@@ -175,9 +175,27 @@ jobs:
       # and `extract` reach - and minio's entire dist calls query-string exactly once, at
       # `helpers.js`, as `querystring.stringify(userTags)`. `stringify` never reaches `decode`.
       #
-      # SO THE PREMISE IS ASSERTED, not just written down. The step below fails if minio ever
+      # THE SECOND ENTRY, ADDED 2026-09-03 WHEN IT TURNED EVERY PULL REQUEST RED.
+      # GHSA-528h-pc64-c93x is a moderate denial of service in `stream-json` at every version
+      # <= 3.4.0: its `pick`/`ignore`/`filter`/`replace` filters are O(depth^2) on nested input, so
+      # a small crafted document blocks the event loop for seconds to minutes. It arrives as
+      # `minio > stream-json`, and there is again no in-range fix - minio 8.0.7 is the latest
+      # release and requires `stream-json: ^1.8.0`, while the fix is 3.5.0, two majors outside it.
+      #
+      # IT IS UNREACHABLE TWICE OVER, measured in the installed tree rather than argued:
+      #
+      #   1. minio imports exactly ONE thing from the package, `stream-json/jsonl/Parser.js`, in
+      #      `notification.mjs` and its CJS twin. It imports NONE of the four filters the advisory
+      #      is about - the vulnerability is in `stream-json/filters/*`, which nothing pulls in.
+      #   2. `notification.mjs` is minio's bucket-notification API, and this service does not call
+      #      it. Its entire use of the client is `bucketExists`, `fPutObject`, `getObject`,
+      #      `makeBucket`, `putObject`, `removeObject` - none of which reaches that module.
+      #
+      # SO EVERY PREMISE IS ASSERTED, not just written down. The step below fails if minio ever
       # starts PARSING a query string, or if the `stringify` call site it was measured on
-      # disappears - either way the reachability argument is void and the ignore has to be
+      # disappears, or if minio starts importing a stream-json FILTER, or if this service starts
+      # calling the notification API - any one of those voids a reachability argument, and the
+      # ignore that rests on it has to be
       # revisited rather than silently outliving the reason it was granted. An advisory suppressed
       # on a premise nothing checks is a hole with a comment over it.
       - name: Audit backend service dependencies
@@ -187,7 +205,7 @@ jobs:
           ignores_for() {
             case "$1" in
               # GHSA-vcc3-ghjq-m6fr - unreachable, see the header above and the assertion below.
-              media-service) echo "--ignore=GHSA-vcc3-ghjq-m6fr" ;;
+              media-service) echo "--ignore=GHSA-vcc3-ghjq-m6fr --ignore=GHSA-528h-pc64-c93x" ;;
               *) echo "" ;;
             esac
           }
@@ -217,6 +235,35 @@ jobs:
               failed="$failed media-service(premise)"
             else
               echo "    minio still calls only querystring.stringify; the ignore holds."
+            fi
+          fi
+
+          # THE PREMISES BEHIND THE SECOND IGNORE, GHSA-528h-pc64-c93x. Two of them, because the
+          # argument has two INDEPENDENT legs and either alone would carry it - so both are checked,
+          # and the ignore is refused the moment either stops being true.
+          echo "--- the premises behind media-service's second ignore"
+          mdist="apps/media-service/node_modules/minio/dist"
+          if [ ! -d "$mdist" ]; then
+            echo "::error::$mdist is not there, so the reachability of GHSA-528h-pc64-c93x cannot be checked. The ignore is not granted."
+            failed="$failed media-service(premise2)"
+          else
+            # LEG ONE: the vulnerability is in `stream-json/filters/*`. minio must import only the
+            # JSONL parser and none of the four filters.
+            filters=$(grep -rlE 'stream-json/(filters|pick|ignore|filter|replace)' "$mdist" 2>/dev/null | grep -v '[.]map$' || true)
+            if [ -n "$filters" ]; then
+              echo "::error::minio now imports a stream-json FILTER, which is exactly what GHSA-528h-pc64-c93x is about, so it is no longer unreachable: $filters"
+              failed="$failed media-service(premise2)"
+            else
+              echo "    minio imports no stream-json filter, only jsonl/Parser.js; leg one holds."
+            fi
+            # LEG TWO: the only minio module touching stream-json at all is the bucket-notification
+            # API. This service must not call it.
+            notif=$(grep -rnE '(listen|set|get|removeAll)BucketNotification|NotificationConfig|NotificationPoller' apps/media-service/src 2>/dev/null || true)
+            if [ -n "$notif" ]; then
+              echo "::error::media-service now calls minio's notification API, the only module that touches stream-json, so GHSA-528h-pc64-c93x is reachable: $notif"
+              failed="$failed media-service(premise2)"
+            else
+              echo "    media-service calls no minio notification API; leg two holds."
             fi
           fi
 
