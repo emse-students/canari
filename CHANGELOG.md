@@ -66,6 +66,13 @@ which is also where every release up to and including v0.13.1 now lives.
   half a pull request cannot see: a new advisory landing against code nobody touched. One
   definition, two moments. This closes the open P2.
 
+  **And `pull-request.yml`'s `workflow_call` trigger is gone with its `git_ref` input**, because
+  nothing called it. It was the sweep's way of testing a merged combination whose `GITHUB_TOKEN`
+  merge raised no `push`; every merge is now made by the App, whose push does raise the event. Six
+  checkout steps carried `inputs.git_ref != '' && inputs.git_ref || github.sha`, which resolved to
+  `github.sha` on every real run this repository has ever had - a trigger nothing uses is a claim a
+  file makes about itself that is not true, and six expressions were written around it.
+
 - **The self-hosted concurrency assertion is asked per JOB rather than per FILE.** It read the
   workflow for a top-level `concurrency:`, which was right while one workflow meant one estate job -
   and would have passed `scheduled.yml` outright, either on a file-level group that queues a
