@@ -133,37 +133,19 @@ ships. **What only the USER can do is ONE table** -
 [backlog](docs/wiki/backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks), pointers
 only; never re-enumerate it here.
 
-### CANARI - THE DELIVERY PIPELINE, PROVEN END TO END ON `v0.16.0` (2026-09-03)
+### CANARI - THE DELIVERY PIPELINE, PROVEN END TO END (`v0.16.0`, 2026-09-03)
 
-**TWO PACKAGES, ONE PER HUMAN GESTURE.** `pull-request.yml` is everything that happens when a pull
-request is opened - tests, the `CI passed` aggregate, the dependency ceiling, and the auto-merge
-armed in PARALLEL with them; a green pull request merges itself and the merge deploys NOTHING.
-`release.yml` is everything that happens when a release is published: five gates, then the bump,
-then `deploy.yml`, `android.yml` and `ios.yml` as CALLED jobs of one run, all building the commit
-the bump resolved. The two paths are told apart by the EVENT TYPE - `prereleased` reaches dev and
-the tester programmes, `released` reaches production, Play `production` and App Store review.
-Everything is on [cicd](docs/wiki/cicd.md) and
-[workflow-migration](docs/wiki/workflow-migration.md), the only copies - **read them before
-touching any workflow.**
+**TWO PACKAGES, ONE PER HUMAN GESTURE**, and the whole model - the five gates, the bump, the three
+called arms, the event types, the store band, what was measured on each of the three releases - is
+on [cicd](docs/wiki/cicd.md) and [workflow-migration](docs/wiki/workflow-migration.md), the ONLY
+copies. **Read them before touching any workflow.** Two facts a task trips over without them:
 
-**A STABLE IS REFUSED** unless the version parses, `main` still POINTS AT the commit (not merely
-contains it - the bump pushes a commit built on it), `CI passed` is green ON it, dev has already
-served it, and `store/whats-new.txt` names that version. No bypass input, by design.
-
-**MEASURED, NOT ASSERTED**, on `v0.16.0-alpha.1`, `alpha.2` and the stable: five gates each
-printing an `ok`; the bump's push accepted by the ruleset; `dev.canari-emse.fr` serving the alpha
-while production stayed behind; production then serving `0.16.0` (probed, not read off a green
-job); Play `internal` then `production` committed; TestFlight uploaded. **What a stable owes a
-human is `store/whats-new.txt`, first line `version: X.Y.Z`, and nothing else** - and since
-2026-09-03 that ONE text reaches THREE destinations: the App Store, Google Play (which had never
-received release notes at all) and the GitHub release body. One implementation reads it,
-`submit.mjs`, called by the fifth gate, by the Play arm and by the notes job; the bump
-deliberately does not write that line, because a marker the machine maintains is only ever in step
-with itself. The store band is `(major*1e6 + minor*1e3 + patch)*100 + rank`, rank 99 for a stable.
-
-**INSIDE EACH ARM THE STORE COMES BEFORE THE GITHUB RELEASE ASSET**, and that ordering is a fix
-rather than a taste: `0.16.0` reached production and Play and NOTHING reached Apple, because a
-refused release-asset upload `skipped` both store steps behind it.
+- **A STABLE IS REFUSED** unless the version parses, `main` still POINTS AT the commit, `CI passed`
+  is green ON it, dev has already served it, and `store/whats-new.txt` names that version. No
+  bypass, by design.
+- **WHAT A STABLE OWES A HUMAN IS `store/whats-new.txt`, first line `version: X.Y.Z`, and nothing
+  else** - one text reaching THREE destinations since 2026-09-03 (App Store, Play, GitHub release
+  body) through ONE implementation, `submit.mjs`. The bump deliberately does not write that line.
 
 ### CANARI - THE QUEUE, IN ORDER
 
@@ -174,57 +156,41 @@ noticing. Order = priority. Detail lives where the link says. Defect stories are
 rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
 [cross-client-testing](docs/wiki/cross-client-testing.md).
 
-1. **THE CAMPAIGN RESTARTS FROM ZERO** - blocked only on a PHONE and the two Chrome profiles that
-   ARE the test accounts enrolled as devices. Accounts blocker GONE.
+1. **THE CAMPAIGN RESTARTS FROM ZERO** - blocked on a PHONE and two Chrome profiles only.
    [resume](docs/wiki/cross-client-campaign-resume.md).
-2. **P1 - a PLACEHOLDER held a member's seat.** Estate cleaned; whether a LEAF is left in the MLS
-   tree is unanswered and only a member's CLIENT can say.
-   [backlog](docs/wiki/backlog.md#p1---the-placeholder-is-gone-from-prod-what-it-may-have-left-in-the-mls-tree-is-not-answered).
-3. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*). **ONE MERGE
-   MECHANISM SINCE 2026-09-03, TWO ARMING POINTS** - the ceiling is a binding CHECK feeding
-   `CI passed`, and the sweep ARMS GitHub's auto-merge rather than merging on its own reading of
-   green. The split exists because a Dependabot `pull_request` run has no secrets, so no App token
-   can be minted there. Model on
-   [cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them). **BUT THE
-   QUEUE IS PARKED: no identity CI can mint may ask Dependabot to rebuild a stale branch** - the
-   App token was refused ten times, so 8/8 are stuck and the sweep is RED until a PAT with push
-   access exists or the predicate narrows
-   ([P1](docs/wiki/backlog.md#p1---no-identity-ci-can-mint-may-ask-dependabot-to-rebuild-a-branch-so-a-moved-gate-parks-the-whole-queue---and-the-app-token-was-the-recommendation-this-row-itself-made-measured-2026-09-03)).
-   Six other open items including **[the suppression CONTROL CASE the NestJS batch destroyed -
-   Monday 2026-09-07 is the only answer](docs/wiki/backlog.md#p2---the-nine-nestjs-pull-requests-were-closed-in-one-batch-so-the-suppression-question-was-never-measured-on-one-first-and-monday-2026-09-07-is-the-only-thing-that-can-answer-it-now-updated-2026-09-03)**
+2. **P1 - a PLACEHOLDER held a member's seat**; whether a LEAF is left in the MLS tree only a
+   member's CLIENT can say. [backlog](docs/wiki/backlog.md#p1---the-placeholder-is-gone-from-prod-what-it-may-have-left-in-the-mls-tree-is-not-answered).
+3. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - ONE merge mechanism,
+   TWO arming points, model on
+   [cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them). **THE QUEUE
+   PARKS whenever a gate moves: no identity CI can mint may ask Dependabot to rebuild** - only an
+   account WITH PUSH ACCESS, measured ([P1](docs/wiki/backlog.md#p1---no-identity-ci-can-mint-may-ask-dependabot-to-rebuild-a-branch-so-a-moved-gate-parks-the-whole-queue---and-the-app-token-was-the-recommendation-this-row-itself-made-measured-2026-09-03)). Six other items, incl. **[the
+   suppression CONTROL CASE the NestJS batch destroyed - Monday 2026-09-07 answers it](docs/wiki/backlog.md#p2---the-nine-nestjs-pull-requests-were-closed-in-one-batch-so-the-suppression-question-was-never-measured-on-one-first-and-monday-2026-09-07-is-the-only-thing-that-can-answer-it-now-updated-2026-09-03)**
    and **nothing tells anybody prod is down**. Hosts:
    [host-updates](docs/wiki/infrastructure/host-updates.md).
-4. **P1 - a release-asset upload was refused WITH the permission it was granted, cause UNMEASURED.**
-   Six candidates ruled out by measurement; one open needs `admin:org`.
-   [backlog](docs/wiki/backlog.md#p1---a-release-asset-upload-was-refused-with-the-permission-it-was-granted-and-the-cause-is-unmeasured-v0160-2026-09-03).
-5. **NO CAMPAIGN ROW ASKS A QUESTION WHOSE ANSWER IS A POPULATION** - structural; four rows written
-   into rung 12 MULTI, needing only `W1 W2` ([campaign](docs/wiki/cross-client-campaign.md)).
+4. **P1 - a release-asset upload was refused WITH the permission granted, cause UNMEASURED**; six
+   candidates ruled out, one open needs `admin:org`. [backlog](docs/wiki/backlog.md#p1---a-release-asset-upload-was-refused-with-the-permission-it-was-granted-and-the-cause-is-unmeasured-v0160-2026-09-03).
+5. **NO CAMPAIGN ROW ASKS A QUESTION WHOSE ANSWER IS A POPULATION** - four rows written into rung
+   12 MULTI, needing only `W1 W2` ([campaign](docs/wiki/cross-client-campaign.md)).
 6. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
-   [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient** - an unarmed
-   quick-reply window proves nothing.
-7. **SIX UX/RENDERING ITEMS + TWO DEV-LOG LINES**, deferred past the ladder, substance in
-   [backlog](docs/wiki/backlog.md) only. Four of the six want ONE pass over `app.css`.
-8. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01). FIVE switches move in ONE
-   commit at revival: [calls](docs/wiki/frontend/modules/calls.md). Prod HAS TURN and has never
-   used it.
+   [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
+7. **SIX UX/RENDERING ITEMS + TWO DEV-LOG LINES**, substance in [backlog](docs/wiki/backlog.md) only; four want ONE
+   pass over `app.css`.
+8. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
+   commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
 9. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
    and audit in [backlog](docs/wiki/backlog.md).
-10. **P1 - A DEVICE ASKS FOR A WELCOME FOR EVER AND THE MEMBER ANSWERING RESETS THE ROW THAT WOULD
-    HAVE HEALED IT** - a livelock, proved on prod, with state LEFT there.
-    [backlog](docs/wiki/backlog.md#p1---a-device-asks-for-a-welcome-for-ever-and-the-member-that-answers-resets-the-row-that-would-have-let-it-heal-itself-measured-on-prod-2026-09-01);
-    its [sibling P2](docs/wiki/backlog.md#p2---a-device-was-given-a-roster-seat-and-never-a-welcome-and-why-its-keypackage-was-skipped-is-unmeasured-measured-on-prod-2026-09-01)
-    wants reading with it and with 11.
-11. **TWELVE MESSAGES DROPPED AND A PERMANENT COMMIT-LOG HOLE AT EPOCH 121.** **The four defects
-    are FIXED AND DEPLOYED** - `af4defb2` and `cf7878a3` are ancestors of `v0.15.0`. Only the
-    RESIDUE is open, and the 13:10 failure arm is **NOT established** - do not write a fix against
-    a suspected arm.
-    [backlog](docs/wiki/backlog.md#p1---twelve-of-sixteen-messages-were-fetched-and-dropped-and-the-commit-log-has-a-permanent-hole-at-epoch-121-measured-on-prod-2026-09-02).
-12. **`dev.canari-emse.fr` IS THE PRE-RELEASE TARGET** -
-    [dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy. Two open: a dev
-    deploy cannot tell a broken CHANGE from an unreachable REGISTRY
-    ([backlog](docs/wiki/backlog.md#p2---a-dev-deploy-still-cannot-tell-a-broken-change-from-an-unreachable-registry-and-the-conflation-moved-rather-than-went-away-measured-2026-09-02-first-day-it-ran));
-    and prod's deploy job is still inlined shell while `deploy-dev` exercises
-    `infrastructure/deploy/deploy-environment.sh` - one implementation, proven before imposed.
+10. **P1 - A DEVICE ASKS FOR A WELCOME FOR EVER AND THE MEMBER ANSWERING RESETS THE HEALING ROW** -
+    a livelock proved on prod, state LEFT there ([backlog](docs/wiki/backlog.md#p1---a-device-asks-for-a-welcome-for-ever-and-the-member-that-answers-resets-the-row-that-would-have-let-it-heal-itself-measured-on-prod-2026-09-01)); read with its
+    [sibling P2](docs/wiki/backlog.md#p2---a-device-was-given-a-roster-seat-and-never-a-welcome-and-why-its-keypackage-was-skipped-is-unmeasured-measured-on-prod-2026-09-01) and with 11.
+11. **TWELVE MESSAGES DROPPED, PERMANENT COMMIT-LOG HOLE AT EPOCH 121** - the four defects are
+    FIXED AND DEPLOYED (ancestors of `v0.15.0`); only the RESIDUE is open, and the 13:10 failure
+    arm is **NOT established** ([backlog](docs/wiki/backlog.md#p1---twelve-of-sixteen-messages-were-fetched-and-dropped-and-the-commit-log-has-a-permanent-hole-at-epoch-121-measured-on-prod-2026-09-02)).
+12. **`dev.canari-emse.fr` IS THE PRE-RELEASE TARGET**
+    ([dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy). Two open: a
+    dev deploy cannot tell a broken CHANGE from an unreachable REGISTRY
+    ([backlog](docs/wiki/backlog.md#p2---a-dev-deploy-still-cannot-tell-a-broken-change-from-an-unreachable-registry-and-the-conflation-moved-rather-than-went-away-measured-2026-09-02-first-day-it-ran)); and prod's deploy job is still inlined shell while `deploy-dev`
+    exercises `infrastructure/deploy/deploy-environment.sh`.
 
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
 
@@ -252,28 +218,26 @@ waiting on credentials Lydia owes; one MLS client in a SharedWorker; and the SEC
 ### CANARI - release, store submission, iOS
 
 **`0.16.0` IS THE SHIPPED VERSION** (2026-09-03): production serving it, Play `production`
-committed, **TestFlight uploaded**. **The App Store submission is the one half that did NOT land**,
-and its cause is now known and fixed rather than suspected - the script asked whether a version was
-NAMED `0.16.0` when Apple's rule is that an app has ONE non-terminal version slot, and answered a
-409 saying so. **The App Store Connect key's role is SETTLED and is not a blocker**: a 409 means the
-JWT was accepted, the app found, the build found and processed. Whether the fix works is answered by
-the next stable, and the script now REFUSES naming the blocking version rather than guessing.
+committed, TestFlight uploaded. **The App Store submission is the one half that did NOT land**; the
+cause is known and fixed rather than suspected - the script asked whether a version was NAMED
+`0.16.0` when Apple's rule is ONE non-terminal version slot - and **the key's role is SETTLED, not
+a blocker** (a 409 means the JWT was accepted). Whether the fix works is answered by the next
+stable.
 
-Whether Play has picked a build up is a MEASUREMENT (`node tools/play-vitals/vitals.mjs`, and why
-every RATE is EMPTY is in [its README](tools/play-vitals/README.md)); what CI did is `gh run list`.
-**Never infer either from a line here, which has been stale twice.** **No HEAL-REVOKE verdict about
-a clean device may be taken on a build older than 0.14.12.** **An APK is not reached by a deploy** -
-`frontendDist: "../build"` means the app EMBEDS the frontend, so `minClientVersion` and check S
-reason about a NAME unless a version identifies its content.
+**Never infer a store or CI state from a line here, which has been stale twice.** Play is a
+MEASUREMENT (`node tools/play-vitals/vitals.mjs`, [README](tools/play-vitals/README.md)); CI is
+`gh run list`. **No HEAL-REVOKE verdict about a clean device may be taken on a build older than
+0.14.12.** **An APK is not reached by a deploy** - `frontendDist: "../build"` means the app EMBEDS
+the frontend, so `minClientVersion` and check S reason about a NAME unless a version identifies its
+content.
 
-**2.1(a) IS PASSED**, and the two guidelines that replaced it are answered in 0.14.15; where the
-submission stands per half is on
+**2.1(a) IS PASSED** and the two guidelines replacing it are answered in 0.14.15; per-half state on
 [mobile](docs/wiki/frontend/mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on).
-Only **check R** is left of the two mails of 2026-08-26; **WP-RESTORE-1** (April 2027) is ACCEPTED,
-after the campaign.
+Only **check R** is left of the 2026-08-26 mails; **WP-RESTORE-1** (April 2027) is ACCEPTED, after
+the campaign.
 
 **iOS: two things are PROVEN and must not be re-verified** - the session HOLDS on the iPhone, and a
-full parity audit read everything else as symmetric. Four things are open in
+full parity audit read everything else as symmetric. Four items open in
 [backlog](docs/wiki/backlog.md), one **diagnosable with no phone at all**. **THREE OF THREE iOS
 DEFECTS WERE INVISIBLE TO EVERY GATE HERE**, so those classes close by HARDWARE, one lettered check
 at a time - **never by a fix written against a suspected lifecycle bug nobody has seen.**
