@@ -284,6 +284,45 @@ for f in android.yml ios.yml; do
     fail "$f no longer guards its release upload - a hand-dispatched run would CREATE a release and restart the chain"
   fi
 done
+printf '\nevery arm is granted what it asks for, because a caller CAPS a called workflow\n'
+# =================================================================================================
+# THE DEFECT THIS EXISTS FOR, and it killed the first real release. A called workflow cannot be
+# granted more than its caller grants it, and exceeding that is a STARTUP FAILURE: no job runs, no
+# log is produced, and the API returns neither an annotation nor an error message. `release.yml`
+# declares `permissions: contents: read` at the workflow level - right for `preflight` and for
+# `bump`, which pushes with an App token rather than `GITHUB_TOKEN` - and that silently capped all
+# three arms. `v0.16.0-alpha.1` was published and the run died before its first job.
+#
+# IT IS CREATED BY THE COLLAPSE. As four independently triggered workflows there was no caller to
+# cap anything and each simply got what it declared; turning them into called workflows introduced a
+# ceiling that had never existed, and nothing in the tree said so.
+#
+# SO THIS IS DERIVED FROM BOTH SIDES rather than typed: it reads every `<scope>: write` each callee
+# asks for and demands the same line inside the caller's job for it. Adding a scope to an arm fails
+# this test until the caller grants it, which is the only ordering that cannot ship broken.
+for pair in 'deploy deploy.yml' 'android android.yml' 'ios ios.yml'; do
+  job="${pair%% *}"
+  wf="${pair##* }"
+
+  # The scopes the callee asks for, anywhere in it: `permissions:` blocks are per job there.
+  WANTED="$(grep -oE '^ +[a-z-]+: write$' "$WF/$wf" | tr -d ' ' | sort -u)"
+  # The caller's block for this job: from its key to the next job key at the same indentation.
+  GRANTED="$(sed -n "/^  $job:\$/,/^  [a-z][a-z-]*:\$/p" "$WF/release.yml" \
+    | grep -oE '^ +[a-z-]+: write$' | tr -d ' ' | sort -u)"
+
+  if [ -z "$WANTED" ]; then
+    fail "$wf asks for no write scope at all - it cannot attach an artefact or move a marker"
+    continue
+  fi
+
+  missing="$(comm -23 <(echo "$WANTED") <(echo "$GRANTED") | tr '\n' ' ')"
+  if [ -z "${missing// /}" ]; then
+    pass "release.yml grants $job everything $wf asks for ($(echo "$WANTED" | tr '\n' ' '))"
+  else
+    fail "$wf asks for $missing and release.yml's '$job' job does not grant it - THE RUN WILL FAIL AT STARTUP, with no log and no annotation"
+  fi
+done
+
 printf '\nboth stores are reached all the way, and iOS no longer stops at TestFlight\n'
 # =================================================================================================
 # THE ASYMMETRY THIS CLOSES. `altool --upload-app` hands Apple the binary and stops; the binary

@@ -234,9 +234,31 @@ jobs:
   #
   # `secrets: inherit` because each holds its own credentials - signing keys, store API keys, the
   # deploy host. Naming them one by one here would be a fourth list to keep in step with three files.
+  # A CALLED WORKFLOW CANNOT BE GRANTED MORE THAN ITS CALLER GRANTS IT, and exceeding that is a
+  # STARTUP FAILURE - no job runs, no log is produced, and the API returns neither an annotation nor
+  # an error message. `v0.16.0-alpha.1` was published and the run died that way, on the first real
+  # use of this chain.
+  #
+  # This file's top-level `permissions: contents: read` is the whole cause. It is correct for
+  # `preflight` and for `bump` (which pushes with an App token, not with `GITHUB_TOKEN`), and it
+  # silently capped all three arms - each of which asks for `contents: write` to attach an artefact
+  # to the release, and `deploy.yml` for `packages: write` to push images to GHCR. **The permissions
+  # below are therefore derived from what each callee declares, not chosen here**, and
+  # `release-chain.test.sh` reads both sides and fails if a callee ever asks for a scope its caller
+  # does not grant.
+  #
+  # THE DEFECT IS CREATED BY THE COLLAPSE ITSELF. As four independently triggered workflows there
+  # was no caller to cap anything, so every one of them simply got what it declared. Turning them
+  # into called workflows introduced a ceiling that had never existed, and nothing in the tree said
+  # so.
   deploy:
     name: Estate
     needs: [preflight, bump]
+    # `contents: write` for the `prod-released` / `dev-deployed` markers it moves;
+    # `packages: write` to push the images it builds to GHCR.
+    permissions:
+      contents: write
+      packages: write
     uses: ./.github/workflows/deploy.yml
     with:
       sha: ${{ needs.bump.outputs.sha }}
@@ -247,6 +269,9 @@ jobs:
   android:
     name: Google Play
     needs: [preflight, bump]
+    # `contents: write` to attach the signed `.aab` to the published release.
+    permissions:
+      contents: write
     uses: ./.github/workflows/android.yml
     with:
       sha: ${{ needs.bump.outputs.sha }}
@@ -257,6 +282,9 @@ jobs:
   ios:
     name: App Store
     needs: [preflight, bump]
+    # `contents: write` to attach the signed `.ipa` to the published release.
+    permissions:
+      contents: write
     uses: ./.github/workflows/ios.yml
     with:
       sha: ${{ needs.bump.outputs.sha }}
