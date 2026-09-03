@@ -530,6 +530,56 @@ else
   pass 'the sweep is gone entirely, so GitHub auto-merge is the only route to main'
 fi
 
+printf '\nthe sweep ARMS, and the identity it arms with is what keeps releases possible\n'
+# =================================================================================================
+# THE ONE PROPERTY OF STAGE 2 THAT IS SILENT WHEN WRONG, and it is not the arming - it is the TOKEN.
+#
+# Auto-merge merges as whoever ARMED it. A merge made with `GITHUB_TOKEN` raises no `push` event
+# (GitHub's anti-recursion rule), so `main` would get no run of `pull-request.yml`, its merge commit
+# would carry no `CI passed` check, and `release-preflight.sh`'s third gate - "the tests passed on
+# the commit being released" - would refuse EVERY release, on commits that had in fact been tested.
+# Nothing about the sweep would look broken: pull requests would merge, and releases would start
+# failing a gate in a different file for a reason nobody would connect to this one.
+#
+# The old step merged with `GITHUB_TOKEN` and paid for it with a manual `gh workflow run` dispatch.
+# Deleting that dispatch is only safe because the identity changed with it, so both are asserted.
+SWEEP_WF="$WF/dependabot-auto-merge.yml"
+if [ -r "$SWEEP_WF" ]; then
+  ARM_STEP="$(sed -n "/^      - name: Arm GitHub's auto-merge on each\$/,/^      - name: /p" "$SWEEP_WF")"
+
+  if printf '%s' "$ARM_STEP" | grep -q 'steps.app-token.outputs.token'; then
+    pass 'the sweep arms with the App token, so the merge it causes raises a push'
+  else
+    fail 'the sweep does not arm with the App token - auto-merge merges as whoever armed it, so a GITHUB_TOKEN arming raises no push, main carries no CI passed, and EVERY later release is refused by a gate in another file'
+  fi
+
+  if printf '%s' "$ARM_STEP" | grep -qE 'GH_TOKEN: \$\{\{ (secrets\.)?GITHUB_TOKEN \}\}'; then
+    fail 'the sweep arms with GITHUB_TOKEN - see above, this silently refuses every later release'
+  else
+    pass 'and it does not fall back to GITHUB_TOKEN for the arming'
+  fi
+
+  # The dispatch existed ONLY to compensate for the push that a GITHUB_TOKEN merge never raised.
+  # Keeping it alongside an App-token arming would run CI twice on every merged combination.
+  if grep -q 'gh workflow run pull-request.yml' "$SWEEP_WF"; then
+    fail 'the sweep still dispatches CI by hand - that compensated for a push a GITHUB_TOKEN merge never raised, and an App-token merge raises it, so this now runs CI twice on every merge'
+  else
+    pass 'and the manual CI dispatch is gone, because the merge now raises the push itself'
+  fi
+
+  # A SECOND MERGE MECHANISM IS THE THING STAGE 2 REMOVED. A bare `gh pr merge` without `--auto`
+  # would merge on the sweep's own reading of green - a second opinion about which jobs matter,
+  # beside `CI passed`, which is the one the ruleset requires.
+  if grep -qE 'pr merge [^|]*--squash' "$HERE/../dependabot-auto-merge.sh" &&
+    ! grep -qE 'pr merge [^|]*--auto' "$HERE/../dependabot-auto-merge.sh"; then
+    fail 'the sweep merges directly again - that is a second merge mechanism with its own opinion of "green", beside the CI passed the ruleset requires'
+  else
+    pass 'the sweep holds no opinion about green - --auto hands that to GitHub'
+  fi
+else
+  pass 'the sweep workflow is gone entirely'
+fi
+
 printf '\n'
 if [ "$FAIL" -ne 0 ]; then
   printf '%s of %s assertions FAILED\n' "$FAIL" "$((PASS + FAIL))"

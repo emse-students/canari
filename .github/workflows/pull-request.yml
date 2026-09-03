@@ -912,13 +912,18 @@ jobs:
   #
   # WHOSE PULL REQUESTS, AND WHY NOT EVERY ONE:
   #
-  #   * NOT Dependabot's - YET. `dependabot-auto-merge.yml` merges those through a ceiling that
-  #     refuses what CI structurally cannot judge: on 2026-09-01 `postgres 15-alpine -> 18-alpine`
-  #     merged on a fully green suite and took production down for 33 minutes, because every gate
-  #     here starts from an EMPTY volume. Native auto-merge would walk straight past that ceiling,
-  #     since green is exactly what those updates are. **The ceiling is being turned into a job of
-  #     this workflow so that one merge path can serve every pull request** - which is what the user
-  #     asked for - and this exclusion disappears with the sweep in the same change.
+  #   * NOT Dependabot's, AND THAT EXCLUSION IS PERMANENT - the earlier version of this comment
+  #     said it would "disappear with the sweep", and that was wrong. **A `pull_request` run from
+  #     Dependabot has no access to secrets**: GitHub runs it as if it came from a fork, with a
+  #     read-only `GITHUB_TOKEN`, so `secrets.AUTOMERGE_APP_CLIENT_ID` and its private key arrive
+  #     EMPTY and no App token can be minted here. Arming needs the App - auto-merge merges as
+  #     whoever armed it, and a `GITHUB_TOKEN` merge raises no `push`, which refuses every later
+  #     release. So Dependabot's pull requests are armed by `dependabot-auto-merge.yml`, which runs
+  #     on `workflow_run` and a schedule in the DEFAULT-BRANCH context where the secrets exist.
+  #     **One merge mechanism, two arming points, and the split is forced by where secrets live.**
+  #     What the sweep no longer does is merge: since 2026-09-03 it arms and GitHub merges, so
+  #     `CI passed` - which now includes `dependency-ceiling` - is the only answer to "is it green"
+  #     for every pull request in the repository.
   #   * NOT an outside contributor's. `author_association` must be OWNER, MEMBER or COLLABORATOR -
   #     somebody who could merge it by hand anyway.
   #   * NOT a draft. A draft is a pull request whose author has said it is not ready.

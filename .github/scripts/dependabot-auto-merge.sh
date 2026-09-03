@@ -1,22 +1,48 @@
 #!/usr/bin/env bash
 #
-# Decides, for ONE Dependabot pull request, whether this repository has a gate that would see the
-# update fail - and merges it when the whole check suite is green.
+# ARMS GitHub's auto-merge on ONE Dependabot pull request, and asks Dependabot to rebuild a branch
+# whose gates have moved under it.
 #
-# IT IS A SCRIPT RATHER THAN INLINE YAML BECAUSE IT HAS TWO CALLERS, and they exist for different
-# reasons. `dependabot-auto-merge.yml` runs it on a CI completion, which is the fast path, and again
-# on a schedule, which is the only path that CONVERGES: a pull request whose checks finished before
-# this workflow existed - or while it was disabled, or during a runner outage - will never receive
-# another `workflow_run`, and on 2026-08-31 seven green ones sat exactly there. An automation that
-# can only act on an event it happened to catch is not one that runs on its own.
+# IT USED TO MERGE, AND THAT WAS THE PROBLEM (stage 2 of 2, 2026-09-03). Until today this script
+# read every check-run on the head commit, decided for itself whether the pull request was green,
+# and squash-merged it - a SECOND merge mechanism running beside GitHub's own auto-merge, so a
+# Dependabot pull request and a human's took different routes to `main` (user: *"le auto-merge et
+# les CI doivent considerer toutes les PR, les miennes ou dependabot"*). Three things followed from
+# that and all three are gone with it:
 #
-# FAIL-CLOSED ON THE AUTHOR, HERE rather than in either caller: a guard written once in the place
-# that does the merging cannot be bypassed by adding a third trigger later.
+#   * A SECOND OPINION ABOUT WHICH JOBS MATTER. "at least one check exists, all completed, none
+#     bad" is not the same statement as `CI passed`, the one check the branch ruleset requires, and
+#     nothing compared the two. The ruleset's answer is now the only answer.
+#   * A MERGE THAT RAISED NO `push`. It merged with `GITHUB_TOKEN`, and GitHub's anti-recursion
+#     rule means such a merge emits no `push` event - so `main` got no CI run, carried no
+#     `CI passed` check, and `release-preflight.sh`'s third gate would refuse every release built
+#     on it. The workaround was a manual `gh workflow run pull-request.yml` dispatch, which is
+#     deleted with the merge that needed it. **Arming with the App token is what makes the merge
+#     raise the event**, exactly as it does for a human's pull request.
+#   * A CEILING ASKED TWICE. `dependency-ceiling.sh` is a job of `pull-request.yml` feeding
+#     `ci-passed` since stage 1, so an update with no gate cannot merge by ANY route - measured on
+#     the rebased #309: `Dependency ceiling -> FAILURE`, then `CI passed -> FAILURE`. A copy of
+#     that decision here would be a duplicate of a binding check, and the annotation the check
+#     emits carries the same text - the name of the missing test - that the comment used to.
+#
+# WHAT THIS SCRIPT IS STILL FOR, because GitHub's auto-merge does neither:
+#
+#   CONVERGENCE  the caller enumerates every open Dependabot pull request and arms each, so the
+#                correct state is reached from ANY starting state. On 2026-08-31 seven mergeable
+#                green pull requests sat untouched: their checks had finished days earlier, so no
+#                future event would ever name them again. An automation that acts only on what it
+#                happened to catch is not one that runs on its own.
+#   STALENESS    GitHub re-evaluates a pull request when the PULL REQUEST changes, never when the
+#                BASE does. A green suite is evidence about the gates that produced it; when those
+#                move, the branch has to be rebuilt, and only Dependabot can rebuild it.
 #
 # Usage: dependabot-auto-merge.sh <pr-number>
-# Prints `MERGED <pr>` and `MERGED_ONTO <branch>` on stdout when it merged, so the caller can
-# dispatch ONE deploy per branch for a sweep that merged several. Never exits non-zero for a pull
-# request it declines to touch: a sweep must not be stopped by one unmergeable branch.
+# Prints `ARMED <pr>` when auto-merge is set, and `STALE <pr>` when the branch needs rebuilding.
+# Never exits non-zero for a pull request it declines to touch: a sweep must not be stopped by one
+# branch.
+#
+# FAIL-CLOSED ON THE AUTHOR, HERE rather than in the caller: a guard written once in the place that
+# does the arming cannot be bypassed by adding a third trigger later.
 set -uo pipefail
 
 pr="${1:?usage: dependabot-auto-merge.sh <pr-number>}"
@@ -28,31 +54,17 @@ pr="${1:?usage: dependabot-auto-merge.sh <pr-number>}"
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=lib/gate-moves.sh
 . "$(dirname "$0")/lib/gate-moves.sh"
-# THE NAME TABLE MOVED OUT FOR THE SAME REASON, ON 2026-09-01, and it cost a production outage to
-# learn it: a `case` inline here could not be asked what it covered, so nobody noticed `postgres`
-# was absent from it until PostgreSQL 18 refused to start on production's data directory. See
-# `lib/ceiling.sh` and `tests/ceiling.test.sh`.
-# `source-path` IS PER-COMMAND, NOT PER-FILE - the copy above the gate-moves source does not
-# reach this one, and shellcheck answered SC1091 for it in CI.
-# shellcheck source-path=SCRIPTDIR
-# shellcheck source=lib/ceiling.sh
-. "$(dirname "$0")/lib/ceiling.sh"
 
-MARKER='<!-- canari-auto-merge-ceiling -->'
-
-# `baseRefName` IS READ HERE AND NOT ASSUMED, and the reason is that it stopped being constant on
-# 2026-09-02: Dependabot targets `dev` now, while pull requests opened before that day still carry
-# `main`. Everything downstream that used to name `main` as a literal - the staleness comparison,
-# the conflict message, the deploy the caller dispatches - is about THIS pull request's own base,
-# and reading it is what lets both generations drain through one sweep instead of one of them
-# silently deploying the wrong estate.
+# `baseRefName` IS READ HERE AND NOT ASSUMED. It stopped being constant once Dependabot briefly
+# targeted a second branch, and everything downstream that used to name `main` as a literal - the
+# staleness comparison, the conflict message - is about THIS pull request's own base.
 meta=$(gh pr view "$pr" --repo "$REPO" --json author,state,headRefOid,mergeable,baseRefName \
-         --jq '"\(.author.login)|\(.state)|\(.headRefOid)|\(.mergeable)|\(.baseRefName)"') || {
+  --jq '"\(.author.login)|\(.state)|\(.headRefOid)|\(.mergeable)|\(.baseRefName)"') || {
   echo "#$pr: could not be read; skipping."
   exit 0
 }
 
-IFS='|' read -r author state head_sha mergeable base_ref <<< "$meta"
+IFS='|' read -r author state head_sha mergeable base_ref <<<"$meta"
 
 if [ "$author" != "app/dependabot" ] && [ "$author" != "dependabot[bot]" ]; then
   echo "#$pr: author is '$author', not Dependabot; refusing."
@@ -63,126 +75,34 @@ if [ "$state" != "OPEN" ]; then
   exit 0
 fi
 
-echo "#$pr: head=$head_sha mergeable=$mergeable"
-
-# -----------------------------------------------------------------------------------------------
-# THE CEILING
-# -----------------------------------------------------------------------------------------------
-# Dependabot writes one `updated-dependencies` block per dependency into the commit message, with
-# typed fields. A grouped PR carries several, and EVERY one has to pass. The blocks are read AS
-# BLOCKS rather than as three independent `sed` lists: an update Dependabot could not classify
-# carries no `update-type` at all, and three lists pasted side by side would then pair the wrong
-# name with the wrong version, silently.
-#
-# `update-type` IS REPORTED AND DECIDES NOTHING, deliberately, and this has to be said out loud
-# because two comments elsewhere in this repository claimed the opposite until 2026-09-01 - that the
-# ceiling "refuses any major". It never has: the only thing consulted is the NAME. A major that
-# breaks the tree stops it compiling and the suite refuses it without help, and a blanket major
-# refusal would build the queue nobody drains. The cost of the false claim was that `postgres
-# 15-alpine -> 18-alpine` looked covered by a rule that did not exist, and production lost every
-# backend service for 33 minutes. What protects a datastore now is its NAME, in `lib/ceiling.sh`.
-message=$(gh api "repos/$REPO/commits/$head_sha" --jq '.commit.message') || {
-  echo "#$pr: could not read its head commit; skipping."
-  exit 0
-}
-
-parsed=$(awk '
-  /^ *- dependency-name:/ {
-    if (name != "") print name "|" type "|" version
-    name = $0; sub(/^ *- dependency-name: */, "", name); type = ""; version = ""
-    next
-  }
-  /^ *dependency-version:/ { version = $0; sub(/^ *dependency-version: */, "", version) }
-  /^ *update-type:/ { type = $0; sub(/^ *update-type: *version-update:semver-/, "", type) }
-  END { if (name != "") print name "|" type "|" version }
-' <<< "$message")
-
-reasons_file="${RUNNER_TEMP:-/tmp}/ceiling-reasons-$pr.md"
-: > "$reasons_file"
-refused=0
-
-if [ -z "$parsed" ]; then
-  echo "#$pr: no updated-dependencies block on $head_sha - refusing to guess."
-  echo "- this commit carries no machine-readable updated-dependencies block, so nothing here can tell what it changes." >> "$reasons_file"
-  refused=1
-fi
-
-# The loop reads from a redirection rather than a pipe, so the counters below belong to the CURRENT
-# shell - a piped `while` runs in a subshell and its state is discarded.
-while IFS='|' read -r name type version; do
-  [ -z "$name" ] && continue
-  # Dependabot YAML-quotes any dependency name that starts with `@`, so the trailer for a scoped npm
-  # package reads `"@nestjs/common"`, quotes included. Matching without stripping them silently
-  # misses the entire scope - which is how a first draft of this ceiling merged the exact
-  # `@nestjs/common` major it was written to refuse.
-  name="${name%\"}"
-  name="${name#\"}"
-  # The table, and every reason in it, is `lib/ceiling.sh` - one place, with self-tests. The VERSION
-  # is passed because one arm needs it: a datastore is refused only when the update crosses the major
-  # production runs, a patch within a major being exactly what the digest pin exists to let through.
-  gate=$(gate_for_dependency "$name" "$version")
-
-  if [ -n "$gate" ]; then
-    echo "  REFUSED: $name -> $version ($type): $gate"
-    refused=$((refused + 1))
-    echo "- \`$name\` -> \`$version\`: $gate." >> "$reasons_file"
-  else
-    echo "  ok: $name -> $version ($type) - the suite is evidence about this one"
-  fi
-done <<< "$parsed"
-
-# -----------------------------------------------------------------------------------------------
-# A REFUSAL THAT SAYS NOTHING IS THE QUEUE NOBODY DRAINS
-# -----------------------------------------------------------------------------------------------
-# The comment names the missing test, so the pull request carries its own reason for sitting there.
-# It is posted ONCE: this runs on every check-suite completion AND on a schedule, and a marker line
-# is cheaper and more reliable than reasoning about how many passes a branch has seen.
-if [ "$refused" -ne 0 ]; then
-  echo "#$pr: $refused update(s) have no gate here; it waits for one to be written."
-  if gh api "repos/$REPO/issues/$pr/comments" --paginate --jq '.[].body' | grep -qF "$MARKER"; then
-    echo "#$pr: already explained."
-    exit 0
-  fi
-  gh pr comment "$pr" --repo "$REPO" --body "$MARKER
-**Not auto-merged: this repository has no gate that would see this one fail.**
-
-$(cat "$reasons_file")
-
-This is not a semver judgement - a break that stops the tree compiling is caught by the suite and
-merges on its own. It is a statement that a TEST IS MISSING. Write the one named above and this
-whole class of update starts merging by itself; the list is in \`docs/wiki/backlog.md\`."
-  exit 0
-fi
+echo "#$pr: head=$head_sha mergeable=$mergeable base=$base_ref"
 
 # -----------------------------------------------------------------------------------------------
 # A GREEN CHECK IS EVIDENCE ABOUT THE WORKFLOW THAT PRODUCED IT
 # -----------------------------------------------------------------------------------------------
-# NOT about the workflow on `main` today, and `lib/gate-moves.sh` carries the incident that says so
-# along with the predicate itself. What belongs HERE is the consequence for a caller that merges:
+# NOT about the workflow on the base branch today, and `lib/gate-moves.sh` carries the incident
+# that says so along with the predicate itself.
 #
-# Until 2026-09-01 this asked `base_sha != main_sha`, and that made the queue undrainable rather
-# than careful. Every merge moves `main`, so every remaining pull request went stale in the same
-# instant, and the only exit was a rebuild NOTHING HERE CAN PERFORM: `PUT /update-branch` poisons
-# the branch (see the section below), and `@dependabot recreate` is refused when the caller is
-# `github-actions[bot]` - measured on #303, three seconds after the ask, "Sorry, only users with
-# push access can use that command." A gate whose only remedy is unavailable is not a gate, it is
-# a stop, and it stopped seven mergeable pull requests.
+# THIS IS THE PROPERTY GITHUB'S AUTO-MERGE DOES NOT HAVE, which is the whole reason this script
+# survives stage 2. GitHub re-evaluates when the pull request changes; a base that moves under a
+# branch invalidates its evidence without touching it, and nothing on GitHub's side notices.
 #
-# AND THE BRANCH COMPARED AGAINST IS THE PULL REQUEST'S OWN BASE, not `main`. It was `main` as a
-# literal until 2026-09-02, which was the same thing while everything targeted `main`; with
-# Dependabot targeting `dev` it would have compared a `dev`-based branch's checks against a trunk
-# it was never built on, and reported the whole delta between the two branches as a gate move -
-# every pull request permanently stale, which is precisely the failure this section already
-# records once.
+# Until 2026-09-01 this asked `base_sha != main_sha`, which made the queue undrainable rather than
+# careful: every merge moves the base, so every remaining pull request went stale in the same
+# instant, and the only exit was a rebuild NOTHING HERE CAN PERFORM - `PUT /update-branch` poisons
+# the branch, and `@dependabot recreate` is refused when the caller is `github-actions[bot]`
+# (measured on #303: *"Sorry, only users with push access can use that command."*). A gate whose
+# only remedy is unavailable is not a gate, it is a stop, and it stopped seven mergeable pull
+# requests.
 tip_sha=$(gh api "repos/$REPO/commits/$base_ref" --jq '.sha') || {
-  echo "#$pr: could not read $base_ref; skipping rather than merging on an unknown base."
+  echo "#$pr: could not read $base_ref; skipping rather than arming on an unknown base."
   exit 0
 }
 base_sha=$(gh pr view "$pr" --repo "$REPO" --json baseRefOid --jq '.baseRefOid')
 
 if [ "$base_sha" != "$tip_sha" ]; then
-  # One call: the changed-file count on the first line, then one filename per line - which is
-  # exactly the payload `classify_gate_moves` is specified and tested against.
+  # One call: the changed-file count on the first line, then one filename per line - exactly the
+  # payload `classify_gate_moves` is specified and tested against.
   compare=$(gh api "repos/$REPO/compare/$base_sha...$tip_sha" \
     --jq '((.files // []) | length), ((.files // []) | .[].filename)') || compare="gh: compare failed"
 
@@ -208,12 +128,12 @@ fi
 # GitHub parks the `pull_request` run of a branch pushed by anything other than Dependabot in
 # `action_required` - waiting for a human to click Approve - and Dependabot then declines the branch
 # for good ("this PR has been edited by someone other than Dependabot"). Such a branch is not stale:
-# its base can be current `main`, so the check above passes it straight through to a merge decision
-# that reads checks which will never complete. It would sit there forever.
+# its base can be current, so the check above passes it straight through, and arming it would wait
+# on checks that never complete. #299 is the live example.
 #
-# This is measured rather than inferred, on the state itself and not on how the state came about, so
-# a branch touched by a maintainer, by a bad rebase, or by an earlier version of this very workflow
-# converges the same way: it is rebuilt, and the rebuild is Dependabot's.
+# Measured on the STATE and not on how the state came about, so a branch touched by a maintainer, by
+# a bad rebase, or by an earlier version of this very workflow converges the same way: it is
+# rebuilt, and the rebuild is Dependabot's.
 head_author=$(gh api "repos/$REPO/commits/$head_sha" --jq '.author.login // ""')
 if [ "$head_author" != "dependabot[bot]" ]; then
   echo "#$pr: head ${head_sha:0:8} was written by '${head_author:-unknown}', not dependabot[bot] - its checks cannot run unattended."
@@ -222,71 +142,38 @@ if [ "$head_author" != "dependabot[bot]" ]; then
 fi
 
 # -----------------------------------------------------------------------------------------------
-# THE MERGE
+# THE ARMING
 # -----------------------------------------------------------------------------------------------
-# Inspect every check-run on the head commit rather than trusting one workflow's conclusion: the
-# repository has several PR-gating workflows and path-filtered matrix jobs, so the only safe reading
-# is "at least one check exists, all are completed, none reported a bad conclusion".
-runs=$(gh api "repos/$REPO/commits/$head_sha/check-runs" --paginate \
-  --jq '.check_runs[] | "\(.name)|\(.status)|\(.conclusion // "")"')
-
-total=0
-pending=0
-bad=0
-while IFS='|' read -r name status conclusion; do
-  [ -z "$name" ] && continue
-  # Ignore this workflow's own run if it ever surfaces as a check.
-  case "$name" in "Dependabot auto-merge"*) continue ;; esac
-  total=$((total + 1))
-  [ "$status" != "completed" ] && pending=$((pending + 1))
-  case "$conclusion" in
-    success | skipped | neutral | "") ;;
-    *)
-      bad=$((bad + 1))
-      echo "  FAIL: $name -> $conclusion"
-      ;;
-  esac
-done <<< "$runs"
-
-echo "#$pr: checks total=$total pending=$pending bad=$bad"
-if [ "$total" -eq 0 ]; then
-  echo "#$pr: no checks yet; skip."
-  exit 0
-fi
-if [ "$bad" -ne 0 ]; then
-  echo "#$pr: a check failed; not merging."
-  exit 0
-fi
-if [ "$pending" -ne 0 ]; then
-  echo "#$pr: checks still running; a later pass will take it."
+# NO CHECK READING AT ALL, AND THAT IS THE POINT. `--auto` hands the decision to GitHub, which
+# merges the instant the required check passes and never before. Arming is a declaration of intent,
+# not a verdict - so this asks nothing about green, and the repository keeps exactly one answer to
+# "did the tests pass": `CI passed`, which the branch ruleset requires.
+#
+# `mergeable` IS NOT CONSULTED EITHER. `CONFLICTING` is a fact about the branch rather than a
+# verdict on the update: Dependabot rebases, and GitHub merges the armed pull request when it
+# becomes mergeable. `UNKNOWN` means GitHub has not finished computing it, which it always does
+# eventually. Both used to cost a whole pass; neither costs anything now.
+#
+# NO `--delete-branch`: it is a NO-OP alongside `--auto` - `gh` deletes after a merge IT made, and
+# `--auto` makes none. `delete_branch_on_merge` does the work, and is inventoried in
+# `infrastructure/MIGRATION.md` section 3bis.
+echo "#$pr: arming GitHub's auto-merge"
+if arm_out=$(gh pr merge "$pr" --repo "$REPO" --auto --squash 2>&1); then
+  echo "ARMED $pr"
   exit 0
 fi
 
-# CONFLICTING is a fact about the branch, not a verdict on the update: Dependabot rebases it and the
-# next sweep takes it. UNKNOWN means GitHub has not finished computing mergeability - which it does
-# lazily, and always does eventually - so waiting one pass is right and guessing is not.
-case "$mergeable" in
-  MERGEABLE) ;;
-  CONFLICTING)
-    echo "#$pr: conflicts with $base_ref; Dependabot must rebase it first."
-    exit 0
-    ;;
-  *)
-    echo "#$pr: mergeability still $mergeable; a later pass will take it."
-    exit 0
-    ;;
-esac
-
-echo "#$pr: all checks green -> merging"
-if gh pr merge "$pr" --repo "$REPO" --squash --delete-branch; then
-  echo "MERGED $pr"
-  # THE BRANCH IS NAMED SEPARATELY BECAUSE THE CALLER HAS TO DISPATCH A DEPLOY FOR IT, and it can
-  # no longer assume which one: a `dev` merge must deploy the DEV estate (and be promoted from
-  # there on a proof), a `main` merge deploys production directly. Emitted as its own line rather
-  # than appended to `MERGED $pr`, whose exact-match contract the caller greps for.
-  echo "MERGED_ONTO $base_ref"
-else
-  # Not fatal, and deliberately not retried here: whatever refused the merge is durable state that
-  # the next pass reads fresh.
-  echo "#$pr: the merge itself was refused; leaving it open."
+# ALREADY ARMED IS NOT A FAILURE, and it is the ordinary case: this runs on every check-suite
+# completion AND on a schedule, so most passes meet pull requests that are already armed.
+if printf '%s' "$arm_out" | grep -qiE 'already enabled|already set'; then
+  echo "#$pr: already armed."
+  exit 0
 fi
+
+# ANYTHING ELSE IS A REAL PROBLEM AND SAYS SO, without stopping the sweep - the next pull request
+# may well arm cleanly, and a whole pass lost to one branch is the queue nobody drains. The two
+# causes worth recognising on sight: `allow_auto_merge` turned off on the repository, and an App
+# token that has lost `Pull requests: write`.
+echo "#$pr: arming was refused - $arm_out"
+echo "#$pr: if this is repo-wide, check allow_auto_merge and the canari-auto-merge App's Pull requests: write (MIGRATION.md section 3bis)."
+exit 0
