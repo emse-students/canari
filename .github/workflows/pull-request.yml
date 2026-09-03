@@ -477,7 +477,7 @@ jobs:
       # jest runs under node here for the same reason it does in the matrix above - see the note on
       # `node --run test` there.
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: '24'
 
