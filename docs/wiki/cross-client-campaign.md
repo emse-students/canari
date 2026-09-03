@@ -12,20 +12,44 @@ store** meet.
 
 ## Where it runs, and what may never leave it
 
-**Target is PRODUCTION** (`https://canari-emse.fr`). Real accounts, real messages, real FCM.
+**TARGET IS THE LOCAL ESTATE** (`http://localhost:1420`), since 2026-09-03. Dedicated accounts,
+a database restored from a full production dump, and a stack whose nginx is the same single entry
+point production has.
 
-**`dev.canari-emse.fr` does not change this, and assuming it does is the mistake that costs a run.**
-The estate exists and may be given its own push credentials, but the rig cannot be pointed at it: 89
-files under `tools/cross-client-harness/` carry `canari-emse.fr` as a literal with no central
-constant, every account would need re-enrolling there, and dev's MLS state and device rows are not
-production's - so a rung that measures a POPULATION would have to run here anyway. The delta since
-the pause, and what else can now redeploy production mid-run, are on
-[cross-client-campaign-resume](cross-client-campaign-resume.md).
+**What moving off production bought, and it is more than convenience.** Three things the campaign
+had lived with are simply gone. A run could be voided by a deploy landing under it - three
+measurements died that way on 2026-08-27, two of them to DOCUMENTATION commits - and nothing
+deploys under a local run. A run left DEBRIS on the production database that later runs then
+measured and could not tell from real traffic; local debris is cleared by restoring the dump again.
+And a check that damages a store, revokes a device or deletes a conversation was reasoning about
+data real members depend on, which is why several rows are `SKIPPED` for a reason that is not a
+technical one.
+
+**What it costs, stated so no row silently claims otherwise.** Local is production's data, not
+production's POPULATION: it is a snapshot, its push tokens are truncated by the copy, and its FCM
+path reaches no real device. So **a rung whose question is about a population** - how many devices
+are stranded, what the re-key rate is - measures the snapshot and says so on the row. And the
+COOKIE is not the same: see the standing rules below.
+
+**Pointing the rig is ONE line, and the claim that it was not is a correction this page owes.** It
+used to say "89 files under `tools/cross-client-harness/` carry `canari-emse.fr` as a literal with
+no central constant". That was wrong, and it was disproved by reading rather than by arguing:
+`SITE` in the machine-local `names.mjs` is the single constant, with `ORIGIN[device]` beside it for
+the phone, and everything else imports from there. **The correction matters more than the error** -
+it was the whole stated reason the rig could not leave production, and it was never true.
+
+**The phone enters over `adb reverse`, and that is per-device and does not survive a replug.**
+Neither phone can reach `localhost` on the workstation otherwise. The APK still serves its own
+frontend from `tauri.localhost`, so the phone's `ORIGIN` is not the site's - `bundle.mjs` derives
+the web/phone split from `ORIGIN[device] === SITE` precisely so this stays one fact in one place.
 
 **The rig is in this repository**, at `tools/cross-client-harness/` - the scripts that run, not a
-copy of them. **Its STATE is deliberately outside**, in a sibling directory `../canari-harness`: the
-account file, the two Chrome profiles (which ARE W1 and W2 - their MLS identity, their history, their
-login), the verdict record, the APK and the phone baseline. One constant, `STATE_DIR` in `names.mjs`,
+copy of them. **Its STATE is deliberately outside**, in `../../canari-harness` (moved one level up
+on 2026-09-03, so that nothing of the LITHIUM rig can be inherited by accident): the account file,
+the two Chrome profiles (which ARE W1 and W2 - their MLS identity, their history, their login), the
+verdict record, the APK and the phone baseline. **Two files stayed behind in the old directory on
+purpose** - `play-console-sa.json` and `google-services.json` - because they are store and build
+credentials rather than rig state, and other tooling records their paths. One constant, `STATE_DIR` in `names.mjs`,
 bridges the two. Credentials outside the work tree **cannot** be committed, which is a structure; a
 `.gitignore` rule would only be a policy, and this repository is public.
 
@@ -110,6 +134,20 @@ production.
 ## Standing rules for every check
 
 Decided with the user, not to be re-litigated.
+
+- **THE REFRESH COOKIE IS NOT THE SAME LOCALLY, AND EVERY ROW THAT REASONS ABOUT IT SAYS SO.**
+  `auth.controller.ts` emits `Secure; SameSite=None` in production and flips to `SameSite=Lax`
+  without `Secure` as soon as `ALLOW_INSECURE_COOKIES=true`, which is what local runs with
+  (decision 11 of the [workflow migration](workflow-migration.md), a documented reservation and not
+  a defect - plain HTTP has no `Secure` cookie to send). On a stack where the frontend is
+  `localhost:1420` and core is behind nginx on `localhost:8081`, `SameSite=Lax` is enough, because a
+  differing PORT is still same-site. **So a row whose question is about CROSS-SITE cookie behaviour
+  measures something else here** - the session rows, anything about a cookie surviving a
+  third-party context, anything comparing the web credential with the `X-Canari-Refresh` header the
+  Tauri clients carry instead. Such a row is not `SKIPPED` and it is not silently believed: it
+  carries the reservation in its own cell, so a verdict cannot be read as covering the production
+  cookie policy. The rule is the general one this repository already has - **a column is only
+  evidence for the question it was written to answer.**
 
 - **Six rungs ARE the target, and the other four come after them.** The campaign runs in autonomy
   by the user's decision of 2026-08-21 (*"C'est parti pour la campagne"*), top of the ladder down,
@@ -295,11 +333,14 @@ forbids of any decision.
    is the only reader); output in ACCOUNTS, never in names; ids cut to 8 characters; this repository is
    PUBLIC and `names.mjs` is gitignored; a destructive control takes an ALLOWLIST (`--only <ids>
    --expect N`), never a denylist.
-6. **The mutual exclusion.** A campaign run and a DEPLOY cannot overlap - a deploy redeploys the
-   server under the run. **The trigger changed on 2026-09-03 and the danger did not**: a push to
-   `main` no longer deploys anything, and what starts a deploy now is somebody publishing a RELEASE.
-   That is rarer and it is deliberate rather than incidental, which makes it easier to avoid and
-   easier to forget. CD green AND QUIET (`gh run list`) before the row starts, unchanged.
+6. **The mutual exclusion is RETIRED, and what replaced it is closer to hand.** It said a run and
+   a push to `main` could not overlap, because a push redeployed the server under the run. Neither
+   half survives: a push deploys nothing since 2026-09-03, and the target is LOCAL, so no deploy is
+   on the path of a run at all. `gh run list` is no longer a precondition for a row. **What does
+   the same damage now is a `bun run dev` reload** - a save in the frontend while a run is in
+   flight, which swaps the bundle under the clients exactly as a deploy did. It is more frequent
+   than a deploy ever was and it has no run to watch, so `bundle.mjs`'s check is the only thing
+   standing between it and a verdict about the wrong build. Do not edit the frontend during a run.
 7. **Where the verdict is written.** The board cell - a verdict, a count, a time, four or five words -
    and the ledger; then `node rows.mjs`, which is what proves the two vocabularies still agree.
 8. **A branch CARRIES ITS ROW TO GREEN - it tests, and it FIXES, the product included** (user,
@@ -440,9 +481,11 @@ outright. Worth recording what is NOT there: **no access token in any web storag
 
 ## The campaign owns its own debris, and clearing it is a check in itself
 
-A campaign that creates groups, devices and backlogs on the PRODUCTION database leaves state behind
-that later runs then measure - and cannot tell from real traffic. Clearing it is the last step of the
-ladder, after CORRUPT's rollback.
+A campaign that creates groups, devices and backlogs leaves state behind that later runs then
+measure. **On a LOCAL target this got cheaper but not optional**: the way back is restoring the
+production dump again, which is a minute rather than a `DELETE` somebody has to be trusted with -
+and the debris still breaks the instrument between restores, which is the half that never depended
+on which database it was. Clearing it is the last step of the ladder, after CORRUPT's rollback.
 
 **IT IS ALSO THE FIRST STEP, because debris does not merely get measured - it BREAKS the instrument.**
 Most checks build a salon inside the shared `Campagne de test` venue, which no runner deletes, so a

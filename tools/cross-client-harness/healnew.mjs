@@ -886,9 +886,13 @@ const detail = {
 // no other rung's `PASS` meant the same thing as. A field in the detail is not a gate; only a gate
 // is a gate.
 //
-// THE REDEPLOY HALF IS THE SHARPER ONE. A push to `main` redeploys the server this rig points at,
-// and the campaign has already lost three cells to a run that straddled one. Every gated check turns
-// VACUOUS there and says so; these six would have recorded a product verdict about a server that
-// went away mid-measurement - a Work Package written about us.
+// THE REDEPLOY HALF IS THE SHARPER ONE, AND SINCE 2026-09-03 ITS CAUSE IS DIFFERENT WHILE THE
+// CHECK IS NOT. It used to be a push to `main`, which redeployed the server this rig pointed at;
+// the campaign lost three cells to runs that straddled one. The rig targets LOCAL now and no deploy
+// can reach it - what swaps the bundle under a run is a `bun run dev` reload on a save, which is
+// more frequent than a deploy ever was and has no pipeline to watch. The check did not have to
+// change because it was never written against the CAUSE: it asks what a client is executing. Every
+// gated check turns VACUOUS there and says so; these six would otherwise have recorded a product
+// verdict about a server that went away mid-measurement - a Work Package written about us.
 cx.close();
 await finishObserved(row.id, verdict, detail, { W3: w3Report });

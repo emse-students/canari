@@ -2,19 +2,29 @@
  * TEMPLATE for the ONE machine-local file this rig needs. Setting it up is two steps, because the
  * values and the pointer live on opposite sides of the repository boundary.
  *
- *   1. Create `<repo>/../canari-harness/` and put the REAL values there, in a `names.mjs` holding
- *      everything below except `STATE_DIR`. Put `test-accounts.json` beside them (see
+ *   1. Create `<repo>/../../canari-harness/` and put the REAL values there, in a `names.mjs`
+ *      holding everything below except `STATE_DIR`. Put `test-accounts.json` beside them (see
  *      `test-accounts.example.json`), and let the Chrome profiles, the debug APK, the phone baseline
- *      and `results.ndjson` accumulate there too.
+ *      and `results.ndjson` accumulate there too. **It moved one level further out on 2026-09-03**,
+ *      when the campaign restarted from zero: the previous root still holds the LITHIUM rig's
+ *      account file and display names, and a root that cannot be reached by the old path cannot be
+ *      half-inherited by accident. Two files were deliberately LEFT there - `play-console-sa.json`
+ *      and `google-services.json` - because they are store and build credentials rather than rig
+ *      state, and other tooling records their paths.
  *   2. Copy this file to `names.mjs` HERE, and replace its body with the two lines at the bottom:
  *      a re-export of that file, and `STATE_DIR` pointing at it.
  *
- * WHY THE SPLIT. `emse-students/canari` is public and the campaign runs against PRODUCTION with two
- * real accounts. A credential inside the work tree is protected by a `.gitignore` rule, which is a
- * policy; kept outside it cannot be committed at all, which is a structure. The Chrome profiles are
- * outside for a second reason: they ARE the W1 and W2 devices - profile holds the MLS identity, the
- * session and the enrolment - and `git clean -xdf` does not spare a gitignored directory. Losing
- * them costs a re-enrolment and the 2FA step no tool here can answer.
+ * WHY THE SPLIT. `emse-students/canari` is public. A credential inside the work tree is protected
+ * by a `.gitignore` rule, which is a policy; kept outside it cannot be committed at all, which is a
+ * structure. That held when the campaign ran against production on real accounts, and it still
+ * holds now that it runs against the LOCAL estate on dedicated ones - the accounts are ordinary
+ * Authentik users on the production identity provider either way, so their passwords are real
+ * passwords. The Chrome profiles are outside for a second reason: they ARE the W1 and W2 devices -
+ * profile holds the MLS identity, the session and the enrolment - and `git clean -xdf` does not
+ * spare a gitignored directory. **Losing one is cheap in TIME and expensive in MEANING**: the
+ * service-account login flow carries no 2FA stage, so a re-login is a username and a password, but
+ * a fresh profile is a NEW DEVICE with no history, and every row whose verdict depends on an
+ * existing device has to be re-run rather than trusted.
  *
  * WHY ANY OF IT IS CENTRAL. A check must IMPORT from `names.mjs` and never spell a name inline.
  * That is not a style rule: a spelt name is how the peer's real identity reached the public archive
@@ -32,6 +42,13 @@ export const PEER_NAME = "<peer display name>";
 /**
  * The site, as an ABSOLUTE url.
  *
+ * **THIS ONE LINE IS WHERE THE CAMPAIGN RUNS**, and it is the whole switch between estates - which
+ * this repository denied for a while. The claim was that 89 files carried `canari-emse.fr` as a
+ * literal with no central constant; measured 2026-09-02, the navigation literals were ZERO, the 120
+ * bare occurrences were CDP tab matchers matched by SUBSTRING, and the anchored comparisons were
+ * zero. A count of occurrences is not a measurement of coupling. Since 2026-09-03 the campaign
+ * targets the LOCAL estate.
+ *
  * Navigation used to be written `location.origin + '/chat'`, which reads as harmless and is not: on
  * a freshly opened tab the document is `about:blank`, whose origin is the STRING "null", so the
  * result is not a URL and the navigation throws `Failed to set the 'href' property on 'Location'`.
@@ -39,7 +56,7 @@ export const PEER_NAME = "<peer display name>";
  * starts there - so anything that recovers a client must not depend on the client already being
  * somewhere.
  */
-export const SITE = "https://canari-emse.fr";
+export const SITE = "http://localhost:1420";
 
 /**
  * Devtools ports. The Chrome profiles ARE the devices; A1 is an adb forward.
@@ -108,8 +125,8 @@ export const VENUE = { community: "Campagne de test", channel: "general" };
  * THE TWO LINES THE COPY IN THIS DIRECTORY ACTUALLY CONTAINS, replacing everything above:
  *
  *   import { fileURLToPath } from 'node:url';
- *   export * from '../../../canari-harness/names.mjs';
- *   export const STATE_DIR = fileURLToPath(new URL('../../../canari-harness/', import.meta.url));
+ *   export * from '../../../../canari-harness/names.mjs';
+ *   export const STATE_DIR = fileURLToPath(new URL('../../../../canari-harness/', import.meta.url));
  *
  * `STATE_DIR` has exactly three consumers - `launch.mjs` for the profiles, `accounts.mjs` for the
  * logins, `results.mjs` for the verdict record - and nothing else needs to know the split exists.

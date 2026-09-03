@@ -2543,13 +2543,20 @@ commit to `main` triggers CD, CD redeploys the frontend, and prod IS the test se
 straddles that redeploy cannot say which artefact it measured, which is precisely what `gate` reports
 by returning `VACUOUS` with `redeployedMidRun` naming the run.
 
-**THE TRIGGER THAT CAUSED THIS CANNOT FIRE ANY MORE, AND THE RULE IS NOT RETIRED (2026-09-03).**
-A push to `main` deploys nothing now - deployment happens when somebody publishes a release - so a
-documentation commit can no longer void a row, and that whole class is closed. What replaced it is
-rarer and deliberate rather than incidental, which makes it easier to avoid and easier to forget:
-**a campaign run and a RELEASE are mutually exclusive.** The heading above is left naming the push
-because that is what actually happened on 2026-08-27, and a rule reads as retired the moment its
-incident is rewritten out of it.
+**THE RULE IS RETIRED (2026-09-03), AND THE INCIDENT IS WHY THE PAGE KEEPS IT.** Both halves of
+it are gone: a push to `main` deploys nothing now, and the rig targets the LOCAL estate, so no
+deploy is on the path of a run at all. A documentation commit cannot void a row, and neither can a
+release. The heading above is left naming the push because that is what actually happened on
+2026-08-27 - a rule reads as retired the moment its incident is rewritten out of it, and this one is
+retired for a reason worth being able to check.
+
+**WHAT REPLACED IT IS SMALLER, MORE FREQUENT AND LESS VISIBLE, WHICH IS THE WHOLE WARNING.** A
+`bun run dev` reload swaps the bundle under the clients exactly as a deploy did. It happens on a
+SAVE, it takes no run and no pipeline, and there is nothing to watch the way `gh run list` was
+watched. `bundle.mjs` - written for the deploy case, and derived from what a client is EXECUTING
+rather than from what happened upstream - is the only thing that still catches it, which is the
+argument for deriving a check from state rather than from a cause: it kept working when its cause
+was replaced by a different one.
 
 **The mechanism is working and must not be softened.** `gate` refusing the attribution is the only
 reason no false verdict entered the ledger - the alternative is a `PASS` against an unknown build,

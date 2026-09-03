@@ -154,11 +154,19 @@ now describe deploy-at-bump instead of the push model. **The one correction to c
 run and a push to `main` are mutually exclusive" now names a RELEASE**, in all four places it
 appears; it becomes deletable only when WP-5 moves the rig LOCAL.
 
-**WP-5 is what is left** - the campaign from zero: a new rig root, fresh Chrome profiles, fresh test
-accounts, target LOCAL, the board reset with the old verdicts archived as "rig LITHIUM, ledger
-lost". Plus two boxes nothing here can tick: **publishing `0.15.0-alpha.1`**, a release only the
-USER performs, and **the iOS build number**, which needs a macOS run to say whether
-`tauri ios build` clobbers `CFBundleVersion`.
+**WP-5 IS DONE EXCEPT FOR WHAT ONLY THE USER CAN DO (2026-09-03).** The board is reset and
+archived, the campaign pages and the rig wiring target LOCAL, and both standing rules are retired.
+**Three things are left, and none of them is a repository change:**
+
+- **The test ACCOUNTS.** Local authenticates against the PRODUCTION Authentik (decision 8, no local
+  IdP), so "fresh test accounts" is a write to the identity provider. Everything downstream waits on
+  it: the rig root's `names.mjs` is deliberately NOT created with placeholder display names, a name
+  that looks real and matches nothing being the precise failure that file exists to prevent, and the
+  Chrome profiles ARE enrolments of those accounts.
+- **Publishing `0.15.0-alpha.1`** - a release only the USER performs, and the first real passage of
+  the whole deploy-at-bump chain.
+- **The iOS build number** - needs a macOS run to say whether `tauri ios build` clobbers
+  `CFBundleVersion`. If it does, the second alpha of a version is refused by TestFlight.
 
 ### CANARI - THE QUEUE, IN ORDER
 
@@ -167,15 +175,22 @@ restated**. **Every defect story is in `CHANGELOG.md`, every rule one left is in
 [durable-rules](docs/wiki/durable-rules.md), every verdict is on
 [cross-client-testing](docs/wiki/cross-client-testing.md).**
 
-1. **THE CAMPAIGN - PAUSED 2026-08-30 for want of a phone** (user), and **HEAL is the rung in
-   hand.** The six target rungs, what a `PASS-DIRTY` does and does not stop, and the ORDER
-   everything is owed in once a device exists are
+1. **THE CAMPAIGN DOES NOT RESUME, IT RESTARTS FROM ZERO** (2026-09-03, WP-5). It was paused
+   2026-08-30 for want of a phone; since then the RIG was lost (this machine was reconstituted from
+   a bundle collected without `-WithRig`, so both Chrome profiles, `results.ndjson` and the phone
+   baseline are gone), the TARGET moved to the LOCAL estate, and nothing deploys at a push any
+   more. **The board is reset to zero** and the old one archived at
+   [cross-client-testing-archive](docs/wiki/cross-client-testing-archive.md) - read it when a
+   re-run disagrees with itself, never as a gate, because a verdict whose run cannot be read is a
+   claim with nothing behind it. **The mutual-exclusion rule is RETIRED**; what replaced it is a
+   `bun run dev` reload, which does the same damage on a SAVE and has no run to watch. The six
+   target rungs and what a `PASS-DIRTY` does and does not stop are
    [standing rules](docs/wiki/cross-client-campaign.md#standing-rules-for-every-check), decided with
-   the user and not re-litigated here; the restart order is
-   [cross-client-campaign-resume](docs/wiki/cross-client-campaign-resume.md), the only copy. **Where
-   it stands is the [board](docs/wiki/cross-client-testing.md)** - read it rather than any count
-   written here, which has been stale twice, and read the three verdicts it marks NOT settled
-   (DEL-10, COMM-8, COMM-23) before believing them.
+   the user and not re-litigated; the restart order and what LOCAL costs a verdict are
+   [cross-client-campaign-resume](docs/wiki/cross-client-campaign-resume.md), the only copy.
+   **BLOCKED ON THE USER, and on one thing only: the test ACCOUNTS.** Local authenticates against
+   the PRODUCTION Authentik by decision 8, so creating them is a write to the identity provider -
+   the attempt of 2026-09-02 was refused for that reason and the refusal was right.
 
 2. **A PLACEHOLDER HELD A MEMBER'S PLACE IN A REAL CONVERSATION - the user's lost messages and the
    ghost are ONE P1. THE SERVER ESTATE IS GONE**, cleaned by hand on the owner's go-ahead 2026-08-30
@@ -347,14 +362,19 @@ methodology = how a result earns belief, README = operating manual. **Read them 
 re-deriving anything here, and keep no second copy.**
 
 **Four facts govern every session that touches the rig.** `node rows.mjs` SETTLES whether the board
-matches the ledger - run it before believing a cell; it has caught the board wrong three times. **A
-campaign run and a RELEASE are MUTUALLY EXCLUSIVE** - it was "a push to `main`" until 2026-09-03,
-and the danger did not go away with the trigger, it MOVED: a mid-run deploy has already voided three
-cells, and the thing that can now start one is somebody publishing a release, and a killed run can destroy a measurement seconds from being recorded - which is also
-why the dependency sweep is disabled around a session, one of the preconditions
-[the resume page](docs/wiki/cross-client-campaign-resume.md) carries and nothing else does (it also
-carries the one that surprises: **the rig still targets PRODUCTION**, so the dev estate does not make
-a run safer, and **losing a `chrome-w1` / `chrome-w2` profile costs a DEVICE**). **THE USER ASKED FOR
+matches the ledger - run it before believing a cell; it has caught the board wrong three times.
+**THE RIG TARGETS THE LOCAL ESTATE SINCE 2026-09-03, AND TWO STANDING RULES DIED WITH THAT MOVE.**
+"A campaign run and a push to `main` are mutually exclusive" is retired, not re-pointed: a push
+deploys nothing now, and a local run is not on the path of any deploy, so there is no event left to
+be exclusive with - the accident that voided three cells on 2026-08-27, two of them to
+DOCUMENTATION commits, cannot recur. What replaces it is smaller and belongs to the workstation: a
+`bun run dev` reload under a run does the same damage, which is what `bundle.mjs` measures, and it
+is more frequent and less visible than a deploy ever was. **The board is also reset to zero** (the
+LITHIUM ledger was lost with the rig), archived at
+[cross-client-testing-archive](docs/wiki/cross-client-testing-archive.md). What still holds: a
+killed run can destroy a measurement seconds from being recorded, and **losing a `chrome-w1` /
+`chrome-w2` profile costs a DEVICE**. The preconditions are on
+[the resume page](docs/wiki/cross-client-campaign-resume.md) and nowhere else. **THE USER ASKED FOR
 THE LOGS TO BE READ ON EVERY PASS, the reconciliations especially** (2026-08-28) - a heal that works
 is not a heal that was observed, and reading them has since found one P1 no row asks about and turned
 a `FAIL` into another. And two instrument facts that are NOT per-row: the disposition for expected
