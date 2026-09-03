@@ -34,10 +34,17 @@ for the ten minutes its suite took, and merged the moment `CI passed` concluded.
 REQUEST** (user: *"le auto-merge et les CI doivent considerer toutes les PR, les miennes ou
 dependabot"*). It was asked only inside `dependabot-auto-merge.yml` - a SECOND merge mechanism
 beside GitHub's own auto-merge, so a Dependabot pull request and a human's took different routes to
-`main` and only one was visible where a human looks. **#309 is what that costs**: `postgres
-15-alpine -> 18-alpine`, fully GREEN, correctly refused, open for days with the refusal recorded
-nowhere on the pull request. It now feeds `ci-passed`, which is what makes it BINDING rather than
-advisory - an update with no gate cannot merge by any route, armed or not.
+`main`. **#309 is the case**: `postgres 15-alpine -> 18-alpine`, fully GREEN, correctly refused,
+open for days.
+
+**AND IT CORRECTS WHAT THIS PAGE FIRST SAID.** The refusal was NOT "recorded nowhere on the pull
+request" - the sweep posts a `github-actions` comment naming the exact missing test, and it is a
+good comment. What a CHECK adds is narrower and still worth the change: **a comment is ADVISORY.**
+It is absent from the checks list, which is where a reader looks for what blocks a pull request; the
+merge machinery cannot read it, so anything that armed GitHub's auto-merge would merge straight past
+it; and it sat outside `ci-passed`, the one check the branch ruleset requires. Feeding `ci-passed`
+is what makes the refusal BINDING - an update with no gate cannot merge by any route, armed or not.
+**Measured on the rebased #309: `Dependency ceiling -> FAILURE`, then `CI passed -> FAILURE`.**
 
 **IT IS DELIBERATELY STAGE ONE OF TWO, AND THE ORDER IS NOT A PREFERENCE.** Stage two is the sweep
 ARMING GitHub's auto-merge instead of merging on its own reading of "green" - which retires the

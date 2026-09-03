@@ -2,12 +2,20 @@
 #
 # DOES THIS REPOSITORY HAVE A GATE THAT WOULD SEE THIS DEPENDENCY UPDATE FAIL?
 #
-# Answered as a CHECK on the pull request, so the answer is a red tick with a reason ON THE PULL
-# REQUEST rather than a line in a sweep's log that nobody reads. Until 2026-09-03 the only place
-# this question was asked was inside `dependabot-auto-merge.yml`, a SECOND merge mechanism running
-# beside GitHub's own auto-merge - so a Dependabot pull request and a human's took different routes
-# to `main`, and only one of them was visible where a human looks (user, 2026-09-03: *"le
-# auto-merge et les CI doivent considerer toutes les PR, les miennes ou dependabot"*).
+# Answered as a CHECK, which makes the answer BINDING. Until 2026-09-03 this question was asked
+# only inside `dependabot-auto-merge.yml`, a SECOND merge mechanism running beside GitHub's own
+# auto-merge - so a Dependabot pull request and a human's took different routes to `main` (user,
+# 2026-09-03: *"le auto-merge et les CI doivent considerer toutes les PR, les miennes ou
+# dependabot"*).
+#
+# **THE OLD MECHANISM DID POST ITS REFUSAL, AND SAYING OTHERWISE WAS WRONG.** The first version of
+# this header claimed the refusal was "recorded nowhere a reader could see"; #309 carries a
+# detailed `github-actions` comment naming the exact missing test. The real difference is narrower
+# and still worth the change: **a comment is ADVISORY.** It does not appear in the checks list,
+# which is where a reader looks for what blocks a pull request; the merge machinery cannot read it,
+# so anything that armed GitHub's auto-merge would merge straight past it; and it was not part of
+# `ci-passed`, the one check the branch ruleset requires. Advisory -> binding is the improvement,
+# not invisible -> visible.
 #
 # THIS IS STAGE ONE OF TWO, AND THE ORDER IS NOT ARBITRARY. This change is purely ADDITIVE: the
 # ceiling becomes a job of `pull-request.yml` feeding `ci-passed`, which is the one check the branch
