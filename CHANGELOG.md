@@ -100,12 +100,20 @@ which is also where every release up to and including v0.13.1 now lives.
   `release-notes-body.sh`, 11 assertions - because idempotence is the property that is silent when
   wrong: a composer that appends grows the body by one copy of the notes per re-run.
 
-  **Two figures were measured rather than assumed.** The Play listing carries `fr-FR` and `en-US`
-  (read through the Publishing API in an edit that was deleted, never committed) - a file for a
-  locale the listing lacks is refused and a missing one is silent, so a guess fails invisibly. And
-  Play's notes have **no length limit anybody can source**: the API reference states none, the
-  repeated 500 is a Console UI figure, and `PATCH` accepted 5000 characters. So no Play ceiling is
-  encoded; Apple's documented 4000 stays the only binding one.
+  **Two figures were measured rather than assumed, and the second measurement was WRONG - corrected
+  the same day, before the release that would have hit it.** The Play listing carries `fr-FR` and
+  `en-US` (read through the Publishing API in an edit that was deleted, never committed) - a file
+  for a locale the listing lacks is refused and a missing one is silent, so a guess fails invisibly.
+  That half stands.
+
+  The other half said Play's notes have no length limit anybody can source: the API reference states
+  none and `PATCH` accepted 5000 characters. **`PATCH` only stores the draft.** `POST edits:validate`
+  runs a commit's validation and refuses 501 with *"notes in language fr-FR with length 501, which is
+  too long (max: 500)"*, while 499 validates. The caveat written beside the first measurement - that
+  the edit was never COMMITTED - is exactly what mattered. So the gate carries
+  `min(Apple 4000, Play 500)` and names which destination binds; `0.16.1`'s notes were 532
+  characters when this was found, and would have failed the Android arm at the store step after a
+  full build.
 
   Six mutations rejected, plus a pre-existing assertion corrected for the third time in this class:
   it counted whether EXACTLY THREE jobs declare `needs: [preflight, bump]`, which the new job broke

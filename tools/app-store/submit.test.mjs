@@ -127,11 +127,38 @@ try {
     true
   );
 
+  // THE CEILING IS PLAY'S 500, NOT APPLE'S 4000, and the boundary is asserted on both sides because
+  // the whole point of this gate is refusing in seconds what a store refuses after a full build.
+  //
+  // MEASURED THROUGH `POST edits:validate`, which runs a commit's validation and changes nothing:
+  // 499 -> 200, 501 -> 403 "notes in language fr-FR with length 501, which is too long (max: 500)".
+  // A `PATCH` accepted 5000, which is why the first version of this file encoded no Play ceiling at
+  // all - `PATCH` only stores the draft. This test exists so that measurement cannot be undone by
+  // somebody reading "Apple's limit is 4000" in the tool's own name.
+  const at500 = readWhatsNew({
+    file: notes(`version: 0.16.0\n${'x'.repeat(500)}\n`),
+    version: '0.16.0',
+  });
+  eq('notes of exactly 500 characters are accepted - the boundary is inclusive', at500.ok, true);
+
+  const over500 = readWhatsNew({
+    file: notes(`version: 0.16.0\n${'x'.repeat(501)}\n`),
+    version: '0.16.0',
+  });
+  eq('501 characters are refused, because Google Play refuses them at validate time', over500.ok, false);
+  // `eq` AND NOT `ok`: `ok` takes ONE argument and prints it as the label, so a two-argument call
+  // asserts nothing and goes green - a trap this suite has already sprung once in one session.
+  eq(
+    'and the refusal names which destination binds, so the fix is obvious',
+    over500.why.includes('Google Play') && over500.why.includes('500'),
+    true
+  );
+
   const long = readWhatsNew({
     file: notes(`version: 0.16.0\n${'x'.repeat(4001)}\n`),
     version: '0.16.0',
   });
-  eq("notes past Apple's 4000-character limit are refused here, not there", long.ok, false);
+  eq('notes past every limit are refused', long.ok, false);
 
   process.stdout.write('\nthe token is the shape App Store Connect accepts\n');
   // A GENERATED KEY, so the test carries no credential. The assertion is on the SIGNATURE LENGTH:
