@@ -307,6 +307,11 @@ else
 fi
 
 if [ -r "$AM" ]; then
+  # THE CODE, WITHOUT THE PROSE, AND MATCHED WITH A HERESTRING RATHER THAN THROUGH A PIPE - the
+  # second half is not style. `set -o pipefail` is on and `grep -q` exits the instant it matches,
+  # so a producer upstream is killed by SIGPIPE and the PIPELINE reports failure exactly when the
+  # match SUCCEEDED. Measured elsewhere in this file: green here, red on Ubuntu, nothing naming why.
+  #
   # THE CODE, WITHOUT THE PROSE. Every assertion below reads this rather than the file: the
   # comments here spell out the very conditions being asserted, so a file-wide grep answers "is
   # this idea written down" instead of "is it done" - and passes on the explanation of a
