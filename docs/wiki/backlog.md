@@ -64,7 +64,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | --- | --- | --- |
 | choose how production says it is down - the probe must hit `/api/version`, which needs the database | decision, then ~1 click | [P2 - nothing tells anybody production is down](#p2---nothing-tells-anybody-production-is-down-and-both-outages-of-2026-09-01-were-reported-by-the-user-owed-to-the-user-a-decision-then-one-click) |
 | should a dev-ONLY trigger exist - today one push deploys both estates and a broken dev BLOCKS production, by design | decision | [dev.canari-emse.fr becomes a real second environment](#devcanari-emsefr-becomes-a-real-second-environment---decided-2026-08-17) |
-| the credential for the one rebuild no `GITHUB_TOKEN` may perform - fine-grained PAT or GitHub App | decision | [P2 - the one rebuild the auto-merge cannot perform](#p2---the-one-rebuild-the-auto-merge-cannot-perform-and-the-credential-that-would-let-it) |
+| a fine-grained PAT from an account WITH PUSH ACCESS - the App token was measured refused, ten times | decision | [P1 - no identity CI can mint may ask Dependabot to rebuild a branch](#p1---no-identity-ci-can-mint-may-ask-dependabot-to-rebuild-a-branch-so-a-moved-gate-parks-the-whole-queue---and-the-app-token-was-the-recommendation-this-row-itself-made-measured-2026-09-03) |
 | PostgreSQL 15 -> 18, parked by the user (*"on verra ca plus tard"*); its test also releases `redis` and `garage` | decision | [P2 - PostgreSQL is held at 15](#p2---postgresql-is-held-at-15-because-18-needs-a-migration-nobody-has-performed-after-the-outage-of-2026-09-01) |
 | is a MiGallery application worth building | decision | [post-campaign projects](#post-campaign-projects---decided-not-scheduled) |
 | how `frontend/src-tauri` gets its cargo updates - Dependabot cannot parse it and the fix that would let it is verified only by an Android AND an iOS build | decision | [P1 - two of the six cargo directories are invisible to Dependabot](#p1---two-of-the-six-cargo-directories-are-invisible-to-dependabot-and-one-of-them-is-the-app-that-ships-to-phones-measured-2026-09-02) |
@@ -373,33 +373,63 @@ major-version subdirectory, so the compose changes with the image, and the ceili
 `.github/scripts/lib/ceiling.sh` is what holds the bump back until both are done. Re-measure the size
 before the window rather than quoting this line - it is a number that only grows.
 
-### P2 - the one rebuild the auto-merge cannot perform, and the credential that would let it
+### P1 - NO IDENTITY CI CAN MINT MAY ASK DEPENDABOT TO REBUILD A BRANCH, so a moved gate parks the whole queue - and the App token was the recommendation this row itself made (measured 2026-09-03)
 
-**The chain is unattended everywhere except here.** When `.github/workflows/` or `.github/scripts/`
-really did move under a Dependabot branch, its green checks describe gates that no longer exist and
-the branch has to be rebuilt before any verdict on it means anything. **Neither way of rebuilding it
-is available to a workflow holding only `GITHUB_TOKEN`, and both were tried and measured on
-2026-08-31:**
+**The chain is unattended everywhere except here, and this row used to say the fix was an App
+token. It is not.** When `.github/workflows/` or `.github/scripts/` moves under a Dependabot
+branch, its green checks describe gates that no longer exist and the branch has to be rebuilt
+before any verdict on it means anything. Rebuilding is Dependabot's to do, and **`@dependabot
+recreate` authorises by PUSH ACCESS**:
+
+| Identity | Asked | Answer |
+| --- | --- | --- |
+| `github-actions[bot]` | #303, 2026-08-31 | *"Sorry, only users with push access can use that command."* - 3 s |
+| `canari-auto-merge` App installation | #290 #291 #295 #297 #299 #304 #309 #315, 2026-09-03 19:39 | the same sentence, 3 s after each - **ten refusals** counting the earlier asks on #304 and #309 |
+
+**An App installation is not an account, and holds no push access** - `Contents: write` on the
+repository is a different thing from the push access Dependabot's command parser asks for. The App
+token was this row's own recommendation, and it was written from an argument rather than a
+measurement. It is still worth minting for the ARMING, where it is load-bearing for a different
+reason (a merge armed with `GITHUB_TOKEN` raises no `push`, so `main` carries no `CI passed` and
+every later release is refused - see [cicd](cicd.md)); it buys nothing here.
+
+**And the refusal was SILENT for a day, which is the half that was fixable here and is now fixed.**
+The sweep wrote its idempotence marker when the COMMENT was POSTED and never read the reply, so
+every pass printed `already asked for c228e97d; waiting on Dependabot` about a request refused three
+seconds after it was made. `is this broken` and `have I already asked` differ only in lifetime, and
+using one for the other silences the trigger. Since 2026-09-03 the ask and the refusal are two
+facts, read from the same thread, and **the sweep FAILS while any branch is stuck this way** - it
+feeds no required check, so a red sweep costs no release and is the only report there is.
+
+**The other two routes are still closed, and were measured before this one:**
 
 - `PUT /pulls/{n}/update-branch` pushes a merge commit authored by `github-actions[bot]`, which
   parks the re-triggered run in `action_required`, makes Dependabot refuse the branch for good, and
-  fails the workflow's own entry filter. It made seven branches unmergeable by every path at once.
-- `@dependabot recreate` is refused when the caller is `github-actions[bot]`: *"Sorry, only users
-  with push access can use that command."* Measured on #303, three seconds after the ask.
+  fails the workflow's own entry filter. It made seven branches unmergeable by every path at once
+  (2026-08-31).
+- **Closing the pull request is NOT an alternative**: Dependabot does not recreate a version whose
+  pull request was closed unmerged.
 
-So the sweep reports instead - one comment per pull request behind
-`<!-- canari-auto-merge-gates-moved -->` naming the single command that clears it - and a person
-types `@dependabot recreate`. **Closing that gap is a CREDENTIAL decision and therefore the user's**
-([CLAUDE.md](../../CLAUDE.md): one-off actions go to the user): a fine-grained PAT, or a GitHub App
-token minted per run with `actions/create-github-app-token`, either with push access, would make the
-ask succeed and the chain run end to end. The App token is the better shape - it is minted per run,
-scoped to this repository and expires in an hour, where a PAT is long-lived and has to be rotated by
-hand before it silently expires. **Closing the pull request is NOT an alternative**: Dependabot does
-not recreate a version whose pull request was closed unmerged.
+**What is OWED TO THE USER, and it is the only thing that closes this route** ([CLAUDE.md](../../CLAUDE.md):
+one-off actions go to the user): **a fine-grained PAT belonging to an account with push access**,
+stored as a repository secret, used for this one step. It is the shape this row previously argued
+against - long-lived, rotated by hand - and the measurement says it is the only shape that works,
+because the authorisation is by account and an App is not one. Nothing else in the chain needs it.
 
-**What retires this row:** a sweep log showing a stale branch rebuilt and merged with nobody typing
-anything. Until then the gap is bounded and visible rather than silent, which is the difference that
-mattered.
+**AND THERE IS A FIX THAT NEEDS NO CREDENTIAL, which is why this is not simply parked.** The
+predicate calls a branch stale when ANY file under `.github/workflows/` or `.github/scripts/`
+moved - and on 2026-09-03 that was all eight open pull requests, because the CI work of that day
+touched 34 such files. Most of them cannot produce a check on a pull request at all: `ios.yml`,
+`android.yml`, `deploy.yml`, `release.yml`, `host-updates.yml` and `dev-refresh.yml` run on a
+release or a schedule, so #290 - a Rust crate bump - was declared stale by a change to the iOS
+build. **A predicate that named the last incident is not the predicate that names the next one**:
+it was written for #272, where `Boot the real AppModule` was genuinely a new job in
+`pull-request.yml`. Narrowing it to the definitions that can actually produce a pull request's
+checks - readable from each workflow's own `on:` block, a fact rather than a guess - makes the
+credential gap RARE instead of permanent, and needs nothing from anybody.
+
+**What retires this row:** a sweep pass that is green with eight open pull requests, and a sweep log
+showing a genuinely stale branch rebuilt and merged with nobody typing anything.
 
 ### P3 - one audit advisory is suppressed because it cannot be reached, and it should stop being
 

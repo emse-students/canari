@@ -62,6 +62,44 @@ which is also where every release up to and including v0.13.1 now lives.
   re-mutated to prove it still rejects.
 
 ### Fixed
+- **A rebuild request Dependabot REFUSED was recorded as one it was performing, and ten refusals
+  went unreported.** The sweep marks a Dependabot branch `STALE` when the gate definitions moved
+  under it, and asks `@dependabot recreate`. It wrote its idempotence marker when the COMMENT was
+  POSTED and never read the reply - so every pass printed `already asked for c228e97d; waiting on
+  Dependabot`, a sentence that was false three seconds after the first ask.
+
+  **`@dependabot recreate` authorises by PUSH ACCESS, and no identity this workflow can mint has
+  any.** Measured, after this repository had argued the opposite in three places:
+
+  | Identity | Asked | Answer |
+  | --- | --- | --- |
+  | `github-actions[bot]` | #303, 2026-08-31 | *"only users with push access can use that command"* - 3 s |
+  | `canari-auto-merge` App | all eight open pull requests, 2026-09-03 | the same sentence, 3 s after each |
+
+  An App installation is not an account: `Contents: write` on the repository is a different thing
+  from push access. The App token is still minted, because the ARMING needs it for an unrelated and
+  load-bearing reason, and because the day a credential with push access exists the ask starts
+  working with no change to the workflow.
+
+  **The ask and the refusal are two facts now**, read from the same comment thread - ours by its
+  head marker, a `dependabot[bot]` reply about push access after it as the refusal. A refusal is
+  never retried, being deterministic, and **the step FAILS while any branch is stuck that way**: a
+  permanently red sweep is the correct accusation when the queue is permanently stuck, it feeds no
+  required check so it blocks no release, and it goes green the day the credential exists. *Durable
+  state answers only the question it was written for* - `have I already asked` and `is this stuck`
+  differ only in lifetime, and using one for the other silenced the trigger.
+
+  Three statements this repository carried are corrected with it, all written from an argument
+  rather than a measurement: the step named itself *"Mint the identity a rebuild request is honoured
+  for"*, `cicd.md` said an App token with push access "would make that succeed", and
+  `backlog.md`'s own row recommended it. Five assertions, all five mutation-proved, plus one that
+  refuses `gh api --slurp` alongside `--jq` - a combination `gh` rejects with a usage message and an
+  EMPTY stdout, which `2>/dev/null` turns into a plausible-looking answer. That one was found by
+  running the filter against the live threads before shipping it.
+- **Two comment blocks left false by the previous change (#340).** The orphaned header of the
+  deleted CI-dispatch step still explained a mechanism that no longer exists, and the rebuild step
+  carried two contradictory paragraphs - one saying it reports and waits for a person, the next
+  saying it asks by itself.
 
 - **0.16.0 reached production and Google Play and never reached Apple, because a convenience was
   ordered in front of the deliverable.** The iOS arm attached its IPA to the GitHub release BEFORE
