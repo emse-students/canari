@@ -229,15 +229,27 @@ else
   fail "deploy.yml reads inputs.phase only $n time(s) - a phase that gates nothing lets both halves run on both calls"
 fi
 
-if sed -n '/^  deploy-to-server:$/,/^  [a-z][a-z-]*:$/p' "$WF/deploy.yml" \
-  | grep -qE "^      inputs\.phase == 'production' &&$"; then
+# CAPTURED, THEN MATCHED WITH A HERESTRING - AND `| grep -q` HERE IS A REAL DEFECT, NOT A STYLE.
+# `set -o pipefail` is on (line 25), and `grep -q` EXITS THE INSTANT IT MATCHES: the `sed` upstream
+# is then killed by SIGPIPE and exits 141, so the PIPELINE reports failure precisely when the match
+# SUCCEEDED. It bites only when the left-hand side is bigger than the pipe buffer or slower than
+# grep - `deploy-to-server` is the last job of a 1479-line file, 41 KB - which is why the same idiom
+# passes elsewhere in this suite on smaller blocks.
+#
+# MEASURED, AND IT PASSED LOCALLY. These two assertions were green on this workstation (MSYS bash
+# does not deliver SIGPIPE the same way) and RED on Ubuntu in CI, for a reason nothing in the output
+# named: `FAIL` on the two assertions whose condition was in fact satisfied. A test that inverts its
+# own verdict by platform is worse than no test.
+DEPLOY_PROD="$(sed -n '/^  deploy-to-server:$/,/^  [a-z][a-z-]*:$/p' "$WF/deploy.yml")"
+DEPLOY_DEV="$(sed -n '/^  deploy-dev:$/,/^  [a-z][a-z-]*:$/p' "$WF/deploy.yml")"
+
+if grep -qE "^      inputs\.phase == 'production' &&$" <<<"$DEPLOY_PROD"; then
   pass 'the production estate runs only in the production phase'
 else
   fail 'deploy-to-server does not require phase == production - the first call would deploy the web before the stores answered'
 fi
 
-if sed -n '/^  deploy-dev:$/,/^  [a-z][a-z-]*:$/p' "$WF/deploy.yml" \
-  | grep -qE "^      inputs\.phase == 'build' &&$"; then
+if grep -qE "^      inputs\.phase == 'build' &&$" <<<"$DEPLOY_DEV"; then
   pass 'the dev estate stays in the build phase - it is not held behind the stores'
 else
   fail 'deploy-dev is no longer in the build phase - dev would wait a quarter of an hour for stores an alpha does not need'
