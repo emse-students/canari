@@ -52,6 +52,26 @@ raising `@nestjs/core` to 12 on those two services are **red, open, and correct 
 **Nothing in that chain is a clock or a reminder.** The hold is expressed as an assertion about the
 resolved tree, so it expires exactly when its reason does.
 
+#### STEP 4 IS FALSE AS WRITTEN, AND THE PULL REQUESTS IT DESCRIBES DO NOT EXIST (measured 2026-09-03)
+
+**The chain above assumes ONE pull request raising the framework as a unit. There is no such pull
+request.** What is open is nine, one package each, and each is incoherent on its own: #263 carries
+`@nestjs/common@12.0.1` with `@nestjs/core@11.2.3`, and **45 suites die at import** on
+`Cannot find module '@nestjs/common/interfaces' from 'node_modules/@nestjs/core/injector/module.js'` -
+core 11 reaching for a subpath that ESM-only common 12 no longer exports.
+
+**Throttler is irrelevant to that failure.** The day it ships `^12.0.0`, step 3 refreshes those
+branches and step 4 does not happen: they stay red on the module resolution, for ever, because the
+version skew is INSIDE the branch. The hold was written as an assertion about the resolved tree, and
+that part is right - but the tree it asserts over is never assembled.
+
+**The `nestjs` group was the fix and it is inert.** It landed 2026-08-31, after all nine pull
+requests were open, and Dependabot neither groups a dependency that already has an open pull request
+nor regroups retroactively - so the group has never produced one. The nine also hold **9 of the 10
+`open-pull-requests-limit` slots** the four services share, which is why this is a P1 in
+[backlog](../backlog.md) rather than a note here: the framework hold is fine, the chain around it is
+blocked.
+
 ### Satellites move on their own schedule, and that is not a skew
 
 `@nestjs/config`, `@nestjs/schedule`, `@nestjs/axios` and `@nestjs/typeorm` were renumbered onto the
