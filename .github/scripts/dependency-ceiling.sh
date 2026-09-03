@@ -3,7 +3,8 @@
 # DOES THIS REPOSITORY HAVE A GATE THAT WOULD SEE THIS DEPENDENCY UPDATE FAIL?
 #
 # Answered as a CHECK, which makes the answer BINDING. Until 2026-09-03 this question was asked
-# only inside `dependabot-auto-merge.yml`, a SECOND merge mechanism running beside GitHub's own
+# only inside `dependabot-auto-merge.yml` (deleted 2026-09-04), a SECOND merge mechanism beside
+# GitHub's own
 # auto-merge - so a Dependabot pull request and a human's took different routes to `main` (user,
 # 2026-09-03: *"le auto-merge et les CI doivent considerer toutes les PR, les miennes ou
 # dependabot"*).

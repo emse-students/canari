@@ -160,12 +160,15 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    [resume](docs/wiki/cross-client-campaign-resume.md).
 2. **P1 - a PLACEHOLDER held a member's seat**; whether a LEAF is left in the MLS tree only a
    member's CLIENT can say. [backlog](docs/wiki/backlog.md#p1---the-placeholder-is-gone-from-prod-what-it-may-have-left-in-the-mls-tree-is-not-answered).
-3. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - ONE merge mechanism,
-   TWO arming points, model on
-   [cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them). **THE QUEUE
-   PARKS whenever a gate moves: no identity CI can mint may ask Dependabot to rebuild** - only an
-   account WITH PUSH ACCESS, measured ([P1](docs/wiki/backlog.md#p1---no-identity-ci-can-mint-may-ask-dependabot-to-rebuild-a-branch-so-a-moved-gate-parks-the-whole-queue---and-the-app-token-was-the-recommendation-this-row-itself-made-measured-2026-09-03)). Six other items, incl. **[the
-   suppression CONTROL CASE the NestJS batch destroyed - Monday 2026-09-07 answers it](docs/wiki/backlog.md#p2---the-nine-nestjs-pull-requests-were-closed-in-one-batch-so-the-suppression-question-was-never-measured-on-one-first-and-monday-2026-09-07-is-the-only-thing-that-can-answer-it-now-updated-2026-09-03)**
+3. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - **ONE merge
+   mechanism and ONE arming point since 2026-09-04**: `arm-auto-merge.yml` on
+   `pull_request_target`, which is the only context where a Dependabot pull request reaches a
+   secret. The 448-line hourly sweep, its 179-line script, its 250-line staleness library and
+   `CODEOWNERS` are all DELETED - and so is the whole "rebuild a stale branch" question, whose
+   mechanism was refused ten times out of ten. Model on
+   [cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them). Open items
+   include **[the suppression CONTROL CASE the NestJS batch destroyed - Monday 2026-09-07 answers
+   it](docs/wiki/backlog.md#p2---the-nine-nestjs-pull-requests-were-closed-in-one-batch-so-the-suppression-question-was-never-measured-on-one-first-and-monday-2026-09-07-is-the-only-thing-that-can-answer-it-now-updated-2026-09-03)**
    and **nothing tells anybody prod is down**. Hosts:
    [host-updates](docs/wiki/infrastructure/host-updates.md).
 4. **P1 - a release-asset upload was refused WITH the permission granted, cause UNMEASURED**; six

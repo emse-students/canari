@@ -314,7 +314,6 @@ test-frontend:
 # on the inputs a live run never produces, which are the ones that fail closed.
 test-ci-scripts:
 	@echo "${BLUE}🧪 CI script self-tests…${RESET}"
-	@bash .github/scripts/tests/gate-moves.test.sh
 	@bash .github/scripts/tests/ceiling.test.sh
 	@bash .github/scripts/tests/compose-wiring.test.sh
 	@bash .github/scripts/tests/dev-copy-guards.test.sh

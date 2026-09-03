@@ -50,7 +50,7 @@ on:
 
 # TWO DEPLOYS OF THE SAME ESTATE MUST NOT OVERLAP, and until 2026-09-02 nothing said so. Three runs
 # were in flight against `/home/canari/canari` at once, each able to `git reset --hard` and
-# `docker compose up` while another was mid-flight; `dependabot-auto-merge.yml` and `dev-refresh.yml`
+# `docker compose up` while another was mid-flight; `dev-refresh.yml`
 # both serialise themselves, and the workflow that actually touches production did not. It does not
 # take a burst of human pushes either. The dev arm doubles the exposure, `/home/canari/canari-dev`
 # being a second checkout two runs would race on identically, which is why ONE group covers both
