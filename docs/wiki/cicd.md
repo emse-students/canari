@@ -833,9 +833,41 @@ the same defect wearing a different hat - two toolchains put two cryptos back in
 
 ## Dependency updates, and the auto-merge that ships them
 
-Dependabot opens the pull requests (`.github/dependabot.yml`); `dependabot-auto-merge.yml` decides
-which of them merge, and `.github/scripts/dependabot-auto-merge.sh` is the decision itself. The
-script is the ONE implementation - the workflow calls it from two triggers and adds nothing.
+Dependabot opens the pull requests (`.github/dependabot.yml`); **from there they are the same as
+anybody's**. `arm-auto-merge.yml` arms GitHub's own auto-merge on every pull request in the
+repository, and GitHub squash-merges each one the moment `CI passed` goes green. The one thing a
+dependency update is asked that a human's pull request is not is the `dependency-ceiling` job, and
+that is a CHECK feeding `ci-passed`, so an update with no gate here cannot merge by any route.
+
+**There is no sweep any more (deleted 2026-09-04).** `dependabot-auto-merge.yml` was 448 lines on an
+hourly cron, plus a 179-line decision script and a 250-line staleness library, and it existed for one
+reason: a `pull_request` run from Dependabot gets no secrets, so the arming job inside
+`pull-request.yml` could not mint an App token on its pull requests. `pull_request_target` runs in
+the base repository's context, with its secrets, for every pull request - so one file now covers the
+whole population. What went with the sweep, and what did not:
+
+| The sweep did | Now |
+| --- | --- |
+| Armed Dependabot's pull requests | `arm-auto-merge.yml`, for everybody, on `pull_request_target` |
+| Refused updates this repository has no gate for | `dependency-ceiling`, a job of `pull-request.yml` feeding `ci-passed` |
+| Asked Dependabot to rebase a branch whose gates had moved | **Nothing, and nothing did before** - see below |
+| Failed hourly while any branch was stuck, mailing the owner every time | Gone with the cron |
+
+**The rebuild half never worked, which is why deleting it loses nothing that ran.**
+`@dependabot recreate` and `@dependabot rebase` authorise by PUSH ACCESS, and an App *installation*
+is not an account with push access: `Contents: write` is not the same permission. Measured refused
+ten times out of ten, on eight pull requests, with two identities (`github-actions[bot]` and the
+`canari-auto-merge` App). The underlying question - can a pull request that was green against an
+older set of gates still merge - is answered where it matters instead: `pull-request.yml` also runs
+on `push: main`, so a merge that breaks the trunk turns `CI passed` RED on `main`, and
+`release-preflight.sh` gate 3 then refuses every release cut from that commit. The protection sits at
+the release, which is the only place it changes anything.
+
+**Nobody is assigned to any of it.** `.github/CODEOWNERS` requested a review from two humans on every
+pull request in a repository whose written model is that no approval is required (user, 2026-08-31:
+*"Je prefere blinder de test et faire les choses automatiquement qu'avoir une review humaine qui
+n'arrive jamais"*). It was deleted on 2026-09-04 with the sweep, for the same reason: a notification
+about a decision nobody makes.
 
 ### Every update merges onto `main`, and what protects production is that a merge does not deploy
 
@@ -1053,171 +1085,32 @@ It fails closed on every other input, proved against fixtures: the wrong evidenc
 `in_place_upgrade` with an empty `proof`, a missing gap file, a different major, and a sibling image
 in the same arm are all still refused.
 
-### Why there are three triggers, and why the clock is the weakest of them
+### What the sweep taught, kept because the lessons outlive it
 
-- **`workflow_run` on a Dependabot pull request's own CI** - the fast path, seconds after that one
-  pull request goes green. Narrow by construction: it names a branch.
-- **`workflow_run` on `CI`** - the convergent path, **and it was CD until 2026-09-03**. Whatever
-  runs on every push to `main` is the closest thing this repository has to "somebody did something",
-  and it is answered with a FULL SWEEP of every open Dependabot pull request. CD stopped being that
-  workflow when deployment moved to the bump: hanging the sweep off it now would drain the queue
-  once per RELEASE, which is weeks. **This is the rule below catching its own instance** - a
-  convergent trigger names an EVENT, a workflow is only ever its current proxy, and nothing
-  announces the day one stops being the other.
-- **`schedule` (hourly) and `workflow_dispatch`** - also full sweeps, and the schedule is a bonus
-  rather than the mechanism.
+Three findings from the year the sweep ran, none of which depend on it existing:
 
-The convergent path is the one that matters: an event-only automation cannot touch a pull request
-that was already green when it was installed, and on 2026-08-31 seven mergeable ones sat exactly
-there.
+- **A convergent trigger names an EVENT; a workflow is only ever its current proxy, and nothing
+  announces the day one stops being the other.** The sweep hung off "CD completed" because CD ran on
+  every push to `main`. When deployment moved to the version bump, that same trigger silently became
+  "once per release" - weeks apart - and nothing said so.
+- **Scheduled delivery on a public repository is best-effort, and GitHub DROPS the slots an hourly
+  cron misses rather than queueing them.** `code-analysis.yml` asks for `0 2 * * *` and ran at 03:01,
+  03:09, 08:05, 08:24, 08:47, 12:37 and 14:10 UTC on seven consecutive days. A clock is a floor under
+  the worst case, never the thing a verdict waits on.
+- **Counting deliveries is the wrong question; read one log.** Two of the four repositories had a
+  sweep that was delivered, ran, went GREEN and had never executed anything - the script landed
+  without its executable bit, `Permission denied` on every pull request, `merged 0`, six consecutive
+  green passes in Sky. The step swallowed a non-zero status by design so one unmergeable branch could
+  not stop the sweep, and it swallowed "the script could not run" with it. No count would ever have
+  found that.
 
-**THE SCHEDULE WAS THAT PATH FOR ABOUT THREE HOURS, AND A MEASUREMENT TOOK THE JOB AWAY FROM IT -
-THEN A SECOND MEASUREMENT CORRECTED THE FIRST.** The cron `17 * * * *` landed on `main` at 14:32 UTC
-on 2026-08-31 and had produced **zero** runs by 17:00, and this page said on that basis that the
-clock did not fire at all. It does. Counted on 2026-09-01, every one of the four repositories had
-delivered a scheduled sweep - Canari twice, at 20:49 and 00:36 UTC, and Sky, MiGallery and
-Portail-etu once each around 21:30. **A three-hour window is not enough to call a trigger dead**, and
-the correction matters more than the conclusion it barely changes: a mechanism built on the first
-quiet interval somebody happened to look at is built on nothing.
-
-What the wider measurement does support is the SHAPE of the delivery, and that was always the real
-argument: `code-analysis.yml` asks for `0 2 * * *` and actually ran at 03:01, 03:09, 08:05, 08:24,
-08:47, 12:37 and **14:10** UTC on seven consecutive days. Scheduled delivery on a public repository
-is best-effort, and **GitHub does not queue the slots an hourly cron misses - it drops them.** Two
-deliveries in seven hours is not an hourly clock.
-
-So the clock stays demoted, on the honest ground rather than the dramatic one: it arrives, with
-hours of jitter, which makes it a floor under the worst case and never the thing a verdict waits on.
-The convergent trigger is the event that happens whenever anybody works - a push to `main` - and the
-cron covers the case where nobody does for days.
-
-**AND A THIRD MEASUREMENT FOUND THAT COUNTING DELIVERIES WAS THE WRONG QUESTION ENTIRELY.** Both
-counts above are about whether a run was DELIVERED. On 2026-09-01 the logs of those runs were read
-rather than counted, and in two of the four repositories the sweep had never executed at all: the
-script landed without its executable bit, `Permission denied` on every pull request, `merged 0`, and
-the workflow went GREEN - six consecutive passes in Sky, every one reporting success. The step
-swallowed the status by design (`if ...; then :; fi`), so one unmergeable branch could not stop the
-sweep, and it swallowed "the script could not run" with it. **The script declines by PRINTING, never
-by status**, so a non-zero status was never a refusal and never should have been survivable; it is
-fatal and annotated now, and the script is invoked through `bash` so a mode bit cannot decide
-whether the chain runs at all. A count of deliveries would never have found this. Reading one log
-did.
-
-**One measured limit of the push path, recorded because it is invisible otherwise:** the CD run the
-sweep DISPATCHES after a merge does not come back. `workflow_dispatch` is the documented exception
-that lets `GITHUB_TOKEN` start CD at all, but that run's completion emitted no `workflow_run` event
-on 2026-08-31. It matters less than it looks - since the staleness predicate stopped firing on every
-movement of `main` (below), one sweep merges everything mergeable rather than one pull request per
-re-trigger.
-
-### Why a green pull request is not enough
-
-A check-run's conclusion is evidence about the workflow that PRODUCED it. PR #272 bumps
-`@nestjs/platform-express` 11 -> 12 in media-service alone - the split that started all of this -
-and was `CLEAN` with every check green: its suite has no `Boot the real AppModule` run at all,
-because that job was written after its CI last ran. **An absent check and an inapplicable one look
-identical**, so "nothing failed" is not a merge condition.
-
-The script therefore refuses to merge on a suite that describes gates `main` no longer carries, and
-marks such a head `STALE`.
-
-**WHAT COUNTS AS "NO LONGER CARRIES" WAS TOO WIDE UNTIL 2026-09-01, AND IT MADE THE QUEUE
-UNDRAINABLE.** The predicate asked whether the branch's base was current `main`. Every merge moves
-`main`, so every merge invalidated every remaining pull request in the same instant - and the only
-way out was a rebuild, which **nothing in CI is permitted to perform**:
-
-- `PUT /pulls/{n}/update-branch` pushes a merge commit authored by `github-actions[bot]`. The
-  `pull_request` run it re-triggers is created as `action_required`, parked for a human; Dependabot
-  then refuses the branch for good; and the workflow's own entry filter admits only
-  `dependabot[bot]`. It made the branch unmergeable by every path at once.
-- `@dependabot recreate` is refused when the caller is `github-actions[bot]`. Measured on #303,
-  three seconds after the ask: *"Sorry, only users with push access can use that command."*
-
-**A gate whose only remedy is unavailable is not a gate, it is a stop** - and it stopped seven
-mergeable pull requests. So the question is now asked the way #272 actually poses it: did the
-definitions that BUILD a check suite move between the branch's base and `main`? Those are
-`.github/workflows/` and `.github/scripts/`, which decide both which jobs run and what each one
-asserts, and nothing else. Two dependency merges landing on `main` change neither, so a suite from
-before them still describes today's gates and the pull request merges. A workflow edit changes both,
-and then the suite proves nothing.
-
-The predicate lives in `.github/scripts/lib/gate-moves.sh`, apart from its caller so that it can be
-exercised on inputs GitHub will not produce on demand: **it fails closed on a compare it cannot
-read, and on one whose file list the API truncated at 300** - a 300-entry answer is
-indistinguishable from a longer one by inspection, so the count is read before the list. Those are
-the branches a live run never reaches, which is exactly why
-`.github/scripts/tests/gate-moves.test.sh` produces them instead, and why `make test-ci-scripts`
-runs on every change under `.github/scripts/`.
-
-**And the shell itself is linted, not merely parsed.** `.github/scripts/` is the only code here that
-MERGES things, so `shellcheck -x` gates it before a merge, in each of the four repositories that
-carry these scripts. Two details are the point. The linter is **pinned by version and digest** and
-the runner's own copy is ignored: `ubuntu-latest` ships a shellcheck, but which one is the image's
-business and it moves without this repository changing. And it was **run, and made to fail, before
-it was turned on** - a throwaway copy across all four repositories named exactly one thing, SC1091,
-the source it cannot resolve through `$(dirname "$0")`, which the `source-path=SCRIPTDIR` directive
-beside each `.` answers; then an unquoted `rm $f` spliced into the library came back as SC2086, so
-the gate is known to reject rather than merely to pass.
-
-**One consequence changed with it.** Under the old predicate roughly one pull request merged per
-pass, because each merge invalidated the rest. Now a single sweep merges everything that is
-mergeable, which is what makes the chain converge without a re-trigger per merge.
-
-**AND ONE THING STILL WANTS A HUMAN - MEASURED, AFTER THIS PAGE ARGUED THE OPPOSITE.** When the
-gates really did move, the branch really does need a rebuild, and the sweep asks for it itself:
-`@dependabot recreate`, behind a marker carrying the head it was asked against. This page used to
-say a GitHub App token with push access "would make that succeed from the workflow". **It does
-not.** `@dependabot recreate` authorises by PUSH ACCESS, and an App installation is not an account
-that has any - `Contents: write` on the repository is a different thing:
-
-| Identity | Asked | Answer |
-| --- | --- | --- |
-| `github-actions[bot]` | #303, 2026-08-31 | *"Sorry, only users with push access can use that command."* - 3 s |
-| `canari-auto-merge` App | all eight open pull requests, 2026-09-03 | the same sentence, 3 s after each - **ten refusals** |
-
-**AND THE REFUSAL WAS SILENT FOR A DAY, WHICH IS THE HALF THAT WAS FIXABLE HERE.** The marker
-records that a COMMENT WAS POSTED; whether Dependabot ACTED on it is a different fact, carried in
-its reply, and nothing read that reply. So every pass printed `already asked for c228e97d; waiting
-on Dependabot` - false three seconds after the first ask. *Durable state answers only the question
-it was written for*: `have I already asked` and `is this stuck` differ only in lifetime, and using
-one for the other silences the trigger. Since 2026-09-03 the two are read from the same thread - our
-ask by its marker, a `dependabot[bot]` reply about push access AFTER it as the refusal - a refusal
-is never retried (it is deterministic; asking again every hour would be noise), and the step FAILS -
-**once per (pull request, HEAD), which is the half the first version got wrong by one day.** It
-failed while ANY branch was stuck, on the reasoning that a permanently red sweep is the correct
-accusation for a permanently stuck queue. That was right about the signal and wrong about the cost:
-**this workflow runs hourly**, plus on every push to `main`, so it mails the maintainer about
-twenty-four times a day about one known condition - and *a line its reader learns to skip is the one
-that hides the next defect*. The user said so within the hour.
-
-So the FAILURE is rationed and the REPORT is not: every pass prints the `::error` annotation and
-writes each stuck branch to the step summary, neither of which sends mail, while the exit status
-carries only "something changed". The ration is a durable stamp carrying the HEAD, written into our
-own ask comment - so a rebased branch that gets stuck again on fresh evidence fails again, and the
-same branch staying stuck does not. Rationing the failure WITHOUT the unconditional report would
-have made a still-stuck queue silent after its first pass, which is the defect this whole section
-is about; an assertion holds that pairing.
-
-**AND THE REMEDY IN THE MESSAGE IS ONE GESTURE, MEASURED.** An account WITH push access can post
-`@dependabot rebase`: on 2026-09-03 the maintainer's own account asked on all eight open pull
-requests and **seven rebased inside a minute**. The eighth, #299, answered *"this PR has been edited
-by someone other than Dependabot"* - exactly what the head-author check had predicted from the state
-- and took `@dependabot recreate` instead. So the queue IS drainable today, by hand, in one comment;
-what the missing credential costs is doing it unattended.
-
-Closing the pull request is not an alternative - Dependabot does not recreate a version whose pull
-request was closed unmerged. What closes the route is a **fine-grained PAT from an account with push
-access**, which is the user's to mint; what makes the gap RARE rather than permanent needs nobody -
-narrowing the predicate, below. Both are in [backlog](backlog.md).
-
-**THE PREDICATE IS STILL TOO WIDE, AND 2026-09-03 IS THE MEASUREMENT THAT SAYS SO.** It fires on any
-file under `.github/workflows/` or `.github/scripts/`, and the CI work of that day touched 34 of
-them - so all eight open pull requests went stale at once, #290 (a Rust crate bump) included, by a
-change to `ios.yml`. Most of those definitions cannot produce a check on a pull request at all:
-`ios.yml`, `android.yml`, `deploy.yml`, `release.yml`, `host-updates.yml` and `dev-refresh.yml` run
-on a release or a schedule. *A predicate that named the last incident is not the predicate that
-names the next one* - this one was written for #272, where `Boot the real AppModule` was genuinely a
-new job in `pull-request.yml`.
+**And one about check runs, which is why `push: main` matters.** A check-run's conclusion is evidence
+about the workflow that PRODUCED it, not the ones `main` carries today. PR #272 was `CLEAN` with
+every check green and no `Boot the real AppModule` run at all, because that job was written after its
+CI last ran: **an absent check and an inapplicable one look identical**, so "nothing failed" is not a
+merge condition. The sweep tried to answer this per pull request and got the predicate wrong twice -
+too wide, then measured unsound when narrowed. It is answered on `main` now, after the fact and
+before any release.
 
 ### One changelog, three destinations, and the one that had never received it
 
@@ -1286,45 +1179,28 @@ consequence. Eleven assertions, and the mutation that makes the block-strip a no
   build, which is learning by failing what a fact could have told us. `0.16.1`'s notes were 532
   characters when this was found.
 
-### Who pushes the refresh decides whether it is a refresh at all
+### Never write to somebody else's pull request, and the day that cost seven of them
 
-Rebuilding a stale branch is the sweep's one write to somebody else's pull request, and **which
-identity performs it is part of the mechanism**. The step was written as
-`PUT /repos/{owner}/{repo}/pulls/{n}/update-branch`, the obvious API for the job. It pushes a merge
-commit authored by `github-actions[bot]`, and on 2026-08-31 that cost three things at once, across
-seven pull requests:
+Kept because the mechanism is gone and the lesson is not. The sweep rebuilt stale branches with
+`PUT /repos/{owner}/{repo}/pulls/{n}/update-branch` - the obvious API - which pushes a merge commit
+authored by `github-actions[bot]`. On 2026-08-31 that cost three things at once, across seven pull
+requests:
 
-1. **The re-triggered `pull_request` run is created as `action_required`** - parked until a human
+1. **The re-triggered `pull_request` run is created as `action_required`**, parked until a human
    clicks Approve. A push authored by Dependabot is not. Twenty runs were sitting there.
-2. **Dependabot then refuses the branch permanently.** Asked to rebase, it answers: *"Looks like this
-   PR has been edited by someone other than Dependabot. That means Dependabot can't rebase it -
-   sorry!"*
-3. **The workflow's own entry condition** admits a `workflow_run` whose actor is `dependabot[bot]`,
-   so even a human approval would not have let the branch back into the fast path.
+2. **Dependabot then refuses the branch permanently**: *"Looks like this PR has been edited by
+   someone other than Dependabot. That means Dependabot can't rebase it - sorry!"*
+3. The branch was no longer *stale* either - `update-branch` had made its base current `main` - so it
+   passed straight through to a merge decision reading checks that would never complete.
 
-The branch was left unmergeable by every path, and it was no longer *stale* - `update-branch` had
-made its base current `main`, so the check above passed it straight through to a merge decision
-reading checks that would never complete. Meanwhile every push to `main` made another branch stale
-and fed another one in. **The step written to drain the queue was the one filling it.**
+**The step written to drain the queue was the one filling it.** Nothing in this repository writes to
+a pull request's branch any more.
 
-The refresh is now a `@dependabot recreate` comment. `recreate` rather than `rebase` because it ends
-in the same state whatever was done to the branch before - a freshly generated branch on current
-`main`, authored by Dependabot - where `rebase` refuses an edited branch, which is precisely the
-state the old step spent a day creating. Dependabot answers asynchronously, so the step reads nothing
-back: the next pass measures the outcome on durable state, whether the pull request's base is current
-`main`, and a request that was ignored simply leaves the branch stale to be asked again.
-
-Detection is on the STATE and never on how the state arose. The script reads the head commit's author
-and marks any pull request whose head is not `dependabot[bot]` for rebuilding - so a branch touched by
-a maintainer, by a bad rebase, or by an earlier version of this very workflow converges the same way,
-and the six branches the old step had already trapped were healed by the sweep itself rather than by
-hand.
-
-### Two traps, both found by testing the gate against real pull requests
+### Two traps in reading Dependabot's own commit trailers
 
 - **Dependabot YAML-quotes a dependency name starting with `@`**, so the commit trailer reads
   `"@nestjs/common"` with the quotes. A `case` on `@nestjs/*` matches nothing - which is how a first
-  draft merged the exact major it was written to refuse. The script strips the quotes.
+  draft merged the exact major it was written to refuse. `dependency-ceiling.sh` strips the quotes.
 - **A "update the requirement to permit the latest version" pull request carries no `update-type`
   trailer at all** (PR #297, openmls 0.9.0), so any logic keyed on the update type reads an empty
   string. Treat unknown as major.
@@ -1333,22 +1209,14 @@ The `updated-dependencies` trailers are parsed **as blocks**, never as three ind
 lists: a grouped pull request carries several, and an update Dependabot could not classify has no
 `update-type`, so three lists pasted side by side would pair the wrong name with the wrong version.
 
-### The chain, proven end to end
+### Verifying a change to the CI scripts
 
-On 2026-08-31 a dependency update reached production with no human in it, which had never happened
-in this repository before. PR #289 merged at 13:48:44; CD run `33399025542` started four seconds
-later, event `workflow_dispatch`, on that merge commit; it completed `success` and prod answered
-afterwards. **That is the fact worth not re-deriving** - the three pieces (a ceiling that decides, a
-sweep that converges, a CD dispatch on the merge commit) compose, and a session finding one of them
-apparently idle should look for a refusal it printed rather than assume the chain is broken.
+The decisions live in `.github/scripts/lib/` precisely so they can be exercised on inputs GitHub
+will not produce on demand, and `make test-ci-scripts` runs every suite in seconds. Change a
+decision, change its assertion, and prove the assertion by breaking the thing it guards - a test
+that passes on a mutation is a test that asserts nothing.
 
-### Verifying a change to it
-
-Run the shipped script, unmodified, against real pull requests, with a `gh` shim on `PATH` that
-passes reads through and intercepts `pr merge`, `pr comment` and `workflow run`. Testing a retyped
-copy proves nothing about the file that runs.
-
-**And lint it before pushing, because this workstation has no `shellcheck` and CI does.** A change to
+**And lint before pushing, because this workstation has no `shellcheck` and CI does.** A change to
 these scripts went red on 2026-09-01 for two findings a local run would have named in one second
 (`SC1091` - `# shellcheck source-path=SCRIPTDIR` is **per-command, not per-file**, so a second
 `source` needs its own copy - and `SC2016` on a `'${'` case pattern that meant the brace literally).

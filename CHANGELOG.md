@@ -11,6 +11,36 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Removed
+
+- **The hourly Dependabot sweep, and `CODEOWNERS`** (user: *"pourquoi Dependabot auto-merge existe
+  sachant qu'il y a deja canari-auto-merge ?"*, and *"je ne veux plus etre assigne aux PR etc, je ne
+  veux plus recevoir les mails"*). Deleted: `dependabot-auto-merge.yml` (448 lines, an hourly cron),
+  `dependabot-auto-merge.sh` (179), `lib/gate-moves.sh` and its self-tests (250), and
+  `.github/CODEOWNERS`.
+
+  **The answer to the question is that `canari-auto-merge` is an App - an identity - and the sweep
+  was a workflow using it**, so they were never two mechanisms doing one job. But the sweep had
+  become one anyway: since 2026-09-03 `pull-request.yml` armed GitHub's native auto-merge on every
+  human pull request, and the sweep armed Dependabot's. The reason given for the split was that a
+  `pull_request` run from Dependabot **gets no secrets**, so no App token can be minted there. That
+  fact is true; the conclusion was not. **`pull_request_target` runs in the base repository's
+  context, with its secrets, for every pull request** - so `arm-auto-merge.yml` (~130 lines,
+  mostly comment, no schedule) now covers the whole population from one file. It is safe on that
+  trigger for one specific reason, asserted by a test: **it never checks the pull request out.**
+
+  **The sweep's one unique function did not work.** Asking Dependabot to rebase a branch whose gates
+  had moved was refused ten times out of ten, on eight pull requests and with two identities:
+  `@dependabot rebase` authorises by PUSH ACCESS, and an App *installation* is not an account with
+  push access. So deleting it loses nothing that ran, and the open P1 about it is retired rather
+  than fixed. The underlying question is answered where it matters instead - `pull-request.yml` also
+  runs on `push: main`, so a merge that breaks the trunk turns `CI passed` red ON `main` and
+  `release-preflight.sh` gate 3 refuses every release cut from that commit.
+
+  **`CODEOWNERS` requested a review from two humans on every pull request** in a repository whose
+  written model is that no approval is required - a mention per pull request, per push, about a
+  decision nobody makes. `release-chain.test.sh` fails if either comes back.
+
 ### Fixed
 
 - **A 500 from Apple no longer loses a submission, and a failed iOS arm can be re-run at all.**
@@ -1238,7 +1268,7 @@ of each entry is in [`docs/changelog-archive.md`](docs/changelog-archive.md)._
   is what decides which jobs run and what each asserts - so two dependency merges no longer
   invalidate anything and one sweep merges everything mergeable. When the gates really did move, the
   sweep says so on the pull request instead of pretending to fix it.
-  ([cicd](docs/wiki/cicd.md#why-a-green-pull-request-is-not-enough))
+  ([cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them))
 
 - **This file said an hourly `schedule:` produced zero runs; it produces runs.** The claim was made
   on three hours of observation taken right after the cron landed, and a trigger was rebuilt around
@@ -1246,7 +1276,7 @@ of each entry is in [`docs/changelog-archive.md`](docs/changelog-archive.md)._
   barely moves - GitHub drops the slots an hourly cron misses rather than queueing them, so the
   clock is a floor and not a mechanism - but the reasoning did, and the corrected measurement is now
   the one written down.
-  ([cicd](docs/wiki/cicd.md#why-there-are-three-triggers-and-why-the-clock-is-the-weakest-of-them))
+  ([cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them))
 
 - **`src-tauri`'s CI entry compiled its tests and never ran them.** The matrix command was
   `cargo check --all-targets`, scoped on purpose to the defect that created the entry - a broken
@@ -1430,7 +1460,7 @@ of each entry is in [`docs/changelog-archive.md`](docs/changelog-archive.md)._
   now a `@dependabot recreate` comment, so the push carries the identity GitHub already trusts, and
   the sweep additionally marks any pull request whose head Dependabot did not write - detecting the
   state rather than its cause, which healed the seven without a hand touching them. Applied to all
-  four repositories. ([cicd](docs/wiki/cicd.md#who-pushes-the-refresh-decides-whether-it-is-a-refresh-at-all))
+  four repositories. ([cicd](docs/wiki/cicd.md#never-write-to-somebody-elses-pull-request-and-the-day-that-cost-seven-of-them))
 
 - **Every jest suite in the four services would have died at import under NestJS 12, and the
   workaround that hid `uuid` became the thing that broke it.** NestJS 12 is ESM-only - `"type":

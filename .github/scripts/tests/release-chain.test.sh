@@ -177,7 +177,7 @@ for arm in deploy production android ios; do
     'version: \$\{\{ needs\.preflight\.outputs\.version \}\}' \
     'prerelease: \$\{\{ needs\.preflight\.outputs\.prerelease \}\}' \
     'sha: \$\{\{ needs\.bump\.outputs\.sha \}\}'; do
-    printf '%s' "$BLOCK" | grep -qE "^      $ref\$" || missing="$missing ${ref%%:*}"
+    grep -qE "^      $ref\$" <<<"$BLOCK" || missing="$missing ${ref%%:*}"
   done
   if [ -z "${missing// /}" ]; then
     pass "the $arm arm is handed sha, version and prerelease from jobs it declares"
@@ -198,7 +198,7 @@ printf '\nthe web never serves a version a store refused\n'
 # `deploy-dev` back too.
 PROD_BLOCK="$(sed -n '/^  production:$/,/^  [a-z][a-z-]*:$/p' "$WF/release.yml")"
 
-if printf '%s' "$PROD_BLOCK" | grep -qE '^    needs: \[preflight, bump, deploy, android, ios\]$'; then
+if grep -qE '^    needs: \[preflight, bump, deploy, android, ios\]$' <<<"$PROD_BLOCK"; then
   pass 'the production estate waits for the build AND for both stores'
 else
   fail 'release.yml has no production arm needing [preflight, bump, deploy, android, ios] - the web can go ahead of the stores again'
@@ -207,7 +207,7 @@ fi
 # `always()` HERE WOULD BE THE WHOLE DEFECT BACK. A success dependency is what makes a failed store
 # arm stop production; `always()` plus a result test is how a gate becomes a formality, and it is
 # exactly the shape used LEGITIMATELY inside deploy.yml, so it would read as idiomatic.
-if printf '%s' "$PROD_BLOCK" | grep -q 'always()'; then
+if grep -q 'always()' <<<"$PROD_BLOCK"; then
   fail 'the production arm uses always() - a failed store arm would no longer stop the web deploy'
 else
   pass 'the production arm has no always() - a failed store arm leaves it skipped'
@@ -279,63 +279,117 @@ else
 fi
 
 
-printf '\nand the first gesture merges itself, with the credential that keeps the chain working\n'
+printf '\nONE arming mechanism, covering every pull request, with the credential releases depend on\n'
 # =================================================================================================
 # THE TRAP THIS NAMES. Auto-merge merges as whoever armed it, and a merge made by `GITHUB_TOKEN`
-# raises NO `push` event - so `ci.yml` would never run on `main`, the merge commit would carry no
-# `CI passed` check, and the preflight's third gate would then refuse EVERY release on a commit that
-# had in fact been tested. Someone "simplifying" auto-merge.yml to the default token would break the
-# release chain from a file that has nothing to do with releasing.
-AM="$WF/pull-request.yml"
-if [ -e "$WF/auto-merge.yml" ]; then
-  fail 'auto-merge.yml is back as its own workflow - the sequence a human reads on opening a pull request is then split across two files listening for the same event'
+# raises NO `push` event - so the CI workflow would never run on `main`, the merge commit would
+# carry no `CI passed` check, and the preflight's third gate would then refuse EVERY release on a
+# commit that had in fact been tested. Someone "simplifying" this file to the default token would
+# break the release chain from a file that has nothing to do with releasing.
+AM="$WF/arm-auto-merge.yml"
+
+# TWO ARMING POINTS WAS THE OLD SHAPE, and it is the thing this section now refuses to let back.
+# Arming lived in `pull-request.yml` for humans and in a 448-line hourly sweep for Dependabot,
+# because a `pull_request` run from Dependabot has no secrets. `pull_request_target` has them, for
+# every pull request, so one file covers the whole population.
+for gone in dependabot-auto-merge.yml auto-merge.yml; do
+  if [ -e "$WF/$gone" ]; then
+    fail "$gone is back - two arming mechanisms is what this repository already paid for once, in an hourly cron nobody could read and a mail every hour it failed"
+  else
+    pass "$gone is gone"
+  fi
+done
+
+if grep -qE '^  arm-auto-merge:$' "$WF/pull-request.yml"; then
+  fail 'pull-request.yml arms again - that job can only ever cover HUMAN pull requests, because a Dependabot run there has no secrets, and covering the other half is what created the second mechanism'
 else
-  pass 'auto-merge is a job of pull-request.yml, not a second workflow on the same event'
+  pass 'pull-request.yml no longer arms - one file does, for everybody'
 fi
 
 if [ -r "$AM" ]; then
-  if grep -q 'create-github-app-token' "$AM"; then
-    pass 'auto-merge.yml mints the App token, whose merge raises a push event'
+  # THE CODE, WITHOUT THE PROSE. Every assertion below reads this rather than the file: the
+  # comments here spell out the very conditions being asserted, so a file-wide grep answers "is
+  # this idea written down" instead of "is it done" - and passes on the explanation of a
+  # condition somebody deleted. Measured, twice, while writing this section.
+  AM_CODE="$(grep -vE '^ *#' "$AM")"
+
+  if grep -qE '^  pull_request_target:$' <<<"$AM_CODE"; then
+    pass 'it runs on pull_request_target, which is the only context where Dependabot pull requests can reach a secret'
   else
-    fail 'auto-merge.yml no longer mints an App token - a GITHUB_TOKEN merge raises no push, so main gets no CI run and every release is then refused'
+    fail 'arm-auto-merge.yml does not run on pull_request_target - Dependabot pull requests would be armed by nobody'
   fi
 
-  # SCOPED TO THE MERGE JOB, AND IT USED TO BE A FILE-WIDE GREP. That was right while the merge was
-  # the only thing in this file holding a token, and it broke the day `dependency-ceiling` landed -
-  # a job that legitimately reads with `github.token`, has nothing to do with merging, and tripped
-  # a check about the merge credential. **A predicate that named the last incident is not the
-  # predicate that names the next one**: the property is "the ARMING does not use GITHUB_TOKEN",
-  # not "this file never mentions it", and the two stopped agreeing as soon as the file grew.
-  if sed -n '/^  arm-auto-merge:$/,/^  [a-z][a-z-]*:$/p' "$AM" |
-    grep -qE 'GH_TOKEN: \$\{\{ (secrets\.)?GITHUB_TOKEN \}\}|GH_TOKEN: \$\{\{ github\.token \}\}'; then
-    fail 'arm-auto-merge arms with GITHUB_TOKEN - see above, this silently refuses every later release'
+  # `pull_request_target` IS SAFE HERE FOR EXACTLY ONE REASON, AND THIS IS THAT REASON ASSERTED.
+  # The trigger runs with the base repository's secrets; checking out the pull request would then
+  # execute untrusted code with them. This job calls `gh pr merge` and nothing else.
+  if grep -qE '^ *- uses: actions/checkout' <<<"$AM_CODE"; then
+    fail 'arm-auto-merge.yml checks something out - under pull_request_target that runs untrusted code WITH the repository secrets, which is the one thing that trigger must never do'
   else
-    pass 'it does not merge with GITHUB_TOKEN'
+    pass 'it checks nothing out, which is what makes pull_request_target safe here'
   fi
 
-  if grep -q "!= 'dependabot\[bot\]'" "$AM"; then
-    pass 'Dependabot is excluded, so its own ceiling is not bypassed'
+  if grep -q 'create-github-app-token' <<<"$AM_CODE"; then
+    pass 'it mints the App token, whose merge raises a push event'
   else
-    fail 'auto-merge.yml no longer excludes Dependabot - native auto-merge walks past the ceiling that exists because postgres 18 merged green and took production down'
+    fail 'arm-auto-merge.yml no longer mints an App token - a GITHUB_TOKEN merge raises no push, so main gets no CI run and every release is then refused'
+  fi
+
+  if grep -qE 'GH_TOKEN: \$\{\{ (secrets\.)?GITHUB_TOKEN \}\}|GH_TOKEN: \$\{\{ github\.token \}\}' <<<"$AM_CODE"; then
+    fail 'it arms with GITHUB_TOKEN - see above, this silently refuses every later release'
+  else
+    pass 'it does not arm with GITHUB_TOKEN'
+  fi
+
+  # DEPENDABOT IS NOW INCLUDED, AND THE ASSERTION FLIPPED WITH THE MECHANISM. It was excluded while
+  # native auto-merge would have walked past the ceiling; since 2026-09-03 `dependency-ceiling` is a
+  # job feeding `ci-passed`, so an update with no gate cannot merge BY ANY ROUTE and arming it is
+  # safe. That check being binding is asserted in the next section, and the two must move together.
+  if grep -q "github.event.pull_request.user.login == 'dependabot\[bot\]'" <<<"$AM_CODE"; then
+    pass 'Dependabot is armed by name, which is the population this file exists for'
+  else
+    fail 'arm-auto-merge.yml does not name Dependabot - its pull requests would be armed by nobody, and the hourly sweep would come back'
+  fi
+
+  # THE TRUST BOUNDARY. A branch inside this repository required push access to create; a fork's
+  # did not. Arming a fork's pull request would hand a stranger the merge the moment CI is green.
+  if grep -q 'head.repo.full_name == github.repository' <<<"$AM_CODE"; then
+    pass 'only a branch living in this repository is armed - a fork is merged by a human'
+  else
+    fail 'arm-auto-merge.yml arms pull requests from forks - CI green would then merge code from anybody'
+  fi
+
+  # THE ARMING MUST NOT DEPEND ON THE TESTS. `--auto` hands the decision to GitHub; waiting for the
+  # suite would hold a runner for its whole length and would still have to re-read the checks, and
+  # a job that merges on its own reading of green is a second opinion about which jobs matter.
+  if grep -qE '^    needs:' <<<"$AM_CODE"; then
+    fail 'the arming declares needs: - it must run in PARALLEL with the suite, because it declares intent rather than reading a verdict'
+  else
+    pass 'the arming runs in parallel with the suite, which is what --auto is for'
+  fi
+
+  if grep -qE 'pr merge [^|]*--auto' <<<"$AM_CODE"; then
+    pass 'it arms and holds no opinion about green - GitHub reads CI passed, the one check the ruleset requires'
+  else
+    fail 'the arming does not use --auto - it would be merging on its own reading of green, a second opinion beside the required check'
+  fi
+
+  if grep -q -- '--delete-branch' <<<"$AM_CODE"; then
+    fail 'the arming passes --delete-branch, which does NOTHING with --auto: gh deletes only after a merge IT made, and #329 and #330 both left their branches behind while the flag sat there looking like it worked'
+  else
+    pass 'no --delete-branch, which does nothing with --auto - the repository setting deletes the branch'
   fi
 else
-  fail 'pull-request.yml is gone - a green pull request would wait for a human who decides nothing'
+  fail 'arm-auto-merge.yml is gone - a green pull request would wait for a human who decides nothing'
 fi
 
-# THE ARMING MUST NOT DEPEND ON THE TESTS. `--auto` hands the decision to GitHub; a `needs:` on the
-# suite would hold a runner for its whole length and would still have to re-read the checks, and a
-# job that merges on its own reading of green is a second opinion about which jobs matter.
-if sed -n '/^  arm-auto-merge:$/,/^  [a-z][a-z-]*:$/p' "$AM" | grep -qE '^    needs:'; then
-  fail 'arm-auto-merge declares needs: - it must run in PARALLEL with the suite, because it declares intent rather than reading a verdict'
+# NOBODY IS ASSIGNED TO A PULL REQUEST HERE (user, 2026-09-04: *"je ne veux plus etre assigne aux
+# PR etc, je ne veux plus recevoir les mails"*). CODEOWNERS requested a review from two humans on
+# every pull request, in a repository whose written model is that no approval is required - a
+# mention per pull request, per push, for a queue nobody was ever meant to drain.
+if [ -e "$HERE/../../CODEOWNERS" ]; then
+  fail 'CODEOWNERS is back - it requests a review from a human on every pull request, and this repository requires no approval, so every one of those is a notification about a decision nobody makes'
 else
-  pass 'arm-auto-merge runs in parallel with the suite, which is what --auto is for'
-fi
-
-# And it must not try to arm on a `push` to main, where there is no pull request at all.
-if sed -n '/^  arm-auto-merge:$/,/^  [a-z][a-z-]*:$/p' "$AM" | grep -q "github.event_name == 'pull_request'"; then
-  pass "it only arms on a pull_request event, since this workflow also runs on push to main"
-else
-  fail 'arm-auto-merge is not restricted to pull_request events - on a push to main it would read a null pull request'
+  pass 'no CODEOWNERS - nobody is assigned to a pull request that merges itself'
 fi
 
 printf '\nthe release package tells a pre-release from a stable by the EVENT, and refuses a mismatch\n'
@@ -632,7 +686,9 @@ printf '\nthe dependency ceiling is a CHECK, and it is binding\n'
 # the pull request. It was - as a `github-actions` comment naming the missing test. What a CHECK
 # adds is that the refusal becomes BINDING: a comment is absent from the checks list, unreadable by
 # the merge machinery, and outside `ci-passed`, the one check the ruleset requires.
-if grep -qE '^  dependency-ceiling:$' "$AM"; then
+PR_WF="$WF/pull-request.yml"
+
+if grep -qE '^  dependency-ceiling:$' "$PR_WF"; then
   pass 'the ceiling is a job of the pull-request package'
 else
   fail 'there is no dependency-ceiling job - the ceiling is invisible on the pull request again'
@@ -641,151 +697,26 @@ fi
 # BINDING MEANS `ci-passed` READS IT. `ci-passed` is the one check the branch ruleset requires, so a
 # ceiling job outside its `needs` is a red tick nothing enforces - strictly worse than the sweep it
 # replaced, because it LOOKS enforced.
-if sed -n '/^  ci-passed:$/,/^  [a-z][a-z-]*:$/p' "$AM" | grep -q 'dependency-ceiling'; then
+if sed -n '/^  ci-passed:$/,/^  [a-z][a-z-]*:$/p' "$PR_WF" | grep -q 'dependency-ceiling'; then
   pass 'and ci-passed reads it, so an update with no gate cannot merge by ANY route'
 else
   fail 'ci-passed does not read dependency-ceiling - the refusal would be advisory, and a red tick nothing enforces is worse than none because it looks enforced'
 fi
 
-# THE TWO-STAGE ORDER IS LOAD-BEARING, AND THIS RECORDS WHICH STAGE THE SWEEP IS IN. Stage two is
-# the sweep ARMING GitHub's auto-merge instead of merging it itself. Landing that while the ceiling
-# was not yet a required check would merge `postgres 15-alpine -> 18-alpine` on a green suite - the
-# exact update that cost 33 minutes of production on 2026-09-01. The two assertions above establish
-# that the check exists and binds, so this pair can never read as "safe" without them passing.
-SWEEP_SH="$HERE/../dependabot-auto-merge.sh"
-if [ -r "$SWEEP_SH" ]; then
-  if grep -qE 'pr merge [^|]*--auto' "$SWEEP_SH"; then
-    pass 'stage 2: the sweep ARMS rather than merges, and the binding check above is what makes that safe'
-  else
-    pass 'stage 1: the sweep still merges on its own reading of green, which now INCLUDES this check'
-  fi
-else
-  pass 'the sweep is gone entirely, so GitHub auto-merge is the only route to main'
-fi
-
-printf '\nthe sweep ARMS, and the identity it arms with is what keeps releases possible\n'
-# =================================================================================================
-# THE ONE PROPERTY OF STAGE 2 THAT IS SILENT WHEN WRONG, and it is not the arming - it is the TOKEN.
+# THE SWEEP IS GONE, AND WITH IT EVERY ASSERTION ABOUT IT (2026-09-04). Four blocks lived here:
+# which of two stages the sweep was in, that it armed with the App token rather than merging on its
+# own reading of green, that it no longer dispatched CI by hand, and that a REFUSED rebuild request
+# was told apart from a pending one. All four described `dependabot-auto-merge.yml`, which no longer
+# exists - `arm-auto-merge.yml` covers the whole population from one file, asserted above.
 #
-# Auto-merge merges as whoever ARMED it. A merge made with `GITHUB_TOKEN` raises no `push` event
-# (GitHub's anti-recursion rule), so `main` would get no run of `pull-request.yml`, its merge commit
-# would carry no `CI passed` check, and `release-preflight.sh`'s third gate - "the tests passed on
-# the commit being released" - would refuse EVERY release, on commits that had in fact been tested.
-# Nothing about the sweep would look broken: pull requests would merge, and releases would start
-# failing a gate in a different file for a reason nobody would connect to this one.
-#
-# The old step merged with `GITHUB_TOKEN` and paid for it with a manual `gh workflow run` dispatch.
-# Deleting that dispatch is only safe because the identity changed with it, so both are asserted.
-SWEEP_WF="$WF/dependabot-auto-merge.yml"
-if [ -r "$SWEEP_WF" ]; then
-  ARM_STEP="$(sed -n "/^      - name: Arm GitHub's auto-merge on each\$/,/^      - name: /p" "$SWEEP_WF")"
-
-  if printf '%s' "$ARM_STEP" | grep -q 'steps.app-token.outputs.token'; then
-    pass 'the sweep arms with the App token, so the merge it causes raises a push'
-  else
-    fail 'the sweep does not arm with the App token - auto-merge merges as whoever armed it, so a GITHUB_TOKEN arming raises no push, main carries no CI passed, and EVERY later release is refused by a gate in another file'
-  fi
-
-  if printf '%s' "$ARM_STEP" | grep -qE 'GH_TOKEN: \$\{\{ (secrets\.)?GITHUB_TOKEN \}\}'; then
-    fail 'the sweep arms with GITHUB_TOKEN - see above, this silently refuses every later release'
-  else
-    pass 'and it does not fall back to GITHUB_TOKEN for the arming'
-  fi
-
-  # The dispatch existed ONLY to compensate for the push that a GITHUB_TOKEN merge never raised.
-  # Keeping it alongside an App-token arming would run CI twice on every merged combination.
-  if grep -q 'gh workflow run pull-request.yml' "$SWEEP_WF"; then
-    fail 'the sweep still dispatches CI by hand - that compensated for a push a GITHUB_TOKEN merge never raised, and an App-token merge raises it, so this now runs CI twice on every merge'
-  else
-    pass 'and the manual CI dispatch is gone, because the merge now raises the push itself'
-  fi
-
-  # A SECOND MERGE MECHANISM IS THE THING STAGE 2 REMOVED. A bare `gh pr merge` without `--auto`
-  # would merge on the sweep's own reading of green - a second opinion about which jobs matter,
-  # beside `CI passed`, which is the one the ruleset requires.
-  if grep -qE 'pr merge [^|]*--squash' "$HERE/../dependabot-auto-merge.sh" &&
-    ! grep -qE 'pr merge [^|]*--auto' "$HERE/../dependabot-auto-merge.sh"; then
-    fail 'the sweep merges directly again - that is a second merge mechanism with its own opinion of "green", beside the CI passed the ruleset requires'
-  else
-    pass 'the sweep holds no opinion about green - --auto hands that to GitHub'
-  fi
-else
-  pass 'the sweep workflow is gone entirely'
-fi
-
-printf '\na rebuild request that was REFUSED is not a rebuild request that is pending\n'
-# =================================================================================================
-# THE MARKER ANSWERED THE WRONG QUESTION FOR A DAY, AND THE COST WAS TEN SILENT REFUSALS.
-#
-# `@dependabot recreate` authorises by PUSH ACCESS. Neither `github-actions[bot]` (#303,
-# 2026-08-31) nor the `canari-auto-merge` App installation (all eight open pull requests,
-# 2026-09-03) has any, and Dependabot answers *"Sorry, only users with push access can use that
-# command"* three seconds after each ask. The sweep wrote its idempotence marker when the COMMENT
-# was POSTED and never read the reply, so every pass printed `waiting on Dependabot` about a
-# request that had already been refused - and the queue could not drain, silently, indefinitely.
-#
-# `is this broken` and `have I already asked` differ only in lifetime, and using one for the other
-# silences the trigger. These assertions hold the two facts apart.
-if [ -r "$SWEEP_WF" ]; then
-  ASK_STEP="$(sed -n '/^      - name: Ask Dependabot to rebuild the branches whose gates moved$/,$p' "$SWEEP_WF")"
-
-  # THE REPLY IS THE ONLY PLACE THE REFUSAL EXISTS. `gh pr comment` succeeds either way, so a
-  # step that checks only its own exit status cannot tell "asked" from "refused" at all.
-  if printf '%s' "$ASK_STEP" | grep -q 'push access'; then
-    pass 'the ask step reads Dependabot reply for the push-access refusal'
-  else
-    fail 'the ask step never reads Dependabot reply - posting a comment succeeds whether or not the command is honoured, so a posted comment would again be recorded as a pending rebuild and the queue would sit stuck in silence'
-  fi
-
-  # THREE STATES, NOT TWO. Without a `refused` arm the marker is the whole verdict again.
-  if printf '%s' "$ASK_STEP" | grep -qE '^ *refused\)'; then
-    pass 'and it has a refused arm, distinct from asked'
-  else
-    fail 'the ask step has no refused arm - marker-present then means pending, which is the sentence that was false three seconds after the first ask'
-  fi
-
-  # AND THE REFUSAL IS LOUD - BUT ONCE PER HEAD, WHICH IS THE HALF THE FIRST VERSION GOT WRONG.
-  # It failed while ANY branch was stuck, and this workflow runs HOURLY: that mails the maintainer
-  # about twenty-four times a day about one known condition, and a line its reader learns to skip
-  # is the one that hides the next defect. The report is what must be unconditional; the FAILURE is
-  # what must be new.
-  if printf '%s' "$ASK_STEP" | grep -qE 'if \[ ".stuck" -gt 0 \]'; then
-    pass 'the step still fails on a refusal, so something changing is mailed'
-  else
-    fail 'nothing fails when a branch cannot be rebuilt by any identity here - a correct mechanism with no report is found by hand, a day late, and this one hid ten refusals'
-  fi
-
-  # THE ANNOTATION AND THE SUMMARY COST NO MAIL, so they are the ones that run every pass. Without
-  # them, rationing the failure would make a still-stuck queue silent again after its first report.
-  if printf '%s' "$ASK_STEP" | grep -q 'GITHUB_STEP_SUMMARY'; then
-    pass 'and every pass writes the stuck branches to the step summary, which sends no mail'
-  else
-    fail 'nothing reports a stuck branch on a pass that does not fail - rationing the failure without an unconditional report makes a still-stuck queue silent again, which is the defect this whole section is about'
-  fi
-
-  # RATIONED BY A DURABLE STAMP CARRYING THE HEAD, never by a counter or a clock: a rebase replaces
-  # the head, so a branch that gets stuck AGAIN on fresh evidence fails again.
-  if printf '%s' "$ASK_STEP" | grep -q 'auto-merge-refusal-reported'; then
-    pass 'and the failure is rationed by a stamp carrying the head, so a rebased branch fails again'
-  else
-    fail 'the failure is not rationed per head - an hourly workflow that fails for as long as a known condition lasts is a mail every hour about nothing new'
-  fi
-
-  # THE CLAIM THE STEP NAME USED TO MAKE. It was written from an argument, and the measurement
-  # refutes it; re-introducing the wording would re-introduce the belief.
-  #
-  # ANCHORED ON `- name:` AND NOT ON THE FILE, because the first draft of this assertion failed on
-  # the comment that QUOTES the old name in order to say it was wrong. A file-wide grep cannot tell
-  # a claim from a quotation of a claim, and the claim is what a step NAME makes - a comment
-  # explaining the correction is the opposite of the defect.
-  if grep -E '^ *- name:' "$SWEEP_WF" | grep -q 'a rebuild request is honoured for'; then
-    fail 'the sweep again claims its App identity is one a rebuild request is honoured for - measured false on eight pull requests: an App installation is not an account with push access'
-  else
-    pass 'and nothing claims the App identity is one the rebuild is honoured for'
-  fi
-else
-  pass 'the sweep workflow is gone entirely'
-fi
+# WHAT WENT WITH IT, SO A LATER SESSION DOES NOT "RESTORE" IT. The sweep's one unique function was
+# asking Dependabot to rebase a branch whose gates had moved, and that function DID NOT WORK: the
+# ask was refused ten times out of ten, on eight pull requests and with two different identities,
+# because `@dependabot rebase` authorises by PUSH ACCESS and an App installation is not an account
+# with push access. So deleting it loses nothing that ran. The underlying question - can a pull
+# request green on an older gate set still merge - is answered where it matters instead: this
+# workflow also runs on `push: main`, so a merge that breaks the trunk turns `CI passed` red ON
+# `main`, and `release-preflight.sh` gate 3 then refuses every release from that commit.
 
 printf '\ngh api --slurp and --jq cannot be combined, and the error is easy to swallow\n'
 # =================================================================================================

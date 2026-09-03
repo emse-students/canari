@@ -29,11 +29,12 @@ failures=0
 
 # THE SWEEP CHECKS OUT `.github/scripts` SPARSELY, so this file is one of two things that puts the
 # compose file in the tree - the other being the `sparse-checkout` list in
-# `dependabot-auto-merge.yml`. Said here, by name, because the two have to move together and the
+# `pull-request.yml` (the `dependency-ceiling` job). Said here, by name, because the two have to
+# move together and the
 # failure otherwise reads as "the parse is broken" rather than "the file is not there".
 if [ ! -f "$compose" ]; then
   echo "FAIL $compose is not in the tree, so the coverage assertion below cannot run."
-  echo "     Add it to the sparse-checkout list in .github/workflows/dependabot-auto-merge.yml."
+  echo "     Add it to the sparse-checkout list in .github/workflows/pull-request.yml."
   exit 1
 fi
 

@@ -2,7 +2,8 @@
 #
 # THE CEILING'S NAME TABLE: given a dependency name, the gate this repository is MISSING for it.
 #
-# It lived inline in `dependabot-auto-merge.sh` until 2026-09-01, and the reason it moved is the
+# It lived inline in `dependabot-auto-merge.sh` (deleted 2026-09-04) until 2026-09-01, and the
+# reason it moved is the
 # incident that day: `postgres 15-alpine -> 18-alpine` auto-merged on a green suite, the deploy
 # recreated the container, and PostgreSQL 18 refused to start on a data directory initialised by 15.
 # Production lost every backend service for 33 minutes. The arm that would have refused it was simply

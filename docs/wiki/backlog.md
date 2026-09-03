@@ -373,71 +373,30 @@ major-version subdirectory, so the compose changes with the image, and the ceili
 `.github/scripts/lib/ceiling.sh` is what holds the bump back until both are done. Re-measure the size
 before the window rather than quoting this line - it is a number that only grows.
 
-### P1 - NO IDENTITY CI CAN MINT MAY ASK DEPENDABOT TO REBUILD A BRANCH, so a moved gate parks the whole queue - and the App token was the recommendation this row itself made (measured 2026-09-03)
+### ~~P1 - no identity CI can mint may ask Dependabot to rebuild a branch~~ - RETIRED 2026-09-04, the mechanism that needed it is deleted
 
-**The chain is unattended everywhere except here, and this row used to say the fix was an App
-token. It is not.** When `.github/workflows/` or `.github/scripts/` moves under a Dependabot
-branch, its green checks describe gates that no longer exist and the branch has to be rebuilt
-before any verdict on it means anything. Rebuilding is Dependabot's to do, and **`@dependabot
-recreate` authorises by PUSH ACCESS**:
+**Not fixed: withdrawn, because the thing it blocked no longer exists.** The row said that a moved
+gate parks the whole Dependabot queue, since the only exit is a rebuild and `@dependabot rebase`
+authorises by PUSH ACCESS - which no identity a workflow can mint has. That measurement stands, and
+it is worth keeping: ten refusals out of ten asks, on eight pull requests, with `github-actions[bot]`
+and with the `canari-auto-merge` App, three seconds after each ask. **An App installation is not an
+account.** `Contents: write` is not push access, and this repository recommended the App token in
+three places before measuring it.
 
-| Identity | Asked | Answer |
-| --- | --- | --- |
-| `github-actions[bot]` | #303, 2026-08-31 | *"Sorry, only users with push access can use that command."* - 3 s |
-| `canari-auto-merge` App installation | #290 #291 #295 #297 #299 #304 #309 #315, 2026-09-03 19:39 | the same sentence, 3 s after each - **ten refusals** counting the earlier asks on #304 and #309 |
+What is gone is the mechanism that needed the rebuild. `dependabot-auto-merge.yml` refused to arm a
+pull request whose check suite described gates `main` no longer carried, and the only way to lift
+that refusal was a rebuild nobody could perform. The sweep was deleted on 2026-09-04 together with
+the staleness predicate, so nothing refuses on staleness any more and there is nothing to unblock.
 
-**An App installation is not an account, and holds no push access** - `Contents: write` on the
-repository is a different thing from the push access Dependabot's command parser asks for. The App
-token was this row's own recommendation, and it was written from an argument rather than a
-measurement. It is still worth minting for the ARMING, where it is load-bearing for a different
-reason (a merge armed with `GITHUB_TOKEN` raises no `push`, so `main` carries no `CI passed` and
-every later release is refused - see [cicd](cicd.md)); it buys nothing here.
+**The underlying question is answered elsewhere, and better.** "Can a pull request that was green
+against an older set of gates still merge, and would we know" - yes it can, and yes we would:
+`pull-request.yml` runs on `push: main` as well as on `pull_request`, so the merged trunk is tested,
+and a red `CI passed` ON `main` makes `release-preflight.sh` gate 3 refuse every release cut from
+that commit. The protection sits at the release rather than at the merge, which is the only place it
+changes what a user sees.
 
-**And the refusal was SILENT for a day, which is the half that was fixable here and is now fixed.**
-The sweep wrote its idempotence marker when the COMMENT was POSTED and never read the reply, so
-every pass printed `already asked for c228e97d; waiting on Dependabot` about a request refused three
-seconds after it was made. `is this broken` and `have I already asked` differ only in lifetime, and
-using one for the other silences the trigger. Since 2026-09-03 the ask and the refusal are two
-facts, read from the same thread, and **the sweep FAILS once per (pull request, HEAD)** - not while
-the condition lasts, which on an HOURLY workflow was twenty-four identical mails a day. The
-annotation and the step summary are unconditional and send no mail; the exit status carries only
-"something changed".
-
-**AND THE QUEUE IS DRAINABLE BY HAND TODAY, measured 2026-09-03:** the maintainer's own account
-posted `@dependabot rebase` on all eight, and **seven rebased inside a minute**; #299 answered *"this
-PR has been edited by someone other than Dependabot"*, exactly as the head-author check predicts,
-and took `@dependabot recreate`. So what the missing credential costs is not the drain - it is doing
-it UNATTENDED, which is the whole point of the chain.
-
-**The other two routes are still closed, and were measured before this one:**
-
-- `PUT /pulls/{n}/update-branch` pushes a merge commit authored by `github-actions[bot]`, which
-  parks the re-triggered run in `action_required`, makes Dependabot refuse the branch for good, and
-  fails the workflow's own entry filter. It made seven branches unmergeable by every path at once
-  (2026-08-31).
-- **Closing the pull request is NOT an alternative**: Dependabot does not recreate a version whose
-  pull request was closed unmerged.
-
-**What is OWED TO THE USER, and it is the only thing that closes this route** ([CLAUDE.md](../../CLAUDE.md):
-one-off actions go to the user): **a fine-grained PAT belonging to an account with push access**,
-stored as a repository secret, used for this one step. It is the shape this row previously argued
-against - long-lived, rotated by hand - and the measurement says it is the only shape that works,
-because the authorisation is by account and an App is not one. Nothing else in the chain needs it.
-
-**AND THERE IS A FIX THAT NEEDS NO CREDENTIAL, which is why this is not simply parked.** The
-predicate calls a branch stale when ANY file under `.github/workflows/` or `.github/scripts/`
-moved - and on 2026-09-03 that was all eight open pull requests, because the CI work of that day
-touched 34 such files. Most of them cannot produce a check on a pull request at all: `ios.yml`,
-`android.yml`, `deploy.yml`, `release.yml`, `host-updates.yml` and `dev-refresh.yml` run on a
-release or a schedule, so #290 - a Rust crate bump - was declared stale by a change to the iOS
-build. **A predicate that named the last incident is not the predicate that names the next one**:
-it was written for #272, where `Boot the real AppModule` was genuinely a new job in
-`pull-request.yml`. Narrowing it to the definitions that can actually produce a pull request's
-checks - readable from each workflow's own `on:` block, a fact rather than a guess - makes the
-credential gap RARE instead of permanent, and needs nothing from anybody.
-
-**What retires this row:** a sweep pass that is green with eight open pull requests, and a sweep log
-showing a genuinely stale branch rebuilt and merged with nobody typing anything.
+The durable rule this produced is on
+[durable-rules](durable-rules.md) and stays there.
 
 ### P3 - one merge out of three did NOT delete its remote branch, and nothing here refused it (observed 2026-09-03)
 

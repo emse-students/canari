@@ -16,8 +16,14 @@
 #                        block to decide on, so it skips
 #   3. `ci-passed`       aggregates them. `success` AND `skipped` both pass; it is the ONE check
 #                        the branch ruleset requires, and the only one it could require
-#   4. `arm-auto-merge`  in PARALLEL with 1-3, not after: it declares intent and GitHub does the
-#                        merging when 3 goes green
+#
+# ARMING THE MERGE IS NOT HERE, AND THAT MOVED ON 2026-09-04. It was a job of this file, and it
+# could only ever cover HUMAN pull requests: a `pull_request` run from Dependabot gets no secrets,
+# so no App token can be minted in this context. That forced a second mechanism - a 448-line hourly
+# sweep - to arm the other half of the population. `arm-auto-merge.yml` runs on
+# `pull_request_target`, which has the base repository's secrets, and covers every pull request in
+# one file. It checks nothing out, which is what makes that trigger safe there and would make it
+# unsafe here.
 #
 # Then GitHub squash-merges, deletes the branch, and the merge raises a `push` - which runs this
 # same file again on the merged `main`. That second run is not decoration: it is what puts the
@@ -38,9 +44,10 @@ on:
     branches: [main]
   push:
     branches: [main]
-  # `dependabot-auto-merge.yml` calls this after a sweep. Its merges are made with `GITHUB_TOKEN`,
-  # which raises no `push` event - github's anti-recursion rule - so without a dispatch the merged
-  # COMBINATION would never be tested and the sweep would never be woken to drain the rest.
+  # Kept for a hand re-run of the suite on `main` after an infrastructure fault. It used to exist
+  # for the hourly sweep, whose `GITHUB_TOKEN` merges raised no `push` event and therefore never
+  # tested the merged COMBINATION; the sweep is gone and every merge is now made by the App, whose
+  # push does raise the event.
   workflow_dispatch:
   workflow_call:
     inputs:
@@ -410,7 +417,7 @@ jobs:
   # THIS JOB CONSTRUCTS THE ACTUAL `AppModule`. Until 2026-08-31 nothing in this repository ever did:
   # `NestFactory` appeared in four files and all four were a `main.ts`. That is the gate a
   # `@nestjs/platform-express` 11 -> 12 auto-merge walked straight through, and it is the gate
-  # `dependabot-auto-merge.yml` names when it refuses a framework major - so this job is what
+  # the ceiling names when it refuses a framework major - so this job is what
   # eventually lets those merge on their own.
   #
   # IT NEEDS REAL INFRASTRUCTURE, AND THE LIST WAS MEASURED RATHER THAN GUESSED: booting
@@ -809,11 +816,10 @@ jobs:
   # `always()` is what makes it run at all when something upstream failed; without it this job would
   # itself be skipped by a failed dependency, and a skipped required check is a green one.
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
-  # ═══════════════════════════════════════════════════════════════════════════════════════════════
   # DOES THIS REPOSITORY HAVE A GATE THAT WOULD SEE THIS DEPENDENCY UPDATE FAIL?
   #
   # A CHECK, SO THE ANSWER IS ON THE PULL REQUEST. Until 2026-09-03 this question was asked only
-  # inside `dependabot-auto-merge.yml` - a SECOND merge mechanism beside GitHub's own auto-merge, so
+  # inside the hourly Dependabot sweep - a SECOND merge mechanism beside GitHub's own auto-merge, so
   # a Dependabot pull request and a human's took different routes to `main` and only one of them was
   # visible where a human looks (user: *"le auto-merge et les CI doivent considerer toutes les PR,
   # les miennes ou dependabot"*).
@@ -884,104 +890,3 @@ jobs:
             exit 1
           fi
           echo "✅ every CI job passed or was skipped as having nothing to do"
-
-  # ═══════════════════════════════════════════════════════════════════════════════════════════════
-  # AND THE PULL REQUEST MERGES ITSELF
-  #
-  # WHY THIS IS A JOB HERE RATHER THAN ITS OWN WORKFLOW. It was `auto-merge.yml`, a second file
-  # listening for the same `pull_request` event as this one - so the sequence a human wanted to read
-  # ("what happens when I open a pull request?") was split across two files that never referred to
-  # each other. One event, one file, one readable order (user, 2026-09-03: *"Je veux une suite
-  # d'evenements et d'etapes"*).
-  #
-  # IT DOES NOT DEPEND ON THE TESTS, AND MUST NOT. `--auto` hands the decision to GitHub, which
-  # merges the instant the required check passes and never before; arming is a declaration of
-  # intent, not a verdict. A job that waited for the suite would hold a runner for its whole length
-  # and would then have to re-read the checks anyway - and a workflow that merges on its OWN reading
-  # of "green" is a second opinion about which jobs matter. `CI passed` is the ruleset's answer and
-  # must stay the only one.
-  #
-  # THE CREDENTIAL IS THE WHOLE DESIGN, AND `GITHUB_TOKEN` WOULD BREAK RELEASING. Auto-merge merges
-  # as whoever armed it, and a merge made by `GITHUB_TOKEN` raises NO `push` event - GitHub's
-  # anti-recursion rule. So `main` would get no run of this workflow, its merge commit would carry
-  # no `CI passed` check, and `release-preflight.sh`'s third gate - "the tests passed on the commit
-  # being released" - would refuse EVERY release, on commits that had in fact been tested. An App
-  # token does raise the event, so the same `canari-auto-merge` installation that pushes the version
-  # bump arms this. Measured on #329 and #330: merged by `app/canari-auto-merge`, each followed by a
-  # `push` run of this workflow on the merge commit.
-  #
-  # WHOSE PULL REQUESTS, AND WHY NOT EVERY ONE:
-  #
-  #   * NOT Dependabot's, AND THAT EXCLUSION IS PERMANENT - the earlier version of this comment
-  #     said it would "disappear with the sweep", and that was wrong. **A `pull_request` run from
-  #     Dependabot has no access to secrets**: GitHub runs it as if it came from a fork, with a
-  #     read-only `GITHUB_TOKEN`, so `secrets.AUTOMERGE_APP_CLIENT_ID` and its private key arrive
-  #     EMPTY and no App token can be minted here. Arming needs the App - auto-merge merges as
-  #     whoever armed it, and a `GITHUB_TOKEN` merge raises no `push`, which refuses every later
-  #     release. So Dependabot's pull requests are armed by `dependabot-auto-merge.yml`, which runs
-  #     on `workflow_run` and a schedule in the DEFAULT-BRANCH context where the secrets exist.
-  #     **One merge mechanism, two arming points, and the split is forced by where secrets live.**
-  #     What the sweep no longer does is merge: since 2026-09-03 it arms and GitHub merges, so
-  #     `CI passed` - which now includes `dependency-ceiling` - is the only answer to "is it green"
-  #     for every pull request in the repository.
-  #   * NOT an outside contributor's. `author_association` must be OWNER, MEMBER or COLLABORATOR -
-  #     somebody who could merge it by hand anyway.
-  #   * NOT a draft. A draft is a pull request whose author has said it is not ready.
-  # ═══════════════════════════════════════════════════════════════════════════════════════════════
-  arm-auto-merge:
-    name: Arm auto-merge
-    # `pull_request` only: this workflow also runs on `push` to `main`, where there is no pull
-    # request to arm and `github.event.pull_request` is null.
-    if: >
-      github.event_name == 'pull_request' &&
-      github.event.pull_request.draft == false &&
-      github.event.pull_request.user.login != 'dependabot[bot]' &&
-      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Mint the identity whose merge raises a push event
-        id: app-token
-        uses: actions/create-github-app-token@v3
-        with:
-          client-id: ${{ secrets.AUTOMERGE_APP_CLIENT_ID }}
-          private-key: ${{ secrets.AUTOMERGE_APP_PRIVATE_KEY }}
-
-      - name: Ask GitHub to merge it when the checks pass
-        env:
-          GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          PR: ${{ github.event.pull_request.number }}
-        run: |
-          set -euo pipefail
-
-          # `--squash` EXPLICITLY, because the repository permits all three methods - the merge
-          # method is decided here rather than by whatever the settings happen to allow, which is
-          # why the history is uniform.
-          #
-          # THERE IS NO `--delete-branch`, AND THAT IS THE FIX RATHER THAN AN OMISSION. It was
-          # passed until 2026-09-03 and did nothing at all: `gh` performs the deletion itself after
-          # a merge IT made, and `--auto` makes no merge - it arms and exits. #329 and #330 both
-          # left their branches behind while the flag sat in this command appearing to remove them,
-          # which is the shape of a mechanism believed because it is written down. What deletes the
-          # branch is the repository's own `delete_branch_on_merge`, and `--auto` needs
-          # `allow_auto_merge` before any of this works at all - both are repository settings, both
-          # are invisible in this tree, and both are inventoried in `infrastructure/MIGRATION.md`
-          # section 3bis alongside the ruleset.
-          if gh pr merge "$PR" --auto --squash --repo "${{ github.repository }}"; then
-            echo "Auto-merge armed. GitHub will squash-merge #$PR as soon as CI passed goes green."
-            exit 0
-          fi
-
-          # ALREADY ARMED IS NOT A FAILURE, and it is the ordinary case on `synchronize`: every push
-          # to the branch re-runs this, and GitHub refuses to arm what is already armed. Anything
-          # else is a real problem and must fail loudly - the App uninstalled, its Pull requests
-          # write permission revoked, auto-merge disabled on the repository - because the silent
-          # version of that is a pull request that simply never merges and nobody looking.
-          state="$(gh pr view "$PR" --repo "${{ github.repository }}" --json autoMergeRequest --jq '.autoMergeRequest != null')"
-          if [ "$state" = 'true' ]; then
-            echo "Auto-merge was already armed on #$PR; nothing to do."
-            exit 0
-          fi
-          echo "::error::Could not arm auto-merge on #$PR, and it is not armed. Check that the"
-          echo "::error::canari-auto-merge App is installed with Pull requests write, and that"
-          echo "::error::auto-merge is still allowed on the repository."
-          exit 1
