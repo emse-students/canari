@@ -1,10 +1,25 @@
 name: Dependabot auto-merge
 
-# Squash-merges Dependabot pull requests once the full check suite on the PR head commit is green,
-# and only for updates whose failure mode this repository can actually SEE.
+# ARMS GitHub's auto-merge on Dependabot's pull requests, and asks Dependabot to rebuild a branch
+# whose gates moved under it. **It stopped MERGING on 2026-09-03**, and that is the whole shape of
+# this file now: one merge mechanism serves every pull request in the repository, and this workflow
+# is the ARMING POINT for the pull requests that `pull-request.yml` cannot arm.
 #
-# The decision itself lives in `.github/scripts/dependabot-auto-merge.sh`, one implementation for
-# both entry points below. The header there explains the ceiling; this file explains WHEN it runs.
+# WHY THERE ARE TWO ARMING POINTS AT ALL, since one mechanism was the goal (user: *"le auto-merge et
+# les CI doivent considerer toutes les PR, les miennes ou dependabot"*): a `pull_request` run from
+# Dependabot HAS NO ACCESS TO SECRETS - GitHub runs it as if it came from a fork - so the App token
+# that arming requires cannot be minted there. This workflow runs on `workflow_run` and a schedule,
+# in the default-branch context where the secrets exist. The split is forced by where secrets live,
+# not by a second opinion about merging.
+#
+# THE CEILING IS NOT HERE ANY MORE EITHER. `dependency-ceiling.sh` is a job of `pull-request.yml`
+# feeding `ci-passed`, the one check the branch ruleset requires - so an update with no gate cannot
+# merge by ANY route, armed or not. Measured on the rebased #309: `Dependency ceiling -> FAILURE`,
+# then `CI passed -> FAILURE`. A copy of that decision here would duplicate a binding check.
+#
+# The decision that remains lives in `.github/scripts/dependabot-auto-merge.sh`, one implementation
+# for both entry points below. The header there explains what survived and why; this file explains
+# WHEN it runs.
 #
 # ---------------------------------------------------------------------------------------------
 # WHY THERE ARE THREE TRIGGERS, AND WHY THE CONVERGENT ONE IS NOT THE CLOCK
@@ -79,18 +94,10 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  # READ, NOT WRITE, SINCE 2026-09-03: this workflow no longer merges anything. The App token does
+  # the arming and the rebuild request; `GITHUB_TOKEN` only checks out and reads.
+  contents: read
   pull-requests: write
-  # `gh workflow run pull-request.yml` after a merge, and nothing else. A merge made with `GITHUB_TOKEN`
-  # raises no `push` event, so without this dispatch the merged COMBINATION is never tested and the
-  # sweep is never woken to drain the rest - it fails 403 exactly as silently as the push that never
-  # happened.
-  #
-  # IT USED TO DISPATCH THE DEPLOY TOO, and that is gone with the two-branch model: since 2026-09-02
-  # a merge to `main` deploys NOTHING, and deployment happens when a human publishes a release
-  # (`release.yml`). The arms of that chain are `workflow_call` workflows now and cannot be
-  # dispatched at all, so nothing here may try.
-  actions: write
 
 # One sweep at a time. Two overlapping passes would each read a pre-merge mergeability and race on
 # the same branches; `cancel-in-progress: false` because a pass that is already merging must finish.
@@ -174,15 +181,6 @@ jobs:
       - name: Verify the staleness predicate before trusting it
         run: bash .github/scripts/tests/gate-moves.test.sh
 
-      # AND THE TABLE THAT DECIDES WHAT MERGES, which had no test at all until it cost an outage.
-      # On 2026-09-01 `postgres 15-alpine -> 18-alpine` merged on a green suite because `postgres`
-      # was absent from the ceiling, and PostgreSQL 18 then refused production's data directory.
-      # `tests/ceiling.test.sh` reads the stateful images out of `docker-compose.prod.yml` rather
-      # than from a list, so the omission is named HERE, in the run that would do the merging,
-      # instead of by eight services going down.
-      - name: Verify the ceiling covers every stateful image production runs
-        run: bash .github/scripts/tests/ceiling.test.sh
-
       - name: Collect the pull requests to evaluate
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -212,37 +210,41 @@ jobs:
           echo "$(wc -l < "$list") pull request(s) to evaluate:"
           cat "$list"
 
-      - name: Apply the ceiling to each
+      # ARM, NEVER MERGE - and the token is the whole reason this is not a detail.
+      #
+      # `GITHUB_TOKEN` armed this until 2026-09-03, back when the step MERGED: GitHub's
+      # anti-recursion rule means a merge made with it raises no `push`, so `main` got no CI run,
+      # carried no `CI passed` check, and `release-preflight.sh`'s third gate would refuse every
+      # release built on it. The old fix was a manual `gh workflow run` dispatch, deleted with the
+      # merge that needed it. **Auto-merge merges as whoever ARMED it**, so arming with the App is
+      # what makes the eventual merge raise the event - identical to a human's pull request, which
+      # is the point of the whole change.
+      - name: Arm GitHub's auto-merge on each
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REPO: ${{ github.repository }}
         run: |
           set -uo pipefail
-          merged=0
+          armed=0
           while IFS= read -r pr; do
             [ -z "$pr" ] && continue
             echo "::group::PR #$pr"
-            # THE SCRIPT DECLINES BY PRINTING, NEVER BY STATUS - a refused or unmergeable branch
-            # is a line on stdout and an exit 0 - so a non-zero status here is the script failing
-            # to RUN, and it must be fatal and loud. It was neither: `if ...; then :; fi` swallowed
-            # every cause alike, and on 2026-09-01 that turned out to hide `Permission denied` in
-            # two of the four repositories carrying this workflow. The file had landed without its
-            # executable bit, so the sweep executed NOTHING, printed `merged 0` and went green -
-            # six consecutive passes in Sky, every one of them reporting success. It is invoked
-            # through `bash` now so the mode bit cannot decide whether the chain runs at all.
+            # THE SCRIPT DECLINES BY PRINTING, NEVER BY STATUS - a branch it will not touch is a
+            # line on stdout and an exit 0 - so a non-zero status here is the script failing to
+            # RUN, and it must be fatal and loud. It was neither: `if ...; then :; fi` swallowed
+            # every cause alike, and on 2026-09-01 that hid `Permission denied` in two of the four
+            # repositories carrying this workflow. The file had landed without its executable bit,
+            # so the sweep executed NOTHING, printed `merged 0` and went green - six consecutive
+            # passes in Sky, every one reporting success. It is invoked through `bash` now so the
+            # mode bit cannot decide whether the chain runs at all.
             status=0
             bash .github/scripts/dependabot-auto-merge.sh "$pr" | tee "$RUNNER_TEMP/out-$pr.txt" || status=$?
             if [ "$status" -ne 0 ]; then
               echo "::error::the sweep script exited $status on #$pr. It declines by PRINTING, so this is not a refusal - it could not run."
               exit "$status"
             fi
-            if grep -q "^MERGED $pr\$" "$RUNNER_TEMP/out-$pr.txt"; then
-              merged=$((merged + 1))
-              # WHICH BRANCH IT LANDED ON DECIDES WHICH REF IS TESTED. It is `main` for everything
-              # now that `dev` is gone, but it stays READ rather than assumed: this is the line that
-              # would have to change the next time a second branch exists, and hardcoding it is what
-              # made the previous switch a hazard rather than a setting.
-              sed -n 's/^MERGED_ONTO //p' "$RUNNER_TEMP/out-$pr.txt" >> "$RUNNER_TEMP/bases.txt"
+            if grep -q "^ARMED $pr\$" "$RUNNER_TEMP/out-$pr.txt"; then
+              armed=$((armed + 1))
             fi
             if grep -q "^STALE $pr\$" "$RUNNER_TEMP/out-$pr.txt"; then
               echo "$pr" >> "$RUNNER_TEMP/stale.txt"
@@ -250,8 +252,11 @@ jobs:
             echo "::endgroup::"
           done < "$PR_LIST"
 
-          echo "merged=$merged" >> "$GITHUB_ENV"
-          echo "merged $merged pull request(s) this pass"
+          # NO COUNT OF WHAT MERGED, BECAUSE THIS STEP NO LONGER MERGES ANYTHING. What merges is
+          # GitHub, when `CI passed` goes green, which may be minutes or days after this run ends.
+          # A number printed here would be a number about arming, and reading it as "merged" is
+          # exactly the confusion the old step invited.
+          echo "armed $armed pull request(s) this pass"
 
       # WHAT A STALE PULL REQUEST NEEDS, AND WHY THIS STEP CANNOT PROVIDE IT.
       #
@@ -349,27 +354,3 @@ jobs:
       # wakes the next pass - and it is also what says whether the merged COMBINATION is green,
       # which no pull request tested. It cannot reach production: a red CI on `main` blocks the
       # next release rather than breaking the running one.
-      - name: Dispatch CI for what merged
-        # Both halves are load-bearing. The step above runs without `set -e` so one unmergeable
-        # branch cannot stop a sweep, which means it can also end early and leave `merged` never
-        # written - and an UNSET value is not equal to '0', so testing only that would dispatch on
-        # the one path where nothing is known to have merged.
-        if: env.merged != '' && env.merged != '0'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          bases="$RUNNER_TEMP/bases.txt"
-          if [ ! -s "$bases" ]; then
-            # `merged` is non-zero and no branch was recorded: the two are written by the same
-            # loop, so this cannot happen without the script's contract having changed underneath.
-            echo "::error::$merged merge(s) reported and no MERGED_ONTO line to name the branch. Refusing to guess which branch to test."
-            exit 1
-          fi
-          echo "Dispatching CI for $merged merge(s)"
-          sort -u "$bases" | while IFS= read -r ref; do
-            [ -z "$ref" ] && continue
-            echo "  -> pull-request.yml on $ref"
-            gh workflow run pull-request.yml --repo "$REPO" --ref "$ref"
-          done

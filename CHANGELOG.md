@@ -26,13 +26,28 @@ which is also where every release up to and including v0.13.1 now lives.
   `updated-dependencies` block Dependabot writes into its commit message, and a human's pull
   request carries none, so there is nothing to decide and the job skips.
 
-  **This is deliberately stage one of two.** Stage two - the sweep ARMING GitHub's auto-merge
-  instead of merging on its own reading of "green" - retires the second mechanism, its second
-  opinion about which jobs matter, and the manual CI dispatch it needs because a `GITHUB_TOKEN`
-  merge raises no `push`. **Landing stage two first would re-create the outage**, because arming a
-  pull request whose ceiling refusal is not yet a required check merges `postgres 18` on a green
-  suite. So stage one is purely additive and stage two waits for this to be observed on a real
-  Dependabot pull request. Three assertions, one of which records which stage the sweep is in.
+  **Stage two landed the same day, after the binding half was OBSERVED rather than argued.**
+  `@dependabot rebase` on #309 raised the `pull_request` event the new job needs to reach an
+  existing pull request, and gave `Dependency ceiling -> FAILURE` then `CI passed -> FAILURE` - so
+  `postgres 18` can no longer merge by any route, armed or not. **The order mattered**: arming
+  before the refusal was a required check would have merged it on a green suite.
+
+  **So the sweep arms and no longer merges**, and three things went with the merge: about 200 lines
+  counting check-runs to decide "is it green", which was a SECOND OPINION beside the `CI passed`
+  the ruleset requires; the manual `gh workflow run` dispatch, which only ever compensated for the
+  `push` a `GITHUB_TOKEN` merge does not raise; and the ceiling itself, now a binding check whose
+  annotation carries the same text the sweep's comment did. `contents: write` and `actions: write`
+  went too - a workflow that merges nothing and dispatches nothing needs neither.
+
+  **The identity is the only part that is silent when wrong.** Auto-merge merges as whoever ARMED
+  it, so arming with `GITHUB_TOKEN` would raise no `push`, leave `main` without a `CI passed`
+  check, and make the release preflight's third gate refuse EVERY release - from a file with
+  nothing to do with releasing. Four assertions, two mutation-proved against exactly that swap.
+
+  **And the Dependabot exclusion in `arm-auto-merge` is PERMANENT, not pending** - the comment
+  claiming it would disappear was wrong. A `pull_request` run from Dependabot has no access to
+  secrets, so the App token cannot be minted there at all. One merge mechanism, two arming points,
+  and the split is forced by where secrets live.
 
   **One existing assertion had to be NARROWED, and it is the same lesson twice in one day.** The
   check that `arm-auto-merge` does not use `GITHUB_TOKEN` was a FILE-WIDE grep, correct while the

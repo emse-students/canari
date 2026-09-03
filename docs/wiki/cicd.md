@@ -39,23 +39,39 @@ beside GitHub's own auto-merge, so a Dependabot pull request and a human's took 
 nowhere on the pull request. It now feeds `ci-passed`, which is what makes it BINDING rather than
 advisory - an update with no gate cannot merge by any route, armed or not.
 
-**IT IS DELIBERATELY STAGE ONE OF TWO, AND THE ORDER IS NOT A PREFERENCE.** Stage two is the sweep
-ARMING GitHub's auto-merge instead of merging on its own reading of "green" - which retires the
-second mechanism, the second opinion about which jobs matter, and the manual `gh workflow run`
-dispatch the sweep needs because a `GITHUB_TOKEN` merge raises no `push`. **Landing stage two first
-would re-create the outage**: arming a pull request whose ceiling refusal was not yet a required
-check merges `postgres 18` on a green suite, which is exactly the 33 minutes of 2026-09-01. So
-stage one is purely additive, and stage two waits until this is on `main` and observed on a real
-Dependabot pull request. `release-chain.test.sh` records which stage the sweep is in, so the pair
-can never read as safe without the binding assertions passing.
+**STAGE TWO LANDED THE SAME DAY, AFTER THE BINDING HALF WAS OBSERVED and not before.** The order
+was not a preference: arming a pull request whose ceiling refusal was not yet a required check
+merges `postgres 18` on a green suite, which is exactly the 33 minutes of 2026-09-01. The
+observation that unlocked it was `@dependabot rebase` on #309 - the only way a new job can reach an
+existing pull request, since it is gated on `pull_request` - giving `Dependency ceiling -> FAILURE`
+and then `CI passed -> FAILURE`.
 
-**AND THE SWEEP STILL HOLDS TWO PROPERTIES A CHECK DOES NOT REPLACE**, which is why deleting the
-file is not the plan: CONVERGENCE (it enumerates every open Dependabot pull request, so the correct
-state is reached from any starting state - seven mergeable green pull requests sat untouched on
+**SO THE SWEEP ARMS AND NO LONGER MERGES**, and three things went with the merge:
+
+| Gone | Why it existed | Why it is gone |
+|---|---|---|
+| ~200 lines counting check-runs | to decide "is it green" | a SECOND OPINION about which jobs matter. `CI passed` is the ruleset's answer and is now the only one |
+| `gh workflow run pull-request.yml` | a `GITHUB_TOKEN` merge raises no `push`, so the merged combination was never tested | the App-token arming makes the merge raise it, exactly as for a human's pull request |
+| the ceiling, and its comment | to refuse what CI cannot judge | it is a binding CHECK now, and the annotation carries the same text the comment did |
+
+**THE IDENTITY IS THE ONLY SILENT-WHEN-WRONG PART.** Auto-merge merges as whoever ARMED it, so a
+`GITHUB_TOKEN` arming would raise no `push`, leave `main` without a `CI passed` check, and make
+`release-preflight.sh`'s third gate refuse EVERY release - from a file that has nothing to do with
+releasing. Four assertions hold it, two of them mutation-proved against exactly that swap.
+
+**WHY THERE ARE TWO ARMING POINTS RATHER THAN ONE**, which is the one thing the "single mechanism"
+goal does not get: **a `pull_request` run from Dependabot has no access to secrets** - GitHub runs
+it as if it came from a fork - so the App token cannot be minted in `pull-request.yml` for those.
+The sweep runs on `workflow_run` and a schedule, in the default-branch context where secrets exist.
+One merge mechanism, two arming points, and the split is forced by where secrets live.
+
+**AND THE SWEEP STILL HOLDS TWO PROPERTIES NOTHING ELSE DOES**, which is why deleting the file was
+never the plan: CONVERGENCE (it enumerates every open Dependabot pull request, so the correct state
+is reached from any starting state - seven mergeable green pull requests sat untouched on
 2026-08-31 because an event-only automation acts on what it happened to catch) and STALENESS
 (`lib/gate-moves.sh`, and asking Dependabot to rebuild a branch whose gates moved - the one thing
-GitHub's auto-merge does not do, since it re-evaluates when the pull request changes and not when
-`main` does).
+GitHub's auto-merge does not do, since it re-evaluates when the PULL REQUEST changes and never when
+the BASE does).
 
 **AND THEN STEP 6, WHICH IS WHY A RELEASE IS POSSIBLE AT ALL.** GitHub squash-merges, deletes the
 branch (`delete_branch_on_merge`, set true on 2026-09-03; `--delete-branch` was passed until then
