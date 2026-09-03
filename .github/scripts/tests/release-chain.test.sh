@@ -580,6 +580,84 @@ else
   pass 'the sweep workflow is gone entirely'
 fi
 
+printf '\na rebuild request that was REFUSED is not a rebuild request that is pending\n'
+# =================================================================================================
+# THE MARKER ANSWERED THE WRONG QUESTION FOR A DAY, AND THE COST WAS TEN SILENT REFUSALS.
+#
+# `@dependabot recreate` authorises by PUSH ACCESS. Neither `github-actions[bot]` (#303,
+# 2026-08-31) nor the `canari-auto-merge` App installation (all eight open pull requests,
+# 2026-09-03) has any, and Dependabot answers *"Sorry, only users with push access can use that
+# command"* three seconds after each ask. The sweep wrote its idempotence marker when the COMMENT
+# was POSTED and never read the reply, so every pass printed `waiting on Dependabot` about a
+# request that had already been refused - and the queue could not drain, silently, indefinitely.
+#
+# `is this broken` and `have I already asked` differ only in lifetime, and using one for the other
+# silences the trigger. These assertions hold the two facts apart.
+if [ -r "$SWEEP_WF" ]; then
+  ASK_STEP="$(sed -n '/^      - name: Ask Dependabot to rebuild the branches whose gates moved$/,$p' "$SWEEP_WF")"
+
+  # THE REPLY IS THE ONLY PLACE THE REFUSAL EXISTS. `gh pr comment` succeeds either way, so a
+  # step that checks only its own exit status cannot tell "asked" from "refused" at all.
+  if printf '%s' "$ASK_STEP" | grep -q 'push access'; then
+    pass 'the ask step reads Dependabot reply for the push-access refusal'
+  else
+    fail 'the ask step never reads Dependabot reply - posting a comment succeeds whether or not the command is honoured, so a posted comment would again be recorded as a pending rebuild and the queue would sit stuck in silence'
+  fi
+
+  # THREE STATES, NOT TWO. Without a `refused` arm the marker is the whole verdict again.
+  if printf '%s' "$ASK_STEP" | grep -qE '^ *refused\)'; then
+    pass 'and it has a refused arm, distinct from asked'
+  else
+    fail 'the ask step has no refused arm - marker-present then means pending, which is the sentence that was false three seconds after the first ask'
+  fi
+
+  # AND THE REFUSAL IS LOUD. A green run whose log says `waiting on Dependabot` is how this hid.
+  # The sweep feeds no required check, so failing costs no release and buys the only report there
+  # is: the queue cannot converge until a credential with push access exists.
+  if printf '%s' "$ASK_STEP" | grep -qE 'if \[ ".stuck" -gt 0 \]'; then
+    pass 'and the step fails while any branch is stuck this way, rather than reporting green'
+  else
+    fail 'nothing fails when a branch cannot be rebuilt by any identity here - a correct mechanism with no report is found by hand, a day late, and this one hid ten refusals'
+  fi
+
+  # THE CLAIM THE STEP NAME USED TO MAKE. It was written from an argument, and the measurement
+  # refutes it; re-introducing the wording would re-introduce the belief.
+  #
+  # ANCHORED ON `- name:` AND NOT ON THE FILE, because the first draft of this assertion failed on
+  # the comment that QUOTES the old name in order to say it was wrong. A file-wide grep cannot tell
+  # a claim from a quotation of a claim, and the claim is what a step NAME makes - a comment
+  # explaining the correction is the opposite of the defect.
+  if grep -E '^ *- name:' "$SWEEP_WF" | grep -q 'a rebuild request is honoured for'; then
+    fail 'the sweep again claims its App identity is one a rebuild request is honoured for - measured false on eight pull requests: an App installation is not an account with push access'
+  else
+    pass 'and nothing claims the App identity is one the rebuild is honoured for'
+  fi
+else
+  pass 'the sweep workflow is gone entirely'
+fi
+
+printf '\ngh api --slurp and --jq cannot be combined, and the error is easy to swallow\n'
+# =================================================================================================
+# MEASURED, NOT GUESSED: `the --slurp option is not supported with --jq or --template`. It is worth
+# a gate because the two read as complementary and the failure is a usage message on stderr plus an
+# EMPTY stdout - which a `|| echo '[]'` or a `2>/dev/null` turns into a plausible-looking answer.
+# `--paginate` without `--slurp` and WITH `--jq` is a different trap in the same family: each page
+# becomes its own document, so a thread past the first page is silently judged on page one.
+SLURP_OFFENDERS=""
+for f in "$WF"/*.yml "$HERE"/../*.sh "$HERE"/../lib/*.sh; do
+  [ -r "$f" ] || continue
+  # One physical line at a time: this pair is only wrong when it reaches the same invocation, and
+  # a continued `gh api` line is what carries them there.
+  if grep -nE 'gh api[^|]*--slurp[^|]*--jq|gh api[^|]*--jq[^|]*--slurp' "$f" >/dev/null 2>&1; then
+    SLURP_OFFENDERS="$SLURP_OFFENDERS $(basename "$f")"
+  fi
+done
+if [ -z "$SLURP_OFFENDERS" ]; then
+  pass 'no gh api call combines --slurp with --jq'
+else
+  fail "these files combine gh api --slurp with --jq, which gh refuses with a usage message and an empty stdout:$SLURP_OFFENDERS"
+fi
+
 printf '\n'
 if [ "$FAIL" -ne 0 ]; then
   printf '%s of %s assertions FAILED\n' "$FAIL" "$((PASS + FAIL))"

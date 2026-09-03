@@ -129,23 +129,28 @@ jobs:
       github.event.workflow_run.head_branch == 'main')
     steps:
       # THE IDENTITY PERFORMING AN AUTOMATED ACTION IS PART OF THE MECHANISM, AND `GITHUB_TOKEN`
-      # CANNOT PERFORM THIS ONE. When the gates move under a Dependabot branch it has to be rebuilt,
-      # and neither way of doing that is open to this workflow's default identity - measured, both
-      # of them, on 2026-08-31. `PUT /pulls/{n}/update-branch` pushes a commit authored by
-      # `github-actions[bot]`, which parks the re-triggered run in `action_required`, makes
-      # Dependabot refuse the branch for good and fails this workflow's own actor filter; it left
-      # seven branches unmergeable by every path at once. And `@dependabot recreate` is answered
-      # with *"Sorry, only users with push access can use that command"* when the caller is
-      # `github-actions[bot]`.
+      # CANNOT PERFORM THE ARMING. Auto-merge merges as whoever ARMED it, so an arming made with
+      # `GITHUB_TOKEN` produces a merge that raises no `push` - GitHub's anti-recursion rule - and
+      # `main` then carries no `CI passed` check, which makes `release-preflight.sh`'s third gate
+      # refuse every release built on it. MEASURED the other way on the merge of #340: armed by
+      # `app/canari-auto-merge`, and `dbae2ff4` carries a full `push` run of `pull-request.yml` with
+      # `CI passed -> success`.
       #
-      # So the sweep mints its own identity: an installation token for a GitHub App with Contents
-      # and Pull requests write on this repository. It is minted per RUN and expires in an hour,
-      # which is why an App beats a fine-grained PAT here - there is no long-lived secret to rotate
-      # before it silently expires. It is used for EXACTLY ONE STEP, the rebuild request. The merge
-      # itself stays on `GITHUB_TOKEN` deliberately: a merge made with an App token DOES raise a
-      # `push` event, and the deploy dispatch below exists precisely because a `GITHUB_TOKEN` merge
-      # does not. Swapping it would double every deploy.
-      - name: Mint the identity a rebuild request is honoured for
+      # So the sweep mints an installation token for a GitHub App with Contents and Pull requests
+      # write on this repository. It is minted per RUN and expires in an hour, which is why an App
+      # beats a fine-grained PAT here - there is no long-lived secret to rotate before it silently
+      # expires.
+      #
+      # **WHAT THIS TOKEN DOES NOT BUY IS THE REBUILD, AND THIS STEP USED TO CLAIM IT DID.** Its
+      # name was *"Mint the identity a rebuild request is honoured for"*, written from an argument
+      # rather than a measurement: `@dependabot recreate` authorises by PUSH ACCESS, and an App
+      # installation is not an account that has any. Measured on 2026-09-03 across all eight open
+      # pull requests, three seconds after each ask: *"Sorry, only users with push access can use
+      # that command."* - the same sentence `github-actions[bot]` got on #303 on 2026-08-31.
+      # Ten refusals. The ask is still made, because the refusal is what the report below is built
+      # on, and because the day a credential with push access exists it starts working with no
+      # change here.
+      - name: Mint the App identity the arming needs
         id: app-token
       # `client-id` AND NOT `app-id`: v3 deprecated the numeric id, and the annotation it printed on
       # every release run and every dependency sweep is the kind of line whose reader learns to skip
@@ -281,25 +286,33 @@ jobs:
       #   use that command." The default token is not an account, and Dependabot authorises its
       #   commands by push access.
       #
-      # So this step REPORTS rather than pretending, and the report is the point: a stale pull
-      # request that says nothing is found by hand, a week late. It names what has to happen, ONCE
-      # per pull request - a comment re-posted every sweep is noise, and noise is what its reader
-      # learns to skip.
-      #
-      # IT IS ALSO THE ONE THING IN THIS CHAIN THAT STILL WANTS A HUMAN, and closing that gap is a
-      # credential decision rather than a code one: a fine-grained PAT or a GitHub App token with
-      # push access would let the ask above succeed. Recorded in `docs/wiki/backlog.md`. Closing the
-      # pull request is NOT the alternative - Dependabot does not recreate a version whose pull
-      # request was closed unmerged.
-      # THE SWEEP ASKS FOR THE REBUILD ITSELF NOW, instead of naming the command and waiting for a
+      # THE SWEEP ASKS FOR THE REBUILD ITSELF, instead of naming the command and waiting for a
       # person to type it. A queue nobody drains is worse than the merge it prevented (user,
-      # 2026-08-31), and this was the last place in the chain where a human stood in the loop.
+      # 2026-08-31). Closing the pull request is NOT the alternative - Dependabot does not recreate
+      # a version whose pull request was closed unmerged.
       #
       # IDEMPOTENCE COMES FROM DURABLE STATE, NOT FROM A COUNTER OR A CLOCK: the marker carries the
       # HEAD the request was made against. A successful recreate replaces that head, so the marker
       # stops matching and a later staleness episode asks again; an unsuccessful one leaves the head
       # where it was, so the pass after this one does not ask twice. The command is the first line
       # of the body because that is what Dependabot parses.
+      #
+      # **BUT DURABLE STATE ANSWERS ONLY THE QUESTION IT WAS WRITTEN FOR, AND THIS MARKER ANSWERED
+      # THE WRONG ONE FOR A DAY.** It records that a COMMENT WAS POSTED. Whether Dependabot ACTED
+      # on it is a different fact, carried in Dependabot's reply, and nothing read that reply - so
+      # every pass printed `already asked for c228e97d; waiting on Dependabot`, a sentence that was
+      # false three seconds after the first ask. Dependabot is not going to do it: it authorises
+      # `recreate` by PUSH ACCESS, and neither `github-actions[bot]` (#303, 2026-08-31) nor the App
+      # (all eight open pull requests, 2026-09-03) has any. Ten refusals, none of them reported.
+      #
+      # SO THE ASK AND THE REFUSAL ARE TWO FACTS NOW, read from the SAME comment thread rather than
+      # from a second marker of our own: our ask is found by its head marker, and a `dependabot[bot]`
+      # reply about push access AFTER it is the refusal. A refusal is not retried - it is
+      # deterministic, and asking again every six hours would be noise - and it is not silent
+      # either: the step FAILS while any branch is stuck this way. A permanently red sweep is the
+      # correct accusation here, because the queue is permanently stuck: it cannot converge, it
+      # blocks no release (it is not `CI passed`), and it goes green the day the credential exists
+      # or the day the predicate stops calling these branches stale.
       - name: Ask Dependabot to rebuild the branches whose gates moved
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -310,6 +323,30 @@ jobs:
           if [ ! -s "$list" ]; then echo "no branch is waiting on a rebuild."; exit 0; fi
 
           echo "$(wc -l < "$list") branch(es) need rebuilding before their checks mean anything."
+
+          # ONE READ OF THE THREAD, IN ORDER, because the verdict is positional: a refusal is a
+          # `dependabot[bot]` reply about push access that comes AFTER our ask. `--slurp` is what
+          # makes `--paginate` safe with a jq filter - without it each page is its own document and
+          # a thread over 30 comments long would silently be judged on its first page.
+          # `--slurp` AND `--jq` ARE MUTUALLY EXCLUSIVE in `gh` ("the --slurp option is not
+          # supported with --jq or --template"), so the filter runs in a real `jq` after the
+          # pipe. Measured here before shipping rather than in the sweep afterwards.
+          thread() {
+            gh api "repos/$REPO/issues/$1/comments" --paginate --slurp 2>/dev/null \
+              | jq '[.[][] | {a: .user.login, b: .body}]' 2>/dev/null || echo '[]'
+          }
+
+          # unasked | asked | refused - the three states the thread can be in for THIS head.
+          verdict() {
+            printf '%s' "$1" | jq -r --arg m "$2" '
+              (map(.b | contains($m)) | index(true)) as $i
+              | if $i == null then "unasked"
+                elif ([.[$i + 1:][] | select(.a == "dependabot[bot]" and (.b | test("push access")))] | length) > 0
+                  then "refused"
+                else "asked" end'
+          }
+
+          stuck=0
           while IFS= read -r pr; do
             [ -z "$pr" ] && continue
             head=$(gh pr view "$pr" --repo "$REPO" --json headRefOid --jq .headRefOid) || head=""
@@ -318,10 +355,20 @@ jobs:
               continue
             fi
             marker="<!-- auto-merge-recreate $head -->"
-            if gh api "repos/$REPO/issues/$pr/comments" --paginate --jq '.[].body' | grep -qF "$marker"; then
-              echo "  #$pr: already asked for ${head:0:8}; waiting on Dependabot."
-              continue
-            fi
+            state=$(verdict "$(thread "$pr")" "$marker")
+
+            case "$state" in
+              refused)
+                stuck=$((stuck + 1))
+                echo "::error title=A stale branch cannot be rebuilt by anything here::#$pr: asked for ${head:0:8} and Dependabot refused - 'only users with push access can use that command'. The App installation is not an account with push access, and neither is github-actions[bot]. This branch cannot drain until a credential with push access makes the ask, or until the staleness predicate stops calling it stale. See docs/wiki/backlog.md."
+                continue
+                ;;
+              asked)
+                echo "  #$pr: asked for ${head:0:8}, no refusal in the thread - waiting on Dependabot."
+                continue
+                ;;
+            esac
+
             body="$RUNNER_TEMP/recreate-$pr.md"
             cat > "$body" <<EOF
           @dependabot recreate
@@ -333,24 +380,30 @@ jobs:
 
           $marker
           EOF
-            if gh pr comment "$pr" --repo "$REPO" --body-file "$body"; then
-              echo "  #$pr: rebuild requested against ${head:0:8}"
-            else
-              echo "::error::#$pr: the rebuild request could not be posted. This is the one step the default identity cannot perform, so a failure here means the App token is missing, expired, or lacks Pull requests write."
+            if ! gh pr comment "$pr" --repo "$REPO" --body-file "$body"; then
+              echo "::error::#$pr: the rebuild request could not be POSTED at all - that is the App token missing, expired, or lacking Pull requests write, and not the push-access refusal below."
+              continue
             fi
+            echo "  #$pr: rebuild requested against ${head:0:8}"
+
+            # THE RUN THAT ASKS IS THE RUN THAT REPORTS. Dependabot answered in three seconds on
+            # every one of the eight asks of 2026-09-03, so a short bounded wait turns a refusal
+            # into a finding NOW instead of in six hours. A silent expiry of this wait is not read
+            # as success: `asked` is what the next pass will re-evaluate.
+            for _ in 1 2 3 4 5 6; do
+              sleep 5
+              [ "$(verdict "$(thread "$pr")" "$marker")" = "refused" ] || continue
+              stuck=$((stuck + 1))
+              echo "::error title=A stale branch cannot be rebuilt by anything here::#$pr: the rebuild request was refused three seconds after it was made - 'only users with push access can use that command'. See docs/wiki/backlog.md."
+              break
+            done
           done < "$list"
-      # THIS STEP USED TO DISPATCH A DEPLOY, AND DELETING THAT IS THE POINT OF THE MIGRATION.
-      #
-      # A squash merge made with GITHUB_TOKEN produces a push that triggers NOTHING - github's
-      # anti-recursion rule - so CD never saw a single one of these merges and `main` drifted from
-      # production silently. `workflow_dispatch` was the documented exception to that rule and was
-      # the one call that closed the gap. **Nothing deploys at a push any more** (user, 2026-09-02),
-      # CD has no dispatch left to call, and a dependency update reaches an estate when the next
-      # release is published - so the gap it closed no longer exists.
-      #
-      # WHAT REPLACES IT IS CI, NOT NOTHING, and that is the half worth stating: the anti-recursion
-      # rule still applies, so a `GITHUB_TOKEN` merge raises no `push` event and CI does not run on
-      # `main` for it either. This dispatch keeps the sweep converging - CI's completion is what
-      # wakes the next pass - and it is also what says whether the merged COMBINATION is green,
-      # which no pull request tested. It cannot reach production: a red CI on `main` blocks the
-      # next release rather than breaking the running one.
+
+          # FAIL WHILE ANYTHING IS STUCK, and the reasoning is in the comment above the step: this
+          # is not a flaky failure to be retried, it is the queue being unable to converge, and a
+          # green run saying `waiting on Dependabot` is the sentence that hid ten refusals for a
+          # day. It blocks no release - this workflow feeds no required check.
+          if [ "$stuck" -gt 0 ]; then
+            echo "$stuck branch(es) cannot be rebuilt by any identity this workflow can mint." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi

@@ -182,9 +182,13 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    `CI passed`, and the sweep ARMS GitHub's auto-merge rather than merging on its own reading of
    green. The split exists because a Dependabot `pull_request` run has no secrets, so no App token
    can be minted there. Model on
-   [cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them); six
-   open items including **[the suppression CONTROL CASE the NestJS batch destroyed - Monday
-   2026-09-07 is the only answer](docs/wiki/backlog.md#p2---the-nine-nestjs-pull-requests-were-closed-in-one-batch-so-the-suppression-question-was-never-measured-on-one-first-and-monday-2026-09-07-is-the-only-thing-that-can-answer-it-now-updated-2026-09-03)**
+   [cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them). **BUT THE
+   QUEUE IS PARKED: no identity CI can mint may ask Dependabot to rebuild a stale branch** - the
+   App token was refused ten times, so 8/8 are stuck and the sweep is RED until a PAT with push
+   access exists or the predicate narrows
+   ([P1](docs/wiki/backlog.md#p1---no-identity-ci-can-mint-may-ask-dependabot-to-rebuild-a-branch-so-a-moved-gate-parks-the-whole-queue---and-the-app-token-was-the-recommendation-this-row-itself-made-measured-2026-09-03)).
+   Six other open items including **[the suppression CONTROL CASE the NestJS batch destroyed -
+   Monday 2026-09-07 is the only answer](docs/wiki/backlog.md#p2---the-nine-nestjs-pull-requests-were-closed-in-one-batch-so-the-suppression-question-was-never-measured-on-one-first-and-monday-2026-09-07-is-the-only-thing-that-can-answer-it-now-updated-2026-09-03)**
    and **nothing tells anybody prod is down**. Hosts:
    [host-updates](docs/wiki/infrastructure/host-updates.md).
 4. **P1 - a release-asset upload was refused WITH the permission it was granted, cause UNMEASURED.**

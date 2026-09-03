@@ -1129,18 +1129,42 @@ the gate is known to reject rather than merely to pass.
 pass, because each merge invalidated the rest. Now a single sweep merges everything that is
 mergeable, which is what makes the chain converge without a re-trigger per merge.
 
-**AND ONE THING STILL WANTS A HUMAN.** When the gates really did move, the branch really does need a
-rebuild, and the sweep can only say so: it posts one comment per pull request behind
-`<!-- canari-auto-merge-gates-moved -->` naming the single command that clears it. Closing the pull
-request is not an alternative - Dependabot does not recreate a version whose pull request was closed
-unmerged. Closing the gap is a **credential** decision rather than a code one: a fine-grained PAT or
-a GitHub App token with push access would make `@dependabot recreate` succeed from the workflow. The
-row is in [backlog](backlog.md).
+**AND ONE THING STILL WANTS A HUMAN - MEASURED, AFTER THIS PAGE ARGUED THE OPPOSITE.** When the
+gates really did move, the branch really does need a rebuild, and the sweep asks for it itself:
+`@dependabot recreate`, behind a marker carrying the head it was asked against. This page used to
+say a GitHub App token with push access "would make that succeed from the workflow". **It does
+not.** `@dependabot recreate` authorises by PUSH ACCESS, and an App installation is not an account
+that has any - `Contents: write` on the repository is a different thing:
 
-A sweep may merge several pull requests that were only ever tested apart. That is safe here for one
-reason and it is worth not breaking: **`deploy-to-server` needs `run-ci`**, so a combination that
-breaks fails CI on `main` and the deploy is skipped. `main` can go red; production cannot follow it.
-One dispatch is sent for the whole pass, not one per merge.
+| Identity | Asked | Answer |
+| --- | --- | --- |
+| `github-actions[bot]` | #303, 2026-08-31 | *"Sorry, only users with push access can use that command."* - 3 s |
+| `canari-auto-merge` App | all eight open pull requests, 2026-09-03 | the same sentence, 3 s after each - **ten refusals** |
+
+**AND THE REFUSAL WAS SILENT FOR A DAY, WHICH IS THE HALF THAT WAS FIXABLE HERE.** The marker
+records that a COMMENT WAS POSTED; whether Dependabot ACTED on it is a different fact, carried in
+its reply, and nothing read that reply. So every pass printed `already asked for c228e97d; waiting
+on Dependabot` - false three seconds after the first ask. *Durable state answers only the question
+it was written for*: `have I already asked` and `is this stuck` differ only in lifetime, and using
+one for the other silences the trigger. Since 2026-09-03 the two are read from the same thread - our
+ask by its marker, a `dependabot[bot]` reply about push access AFTER it as the refusal - a refusal
+is never retried (it is deterministic; asking again every six hours would be noise), and **the step
+FAILS while any branch is stuck this way**. A permanently red sweep is the correct accusation: it
+feeds no required check, so it blocks no release, and it goes green the day the credential exists.
+
+Closing the pull request is not an alternative - Dependabot does not recreate a version whose pull
+request was closed unmerged. What closes the route is a **fine-grained PAT from an account with push
+access**, which is the user's to mint; what makes the gap RARE rather than permanent needs nobody -
+narrowing the predicate, below. Both are in [backlog](backlog.md).
+
+**THE PREDICATE IS STILL TOO WIDE, AND 2026-09-03 IS THE MEASUREMENT THAT SAYS SO.** It fires on any
+file under `.github/workflows/` or `.github/scripts/`, and the CI work of that day touched 34 of
+them - so all eight open pull requests went stale at once, #290 (a Rust crate bump) included, by a
+change to `ios.yml`. Most of those definitions cannot produce a check on a pull request at all:
+`ios.yml`, `android.yml`, `deploy.yml`, `release.yml`, `host-updates.yml` and `dev-refresh.yml` run
+on a release or a schedule. *A predicate that named the last incident is not the predicate that
+names the next one* - this one was written for #272, where `Boot the real AppModule` was genuinely a
+new job in `pull-request.yml`.
 
 ### Who pushes the refresh decides whether it is a refresh at all
 
