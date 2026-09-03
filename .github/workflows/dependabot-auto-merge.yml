@@ -360,7 +360,7 @@ jobs:
             case "$state" in
               refused)
                 stuck=$((stuck + 1))
-                echo "::error title=A stale branch cannot be rebuilt by anything here::#$pr: asked for ${head:0:8} and Dependabot refused - 'only users with push access can use that command'. The App installation is not an account with push access, and neither is github-actions[bot]. This branch cannot drain until a credential with push access makes the ask, or until the staleness predicate stops calling it stale. See docs/wiki/backlog.md."
+                echo "::error title=A stale branch cannot be rebuilt by anything here::#$pr: asked for ${head:0:8} and Dependabot refused - 'only users with push access can use that command'. The App installation is not an account with push access, and neither is github-actions[bot]. This branch cannot drain until a credential with push access makes the ask - there is no code-side escape, because a pull_request run tests the SYNTHESISED merge commit and the self-tests read almost every workflow file, so narrowing the staleness predicate would call a branch fresh on evidence a re-run could contradict. See docs/wiki/backlog.md."
                 continue
                 ;;
               asked)
