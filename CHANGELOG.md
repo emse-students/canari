@@ -11,6 +11,47 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The release preflight approved a release whose bump could not push, and five green gates would
+  have been followed by a git error naming none of them.** The bump job checks out the RELEASED
+  commit, writes the version across 18 files and runs `git push origin HEAD:main` - a fast-forward
+  only while `main` still POINTS AT that commit. The second gate asks whether `main` CONTAINS the
+  commit, which is the right question for "is this on the trunk" and accepts `ahead`. So publishing
+  a release from a commit anything had merged past passed the whole preflight and would then have
+  died at the SECOND job of five, before a single deployment, with nothing in the error mentioning
+  the release or the gate that let it start.
+
+  **Found by reading the bump job while sequencing `v0.16.0`, not by hitting it** - `main` happened
+  to still be the alpha's bump commit. `ahead` is not always wrong, which is why the fix is a
+  classifier rather than a stricter refusal: a released tree ALREADY carrying the version being
+  released makes the bump write nothing, commit nothing and push nothing, which is the documented
+  no-op case. The discriminator - the version in the released tree - was already in the preflight's
+  working tree, so it is carried to where the decision is made instead of being learned by failing.
+  `classify_main_position` joins the other two judgements in `lib/release-preconditions.sh`, with
+  eight assertions, four of them refusals for positions it was never given.
+
+- **One of the five checks passed in silence, so a green run could not show that it had run.** The
+  version/checkbox cross-check refuses loudly and printed nothing when the two agreed:
+  `v0.16.0-alpha.2`'s log carried an `ok` line for each of the five gates and no line at all for
+  it, leaving a reader unable to tell it from a check skipped by a fall-through arm. **A mechanism
+  whose only output is a refusal is unfalsifiable while it is quiet.** Each passing arm now states
+  which two things agreed, held there by two assertions - one that the verdict is printed, one that
+  every arm sets it, because the report reads the variable under `set -u` and an arm that forgets
+  it would turn a good release into an unbound-variable failure.
+
+- **`--delete-branch` had never deleted a branch, and the setting that does was written down
+  nowhere.** It was passed to `gh pr merge --auto` and is inert there: `gh` deletes after a merge IT
+  made, and `--auto` makes none - it arms and exits. #329 and #330 both left their branches behind
+  while the flag sat in the command appearing to remove them. The flag is deleted rather than
+  commented as inert, and what actually does the work is now recorded: `delete_branch_on_merge`,
+  plus `allow_auto_merge` without which nothing arms at all, plus the branch ruleset - three
+  repository settings, invisible in the tree and reproduced from nowhere on a fork or a rebuild,
+  now `infrastructure/MIGRATION.md` section 3bis with every value READ off the live repository
+  rather than remembered. `allow_merge_commit` and `allow_rebase_merge` are also on, which is why
+  `--squash` is passed explicitly.
+
+
 ## [0.16.0] - 2026-09-03
 
 ### Changed
