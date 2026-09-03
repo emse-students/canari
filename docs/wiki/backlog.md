@@ -2655,11 +2655,14 @@ Three things that must not be got wrong:
 - **Serve it from our own origin**, never Google Fonts: a third-party font host leaks the IP of every
   member and cannot work offline in the Tauri apps.
 
-**WebKitGTK (the AppImage) is the one target that may read neither table** - it goes through
-FreeType/Skia and WebKit bug 191976 ("[FreeType] Color emoji not properly supported") is still open.
-It is also the only target where the failure is free: the system emoji font on Linux **is** Noto
-Color Emoji, so the fallback draws the same pictures. Verify it once on a real AppImage; do not design
-around it.
+**WebKitGTK was the one target that may read neither table**, and **it is no longer a target at
+all** - the Linux desktop build was dropped 2026-09-03
+([cicd](cicd.md#the-linux-desktop-build-is-suspended-not-lost-2026-09-03)), so
+this row owes one fewer verification than it did. Kept because it returns with the target: WebKitGTK
+goes through FreeType/Skia and WebKit bug 191976 ("[FreeType] Color emoji not properly supported")
+is still open. It was also the only target where the failure was free - the system emoji font on
+Linux **is** Noto Color Emoji, so the fallback drew the same pictures. Never design around it; if
+the desktop target comes back, verify it once on a real build.
 
 **And note what this is, under the standing rule that a fallback is a signal and never a path**: a
 font stack IS a fallback chain, so "it looks right" is not a verdict. The question is always *which

@@ -11,6 +11,22 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Removed
+
+- **The Linux desktop build is gone**, on the owner's decision - there is no audience for it right
+  now, and a release workflow nobody wants costs about ninety seconds and ninety megabytes on every
+  tag. `appimage-release.yml` is deleted, the README stopped advertising a Linux desktop client, and
+  the workflow tables lost their row. **Nothing was broken about it**: it built, it attached a
+  `.AppImage` to every release, and it carried the same baked-origin assertion the store bundles do.
+  Restoring it is one file out of git history and no decisions - `bundle.targets` is still `all` and
+  nothing else was adjusted to make its absence work. Two classes of mention were kept deliberately:
+  the **incident records**, because each explains a guard that is still live (the
+  `@tauri-apps/plugin-log` parity check exists because a mismatch killed Android, AppImage and iOS on
+  one tag; the `rustflags` warning exists because the AppImage release of v0.14.1 died of a leaked
+  `-D warnings`), and the **runtime fact** that `tauri://localhost` is a desktop origin too, which is
+  a property of the engine rather than of a workflow. `v0.15.0-alpha.1` is the last release carrying
+  the asset, left attached because a published release is a record.
+
 ### Added
 
 - **The four hosts take their security updates by themselves, and a daily run says whether they

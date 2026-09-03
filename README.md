@@ -31,7 +31,7 @@ Key features:
 - **Associations** — Club management, membership dues (cotisations), boutique shop (Stripe Connect)
 - **Forms & payments** — Dynamic form builder with Stripe Checkout, cash payments, Excel export
 - **News feed** — Markdown posts, polls, reactions, comments
-- **Cross-platform** — Web (SvelteKit), Android & iOS (Tauri 2), Linux desktop (AppImage)
+- **Cross-platform** — Web (SvelteKit), Android & iOS (Tauri 2)
 
 ## Architecture
 

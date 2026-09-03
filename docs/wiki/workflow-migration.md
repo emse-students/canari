@@ -546,6 +546,9 @@ derivation (`major*1e6 + minor*1e3 + patch`, which produced 14015) leaves no roo
       where a mistake ships to phones, so it is an assertion and never a convention. Written into
       FOUR workflows, not two: `cd.yml`, `android-release.yml`, `ios-release.yml` and
       `appimage-release.yml`, the last of which bakes an origin in exactly like the store bundles.
+      **`appimage-release.yml` was deleted 2026-09-03** (no audience for a Linux desktop client), so
+      the assertion lives in THREE workflows now - the box stays ticked because it records what was
+      done, and restoring that file restores its copy of the assertion with it.
       There is no fallback from the `DEV_*` secrets to the production ones anywhere - falling back
       is precisely how an alpha ends up talking to production
 - [x] a prerelease deploys the dev estate; a stable deploys production

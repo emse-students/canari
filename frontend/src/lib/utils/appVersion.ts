@@ -3,7 +3,7 @@ import { platform } from '@tauri-apps/plugin-os';
 
 import { isTauriRuntime, openExternal } from '$lib/utils/openExternal';
 
-/** GitHub repository where release artifacts (AppImage, APK) are published. */
+/** GitHub repository where release artifacts (the Android APK) are published. */
 export const CANARI_RELEASES_REPO = 'emse-students/canari';
 
 /** Universal APK asset name on GitHub Releases (Android). */
@@ -24,8 +24,8 @@ export const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=fr.
  *
  * Geo-neutral on purpose (no `/us/` path segment): Apple redirects to the viewer's own
  * regional storefront. iOS updates always go through the App Store - there is no
- * sideloadable binary like the Android APK or the desktop AppImage - so this is the
- * only meaningful update target on iOS.
+ * sideloadable binary the way Android has its APK - so this is the only meaningful
+ * update target on iOS.
  */
 export const APP_STORE_URL = 'https://apps.apple.com/app/id6793060521';
 
