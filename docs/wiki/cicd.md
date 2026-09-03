@@ -129,7 +129,7 @@ moves once dev has exercised them. Everything about the estate itself is on
 `dev-refresh.yml` copies production's data into dev weekly (Mondays 04:00 UTC) and on demand, behind
 the same gate.
 
-### Mobile CD (`ios-release.yml`, `android-release.yml`, `appimage-release.yml`)
+### Mobile CD (`ios-release.yml`, `android-release.yml`)
 
 Chained off the same bump run CD is, and each reads `frontend/package.json` for the same
 pre-release decision CD makes:
@@ -138,7 +138,35 @@ pre-release decision CD makes:
 |---|---|---|---|
 | `android-release.yml` | `.aab` for Google Play | `production` track | `internal` track |
 | `ios-release.yml` | `.ipa` via `altool` | TestFlight, App Store submission by hand | TestFlight |
-| `appimage-release.yml` | `.AppImage` for Linux desktop | attached to the release | attached to the release |
+
+#### The Linux desktop build is SUSPENDED, not lost (2026-09-03)
+
+`appimage-release.yml` was deleted on the owner's decision - *"il n'y a actuellement aucune
+perspective de ce cote la"*. It worked: it built and attached a `.AppImage` to every release, and it
+carried the same baked-origin assertion the store bundles do. Nothing was broken about it; there is
+simply no audience for a Linux desktop client right now, and a release workflow nobody wants costs
+about ninety seconds and ninety megabytes on every tag.
+
+**What actually went, and what deliberately stayed.** The workflow file went, the README stopped
+advertising a Linux desktop client, and the tables here and in
+[the French guide](../user-guide/workflow-developpement.md) lost their row. **The incident records
+kept the word on purpose**, because each one explains a guard that is still live: the
+`@tauri-apps/plugin-log` parity check exists because a version mismatch killed Android, AppImage and
+iOS on one tag, and the `rustflags` warning in `.github/actions/build-mls-wasm/action.yml` exists
+because the AppImage release of v0.14.1 died of a leaked `-D warnings`. Deleting those sentences
+would delete the reasoning behind checks that still run.
+
+**Bringing it back is one file and no decisions.** The last version is in this repository's history
+(`git log -- .github/workflows/appimage-release.yml`), Tauri's `bundle.targets` is still `all`, and
+nothing else was adjusted to make its absence work - so restoring the file restores the behaviour.
+`v0.15.0-alpha.1` is the last release carrying an AppImage asset; the asset was left attached rather
+than deleted, because a published release is a record.
+
+**One runtime fact survives the removal and must not be tidied away with it.** On
+`tauri://localhost` - iOS, macOS *and* a Linux desktop build - WKWebView drops the refresh cookie,
+which is why the client carries it in `X-Canari-Refresh` instead. That is a property of the engine,
+not of a workflow, and it stays true for anyone who builds the desktop target locally
+([sessions](sessions.md#the-credential-a-client-carries-itself)).
 
 **THERE IS NO TESTFLIGHT GROUP TO SELECT, and that surprised the checklist.** `altool --upload-app`
 hands the build to App Store Connect, and every INTERNAL tester sees every processed build
@@ -308,7 +336,7 @@ here rather than fixed silently.
 
 ```
 1. Developer: gh release create vX.Y.Z --target $(git rev-parse HEAD)
-2. Mobile workflows build iOS/Android/AppImage artifacts
+2. Mobile workflows build iOS/Android artifacts
 3. bump-version.yml commits "chore: bump version to X.Y.Z" on main
 4. CD (workflow_run) rebuilds core-service + frontend (no CI) and deploys
 5. iOS: altool upload to App Store Connect (manual TestFlight submission after)

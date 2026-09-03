@@ -89,8 +89,10 @@ lossy in exactly one direction.
 `X-Canari-Refresh` (`refresh-transport.ts`), because WKWebView drops the third-party cookie -
 measured on prod 2026-08-27, `cookies=[]` on 120 consecutive refreshes from one iPhone. When that
 header is absent the cookie is still read.
-**Why it is not just "old iOS clients":** `tauri://localhost` is ALSO the macOS and Linux AppImage
-origin, and nothing has ever measured whether their engines keep the cookie. If they do, refusing it
+**Why it is not just "old iOS clients":** `tauri://localhost` is ALSO the macOS and Linux desktop
+origin, and nothing has ever measured whether their engines keep the cookie. (No Linux desktop
+artifact SHIPS since 2026-09-03, but the origin is a property of the engine and returns with anyone
+who builds that target locally, so the shim's population is unchanged in kind.) If they do, refusing it
 here would log every desktop install out on the deploy that introduced the header - so the shim is
 covering an unknown population, not only an old one.
 **Removal condition, and it has two halves:** (1) `minClientVersion` is at or above the first release

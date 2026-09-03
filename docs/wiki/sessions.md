@@ -210,7 +210,7 @@ being refused.
   and whose durability is proven on hardware; routing them through here would unprove it.
 - **The cookie is still SET for everyone**, including the clients that will drop it. It is unreadable
   by the page's own JavaScript, so it stays the better credential wherever it survives - and
-  `tauri://localhost` is also macOS and the Linux AppImage, where nobody has measured whether it does.
+  `tauri://localhost` is also macOS and a Linux desktop build, where nobody has measured whether it does.
   Reading it when no header arrives is therefore a shim over an UNKNOWN population, not just an old
   one, and it is registered as such in
   [`legacy-compatibility.md`](legacy-compatibility.md) with a removal condition that requires that

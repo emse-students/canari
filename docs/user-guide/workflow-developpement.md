@@ -116,7 +116,6 @@ Ensuite, sans intervention :
 | `cd.yml` | relit la version, en deduit l'estate, reconstruit ce qui a change depuis la release **de meme nature**, deploie |
 | `android-release.yml` | `.aab` signe -> Play, piste `internal` pour une alpha, `production` pour une stable |
 | `ios-release.yml` | `.ipa` -> App Store Connect via `altool`. Tous les testeurs **internes** voient chaque build traite automatiquement |
-| `appimage-release.yml` | `.AppImage` attache a la release |
 
 ### 4.1 Le piege : la case "pre-release" et le numero de version doivent dire la meme chose
 

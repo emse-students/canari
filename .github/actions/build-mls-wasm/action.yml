@@ -1,7 +1,7 @@
 name: Build MLS WASM
 description: >
   Compile frontend/mls-wasm into frontend/src/lib/wasm. The output is a build artefact and is
-  never committed, so EVERY pipeline that ships a client - web, Android, iOS, AppImage - builds
+  never committed, so EVERY pipeline that ships a client - web, Android, iOS - builds
   it here. One place, one pinned wasm-pack, one cache key: a client cannot be a crypto fix behind
   another without this file changing.
 

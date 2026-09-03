@@ -1595,9 +1595,8 @@ showed "not sticky," never why, and the actual gap (0.05px) was only visible by 
 
 | Workflow | Output |
 |---|---|
-| `ios.yml` | `.ipa` for TestFlight (uses `altool`) |
-| `android.yml` | `.aab` for Google Play |
-| `appimage.yml` | `.AppImage` for Linux desktop |
+| `ios-release.yml` | `.ipa` for TestFlight (uses `altool`) |
+| `android-release.yml` | `.aab` for Google Play |
 | `bump-version.yml` | Bumps `MARKETING_VERSION` across iOS + Android |
 
 See [`cicd.md`](../cicd.md) for the full pipeline.

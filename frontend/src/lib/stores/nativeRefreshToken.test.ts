@@ -29,7 +29,7 @@ afterEach(() => {
 });
 
 describe('usesBodyRefreshTransport', () => {
-  it('is true on the custom scheme - iOS, macOS and the Linux AppImage', () => {
+  it('is true on the custom scheme - iOS, macOS and a Linux desktop build', () => {
     servedOver('tauri:');
     expect(usesBodyRefreshTransport()).toBe(true);
   });
