@@ -8,7 +8,7 @@ name: CI
 # check cannot: an admin bypassing the ruleset for an emergency hotfix still gets told, on `main`,
 # what the bypass skipped.
 #
-# NOTHING HERE DEPLOYS. Deployment happens when a release is published (`cd.yml`), so a red run on
+# NOTHING HERE DEPLOYS. Deployment happens when a release is published (`release.yml`), so a red run on
 # `main` is a statement about the repository, never about production - which is still serving the
 # last release.
 on:
@@ -105,7 +105,7 @@ jobs:
           fi
           # THE SFU, WHICH NOTHING HERE COMPILED UNTIL 2026-08-27 - the same hole as the native
           # crate below, found the same way. `apps/call-service` was in no matrix at all, so the
-          # ONLY thing that ever built it was the Docker stage in `cd.yml`, which runs AFTER a
+          # ONLY thing that ever built it was the Docker stage in `deploy.yml`, which runs AFTER a
           # merge. Two Dependabot majors went green through that gap and landed on `main` broken:
           # #222 (webrtc 0.11 -> 0.17, which deleted `RTCIceServer::credential_type`) and #227
           # (axum 0.7 -> 0.8, whose text frames became `Utf8Bytes`). The failure surfaced as a red
@@ -233,15 +233,23 @@ jobs:
           # that breaks it. That is the same shape as the two entries below and the one above, and
           # it is the reason this list keeps growing rather than being tidied into a prefix.
           #
-          # `cd.yml` IS AN INPUT, and it is the least obvious entry here. `tests/deploy-env.test.sh`
-          # derives the expected key set of a deployed environment FROM `cd.yml`'s own
+          # THE FOUR RELEASE WORKFLOWS ARE INPUTS, and they are the least obvious entries here.
+          # `tests/deploy-env.test.sh` derives the expected key set of a deployed environment FROM
+          # `deploy.yml`'s own
           # `upsert_env_var` calls - so the change that must run it is a key added THERE and not to
           # `infrastructure/deploy/env-manifest.tsv`. A derived test whose source sits outside its
           # own trigger is a test that passes on the very commit that breaks it. `.env.example` joins
           # for the same reason: it is the template every rendered .env is built from.
+          #
+          # `release.yml`, `android.yml` and `ios.yml` are there because `tests/release-chain.test.sh`
+          # READS ALL FOUR: it asserts the release still has the shape the three human gestures
+          # require - one entry point, the gates before the bump, the bump before every arm, and no
+          # arm resolving `main` for itself. Every defect that chain has actually had was a wiring
+          # defect rather than a bug in a script, so the files themselves are the test's subject.
+          # `bump-staging.test.sh` reads `release.yml` too, for how the bump stages its commit.
           if has '^\.github/scripts/' \
             || has '^infrastructure/(docker-compose\.(prod|dev)\.yml|dev/|local/|deploy/|\.env\.example)' \
-            || has '^\.github/workflows/cd\.yml$' \
+            || has '^\.github/workflows/(release|deploy|android|ios)\.yml$' \
             || has '^scripts/bump-app-version\.sh$' \
             || has '\.md$' \
             || has '^Makefile'; then

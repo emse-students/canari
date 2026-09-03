@@ -1,18 +1,31 @@
-name: iOS Release
+name: Ship to the App Store
 
 # Mirrors android-release.yml: runs after "Bump version on release" syncs
 # frontend/package.json on main, and attaches the signed .ipa to the GitHub Release.
 # Public repo => GitHub-hosted macOS runners are free.
+# CALLED BY `release.yml`, AND BY NOTHING ELSE. It used to listen for the bump run's completion
+# itself, which is what made three workflows each re-derive the same facts and each resolve `main`
+# for itself - so a merge landing mid-release could give a store a different tree from production,
+# with nothing anywhere to say so. The orchestrator resolves the commit once and hands it down.
 on:
-  workflow_run:
-    workflows: ['Bump version on release']
-    types: [completed]
-  workflow_dispatch:
+  workflow_call:
+    inputs:
+      sha:
+        description: 'The exact commit to build - resolved ONCE by the caller'
+        required: true
+        type: string
+      version:
+        description: 'The version the bump wrote into the manifests'
+        required: true
+        type: string
+      prerelease:
+        description: 'The string "true" or "false", already read off the version by the caller'
+        required: true
+        type: string
 
 jobs:
   build-ios:
     name: Build iOS IPA
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: macos-15 # Xcode 16.2+ (required for current iOS SDK / Tauri toolchain)
     permissions:
       contents: write
@@ -20,34 +33,22 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: main
+          ref: ${{ inputs.sha }}
 
-      # THE MANIFEST DECIDES WHETHER THIS IS AN ALPHA, for the same reason as everywhere else:
-      # `github.event.release.prerelease` does not exist in a `workflow_run` context, and
-      # `workflow_run.head_branch` says `main` on the hand-dispatched path. A hyphen in the semver
-      # version IS the definition of a pre-release.
-      #
-      # WHAT IT DOES *NOT* CHANGE HERE, and this is worth saying because the checklist expected it
-      # to: there is no TestFlight GROUP to select. `altool --upload-app` hands the build to App
-      # Store Connect and every INTERNAL tester sees every processed build automatically - internal
-      # groups are not opt-in per build, unlike external ones, which is exactly why decision 9 chose
-      # internal channels (no Beta App Review in the loop). The alpha/stable difference on iOS is
-      # therefore the BACKEND the bundle is built against, below, and nothing else. An App Store
-      # submission is still a manual act in App Store Connect.
-      - name: Resolve release tag
+      # THE CALLER HAS ALREADY DECIDED. This step used to read `frontend/package.json` back off the
+      # checkout, for a reason that was correct at the time: a `workflow_run` carries neither
+      # `release.prerelease` nor a usable branch. `release.yml` now reads the manifest the bump just
+      # WROTE and hands the same answer to all three chains, so the App Store channel, the Play
+      # track and the estate cannot disagree.
+      - name: Read the release under way
         id: release_tag
         run: |
           set -euo pipefail
-          VERSION="$(bash scripts/read-app-version.sh)"
-          case "$VERSION" in
-            *-*) PRERELEASE=true ;;
-            *)   PRERELEASE=false ;;
-          esac
           {
-            echo "version=${VERSION}"
-            echo "prerelease=${PRERELEASE}"
+            echo "version=${{ inputs.version }}"
+            echo "prerelease=${{ inputs.prerelease }}"
           } >> "$GITHUB_OUTPUT"
-          echo "Building Canari v${VERSION} (prerelease=${PRERELEASE})"
+          echo "Building Canari v${{ inputs.version }} (prerelease=${{ inputs.prerelease }})"
 
       - name: Select Xcode (>= 16.2)
         uses: maxim-lobanov/setup-xcode@v1

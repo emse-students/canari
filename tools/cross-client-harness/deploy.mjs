@@ -39,12 +39,19 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
- * The workflow that restarts production, and since 2026-09-01 the only CD workflow there is:
- * `cd-dev.yml` was deleted, dormant and wired to production's own secrets. When the CD is unified
- * onto one environment-parameterised workflow this name stays correct, but the rig will have to say
- * WHICH environment it means.
+ * The workflow that restarts production - and since 2026-09-03 it is the RELEASE, not a deploy.
+ *
+ * The unification this file's previous comment anticipated has happened, and it went one step
+ * further than expected: `cd.yml` is now `deploy.yml`, a `workflow_call` workflow that produces no
+ * run of its own, so `gh run list --workflow deploy.yml` returns nothing at all. The run that
+ * restarts an estate is `release.yml`, which carries the deploy and both store chains as jobs.
+ *
+ * THE RIG MUST THEREFORE READ WHICH ESTATE A RUN WAS FOR, because one workflow now covers both: a
+ * `-alpha.N` release deploys dev and a stable deploys production, and only the run's version says
+ * which. Until it does, treat every release run as a possible production restart - over-reporting
+ * costs a re-run, under-reporting files a Work Package against the product for something we did.
  */
-export const DEPLOY_WORKFLOW = 'cd.yml';
+export const DEPLOY_WORKFLOW = 'release.yml';
 
 /** The repository root - `gh` resolves the repo from the working directory, and the rig runs in `tools/`. */
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');

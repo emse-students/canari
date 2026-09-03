@@ -1,16 +1,29 @@
-name: Android Release
+name: Ship to Google Play
 
 # Runs after "Bump version on release" syncs frontend/package.json on main.
+# CALLED BY `release.yml`, AND BY NOTHING ELSE. It used to listen for the bump run's completion
+# itself, which is what made three workflows each re-derive the same facts and each resolve `main`
+# for itself - so a merge landing mid-release could give a store a different tree from production,
+# with nothing anywhere to say so. The orchestrator resolves the commit once and hands it down.
 on:
-  workflow_run:
-    workflows: ['Bump version on release']
-    types: [completed]
-  workflow_dispatch:
+  workflow_call:
+    inputs:
+      sha:
+        description: 'The exact commit to build - resolved ONCE by the caller'
+        required: true
+        type: string
+      version:
+        description: 'The version the bump wrote into the manifests'
+        required: true
+        type: string
+      prerelease:
+        description: 'The string "true" or "false", already read off the version by the caller'
+        required: true
+        type: string
 
 jobs:
   build-android:
     name: Build Android APK
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -18,23 +31,23 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: main
+          ref: ${{ inputs.sha }}
 
-      # THE MANIFEST DECIDES WHICH TRACK THIS BUILD IS FOR, and it is the only thing that can.
-      # `github.event.release.prerelease` does not exist in a `workflow_run` context - the event
-      # here is the BUMP run's completion - and `workflow_run.head_branch` says `main` whenever the
-      # bump was dispatched by hand, which would put an alpha on the production track. After the
-      # bump, `frontend/package.json` carries the version, and a hyphen in a semver version IS the
-      # definition of a pre-release.
-      - name: Resolve release tag
+      # THE TRACK IS THE ONLY THING DECIDED HERE, and it is decided from the caller's answer.
+      #
+      # This step used to read `frontend/package.json` back off the checkout and derive the version
+      # and the pre-release flag itself, for a reason that was correct at the time: a `workflow_run`
+      # carries neither `release.prerelease` nor a usable branch. It is no longer this file's
+      # question. `release.yml` reads the manifest the bump just WROTE and hands the answer to all
+      # three chains, so the Play track, the App Store channel and the estate cannot disagree - which
+      # they could when each chain derived its own.
+      - name: Resolve the Play track
         id: release_tag
         run: |
           set -euo pipefail
-          VERSION="$(bash scripts/read-app-version.sh)"
-          case "$VERSION" in
-            *-*) PRERELEASE=true;  TRACK=internal ;;
-            *)   PRERELEASE=false; TRACK=production ;;
-          esac
+          VERSION="${{ inputs.version }}"
+          PRERELEASE="${{ inputs.prerelease }}"
+          if [ "$PRERELEASE" = "true" ]; then TRACK=internal; else TRACK=production; fi
           {
             echo "version=${VERSION}"
             echo "prerelease=${PRERELEASE}"

@@ -81,8 +81,15 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  # `gh workflow run cd.yml` after a merge. Without it the dispatch 403s and the deploy is skipped
-  # exactly as silently as the push that never triggered one.
+  # `gh workflow run ci.yml` after a merge, and nothing else. A merge made with `GITHUB_TOKEN`
+  # raises no `push` event, so without this dispatch the merged COMBINATION is never tested and the
+  # sweep is never woken to drain the rest - it fails 403 exactly as silently as the push that never
+  # happened.
+  #
+  # IT USED TO DISPATCH THE DEPLOY TOO, and that is gone with the two-branch model: since 2026-09-02
+  # a merge to `main` deploys NOTHING, and deployment happens when a human publishes a release
+  # (`release.yml`). The arms of that chain are `workflow_call` workflows now and cannot be
+  # dispatched at all, so nothing here may try.
   actions: write
 
 # One sweep at a time. Two overlapping passes would each read a pre-merge mergeability and race on
