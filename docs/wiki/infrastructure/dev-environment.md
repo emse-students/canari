@@ -90,7 +90,7 @@ to `127.0.0.1`; dev is the stricter of the two, deliberately, since nothing but 
 business reaching it.
 
 **ALL THREE ARE `computed` MANIFEST ROWS, AND THAT IS THE ONLY DISPOSITION THAT WORKS HERE.** The
-first bootstrap could not bind any of them, because `cd.yml` had set them in dev's `.env` with an
+first bootstrap could not bind any of them, because `deploy.yml` had set them in dev's `.env` with an
 "add if missing" default - `grep -q '^FRONTEND_HOST_PORT=' .env || echo FRONTEND_HOST_PORT=3080` -
 which can never fire: `render-env.sh` COPIES `infrastructure/.env.example` and then upserts the
 manifest rows over it, and the template declares all three keys with production's values. Dev
@@ -235,7 +235,7 @@ the update button. A build identity is REPORTING; a version is DECIDED on.
 [`version.service.spec.ts`](../../../apps/core-service/src/version/version.service.spec.ts) asserts
 `version` stays a bare semver while `build` carries the suffix.
 
-Both variables are now written by the pipeline: `cd.yml` passes `--build dev.<sha7>` to
+Both variables are now written by the pipeline: `deploy.yml` passes `--build dev.<sha7>` to
 `render-env.sh`, which writes `DEPLOY_BUILD` for dev and, by decision, nothing for production. **So a
 non-null `build` IS dev**, and that is the cheapest statement anyone can make about which estate a
 name is serving.
@@ -303,7 +303,7 @@ Run by `make test-ci-scripts`, which is a CI job:
 | [`dev-copy-guards.test.sh`](../../../.github/scripts/tests/dev-copy-guards.test.sh) | the payment columns from the entity declarations |
 | [`dev-gap.test.sh`](../../../.github/scripts/tests/dev-gap.test.sh) | the row set from production's compose file's named stateful images |
 | [`ceiling.test.sh`](../../../.github/scripts/tests/ceiling.test.sh) | the stateful image names from `docker-compose.prod.yml` |
-| [`deploy-env.test.sh`](../../../.github/scripts/tests/deploy-env.test.sh) | the expected `.env` key set from `cd.yml`'s own `upsert_env_var` calls, and the dev secret list from the manifest - it also asserts that `deploy-dev` references no production secret by its bare name |
+| [`deploy-env.test.sh`](../../../.github/scripts/tests/deploy-env.test.sh) | the expected `.env` key set from `deploy.yml`'s own `upsert_env_var` calls, and the dev secret list from the manifest - it also asserts that `deploy-dev` references no production secret by its bare name |
 
 Every one of them reads its subject from a source of truth rather than a hand-written list, for the
 same reason: the failure mode of a guard list is an ABSENCE, and an absence in a hand-written list
@@ -313,7 +313,7 @@ passes silently.
 
 ## 8. How it is deployed
 
-One workflow, `cd.yml`, with ONE added job since 2026-09-03, and a second that refreshes the data.
+One workflow, `deploy.yml`, with ONE added job since 2026-09-03, and a second that refreshes the data.
 Both are gated on `vars.DEV_ENVIRONMENT_ENABLED == 'true'`, a repository VARIABLE rather than a
 secret so its value is visible in the run log - whether a second estate is being deployed is not a
 secret, and a silent gate is one nobody can debug.
@@ -356,7 +356,7 @@ follows.
 the estate up: `up -d` alone sees no reason to recreate a container whose tag has not changed. It is
 also why a service a release does not rebuild keeps the image it has - that is what a selective
 rebuild means, and it is why the change detector's baseline must be the previous PRE-RELEASE and not
-the previous release of any kind ([cicd](../cicd.md#cd-cdyml)).
+the previous release of any kind ([cicd](../cicd.md#deploy-an-estate-deployyml)).
 
 ### The deploy is two scripts, and the order is load-bearing
 

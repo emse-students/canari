@@ -7,6 +7,19 @@ name: Ship to the App Store
 # itself, which is what made three workflows each re-derive the same facts and each resolve `main`
 # for itself - so a merge landing mid-release could give a store a different tree from production,
 # with nothing anywhere to say so. The orchestrator resolves the commit once and hands it down.
+#
+# AND IT IS ALSO HAND-DISPATCHABLE AS A PURE COMPILE CHECK, which is a capability rather than a
+# second door. This is the ONLY way to compile Swift, ObjC or Kotlin from the Windows workstation
+# this project is developed on: none of a Swift `guard` body that falls through, a Kotlin nested
+# type in a companion object, or a plugin command missing from its ACL is visible to
+# `cargo clippy`, `bun run check` or any gate that runs locally. Collapsing the release chain into
+# one run removed the trigger for a commit, which would have taken that capability away silently.
+#
+# WHAT MAKES IT SAFE IS `publish`, CARRIED AS DATA. The old version reasoned about
+# `github.event_name` to tell a compile check from a release - and in a called workflow
+# `github.event_name` is the CALLER's event, so that reasoning is not merely wrong here, it is
+# unanswerable. A dispatch therefore declares `publish: false` and every step that reaches a store
+# or a release reads that input instead of guessing from an event.
 on:
   workflow_call:
     inputs:
@@ -23,6 +36,39 @@ on:
         required: true
         type: string
 
+      publish:
+        description: 'Whether this run may reach a store or a release. A release always may.'
+        required: false
+        default: true
+        type: boolean
+
+  # A COMPILE CHECK, and it ships nothing: `publish` defaults to false here and every publishing
+  # step is gated on it. `sha` may be left empty, in which case the branch this is dispatched from
+  # is what gets built - which is the whole point when the question is "does this native change
+  # compile at all".
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: 'Commit to build. Empty builds the branch this is dispatched from.'
+        required: false
+        default: ''
+        type: string
+      version:
+        description: 'Version to stamp. Only affects the artefact name on a compile check.'
+        required: false
+        default: '0.0.0-compilecheck'
+        type: string
+      prerelease:
+        description: 'The string "true" or "false". A compile check should stay "true".'
+        required: false
+        default: 'true'
+        type: string
+      publish:
+        description: 'Leave OFF. Turning it on makes a hand-dispatched run reach a real store.'
+        required: false
+        default: false
+        type: boolean
+
 jobs:
   build-ios:
     name: Build iOS IPA
@@ -33,7 +79,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.sha }}
+          # An empty `sha` is the compile-check case: build the ref this was dispatched from.
+          ref: ${{ inputs.sha != '' && inputs.sha || github.ref }}
 
       # THE CALLER HAS ALREADY DECIDED. This step used to read `frontend/package.json` back off the
       # checkout, for a reason that was correct at the time: a `workflow_run` carries neither
@@ -486,7 +533,7 @@ jobs:
         # CREATE one - which would publish a release, which would start `release.yml` again. Reading
         # the caller's event is the precise question: attach the artefact to the release that
         # triggered this run, and to nothing else.
-        if: github.event_name == 'release'
+        if: inputs.publish && github.event_name == 'release'
         with:
           tag_name: v${{ steps.release_tag.outputs.version }}
           fail_on_unmatched_files: true
@@ -496,13 +543,18 @@ jobs:
 
       - name: Upload to TestFlight / App Store Connect
         id: testflight
-        # NO EVENT CONDITION, and that is the fix rather than an omission. This step used to read
-        # `github.event_name == 'workflow_run'`, which meant "a real release rather than a
-        # hand-dispatched test build". In a `workflow_call` workflow `github.event_name` is the
-        # CALLER's event - `release` or `workflow_dispatch` - so that condition became permanently
-        # FALSE when the chain collapsed into one run, and the store would have received nothing at
-        # all, silently. The distinction it expressed is gone too: a dispatch now goes through the
-        # same preflight and IS a release, so both paths must ship.
+        if: inputs.publish
+        # GATED ON `inputs.publish`, WHICH IS DATA, and never on an event again. This step used to
+        # read `github.event_name == 'workflow_run'`, meaning "a real release rather than a
+        # hand-dispatched compile check" - and in a `workflow_call` workflow `github.event_name` is
+        # the CALLER's event, so the condition became permanently FALSE when the chain collapsed
+        # into one run: the build would have succeeded, the run would have been green, and NO STORE
+        # WOULD HAVE RECEIVED ANYTHING.
+        #
+        # The distinction it was reaching for is real and still needed - a compile check must ship
+        # nothing - so it is carried explicitly by the caller instead of inferred from an event
+        # nobody here can see. `release.yml` passes nothing and takes the callable default, `true`;
+        # a hand dispatch of THIS workflow defaults it to `false`.
         env:
           ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
@@ -560,7 +612,7 @@ jobs:
       # Apple refuses `0.15.0-alpha.1` outright. A pre-release's destination IS TestFlight, which
       # the upload above has already reached - there is nothing further to do for one.
       - name: Create the App Store version, attach the build, and submit for review
-        if: inputs.prerelease == 'false' && steps.testflight.outputs.uploaded == 'true'
+        if: inputs.publish && inputs.prerelease == 'false' && steps.testflight.outputs.uploaded == 'true'
         env:
           ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}

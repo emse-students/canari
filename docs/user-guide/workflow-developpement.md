@@ -31,7 +31,7 @@ secrets.
 | rien (un simple merge) | rien | rien |
 
 **Ce qui distingue les deux, c'est le tiret dans le numero de version.** Pas une case a cocher sur
-GitHub, pas une branche : `cd.yml` relit la version dans `frontend/package.json` apres le bump, et
+GitHub, pas une branche : `deploy.yml` relit la version dans `frontend/package.json` apres le bump, et
 un tiret dedans **est** la definition d'une pre-release. Le meme test est dans
 `scripts/bump-app-version.sh`. Une seule source de verite, donc pas de desaccord possible entre ce
 qui est construit et ce qui est deploye.
@@ -110,12 +110,39 @@ bruler ; ca se note dans `CHANGELOG.md` quand ca arrive.
 
 Ensuite, sans intervention :
 
+**Tout se passe dans UN SEUL run**, `Release` (`release.yml`), et dans cet ordre :
+
 | etape | ce qui se passe |
 |---|---|
-| `bump-version.yml` | ecrit la version dans `package.json`, les `Cargo.toml`, la config Tauri et le projet iOS, calcule les numeros de build des stores, et pousse sur `main` |
-| `cd.yml` | relit la version, en deduit l'estate, reconstruit ce qui a change depuis la release **de meme nature**, deploie |
-| `android-release.yml` | `.aab` signe -> Play, piste `internal` pour une alpha, `production` pour une stable |
-| `ios-release.yml` | `.ipa` -> App Store Connect via `altool`. Tous les testeurs **internes** voient chaque build traite automatiquement |
+| `preflight` | cinq verifications. **Si l'une refuse, rien ne bouge du tout** : pas de bump, pas de deploiement, aucun store. Voir 4.0 |
+| `bump` | ecrit la version dans `package.json`, les `Cargo.toml`, la config Tauri et le projet iOS, calcule les numeros de build des stores, pousse sur `main`, et **fixe le commit** que les trois bras ci-dessous construiront |
+| `deploy.yml` | reconstruit ce qui a change depuis la release **de meme nature**, deploie l'estate (dev pour une alpha, production pour une stable) |
+| `android.yml` | `.aab` signe -> Play, piste `internal` pour une alpha, `production` pour une stable |
+| `ios.yml` | `.ipa` -> App Store Connect via `altool`. Pour une **alpha**, ca s'arrete la et les testeurs internes voient le build. Pour une **stable**, la version App Store est creee, le build y est rattache, les notes sont ecrites et **le tout est soumis a validation Apple** - plus aucun geste manuel |
+
+### 4.0 Les cinq refus possibles, et ce qu'il faut faire de chacun
+
+Aucun n'est contournable par un drapeau : un contournement serait un chemin de repli, et emprunter
+un chemin de repli veut dire que le chemin principal est casse. Le vrai chemin d'urgence n'est pas
+logiciel - c'est un humain avec les droits admin, et ca s'ecrit dans `CHANGELOG.md` quand ca arrive.
+
+| le refus | ce qu'il faut faire |
+|---|---|
+| la version n'est pas une version | supprimer la release, la republier avec un tag lisible (`v0.16.0` ou `v0.16.0-alpha.1`) |
+| le commit n'est pas sur `main` | passer par une pull request - rien ici ne deploie un commit que le tronc ne porte pas |
+| `CI passed` n'est pas vert **sur ce commit** | reparer les tests. Un check **absent** est refuse aussi : ce n'est pas un check qui passe |
+| **la prod serait en avance sur dev** (stables seulement) | publier d'abord une **pre-release sur ce meme commit**. Elle deploie dev en quelques minutes et deplace le repere que cette verification lit ; republier la stable ensuite |
+| les notes App Store ne nomment pas cette version | reecrire `frontend/src-tauri/store/whats-new.txt`, **premiere ligne `version: X.Y.Z`**, puis republier |
+
+Le quatrieme est la raison d'etre du fichier : *"Je ne veux pas un detecteur de retard, je ne veux
+pas que ca soit possible."* Il n'y a donc pas de rapport a lire - il y a un refus.
+
+Le cinquieme est la seule chose qu'un humain **doit** ecrire a chaque stable. Apple refuse une
+soumission sans notes de version ; les lui laisser decouvrir a la fin d'une release couterait toute
+la release (bump fait, production deployee, Play publie, vingt minutes de build macOS), donc c'est
+verifie en quelques secondes avant que quoi que ce soit ne bouge. **La premiere ligne nomme sa
+version** parce qu'un simple "le fichier n'est pas vide" passerait indefiniment sur des notes que
+personne n'a mises a jour, et le store afficherait celles de la release d'avant.
 
 ### 4.1 Le piege : la case "pre-release" et le numero de version doivent dire la meme chose
 
@@ -256,7 +283,7 @@ docker compose -f canari/infrastructure/docker-compose.prod.yml ps
 > bien l'un que l'autre.
 
 **Rejouer un deploiement a moitie rate**, c'est "Re-run failed jobs" sur le run qui existe deja.
-`cd.yml` n'a **pas** de `workflow_dispatch` : ce serait une deuxieme porte vers la machine, et une
+`deploy.yml` n'a **pas** de `workflow_dispatch` : ce serait une deuxieme porte vers la machine, et une
 deuxieme porte est exactement ce que la migration a supprime.
 
 ---
@@ -269,7 +296,7 @@ deuxieme porte est exactement ce que la migration a supprime.
 2. **Verifier le numero de build iOS depuis un Mac.** La seule question que cette machine ne peut
    pas trancher : savoir si `tauri ios build` reecrit `CFBundleVersion` par-dessus ce que le bump y
    a mis. Si oui, TestFlight refusera la deuxieme alpha d'une meme version, et ca se corrige dans
-   `ios-release.yml`.
+   `ios.yml`.
 
 Le reste de ce qui t'est du - decisions, rotations, clics uniques - est dans **une seule table**,
 [`docs/wiki/backlog.md`](../wiki/backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks).

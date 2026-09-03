@@ -6,7 +6,7 @@ operationnel en un seul pipeline.
 
 ## Deploiement
 
-La CD (`.github/workflows/cd.yml`, job `deploy-to-server`) :
+La CD (`.github/workflows/deploy.yml`, job `deploy-to-server`) :
 
 1. cree `/home/canari/miconnect/{data,certs,custom-templates}` si absents ;
 2. copie `infrastructure/authentik/compose.yml` vers `/home/canari/miconnect/compose.yml` (source de verite versionnee) ;

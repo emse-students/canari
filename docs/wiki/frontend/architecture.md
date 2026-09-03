@@ -14,7 +14,7 @@ The frontend is a SvelteKit application that never renders a component on the se
 | Build | Adapter | Output | Who sets it |
 |---|---|---|---|
 | Tauri, local, mobile releases | `adapter-static` (`fallback: index.html`) | `build/` — a plain static bundle | nobody: this is the default |
-| Web (production) | `adapter-node` | `build/client`, `build/prerendered`, `build/index.js` | `BUILD_WEB=1` on the `build-frontend` job in `.github/workflows/cd.yml` |
+| Web (production) | `adapter-node` | `build/client`, `build/prerendered`, `build/index.js` | `BUILD_WEB=1` on the `build-frontend` job in `.github/workflows/deploy.yml` |
 
 The polarity is deliberate: a build that forgets the variable produces the static bundle Tauri
 needs, never a Node server it cannot consume.

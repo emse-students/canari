@@ -349,7 +349,7 @@ the same commit that adds it to the config.
 
 Canari had the worst of it before the pin: **three different bun versions across its workflows**
 (1.2.18 in five, 1.4.0 in two) and `ci.yml` with no version at all - `setup-bun` with no `with:`
-block resolves to *latest*, which is both the 401-prone path `cd.yml` already warned about in a
+block resolves to *latest*, which is both the 401-prone path `deploy.yml` already warned about in a
 comment and the exact route by which a v2 lockfile could have entered the repo from CI. All eight
 sites now read `.bun-version` through `bun-version-file`.
 
@@ -504,7 +504,7 @@ means no dependency updates for that directory.**
 
 ### The separation the old pin missed
 
-The `cd.yml` comment said "any bun >= 1.4.0 writes `lockfileVersion: 2` into a `bun.lock` **it
+The `deploy.yml` comment said "any bun >= 1.4.0 writes `lockfileVersion: 2` into a `bun.lock` **it
 creates**", and that qualifier is the whole point: **the version of bun you RUN and the version of
 the lockfile you COMMIT are independent.** bun 1.4.0 writes v2 only when creating a lockfile from
 nothing. Against an existing v1 lockfile it preserves the version. Measured three times, three

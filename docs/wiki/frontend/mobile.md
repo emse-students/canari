@@ -360,7 +360,7 @@ right answer for a given install, and **the app has to work it out at runtime**.
 > never a build-time constant, and that is why the store URLs are plain constants in `appVersion.ts`
 > with no env plumbing behind them: the thing that varies is the *install*, not the build.
 
-`android-release.yml` must therefore keep attaching the APK to every GitHub release — it is the only
+`android.yml` must therefore keep attaching the APK to every GitHub release — it is the only
 update path sideload users have.
 
 ### The install-source probe
@@ -1329,7 +1329,7 @@ CONFIGURATION** — and every parity defect found since has been exactly that. A
 | `push_context.json` fields | Rust writer, three native readers | `pushContextFields.test.ts` |
 | FCM manifest entries | `AndroidManifest.xml` | `androidFcmManifest.test.ts` (Android-only by nature) |
 | Cookie-jar durability | `commands/cookies.rs` | Android-only **by API**, not by decision — iOS has no flush to call and has never been observed. `check P` |
-| Server CORS allowlist | `apps/*-service/src/cors-origins.ts`, `ALLOW_ORIGIN` in `cd.yml` | Named the Android origins ONLY. Broke iOS login outright - see below. One module per service now, with a test naming each platform's origin individually |
+| Server CORS allowlist | `apps/*-service/src/cors-origins.ts`, `ALLOW_ORIGIN` in `deploy.yml` | Named the Android origins ONLY. Broke iOS login outright - see below. One module per service now, with a test naming each platform's origin individually |
 | Third-party cookie acceptance | `MainActivity.kt` (Android), nothing on iOS | MEASURED 2026-08-27: Android opts in and survives `am force-stop` (1 refresh, 200); iOS presented `cookies=[]` on 120. WKWebView has no equivalent API, so on `tauri://localhost` the credential is carried in a header instead - [`sessions.md`](../sessions.md#the-credential-a-client-carries-itself) |
 | Push token acquisition | `canari_push.mm` (iOS), `MainActivity.kt` + FCM SDK (Android) | MEASURED 2026-08-27: `push_token` held 49 `android` rows and had NEVER held one `ios` row. The iOS launch-time FCM fetch was written as Android's mirror, but iOS has a precondition Android does not - see [below](#the-fcm-token-an-iphone-could-never-obtain-and-the-silence-that-hid-it-for-the-platforms-life). Fixed 2026-08-28; a device now REPORTS the absence, so one `GROUP BY` settles it |
 | Device CLASS inside one platform | `navigator.userAgent`, until 2026-08-30 | An iPad reports itself as `Macintosh` (desktop-class browsing is WKWebView's default), so every iOS branch took its WEB side on an iPad - which is what App Review rejected, see [below](#the-ipad-that-called-itself-a-macintosh-and-the-login-app-review-could-not-finish). The platform is read from `tauri-plugin-os` now, and `appVersion.test.ts` / `mlsPlatform.test.ts` assert it against that exact user agent |
@@ -1595,9 +1595,12 @@ showed "not sticky," never why, and the actual gap (0.05px) was only visible by 
 
 | Workflow | Output |
 |---|---|
-| `ios-release.yml` | `.ipa` for TestFlight (uses `altool`) |
-| `android-release.yml` | `.aab` for Google Play |
-| `bump-version.yml` | Bumps `MARKETING_VERSION` across iOS + Android |
+| `release.yml` | the ONE entry point: five gates, then the version bump, then the three arms below as jobs of the same run |
+| `ios.yml` | `.ipa` to App Store Connect (`altool`), then for a STABLE the App Store version created, the build attached and the whole thing submitted for review |
+| `android.yml` | `.aab` to Google Play - `internal` track for a pre-release, `production` for a stable |
+
+Both store arms also accept `workflow_dispatch` as a pure compile check: `publish` defaults to
+false there, and it is the only way to compile Swift, ObjC or Kotlin off macOS.
 
 See [`cicd.md`](../cicd.md) for the full pipeline.
 

@@ -176,7 +176,7 @@ Test: `sudo -u canari ssh canaribackup@10.0.0.4 'echo ok'`.
 
 ## 5. First deployment
 
-**Publish a GitHub Release.** That is the only thing that starts a deploy: `cd.yml` has no
+**Publish a GitHub Release.** That is the only thing that starts a deploy: `deploy.yml` has no
 `on: push` and no `workflow_dispatch`, deliberately, a dispatch being a second door. A stable
 `vX.Y.Z` reaches production; a `vX.Y.Z-alpha.N` pre-release reaches `dev.canari-emse.fr` instead, so
 the first bootstrap of a production box wants a stable one. The run will:
@@ -281,7 +281,7 @@ from the same build; the CD rebuilds them together for exactly that reason.
 
 **Nothing here is required to bring production up, and on a fresh host there is nothing to do.** The
 second estate is optional. Since 2026-09-01 the pipeline that deploys it exists - three jobs in
-`cd.yml` plus `dev-refresh.yml` - all gated on the repository variable `DEV_ENVIRONMENT_ENABLED`.
+`deploy.yml` plus `dev-refresh.yml` - all gated on the repository variable `DEV_ENVIRONMENT_ENABLED`.
 **On THIS repository that variable is `true` since 2026-09-02, with all 14 `required` `DEV_*`
 secrets present and the `canari-dev` Authentik client created; on a fresh host it is absent and
 every dev job skips.** It is recorded here because turning that switch on is a bootstrap concern,

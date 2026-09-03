@@ -241,14 +241,47 @@ for f in deploy.yml android.yml ios.yml; do
   fi
 done
 
-# And the steps that must still be conditional are conditional on the CALLER's real event, because
-# attaching an artefact to a release that does not exist would CREATE one - which would publish a
-# release, which would start the chain again.
+# And what replaced that reasoning is DATA. `publish` is passed by the caller instead of inferred
+# from an event the called workflow cannot see: `release.yml` takes the callable default `true`, and
+# a hand dispatch of an arm defaults it to `false`.
+#
+# WHY AN ARM IS HAND-DISPATCHABLE AT ALL, since one entry point is the whole point of this file: it
+# is the ONLY way to compile Swift, ObjC or Kotlin from the Windows workstation this project is
+# developed on. A Swift `guard` body that falls through, a Kotlin nested type in a companion object,
+# a plugin command missing from its ACL - none is visible to `cargo clippy`, `bun run check` or any
+# gate that runs locally. Collapsing the chain removed that trigger for a commit, which would have
+# taken the capability away silently; `publish: false` is what makes it a compile check rather than
+# a second door to the stores.
 for f in android.yml ios.yml; do
-  if grep -qE "^\s+if: github\.event_name == 'release'$" "$WF/$f"; then
-    pass "$f attaches its artefact only when a published release started the run"
+  if grep -qE "^  workflow_dispatch:$" "$WF/$f"; then
+    pass "$f can be dispatched by hand, which is the only native compiler available off macOS"
   else
-    fail "$f no longer guards its release upload - a hand-dispatched re-run would create a release and restart the chain"
+    fail "$f cannot be dispatched - there is then no way to compile Swift or Kotlin without publishing a release"
+  fi
+
+  # THE DISPATCH MUST DEFAULT TO SHIPPING NOTHING. A compile check that reached a store would be
+  # worse than no compile check, and the default is the whole guard: nobody types `publish: false`.
+  if grep -A3 -E "^      publish:" "$WF/$f" | grep -qE "^        default: false$"; then
+    pass "$f's dispatch defaults publish to false, so a compile check ships nothing"
+  else
+    fail "$f's hand dispatch does not default publish to false - a compile check would reach a real store"
+  fi
+
+  # Every step that reaches outward reads that input. An ungated one turns the compile check into a
+  # release, and the run would be green either way.
+  OUTWARD="$(grep -cE "^\s+if: inputs\.publish" "$WF/$f")"
+  if [ "$OUTWARD" -ge 2 ]; then
+    pass "$f gates its outward steps on inputs.publish ($OUTWARD of them)"
+  else
+    fail "$f has $OUTWARD step(s) gated on inputs.publish - a hand-dispatched compile check would publish"
+  fi
+
+  # And attaching an artefact to a release that does not exist would CREATE one, which would publish
+  # a release, which would start the whole chain again. So that one step needs BOTH conditions.
+  if grep -qE "^\s+if: inputs\.publish && github\.event_name == 'release'$" "$WF/$f"; then
+    pass "$f attaches its artefact only on a real published release"
+  else
+    fail "$f no longer guards its release upload - a hand-dispatched run would CREATE a release and restart the chain"
   fi
 done
 printf '\nboth stores are reached all the way, and iOS no longer stops at TestFlight\n'
@@ -266,8 +299,8 @@ fi
 
 # ONLY FOR A STABLE, and not as a policy: `versionString` is a marketing version and Apple refuses
 # `0.15.0-alpha.1` outright. A pre-release's destination IS TestFlight.
-if grep -qE "^\s+if: inputs\.prerelease == 'false' && steps\.testflight\.outputs\.uploaded == 'true'$" "$WF/ios.yml"; then
-  pass 'and only for a stable whose upload actually happened'
+if grep -qE "^\s+if: inputs\.publish && inputs\.prerelease == 'false' && steps\.testflight\.outputs\.uploaded == 'true'$" "$WF/ios.yml"; then
+  pass 'and only for a publishing run, on a stable, whose upload actually happened'
 else
   fail 'the submission is no longer gated on a stable with a completed upload - it would submit an alpha, which Apple refuses, or a build it never sent'
 fi

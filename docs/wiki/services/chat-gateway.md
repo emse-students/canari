@@ -187,7 +187,7 @@ this layer is the only one answering, which is why the value has to be right her
 **It served `*` in production until 2026-08-30, and the allowlist CD wrote had never reached the
 container.** `docker-compose.prod.yml` set `ALLOW_ORIGIN: "*"` as a **literal** on the service, and
 a literal there wins over anything in `infrastructure/.env`, so `upsert_env_var "ALLOW_ORIGIN" ...`
-in `cd.yml` had been writing a value nothing read since the iOS login incident. Measured twice:
+in `deploy.yml` had been writing a value nothing read since the iOS login incident. Measured twice:
 
 ```
 docker exec infrastructure-chat-gateway-1 printenv ALLOW_ORIGIN   -> *
@@ -206,7 +206,7 @@ declaration is a mistake, and a mistake that picks a policy is worse than one th
 
 ### Every entry, and why it is there
 
-Enumerated in `infrastructure/.env.example`, written by `cd.yml`, and pinned by the tests in
+Enumerated in `infrastructure/.env.example`, written by `deploy.yml`, and pinned by the tests in
 `main.rs` that drive a real preflight through the layer:
 
 | Origin | Client |

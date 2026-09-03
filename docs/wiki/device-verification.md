@@ -447,7 +447,7 @@ destination it offers is resolved at **run time** from `installer_package.txt` -
 then `get_installer_package`, then `appVersion.ts`. `buildUpdateTarget` and the cross-process
 contract are unit-tested; three things are not, and cannot be.
 
-1. **The Kotlin actually compiles.** A `workflow_dispatch` run of `android-release.yml` is the only
+1. **The Kotlin actually compiles.** A `workflow_dispatch` run of `android.yml` is the only
    real compile of `recordInstallerPackage`. Nothing local exercises it.
 2. **The target follows the install source.** On a **Play-installed** build the blocking gate must
    offer the Play Store; on a **sideloaded CI APK** it must offer the APK. Capture the verdict line
@@ -535,7 +535,7 @@ what survived is enough; and `androidPlayRecommendations.test.ts` reads the two 
 can say nothing about either outcome. Reasoning and the evidence behind each change are on
 [mobile](frontend/mobile.md#the-release-builds-shape-and-what-google-plays-analysis-asked-of-it).
 
-Test the **release** artifact from `android-release.yml`, not a local build: a locally re-signed
+Test the **release** artifact from `android.yml`, not a local build: a locally re-signed
 release cannot be installed over the existing app without an uninstall, and an uninstall costs a
 re-enrolment and SETUP-4's 2FA. **TWO signed artifacts now exist and the RELEASE one is the target:**
 v0.14.5 of 2026-08-26 carries both Android fixes and went to Google Play production, so its attached

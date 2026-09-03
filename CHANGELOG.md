@@ -11,6 +11,112 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed
+
+- **A release is ONE run with five gates in front of it, and a release with red tests is now
+  refused.** Publishing the first two releases for real measured three defects no gate here could
+  have found. **Nothing was gated on the tests**: the chain required the *bump* to succeed, which is
+  a different statement, and `v0.15.0` deployed production with a RED `CI passed` on the commit it
+  released. **Production went three merged pull requests ahead of dev**, the two gestures having
+  landed on two unrelated commits with nothing comparing them - there was no mechanism to be wrong,
+  there was no mechanism. **And each of the three chains resolved `main` for itself**, so a merge
+  landing mid-release could hand a store a different tree from production with no artefact carrying a
+  commit to disagree. All three are one defect: a decision taken more than once, and a precondition
+  asserted nowhere.
+
+  `release.yml` is now the only entry point - `preflight` -> `bump` -> `deploy` + `android` + `ios`,
+  the three arms being `workflow_call` workflows invoked with `uses:` rather than woken by
+  `workflow_run`, so they are jobs of one run: one page to read, real `needs:` ordering, and the
+  same inputs to all three. `bump-version.yml` is gone (the bump is a job); `cd.yml`,
+  `android-release.yml` and `ios-release.yml` are `deploy.yml`, `android.yml` and `ios.yml`.
+
+  **THE FOURTH GATE IS THE POINT** (user: *"Je ne veux pas un detecteur de retard, je ne veux pas
+  que ca soit possible"*). A stable is refused unless the `dev-deployed` marker names the commit
+  being released or a descendant of it. A lag *detector* was written first and deleted unshipped -
+  the same measurement, turned into a refusal. **There is no bypass input**: a skip flag is a
+  fallback path, and reaching one means the primary path failed, so the fix belongs there. The
+  emergency path is a human with admin rights, recorded here when taken; gate 4 costs one extra
+  pre-release, which deploys dev in minutes.
+
+  **The order was already fail-safe by accident and is now so on purpose.** Every arm needed the
+  bump, which is how a rejected push once made a whole release quietly deploy nothing - so the
+  gates simply sit in front of the bump.
+
+- **A green pull request merges itself.** Zero approvals are required here on standing policy, so a
+  human clicking Merge after CI goes green adds a wait and decides nothing; `auto-merge.yml` arms
+  GitHub's own auto-merge instead. **The credential is the whole design**: auto-merge merges as
+  whoever armed it, and a `GITHUB_TOKEN` merge raises no `push` event - so `ci.yml` would never run
+  on `main`, the merge commit would carry no `CI passed`, and the release preflight's third gate
+  would then refuse EVERY release on commits that had in fact been tested. The same
+  `canari-auto-merge` App that pushes the bump arms this. Not for Dependabot, whose own ceiling
+  exists because `postgres 15 -> 18` merged on a fully green suite and took production down for 33
+  minutes; not for an outside contributor; not for a draft.
+
+### Added
+
+- **A stable release now reaches App Store review by itself, which closes the last asymmetry between
+  the two stores.** `altool --upload-app` hands Apple the binary and returns green - the whole job
+  for a tester build, and one manual gesture short of shipped for a stable: somebody had to open App
+  Store Connect, create the version, attach the build and press Submit. Nothing asked for that
+  gesture and nothing reported its absence, while the same release put Android on the Play
+  `production` track automatically. `ios.yml` said so in its own comments. So a stable release was
+  **half-shipped by construction** while both store jobs read green.
+
+  `tools/app-store/submit.mjs` finishes it, idempotently at every step because a re-run is an
+  ordinary event: a version already with Apple is reported as done rather than resubmitted, an open
+  review submission is reused, an item already in it is left alone. Two decisions whose failure mode
+  is silence: **the build number is read off the signed archive** (`CFBundleVersion`) and never
+  recomputed, since a second implementation of the store band would eventually disagree with
+  `bump-app-version.sh` and look like a submission waiting 45 minutes for a build nobody uploaded;
+  and **an unrecognised build or version state is a refusal, not a wait**, because Apple adds states
+  and a classifier that keeps polling anything unknown holds a macOS runner until the job times out
+  and explains nothing.
+
+  **The one thing a human owes each stable is the release notes**, and their staleness is made
+  impossible rather than reported: `frontend/src-tauri/store/whats-new.txt` opens with
+  `version: X.Y.Z`, and the release is refused unless that matches. A plain non-empty check would
+  pass for ever on notes nobody updated and the store would publish the previous version's text - a
+  file cannot be asked when it was last meant. It is checked in the preflight, before the bump,
+  because being refused by Apple at the END of a release costs the whole release; the preflight
+  calls the submission script's own `--check-notes` mode rather than restating the rule in bash,
+  so there is one implementation and nothing to drift.
+
+  **What is not yet measured is written down rather than assumed**: uploading a build needs only
+  Developer rights, and Apple documents managing a version and submitting for review as App Manager
+  work. The existing key has never been asked for more than an upload, so the first stable release
+  is what settles whether its role suffices - and if not, the fix is in App Store Connect and
+  belongs to the account holder.
+
+### Fixed
+
+- **Four release steps became permanently unreachable in one stroke, and every one of them was a
+  store upload.** Both "Upload to Release" steps, the TestFlight upload and the Play publish were
+  gated on `if: github.event_name == 'workflow_run'` - and **in a `workflow_call` workflow
+  `github.event_name` is the CALLER's event**, so the field they read is not merely wrong there, it
+  is unanswerable. The build would have succeeded, the run would have been green, and no store would
+  have received anything. Found by reading the files, because nothing failed and so nothing could
+  have reported it. What replaced the condition carries the distinction as DATA - a `publish` input,
+  `true` by default on the callable side and `false` on a hand dispatch - which also restored a
+  capability the collapse had removed unnoticed: dispatching a store arm by hand is the only way to
+  compile Swift, ObjC or Kotlin off macOS, and it now ships nothing by default.
+
+- **Three release arms read a job they did not declare, and would have received an empty string.**
+  They declared `needs: bump` and read `needs.preflight.outputs.prerelease`; a job may only read
+  `needs.<job>` for a job it declares, and the failure is silent. For a stable that is accidentally
+  the right answer, which is what makes it dangerous. For an ALPHA it bakes the PRODUCTION origin
+  into a tester build - **and the build's own "am I pointing at the right estate" assertion passes
+  while it happens**, because an empty string takes the stable branch and the stable branch is what
+  that assertion checks. Caught by a workflow linter three minutes after being written, and now
+  asserted on the anchored line, since the same expression appears legitimately inside the job that
+  owns it.
+
+- **The release gates now read the released tree literally, not by coincidence.** The preflight's
+  checkout lands on the event's SHA - for a published release that IS the tag's commit, and for a
+  hand dispatch it is `main` at dispatch time. Right almost always, and the notes gate reads a FILE
+  out of the working tree, so almost always is not enough: a dispatch minutes after a merge would
+  have judged the release notes of a commit it was not releasing.
+
+
 ## [0.15.0] - 2026-09-03
 
 _This section covers everything released since `0.14.0`, not only `0.15.0`'s own changes: the
