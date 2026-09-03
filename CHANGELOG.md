@@ -34,8 +34,6 @@ which is also where every release up to and including v0.13.1 now lives.
     upload, several steps before the request that needed retrying. Only Apple's own redundancy
     markers are read this way; every other altool failure still fails the step.
 
-## [0.16.1] - 2026-09-03
-
 ### Changed
 
 - **Production is deployed only once Google Play AND the App Store have accepted the same version**
@@ -69,6 +67,10 @@ which is also where every release up to and including v0.13.1 now lives.
   asking whether the file held exactly three arms while claiming to ask whether each arm is handed
   the release's facts. Each arm is now asked by name, and the "one commit, one release" half is
   stated as a property instead: no `sha:` in any `with:` block names anything but the bump's output.
+
+## [0.16.1] - 2026-09-03
+
+### Changed
 
 - **The dependency ceiling is a CHECK on the pull request, so one mechanism now answers for every
   pull request in the repository** (user: *"le auto-merge et les CI doivent considerer toutes les
