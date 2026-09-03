@@ -10,6 +10,19 @@
 #   3. PUBLISH A STABLE `vX.Y.Z`.  Deploys `canari-emse.fr` and both store production channels - if
 #      the tests are green, AND only from a commit the dev estate has already served.
 #
+# THIS FILE IS PACKAGE 2 OF 2, AND IT CARRIES BOTH OF THOSE TWO PATHS. `pull-request.yml` is the
+# other. The two publications are ONE machine differing by one boolean, so they are one file with
+# two named paths rather than two files: a second entry point would either duplicate the chain -
+# the exact "a decision taken more than once" defect this rebuild removed - or add a third level of
+# reusable-workflow permission plumbing, which is what killed the first run of this chain. The
+# paths are told apart by the EVENT TYPE, not by a branch and not by a guess:
+#
+#   prereleased -> dev.canari-emse.fr + Play `internal` + TestFlight
+#   released    -> canari-emse.fr     + Play `production` + App Store REVIEW
+#
+# and everything before that fork - the five gates and the version bump - is shared, because it
+# must be identical for both.
+#
 # WHY THIS FILE EXISTS AT ALL. Until 2026-09-03 those two publications drove FOUR workflows chained
 # by `workflow_run`: the bump, then a deploy and two store builds each listening for its completion.
 # Three consequences, all measured on the day the chain first ran for real:
@@ -32,9 +45,20 @@
 # =================================================================================================
 name: Release
 
+# TWO EVENT TYPES, AND GITHUB ITSELF IS THE DISCRIMINATOR. `prereleased` fires only for a release
+# flagged as a pre-release; `released` fires only for one that is not (and for a pre-release later
+# promoted to a release). `published` fires for BOTH, which is why it used to be the trigger - and
+# why the kind then had to be inferred from the version string alone.
+#
+# WHAT THAT BUYS, AND IT CLOSES A DOCUMENTED TRAP. The version string and the pre-release checkbox
+# are two independent statements a human makes on the same form, and until now only the version was
+# read: ticking the box on a `v0.17.0`, or forgetting it on a `v0.17.0-alpha.1`, was invisible and
+# the release simply went to whichever estate the hyphen implied. The guide carried a section
+# warning about it. Now the two statements arrive separately - the EVENT says one, `release_kind()`
+# says the other - so a mismatch is a refusal that names both, and the trap cannot be walked into.
 on:
   release:
-    types: [published]
+    types: [prereleased, released]
   # The hand-dispatched path, kept for one reason: a release whose chain has to be re-run after an
   # infrastructure fault, without deleting and re-publishing the release. It goes through the SAME
   # preflight - a dispatch is not a bypass.
@@ -97,9 +121,15 @@ jobs:
           if [ "${{ github.event_name }}" = 'workflow_dispatch' ]; then
             RAW='${{ inputs.version }}'
             REF='main'
+            # A dispatch carries no checkbox, so there is nothing to cross-check against and the
+            # version is the only statement made. That is the pre-2026-09-03 behaviour, kept for
+            # this path alone.
+            EVENT_SAYS=''
           else
             RAW='${{ github.event.release.tag_name }}'
             REF="$RAW"
+            # `prereleased` or `released` - the checkbox, as GitHub read it.
+            EVENT_SAYS='${{ github.event.action }}'
           fi
           VERSION="${RAW#v}"
 
@@ -112,6 +142,38 @@ jobs:
             *)
               echo "::error::${KIND_VERDICT#invalid }"
               exit 1 ;;
+          esac
+
+          # THE TWO STATEMENTS MUST AGREE, and this is the only place both are visible.
+          #
+          # The version string and the pre-release checkbox are independent things a human types on
+          # one form, and the estate, the Play track and the App Store channel all follow from the
+          # answer. Reading only the version meant a ticked box on a stable version silently
+          # deployed PRODUCTION, and an unticked box on an alpha silently pushed a tester build to
+          # the production channels - neither visible in a green run, and the guide could only
+          # warn about it in prose.
+          #
+          # The refusal names BOTH sides on purpose: whichever one is wrong, the reader has to know
+          # which to change, and "prerelease=true but 0.17.0 has no suffix" says it in one line.
+          case "$EVENT_SAYS" in
+            '')
+              ;;
+            prereleased)
+              if [ "$PRERELEASE" != 'true' ]; then
+                echo "::error::This release is flagged PRE-RELEASE but its version is $VERSION, which has no pre-release suffix. The two must agree: either untick 'Set as a pre-release', or name it ${VERSION}-alpha.1."
+                exit 1
+              fi
+              ;;
+            released)
+              if [ "$PRERELEASE" != 'false' ]; then
+                echo "::error::This release is NOT flagged as a pre-release but its version is $VERSION, whose suffix makes it one. The two must agree: either tick 'Set as a pre-release', or name it ${VERSION%%-*}."
+                exit 1
+              fi
+              ;;
+            *)
+              echo "::error::Unknown release action '$EVENT_SAYS'. This workflow understands 'prereleased' and 'released' only, and must not guess which estate to deploy."
+              exit 1
+              ;;
           esac
 
           TARGET_SHA="$(gh api "repos/${{ github.repository }}/commits/$REF" --jq '.sha')"

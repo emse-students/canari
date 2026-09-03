@@ -81,7 +81,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
-  # `gh workflow run ci.yml` after a merge, and nothing else. A merge made with `GITHUB_TOKEN`
+  # `gh workflow run pull-request.yml` after a merge, and nothing else. A merge made with `GITHUB_TOKEN`
   # raises no `push` event, so without this dispatch the merged COMBINATION is never tested and the
   # sweep is never woken to drain the rest - it fails 403 exactly as silently as the push that never
   # happened.
@@ -370,6 +370,6 @@ jobs:
           echo "Dispatching CI for $merged merge(s)"
           sort -u "$bases" | while IFS= read -r ref; do
             [ -z "$ref" ] && continue
-            echo "  -> ci.yml on $ref"
-            gh workflow run ci.yml --repo "$REPO" --ref "$ref"
+            echo "  -> pull-request.yml on $ref"
+            gh workflow run pull-request.yml --repo "$REPO" --ref "$ref"
           done
