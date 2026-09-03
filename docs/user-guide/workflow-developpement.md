@@ -176,19 +176,34 @@ verifie en quelques secondes avant que quoi que ce soit ne bouge. **La premiere 
 version** parce qu'un simple "le fichier n'est pas vide" passerait indefiniment sur des notes que
 personne n'a mises a jour, et le store afficherait celles de la release d'avant.
 
-### 4.1 Le piege : la case "pre-release" et le numero de version doivent dire la meme chose
+### 4.1 La case "pre-release" et le numero de version ne peuvent plus se contredire
 
-Ce qui decide **ou** on deploie, c'est le tiret dans la version - pas la case. Une alpha publiee
-sans la case part donc quand meme sur dev, et rien ne parait anormal ce jour-la.
+**Ce paragraphe decrivait un piege jusqu'au 2026-09-03. Il n'en est plus un, et il vaut la peine de
+savoir pourquoi.**
 
-Ce qui lit la case, c'est le **detecteur de changements**, qui cherche la release precedente *de
-meme nature* pour savoir ce qui doit etre reconstruit. Une alpha rangee parmi les stables devient
-la reference de la **prochaine stable** : une reference trop recente, donc des services qu'on ne
-reconstruit pas alors qu'ils ont change. C'est la mauvaise direction, et ca se manifeste une
-release plus tard, loin de sa cause.
+Deux choses disent si une release est une pre-release : le **tiret dans la version**, et la **case
+"Set as a pre-release"**. Ce sont deux affirmations independantes tapees sur le meme formulaire, et
+tant que la seule chose lue etait la version, une contradiction ne se voyait pas :
 
-Rien ne verifie encore que les deux se contredisent - c'est un P3 du backlog, et il nomme
-l'assertion qui le fermerait.
+| ce que tu fais | ce qui se passait avant |
+|---|---|
+| cocher la case sur un `v0.17.0` | la **production** etait deployee, sans un mot |
+| oublier la case sur un `v0.17.0-alpha.1` | un build **testeur** partait sur les deux canaux de production |
+
+Aucun des deux n'est visible dans un run vert, et le second coutait plus tard : une alpha rangee
+parmi les stables devient la reference du **detecteur de changements** pour la prochaine stable -
+une reference trop recente, donc des services non reconstruits alors qu'ils ont change. Ca se
+manifeste une release plus tard, loin de sa cause.
+
+**Ce qui a change : GitHub distingue lui-meme les deux evenements.** `prereleased` ne se declenche
+que pour une release cochee, `released` que pour une release qui ne l'est pas. L'ancien declencheur,
+`published`, se declenchait pour les deux - c'est ce qui rendait la case invisible. Les deux
+affirmations arrivent donc maintenant separement, et `release.yml` les compare : l'evenement dit
+l'une, `release_kind()` dit l'autre, et un desaccord est un **refus qui nomme les deux cotes**,
+parce que selon celui qui est faux ce n'est pas la meme correction.
+
+Concretement, tu ne peux plus te tromper : ou la release part correctement, ou elle refuse en te
+disant quoi changer. **Il n'y a plus rien a surveiller ici.**
 
 ### 4.2 Les numeros que les stores exigent, et pourquoi ils ne sont pas la version
 

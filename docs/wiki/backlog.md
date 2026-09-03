@@ -2977,30 +2977,6 @@ feature is therefore coherent with E2EE - it removes a password prompt, not a re
 
 ## Tooling
 
-### P3 - the "pre-release" checkbox and the version number can disagree, and nothing notices until the release AFTER the mistake (measured 2026-09-03)
-
-Two things say whether a release is a pre-release, and only one of them is read by each consumer.
-**The VERSION decides where it deploys**: `deploy.yml`'s `release-kind` job reads
-`frontend/package.json` after the bump and treats a hyphen as the definition. **GitHub's
-`prerelease` FLAG decides the change detector's baseline**: it filters
-`gh api .../releases?per_page=100` by `.prerelease` to find the previous release of the same kind.
-
-So publishing `v0.15.0-alpha.1` without ticking "Set as a pre-release" does the right thing that
-day - the version has a hyphen, the alpha deploys dev, everything is green. **The cost arrives at
-the NEXT STABLE release**, which then finds that alpha sitting in the stable list as its baseline:
-a baseline too RECENT, so services changed before it are reported unchanged and are not rebuilt.
-Production keeps whatever `:latest` already pointed at for those services. That is the dangerous
-direction of the two, and it manifests one release later, far from its cause.
-
-The reverse - a stable ticked as a pre-release - is the same defect pointing at dev.
-
-Retired by: an assertion in `release-kind`, which already reads the version and can read the flag.
-`gh api repos/{repo}/releases/tags/v$VERSION --jq .prerelease` against the hyphen test it already
-performs, and FAIL when they disagree, before anything is built. There is no case where proceeding
-on a contradiction is better than stopping: the two are supposed to be the same fact, and one of
-them is wrong. Named here rather than written straight away because the workflow migration's
-documentation pass is not the commit to slip a workflow change into.
-
 ### P3 - `scripts/` is the one shell directory CI does not shellcheck, and it holds the release's first step (measured 2026-09-03)
 
 `ci.yml`'s shellcheck step globs `.github/scripts/**`, `infrastructure/dev/*.sh` and
