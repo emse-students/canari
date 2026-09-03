@@ -14,6 +14,9 @@
 #   2b `dependency-      ONLY on a Dependabot pull request: does a gate HERE exist that would see
 #      ceiling`          this update fail? A human's pull request carries no `updated-dependencies`
 #                        block to decide on, so it skips
+#   2c `security`        CodeQL, the secret scan and the vulnerability audit, called from
+#                        `code-analysis.yml`. NOT behind `changes`: a secret can be committed in a
+#                        documentation change
 #   3. `ci-passed`       aggregates them. `success` AND `skipped` both pass; it is the ONE check
 #                        the branch ruleset requires, and the only one it could require
 #
@@ -869,12 +872,37 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: bash .github/scripts/dependency-ceiling.sh
 
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  # THE SECURITY PASS, AND IT CAN NOW STOP A MERGE
+  #
+  # CodeQL, the TruffleHog secret scan and the vulnerability audit ran on every pull request from
+  # their own workflow until 2026-09-04 - and could not block a single merge, because the branch
+  # ruleset requires exactly one check, `CI passed`, and they were not part of it. A live secret in a
+  # PUBLIC repository or a HIGH advisory produced a red tick beside a mergeable pull request. **A red
+  # tick nothing enforces is worse than no tick, because it looks enforced.**
+  #
+  # `code-analysis.yml` is now a `workflow_call` library with no triggers of its own, called here and
+  # nightly by `scheduled.yml` - one definition, asked at both moments. THE PERMISSIONS BELOW ARE
+  # DERIVED FROM WHAT IT DECLARES, not chosen: a caller caps a called workflow, and exceeding that
+  # cap is a startup failure with no log and no annotation.
+  #
+  # NOT BEHIND `changes`, deliberately. Every other job here is gated on the paths a pull request
+  # touched, which is right for a test suite and wrong for this: a secret can be committed in a
+  # documentation change, and an advisory is about the lockfile a pull request did not have to edit.
+  security:
+    name: Security
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    uses: ./.github/workflows/code-analysis.yml
+
   ci-passed:
     name: CI passed
     if: always()
     needs:
       [changes, test-rust, boot-nest-apps, test-typescript-backend, test-frontend, test-harness, test-ci-scripts,
-      dependency-ceiling]
+      dependency-ceiling, security]
     runs-on: ubuntu-latest
     steps:
       - name: Every job either passed or had nothing to do

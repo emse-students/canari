@@ -1,23 +1,35 @@
+# =================================================================================================
+# THE SECURITY PASS - A LIBRARY, CALLED FROM BOTH MOMENTS IT IS WANTED
+#
+# CALLED BY `pull-request.yml` AND BY `scheduled.yml`, AND BY NOTHING ELSE. It used to carry its own
+# `pull_request` and `schedule` triggers, which made it a fourth row in the Actions list and, worse,
+# put its verdict OUTSIDE `CI passed`: CodeQL, the secret scan and the vulnerability audit all ran on
+# every pull request and **could not block a single merge**, because the branch ruleset requires
+# exactly one check and this was not part of it. A red tick nothing enforces is worse than no tick,
+# because it looks enforced.
+#
+# Since 2026-09-04 it is `workflow_call` only. `pull-request.yml` calls it as a job feeding
+# `ci-passed`, so a live secret or a HIGH advisory now stops the merge; `scheduled.yml` calls the
+# same file nightly, which is the half a pull request cannot see - **a new advisory lands against
+# code nobody touched.** One definition, two moments.
+#
+# ITS PERMISSIONS ARE PER JOB, and the caller must grant at least as much: a called workflow cannot
+# be given more than its caller grants it, and exceeding that is a STARTUP FAILURE - no job runs, no
+# log, no annotation. `release-chain.test.sh` derives the caller's grant from what is declared here.
+# =================================================================================================
 name: Code Analysis
 
 on:
-  pull_request:
-    branches:
-      - main
-  schedule:
-    # Daily analysis at 2 AM UTC
-    - cron: "0 2 * * *"
   workflow_call:
-
-permissions:
-  actions: read
-  contents: read
-  security-events: write
 
 jobs:
   codeql:
     name: CodeQL Security Analysis
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
     strategy:
       fail-fast: false
       matrix:
@@ -66,6 +78,8 @@ jobs:
   secret-scan:
     name: Scan for Secrets
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -94,6 +108,8 @@ jobs:
   dependencies:
     name: Check Dependencies Vulnerabilities
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v7

@@ -11,6 +11,41 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed
+
+- **Four workflows became one, and the security pass can now block a merge** (user:
+  *"le moins de workflows differents possibles, ca inonde la console github"*, and *"propres,
+  fonctionnelles, testees, fluides"*). `cache-cleanup.yml`, `dev-refresh.yml` and `host-updates.yml`
+  are deleted; `code-analysis.yml` keeps its jobs and loses its triggers.
+
+  | | Before | After |
+  | --- | --- | --- |
+  | Rows in the Actions list | `pull-request`, `release`, `code-analysis`, `cache-cleanup`, `dev-refresh`, `host-updates` | `pull-request`, `release`, `arm-auto-merge`, `scheduled` |
+  | Called libraries (invisible) | `deploy`, `android`, `ios` | + `code-analysis` |
+
+  **`scheduled.yml` holds everything this repository does on a clock**, one job each, routed by
+  `github.event.schedule`. That cron string is the whole routing mechanism and it appears twice -
+  in the `schedule:` list and in the job's `if:` - with nothing in GitHub comparing them, so
+  `scheduled.test.sh` asserts both directions: a cron nobody claims wakes a run in which every job
+  skips and is GREEN, and a job naming an undeclared cron never runs at all, its only symptom an
+  absence. It also asserts that the hand-dispatch menu reaches every job and names no job that is
+  gone.
+
+  **`code-analysis.yml` is now `workflow_call` only, and that is the substantive half.** CodeQL, the
+  TruffleHog secret scan and the vulnerability audit ran on every pull request and **could not block
+  one**: the branch ruleset requires exactly one check, `CI passed`, and they were not part of it. A
+  live secret in a PUBLIC repository produced a red tick beside a mergeable pull request - *a red
+  tick nothing enforces is worse than no tick, because it looks enforced.* It is called from
+  `pull-request.yml` as a job feeding `ci-passed`, and from `scheduled.yml` nightly, which is the
+  half a pull request cannot see: a new advisory landing against code nobody touched. One
+  definition, two moments. This closes the open P2.
+
+- **The self-hosted concurrency assertion is asked per JOB rather than per FILE.** It read the
+  workflow for a top-level `concurrency:`, which was right while one workflow meant one estate job -
+  and would have passed `scheduled.yml` outright, either on a file-level group that queues a
+  read-only host report behind a dev refresh, or on a file with one guarded job and one unguarded
+  one. The property is about the job that reaches the machine.
+
 ### Removed
 
 - **The hourly Dependabot sweep, and `CODEOWNERS`** (user: *"pourquoi Dependabot auto-merge existe

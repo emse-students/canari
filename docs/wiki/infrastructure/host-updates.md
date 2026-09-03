@@ -90,7 +90,7 @@ same shape as the pending reboot on `mitv`, one layer down. Nothing here measure
 ## The report, and why a red workflow run is the channel
 
 **A correct mechanism with no report is found by hand, a day late** - the rule this whole page
-exists under. `.github/workflows/host-updates.yml` runs
+exists under. `.github/workflows/scheduled.yml` runs
 `infrastructure/deploy/host-update-report.sh` daily on the self-hosted runner and FAILS the run on
 any finding. There is no alerting anywhere in this estate (both outages of 2026-09-01 were reported
 by the user), and what this repository does read is `gh run list` - so a failing run is the only

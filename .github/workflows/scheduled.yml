@@ -1,0 +1,241 @@
+# =================================================================================================
+# EVERYTHING THIS REPOSITORY DOES ON A CLOCK, IN ONE PLACE
+#
+# WHY ONE FILE (user, 2026-09-04: *"le moins de workflows differents possibles, ca inonde la console
+# github"*). There were four workflows here - `host-updates`, `cache-cleanup`, `dev-refresh`, and
+# the scheduled half of `code-analysis` - each a separate row in the Actions list, each with its own
+# permissions block, its own dispatch and its own conventions, and not one of them ever reading
+# another. They have exactly one thing in common and it is the only thing that matters about them:
+# **nobody is watching when they run.**
+#
+# WHAT A CLOCK IS ALLOWED TO BE HERE, and it is the same rule for all four. *Termination comes from
+# a proof, never from a clock*, so a schedule is only ever a FLOOR UNDER THE WORST CASE: if it
+# arrives late, or not at all, the cost must be a late REPORT and never a wrong outcome. That holds
+# for every job below - the host applies its own updates whether this fires or not, a buildkit cache
+# that survives another week costs quota, the dev estate is refreshed on demand by anyone who needs
+# it, and a nightly audit re-asks a question the pull-request path already asks on every change.
+# **A job whose correctness depended on this firing would not belong here.** It is measured, not
+# assumed: `code-analysis` asked for `0 2 * * *` and actually ran at 03:01, 03:09, 08:05, 08:24,
+# 08:47, 12:37 and 14:10 UTC on seven consecutive days, and GitHub DROPS the slots a cron misses
+# rather than queueing them.
+#
+# HOW A RUN KNOWS WHICH JOB IT IS. `github.event.schedule` carries the cron string that fired,
+# verbatim, so each job names its own. That string is the whole routing mechanism, which makes a
+# typo a job that never runs and says nothing - so `scheduled.test.sh` reads the crons declared
+# below and the crons the jobs name, and fails if the two sets differ.
+# =================================================================================================
+name: Scheduled
+
+on:
+  schedule:
+    # Daily, an hour before the analysis, after the apt-daily-upgrade window.
+    - cron: '30 7 * * *'
+    # Daily. A new advisory can land against code nobody touched, which is the half the
+    # pull-request path cannot see.
+    - cron: '0 2 * * *'
+    # Sundays. The Actions cache quota is 10 GB and buildkit entries are never evicted.
+    - cron: '0 3 * * 0'
+    # Mondays. Re-seed the dev estate from production.
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+    inputs:
+      job:
+        description: 'Which one to run by hand'
+        type: choice
+        default: all
+        options: [all, hosts, analysis, caches, dev-refresh]
+      dry_run:
+        description: 'dev-refresh only: report what would happen and change nothing'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  # IS THE PRODUCTION BOX ACTUALLY TAKING ITS SECURITY UPDATES?
+  #
+  # `unattended-upgrades` was installed on all four hosts on 2026-09-03, security origins only,
+  # never rebooting. This job is the other half, and without it the install would be the exact
+  # defect this repository names hardest: *a correct mechanism with no report is found by hand, a
+  # day late.*
+  #
+  # WHY A RED RUN IS THE REPORT. There is no alerting anywhere in this estate - both outages of
+  # 2026-09-01 were reported by the USER, and nothing pages anybody (`docs/wiki/backlog.md`). What
+  # this repository DOES read is `gh run list`, so a failing run is the only channel that already
+  # exists. Everything the script finds is emitted as `::error::` so it is legible in the run
+  # summary without opening a log.
+  #
+  # WHY IT RUNS ON THE SELF-HOSTED RUNNER. The report has to be taken ON the box - `apt-config
+  # dump`, the timer's last trigger and `/var/log/unattended-upgrades` are all local facts. That
+  # runner lives on the production origin, which is why this reports production and nothing else:
+  # its key is authorised on none of the other three hosts (measured 2026-09-03), and installing
+  # cross-host keys in order to write a report is a privilege expansion nobody asked for. The gap is
+  # in `docs/wiki/backlog.md` with what would close it.
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  hosts:
+    name: Security updates on the production host
+    if: >
+      github.event.schedule == '30 7 * * *' ||
+      (github.event_name == 'workflow_dispatch' &&
+      contains(fromJSON('["all", "hosts"]'), inputs.job))
+    runs-on: self-hosted
+    timeout-minutes: 10
+    # ONE RUNNER, SO EVERY JOB THAT ASKS FOR IT MUST SAY WHAT IT MAY NOT OVERLAP WITH -
+    # `deploy-env.test.sh` derives that assertion from `runs-on: self-hosted` rather than from a
+    # list of workflow names, precisely so a new job like this one cannot be added without it. This
+    # job only READS, so an overlap would be harmless; the group is declared anyway, because a rule
+    # waived the first time it is inconvenient is not a rule. It is its OWN group, at the JOB level:
+    # queueing a read-only report behind the dev refresh below would make the report late for no
+    # benefit, which a workflow-level group would do.
+    concurrency:
+      group: host-updates
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+
+      # `apt-get -s upgrade` needs no privilege and neither does `apt-config`. Reading
+      # `/var/log/unattended-upgrades` needs the `adm` group, which the runner account was added to
+      # on 2026-09-03 - it grants nothing an account already in `sudo` and `docker` did not have,
+      # and without it the script's ERROR arm is blind. Losing the group again is itself reported,
+      # rather than making the check quietly stop working.
+      - name: Read the host and judge it
+        run: bash infrastructure/deploy/host-update-report.sh
+
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  # THE NIGHTLY SECURITY PASS
+  #
+  # THE SAME FILE THE PULL REQUEST RUNS, called rather than copied. `code-analysis.yml` is a
+  # `workflow_call` library, so CodeQL, the secret scan and the vulnerability audit are ONE
+  # definition asked at two moments: on every pull request, where it feeds `CI passed` and can
+  # therefore block a merge, and here, where it re-asks the question against code nobody touched.
+  # A new advisory lands against an unchanged tree, which is precisely what the pull-request path
+  # cannot see.
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  analysis:
+    name: Security
+    if: >
+      github.event.schedule == '0 2 * * *' ||
+      (github.event_name == 'workflow_dispatch' &&
+      contains(fromJSON('["all", "analysis"]'), inputs.job))
+    # Derived from what the callee declares, not chosen here: a caller CAPS a called workflow, and
+    # exceeding that cap is a startup failure with no log and no annotation.
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    uses: ./.github/workflows/code-analysis.yml
+
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  # THE ACTIONS CACHE QUOTA IS 10 GB, AND BUILDKIT NEVER EVICTS
+  #
+  # Docker buildkit caches (`type=gha`) create one cache entry per blob and are never evicted
+  # automatically, so they accumulate until `cache-to` starts failing with "failed to reserve
+  # cache" - a build that gets slower and then breaks, for a reason that is invisible in the build
+  # log.
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  caches:
+    name: Prune stale buildkit caches
+    if: >
+      github.event.schedule == '0 3 * * 0' ||
+      (github.event_name == 'workflow_dispatch' &&
+      contains(fromJSON('["all", "caches"]'), inputs.job))
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - name: Delete buildkit caches older than 7 days
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          CUTOFF=$(date -d '7 days ago' +%s)
+
+          echo "Pruning buildkit caches older than $(date -d @"$CUTOFF" -Iseconds)..."
+
+          gh cache list --repo "$REPO" --limit 200 --json id,key,createdAt \
+            --jq '.[] | select(.key | startswith("buildkit-") or startswith("index-buildkit-")) | "\(.id) \(.createdAt)"' \
+          | while read -r id created; do
+              created_ts=$(date -d "$created" +%s 2>/dev/null || echo 0)
+              if [ "$created_ts" -lt "$CUTOFF" ]; then
+                echo "  Deleting cache $id (created $created)"
+                gh cache delete "$id" --repo "$REPO" || true
+              fi
+            done
+
+          echo "Pruning complete."
+
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  # RE-SEED THE DEV ESTATE FROM PRODUCTION
+  #
+  # The full reasoning - what is copied, what is deliberately NOT, and why the copy is what makes a
+  # pre-release worth publishing - is on
+  # `docs/wiki/infrastructure/dev-environment.md`, the only copy.
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  dev-refresh:
+    name: Refresh dev.canari-emse.fr from production
+    if: >
+      vars.DEV_ENVIRONMENT_ENABLED == 'true' &&
+      (github.event.schedule == '0 4 * * 1' ||
+      (github.event_name == 'workflow_dispatch' &&
+      contains(fromJSON('["all", "dev-refresh"]'), inputs.job)))
+    runs-on: self-hosted
+    permissions:
+      contents: read
+    concurrency:
+      group: dev-refresh
+      cancel-in-progress: false
+    steps:
+      # The script lives in the repository, so it is read from the DEV checkout - never from
+      # production's. A refresh must not be able to depend on production's working tree at all.
+      - name: Point at the dev checkout
+        id: checkout
+        run: |
+          set -euo pipefail
+          path="/home/canari/canari-dev"
+          if [ ! -d "$path/.git" ]; then
+            echo "::error::$path is not a checkout - the dev estate has never been deployed, so there is nothing to refresh. Publish a pre-release first."
+            exit 1
+          fi
+          git -C "$path" fetch origin main
+          git -C "$path" reset --hard origin/main
+          echo "path=$path" >> "$GITHUB_OUTPUT"
+          echo "refreshing from $(git -C "$path" rev-parse --short HEAD)"
+
+      - name: Copy production into dev
+        working-directory: ${{ steps.checkout.outputs.path }}
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            bash infrastructure/dev/copy-prod-to-dev.sh --dry-run
+          else
+            bash infrastructure/dev/copy-prod-to-dev.sh
+          fi
+
+      # THE COPY IS NOT THE END OF THE JOB. It stops dev's application containers to restore, and
+      # the script brings them back - but "the containers are back" is not "the estate answers",
+      # which is the house rule these two lines exist to honour. `/api/version` needs the database
+      # the copy just replaced, so it is the cheapest statement that the restore really worked.
+      # A DRY RUN CHANGES NOTHING, SO IT PROVES NOTHING - and asserting anyway reports the estate's
+      # PRE-EXISTING state as this refresh's failure. Measured 2026-09-02: the first dry run went
+      # green through the copy step and then failed here on twenty 502s, which were the schemaless
+      # dev database the dry run had deliberately not touched. A gate must only assert what the run
+      # it guards actually did.
+      - name: Prove the dev estate still answers
+        if: inputs.dry_run != true
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 20); do
+            status="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3080/api/version || true)"
+            if [ "$status" = "200" ]; then
+              echo "dev answers /api/version after the refresh"
+              curl -s http://127.0.0.1:3080/api/version
+              exit 0
+            fi
+            echo "  not yet (HTTP $status, $i/20)"
+            sleep 6
+          done
+          echo "::error::dev did not answer /api/version within 2 minutes of the refresh - the restore may have left the database in a state the services cannot read"
+          exit 1

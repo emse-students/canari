@@ -249,7 +249,7 @@ production's value. **Production's own deploy job is deliberately NOT on these s
 moves once dev has exercised them. Everything about the estate itself is on
 [dev-environment](infrastructure/dev-environment.md), the only copy.
 
-`dev-refresh.yml` copies production's data into dev weekly (Mondays 04:00 UTC) and on demand, behind
+`scheduled.yml`'s `dev-refresh` job copies production's data into dev weekly (Mondays 04:00 UTC) and on demand, behind
 the same gate.
 
 ### The store arms (`ios.yml`, `android.yml`)
@@ -628,7 +628,7 @@ Three details decide the shape, and only the first is obvious.
 
 `deploy-env.test.sh` asserts this, DERIVED from `runs-on: self-hosted` rather than from a list of
 workflow names - there is exactly one such runner, and a typed list would pass on the day somebody
-adds the third workflow. `dev-refresh.yml` carries its own `dev-refresh` group and satisfies the same
+adds the third workflow. `scheduled.yml`'s `dev-refresh` job carries its own `dev-refresh` group and satisfies the same
 rule.
 
 **Still open, and not covered by either group:** a dev refresh and a dev deploy can overlap, the

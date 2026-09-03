@@ -222,8 +222,8 @@ add_declared "docker-compose.dev.yml" \
 add_declared "deploy-environment.sh" \
   "$(grep -A4 '^dev)' infrastructure/deploy/deploy-environment.sh |
     grep -oE 'DEFAULT_FRONTEND_PORT=[0-9]+' | grep -oE '[0-9]+' || true)"
-add_declared "dev-refresh.yml" \
-  "$(grep -oE '127\.0\.0\.1:[0-9]+/api/version' .github/workflows/dev-refresh.yml | head -1 |
+add_declared "scheduled.yml" \
+  "$(grep -oE '127\.0\.0\.1:[0-9]+/api/version' .github/workflows/scheduled.yml | head -1 |
     grep -oE ':[0-9]+' | tr -d ':' || true)"
 
 disagree=""
@@ -484,14 +484,40 @@ printf '\nnothing that touches the one machine may run twice at once\n'
 #
 # It proved able to fail: on 2026-09-02 `deploy.yml` had no `concurrency:` at all and three deploy runs
 # were in flight against `/home/canari/canari` simultaneously.
+# ASKED PER JOB, NOT PER FILE, SINCE 2026-09-04. It read the WORKFLOW for a top-level
+# `concurrency:`, which was right while one workflow meant one estate job - and wrong the moment
+# `scheduled.yml` collected four unrelated jobs, two of them on the runner. A file-level group there
+# would have PASSED this check while queueing a read-only host report behind a dev refresh; and a
+# file with one guarded job and one unguarded one would have passed just the same. The property is
+# about the JOB that reaches the machine.
 for wf in .github/workflows/*.yml; do
   grep -q 'runs-on: self-hosted' "$wf" || continue
   name="$(basename "$wf")"
+
+  # A workflow-level group covers every job in the file, which is the right shape for `deploy.yml`:
+  # its two estate jobs must not overlap with each other either.
   if grep -q '^concurrency:' "$wf"; then
     group="$(grep -A2 '^concurrency:' "$wf" | sed -n 's/^ *group: *//p' | head -1)"
-    pass "$name reaches the machine and serialises itself (group: $group)"
+    pass "$name serialises the whole file (group: $group)"
+    continue
+  fi
+
+  # Otherwise every self-hosted job in it must serialise itself. `awk` splits on the job keys, which
+  # sit at exactly two spaces; anything deeper belongs to the job above.
+  UNGUARDED="$(awk '
+    function flush() { if (job != "" && sh && !conc) print job }
+    /^  [a-z][a-z0-9_-]*:$/ {
+      flush(); job = $0; sub(/^  /, "", job); sub(/:$/, "", job); sh = 0; conc = 0; next
+    }
+    /^    runs-on: self-hosted$/ { sh = 1 }
+    /^    concurrency:$/ { conc = 1 }
+    END { flush() }
+  ' "$wf" | sort -u | tr '\n' ' ')"
+
+  if [ -z "${UNGUARDED// /}" ]; then
+    pass "$name serialises every job that reaches the machine, at the job level"
   else
-    fail "$name runs on the self-hosted runner and declares no 'concurrency:' group, so two of its runs can reset the same checkout and recreate the same containers at once"
+    fail "$name has self-hosted job(s) with no 'concurrency:' of their own:$UNGUARDED - two runs can reset the same checkout and recreate the same containers at once"
   fi
 done
 

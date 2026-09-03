@@ -323,7 +323,7 @@ secret, and a silent gate is one nobody can debug.
 | `build-frontend` | GitHub runner | builds the frontend from the `DEV_*` secrets when the release is a PRE-RELEASE, with `VITE_DEPLOY_ENVIRONMENT=development` |
 | `build-docker-images` | GitHub runner | pushes every changed image, moving `:dev` rather than `:latest` |
 | `deploy-dev` | the server | renders `.env`, then runs [`deploy-environment.sh`](../../../infrastructure/deploy/deploy-environment.sh) |
-| `refresh` in [`dev-refresh.yml`](../../../.github/workflows/dev-refresh.yml) | the server | weekly, copies production's data into dev |
+| `refresh` in [`scheduled.yml`](../../../.github/workflows/scheduled.yml) | the server | weekly, copies production's data into dev |
 
 **`build-frontend-dev` and `build-frontend-images-dev` were DELETED.** They were a near-identical
 copy of the production frontend build, and they existed only because one push used to deploy both
@@ -422,7 +422,7 @@ builds a table no delta creates.
    same absence prints that the schema is GONE and not to deploy. This is the
    "never learn by failing what a fact could have told you" rule applied to a deploy: the
    discriminator is known before the loop, so it belongs before the loop.
-3. **Run [`dev-refresh.yml`](../../../.github/workflows/dev-refresh.yml).** It restores production's
+3. **Run [`scheduled.yml`](../../../.github/workflows/scheduled.yml).** It restores production's
    full `pg_dump` (`--clean --if-exists`), so schema, data AND `schema_migrations` arrive together -
    every delta is already recorded and the next deploy applies only what is genuinely new. It then
    brings the containers back and proves `/api/version` itself.
@@ -457,7 +457,7 @@ and **nothing deploys until a release is published**.
 | `v0.15.0-alpha.1` (pre-release) | `dev.canari-emse.fr` only | Play *internal* track, TestFlight |
 | `v0.15.0` (stable) | production only | Play `production` track |
 
-`dev-refresh.yml` still copies production's data in every Monday, so an alpha meets
+`scheduled.yml`'s `dev-refresh` job still copies production's data in every Monday, so an alpha meets
 production-shaped data. What dev is FOR changed with the model: it was a rehearsal stage every
 change passed through, and it is now where a tester build points.
 

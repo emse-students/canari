@@ -427,25 +427,23 @@ merges - or it recurs and the pattern says what it depends on. Do not write a wo
 observation: a sweep that deletes leftover branches would be a destructive control built on an
 unmeasured cause, and it would need an allowlist of what it may touch.
 
-### P2 - the vulnerability audit CANNOT BLOCK A MERGE, and it spent a day failing on every pull request while they merged anyway (measured 2026-09-03)
+### ~~P2 - the vulnerability audit cannot block a merge~~ - CLOSED 2026-09-04
 
-**`Check Dependencies Vulnerabilities` is not part of `CI passed`, so it refuses nothing.** It lives
-in `code-analysis.yml`, and `ci-passed` aggregates jobs of `pull-request.yml` - a `needs:` cannot
-reach across workflows. Measured on 2026-09-03: the job was FAILING on #290, #291, #295, #297,
-#299, #304, #309, #315 **and on #344, which merged anyway**.
+**The three security jobs now feed `CI passed`.** `code-analysis.yml` lost its own `pull_request`
+and `schedule` triggers and became a `workflow_call` library; `pull-request.yml` calls it as the
+`security` job and lists it in `ci-passed`'s `needs`, which is the one check the branch ruleset
+requires. So CodeQL, the TruffleHog secret scan and the vulnerability audit can now stop a merge,
+which is what the row asked for.
 
-**That is the same defect the dependency ceiling had until that morning** - advisory where it had to
-be binding - and it was fixed there by MOVING the decision into `pull-request.yml` as a job feeding
-`ci-passed`. The same move closes this one. It is not a one-line change: `code-analysis.yml` also
-runs on a push and on a daily schedule, so the job has to keep serving those callers.
+**What it was.** They ran on every pull request and could not block one, because the ruleset names
+exactly one check and this was not it. A live secret in a PUBLIC repository, or a HIGH advisory,
+produced a red tick beside a mergeable pull request - *a red tick nothing enforces is worse than no
+tick, because it looks enforced.* It spent a day failing on every pull request while they merged
+anyway.
 
-**What made it visible was unrelated:** a new advisory (`GHSA-528h-pc64-c93x`, `stream-json` via
-`minio`) turned the check red on every pull request at once. A check that is red on everything is a
-check nobody reads - *a line its reader learns to skip is the one that hides the next defect* - and
-the fact that it blocked nothing is what let it stay red without stopping anything.
-
-**What retires this row:** the audit is a job of `pull-request.yml`, `ci-passed` needs it, and a
-mutation that introduces a reachable advisory is observed to refuse a merge.
+**And the nightly pass survived the change**, which was the other half: `scheduled.yml` calls the
+same file on `0 2 * * *`. A new advisory lands against code nobody touched, and no pull-request
+gate can ever see that.
 
 ### P3 - TWO audit advisories are suppressed because they cannot be reached, and both should stop being
 
@@ -469,7 +467,7 @@ parses a query string, or if the `stringify` call site the measurement was taken
 
 **The mechanism and the report both exist since 2026-09-03**, installed on the user's decision
 (*"unattended-upgrades securite + rapport"*) across all four hosts: security origins only, nothing
-reboots, and `.github/workflows/host-updates.yml` fails a daily run on any finding. The whole
+reboots, and `.github/workflows/scheduled.yml` fails a daily run on any finding. The whole
 write-up - the policy, the `#clear` that the file needs to not be decorative, the 30-second `502`
 this scope does NOT incur and the evidence for that, and the two defects the report itself had - is
 [host-updates](infrastructure/host-updates.md), the only copy.
