@@ -2207,9 +2207,11 @@ export function gate(verdict, reports) {
   // `{}` for a clean client, so the record shows WHO was dirty without five empty objects around it.
   for (const [label, r] of dirty) detail[`dirt_${label}`] = dirtOf(r);
 
-  // A RUN PRODUCTION RESTARTED UNDER IS NOT A FAILING RUN, IT IS AN ABSENT ONE - see `deploy.mjs`
-  // for the measurement that put this here. Every push to `main` redeploys the server the whole rig
-  // is pointed at, so nginx drops what is in flight and the clients report `ERR_CONNECTION_CLOSED`
+  // A RUN THE SERVER RESTARTED UNDER IS NOT A FAILING RUN, IT IS AN ABSENT ONE - see `deploy.mjs`
+  // for the measurement that put this here. It was written when a push to `main` redeployed the
+  // server the whole rig pointed at; since 2026-09-03 the rig is LOCAL and no deploy reaches it,
+  // but a `make run-services` or a container restart does the same thing and needs no pipeline at
+  // all. Either way nginx drops what is in flight and the clients report `ERR_CONNECTION_CLOSED`
   // on whatever they were doing. That is a transport failure, and the campaign's first rule is that
   // a transport failure is not an answer: the gestures after it are asking a server that is not
   // there, and their failures are sentences about the product that the product did not say.

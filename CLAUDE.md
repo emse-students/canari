@@ -347,14 +347,19 @@ methodology = how a result earns belief, README = operating manual. **Read them 
 re-deriving anything here, and keep no second copy.**
 
 **Four facts govern every session that touches the rig.** `node rows.mjs` SETTLES whether the board
-matches the ledger - run it before believing a cell; it has caught the board wrong three times. **A
-campaign run and a RELEASE are MUTUALLY EXCLUSIVE** - it was "a push to `main`" until 2026-09-03,
-and the danger did not go away with the trigger, it MOVED: a mid-run deploy has already voided three
-cells, and the thing that can now start one is somebody publishing a release, and a killed run can destroy a measurement seconds from being recorded - which is also
-why the dependency sweep is disabled around a session, one of the preconditions
-[the resume page](docs/wiki/cross-client-campaign-resume.md) carries and nothing else does (it also
-carries the one that surprises: **the rig still targets PRODUCTION**, so the dev estate does not make
-a run safer, and **losing a `chrome-w1` / `chrome-w2` profile costs a DEVICE**). **THE USER ASKED FOR
+matches the ledger - run it before believing a cell; it has caught the board wrong three times.
+**THE RIG TARGETS THE LOCAL ESTATE SINCE 2026-09-03, AND TWO STANDING RULES DIED WITH THAT MOVE.**
+"A campaign run and a push to `main` are mutually exclusive" is retired, not re-pointed: a push
+deploys nothing now, and a local run is not on the path of any deploy, so there is no event left to
+be exclusive with - the accident that voided three cells on 2026-08-27, two of them to
+DOCUMENTATION commits, cannot recur. What replaces it is smaller and belongs to the workstation: a
+`bun run dev` reload under a run does the same damage, which is what `bundle.mjs` measures, and it
+is more frequent and less visible than a deploy ever was. **The board is also reset to zero** (the
+LITHIUM ledger was lost with the rig), archived at
+[cross-client-testing-archive](docs/wiki/cross-client-testing-archive.md). What still holds: a
+killed run can destroy a measurement seconds from being recorded, and **losing a `chrome-w1` /
+`chrome-w2` profile costs a DEVICE**. The preconditions are on
+[the resume page](docs/wiki/cross-client-campaign-resume.md) and nowhere else. **THE USER ASKED FOR
 THE LOGS TO BE READ ON EVERY PASS, the reconciliations especially** (2026-08-28) - a heal that works
 is not a heal that was observed, and reading them has since found one P1 no row asks about and turned
 a `FAIL` into another. And two instrument facts that are NOT per-row: the disposition for expected

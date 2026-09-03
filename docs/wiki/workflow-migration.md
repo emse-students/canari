@@ -172,7 +172,13 @@ lightened hook whose gates are not yet in CI is an open hole for the length of t
       exactly where `tools/play-vitals/lib.mjs` already looks, so **no `PLAY_SA_KEY` is needed** and
       the variable stays what it is meant to be - the override. `play-console-sa.json`,
       `google-services.json` and the harness test accounts live there; `google-services.json` is
-      also placed at the gitignored `frontend/src-tauri/gen/android/app/` for a local Android build
+      also placed at the gitignored `frontend/src-tauri/gen/android/app/` for a local Android build.
+      **SPLIT ON 2026-09-03 by WP-5, and the split is the point**: the campaign RIG root moved one
+      level further out, to `D:\Documents\Programmation\canari-harness\`, so a campaign starting
+      from zero cannot half-inherit the LITHIUM one. `play-console-sa.json` and
+      `google-services.json` did NOT move - they are store and build credentials rather than rig
+      state, `lib.mjs` still resolves the first at the path above, and the sentence about
+      `PLAY_SA_KEY` above stays true because of that
 - [x] verified END TO END, not by the file existing: `node tools/play-vitals/vitals.mjs` reads the
       key, authenticates, and reports production on `0.14.15` / code `14015`
 - [x] the handoff memory installed - **11 files, not 12**: the `bunx` shim note was dropped as false
@@ -529,7 +535,21 @@ neither phone can reach the local stack without `adb reverse`, which is per-devi
 survive a replug.
 
 - [ ] a new rig root at `D:\Documents\Programmation\canari-harness\`, fresh Chrome profiles, fresh
-      test accounts, target LOCAL
+      test accounts, target LOCAL - **THE REPOSITORY HALF IS DONE 2026-09-03; THE REST IS BLOCKED ON
+      THE USER AND IT IS THE RIGHT KIND OF BLOCKED.** `names.example.mjs` now points at
+      `../../../../canari-harness`, one level further out - a root the old path cannot reach cannot
+      be half-inherited - and its `SITE` is `http://localhost:1420`. **Two files were deliberately
+      LEFT in the old directory**, `play-console-sa.json` and `google-services.json`: they are STORE
+      and BUILD credentials rather than rig state, `tools/play-vitals/lib.mjs` resolves the first by
+      that exact path, and its README now says so in the imperative so nobody tidies it. **What
+      cannot be done here is the ACCOUNTS.** Local authenticates against the PRODUCTION Authentik
+      (decision 8 - no local IdP), so "fresh test accounts" means creating users on
+      `auth.canari-emse.fr`, which is a write to the identity provider; the attempt of 2026-09-02
+      was refused for exactly that reason and the refusal was correct. **And the rig root is not
+      created with a placeholder `names.mjs`** - a display name that looks real and matches nothing
+      is the precise failure that file exists to prevent, since a check clicking a name nobody
+      renders opens NOTHING and then reports on whatever conversation was on screen. Absent beats
+      plausible. The Chrome profiles follow the accounts, being enrolments of them
 - [x] the board reset, old verdicts archived in a dated "rig LITHIUM, ledger lost" section -
       **DONE 2026-09-03, as a separate PAGE rather than a section.**
       [cross-client-testing-archive](cross-client-testing-archive.md) holds the old board verbatim;
@@ -547,17 +567,36 @@ survive a replug.
       question and not its answer. The `VACUOUS` definition changed with the target: on local the
       thing that redeploys under a run is a `bun run dev` reload, more frequent and less visible
       than a CD run, so `bundle.mjs` matters MORE here than it did against production
-- [ ] the campaign pages rewritten: the target is local, the phone enters by `adb reverse`, and the
-      cookie reservation of section 4 is stated per row
-- [ ] **two standing rules DELETED, and that is a gain** - **but WP-6 has already done half of
-      this, and the half it did is not a deletion.** "A campaign run and a push to `main` are
-      mutually exclusive" was corrected on 2026-09-03 to name a RELEASE: the trigger changed, the
-      danger did not, and a safety rule whose event can no longer happen reads as retired rather
-      than as moved. It becomes deletable only when this box lands - a LOCAL run cannot be voided by
-      any deploy at all - and the same commit makes "the rig targets PRODUCTION" false. So the four
-      places carrying it (`cross-client-campaign.md`, `cross-client-campaign-resume.md`,
-      `testing-methodology.md`, `CLAUDE.md`) are edited TWICE by design, and the second edit is the
-      one that removes rather than corrects
+- [x] the campaign pages rewritten: the target is local, the phone enters by `adb reverse`, and the
+      cookie reservation of section 4 is stated per row - **DONE 2026-09-03.**
+      `cross-client-campaign-resume.md` was rewritten WHOLE, because it is the page whose entire
+      subject is "the delta since the pause" and the delta is now four simultaneous changes, any one
+      of which would have invalidated the board on its own. `cross-client-campaign.md` took targeted
+      edits: the target section, the state directory, the debris section (clearing it got CHEAPER,
+      not optional - restoring the dump instead of a `DELETE` somebody has to be trusted with), and
+      a new standing rule for the cookie. **The cookie reservation is written as a rule about
+      EVIDENCE rather than as a caveat**: `SameSite=Lax` without `Secure` is sound for what local
+      measures, a differing PORT still being same-site, so the affected rows are neither `SKIPPED`
+      nor silently believed - they carry the reservation in their own cell, which is this
+      repository's existing rule that a column is only evidence for the question it was written to
+      answer. **One correction is repeated on both pages because it was the stated reason the rig
+      could not move**: "89 files carry `canari-emse.fr` as a literal with no central constant" was
+      false - zero navigation literals, 120 CDP tab matchers matched by substring, zero anchored
+      comparisons - and a count of occurrences is not a measurement of coupling
+- [x] **two standing rules DELETED, and that is a gain** - **DONE 2026-09-03, in two passes by
+      design.** WP-6 corrected "a campaign run and a push to `main` are mutually exclusive" to name
+      a RELEASE, because the trigger had changed and the danger had not; this pass RETIRES it, both
+      halves now being gone - a push deploys nothing, and a local run is not on the path of any
+      deploy at all. "The rig targets PRODUCTION" is false with it. Six places carried them and all
+      six moved: `cross-client-campaign.md`, `cross-client-campaign-resume.md`,
+      `testing-methodology.md`, `CLAUDE.md`, and the comments in `healnew.mjs` and `watch.mjs`.
+      **What replaced the rule is the part worth carrying**, and it is worse in the way that
+      matters: a `bun run dev` reload swaps the bundle under the clients exactly as a deploy did, it
+      happens on a SAVE, it needs no pipeline, and there is nothing to watch the way `gh run list`
+      was watched. `bundle.mjs` still catches it, and did not have to change - because it was
+      derived from what a client is EXECUTING rather than from what happened upstream. **A check
+      written against STATE survived the replacement of its own cause**, which is the argument this
+      repository keeps making, arriving here as evidence rather than as advice
 
 ### WP-6 - documentation (DONE 2026-09-03)
 
