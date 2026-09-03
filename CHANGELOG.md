@@ -18,9 +18,13 @@ which is also where every release up to and including v0.13.1 now lives.
   PR, les miennes ou dependabot"*). It was asked only inside `dependabot-auto-merge.yml`, a SECOND
   merge mechanism running beside GitHub's own auto-merge - so a Dependabot pull request and a
   human's took different routes to `main`, and only one of them was visible where a human looks.
-  **#309 is what that cost**: `postgres 15-alpine -> 18-alpine`, fully green, correctly refused,
-  open for days with the refusal recorded nowhere on the pull request itself. The new
-  `dependency-ceiling` job feeds `ci-passed`, which is what makes it binding rather than advisory:
+  **#309 is the case**: `postgres 15-alpine -> 18-alpine`, fully green, correctly refused, open
+  for days. **The entry first published here said the refusal was "recorded nowhere on the pull
+  request", and that was wrong** - the sweep posts a detailed comment naming the exact missing
+  test. The difference a check makes is narrower and still worth it: a comment is absent from the
+  checks list where a reader looks for blockers, cannot be read by the merge machinery, and sits
+  outside `ci-passed`. The new `dependency-ceiling` job feeds `ci-passed`, which is what makes it
+  binding rather than advisory:
   an update with no gate here cannot merge by any route, armed or not. It runs only on Dependabot's
   own pull requests, and the reason is the INPUT rather than the author - the decision reads the
   `updated-dependencies` block Dependabot writes into its commit message, and a human's pull

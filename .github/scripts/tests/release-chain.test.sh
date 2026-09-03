@@ -492,9 +492,13 @@ printf '\nthe dependency ceiling is a CHECK, and it is binding\n'
 # inside `dependabot-auto-merge.yml`, a SECOND merge mechanism beside GitHub's own auto-merge - so a
 # Dependabot pull request and a human's took different routes to `main`, and only one was visible
 # where a human looks (user: *"le auto-merge et les CI doivent considerer toutes les PR, les
-# miennes ou dependabot"*). #309 is the case that shows the cost: `postgres 15-alpine -> 18-alpine`,
-# fully GREEN, correctly refused, open for days with the refusal recorded nowhere on the pull
-# request itself.
+# miennes ou dependabot"*). #309 is the case: `postgres 15-alpine -> 18-alpine`, fully GREEN and
+# correctly refused, open for days.
+#
+# AND IT CORRECTS THE FIRST VERSION OF THIS COMMENT, which said the refusal was recorded nowhere on
+# the pull request. It was - as a `github-actions` comment naming the missing test. What a CHECK
+# adds is that the refusal becomes BINDING: a comment is absent from the checks list, unreadable by
+# the merge machinery, and outside `ci-passed`, the one check the ruleset requires.
 if grep -qE '^  dependency-ceiling:$' "$AM"; then
   pass 'the ceiling is a job of the pull-request package'
 else
