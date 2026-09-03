@@ -62,6 +62,26 @@ which is also where every release up to and including v0.13.1 now lives.
   re-mutated to prove it still rejects.
 
 ### Fixed
+- **The report added an hour earlier would have mailed the maintainer twenty-four times a day**, and
+  they said so within the hour. Failing the sweep while ANY branch is stuck was right about the
+  signal and wrong about the cost: this workflow runs **hourly**, plus on every push to `main`, so a
+  permanently stuck queue meant a permanent stream of identical failure mail - and *a line its
+  reader learns to skip is the one that hides the next defect*.
+
+  **The failure is rationed, the report is not.** Every pass still prints the `::error` annotation
+  and writes each stuck branch to the step summary; neither sends mail. The exit status now carries
+  only "something changed", rationed by a durable stamp carrying the HEAD, written into the sweep's
+  own ask comment - so a rebased branch that gets stuck again fails again, while the same branch
+  staying stuck does not. An assertion holds the pairing, because rationing the failure without the
+  unconditional report would make a still-stuck queue silent after its first pass, which is the
+  defect that started this.
+
+  **And the queue was drained by hand while this was written, which is the measurement the row
+  needed:** an account WITH push access posted `@dependabot rebase` on all eight open pull requests
+  and **seven rebased inside a minute**. The eighth answered *"this PR has been edited by someone
+  other than Dependabot"* - exactly what the head-author check predicts from the state - and took
+  `@dependabot recreate`. So the queue is drainable today in one comment; what the missing
+  credential costs is doing it unattended. The report now names that gesture.
 - **Google Play had never received release notes at all**, and nothing could have said so: a WRONG
   what's-new is refused by the API, a MISSING one is silent - the field simply keeps whatever it
   held. Every release told iOS users what had changed and left Android users with the previous

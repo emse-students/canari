@@ -619,13 +619,31 @@ if [ -r "$SWEEP_WF" ]; then
     fail 'the ask step has no refused arm - marker-present then means pending, which is the sentence that was false three seconds after the first ask'
   fi
 
-  # AND THE REFUSAL IS LOUD. A green run whose log says `waiting on Dependabot` is how this hid.
-  # The sweep feeds no required check, so failing costs no release and buys the only report there
-  # is: the queue cannot converge until a credential with push access exists.
+  # AND THE REFUSAL IS LOUD - BUT ONCE PER HEAD, WHICH IS THE HALF THE FIRST VERSION GOT WRONG.
+  # It failed while ANY branch was stuck, and this workflow runs HOURLY: that mails the maintainer
+  # about twenty-four times a day about one known condition, and a line its reader learns to skip
+  # is the one that hides the next defect. The report is what must be unconditional; the FAILURE is
+  # what must be new.
   if printf '%s' "$ASK_STEP" | grep -qE 'if \[ ".stuck" -gt 0 \]'; then
-    pass 'and the step fails while any branch is stuck this way, rather than reporting green'
+    pass 'the step still fails on a refusal, so something changing is mailed'
   else
     fail 'nothing fails when a branch cannot be rebuilt by any identity here - a correct mechanism with no report is found by hand, a day late, and this one hid ten refusals'
+  fi
+
+  # THE ANNOTATION AND THE SUMMARY COST NO MAIL, so they are the ones that run every pass. Without
+  # them, rationing the failure would make a still-stuck queue silent again after its first report.
+  if printf '%s' "$ASK_STEP" | grep -q 'GITHUB_STEP_SUMMARY'; then
+    pass 'and every pass writes the stuck branches to the step summary, which sends no mail'
+  else
+    fail 'nothing reports a stuck branch on a pass that does not fail - rationing the failure without an unconditional report makes a still-stuck queue silent again, which is the defect this whole section is about'
+  fi
+
+  # RATIONED BY A DURABLE STAMP CARRYING THE HEAD, never by a counter or a clock: a rebase replaces
+  # the head, so a branch that gets stuck AGAIN on fresh evidence fails again.
+  if printf '%s' "$ASK_STEP" | grep -q 'auto-merge-refusal-reported'; then
+    pass 'and the failure is rationed by a stamp carrying the head, so a rebased branch fails again'
+  else
+    fail 'the failure is not rationed per head - an hourly workflow that fails for as long as a known condition lasts is a mail every hour about nothing new'
   fi
 
   # THE CLAIM THE STEP NAME USED TO MAKE. It was written from an argument, and the measurement

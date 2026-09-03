@@ -1148,9 +1148,28 @@ on Dependabot` - false three seconds after the first ask. *Durable state answers
 it was written for*: `have I already asked` and `is this stuck` differ only in lifetime, and using
 one for the other silences the trigger. Since 2026-09-03 the two are read from the same thread - our
 ask by its marker, a `dependabot[bot]` reply about push access AFTER it as the refusal - a refusal
-is never retried (it is deterministic; asking again every six hours would be noise), and **the step
-FAILS while any branch is stuck this way**. A permanently red sweep is the correct accusation: it
-feeds no required check, so it blocks no release, and it goes green the day the credential exists.
+is never retried (it is deterministic; asking again every hour would be noise), and the step FAILS -
+**once per (pull request, HEAD), which is the half the first version got wrong by one day.** It
+failed while ANY branch was stuck, on the reasoning that a permanently red sweep is the correct
+accusation for a permanently stuck queue. That was right about the signal and wrong about the cost:
+**this workflow runs hourly**, plus on every push to `main`, so it mails the maintainer about
+twenty-four times a day about one known condition - and *a line its reader learns to skip is the one
+that hides the next defect*. The user said so within the hour.
+
+So the FAILURE is rationed and the REPORT is not: every pass prints the `::error` annotation and
+writes each stuck branch to the step summary, neither of which sends mail, while the exit status
+carries only "something changed". The ration is a durable stamp carrying the HEAD, written into our
+own ask comment - so a rebased branch that gets stuck again on fresh evidence fails again, and the
+same branch staying stuck does not. Rationing the failure WITHOUT the unconditional report would
+have made a still-stuck queue silent after its first pass, which is the defect this whole section
+is about; an assertion holds that pairing.
+
+**AND THE REMEDY IN THE MESSAGE IS ONE GESTURE, MEASURED.** An account WITH push access can post
+`@dependabot rebase`: on 2026-09-03 the maintainer's own account asked on all eight open pull
+requests and **seven rebased inside a minute**. The eighth, #299, answered *"this PR has been edited
+by someone other than Dependabot"* - exactly what the head-author check had predicted from the state
+- and took `@dependabot recreate` instead. So the queue IS drainable today, by hand, in one comment;
+what the missing credential costs is doing it unattended.
 
 Closing the pull request is not an alternative - Dependabot does not recreate a version whose pull
 request was closed unmerged. What closes the route is a **fine-grained PAT from an account with push

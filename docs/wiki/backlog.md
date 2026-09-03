@@ -398,8 +398,16 @@ The sweep wrote its idempotence marker when the COMMENT was POSTED and never rea
 every pass printed `already asked for c228e97d; waiting on Dependabot` about a request refused three
 seconds after it was made. `is this broken` and `have I already asked` differ only in lifetime, and
 using one for the other silences the trigger. Since 2026-09-03 the ask and the refusal are two
-facts, read from the same thread, and **the sweep FAILS while any branch is stuck this way** - it
-feeds no required check, so a red sweep costs no release and is the only report there is.
+facts, read from the same thread, and **the sweep FAILS once per (pull request, HEAD)** - not while
+the condition lasts, which on an HOURLY workflow was twenty-four identical mails a day. The
+annotation and the step summary are unconditional and send no mail; the exit status carries only
+"something changed".
+
+**AND THE QUEUE IS DRAINABLE BY HAND TODAY, measured 2026-09-03:** the maintainer's own account
+posted `@dependabot rebase` on all eight, and **seven rebased inside a minute**; #299 answered *"this
+PR has been edited by someone other than Dependabot"*, exactly as the head-author check predicts,
+and took `@dependabot recreate`. So what the missing credential costs is not the drain - it is doing
+it UNATTENDED, which is the whole point of the chain.
 
 **The other two routes are still closed, and were measured before this one:**
 
