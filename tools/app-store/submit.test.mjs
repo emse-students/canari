@@ -25,6 +25,7 @@ import {
   classifyVersionState,
   readWhatsNew,
   mintToken,
+  shouldRetry,
 } from './submit.mjs';
 
 let pass = 0;
@@ -262,6 +263,33 @@ process.stdout.write('\nwhich version slot does this release belong in?\n');
     chooseVersionSlot({ versions: null, versionString: '0.16.0' }).action,
     'fail'
   );
+}
+
+// -------------------------------------------------------------------------------------------------
+{
+  process.stdout.write('\nwhat is Apple answering, and what is Apple failing to answer\n');
+
+  // THE CASE. `v0.16.1` died on the LAST request of the submission chain - version created, build
+  // attached, notes written - with `PATCH /v1/reviewSubmissions/{id} -> 500 An unexpected error
+  // occurred on the server side`. That is not a decision about our request; it is Apple saying it
+  // never reached one.
+  eq('a 500 on a PATCH is Apple failing to answer, so it is retried', shouldRetry('PATCH', 500), true);
+  eq('so is a 502, a 503 and a 504', [502, 503, 504].every((s) => shouldRetry('GET', s)), true);
+  eq('and a 429, which is Apple asking for less, not answering', shouldRetry('PATCH', 429), true);
+  eq('a request that got no response at all is retried too', shouldRetry('PATCH', 0), true);
+
+  // A STATUS CODE IS AN ANSWER. Retrying one changes nothing and hides what it said.
+  eq('a 409 is an ANSWER - the app already has a non-terminal version', shouldRetry('PATCH', 409), false);
+  eq('a 401 is an ANSWER - the key or the JWT is wrong', shouldRetry('PATCH', 401), false);
+  eq('a 422 is an ANSWER', shouldRetry('PATCH', 422), false);
+
+  // THE HALF THAT MATTERS MOST. A 500 on a POST leaves us unable to say whether the thing was
+  // created; retrying would quietly make a SECOND review submission. Those calls are protected
+  // instead by asking what exists before creating anything.
+  eq('a POST is NEVER retried, whatever the status', shouldRetry('POST', 500), false);
+  eq('nor when it got no response at all', shouldRetry('POST', 0), false);
+
+  eq('the method is read case-insensitively', shouldRetry('patch', 503), true);
 }
 
 process.stdout.write('\n');

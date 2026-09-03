@@ -570,6 +570,30 @@ jobs:
           cat "$ALTOOL_LOG"
           rm -f "$KEY_DIR/AuthKey_${ASC_KEY_ID}.p8"
 
+          # A BUILD APPLE ALREADY HAS IS THIS STEP'S POSTCONDITION, NOT ITS FAILURE, and this is
+          # what makes "Re-run failed jobs" work on this arm at all. The build number is derived
+          # from the version, so a re-run uploads the SAME CFBundleVersion and Apple answers
+          # `ERROR ITMS-4238: Redundant Binary Upload` - a statement that the binary is already
+          # there, which is exactly what the step was asked to achieve.
+          #
+          # MEASURED ON `v0.16.1`. That run failed on the very LAST request of the submission
+          # chain (a 500 from Apple on `PATCH /reviewSubmissions`) with the build uploaded, the
+          # version created and the notes written - and the write had in fact LANDED, the version
+          # showing as added for review. A red job over a shipped release, and the documented
+          # recovery could not even be attempted: "Re-run failed jobs" would have died HERE, on a
+          # redundant upload, several steps before the one that needed retrying.
+          #
+          # NARROW ON PURPOSE. Only Apple's own redundancy markers are read as success; every other
+          # altool failure, including a validation rejection, still fails the step. Widening this
+          # to "any error mentioning the build number" would launder a real rejection into a green
+          # step, which is the failure mode this workflow already paid for once with the
+          # `workflow_run` gate that could never be true.
+          if grep -qiE "ITMS-4238|Redundant Binary Upload" "$ALTOOL_LOG"; then
+            echo "::notice::Apple already holds this build - the upload is a no-op, continuing"
+            echo "uploaded=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           # altool can exit 0 even when its own payload reports a failed upload (e.g. an
           # asset-validation rejection), so the process exit code alone cannot be trusted -
           # also grep the transcript for altool's own failure markers.

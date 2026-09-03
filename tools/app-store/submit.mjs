@@ -91,6 +91,49 @@ const VERSION_DONE = new Set([
   'PROCESSING_FOR_APP_STORE',
 ]);
 
+const IDEMPOTENT_METHODS = new Set(['GET', 'HEAD', 'PATCH', 'PUT', 'DELETE']);
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+export const API_ATTEMPTS = 4;
+const API_RETRY_BASE_MS = 4000;
+
+/**
+ * WHETHER A REFUSAL IS APPLE ANSWERING, OR APPLE FAILING TO ANSWER.
+ *
+ * *A status code is an ANSWER, a transport failure is not.* A 409 is Apple telling us the app
+ * already has a non-terminal version - a fact, and retrying it a hundred times changes nothing. A
+ * `500 An unexpected error occurred on the server side. If this issue continues, contact us` is
+ * Apple saying it did not get as far as having an opinion.
+ *
+ * THE CASE, AND ITS SECOND HALF IS THE INTERESTING ONE. `v0.16.1` died on the LAST request of the
+ * submission chain - `PATCH /v1/reviewSubmissions/{id} {submitted: true} -> 500` - with the version
+ * created, the build attached and the notes written. **The write had LANDED**: App Store Connect
+ * showed the version added for review, observed by the user minutes later. So the 500 was a lost
+ * RESPONSE, not a refused effect, and the run was RED while the release had in fact shipped - which
+ * is its own defect, a job whose colour contradicts what it did. Retrying is what closes it: the
+ * second `PATCH` would have found the submission already submitted and returned an ANSWER, and the
+ * job would have been honest.
+ *
+ * ONLY IDEMPOTENT METHODS, and this is the whole subtlety. `PATCH /reviewSubmissions/{id}
+ * {submitted: true}` may be repeated: the second call either does the same thing or is refused for
+ * a reason that IS an answer. `POST /v1/reviewSubmissions` may NOT: a 500 leaves us unable to say
+ * whether the submission was created, and a retry would quietly make a second one. Those POSTs are
+ * already protected differently - the code asks what exists before creating anything - so the two
+ * halves cover each other.
+ *
+ * NOT A FALLBACK PATH. Nothing different happens on a retry; the same request is made again,
+ * because the first one never reached a decision.
+ *
+ * @param {string} method
+ * @param {number} status HTTP status, or 0 for a request that never got a response at all.
+ * @returns {boolean}
+ */
+export function shouldRetry(method, status) {
+  if (!IDEMPOTENT_METHODS.has(method.toUpperCase())) return false;
+  // A throw from `fetch` - DNS, a reset connection, a TLS failure - carries no status at all.
+  if (status === 0) return true;
+  return RETRYABLE_STATUS.has(status);
+}
+
 // -------------------------------------------------------------------------------------------------
 // Authentication
 // -------------------------------------------------------------------------------------------------
@@ -315,30 +358,59 @@ export function readWhatsNew({ file, version }) {
 
 /** @type {(token: string) => (method: string, path: string, body?: unknown) => Promise<any>} */
 const client = (token) => async (method, path, body) => {
-  const res = await fetch(`${API}${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      ...(body ? { 'Content-Type': 'application/json' } : {}),
-    },
-    ...(body ? { body: JSON.stringify(body) } : {}),
-  });
-  if (res.status === 204) return null;
-  const text = await res.text();
-  let json = null;
-  try {
-    json = text ? JSON.parse(text) : null;
-  } catch {
-    // Apple answers HTML for some gateway errors; the status and the body are what a reader needs.
-  }
-  if (!res.ok) {
+  for (let attempt = 1; ; attempt++) {
+    /** @type {Response} */
+    let res;
+    try {
+      res = await fetch(`${API}${path}`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          ...(body ? { 'Content-Type': 'application/json' } : {}),
+        },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
+    } catch (e) {
+      // No response at all. `status: 0` is how the policy above spells that.
+      if (attempt < API_ATTEMPTS && shouldRetry(method, 0)) {
+        const wait = API_RETRY_BASE_MS * attempt;
+        log(`  ${method} ${path} did not reach Apple (${e}) - retrying in ${wait / 1000}s`);
+        await sleep(wait);
+        continue;
+      }
+      throw new Error(`${method} ${path} -> no response after ${attempt} attempt(s): ${e}`);
+    }
+
+    if (res.status === 204) return null;
+    const text = await res.text();
+    let json = null;
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch {
+      // Apple answers HTML for some gateway errors; the status and the body are what a reader needs.
+    }
+    if (res.ok) return json;
+
     // THE ERROR DETAIL IS THE WHOLE VALUE OF THIS BRANCH. Apple's errors say exactly what is wrong
     // ("You must provide a value for 'whatsNew'"), and a bare status turns that into a guess.
     const detail =
       json?.errors?.map((e) => `${e.title}: ${e.detail ?? ''}`).join(' | ') ?? text.slice(0, 400);
-    throw new Error(`${method} ${path} -> ${res.status} ${detail}`);
+
+    if (attempt < API_ATTEMPTS && shouldRetry(method, res.status)) {
+      const wait = API_RETRY_BASE_MS * attempt;
+      log(
+        `  ${method} ${path} -> ${res.status} (Apple did not answer) - attempt ${attempt} of ` +
+          `${API_ATTEMPTS}, retrying in ${wait / 1000}s: ${detail}`
+      );
+      await sleep(wait);
+      continue;
+    }
+
+    // The attempt count is part of the message: "500 once" and "500 four times, a minute apart"
+    // are different findings, and only one of them is worth reporting to Apple.
+    const tried = attempt > 1 ? ` after ${attempt} attempts` : '';
+    throw new Error(`${method} ${path} -> ${res.status}${tried} ${detail}`);
   }
-  return json;
 };
 
 const log = (msg) => process.stdout.write(`${msg}\n`);

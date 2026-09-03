@@ -11,6 +11,29 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A 500 from Apple no longer loses a submission, and a failed iOS arm can be re-run at all.**
+  `v0.16.1` shipped to the App Store and reported failure: the chain got all the way to
+  `PATCH /v1/reviewSubmissions/{id} {submitted: true}`, with the build uploaded, the version created
+  and the release notes written, and Apple answered `500 An unexpected error occurred on the server
+  side`. **The write had landed** - the version showed as added for review minutes later - so the
+  500 was a lost RESPONSE, not a refused effect, and the run was RED over a release that had in fact
+  shipped. Two things are now true that were not:
+
+  - **`submit.mjs` retries what Apple never answered** (429, 500, 502, 503, 504, and a request that
+    got no response at all), four attempts with a linear backoff. *A status code is an ANSWER, a
+    transport failure is not*: a 409 or a 401 is a fact about our request and is raised at once.
+    **A POST is never retried**, whatever the status - a 500 there leaves it unknown whether the
+    review submission was created, and a second attempt would quietly make a duplicate; those calls
+    are protected instead by asking what already exists before creating anything.
+  - **`ios.yml` treats a build Apple already holds as this step's postcondition, not its failure.**
+    The build number is derived from the version, so re-running the arm re-uploads the same
+    `CFBundleVersion` and Apple answers `ITMS-4238 Redundant Binary Upload`. The documented recovery
+    - "Re-run failed jobs" - therefore could not even be attempted: it would have died on the
+    upload, several steps before the request that needed retrying. Only Apple's own redundancy
+    markers are read this way; every other altool failure still fails the step.
+
 ## [0.16.1] - 2026-09-03
 
 ### Changed
