@@ -153,6 +153,61 @@ next green because it could, nothing else about the host having changed. A repor
 has never been observed is a report nobody should believe - and the failure it produced was the
 honest one, naming its own blindness rather than announcing health.
 
+## The 7.3 TB RAID1 nobody was watching, found while rebooting for the kernel (2026-09-03)
+
+`mitv` was owed a reboot for `linux-image-6.12.95+deb12-amd64` since 12 July, and taking it (57
+days of uptime, back in 75 seconds, `reboot-required` now clear) exposed something the kernel had
+nothing to do with. **`mdmonitor.service` had been FAILED on every boot back to at least 9 June**,
+and the box carries a live mirror of 7.3 TB - `md0 : active raid1 sdb[2] sdc[0]`, `[2/2] [UU]` -
+holding all of the NAS storage: Immich's library, the Samba shares, MiGallery's and Sky's data.
+
+The reason was `mdadm: No mail address or alert command - not monitoring`, then exit 1. **The
+monitor refused to start at all.** A disk failing would have left the array running degraded on one
+disk with NOTHING recording it - not locally, not anywhere - until the second one went and the
+7.3 TB with it.
+
+### `MAILADDR` would have been the wrong fix, and why is the whole point
+
+postfix and exim4 are both inactive on that box, and `monit` - which DOES run, and does watch the
+root filesystem, the data mount and nginx - has no `set alert` and no `set mailserver` destination
+at all. **There is no notification channel on this host.** An address in `mdadm.conf` would have
+made the unit start and delivered its warnings into a spool nobody opens: the unit would then read
+*healthy* while a degraded array stayed silent, which is strictly worse than the failure it
+replaced. That is this page's own rule turned on itself - a check that cannot reach its reader
+reports health.
+
+So the event goes to syslog, via `PROGRAM /usr/local/sbin/mdadm-alert`, **with severity by event
+class**: `Fail`, `FailSpare`, `DegradedArray` and `DeviceDisappeared` at `daemon.crit`, everything
+else at `daemon.notice`. A level that cries wolf on `RebuildFinished` is a level its reader learns
+to skip, and the line it then skips is the one that mattered.
+
+**It was proved by firing it rather than by reading it.** `mdadm --monitor --scan --test --oneshot`
+put a `TestMessage` line into syslog with the `mdstat` snapshot beside it, which is the same
+discipline the update report earned the hard way: a check whose alarm has never been observed is a
+check nobody should believe.
+
+### Which immediately caught a second thing - the alarm that would have cried wolf for ever
+
+`SparesMissing on /dev/md0` fired on the RESTART itself, not on the test. `mdadm.conf` declared
+`spares=1`, and the box has three disks: `sda` for the OS, `sdb` and `sdc` in the mirror, and no
+spare anywhere. The declaration was stale, so it was removed - `mdmonitor` now restarts with no
+lines at all, and **a future `SparesMissing` therefore means something**. Left alone it would have
+alarmed on every boot, and a monitor installed on Thursday and ignored by Friday is not a monitor.
+
+### `dnsmasq`, the other failed unit, was not useful
+
+Zero queries ever logged, nothing listening on 53, dead since at least June while the box resolved
+perfectly. It failed on a BOOT RACE - `bind-interfaces` with `listen-address=10.0.0.4` evaluated
+before the interface carried that address - so `bind-dynamic` is the fix if a LAN DNS cache is ever
+actually wanted. It is disabled instead, and `systemctl enable --now dnsmasq` reverts that.
+
+### What this does NOT install is a report
+
+Syslog on `mitv` is read by nobody and nothing. **The array now has a SENSOR and still has no
+CHANNEL**, which is the same gap already open for the three hosts the update report cannot reach,
+one subject wider. It is in [backlog](../backlog.md) with what closes it: `/proc/mdstat` read into
+the same daily report, and that report reaching more than the production box.
+
 ## See also
 
 - [backlog](../backlog.md) - what stays open: the other three hosts' reporter, and the library

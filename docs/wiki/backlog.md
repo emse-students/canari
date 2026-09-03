@@ -83,6 +83,45 @@ and its test are on [dev-environment](infrastructure/dev-environment.md).
 
 ## CI and the chain that runs unattended
 
+### P2 - a 7.3 TB RAID1 now has a sensor and still has no report, and nothing on that host can reach a human (measured 2026-09-03)
+
+**`mitv`'s mirror was monitored by nothing at all until 2026-09-03** - `mdmonitor.service` had
+refused to start on every boot back to at least 9 June, for want of an alert destination. It runs
+now, with severity by event class, and its alarm was proved by firing a test event through the real
+path. The whole account, including why `MAILADDR` would have made it worse and the stale `spares=1`
+that would have cried wolf on every boot, is
+[host-updates](infrastructure/host-updates.md#the-73-tb-raid1-nobody-was-watching-found-while-rebooting-for-the-kernel-2026-09-03).
+
+**What stays open is the channel.** The events go to syslog, and syslog on that box is read by
+nobody and nothing: postfix and exim4 are inactive, and `monit` runs with no `set alert` and no
+`set mailserver`. So a failing disk is now RECORDED and still not REPORTED.
+
+**What retires it:** `/proc/mdstat` read into the daily host report - a degraded array is exactly
+the shape that report already handles, and it would name the array and the missing component - plus
+that report reaching hosts other than production, which is the row above this one. The two close
+together or not at all, and neither needs a new mechanism, only the existing one pointed at one
+more fact and one more box.
+
+### P3 - vitest cannot start a worker on this workstation, so half of `make run-ci` is not available where development now happens (measured 2026-09-03)
+
+`bunx vitest run src/lib/utils/appVersion.test.ts` ends in
+`[vitest-pool-runner]: Timeout waiting for worker to respond` after 60 seconds, reporting
+`Test Files  no tests`. Measured with the default pool and with `--pool=forks`, and with a single
+test file, so it is not one suite being slow - **no worker starts at all.**
+
+**Why it is not cosmetic.** WP-5 moved development and the whole test campaign LOCAL, and
+`CLAUDE.md` names `make run-ci` as the full local pipeline. A local gate that cannot be executed on
+the machine doing the work is not a gate: the frontend half of that pipeline is currently CI-only,
+so a frontend defect is found after a push rather than before one. It also means a session cannot
+verify a frontend change it just wrote - on 2026-09-03 a `compareSemver` fix had to be checked by
+extracting the function into a standalone script (13 cases, all passing) because its real test file
+could not be run, and only CI exercised the file itself.
+
+**What retires it:** naming the cause. Candidates not yet separated - Windows plus the forks pool,
+the `paraglide:compile` step the `test` script runs first, or a `node_modules` state specific to
+this box. `bun test` as a runner is NOT the answer to reach for: the suites are written for vitest,
+and swapping the runner to dodge a broken worker would change what is being asserted.
+
 ### P1 - NINE OF THE TEN BACKEND PULL-REQUEST SLOTS ARE HELD BY UPDATES THAT CAN NEVER GO GREEN, and the group written to prevent exactly that has never opened a pull request (measured 2026-09-03)
 
 **The four NestJS services share `open-pull-requests-limit: 10`, and nine of those ten slots are
