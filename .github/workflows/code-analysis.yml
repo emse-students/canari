@@ -21,6 +21,18 @@ name: Code Analysis
 
 on:
   workflow_call:
+    inputs:
+      # WHAT AN UNREACHABLE npm ADVISORY ENDPOINT COSTS, AND IT IS NOT THE SAME IN BOTH CALLERS.
+      # `bun audit` exits 1 for a 503 exactly as it does for a real advisory, and on 2026-09-03 that
+      # walled every merge in the repository behind a five-minute npm outage. A pull request must not
+      # be stopped by an incident nobody here can fix; the nightly pass must, because that failure IS
+      # the report that a tree has gone a day unaudited. `audit-dependencies.sh` carries the
+      # classification, this input carries the policy.
+      registry_outage_is_failure:
+        description: 'Fail when the npm advisory endpoint never answers. `true` for the nightly pass, `false` for a pull request.'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   codeql:
@@ -162,12 +174,17 @@ jobs:
         run: node ./scripts/check-tauri-plugin-versions.mjs
 
       # `bun audit`, not `npm audit`: the frontend's committed lockfile is bun.lock, and npm audit
-      # against it audits whatever a stray package-lock.json happens to say instead.
+      # against it audits whatever a stray package-lock.json happens to say instead. It goes through
+      # `audit-dependencies.sh`, which is the one place that tells the registry's ANSWER apart from
+      # its SILENCE - `|| [ "$?" -eq 2 ]` is where this caller's policy lands, and the script turns
+      # that 2 into a 1 by itself when the input above says an unaudited tree is a failure.
       - name: Audit frontend dependencies
-        working-directory: frontend
+        env:
+          REGISTRY_OUTAGE_IS_FAILURE: ${{ inputs.registry_outage_is_failure }}
         run: |
-          bun install --frozen-lockfile
-          bun audit
+          set -uo pipefail
+          ( cd frontend && bun install --frozen-lockfile )
+          .github/scripts/audit-dependencies.sh frontend || [ "$?" -eq 2 ]
 
       # Every service is audited even after one fails. Aborting on the first would report a
       # single service and call the rest clean by never opening them - the same failure the
@@ -215,6 +232,8 @@ jobs:
       # revisited rather than silently outliving the reason it was granted. An advisory suppressed
       # on a premise nothing checks is a hole with a comment over it.
       - name: Audit backend service dependencies
+        env:
+          REGISTRY_OUTAGE_IS_FAILURE: ${{ inputs.registry_outage_is_failure }}
         run: |
           set -uo pipefail
 
@@ -231,7 +250,15 @@ jobs:
             echo "--- $svc"
             ig=$(ignores_for "$svc")
             [ -n "$ig" ] && echo "    suppressing, with the reason and the assertion in this workflow: $ig"
-            ( cd "apps/$svc" && bun install --frozen-lockfile --ignore-scripts && bun audit --audit-level=moderate $ig ) || failed="$failed $svc"
+            # Same three outcomes as the frontend, and the same policy: 2 is "the registry never
+            # answered", which is not a finding about this service.
+            ( cd "apps/$svc" && bun install --frozen-lockfile --ignore-scripts ) || { failed="$failed $svc(install)"; continue; }
+            # `$ig` is a deliberately word-split list of `--ignore=` flags built by `ignores_for`,
+            # and it is EMPTY for every service but one - quoting it would pass an empty argument.
+            # shellcheck disable=SC2086
+            .github/scripts/audit-dependencies.sh "apps/$svc" --audit-level=moderate $ig
+            rc=$?
+            [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ] || failed="$failed $svc"
           done
 
           # The premise behind the one ignore. Runs after the loop so `node_modules` exists.

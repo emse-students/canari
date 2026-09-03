@@ -126,6 +126,13 @@ jobs:
       contents: read
       security-events: write
     uses: ./.github/workflows/code-analysis.yml
+    # HERE AN UNAUDITED TREE IS A FAILURE, and on a pull request it is not. `bun audit` exits 1 for
+    # an npm 503 exactly as it does for a real advisory, so tolerating that on a pull request is what
+    # keeps a five-minute outage in somebody else's datacentre from walling every merge here. Nothing
+    # is behind THIS run, so the same silence is simply reported - which is what stops the toleration
+    # from turning into a tree nobody has audited for a week with only warnings to show for it.
+    with:
+      registry_outage_is_failure: true
 
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   # THE ACTIONS CACHE QUOTA IS 10 GB, AND BUILDKIT NEVER EVICTS

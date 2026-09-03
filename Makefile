@@ -327,6 +327,7 @@ test-ci-scripts:
 	@bash .github/scripts/tests/release-chain.test.sh
 	@bash .github/scripts/tests/release-notes-body.test.sh
 	@bash .github/scripts/tests/scheduled.test.sh
+	@bash .github/scripts/tests/audit-dependencies.test.sh
 	@bash .github/scripts/tests/host-update-report.test.sh
 	@node .github/scripts/tests/wiki-links.test.mjs
 	@node tools/app-store/submit.test.mjs

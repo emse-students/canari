@@ -1228,6 +1228,41 @@ curl -sSL -o sc.zip https://github.com/koalaman/shellcheck/releases/download/v0.
 ./shellcheck.exe -x .github/scripts/*.sh .github/scripts/lib/*.sh .github/scripts/tests/*.sh
 ```
 
+### The npm advisory endpoint's silence is not a verdict, and telling them apart is one script
+
+`bun audit` exits **1** for `POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - 503`
+exactly as it exits 1 for a real advisory. On 2026-09-03 that turned a five-minute npm outage into a
+red `Check Dependencies Vulnerabilities`, a red `CI passed`, and a repository in which nothing could
+merge - over a tree in which nothing was wrong. It bit on that day and not before because the
+security pass had just become part of `CI passed`; the same 503 a week earlier produced a red tick
+nobody was waiting on.
+
+`.github/scripts/audit-dependencies.sh` is the only place that runs `bun audit`, and it answers with
+three exit codes rather than two:
+
+| Exit | What it means | Who decides what it costs |
+| --- | --- | --- |
+| `0` | the registry answered and the tree is clean | - |
+| `1` | the registry answered and named an advisory | always a failure |
+| `2` | the registry never answered, after three attempts | **the caller** |
+
+**A `2` is not a verdict about the tree**, so what it costs is passed in as
+`registry_outage_is_failure`, an input on `code-analysis.yml`:
+
+- **a pull request tolerates it.** A refusal whose only remedy is unavailable is a stop, not a gate,
+  and nobody in this repository can restore npm.
+- **the nightly `scheduled.yml` pass FAILS on it.** Nothing is queued behind that run, so the
+  failure costs no merge and IS the report: this tree has now gone a day unaudited. Without that
+  half, a tolerated outage quietly becomes a tree nobody has audited in a week, with only warnings
+  in closed logs to show for it.
+
+**The unknown case fails CLOSED.** Only a narrow list of recognised transport failures is classified
+as silence; anything else is a finding. The day bun rewords its errors, the gate goes red and
+somebody fixes the pattern - a classifier that fails open on its own blind spot stops auditing and
+reports success for ever. `audit-dependencies.test.sh` asserts that direction explicitly, alongside
+both sides of the distinction, the policy flip, and the fact that the `--ignore=` flags the one
+suppressed advisory rests on still reach the tool.
+
 ## Notable CI gotchas
 
 - **A Tauri plugin's JS package and its Rust crate must agree on major.minor, and only a RELEASE used to discover when they did not.** The CLI refuses to build (`tauri-plugin-log (v2.8.0) : @tauri-apps/plugin-log (v2.9.0)`), but nothing else in this pipeline compiles the Tauri app, so an ordinary `bun install` that re-resolves the JS half lands green and kills the next tag - it took out Android Release and AppImage Release on v0.14.6, while iOS Release passed because its path never runs the check. `frontend/scripts/check-tauri-plugin-versions.mjs` (step `Guard the Tauri JS/Rust version parity` in `code-analysis.yml`) now compares the two committed files on every run. Fix the Rust side with `cd frontend/src-tauri && cargo update -p <crate>`.
