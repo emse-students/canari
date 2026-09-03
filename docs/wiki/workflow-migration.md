@@ -159,6 +159,24 @@ Measured during WP-0, and each one changes something downstream:
 WP-0 and WP-1 come first because nothing can be verified without them. **WP-4 comes before WP-2**: a
 lightened hook whose gates are not yet in CI is an open hole for the length of the chantier.
 
+### WHERE IT ENDED, 2026-09-03
+
+**Every work package is closed, and the four boxes still open are open because no session on this
+machine can close them.** They are not deferred work and they are not a backlog - each names a
+person or a piece of hardware:
+
+| Open box | Who or what it needs | Why nothing here can do it |
+|---|---|---|
+| The first pre-release, `0.15.0-alpha.1` | the USER | Publishing a release is the trigger this whole chantier built. It is also the first real passage of the chain end to end. |
+| The campaign's fresh test ACCOUNTS (WP-5) | the USER | Local authenticates against the PRODUCTION Authentik by decision 8, so creating them is a write to the identity provider. The attempt of 2026-09-02 was refused for exactly that reason, and the refusal was correct. The rig root and the Chrome profiles wait on this and on nothing else. |
+| The iOS BUILD number | a macOS run | Whether `tauri ios build` clobbers the `CFBundleVersion` the bump wrote cannot be measured from Windows. If it does, TestFlight refuses the second alpha of a version. |
+| The handoff zip destroyed | the USER | It is the only copy of things this repository must never hold, and deleting it blind is how the one thing nobody remembered goes with it. |
+
+**One thing to carry, because it decides how the rest of the checklist reads.** The chantier
+committed directly on `main` until WP-2 existed - the flow it creates cannot govern its own creation
+- and it has committed through pull requests ever since, starting with the very commit that replaced
+"WORK ON `main`, commit directly" in `CLAUDE.md`. Nothing here is exempt any more.
+
 ### WP-0 - this machine (DONE, both rotations included; only the handoff zip is left)
 
 - [x] `~/.ssh/config`: `Host miconnect` added. **The `cercle` block needed no repair** - it was
@@ -363,10 +381,21 @@ have opened a hole for as long as it took to notice.
       asserts nothing now**: a hook that fails is a hook that gets bypassed, and CI is where a
       verdict belongs
 - [x] `.husky/pre-push` deleted
-- [ ] optional, and the ONLY job WSL keeps here: run `make test-ci-scripts` and the deploy-script
+- [x] optional, and the ONLY job WSL keeps here: run `make test-ci-scripts` and the deploy-script
       tests from the `Debian` distro, which is what `ubuntu-latest` actually is. They are shell-only
       and tiny, so `/mnt/d` costs nothing, and Git Bash has already let a Windows-shell difference
-      through (`jq` and CRLF)
+      through (`jq` and CRLF). **CLOSED 2026-09-03 AS RETIRED BY WP-2, NOT AS DONE - and the two
+      are worth telling apart.** The distro is there and answers (Debian 13 trixie, bash 5.2.37,
+      `/mnt/d` readable), but it is a bare install: `jq`, `node`, `make`, `shellcheck` and `python3`
+      are all absent, and `sudo` wants a password this session does not have. **What actually
+      retires the box is that the thing it was a substitute FOR now runs on every pull request.**
+      `ci.yml`'s `test-ci-scripts` job executes `make test-ci-scripts` on `ubuntu-latest`, and since
+      2026-09-03 `main` refuses a direct push - so no change reaches the trunk without those tests
+      having run on the real runner image, which is strictly better evidence than a local
+      approximation of it. A WSL run would only have made the same verdict arrive sooner, and it
+      would have cost an apt install and a password to get a WEAKER version of a gate that already
+      exists. **If it is ever wanted anyway**, the reason is earliness alone and the price is
+      `sudo apt install jq make nodejs shellcheck` inside the distro
 
 ### WP-2 AND WP-3 ARE ONE WORK PACKAGE, not two - found 2026-09-02, before either was written
 
