@@ -105,6 +105,15 @@ All measured on 2026-09-02 on the current machine (`OXYGEN`) and against the rem
   major as production, so a dump restores), chat-gateway, call-service, chat-delivery, garage, media,
   core, social - each on its own port, the frontend served by `bun run dev`. Production reaches all of
   them through one nginx, so the single-entry-point behaviour is the one thing local cannot exercise.
+  **SUPERSEDED BY WP-1 ON 2026-09-03, AND THIS IS THE ONE ITEM IN THIS SECTION A READER COULD TAKE
+  AS STILL TRUE.** The local compose HAS nginx now, on host port 8081, and it is the sole
+  authenticator exactly as in production: `auth_request`, then `X-User-Id`, which the services read
+  and nothing else. That is what made a full OIDC login and an MLS message between two clients work
+  locally, and it means the single-entry-point behaviour is no longer the thing local cannot
+  exercise - it is the thing local exercises FIRST. The current port table is on
+  [development](development.md#local-services-docker-compose); the frontend is on **1420**
+  (`strictPort`, the OIDC redirect URIs being registered on 1420/1421), not 5173 as the cookie item
+  above says.
 - **The handoff bundle's `.env` is a 2026-06-07 snapshot, taken BEFORE the Garage migration.** 27
   variables of today are missing from it (`GARAGE_*` x9, `APNS_VOIP_*` x5, `SKY_/CERCLE_/MIGALLERY_/
   EXTERNAL_API_KEY`, `LYDIA_*`, `GOOGLE_SAFE_BROWSING_API_KEY`, `SERVICE_ACCOUNT_USER_ID`) and 12
