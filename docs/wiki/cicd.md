@@ -4,7 +4,38 @@ Canari uses GitHub Actions for continuous integration and deployment. The pipeli
 
 ## Workflows
 
-### CI (`ci.yml`)
+### Package 1: opening a pull request (`pull-request.yml`)
+
+**THE PIPELINE IS TWO PACKAGES, ONE PER HUMAN GESTURE** (user, 2026-09-03: *"Je veux une suite
+d'evenements et d'etapes"*). This file is everything that happens when a pull request is opened;
+`release.yml` is everything that happens when a release is published. There is no third file,
+because a merge deploys nothing.
+
+**It was `ci.yml` and `auto-merge.yml` until 2026-09-03** - two files listening for the SAME
+`pull_request` event and never referring to each other, so the sequence a human wants to read was
+split in half. The order, which the file's own header states:
+
+| # | job | what |
+|---|---|---|
+| 1 | `changes` | reads the modified paths and decides which of the jobs below run at all |
+| 2 | the test jobs | Rust, the four NestJS apps' real AppModule, TS, frontend, the two self-test suites - in parallel, each behind its own path filter |
+| 3 | `ci-passed` | aggregates them. `success` AND `skipped` both pass. The ONE check the ruleset requires |
+| 4 | `arm-auto-merge` | in **parallel** with 1-3, not after |
+
+**`arm-auto-merge` HAS NO `needs:`, AND THAT IS DELIBERATE.** `--auto` hands the decision to
+GitHub, which merges the instant the required check passes and never before, so arming is a
+declaration of intent rather than a verdict. A job that waited for the suite would hold a runner
+for its whole length and would still have to re-read the checks at the end - and a job that merges
+on its OWN reading of "green" is a second opinion about which jobs matter. Measured: #332 sat armed
+for the ten minutes its suite took, and merged the moment `CI passed` concluded.
+
+**AND THEN STEP 6, WHICH IS WHY A RELEASE IS POSSIBLE AT ALL.** GitHub squash-merges, deletes the
+branch (`delete_branch_on_merge`, set true on 2026-09-03 - `--delete-branch` is a NO-OP alongside
+`--auto`, since `gh` performs the deletion after a merge IT made and there is none to follow), and
+the merge raises a `push`, so this same file runs again on the merged `main`. That run is what puts
+the `CI passed` check ON the commit of `main`, and `release-preflight.sh`'s third gate reads exactly
+that check. An App token raises that event; `GITHUB_TOKEN` does not - so arming with the default
+token would refuse every later release, from a file that has nothing to do with releasing.
 
 Runs on every pull request to `main`, and again on every push to `main`:
 
@@ -244,7 +275,7 @@ wiped every Monday. Neither is visible in a green pipeline, so each workflow res
 FAILS on a mismatch. There is no fallback from the `DEV_*` secrets to the production ones - falling
 back is precisely how an alpha ends up talking to production.
 
-### Release (`release.yml`) - the one entry point
+### Package 2: publishing a release (`release.yml`) - the one entry point
 
 **THREE HUMAN GESTURES, AND NOTHING ELSE MOVES** (user, 2026-09-03): open a pull request, which
 `auto-merge.yml` squash-merges onto `main` once `CI passed` is green and which deploys NOTHING;
@@ -253,7 +284,28 @@ tester programmes; publish a stable `vX.Y.Z`, which deploys production and both 
 channels.
 
 `release.yml` is the only workflow either publication triggers, and it has five jobs:
-`preflight` -> `bump` -> `deploy` + `android` + `ios`. The three arms are `uses:` calls, not
+`preflight` -> `bump` -> `deploy` + `android` + `ios`.
+
+**IT CARRIES BOTH PUBLICATION PATHS RATHER THAN BEING TWO FILES, and the reason is worth keeping.**
+The two publications are one machine differing by one boolean. A second entry point would either
+duplicate the chain - the exact "a decision taken more than once" defect this rebuild removed - or
+add a THIRD level of reusable-workflow permission plumbing, which is what killed this chain's first
+run. So the paths are told apart by the EVENT TYPE:
+
+| event | estate | Play | App Store |
+|---|---|---|---|
+| `prereleased` | `dev.canari-emse.fr` | `internal` | TestFlight |
+| `released` | `canari-emse.fr` | `production` | submitted for **review** |
+
+**AND THAT CLOSED A DEFECT NOTHING COULD SEE.** `published`, the old trigger, fires for BOTH kinds,
+so the "Set as a pre-release" checkbox was invisible and the version string was the only statement
+read - ticking the box on a `v0.17.0` silently deployed production, and forgetting it on a
+`v0.17.0-alpha.1` silently pushed a tester build to both production channels. Neither shows in a
+green run. `prereleased` and `released` fire for exactly one kind each, so both statements now
+arrive and the preflight compares them: the event says one, `release_kind()` says the other, and a
+mismatch is a refusal naming BOTH sides, because whichever is wrong the reader has to know which to
+change. The dispatch path keeps the old behaviour, deliberately: a dispatch carries no checkbox, so
+the version is the only statement made. The three arms are `uses:` calls, not
 `workflow_run` listeners, so they are jobs of ONE run: one page to read, real `needs:` ordering,
 and the same inputs to all three.
 

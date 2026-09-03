@@ -13,6 +13,19 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Changed
 
+- **The pipeline is two packages, one per human gesture.** `pull-request.yml` is everything that
+  happens when a pull request is opened; `release.yml` is everything that happens when a release is
+  published; a merge deploys nothing, so there is no third. The first was `ci.yml` and
+  `auto-merge.yml` - two files listening for the SAME `pull_request` event and never referring to
+  each other, so the sequence a human wants to read was split in half (user: *"Je veux une suite
+  d'evenements et d'etapes"*). Its header now states the order, and two properties of the merge job
+  are asserted because both are invisible when wrong: it must have **no `needs:`** on the suite,
+  since `--auto` declares intent rather than reading a verdict, and it must be restricted to
+  `pull_request`, because the file also runs on `push` to `main` where there is no pull request at
+  all. **And the self-reference had to move with the file**: the short-circuit that runs every job
+  when this workflow itself changes matched the old filename, and left alone it would simply never
+  have fired again.
+
 - **A release is ONE run with five gates in front of it, and a release with red tests is now
   refused.** Publishing the first two releases for real measured three defects no gate here could
   have found. **Nothing was gated on the tests**: the chain required the *bump* to succeed, which is
@@ -88,6 +101,37 @@ which is also where every release up to and including v0.13.1 now lives.
   belongs to the account holder.
 
 ### Fixed
+
+- **The first release through the new chain died before its first job, and left no log at all.**
+  `v0.16.0-alpha.1` was published, `release.yml` was picked up, and the run concluded
+  `startup_failure`: no job ran, no annotation was produced, and `gh run view --log` answers *"log
+  not found"*. The cause is one line that was correct when it was written - `permissions:
+  contents: read` at the workflow level, right for the preflight and right for the bump, which
+  pushes with an App token rather than `GITHUB_TOKEN`. **A called workflow cannot be granted more
+  than its caller grants it**, so that line capped all three arms, which need `contents: write` for
+  the release assets and the estate markers and `packages: write` for GHCR.
+
+  **The defect is created by the collapse itself**, which is why nothing here could have caught it:
+  as four independently triggered workflows there was no caller to cap anything, and each simply
+  got what it declared, for months. The shape test asked about triggers, inputs, `needs:` edges and
+  step conditions - not about the one thing the new shape invented. The assertion added is derived
+  from both sides: it reads every `<scope>: write` each callee asks for and demands the same line
+  inside the caller's job for it, and it was mutated to prove it rejects.
+
+- **The "Set as a pre-release" checkbox and the version number could disagree, and only the version
+  was read.** `published` fires for both kinds of release, so the checkbox was invisible: ticking it
+  on a `v0.17.0` deployed **production** silently, and forgetting it on a `v0.17.0-alpha.1` pushed a
+  **tester build to both store production channels** silently. Neither shows in a green run, and the
+  second only bills a release later - a mis-filed alpha becomes the change detector's baseline for
+  the next stable, so services that HAD changed are reported unchanged and production keeps whatever
+  `:latest` pointed at.
+
+  **The fix is not an assertion, it is a source that carries both facts.** `prereleased` and
+  `released` fire for exactly one kind each, so both statements now arrive - the event says one,
+  `release_kind()` says the other - and a mismatch is a refusal naming both sides, because whichever
+  is wrong the reader has to know which to change. The backlog's own retirement plan had proposed
+  reading the flag back through the API and asserting; that works and is strictly worse, because the
+  two facts still arrive by different routes.
 
 - **Four release steps became permanently unreachable in one stroke, and every one of them was a
   store upload.** Both "Upload to Release" steps, the TestFlight upload and the Play publish were

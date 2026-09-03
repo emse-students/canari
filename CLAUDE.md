@@ -47,7 +47,7 @@
 - NO BLIND GREP: never run generic grep or find across the project. Check SESSION STATE first, or ask for exact paths.
 - ASK EARLY: state assumptions explicitly. If uncertain about architecture or a bug, ASK during planning. No guessing.
 - SURGICAL EDITS: touch ONLY requested code. Map changes 1:1 to the prompt.
-- **WORK GOES THROUGH A PULL REQUEST, on a branch off `main` - since 2026-09-03, and this replaces "commit directly".** `main` carries a ruleset (id `22152902`, active): no direct push, no force-push, no delete, and one required check, `CI passed`. The loop is `git switch -c`, commit, `gh pr create`, let CI answer, `gh pr merge --squash --delete-branch`. **No approval is required** - a queue nobody drains is worse than the merge it prevented (user, 2026-08-31) - so this costs a minute and buys two things a direct push never gave: a diff somebody can read, and a CI run on the MERGED combination rather than on the branch. **Admin bypass exists and is the EMERGENCY path only**: taking it means production is broken right now, and it is written down in `CHANGELOG.md` when taken.
+- **WORK GOES THROUGH A PULL REQUEST, AND IT MERGES ITSELF - since 2026-09-03.** `pull-request.yml` arms GitHub auto-merge on every pull request of yours, in PARALLEL with the suite, so the human gesture is OPENING it, never merging it. `main` carries a ruleset (id `22152902`, active): no direct push, no force-push, no delete, and one required check, `CI passed`. The loop is `git switch -c`, commit, `gh pr create` - and then NOTHING: the merge and the branch deletion are automatic. **No approval is required** - a queue nobody drains is worse than the merge it prevented (user, 2026-08-31) - so this costs a minute and buys two things a direct push never gave: a diff somebody can read, and a CI run on the MERGED combination rather than on the branch. **Admin bypass exists and is the EMERGENCY path only**: taking it means production is broken right now, and it is written down in `CHANGELOG.md` when taken.
 - **NOTHING DEPLOYS ON A PUSH - deployment happens at the BUMP** (user, 2026-09-02: *"le deploiement de tout (production, android, ios...) se fait au bump. Pas au push sur main."*). A STABLE release `vX.Y.Z` deploys production and ships the stores; a PRE-RELEASE `vX.Y.Z-alpha.N` deploys `dev.canari-emse.fr` and feeds the store TESTER programmes; a merge to `main` deploys nothing at all and only runs CI. **So a merged fix is not a shipped fix**, and `frontend/package.json`'s version is what decides which kind a release is - a hyphen in it IS the definition of a pre-release, read that way by `release_kind()` in `.github/scripts/lib/release-preconditions.sh` - the ONE implementation - and by `scripts/bump-app-version.sh`'s store band. **`release.yml` IS THE ONLY ENTRY POINT since 2026-09-03**: five gates, then the bump, then `deploy.yml`, `android.yml` and `ios.yml` as CALLED jobs of the same run, all building the commit the bump resolved. **A stable is refused unless dev has already served that commit, `CI passed` is green ON it, and `store/whats-new.txt` names that version** - production being ahead of dev is impossible, not reported. The whole model is on [workflow-migration](docs/wiki/workflow-migration.md) and [cicd](docs/wiki/cicd.md), the only copies.
 - NO FALLBACKS: never add a fallback path. Diagnose why the primary path failed and fix it there.
 - FIX, NEVER DEFER: a warning or failure you meet is yours, whether or not you caused it. "Pre-existing" is not a disposition.
@@ -133,49 +133,35 @@ ships. **What only the USER can do is ONE table** -
 [backlog](docs/wiki/backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks), pointers
 only; never re-enumerate it here.
 
-### CANARI - THE WORKFLOW MIGRATION IS COMPLETE (WP-0 through WP-6, closed 2026-09-03)
+### CANARI - THE DELIVERY PIPELINE IS DONE AND PROVEN (2026-09-03)
 
-**`main` is the only branch; NOTHING deploys on a push; work goes through pull requests; a stable
-`vX.Y.Z` deploys production and ships the stores, a `-alpha.N` deploys `dev.canari-emse.fr` and
-feeds the store tester programmes; development and the whole test campaign are LOCAL.** The mandate,
-the twelve decisions that must not be relitigated, the measurements and the emergency path are on
-[workflow-migration](docs/wiki/workflow-migration.md), the ONLY copy - **read it before touching any
-workflow, hook, `.env` or campaign page.**
+**TWO PACKAGES, ONE PER HUMAN GESTURE.** `pull-request.yml` is everything that happens when a pull
+request is opened - tests, the `CI passed` aggregate, and the auto-merge armed in PARALLEL with
+them; a green pull request merges itself and the merge deploys NOTHING. `release.yml` is everything
+that happens when a release is published: five gates, then the bump, then `deploy.yml`,
+`android.yml` and `ios.yml` as CALLED jobs of one run, all building the commit the bump resolved.
+The two publication paths are told apart by the EVENT TYPE - `prereleased` reaches dev and the
+tester programmes, `released` reaches production, the Play `production` track and **App Store
+review**. Everything is on [cicd](docs/wiki/cicd.md) and
+[workflow-migration](docs/wiki/workflow-migration.md), the only copies - **read them before
+touching any workflow.** One decision on the second page is SUPERSEDED and marked so: the
+prerelease flag IS passed down now, so do not restore per-workflow manifest reading.
 
-**PROVEN END TO END, TWICE.** `0.15.0-alpha.1` exercised the chain against dev and the tester
-programmes; `0.15.0` then deployed PRODUCTION while dev stayed on the alpha, which is the half the
-alpha could not show - nothing leaks between the estates.
+**A STABLE IS REFUSED** unless the version parses, the commit is on `main`, `CI passed` is green ON
+it, dev has already served it, and `store/whats-new.txt` names that version. Production being
+ahead of dev is impossible, not reported. There is NO bypass input, by design.
 
-**AND THEN THE CHAIN WAS REBUILT AS ONE RUN (2026-09-03), because publishing those two releases
-measured three defects no gate here could have found**: nothing was gated on the TESTS (the chain
-required the BUMP to succeed - a different statement - and `0.15.0` shipped on a RED run);
-production went THREE PULL REQUESTS AHEAD OF DEV, the two gestures landing on unrelated commits with
-nothing comparing them; and each arm resolved `main` for ITSELF. **`release.yml` is now the ONE
-entry point** - `preflight` -> `bump` -> `deploy` + `android` + `ios` as CALLED jobs of one run -
-and a stable is REFUSED unless dev has served that commit, `CI passed` is green ON it, and
-`whats-new.txt` names that version. `bump-version.yml` is gone; `cd.yml`/`android-release.yml`/
-`ios-release.yml` are `deploy.yml`/`android.yml`/`ios.yml`. **A green pull request now merges
-itself** (`auto-merge.yml`, App token - a `GITHUB_TOKEN` merge raises no `push`, which would then
-make gate 3 refuse every release). **iOS goes all the way to App Store REVIEW**
-([tools/app-store](tools/app-store/README.md)). Everything is on
-[cicd](docs/wiki/cicd.md) and [workflow-migration](docs/wiki/workflow-migration.md)'s closing
-section, the only copies - **and one decision on that page is SUPERSEDED and marked as such: the
-prerelease flag IS passed down now, so do not restore per-workflow manifest reading.**
+**MEASURED END TO END on `v0.16.0-alpha.1`**, which is the half `0.15.0` never showed (it shipped on
+a RED run): five gates `success`; the bump's push accepted by the ruleset; `dev.canari-emse.fr`
+serving `0.16.0-alpha.1` while production stayed on `0.15.0`; Play `internal` Edit committed;
+`UPLOAD SUCCEEDED` on TestFlight; and the App Store submission step **correctly skipped**, because
+Apple refuses a pre-release suffix as a `versionString`.
 
-**THE FIRST RELEASE FOUND WHAT NO GATE COULD HAVE:** WP-2's ruleset refuses the push WP-3 makes, so
-publishing a release deployed nothing at all - fail-safe, and silent unless somebody read the run.
-That fix and the two things the same audit turned up - a deploy that RECORDED one commit and BUILT
-another, and a `CHANGELOG.md` no release had ever touched (4098 lines under one heading, fifteen
-versions) - are on [cicd](docs/wiki/cicd.md), with the App-token side effect that a `push` event now
-fires on the bump commit. **The rule that generalises: a release-bearing file carrying no version
-NUMBER is invisible to every version check.** **The iOS build number is ANSWERED and must not be
-re-opened** - the shipped `.ipa` carries `CFBundleVersion 1500001`, and the bump writes the same
+**WHAT A STABLE OWES A HUMAN, and it is the only thing:** `store/whats-new.txt`, first line
+`version: X.Y.Z`. **The bump deliberately does not write that line** - a marker the machine
+maintains is only ever in step with itself. **The iOS build number is ANSWERED**: the store band is
+`(major*1e6 + minor*1e3 + patch)*100 + rank`, rank 99 for a stable, and the bump writes the same
 number into `tauri.conf.json` and the plist, so a Tauri re-sync is idempotent.
-
-**WHAT A STABLE RELEASE NOW OWES A HUMAN, and it is the only thing:**
-`store/whats-new.txt`, first line `version: X.Y.Z`. The preflight refuses in
-seconds otherwise, before anything moves. **The bump deliberately does not write that line** - a
-marker the machine maintains is only ever in step with itself.
 
 **The test ACCOUNTS exist**, rotated and verified, with `names.mjs` carrying their real display
 names - so the campaign is no longer blocked on an identity, only on a phone and two Chrome profiles.
