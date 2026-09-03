@@ -11,6 +11,9 @@
 #   1. `changes`         reads the modified paths and decides which of the jobs below run at all
 #   2. the test jobs     Rust, the four NestJS apps' real AppModule, TS, frontend, the two
 #                        self-test suites - in parallel, each behind its own path filter
+#   2b `dependency-      ONLY on a Dependabot pull request: does a gate HERE exist that would see
+#      ceiling`          this update fail? A human's pull request carries no `updated-dependencies`
+#                        block to decide on, so it skips
 #   3. `ci-passed`       aggregates them. `success` AND `skipped` both pass; it is the ONE check
 #                        the branch ruleset requires, and the only one it could require
 #   4. `arm-auto-merge`  in PARALLEL with 1-3, not after: it declares intent and GitHub does the
@@ -806,11 +809,61 @@ jobs:
   # `always()` is what makes it run at all when something upstream failed; without it this job would
   # itself be skipped by a failed dependency, and a skipped required check is a green one.
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  # DOES THIS REPOSITORY HAVE A GATE THAT WOULD SEE THIS DEPENDENCY UPDATE FAIL?
+  #
+  # A CHECK, SO THE ANSWER IS ON THE PULL REQUEST. Until 2026-09-03 this question was asked only
+  # inside `dependabot-auto-merge.yml` - a SECOND merge mechanism beside GitHub's own auto-merge, so
+  # a Dependabot pull request and a human's took different routes to `main` and only one of them was
+  # visible where a human looks (user: *"le auto-merge et les CI doivent considerer toutes les PR,
+  # les miennes ou dependabot"*). #309 is the case that shows it: `postgres 15-alpine -> 18-alpine`,
+  # fully GREEN and correctly refused, sitting open for days with the refusal recorded nowhere a
+  # reader of the pull request could see.
+  #
+  # IT FEEDS `ci-passed`, WHICH IS WHAT MAKES IT BINDING. `ci-passed` is the one check the branch
+  # ruleset requires, so an update with no gate here cannot merge - by any route, armed or not.
+  #
+  # ONLY DEPENDABOT'S OWN PULL REQUESTS, and the reason is the input rather than the author: the
+  # decision reads the `updated-dependencies` block Dependabot writes into its commit message, which
+  # is the only machine-readable description of an update this repository gets. A human's pull
+  # request carries no such block, so there is nothing to decide and the job skips - `ci-passed`
+  # treats `skipped` as passing, which is exactly right here.
+  dependency-ceiling:
+    name: Dependency ceiling
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # `infrastructure/docker-compose.prod.yml` IS PART OF THE DECISION rather than a
+          # convenience: the datastore arm refuses a MAJOR CROSSING only, and the major production
+          # runs is read out of that file instead of assumed - which is what lets `redis
+          # 8.8 -> 8.10` through while refusing `postgres 15 -> 18`.
+          sparse-checkout: |
+            .github/scripts
+            infrastructure/docker-compose.prod.yml
+
+      # THE TABLE IS TESTED IN THE RUN THAT USES IT, and it had no test at all until it cost an
+      # outage: `postgres` was simply absent from the ceiling. `ceiling.test.sh` derives the
+      # stateful images it demands coverage for FROM the compose file, so the next stateful service
+      # somebody declares is covered by that declaration rather than by anyone remembering.
+      - name: Verify the ceiling covers every stateful image production runs
+        run: bash .github/scripts/tests/ceiling.test.sh
+
+      - name: Does a gate here exist for every dependency this changes?
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bash .github/scripts/dependency-ceiling.sh
+
   ci-passed:
     name: CI passed
     if: always()
     needs:
-      [changes, test-rust, boot-nest-apps, test-typescript-backend, test-frontend, test-harness, test-ci-scripts]
+      [changes, test-rust, boot-nest-apps, test-typescript-backend, test-frontend, test-harness, test-ci-scripts,
+      dependency-ceiling]
     runs-on: ubuntu-latest
     steps:
       - name: Every job either passed or had nothing to do
