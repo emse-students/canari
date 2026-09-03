@@ -141,6 +141,91 @@ export function classifyVersionState(state) {
 }
 
 /**
+ * Which App Store version slot should this release use, given EVERY version the app has?
+ *
+ * WHY THIS EXISTS, AND IT COST A RELEASE. The first version of this script asked Apple *"is there
+ * a version called 0.16.0?"* - `filter[versionString]=0.16.0` - and created one when the answer
+ * was no. Apple refused with a 409 that says exactly what the real rule is:
+ *
+ *     POST /v1/appStoreVersions -> 409 The provided entity includes a relationship with an
+ *     invalid value: You cannot create a new version of the App in the current state.
+ *
+ * **An app has ONE non-terminal version slot.** Whether a version named `0.16.0` exists is not the
+ * question that decides the POST; whether the slot is OCCUPIED is - and it can be occupied by a
+ * version with any other name. The narrow predicate happened to be true and the weaker answer was
+ * useless, which is the same defect shape as a gate asking `contains` where the work needs `is`.
+ *
+ * SO THE DECISION IS MADE FROM THE WHOLE LIST, and the arms are not symmetric:
+ *
+ *   - the slot holds THIS version, editable        -> use it
+ *   - the slot holds THIS version, already gone    -> nothing to do; this is an answer, not an error
+ *   - the slot holds ANOTHER version, editable     -> rename it. This is what the App Store Connect
+ *                                                    UI does to a prepared-but-unsubmitted version,
+ *                                                    and the alternative is a slot nothing can ever
+ *                                                    free without a human
+ *   - the slot holds ANOTHER version, with Apple   -> REFUSE, naming it and its state. Cancelling a
+ *                                                    review is a human decision and must never be
+ *                                                    taken by a release script
+ *   - the slot is empty                            -> create
+ *
+ * @param {{versions: Array<{id: string, attributes?: {versionString?: string, appStoreState?: string}}>, versionString: string}} input
+ * @returns {{action: 'use', id: string, state: string}
+ *          | {action: 'done', why: string}
+ *          | {action: 'rename', id: string, from: string, state: string}
+ *          | {action: 'blocked', why: string}
+ *          | {action: 'create'}
+ *          | {action: 'fail', why: string}}
+ */
+export function chooseVersionSlot({ versions, versionString }) {
+  if (!versionString) return { action: 'fail', why: 'no version string was given' };
+  if (!Array.isArray(versions))
+    return {
+      action: 'fail',
+      why: 'the app returned no version list, so the slot state is unknown',
+    };
+
+  // A TERMINAL VERSION DOES NOT HOLD THE SLOT. Every past release is `READY_FOR_SALE` and there are
+  // as many of those as the app has ever shipped, so they have to be filtered out BEFORE looking
+  // for an occupant - counting them as occupants would refuse every release for ever.
+  const occupants = versions.filter((v) => {
+    const st = v?.attributes?.appStoreState;
+    return st && !VERSION_DONE.has(st);
+  });
+
+  if (occupants.length === 0) return { action: 'create' };
+
+  // MORE THAN ONE OCCUPANT CONTRADICTS APPLE'S OWN RULE, so it is refused rather than picked from:
+  // choosing between them would be a guess about which one a human is working on.
+  if (occupants.length > 1) {
+    const named = occupants
+      .map((v) => `${v?.attributes?.versionString} (${v?.attributes?.appStoreState})`)
+      .join(', ');
+    return {
+      action: 'fail',
+      why: `the app has ${occupants.length} non-terminal versions, which Apple is not supposed to allow: ${named}. Refusing to guess which one this release belongs in.`,
+    };
+  }
+
+  const slot = occupants[0];
+  const state = slot?.attributes?.appStoreState;
+  const name = slot?.attributes?.versionString;
+  const verdict = classifyVersionState(state);
+
+  if (name === versionString) {
+    if (verdict.action === 'edit') return { action: 'use', id: slot.id, state };
+    if (verdict.action === 'done') return { action: 'done', why: verdict.why };
+    return { action: 'fail', why: verdict.why };
+  }
+
+  if (verdict.action === 'edit') return { action: 'rename', id: slot.id, from: name, state };
+
+  return {
+    action: 'blocked',
+    why: `version ${name} occupies the app's only version slot and is ${state}. A release script must not cancel a review or a pending release - decide what happens to ${name} in App Store Connect, then re-run this.`,
+  };
+}
+
+/**
  * The release notes for exactly this version.
  *
  * APPLE REQUIRES THEM and refuses the submission without them, so their absence has to be a
@@ -319,21 +404,45 @@ async function main() {
   }
 
   // -- the version --------------------------------------------------------------------------------
-  const existing = await api(
+  // EVERY VERSION, NOT THE ONE THIS RELEASE IS CALLED. An app has a single non-terminal version
+  // slot; asking `filter[versionString]=0.16.0` answers a narrower question than the POST needs and
+  // is how `v0.16.0` earned a 409 saying so. `chooseVersionSlot` carries the whole list.
+  const all = await api(
     'GET',
-    `/v1/apps/${app.id}/appStoreVersions?filter[versionString]=${encodeURIComponent(versionString)}&limit=1`
+    `/v1/apps/${app.id}/appStoreVersions?filter[platform]=${PLATFORM}&limit=50`
   );
-  let version = existing?.data?.[0];
+  const slot = chooseVersionSlot({ versions: all?.data ?? [], versionString });
 
-  if (version) {
-    const verdict = classifyVersionState(version.attributes?.appStoreState);
-    if (verdict.action === 'done') {
-      log(`  version ${versionString} needs nothing: ${verdict.why}`);
-      log('done.');
+  for (const v of all?.data ?? []) {
+    const st = v?.attributes?.appStoreState;
+    if (st && !VERSION_DONE.has(st)) log(`  version slot: ${v?.attributes?.versionString} (${st})`);
+  }
+
+  if (slot.action === 'done') {
+    log(`  version ${versionString} needs nothing: ${slot.why}`);
+    log('done.');
+    return;
+  }
+  if (slot.action === 'fail' || slot.action === 'blocked') throw new Error(slot.why);
+
+  let version = null;
+
+  if (slot.action === 'use') {
+    version = { id: slot.id };
+    log(`  version ${versionString} exists and is editable (${slot.state})`);
+  } else if (slot.action === 'rename') {
+    if (dryRun) {
+      log(`  [dry run] would rename version ${slot.from} to ${versionString}`);
       return;
     }
-    if (verdict.action === 'fail') throw new Error(verdict.why);
-    log(`  version ${versionString} exists and is editable (${version.attributes?.appStoreState})`);
+    // THE PREPARED-BUT-UNSUBMITTED SLOT IS THE ONE THIS RELEASE WANTS. Renaming it is what the App
+    // Store Connect UI does, and it is the only way to reach a slot a previous attempt left behind
+    // without asking a human to clear it by hand every time.
+    await api('PATCH', `/v1/appStoreVersions/${slot.id}`, {
+      data: { type: 'appStoreVersions', id: slot.id, attributes: { versionString } },
+    });
+    version = { id: slot.id };
+    log(`  renamed the editable version ${slot.from} (${slot.state}) to ${versionString}`);
   } else {
     if (dryRun) {
       log(`  [dry run] would create version ${versionString}`);

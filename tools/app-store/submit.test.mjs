@@ -19,7 +19,13 @@
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { classifyBuildState, classifyVersionState, readWhatsNew, mintToken } from './submit.mjs';
+import {
+  chooseVersionSlot,
+  classifyBuildState,
+  classifyVersionState,
+  readWhatsNew,
+  mintToken,
+} from './submit.mjs';
 
 let pass = 0;
 let fail = 0;
@@ -150,6 +156,85 @@ try {
   eq('the signature is the raw 64-byte r||s pair, not DER', Buffer.from(s, 'base64url').length, 64);
 } finally {
   rmSync(dir, { recursive: true, force: true });
+}
+
+// -------------------------------------------------------------------------------------------------
+// WHICH VERSION SLOT, AND THIS IS THE ONE THAT COST A RELEASE
+// -------------------------------------------------------------------------------------------------
+// `v0.16.0` reached production and Google Play, uploaded to TestFlight, and then died here:
+//
+//     POST /v1/appStoreVersions -> 409 The provided entity includes a relationship with an
+//     invalid value: You cannot create a new version of the App in the current state.
+//
+// The script had asked Apple *"is there a version called 0.16.0?"* and created one when the answer
+// was no. **An app has ONE non-terminal version slot**, and whether it is OCCUPIED - by a version
+// with any name at all - is the question the POST actually answers to. The narrow predicate
+// happened to be true and its answer was useless.
+//
+// THE ARM THAT WOULD BREAK EVERY FUTURE RELEASE IS THE FIRST ONE BELOW: every past release sits in
+// `READY_FOR_SALE` for ever, so counting terminal versions as occupants would refuse every release
+// from now on, and the refusal would look exactly like a correct one.
+process.stdout.write('\nwhich version slot does this release belong in?\n');
+{
+  const V = (versionString, appStoreState, id) => ({
+    id,
+    attributes: { versionString, appStoreState },
+  });
+  const slot = (versions) => chooseVersionSlot({ versions, versionString: '0.16.0' });
+
+  eq('no versions at all -> create', slot([]).action, 'create');
+  eq(
+    'only PUBLISHED versions -> create, because a terminal version does not hold the slot',
+    slot([V('0.15.0', 'READY_FOR_SALE', 'a'), V('0.14.15', 'READY_FOR_SALE', 'b')]).action,
+    'create'
+  );
+  eq(
+    'the slot already holds THIS version, editable -> use it',
+    slot([V('0.16.0', 'PREPARE_FOR_SUBMISSION', 'c')]).action,
+    'use'
+  );
+  eq(
+    'the slot holds THIS version and it is already with Apple -> done, which is an answer not an error',
+    slot([V('0.16.0', 'WAITING_FOR_REVIEW', 'd')]).action,
+    'done'
+  );
+  eq(
+    'the slot holds ANOTHER version, editable -> rename it, which is what the UI does',
+    slot([V('0.14.15', 'PREPARE_FOR_SUBMISSION', 'e')]).action,
+    'rename'
+  );
+
+  // A RELEASE SCRIPT MUST NEVER CANCEL A REVIEW. That is a human decision with a cost - a cancelled
+  // review goes back to the end of Apple's queue - so the only correct move is to refuse and name
+  // what is in the way.
+  const blocked = slot([V('0.14.15', 'WAITING_FOR_REVIEW', 'f')]);
+  eq('the slot holds ANOTHER version that is with Apple -> blocked', blocked.action, 'blocked');
+  // `eq(..., true)` and not `ok(...)`: `ok` records an unconditional pass, so a two-argument call
+  // would assert precisely nothing while printing a green line.
+  eq(
+    'and the refusal names the version AND its state, because both decide what a human does next',
+    blocked.why.includes('0.14.15') && blocked.why.includes('WAITING_FOR_REVIEW'),
+    true
+  );
+
+  // Apple is not supposed to allow two, so seeing two means an assumption is wrong - and picking
+  // between them would be a guess about which one a human is working in.
+  eq(
+    'two non-terminal versions -> fail rather than pick',
+    slot([V('0.14.15', 'PREPARE_FOR_SUBMISSION', 'g'), V('0.15.5', 'IN_REVIEW', 'h')]).action,
+    'fail'
+  );
+
+  eq(
+    'an unknown state is a refusal here too, not a guess',
+    slot([V('0.16.0', 'SOMETHING_APPLE_ADDED_LATER', 'i')]).action,
+    'fail'
+  );
+  eq(
+    'an unreadable version list is a refusal, never permission',
+    chooseVersionSlot({ versions: null, versionString: '0.16.0' }).action,
+    'fail'
+  );
 }
 
 process.stdout.write('\n');
