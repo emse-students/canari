@@ -12,7 +12,7 @@ to be cleared.
 le-cercle fills up for the opposite reason, and the difference decides what may be deleted here. Its
 pipeline tags every build `le-cercle:<sha>`; a tag is never dangling, so the `docker image prune -f`
 in its deploy reclaimed 0 B for months
-([durable-rules](../../docs/wiki/durable-rules.md#shared-gotchas)). Our CD pushes to ghcr and the
+([durable-rules](../../docs/wiki/durable-rules.md#shared-gotchas---development-cicd)). Our CD pushes to ghcr and the
 compose files pull `:latest`, so the image a deploy replaces **loses its tag** and becomes dangling -
 reclaimable by the plainest possible prune, and reconstructible by the next `docker compose pull`.
 
