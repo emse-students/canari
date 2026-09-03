@@ -11,6 +11,20 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Added
+
+- **Every link into the wiki is now checked, because a renamed heading breaks one silently.**
+  GitHub does not 404 an unresolvable `#fragment`: it serves the page scrolled to the top, so the
+  reader lands on a 900-line file with no idea which section was meant, and the page still looks
+  correct to whoever did the rename - the broken link is on a different page. In a repository
+  whose own index says to read the wiki before the source, that is the difference between a
+  pointer and a maze. `.github/scripts/tests/wiki-links.test.mjs` walks all 98 markdown files and
+  asserts that every intra-repository link resolves, file AND anchor; `.md$` joins `ci.yml`'s
+  `run-scripts` trigger, because the commit that breaks such a link touches only the page being
+  renamed and any narrower trigger would pass on exactly that commit. The first run found two:
+  one created the same day by a heading rename in `cicd.md` during the workflow migration, one
+  dead for far longer with nothing to notice it. Both fixed.
+
 ### Changed
 
 - **Deployment happens at the BUMP, not at a push, and which estate it reaches is decided by the

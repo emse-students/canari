@@ -226,6 +226,13 @@ jobs:
           # so the commit that must run it is a change to the script - the one file the first
           # pattern here would never match.
           #
+          # EVERY `.md` FILE IN THE REPOSITORY IS AN INPUT, because of `tests/wiki-links.test.mjs`.
+          # It walks all of them and asserts that every intra-repository link resolves - the file
+          # AND the heading anchor. The commit that breaks such a link is a heading RENAME, which
+          # touches only the target page, so any narrower pattern would pass on exactly the commit
+          # that breaks it. That is the same shape as the two entries below and the one above, and
+          # it is the reason this list keeps growing rather than being tidied into a prefix.
+          #
           # `cd.yml` IS AN INPUT, and it is the least obvious entry here. `tests/deploy-env.test.sh`
           # derives the expected key set of a deployed environment FROM `cd.yml`'s own
           # `upsert_env_var` calls - so the change that must run it is a key added THERE and not to
@@ -236,6 +243,7 @@ jobs:
             || has '^infrastructure/(docker-compose\.(prod|dev)\.yml|dev/|local/|deploy/|\.env\.example)' \
             || has '^\.github/workflows/cd\.yml$' \
             || has '^scripts/bump-app-version\.sh$' \
+            || has '\.md$' \
             || has '^Makefile'; then
             echo "scripts=true" >> "$GITHUB_OUTPUT"
           else

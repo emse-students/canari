@@ -323,6 +323,7 @@ test-ci-scripts:
 	@bash .github/scripts/tests/deploy-migrations.test.sh
 	@bash .github/scripts/tests/dependabot-cargo-reach.test.sh
 	@bash .github/scripts/tests/bump-version.test.sh
+	@node .github/scripts/tests/wiki-links.test.mjs
 
 test-harness:
 	@echo "${BLUE}🧪 Harness self-tests…${RESET}"
