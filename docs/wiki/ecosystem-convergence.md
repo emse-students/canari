@@ -1072,3 +1072,81 @@ its own types all along. The framework itself is on 12 in media and core and hel
 chat-delivery and social by one upstream package. **State and reasoning live on
 [nestjs-framework](services/nestjs-framework.md), the only copy** - do not restate them here, which
 is what made this paragraph wrong twice about its neighbours.
+
+
+## 12. The CI/CD rebuild, 2026-09-04 - the same four workflows in every repository
+
+**The mandate, verbatim** (user, 2026-09-04): *"Fais en sorte que toutes les CI/CD de tous les repos
+soient propres, fonctionnelles, testees, fluides, propices a un bon developpement. Lisibles,
+comprehensibles, pas de race-condition, et le moins de workflows differents possibles, ca inonde la
+console github. Et je ne veux plus etre assigne aux PR etc, je ne veux plus recevoir les mails."*
+
+### What every repository now has, and what it lost
+
+| | Before | After |
+| --- | --- | --- |
+| Dependency merges | a ~300-450 line sweep on an hourly cron, per repo | `arm-auto-merge.yml`, ~130 lines and mostly comment |
+| Who is armed | Dependabot only, by a mechanism that judged "green" itself | every pull request in the repository, by GitHub's own `--auto` |
+| The security pass | its own `pull_request` + `schedule` triggers, blocking nothing | a `workflow_call` library, called into `CI passed` AND nightly |
+| Things on a clock | one file each | `scheduled.yml`, one job per cron, routed by `github.event.schedule` |
+| PR assignment / review requests | `CODEOWNERS` (Canari) | deleted |
+
+**THE ONE FACT THAT MADE THE SWEEP OBSOLETE.** `pull_request_target` runs in the BASE repository's
+context, **with its secrets**, for every pull request including Dependabot's. The sweep existed
+because a `pull_request` run raised by Dependabot gets NO secrets - GitHub treats it as a fork - so
+no App token can be minted there, and an arming made with `GITHUB_TOKEN` produces a merge that
+raises no `push` event (anti-recursion), which is what would silently stop every downstream deploy.
+That reason was true and is now answered by a different trigger rather than by 1,500 lines of shell.
+
+**`pull_request_target` IS SAFE HERE FOR ONE SPECIFIC REASON: the job never checks the pull request
+out.** No `actions/checkout`, nothing built, nothing from the branch executed - the only call is
+`gh pr merge --auto`. *Do not add a checkout to that file in any repository.*
+
+### What the sweep taught, kept because the lessons outlive it
+
+- **A gate whose only remedy is unavailable is a stop, not a gate.** The staleness gate refused any
+  head built on a base whose gates had moved, and the only lift was a rebuild no identity a workflow
+  can mint may perform: `update-branch` parks the run in `action_required` and makes Dependabot
+  abandon the branch, and `@dependabot recreate` is refused for want of push access **even to a
+  GitHub App** - an App INSTALLATION is not an account. Measured 10/10 on `emse-students/canari`.
+- **Counting deliveries is the wrong question; read one log.** Sky's sweep ran green six times
+  having executed nothing: the script was committed without its executable bit, and the step
+  swallowed `Permission denied` along with the refusals it was meant to survive.
+- **A three-hour window is not enough to call a trigger dead.** The measurement that demoted the
+  hourly cron was itself wrong, and was corrected the next day.
+
+### An npm outage is not a vulnerability - and it walled a whole repository
+
+`bun audit` exits **1** for `POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - 503`
+exactly as it exits 1 for a real advisory. On 2026-09-03 that turned a five-minute npm outage into a
+red `CI passed` on Canari and a repository in which nothing could merge, over a tree in which nothing
+was wrong. It bit that day and not before **because the security pass had just become binding** - the
+same 503 a week earlier produced a red tick nobody was waiting on.
+
+`.github/scripts/audit-dependencies.sh` is the single classifier, byte-identical in all four
+repositories: `0` clean, `1` an advisory was named, `2` the registry never answered after three
+attempts. **A `2` is not a verdict about the tree**, so what it costs is passed in as
+`registry_outage_is_failure` - a pull request tolerates it, the nightly pass FAILS on it, and that
+second half is what stops a tolerated outage from becoming a tree nobody has audited in a week. The
+unknown case fails **CLOSED**, asserted against a fake `bun` by `audit-dependencies.test.sh` in the
+same run that uses the script.
+
+### Per-repository state
+
+| Repo | Workflows now visible | Notes |
+| --- | --- | --- |
+| **Canari** | `pull-request`, `release`, `arm-auto-merge`, `scheduled` | + 4 `workflow_call` libraries. `CODEOWNERS` deleted. |
+| **Sky** | `ci-bun`, `deploy`, `arm-auto-merge`, `scheduled` | **gained a dependency audit it had never had** - CodeQL and a secret scan never ask whether a SHIPPED dependency was since found vulnerable. Measured clean (327 packages) before it was turned on. |
+| **MiGallery** | `ci`, `cd`, `arm-auto-merge`, `scheduled` | audit moved behind the classifier. |
+| **Portail-etu** | `test`, `deploy`, `arm-auto-merge`, `scheduled`, `release` | `probe-egress.yml` folded into `scheduled.yml` as a dispatch-only job. |
+| **le-cercle** | GitLab, not GitHub | out of scope: no Actions, no Dependabot. |
+
+**WHAT ONLY THE USER CAN DO, and it is why mail keeps arriving.** The notification volume is an
+ACCOUNT setting, not a repository one: `github.com/settings/notifications` -> Actions email OFF, and
+Watching email OFF. Deleting `CODEOWNERS` stopped the review REQUESTS; nothing in a repository can
+stop GitHub mailing a user about their own runs.
+
+**AND A RULESET IS WHAT `--auto` WAITS FOR.** Sky and MiGallery had NO branch protection at all, so
+there was no required check for auto-merge to wait on; the portal's ruleset had a `pull_request`
+rule and no `required_status_checks`. Each needs `CI passed` as a required check for the arming to
+mean anything - the shape to copy is Canari's ruleset `22152902`.

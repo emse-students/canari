@@ -173,7 +173,11 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    `pull_request_target`, which is the only context where a Dependabot pull request reaches a
    secret. The 448-line hourly sweep, its 179-line script, its 250-line staleness library and
    `CODEOWNERS` are all DELETED - and so is the whole "rebuild a stale branch" question, whose
-   mechanism was refused ten times out of ten. Model on
+   mechanism was refused ten times out of ten. **The SAME four workflows are now in all four GitHub
+   repos**, one arming file each, byte-identical audit classifier
+   ([ecosystem-convergence](docs/wiki/ecosystem-convergence.md#12-the-cicd-rebuild-2026-09-04---the-same-four-workflows-in-every-repository),
+   the only copy) - **and Sky and MiGallery have NO ruleset, so `--auto` has nothing to wait for
+   until `CI passed` is required there.** Model on
    [cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them). Open items
    include **[the suppression CONTROL CASE the NestJS batch destroyed - Monday 2026-09-07 answers
    it](docs/wiki/backlog.md#p2---the-nine-nestjs-pull-requests-were-closed-in-one-batch-so-the-suppression-question-was-never-measured-on-one-first-and-monday-2026-09-07-is-the-only-thing-that-can-answer-it-now-updated-2026-09-03)**
