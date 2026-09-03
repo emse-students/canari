@@ -1146,7 +1146,39 @@ ACCOUNT setting, not a repository one: `github.com/settings/notifications` -> Ac
 Watching email OFF. Deleting `CODEOWNERS` stopped the review REQUESTS; nothing in a repository can
 stop GitHub mailing a user about their own runs.
 
-**AND A RULESET IS WHAT `--auto` WAITS FOR.** Sky and MiGallery had NO branch protection at all, so
-there was no required check for auto-merge to wait on; the portal's ruleset had a `pull_request`
-rule and no `required_status_checks`. Each needs `CI passed` as a required check for the arming to
-mean anything - the shape to copy is Canari's ruleset `22152902`.
+### A ruleset is what `--auto` waits for, and two repositories had none at all
+
+**Armed is not blocked.** `gh pr merge --auto` asks GitHub to merge *when the required checks pass*;
+with nothing required there is nothing to wait for, and the arming means nothing. Sky and MiGallery
+had **no branch protection whatsoever** - not a weak ruleset, none - and the portal's had a
+`pull_request` rule and no `required_status_checks`. All three were fixed on 2026-09-04 on the shape
+of Canari's `22152902`: no deletion, no force-push, a pull request required, zero approvals, and one
+required check, `CI passed`.
+
+| Repo | Ruleset | What changed |
+| --- | --- | --- |
+| Canari | `22152902` | already correct |
+| Sky | `22233778` | **created** - the branch was unprotected |
+| MiGallery | `22233779` | **created** - the branch was unprotected |
+| Portail-etu | `10687261` | `required_status_checks` **added**; its `required_signatures` and `pull_request` rules kept |
+
+**Zero approvals is deliberate and is the user's decision** (2026-08-31): *a queue nobody drains is
+worse than the merge it prevented.* What protects the trunk is the suite, not a reviewer who never
+comes.
+
+### The whole chain was proved end to end the same evening, by nobody
+
+Not inferred from green ticks - watched:
+
+- The three pull requests were merged by hand (the bootstrap: `pull_request_target` reads the
+  workflow file from the BASE branch, so nothing could arm the pull request that INTRODUCED it).
+- **Dependabot rebased its five open pull requests** when `main` moved under them, which raised
+  `synchronize`, which fired `arm-auto-merge.yml`. Five runs, five successes, and
+  `autoMergeRequest != null` on all five - Sky #90/#91/#92, MiGallery #293/#294 - each sitting at
+  `BLOCKED` waiting for `CI passed`. **Nobody clicked anything.**
+- The nightly path was dispatched by hand in all three repositories and came back `success`,
+  including with `registry_outage_is_failure: true`.
+
+**The portal's two pull requests (#61, #62) were opened before the workflow existed and had not been
+rebased**, so nothing had raised an event for them; a `@dependabot rebase` comment is the nudge, and
+it works from a USER account - which is exactly the command an App installation is refused.
