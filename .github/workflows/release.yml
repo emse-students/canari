@@ -357,3 +357,82 @@ jobs:
       version: ${{ needs.preflight.outputs.version }}
       prerelease: ${{ needs.preflight.outputs.prerelease }}
     secrets: inherit
+
+  # =================================================================================================
+  # THE SAME NOTES ON THE GITHUB RELEASE (user, 2026-09-03: the changelog can be the same on every
+  # platform, and in the GitHub console at the version bump)
+  # =================================================================================================
+  # `store/whats-new.txt` fed the App Store and, since today, Google Play. The GitHub release
+  # carried whatever a human typed into the box, or nothing - a third text for the same event.
+  #
+  # PARALLEL WITH THE THREE ARMS, `needs: [preflight, bump]` AND NOTHING DEPENDING ON IT. That is
+  # not tidiness, it is the lesson of `v0.16.0`: a GitHub release update was refused
+  # (`Resource not accessible by integration`) and the two steps that actually SHIPPED were
+  # `skipped` behind it, so production and Play got the release and Apple got nothing. **A release
+  # body is a convenience; the stores are the deliverable.** Placed here, a refusal fails this run
+  # loudly and can skip nothing - and it would be a SECOND instance of that unexplained 403, on a
+  # different endpoint, which is evidence the open P1 does not have yet.
+  #
+  # THE APP TOKEN AND NOT `GITHUB_TOKEN`, for the same reason the bump uses it: it is the identity
+  # this repository already trusts to write, and `GITHUB_TOKEN` is the one that was refused.
+  notes:
+    name: Release notes
+    needs: [preflight, bump]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Mint the identity that may write a release
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.AUTOMERGE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AUTOMERGE_APP_PRIVATE_KEY }}
+
+      # The commit the bump produced, so the notes read are the ones that shipped.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.bump.outputs.sha }}
+
+      - name: Put the release notes in the release body
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          RELEASE_ID: ${{ github.event.release.id }}
+          MARKETING_VERSION: ${{ needs.preflight.outputs.version }}
+          PRERELEASE: ${{ needs.preflight.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+
+          # A PRE-RELEASE HAS NO NOTES TO CARRY, and that is a property of the file rather than a
+          # policy here: it opens with `version: X.Y.Z` naming the STABLE, so asking for an alpha's
+          # notes is asking for a text nobody wrote. The stable that follows is what documents them.
+          if [ "$PRERELEASE" = "true" ]; then
+            echo "$MARKETING_VERSION is a pre-release; the notes belong to its stable."
+            exit 0
+          fi
+
+          # ONE IMPLEMENTATION OF THE NOTES RULE, the same call the fifth preflight gate makes and
+          # the same one the Play arm makes. Nothing here re-parses the file.
+          notes="$(node tools/app-store/submit.mjs --print-notes)"
+
+          # THE BODY IS READ LIVE, and not from `github.event.release.body`: on a re-run that
+          # payload is the ORIGINAL event's, so writing from it would resurrect a body somebody has
+          # since edited.
+          gh api "repos/$REPO/releases/$RELEASE_ID" --jq '.body // ""' > body-current.md
+          printf '%s' "$notes" > notes.md
+
+          # THE COMPOSITION IS A TESTED SCRIPT, not inline shell, because it is a pure function of
+          # those two files and its interesting inputs are ones a live release never produces - a
+          # body carrying a STALE block, a body with the markers and nothing between them.
+          # `.github/scripts/tests/release-notes-body.test.sh` produces them; 11 assertions, and
+          # the one that matters is idempotence.
+          bash .github/scripts/release-notes-body.sh body-current.md notes.md > body-next.md
+
+          if cmp -s body-current.md body-next.md; then
+            echo "the release body already carries the notes for $MARKETING_VERSION."
+            exit 0
+          fi
+
+          gh api -X PATCH "repos/$REPO/releases/$RELEASE_ID" -F body=@body-next.md --jq '.html_url'
+          printf 'release body updated - %s characters of notes for %s\n' "${#notes}" "$MARKETING_VERSION"

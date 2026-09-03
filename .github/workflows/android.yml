@@ -352,6 +352,40 @@ jobs:
       # alpha carries its OWN versionCode - `bump-app-version.sh` bands the pre-release counter into
       # it - which is the thing that was missing when that comment said internal testing "needs its
       # own build cadence".
+      # PLAY HAD NEVER RECEIVED RELEASE NOTES AT ALL, and nothing said so - the field simply stayed
+      # whatever it was. `store/whats-new.txt` was read by `submit.mjs` and by nobody else, so every
+      # release told iOS users what changed and left Android users with nothing.
+      #
+      # THE TEXT COMES THROUGH `submit.mjs --print-notes` rather than from `tail -n +2` here,
+      # because the notes RULE - the version marker, the trim, the length ceiling - has one
+      # implementation and a second reader in bash would be a second opinion about what valid notes
+      # are. The same call refuses the same files the fifth preflight gate refuses.
+      #
+      # `whatsnew-<LOCALE>`, NO EXTENSION, in a directory: that is the layout the action documents,
+      # and the locales are the ones the listing actually carries - MEASURED through the Play API on
+      # 2026-09-03, `fr-FR` and `en-US`, not assumed. A file for a locale the listing lacks is
+      # refused; a MISSING file is silent, which is how this went unnoticed.
+      #
+      # STABLE ONLY, mirroring the App Store arm. A pre-release cannot carry these notes: the file
+      # opens with `version: X.Y.Z` naming the STABLE, so `--print-notes` refuses an alpha by
+      # construction - and the notes for a stable are not the notes for the alpha that preceded it.
+      - name: Write the release notes Play shows, from the one file that carries them
+        id: notes
+        if: inputs.publish && inputs.prerelease == 'false' && steps.gplay.outputs.present == 'true'
+        env:
+          MARKETING_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/whatsnew"
+          mkdir -p "$dir"
+          notes="$(node tools/app-store/submit.mjs --print-notes)"
+          for locale in fr-FR en-US; do
+            printf '%s\n' "$notes" > "$dir/whatsnew-$locale"
+          done
+          printf 'release notes for %s: %s characters, written for fr-FR and en-US\n' \
+            "$MARKETING_VERSION" "${#notes}"
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+
       - name: Publish to Google Play
         # GATED ON `inputs.publish`, WHICH IS DATA, and never on an event again. This step used to
         # read `github.event_name == 'workflow_run'`, meaning "a real release rather than a
@@ -373,6 +407,10 @@ jobs:
           # `tracks` (plural) is the non-deprecated input name for the same thing.
           tracks: ${{ steps.release_tag.outputs.track }}
           status: completed
+          # EMPTY ON A PRE-RELEASE, and that is what "unset" looks like to an action: the step above
+          # is skipped, so this resolves to `''`, which `core.getInput` cannot distinguish from an
+          # absent input. Play then keeps whatever the field held, exactly as before.
+          whatsNewDirectory: ${{ steps.notes.outputs.dir }}
           # NO `changesNotSentForReview`: once the app is fully published, Google always
           # sends changes for review automatically and REJECTS the query parameter
           # ("changesNotSentForReview must not be set", seen on v0.10.2). It was only

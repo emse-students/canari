@@ -131,12 +131,20 @@ else
   fail 'the bump does not need the preflight - the gates would run beside the release, not before it'
 fi
 
-ARM_NEEDS="$(grep -c '^    needs: \[preflight, bump\]$' "$WF/release.yml")"
-if [ "$ARM_NEEDS" -eq 3 ]; then
-  pass 'all three arms need the preflight AND the bump'
-else
-  fail "$ARM_NEEDS of 3 arms declare 'needs: [preflight, bump]' - see below, this is not cosmetic"
-fi
+# NAMED, NOT COUNTED, since 2026-09-03. This asked whether EXACTLY THREE jobs in the file declare
+# `needs: [preflight, bump]`, which answered the right question only while the file held exactly
+# three such jobs: adding the release-notes job - which legitimately needs both, and which nothing
+# depends on - broke an assertion about the store arms by changing the POPULATION rather than the
+# property. *A predicate that named the last incident is not the predicate that names the next
+# one.* What has to hold is that EACH ARM declares it, so each arm is asked by name.
+for arm in deploy android ios; do
+  if sed -n "/^  $arm:\$/,/^  [a-z-]*:\$/p" "$WF/release.yml" |
+    grep -qE '^    needs: \[preflight, bump\]$'; then
+    pass "the $arm arm needs the preflight AND the bump"
+  else
+    fail "the $arm arm does not declare 'needs: [preflight, bump]' - see below, this is not cosmetic"
+  fi
+done
 
 # A JOB CAN ONLY READ `needs.<job>` FOR A JOB IT DECLARES, and the failure is an EMPTY STRING rather
 # than an error. This was live for the length of one commit: the three arms declared `needs: bump`
@@ -656,6 +664,85 @@ if [ -z "$SLURP_OFFENDERS" ]; then
   pass 'no gh api call combines --slurp with --jq'
 else
   fail "these files combine gh api --slurp with --jq, which gh refuses with a usage message and an empty stdout:$SLURP_OFFENDERS"
+fi
+
+printf '\none changelog, three destinations, and ONE implementation of what valid notes are\n'
+# =================================================================================================
+# `store/whats-new.txt` is the one text a stable owes a human (user, 2026-09-03: the changelog can
+# be the same on every platform, and in the GitHub console at the version bump). Until that day it
+# reached ONE of the three: the App Store. **Google Play received no release notes at all** - the
+# field simply kept whatever it held, and nothing anywhere said so, because a MISSING what's-new is
+# silent where a wrong one is refused.
+#
+# WHAT THESE ASSERTIONS PROTECT IS NOT "the notes are sent" - it is that all three read the same
+# file through the same implementation. Three readers of one file is three opinions about the
+# version marker, the trim and the length ceiling, and they drift on the day the format changes.
+NOTES_SRC='store/whats-new.txt'
+
+# THE RULE HAS ONE IMPLEMENTATION AND IT IS `submit.mjs`. A second reader in shell is the defect
+# this asserts against, so what is checked is that nothing else opens the file by name.
+# A MENTION IS NOT A READ. The first draft of this grepped for the path and accused three files
+# that merely NAME it in a comment saying where the notes come from - the opposite of the defect.
+# So comment lines are dropped first: `#` for shell and YAML, `//` and a leading `*` for the JS.
+# What survives is the path appearing in CODE, which is what a second reader looks like.
+OTHER_READERS=""
+for f in "$WF"/*.yml "$HERE"/../*.sh "$HERE"/../lib/*.sh; do
+  [ -r "$f" ] || continue
+  case "$(basename "$f")" in submit.mjs) continue ;; esac
+  if grep -n "$NOTES_SRC" "$f" 2>/dev/null | grep -vE '^[0-9]+: *(#|//|\*)' | grep -q .; then
+    OTHER_READERS="$OTHER_READERS $(basename "$f")"
+  fi
+done
+if [ -z "$OTHER_READERS" ]; then
+  pass 'nothing but submit.mjs reads the notes file in code'
+else
+  fail "these read the notes file directly instead of calling submit.mjs, which is a second opinion about what valid notes are:$OTHER_READERS"
+fi
+
+# DESTINATION 2 - GOOGLE PLAY. The action takes a DIRECTORY of `whatsnew-<LOCALE>` files; without
+# that input it uploads a build and says nothing about what changed.
+AND_WF="$WF/android.yml"
+if [ -r "$AND_WF" ]; then
+  if grep -q 'whatsNewDirectory:' "$AND_WF"; then
+    pass 'the Play upload is given a whats-new directory'
+  else
+    fail 'the Play upload has no whatsNewDirectory - Android users are told nothing about what changed, and a MISSING whats-new file is silent where a wrong one is refused'
+  fi
+  if grep -q 'submit.mjs --print-notes' "$AND_WF"; then
+    pass 'and it fills that directory through submit.mjs, not by re-parsing the file'
+  else
+    fail 'the Play arm does not call submit.mjs --print-notes, so the notes rule has a second implementation'
+  fi
+  # STABLE ONLY, and this is a property of the FILE: it opens with `version: X.Y.Z` naming the
+  # stable, so an alpha cannot be described by it and `--print-notes` refuses one by construction.
+  if grep -qE "prerelease == 'false'" "$AND_WF"; then
+    pass 'and only on a stable, which is the only version the file can name'
+  else
+    fail 'the Play notes step is not gated on a stable - the notes file names the stable version, so an alpha would refuse it and fail the arm'
+  fi
+fi
+
+# DESTINATION 3 - THE GITHUB RELEASE. And the ordering rule that cost a platform applies here too.
+if grep -qE '^  notes:' "$WF/release.yml"; then
+  pass 'the release notes reach the GitHub release too'
+
+  # NOTHING MAY DEPEND ON IT. On v0.16.0 a refused release update `skipped` TestFlight and the App
+  # Store submission behind it: production and Play shipped, Apple got nothing. A body is a
+  # convenience; the stores are the deliverable. So this job runs BESIDE the three arms, and a
+  # refusal - including a second instance of that unexplained 403 - can skip none of them.
+  if grep -qE 'needs: .*notes' "$WF/release.yml"; then
+    fail 'something NEEDS the release-notes job, so a refused release update can skip a store arm again - that is exactly what cost Apple v0.16.0'
+  else
+    pass 'and nothing depends on it, so a refusal can skip no store arm'
+  fi
+
+  if grep -q 'release-notes-body.sh' "$WF/release.yml"; then
+    pass 'and the body is composed by the tested script, not by inline shell'
+  else
+    fail 'the release body is composed inline - its interesting inputs (a stale block, hollow markers) are ones a live release never produces, so they would never be exercised'
+  fi
+else
+  fail 'no job puts the release notes on the GitHub release'
 fi
 
 printf '\n'

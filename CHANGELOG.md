@@ -62,6 +62,34 @@ which is also where every release up to and including v0.13.1 now lives.
   re-mutated to prove it still rejects.
 
 ### Fixed
+- **Google Play had never received release notes at all**, and nothing could have said so: a WRONG
+  what's-new is refused by the API, a MISSING one is silent - the field simply keeps whatever it
+  held. Every release told iOS users what had changed and left Android users with the previous
+  text. Found by asking what reads `store/whats-new.txt`: `submit.mjs`, and nothing else.
+
+  **One changelog, three destinations now** (user: the changelog can be the same on every platform,
+  and in the GitHub console at the version bump) - the App Store as before, Google Play through
+  `whatsNewDirectory`, and the GitHub release body. **One implementation of the notes rule, three
+  callers**: `submit.mjs --check-notes` is the fifth preflight gate, and the new `--print-notes` is
+  what the other two read the text through, because `tail -n +2` in two workflows would be three
+  opinions about the version marker, the trim and the ceiling.
+
+  **The GitHub release job runs BESIDE the three arms with nothing depending on it**, which is the
+  `v0.16.0` lesson rather than a preference: a refused release update `skipped` TestFlight and the
+  App Store submission behind it. Its body composition is a tested script, not inline shell -
+  `release-notes-body.sh`, 11 assertions - because idempotence is the property that is silent when
+  wrong: a composer that appends grows the body by one copy of the notes per re-run.
+
+  **Two figures were measured rather than assumed.** The Play listing carries `fr-FR` and `en-US`
+  (read through the Publishing API in an edit that was deleted, never committed) - a file for a
+  locale the listing lacks is refused and a missing one is silent, so a guess fails invisibly. And
+  Play's notes have **no length limit anybody can source**: the API reference states none, the
+  repeated 500 is a Console UI figure, and `PATCH` accepted 5000 characters. So no Play ceiling is
+  encoded; Apple's documented 4000 stays the only binding one.
+
+  Six mutations rejected, plus a pre-existing assertion corrected for the third time in this class:
+  it counted whether EXACTLY THREE jobs declare `needs: [preflight, bump]`, which the new job broke
+  by changing the population rather than the property. Each arm is now asked by name.
 - **The report written to name a stuck queue pointed at a remedy that does not exist.** The eight
   `::error` annotations the sweep now emits - verified on the real system 48 seconds after the merge
   of #341, the first time those ten refusals appeared anywhere - each ended *"or until the staleness
