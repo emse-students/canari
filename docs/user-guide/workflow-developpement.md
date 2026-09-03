@@ -76,9 +76,41 @@ git switch -c fix/description-courte
 # ... travail, commits ...
 git push -u origin HEAD
 gh pr create
-# attendre que "CI passed" soit vert
-gh pr merge --squash --delete-branch
+# c'est tout. Elle se merge toute seule quand "CI passed" est vert.
 ```
+
+**Le geste humain, c'est OUVRIR la pull request - pas la fusionner.** Ce qui se passe ensuite, dans
+l'ordre :
+
+| # | quand | ce qui se passe |
+|---|---|---|
+| 1 | a l'ouverture | **deux workflows partent en parallele sur le meme evenement**. `auto-merge.yml` arme l'auto-merge de GitHub (5 secondes) ; `ci.yml` demarre |
+| 2 | dans `ci.yml` | `Detect changes` lit les chemins modifies et decide quels jobs tournent, puis ceux-la tournent en parallele : Rust (5 crates), `Boot the real AppModule` (4 services NestJS), tests TS, frontend (vitest + lint + `svelte-check` + build), self-tests du banc d'essai, self-tests des scripts CI |
+| 3 | a cote, **non obligatoires** | CodeQL, recherche de secrets, audit des vulnerabilites de dependances |
+| 4 | quand tout est fini | **`CI passed`** agrege les resultats. `success` **et** `skipped` passent ; `failure` et `cancelled` non |
+| 5 | `CI passed` vert | **GitHub fusionne tout seul**, en squash, et supprime la branche. Aucune approbation |
+| 6 | la fusion atterrit sur `main` | elle **declenche un evenement `push`**, donc `ci.yml` retourne une deuxieme fois, sur le `main` reellement fusionne |
+| 7 | ensuite | **rien**. Aucun deploiement, aucun store, aucun bump de version |
+
+**L'etape 2 ne teste pas ta branche : elle teste la FUSION.** GitHub fabrique un commit
+`Merge <ta branche> into <main>` et c'est celui-la qui est teste - deux pull requests qui passent
+chacune peuvent quand meme casser `main` entre elles.
+
+**L'etape 6 n'est pas un detail, c'est ce qui rend une release possible plus tard.** La fusion est
+faite par l'App `canari-auto-merge`, et une fusion faite par une App **declenche** un `push` la ou
+une fusion faite par `GITHUB_TOKEN` n'en declenche pas (regle anti-recursion de GitHub). C'est ce
+run-la qui pose le controle `CI passed` **sur le commit de `main`** - et c'est exactement ce que la
+troisieme porte du preflight de release ira relire. Si l'auto-merge etait arme avec le jeton par
+defaut, `main` n'aurait jamais de run, donc jamais de `CI passed`, et **toutes les releases seraient
+refusees** sur des commits qui avaient pourtant ete testes.
+
+**Si tu repousses sur la branche**, tout recommence : l'auto-merge se re-arme (deja arme = succes,
+pas une erreur) et la CI retourne sur le nouveau commit de fusion.
+
+**Trois cas ou l'auto-merge ne s'arme pas**, volontairement : un brouillon (*draft*), une pull
+request de Dependabot (elle a son propre plafond, qui existe parce que `postgres 15 -> 18` est passe
+sur une suite entierement verte et a coupe la production 33 minutes), et une contribution
+exterieure.
 
 **Aucune approbation n'est requise.** C'est delibere et c'est ta propre regle : *"Je prefere blinder
 de test et faire les choses automatiquement qu'avoir une revue humaine qui n'arrive jamais."* Une
@@ -132,7 +164,7 @@ logiciel - c'est un humain avec les droits admin, et ca s'ecrit dans `CHANGELOG.
 | le commit n'est pas sur `main` | passer par une pull request - rien ici ne deploie un commit que le tronc ne porte pas |
 | `CI passed` n'est pas vert **sur ce commit** | reparer les tests. Un check **absent** est refuse aussi : ce n'est pas un check qui passe |
 | **la prod serait en avance sur dev** (stables seulement) | publier d'abord une **pre-release sur ce meme commit**. Elle deploie dev en quelques minutes et deplace le repere que cette verification lit ; republier la stable ensuite |
-| les notes App Store ne nomment pas cette version | reecrire `frontend/src-tauri/store/whats-new.txt`, **premiere ligne `version: X.Y.Z`**, puis republier |
+| les notes App Store ne nomment pas cette version | reecrire `store/whats-new.txt`, **premiere ligne `version: X.Y.Z`**, puis republier |
 
 Le quatrieme est la raison d'etre du fichier : *"Je ne veux pas un detecteur de retard, je ne veux
 pas que ca soit possible."* Il n'y a donc pas de rapport a lire - il y a un refus.

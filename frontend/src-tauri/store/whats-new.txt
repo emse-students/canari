@@ -1,8 +1,0 @@
-version: 0.15.0
-Messages manquants : des messages recus etaient bien telecharges puis abandonnes sans rien
-afficher. La synchronisation des conversations chiffrees a ete corrigee et une conversation qui n'a
-pas fini de se remettre a jour ne s'annonce plus comme securisee.
-
-Sessions : la reconnexion automatique ne se perd plus selon la plateforme.
-
-Les appels audio et video restent desactives pour le moment.
