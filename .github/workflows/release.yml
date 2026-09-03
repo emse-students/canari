@@ -317,6 +317,23 @@ jobs:
   # was no caller to cap anything, so every one of them simply got what it declared. Turning them
   # into called workflows introduced a ceiling that had never existed, and nothing in the tree said
   # so.
+  # `deploy.yml` IS CALLED TWICE, AND THE SPLIT IS THE POINT (user, 2026-09-03: *"j'aimerais que
+  # toutes les versions soient toujours alignees [...] on pourrait faire en sorte que le deploiement
+  # sur les stores et sur le web soit coordonne ?"*).
+  #
+  #   build       - the frontend, the images, and the DEV estate.  Starts at once, beside the two
+  #                 mobile arms, so nothing waits for anything it does not need.
+  #   production  - the production estate, and nothing else.  Needs `[android, ios]`, so the web
+  #                 cannot serve a version Google Play or Apple has just refused.
+  #
+  # WHY TWO CALLS RATHER THAN ONE `needs:`. A called workflow cannot depend on a job of its caller,
+  # and the two estates are jobs INSIDE `deploy.yml`; gating the single call on `[android, ios]`
+  # would hold `deploy-dev` back too, and gating nothing is where we were. Two calls of one file,
+  # told apart by `phase`, keeps ONE implementation of a deployment - the alternative was a second
+  # copy of the estate steps, which is the duplication this chain was rebuilt to remove.
+  #
+  # THE SECOND CALL BUILDS NOTHING. The images were pushed to GHCR by the first, and `phase` skips
+  # every build job, so the cost of the split is the ~30 seconds a job takes to start.
   deploy:
     name: Estate
     needs: [preflight, bump]
@@ -330,6 +347,7 @@ jobs:
       sha: ${{ needs.bump.outputs.sha }}
       version: ${{ needs.preflight.outputs.version }}
       prerelease: ${{ needs.preflight.outputs.prerelease }}
+      phase: build
     secrets: inherit
 
   android:
@@ -356,6 +374,32 @@ jobs:
       sha: ${{ needs.bump.outputs.sha }}
       version: ${{ needs.preflight.outputs.version }}
       prerelease: ${{ needs.preflight.outputs.prerelease }}
+    secrets: inherit
+
+  # THE WEB GOES LAST, AND ONLY IF BOTH STORES TOOK THE SAME VERSION.
+  #
+  # `if:` RATHER THAN A SKIP INSIDE THE CALLEE, because a pre-release has no production estate at
+  # all: without this condition every alpha would spend a job starting a workflow whose only real
+  # job then refuses itself, and a run full of hollow greens is a run nobody reads.
+  #
+  # `needs: [android, ios]` IS A SUCCESS DEPENDENCY, deliberately: there is no `always()` here and
+  # there must not be one. A failed or cancelled mobile arm leaves this job `skipped`, production
+  # keeps serving the previous release, and the recovery is "Re-run failed jobs" on the run that
+  # already exists - the same door as every other half-failed deploy. What must NOT be done is
+  # adding `always()` and a result test, which is how a gate becomes a formality.
+  production:
+    name: Production estate
+    needs: [preflight, bump, deploy, android, ios]
+    if: needs.preflight.outputs.prerelease == 'false'
+    permissions:
+      contents: write
+      packages: write
+    uses: ./.github/workflows/deploy.yml
+    with:
+      sha: ${{ needs.bump.outputs.sha }}
+      version: ${{ needs.preflight.outputs.version }}
+      prerelease: ${{ needs.preflight.outputs.prerelease }}
+      phase: production
     secrets: inherit
 
   # =================================================================================================

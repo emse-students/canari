@@ -38,6 +38,38 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Changed
 
+- **Production is deployed only once Google Play AND the App Store have accepted the same version**
+  (user: *"j'aimerais que toutes les versions soient toujours alignees [...] on pourrait faire en
+  sorte que le deploiement sur les stores et sur le web soit coordonne ?"*). The three arms of a
+  release were siblings, so the web deployed whatever the bump produced regardless of what the
+  stores did with it. **`v0.16.1` is the case, the same day the question was asked**: the App Store
+  submission failed and production went out anyway, leaving `canari-emse.fr` on a version no phone
+  could be given.
+
+  `deploy.yml` is therefore **called twice** from `release.yml`, told apart by a new `phase` input:
+  `build` (the frontend, every image, and the dev estate) starts at once beside the two mobile arms,
+  and `production` needs `[deploy, android, ios]`. A called workflow cannot depend on a job of its
+  caller and the two estates are jobs inside `deploy.yml`, so gating the single call would have held
+  `deploy-dev` back too - fifteen minutes bought for nothing, an alpha having no production estate
+  to get ahead of. The second call builds nothing (the images are already in GHCR), so the split
+  costs the ~30 seconds a job takes to start; the ~14 minutes are the mobile wall, and they are paid
+  by production alone.
+
+  **What this does NOT claim.** Store availability is never simultaneous - Apple reviews in days,
+  Play rolls out over hours - so "aligned" cannot mean "live at the same instant". The enforceable
+  half is that the web never serves a version a store refused.
+
+  `needs:` here is a SUCCESS dependency with no `always()`, deliberately: a failed mobile arm leaves
+  the job skipped and production keeps serving the previous release. `release-chain.test.sh` fails
+  if `always()` ever appears in it, because the `always() && <result test>` shape is used
+  legitimately inside `deploy.yml` and would read as idiomatic.
+
+- **Two counting assertions in `release-chain.test.sh` became named ones**, both broken by the same
+  population change - a fourth arm - and one of them for the SECOND time in two days. `-eq 3` was
+  asking whether the file held exactly three arms while claiming to ask whether each arm is handed
+  the release's facts. Each arm is now asked by name, and the "one commit, one release" half is
+  stated as a property instead: no `sha:` in any `with:` block names anything but the bump's output.
+
 - **The dependency ceiling is a CHECK on the pull request, so one mechanism now answers for every
   pull request in the repository** (user: *"le auto-merge et les CI doivent considerer toutes les
   PR, les miennes ou dependabot"*). It was asked only inside `dependabot-auto-merge.yml`, a SECOND

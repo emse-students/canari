@@ -647,15 +647,49 @@ gh release create vX.Y.Z --target $(git rev-parse HEAD)      <- the human gestur
        |- preflight   five gates; a refusal ends it here, having moved nothing
        |- bump        writes the version into 18 files, commits, pushes to main, outputs the SHA
        |
-       '- three arms, in parallel, each building THAT SHA
-            |- deploy.yml   production (stable) or dev.canari-emse.fr (pre-release)
-            |- android.yml  .aab -> Play `production` (stable) or `internal` (pre-release)
-            '- ios.yml      .ipa -> App Store Connect, then for a stable: version created,
-                            build attached, release notes written, SUBMITTED FOR REVIEW
+       |- three arms, in parallel, each building THAT SHA
+       |    |- deploy.yml (phase: build)
+       |    |               the frontend, every docker image, and dev.canari-emse.fr
+       |    |               for a pre-release
+       |    |- android.yml  .aab -> Play `production` (stable) or `internal` (pre-release)
+       |    '- ios.yml      .ipa -> App Store Connect, then for a stable: version created,
+       |                    build attached, release notes written, SUBMITTED FOR REVIEW
+       |
+       '- deploy.yml (phase: production), STABLE ONLY, needs [deploy, android, ios]
+            '- canari-emse.fr - and only once BOTH stores accepted this version
 ```
 
 A pre-release stops at TestFlight and the Play `internal` track, which is what a tester programme
 is. A stable goes all the way on both stores. **Nothing here is reached by a push to `main`.**
+
+### The web goes last, and only if both stores took the same version
+
+Since 2026-09-04 (user: *"j'aimerais que toutes les versions soient toujours alignees [...] on
+pourrait faire en sorte que le deploiement sur les stores et sur le web soit coordonne ?"*).
+
+**What "aligned" can and cannot mean.** Store AVAILABILITY is never simultaneous - Apple reviews in
+days, Play rolls out over hours - so no gate can make three destinations live at the same instant,
+and one claiming to would be lying. What IS enforceable is the useful half: **the web never serves
+a version a store refused.** A build that fails to sign, an `.aab` Play rejects, an App Store
+submission answered with a 500 - each now leaves `production` *skipped* and production serving the
+previous release, instead of a web estate a version ahead of every phone.
+
+**Why `deploy.yml` is called twice rather than gated once.** A called workflow cannot depend on a
+job of its caller, and the two estates are jobs INSIDE `deploy.yml`. Putting `needs: [android, ios]`
+on the single call would have held `deploy-dev` back too - fifteen minutes bought for nothing, an
+alpha having no production estate to get ahead of. Two calls of ONE file, told apart by the `phase`
+input, keeps a single implementation of a deployment; the alternative was a second copy of the
+estate steps, which is the duplication this chain was rebuilt to remove. The second call builds
+nothing - the images are already in GHCR - so the split costs the ~30 seconds a job takes to start.
+
+**`needs:` is a SUCCESS dependency and there is no `always()` there.** That is what makes the gate
+real rather than a formality: a failed or cancelled mobile arm leaves `production` skipped, and the
+recovery is "Re-run failed jobs" on the run that already exists. `release-chain.test.sh` fails if
+`always()` ever appears in that job, because inside `deploy.yml` the `always() && <result test>`
+shape is used legitimately and would read as idiomatic here.
+
+**The measured cost is ~14 minutes, paid by production alone**, from `v0.16.1-alpha.1`: the two
+mobile arms are the wall, and everything else already finished inside their shadow.
 
 ## A manual workflow run is the only native compiler available off macOS
 
