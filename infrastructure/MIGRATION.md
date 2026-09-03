@@ -72,6 +72,31 @@ admins itself). If not defined, falls back to the default value in `.env.example
 This is not a sensitive secret (just a user ID), but exposing it as a secret allows
 changing it without a commit.
 
+
+**THREE SECRETS ABOVE ARE NOT DEPLOYMENT SECRETS, AND THEY WERE MISSING FROM THIS INVENTORY UNTIL
+2026-09-03.** `AUTOMERGE_APP_CLIENT_ID`, `AUTOMERGE_APP_ID` and `AUTOMERGE_APP_PRIVATE_KEY` identify
+the `canari-auto-merge` GitHub App, and nothing in a `.env` ever sees them - they exist because two
+workflows need an identity the branch ruleset on `main` accepts, which `GITHUB_TOKEN` is not:
+
+| Secret | Value | Why it cannot be something simpler |
+|---|---|---|
+| `AUTOMERGE_APP_CLIENT_ID` | the App's `Iv23li...` client id | what `actions/create-github-app-token@v3` asks for; `app-id` still works but is deprecated and annotates every run |
+| `AUTOMERGE_APP_ID` | the numeric app id, `4791068` | the deprecated input. **It is a DIFFERENT VALUE, not another name for the client id** - kept only until nothing references it |
+| `AUTOMERGE_APP_PRIVATE_KEY` | the App's private key, PEM | the only one of the three that is genuinely secret; the other two are public identifiers |
+
+**Neither of the first two is confidential** - an App's ids are readable by anyone who can see the
+installation (`gh api orgs/<org>/installations`). They are stored as secrets for consistency with
+the key, not for secrecy.
+
+**ON A NEW REPO OR FORK, THE APP IS THE PART THAT DOES NOT COPY.** A GitHub App is installed in an
+ORGANISATION, and a repository ruleset will only accept a bypass actor from its own owner
+organisation - which is why the Actions app itself cannot be exempted and returns
+`422 Actor GitHub Actions integration must be part of the ruleset source or owner organization`. So
+a fork needs its own App, installed on its own org, added to the ruleset's `bypass_actors`, with the
+three secrets recreated. Without it, `bump-version.yml`'s push to `main` is refused and **publishing
+a release deploys nothing at all** - fail-safe, and silent unless somebody reads the run. See
+[`docs/wiki/cicd.md`](../docs/wiki/cicd.md#the-push-this-workflow-makes-is-the-one-push-to-main-that-is-not-a-pull-request-and-the-ruleset-refused-it-measured-2026-09-03).
+
 Generate strong values: `openssl rand -hex 32` (secrets), `openssl rand -base64 60`
 (`MICONNECT_AUTHENTIK_SECRET_KEY`).
 

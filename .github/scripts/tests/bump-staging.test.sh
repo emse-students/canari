@@ -86,6 +86,26 @@ PREV="$(grep -m1 '"version"' "$WT/frontend/package.json" | sed 's/.*"version"[^"
 # the real checkout it would bump the REAL tree, the one outcome this suite must never have.
 cp "$SCRIPT" "$WT/scripts/bump-app-version.sh"
 
+# A CHANGELOG OF THIS SUITE'S OWN MAKING, and not the repository's. The promotion's behaviour
+# depends on whether `[Unreleased]` has a BODY, and the repository's answer to that changes with
+# every release: v0.15.0 promoted its section and left `[Unreleased]` empty, at which point three
+# assertions below started failing against a mechanism that was behaving exactly as designed. A
+# fixture makes both arms testable and neither dependent on when the suite happens to run.
+cat > "$WT/CHANGELOG.md" <<'FIXTURE'
+# Changelog
+
+## [Unreleased]
+
+### Fixed
+
+- a line that must survive the promotion and end up under the new version heading
+- a second one, so "the prose moved" is a count and not a coincidence
+
+## [0.14.0] - 2026-08-17
+
+- an older section the promotion must not touch
+FIXTURE
+
 # NOT piped anywhere: this suite exists partly because a pipe killed this script once.
 ( cd "$WT" && bash scripts/bump-app-version.sh "$TARGET" ) > "$WT/.bump.log" 2>&1
 RC=$?
@@ -167,9 +187,12 @@ printf '\nthe release notes are promoted, and only for a stable\n'
 # fifteen shipped versions came to sit under one section with no way to say which release a user got
 # a given fix in.
 #
+# EVERY ASSERTION HERE RUNS AGAINST THE FIXTURE WRITTEN ABOVE, never against the repository's own
+# changelog, whose `[Unreleased]` is empty for most of a release cycle and full for the rest.
+#
 # THE DATE IS MATCHED AS A SHAPE, NEVER AGAINST TODAY. Asserting the wall clock would make this
-# suite fail on the UTC midnight it happened to straddle, and it is the promotion under test here,
-# not `date`.
+# suite fail on the UTC midnight it happened to straddle, and it is the promotion under test, not
+# `date`.
 HEADS="$(grep -n '^## \[' "$WT/CHANGELOG.md" | head -2)"
 FIRST="$(printf '%s\n' "$HEADS" | sed -n '1s/^[0-9]*://p')"
 SECOND="$(printf '%s\n' "$HEADS" | sed -n '2s/^[0-9]*://p')"
@@ -187,17 +210,24 @@ case "$SECOND" in
     fail "expected '## [$TARGET] - <date>' under [Unreleased], found '$SECOND'" ;;
 esac
 
-# The promotion moves the HEADING and not the prose: everything that was under [Unreleased] must end
-# up under the new version, so the section cannot be a heading with nothing beneath it.
-PROMOTED_BODY="$(awk -v ver="$TARGET" '
+# The promotion moves the HEADING and not the prose, so BOTH seeded lines must end up under the new
+# version - and the older section must still be there, below, untouched.
+PROMOTED="$(awk -v ver="$TARGET" '
   index($0, "## [" ver "]") == 1 { inside = 1; next }
   inside && /^## \[/ { exit }
   inside { print }
-' "$WT/CHANGELOG.md" | grep -c .)"
-if [ "$PROMOTED_BODY" -gt 100 ]; then
-  pass "the promoted section carries its $PROMOTED_BODY lines of notes"
+' "$WT/CHANGELOG.md")"
+SEEDED="$(printf '%s\n' "$PROMOTED" | grep -c 'must survive the promotion\|so "the prose moved" is a count')"
+if [ "$SEEDED" -eq 2 ]; then
+  pass "both seeded entries moved under [$TARGET] with the heading"
 else
-  fail "the [$TARGET] section holds only $PROMOTED_BODY lines - the prose did not move with the heading"
+  fail "$SEEDED of 2 seeded entries are under [$TARGET] - the prose did not move with the heading"
+fi
+
+if grep -qF '## [0.14.0] - 2026-08-17' "$WT/CHANGELOG.md"; then
+  pass "the older section below is untouched"
+else
+  fail "the promotion ate the section below it"
 fi
 
 # IDEMPOTENT, because a re-run is an ordinary event: the workflow is hand-dispatchable and a release
@@ -210,15 +240,60 @@ else
   fail "$DUPES sections for [$TARGET] after a re-run - the promotion is not idempotent"
 fi
 
-# AND A PRE-RELEASE MUST NOT TOUCH IT AT ALL. Promoting on `-alpha.1` would close the section and
-# leave the stable that follows days later publishing an empty one - the drift being fixed, inverted.
-( cd "$WT" && git checkout -q -- CHANGELOG.md )
+printf '\nand the two arms that must NOT rewrite it\n'
+# =================================================================================================
+# A PRE-RELEASE MUST NOT TOUCH IT AT ALL. Promoting on `-alpha.1` would close the section and leave
+# the stable that follows days later publishing an empty one - the drift being fixed, inverted.
+write_fixture() {
+  cat > "$WT/CHANGELOG.md" <<'FIX'
+# Changelog
+
+## [Unreleased]
+
+- something worth releasing
+
+## [0.14.0] - 2026-08-17
+FIX
+}
+write_fixture
+BEFORE="$(cat "$WT/CHANGELOG.md")"
 ( cd "$WT" && bash scripts/bump-app-version.sh "${TARGET}-alpha.7" ) >> "$WT/.bump.log" 2>&1
-if ( cd "$WT" && git diff --quiet -- CHANGELOG.md ); then
-  pass "a -alpha.N bump leaves CHANGELOG.md untouched"
+if [ "$BEFORE" = "$(cat "$WT/CHANGELOG.md")" ]; then
+  pass "a -alpha.N bump leaves CHANGELOG.md byte-for-byte unchanged"
 else
   fail "a pre-release rewrote CHANGELOG.md - its notes belong to the stable that follows"
 fi
+
+# AND AN EMPTY SECTION IS REFUSED, WITH A WARNING THAT REACHES THE RUN. This arm is reached in the
+# ordinary course of things - every release leaves `[Unreleased]` empty behind it - and promoting it
+# would claim a release documented nothing. It must not FAIL the release either, so the check is
+# that the file is untouched AND that a GitHub annotation was emitted.
+cat > "$WT/CHANGELOG.md" <<'FIX'
+# Changelog
+
+## [Unreleased]
+
+## [0.14.0] - 2026-08-17
+FIX
+BEFORE="$(cat "$WT/CHANGELOG.md")"
+EMPTY_OUT="$(cd "$WT" && GITHUB_ACTIONS=true bash scripts/bump-app-version.sh "$TARGET" 2>&1)"
+EMPTY_RC=$?
+if [ "$BEFORE" = "$(cat "$WT/CHANGELOG.md")" ]; then
+  pass "an empty [Unreleased] is not promoted to a version heading"
+else
+  fail "an empty [Unreleased] was promoted - the release would claim it documented nothing"
+fi
+if [ "$EMPTY_RC" -eq 0 ]; then
+  pass "and it does not fail the release, which is what ships the fix"
+else
+  fail "the bump exited $EMPTY_RC on an empty section - a documentation gap must not block a release"
+fi
+case "$EMPTY_OUT" in
+  *"::warning file=CHANGELOG.md::"*)
+    pass "it emits a ::warning:: annotation, so the run says so rather than a log line nobody opens" ;;
+  *)
+    fail "no ::warning:: annotation - the refusal would only exist in stderr" ;;
+esac
 
 printf '\n'
 if [ "$FAIL" -ne 0 ]; then
