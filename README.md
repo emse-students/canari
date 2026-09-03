@@ -10,7 +10,7 @@
 [![Built with Rust](https://img.shields.io/badge/Rust-CE422B?logo=rust)](https://www.rust-lang.org/)
 [![NestJS](https://img.shields.io/badge/NestJS-E0234E?logo=nestjs)](https://nestjs.com/)
 
-[![CI](https://github.com/emse-students/canari/actions/workflows/ci.yml/badge.svg)](https://github.com/emse-students/canari/actions/workflows/ci.yml)
+[![CI](https://github.com/emse-students/canari/actions/workflows/pull-request.yml/badge.svg)](https://github.com/emse-students/canari/actions/workflows/pull-request.yml)
 [![Release](https://github.com/emse-students/canari/actions/workflows/release.yml/badge.svg)](https://github.com/emse-students/canari/actions/workflows/release.yml)
 [![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue.svg)](LICENSE)
 

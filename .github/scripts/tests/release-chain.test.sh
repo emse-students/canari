@@ -192,7 +192,13 @@ printf '\nand the first gesture merges itself, with the credential that keeps th
 # `CI passed` check, and the preflight's third gate would then refuse EVERY release on a commit that
 # had in fact been tested. Someone "simplifying" auto-merge.yml to the default token would break the
 # release chain from a file that has nothing to do with releasing.
-AM="$WF/auto-merge.yml"
+AM="$WF/pull-request.yml"
+if [ -e "$WF/auto-merge.yml" ]; then
+  fail 'auto-merge.yml is back as its own workflow - the sequence a human reads on opening a pull request is then split across two files listening for the same event'
+else
+  pass 'auto-merge is a job of pull-request.yml, not a second workflow on the same event'
+fi
+
 if [ -r "$AM" ]; then
   if grep -q 'create-github-app-token' "$AM"; then
     pass 'auto-merge.yml mints the App token, whose merge raises a push event'
@@ -212,8 +218,56 @@ if [ -r "$AM" ]; then
     fail 'auto-merge.yml no longer excludes Dependabot - native auto-merge walks past the ceiling that exists because postgres 18 merged green and took production down'
   fi
 else
-  fail 'auto-merge.yml is gone - a green pull request would wait for a human who decides nothing'
+  fail 'pull-request.yml is gone - a green pull request would wait for a human who decides nothing'
 fi
+
+# THE ARMING MUST NOT DEPEND ON THE TESTS. `--auto` hands the decision to GitHub; a `needs:` on the
+# suite would hold a runner for its whole length and would still have to re-read the checks, and a
+# job that merges on its own reading of green is a second opinion about which jobs matter.
+if sed -n '/^  arm-auto-merge:$/,/^  [a-z][a-z-]*:$/p' "$AM" | grep -qE '^    needs:'; then
+  fail 'arm-auto-merge declares needs: - it must run in PARALLEL with the suite, because it declares intent rather than reading a verdict'
+else
+  pass 'arm-auto-merge runs in parallel with the suite, which is what --auto is for'
+fi
+
+# And it must not try to arm on a `push` to main, where there is no pull request at all.
+if sed -n '/^  arm-auto-merge:$/,/^  [a-z][a-z-]*:$/p' "$AM" | grep -q "github.event_name == 'pull_request'"; then
+  pass "it only arms on a pull_request event, since this workflow also runs on push to main"
+else
+  fail 'arm-auto-merge is not restricted to pull_request events - on a push to main it would read a null pull request'
+fi
+
+printf '\nthe release package tells a pre-release from a stable by the EVENT, and refuses a mismatch\n'
+# =================================================================================================
+# THE TRAP THIS CLOSES. The version string and the "Set as a pre-release" checkbox are two
+# independent statements a human makes on one form, and until 2026-09-03 only the version was read -
+# `published` fires for both kinds, so the checkbox was invisible. Ticking it on a `v0.17.0`
+# silently deployed PRODUCTION; forgetting it on a `v0.17.0-alpha.1` silently pushed a tester build
+# to the production channels. Neither is visible in a green run, and the French guide could only
+# warn about it in prose.
+#
+# `prereleased` and `released` fire for exactly one kind each, so both statements now arrive and can
+# be compared.
+RY="$WF/release.yml"
+if grep -qE '^    types: \[prereleased, released\]$' "$RY"; then
+  pass 'release.yml listens for the two event types GitHub tells apart'
+else
+  fail 'release.yml no longer listens for [prereleased, released] - with the published event the checkbox is invisible again and only the version speaks'
+fi
+
+if grep -q 'github.event.action' "$RY"; then
+  pass 'it reads the event action, which is the checkbox as GitHub read it'
+else
+  fail 'release.yml does not read github.event.action - it cannot know what the checkbox said'
+fi
+
+for phrase in 'flagged PRE-RELEASE but its version' 'NOT flagged as a pre-release but its version'; do
+  if grep -qF "$phrase" "$RY"; then
+    pass "a mismatch is refused and names both sides ($phrase...)"
+  else
+    fail "release.yml no longer refuses the mismatch '$phrase' - the estate would be chosen by whichever statement it happens to read"
+  fi
+done
 
 printf '\nno step in an arm is gated on an event that can never happen there\n'
 # =================================================================================================

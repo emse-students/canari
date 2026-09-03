@@ -19,7 +19,7 @@ set -eu
 
 OXVELTE_REPO="${OXVELTE_REPO:-https://github.com/tolgaouz/oxvelte.git}"
 # oxvelte 0.2.0. Move it by editing this line, having read what changed - and move the cache key in
-# .github/workflows/ci.yml with it, or CI restores the previous binary and lints with that.
+# .github/workflows/pull-request.yml with it, or CI restores the previous binary and lints with that.
 OXVELTE_REV="${OXVELTE_REV:-7196779a744cee009abfc551e4c527bc98e26945}"
 
 if [ -f "$HOME/.cargo/env" ]; then
