@@ -40,6 +40,13 @@ on:
           the caller has already read it - this file never decides its own target.'
         required: true
         type: string
+      phase:
+        description: 'Which half of this file to run: `build` (the images, and the dev estate) or
+          `production`. See the two-call comment in `release.yml` - the caller runs `build`
+          immediately and `production` only once Google Play and the App Store have accepted the
+          same version.'
+        required: true
+        type: string
 
 # TWO DEPLOYS OF THE SAME ESTATE MUST NOT OVERLAP, and until 2026-09-02 nothing said so. Three runs
 # were in flight against `/home/canari/canari` at once, each able to `git reset --hard` and
@@ -198,7 +205,11 @@ jobs:
   build-frontend:
     name: Build Frontend
     needs: enumerate-services
-    if: needs.enumerate-services.outputs.frontend_changed == 'true'
+    # `phase == 'build'` HERE AND ON THE NEXT TWO JOBS, `production` ON THE LAST ONE. This file is
+    # called TWICE per stable release, and each call runs one half; the images are pushed to GHCR by
+    # the first call, so the second has nothing left to build and only has to deploy what is already
+    # in the registry.
+    if: inputs.phase == 'build' && needs.enumerate-services.outputs.frontend_changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -382,6 +393,7 @@ jobs:
     needs: [enumerate-services, build-frontend]
     if: |
       always() &&
+      inputs.phase == 'build' &&
       needs.enumerate-services.result == 'success' &&
       needs.enumerate-services.outputs.any_changed == 'true' &&
       (needs.build-frontend.result == 'success' || needs.build-frontend.result == 'skipped')
@@ -491,6 +503,7 @@ jobs:
     # a failure to run must not be the only thing consulted: the builder's own result is.
     if: |
       always() &&
+      inputs.phase == 'build' &&
       vars.DEV_ENVIRONMENT_ENABLED == 'true' &&
       inputs.prerelease == 'true' &&
       needs.enumerate-services.result == 'success' &&
@@ -651,10 +664,28 @@ jobs:
     name: Deploy to Production Server
     runs-on: self-hosted
     needs: [enumerate-services, build-frontend, build-docker-images]
-    # A STABLE RELEASE, AND NOTHING ELSE, REACHES THIS JOB. `prerelease == 'false'` is the whole
-    # gate: an alpha stops at `deploy-dev` above and a push to `main` no longer starts this workflow
-    # at all. There is no CI condition left here either - CI runs on the pull request and again at
-    # merge on `main`, so the commit a release is cut from was green before the release existed.
+    # A STABLE RELEASE, AND NOTHING ELSE, REACHES THIS JOB, and since 2026-09-04 only after BOTH
+    # STORES HAVE ACCEPTED THE SAME VERSION. `prerelease == 'false'` says the first half; the second
+    # half is not expressible here, because a called workflow cannot depend on a job of its caller -
+    # it is `release.yml`'s `production` job, which needs `[android, ios]` and calls this file a
+    # second time with `phase: production`.
+    #
+    # WHY THE WEB WAITS FOR THE STORES (user, 2026-09-03: *"j'aimerais que toutes les versions soient
+    # toujours alignees"*). Store AVAILABILITY is never simultaneous - Apple reviews in days, Play
+    # rolls out in hours - so "aligned" cannot mean "live at the same instant", and pretending
+    # otherwise would be a promise this file cannot keep. What it CAN guarantee is the useful half:
+    # **the web never serves a version a store refused.** A build that fails to sign, an `.aab` Play
+    # rejects, an App Store submission answered with a 409 - each now stops production instead of
+    # leaving the web a version ahead of every phone.
+    #
+    # THE COST IS ~14 MINUTES AND IT IS PAID ONLY BY PRODUCTION, measured on `v0.16.1-alpha.1`: the
+    # two mobile arms are the wall, everything else already finishes inside their shadow.
+    # `deploy-dev` is deliberately NOT behind this - dev is where somebody looks first, and holding
+    # it back a quarter of an hour would buy nothing, an alpha having no production estate to get
+    # ahead of.
+    #
+    # There is no CI condition here either - `release.yml` gates the whole run on `CI passed` being
+    # green on the very commit these artefacts are built from.
     #
     # `deploy-dev` IS NOT IN THIS LIST, and it must not be added. The two arms deploy DIFFERENT
     # commits now - the alpha somebody published and the stable somebody published - so waiting on
@@ -663,6 +694,7 @@ jobs:
     # first day) must never hold a production release hostage.
     if: |
       always() &&
+      inputs.phase == 'production' &&
       inputs.prerelease == 'false' &&
       needs.enumerate-services.result == 'success' &&
       (needs.build-frontend.result == 'success' || needs.build-frontend.result == 'skipped') &&
