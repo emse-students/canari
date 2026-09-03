@@ -431,6 +431,35 @@ credential gap RARE instead of permanent, and needs nothing from anybody.
 **What retires this row:** a sweep pass that is green with eight open pull requests, and a sweep log
 showing a genuinely stale branch rebuilt and merged with nobody typing anything.
 
+### P3 - one merge out of three did NOT delete its remote branch, and nothing here refused it (observed 2026-09-03)
+
+**One occurrence, recorded because it is a measurement and not a theory.** The repository has
+`delete_branch_on_merge: true` (inventoried in
+[MIGRATION.md](../../infrastructure/MIGRATION.md) section 3bis), and on 2026-09-03 three pull
+requests merged within twenty minutes of one another, all squash-merged by the same App through
+GitHub's auto-merge:
+
+| Pull request | Branch after the merge |
+| --- | --- |
+| #339 | deleted (404) |
+| #340 | deleted (404) |
+| #341 | **still present**, twelve minutes later |
+
+`DELETE /git/refs/heads/...` then removed it with **no error and no refusal**, so nothing in this
+repository was protecting it - no ruleset, no protection rule, no open pull request pointing at it.
+Whatever happened, happened on GitHub's side, and the cause is UNMEASURED.
+
+**Why it is worth a row rather than a shrug:** the remote branch is what tells a workstation its
+local branch is finished. `[origin/x: gone]` after a fetch is the signal a session uses to delete
+its local copies, and a branch that is never marked gone accumulates silently in every clone - the
+exact confusion that had to be explained on 2026-09-03
+([workflow-developpement](../user-guide/workflow-developpement.md) section 3.1).
+
+**What retires this row:** either it never recurs - in which case delete the row after a month of
+merges - or it recurs and the pattern says what it depends on. Do not write a workaround for one
+observation: a sweep that deletes leftover branches would be a destructive control built on an
+unmeasured cause, and it would need an allowlist of what it may touch.
+
 ### P3 - one audit advisory is suppressed because it cannot be reached, and it should stop being
 
 `GHSA-vcc3-ghjq-m6fr` (moderate, denial of service) covers every `decode-uri-component` at or below

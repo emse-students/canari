@@ -62,6 +62,13 @@ which is also where every release up to and including v0.13.1 now lives.
   re-mutated to prove it still rejects.
 
 ### Fixed
+- **The report written to name a stuck queue pointed at a remedy that does not exist.** The eight
+  `::error` annotations the sweep now emits - verified on the real system 48 seconds after the merge
+  of #341, the first time those ten refusals appeared anywhere - each ended *"or until the staleness
+  predicate stops calling it stale"*. That escape was refuted in the same change: a `pull_request`
+  run tests the SYNTHESISED merge commit and the self-tests read almost every workflow file, so
+  narrowing the predicate would declare a branch fresh on evidence a re-run could contradict. A
+  report that sends its reader to a non-existent exit is the defect the report was written to fix.
 - **A rebuild request Dependabot REFUSED was recorded as one it was performing, and ten refusals
   went unreported.** The sweep marks a Dependabot branch `STALE` when the gate definitions moved
   under it, and asks `@dependabot recreate`. It wrote its idempotence marker when the COMMENT was
