@@ -468,7 +468,27 @@ merges - or it recurs and the pattern says what it depends on. Do not write a wo
 observation: a sweep that deletes leftover branches would be a destructive control built on an
 unmeasured cause, and it would need an allowlist of what it may touch.
 
-### P3 - one audit advisory is suppressed because it cannot be reached, and it should stop being
+### P2 - the vulnerability audit CANNOT BLOCK A MERGE, and it spent a day failing on every pull request while they merged anyway (measured 2026-09-03)
+
+**`Check Dependencies Vulnerabilities` is not part of `CI passed`, so it refuses nothing.** It lives
+in `code-analysis.yml`, and `ci-passed` aggregates jobs of `pull-request.yml` - a `needs:` cannot
+reach across workflows. Measured on 2026-09-03: the job was FAILING on #290, #291, #295, #297,
+#299, #304, #309, #315 **and on #344, which merged anyway**.
+
+**That is the same defect the dependency ceiling had until that morning** - advisory where it had to
+be binding - and it was fixed there by MOVING the decision into `pull-request.yml` as a job feeding
+`ci-passed`. The same move closes this one. It is not a one-line change: `code-analysis.yml` also
+runs on a push and on a daily schedule, so the job has to keep serving those callers.
+
+**What made it visible was unrelated:** a new advisory (`GHSA-528h-pc64-c93x`, `stream-json` via
+`minio`) turned the check red on every pull request at once. A check that is red on everything is a
+check nobody reads - *a line its reader learns to skip is the one that hides the next defect* - and
+the fact that it blocked nothing is what let it stay red without stopping anything.
+
+**What retires this row:** the audit is a job of `pull-request.yml`, `ci-passed` needs it, and a
+mutation that introduces a reachable advisory is observed to refuse a merge.
+
+### P3 - TWO audit advisories are suppressed because they cannot be reached, and both should stop being
 
 `GHSA-vcc3-ghjq-m6fr` (moderate, denial of service) covers every `decode-uri-component` at or below
 0.4.2 and reaches media-service as `minio > query-string > decode-uri-component`. **It is ignored

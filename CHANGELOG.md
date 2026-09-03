@@ -62,6 +62,29 @@ which is also where every release up to and including v0.13.1 now lives.
   re-mutated to prove it still rejects.
 
 ### Fixed
+- **A new advisory turned `Check Dependencies Vulnerabilities` red on every pull request**, and it
+  had been red for a day while pull requests merged past it. `GHSA-528h-pc64-c93x` is a moderate
+  denial of service in `stream-json` at every version `<= 3.4.0` - its `pick`/`ignore`/`filter`/
+  `replace` filters are O(depth^2) on nested input - reached as `minio > stream-json`. There is no
+  in-range fix: `minio@8.0.7` is the latest release and requires `stream-json: ^1.8.0`, while the
+  fix is `3.5.0`, two majors outside that range.
+
+  **It is unreachable twice over, measured in the installed tree rather than argued.** minio imports
+  exactly one thing from the package, `stream-json/jsonl/Parser.js`, and NONE of the four filters
+  the advisory is about; and that module is minio's bucket-notification API, which media-service
+  does not call - its whole use of the client is `bucketExists`, `fPutObject`, `getObject`,
+  `makeBucket`, `putObject`, `removeObject`.
+
+  So the ignore is granted the way this repository grants ignores: **with its premises asserted, per
+  service, failing closed.** Two new checks, each mutation-proved - a probe file importing a
+  stream-json filter, and one naming `listenBucketNotification`, each refuses the ignore by name.
+  The audit now reports `2 ignored` and exits 0.
+
+  **And the gap the red check exposed is recorded rather than fixed:** the audit is not part of
+  `CI passed`, so it cannot block a merge - #344 merged while it was failing. That is the same
+  advisory-where-it-should-be-binding defect the dependency ceiling had that morning, and the same
+  move closes it (a job of `pull-request.yml` feeding `ci-passed`); it is a P2 in `backlog.md`
+  because `code-analysis.yml` also serves a push and a daily schedule.
 - **The report added an hour earlier would have mailed the maintainer twenty-four times a day**, and
   they said so within the hour. Failing the sweep while ANY branch is stuck was right about the
   signal and wrong about the cost: this workflow runs **hourly**, plus on every push to `main`, so a
@@ -100,12 +123,20 @@ which is also where every release up to and including v0.13.1 now lives.
   `release-notes-body.sh`, 11 assertions - because idempotence is the property that is silent when
   wrong: a composer that appends grows the body by one copy of the notes per re-run.
 
-  **Two figures were measured rather than assumed.** The Play listing carries `fr-FR` and `en-US`
-  (read through the Publishing API in an edit that was deleted, never committed) - a file for a
-  locale the listing lacks is refused and a missing one is silent, so a guess fails invisibly. And
-  Play's notes have **no length limit anybody can source**: the API reference states none, the
-  repeated 500 is a Console UI figure, and `PATCH` accepted 5000 characters. So no Play ceiling is
-  encoded; Apple's documented 4000 stays the only binding one.
+  **Two figures were measured rather than assumed, and the second measurement was WRONG - corrected
+  the same day, before the release that would have hit it.** The Play listing carries `fr-FR` and
+  `en-US` (read through the Publishing API in an edit that was deleted, never committed) - a file
+  for a locale the listing lacks is refused and a missing one is silent, so a guess fails invisibly.
+  That half stands.
+
+  The other half said Play's notes have no length limit anybody can source: the API reference states
+  none and `PATCH` accepted 5000 characters. **`PATCH` only stores the draft.** `POST edits:validate`
+  runs a commit's validation and refuses 501 with *"notes in language fr-FR with length 501, which is
+  too long (max: 500)"*, while 499 validates. The caveat written beside the first measurement - that
+  the edit was never COMMITTED - is exactly what mattered. So the gate carries
+  `min(Apple 4000, Play 500)` and names which destination binds; `0.16.1`'s notes were 532
+  characters when this was found, and would have failed the Android arm at the store step after a
+  full build.
 
   Six mutations rejected, plus a pre-existing assertion corrected for the third time in this class:
   it counted whether EXACTLY THREE jobs declare `needs: [preflight, bump]`, which the new job broke

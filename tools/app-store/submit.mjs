@@ -43,7 +43,28 @@ const API = 'https://api.appstoreconnect.apple.com';
 const PLATFORM = 'IOS';
 
 /** Apple's own limit on the release-notes field. Longer text is refused by the API, not truncated. */
-const WHATS_NEW_MAX = 4000;
+// THE TIGHTEST OF THE THREE DESTINATIONS, WHICH IS PLAY'S - not Apple's 4000, even though this
+// file is the App Store tool. The notes went to one store when this constant was written; since
+// 2026-09-03 the same text reaches Play and the GitHub release, so the gate that reads it in
+// seconds has to refuse anything ANY destination will refuse. Otherwise the fifth preflight gate
+// passes and the Android arm dies at the store step after a twenty-minute build - learning by
+// failing what a fact could have told us.
+//
+// MEASURED TWICE, AND THE FIRST MEASUREMENT WAS MISLEADING. Play's API reference states no limit,
+// and `PATCH` on a track accepted 400, 500, 501, 1000 and 5000 characters - which is why "no Play
+// ceiling is encoded" was written here first. `PATCH` only stores the draft. `POST edits:validate`
+// runs the same validation as a commit and changes nothing:
+//
+//     532 (the real 0.16.1 notes)  ->  403  "notes in language fr-FR with length 532,
+//                                            which is too long (max: 500)"
+//     499                          ->  200  valid
+//     501                          ->  403  same message
+//
+// So the widely repeated Console figure of 500 IS the API's, enforced at validate/commit time and
+// not at write time. Apple's 4000 is kept beside it only to say which one binds.
+const APPLE_WHATS_NEW_MAX = 4000;
+const PLAY_WHATS_NEW_MAX = 500;
+const WHATS_NEW_MAX = Math.min(APPLE_WHATS_NEW_MAX, PLAY_WHATS_NEW_MAX);
 
 /**
  * A build Apple has finished processing. `PROCESSING` is the state a fresh upload sits in for
@@ -278,7 +299,12 @@ export function readWhatsNew({ file, version }) {
   if (text.length > WHATS_NEW_MAX)
     return {
       ok: false,
-      why: `${file} holds ${text.length} characters of notes; Apple's limit is ${WHATS_NEW_MAX}`,
+      why:
+        `${file} holds ${text.length} characters of notes, and the limit is ${WHATS_NEW_MAX} - ` +
+        `Google Play's, which is the tightest of the three destinations and is enforced when the ` +
+        `edit is validated rather than when it is written (Apple's own limit is ` +
+        `${APPLE_WHATS_NEW_MAX}). Shorten them, or the Android arm fails at the store step after a ` +
+        `full build.`,
     };
   return { ok: true, text };
 }

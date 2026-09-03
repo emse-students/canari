@@ -1231,12 +1231,26 @@ consequence. Eleven assertions, and the mutation that makes the block-strip a no
   2026-09-03, in an edit that was deleted and never committed. A `whatsnew-<LOCALE>` file for a
   locale the listing lacks is refused, and a missing one is silent, so guessing here fails in the
   invisible direction.
-- **Play's release notes have no length limit that anybody can source.** The API reference states
-  none, and the widely repeated 500 is a Console UI figure. `PATCH` on a track accepted 400, 500,
-  501, 1000 and 5000 characters, measured the same way. So **no Play-specific ceiling is encoded**:
-  Apple's documented 4000 stays the only binding one, in `submit.mjs`. The caveat is stated because
-  it bounds the measurement: the edit was never COMMITTED, so commit-time validation is not
-  exercised.
+- **Play's release notes are capped at 500 characters, and the FIRST measurement of this said the
+  opposite.** The API reference states no limit, and `PATCH` on a track accepted 400, 500, 501, 1000
+  and 5000 characters - so "no Play ceiling is encoded" was written here, with a caveat that the
+  edit had never been COMMITTED and commit-time validation was therefore unexercised. **That caveat
+  is what turned out to matter.** `POST edits:validate` runs a commit's validation and changes
+  nothing:
+
+  ```
+  532 (the first 0.16.1 notes)  ->  403  "notes in language fr-FR with length 532,
+                                          which is too long (max: 500)"
+  499                           ->  200  valid
+  501                           ->  403  same message
+  ```
+
+  `PATCH` only stores the draft. So the Console's 500 IS the API's, enforced at validate/commit
+  time, and **the gate now carries the TIGHTEST of the three destinations** -
+  `min(Apple 4000, Play 500)` in `submit.mjs`, with a message naming which one binds. Without it the
+  fifth gate passes in seconds and the Android arm dies at the store step after a twenty-minute
+  build, which is learning by failing what a fact could have told us. `0.16.1`'s notes were 532
+  characters when this was found.
 
 ### Who pushes the refresh decides whether it is a refresh at all
 
