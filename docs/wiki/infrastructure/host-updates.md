@@ -135,6 +135,24 @@ why `gather` and `judge` are separate functions: the judgement runs against fabr
 every case in it is a shape really met on 2026-09-03 - `mitv`'s switch-on-package-absent, its
 kernel reboot, the four enabled-but-idle timers, and the accumulated `label=Debian`.
 
+### ADDING THE GROUP IS NOT ENOUGH - THE RUNNER HAS TO BE RESTARTED, and the report proved it
+
+**A process holds the group set it was started with.** `adduser canari adm` returned success,
+`id -Gn canari` listed `adm` immediately, and the very next workflow run still reported
+`last log outcome: unreadable` - because the Actions runner had been running since long before, and
+`/proc/<pid>/status` showed `Groups: 27 100 991 1000` with no `4`. A fresh `ssh` session had the
+group and the service did not.
+
+`sudo systemctl restart actions.runner.emse-students-canari.Canari.service` fixed it
+(`Groups: 4 27 100 991 1000` after), and the run went green. **Restart it only while no job is in
+flight** - it is the same runner every deploy uses.
+
+**This is the best thing that happened to this report.** It was *proved able to fail against the
+real production box*, not only against fabricated facts: one run red because it could not see, the
+next green because it could, nothing else about the host having changed. A report whose red state
+has never been observed is a report nobody should believe - and the failure it produced was the
+honest one, naming its own blindness rather than announcing health.
+
 ## See also
 
 - [backlog](../backlog.md) - what stays open: the other three hosts' reporter, and the library
