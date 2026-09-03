@@ -202,13 +202,14 @@ restated**. **Every defect story is in `CHANGELOG.md`, every rule one left is in
    started from ONE P1: every Stripe webhook rejected for four days. The ceiling, the sweep, the
    dispatch, the outage of 2026-09-01 and Dependabot's TWO switches are all on
    [cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them), the only copy.
-   **SIX THINGS OPEN, each in [backlog](docs/wiki/backlog.md) and nowhere else:** **[nine of the ten
-   backend pull-request slots are held by updates that can never go green, and the group written to
-   prevent exactly that has never opened a pull request](docs/wiki/backlog.md#p1---nine-of-the-ten-backend-pull-request-slots-are-held-by-updates-that-can-never-go-green-and-the-group-written-to-prevent-exactly-that-has-never-opened-a-pull-request-measured-2026-09-03)** -
-   the four NestJS services share a limit of 10, nine are single-package NestJS 12 bumps each
-   incoherent ALONE (45 suites die at import), the `nestjs` group landed after they were open and so
-   has never produced a pull request, and closing them is the fix but its suppression semantics must
-   be measured on ONE first, resolving no sooner than Monday 2026-09-07; **[two of the six
+   **SIX THINGS OPEN, each in [backlog](docs/wiki/backlog.md) and nowhere else:** **[the nine
+   NestJS pull requests were closed in ONE BATCH, so the suppression question was never measured on
+   one first](docs/wiki/backlog.md#p2---the-nine-nestjs-pull-requests-were-closed-in-one-batch-so-the-suppression-question-was-never-measured-on-one-first-and-monday-2026-09-07-is-the-only-thing-that-can-answer-it-now-updated-2026-09-03)** -
+   the queue is FREE (two backend slots used, not nine) and what the batch cost is the CONTROL CASE:
+   closing a Dependabot pull request suppresses that version, and whether that also silences the
+   `nestjs` group is now answerable only by waiting for Monday 2026-09-07. **The four openmls
+   singles are the same question in its "before" state** and are kept open deliberately as the
+   control the batch destroyed; **[two of the six
    cargo directories are invisible to Dependabot](docs/wiki/backlog.md#p1---two-of-the-six-cargo-directories-are-invisible-to-dependabot-and-one-of-them-is-the-app-that-ships-to-phones-measured-2026-09-02)** - the app that
    ships to phones among them, silent for 25 days, its silence now closed by a derived test and its
    fix a decision owed to the USER; the remaining rows
