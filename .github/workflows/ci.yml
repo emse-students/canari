@@ -247,7 +247,13 @@ jobs:
           # arm resolving `main` for itself. Every defect that chain has actually had was a wiring
           # defect rather than a bug in a script, so the files themselves are the test's subject.
           # `bump-staging.test.sh` reads `release.yml` too, for how the bump stages its commit.
+          #
+          # AND `tools/app-store/` IS AN INPUT, for the same reason `scripts/bump-app-version.sh` is:
+          # its self-test lives beside it rather than under `.github/`, and the release preflight
+          # calls `submit.mjs --check-notes` as its fifth gate. So the commit that must run it is a
+          # change to the submission script - which the first pattern here would never match.
           if has '^\.github/scripts/' \
+            || has '^tools/app-store/' \
             || has '^infrastructure/(docker-compose\.(prod|dev)\.yml|dev/|local/|deploy/|\.env\.example)' \
             || has '^\.github/workflows/(release|deploy|android|ios)\.yml$' \
             || has '^scripts/bump-app-version\.sh$' \

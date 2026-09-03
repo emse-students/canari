@@ -131,12 +131,35 @@ else
   fail 'the bump does not need the preflight - the gates would run beside the release, not before it'
 fi
 
-ARM_NEEDS="$(grep -c '^    needs: bump$' "$WF/release.yml")"
+ARM_NEEDS="$(grep -c '^    needs: \[preflight, bump\]$' "$WF/release.yml")"
 if [ "$ARM_NEEDS" -eq 3 ]; then
-  pass 'all three arms need the bump'
+  pass 'all three arms need the preflight AND the bump'
 else
-  fail "$ARM_NEEDS of 3 arms need the bump - an arm that does not would build the unbumped tree"
+  fail "$ARM_NEEDS of 3 arms declare 'needs: [preflight, bump]' - see below, this is not cosmetic"
 fi
+
+# A JOB CAN ONLY READ `needs.<job>` FOR A JOB IT DECLARES, and the failure is an EMPTY STRING rather
+# than an error. This was live for the length of one commit: the three arms declared `needs: bump`
+# and read `needs.preflight.outputs.prerelease`, so every arm would have received `prerelease: ''`.
+# For a stable that is accidentally the right answer; for an ALPHA it is catastrophic and silent -
+# `ios.yml` and `android.yml` would have taken the `else` branch, baked the PRODUCTION origin into a
+# tester build, and passed their own "is this pointing at the right estate" assertion while doing it.
+# Green run, tester build against production.
+#
+# The patterns are anchored to the `with:` block's indentation on purpose: `needs.preflight.outputs.
+# version` also appears inside the bump job's own steps, where it is legitimate, and an unanchored
+# count would mix the two and mean nothing.
+for ref in \
+  '^      version: \$\{\{ needs\.preflight\.outputs\.version \}\}$' \
+  '^      prerelease: \$\{\{ needs\.preflight\.outputs\.prerelease \}\}$' \
+  '^      sha: \$\{\{ needs\.bump\.outputs\.sha \}\}$'; do
+  n="$(grep -cE "$ref" "$WF/release.yml")"
+  if [ "$n" -eq 3 ]; then
+    pass "all three arms are handed ${ref##*outputs\.}, from a job they declare"
+  else
+    fail "$n of 3 arms are handed ${ref##*outputs\.} - an arm reading a job it does not need gets an EMPTY STRING, silently"
+  fi
+done
 
 if grep -qE 'bash \.github/scripts/release-preflight\.sh' "$WF/release.yml"; then
   pass 'the preflight script is actually invoked, not merely present in the tree'
@@ -191,6 +214,81 @@ if [ -r "$AM" ]; then
 else
   fail 'auto-merge.yml is gone - a green pull request would wait for a human who decides nothing'
 fi
+
+printf '\nno step in an arm is gated on an event that can never happen there\n'
+# =================================================================================================
+# THE DEFECT THIS EXISTS FOR, AND IT WAS MINE. Collapsing the chain into one run made four steps
+# permanently unreachable in a single stroke: `if: github.event_name == 'workflow_run'` guarded both
+# "Upload to Release" steps, the TestFlight upload and the Play publish - and in a `workflow_call`
+# workflow `github.event_name` is the CALLER's event, which is `release` or `workflow_dispatch` and
+# never `workflow_run`. The build would have succeeded, the run would have been green, and NO STORE
+# WOULD HAVE RECEIVED ANYTHING.
+#
+# The shape test as first written did not catch it, because it asked about triggers and inputs and
+# not about the conditions on steps. A condition that cannot be true is the same class of defect as
+# a required check that is always skipped: invisible, green, and load-bearing.
+for f in deploy.yml android.yml ios.yml; do
+  if grep -qE "^\s+if:.*github\.event_name\s*==\s*'workflow_run'" "$WF/$f"; then
+    fail "$f gates a step on github.event_name == 'workflow_run', which is NEVER true in a called workflow - the step is dead and its run stays green"
+  else
+    pass "$f has no step gated on a workflow_run event"
+  fi
+
+  if grep -qE "^\s+if:.*github\.event\.workflow_run\." "$WF/$f"; then
+    fail "$f reads github.event.workflow_run.*, which does not exist on the caller's event"
+  else
+    pass "$f reads no workflow_run event payload"
+  fi
+done
+
+# And the steps that must still be conditional are conditional on the CALLER's real event, because
+# attaching an artefact to a release that does not exist would CREATE one - which would publish a
+# release, which would start the chain again.
+for f in android.yml ios.yml; do
+  if grep -qE "^\s+if: github\.event_name == 'release'$" "$WF/$f"; then
+    pass "$f attaches its artefact only when a published release started the run"
+  else
+    fail "$f no longer guards its release upload - a hand-dispatched re-run would create a release and restart the chain"
+  fi
+done
+printf '\nboth stores are reached all the way, and iOS no longer stops at TestFlight\n'
+# =================================================================================================
+# THE ASYMMETRY THIS CLOSES. `altool --upload-app` hands Apple the binary and stops; the binary
+# lands in TestFlight. For a stable that left the release one MANUAL gesture short of shipped -
+# create the version, attach the build, press Submit - while the same release put Android on the
+# Play `production` track by itself. Nothing asked for that gesture and nothing reported its
+# absence, so a stable release was half-shipped by construction.
+if grep -q 'node tools/app-store/submit\.mjs' "$WF/ios.yml"; then
+  pass 'ios.yml submits the version for review after the upload'
+else
+  fail 'ios.yml no longer submits - a stable release would stop at TestFlight and wait for a human nothing reminds'
+fi
+
+# ONLY FOR A STABLE, and not as a policy: `versionString` is a marketing version and Apple refuses
+# `0.15.0-alpha.1` outright. A pre-release's destination IS TestFlight.
+if grep -qE "^\s+if: inputs\.prerelease == 'false' && steps\.testflight\.outputs\.uploaded == 'true'$" "$WF/ios.yml"; then
+  pass 'and only for a stable whose upload actually happened'
+else
+  fail 'the submission is no longer gated on a stable with a completed upload - it would submit an alpha, which Apple refuses, or a build it never sent'
+fi
+
+# THE BUILD NUMBER MUST COME OFF THE ARCHIVE. Recomputing the store band here would be a second
+# implementation of `scripts/bump-app-version.sh`'s formula, and the two would disagree silently:
+# the submission would poll for a build number nobody uploaded until it gave up 45 minutes later.
+if grep -q 'ApplicationProperties:CFBundleVersion' "$WF/ios.yml"; then
+  pass 'the build number is read off the archive that was signed, not recomputed'
+else
+  fail 'ios.yml no longer reads CFBundleVersion from the archive - a recomputed band can name a build that does not exist'
+fi
+
+# And the notes gate must stay in the PREFLIGHT, where a refusal costs seconds rather than a
+# production deploy, a Play publish and a twenty-minute macOS build.
+if grep -q 'submit\.mjs --check-notes' "$PF"; then
+  pass 'the release notes are checked before anything moves, by the same code that submits them'
+else
+  fail 'the preflight no longer checks the release notes - Apple would refuse the submission at the END of a release, after the other store had already shipped'
+fi
+
 printf '\n'
 if [ "$FAIL" -ne 0 ]; then
   printf '%s of %s assertions FAILED\n' "$FAIL" "$((PASS + FAIL))"

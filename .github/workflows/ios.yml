@@ -457,6 +457,21 @@ jobs:
           echo "ipa=frontend/src-tauri/gen/apple/$IPA" >> "$GITHUB_OUTPUT"
           echo "IPA: $IPA"
 
+          # THE BUILD NUMBER IS READ OFF THE ARCHIVE, never recomputed. The submission step below
+          # has to name the build it wants among everything in App Store Connect, and the only
+          # answer that cannot be wrong is the `CFBundleVersion` of the binary this job actually
+          # signed - a second implementation of the store band (`scripts/bump-app-version.sh`
+          # computes it as (major*1e6 + minor*1e3 + patch)*100 + rank) would be one more place for
+          # the two to disagree, and they would disagree silently: the submission would simply wait
+          # for a build number nobody uploaded until it timed out.
+          BUILD_NUMBER="$(/usr/libexec/PlistBuddy -c 'Print :ApplicationProperties:CFBundleVersion' "$ARCHIVE/Info.plist")"
+          if [ -z "$BUILD_NUMBER" ]; then
+            echo "::error::the archive carries no CFBundleVersion, so no submission could name its build"
+            exit 1
+          fi
+          echo "build_number=$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "Build number: $BUILD_NUMBER"
+
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v7
         with:
@@ -465,7 +480,13 @@ jobs:
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v3
-        if: github.event_name == 'workflow_run'
+        # ONLY WHEN A PUBLISHED RELEASE IS WHAT STARTED THIS. `release.yml` also has a
+        # hand-dispatched path, for re-running a release whose chain died on an infrastructure
+        # fault; on that path a GitHub release for the version may not exist, and this action would
+        # CREATE one - which would publish a release, which would start `release.yml` again. Reading
+        # the caller's event is the precise question: attach the artefact to the release that
+        # triggered this run, and to nothing else.
+        if: github.event_name == 'release'
         with:
           tag_name: v${{ steps.release_tag.outputs.version }}
           fail_on_unmatched_files: true
@@ -474,7 +495,14 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload to TestFlight / App Store Connect
-        if: github.event_name == 'workflow_run'
+        id: testflight
+        # NO EVENT CONDITION, and that is the fix rather than an omission. This step used to read
+        # `github.event_name == 'workflow_run'`, which meant "a real release rather than a
+        # hand-dispatched test build". In a `workflow_call` workflow `github.event_name` is the
+        # CALLER's event - `release` or `workflow_dispatch` - so that condition became permanently
+        # FALSE when the chain collapsed into one run, and the store would have received nothing at
+        # all, silently. The distinction it expressed is gone too: a dispatch now goes through the
+        # same preflight and IS a release, so both paths must ship.
         env:
           ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
@@ -488,6 +516,7 @@ jobs:
           # the meantime.
           if [ -z "$ASC_KEY_ID" ] || [ -z "$ASC_ISSUER_ID" ] || [ -z "$ASC_API_KEY_P8" ]; then
             echo "::warning::App Store Connect API key secrets not set; skipping TestFlight upload"
+            echo "uploaded=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           # altool auto-discovers the key at ~/.appstoreconnect/private_keys/AuthKey_<KEYID>.p8
@@ -512,5 +541,34 @@ jobs:
             echo "::error::altool reported a failed upload - see log above"
             exit 1
           fi
+          echo "uploaded=true" >> "$GITHUB_OUTPUT"
           echo "✅ Uploaded to TestFlight"
 
+
+      # ═══════════════════════════════════════════════════════════════════════════════════════════
+      # AND THEN ACTUALLY SUBMIT IT - the half that was missing, and the only asymmetry left
+      # between the two stores.
+      #
+      # `altool --upload-app` above hands Apple the binary and stops. The binary lands in
+      # TestFlight, which is exactly right for a pre-release, and for a STABLE it left the release
+      # one manual gesture short of shipped: somebody had to open App Store Connect, create the
+      # version, attach the build and press Submit. Nothing asked for that gesture and nothing
+      # reminded anybody of it, while the same release put Android on the Play `production` track by
+      # itself. So a stable release was half-shipped by construction.
+      #
+      # ONLY FOR A STABLE, and not as a policy choice: `versionString` is a marketing version and
+      # Apple refuses `0.15.0-alpha.1` outright. A pre-release's destination IS TestFlight, which
+      # the upload above has already reached - there is nothing further to do for one.
+      - name: Create the App Store version, attach the build, and submit for review
+        if: inputs.prerelease == 'false' && steps.testflight.outputs.uploaded == 'true'
+        env:
+          ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          ASC_API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
+          APP_BUNDLE_ID: fr.emse.canari
+          MARKETING_VERSION: ${{ inputs.version }}
+          BUILD_NUMBER: ${{ steps.outputs.outputs.build_number }}
+        # `node` and not `bun`: this runs on a macOS runner where node is preinstalled, the script
+        # uses nothing but `node:crypto`, `node:fs` and global `fetch`, and setting bun up again
+        # after the archive would be a step for no gain.
+        run: node tools/app-store/submit.mjs

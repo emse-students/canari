@@ -129,7 +129,19 @@ jobs:
           REPO: ${{ github.repository }}
           VERSION: ${{ steps.resolve.outputs.version }}
           TARGET_SHA: ${{ steps.resolve.outputs.target_sha }}
-        run: bash .github/scripts/release-preflight.sh
+        run: |
+          set -euo pipefail
+
+          # THE GATES READ THE RELEASED TREE, and this is what makes that literally true rather
+          # than true by coincidence. The checkout above lands on the event's SHA, which for a
+          # published release IS the tag's commit and for a dispatch is `main` at dispatch time -
+          # close enough to be right almost always, and the fifth gate reads a FILE out of the
+          # working tree, so "almost always" is not good enough: a dispatch minutes after a merge
+          # would judge the release notes of a commit it is not releasing.
+          git fetch --depth 1 origin "$TARGET_SHA"
+          git checkout --detach FETCH_HEAD
+
+          bash .github/scripts/release-preflight.sh
 
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   # WRITE THE VERSION EVERYWHERE, IN ONE COMMIT
@@ -224,7 +236,7 @@ jobs:
   # deploy host. Naming them one by one here would be a fourth list to keep in step with three files.
   deploy:
     name: Estate
-    needs: bump
+    needs: [preflight, bump]
     uses: ./.github/workflows/deploy.yml
     with:
       sha: ${{ needs.bump.outputs.sha }}
@@ -234,7 +246,7 @@ jobs:
 
   android:
     name: Google Play
-    needs: bump
+    needs: [preflight, bump]
     uses: ./.github/workflows/android.yml
     with:
       sha: ${{ needs.bump.outputs.sha }}
@@ -244,7 +256,7 @@ jobs:
 
   ios:
     name: App Store
-    needs: bump
+    needs: [preflight, bump]
     uses: ./.github/workflows/ios.yml
     with:
       sha: ${{ needs.bump.outputs.sha }}

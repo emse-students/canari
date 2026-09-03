@@ -93,9 +93,34 @@ ORGANISATION, and a repository ruleset will only accept a bypass actor from its 
 organisation - which is why the Actions app itself cannot be exempted and returns
 `422 Actor GitHub Actions integration must be part of the ruleset source or owner organization`. So
 a fork needs its own App, installed on its own org, added to the ruleset's `bypass_actors`, with the
-three secrets recreated. Without it, `bump-version.yml`'s push to `main` is refused and **publishing
+three secrets recreated. Without it, `release.yml`'s bump job cannot push to `main` and **publishing
 a release deploys nothing at all** - fail-safe, and silent unless somebody reads the run. See
 [`docs/wiki/cicd.md`](../docs/wiki/cicd.md#the-push-this-workflow-makes-is-the-one-push-to-main-that-is-not-a-pull-request-and-the-ruleset-refused-it-measured-2026-09-03).
+
+**THREE MORE ARE STORE CREDENTIALS RATHER THAN DEPLOYMENT SECRETS**, and they were missing from this
+inventory for the same reason: nothing in a `.env` ever reads them. They identify one App Store
+Connect API key, and since 2026-09-03 they carry the iOS half of a release all the way to review
+rather than only as far as TestFlight:
+
+| Secret | Value | What breaks without it |
+|---|---|---|
+| `APP_STORE_CONNECT_KEY_ID` | the key's 10-character id | `altool` cannot find the `.p8` it auto-discovers by this name, and no JWT can be minted |
+| `APP_STORE_CONNECT_ISSUER_ID` | the team's issuer UUID | every API call answers 401 |
+| `APP_STORE_CONNECT_API_KEY_P8` | the `.p8` private key, base64-encoded | the only genuinely secret one of the three |
+
+**THE KEY'S ROLE IS NOT MEASURED AND THE FIRST STABLE RELEASE IS WHAT MEASURES IT.** Uploading a
+build needs only Developer rights, which is all the key has ever been asked for; Apple documents
+managing an App Store version and submitting it for review as App Manager work. So a key that has
+uploaded to TestFlight faultlessly for months may still be refused at the create call, as a 403
+rather than at authentication. If that is what the first `vX.Y.Z` reports, the fix is the key's role
+in App Store Connect and nothing in this repository - and it is a decision owed to the USER, since
+only the account holder can change it.
+
+**ALL THREE ABSENT IS A DELIBERATE SKIP, NOT A FAILURE.** `ios.yml` warns and leaves the binary
+unuploaded so that a fork with no Apple account still gets a green release; the submission step then
+does not run at all, because it is gated on the upload having happened. That is the one place in
+this chain where a missing credential is tolerated, and it is tolerated because the alternative is a
+repository nobody else can release from.
 
 Generate strong values: `openssl rand -hex 32` (secrets), `openssl rand -base64 60`
 (`MICONNECT_AUTHENTIK_SECRET_KEY`).

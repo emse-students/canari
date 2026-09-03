@@ -157,6 +157,30 @@ else
   fi
 fi
 
+# -- 5 -------------------------------------------------------------------------------------------
+step 'the App Store release notes are written for this version'
+if [ "$KIND" != 'stable' ]; then
+  ok 'not asked of a pre-release - a pre-release goes to TestFlight, which takes no release notes'
+else
+  # THE SAME CODE THE SUBMISSION RUNS, on purpose. Apple REQUIRES release notes and refuses the
+  # submission without them, so the question has to be asked somewhere; asking it here costs a
+  # second on an ubuntu runner, and asking it at the end costs the whole release - the bump, the
+  # production deploy, the Play publish and a twenty-minute macOS build all happen first, and the
+  # iOS half then fails alone, leaving a release that is shipped on one store and not the other.
+  #
+  # `--check-notes` is a MODE of the submission script rather than a rule restated in bash, because
+  # two implementations of "valid release notes" drift and the drift is invisible: the preflight
+  # would pass and Apple would refuse.
+  if NOTES_OUT="$(MARKETING_VERSION="$VERSION" node tools/app-store/submit.mjs --check-notes 2>&1)"; then
+    ok "$NOTES_OUT"
+  else
+    refuse "$NOTES_OUT"
+    hint 'Apple refuses a submission with no release notes, and the notes file names its own version'
+    hint 'so it cannot silently describe the release before last. Write it, first line'
+    hint "\"version: $VERSION\", then publish this release again."
+  fi
+fi
+
 printf '\n'
 if [ "$FAILED" -ne 0 ]; then
   printf 'preflight REFUSED - nothing is bumped, nothing is deployed, no store receives anything.\n'

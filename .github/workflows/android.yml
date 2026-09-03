@@ -280,7 +280,13 @@ jobs:
 
       - name: Upload to Release
         uses: softprops/action-gh-release@v3
-        if: github.event_name == 'workflow_run'
+        # ONLY WHEN A PUBLISHED RELEASE IS WHAT STARTED THIS. `release.yml` also has a
+        # hand-dispatched path, for re-running a release whose chain died on an infrastructure
+        # fault; on that path a GitHub release for the version may not exist, and this action would
+        # CREATE one - which would publish a release, which would start `release.yml` again. Reading
+        # the caller's event is the precise question: attach the artefact to the release that
+        # triggered this run, and to nothing else.
+        if: github.event_name == 'release'
         with:
           tag_name: v${{ steps.release_tag.outputs.version }}
           fail_on_unmatched_files: true
@@ -321,7 +327,14 @@ jobs:
       # it - which is the thing that was missing when that comment said internal testing "needs its
       # own build cadence".
       - name: Publish to Google Play
-        if: github.event_name == 'workflow_run' && steps.gplay.outputs.present == 'true'
+        # NO EVENT CONDITION, and that is the fix rather than an omission. This step used to read
+        # `github.event_name == 'workflow_run'`, which meant "a real release rather than a
+        # hand-dispatched test build". In a `workflow_call` workflow `github.event_name` is the
+        # CALLER's event - `release` or `workflow_dispatch` - so that condition became permanently
+        # FALSE when the chain collapsed into one run, and the store would have received nothing at
+        # all, silently. The distinction it expressed is gone too: a dispatch now goes through the
+        # same preflight and IS a release, so both paths must ship.
+        if: steps.gplay.outputs.present == 'true'
         uses: r0adkll/upload-google-play@v1
         with:
           serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
