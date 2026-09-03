@@ -159,13 +159,18 @@ A TLS handshake to ghcr.io. Production was not deployed because the other estate
 registry - nothing about the change, nothing about the data, nothing a second environment exists to
 catch.
 
-**WHAT THE BRANCH SPLIT OF 2026-09-02 CHANGED, AND WHAT IT DID NOT.** `deploy-to-server` no longer
-names `deploy-dev` in its `needs:` at all: production is released by `promote-dev-to-main`, so a
-failed dev deploy no longer BLOCKS a release. **But the conflation moved with the gate rather than
-being removed.** A registry timeout on `deploy-dev` still stops the promotion, so the release simply
-does not happen - and "a release that silently did not happen" is the same queue-nobody-drains
-failure in a new place. Two things make it strictly better and neither makes it right: the red run is
-on `dev` where it belongs, and recovering needs a re-run instead of flipping a repository variable.
+**WHAT THE WORKFLOW MIGRATION CHANGED, AND WHAT IT DID NOT (2026-09-03).** `deploy-to-server` no
+longer names `deploy-dev` in its `needs:` at all, and this time that is not a re-routing: **a run
+deploys exactly one estate.** A pre-release runs `deploy-dev` and stops; a stable runs
+`deploy-to-server` and never touches dev. So a registry timeout on the dev deploy can no longer
+block, delay or silently cancel anything production-bound, which is the whole of what the branch
+split had merely MOVED.
+
+**The conflation itself survives, one estate smaller.** A `deploy-dev` that fails on a TLS handshake
+to ghcr.io still reports the same red run as a `deploy-dev` that fails because the change is broken,
+and the cost is now precise: **the dev estate silently did not receive that pre-release**, so the
+next alpha tester is measuring the previous build and nothing says so. That is smaller than "a
+release that did not happen" and it is the same defect.
 
 **Owed, unchanged in substance:** the dev deploy separates the failures it OWNS (a migration refused,
 a container that will not start, `/api/version` unanswered) from the ones it merely observed (a
@@ -2793,6 +2798,30 @@ feature is therefore coherent with E2EE - it removes a password prompt, not a re
 
 ## Tooling
 
+### P3 - the "pre-release" checkbox and the version number can disagree, and nothing notices until the release AFTER the mistake (measured 2026-09-03)
+
+Two things say whether a release is a pre-release, and only one of them is read by each consumer.
+**The VERSION decides where it deploys**: `cd.yml`'s `release-kind` job reads
+`frontend/package.json` after the bump and treats a hyphen as the definition. **GitHub's
+`prerelease` FLAG decides the change detector's baseline**: it filters
+`gh api .../releases?per_page=100` by `.prerelease` to find the previous release of the same kind.
+
+So publishing `v0.15.0-alpha.1` without ticking "Set as a pre-release" does the right thing that
+day - the version has a hyphen, the alpha deploys dev, everything is green. **The cost arrives at
+the NEXT STABLE release**, which then finds that alpha sitting in the stable list as its baseline:
+a baseline too RECENT, so services changed before it are reported unchanged and are not rebuilt.
+Production keeps whatever `:latest` already pointed at for those services. That is the dangerous
+direction of the two, and it manifests one release later, far from its cause.
+
+The reverse - a stable ticked as a pre-release - is the same defect pointing at dev.
+
+Retired by: an assertion in `release-kind`, which already reads the version and can read the flag.
+`gh api repos/{repo}/releases/tags/v$VERSION --jq .prerelease` against the hyphen test it already
+performs, and FAIL when they disagree, before anything is built. There is no case where proceeding
+on a contradiction is better than stopping: the two are supposed to be the same fact, and one of
+them is wrong. Named here rather than written straight away because the workflow migration's
+documentation pass is not the commit to slip a workflow change into.
+
 ### P3 - `scripts/` is the one shell directory CI does not shellcheck, and it holds the release's first step (measured 2026-09-03)
 
 `ci.yml`'s shellcheck step globs `.github/scripts/**`, `infrastructure/dev/*.sh` and
@@ -3230,15 +3259,17 @@ that reason is what a future session must argue with rather than the choice.
 > which stores a literal dash rather than reading stdin, and all twelve had to be rewritten - the
 > rule is in [durable-rules](durable-rules.md). That page's closing section is the map.
 
-**OPEN, AND OWED TO THE USER AS A DECISION: there is no way to deploy dev WITHOUT deploying
-production** (raised by the user 2026-09-02: *"on peut toujours push sur dev non ?"*). There is one
-trigger - a push to `main` - and it runs both estates in sequence. So dev is a NET that breaks before
-production on a copy of its data, and not a sandbox anybody can push into freely. Two shapes would
-change that, and the choice is the user's: a `dev` branch, which the 2026-08-17 scoping explicitly
-ruled out ("dev deploys from `main`") and which would reintroduce the drift that decision was taken
-to avoid; or a `workflow_dispatch` input on `cd.yml` meaning "dev only", which contradicts nothing
-already decided and is a small change. **It is absent because nobody asked for it, not because it was
-considered and rejected** - which is exactly the distinction this file exists to keep.
+**CLOSED 2026-09-03, and by neither of the two shapes that had been proposed.** It was raised by
+the user on 2026-09-02 (*"on peut toujours push sur dev non ?"*) as: there is no way to deploy dev
+WITHOUT deploying production, because one trigger - a push to `main` - ran both estates in sequence.
+The workflow migration answered it from the other end. **A run deploys exactly one estate, and which
+one is decided by the RELEASE**: a `X.X.X-alpha.N` pre-release deploys dev and nothing else, a
+stable deploys production and nothing else, and a push deploys neither. Both shapes weighed here are
+gone rather than chosen - the `dev` branch existed for one day and was deleted, and `cd.yml` has no
+`workflow_dispatch` at all, a dispatch being a second door onto the one machine. **Kept because the
+distinction it was written to preserve still holds**: the capability was absent because nobody had
+asked for it, not because it had been considered and rejected, and it arrived the day somebody
+asked.
 
 **Shape.** Same machine as production (70 GB and 15 GiB free, measured), own compose project
 `canari-dev`, resource limits so a dev container cannot starve prod, running permanently. Own
@@ -3313,7 +3344,10 @@ untouched), one `Network.setExtraHTTPHeaders` call at target attach, and one ass
 `*-selftest.mjs` that an unset pair injects nothing.
 
 **Trigger: deployed from `main` on every push, with no `dev` branch at all.** One trigger, no possible
-divergence, and `WORK ON main` stays intact. Dev deploys BEFORE prod and **a failed dev migration
+divergence, and `WORK ON main` stays intact. **(SUPERSEDED 2026-09-03: nothing deploys on a push any
+more, and this estate is reached by publishing a `X.X.X-alpha.N` pre-release. The paragraph stays as
+the record of what was decided on 2026-08-17, and the sentence below about a failed dev migration
+blocking the prod deploy no longer describes anything - a run deploys one estate.)** Dev deploys BEFORE prod and **a failed dev migration
 blocks the prod deploy** - the most valuable gate this whole item buys, and it is free: dev runs the
 migration against a copy of prod's data, so a migration that breaks there would have broken prod.
 Accepted cost: dev never pre-validates a commit, it is where things are tried afterwards.

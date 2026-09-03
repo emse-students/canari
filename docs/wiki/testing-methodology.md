@@ -2543,6 +2543,14 @@ commit to `main` triggers CD, CD redeploys the frontend, and prod IS the test se
 straddles that redeploy cannot say which artefact it measured, which is precisely what `gate` reports
 by returning `VACUOUS` with `redeployedMidRun` naming the run.
 
+**THE TRIGGER THAT CAUSED THIS CANNOT FIRE ANY MORE, AND THE RULE IS NOT RETIRED (2026-09-03).**
+A push to `main` deploys nothing now - deployment happens when somebody publishes a release - so a
+documentation commit can no longer void a row, and that whole class is closed. What replaced it is
+rarer and deliberate rather than incidental, which makes it easier to avoid and easier to forget:
+**a campaign run and a RELEASE are mutually exclusive.** The heading above is left naming the push
+because that is what actually happened on 2026-08-27, and a rule reads as retired the moment its
+incident is rewritten out of it.
+
 **The mechanism is working and must not be softened.** `gate` refusing the attribution is the only
 reason no false verdict entered the ledger - the alternative is a `PASS` against an unknown build,
 which is worse than no measurement. The cost is real, though: three rows have to be re-run, and one of

@@ -14,8 +14,11 @@ the [board](cross-client-testing.md); what each rung is for is the
 
 ## 1. The rig targets PRODUCTION today - but that is now a ONE-LINE choice, not a property
 
-**As it stands, a run goes against production, and the mutual-exclusion rule holds: a campaign run
-and a push to `main` are mutually exclusive.** `SITE` in the machine-local `names.mjs` says
+**As it stands, a run goes against production, and the mutual-exclusion rule holds - but it names a
+different event since 2026-09-03: a campaign run and a RELEASE are mutually exclusive.** A push to
+`main` deploys nothing now, so the class of accident that voided three rows on 2026-08-27 (a
+DOCUMENTATION commit redeploying the frontend mid-run) can no longer happen at all. What can is
+somebody publishing a release. `SITE` in the machine-local `names.mjs` still says
 `https://canari-emse.fr`, so anything launched right now types into production.
 
 **What this page used to say here was wrong, and the correction matters more than the error.** It
@@ -57,9 +60,9 @@ operator instruction that cannot be pasted is not an instruction.
 
 | Change | Effect on a run |
 |---|---|
-| A push to `main` now deploys **dev first, then production** | The mutual-exclusion rule is unchanged, but the window is LONGER: one push occupies the pipeline for both estates. |
-| A failed dev deploy **blocks** the production deploy | `main` can be ahead of what production is serving, so **`git log` never says what production is running**. `/api/version` gives `version` and `minClientVersion`, which is what a verdict may cite - but NOT the commit: production renders no `build` by decision (a non-null `build` means you are talking to DEV). To learn which commit production actually received, read the `prod-deployed` tag or the last green `Deploy to Production Server`, never the local branch. |
-| `Dependabot auto-merge` sweeps **hourly** and after every CD run, and dispatches `cd.yml` itself | **This is the new hazard.** Production can be redeployed mid-run by a merge nobody performed. See section 3. |
+| **A push to `main` deploys NOTHING** (2026-09-03) | The mutual-exclusion rule now names a RELEASE. A docs commit, a merged Dependabot pull request and a hotfix are all harmless to a run in flight - which retires the exact accident that voided COMM-12, COMM-22 and DEL-9 on 2026-08-27. |
+| Production is deployed by publishing a STABLE release; `dev.canari-emse.fr` by a `X.X.X-alpha.N` pre-release | One run deploys exactly one estate, so a dev deploy can no longer delay or block a production one. **`git log` still never says what production is running**: `/api/version` gives `version` and `minClientVersion`, which is what a verdict may cite, but NOT the commit - production renders no `build` by decision (a non-null `build` means you are talking to DEV). To learn which commit production actually received, read the `prod-released` tag (renamed from `prod-deployed` on 2026-09-03) or the last green `Deploy to Production Server`, never the local branch. |
+| `Dependabot auto-merge` sweeps hourly and after every CI run | **This stopped being a hazard on 2026-09-03.** It used to dispatch `cd.yml`, so production could be redeployed mid-run by a merge nobody performed; there is no deploy left to dispatch, and the sweep now dispatches CI. Section 3 is kept as the record of what it cost. |
 | The weekly dev refresh, Mondays 04:00 UTC | Stops and restarts DEV's containers only. It touches nothing production serves, so it can never void a row - named here so nobody blames it for one. |
 | Push credentials are now permitted on dev | Irrelevant to the campaign today. It matters only once a dev-built mobile app exists, which is phase 2. |
 | `vars.DEV_ENVIRONMENT_ENABLED` is **`true`** since 2026-09-02 | The dev jobs no longer skip, so **a broken dev estate holds production's deploys**. That is by design and it cuts both ways during a campaign: it makes an accidental production deploy LESS likely, and it means `main` can sit ahead of what production serves for a long time. The escape is `gh variable set DEV_ENVIRONMENT_ENABLED --body false`. |
@@ -163,9 +166,11 @@ timestamps overlap the run is a voided measurement, not a defect.
 
 Everything below is in order, and nothing else goes first.
 
-1. **`git fetch`, then PUSH whatever is local.** A push redeploys production, so it cannot happen
-   during a run. Background it, redirect rather than pipe, read `PUSH_EXIT`, and `rm -rf apps/*/dist`
-   first.
+1. **`git fetch`, then land whatever is local - through a pull request, `main` being protected
+   since 2026-09-03.** The old reason to do it FIRST is gone (a push no longer redeploys anything),
+   but the order still holds for a duller one: a merge changes the tree the rig reads its own
+   sources from. Background the push, redirect rather than pipe, read `PUSH_EXIT`, and
+   `rm -rf apps/*/dist` first.
 2. **`gh run list`** - CD green **and quiet** before any row. "Quiet" now means dev's three jobs
    too, and since 2026-09-02 they RUN rather than skip: a dev job in flight means a production
    deploy is queued behind it, so the pipeline is not quiet yet.

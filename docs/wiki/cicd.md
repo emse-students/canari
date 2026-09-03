@@ -285,11 +285,13 @@ Three details decide the shape, and only the first is obvious.
   Queueing behind a running deploy is the only safe answer.
 - **What makes the runs GitHub drops harmless is a property of the DETECTOR, not of this block.**
   At most one run waits per group; the rest are cancelled while pending. That would lose work if
-  `detect-changed-services` measured against the previous push - it measures against the
-  `prod-deployed` tag, i.e. what actually reached production, so the surviving run rebuilds
-  everything the dropped ones would have. **That tag is also the second reason to serialise**:
-  overlapping runs can have one write `prod-deployed` while the other is still deploying, which makes
-  the baseline claim a deploy that had not finished.
+  `detect-changed-services` measured against the previous RUN - it measures against the previous
+  RELEASE of the same kind, which no cancelled run can move, so the survivor rebuilds everything the
+  dropped ones would have. **The baseline was the `prod-deployed` tag until 2026-09-03**, and that
+  tag was itself the second reason to serialise: two overlapping runs could have one write it while
+  the other was still deploying, making the baseline claim a deploy that had not finished. A release
+  is published by a human before any of this starts, so that particular race went with the tag. What
+  is left to serialise is the Docker daemon and the checkout, which is reason enough.
 
 `deploy-env.test.sh` asserts this, DERIVED from `runs-on: self-hosted` rather than from a list of
 workflow names - there is exactly one such runner, and a typed list would pass on the day somebody
@@ -657,9 +659,13 @@ in the same arm are all still refused.
 
 - **`workflow_run` on a Dependabot pull request's own CI** - the fast path, seconds after that one
   pull request goes green. Narrow by construction: it names a branch.
-- **`workflow_run` on `CD - Deploy to Production`** - the convergent path. CD is what runs on every
-  push to `main`, so its completion is the closest thing this repository has to "somebody did
-  something", and it is answered with a FULL SWEEP of every open Dependabot pull request.
+- **`workflow_run` on `CI`** - the convergent path, **and it was CD until 2026-09-03**. Whatever
+  runs on every push to `main` is the closest thing this repository has to "somebody did something",
+  and it is answered with a FULL SWEEP of every open Dependabot pull request. CD stopped being that
+  workflow when deployment moved to the bump: hanging the sweep off it now would drain the queue
+  once per RELEASE, which is weeks. **This is the rule below catching its own instance** - a
+  convergent trigger names an EVENT, a workflow is only ever its current proxy, and nothing
+  announces the day one stops being the other.
 - **`schedule` (hourly) and `workflow_dispatch`** - also full sweeps, and the schedule is a bonus
   rather than the mechanism.
 

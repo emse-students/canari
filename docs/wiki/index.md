@@ -76,7 +76,7 @@
 - [Ecosystem convergence](ecosystem-convergence.md) — The five projects measured side by side: tolerant search, outbound deadlines, the locale under SSR, the head, typed errors, the gates
 - [The search contract](search-contract.md) — What every search box in the ecosystem promises, the tolerance ladder, and the roster measurement that chose its numbers
 - [Development workflow](development.md) — Local setup, Makefile, Docker Compose, pre-commit hooks
-- [CI/CD pipeline](cicd.md) — GitHub Actions, mobile builds, releases, self-hosted runner
+- [CI/CD pipeline](cicd.md) — GitHub Actions: CI on a pull request and again at merge, deployment at the BUMP and never at a push, which estate a release reaches, mobile builds, the self-hosted runner
 - [Device verification runbook](device-verification.md) — The ordered Android + iOS pass: what compiling never proves, and the log line that is the verdict for each check
 - [Testing methodology](testing-methodology.md) — How a result earns belief: the harness faults distilled into rules, plus the environment traps that read as application bugs
 - [Mechanism audit](mechanism-audit.md) - What every part of the app is covered by, measured across the board, the unit tests and the hand pass - and the five things nothing watches

@@ -295,8 +295,11 @@ forbids of any decision.
    is the only reader); output in ACCOUNTS, never in names; ids cut to 8 characters; this repository is
    PUBLIC and `names.mjs` is gitignored; a destructive control takes an ALLOWLIST (`--only <ids>
    --expect N`), never a denylist.
-6. **The mutual exclusion.** A campaign run and a push to `main` cannot overlap - a push redeploys the
-   server under the run. CD green AND QUIET (`gh run list`) before the row starts.
+6. **The mutual exclusion.** A campaign run and a DEPLOY cannot overlap - a deploy redeploys the
+   server under the run. **The trigger changed on 2026-09-03 and the danger did not**: a push to
+   `main` no longer deploys anything, and what starts a deploy now is somebody publishing a RELEASE.
+   That is rarer and it is deliberate rather than incidental, which makes it easier to avoid and
+   easier to forget. CD green AND QUIET (`gh run list`) before the row starts, unchanged.
 7. **Where the verdict is written.** The board cell - a verdict, a count, a time, four or five words -
    and the ledger; then `node rows.mjs`, which is what proves the two vocabularies still agree.
 8. **A branch CARRIES ITS ROW TO GREEN - it tests, and it FIXES, the product included** (user,

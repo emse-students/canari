@@ -105,6 +105,15 @@ All measured on 2026-09-02 on the current machine (`OXYGEN`) and against the rem
   major as production, so a dump restores), chat-gateway, call-service, chat-delivery, garage, media,
   core, social - each on its own port, the frontend served by `bun run dev`. Production reaches all of
   them through one nginx, so the single-entry-point behaviour is the one thing local cannot exercise.
+  **SUPERSEDED BY WP-1 ON 2026-09-03, AND THIS IS THE ONE ITEM IN THIS SECTION A READER COULD TAKE
+  AS STILL TRUE.** The local compose HAS nginx now, on host port 8081, and it is the sole
+  authenticator exactly as in production: `auth_request`, then `X-User-Id`, which the services read
+  and nothing else. That is what made a full OIDC login and an MLS message between two clients work
+  locally, and it means the single-entry-point behaviour is no longer the thing local cannot
+  exercise - it is the thing local exercises FIRST. The current port table is on
+  [development](development.md#local-services-docker-compose); the frontend is on **1420**
+  (`strictPort`, the OIDC redirect URIs being registered on 1420/1421), not 5173 as the cookie item
+  above says.
 - **The handoff bundle's `.env` is a 2026-06-07 snapshot, taken BEFORE the Garage migration.** 27
   variables of today are missing from it (`GARAGE_*` x9, `APNS_VOIP_*` x5, `SKY_/CERCLE_/MIGALLERY_/
   EXTERNAL_API_KEY`, `LYDIA_*`, `GOOGLE_SAFE_BROWSING_API_KEY`, `SERVICE_ACCOUNT_USER_ID`) and 12
@@ -384,7 +393,7 @@ matches `^[0-9]+\.[0-9]+\.[0-9]+$` and EXITS on anything else - so a release tag
 `v0.15.0-alpha.1` fails on the first step, before any of this matters. That is where the merged
 package starts.
 
-### WP-2 - the branch, and deploy-at-bump
+### WP-2 - the branch, and deploy-at-bump (DONE 2026-09-03)
 
 - [x] `cd.yml`: `on: push` and `workflow_dispatch` removed (section 3 explains why the dispatch goes)
 - [x] `cd.yml`: `build-frontend-dev`, `build-frontend-images-dev`, `promote-dev-to-main` deleted -
@@ -524,11 +533,17 @@ survive a replug.
 - [ ] the board reset, old verdicts archived in a dated "rig LITHIUM, ledger lost" section
 - [ ] the campaign pages rewritten: the target is local, the phone enters by `adb reverse`, and the
       cookie reservation of section 4 is stated per row
-- [ ] **two standing rules DELETED, and that is a gain**: "a campaign run and a push to `main` are
-      mutually exclusive" no longer holds (a local run cannot be voided by a deploy), and "the rig
-      targets PRODUCTION" becomes false
+- [ ] **two standing rules DELETED, and that is a gain** - **but WP-6 has already done half of
+      this, and the half it did is not a deletion.** "A campaign run and a push to `main` are
+      mutually exclusive" was corrected on 2026-09-03 to name a RELEASE: the trigger changed, the
+      danger did not, and a safety rule whose event can no longer happen reads as retired rather
+      than as moved. It becomes deletable only when this box lands - a LOCAL run cannot be voided by
+      any deploy at all - and the same commit makes "the rig targets PRODUCTION" false. So the four
+      places carrying it (`cross-client-campaign.md`, `cross-client-campaign-resume.md`,
+      `testing-methodology.md`, `CLAUDE.md`) are edited TWICE by design, and the second edit is the
+      one that removes rather than corrects
 
-### WP-6 - documentation (26 files touched)
+### WP-6 - documentation (DONE 2026-09-03)
 
 - [x] `CLAUDE.md` first: "WORK ON `main`, commit directly" is replaced by the PR flow, the
       deploy-at-bump rule, and the release conventions - **2026-09-03, and it is the first change in
@@ -542,22 +557,76 @@ survive a replug.
       edit went with them: **"a campaign run and a push to `main` are mutually exclusive" is now "a
       campaign run and a RELEASE"** - the trigger changed, the danger did not, and a safety rule
       naming an event that can no longer happen reads as retired rather than as moved
-- [ ] `durable-rules.md`, `cicd.md`, `infrastructure/dev-environment.md`, `backlog.md`, `index.md`,
-      **PARTLY DONE 2026-09-03**: the sections of `cicd.md` and `dev-environment.md` that WP-2+WP-3
-      falsified were rewritten in that same commit rather than left lying, because a wiki that
-      contradicts the workflows is worse than none. What is left on those two pages is the rest,
-      not the branch model.
-      `README.md`, `infrastructure/MIGRATION.md`
-- [ ] `sessions.md`, `infrastructure/databases.md`, `infrastructure/docker.md`,
-      `services/chat-gateway.md`
-- [ ] the three campaign pages, `.github/scripts/tests/deploy-env.test.sh`,
+- [x] `durable-rules.md`, `cicd.md`, `infrastructure/dev-environment.md`, `backlog.md`, `index.md`,
+      `README.md`, `infrastructure/MIGRATION.md` - **DONE 2026-09-03.** The head sections of
+      `cicd.md` and `dev-environment.md` had already been rewritten in the WP-2+WP-3 commit, because
+      a wiki contradicting the workflows is worse than none; this pass took the rest. **The three
+      `durable-rules` entries are the ones worth reading**, because a rule is not a description and
+      the temptation was to delete two of them. The staging-branch rule keeps its whole argument and
+      gains one sentence saying the instance lived a day - the SHAPE recurs, and what replaced the
+      promotion is a human publishing an alpha, which is the same gate with a person in it. The
+      concurrency rule's baseline moved from the `prod-deployed` tag to the previous release of the
+      same kind, and one of its two reasons to serialise went with the tag. And the CLOCK rule
+      caught its own instance: it says to bind a convergent pass to "the workflow that runs on a
+      push to `main`", which was CD and is now CI - a convergent trigger names an EVENT, a workflow
+      is only its current proxy, and nothing announces the day one stops being the other.
+      **`backlog.md` closed an item rather than editing it**: "there is no way to deploy dev without
+      deploying production", raised by the user on 2026-09-02, is answered - a run deploys exactly
+      one estate - and by neither of the two shapes that had been weighed
+- [x] `sessions.md`, `infrastructure/databases.md`, `infrastructure/docker.md`,
+      `services/chat-gateway.md` - **DONE 2026-09-03, and three of the four needed nothing.** They
+      were on this list because they mention deploys, and a grep for the branch model found every
+      such mention to be about what a deploy DOES rather than what starts one. The single real edit
+      is `docker.md`, which said `:latest` was "built by CI on push to main" and `:dev` was the
+      "latest dev build" - both tags now mean something narrower and load-bearing: `:latest` is
+      moved by a STABLE release and nothing else, `:dev` by a PRE-RELEASE and nothing else, and the
+      separation is forced rather than chosen, a deploy resolving a tag for every service in the
+      compose file including the ones it did not rebuild
+- [x] the three campaign pages, `.github/scripts/tests/deploy-env.test.sh`,
       `.github/scripts/tests/deploy-migrations.test.sh`, `infrastructure/deploy/env-manifest.tsv`,
-      `tools/cross-client-harness/srvlog.mjs`
-- [ ] `development.md` extended with the local estate (NOT a new page - this one already owns local
-      setup, the Makefile, compose and the hooks)
-- [ ] `docs/user-guide/workflow-developpement.md` - French, the user's own page, and the most
-      rewritten of all
-- [ ] `CHANGELOG.md` under `[Unreleased]`
+      `tools/cross-client-harness/srvlog.mjs` - **DONE 2026-09-03, for the branch model only.** The
+      four non-wiki files carry no claim about what triggers a deploy; what they will need is the
+      move to a LOCAL target, which is WP-5's work and not a documentation edit. On the three
+      campaign pages the change is one fact repeated: **the mutual exclusion names a RELEASE now,
+      not a push.** That is the correction that mattered most in the whole sweep, because it cuts
+      both ways - the accident that voided COMM-12, COMM-22 and DEL-9 on 2026-08-27 (a
+      DOCUMENTATION commit redeploying the frontend mid-run) is now impossible, and what replaced
+      it is rarer, deliberate, and therefore easier to forget. `cross-client-campaign-resume.md`
+      also loses a hazard outright: the dependency sweep used to dispatch `cd.yml` itself, so
+      production could be redeployed mid-run by a merge nobody performed, and there is no deploy
+      left to dispatch. The `testing-methodology.md` HEADING is deliberately left naming the push,
+      because that is what actually happened on 2026-08-27 and a rule reads as retired the moment
+      its incident is rewritten out of it
+- [x] `development.md` extended with the local estate (NOT a new page - this one already owns local
+      setup, the Makefile, compose and the hooks) - **DONE 2026-09-03.** WP-1 had already put the
+      port table, the nginx section, the environment section and the `optimizeDeps` finding here, so
+      what this pass added is the SENTENCE that makes them load-bearing: local is where development
+      happens and there is no alternative to it, because nothing deploys at a push any more - there
+      is no longer any way to see a change running by pushing it. With the two consequences worth
+      stating once: bypassing nginx tests nothing the application does, since it is the sole
+      authenticator, and `dev.canari-emse.fr` is no longer where a change is first tried. The
+      "Working in this repo" list gained the pull-request loop
+- [x] `docs/user-guide/workflow-developpement.md` - French, the user's own page, and the most
+      rewritten of all - **REWRITTEN WHOLE, 2026-09-03.** Not edited: the old page's section 1 was
+      three things the user still had to do to turn the dev estate on, which have been done since
+      2026-09-02, and its sections 2 and 2.1 explained at length why one could NOT push to dev
+      without deploying production - a question the migration answers by making a run deploy exactly
+      one estate. Editing around that would have left the shape of a page written for a model that
+      no longer exists. The new one is eight sections: the three rules and the table of what each
+      kind of release deploys; local development as the only place development happens; the pull
+      request; publishing a release, with the store version-code band and the one mistake in the
+      chain that reaches a phone; the two estates; dependency updates; what to do when it breaks;
+      and what is still owed to the user. It carries a dated banner saying it was rewritten, so a
+      contradicting sentence found elsewhere is known to be the stale one
+- [x] `CHANGELOG.md` under `[Unreleased]` - **DONE 2026-09-03.** Three entries were already
+      written with the work (the local estate and its nginx, deploy-at-bump, the pre-release bump);
+      this pass added the ruleset and the deletion of `origin/dev`, and did one thing that needed
+      deciding. **The entry describing `target-branch: "dev"` and `promote-dev-to-main` was
+      superseded before it ever shipped**, and the obvious move was to delete it - `[Unreleased]`
+      is not history. It is kept, marked superseded, because it carries the MOTIVE: the outage of
+      2026-09-01, why every gate here asks a question about the SOURCE, and why a branch nobody
+      promotes is a queue nobody drains. Delete it and the next session proposing `target-branch`
+      starts from nothing
 
 ## 6. Traps this chantier must not leave behind
 

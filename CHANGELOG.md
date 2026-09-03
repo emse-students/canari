@@ -13,6 +13,22 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Added
 
+- **`main` is protected, and work arrives by pull request.** Branch ruleset `22152902`, active, on
+  the default branch: no direct push, no force-push, no deletion, and one required status check.
+  Three of its parameters were decisions rather than defaults. **No approving review is required** -
+  this repository's standing rule is that a queue nobody drains is worse than the merge it prevented
+  (user, 2026-08-31), so the pull request exists to make a change visible and to run CI on the
+  MERGED combination, not to wait for a human. **The one required context is `CI passed`**, a new
+  `if: always()` aggregate job, and no other check could have been required: every real job in
+  `ci.yml` sits behind a path filter, and a required check that is SKIPPED either blocks the merge
+  for ever or passes vacuously. **`require_extra_approval_for_unattributed_changes` is forced to
+  false**, the API defaulting it to true - left alone it would have demanded a human approval on
+  exactly the merges that must never need one, Dependabot's, and jammed the auto-merge the moment
+  enforcement went active. The admin role bypasses, which is the emergency path and the only reason
+  a broken `CI passed` cannot lock the repository out of its own `main`. `origin/dev` was deleted
+  the same day, after measuring: 13 commits behind, 0 ahead, and all 19 open pull requests already
+  targeting `main`.
+
 - **Every link into the wiki is now checked, because a renamed heading breaks one silently.**
   GitHub does not 404 an unresolvable `#fragment`: it serves the page scrolled to the top, so the
   reader lands on a 900-line file with no idea which section was meant, and the page still looks
@@ -89,9 +105,14 @@ which is also where every release up to and including v0.13.1 now lives.
   reloads - one of which destroyed an OIDC login in flight, an authorization code being single-use.
   All of it was found by performing the login instead of asserting that the files were right.
 
-- **Dependency updates land on a `dev` branch that deploys the dev estate, and a proof promotes them
-  to production.** Asked by the user - *"Est-ce qu'on pourrait dire a Dependabot de push sur la
-  branche dev au lieu de la prod ?"* - and the motive is the outage of 2026-09-01: `postgres
+- **Dependency updates landed on a `dev` branch for ONE DAY, and what replaced it is that a merge
+  deploys nothing.** *(Superseded 2026-09-03, before ever being released. The whole two-branch model
+  was cancelled by the user the day after it landed - see the deploy-at-bump entry above. This is
+  kept, rather than deleted, because it carries the MOTIVE: anybody proposing `target-branch` again
+  needs the paragraph below, and the answer that a merge which deploys nothing solves the same
+  problem without a branch nobody promotes.)* Asked by the user - *"Est-ce qu'on pourrait dire a
+  Dependabot de push sur la branche dev au lieu de la prod ?"* - and the motive is the outage of
+  2026-09-01: `postgres
   15-alpine -> 18-alpine` passed every gate this repository has, auto-merged onto `main`, and PG 18
   then refused production's data directory (33 minutes down). Every gate here asks a question about
   the SOURCE; none runs anything against real data, and the dev estate carries a copy of production.

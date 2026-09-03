@@ -208,13 +208,18 @@ canari/
 
 ## CI/CD
 
-Every push to `main` triggers:
+**A pull request and a merge run CI, and nothing else. Deployment happens when a RELEASE is
+published - never at a push.**
 
-1. **CI** — `cargo clippy`, `cargo test`, `oxlint`, `oxvelte`, `svelte-check`, `vitest`
-2. **Build** — WASM + SvelteKit + 6 Docker images → `ghcr.io/emse-students/canari/*`
-3. **Deploy** — Pull images on production server via self-hosted runner, restart Docker Compose
+| Event | What happens |
+|---|---|
+| a pull request to `main`, and again at merge | **CI** - `cargo clippy`, `cargo test`, `oxlint`, `oxvelte`, `svelte-check`, `vitest`. Nothing is built for a registry, nothing is deployed, nothing is published. |
+| release `vX.Y.Z-alpha.N` | the version bump, then **CD** - WASM + SvelteKit + 6 Docker images to `ghcr.io/emse-students/canari/*`, deployed to `dev.canari-emse.fr` and shipped to the store TESTER programmes |
+| release `vX.Y.Z` | the same build, deployed to **production** and shipped to the stores |
 
-For server bootstrap, see [`infrastructure/MIGRATION.md`](infrastructure/MIGRATION.md).
+Which of the two a release is comes from the version itself: a hyphen in it is what makes it a
+pre-release, read that way by CD and by `scripts/bump-app-version.sh`. For server bootstrap, see
+[`infrastructure/MIGRATION.md`](infrastructure/MIGRATION.md).
 
 ## Contributing
 
@@ -223,10 +228,11 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full guide: workflow, coding st
 Quick reference:
 
 ```bash
-# Work directly on main (no feature branches)
+git switch -c fix/short-description    # `main` is protected - no direct push
 # Pre-commit hooks: oxlint + oxvelte + oxfmt on commit
-git commit -m "feat: description"   # conventional commits
-git push
+git commit -m "fix: description"       # conventional commits
+git push -u origin HEAD && gh pr create
+gh pr merge --squash --delete-branch   # once `CI passed` is green; no approval is required
 ```
 
 Release history is in [`CHANGELOG.md`](CHANGELOG.md), condensed. The full account behind each entry,

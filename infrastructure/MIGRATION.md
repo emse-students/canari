@@ -126,7 +126,10 @@ Test: `sudo -u canari ssh canaribackup@10.0.0.4 'echo ok'`.
 
 ## 5. First deployment
 
-Trigger the CD (push to `main`, or Actions → CD → Run workflow). It will:
+**Publish a GitHub Release.** That is the only thing that starts a deploy: `cd.yml` has no
+`on: push` and no `workflow_dispatch`, deliberately, a dispatch being a second door. A stable
+`vX.Y.Z` reaches production; a `vX.Y.Z-alpha.N` pre-release reaches `dev.canari-emse.fr` instead, so
+the first bootstrap of a production box wants a stable one. The run will:
 
 1. generate `infrastructure/.env` from secrets (regenerated from the template);
 2. deploy the Canari stack (`docker compose -f infrastructure/docker-compose.prod.yml up -d`);

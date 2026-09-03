@@ -187,7 +187,13 @@ All service images are pulled from GHCR:
 ghcr.io/emse-students/canari/<service>:<tag>
 ```
 
-`TAG` defaults to `dev` (latest dev build). Production uses `:latest` (built by CI on push to main).
+**`TAG` defaults to `dev`, and since 2026-09-03 both moving tags mean something narrower than they
+used to.** `:latest` is moved by a STABLE release and by nothing else; `:dev` is moved by a
+`X.X.X-alpha.N` PRE-RELEASE and by nothing else. Neither is moved by a push. The two exist as an
+estate separation rather than as a convenience: a deploy resolves a tag for every service in the
+compose file including the ones that were not rebuilt, so a single moving tag would hand one estate
+the other's images. Each image also carries its commit sha and its `vX.Y.Z` version, which are the
+tags to pin when you need to name an exact build.
 
 ## Starting services
 
