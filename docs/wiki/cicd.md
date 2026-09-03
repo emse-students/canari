@@ -19,6 +19,7 @@ split in half. The order, which the file's own header states:
 |---|---|---|
 | 1 | `changes` | reads the modified paths and decides which of the jobs below run at all |
 | 2 | the test jobs | Rust, the four NestJS apps' real AppModule, TS, frontend, the two self-test suites - in parallel, each behind its own path filter |
+| 2b | `dependency-ceiling` | ONLY on a Dependabot pull request: does a gate HERE exist that would see this update fail? A human's pull request carries no `updated-dependencies` block to decide on, so it skips |
 | 3 | `ci-passed` | aggregates them. `success` AND `skipped` both pass. The ONE check the ruleset requires |
 | 4 | `arm-auto-merge` | in **parallel** with 1-3, not after |
 
@@ -28,6 +29,33 @@ declaration of intent rather than a verdict. A job that waited for the suite wou
 for its whole length and would still have to re-read the checks at the end - and a job that merges
 on its OWN reading of "green" is a second opinion about which jobs matter. Measured: #332 sat armed
 for the ten minutes its suite took, and merged the moment `CI passed` concluded.
+
+**THE CEILING IS A CHECK SINCE 2026-09-03, AND THAT IS ONE HALF OF ONE MECHANISM FOR EVERY PULL
+REQUEST** (user: *"le auto-merge et les CI doivent considerer toutes les PR, les miennes ou
+dependabot"*). It was asked only inside `dependabot-auto-merge.yml` - a SECOND merge mechanism
+beside GitHub's own auto-merge, so a Dependabot pull request and a human's took different routes to
+`main` and only one was visible where a human looks. **#309 is what that costs**: `postgres
+15-alpine -> 18-alpine`, fully GREEN, correctly refused, open for days with the refusal recorded
+nowhere on the pull request. It now feeds `ci-passed`, which is what makes it BINDING rather than
+advisory - an update with no gate cannot merge by any route, armed or not.
+
+**IT IS DELIBERATELY STAGE ONE OF TWO, AND THE ORDER IS NOT A PREFERENCE.** Stage two is the sweep
+ARMING GitHub's auto-merge instead of merging on its own reading of "green" - which retires the
+second mechanism, the second opinion about which jobs matter, and the manual `gh workflow run`
+dispatch the sweep needs because a `GITHUB_TOKEN` merge raises no `push`. **Landing stage two first
+would re-create the outage**: arming a pull request whose ceiling refusal was not yet a required
+check merges `postgres 18` on a green suite, which is exactly the 33 minutes of 2026-09-01. So
+stage one is purely additive, and stage two waits until this is on `main` and observed on a real
+Dependabot pull request. `release-chain.test.sh` records which stage the sweep is in, so the pair
+can never read as safe without the binding assertions passing.
+
+**AND THE SWEEP STILL HOLDS TWO PROPERTIES A CHECK DOES NOT REPLACE**, which is why deleting the
+file is not the plan: CONVERGENCE (it enumerates every open Dependabot pull request, so the correct
+state is reached from any starting state - seven mergeable green pull requests sat untouched on
+2026-08-31 because an event-only automation acts on what it happened to catch) and STALENESS
+(`lib/gate-moves.sh`, and asking Dependabot to rebuild a branch whose gates moved - the one thing
+GitHub's auto-merge does not do, since it re-evaluates when the pull request changes and not when
+`main` does).
 
 **AND THEN STEP 6, WHICH IS WHY A RELEASE IS POSSIBLE AT ALL.** GitHub squash-merges, deletes the
 branch (`delete_branch_on_merge`, set true on 2026-09-03; `--delete-branch` was passed until then

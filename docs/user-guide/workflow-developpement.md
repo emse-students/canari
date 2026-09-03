@@ -128,6 +128,37 @@ documentation, `CI passed` est vert en quelques secondes.
 casse ne peut pas verrouiller le depot. La prendre veut dire que la production est en train de
 bruler ; ca se note dans `CHANGELOG.md` quand ca arrive.
 
+### 3.1 Apres la fusion : la branche disparait sur GitHub, PAS chez toi
+
+**Un arbre local encombre ne dit RIEN sur la fusion**, et c'est la confusion a evacuer en premier
+parce qu'elle se represente a chaque pull request. Ce que GitHub supprime, c'est la branche
+**distante** (le reglage `delete_branch_on_merge`). Rien sur GitHub ne peut supprimer une branche
+dans ton depot local : cote serveur elle n'existe plus, chez toi elle est toujours la, et `git
+branch` continue de l'afficher.
+
+Comment lire l'etat reel en une commande :
+
+```bash
+git fetch --prune          # supprime les references de suivi vers des branches disparues
+git branch -vv             # les branches locales dont l'amont a disparu sont marquees ": gone]"
+```
+
+Une ligne marquee `[origin/ma-branche: gone]` veut dire exactement une chose : **la fusion a
+fonctionne et GitHub a fait le menage**. C'est le signe du succes, pas d'un probleme.
+
+Pour ranger, une fois que tu as verifie que la pull request est bien `MERGED` :
+
+```bash
+git switch main && git pull --ff-only
+git branch -D ma-branche
+```
+
+**`-D` et non `-d`, et ce n'est pas de la brutalite.** La fusion est un *squash* : le contenu de ta
+branche est dans `main`, mais son commit n'en est pas un ancetre. `git branch -d`, qui verifie
+l'ascendance, refuse donc une branche parfaitement fusionnee. La vraie preuve n'est pas
+l'ascendance, c'est l'etat de la pull request - `gh pr list --head ma-branche --state all` doit
+dire `MERGED`.
+
 ---
 
 ## 4. Deployer : publier une release

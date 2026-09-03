@@ -206,8 +206,15 @@ if [ -r "$AM" ]; then
     fail 'auto-merge.yml no longer mints an App token - a GITHUB_TOKEN merge raises no push, so main gets no CI run and every release is then refused'
   fi
 
-  if grep -qE 'GH_TOKEN: \$\{\{ (secrets\.)?GITHUB_TOKEN \}\}|GH_TOKEN: \$\{\{ github\.token \}\}' "$AM"; then
-    fail 'auto-merge.yml merges with GITHUB_TOKEN - see above, this silently refuses every later release'
+  # SCOPED TO THE MERGE JOB, AND IT USED TO BE A FILE-WIDE GREP. That was right while the merge was
+  # the only thing in this file holding a token, and it broke the day `dependency-ceiling` landed -
+  # a job that legitimately reads with `github.token`, has nothing to do with merging, and tripped
+  # a check about the merge credential. **A predicate that named the last incident is not the
+  # predicate that names the next one**: the property is "the ARMING does not use GITHUB_TOKEN",
+  # not "this file never mentions it", and the two stopped agreeing as soon as the file grew.
+  if sed -n '/^  arm-auto-merge:$/,/^  [a-z][a-z-]*:$/p' "$AM" |
+    grep -qE 'GH_TOKEN: \$\{\{ (secrets\.)?GITHUB_TOKEN \}\}|GH_TOKEN: \$\{\{ github\.token \}\}'; then
+    fail 'arm-auto-merge arms with GITHUB_TOKEN - see above, this silently refuses every later release'
   else
     pass 'it does not merge with GITHUB_TOKEN'
   fi
@@ -477,6 +484,46 @@ if grep -q 'submit\.mjs --check-notes' "$PF"; then
   pass 'the release notes are checked before anything moves, by the same code that submits them'
 else
   fail 'the preflight no longer checks the release notes - Apple would refuse the submission at the END of a release, after the other store had already shipped'
+fi
+
+printf '\nthe dependency ceiling is a CHECK, and it is binding\n'
+# =================================================================================================
+# WHAT THIS REPLACES, AND WHY IT HAD TO BECOME A CHECK. Until 2026-09-03 the ceiling was asked only
+# inside `dependabot-auto-merge.yml`, a SECOND merge mechanism beside GitHub's own auto-merge - so a
+# Dependabot pull request and a human's took different routes to `main`, and only one was visible
+# where a human looks (user: *"le auto-merge et les CI doivent considerer toutes les PR, les
+# miennes ou dependabot"*). #309 is the case that shows the cost: `postgres 15-alpine -> 18-alpine`,
+# fully GREEN, correctly refused, open for days with the refusal recorded nowhere on the pull
+# request itself.
+if grep -qE '^  dependency-ceiling:$' "$AM"; then
+  pass 'the ceiling is a job of the pull-request package'
+else
+  fail 'there is no dependency-ceiling job - the ceiling is invisible on the pull request again'
+fi
+
+# BINDING MEANS `ci-passed` READS IT. `ci-passed` is the one check the branch ruleset requires, so a
+# ceiling job outside its `needs` is a red tick nothing enforces - strictly worse than the sweep it
+# replaced, because it LOOKS enforced.
+if sed -n '/^  ci-passed:$/,/^  [a-z][a-z-]*:$/p' "$AM" | grep -q 'dependency-ceiling'; then
+  pass 'and ci-passed reads it, so an update with no gate cannot merge by ANY route'
+else
+  fail 'ci-passed does not read dependency-ceiling - the refusal would be advisory, and a red tick nothing enforces is worse than none because it looks enforced'
+fi
+
+# THE TWO-STAGE ORDER IS LOAD-BEARING, AND THIS RECORDS WHICH STAGE THE SWEEP IS IN. Stage two is
+# the sweep ARMING GitHub's auto-merge instead of merging it itself. Landing that while the ceiling
+# was not yet a required check would merge `postgres 15-alpine -> 18-alpine` on a green suite - the
+# exact update that cost 33 minutes of production on 2026-09-01. The two assertions above establish
+# that the check exists and binds, so this pair can never read as "safe" without them passing.
+SWEEP_SH="$HERE/../dependabot-auto-merge.sh"
+if [ -r "$SWEEP_SH" ]; then
+  if grep -qE 'pr merge [^|]*--auto' "$SWEEP_SH"; then
+    pass 'stage 2: the sweep ARMS rather than merges, and the binding check above is what makes that safe'
+  else
+    pass 'stage 1: the sweep still merges on its own reading of green, which now INCLUDES this check'
+  fi
+else
+  pass 'the sweep is gone entirely, so GitHub auto-merge is the only route to main'
 fi
 
 printf '\n'

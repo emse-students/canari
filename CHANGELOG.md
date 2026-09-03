@@ -11,6 +11,37 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed
+
+- **The dependency ceiling is a CHECK on the pull request, so one mechanism now answers for every
+  pull request in the repository** (user: *"le auto-merge et les CI doivent considerer toutes les
+  PR, les miennes ou dependabot"*). It was asked only inside `dependabot-auto-merge.yml`, a SECOND
+  merge mechanism running beside GitHub's own auto-merge - so a Dependabot pull request and a
+  human's took different routes to `main`, and only one of them was visible where a human looks.
+  **#309 is what that cost**: `postgres 15-alpine -> 18-alpine`, fully green, correctly refused,
+  open for days with the refusal recorded nowhere on the pull request itself. The new
+  `dependency-ceiling` job feeds `ci-passed`, which is what makes it binding rather than advisory:
+  an update with no gate here cannot merge by any route, armed or not. It runs only on Dependabot's
+  own pull requests, and the reason is the INPUT rather than the author - the decision reads the
+  `updated-dependencies` block Dependabot writes into its commit message, and a human's pull
+  request carries none, so there is nothing to decide and the job skips.
+
+  **This is deliberately stage one of two.** Stage two - the sweep ARMING GitHub's auto-merge
+  instead of merging on its own reading of "green" - retires the second mechanism, its second
+  opinion about which jobs matter, and the manual CI dispatch it needs because a `GITHUB_TOKEN`
+  merge raises no `push`. **Landing stage two first would re-create the outage**, because arming a
+  pull request whose ceiling refusal is not yet a required check merges `postgres 18` on a green
+  suite. So stage one is purely additive and stage two waits for this to be observed on a real
+  Dependabot pull request. Three assertions, one of which records which stage the sweep is in.
+
+  **One existing assertion had to be NARROWED, and it is the same lesson twice in one day.** The
+  check that `arm-auto-merge` does not use `GITHUB_TOKEN` was a FILE-WIDE grep, correct while the
+  merge was the only thing in that file holding a token; the new ceiling job reads with a
+  legitimate read-only `github.token` and tripped it. **A predicate that named the last incident is
+  not the predicate that names the next one** - the property is about the arming step, not about
+  the file, and the two stopped agreeing the moment the file grew. It is scoped to the job now, and
+  re-mutated to prove it still rejects.
+
 ### Fixed
 
 - **0.16.0 reached production and Google Play and never reached Apple, because a convenience was
