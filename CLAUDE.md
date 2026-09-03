@@ -177,9 +177,12 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
 2. **P1 - a PLACEHOLDER held a member's seat.** Estate cleaned; whether a LEAF is left in the MLS
    tree is unanswered and only a member's CLIENT can say.
    [backlog](docs/wiki/backlog.md#p1---the-placeholder-is-gone-from-prod-what-it-may-have-left-in-the-mls-tree-is-not-answered).
-3. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*). The ceiling is a CHECK
-   since 2026-09-03 (**stage 1 of 2; stage 2 arms instead of merging and must not land first**).
-   Model on [cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them); six
+3. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*). **ONE MERGE
+   MECHANISM SINCE 2026-09-03, TWO ARMING POINTS** - the ceiling is a binding CHECK feeding
+   `CI passed`, and the sweep ARMS GitHub's auto-merge rather than merging on its own reading of
+   green. The split exists because a Dependabot `pull_request` run has no secrets, so no App token
+   can be minted there. Model on
+   [cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them); six
    open items including **[the suppression CONTROL CASE the NestJS batch destroyed - Monday
    2026-09-07 is the only answer](docs/wiki/backlog.md#p2---the-nine-nestjs-pull-requests-were-closed-in-one-batch-so-the-suppression-question-was-never-measured-on-one-first-and-monday-2026-09-07-is-the-only-thing-that-can-answer-it-now-updated-2026-09-03)**
    and **nothing tells anybody prod is down**. Hosts:
