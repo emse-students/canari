@@ -31,6 +31,40 @@ describe('compareSemver', () => {
     expect(compareSemver('0.3.5', '0.3.5')).toBe(0);
     expect(compareSemver('1.0.0', '0.9.9')).toBeGreaterThan(0);
   });
+
+  // THE ALPHA USED TO WIN AGAINST ITS OWN STABLE, and it failed in the reassuring direction.
+  // `parseInt('0-alpha')` is 0, so `0.15.0-alpha.1` read as [0, 15, 0, 1] and beat `0.15.0` - a
+  // tester on the pre-release would never have been offered the release they were testing for.
+  it('ranks a pre-release below the stable it precedes', () => {
+    expect(compareSemver('0.15.0-alpha.1', '0.15.0')).toBeLessThan(0);
+    expect(compareSemver('0.15.0', '0.15.0-alpha.1')).toBeGreaterThan(0);
+  });
+
+  // The suffix used to contribute NOTHING: `-alpha.1` and `-beta.1` both reduced to a trailing 1.
+  it('orders the tester channels the way the version band intends', () => {
+    expect(compareSemver('0.15.0-alpha.1', '0.15.0-alpha.2')).toBeLessThan(0);
+    expect(compareSemver('0.15.0-alpha.1', '0.15.0-beta.1')).toBeLessThan(0);
+    expect(compareSemver('0.15.0-beta.1', '0.15.0-rc.1')).toBeLessThan(0);
+  });
+
+  it('compares numeric identifiers numerically rather than as text', () => {
+    expect(compareSemver('0.15.0-alpha.9', '0.15.0-alpha.10')).toBeLessThan(0);
+  });
+
+  it('treats a shorter identifier list as the earlier one when the shared ones match', () => {
+    expect(compareSemver('0.15.0-alpha', '0.15.0-alpha.1')).toBeLessThan(0);
+  });
+
+  // Semver gives build metadata no part in precedence, and `deploy-build.ts` exists so that a `+`
+  // never reaches a field clients decide on in the first place.
+  it('ignores build metadata', () => {
+    expect(compareSemver('0.15.0+dev.abc1234', '0.15.0')).toBe(0);
+  });
+
+  it('still lets a newer core beat a pre-release of an older one', () => {
+    expect(compareSemver('0.14.15', '0.15.0-alpha.1')).toBeLessThan(0);
+    expect(compareSemver('0.15.1-alpha.1', '0.15.0')).toBeGreaterThan(0);
+  });
 });
 
 describe('parseServerVersionInfo', () => {
