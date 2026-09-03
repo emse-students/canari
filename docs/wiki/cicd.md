@@ -311,6 +311,19 @@ the version is the only statement made. The three arms are `uses:` calls, not
 `workflow_run` listeners, so they are jobs of ONE run: one page to read, real `needs:` ordering,
 and the same inputs to all three.
 
+**AND INSIDE EACH ARM, THE STORE COMES BEFORE THE GITHUB RELEASE ASSET** - which is not cosmetic
+ordering, it is what `v0.16.0` cost. Both arms attached their bundle to the GitHub release BEFORE
+publishing to the store. On the stable that attachment was refused (`Resource not accessible by
+integration`, pointing at *update-a-release*, with `Contents: write` granted and PRINTED by the
+runner), and `Upload to TestFlight` plus the App Store submission were both `skipped` behind it:
+production and Google Play received 0.16.0 and **Apple received nothing**, the run complaining only
+about the convenience. The Android arm had the identical ordering and merely happened to succeed.
+**A store is the deliverable; a release asset is a copy for humans** - so the store is served first
+and a refusal on the asset still fails the job, having already shipped. The assertion is on the
+ORDER and on the ABSENCE of `continue-on-error`, because swallowing the refusal would trade a
+visible skip for an invisible one. **The refusal itself is unexplained** and open in
+[backlog](backlog.md), with six causes ruled out by measurement.
+
 **WHY IT IS ONE FILE NOW.** Until 2026-09-03 the two publications drove FOUR workflows chained by
 `workflow_run`, and three things were measured wrong on the first day the chain ran for real:
 nothing was gated on the TESTS (the chain required the BUMP to succeed, which is a different
