@@ -358,6 +358,50 @@ for f in android.yml ios.yml; do
     fail "$f no longer guards its release upload - a hand-dispatched run would CREATE a release and restart the chain"
   fi
 done
+printf '\nthe store is served BEFORE the release asset, in both arms\n'
+# =================================================================================================
+# WHAT THIS COST, MEASURED ON `v0.16.0`. `Upload to Release` sat before the store steps in both
+# arms. On the stable it was refused a release update - `Resource not accessible by integration`,
+# with `Contents: write` granted and printed by the runner - and `Upload to TestFlight` and the App
+# Store submission were both `skipped` behind it. Production and Google Play received 0.16.0; Apple
+# received nothing. The Android arm had the identical ordering and merely happened to succeed,
+# which is a race that heals cleanly and is still a defect.
+#
+# A GITHUB RELEASE ASSET IS A CONVENIENCE; THE STORE IS THE DELIVERABLE. The assertion is on the
+# ORDER and not on a `continue-on-error`, because swallowing the failure would hide it - a refusal
+# there must still fail the job, and now it fails one having already shipped.
+#
+# `grep -n` and not a parser: the line NUMBER is the ordering, and that is the whole property.
+order_ok() {
+  local file="$1" store_step="$2" asset_step="$3" label="$4" store asset
+  store="$(grep -nF "      - name: $store_step" "$file" | head -1 | cut -d: -f1)"
+  asset="$(grep -nF "      - name: $asset_step" "$file" | head -1 | cut -d: -f1)"
+  if [ -z "$store" ] || [ -z "$asset" ]; then
+    fail "$label - one of the two steps is gone (store=${store:-missing} asset=${asset:-missing})"
+  elif [ "$store" -lt "$asset" ]; then
+    pass "$label (store at line $store, release asset at $asset)"
+  else
+    fail "$label - the release asset is at line $asset, BEFORE the store step at $store: a refusal there skips the store, which is how 0.16.0 reached production and Google Play but not Apple"
+  fi
+}
+
+order_ok "$WF/ios.yml" 'Upload to TestFlight / App Store Connect' 'Upload to Release' \
+  'iOS reaches TestFlight before it touches the GitHub release'
+order_ok "$WF/ios.yml" 'Create the App Store version, attach the build, and submit for review' 'Upload to Release' \
+  'and it submits for review before it touches the GitHub release'
+order_ok "$WF/android.yml" 'Publish to Google Play' 'Upload to Release' \
+  'Android reaches Google Play before it touches the GitHub release'
+
+# AND NEITHER MAY BE MADE NON-FATAL INSTEAD. `continue-on-error` on the asset upload would pass the
+# ordering assertion above while re-introducing exactly the invisibility the ordering removes.
+for f in ios android; do
+  if sed -n '/^      - name: Upload to Release$/,/^      - name:/p' "$WF/$f.yml" | grep -qE '^ +continue-on-error:'; then
+    fail "$f.yml makes the release asset upload non-fatal - a swallowed refusal is worse than the skipped store it replaced"
+  else
+    pass "$f.yml still fails loudly if the release asset cannot be attached"
+  fi
+done
+
 printf '\nevery arm is granted what it asks for, because a caller CAPS a called workflow\n'
 # =================================================================================================
 # THE DEFECT THIS EXISTS FOR, and it killed the first real release. A called workflow cannot be

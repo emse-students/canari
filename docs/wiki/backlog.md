@@ -122,6 +122,46 @@ the `paraglide:compile` step the `test` script runs first, or a `node_modules` s
 this box. `bun test` as a runner is NOT the answer to reach for: the suites are written for vitest,
 and swapping the runner to dodge a broken worker would change what is being asserted.
 
+### P1 - a release-asset upload was refused with the permission it was granted, and the CAUSE IS UNMEASURED (v0.16.0, 2026-09-03)
+
+**WHAT HAPPENED.** On the stable `v0.16.0`, the iOS arm's `softprops/action-gh-release@v3` step
+found the release and was then refused:
+
+```
+Found release v0.16.0 (with id=382122297)
+HttpError: Resource not accessible by integration
+  https://docs.github.com/rest/releases/releases#update-a-release
+```
+
+**WHAT IS RULED OUT, EACH BY MEASUREMENT AND NOT BY REASONING:**
+
+| Candidate | Measurement | Verdict |
+|---|---|---|
+| The token lacked `contents: write` | the runner PRINTS the granted scopes at "Set up job": `Contents: write` | ruled out |
+| The caller capped it | the same assertion that caught the `startup_failure` passes: `release.yml` grants `ios` everything `ios.yml` asks | ruled out |
+| The two arms differ | `ios.yml` and `android.yml` declare identical `permissions:` and an identical step; the ANDROID upload to the SAME release SUCCEEDED in the same run (`.aab` and `.apk` are attached) | ruled out |
+| The release is immutable | `immutable: false` on `v0.16.0` and on `v0.16.0-alpha.2` alike | ruled out |
+| A tag ruleset | the repository has exactly one ruleset, `22152902`, target `branch` | ruled out |
+| An ORG-level ruleset or release policy | **NOT MEASURED** - `gh api orgs/emse-students/rulesets` needs `admin:org`, which this token lacks | **open** |
+| A transient GitHub fault | a re-run of the failed job was started; whether it reproduces is the discriminator | **open, and cheap** |
+
+**THE ONE STRUCTURAL DIFFERENCE NOBODY HAS EXCLUDED: this was the first STABLE to reach that step.**
+`v0.15.0` shipped on a RED run, and both alphas passed it. So `prerelease: false` is the only
+attribute that separates the failures from the successes, and it is not obvious why it would matter.
+**Do not write a fix against that suspicion** - the rule about not writing a fix against a suspected
+arm applies exactly here.
+
+**WHAT IS ALREADY FIXED, AND IT IS NOT THIS.** The step used to sit BEFORE the store steps in both
+arms, so this refusal `skipped` TestFlight and the App Store submission: production and Google Play
+received 0.16.0 and **Apple received nothing**. The order is reversed and asserted five ways
+([cicd](cicd.md)). That bounds the blast radius; it does not explain the 403.
+
+**HOW TO RETIRE THIS ROW:** read the org rulesets with a token carrying `admin:org`, and read the
+re-run's outcome. If the re-run succeeds, the row becomes "a transient fault took a platform down
+because a convenience gated a deliverable" - already fixed - and closes. If it reproduces, the
+`prerelease` difference is the next thing to measure, by attaching an asset to a stable release by
+hand with a `GITHUB_TOKEN`-equivalent.
+
 ### P1 - NINE OF THE TEN BACKEND PULL-REQUEST SLOTS ARE HELD BY UPDATES THAT CAN NEVER GO GREEN, and the group written to prevent exactly that has never opened a pull request (measured 2026-09-03)
 
 **The four NestJS services share `open-pull-requests-limit: 10`, and nine of those ten slots are

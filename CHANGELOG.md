@@ -13,6 +13,25 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **0.16.0 reached production and Google Play and never reached Apple, because a convenience was
+  ordered in front of the deliverable.** The iOS arm attached its IPA to the GitHub release BEFORE
+  uploading to TestFlight and submitting for review. On the stable that attachment was refused -
+  `Resource not accessible by integration`, pointing at *update-a-release*, with `Contents: write`
+  granted and printed by the runner at "Set up job" - and both store steps were `skipped` behind
+  it. The run failed complaining only about the convenience.
+
+  **The Android arm had the identical ordering and merely happened to succeed**, uploading to the
+  same release in the same run, which makes this a race that heals cleanly and still a defect. Both
+  arms now serve the store first and touch the GitHub release last. **The fix is the order and not
+  `continue-on-error`**: a swallowed refusal would trade a visible skip for an invisible one, so a
+  refusal there still fails the job - having already shipped. Five assertions hold it: three on the
+  line ordering in the two arms, two forbidding the swallow, all mutation-proved.
+
+  **THE REFUSAL ITSELF IS NOT EXPLAINED and is open in `docs/wiki/backlog.md`**, with six candidate
+  causes ruled out by measurement and two still open. The only structural difference between the
+  failures and the successes is that this was the first STABLE to reach that step, and no fix has
+  been written against that suspicion.
+
 - **The release preflight approved a release whose bump could not push, and five green gates would
   have been followed by a git error naming none of them.** The bump job checks out the RELEASED
   commit, writes the version across 18 files and runs `git push origin HEAD:main` - a fast-forward

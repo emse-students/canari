@@ -525,22 +525,6 @@ jobs:
           name: ios-release
           path: ${{ steps.outputs.outputs.ipa }}
 
-      - name: Upload to Release
-        uses: softprops/action-gh-release@v3
-        # ONLY WHEN A PUBLISHED RELEASE IS WHAT STARTED THIS. `release.yml` also has a
-        # hand-dispatched path, for re-running a release whose chain died on an infrastructure
-        # fault; on that path a GitHub release for the version may not exist, and this action would
-        # CREATE one - which would publish a release, which would start `release.yml` again. Reading
-        # the caller's event is the precise question: attach the artefact to the release that
-        # triggered this run, and to nothing else.
-        if: inputs.publish && github.event_name == 'release'
-        with:
-          tag_name: v${{ steps.release_tag.outputs.version }}
-          fail_on_unmatched_files: true
-          files: ${{ steps.outputs.outputs.ipa }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Upload to TestFlight / App Store Connect
         id: testflight
         if: inputs.publish
@@ -624,3 +608,32 @@ jobs:
         # uses nothing but `node:crypto`, `node:fs` and global `fetch`, and setting bun up again
         # after the archive would be a step for no gain.
         run: node tools/app-store/submit.mjs
+
+      # LAST, AND THAT ORDERING IS THE FIX FOR SOMETHING THAT COST A WHOLE PLATFORM. It used to sit
+      # BEFORE the store steps, so on `v0.16.0` this action was refused a release update
+      # (`Resource not accessible by integration`, with `Contents: write` granted and printed by
+      # the runner) and the two steps that actually SHIP - TestFlight and the App Store submission -
+      # were `skipped` behind it. Production and Google Play both received 0.16.0; Apple received
+      # nothing, and the run's only complaint was about a convenience.
+      #
+      # **A GITHUB RELEASE ASSET IS A CONVENIENCE; THE STORE IS THE DELIVERABLE.** So the store is
+      # served first and this runs afterwards. Note what this is NOT: it is not a fix for the 403 -
+      # that cause is unknown and is in `docs/wiki/backlog.md` - and it is not a
+      # `continue-on-error`, which would swallow the failure. A refusal here still fails the job,
+      # loudly. What changes is only what it can no longer take down with it.
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v3
+        # ONLY WHEN A PUBLISHED RELEASE IS WHAT STARTED THIS, and this is the one event test
+        # left in this file for a reason. `release.yml` also has a hand-dispatched path, for
+        # re-running a release whose chain died on an infrastructure fault; on that path a GitHub
+        # release for the version may not exist, and this action would CREATE one - which would
+        # publish a release, which would start `release.yml` again. So the question really is about
+        # the caller's event: attach the artefact to the release that triggered this run, and to
+        # nothing else.
+        if: inputs.publish && github.event_name == 'release'
+        with:
+          tag_name: v${{ steps.release_tag.outputs.version }}
+          fail_on_unmatched_files: true
+          files: ${{ steps.outputs.outputs.ipa }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
