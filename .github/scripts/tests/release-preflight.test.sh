@@ -47,6 +47,13 @@ cover() {
   if [ "$got" = "$2" ]; then pass "$3"; else fail "$3 - expected '$2', got '$got'"; fi
 }
 
+# position <compare status> <tree version> <release version> <expected verdict> <what it means>
+position() {
+  local got
+  got="$(classify_main_position "$1" "$2" "$3")"
+  if [ "$got" = "$4" ]; then pass "$5"; else fail "$5 - expected '$4', got '$got'"; fi
+}
+
 printf '\nthe hyphen is the definition of a pre-release\n'
 # =================================================================================================
 kind '0.15.0'          'stable'               'a bare major.minor.patch is a stable release'
@@ -141,6 +148,42 @@ case "$CRLF_VERDICT" in
   'undecidable'*) pass 'a CRLF payload is refused, not silently misread' ;;
   *)              fail "a CRLF payload resolved to '$CRLF_VERDICT' - it must not be readable" ;;
 esac
+
+printf '\ncan the bump still push, or does the gate approve what git will refuse?\n'
+# =================================================================================================
+# THE GATE PASSED AND THE PUSH WOULD HAVE FAILED. The bump commits ON the released commit and runs
+# `git push origin HEAD:main`, so it fast-forwards only while `main` still points there - and the
+# second gate accepts `ahead` on purpose, because `main` CONTAINING the commit is what that gate
+# asks. Found by reading the bump job while sequencing the `v0.16.0` stable: publishing a release
+# from a commit anything had merged past would have been approved by five gates and then died at
+# the second job, on a git error naming none of it.
+#
+# `ahead` is not always wrong, which is why this is a classifier and not a refusal: a released tree
+# ALREADY carrying the version writes nothing, commits nothing and pushes nothing.
+position identical 0.16.0-alpha.2 0.16.0 'pushable head' \
+  'main IS the released commit, so the bump commit fast-forwards by construction'
+position ahead 0.16.0 0.16.0 'pushable noop' \
+  'main moved on, but the tree already carries the version - the bump is a no-op and pushes nothing'
+position ahead 0.16.0-alpha.2 0.16.0 'unpushable 0.16.0-alpha.2' \
+  'main moved on AND the bump has real work - this is the case that dies at the second job'
+position ahead 0.16.0 0.16.0-alpha.3 'unpushable 0.16.0' \
+  'and it is symmetric - a pre-release re-published from a passed commit is refused the same way'
+
+printf '\nand every position it was not given is a refusal, never a guess\n'
+# =================================================================================================
+# A CLASSIFIER THAT ANSWERS FOR AN INPUT IT WAS NOT GIVEN IS ONE ITS NEXT CALLER WILL TRUST.
+# `behind` and `diverged` cannot reach it today because gate 2 refuses them first, and that is a
+# property of the CALLER, not of this function.
+position ahead '' 0.16.0 \
+  'undecidable the released tree states no version, so the no-op case cannot be told apart' \
+  'a tree stating no version cannot tell the no-op apart, so it refuses'
+position diverged 0.15.0 0.16.0 \
+  'undecidable status diverged is not a position this answers for' \
+  'a diverged history is not a position this answers for'
+position '' 0.15.0 0.16.0 'undecidable status is empty' \
+  'an empty status is an unreadable compare, which is never permission'
+position identical 0.15.0 '' 'undecidable no version was passed to compare against' \
+  'and with no release version there is nothing to compare the tree against'
 
 printf '\n'
 if [ "$FAIL" -ne 0 ]; then

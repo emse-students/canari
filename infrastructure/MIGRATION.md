@@ -148,6 +148,28 @@ Generate strong values: `openssl rand -hex 32` (secrets), `openssl rand -base64 
 > device to reach, and both halves of push (FCM and the three APNs values) are ordinary optional
 > credentials.
 
+## 3bis. Repository settings that are not secrets, and that no file in the tree carries
+
+**A SETTING NO FILE CARRIES IS REPRODUCED FROM NOWHERE ON A FORK OR A REBUILD**, and these three
+are load-bearing for the delivery chain. None appears in any workflow, so they are listed here or
+they are lost. Values below were read off the live repository on 2026-09-03
+(`gh api repos/emse-students/canari`), not remembered.
+
+| Setting | Value | What breaks without it |
+|---|---|---|
+| **Allow auto-merge** (`allow_auto_merge`) | `true` | `gh pr merge --auto` is refused outright, so `arm-auto-merge` fails on every pull request and nothing merges itself. This is the switch that makes package 1 a package at all |
+| **Automatically delete head branches** (`delete_branch_on_merge`) | `true` | Every merged branch survives its merge. **`--delete-branch` does NOT cover this**: `gh` deletes after a merge IT made, and `--auto` makes none - it arms and exits. #329 and #330 both left branches behind while that flag sat in the arming command appearing to remove them, which is why it is no longer passed |
+| **Branch ruleset on `main`** | id `22152902`, `active` | No direct push, no force-push, no delete, and one required check: `CI passed`. This is what makes a pull request the only route to the trunk, and therefore what makes gate 3 of `release-preflight.sh` mean anything. Its `bypass_actors` is where the App below is granted |
+
+**`allow_merge_commit` and `allow_rebase_merge` are also `true`, and that is not a defect.** The
+arming command passes `--squash` explicitly, so the merge method is decided by the workflow rather
+than by what the repository happens to permit - a human merging by hand can still pick another, and
+the history says squash because that is what the automation does.
+
+**THE APP IS A FOURTH THING OF THIS KIND, AND IT IS DOCUMENTED IN SECTION 3** with its three
+secrets: `canari-auto-merge` must be installed on the owning organisation and listed in the
+ruleset's `bypass_actors`. It is not repeated here.
+
 ## 4. SSH access for offsite backup (mitv)
 
 Backups push to `mitv` via SSH. On the new server:

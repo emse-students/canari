@@ -94,3 +94,60 @@ classify_dev_coverage() {
     diverged)  printf 'uncovered diverged %s %s\n' "$ahead" "$behind" ;;
   esac
 }
+
+# CAN THE BUMP STILL PUSH? Answered from two facts the preflight already holds, rather than by
+# finding out at the push.
+#
+# The bump job checks out the RELEASED commit, writes the version across 18 files and runs
+# `git push origin HEAD:main`. That push is a fast-forward only while `main` still POINTS AT the
+# released commit - and the second gate deliberately accepts `ahead` as well, because `main`
+# containing the commit is what that gate is about.
+#
+# FOR ONE SHAPE OF RELEASE `ahead` IS PERFECTLY SAFE: if the released tree already carries the
+# version being released, the bump writes nothing, commits nothing and pushes nothing, which is the
+# no-op branch the bump job documents. For every other shape the push is a non-fast-forward, the
+# preflight has already said yes, and the release dies at its SECOND job with a git error that
+# names none of this - a gate approving what a later step refuses, which is the shape the rule
+# against learning by failing exists to forbid.
+#
+# The discriminator is the version in the released tree, which the preflight has checked out and
+# can read for free. So it is carried to where the decision is made.
+#
+# args:  <compare status>  <version in the released tree>  <version being released>
+# stdout: `pushable head` | `pushable noop` | `unpushable <tree version>` | `undecidable <why>`
+classify_main_position() {
+  local status="${1-}" tree="${2-}" want="${3-}"
+
+  # An unreadable input is never permission, on the same principle as every other judgement here.
+  if [ -z "$want" ]; then
+    printf 'undecidable no version was passed to compare against\n'
+    return 0
+  fi
+
+  case "$status" in
+    identical)
+      # `main` is the released commit, so a bump commit on top of it fast-forwards by construction.
+      printf 'pushable head\n'
+      ;;
+    ahead)
+      if [ -z "$tree" ]; then
+        # THE TREE NOT STATING A VERSION IS ITSELF THE REFUSAL. Without it there is no way to tell
+        # the harmless no-op from the release that dies at its second job, and a guess here picks
+        # between deploying production and not deploying at all.
+        printf 'undecidable the released tree states no version, so the no-op case cannot be told apart\n'
+      elif [ "$tree" = "$want" ]; then
+        printf 'pushable noop\n'
+      else
+        printf 'unpushable %s\n' "$tree"
+      fi
+      ;;
+    '')
+      printf 'undecidable status is empty\n'
+      ;;
+    *)
+      # `behind` and `diverged` never reach here - gate 2 refuses them first - but a classifier
+      # that answers for an input it was not given is a classifier its next caller will trust.
+      printf 'undecidable status %s is not a position this answers for\n' "$status"
+      ;;
+  esac
+}
