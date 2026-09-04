@@ -39,8 +39,8 @@
  *
  * EXIT CODE IS THE VERDICT: 0 clean, 1 not. So this is usable in a preflight, not only by hand.
  */
-import { client, APP_TAB } from './chat.mjs';
-import { armIfPhone, resolveDevice } from './device.mjs';
+import { client } from './chat.mjs';
+import { armIfPhone, resolveDevice, tabMatchFor } from './device.mjs';
 import { consoleLines, dirtOf, logcatReport, logcatSince, report, watch } from './watch.mjs';
 
 const argv = process.argv.slice(2);
@@ -150,7 +150,7 @@ if (wantLogcat) {
 // The client console: attach, wait, classify. There is no past to read.
 await armIfPhone(target, label);
 const forMs = Number(opt('for', 10_000));
-const cx = await client(target.port, APP_TAB);
+const cx = await client(target.port, tabMatchFor(target));
 const w = await watch(cx, label);
 console.log(`[${label}] attached - watching for ${forMs}ms (a browser keeps no buffer, so this is`);
 console.log(`[${label}] the only window there is; reproduce what you want to see now)`);

@@ -17,11 +17,31 @@
  * BEFORE anything is plugged in or woken, and asking adb what is attached cannot answer a question
  * about intent.
  */
+import { APP_TAB } from './chat.mjs';
 import { ACCOUNT_OF, PORTS } from './names.mjs';
 import { ensure, useDevice } from './phone.mjs';
 
 /** `A1`, `A2`, ... - the rig's spelling for "this client is an Android app". */
 export const isPhoneName = (name) => /^A\d+$/.test(name ?? '');
+
+/**
+ * WHICH DEVTOOLS TARGET TO ATTACH TO, for a client that may be a phone.
+ *
+ * **A PHONE IS NOT SERVED BY THE ESTATE, AND `APP_TAB` IS AN ESTATE HOST.** `frontendDist:
+ * "../build"` means the Android app EMBEDS the frontend, so its WebView sits on
+ * `http://tauri.localhost/...` and never on `localhost:8081`. Passing `APP_TAB` therefore matches
+ * nothing on a phone and `client()` throws `no target on 9333 matching localhost:8081` - which says
+ * the tab is missing when the truth is that the needle was written for a different platform.
+ *
+ * I WROTE THAT BUG TWICE IN ONE AFTERNOON, in `logs.mjs` and in `shot.mjs --webview`, which is why
+ * this is a function rather than a line each of them gets right on its own. `state.mjs` had known
+ * to pass `null` since long before; the knowledge existed and was not reachable.
+ *
+ * `null` means "whatever single target this port has", which is correct for the phone (one WebView)
+ * and for the ad-hoc 9222 profile, and wrong for a browser where several tabs are open - hence the
+ * estate host stays the needle there.
+ */
+export const tabMatchFor = ({ isPhone, port }) => (isPhone || port === 9222 ? null : APP_TAB);
 
 /**
  * Reads `--device` / `--android` / `--port` / `--account` out of an argv, without arming anything.
@@ -58,6 +78,67 @@ export function resolveDevice(argv, { defaultPort = PORTS.W2 } = {}) {
   const account = opt('account', device ? ACCOUNT_OF[device] : ACCOUNT_OF[forPort]);
 
   return { device: device ?? forPort ?? null, port, account, isPhone: isPhoneName(device) };
+}
+
+/**
+ * The SAME QUESTION FOR SEVERAL CLIENTS: which set is this command about.
+ *
+ * WHY IT TAKES BOTH SPELLINGS, AND WHY THAT IS NOT A FALLBACK PATH. The rig grew two vocabularies
+ * for one fact: every atom written since `device.mjs` says `--device W1`, while `unlock.mjs` and
+ * `reload.mjs` - older, and about SETS rather than one client - say `--ports 9224,9223`. A port is
+ * the transport; a name is the subject, and `PORTS` already maps one to the other. Making the
+ * operator hold the port numbers in their head is the same class of defect as making them type an
+ * account key: the mapping is DATA and nothing has to be memorised.
+ *
+ * `--ports` is kept because it is in transcripts, in the campaign pages and in muscle memory, and
+ * because the two are not rival paths - they are two spellings resolved by ONE implementation into
+ * the same list. `--device` is the spelling to write; a run naming both is a caller that disagrees
+ * with itself and is refused rather than silently resolved, exactly as `--android` contradicting
+ * `--device` is.
+ *
+ * @param fallback device names to use when the argv names nothing - the caller's own default set,
+ *   because "every client" means something different to an unlock than to a bundle reload.
+ */
+export function resolveDevices(argv, { fallback = [] } = {}) {
+  const opt = (name) => {
+    const i = argv.indexOf(`--${name}`);
+    return i === -1 ? null : argv[i + 1];
+  };
+  const split = (s) =>
+    String(s)
+      .split(',')
+      .map((x) => x.trim())
+      .filter(Boolean);
+
+  const spelt = opt('device');
+  const ports = opt('ports');
+  if (spelt && ports) {
+    throw new Error(
+      `--device ${spelt} and --ports ${ports} name the set twice; pass one. --device is the spelling.`,
+    );
+  }
+
+  let names;
+  if (spelt) {
+    names = split(spelt);
+  } else if (ports) {
+    // A port with no name is still addressable - the rig has run against an ad-hoc profile before -
+    // so an unknown one is carried as a bare port rather than refused.
+    names = split(ports).map((p) => {
+      const n = Number(p);
+      return Object.keys(PORTS).find((d) => PORTS[d] === n) ?? n;
+    });
+  } else {
+    names = fallback;
+  }
+
+  return names.map((n) => {
+    if (typeof n === 'number') {
+      return { device: null, port: n, account: ACCOUNT_OF[n] ?? null, isPhone: false };
+    }
+    if (!PORTS[n]) throw new Error(`unknown device ${n} - known: ${Object.keys(PORTS).join(' ')}`);
+    return { device: n, port: PORTS[n], account: ACCOUNT_OF[n], isPhone: isPhoneName(n) };
+  });
 }
 
 /**

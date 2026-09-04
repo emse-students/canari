@@ -26,15 +26,14 @@ import { ownerByDevice } from './accounts.mjs';
 import { spawnSync } from 'node:child_process';
 import { client, evaluate } from './chat.mjs';
 import { PORTS } from './names.mjs';
+import { resolveDevices } from './device.mjs';
 
-const flag = (n, f) => {
-  const i = process.argv.indexOf(`--${n}`);
-  return i === -1 ? f : process.argv[i + 1];
-};
-const wanted = flag('ports', null)
-  ?.split(',')
-  .map((p) => Number(p.trim()))
-  .filter(Boolean);
+// `--device W1,A1` is the spelling; `--ports 9224,9333` still resolves, through the same one
+// implementation in `device.mjs`. Naming neither means every client this rig knows, which is the
+// default this command was written for and the reason `fallback` is empty here rather than a list:
+// the loop below already walks `PORTS` and `wanted` only ever narrows it.
+const named = resolveDevices(process.argv.slice(2));
+const wanted = named.length ? named.map((t) => t.port) : null;
 
 /** Label ("W1") -> the account key that owns it, taken from the file's own `clients` list. */
 const ownerOf = ownerByDevice();

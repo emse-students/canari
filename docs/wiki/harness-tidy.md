@@ -150,11 +150,37 @@ does in `login.mjs`.
       as a finding while its own report said `clean`. Caught by diffing against `srvlog.mjs`, which
       disagreed and was right. Every report already carries `clean`; it is read now, not recomputed.
 
-- [ ] **B5. Uniform flags** on `shot.mjs` (positional argv today), `unlock.mjs`, `reload.mjs`.
-      `device.mjs` now owns `--device`/`--android`/`--port`/`--account` and the phone-arming ladder;
-      `login.mjs` and `pin.mjs` both use it. **It exists because I wrote the second copy an hour after
-      the first** - the duplication the user reported, happening live - and a third was about to
-      land in `send.mjs`.
+- [x] **B5 - DONE.** `device.mjs` now owns the plural question too. `resolveDevices()` answers a SET
+      from either spelling: `--device W1,W2` (the spelling to write) or `--ports 9224,9223` (kept -
+      it is in transcripts, the campaign pages and muscle memory). They are not rival paths but two
+      spellings resolved by ONE implementation, and a run naming both is refused rather than
+      silently resolved, exactly as `--android` contradicting `--device` is. `unlock.mjs` and
+      `reload.mjs` use it; all three spellings were exercised, plus the contradiction.
+
+      **`shot.mjs` stopped being positional and grew the half that matters.** It took
+      `bun shot.mjs 9224 out.png` - two positional arguments in a rig where everything else takes
+      `--device`. **On a phone it now captures the WHOLE SCREEN via `adb exec-out screencap`**, not
+      the WebView: a CDP screenshot cannot see a native permission dialog, the IdP browser, a toast,
+      the keyboard or a crash dialog, which are most of the reasons a phone run stalls with the
+      product looking fine. That is the user's own standing rule for this rig
+      (*"adb exec-out screencap -p > shot.png puis Read"*), and it was not implementable before.
+      `--webview` asks for the narrow one deliberately. Verified by LOOKING at both.
+
+      **Two defects of my own, found by using the thing.** `--out` only ever accepted a bare
+      filename - `new URL('./' + out, import.meta.url)` turned `--out /tmp/w1.png` into a stack
+      trace - so a path with a separator is now resolved against the CWD while a bare name still
+      lands next to the runner, where `.gitignore` covers `*.png` and the public repo root does not.
+      And **I passed `APP_TAB` for a phone in BOTH `logs.mjs` and `shot.mjs --webview`**: the app
+      EMBEDS its frontend (`frontendDist: "../build"`), so its WebView is on `tauri.localhost` and
+      never on `localhost:8081`, and `client()` answered `no target on 9333 matching localhost:8081`
+      - which reads as "the tab is missing" when the needle was simply written for another platform.
+      `state.mjs` had known to pass `null` for years. That knowledge existed and was not reachable,
+      so it is now `tabMatchFor()` in `device.mjs` rather than a line each caller gets right alone.
+
+      **And using it found a campaign blocker**, which is the point of building it: A1 logs itself
+      out against the local estate because the refresh cookie is `SameSite=Lax` there and the
+      WebView therefore never stores it - measured, three dead `auth_sessions` rows, see
+      [backlog](backlog.md). Re-run `pin.mjs` before any long phone row.
 
 ## C. Blocked on the user
 

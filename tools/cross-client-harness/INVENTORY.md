@@ -60,7 +60,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `rows.mjs` | THE BOARD AND THE EVIDENCE, RECONCILED - which rows nothing has ever answered, and which answers |
 | `send.mjs` | Sends one message from one client, and ends when that client's own pane shows it. |
 | `serial.mjs` | WHICH PHONE adb SHOULD TALK TO - one resolver, and it REFUSES TO GUESS between two of them. |
-| `shot.mjs` | Saves a PNG screenshot of a client, so a layout claim is looked at rather than inferred. |
+| `shot.mjs` | Saves a PNG of a client, so a layout claim is LOOKED AT rather than inferred. |
 | `srvlog.mjs` | THE THIRD OBSERVER: production's own logs, classified the way the browser's are. |
 | `ssh.mjs` | THE ONE WAY THIS HARNESS REACHES PRODUCTION. |
 | `state.mjs` | One-line health read of every web client - the thing to run when a check behaves oddly. |

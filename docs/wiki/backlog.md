@@ -689,6 +689,53 @@ worth a sweep for the same pattern elsewhere: `ChangePinModal.svelte` and `Login
 **Not fixed inline, deliberately** (user, 2026-09-04): P2s go here rather than into the session that
 found them.
 
+### P2 - THE PHONE CANNOT HOLD A SESSION AGAINST THE LOCAL ESTATE, by construction of the cookie rules - so every phone row that outlives an access token is measuring the estate (measured 2026-09-04)
+
+**Measured, not inferred.** `Network.getAllCookies` on both engines, within a minute of each other:
+
+| client | page origin | cookies matching `canari|refresh|session` |
+|---|---|---|
+| W1 (Chrome) | `http://localhost:8081` | **3** - `canari_refresh` `domain=localhost path=/api/auth secure=false sameSite=Lax` |
+| A1 (Android WebView) | `http://tauri.localhost` | **0** |
+
+The phone does not hold the cookie and never did - this is not "holds it but will not send it". The
+server sees the consequence and says so: `Refresh refused for the NATIVE app: no canari_refresh
+cookie. cookies=[] x-canari-refresh=absent client=0.16.3 origin=http://tauri.localhost`. And
+`auth_sessions` shows the shape end to end - **three Android rows created today (14:21, 14:46,
+15:41), every one with `rotatedAt` NULL and `lastUsedAt` equal to `createdAt`**, beside Windows rows
+rotating normally at 16:21 and 16:22. A session created and never used again, three times.
+
+**The mechanism.** `setRefreshCookie` picks its attributes from the DEPLOYMENT: HTTPS gets
+`secure: true, sameSite: 'none'`, and the comment says exactly why - *"because the mobile app calls
+in cross-origin from `tauri.localhost`"*. The local branch (`allowInsecureCookies`) drops to
+`sameSite: 'lax'`, which is right for a browser whose page IS `localhost:8081` and fatal for the
+native app, whose page is `tauri.localhost`: a `Lax` cookie cannot be SET in a third-party context,
+so the WebView discards it on arrival. **It is not an oversight to be reverted** - `SameSite=None`
+requires `Secure`, and a `Secure` cookie cannot be set over plain HTTP at all, so the local branch
+has no third option available to it.
+
+**What this costs the campaign, which is the reason it is written down.** A1 logs itself out on a
+timer nobody set: measured today it signed in, then died at 19:05 with `refresh 401 -> session dead
+-> logout` while its `auth_sessions` row was valid until 2026-09-11. Any phone row that needs a
+session to survive one access-token lifetime is therefore measuring the ESTATE's HTTP-ness and not
+the product - the exact "instrument answering about itself while reading as an answer about the
+application" failure `estate.mjs` was written for. **Re-run `pin.mjs`/`login.mjs` before any long
+phone row, and do not record a session-persistence verdict for A1 from the local estate.**
+
+**NOT a production defect as far as this measurement goes, and it must not be written up as one.**
+Production and `dev.canari-emse.fr` are HTTPS, take the `none`+`Secure` branch, and that is the
+branch the mobile flow was designed for. Nothing here re-verified prod, so the honest claim is about
+the local estate only.
+
+**Two candidate fixes, and the second is the interesting one.** Serve the local estate over HTTPS
+with a trusted local certificate (heavy, and it changes what the campaign is testing); or carry the
+credential in `X-Canari-Refresh` on Android too. **The header path already exists and already
+ships** - it is what iOS, macOS and Linux use because WKWebView drops the cookie on
+`tauri://localhost` ([sessions](sessions.md#the-credential-a-client-carries-itself)) - and "the
+engine will not keep our cookie" is the same condition, reached for a different reason. That would
+make the native client depend on no cookie policy at all, which is a smaller surface than the one it
+has now. It is a change to the AUTH path, so it is a P2 here rather than something to do inline.
+
 ### P3 - NOTHING LINTS THE HARNESS, and the 158 scripts that drive every campaign verdict carry 29 warnings nobody has ever been shown (measured 2026-09-04)
 
 `bun run lint` is scoped to `frontend/`; `make test-harness` runs the self-tests and

@@ -16,17 +16,16 @@
  */
 import { client } from './chat.mjs';
 import { PORTS } from './names.mjs';
+import { resolveDevices } from './device.mjs';
 import { deployedBundleId, isOnTheDeployment, reloadOntoBundle } from './bundle.mjs';
 
-const flag = (n, f) => {
-  const i = process.argv.indexOf(`--${n}`);
-  return i === -1 ? f : process.argv[i + 1];
-};
-const webPorts = Object.keys(PORTS).filter(isOnTheDeployment).map((d) => PORTS[d]);
-const ports = String(flag('ports', webPorts.join(',')))
-  .split(',')
-  .map((p) => Number(p.trim()))
-  .filter(Boolean);
+// `--device W1,W2` is the spelling; `--ports 9224,9223` still resolves, through the same one
+// implementation. The default is every client the deployment actually serves - a phone EMBEDS its
+// frontend, so reloading it onto "the deployed bundle" is a category error, and `isOnTheDeployment`
+// is what already knows the difference.
+const ports = resolveDevices(process.argv.slice(2), {
+  fallback: Object.keys(PORTS).filter(isOnTheDeployment),
+}).map((t) => t.port);
 
 let deployed;
 try {
