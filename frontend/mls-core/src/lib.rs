@@ -56,6 +56,25 @@ pub enum MlsError {
     /// backstop for a device that never received the commit at all.
     #[error("EVICTED: {0}")]
     Evicted(String),
+    /// No leaf in the tree carries any of the named identities, so a Remove has NOTHING TO DO.
+    ///
+    /// THE MIRROR OF {@link MlsError::AlreadyMember}, AND IT IS NOT A FAILURE. A caller removing a
+    /// stale leaf wants the tree to end up without it; a tree that never had it is that outcome
+    /// already, and the ONE state that must be told apart is the third one - the leaf is still
+    /// there and the Remove was refused. Those two used to be a single
+    /// `OpenMls("No member found for identities: ...")`, distinguishable only by reading the prose,
+    /// and this repository's rule is that a distinction carried in a message is a distinction
+    /// exactly one call site will make.
+    ///
+    /// It became load-bearing on 2026-09-04, when a device holding a roster seat nobody follows
+    /// began serving itself an external-commit join instead of waiting for ever. A caller that
+    /// resets the routing row to `pending` after a Remove it BELIEVES succeeded now invites that
+    /// device to add a second leaf beside the one still sitting in the tree - which is the
+    /// duplicate-leaf race of 2026-08-26 arrived at from the other side. So `kickStaleLeaf` may
+    /// only clear the row when the tree is genuinely without the leaf, and this variant is how it
+    /// tells "already gone" from "still there".
+    #[error("NO_SUCH_MEMBER: {0}")]
+    NoSuchMember(String),
 }
 
 /// Classification of an incoming decryption error. THE single source of native string-matching on

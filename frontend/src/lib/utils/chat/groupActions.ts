@@ -1,4 +1,5 @@
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
+import { classifyRemoveError } from '$lib/mls-client/mlsRemoveError';
 import { persistMlsStructuralCheckpoint } from '$lib/mls-client/mlsStatePersisterRegistry';
 import type { IMlsService } from '$lib/mlsService';
 import type { IStorage, StoredMessage } from '$lib/db';
@@ -477,6 +478,25 @@ export async function handleDuplicateLeafError(params: {
  * independently: a tree cleaned while the routing row survives, or the reverse, are different
  * estates needing different repairs. One line saying "partially" without naming which half would
  * leave the reader exactly where the silence did.
+ *
+ * **AND THEY ARE ORDERED, WHICH THEY WERE NOT UNTIL 2026-09-04.** The routing row is cleared ONLY
+ * when the tree is genuinely without the leaf. Both calls used to run unconditionally, so a refused
+ * Remove still wrote `pending` - a destructive write made before its own prerequisite was known to
+ * hold, which is the invariant `f46e7660` established for the function next door, needed here for
+ * the third time in this area.
+ *
+ * That was tolerable while `pending` meant "wait for a member" and cost only a delay. It is not any
+ * more: since the same day, a `pending` row with no queued Welcome and no add lock tells the device
+ * to STOP waiting and join by external commit. So clearing the row over a leaf that is still in the
+ * tree now asks that device to add a SECOND leaf beside the first, which is the duplicate-leaf race
+ * of 2026-08-26 arrived at from the other side - **the repair would manufacture the fault it exists
+ * to clean up.** Fixing the requester's half is what made this half load-bearing, which is why the
+ * two are one entry in `docs/wiki/backlog.md` and not two.
+ *
+ * "Nothing to remove" is NOT a refusal and must not be read as one - a tree that never held the leaf
+ * is the outcome this function wants. `MlsError::NoSuchMember` carries that as a TYPE and
+ * `classifyRemoveError` is the only thing that reads it; before it existed both outcomes were one
+ * OpenMLS string, and telling them apart meant matching prose.
  */
 export async function kickStaleLeaf(
   groupId: string,
@@ -494,18 +514,34 @@ export async function kickStaleLeaf(
   try {
     await mlsService.removeMemberDevice(groupId, [deviceIdentity]);
   } catch (e) {
-    treeCleared = false;
+    // A leaf that was never there is the state this function wants, so it counts as cleared. Every
+    // other failure leaves the leaf in the tree, and forbids the write below.
+    treeCleared = classifyRemoveError(e) === 'already-absent';
     log(
-      `[KICK] Leaf ${deviceIdentity} still in ${groupId}'s tree - remove refused: ${String(e).slice(0, 120)}`
+      treeCleared
+        ? `[KICK] Leaf ${deviceIdentity} was already absent from ${groupId}'s tree - nothing to remove`
+        : `[KICK] Leaf ${deviceIdentity} still in ${groupId}'s tree - remove refused: ${String(e).slice(0, 120)}`
     );
   }
-  let routingCleared = true;
-  await mlsService.kickStaleDevice(targetDeviceId, targetUserId, groupId).catch((e: unknown) => {
-    routingCleared = false;
+
+  // THE ORDER IS THE FIX: see this function's docblock. A pending row over a live leaf is an
+  // invitation to add a second one.
+  let routingCleared = false;
+  if (treeCleared) {
+    routingCleared = true;
+    await mlsService.kickStaleDevice(targetDeviceId, targetUserId, groupId).catch((e: unknown) => {
+      routingCleared = false;
+      log(
+        `[KICK] Routing row for ${deviceIdentity} still listed on ${groupId} - clear refused: ${String(e).slice(0, 120)}`
+      );
+    });
+  } else {
     log(
-      `[KICK] Routing row for ${deviceIdentity} still listed on ${groupId} - clear refused: ${String(e).slice(0, 120)}`
+      `[KICK] Routing row for ${deviceIdentity} on ${groupId} left ALONE on purpose - the leaf is` +
+        ` still in the tree, and clearing the row would ask that device to add a second one`
     );
-  });
+  }
+
   log(
     treeCleared && routingCleared
       ? `[KICK] Stale leaf ${deviceIdentity} removed from ${groupId}`
