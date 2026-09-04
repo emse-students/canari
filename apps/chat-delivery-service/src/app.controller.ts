@@ -506,10 +506,10 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       .addGroupBy('q.groupId')
       .getRawMany<{ deviceId: string; groupId: string }>();
 
-    // ` ` cannot occur in either identifier, so the pair key is unambiguous - a plain `:` or
+    // `\0` cannot occur in either identifier, so the pair key is unambiguous - a plain `:` or
     // `-` join would be, since a deviceId already contains both.
-    const owedAWelcome = new Set(welcomed.map((w) => `${w.deviceId} ${w.groupId}`));
-    const stranded = pending.filter((p) => !owedAWelcome.has(`${p.deviceId} ${p.groupId}`));
+    const owedAWelcome = new Set(welcomed.map((w) => `${w.deviceId}\0${w.groupId}`));
+    const stranded = pending.filter((p) => !owedAWelcome.has(`${p.deviceId}\0${p.groupId}`));
 
     this.logger.log(
       `[CRON] reportStrandedDeviceMemberships: ${pending.length} pending membership(s) past the ` +

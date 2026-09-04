@@ -1256,6 +1256,26 @@ three exit codes rather than two:
   half, a tolerated outage quietly becomes a tree nobody has audited in a week, with only warnings
   in closed logs to show for it.
 
+### And the audit is not the whole question, because GitHub knows things it does not
+
+`bun audit` and `cargo audit` each read ONE advisory database and each need a manifest they can
+parse. GitHub reads its own, needs neither, and raises alerts against the default branch that
+nothing here used to look at. On 2026-09-04 that gap was measured rather than supposed:
+GHSA-7gcf-g7xr-8hxj (serde_with, in `frontend/src-tauri/Cargo.lock`) was invisible to all three of
+the mechanisms meant to catch it - Dependabot could not open the pull request, `cargo audit` exited
+0 because the advisory is GHSA-only, and no gate read the alert list.
+
+`.github/scripts/dependabot-alerts-report.sh` is that third reader, in the nightly pass on the same
+02:00 cron. **It is not on the pull-request path and must not go there**: the alert list is a
+property of the DEFAULT BRANCH, so a pull request can neither be blamed for an open alert nor
+sensibly blocked by one, and putting it there would wall every merge on a fact about `main`.
+
+**It answers the four causes of an empty list separately**, which is the whole of its design: a 200
+with no alerts is health; a 403 means the token may not read alerts and NOTHING looked; a 404 means
+the feature is disabled or the slug is wrong; no response is a transport failure. The last three
+fail by name. The same rule as the `2` above, in a different place: *a refusal is not a clean
+report.*
+
 **The unknown case fails CLOSED, and that stopped being hypothetical within the hour.** Only a
 narrow list of recognised transport failures is classified as silence; anything else is a finding.
 **The wording differs by bun version** - the same npm 503, the same evening, in two repositories:

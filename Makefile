@@ -321,6 +321,7 @@ test-ci-scripts:
 	@bash .github/scripts/tests/deploy-env.test.sh
 	@bash .github/scripts/tests/deploy-migrations.test.sh
 	@bash .github/scripts/tests/dependabot-cargo-reach.test.sh
+	@bash .github/scripts/tests/dependabot-alerts-report.test.sh
 	@bash .github/scripts/tests/bump-version.test.sh
 	@bash .github/scripts/tests/bump-staging.test.sh
 	@bash .github/scripts/tests/release-preflight.test.sh
@@ -329,6 +330,7 @@ test-ci-scripts:
 	@bash .github/scripts/tests/scheduled.test.sh
 	@bash .github/scripts/tests/audit-dependencies.test.sh
 	@bash .github/scripts/tests/host-update-report.test.sh
+	@node .github/scripts/tests/no-nul-in-source.test.mjs
 	@node .github/scripts/tests/wiki-links.test.mjs
 	@node tools/app-store/submit.test.mjs
 

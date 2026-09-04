@@ -50,14 +50,23 @@ else
   pass "it declares $(echo "$DECLARED" | wc -l | tr -d ' ') cron(s)"
 fi
 
-ORPHAN_CRON="$(comm -23 <(echo "$DECLARED") <(echo "$CLAIMED") | tr '\n' ' ')"
+# COMPARED AS SETS, DEDUPED - and the duplicate is examined on its own below. `comm` takes sorted
+# input and answers per LINE rather than per value, so a cron legally claimed by TWO jobs puts a
+# second copy in `CLAIMED` and comes back from `comm -13` as a cron "no schedule declares". That
+# fired the day a second job joined the 02:00 slot, and the test contradicted itself inside one
+# run: it failed for an undeclared cron, then passed the note saying that very cron was
+# deliberately shared. A test that refuses what it declares legal five lines later is wrong, not
+# strict.
+CLAIMED_SET="$(echo "$CLAIMED" | uniq)"
+
+ORPHAN_CRON="$(comm -23 <(echo "$DECLARED") <(echo "$CLAIMED_SET") | tr '\n' ' ')"
 if [ -z "${ORPHAN_CRON// /}" ]; then
   pass 'every declared cron is claimed by a job'
 else
   fail "cron(s) declared and claimed by nobody:$ORPHAN_CRON - that slot wakes a run in which every job skips, and the run is GREEN"
 fi
 
-ORPHAN_JOB="$(comm -13 <(echo "$DECLARED") <(echo "$CLAIMED") | tr '\n' ' ')"
+ORPHAN_JOB="$(comm -13 <(echo "$DECLARED") <(echo "$CLAIMED_SET") | tr '\n' ' ')"
 if [ -z "${ORPHAN_JOB// /}" ]; then
   pass 'every cron a job names is declared'
 else
