@@ -511,27 +511,58 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     const owedAWelcome = new Set(welcomed.map((w) => `${w.deviceId} ${w.groupId}`));
     const stranded = pending.filter((p) => !owedAWelcome.has(`${p.deviceId} ${p.groupId}`));
 
+    // THE SECOND PARTITION, AND IT IS THE ONE THAT NAMES A DEFECT NOTHING ELSE REPORTS. Every row
+    // above holds a seat with no Welcome, and two opposite causes wear that: a device
+    // `addMembersBulk` SKIPPED for an unusable KeyPackage, which was never in the MLS tree, and a
+    // device whose stale leaf a member REMOVED and whose re-add then threw, which was. `kickedAt`
+    // is written by the kick and cleared by the Welcome that proves the Add landed, so it answers
+    // exactly this and nothing else - see the column's own docblock.
+    //
+    // The failing Add is reported NOWHERE else: it is swallowed on the answering device, which is
+    // a phone, and server-side a kick followed by no Welcome and no commit had no name. It has one
+    // here, and the two halves are printed apart because they send their reader to different code.
+    const kicked = stranded.filter((m) => m.kickedAt !== null);
+    const neverAdded = stranded.filter((m) => m.kickedAt === null);
+
     this.logger.log(
       `[CRON] reportStrandedDeviceMemberships: ${pending.length} pending membership(s) past the ` +
         `window - ${pending.length - stranded.length} awaiting a queued Welcome, ` +
-        `${stranded.length} with no Welcome ever queued`
+        `${neverAdded.length} never added, ${kicked.length} kicked with no re-add`
     );
     if (stranded.length === 0) return;
 
-    // ONE line, not one per row: this fires hourly, and a report whose reader learns to skip it is
-    // the one that hides the next defect. The oldest are named because age is what separates a row
-    // minted minutes ago from the class that cost a conversation its notifications.
-    const named = [...stranded]
-      .sort((a, b) => a.updatedAt.getTime() - b.updatedAt.getTime())
-      .slice(0, STRANDED_MEMBERSHIP_REPORT_TOP_N)
-      .map((m) => `${m.deviceId}@${m.groupId}(${m.updatedAt.toISOString()})`)
-      .join(' ');
-    this.logger.warn(
-      `[CRON] reportStrandedDeviceMemberships: ${stranded.length} device(s) hold a roster seat ` +
-        `with no Welcome ever queued - they were registered as members and never added to the MLS ` +
-        `group, so they receive nothing and notify nothing. Oldest ` +
-        `${Math.min(stranded.length, STRANDED_MEMBERSHIP_REPORT_TOP_N)}: ${named}`
-    );
+    // ONE line per cause, not one per row: this fires hourly, and a report whose reader learns to
+    // skip it is the one that hides the next defect. The oldest are named because age is what
+    // separates a row minted minutes ago from the class that cost a conversation its notifications.
+    const oldest = (rows: typeof stranded, stamp: (m: DeviceGroupMembership) => Date) =>
+      [...rows]
+        .sort((a, b) => stamp(a).getTime() - stamp(b).getTime())
+        .slice(0, STRANDED_MEMBERSHIP_REPORT_TOP_N)
+        .map((m) => `${m.deviceId}@${m.groupId}(${stamp(m).toISOString()})`)
+        .join(' ');
+    const capped = (n: number) => Math.min(n, STRANDED_MEMBERSHIP_REPORT_TOP_N);
+
+    if (neverAdded.length > 0) {
+      this.logger.warn(
+        `[CRON] reportStrandedDeviceMemberships: ${neverAdded.length} device(s) hold a roster seat ` +
+          `with no Welcome ever queued and no kick recorded - they were registered as members and ` +
+          `never added to the MLS group, so they receive nothing and notify nothing. Oldest ` +
+          `${capped(neverAdded.length)}: ${oldest(neverAdded, (m) => m.updatedAt)}`
+      );
+    }
+    if (kicked.length > 0) {
+      // AT THE LEVEL THAT ACCUSES, because this one is a failure rather than a state: a member
+      // removed the leaf and undertook to put it back. The device is not stuck - a seat with
+      // nothing following it is an invitation to join by external commit - but the Add that threw
+      // is a defect with a rate, and this is the only place that rate is visible. Dated by the
+      // KICK, not by `updatedAt`: the age that matters is how long the promise has been outstanding.
+      this.logger.error(
+        `[CRON] reportStrandedDeviceMemberships: ${kicked.length} device(s) were KICKED and never ` +
+          `re-added - a member removed their leaf and the Add that was supposed to follow did not ` +
+          `land, which is reported nowhere else. Oldest ${capped(kicked.length)}: ` +
+          `${oldest(kicked, (m) => m.kickedAt as Date)}`
+      );
+    }
   }
 
   /**

@@ -31,6 +31,7 @@ import { MessagingService } from './services/messaging.service';
 describe('AppController - reportStrandedDeviceMemberships', () => {
   let controller: AppController;
   let warn: jest.SpyInstance;
+  let error: jest.SpyInstance;
   let log: jest.SpyInstance;
 
   const welcomeBuilder = {
@@ -64,13 +65,24 @@ describe('AppController - reportStrandedDeviceMemberships', () => {
     metadata: { tableName: 'stub' },
   });
 
-  /** A `pending` device membership older than the report window. */
-  const pending = (deviceId: string, groupId: string, updatedAt: Date) => ({
+  /**
+   * A `pending` device membership older than the report window.
+   *
+   * `kickedAt` defaults to `null`, which is what every row written before that column existed says
+   * and what a device registered-but-never-added says: no kick promised this row an Add.
+   */
+  const pending = (
+    deviceId: string,
+    groupId: string,
+    updatedAt: Date,
+    kickedAt: Date | null = null
+  ) => ({
     userId: 'u1',
     deviceId,
     groupId,
     status: 'pending' as const,
     updatedAt,
+    kickedAt,
   });
 
   /** Invoke the private cron body the same way the scheduler does. */
@@ -99,11 +111,13 @@ describe('AppController - reportStrandedDeviceMemberships', () => {
 
     controller = module.get(AppController);
     warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
   });
 
   afterEach(() => {
     warn.mockRestore();
+    error.mockRestore();
     log.mockRestore();
   });
 
@@ -124,9 +138,11 @@ describe('AppController - reportStrandedDeviceMemberships', () => {
     await run();
 
     expect(log).toHaveBeenCalledWith(expect.stringContaining('1 awaiting a queued Welcome'));
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('0 with no Welcome ever queued'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('0 never added'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('0 kicked with no re-add'));
     // An offline device is not a defect, and a report that cried about one would be skipped.
     expect(warn).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
   });
 
   it('names a device that was registered and never added', async () => {
@@ -166,7 +182,7 @@ describe('AppController - reportStrandedDeviceMemberships', () => {
       expect.stringContaining('2 pending membership(s) past the window')
     );
     expect(log).toHaveBeenCalledWith(expect.stringContaining('1 awaiting a queued Welcome'));
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('1 with no Welcome ever queued'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('1 never added'));
   });
 
   it('names the OLDEST stranded rows, which is the axis that separates a defect from a blip', async () => {
@@ -182,6 +198,84 @@ describe('AppController - reportStrandedDeviceMemberships', () => {
     const line = warn.mock.calls[0][0] as string;
     expect(line.indexOf('oldest-device')).toBeLessThan(line.indexOf('recent-device'));
     expect(line).toContain(old.toISOString());
+  });
+
+  /**
+   * THE SECOND HALF OF THE PARTITION, AND THE ONLY PLACE A FAILING ADD IS EVER REPORTED.
+   *
+   * A member that finds a stale leaf removes it and undertakes to put the device back. When that Add
+   * throws, the failure is swallowed on the answering device - a phone, whose log nobody reads - and
+   * server-side the row it leaves is byte-identical to one belonging to a device that was never
+   * added at all. Same footprint, opposite fixes: one sends its reader to the inviter's KeyPackage
+   * handling, the other to whatever made the Add throw.
+   *
+   * `kickedAt` is the discriminator, written by the kick and cleared by the Welcome that proves the
+   * Add landed. These cases pin that the two halves are counted apart, accused apart, and dated by
+   * the clock that belongs to each.
+   */
+  describe('the kicked half', () => {
+    const kickedAt = new Date('2026-09-01T10:18:38Z');
+
+    it('accuses a kicked row at ERROR, and does not call it never-added', async () => {
+      deviceGroupRepo.find.mockResolvedValue([pending('tauri-kicked', 'g1', new Date(), kickedAt)]);
+
+      await run();
+
+      expect(warn).not.toHaveBeenCalled();
+      expect(error).toHaveBeenCalledTimes(1);
+      const line = error.mock.calls[0][0] as string;
+      expect(line).toContain('tauri-kicked@g1');
+      expect(line).toContain('KICKED and never');
+      // Dated by the kick: the age that matters is how long the promise has been outstanding.
+      expect(line).toContain(kickedAt.toISOString());
+    });
+
+    it('reports the two causes separately when both are present', async () => {
+      deviceGroupRepo.find.mockResolvedValue([
+        pending('tauri-never', 'g1', new Date()),
+        pending('tauri-kicked', 'g2', new Date(), kickedAt),
+      ]);
+
+      await run();
+
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('1 never added'));
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('1 kicked with no re-add'));
+      expect(warn.mock.calls[0][0] as string).toContain('tauri-never@g1');
+      expect(warn.mock.calls[0][0] as string).not.toContain('tauri-kicked');
+      expect(error.mock.calls[0][0] as string).toContain('tauri-kicked@g2');
+      expect(error.mock.calls[0][0] as string).not.toContain('tauri-never');
+    });
+
+    it('says nothing about a kicked row whose Welcome IS queued - the re-add landed', async () => {
+      // The queued Welcome is the proof, and it outranks the marker: a successful kick-and-re-add
+      // must not be reported as a failed one for as long as the row stays pending. The clearing
+      // write lives in `queueWelcome`; this pins that the report does not accuse it in the window
+      // before that write is visible either.
+      deviceGroupRepo.find.mockResolvedValue([pending('tauri-kicked', 'g1', new Date(), kickedAt)]);
+      welcomeBuilder.getRawMany.mockResolvedValue([{ deviceId: 'tauri-kicked', groupId: 'g1' }]);
+
+      await run();
+
+      expect(error).not.toHaveBeenCalled();
+      expect(warn).not.toHaveBeenCalled();
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('1 awaiting a queued Welcome'));
+    });
+
+    it('names the oldest KICKS first, by the kick clock and not by the row clock', async () => {
+      // The two clocks disagree on purpose here: the row touched most recently carries the OLDEST
+      // outstanding promise. Sorting by `updatedAt` would put them the wrong way round.
+      const oldKick = new Date('2026-08-30T01:00:00Z');
+      const newKick = new Date('2026-09-01T01:00:00Z');
+      deviceGroupRepo.find.mockResolvedValue([
+        pending('recent-kick', 'g1', new Date('2026-08-30T02:00:00Z'), newKick),
+        pending('oldest-kick', 'g2', new Date('2026-09-01T02:00:00Z'), oldKick),
+      ]);
+
+      await run();
+
+      const line = error.mock.calls[0][0] as string;
+      expect(line.indexOf('oldest-kick')).toBeLessThan(line.indexOf('recent-kick'));
+    });
   });
 
   it('deletes nothing - the fourteen-day purge owns that, and this only witnesses it', async () => {

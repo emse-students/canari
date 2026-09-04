@@ -65,6 +65,31 @@ export class DeviceGroupMembership {
   })
   status: DeviceGroupStatus;
 
+  /**
+   * When a member reset this row by KICKING the device's leaf out of the MLS tree, or `null` when
+   * the row's `pending` state has any other origin.
+   *
+   * IT IS NOT A SECOND `updatedAt`, AND THAT DISTINCTION IS THE WHOLE POINT. `updatedAt` answers
+   * "when did this row last change" - it moves for every write, so inferring a kick from it would
+   * read an invitation, a Welcome queue and a demotion as the same event. This column answers
+   * exactly one question: *is this row waiting on a re-add that a kick promised?*
+   *
+   * WHAT IT SEPARATES. A `pending` row with no queued Welcome has two opposite causes with identical
+   * footprints: a device `addMembersBulk` skipped for an invalid KeyPackage (never in the tree - the
+   * fix is in the inviter), and a device whose stale leaf was removed and whose re-add then threw
+   * (it WAS in the tree - the fix is wherever the Add failed, and nothing reported it, the failure
+   * being swallowed on a phone). `reportStrandedDeviceMemberships` could name the population and not
+   * the cause; this is the evidence it was missing.
+   *
+   * WRITTEN BY THE EVENTS THAT CHANGE THE ANSWER, and by nothing else. Set by the two kick endpoints
+   * (`kickStaleDevice`, `kickStaleUser`), the only things that reset a live membership. Cleared when
+   * a Welcome is queued for the device - the proof the re-add landed - and by either path that marks
+   * it `active`. NOT cleared by a demotion to `pending`, which is a step towards cleanup and
+   * promises no Add.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  kickedAt: Date | null;
+
   @CreateDateColumn()
   createdAt: Date;
 

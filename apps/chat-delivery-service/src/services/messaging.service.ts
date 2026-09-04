@@ -1746,12 +1746,19 @@ export class MessagingService {
     // invitation existed (bootstrap case: brand-new group, no pending record).
     // A plain UPDATE WHERE status='pending' would touch 0 rows in that case, leaving the
     // device without a record -> processPendingInvitations would incorrectly kick it.
+    // `kickedAt: null` IS THE PROOF A KICK WAS FOLLOWED THROUGH. A Welcome in the queue means the
+    // Add the kick promised actually landed, so the row stops being one the stranded report should
+    // accuse - it is now an ordinary device owed a delivery. Left set, every successful
+    // kick-and-re-add would be reported as a failed one for as long as the row stayed pending.
+    // `skipUpdateIfNoValuesChanged` still holds: on a row already pending with no kick recorded,
+    // this writes nothing.
     await this.deviceGroupRepo.upsert(
       {
         deviceId: targetDeviceId,
         groupId: safeGroupId,
         userId: deviceInfo.userId,
         status: 'pending' as const,
+        kickedAt: null,
       },
       {
         conflictPaths: ['deviceId', 'groupId'],
@@ -1813,8 +1820,9 @@ export class MessagingService {
     });
     const wasAlreadyActive = existing?.status === 'active';
 
+    // `kickedAt: null`: the device is IN, so nothing is owed to it and no kick is outstanding.
     await this.deviceGroupRepo.upsert(
-      { userId, deviceId, groupId, status: 'active' as const },
+      { userId, deviceId, groupId, status: 'active' as const, kickedAt: null },
       { conflictPaths: ['deviceId', 'groupId'] }
     );
     // Immediate routing: add to Redis set without waiting for a cache rebuild.

@@ -13,6 +13,27 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **An `addMember` that failed after a kick was reported NOWHERE, and the row it left looked exactly
+  like a different defect.** When a member finds a stale leaf it removes it from the MLS tree and
+  undertakes to Add the device back. If that Add throws, the failure is swallowed on the answering
+  device - a phone, whose log nobody reads - and server-side the row is byte-identical to the row of
+  a device whose KeyPackage `addMembersBulk` skipped and which was never in the tree at all. One
+  footprint, two opposite causes, two opposite fixes, and the hourly report could name the
+  population but not the cause.
+
+  `dm_device_group_memberships.kickedAt` is the evidence it was missing: a column written to answer
+  that one question, set by the two kick endpoints and cleared by the three writes that answer it the
+  other way - a Welcome queued (the re-add landed), and either path that marks the device `active`. A
+  demotion to `pending` does not clear it, being cleanup rather than a promise. It is deliberately
+  **not** a second `updatedAt`, which moves for every write and would read an invitation, a Welcome
+  queue and a demotion as the same event. `reportStrandedDeviceMemberships` now prints the two halves
+  apart: *never added* at WARN, and *kicked with no re-add* at **ERROR**, dated by the kick rather
+  than by the row, because the age that matters is how long the promise has been outstanding. The
+  write sites carry their own spec: a kick that forgot to stamp would make the ERROR half count zero
+  for ever and read as health, which is not a visible bug. It cannot be backfilled and is not, so the
+  first passes report the standing backlog as *never added* and the split becomes exact as the
+  population turns over.
+
 - **A group's external-join base fell one epoch behind and stayed there for ever, and the code said
   so in its own comment.** A base is what lets a device with no MLS state join a group, and only a
   member holding the tree can mint one - as a FOLLOW-UP to a commit, fire-and-forget:

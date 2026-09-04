@@ -1358,7 +1358,7 @@ client", never "clean on the server".
 
 ### P1 - a device asks for a Welcome for ever, and the member that answers RESETS the row that would have let it heal itself (measured on prod 2026-09-01)
 
-> **(A) AND (B) ARE FIXED AND MEASURED, 2026-09-04. (C) AND (D) ARE OPEN.** `pending` no longer decides anything on its own: the endpoint answers per row with
+> **ALL FOUR ARE FIXED, 2026-09-04. WHAT IS LEFT IS ONE MEASUREMENT ON PROD AFTER THE RELEASE THAT CARRIES THEM.** `pending` no longer decides anything on its own: the endpoint answers per row with
 > `welcomeQueued` and `addInFlight`, a device owed nothing serves itself an external-commit join and
 > clears its own seat. **The residual window (A) was not allowed to ship without is closed by
 > `addInFlight` - the group's `mls:addlock:<groupId>` held right now - and NOT by the inviter's own
@@ -1470,9 +1470,19 @@ that group cannot external-join until somebody commits into it.
   read-only publish by any member holding the tree, needs no lock, changes no epoch, and hands the
   requester back its ability to serve itself. `stale_base` is already classified at the throw; it
   wants its own action, not the shared fallback.
-- **(D) The failing `addMember` is reported NOWHERE.** It is swallowed on the answering device, and
-  server-side a `[KICK]` followed by no Welcome and no commit is a nameable population that no report
-  names. The hourly report already owns the neighbouring partition and is the natural home.
+- **(D) The failing `addMember` was reported NOWHERE - FIXED 2026-09-04.** It is swallowed on the
+  answering device (a phone), and server-side the row a failed re-add leaves is byte-identical to the
+  row of a device whose KeyPackage was skipped and which was never in the tree at all: one footprint,
+  two opposite causes, two opposite fixes. `dm_device_group_memberships.kickedAt` is the evidence the
+  report was missing - written by the two kick endpoints, cleared by the three writes that answer the
+  question the other way (a Welcome queued, or the device marked `active`), and NOT by a demotion,
+  which is cleanup and promises no Add. `reportStrandedDeviceMemberships` prints the halves apart:
+  *never added* at WARN, *kicked with no re-add* at **ERROR**, dated by the kick rather than by the
+  row. It is deliberately not a second `updatedAt`, which moves for every write. The write sites have
+  their own spec (`invitations.controller.kick-marker.spec.ts`, 5) because a kick that forgot to stamp
+  would make the ERROR half count zero for ever and read as health; the report's split is pinned by 4
+  more in `app.controller.stranded-memberships.spec.ts`, validated against two mutations. **It cannot
+  be backfilled**, so the first passes report the standing backlog as *never added*.
 
 **Two more, same session, lower severity but in the same seams:**
 
@@ -1501,12 +1511,16 @@ that group cannot external-join until somebody commits into it.
 - The manual UPDATE is the only hand-write performed; nothing was deleted, and the fourteen-day purge
   still owns those rows.
 
-**What closes this entry:** (D) alone, plus ONE measurement on prod after the release that carries
-this: the four stale bases at `activeEpoch` and `4f87267a` among them, taken with
-`SELECT ... FROM mls_group_info gi JOIN dm_groups g ...` and no hand-written UPDATE. (A), (B) and
-(C) landed 2026-09-04, (A) with the measurement this line asked for - a device reaching `active` by
-external join with no peer involved, taken twice. The cause of the skipped
-Add itself is the P2 immediately below, and the two want reading together.
+**What closes this entry: ONE measurement on prod after the release that carries all four.** The four
+stale bases at `activeEpoch`, `4f87267a` among them, taken with
+`SELECT ... FROM mls_group_info gi JOIN dm_groups g ...` and no hand-written UPDATE - and one reading
+of the hourly report's new ERROR arm, whose count is the first number anybody has for how often the
+re-add after a kick fails. (A), (B), (C) and (D) all landed 2026-09-04; (A) already carries the
+measurement this line asked for - a device reaching `active` by external join with no peer involved,
+taken twice - and (C) was verified end to end on the local estate, four bases armed one epoch behind
+and all four repaired within two seconds of a holder connecting. **Production is on `0.16.1`, two
+stables behind, so none of this is deployed yet.** The cause of the skipped Add itself is the P2
+immediately below, and the two want reading together.
 
 ### P2 - a device was given a roster seat and never a Welcome, and WHY its KeyPackage was skipped is unmeasured (measured on prod 2026-09-01)
 
@@ -1544,6 +1558,11 @@ longer a user-visible outage and this entry loses its user-facing half. **What i
 of its question**: a skip that cannot name its own cause. The heal being fast does not make the Add
 correct, and a device that external-joins every time is a device whose KeyPackage is being rejected
 every time with nobody counting.
+
+**THE POPULATION IS NOW EXACTLY THIS ENTRY'S, 2026-09-04.** The hourly report used to lump this
+cause together with a device whose leaf a member kicked and failed to re-add - same footprint,
+different fix. `kickedAt` separates them, so the WARN arm named *never added* is now this entry's
+population and nothing else's, and its count is the number a fix has to move.
 
 **Until the reason is typed, the skip is a count.** The rule that a skip printing a count cannot name
 its own cause applies exactly: `warnSkippedKeyPackages` prints ids, and the two causes it collapses -

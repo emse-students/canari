@@ -299,8 +299,17 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       });
 
       expect(res.accepted).toBe(true);
+      // `kickedAt: null` is part of the payload since 2026-09-04: activating a device answers
+      // "is a re-add still owed to it?" with no, and the stranded report reads that column to
+      // separate a device never added from one kicked and never re-added.
       expect(deviceGroupRepo.upsert).toHaveBeenCalledWith(
-        { userId: 'user-2', deviceId: 'device-new', groupId: 'group-1', status: 'active' },
+        {
+          userId: 'user-2',
+          deviceId: 'device-new',
+          groupId: 'group-1',
+          status: 'active',
+          kickedAt: null,
+        },
         { conflictPaths: ['deviceId', 'groupId'] }
       );
       expect(redis.sadd).toHaveBeenCalledWith('group:members:group-1', 'user-2:device-new');
