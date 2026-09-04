@@ -52,11 +52,32 @@
  *                                  through the tunnel, decided by `SITE`, never by a flag. Its own
  *                                  module because `ssh` is machine-agnostic and an ESTATE is not.
  *
+ * **THE ROWS ARE NO LONGER BESIDE THE ATOMS.** Since 2026-09-04 the ~114 row scripts live in
+ * `archive/` and only atoms remain at this root, so `ls` answers the question this file was written
+ * because a grep could not. Nothing was deleted; a row reaches a library that stayed behind by `../`.
+ * See `archive/README.md`.
+ *
  * **Bringing a client up**
  *   `startBrowser` `killBrowser`   `launch.mjs`   a Chrome profile IS a device; the profile lives
  *                                                 outside the work tree.
  *   `bun login.mjs --device W1`                  the two IdP paths: Authentik's service-account
  *                                                 flow (default) and the school's CAS (`--flow cas`).
+ *   `bun login.mjs --android`                     the same on the phone, ARMING what it needs -
+ *                                                 `--android` is `--device A1`, and it wakes,
+ *                                                 launches, foregrounds and forwards before it looks
+ *                                                 at anything. It answers the form in the phone's
+ *                                                 BROWSER first and touches the app only after the
+ *                                                 submit, because Android freezes the app while the
+ *                                                 form is in front. It ends on the session the app
+ *                                                 writes, never on a URL.
+ *   `useDevice('A1')`               `phone.mjs`   WHICH phone, when more than one is attached. A
+ *                                                 device selector that picks "the first" is silently
+ *                                                 wrong at two, so ambiguity throws; this and adb's
+ *                                                 own `ANDROID_SERIAL` are the two ways out.
+ *   `bun a1apk.mjs`                               build the debug APK, install it, prove the origin
+ *                                                 it points at - and it is the ONLY build that adds
+ *                                                 the `local-estate` capability, without which the
+ *                                                 phone refuses the estate it was pointed at.
  *   `bun pin.mjs --device W1`                    the encryption gate, in BOTH its shapes - the
  *                                                 returning "Deverrouiller" and the first-run
  *                                                 "Creer mon PIN" - and both keyboard shapes, the
