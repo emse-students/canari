@@ -57,12 +57,22 @@ fi
 # give up on the 503 above, so attempts are expensive; three of them spread over a couple of minutes
 # of backoff covers a blip, and a longer outage is not something a pull request should sit through.
 #
-# AND THE CALLER MAY SAY ONE, BECAUSE AN OUTAGE IS A PROPERTY OF THE REGISTRY, NOT OF THE DIRECTORY.
-# Canari audits FIVE trees in one job. With a budget that is purely per-directory, a registry that is
-# down costs five separate three-attempt discoveries of the same fact - fifteen `bun audit` calls,
-# each carrying bun's own multi-minute timeout, to learn one thing. *Never learn by failing what a
-# fact could have told you*: the first tree to come back with a 2 has established that npm is not
-# answering, and every caller in this repository hands that forward as `AUDIT_ATTEMPTS=1`.
+# `AUDIT_ATTEMPTS` IS A CALLER INPUT AND NOTHING IN ANY OF THE FOUR REPOSITORIES SETS IT, which is
+# a change from what this comment used to claim. It existed for one shape: Canari audited FIVE trees
+# in ONE sequential job, so a registry that was down cost five separate three-attempt discoveries of
+# the same fact - fifteen `bun audit` calls, each carrying bun's own multi-minute timeout, to learn
+# one thing. The first tree to answer 2 had already established that npm was not answering, and
+# handing that forward as `AUDIT_ATTEMPTS=1` spared the other four - *never learn by failing what a
+# fact could have told you*.
+#
+# ON 2026-09-04 THAT JOB BECAME FIVE PARALLEL ONES and the saving went with it. Parallel jobs cannot
+# tell each other anything, and no longer need to: what the shared budget bought was SEQUENTIAL time,
+# and five audits that overlap cost one audit however many of them meet a 503. The other three
+# repositories audit a single tree, so the budget was never theirs to share in the first place.
+#
+# The variable is still honoured, and deliberately: it is the one knob a caller has if a registry
+# outage ever needs to be discovered cheaply again. A default of three, reached by nobody passing
+# anything, is the whole of the current policy.
 ATTEMPTS="${AUDIT_ATTEMPTS:-3}"
 BACKOFF_BASE_S=20
 
