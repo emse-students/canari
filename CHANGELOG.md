@@ -13,6 +13,26 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A delivery that arrived twice accused BOTH channels at once, so the one shape that would be a
+  server defect read exactly like the three that are routine.** A message is offered by the live
+  socket and by the pending pull, and an acknowledgement cannot land before a pull already in
+  flight - so the same row legitimately reaches the client twice, is decrypted once and acknowledged
+  again. The seam that does that printed one sentence for every repeat, `the live frame and the pull
+  crossed`, whichever way round it had actually happened. It could therefore be counted and never
+  triaged: two campaign rows sat `PASS-DIRTY` on it for a day against a line nobody could explain or
+  fix. The channel was KNOWN at both call sites and thrown away one frame above the decision; it is
+  carried now, and the four combinations of channel and prior state say four different things. Three
+  are the ordinary crossing seen from one side or the other. The fourth - a LIVE frame repeating a
+  row this device has already acknowledged - is not a crossing at all, since the gateway publishes a
+  frame once at send and never replays the queue on connect, so it means one message was published
+  twice; it is the only one printed as a warning, and it has never been observed.
+
+- **A read watermark had three silent ways out, all of them in a debounce that had already zeroed
+  the pending mark.** Nothing retries after that, so what the device had read was lost for the peer,
+  which keeps showing the conversation unread until something else moves the mark - and one of the
+  three carried the comment `/* MLS not ready */`, asserting a cause nothing had checked. All three
+  now say what was lost and what follows from it.
+
 - **The Android client asked "can my ENGINE keep a cookie" when the question is also "can this
   server ISSUE one", so it was silently sessionless on every deployment that is not HTTPS.** The
   refresh credential travels in `X-Canari-Refresh` where the WebView cannot keep the cookie, and the

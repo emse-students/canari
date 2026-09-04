@@ -19,7 +19,7 @@
  * from one that passed, which is the worse of the two directions to be wrong in.
  */
 import { APP_TAB, awaitAppReady, awaitMessage, client, ensureConversation, evaluate, send, settledCount } from '../chat.mjs';
-import { connect, listTargets } from '../cdp.mjs';
+import { connect, listTargets, reloadAndWait } from '../cdp.mjs';
 import { gate, report, watch } from '../watch.mjs';
 import { mark, record } from '../results.mjs';
 import { PORTS, SITE, peerNameFor } from '../names.mjs';
@@ -30,7 +30,11 @@ const w2 = await client(PORTS.W2, APP_TAB);
 // Both clients are reloaded first, and this is not hygiene: a long-lived tab keeps the bundle it
 // loaded, so a page opened before a deploy runs the OLD code while a tab opened by this script runs
 // the new one. The first run after the WP-HIDDEN-1 deploy failed exactly that way.
-for (const cx of [w1, w2]) await cx.send('Page.reload');
+// `reloadAndWait`, not a reload followed by a poll: `awaitAppReady` is a page-side poll, and one
+// issued against the context this very reload is destroying is a race of this script's own making
+// (see `until` in `cdp.mjs`). The load event is a fact; the app being ready is then polled against a
+// context that exists.
+for (const cx of [w1, w2]) await reloadAndWait(cx);
 for (const cx of [w1, w2]) await awaitAppReady(cx);
 await ensureConversation(w1, peerNameFor('W1'));
 await ensureConversation(w2, peerNameFor('W2'));

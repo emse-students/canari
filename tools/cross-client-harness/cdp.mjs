@@ -263,14 +263,40 @@ export async function reloadAndWait(cx, { ignoreCache = false, timeoutMs = 20000
   throw new Error(`reloadAndWait: no Page.loadEventFired within ${timeoutMs}ms`);
 }
 
-/** Polls a page-side boolean until true. Returns the elapsed ms, or throws on timeout. */
+/**
+ * Polls a page-side boolean until true. Returns the elapsed ms, or throws on timeout.
+ *
+ * **A NAVIGATION IS A STATE OF THE PAGE, NOT A FAILURE OF THIS INSTRUMENT.** A poll that lands while
+ * an execution context is being replaced gets `Inspected target navigated or closed (-32000)`, and
+ * this used to turn straight into an `ERROR` verdict - a message naming a CDP condition, no
+ * location, and nothing about the check. TYPE-4 spent a dozen runs on it (2026-09-04) before the
+ * frames were carried: `armCut` reloaded the page and then polled `document.readyState` on the
+ * context that reload was tearing down. Reloads that no caller asked for produce the same thing -
+ * SvelteKit reloads a tab by itself when `version.json` moves, which `bundle.mjs` is entirely about.
+ *
+ * So a destroyed context COUNTS AS "not true yet" and the poll continues. Nothing is hidden by that:
+ * the deadline is unchanged, and a wait that ends in a timeout says how many navigations it saw, so
+ * a page reloading in a loop reads as exactly that rather than as a predicate that never held. What
+ * it must not become is a way to WAIT OUT a reload you issued yourself - `reloadAndWait` is the
+ * fact-based primitive for that, and it exists because polling across your own reload is a race you
+ * created.
+ */
 export async function until(cx, predicate, timeoutMs = 20000, stepMs = 60) {
   const t0 = Date.now();
+  let navigations = 0;
   while (Date.now() - t0 < timeoutMs) {
-    if (await evaluate(cx, `!!(${predicate})`)) return Date.now() - t0;
+    try {
+      if (await evaluate(cx, `!!(${predicate})`)) return Date.now() - t0;
+    } catch (e) {
+      if (!/navigated or closed/.test(String(e?.message ?? e))) throw e;
+      navigations += 1;
+    }
     await new Promise((r) => setTimeout(r, stepMs));
   }
-  throw new Error(`until() timed out after ${timeoutMs}ms: ${predicate}`);
+  throw new Error(
+    `until() timed out after ${timeoutMs}ms: ${predicate}` +
+      (navigations ? ` (the target navigated or closed under ${navigations} of the polls)` : '')
+  );
 }
 
 /**

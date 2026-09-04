@@ -71,7 +71,14 @@ import {
   until,
 } from '../chat.mjs';
 import { armCut, cutHard } from './net.mjs';
-import { gate, ignoringNavigation, ignoringOfflineCut, report, watch } from '../watch.mjs';
+import {
+  gate,
+  ignoringExpectedLog,
+  ignoringNavigation,
+  ignoringOfflineCut,
+  report,
+  watch,
+} from '../watch.mjs';
 import { errorDetail, mark, markSeq, record } from '../results.mjs';
 import { OWNER_NAME, PEER_NAME, PORTS } from '../names.mjs';
 
@@ -291,6 +298,24 @@ async function a1SameAccountAs(w1) {
   return probe.ok ? { ok: true, a1: probe.cx } : probe;
 }
 
+/**
+ * THE ONE LINE THESE TWO ROWS MEET AND NEITHER CAUSES, named narrowly enough to still fail on the
+ * shape that would be a defect.
+ *
+ * A delivery is offered by two channels - the live socket and the pending pull - and an
+ * acknowledgement cannot land before a pull already in flight, so a row this device drained from
+ * the socket can be listed by a pull that crossed its ack. The client deduplicates at the one seam
+ * both channels share, decrypts once, and acknowledges again so the row cannot be left pending:
+ * nothing is wrong, and `BaseMlsService.admitDelivery` says which side was late in the line itself.
+ *
+ * THE NEEDLE IS THE PULL'S HALF OF THE SENTENCE, NOT `arrived twice`. The same seam prints a
+ * WARNING for the fourth combination - a LIVE frame repeating a row already acknowledged - which no
+ * crossing explains and which would mean the server published one message twice. `arrived twice`
+ * would forgive that too, which is exactly the reader-learns-to-skip failure the disposition exists
+ * to avoid. Measured on READ-2 and READ-4, 2026-09-04: one per run, always the pull's half.
+ */
+const CROSSED_PULL = 'the pull listed a row';
+
 // ─── READ-2: the SAME user's other device clears too ─────────────────────────────────────────────
 async function read2() {
   const w1 = await client(W1);
@@ -331,7 +356,7 @@ async function read2() {
   const gated = gate(ok ? 'PASS' : 'FAIL', {
     // W1 navigated twice in-window (`/chat`, then the DM it reads). A1 is only clicked and W2
     // navigated before its window opened, so neither is forgiven anything.
-    W1: ignoringNavigation(await report(oW1)),
+    W1: ignoringExpectedLog(ignoringNavigation(await report(oW1)), [CROSSED_PULL]),
     W2: await report(oW2),
     A1: await report(oA1),
   });
@@ -493,7 +518,7 @@ async function read4() {
   const ok = readMs !== null && readMs <= 6000;
   // Two in-window navigations on W1 (`/chat`, then the DM), as in READ-1.
   const gated = gate(ok ? 'PASS' : 'FAIL', {
-    W1: ignoringNavigation(await report(oW1)),
+    W1: ignoringExpectedLog(ignoringNavigation(await report(oW1)), [CROSSED_PULL]),
     W2: await report(oW2),
   });
   record('READ-4', gated.verdict, {
