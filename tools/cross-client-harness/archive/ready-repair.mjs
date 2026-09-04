@@ -9,6 +9,7 @@
 import { spawn } from 'node:child_process';
 import { clearOverlays, client, evaluate } from '../chat.mjs';
 import { ORIGIN, PORTS } from '../names.mjs';
+import { HARNESS_ROOT, requireScript } from '../scriptpath.mjs';
 import { MAX_REPAIR_PASSES, READY_EXPR, isReady, stateOf } from './ready-probe.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -17,13 +18,20 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * Runs one of this rig's own scripts to completion, resolving to its exit code.
  *
  * `stdio: 'ignore'` because the caller narrates the repair itself; the script's own output would
- * interleave with a phase's report and say the same thing twice. The `cwd` dance strips the leading
- * slash a `file:` URL puts before a Windows drive letter.
+ * interleave with a phase's report and say the same thing twice.
+ *
+ * **THE PATH IS RESOLVED, AND IT USED TO BE A BARE NAME AGAINST THIS DIRECTORY.** `pin.mjs` lives at
+ * the harness root and this file lives in `archive/`, so the spawn failed with `Module not found`
+ * every single time - and `stdio: 'ignore'` swallowed the message while nothing read the exit code.
+ * The preflight therefore printed `fix PIN gate is up - unlocking` four times, changed nothing, and
+ * declared the client NOT FIT TO MEASURE. Measured 2026-09-04 on W1, W2 and A1, while `bun pin.mjs
+ * --device <d>` typed in the same PIN by hand in under two seconds.
  */
 export const runScript = (args) =>
   new Promise((resolve) => {
-    const c = spawn(process.execPath, args, {
-      cwd: new URL('.', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'),
+    const [name, ...rest] = args;
+    const c = spawn(process.execPath, [requireScript(name), ...rest], {
+      cwd: HARNESS_ROOT,
       stdio: 'ignore',
     });
     c.on('close', resolve);
@@ -150,7 +158,11 @@ export async function bringToReady(d, { log = console.log } = {}) {
       deadlineMs = 20000;
     } else {
       log(`  fix  ${d.padEnd(3)} PIN gate is up - unlocking`);
-      await runScript(['pin.mjs', '--device', d]);
+      // THE EXIT CODE IS READ, AND NOT READING IT IS WHAT MADE THE BREAKAGE ABOVE INVISIBLE. A
+      // repair that could not run is not the same fact as a repair that ran and did not help: the
+      // first accuses this file, the second accuses the client. Saying which costs one line.
+      const code = await runScript(['pin.mjs', '--device', d]);
+      if (code !== 0) log(`  FAIL ${d.padEnd(3)} pin.mjs exited ${code} - the repair did not run`);
       deadlineMs = 10000;
     }
     s = (await settle(d, deadlineMs)) ?? s;

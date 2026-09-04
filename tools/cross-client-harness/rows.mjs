@@ -40,6 +40,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PHASES } from './checks.mjs';
 import { instrumentShaOf } from './instrument.mjs';
+import { findScript } from './scriptpath.mjs';
 import { STATE_DIR } from './names.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -307,9 +308,10 @@ if (notGreen.length) {
 // The directories are searched in order and the FIRST hit wins, which is safe because a name is
 // unique across them - two runners with one name would be a fault of its own, and `inventory.mjs`
 // is what would catch it.
-const RUNNER_DIRS = [HERE, join(HERE, 'archive')];
-const runnerPath = (name) =>
-  RUNNER_DIRS.map((d) => join(d, name)).find((f) => existsSync(f)) ?? null;
+// `findScript` rather than a fourth copy of this search: the same "a script moved to archive/" bug
+// has now been fixed in four places, so the directories live in `scriptpath.mjs` and nowhere else.
+// `null` is the right answer HERE - a runner that no longer exists is a fact about the ledger.
+const runnerPath = findScript;
 
 // AND THE SAME QUESTION ABOUT WHAT THE RUNNER MEASURES **WITH**, WHICH IS A DIFFERENT QUESTION.
 // `checkSha` answers "did this runner change". It said nothing on 2026-09-04 when `openConversation`

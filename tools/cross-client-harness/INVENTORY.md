@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-47 scripts.
+48 scripts.
 
 | script | what it is |
 |---|---|
@@ -60,6 +60,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `reload.mjs` | Reloads the web clients onto the CURRENTLY DEPLOYED bundle, and proves it took. |
 | `results.mjs` | Append-only result log for the campaign. |
 | `rows.mjs` | THE BOARD AND THE EVIDENCE, RECONCILED - which rows nothing has ever answered, and which answers |
+| `scriptpath.mjs` | WHERE ONE OF THIS RIG'S SCRIPTS ACTUALLY LIVES, resolved once instead of guessed four times. |
 | `send.mjs` | Sends one message from one client, and ends when that client's own pane shows it. |
 | `serial.mjs` | WHICH PHONE adb SHOULD TALK TO - one resolver, and it REFUSES TO GUESS between two of them. |
 | `shot.mjs` | Saves a PNG of a client, so a layout claim is LOOKED AT rather than inferred. |
@@ -224,4 +225,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-163 scripts in total.
+164 scripts in total.
