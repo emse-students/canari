@@ -217,6 +217,44 @@ export function classifyVersionState(state) {
 }
 
 /**
+ * Is this version ALREADY an item of a review submission?
+ *
+ * WHY THIS IS NOT A QUESTION FOR THE API, AND ASKING IT COST A RELEASE. `POST
+ * /v1/reviewSubmissionItems` answers 409 `appStoreVersion with id ... was already added to this
+ * reviewSubmission` when the version is in one, so the call has to be SKIPPED rather than retried.
+ * The first version of this asked Apple for the submission's items and compared
+ * `relationships.appStoreVersion.data.id` - a linkage a JSON:API collection does not carry unless
+ * the request asks for it. Every item therefore read `undefined`, the comparison was false for all
+ * of them, and the POST went out anyway. `0.16.3` died there on 2026-09-04, ONE CALL FROM DONE: the
+ * slot had been renamed, the build attached and the notes written, and the production estate stayed
+ * on the previous release because it is gated on both stores.
+ *
+ * THE DISCRIMINATOR WAS ALREADY IN HAND. `READY_FOR_REVIEW` *means* the version sits in a review
+ * submission - that is the state's whole definition, it is what `chooseVersionSlot` had just read
+ * one screen earlier, and renaming a version does not detach it. *Never learn by failing what a
+ * fact could have told you: carry the discriminator to where the decision is made, from where it is
+ * already KNOWN.* The items list is still consulted, with the linkage the query was missing,
+ * because a state is a summary and the list is the direct question - either one saying yes is
+ * enough, since the failure being avoided is a duplicate POST.
+ *
+ * @param {{state?: string, versionId?: string,
+ *          items?: Array<{relationships?: {appStoreVersion?: {data?: {id?: string}}}}>}} input
+ * @returns {{already: boolean, how: string}}
+ */
+export function versionIsAlreadySubmissionItem({ state, items, versionId }) {
+  if (state === 'READY_FOR_REVIEW')
+    return {
+      already: true,
+      how: 'its state is READY_FOR_REVIEW, which is what sitting in one means',
+    };
+  const listed = (items ?? []).some(
+    (i) => i?.relationships?.appStoreVersion?.data?.id === versionId
+  );
+  if (listed) return { already: true, how: 'the submission lists it among its items' };
+  return { already: false, how: '' };
+}
+
+/**
  * Which App Store version slot should this release use, given EVERY version the app has?
  *
  * WHY THIS EXISTS, AND IT COST A RELEASE. The first version of this script asked Apple *"is there
@@ -554,8 +592,14 @@ async function main() {
 
   let version = null;
 
+  // THE STATE THE SLOT WAS FOUND IN IS CARRIED FORWARD, because it answers a question asked much
+  // further down: whether this version is already an item of a review submission. It stays
+  // `undefined` for a version this run creates, which cannot be in one.
+  let slotState;
+
   if (slot.action === 'use') {
     version = { id: slot.id };
+    slotState = slot.state;
     log(`  version ${versionString} exists and is editable (${slot.state})`);
   } else if (slot.action === 'rename') {
     if (dryRun) {
@@ -569,6 +613,9 @@ async function main() {
       data: { type: 'appStoreVersions', id: slot.id, attributes: { versionString } },
     });
     version = { id: slot.id };
+    // A RENAME DOES NOT DETACH A VERSION FROM ITS SUBMISSION, so the state it was found in still
+    // describes it. Losing this is precisely what sent a duplicate item POST on 2026-09-04.
+    slotState = slot.state;
     log(`  renamed the editable version ${slot.from} (${slot.state}) to ${versionString}`);
   } else {
     if (dryRun) {
@@ -642,13 +689,21 @@ async function main() {
     log(`  created review submission ${submission.id}`);
   }
 
-  // Adding an item that is already in the submission is an error, not a no-op, so ask first.
-  const items = await api('GET', `/v1/reviewSubmissions/${submission.id}/items?limit=50`);
-  const already = (items?.data ?? []).some(
-    (i) => i.relationships?.appStoreVersion?.data?.id === version.id
+  // Adding an item that is already in the submission is an error, not a no-op, so ask first - and
+  // `include=appStoreVersion` is what makes the answer readable. Without it the collection carries
+  // no `data` linkage for that relationship, every comparison reads `undefined`, and the check
+  // answers "no" for a version that is plainly there.
+  const items = await api(
+    'GET',
+    `/v1/reviewSubmissions/${submission.id}/items?include=appStoreVersion&limit=50`
   );
-  if (already) {
-    log('  the version is already an item of this submission');
+  const seen = versionIsAlreadySubmissionItem({
+    state: slotState,
+    items: items?.data,
+    versionId: version.id,
+  });
+  if (seen.already) {
+    log(`  the version is already an item of this submission - ${seen.how}`);
   } else {
     await api('POST', '/v1/reviewSubmissionItems', {
       data: {

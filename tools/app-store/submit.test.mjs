@@ -16,13 +16,14 @@
  * Run: node tools/app-store/submit.test.mjs
  */
 
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   chooseVersionSlot,
   classifyBuildState,
   classifyVersionState,
+  versionIsAlreadySubmissionItem,
   readWhatsNew,
   mintToken,
   shouldRetry,
@@ -210,6 +211,88 @@ try {
 // THE ARM THAT WOULD BREAK EVERY FUTURE RELEASE IS THE FIRST ONE BELOW: every past release sits in
 // `READY_FOR_SALE` for ever, so counting terminal versions as occupants would refuse every release
 // from now on, and the refusal would look exactly like a correct one.
+process.stdout.write('\nis the version already an item of a review submission?\n');
+{
+  const item = (id) => ({ relationships: { appStoreVersion: { data: { id } } } });
+
+  // THE ONE THAT COST 0.16.3, AND IT IS THE STATE THAT ANSWERS IT. A version in READY_FOR_REVIEW is
+  // by definition in a submission, and that is known before any list is fetched - which is the
+  // point: the list WAS fetched, could not be read, and the duplicate POST went out anyway.
+  eq(
+    'READY_FOR_REVIEW alone proves it is an item, with no list at all',
+    versionIsAlreadySubmissionItem({ state: 'READY_FOR_REVIEW', items: [], versionId: 'v' })
+      .already,
+    true
+  );
+  eq(
+    'and the reason is reported, because the log is what a human reads next',
+    versionIsAlreadySubmissionItem({ state: 'READY_FOR_REVIEW', versionId: 'v' }).how.includes(
+      'READY_FOR_REVIEW'
+    ),
+    true
+  );
+
+  // THE DIRECT QUESTION STILL COUNTS, for a state that does not imply membership.
+  eq(
+    'a listed item proves it too',
+    versionIsAlreadySubmissionItem({
+      state: 'PREPARE_FOR_SUBMISSION',
+      items: [item('other'), item('v')],
+      versionId: 'v',
+    }).already,
+    true
+  );
+  eq(
+    'a submission holding only OTHER versions is not this one',
+    versionIsAlreadySubmissionItem({
+      state: 'PREPARE_FOR_SUBMISSION',
+      items: [item('other')],
+      versionId: 'v',
+    }).already,
+    false
+  );
+
+  // THE EXACT SHAPE OF THE DEFECT: the linkage a JSON:API collection omits unless the query asks
+  // for it. Every item reads `undefined`, so the list can prove nothing - and the state must.
+  const blind = [{ relationships: { appStoreVersion: {} } }, { relationships: {} }, {}];
+  eq(
+    'items whose relationship carries no data cannot prove membership',
+    versionIsAlreadySubmissionItem({
+      state: 'PREPARE_FOR_SUBMISSION',
+      items: blind,
+      versionId: 'v',
+    }).already,
+    false
+  );
+  eq(
+    'but the same blind list with a READY_FOR_REVIEW state still answers correctly',
+    versionIsAlreadySubmissionItem({ state: 'READY_FOR_REVIEW', items: blind, versionId: 'v' })
+      .already,
+    true
+  );
+
+  // A version this run CREATED carries no state and can be in no submission.
+  eq(
+    'a freshly created version is in no submission',
+    versionIsAlreadySubmissionItem({ state: undefined, items: [], versionId: 'v' }).already,
+    false
+  );
+  eq(
+    'and a missing item list is not permission to assume membership',
+    versionIsAlreadySubmissionItem({ state: 'PREPARE_FOR_SUBMISSION', versionId: 'v' }).already,
+    false
+  );
+
+  // THE REQUEST IS ASSERTED TOO, because the fix is half a decision and half a query: a check that
+  // reads a linkage the request never asked for is the defect, not the comparison.
+  const src = readFileSync(new URL('./submit.mjs', import.meta.url), 'utf8');
+  eq(
+    "the submission's items are fetched WITH the appStoreVersion linkage included",
+    src.includes('/items?include=appStoreVersion'),
+    true
+  );
+}
+
 process.stdout.write('\nwhich version slot does this release belong in?\n');
 {
   const V = (versionString, appStoreState, id) => ({
