@@ -1722,6 +1722,59 @@ five rows then reported that a wiped profile does not publish - a phantom produc
 this file overnight. `newdevice.mjs` now asserts the account has a slot BEFORE it wipes anything, and
 purges the id each mint abandons.
 
+### P1 - a client on the LOCAL estate says the roster and the tree disagree, and it cannot send at all (measured 2026-09-04)
+
+**THE CLASS IS REPRODUCING, AND THIS TIME A CLIENT SAYS SO IN ITS OWN WORDS.** The entry below asks
+whether a stale seat leaves a LEAF behind and notes that no server query can answer it. On the LOCAL
+estate, W1 now answers it out loud - the DM group `2bd5add9-2a1b-4b25-829b-4114146c3ab5`:
+
+```
+POST /api/mls/send -> 403
+[OUTBOX] REFUSED by the server: this device holds no leaf in 2bd5add9... while the local MLS
+         state says it is a member - the roster and the tree disagree, and only a Welcome or an
+         external commit lifts it
+SenderNotActiveError: This device holds no leaf in group 2bd5add9-2a1b-4b25-829b
+```
+
+**W1 cannot send anything into that DM.** Four entries sit in its outbox, two at attempt 6 backing
+off ~50 s. `queued_message` has no row for any of them, so nothing reached the server. The app
+renders the bubble optimistically, so **the screen shows a conversation that looks fine.**
+
+**PROVENANCE: MOST LIKELY SELF-INFLICTED, AND THAT IS THE HONEST READING.** A PIN reset was performed
+on A1 at 15:32 the same day (authorised; the accounts are throwaway). A reset re-keys the ACCOUNT, and
+W1 kept a device identity minted under the old one - so W1's local MLS state still claims membership
+while the tree the server holds no longer carries its leaf. That is exactly the sentence the client
+prints. **This entry therefore does NOT establish a spontaneous product defect**, and must not be
+cited as one.
+
+I got this wrong first and the user corrected it. I had checked W1 after the reset, seen no PIN gate
+and an `mls_device_id` present, and concluded "the risk did not hold" - **I measured the absence of a
+gate, not the validity of the key.** A client whose persisted device key is stale shows no gate at
+all: `canari_device_key_persist` is a five-character flag and the key material is in IndexedDB, so
+nothing on the surface distinguishes a live device from a dead one. **"No gate" is not "healthy", and
+the only thing that tells them apart is trying to send.**
+
+**The rule that leaves:** a PIN reset invalidates EVERY OTHER DEVICE on that account, silently, and
+the campaign's fixture step must be redone for all of them rather than for the device that was reset.
+
+**What it already proves regardless:** the product's own diagnosis names the remedy - *"only a Welcome
+or an external commit lifts it"* - and **nothing lifted it**, across at least six retries and several
+minutes. That is the same shape as the healing P1 above: a client that knows exactly what it needs and
+never gets it. Read with [the Welcome livelock](#p1---a-device-asks-for-a-welcome-for-ever-and-the-member-that-answers-resets-the-row-that-would-have-let-it-heal-itself-measured-on-prod-2026-09-01).
+
+**A FULL PAGE RELOAD DOES NOT LIFT IT EITHER** (measured 2026-09-04, at the user's suggestion - it was
+the obvious thing to try and it deserved measuring rather than assuming). W1 was reloaded, came back on
+`/chat` with no gate, and the very next send was refused with the same 403 and the same sentence. So
+the state survives a re-mount and a fresh fetch of the client's MLS state: **whatever recovery exists
+is not on the boot path**, which removes the cheapest explanation - "it just needed a restart" - and
+means a user meeting this has no self-service way out. The conversation looks entirely normal on
+screen the whole time.
+
+**It is also the first thing the new `send.mjs` atom caught**, and only after being fixed twice: its
+first post-condition was the sender's own pane (which renders optimistically, so it passed on a
+refused message), and its second read the response in the same tick the request was sent (so the
+status was `pending` and it passed again). It now waits for the answer and exits 1 on a 4xx.
+
 ### P1 - the placeholder is GONE from prod; what it may have left in the MLS TREE is not answered
 
 **The defect, its cause, the guards of 2026-08-28 and the hand cleanup of 2026-08-30 - with every

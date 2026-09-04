@@ -14,8 +14,8 @@ import { accounts as readAccounts } from './accounts.mjs';
 import { activate, connect, evaluate, listTargets, realClick, until } from './cdp.mjs';
 import { declineBiometricOffer } from './chat.mjs';
 import { GATE_EXPR } from './gate-probe.mjs';
-import { ACCOUNT_OF, PORTS } from './names.mjs';
-import { ensure, useDevice } from './phone.mjs';
+import { PORTS } from './names.mjs';
+import { armIfPhone, resolveDevice } from './device.mjs';
 
 const argv = process.argv.slice(2);
 const opt = (name, fallback) => {
@@ -24,48 +24,28 @@ const opt = (name, fallback) => {
 };
 const has = (name) => argv.includes(`--${name}`);
 
-// `--android` IS `--device A1`, and it arms the phone, exactly as `login.mjs` does. An atom that
-// needs a forward the caller was expected to have made by hand is not an atom, and the two scripts
-// answering the same phone must not disagree about how it is reached.
-const android = argv.includes('--android');
-const spelt = opt('device', null);
-if (android && spelt && spelt !== 'A1') {
-  throw new Error(`--android IS --device A1, so --device ${spelt} contradicts it`);
-}
-
-// `--device W1` is the form to prefer: it fixes the port AND the account together, from the one
-// place that knows which is which. `--port`/`--account` still work for a one-off, but nothing stops
-// them disagreeing - and a mismatched pair types the other account's PIN and blames the PIN.
-const device = android ? 'A1' : spelt;
-if (device && !PORTS[device]) throw new Error(`unknown device ${device} - known: ${Object.keys(PORTS).join(' ')}`);
-const port = Number(opt('port', device ? PORTS[device] : 9223));
-const forPort = Object.keys(PORTS).find((d) => PORTS[d] === port);
-const account = opt('account', device ? ACCOUNT_OF[device] : ACCOUNT_OF[forPort]);
+// ONE RESOLVER FOR EVERY ATOM. This block was a COPY of `login.mjs`'s, written an hour after it -
+// the duplication the rig is being cleaned of, happening live. `device.mjs` owns it now, so the two
+// commands that answer the same phone cannot drift about which phone that is.
+const target = resolveDevice(argv, { defaultPort: PORTS.W2 });
+const { port, account } = target;
 if (!account) throw new Error(`no account known for port ${port} - pass --device or --account`);
+
 const accounts = readAccounts();
 const pin = opt('value', accounts[account]?.pin);
 if (!pin) throw new Error(`no PIN for account ${account}`);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// THE PHONE IS ARMED BEFORE IT IS ASKED ANYTHING - same ladder as `login.mjs`, same reason: the
-// devtools socket carries the app's pid, so a relaunch or a reinstall invalidates the forward, and a
-// backgrounded WebView keeps its socket listed while answering nothing. `A` is a phone, `W` is a
-// Chrome profile.
-const isPhone = /^A\d+$/.test(device ?? '');
-if (isPhone) {
-  const bound = useDevice(device);
-  console.log(`[pin:${account}] device ${device} -> ${bound}`);
-  const up = await ensure({ port, timeoutMs: 10_000 });
-  if (!up.ok) throw new Error(`the phone is not measurable: ${up.reason}`);
-  console.log(`[pin:${account}] phone armed over ${up.how}, app pid ${up.pid}, CDP answering on ${port}`);
-}
+await armIfPhone(target, `pin:${account}`);
 
 const wanted = opt('match', null);
 const targets = await listTargets(port);
-const target = wanted ? targets.find((t) => t.url.includes(wanted) || t.title.includes(wanted)) : targets[0];
-if (!target) throw new Error(`no target matching ${wanted}; have: ${targets.map((t) => t.url).join(' | ')}`);
-const cx = connect(target.webSocketDebuggerUrl);
+// `pageTarget`, not `target`: the resolved DEVICE above already owns that name, and two different
+// things sharing one is how the wrong one gets read.
+const pageTarget = wanted ? targets.find((t) => t.url.includes(wanted) || t.title.includes(wanted)) : targets[0];
+if (!pageTarget) throw new Error(`no target matching ${wanted}; have: ${targets.map((t) => t.url).join(' | ')}`);
+const cx = connect(pageTarget.webSocketDebuggerUrl);
 await cx.ready;
 await cx.send('Runtime.enable');
 

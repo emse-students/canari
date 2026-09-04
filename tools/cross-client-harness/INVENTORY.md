@@ -12,7 +12,7 @@ existed. Search this file first.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. Nothing here takes a verdict. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-41 scripts.
+44 scripts.
 
 | script | what it is |
 |---|---|
@@ -29,6 +29,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `debris.mjs` | * THE ONE ALLOWLIST OF THROWAWAY GROUP NAMES, shared by every sweep that may delete one. |
 | `deploy.mjs` | * WAS PRODUCTION REDEPLOYED WHILE THE CHECK WAS RUNNING? - the one cause of transport failure that |
 | `device-census.mjs` | * THE PURE HALF OF THE DEVICE CENSUS - the SQL text, and every function that turns one of its rows |
+| `device.mjs` | * WHICH CLIENT AN ATOM IS ABOUT, resolved once, in one place. |
 | `devices.mjs` | * THE DEVICE CENSUS - every device the platform knows, with its runtime, OS, app version, owner, |
 | `estate.mjs` | * WHICH ESTATE A QUERY IS ABOUT, DERIVED FROM THE ONE CONSTANT THAT DECIDES WHERE THE CAMPAIGN RUNS. |
 | `gate-probe.mjs` | * The ONE expression that answers "is the encryption PIN gate on screen". |
@@ -47,9 +48,11 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `phone.mjs` | * The phone, as seen from a check: adb, app lifecycle, notifications, and the WebView. |
 | `pin.mjs` | * Enters the encryption PIN in the web unlock modal, over CDP. |
 | `purge-devices.mjs` | * Deletes NAMED devices of an account, through the real UI. |
+| `recv.mjs` | * Waits for one message to ARRIVE on one client, and ends on the bubble rather than on a clock. |
 | `reload.mjs` | * Reloads the web clients onto the CURRENTLY DEPLOYED bundle, and proves it took. |
 | `results.mjs` | * Append-only result log for the campaign. |
 | `rows.mjs` | * THE BOARD AND THE EVIDENCE, RECONCILED - which rows nothing has ever answered, and which answers |
+| `send.mjs` | * Sends one message from one client, and ends when that client's own pane shows it. |
 | `shot.mjs` | Saves a PNG screenshot of a client, so a layout claim is looked at rather than inferred. |
 | `srvlog.mjs` | * THE THIRD OBSERVER: production's own logs, classified the way the browser's are. |
 | `ssh.mjs` | * THE ONE WAY THIS HARNESS REACHES PRODUCTION. |
@@ -183,4 +186,4 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 ---
 
-155 scripts in total.
+158 scripts in total.
