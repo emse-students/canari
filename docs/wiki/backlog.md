@@ -759,6 +759,20 @@ the product - the exact "instrument answering about itself while reading as an a
 application" failure `estate.mjs` was written for. **Re-run `pin.mjs`/`login.mjs` before any long
 phone row, and do not record a session-persistence verdict for A1 from the local estate.**
 
+**IT IS WORSE THAN "PERSISTENCE ROWS", MEASURED AGAIN 2026-09-04 20:10.** The session does not
+merely fail to survive a long row - it dies before the device has REGISTERED. `bun login.mjs
+--android` reported `session held: true` and landed on `/posts`; `bun pin.mjs --android` answered the
+gate in 643 ms and the feed rendered. Minutes later `key_package` held rows for the owner's two `web-`
+devices and NONE for the phone, `dm_device_group_memberships` likewise, the phone's conversation list
+read `Aucune discussion` with zero tiles, and the next probe found it back on `/login` having logged
+itself out in silence - its console produced not one line in a 12 s window.
+
+So a phone with no key package can be added to no group, which means **every `+A1` row is blocked,
+not only the ones about session lifetime**: MSG-2, MSG-5, MSG-8 and MSG-8b all need a conversation on
+a device that never gets one. The login and the PIN are not the precondition; a device identity
+surviving long enough to be published is. Nothing on the local estate can supply that while the
+cookie branch is `Lax`, so those rows wait for an HTTPS-bearing estate rather than for another login.
+
 **NOT a production defect as far as this measurement goes, and it must not be written up as one.**
 Production and `dev.canari-emse.fr` are HTTPS, take the `none`+`Secure` branch, and that is the
 branch the mobile flow was designed for. Nothing here re-verified prod, so the honest claim is about

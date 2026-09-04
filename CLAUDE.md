@@ -231,10 +231,11 @@ noticing. Order = priority. Detail lives where the link says. Defect stories are
 rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
 [cross-client-testing](docs/wiki/cross-client-testing.md).
 
-1. **THE CAMPAIGN RESTARTS FROM ZERO** - **the PHONE is no longer a blocker (2026-09-04)**: it logs
-   in end to end with `bun login.mjs --android`, and its APK reaches the local estate now that
-   `local-estate` exists. What is left is the two Chrome profiles and the venue fixtures, in the
-   order [resume](docs/wiki/cross-client-campaign-resume.md) gives.
+1. **THE CAMPAIGN RUNS AGAIN: RUNG 1 IS 9/13 PASS** (2026-09-04); `bun venue.mjs` asserts the venue
+   to the DELIVERY roster, not just `channel_members`. The four open rows are `+A1`, and **"the
+   phone logs in" IS NOT THE TEST**: it logs in, answers its PIN, then logs itself out before
+   publishing a key package, so it joins no group and lists nothing - the estate's `Lax` cookie
+   branch ([backlog](docs/wiki/backlog.md)). Rung 2 next.
 2. **P1 - a PLACEHOLDER held a member's seat**; whether a LEAF is left in the MLS tree only a
    member's CLIENT can say. [backlog](docs/wiki/backlog.md#p1---the-placeholder-is-gone-from-prod-what-it-may-have-left-in-the-mls-tree-is-not-answered).
 3. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - **ONE merge mechanism
