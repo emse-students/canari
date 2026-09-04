@@ -2963,6 +2963,47 @@ bubble-helper entry above does. The duplication costs nothing while it is identi
 the day one copy is fixed and ten are not, which is the shape `recon.mjs`'s first-database bug already
 had. So this waits for the same wholesale moment: convert all eight, re-run the phases together.
 
+### P1 - "Recuperer mes messages" is INERT: the only way back for a locked-out user makes no request and logs nothing (measured 2026-09-04)
+
+When a client's vault material is older than the account's `pin_verifier`, the unlock modal refuses
+with *"Votre PIN a ete change sur un autre appareil. Recuperez vos messages avec votre ancien PIN."*
+and offers a recovery form: a link that switches the modal into recovery mode, then a `type=submit`
+button reading `Recuperer mes messages`. **That button does nothing at all.**
+
+Measured on W1, local estate, build 0.16.3, with the observer attached across the click:
+
+| Read | Value |
+| --- | --- |
+| button present, `type=submit`, inside a `<form>` | yes |
+| `button.disabled` | `false` |
+| PIN field length at click | 6 |
+| HTTP requests after the click (12 s window) | **0** |
+| console lines after the click | **0** |
+| dialog afterwards | unchanged, same refusal text |
+
+Tried with two different PINs - the current one and the pre-reset one recovered from the older
+credentials file - with identical results, which is what argues the handler is not running rather
+than that a PIN was wrong: a rejected PIN would have to reach the server to be rejected, and nothing
+reached it.
+
+**Why this is P1 rather than P2.** It is the ONLY route back for a user whose PIN was re-registered
+elsewhere, and that state arrives without warning (see the sibling entry above: an already-unlocked
+client keeps working for hours and discovers it at its next unlock). The user is told exactly what to
+do, does it, and the application does not respond - no error, no spinner, no request. The remaining
+control is `PIN oublie ?`, which is the RESET, so an inert recovery button turns "your messages are
+recoverable" into "lose your history" for anyone who does not know the difference.
+
+**What is not yet established, and must be before a fix is written.** Whether the click reaches the
+handler at all - `realClick` verified a stable hit test on the tagged element, so the click landed on
+it, but a handler that returns early is indistinguishable here from one that never ran BECAUSE
+NOTHING IS LOGGED. That silence is itself against the standing rule that every branch logs and every
+swallowed branch logs loudest, so the first change is a log line at the entry of the recovery
+submit - after which one more click settles which of the two it is.
+
+**It cost the campaign W1.** That profile is locked out as of 2026-09-04 20:20 and no row needing it
+can run until it is either recovered or re-minted. Re-minting is not free: it is a DEVICE, and
+`newdevice.mjs` re-registers the verifier again, which stranded W1 in the first place.
+
 ### P2 - re-registering the PIN verifier strands every other client SILENTLY, and only its next unlock finds out (measured 2026-09-04)
 
 `pin_verifier` holds ONE row per user - verifier, salt, `registeredAt` - and minting a fresh device
