@@ -250,8 +250,25 @@ no longer declares).
 3. **Keep both declared and update those two directories deliberately**, which is the state today
    minus the silence. It needs a named trigger, because "somebody remembers" is not a mechanism: a
    scheduled job that runs `cargo update --dry-run` in `frontend/src-tauri` and opens an issue, or
-   the release checklist doing it before each mobile build. `cargo audit` already runs in CI, so a
-   VULNERABILITY there is visible; a routine bump is not.
+   the release checklist doing it before each mobile build. A routine bump is not visible - and
+   **neither is a vulnerability, which this option assumed until 2026-09-04**: see below.
+
+**AND THE ONE THING THAT WAS SUPPOSED TO COVER THE GAP DOES NOT (measured 2026-09-04, same crate).**
+Option 3 rested on "`cargo audit` already runs in CI, so a VULNERABILITY there is visible". It is
+false. GitHub raised GHSA-7gcf-g7xr-8hxj against `serde_with` 3.19.0 in this very lockfile - a panic
+on an empty `KeyValueMap` entry, medium - and `cargo audit`, run by hand on the unbumped tree,
+**exited 0**. The advisory is GHSA-only and is not in the RustSec database `cargo audit` reads, so a
+green Rust pass is not evidence about GHSA at all. The bump landed as its own commit; what stays
+open is the blindness, and it is a THIRD mechanism rather than a variant of the two above:
+
+- Dependabot cannot open the pull request (the `links` manifest, this whole entry).
+- `cargo audit` cannot see the advisory (different database).
+- **Nothing in CI reads GitHub's own alert list** (`repos/{owner}/{repo}/dependabot/alerts`), which
+  is the ONLY place this one appeared. It was found because a `git push` printed a line about it.
+
+The alert list is a property of the DEFAULT BRANCH, not of a pull request's tree, so a pull request
+can neither be blamed for an open alert nor sensibly blocked by one - which puts the report in the
+nightly pass and nowhere else. That is a small job and it is not written yet.
 
 Option 3 with a real trigger, plus option 1 attempted behind a mobile build when a device exists, is
 the shape that fits the rest of this repository - but which one is taken is a decision, and it is
