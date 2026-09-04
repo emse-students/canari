@@ -13,6 +13,33 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **The local test estate logged the phone out before it could publish a key package, and the cause
+  was one line of compose.** `core-service` picks the refresh cookie's attributes from
+  `ALLOW_INSECURE_COOKIES`; the local estate was plain HTTP, so it ran with `true` and issued the
+  cookie `SameSite=Lax` without `Secure`. `localhost` is a trustworthy origin, so the three browser
+  devices never noticed. The phone did: the Android WebView's page is `tauri.localhost`, so the
+  cookie arrives in a THIRD-PARTY context, and a `Lax` cookie **cannot be SET** there. It was
+  discarded on arrival, the client logged itself out mid-enrolment, and every `+A1` row of the
+  campaign was blocked - on the estate, not on the product, which is why "the phone logs in" kept
+  looking like a passing test.
+
+  `SameSite=None` requires `Secure`, and `Secure` cannot be set over plain HTTP, so the estate is now
+  served over TLS at the same host and port (`https://localhost:8081`) with
+  `ALLOW_INSECURE_COOKIES=false` beside it - one change, not two, since either alone breaks a
+  client. nginx terminates it in a second server block mounted into the container, leaving
+  `Dockerfile.frontend` - the single source of truth for that configuration - untouched, because
+  production terminates no TLS in that container either. Trust is a pin on one public key for the
+  browsers and a debug-only Android source set for the phone; nothing installs a root authority on
+  the machine. Three sibling services declared `ALLOW_INSECURE_COOKIES` and nothing read it, so they
+  were removed rather than flipped.
+
+  Two things surfaced on the way and are fixed here. The first request over TLS answered `502 Bad
+  Gateway`: `proxy_buffering off` streams the body, but response HEADERS get a separate buffer of one
+  page by default and this estate's CSP is about 1.5 kB - a server that GENERATES a header never
+  parses it back, so one hop had never exercised it and two hops did. And the container stayed
+  HEALTHY throughout, because the health check asked for `/api/version`, the one route that sets no
+  CSP; it now asks for `/chat` as well, so it fails when a user would fail.
+
 - **A check that asked for a DM was silently handed a group, and recorded a verdict about it.**
   `openConversation` matched the requested name anywhere in a sidebar row and broke ties by shortest
   text. A tile is `<initials>` / `<title>` / `<last message preview>`, and the preview carries other

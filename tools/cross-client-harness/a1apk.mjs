@@ -18,7 +18,10 @@
  *    tcp:<port>` makes the SAME string true on the phone, which is why nothing here rewrites a URL.
  * 2. **A debug build is what makes that legal.** `build.gradle.kts` sets
  *    `usesCleartextTraffic=true` for the debug type only, and `network_security_config.xml` permits
- *    cleartext to `localhost` - so a release APK cannot talk to the local estate at all.
+ *    cleartext to `localhost` - so a release APK cannot talk to the local estate at all. Since the
+ *    estate moved to HTTPS (2026-09-04) the debug build ALSO needs a trust anchor for the local CA,
+ *    which `stageLocalTrust()` writes into a `debug/` source set for the same reason: a release APK
+ *    must not trust a certificate authority whose key sits on a workstation.
  * 3. **`BUILD_WEB` must be UNSET.** The APK embeds its frontend (`frontendDist: "../build"`) and
  *    Tauri needs the adapter-STATIC shape. Inheriting `BUILD_WEB=1` from a shell that had just
  *    deployed the local estate would package an adapter-node build - a `build/` with no
@@ -35,7 +38,8 @@
  * history. If the signature ever mismatches, the fix is to build debug - not to uninstall.
  */
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { X509Certificate } from 'node:crypto';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { SITE, STATE_DIR } from './names.mjs';
@@ -91,6 +95,100 @@ function toolchain() {
 
 /** The two Authentik values, read from the generated `frontend/.env` - local authenticates against
  *  the PRODUCTION identity provider (workflow-migration decision 8), so they are not derived. */
+/**
+ * Give the DEBUG build - and only the debug build - a reason to trust the local estate's TLS.
+ *
+ * WHY THE APK NEEDS THIS AT ALL. `SITE` moved to HTTPS on 2026-09-04, because a `SameSite=Lax`
+ * refresh cookie cannot be SET in a third-party context and this WebView's page is
+ * `tauri.localhost`, so the phone logged itself out before publishing a key package. The estate is
+ * served by nginx with a certificate from a local CA, and Android trusts SYSTEM roots only: without
+ * a trust anchor the handshake fails outright, which surfaces as a phone that reaches nothing.
+ *
+ * WHY A `debug/` SOURCE SET AND NOT `main/`. `app/src/main/res/xml/network_security_config.xml` is
+ * shipped in the RELEASE APK. Putting a development CA there would mean anyone holding that CA's
+ * private key - which lives unencrypted on this workstation - could present a certificate the
+ * PUBLISHED app accepts. A build-type source set overrides the same resource for debug builds only,
+ * so the released app's trust store is untouched by anything here. That is the whole reason this
+ * writes files instead of editing the one that already exists.
+ *
+ * WHY IT IS GENERATED RATHER THAN COMMITTED. The certificate is minted per workstation by
+ * `infrastructure/local/make-local-cert.sh` and is gitignored, like every other credential in this
+ * rig. A committed copy would also go stale the first time anyone passes `--force`.
+ *
+ * Returns what it staged, so the caller can say so out loud.
+ */
+function stageLocalTrust() {
+  const debugRes = join(FRONTEND, 'src-tauri/gen/android/app/src/debug/res');
+  const xml = join(debugRes, 'xml/network_security_config.xml');
+  const raw = join(debugRes, 'raw/canari_local_ca.pem');
+  const ca = join(REPO, 'infrastructure/local/certs/localCA.crt');
+
+  // A PLAIN-HTTP ESTATE MUST NOT KEEP A STALE OVERRIDE. Leaving the debug config behind would make
+  // the APK's trust depend on a file nobody is looking at any more, and the next reader would have
+  // no way to tell whether it was deliberate.
+  if (new URL(SITE).protocol !== 'https:') {
+    if (existsSync(debugRes)) {
+      rmSync(debugRes, { recursive: true, force: true });
+      console.log('[A1] SITE is plain HTTP - removed the debug trust override');
+    }
+    return null;
+  }
+
+  if (!existsSync(ca)) {
+    throw new Error(
+      `SITE is ${SITE} but ${ca} is absent - the phone cannot complete a TLS handshake with the ` +
+        `estate. Run infrastructure/local/make-local-cert.sh, then bring the estate up.`
+    );
+  }
+
+  mkdirSync(join(debugRes, 'xml'), { recursive: true });
+  mkdirSync(join(debugRes, 'raw'), { recursive: true });
+  copyFileSync(ca, raw);
+
+  // `cleartextTrafficPermitted` STAYS TRUE, and removing it would break the app rather than harden
+  // it: `tauri.localhost` is served by the WebViewAssetLoader over a scheme Android still classes
+  // as cleartext, and it is the page itself. The trust anchors are ADDED to that same block.
+  // `system` is listed explicitly because naming any anchor replaces the default set.
+  writeFileSync(
+    xml,
+    `<?xml version="1.0" encoding="utf-8"?>
+<!--
+    GENERATED by tools/cross-client-harness/a1apk.mjs - do not edit, and do not commit.
+    Debug builds only: this source set does not exist in a release build, so the published APK
+    keeps the system trust store and nothing else. See stageLocalTrust() for why.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">tauri.localhost</domain>
+        <domain includeSubdomains="false">localhost</domain>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="@raw/canari_local_ca" />
+        </trust-anchors>
+    </domain-config>
+</network-security-config>
+`,
+    'utf8'
+  );
+
+  // ASSERTED, NOT ASSUMED: that the CA staged is the one that signed what nginx is serving. A
+  // `--force` re-mint replaces both files, but a half-finished one replaces only the leaf - and the
+  // phone would then fail a handshake for a reason that looks like a network fault.
+  const leaf = join(REPO, 'infrastructure/local/certs/local.crt');
+  if (existsSync(leaf)) {
+    const issuer = new X509Certificate(readFileSync(leaf)).issuer;
+    const subject = new X509Certificate(readFileSync(ca)).subject;
+    if (issuer !== subject) {
+      throw new Error(
+        `the staged CA does not match the estate's leaf - leaf issuer ${JSON.stringify(issuer)} ` +
+          `vs CA subject ${JSON.stringify(subject)}. Re-run make-local-cert.sh --force.`
+      );
+    }
+  }
+
+  return { xml, raw };
+}
+
 function authentikEnv() {
   const file = join(FRONTEND, '.env');
   if (!existsSync(file)) return {};
@@ -160,6 +258,13 @@ export async function armA1({ build = true, reverseOnly = false } = {}) {
           `binary is the only way in. Run \`bun install\` in frontend/.`
       );
     }
+
+    const staged = stageLocalTrust();
+    console.log(
+      staged
+        ? `[A1] debug-only trust staged: ${staged.raw}`
+        : `[A1] no TLS trust staged - ${SITE} is plain HTTP`
+    );
 
     const env = { ...process.env };
     // (3) above: the APK wants adapter-static, and this shell may have just built the web shape.

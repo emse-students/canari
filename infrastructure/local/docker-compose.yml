@@ -124,11 +124,6 @@ services:
     environment:
       PORT: "3010"
       NODE_ENV: development
-      # This stack is served over plain HTTP on localhost, where a `Secure` cookie is
-      # never sent back - so the refresh cookie drops it here, and ONLY here. There is
-      # no default: the value decides whether a credential crosses the network
-      # unprotected, so every non-production deployment has to say which it is.
-      ALLOW_INSECURE_COOKIES: "true"
       # Vite SPA origin (PIN check MLS CORS); align with your dev URL (default SvelteKit port).
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:1420}
       POSTGRES_URL: postgres://admin:password@postgres:5432/auth_db
@@ -219,11 +214,6 @@ services:
     environment:
       PORT: "3011"
       NODE_ENV: development
-      # This stack is served over plain HTTP on localhost, where a `Secure` cookie is
-      # never sent back - so the refresh cookie drops it here, and ONLY here. There is
-      # no default: the value decides whether a credential crosses the network
-      # unprotected, so every non-production deployment has to say which it is.
-      ALLOW_INSECURE_COOKIES: "true"
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:1420}
       JWT_SECRET: ${JWT_SECRET}
       # Shared secret gating server-to-server DELETE /media/:id (social-service cleanup).
@@ -255,11 +245,16 @@ services:
     environment:
       PORT: "3012"
       NODE_ENV: development
-      # This stack is served over plain HTTP on localhost, where a `Secure` cookie is
-      # never sent back - so the refresh cookie drops it here, and ONLY here. There is
-      # no default: the value decides whether a credential crosses the network
-      # unprotected, so every non-production deployment has to say which it is.
-      ALLOW_INSECURE_COOKIES: "true"
+      # FALSE SINCE 2026-09-04, BECAUSE THIS ESTATE IS SERVED OVER TLS. nginx terminates HTTPS on
+      # the published port (`nginx-tls.conf`), so the refresh cookie is issued `Secure` +
+      # `SameSite=None`, exactly as production issues it. That pair is not cosmetic: `SameSite=Lax`
+      # - what "true" produced - cannot be SET in a third-party context, and the Android WebView's
+      # page is `tauri.localhost`, so the phone discarded the cookie on arrival and logged itself
+      # out before publishing a key package. Every `+A1` row was blocked on THIS LINE, not on the
+      # product. `None` requires `Secure`, and `Secure` requires TLS, so the two changes are one
+      # change: flipping this back to "true" without also removing the TLS listener re-breaks the
+      # phone, and flipping it while TLS is on breaks the browsers instead.
+      ALLOW_INSECURE_COOKIES: "false"
       JWT_SECRET: ${JWT_SECRET:-dev-jwt-secret-change-me}
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-dev-internal-shared-secret-change-me}
       ENABLE_DEV_ROUTES: "${ENABLE_DEV_ROUTES:-false}"
@@ -319,11 +314,6 @@ services:
     environment:
       PORT: "3014"
       NODE_ENV: development
-      # This stack is served over plain HTTP on localhost, where a `Secure` cookie is
-      # never sent back - so the refresh cookie drops it here, and ONLY here. There is
-      # no default: the value decides whether a credential crosses the network
-      # unprotected, so every non-production deployment has to say which it is.
-      ALLOW_INSECURE_COOKIES: "true"
       DB_HOST: postgres
       DB_PORT: "5432"
       DB_USERNAME: admin
@@ -390,7 +380,7 @@ services:
       # adapter-node's ONE public origin. Locally that is the port nginx publishes, because the
       # browser's address bar is what `ORIGIN` has to agree with - a mismatch makes adapter-node
       # refuse form posts as cross-origin.
-      ORIGIN: http://localhost:${CANARI_LOCAL_API_PORT:-8081}
+      ORIGIN: https://localhost:${CANARI_LOCAL_API_PORT:-8081}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       SOCIAL_SERVICE_URL: http://social-service:3014
       CORE_SERVICE_URL: http://core-service:3012
@@ -427,7 +417,25 @@ services:
     ports:
       # 8081 rather than 80: port 80 is taken often enough on a workstation, and the number is read
       # from `CANARI_LOCAL_API_PORT` on the vite side so a second estate can move it.
-      - "${CANARI_LOCAL_API_PORT:-8081}:80"
+      #
+      # `:443` SINCE 2026-09-04, AND THE HOST PORT DELIBERATELY DID NOT MOVE. The estate is HTTPS
+      # now; keeping the number means the only thing that changed anywhere is the SCHEME - one
+      # character in `SITE`, one character in the Authentik redirect URI, nothing in `adb reverse`,
+      # nothing in `vite.config.js`. Publishing 8443 beside 8081 would have been cheaper to write
+      # and would have left two estates reachable at once, which is how half a campaign gets
+      # measured against the wrong one.
+      - "${CANARI_LOCAL_API_PORT:-8081}:443"
+    volumes:
+      # Read-only, and mounted rather than baked: `Dockerfile.frontend` is the single source of
+      # truth for the nginx configuration and production terminates no TLS in that container at all
+      # (the Cloudflare tunnel does it at the edge). A certificate in the shared image would make
+      # the two estates differ in the one file that exists to keep them identical.
+      - ./nginx-tls.conf:/etc/nginx/conf.d/tls.conf:ro
+      # Minted by `make-local-cert.sh`, gitignored, and NOT created by compose: if the directory is
+      # missing, Docker would silently invent an empty one and nginx would fail to start with a
+      # confusing "no such file" about the certificate instead of about the step that was skipped.
+      # Run the script first; it is idempotent.
+      - ./certs:/etc/nginx/certs:ro
     depends_on:
       core-service:
         condition: service_started
@@ -442,12 +450,29 @@ services:
     healthcheck:
       # `/api/version` needs no authentication and reaches core-service, so a 200 proves both that
       # nginx started and that it can route - which "the container is up" does not.
+      #
+      # OVER HTTPS SINCE 2026-09-04, BECAUSE THAT IS THE LISTENER THE CLIENTS USE. Checking `:80`
+      # would keep passing with a missing, unreadable or malformed certificate - nginx would refuse
+      # to load `tls.conf`, the published port would answer nothing, and the container would still
+      # be green. This exercises the same path a browser takes, including the proxy hop to `:80`.
+      #
+      # `--no-check-certificate` is not a weakening: busybox wget has no `--ca-certificate` option
+      # at all, so the container cannot verify a chain no matter how it is asked. What this proves
+      # is that TLS terminates and routes; that the chain is VALID is proved by the clients, which
+      # is where it matters - `curl --cacert certs/localCA.crt` returns 200 with verify=0.
+      #
+      # TWO URLS, AND THE SECOND ONE IS THERE BECAUSE THE FIRST STAYED GREEN THROUGH AN OUTAGE.
+      # Minutes after the TLS listener went in, every page answered `502 Bad Gateway` - the proxy
+      # hop's header buffer was too small for the CSP - while this check kept passing, because
+      # `/api/version` is the one route that sets no CSP. A probe chosen for being cheap had become
+      # a probe that could not see the estate's ordinary response. `/chat` carries the full header
+      # set and the SSR hop, so it fails when a user would fail.
       test:
         [
           'CMD',
           'sh',
           '-c',
-          'wget -q -O /dev/null http://127.0.0.1/api/version || exit 1',
+          'wget -q -O /dev/null --no-check-certificate https://127.0.0.1/api/version && wget -q -O /dev/null --no-check-certificate https://127.0.0.1/chat || exit 1',
         ]
       interval: 15s
       timeout: 5s

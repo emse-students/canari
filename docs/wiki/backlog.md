@@ -50,6 +50,34 @@ the rule in [durable-rules](durable-rules.md). Delete the line once the measurem
 | the auto-merge ceiling refuses a major | **half taken.** The workflow is enabled again and its shipped loop body was replayed over all 33 open Dependabot PRs: 26 merge, 6 refuse, and the 6 collapse to the two gates below. What replay cannot show is the workflow REFUSING in its own run log, because no major has opened since - so the row stays until a real one does, logging `REFUSED` and staying open |
 | the five products the boutique never sold are buyable | **ONE MANUAL FLIP IS OWED, and it is the user's** (2026-08-31). `activationWithheld` releases a product when payments BECOME ready, and BDE's Stripe onboarding completed long ago - no event will ever fire for it, which is the correct behaviour for an allowlist and the reason a per-tier on-sale switch now exists. So: open `/associations/bde/edit`, Cotisations tab, tick **En vente** on the 170 EUR tier, then buy nothing and simply confirm it appears in `/shop`. The other four associations have no payment account at all, so their products are correctly withheld and release themselves when one arrives - what closes THAT half is the next association to finish onboarding, whose products must go on sale with nobody touching them |
 
+### P2 - a WEB login on the local estate is refused by Authentik, because moving the estate to HTTPS changed the redirect URI and the provider lives on PRODUCTION (measured read-only 2026-09-04)
+
+The local estate became `https://localhost:8081` on 2026-09-04 - the change that unblocks the phone,
+and the reasoning is on [docker](infrastructure/docker.md#the-local-estate-is-https-since-2026-09-04-and-the-scheme-is-the-whole-change).
+Login is OIDC against `auth.canari-emse.fr`, which is the `miconnect` box - PRODUCTION - and
+`oidcRedirectUri()` in `frontend/src/lib/stores/auth.ts` is `window.location.origin + '/auth/callback'`.
+So the estate's scheme IS the redirect URI's scheme.
+
+**Measured, without writing anything**, by asking the provider's own authorize endpoint:
+
+| redirect_uri | status | reading |
+| --- | --- | --- |
+| `http://localhost:8081/auth/callback` | `302` | registered - the flow starts |
+| `https://localhost:8081/auth/callback` | `400` | not registered |
+
+**What this does NOT block, which is most of it.** The three browser profiles are persistent and
+authenticated; a refresh cookie is not re-negotiated through the authorize endpoint, and W1, W2 and
+W3 were all verified rendering the app over HTTPS after the switch. **The phone is not affected at
+all**: A1's page is `http://tauri.localhost`, so its redirect URI is its own origin and never
+mentions the estate. What is blocked is a fresh WEB login - which is what a new browser device, or a
+profile whose refresh token has finally expired, would need.
+
+**Owed to the user, and it is one click**: add `https://localhost:8081/auth/callback` to the
+`Canari Local` provider's redirect URIs, BESIDE the existing `http://` one rather than replacing it,
+so a checkout that has not moved to TLS still works. Nothing in this repository may perform it - the
+box is production, and the standing rule is that production is read-only except where the user says
+otherwise.
+
 ---
 
 ## Owed to the USER - decisions, rotations and one-off clicks
@@ -70,6 +98,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | how `frontend/src-tauri` gets its cargo updates - Dependabot cannot parse it and the fix that would let it is verified only by an Android AND an iOS build | decision | [P1 - two of the six cargo directories are invisible to Dependabot](#p1---two-of-the-six-cargo-directories-are-invisible-to-dependabot-and-one-of-them-is-the-app-that-ships-to-phones-measured-2026-09-02) |
 | rotate `CF_DNS_TOKEN` **and** the cloudflared tunnel run token - both reached a transcript on 2026-09-01 | rotation | agent memory names both; neither may enter this repo |
 | put the BDE 170 EUR tier on sale - an allowlist correctly withholds it and no event will ever fire | 1 click | the verification table above |
+| add `https://localhost:8081/auth/callback` to the `Canari Local` provider on **miconnect** - beside the `http://` one, not replacing it | 1 click | [P2 - a WEB login on the local estate is refused by Authentik](#p2---a-web-login-on-the-local-estate-is-refused-by-authentik-because-moving-the-estate-to-https-changed-the-redirect-uri-and-the-provider-lives-on-production-measured-read-only-2026-09-04) |
 | App Store Connect: the 2.3.6 radio button | 1 click | [mobile](frontend/mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on) |
 | Lydia's credentials, which Lydia owes | blocked upstream | WP-LYDIA-1 |
 | an Android phone and an iPhone - unblocks the whole verification table above and the campaign | hardware | [device-verification](device-verification.md) |

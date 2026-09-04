@@ -221,6 +221,62 @@ both. The name now lives once, as `LOCAL_PROJECT` in the `Makefile`, and every t
 **Not `infrastructure/docker-compose.dev.yml`.** That file is the deployed dev estate and refuses to
 start without an immutable `TAG`; see the compose-file table above.
 
+### The local estate is HTTPS since 2026-09-04, and the scheme is the whole change
+
+Same host, same port: `https://localhost:8081`. nginx terminates TLS on a second server block
+mounted into the container (`infrastructure/local/nginx-tls.conf`) and proxies to the `:80` server
+the image already writes, so `Dockerfile.frontend` - the single source of truth for the nginx
+configuration - is untouched and the image stays byte-identical to the one production's shape is
+described by. Production terminates no TLS in that container at all; the Cloudflare tunnel does it
+at the edge.
+
+**It was not a preference. `core-service` picks the refresh cookie's attributes from
+`ALLOW_INSECURE_COOKIES`**, and on `true` the cookie is `SameSite=Lax` without `Secure`. `localhost`
+is a trustworthy origin, so the three browsers never noticed. The phone did: A1's page is
+`tauri.localhost`, so the cookie arrives in a THIRD-PARTY context, and **a `Lax` cookie cannot be
+SET there** - the phone logged in, answered its PIN, and logged itself out before publishing a key
+package. Every `+A1` campaign row was blocked on the estate rather than on the product.
+`SameSite=None` requires `Secure`, `Secure` requires TLS, so the flag and the listener are one
+change: `ALLOW_INSECURE_COOKIES=false` now sits beside the certificate, and moving either alone
+re-breaks one client or the other.
+
+Three sibling services also declared that variable. Nothing read it - `core-service` is the only
+consumer anywhere in the tree - so they were removed rather than flipped: a compose file whose whole
+job is to say what the estate is should not say it three times, wrongly.
+
+```bash
+infrastructure/local/make-local-cert.sh          # mint if absent; --force re-mints and invalidates
+docker compose -p canari-local -f infrastructure/local/docker-compose.yml   --env-file infrastructure/.env up -d nginx
+curl --cacert infrastructure/local/certs/localCA.crt https://localhost:8081/api/version
+```
+
+**Trust is never ambient, and that is deliberate.** Adding the CA to the Windows root store needs a
+human click - `certutil -addstore -user Root` and `Import-Certificate` both raise the consent dialog,
+and a non-interactive session hangs on it invisibly. It would also make the rig depend on machine
+state nobody reading this repository can see. Instead:
+
+| Client | How it trusts the estate |
+|---|---|
+| W1 / W2 / W3 | `launch.mjs` derives the leaf's SPKI hash from the certificate file at every launch and passes `--ignore-certificate-errors-spki-list`. One public key, not "any certificate" - a browser pointed at the wrong estate still refuses. |
+| A1 (phone) | `a1apk.mjs` writes a `debug/` Android source set holding the CA and a network security config naming it. Debug builds only: the released APK must not trust a CA whose key sits on a workstation. |
+| `curl` | `--cacert infrastructure/local/certs/localCA.crt`. On Windows add `--ssl-revoke-best-effort`: schannel wants a CRL that a local CA does not publish. |
+
+**A 502 that the health check could not see.** The first request after the listener went in answered
+`502 Bad Gateway`: `proxy_buffering off` streams the body, but response HEADERS are read into a
+separate buffer whose default is one page, and the CSP alone is about 1.5 kB. A server that
+GENERATES a header never parses it back, so one hop had never exercised this; two hops did. The
+container stayed healthy throughout, because `/api/version` is the one route that sets no CSP. Fixed
+with `proxy_buffer_size 16k` - and the health check now fetches `/chat` as well, so it fails when a
+user would fail.
+
+**One thing is still owed and it is not local.** Login is OIDC against `auth.canari-emse.fr`, a
+PRODUCTION box, and the redirect URI is `window.location.origin + '/auth/callback'` - so a web login
+on this estate now asks for `https://localhost:8081/auth/callback`. Measured read-only on
+2026-09-04: the `http://` variant is registered and answers `302`, the `https://` one answers `400`.
+Existing browser sessions are unaffected (they hold a refresh cookie) and **the phone is unaffected**
+(A1's redirect URI is its own origin, `http://tauri.localhost`, not the estate's), but a fresh WEB
+login fails until the provider gains the `https://` URI. See the backlog.
+
 ### Putting the CURRENT frontend on the local estate
 
 ```bash

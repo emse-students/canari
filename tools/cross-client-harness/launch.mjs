@@ -11,11 +11,53 @@
  * Usage:  bun launch.mjs kill w1        bun launch.mjs start w1
  */
 import { spawn, execSync } from "node:child_process";
+import { createHash, X509Certificate } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { SITE, STATE_DIR } from "./names.mjs";
 
 const CHROME = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 const POWERSHELL = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+
+/**
+ * The estate's TLS leaf, IN THE WORK TREE - `infrastructure/local/certs/` is where
+ * `make-local-cert.sh` writes and where the nginx container mounts from, so this is the same file
+ * the server presents rather than a copy that can drift from it.
+ *
+ * Note the path is relative to THIS file and stays inside the repository. `names.mjs` reaches four
+ * levels up to an out-of-tree directory, and there are two directories on this machine answering to
+ * that name; nothing here should imitate that.
+ */
+const TLS_LEAF = fileURLToPath(new URL("../../infrastructure/local/certs/local.crt", import.meta.url));
+
+/**
+ * Chrome's trust in the local estate, expressed as a pin on THIS certificate and nothing else.
+ *
+ * WHY NOT INSTALL THE CA. Adding a root to the Windows store needs a human click - `certutil
+ * -addstore -user Root` and `Import-Certificate` both raise the consent dialog, and a
+ * non-interactive session hangs on it, invisibly (measured 2026-09-04). It would also make the rig
+ * depend on machine state nobody reading this repository can see, which is the opposite of what a
+ * reproducible campaign needs. A pin travels with the repository: it is computed here, from the
+ * file the server is serving, at every launch.
+ *
+ * WHY NOT `--ignore-certificate-errors`. That flag accepts ANY certificate, so a browser pointed at
+ * the wrong estate by a mistaken `SITE` would connect happily and the row would be measured against
+ * it. This one accepts exactly one public key. If the estate stops being the estate, the browser
+ * refuses - which is the behaviour a measurement instrument owes.
+ *
+ * COMPUTED, NEVER HARDCODED. `make-local-cert.sh --force` mints a new key, and a literal written
+ * here would then pin a certificate that no longer exists: Chrome would raise an interstitial, the
+ * selectors would all be missing, and the run would read as "the application is broken". Deriving
+ * it costs one hash.
+ */
+function tlsPin() {
+  const spki = new X509Certificate(readFileSync(TLS_LEAF)).publicKey.export({
+    type: "spki",
+    format: "der",
+  });
+  return createHash("sha256").update(spki).digest("base64");
+}
 
 /**
  * The profiles live in `STATE_DIR`, NOT next to this file: they are the devices, not instruments.
@@ -95,6 +137,18 @@ export async function killBrowser(which, timeoutMs = 20_000) {
 export async function startBrowser(which, url = `${SITE}/chat`) {
   const { port, profile } = BROWSERS[which];
   if (await isUp(which)) throw new Error(`${which} is already up on ${port} - kill it first`);
+  // REFUSED UP FRONT, RATHER THAN DISCOVERED AS AN INTERSTITIAL. If `SITE` is HTTPS and the leaf is
+  // absent, Chrome opens a certificate warning page - and every selector this rig looks for is then
+  // missing, so the row reports a broken application. The estate's setup step has a name; say it
+  // here rather than letting the omission impersonate a defect.
+  const https = new URL(SITE).protocol === "https:";
+  if (https && !existsSync(TLS_LEAF)) {
+    throw new Error(
+      `SITE is ${SITE} but there is no certificate at ${TLS_LEAF} - run ` +
+        `infrastructure/local/make-local-cert.sh, then bring the estate up`,
+    );
+  }
+
   const child = spawn(
     CHROME,
     [
@@ -105,6 +159,7 @@ export async function startBrowser(which, url = `${SITE}/chat`) {
       "--disable-backgrounding-occluded-windows",
       "--disable-renderer-backgrounding",
       "--disable-features=CalculateNativeWinOcclusion,ChromeWhatsNewUI",
+      ...(https ? [`--ignore-certificate-errors-spki-list=${tlsPin()}`] : []),
       url,
     ],
     { detached: true, stdio: "ignore" },
