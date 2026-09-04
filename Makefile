@@ -370,7 +370,7 @@ test-gateway:
 	@cd apps/chat-gateway && $(RUST_TEST_CMD)
 
 # Tests Service Historique
-# `node --run`, matching `.github/workflows/pull-request.yml` exactly. These suites are jest, and jest
+# `node --run`, matching `.github/workflows/ci.yml` exactly. These suites are jest, and jest
 # under the bun runtime fails `src/controllers/admin-storage.controller.mls.spec.ts` - which
 # lives in THIS service, so `bun run` here meant `make test` and the pipeline executed the same
 # files on two different runtimes. `node --run` forwards everything after `--` (verified), so

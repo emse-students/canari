@@ -289,7 +289,8 @@ printf '\nONE arming mechanism, covering every pull request, with the credential
 AM="$WF/arm-auto-merge.yml"
 
 # TWO ARMING POINTS WAS THE OLD SHAPE, and it is the thing this section now refuses to let back.
-# Arming lived in `pull-request.yml` for humans and in a 448-line hourly sweep for Dependabot,
+# Arming lived in the CI workflow (`pull-request.yml`, renamed `ci.yml` on 2026-09-04) for humans
+# and in a 448-line hourly sweep for Dependabot,
 # because a `pull_request` run from Dependabot has no secrets. `pull_request_target` has them, for
 # every pull request, so one file covers the whole population.
 for gone in dependabot-auto-merge.yml auto-merge.yml; do
@@ -300,10 +301,10 @@ for gone in dependabot-auto-merge.yml auto-merge.yml; do
   fi
 done
 
-if grep -qE '^  arm-auto-merge:$' "$WF/pull-request.yml"; then
-  fail 'pull-request.yml arms again - that job can only ever cover HUMAN pull requests, because a Dependabot run there has no secrets, and covering the other half is what created the second mechanism'
+if grep -qE '^  arm-auto-merge:$' "$WF/ci.yml"; then
+  fail 'ci.yml arms again - that job can only ever cover HUMAN pull requests, because a Dependabot run there has no secrets, and covering the other half is what created the second mechanism'
 else
-  pass 'pull-request.yml no longer arms - one file does, for everybody'
+  pass 'ci.yml no longer arms - one file does, for everybody'
 fi
 
 if [ -r "$AM" ]; then
@@ -691,7 +692,7 @@ printf '\nthe dependency ceiling is a CHECK, and it is binding\n'
 # the pull request. It was - as a `github-actions` comment naming the missing test. What a CHECK
 # adds is that the refusal becomes BINDING: a comment is absent from the checks list, unreadable by
 # the merge machinery, and outside `ci-passed`, the one check the ruleset requires.
-PR_WF="$WF/pull-request.yml"
+PR_WF="$WF/ci.yml"
 
 if grep -qE '^  dependency-ceiling:$' "$PR_WF"; then
   pass 'the ceiling is a job of the pull-request package'

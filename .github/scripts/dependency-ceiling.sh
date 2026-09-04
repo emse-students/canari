@@ -19,7 +19,7 @@
 # not invisible -> visible.
 #
 # THIS IS STAGE ONE OF TWO, AND THE ORDER IS NOT ARBITRARY. This change is purely ADDITIVE: the
-# ceiling becomes a job of `pull-request.yml` feeding `ci-passed`, which is the one check the branch
+# ceiling becomes a job of `ci.yml` feeding `ci-passed`, which is the one check the branch
 # ruleset requires - so an update with no gate here cannot merge even if something armed it. The
 # sweep is untouched and still merges on its own reading of "green", which now INCLUDES this check,
 # so the two agree rather than compete.
