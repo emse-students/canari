@@ -666,6 +666,29 @@ and `didBecomeActive`, which the FCM fix has just made load-bearing.
 entry here. **What must NOT happen is a fix written against a suspected iOS lifecycle bug that nobody
 has seen** - the repo has no way to tell whether it worked.
 
+### P2 - the PIN modal's error is a bare paragraph, so a refused unlock is never announced to a screen reader (measured 2026-09-04)
+
+`PinModal.svelte` renders its failure as `<p class="...text-red-500">{displayError}</p>` in BOTH
+shapes - line 156 (the keypad) and line 229 (the manual input). No `role="alert"`, no `aria-live`.
+The element is inserted after the submit, and an insertion that carries neither is one assistive
+technology has no reason to read out: a user who cannot see the screen submits a PIN, hears nothing,
+and has no way to learn that the attempt was refused or why.
+
+**Found because an instrument hit the same wall.** `pin.mjs` waited for the gate to close or for the
+body to contain "incorrect", and the product refused with something else entirely - *"Votre PIN a ete
+change sur un autre appareil"* - so the atom spent 25 s and threw `until() timed out` about a message
+plainly on screen. The atom was fixed the same day to key on the error ELEMENT rather than on any
+wording, which is why the missing role was noticed at all: **the only handle the modal offers is a
+Tailwind colour class**, and a test keying on `text-red-500` is a test that breaks on a restyle.
+
+**The fix is one attribute per site** (`role="alert"`, which implies `aria-live="assertive"`), and it
+makes the accessible name the handle - so the harness can stop keying on a colour. Both shapes, and
+worth a sweep for the same pattern elsewhere: `ChangePinModal.svelte` and `LoginForm.svelte` carry
+`text-red-500` too and were not checked.
+
+**Not fixed inline, deliberately** (user, 2026-09-04): P2s go here rather than into the session that
+found them.
+
 ### P3 - the dirt classifier fails a row on the OIDC callback that row performs on purpose (2026-08-28)
 
 **Measured.** `healnew.mjs --row 0` recorded `FAIL` on `03d015fd` with **no unmet condition and no

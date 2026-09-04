@@ -6,6 +6,7 @@
  * scratchpad/test-accounts.json, never from argv, so it never lands in a captured shell.
  *
  * Usage: bun pin.mjs --device W2 [--stay] [--value 9999]
+ *        bun pin.mjs --android          (the phone - arms the forward itself)
  *   --stay   tick "Rester connecte" (the vault path - PIN-9 depends on this being explicit)
  *   --value  override the PIN, for the wrong-PIN and short-PIN checks (PIN-2, PIN-3)
  */
@@ -14,6 +15,7 @@ import { activate, connect, evaluate, listTargets, realClick, until } from './cd
 import { declineBiometricOffer } from './chat.mjs';
 import { GATE_EXPR } from './gate-probe.mjs';
 import { ACCOUNT_OF, PORTS } from './names.mjs';
+import { ensure, useDevice } from './phone.mjs';
 
 const argv = process.argv.slice(2);
 const opt = (name, fallback) => {
@@ -22,10 +24,19 @@ const opt = (name, fallback) => {
 };
 const has = (name) => argv.includes(`--${name}`);
 
+// `--android` IS `--device A1`, and it arms the phone, exactly as `login.mjs` does. An atom that
+// needs a forward the caller was expected to have made by hand is not an atom, and the two scripts
+// answering the same phone must not disagree about how it is reached.
+const android = argv.includes('--android');
+const spelt = opt('device', null);
+if (android && spelt && spelt !== 'A1') {
+  throw new Error(`--android IS --device A1, so --device ${spelt} contradicts it`);
+}
+
 // `--device W1` is the form to prefer: it fixes the port AND the account together, from the one
 // place that knows which is which. `--port`/`--account` still work for a one-off, but nothing stops
 // them disagreeing - and a mismatched pair types the other account's PIN and blames the PIN.
-const device = opt('device', null);
+const device = android ? 'A1' : spelt;
 if (device && !PORTS[device]) throw new Error(`unknown device ${device} - known: ${Object.keys(PORTS).join(' ')}`);
 const port = Number(opt('port', device ? PORTS[device] : 9223));
 const forPort = Object.keys(PORTS).find((d) => PORTS[d] === port);
@@ -36,6 +47,20 @@ const pin = opt('value', accounts[account]?.pin);
 if (!pin) throw new Error(`no PIN for account ${account}`);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// THE PHONE IS ARMED BEFORE IT IS ASKED ANYTHING - same ladder as `login.mjs`, same reason: the
+// devtools socket carries the app's pid, so a relaunch or a reinstall invalidates the forward, and a
+// backgrounded WebView keeps its socket listed while answering nothing. `A` is a phone, `W` is a
+// Chrome profile.
+const isPhone = /^A\d+$/.test(device ?? '');
+if (isPhone) {
+  const bound = useDevice(device);
+  console.log(`[pin:${account}] device ${device} -> ${bound}`);
+  const up = await ensure({ port, timeoutMs: 10_000 });
+  if (!up.ok) throw new Error(`the phone is not measurable: ${up.reason}`);
+  console.log(`[pin:${account}] phone armed over ${up.how}, app pid ${up.pid}, CDP answering on ${port}`);
+}
+
 const wanted = opt('match', null);
 const targets = await listTargets(port);
 const target = wanted ? targets.find((t) => t.url.includes(wanted) || t.title.includes(wanted)) : targets[0];
@@ -180,8 +205,31 @@ await activate(cx, 'form button[type=submit]');
 // "Gone" is the gate predicate NEGATED, never a second reading of it: the keypad shape carries
 // no `#encryption-pin`, so a check keyed on the input alone never settles there.
 const gone = `!(${GATE_EXPR})`;
-const ms = await until(cx, `(${gone}) || document.body.innerText.indexOf('incorrect') !== -1`, 25000);
+
+// THE REFUSAL IS AN OUTCOME, NOT A TIMEOUT - and this waited for one WORD of one of them.
+//
+// The old predicate ended on the gate closing or on the body containing "incorrect". The product has
+// at least one other refusal and it says something else entirely: *"Votre PIN a ete change sur un
+// autre appareil. Recuperez vos messages avec votre ancien PIN."* Measured on A1, 2026-09-04. So the
+// atom spent its whole budget and threw `until() timed out` while the application was explaining
+// itself in red on the screen - the least useful thing it could have said, about a state it could
+// see.
+//
+// A FRENCH LABEL IS NOT AN API, so the new predicate is the ERROR ELEMENT rather than any wording:
+// the modal renders exactly one, and its presence is the fact "the unlock was refused" independently
+// of which refusal it was. The text is then REPORTED, never matched on.
+const ERROR_IN_GATE = `document.querySelector('[role=dialog] p.text-red-500, form p.text-red-500')`;
+const ms = await until(cx, `(${gone}) || !!${ERROR_IN_GATE}`, 25000);
+const refusal = await evaluate(cx, `(${ERROR_IN_GATE} || {}).innerText || null`);
 console.log(`[pin] settled in ${ms}ms`);
+if (refusal) {
+  // Exit non-zero: the caller reads the code, and "the PIN was refused" must not read as success.
+  // It is NOT exit 2 - that code already means "there was no gate to answer", which is a legitimate
+  // outcome on an unlocked client and must stay distinguishable from a refusal.
+  console.error(`[pin] REFUSED by the product: ${refusal.replace(/\s+/g, ' ')}`);
+  cx.close();
+  process.exit(1);
+}
 
 const offer = await declineBiometricOffer(cx);
 if (offer !== 'none') console.log(`[pin] biometric offer: ${offer}`);

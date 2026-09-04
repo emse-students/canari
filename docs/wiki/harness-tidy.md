@@ -70,7 +70,15 @@ Libraries stay as they are (user: *"Les librairies ce n'est pas trop mal non plu
 that some gestures have no command over them. `--device` decides the platform, as `isPhone` already
 does in `login.mjs`.
 
-- [ ] **B1. `pin.mjs` on the phone.** The gate is UP on A1 and the scope error is GONE (measured
+- [x] **B1 - DONE as an atom, BLOCKED as a fixture.** `pin.mjs` takes `--android`, binds the phone
+      with `useDevice` and arms it with `ensure`, exactly as `login.mjs` does. Running it on A1 ends
+      in 2.9 s on a FACT and reports it: *"Votre PIN a ete change sur un autre appareil. Recuperez vos
+      messages avec votre ancien PIN."* - the product refusing, exit 1. It used to spend 25 s and
+      throw `until() timed out`, because it waited for the single word "incorrect". **What is left is
+      not code: the PIN in `test-accounts.json` is not this estate's PIN for that account** - see C2.
+      The missing `role="alert"` that forced the atom to key on a colour class is a P2 in
+      [backlog](backlog.md).
+      ~~`pin.mjs` on the phone.~~ The gate is UP on A1 and the scope error is GONE (measured
       2026-09-04), so this is the last unproven link before A1 is a usable device. Give it the
       `--android` spelling and `useDevice` binding `login.mjs` has.
 - [ ] **B2. `send.mjs --device W1 --to "<conv>" --text "..."`** - the gesture is `send()` in
@@ -82,6 +90,14 @@ does in `login.mjs`.
 - [ ] **B5. Uniform flags** on `shot.mjs`, `unlock.mjs`, `reload.mjs`.
 
 ## C. Blocked on the user
+
+- [ ] **C2. THE PIN FOR THE OWNER ACCOUNT ON THE LOCAL ESTATE.** A1 is logged in and its gate is up,
+      but the PIN from `test-accounts.json` is refused with *"votre PIN a ete change sur un autre
+      appareil"*. The credential store is yours and the recovery path (*"Mon PIN a change sur un autre
+      appareil -> Recuperer mes messages"*) destroys or re-keys message history, so nothing here
+      guesses or resets it. **Needed: the current PIN, or permission to take the recovery path.**
+      Until then every A1 row that needs decryption is blocked, and the campaign's step 4 ("set each
+      PIN") cannot be assumed done.
 
 - [ ] **C1. `ACCOUNT_OF.A2`.** The second phone (Pixel 6a) is bound and addressable on port 9335, but
       no account is assigned and guessing one would be an identity invented by a tool. Peer, or a
