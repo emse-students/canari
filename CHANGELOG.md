@@ -11,6 +11,21 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Security
+
+- **An advisory GitHub had raised was invisible to every gate in this repository.**
+  `serde_with` 3.19.0 panics when `KeyValueMap` serializes an empty sequence or map entry
+  (GHSA-7gcf-g7xr-8hxj, medium, fixed in 3.21.0). It arrives transitively through the Tauri shell,
+  and TWO separate mechanisms should have caught it while neither did. `cargo audit` runs on all
+  four Cargo trees nightly and on every pull request that touches them - and it exits 0 on the
+  vulnerable lockfile, measured here, because the advisory is GHSA-only and is not in the RustSec
+  database `cargo audit` reads. Dependabot declares `/frontend/src-tauri` and produces nothing for
+  it, because that manifest carries `links` and cargo refuses it without a `build.rs` Dependabot
+  never materialises - a gap already recorded in `docs/wiki/backlog.md`. It surfaced because a
+  `git push` printed one line about it. `cargo update -p serde_with --precise 3.21.0`, `cargo check`
+  clean. **This removes the finding, not the blindness**: nothing in CI reads GitHub's own alert
+  list, which is the one place this advisory appeared.
+
 ### Fixed
 
 - **An npm outage was reported as a vulnerability, and it walled every merge in the repository.**
