@@ -184,8 +184,14 @@ jobs:
         run: |
           set -uo pipefail
           ( cd frontend && bun install --frozen-lockfile )
-          .github/scripts/audit-dependencies.sh frontend
-          rc=$?
+          # `rc=0` FIRST, AND `|| rc=$?` RATHER THAN A BARE CALL. GitHub runs a `run:` block as
+          # `bash -e`, and `set -uo pipefail` above does NOT clear that `-e`. A bare call that exits
+          # non-zero therefore kills the step on the spot and the next line never runs - so
+          # `rc=$?` on its own line is unreachable for every exit status this whole design exists to
+          # tell apart. Shipped that way on 2026-09-04 and a real npm 503 turned the pass red four
+          # hours later, which is the exact failure the classifier was written to prevent.
+          rc=0
+          .github/scripts/audit-dependencies.sh frontend || rc=$?
 
           # AN OUTAGE IS A PROPERTY OF THE REGISTRY, NOT OF THE FRONTEND. If npm did not answer for
           # this tree it will not answer for the four services either, and re-discovering that four
@@ -267,8 +273,11 @@ jobs:
             # `$ig` is a deliberately word-split list of `--ignore=` flags built by `ignores_for`,
             # and it is EMPTY for every service but one - quoting it would pass an empty argument.
             # shellcheck disable=SC2086
-            .github/scripts/audit-dependencies.sh "apps/$svc" --audit-level=moderate $ig
-            rc=$?
+            # `|| rc=$?`, never a bare call - see the frontend step: `bash -e` would end the
+            # whole job on the first service that is not clean, which is the opposite of a loop
+            # that collects every failing service and names them together.
+            rc=0
+            .github/scripts/audit-dependencies.sh "apps/$svc" --audit-level=moderate $ig || rc=$?
             # THE SAME FACT, CARRIED ACROSS THE LOOP. The first service to report 2 has established
             # that npm is not answering; the rest ask once and move on. Without this the loop's worst
             # case is four services x three attempts x bun's own timeout, to learn one thing.
