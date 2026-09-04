@@ -246,12 +246,31 @@
     <!-- data-source pointe vers le dataset emojibase FRANÇAIS auto-hébergé : `locale="fr"`
          ne traduit que l'UI, les mots-clés de recherche viennent du data-source. Sans lui,
          la recherche ne fonctionnait qu'en anglais ("wing" au lieu de "aile"). -->
+    <!--
+      `flex-auto`, AND NOT `flex-1`, AND THAT ONE WORD IS WHY THE LIST WOULD NOT SCROLL.
+      Measured on the running app 2026-09-04, at every panel size: `section.picker` inside the
+      element's shadow root was **1017 px tall inside a 417 px host**, so its `.tabpanel` was
+      content-sized (880 of 880), `scrollHeight === clientHeight`, nothing to scroll - and everything
+      past the host's height was clipped away by this panel's `overflow-hidden`. Not an edge case:
+      every open, at 460 px, at 300 px and at 200 px of panel alike.
+      THE CAUSE IS THE FLEX BASIS. `flex-1` is `flex: 1 1 0%`, so the host's main size is GROWN from
+      zero rather than resolved from a length, and the library sizes `section.picker` against the
+      host's own `height: 400px` (its `:host` rule) - which a zero basis has thrown away.
+      `flex: 1 1 auto` keeps that 400 px as the basis, so the section tracks the host exactly, and it
+      keeps tracking it when the flex algorithm SHRINKS it - measured at 400/400, 257/257, 157/157
+      and 97/97, scrolling in all four. That last property is the one that matters: a fix that only
+      worked in the roomy case would leave the cramped one broken, and cramped is where a user meets
+      it, near a viewport edge.
+      AND THE INLINE `height:` IS GONE. It was a hard-coded guess at the height of everything above
+      (`- 3rem`, or `- 5.5rem` with recents) and it was wrong three ways: the recents row wraps to two
+      lines well before twelve buttons, the reactions-at-limit banner is not in the guess at all, and
+      **deleting it alone does not fix the scroll** - measured: with `flex-1` kept, the section was
+      still 973 px inside 417. The layout knows the answer; a second constant would be wrong the next
+      time this header gains a line.
+    -->
     <emoji-picker
       use:attachEmojiPicker
-      class="min-h-0 w-full flex-1"
-      style="height: min(22rem, calc(var(--popover-max-h, 22rem) - {recentEmojis.length > 0
-        ? '5.5rem'
-        : '3rem'}));"
+      class="min-h-0 w-full flex-auto"
       locale={getLocale() === 'en' ? 'en' : 'fr'}
       data-source={getLocale() === 'en' ? undefined : '/emoji-data-fr.json'}
     ></emoji-picker>
