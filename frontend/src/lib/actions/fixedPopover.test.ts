@@ -84,6 +84,70 @@ describe('computeFixedPopoverPosition', () => {
     expect(pos.left).toBe(40);
   });
 
+  /**
+   * THE VERTICAL AXIS WAS NOT CLAMPED WHILE THE HORIZONTAL ONE WAS, and the emoji picker is where
+   * the user met it: *"the panel frequently renders partly off-screen"*. `left` has always been
+   * clamped into `[margin, innerWidth - width - margin]`; `top` was only floored at `margin`, so a
+   * panel opening downward into a gap smaller than the useful-height floor was placed at
+   * `anchor.bottom + offset` and hung off the bottom - where its content is unreachable and its own
+   * scrolling cannot reach it either.
+   */
+  const anchorAt = (top: number, bottom: number) =>
+    ({
+      getBoundingClientRect: () => ({
+        top,
+        bottom,
+        left: 40,
+        right: 180,
+        width: 140,
+        height: bottom - top,
+        x: 40,
+        y: top,
+        toJSON: () => ({}),
+      }),
+    }) as HTMLElement;
+
+  it('slides a panel up rather than letting it hang off the bottom', () => {
+    // THE GEOMETRY HAS TO PUT THE PANEL BELOW, WITH TOO LITTLE ROOM BELOW - and in a tall viewport
+    // that pair cannot happen: the side choice already flips upward. It happens on a SHORT one,
+    // which is a phone with its keyboard open. 200px of viewport, anchor 60-100: 92px below and
+    // 52px above, so `bottom` wins on the comparison, and the floor still hands out 160. Placed at
+    // `anchor.bottom + offset` that panel would run to 268 in a 200px window - 68px of it, with the
+    // scroll affordance, off the screen entirely.
+    vi.stubGlobal('innerHeight', 200);
+    const panel = { offsetWidth: 320, offsetHeight: 160 } as HTMLElement;
+
+    const pos = computeFixedPopoverPosition(anchorAt(60, 100), panel, { estimatedHeight: 360 });
+
+    expect(pos.side).toBe('bottom');
+    const height = Math.min(160, pos.maxHeight);
+    expect(pos.top + height).toBeLessThanOrEqual(200 - 8);
+    expect(pos.top).toBeGreaterThanOrEqual(8);
+  });
+
+  it('never gives a panel more height than the viewport itself', () => {
+    // The floor is a preference and the viewport is a limit: there is nowhere to move a panel
+    // taller than the screen, so the one thing the floor may not do is exceed it.
+    vi.stubGlobal('innerHeight', 120);
+    const panel = { offsetWidth: 320, offsetHeight: 360 } as HTMLElement;
+
+    const pos = computeFixedPopoverPosition(anchorAt(40, 60), panel, { estimatedHeight: 360 });
+
+    expect(pos.maxHeight).toBeLessThanOrEqual(120 - 8 * 2);
+    expect(pos.top).toBeGreaterThanOrEqual(8);
+  });
+
+  it('still opens flush under the anchor when there IS room, and clamps nothing', () => {
+    // The clamp must not move a panel that fits: this is the ordinary case, and a popover that
+    // drifts away from its anchor is a different bug.
+    const panel = { offsetWidth: 320, offsetHeight: 160 } as HTMLElement;
+
+    const pos = computeFixedPopoverPosition(anchorAt(80, 120), panel, { estimatedHeight: 360 });
+
+    expect(pos.side).toBe('bottom');
+    expect(pos.top).toBe(128);
+  });
+
   it('clamps an anchor wider than the viewport', () => {
     const anchor = {
       getBoundingClientRect: () => ({

@@ -30,6 +30,15 @@ export interface FixedPopoverPosition {
   width: number;
 }
 
+/**
+ * Below this, a popover shows nothing anybody can use - a header and a clipped first row.
+ *
+ * It is a PREFERENCE, not a limit: when the chosen side has less room than this, the panel keeps the
+ * height and is moved into the viewport instead of being shrunk into uselessness. Only the viewport
+ * itself is a hard limit.
+ */
+const MIN_USEFUL_HEIGHT = 160;
+
 /** Computes viewport-safe fixed coordinates for a popover panel. */
 export function computeFixedPopoverPosition(
   anchor: HTMLElement,
@@ -54,15 +63,26 @@ export function computeFixedPopoverPosition(
       ? 'bottom'
       : 'top';
 
-  const maxHeight = Math.max(
-    160,
-    Math.min(estimatedHeight, side === 'bottom' ? spaceBelow - offset : spaceAbove - offset)
+  // THE FLOOR MAY EXCEED THE SPACE ON THE CHOSEN SIDE, AND THAT IS DELIBERATE - a panel smaller
+  // than `MIN_USEFUL_HEIGHT` shows nothing usable, so it is better to keep the height and MOVE the
+  // panel, which is what the clamp below does. What the floor may never exceed is the VIEWPORT:
+  // there is nowhere to move a panel taller than the screen.
+  const maxHeight = Math.min(
+    estimatedHeight,
+    window.innerHeight - margin * 2,
+    Math.max(MIN_USEFUL_HEIGHT, side === 'bottom' ? spaceBelow - offset : spaceAbove - offset)
   );
 
-  const top =
-    side === 'bottom'
-      ? anchorRect.bottom + offset
-      : Math.max(margin, anchorRect.top - offset - Math.min(panelHeight, maxHeight));
+  // THE VERTICAL AXIS IS CLAMPED INTO THE VIEWPORT, EXACTLY AS THE HORIZONTAL ONE ALREADY WAS.
+  // That asymmetry was the whole defect behind "the panel often renders partly off-screen": `left`
+  // has been clamped to `[margin, innerWidth - width - margin]` since this was written, while `top`
+  // was only ever floored at `margin` - so a panel opening downward into a gap smaller than the
+  // floor above was placed at `anchor.bottom + offset` and simply hung off the bottom of the screen,
+  // where its content is unreachable and its own scrolling cannot help. Sliding it up is what every
+  // popover does, and it needs no new number.
+  const height = Math.min(panelHeight, maxHeight);
+  let top = side === 'bottom' ? anchorRect.bottom + offset : anchorRect.top - offset - height;
+  top = Math.max(margin, Math.min(top, window.innerHeight - margin - height));
 
   let left = options.alignEnd ? anchorRect.right - panelWidth : anchorRect.left;
   left = Math.max(margin, Math.min(left, window.innerWidth - panelWidth - margin));

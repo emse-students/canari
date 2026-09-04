@@ -13,6 +13,25 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **The emoji list could not be scrolled, and the backlog's own diagnosis of why was wrong.** The
+  picker was given `flex-1` plus an inline `height: min(22rem, calc(var(--popover-max-h) - 5.5rem))`,
+  and `flex: 1 1 0%` DISCARDS the height the library sizes its shadow internals against: measured on
+  the local estate, `section.picker` kept its content height of **1017 px inside a 417 px host**, its
+  `.tabpanel` was content-sized at 880/880 and therefore had nothing to scroll - at every panel size,
+  every time the picker opened. Deleting the inline height while keeping `flex-1`, which is what the
+  backlog proposed, leaves 973 px inside 417: the basis is still zero. `flex-auto` (`1 1 auto`) is the
+  fix, because the basis stays the host's own `400px` and the internals resolve against it; measured
+  scrolling at 400/400, 257/257, 157/157 and 97/97, so it also holds where the flex algorithm has to
+  SHRINK the picker - which is exactly where a user meets it, near a viewport edge.
+
+- **A popover anchored near the bottom of the window was drawn partly off-screen.** `fixedPopover`
+  clamped horizontally and never vertically: it chose a side, then placed the panel at
+  `anchorRect.bottom + offset` with no bound, so a panel taller than the space below simply ran past
+  the viewport. The clamp is added, and the 160 px it wants is now expressed as what it is - a
+  PREFERENCE for a useful minimum height, with the viewport as the LIMIT - so a panel is shrunk to fit
+  rather than pushed out of sight. Three tests cover it, each validated against a mutation that
+  removes the clamp.
+
 - **The step that attaches a release artefact asked to UPDATE the release, and that update is the
   only thing it was ever refused.** `softprops/action-gh-release` finds the release by `tag_name` and
   then makes a second, `github.ref`-shaped call; on the stable `v0.16.0` that call was refused -
