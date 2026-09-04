@@ -428,16 +428,20 @@ jobs:
       # that cause is unknown and is in `docs/wiki/backlog.md` - and it is not a
       # `continue-on-error`, which would swallow the failure. A refusal here still fails the job,
       # loudly. What changes is only what it can no longer take down with it.
+      # THE SAME STEP AS `ios.yml`, AND IT MOVED FOR THE SAME REASON - read the long note there.
+      # `softprops/action-gh-release` PATCHES the release after finding it, and that PATCH is what
+      # `v0.16.0` was refused on the iOS arm with `Contents: write` granted. This arm's identical
+      # step has succeeded on every release, stable and pre-release alike, which is what RULES OUT
+      # "a stable refuses updates from this workflow" - and is also why the refusal is a matter of
+      # luck rather than of design here: attaching a file needs no release update, so neither arm
+      # asks for one any more.
       - name: Upload to Release
-        uses: softprops/action-gh-release@v3
         if: inputs.publish && github.event_name == 'release'
-        with:
-          tag_name: v${{ steps.release_tag.outputs.version }}
-          fail_on_unmatched_files: true
-          files: |
-            ${{ steps.outputs.outputs.aab }}
-            ${{ steps.outputs.outputs.apk }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AAB: ${{ steps.outputs.outputs.aab }}
+          APK: ${{ steps.outputs.outputs.apk }}
+          TAG: v${{ steps.release_tag.outputs.version }}
+        run: gh release upload "$TAG" "$AAB" "$APK" --clobber --repo "$GITHUB_REPOSITORY"
 
 

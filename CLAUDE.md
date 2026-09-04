@@ -238,25 +238,23 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    answers it](docs/wiki/backlog.md#p2---the-nine-nestjs-pull-requests-were-closed-in-one-batch-so-the-suppression-question-was-never-measured-on-one-first-and-monday-2026-09-07-is-the-only-thing-that-can-answer-it-now-updated-2026-09-03)**,
    and **nothing tells anybody prod is down**. Hosts:
    [host-updates](docs/wiki/infrastructure/host-updates.md).
-4. **P1 - a release-asset upload was refused WITH the permission granted, cause UNMEASURED**; six
-   candidates ruled out, one open needs `admin:org`. [backlog](docs/wiki/backlog.md#p1---a-release-asset-upload-was-refused-with-the-permission-it-was-granted-and-the-cause-is-unmeasured-v0160-2026-09-03).
-5. **NO CAMPAIGN ROW ASKS A QUESTION WHOSE ANSWER IS A POPULATION** - four rows written into rung
+4. **NO CAMPAIGN ROW ASKS A QUESTION WHOSE ANSWER IS A POPULATION** - four rows written into rung
    12 MULTI, needing only `W1 W2` ([campaign](docs/wiki/cross-client-campaign.md)).
-6. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
+5. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
    [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
-7. **SIX UX/RENDERING ITEMS + TWO DEV-LOG LINES**, substance in [backlog](docs/wiki/backlog.md) only; four want ONE
+6. **SIX UX/RENDERING ITEMS + TWO DEV-LOG LINES**, substance in [backlog](docs/wiki/backlog.md) only; four want ONE
    pass over `app.css`.
-8. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
+7. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
    commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
-9. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
+8. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
    and audit in [backlog](docs/wiki/backlog.md).
-10. **P1 - A DEVICE ASKS FOR A WELCOME FOR EVER AND THE MEMBER ANSWERING RESETS THE HEALING ROW** -
-    **ALL FOUR HALVES FIXED 2026-09-04; ONE PROD MEASUREMENT OWED AFTER THE RELEASE** ([backlog](docs/wiki/backlog.md#p1---a-device-asks-for-a-welcome-for-ever-and-the-member-that-answers-resets-the-row-that-would-have-let-it-heal-itself-measured-on-prod-2026-09-01)); read with its
-    [sibling P2](docs/wiki/backlog.md#p2---a-device-was-given-a-roster-seat-and-never-a-welcome-and-why-its-keypackage-was-skipped-is-unmeasured-measured-on-prod-2026-09-01) and with 11.
-11. **TWELVE MESSAGES DROPPED, PERMANENT COMMIT-LOG HOLE AT EPOCH 121** - the four defects are
+9. **P1 - A DEVICE ASKS FOR A WELCOME FOR EVER AND THE MEMBER ANSWERING RESETS THE HEALING ROW** -
+   **ALL FOUR HALVES FIXED 2026-09-04; ONE PROD MEASUREMENT OWED AFTER THE RELEASE** ([backlog](docs/wiki/backlog.md#p1---a-device-asks-for-a-welcome-for-ever-and-the-member-that-answers-resets-the-row-that-would-have-let-it-heal-itself-measured-on-prod-2026-09-01)); read with its
+   [sibling P2](docs/wiki/backlog.md#p2---a-device-was-given-a-roster-seat-and-never-a-welcome-and-why-its-keypackage-was-skipped-is-unmeasured-measured-on-prod-2026-09-01) and with 10.
+10. **TWELVE MESSAGES DROPPED, PERMANENT COMMIT-LOG HOLE AT EPOCH 121** - the four defects are
     FIXED AND DEPLOYED (ancestors of `v0.15.0`); only the RESIDUE is open, and the 13:10 failure
     arm is **NOT established** ([backlog](docs/wiki/backlog.md#p1---twelve-of-sixteen-messages-were-fetched-and-dropped-and-the-commit-log-has-a-permanent-hole-at-epoch-121-measured-on-prod-2026-09-02)).
-12. **`dev.canari-emse.fr` IS THE PRE-RELEASE TARGET**
+11. **`dev.canari-emse.fr` IS THE PRE-RELEASE TARGET**
     ([dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy). Two open: a
     dev deploy cannot tell a broken CHANGE from an unreachable REGISTRY
     ([backlog](docs/wiki/backlog.md#p2---a-dev-deploy-still-cannot-tell-a-broken-change-from-an-unreachable-registry-and-the-conflation-moved-rather-than-went-away-measured-2026-09-02-first-day-it-ran)); and prod's deploy job is still inlined shell while `deploy-dev`

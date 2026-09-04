@@ -13,6 +13,25 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **The step that attaches a release artefact asked to UPDATE the release, and that update is the
+  only thing it was ever refused.** `softprops/action-gh-release` finds the release by `tag_name` and
+  then makes a second, `github.ref`-shaped call; on the stable `v0.16.0` that call was refused -
+  `Resource not accessible by integration`, pointing at `update-a-release`, with `Contents: write`
+  granted and printed by the runner - and because the step then sat BEFORE the store steps, Apple
+  received nothing while production and Google Play received 0.16.0. That ordering was fixed the same
+  day; the refusal was not, and its cause is still unexplained.
+
+  **The full population, measured 2026-09-04** over five stables and five pre-releases: the re-run
+  REPRODUCED the 403, so it is not transient; the Android arm's identical step succeeded on that very
+  stable 24 minutes earlier and on all three stables since, so it is not `prerelease: false`; and the
+  `Canari.ipa` missing from the other four stables was `skipped` behind a failing App Store
+  submission, not refused. **Attaching a file to a release needs no release update at all**, so both
+  arms now use `gh release upload "$TAG" ... --clobber`: one call, and it creates nothing when the
+  release is absent - strictly better than the action, which would have created a release, published
+  it, and restarted `release.yml`. `release-chain.test.sh` refuses an `uses:` in either step and
+  requires the one call, validated in negative. The unexplained refusal is retired rather than
+  carried: nothing calls that endpoint any more, so nothing depends on the answer.
+
 - **An `addMember` that failed after a kick was reported NOWHERE, and the row it left looked exactly
   like a different defect.** When a member finds a stale leaf it removes it from the MLS tree and
   undertakes to Add the device back. If that Add throws, the failure is swallowed on the answering
