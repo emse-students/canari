@@ -183,6 +183,44 @@ export function communityDistribution(workspaceId) {
   return { groupId, epoch: Number(epoch), devices };
 }
 
+/**
+ * Waits until a user's devices either HOLD or do not hold delivery rows on the COMMUNITY's own
+ * distribution group - the sibling of `awaitUserRouting`, one level up.
+ *
+ * A COMMUNITY'S ROSTER IS WHAT A PUBLIC SALON DELIVERS ON, and that is why this exists separately.
+ * A public salon carries no group of its own (`salonDistribution` answers null for one, correctly),
+ * so `awaitUserRouting` has nothing to poll there and a caller reaching for it on `general` would
+ * read "no roster" as "not routed" for ever. The community group is the one that fans a public
+ * salon's frames out, so it is the roster a member of a public salon has to appear on.
+ *
+ * AN INVITATION DOES NOT MOVE IT. Membership is entitlement; the delivery row is minted when THE
+ * MEMBER'S OWN DEVICE commits its add, which happens when that member LOADS the community. So a
+ * fixture is not usable the moment the invite lands - measured 2026-09-04, when a freshly built
+ * venue carried the owner's single device and nothing else, and a peer invited seconds earlier was
+ * absent from the only roster its messages would travel on.
+ *
+ * A DEADLINE IS A RESULT, NEVER A THROW, exactly as in `awaitUserRouting`: only the caller knows
+ * whether a roster that never settled is the product's answer or its own missing gesture.
+ *
+ * @param {string} workspaceId the community
+ * @param {string} userId whose devices to look for; matched case-insensitively
+ * @param {boolean} wanted whether they should be on the roster by the end
+ * @returns {Promise<{ok, elapsedMs, dist: ReturnType<typeof communityDistribution>}>}
+ */
+export async function awaitCommunityRouting(workspaceId, userId, wanted, timeoutMs = 10_000) {
+  if (!workspaceId || !userId) throw new Error('awaitCommunityRouting needs a community + user');
+  const mine = userId.toLowerCase();
+  let dist = null;
+  const outcome = await pollFact(
+    () => {
+      dist = communityDistribution(workspaceId);
+      return (dist?.devices ?? []).some((d) => d.userId.toLowerCase() === mine) === wanted;
+    },
+    { timeoutMs, everyMs: 1000 }
+  );
+  return { ok: outcome.ok, elapsedMs: outcome.elapsedMs, dist };
+}
+
 /** The user id behind a display name, or null. Used to name a device roster's rows. */
 export function userIdOf(displayName) {
   const exact = rows(psql(`SELECT id FROM users WHERE "displayName" = '${displayName}'`));
