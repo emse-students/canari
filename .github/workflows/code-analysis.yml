@@ -184,7 +184,18 @@ jobs:
         run: |
           set -uo pipefail
           ( cd frontend && bun install --frozen-lockfile )
-          .github/scripts/audit-dependencies.sh frontend || [ "$?" -eq 2 ]
+          .github/scripts/audit-dependencies.sh frontend
+          rc=$?
+
+          # AN OUTAGE IS A PROPERTY OF THE REGISTRY, NOT OF THE FRONTEND. If npm did not answer for
+          # this tree it will not answer for the four services either, and re-discovering that four
+          # more times costs twelve `bun audit` calls carrying bun's own multi-minute timeout each.
+          # The fact is carried forward instead - which is the whole of what `$GITHUB_ENV` is for.
+          if [ "$rc" -eq 2 ]; then
+            echo 'AUDIT_ATTEMPTS=1' >> "$GITHUB_ENV"
+            echo '::notice::npm did not answer for the frontend, so the services below ask once each rather than three times.'
+          fi
+          [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ]
 
       # Every service is audited even after one fails. Aborting on the first would report a
       # single service and call the rest clean by never opening them - the same failure the
@@ -258,6 +269,10 @@ jobs:
             # shellcheck disable=SC2086
             .github/scripts/audit-dependencies.sh "apps/$svc" --audit-level=moderate $ig
             rc=$?
+            # THE SAME FACT, CARRIED ACROSS THE LOOP. The first service to report 2 has established
+            # that npm is not answering; the rest ask once and move on. Without this the loop's worst
+            # case is four services x three attempts x bun's own timeout, to learn one thing.
+            [ "$rc" -eq 2 ] && export AUDIT_ATTEMPTS=1
             [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ] || failed="$failed $svc"
           done
 
