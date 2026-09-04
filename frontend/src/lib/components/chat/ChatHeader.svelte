@@ -190,13 +190,20 @@
         {m.chat_community_channel_label()}
       </span>
     {:else}
+      <!--
+        NO PULSE ON THE NOT-JOINED HALF, AND THE TITLE NO LONGER CLAIMS A NEGOTIATION. `isReady` is
+        `lifecycle === 'active'`, which means this device holds MLS state for the group; its
+        negation means it holds none, and nothing local is negotiating anything - a member has to
+        come online and let it in. An animation is a promise of progress, and the state it was
+        promising on can last days.
+      -->
       <LockKeyhole
         size={12}
         strokeWidth={2.5}
         class={isReady
           ? 'text-emerald-600 dark:text-emerald-400'
-          : 'animate-pulse text-amber-600 dark:text-amber-500'}
-        title={isReady ? m.chat_e2e_verified_title() : m.chat_e2e_negotiating_title()}
+          : 'text-amber-600 dark:text-amber-500'}
+        title={isReady ? m.chat_e2e_verified_title() : m.chat_e2e_not_joined_title()}
       />
     {/if}
   </div>

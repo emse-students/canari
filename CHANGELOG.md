@@ -80,6 +80,17 @@ which is also where every release up to and including v0.13.1 now lives.
   next login's reconciliation happened to notice. `findByGroupId` had been written for exactly this
   and this was the last call site in the module still reading by key; four tests pin both
   conventions, and the one for a received DM fails against the old lookup.
+- **"Sync" promised a synchronisation that was not happening, on a state that can last days.** The
+  sidebar badge, the header's pulsing padlock (*"Negociation securisee en cours..."*) and the group
+  panel's pulsing clock (*"Synchronisation..."*) all read off one flag: `lifecycle !== 'active'`,
+  which means **this device holds no MLS state for the group** - not that anything is under way.
+  Every such state that lasts is a WAIT on somebody else: the recovery ladder's rounds are short and
+  each ends by either joining outright or handing the work to a member (a `welcome_request`, a base
+  republish), so nothing local is ever in progress for longer than one attempt. The three surfaces
+  now name the wait - "En attente", with a title saying a member already in the conversation has to
+  be online - and neither animates, because an animation is a promise of progress. `data-ready` and
+  `data-removed`, the campaign's hooks, are untouched: they carry the facts, and the badge carries
+  the sentence.
 
 - **A repair that could not remove a stale leaf cleared the routing row anyway, which is now an
   invitation to add a second leaf.** `kickStaleLeaf` does two things to two different estates: it

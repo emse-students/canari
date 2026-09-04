@@ -2936,6 +2936,24 @@ an observation.
   the lever for this.
 
 
+### P3 - 37 arbitrary Tailwind values have a canonical spelling, and only the IDE says so (measured 2026-09-04)
+
+`flex-shrink-0` (37 occurrences across 20 components), `rounded-[1.5rem]` -> `rounded-3xl`,
+`h-[3.25rem]` -> `h-13`, `z-[260]` -> `z-260`, `md:w-[28rem]` -> `md:w-md`. Ten of them sit in
+`ChatGroupPanel.svelte` alone.
+
+**Nothing in the repository reports these.** `bun run check` answers `0 ERRORS 0 WARNINGS` on 8128
+files and `oxlint` is silent; the only thing that names them is the editor's Tailwind plugin, which
+means they are invisible to CI and to any session not looking at that file in an IDE. That is the
+part worth fixing first - a rule enforced by a tooltip is not enforced.
+
+**It is ONE sweep, and it must not ride along with an unrelated change.** Three of them are in the
+files the SYNC-badge fix touched and were deliberately left: correcting three of thirty-seven inside
+a behaviour PR produces a file that disagrees with its twenty neighbours and hides the real diff.
+Wants doing with the four other items that each want one pass over `app.css` (queue item 7), and the
+gate that would keep it fixed - a lint rule in `bun run check` - is the deliverable, not the
+replacement.
+
 ### P3 - the two controls on a device row do not look like the same kind of thing (reported 2026-08-25)
 
 **Reported by the user with a screenshot**: *"Petite note graphique, il faudrait homogeneiser la

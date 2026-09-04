@@ -302,8 +302,10 @@
                 <Shield size={14} class="text-emerald-500" strokeWidth={2.5} />
                 {m.chat_group_secured_sync_label()}
               {:else}
-                <Clock size={14} class="animate-pulse text-amber-500" strokeWidth={2.5} />
-                {m.chat_group_syncing_label()}
+                <!-- Same correction as the sidebar badge: this device holds no key for the group,
+                     which is a wait on a member rather than a synchronisation under way. -->
+                <Clock size={14} class="text-amber-500" strokeWidth={2.5} />
+                {m.chat_group_not_joined_label()}
               {/if}
             </div>
           </div>
