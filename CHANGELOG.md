@@ -13,6 +13,20 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A check that asked for a DM was silently handed a group, and recorded a verdict about it.**
+  `openConversation` matched the requested name anywhere in a sidebar row and broke ties by shortest
+  text. A tile is `<initials>` / `<title>` / `<last message preview>`, and the preview carries other
+  people's sentences - "<owner> a ajoute <peer> au groupe" contains the peer's name as surely as
+  their own DM row does. Shortest-match then chose between them by how much had been said lately.
+
+  Measured 2026-09-04: MSG-1 asked for the DM and opened `Repro Gamma`, because inviting the peer to
+  the venue minutes earlier had left a 89-character notice in the DM's preview against the group's
+  68. Nothing failed - it opened a real conversation, sent into it, saw the message arrive in 254 ms
+  and recorded a verdict naming a conversation it never touched. The search now matches the row's
+  TITLE, prefers an exact title over a containing one, clicks by the app's own
+  `data-conversation-tile` id rather than a re-located description, and REFUSES an ambiguous match
+  instead of resolving it. Re-run on the same estate: MSG-1 PASS, clean, on the DM, 252 ms.
+
 - **The campaign venue fixture was identified by a name, so on a copy of production it resolved to
   a real community the test accounts could neither join nor rebuild.** `workspaceIdOf` asked whether
   a community by that NAME existed, which was a sufficient key for exactly as long as the campaign

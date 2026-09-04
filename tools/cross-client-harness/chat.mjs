@@ -996,21 +996,55 @@ export async function openConversation(cx, name) {
   // `.sidebar-panel` is a stable hook added to the conversation list for this (its `aria-label` is
   // localized prose, so it cannot be the selector). Scoping first also means the shortest-match rule
   // now only ever chooses BETWEEN CONVERSATION ROWS, which is what it was written for.
-  const scope = `(document.querySelector('.sidebar-panel') || document.body)`;
-  // The list is fetched, so it is EMPTY for the first few hundred ms after a navigation. Failing
-  // on the first look would make every check that navigates flaky for a reason that is the
-  // harness's, not the app's.
-  const find = `(function () {
+  // MATCH THE TITLE, NEVER THE WHOLE ROW, AND NEVER "THE SHORTEST ONE".
+  //
+  // A tile's innerText is `<initials>\n<title>\n<last message preview>`, and the preview is somebody
+  // else's sentence - it routinely carries the very name being searched for ("<owner> a ajoute
+  // <peer> au groupe", "<owner> vous a invite a rejoindre <community>"). Searching the whole row
+  // therefore matched every group the peer was ever added to, and the tie was broken by SHORTEST
+  // TEXT, which is not a statement about identity at all: it is a statement about how much has been
+  // said in each conversation lately.
+  //
+  // MEASURED 2026-09-04, AND IT SILENTLY MOVED A CHECK TO THE WRONG CONVERSATION. MSG-1 asked for
+  // the DM and was handed the group `Repro Gamma`, because inviting the peer to the venue minutes
+  // earlier had put a long notice in the DM's preview (89 chars) while the group's preview was 68.
+  // Nothing failed: the check opened a real conversation, sent into it, saw the message arrive and
+  // recorded a verdict about a DM it never touched. An instrument that measures the wrong subject
+  // and says so nowhere is worse than one that breaks.
+  //
+  // THE TITLE IS THE ROW'S IDENTITY - a DM is titled with the peer's display name, a group with its
+  // own name - and `data-conversation-tile` carries the id, so the click addresses exactly what the
+  // search chose without the tagging round-trip this used to need.
+  //
+  // AMBIGUITY IS REFUSED RATHER THAN RESOLVED. Two tiles whose titles both match is a fixture
+  // problem or a name collision, and picking one is how the fault above happened in the first place.
+  const FIND = `(function () {
       var wanted = ${JSON.stringify(name)}.toLowerCase();
-      var els = [].slice.call(${scope}.querySelectorAll('button, [role=button], a, li'));
-      var best = els.filter(function (e) {
-        var t = (e.innerText || '').trim();
-        return t && t.toLowerCase().indexOf(wanted) !== -1 && e.getBoundingClientRect().width > 0;
+      var scope = document.querySelector('.sidebar-panel') || document.body;
+      var tiles = [].slice.call(scope.querySelectorAll('[data-conversation-tile]')).filter(function (e) {
+        return e.getBoundingClientRect().width > 0;
       });
-      best.sort(function (a, b) { return a.innerText.length - b.innerText.length; });
-      if (!best.length) return null;
-      best[0].scrollIntoView({ block: 'center' });
-      return best[0].innerText.trim().slice(0, 60);
+      var titled = tiles.map(function (e) {
+        var lines = (e.innerText || '').split(String.fromCharCode(10)).map(function (x) {
+          return x.trim();
+        }).filter(Boolean);
+        // The avatar block is the tile's first child and its text is the initials, so it is dropped
+        // by IDENTITY rather than by position-in-text - a tile with no avatar keeps its title.
+        var avatar = ((e.children[0] && e.children[0].innerText) || '').trim();
+        if (lines.length && avatar && lines[0] === avatar) lines.shift();
+        return { el: e, id: e.getAttribute('data-conversation-tile'), title: lines[0] || '' };
+      });
+      var hits = titled.filter(function (t) { return t.title.toLowerCase().indexOf(wanted) !== -1; });
+      // An exact title wins over a containing one, so a peer named "Alex" still opens their own DM
+      // when a group called "Alex and friends" is listed beside it.
+      var exact = hits.filter(function (t) { return t.title.toLowerCase() === wanted; });
+      var chosen = exact.length ? exact : hits;
+      if (chosen.length !== 1) {
+        return JSON.stringify({ ok: false, matched: chosen.length, tiles: tiles.length,
+          titles: hits.map(function (t) { return t.title.slice(0, 40); }).slice(0, 6) });
+      }
+      chosen[0].el.scrollIntoView({ block: 'center' });
+      return JSON.stringify({ ok: true, id: chosen[0].id, title: chosen[0].title.slice(0, 60) });
     })()`;
   // THE TIMEOUT HERE USED TO RETHROW THE PREDICATE, WHICH IS BOTH USELESS AND UNSAFE.
   //
@@ -1019,7 +1053,7 @@ export async function openConversation(cx, name) {
   // label never resolved are three different findings and two of them are the application's. It
   // fired on MUT-19 and again on MUT-7 on 2026-08-16 and neither sighting could be attributed.
   //
-  // Unsafe: `find` embeds the peer's display name, so the message carries a real person's name into
+  // Unsafe: `FIND` embeds the peer's display name, so the message carries a real person's name into
   // a run log. The rig is anonymised BY CONSTRUCTION - no check spells a name - but an error built
   // at runtime escapes that, and `idcheck.mjs` cannot see it because it guards the git index only.
   //
@@ -1027,29 +1061,36 @@ export async function openConversation(cx, name) {
   // owner's REAL conversations, so dumping row text would leak far more than the peer's name.
   // `unknownLabelRows` is the discriminator that matters - a row rendered under the "Utilisateur
   // inconnu" fallback exists but can never match a search by name.
-  await awaitListed(cx, `${find} !== null`, 20000, "the peer's conversation row", cx.port);
-  const hit = await evaluate(cx, find);
-  if (!hit) throw new Error(`no conversation entry matching the requested peer on port ${cx.port}`);
-
-  // CLICK THE ELEMENT WE FOUND, not a description of it.
-  //
-  // This used to hand `realClick` a `text=<first line>` selector, so the element was located
-  // TWICE by two different rules - and the second one is ambiguous by construction: a peer's name
-  // appears in the DM row AND in the preview line of every group they were added to ("<peer> a
-  // ajoute <owner> au groupe"). Eight elements matched on W2, `realClick` picked one that
-  // failed its own hit test, and the check died with `no stable element` - after the reload only,
-  // because until then the conversation was already open and nothing ever clicked.
-  //
-  // The found element is tagged instead, so the click addresses exactly what the search chose.
-  // The attribute is removed afterwards: a stray marker left in the DOM would be picked up by the
-  // NEXT call, which is how a harness fix becomes the next harness fault.
-  const TAG = 'data-harness-open-conversation';
-  await evaluate(cx, find.replace('return best[0].innerText.trim().slice(0, 60);', `best[0].setAttribute('${TAG}', '1'); return best[0].innerText.trim().slice(0, 60);`));
   try {
-    await realClick(cx, `[${TAG}]`);
-  } finally {
-    await evaluate(cx, `(function () { var e = document.querySelector('[${TAG}]'); if (e) e.removeAttribute('${TAG}'); return 'cleared'; })()`);
+    await awaitListed(cx, `JSON.parse(${FIND}).ok === true`, 20000, "the peer's conversation row", cx.port);
+  } catch (e) {
+    // AMBIGUITY AND ABSENCE ARE DIFFERENT FINDINGS AND THE DEADLINE CANNOT TELL THEM APART, so the
+    // state is re-read once here to say which one happened. Waiting 20 s for a second matching tile
+    // to go away would never succeed, and reporting it as "never listed" sends the reader hunting
+    // for a row that is on screen twice.
+    const why = JSON.parse(await evaluate(cx, FIND));
+    if (!why.ok && why.matched > 1) {
+      throw new Error(
+        `openConversation: ${why.matched} of ${why.tiles} conversation tiles match the requested ` +
+          `name on port ${cx.port}, so the row is AMBIGUOUS and none was opened. This is a fixture ` +
+          `or naming collision, not a missing row.`
+      );
+    }
+    throw e;
   }
+  const found = JSON.parse(await evaluate(cx, FIND));
+  if (!found.ok) throw new Error(`no conversation entry matching the requested peer on port ${cx.port}`);
+  const hit = found.title;
+
+  // CLICK THE TILE BY ITS ID, not by a description of it.
+  //
+  // This used to hand `realClick` a `text=<first line>` selector, so the element was located TWICE
+  // by two different rules - and the second one is ambiguous by construction, for exactly the reason
+  // the search above no longer is. It was then fixed by TAGGING the found element with a temporary
+  // attribute, which worked but had to be cleaned up afterwards or the next call would pick up the
+  // stray marker. `data-conversation-tile` is the app's own identity for the row, so it needs
+  // neither a round-trip nor a teardown.
+  await realClick(cx, `[data-conversation-tile="${found.id}"]`);
   // THE POST-CONDITION MUST SAY WHAT IT SAW, and this one said nothing for as long as it existed.
   //
   // `openChannel` above learnt this the hard way and got a sentence naming the port, the target and
