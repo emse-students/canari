@@ -617,6 +617,16 @@ next one's symptom names the wrong cause.
   - **`--target aarch64` is not needed and its absence is not a warning to fix.** A full build prints
     "There are no .so files available to package in the APK for armeabi-v7a, x86, x86_64" and
     packages arm64 alone, which is what the Pixel 6a runs. Measured 2026-08-24 on v0.14.4.
+- **AND A SOURCE EDIT CANNOT REACH W1 OR W2 EITHER - `SITE` IS THE BUILT ESTATE, NOT THE DEV
+  SERVER.** `http://localhost:8081` is nginx serving `_app/immutable/...`, so the browsers run
+  whatever `make local-frontend` last produced; a `bun run dev` on 1420 is a different application
+  that nothing in this rig looks at. **A product fix is invisible to every row until
+  `make local-frontend` has run** - it rebuilds BOTH images, because nginx holds its own copy of the
+  assets and rebuilding `frontend-ssr` alone serves the new shell with the old JS. The stamp that
+  settles it is `builtAt` on the verdict, read from `/_app/version.json`: if it predates the edit,
+  the row measured the code without it. Cost 2026-09-05: a fix to the display-name resolver was
+  measured three times against a build made before it, and the console line that disproved it named
+  `localhost:8081/_app/immutable` in the stack of the error it was supposed to have classified.
 - **A DEPLOY CANNOT REACH AN APK.** `frontendDist` is `../build`, so the phone keeps whatever was
   installed on it and drifts from the fleet the moment anything ships. That is why a verdict carries
   `a1Build` beside `build`: a phase that arms the phone stamps EVERY row by construction, because the

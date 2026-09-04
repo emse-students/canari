@@ -57,7 +57,7 @@
  *   bun mention.mjs                 # all six
  *   bun mention.mjs --only 6        # one
  */
-import { randomBytes } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import {
   client,
   ensureChat,
@@ -85,7 +85,60 @@ import {
 import { srvLines } from '../srvlog.mjs';
 import * as phone from '../phone.mjs';
 import { whoIs } from './presence.mjs';
-import { OWNER_NAME, PEER_NAME, PORTS, VENUE } from '../names.mjs';
+import { OWNER_NAME, PEER_NAME, PORTS, STRANDED_ABSENT_MENTION_IDS, VENUE } from '../names.mjs';
+
+/**
+ * THE ONE FABRICATED USER ID THIS FILE MENTIONS, AND WHY IT IS A CONSTANT.
+ *
+ * MENTION-5 types a well-formed `@[64-hex]` that belongs to nobody, on purpose - that is the whole
+ * row. What was not on purpose is that the message SURVIVES the check: it stays in the venue
+ * channel for ever, and every later check that opens that conversation re-renders its chip and
+ * re-asks `/api/users/<id>`, which can only 404. With `randomBytes(32)` behind it, EVERY RUN OF
+ * MENTION-5 STRANDED A NEW ONE - the ledger shows two so far (2026-09-04, 22:27 and 22:57), and
+ * MENTION-2, MENTION-3 and MENTION-6 all recorded PASS-DIRTY on their echoes without a single row
+ * being about them. A run that permanently degrades the estate it measures is not reproducible.
+ *
+ * Derived from a phrase rather than written as a literal so a reader can see at a glance that it
+ * names nobody, and so it is the same value on every machine and in every run.
+ */
+export const ABSENT_MENTION_ID = createHash('sha256')
+  .update('canari-cross-client-campaign-absent-user')
+  .digest('hex');
+
+/**
+ * The ids the randomised era left behind, and the ONLY 404s the venue channel may produce.
+ *
+ * AN ALLOWLIST, NOT THE `[0-9a-f]{64}` PATTERN. Forgiving the shape would forgive a 404 on a real
+ * member's profile, which is a defect this campaign exists to catch; this names exactly what is
+ * known to be stranded. THE LIST CANNOT GROW - the id above is fixed, so a MENTION-5 re-run reuses
+ * the same message rather than adding to it, and a new entry appearing would mean that property
+ * broke. The residue of the randomised era is out of tree in `names.mjs`, because 64 hex digits
+ * read like an account whether or not they are one and this repository is public.
+ */
+export const STRANDED_ABSENT_IDS = [ABSENT_MENTION_ID, ...STRANDED_ABSENT_MENTION_IDS];
+
+/**
+ * The pair rule for those ids, in the shape {@link ignoringExpectedRefusal} takes.
+ *
+ * Forgiven as a PAIR (that path, that status) exactly like COMM's provoked 403s: the path alone
+ * would swallow a 500 from the user endpoint, the status alone one from anywhere else on the page.
+ */
+export const ABSENT_MENTION_404 = STRANDED_ABSENT_IDS.map((id) => ({
+  path: new RegExp(`^/api/users/${id}$`),
+  status: [404],
+}));
+
+/**
+ * A report with the stranded 404s removed, for any row that merely OPENS the venue channel.
+ *
+ * MENTION-5 provokes its 404 and forgives it at the point it caused it, which is the ordinary
+ * shape. These rows did not provoke anything: they open a conversation whose history happens to
+ * contain a mention of an account that does not exist, and pay for it. Two of them are about
+ * NOTIFICATION LEVELS and one is about the SHAPE OF A REQUEST BODY - none has an opinion on user
+ * profiles - so the forgiveness is stated here once rather than argued three times.
+ */
+const withoutStranded = async (obs) =>
+  ignoringExpectedRefusal(await report(obs), ABSENT_MENTION_404);
 
 /**
  * A CLIENT AND THE OBSERVER THAT WATCHES IT - see the twin in `search.mjs` for why they are one call.
@@ -181,6 +234,30 @@ async function chipButtonIn(cx, marker, timeoutMs = 8000) {
     await sleep(200);
   }
   return last ? { ...last, settled: false } : null;
+}
+
+/**
+ * The same chip, read once its NAME has landed rather than once its BOX has.
+ *
+ * `chipButtonIn` settles on GEOMETRY - it returns as soon as the button has stopped moving, which
+ * is what a click needs and is not what a LABEL needs. The chip paints its `@` immediately and
+ * fills the name in from an async lookup, so a read taken at that moment records `"@"` whatever
+ * the name turns out to be. MENTION-5 recorded exactly that three runs running, including on a
+ * build where the resolver had been fixed to answer "Utilisateur inconnu" for an absent account -
+ * the row could not have seen its own subject.
+ *
+ * IT REPORTS WHAT IT SETTLED TO, and never fails: a chip that stays `@` is a legitimate outcome
+ * (that WAS the defect until 2026-09-05), and the caller records the value rather than being told
+ * it timed out. Bounded well under the campaign's ten seconds - the lookup is one request.
+ */
+async function namedChipIn(cx, marker, budgetMs = 5000) {
+  const t0 = Date.now();
+  let chip = await chipButtonIn(cx, marker);
+  while (chip && chip.text === '@' && Date.now() - t0 < budgetMs) {
+    await sleep(250);
+    chip = await chipButtonIn(cx, marker);
+  }
+  return chip;
 }
 
 /** Clicks at a page point directly - the same raw dispatch `clickBubbleAction` uses once the target
@@ -498,7 +575,7 @@ async function mention2() {
         'raised a notification whose body carried this send marker, so the frame was routed AND ' +
         'decrypted on the device.',
     },
-    { W1: obs, W2: w2obs }
+    { W1: await withoutStranded(obs), W2: await withoutStranded(w2obs) }
   );
   cx.close();
   w2cx.close();
@@ -584,7 +661,7 @@ async function mention3() {
         'suppression is the SERVER routing decision and not the client declining to ask. VACUOUS ' +
         'means the control was not heard, so the silence proves nothing.',
     },
-    { W1: obs, W2: w2obs }
+    { W1: await withoutStranded(obs), W2: await withoutStranded(w2obs) }
   );
   cx.close();
   w2cx.close();
@@ -654,7 +731,7 @@ async function mention5() {
   await cx.send('Network.enable');
   const sinceIdx = cx.events.length;
 
-  const fakeId = randomBytes(32).toString('hex'); // matches MENTION_USER_ID_PATTERN, no real account
+  const fakeId = ABSENT_MENTION_ID; // matches MENTION_USER_ID_PATTERN, no real account, FIXED
   const term = mark('MENTION5');
 
   await realClick(cx, COMPOSER);
@@ -669,22 +746,24 @@ async function mention5() {
   const body = await awaitChannelSendBody(cx, sinceIdx);
   const mentionedUserIds = body?.mentionedUserIds ?? null;
   const sentDespiteNonMembership = Array.isArray(mentionedUserIds) && mentionedUserIds.includes(fakeId);
-  const bubbleChip = await chipButtonIn(cx, term);
+  const bubbleChip = await namedChipIn(cx, term);
 
   // THE 404 THIS CHECK GOES AND CAUSES. Mentioning a user id that belongs to nobody is the whole
   // point of the row, and the client then asks `/api/users/<id>` to render a name for it - so the
-  // check cannot be clean and be doing its job at the same time. Forgiven as a PAIR (that path, that
-  // status) exactly like COMM's provoked 403s: forgiving the path alone would swallow a 500 from the
-  // user endpoint, forgiving 404 alone would swallow one from anywhere else on the page.
-  const narrowed = ignoringExpectedRefusal(await report(obs), [
-    { path: /^\/api\/users\/[0-9a-f]{64}$/, status: [404] },
-  ]);
+  // check cannot be clean and be doing its job at the same time. The allowlist and the reason it is
+  // an allowlist are on `ABSENT_MENTION_404`; what matters here is that the id is a CONSTANT, so
+  // this message is the same message on every run and the estate does not accumulate them.
+  const narrowed = ignoringExpectedRefusal(await report(obs), ABSENT_MENTION_404);
 
   await recordObserved('MENTION-5', sentDespiteNonMembership ? 'PASS' : 'FAIL', {
     fakeUserId: fakeId,
     mentionedUserIdsSent: mentionedUserIds,
     sentDespiteNonMembership,
-    renderedFallbackLabel: bubbleChip?.text ?? null, // expect the raw id (mentions.parse.ts fallback)
+    // WHAT AN UNRESOLVABLE MENTION LOOKS LIKE TO A READER, read once the lookup has landed. It was
+    // a bare `@` until 2026-09-05 - the resolver answered `null` both for "not known yet" and for
+    // "the server says there is nobody", so the chip could not tell them apart and rendered the
+    // empty string for each. A 404 is an answer now, and this is where that shows.
+    renderedFallbackLabel: bubbleChip?.text ?? null,
     note:
       'PASS here means the client neither blocks the send nor validates membership, matching the ' +
       'source read above - it is a finding about the CLIENT, not a verdict on the server: whether the ' +
@@ -758,7 +837,7 @@ async function mention6() {
     noncePresent,
     nonceLength: body?.nonce?.length ?? null, // length only, never the value
     redactionNote: 'ciphertext/nonce values and all request headers are excluded from this record on purpose.',
-  }, { W1: obs });
+  }, { W1: await withoutStranded(obs) });
   cx.close();
   return ok;
 }

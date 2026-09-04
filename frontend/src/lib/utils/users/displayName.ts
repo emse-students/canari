@@ -1,4 +1,9 @@
-import { currentUserId, fetchUserProfile, getSavedDisplayName } from '$lib/stores/user';
+import {
+  currentUserId,
+  fetchUserProfile,
+  getSavedDisplayName,
+  isAbsentUserError,
+} from '$lib/stores/user';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { m } from '$lib/paraglide/messages';
 // The sentinel is imported rather than restated: that a notice carries this sender id, and that no
@@ -209,6 +214,37 @@ export async function resolveUserDisplayName(userId: string): Promise<string | n
       return value;
     })
     .catch((e) => {
+      // A REFUSAL THAT ANSWERS THE QUESTION IS NOT A FAILURE TO ASK IT, AND ONLY ONE OF THEM IS
+      // WORTH ASKING AGAIN. This file says twice, in two other docblocks, that not knowing a name
+      // is not the same as knowing there is none - and until this branch existed it had no way to
+      // write the second down. A 404 went into `failedAt` beside a dead radio and inherited all
+      // three of that entry's properties, every one of them wrong for it: a two-minute expiry after
+      // which the app asks again for an account that will never exist, an accusing `warn` for
+      // something that did not fail, and a place in the failure RATE that exists to decide whether
+      // the backoff is earning its keep. `connectivity.onReconnect` then CLEARED it, so regaining
+      // the network provoked a fresh round of the same 404s.
+      //
+      // The answer goes into the ordinary cache rather than into a second structure, because that
+      // is exactly what the cache holds: the best name for this id. For an account that does not
+      // exist the best name IS the unknown-user label - the same answer `formatProfileDisplayName`
+      // already returns for a profile that exists and carries no name - so every reader, sync or
+      // async, peek or resolve, needs no new case, and the chip stops rendering a bare `@`. It is
+      // permanent for the session on purpose: nothing that happens later turns a deleted account
+      // back into a name, so there is nothing here for a timer or a reconnect to revise.
+      //
+      // Measured on the local estate 2026-09-04: one channel message mentioning an absent account
+      // re-fetched its profile once per chip mount, in every check that opened that conversation.
+      if (isAbsentUserError(e)) {
+        const label = m.user_unknown_label();
+        console.log(
+          `[DISPLAYNAME] no such user - the server answered 404, so this id renders as ` +
+            `"${label}" for the rest of the session and is not asked for again`,
+          { userId: normalized }
+        );
+        displayNameCache.set(normalized, label);
+        failedAt.delete(normalized);
+        return label;
+      }
       // THE ONLY PLACE THAT KNOWS A NAME WAS LOST, AND IT USED TO SAY NOTHING. This file had no
       // logging at all, so a fallback that anonymises a conversation row could not be counted and
       // its rate against the population was unknown - which is how "9 of 10 rows read Utilisateur

@@ -170,12 +170,12 @@ Client-side, in-conversation, substring-only: no server index, no global search.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| MENTION-1 | The autocomplete inserts the `@[uuid]` token and it renders as a chip | `W1 W2` | `pending` |
-| MENTION-2 | In a CHANNEL at level `mentions`, the mention REACHES the receiver's phone | `+A1` | `pending` |
-| MENTION-3 | At level `none` it reaches nothing - carrying its own positive control | `+A1` | `pending` |
-| MENTION-4 | In a DM or group a mention triggers NOTHING extra | `W1 W2` | `pending` |
-| MENTION-5 | Mention a user who is not a member of the channel | `W1 W2` | `pending` |
-| MENTION-6 | The channel path sends `mentionedUserIds` in CLEARTEXT - confirm the documented leak and nothing more | `W1 W2` | `pending` |
+| MENTION-1 | The autocomplete inserts the `@[uuid]` token and it renders as a chip | `W1 W2` | `PASS` 2026-09-05 01:17 on 0.16.3, clean - the autocomplete inserts `@[uuid]`, the bubble renders it as `@Canari Test Beta`, and clicking the chip lands on `/profile/<that same id>`. The row is addressed by id now, not by the top of the list |
+| MENTION-2 | In a CHANNEL at level `mentions`, the mention REACHES the receiver's phone | `+A1` | `PASS` 2026-09-05 01:17 on 0.16.3, clean - a REAL push: the owner sets their own level to `mentions`, the peer mentions them by id, and the owner's phone - killed 52 ms earlier, out of the foreground - raises a notification carrying the send marker in 2231 ms. So the frame was routed AND decrypted on the device |
+| MENTION-3 | At level `none` it reaches nothing - carrying its own positive control | `+A1` | `PASS` 2026-09-05 01:20 on 0.16.3, clean - a REAL suppression, and it carries its own positive control: the identical send at `mentions` was heard in 2251 ms, the same send at `none` raised nothing over 45 s, and the sender attached `mentionedUserIds` both times. So the silence is the SERVER's routing decision, not the client declining to ask |
+| MENTION-4 | In a DM or group a mention triggers NOTHING extra | `W1 W2` | `PASS` 2026-09-05 01:20 on 0.16.3, clean - a mention in a DM triggers nothing extra: no channel endpoint touched across 9 requests and `mentionedUserIds` on none of them. `messaging.ts:101` computes it only inside the channel branch |
+| MENTION-5 | Mention a user who is not a member of the channel | `W1 W2` | `PASS` 2026-09-05 01:25 on 0.16.3, clean - a fabricated `@[64-hex]` typed past the autocomplete is SENT, with the id attached: the client neither blocks it nor checks membership. A finding about the CLIENT - whether the server routes a push for it is not observed here. It also carries the evidence for the fix it provoked: the chip reads `@Utilisateur inconnu`, where three earlier runs read a bare `@` because the resolver answered `null` both for "not known yet" and for "there is nobody". The id is a CONSTANT now (`ABSENT_MENTION_ID`); it used to be random, so every run stranded one more unresolvable mention in the venue channel and three later rows paid for it |
+| MENTION-6 | The channel path sends `mentionedUserIds` in CLEARTEXT - confirm the documented leak and nothing more | `W1 W2` | `PASS` 2026-09-05 01:20 on 0.16.3, clean - the documented leak and nothing wider: the channel send carries exactly `ciphertext`, `nonce`, `senderSessionId`, `messageIndex`, `messageId`, `mentionedUserIds`, no unexpected key, and the one mentioned id is the peer's |
 
 ## 7 - FWD - forwarding
 

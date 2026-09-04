@@ -13,6 +13,20 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A mention of an account that does not exist re-asked the server for its name for ever, and
+  rendered as a bare `@` in the meantime.** Two layers read a 404 as a failure to ASK rather than as
+  the answer to what was asked. The thirty-second profile cache evicted every rejection "so the next
+  caller retries", which is right for a dead radio and meaningless for an account that is gone; the
+  display-name resolver then filed the same 404 in the two-minute failure backoff, accused it in a
+  `warn`, counted it in the failure RATE that decides whether that backoff is earning its keep, and
+  cleared it on every reconnect - so regaining the network provoked a fresh round of the same 404s.
+  A deleted member in a conversation cost one request per mount of every chip naming them,
+  indefinitely. A 404 is now an answer at both layers: asked once, cached for the session, reported
+  as a fact rather than an accusation. The resolver's own docblocks had stated the rule twice - *not
+  knowing a name is not the same as knowing there is none* - and the code had no way to write the
+  second one down; now that it does, the chip renders "Utilisateur inconnu" instead of nothing, and
+  `userExists`, which was the same conflation with no callers at all, is deleted.
+
 - **A channel fan-out that chose nobody returned in silence, so "nobody was notified" and "the
   notification code never ran" printed the same thing: nothing.** Those are the two halves of every
   "I did not get a notification" report, and the only line the path could emit was the recipient
