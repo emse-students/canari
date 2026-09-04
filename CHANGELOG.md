@@ -11,6 +11,28 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Process
+
+- **A commit reached `main` by admin bypass on 2026-09-04, and it was not an emergency.** `66df9399`
+  (a documentation-only correction to `docs/wiki/ecosystem-convergence.md`) was pushed directly,
+  bypassing the two rules `22152902` enforces - a pull request, and a green `CI passed`. The cause
+  was mechanical rather than a decision: the `git switch -c` that should have created the branch was
+  the first command in a chain the shell refused to parse, so the edit, the commit and the push all
+  ran on `main`, and GitHub reported the bypass in the push output rather than refusing it. Recorded
+  here because the rule says so - *admin bypass exists and is the EMERGENCY path only, and it is
+  written down when taken* - and the honest entry is that this one bought nothing at all.
+  **It is NOT reverted**: the content is correct, `ci.yml` ran on the commit through the push
+  trigger and `CI passed` is green on it, so the tree is in the state a pull request would have left
+  it in. Reverting through a second bypass, or opening a pull request that undoes a correct change
+  in order to redo it, would both be theatre. What is missing is the diff somebody could have read
+  BEFORE it landed, and nothing can restore that after the fact.
+
+  The lesson is not "be careful": a chain whose first command creates the branch will run its
+  remaining commands on whatever branch is checked out if that first command never executes.
+  Commit and push belong in a separate invocation from the branch creation, once the branch is
+  confirmed.
+
+
 ### Security
 
 - **An advisory GitHub had raised was invisible to every gate in this repository.**
