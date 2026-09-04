@@ -39,6 +39,7 @@
 | What the USER must do by hand, and the long-term dev/release workflow (French) | [workflow-developpement.md](docs/user-guide/workflow-developpement.md) |
 | A shim kept alive for old clients, and its removal date | [docs/wiki/legacy-compatibility.md](docs/wiki/legacy-compatibility.md) |
 | What a report is, and what a block does and does not close | [docs/wiki/moderation-and-blocking.md](docs/wiki/moderation-and-blocking.md) |
+| Whether the four repos STILL have ONE CI shape, asserted rather than described | [ecosystem-shape](tools/ecosystem-shape/README.md) |
 | The cross-repo convergence plan, repo by repo | [ecosystem-convergence.md](docs/wiki/ecosystem-convergence.md#11-the-cross-repo-convergence-plan-repo-by-repo) |
 | The 2026-09-02 workflow migration: its decisions, its order, its state | [workflow-migration.md](docs/wiki/workflow-migration.md) |
 
@@ -211,10 +212,9 @@ only; never re-enumerate it here.
 
 ### CANARI - THE DELIVERY PIPELINE
 
-**The commands are in THE DEVELOPMENT CYCLE above; the model is on [cicd](docs/wiki/cicd.md) and
-[workflow-migration](docs/wiki/workflow-migration.md), the ONLY copies - read them before touching
-any workflow.** Nothing about the pipeline belongs here: this section existed to restate the five
-gates and the notes rule, and both are now one screen up.
+**Commands: THE DEVELOPMENT CYCLE above. Model: [cicd](docs/wiki/cicd.md) +
+[workflow-migration](docs/wiki/workflow-migration.md), the ONLY copies - read before touching any
+workflow.**
 
 ### CANARI - THE QUEUE, IN ORDER
 
@@ -239,7 +239,10 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    ([ecosystem-convergence](docs/wiki/ecosystem-convergence.md#12-the-cicd-rebuild-2026-09-04---the-same-four-workflows-in-every-repository),
    the only copy). **All four now require `CI passed` on `main`** - Sky and MiGallery had NO branch
    protection at all until 2026-09-04 - and the chain was watched end to end: Dependabot rebased,
-   `synchronize` fired, five pull requests armed themselves. Model on
+   `synchronize` fired, five pull requests armed themselves. A SECOND PASS the same day made
+   `deploy.yml` a library everywhere and the CI file `ci.yml` everywhere; **`bun
+   tools/ecosystem-shape/shape.mjs` asserts that and is the only thing reading the four at once.**
+   Model on
    [cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them). Open items
    include **[the suppression CONTROL CASE the NestJS batch destroyed - Monday 2026-09-07 answers
    it](docs/wiki/backlog.md#p2---the-nine-nestjs-pull-requests-were-closed-in-one-batch-so-the-suppression-question-was-never-measured-on-one-first-and-monday-2026-09-07-is-the-only-thing-that-can-answer-it-now-updated-2026-09-03)**
