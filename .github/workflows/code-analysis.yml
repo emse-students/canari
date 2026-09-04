@@ -1,14 +1,14 @@
 # =================================================================================================
 # THE SECURITY PASS - A LIBRARY, CALLED FROM BOTH MOMENTS IT IS WANTED
 #
-# CALLED BY `pull-request.yml` AND BY `scheduled.yml`, AND BY NOTHING ELSE. It used to carry its own
+# CALLED BY `ci.yml` AND BY `scheduled.yml`, AND BY NOTHING ELSE. It used to carry its own
 # `pull_request` and `schedule` triggers, which made it a fourth row in the Actions list and, worse,
 # put its verdict OUTSIDE `CI passed`: CodeQL, the secret scan and the vulnerability audit all ran on
 # every pull request and **could not block a single merge**, because the branch ruleset requires
 # exactly one check and this was not part of it. A red tick nothing enforces is worse than no tick,
 # because it looks enforced.
 #
-# Since 2026-09-04 it is `workflow_call` only. `pull-request.yml` calls it as a job feeding
+# Since 2026-09-04 it is `workflow_call` only. `ci.yml` calls it as a job feeding
 # `ci-passed`, so a live secret or a HIGH advisory now stops the merge; `scheduled.yml` calls the
 # same file nightly, which is the half a pull request cannot see - **a new advisory lands against
 # code nobody touched.** One definition, two moments.

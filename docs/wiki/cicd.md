@@ -4,7 +4,7 @@ Canari uses GitHub Actions for continuous integration and deployment. The pipeli
 
 ## Workflows
 
-### Package 1: opening a pull request (`pull-request.yml`)
+### Package 1: opening a pull request (`ci.yml`)
 
 **THE PIPELINE IS TWO PACKAGES, ONE PER HUMAN GESTURE** (user, 2026-09-03: *"Je veux une suite
 d'evenements et d'etapes"*). This file is everything that happens when a pull request is opened;
@@ -58,7 +58,7 @@ and then `CI passed -> FAILURE`.
 | Gone | Why it existed | Why it is gone |
 |---|---|---|
 | ~200 lines counting check-runs | to decide "is it green" | a SECOND OPINION about which jobs matter. `CI passed` is the ruleset's answer and is now the only one |
-| `gh workflow run pull-request.yml` | a `GITHUB_TOKEN` merge raises no `push`, so the merged combination was never tested | the App-token arming makes the merge raise it, exactly as for a human's pull request |
+| `gh workflow run ci.yml` | a `GITHUB_TOKEN` merge raises no `push`, so the merged combination was never tested | the App-token arming makes the merge raise it, exactly as for a human's pull request |
 | the ceiling, and its comment | to refuse what CI cannot judge | it is a binding CHECK now, and the annotation carries the same text the comment did |
 
 **THE IDENTITY IS THE ONLY SILENT-WHEN-WRONG PART.** Auto-merge merges as whoever ARMED it, so a
@@ -68,7 +68,7 @@ releasing. Four assertions hold it, two of them mutation-proved against exactly 
 
 **WHY THERE ARE TWO ARMING POINTS RATHER THAN ONE**, which is the one thing the "single mechanism"
 goal does not get: **a `pull_request` run from Dependabot has no access to secrets** - GitHub runs
-it as if it came from a fork - so the App token cannot be minted in `pull-request.yml` for those.
+it as if it came from a fork - so the App token cannot be minted in `ci.yml` for those.
 The sweep runs on `workflow_run` and a schedule, in the default-branch context where secrets exist.
 One merge mechanism, two arming points, and the split is forced by where secrets live.
 
@@ -842,14 +842,14 @@ that is a CHECK feeding `ci-passed`, so an update with no gate here cannot merge
 **There is no sweep any more (deleted 2026-09-04).** `dependabot-auto-merge.yml` was 448 lines on an
 hourly cron, plus a 179-line decision script and a 250-line staleness library, and it existed for one
 reason: a `pull_request` run from Dependabot gets no secrets, so the arming job inside
-`pull-request.yml` could not mint an App token on its pull requests. `pull_request_target` runs in
+`ci.yml` could not mint an App token on its pull requests. `pull_request_target` runs in
 the base repository's context, with its secrets, for every pull request - so one file now covers the
 whole population. What went with the sweep, and what did not:
 
 | The sweep did | Now |
 | --- | --- |
 | Armed Dependabot's pull requests | `arm-auto-merge.yml`, for everybody, on `pull_request_target` |
-| Refused updates this repository has no gate for | `dependency-ceiling`, a job of `pull-request.yml` feeding `ci-passed` |
+| Refused updates this repository has no gate for | `dependency-ceiling`, a job of `ci.yml` feeding `ci-passed` |
 | Asked Dependabot to rebase a branch whose gates had moved | **Nothing, and nothing did before** - see below |
 | Failed hourly while any branch was stuck, mailing the owner every time | Gone with the cron |
 
@@ -858,7 +858,7 @@ whole population. What went with the sweep, and what did not:
 is not an account with push access: `Contents: write` is not the same permission. Measured refused
 ten times out of ten, on eight pull requests, with two identities (`github-actions[bot]` and the
 `canari-auto-merge` App). The underlying question - can a pull request that was green against an
-older set of gates still merge - is answered where it matters instead: `pull-request.yml` also runs
+older set of gates still merge - is answered where it matters instead: `ci.yml` also runs
 on `push: main`, so a merge that breaks the trunk turns `CI passed` RED on `main`, and
 `release-preflight.sh` gate 3 then refuses every release cut from that commit. The protection sits at
 the release, which is the only place it changes anything.

@@ -1,6 +1,12 @@
 # =================================================================================================
 # PACKAGE 1 OF 2: EVERYTHING THAT HAPPENS WHEN A PULL REQUEST IS OPENED
 #
+# IT IS `ci.yml` IN ALL FOUR REPOSITORIES SINCE 2026-09-04. This was `pull-request.yml` here, and
+# the name had stopped being true: the file runs on `push: main` and on `workflow_dispatch` as well,
+# and the verdict it leaves on a `main` commit is what `release-preflight.sh` reads before it lets a
+# release start. The workflow's NAME was already `CI` and the required check is `ci-passed`, so
+# nothing outside this repository ever saw the old file name - which is exactly why it could drift.
+#
 # `release.yml` is the other one. Between them they are the whole delivery cycle, and the split is
 # the human gesture that starts each (user, 2026-09-03: *"Je veux une suite d'evenements et
 # d'etapes. Un paquet qui suit la soumission d'une PR, un qui suit la publication d'une pre-release,
@@ -233,7 +239,7 @@ jobs:
 
           # -- CI script self-tests --
           # `.github/scripts/` decides which Dependabot pull requests merge unattended, so its own
-          # sources are the whole trigger. Note it is NOT reached by the `pull-request.yml` short-circuit at
+          # sources are the whole trigger. Note it is NOT reached by the `ci.yml` short-circuit at
           # the top of this step: a change to a script is not a change to this workflow.
           #
           # AND ITS OWN SOURCES ARE NOT THE WHOLE TRIGGER ANY MORE, because one of those self-tests

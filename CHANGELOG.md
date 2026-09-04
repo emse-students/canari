@@ -76,6 +76,25 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Changed
 
+- **The CI workflow is `ci.yml` in all four repositories, and here it was `pull-request.yml`.**
+  The name had stopped being true: the file runs on `push: main` and on `workflow_dispatch` as well
+  as on `pull_request`, and the verdict it leaves on a `main` commit is precisely what
+  `release-preflight.sh` reads before letting a release start. Nothing outside this repository ever
+  saw the file name - the workflow is called `CI`, the required check is `ci-passed` - which is why
+  it could drift from its siblings unnoticed for months. The README badge pointed at the old path
+  and would have started serving a "not found" image; that, a `Makefile` comment, six references in
+  `docs/wiki/cicd.md` and the two self-test suites moved with it. Historical entries in this file
+  keep the old name, because that is what it was called at the time.
+
+- **The arming step named a deprecated input, and said so on every run it made.**
+  `actions/create-github-app-token@v3` deprecated `app-id`; this repository moved to `client-id` on
+  2026-09-04, the three sibling repositories did not, and each of their arming runs printed
+  `Input 'app-id' has been deprecated` as a warning annotation - on a job that fires for every
+  single pull request. All four now name `client-id` and carry the same comment explaining why, so
+  the next person to notice the difference cannot converge the four the wrong way. The mechanism in
+  `arm-auto-merge.yml` is byte-identical across the four; the prose differs where a repository cites
+  a measurement it actually made.
+
 - **Four workflows became one, and the security pass can now block a merge** (user:
   *"le moins de workflows differents possibles, ca inonde la console github"*, and *"propres,
   fonctionnelles, testees, fluides"*). `cache-cleanup.yml`, `dev-refresh.yml` and `host-updates.yml`

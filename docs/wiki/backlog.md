@@ -407,7 +407,7 @@ the staleness predicate, so nothing refuses on staleness any more and there is n
 
 **The underlying question is answered elsewhere, and better.** "Can a pull request that was green
 against an older set of gates still merge, and would we know" - yes it can, and yes we would:
-`pull-request.yml` runs on `push: main` as well as on `pull_request`, so the merged trunk is tested,
+`ci.yml` runs on `push: main` as well as on `pull_request`, so the merged trunk is tested,
 and a red `CI passed` ON `main` makes `release-preflight.sh` gate 3 refuse every release cut from
 that commit. The protection sits at the release rather than at the merge, which is the only place it
 changes what a user sees.
@@ -447,7 +447,7 @@ unmeasured cause, and it would need an allowlist of what it may touch.
 ### ~~P2 - the vulnerability audit cannot block a merge~~ - CLOSED 2026-09-04
 
 **The three security jobs now feed `CI passed`.** `code-analysis.yml` lost its own `pull_request`
-and `schedule` triggers and became a `workflow_call` library; `pull-request.yml` calls it as the
+and `schedule` triggers and became a `workflow_call` library; `ci.yml` calls it as the
 `security` job and lists it in `ci-passed`'s `needs`, which is the one check the branch ruleset
 requires. So CodeQL, the TruffleHog secret scan and the vulnerability audit can now stop a merge,
 which is what the row asked for.

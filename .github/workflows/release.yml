@@ -10,7 +10,7 @@
 #   3. PUBLISH A STABLE `vX.Y.Z`.  Deploys `canari-emse.fr` and both store production channels - if
 #      the tests are green, AND only from a commit the dev estate has already served.
 #
-# THIS FILE IS PACKAGE 2 OF 2, AND IT CARRIES BOTH OF THOSE TWO PATHS. `pull-request.yml` is the
+# THIS FILE IS PACKAGE 2 OF 2, AND IT CARRIES BOTH OF THOSE TWO PATHS. `ci.yml` is the
 # other. The two publications are ONE machine differing by one boolean, so they are one file with
 # two named paths rather than two files: a second entry point would either duplicate the chain -
 # the exact "a decision taken more than once" defect this rebuild removed - or add a third level of

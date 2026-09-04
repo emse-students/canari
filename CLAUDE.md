@@ -48,7 +48,7 @@
 - ASK EARLY: state assumptions explicitly. If uncertain about architecture or a bug, ASK during planning. No guessing.
 - SURGICAL EDITS: touch ONLY requested code. Map changes 1:1 to the prompt.
 - **FOUR WORKFLOWS ARE VISIBLE IN THE ACTIONS LIST, AND THAT IS DELIBERATE** (user, 2026-09-04:
-  *"le moins de workflows differents possibles, ca inonde la console github"*). `pull-request.yml`
+  *"le moins de workflows differents possibles, ca inonde la console github"*). `ci.yml`
   (tests + the `CI passed` aggregate + the security pass + the dependency ceiling), `release.yml`
   (the one deployment entry point), `arm-auto-merge.yml` (one job, `pull_request_target`, arms every
   pull request including Dependabot's), `scheduled.yml` (everything on a clock, one job per cron).
