@@ -43,7 +43,23 @@ which is also where every release up to and including v0.13.1 now lives.
   stationary, which a single number hid: the older half of the window scores 0, 0, 0, 0, 1, 1 and
   the newer half 2, 6, 3, 4, 4, 5.
 
-### Fixed
+- **The release script asked Apple whether a version was already in a review submission, using a
+  query that could not carry the answer - and `0.16.3` died one call from done.** `POST
+  /v1/reviewSubmissionItems` answers 409 when the version is already an item, so the call has to be
+  skipped rather than made; the check compared `relationships.appStoreVersion.data.id` across the
+  submission's items, a linkage a JSON:API collection omits unless the request asks for it with
+  `include=`. Every item therefore read `undefined`, the comparison was false for all of them, and
+  the POST went out anyway. Everything before it had worked: the prepared-and-forgotten `0.16.1`
+  slot was renamed to `0.16.3`, build `1600399` was attached, the notes were written - and then
+  `409 appStoreVersion ... was already added to this reviewSubmission`. Because the production
+  estate is gated on both stores, the web stayed on `0.16.1` for the second release running.
+  **The discriminator was already in hand**: `READY_FOR_REVIEW` *means* the version sits in a
+  submission, that is what the slot decision had read one screen earlier, and a rename does not
+  detach it - so the state is now carried to the decision instead of a fact being re-requested and
+  misread. The items query also asks for its linkage, because a state is a summary and the list is
+  the direct question. Nine assertions, mutation-tested both ways: removing the `include=` names
+  itself, and dropping the carried state reproduces `already: false` on a blind list exactly.
+
 
 - **The page that exists to survive an outage could not survive one anywhere but the site root.**
   `app-shell.html` is what nginx answers when `frontend-ssr` is down - a plain shell that boots the
