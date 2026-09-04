@@ -289,13 +289,29 @@ if (notGreen.length) {
 // nothing consumed it.
 //
 // A row with no `checkSha` at all predates the field, which is the same answer for the same reason.
+// WHERE A RUNNER LIVES, AND WHY THIS IS A SEARCH RATHER THAN A JOIN.
+//
+// `results.mjs` records `check` as a BARE FILENAME (`msg1.mjs`), which was the whole path while
+// every runner sat at the harness root. They now live in `archive/`, so joining the name onto
+// `HERE` named a file that does not exist and EVERY archived row reported `its runner no longer
+// exists` - all seven MSG verdicts on 2026-09-04, each of them taken minutes earlier by a runner
+// sitting right there. A warning that fires on every row is not a warning: it hides the one case it
+// was written for, which is HEAL-W2's `FAIL` surviving the rewrite that made it unreachable.
+//
+// The directories are searched in order and the FIRST hit wins, which is safe because a name is
+// unique across them - two runners with one name would be a fault of its own, and `inventory.mjs`
+// is what would catch it.
+const RUNNER_DIRS = [HERE, join(HERE, 'archive')];
+const runnerPath = (name) =>
+  RUNNER_DIRS.map((d) => join(d, name)).find((f) => existsSync(f)) ?? null;
+
 const superseded = [];
 const shaOf = new Map();
 for (const r of rows) {
   const e = latest.get(r);
   if (!e || !e.check) continue;
-  const file = join(HERE, e.check);
-  if (!existsSync(file)) {
+  const file = runnerPath(e.check);
+  if (!file) {
     superseded.push([r, e, 'its runner no longer exists']);
     continue;
   }

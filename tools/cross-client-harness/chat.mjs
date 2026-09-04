@@ -7,6 +7,8 @@
  *
  * See docs/wiki/cross-client-testing.md section 9 (evidence rule).
  */
+import { existsSync } from 'node:fs';
+import { GATE_EXPR } from './gate-probe.mjs';
 import { IS_MOVING_FN, RESOLVE, activate, clickAtPoint, connect, dragTo, evaluate, listTargets, pressKey, realClick, stablePoint, until } from './cdp.mjs';
 // For the device check in `goto`: the phone is the one client a reload costs something on.
 import { PORTS, SITE } from './names.mjs';
@@ -703,6 +705,38 @@ export async function clearOverlays(cx) {
  * user's click does not, and that difference is itself a bug this campaign has already found once.
  */
 export async function ensureChat(cx) {
+  // A SIGNED-OUT OR LOCKED CLIENT IS A PRECONDITION, NOT A MISSING BUTTON.
+  //
+  // Neither screen has a "Discussions" link, so both used to die four frames later inside
+  // `realClick` as `no stable element for selector: text=Discussions` - a sentence about the DOM,
+  // for a fact the session state knew before anything was clicked. Measured
+  // 2026-09-04 when MSG-2 was run against a phone that had never been logged in: the check produced
+  // no verdict at all, recorded nothing, and read as a broken app.
+  //
+  // The two states are named apart because their remedies are different commands, and a run that
+  // cannot tell them apart sends its reader to the wrong one. `GATE_EXPR` is `gate-probe.mjs`'s
+  // single definition of the PIN gate, the same one `state.mjs` and `pin.mjs` read.
+  const session = await evaluate(
+    cx,
+    `(function () {
+      if (location.pathname.indexOf('/login') === 0 || !!document.querySelector('#username')) {
+        return 'signedOut';
+      }
+      return ${GATE_EXPR} ? 'locked' : 'in';
+    })()`
+  );
+  if (session !== 'in') {
+    throw new Error(
+      `ensureChat: port ${cx.port} is ` +
+        `${session === 'signedOut' ? 'SIGNED OUT' : 'behind the PIN gate'}, so there is no ` +
+        `Discussions list to reach. ` +
+        (session === 'signedOut'
+          ? 'Log it in first (`bun login.mjs --device <name>`, or `--android` for the phone).'
+          : 'Unlock it first (`bun pin.mjs --device <name>`).') +
+        ' This is a PRECONDITION the run did not meet, not a defect in the app.'
+    );
+  }
+
   // BEFORE the route test, not after: an overlay is what stops the clicks below from landing, and
   // the early return would otherwise hand back `already` for a screen nothing can be clicked on.
   await clearOverlays(cx);
@@ -1801,6 +1835,28 @@ export async function clickBubbleAction(cx, textMatch, label, timeoutMs = 5000) 
  * @param {string[]} files absolute paths
  */
 export async function attachFiles(cx, files) {
+  // A MISSING FIXTURE IS A PRECONDITION, AND `DOM.setFileInputFiles` DOES NOT SAY SO.
+  //
+  // CDP accepts a path that does not exist without complaint: the input ends up holding a `File`
+  // whose bytes cannot be read, so the app stages it, shows `EN ATTENTE`, and the upload fails far
+  // away with Chromium's own wording - `Erreur envoi media: A requested file or directory could not
+  // be found at the time an operation was processed`. Measured 2026-09-04, when
+  // `fixtures/msg4-image.png` was absent because `.gitignore`'s `*.png` rule had made it
+  // uncommittable: MSG-4 hung 30 s on the staging tray and died in an `until() timed out` about
+  // `EN ATTENTE`, which names neither the file nor its absence, and recorded no verdict at all.
+  // MSG-6 met the same fixture and recorded PASS-DIRTY on
+  // the resulting error line, blaming the product for a file the harness never had.
+  //
+  // The paths are checked here rather than in each check because this is the ONE place they are
+  // handed to the browser, and a check cannot report on bytes the browser never had.
+  const missing = files.filter((f) => !existsSync(f));
+  if (missing.length) {
+    throw new Error(
+      `attachFiles: ${missing.length} of ${files.length} file(s) do not exist, so nothing ` +
+        `can be uploaded: ${missing.join(', ')}. This is a MISSING FIXTURE, not an app defect - ` +
+        `check that the file is committed and that no ignore rule swallows it.`
+    );
+  }
   await cx.send('DOM.enable');
   const { root } = await cx.send('DOM.getDocument', { depth: -1 });
   const { nodeId } = await cx.send('DOM.querySelector', {

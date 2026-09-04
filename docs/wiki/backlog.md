@@ -2949,6 +2949,52 @@ bubble-helper entry above does. The duplication costs nothing while it is identi
 the day one copy is fixed and ten are not, which is the shape `recon.mjs`'s first-database bug already
 had. So this waits for the same wholesale moment: convert all eight, re-run the phases together.
 
+### P2 - `checkSha` invalidates a verdict when the RUNNER changes and says nothing when the INSTRUMENT does (measured 2026-09-04)
+
+`results.mjs` records `checkSha`, the hash of the runner file, and `rows.mjs` refuses to believe a
+verdict whose runner has changed since. That rule was written after HEAL-W2's `FAIL` survived the
+rewrite that made its own failing branch unreachable, and for a runner it works.
+
+**It does not cover what the runner IMPORTS, which is where the measuring is done.** On 2026-09-04
+`openConversation` in `chat.mjs` was found to be opening the wrong conversation - MSG-1 asked for
+the DM and was handed a group - and fixing it changed what every MSG, READ, MUT, FWD and NOTIF row
+actually looks at. Not one verdict was flagged: `msg1.mjs` had not been touched, so its hash still
+matched, and `rows.mjs` reported the row as believable. The verdicts happened to be re-taken by hand
+that afternoon, which is not a mechanism.
+
+**A column is only evidence for the question it was written to answer.** `checkSha` answers "did
+this runner change"; nothing answers "did the thing it measures WITH change", and the second
+question is the one that decides whether a green board means anything. `chat.mjs`, `watch.mjs`,
+`comm.mjs`, `results.mjs` and `grainedb.mjs` are shared by nearly every row, so a single edit there
+silently ages the whole board.
+
+**What would close it.** Record a second hash beside `checkSha` covering the harness modules the
+runner imports - resolved from its own import graph rather than a hand-kept list, since a hand-kept
+list is the thing that goes stale. `rows.mjs` then reports "its instrument changed" separately from
+"its runner changed": they send the reader to different work, and merging them would make every
+shared-module edit look like a rewrite of twenty runners.
+
+### P3 - a check that dies mid-gesture leaves a file staged in the composer, and the NEXT check sends it (measured 2026-09-04)
+
+MSG-4 stages a file, types a caption and clicks send. When it died between those steps - which it
+did all afternoon, on a fixture that did not exist - the composer kept the staged attachment. The
+next runner opened the same conversation, typed its own text and sent, and the orphaned file went
+with it. MSG-6 recorded `PASS-DIRTY` on `Erreur envoi media: A requested file or directory could not
+be found`, an error about MSG-4's fixture, in a check that never attaches anything. Both rows came
+back clean once MSG-4 stopped dying.
+
+**Why this is the same fault the campaign already names.** `openDM`'s docblock states that a check
+may not inherit a precondition from whatever ran before it, and every runner now navigates for
+itself. The composer's staging tray is a piece of state that survives that navigation, so it is
+exactly the residue the rule was written about, and nothing asserts it is empty.
+
+**What would close it.** A staged-tray assertion in the shared entry point rather than in each
+runner - the same shape as `clearOverlays`, which already runs at the top of `ensureChat` for the
+same reason. It is P3 and not P2 only because the dirt is LOUD: it surfaced as a recorded
+`PASS-DIRTY` naming a file the check does not use, which is a verdict pointing at its own cause.
+The danger is the quiet version - a valid file staged by a check that then passes, sending an
+attachment nobody asked for into a row about plain text.
+
 ### P3 - TWO out-of-tree directories are both called `canari-harness`, and a decoy `names.mjs` sits in the one the harness does not read (measured 2026-09-04)
 
 The rig keeps its secrets and state outside the public tree, and two different directories now

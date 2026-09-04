@@ -77,21 +77,21 @@ accounts changed.
 | SETUP-6 | A1: log in as owner, decline biometrics | `+A1` `+user` | `pending` |
 | SETUP-7 | Discovery pass over the real at-rest artefacts | `+A1` | `pending` - owed before CORRUPT and PIN |
 | SETUP-8 | Baseline snapshot of intact Android app data | `+A1` | `pending` - owed before CORRUPT and PIN |
-| SETUP-9 | The dedicated venue for channel traffic, recreated through the UI after the 2026-08-17 purge | `W1 W2` | `pending` |
+| SETUP-9 | The dedicated venue for channel traffic, recreated through the UI after the 2026-08-17 purge | `W1 W2` | BUILT 2026-09-04 19:30 on 0.16.3 by `bun venue.mjs`, through the product on W1 and W2 - community + public `general`, both accounts members AND both devices `active` on the community's distribution group (epoch 0 -> 1). Not a recorded verdict: `venue.mjs` is the fixture builder, and the row it answers is asserted from the tables on every run. The venue was RENAMED this day - the old name resolved to a real community on the prod-copy estate ([durable-rules](durable-rules.md)) |
 
 ## 1 - MSG - the plain path
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| MSG-1 | W1 -> W2 plain DM: under 2 s, one copy, correct author | `W1 W2` | `pending` |
-| MSG-1-cold | Same, after a reload | `W1 W2` | `pending` |
-| MSG-1b | Delivery DURING a history load | `W1 W2` | `pending` |
-| MSG-2 | W2 -> A1 with the app foreground: no duplicate against the push | `+A1` | `pending` |
-| MSG-3 | Reply renders with its quoted parent on both sides | `W1 W2` | `pending` |
-| MSG-4 | Image then PDF: ciphertext upload, both render, receiver decodes | `W1 W2` | `pending` |
+| MSG-1 | W1 -> W2 plain DM: under 2 s, one copy, correct author | `W1 W2` | `PASS` 2026-09-04 19:41 on 0.16.3 - 252 ms against a 1 s budget, one copy each side, no disappearance over 16 samples. **The first run of this row was PASS-DIRTY on the WRONG CONVERSATION**: `openConversation` matched the peer's name in a group's message PREVIEW and broke the tie by shortest text, so the check sent into `Repro Gamma` and reported on a DM it never opened. Fixed at the instrument, then re-run |
+| MSG-1-cold | Same, after a reload | `W1 W2` | `PASS` 2026-09-04 19:43 on 0.16.3 - 253 ms against the 3 s cold budget, one copy each side. The historical cold cost (2142 ms, prod 2026-08-13) does not reproduce on the local estate, so the two budgets are no longer telling the two modes apart here |
+| MSG-1b | Delivery DURING a history load | `W1 W2` | `PASS` 2026-09-04 19:43 on 0.16.3 - 1 ms, one copy of the marker AND one of the primer on the receiver, so the message that landed mid-load was neither lost behind the history nor duplicated by it |
+| MSG-2 | W2 -> A1 with the app foreground: no duplicate against the push | `+A1` | `pending` - BLOCKED on the precondition, not on the product: A1 is signed out on the local estate. It used to die inside `realClick` as `no stable element for selector: text=Discussions`, recording NO verdict; `ensureChat` now refuses first and names which of signed-out / PIN-locked it is, and the command that lifts it (2026-09-04) |
+| MSG-3 | Reply renders with its quoted parent on both sides | `W1 W2` | `PASS` 2026-09-04 19:44 on 0.16.3 - 111 ms, parent and reply both rendered, the `Repondre` action addressed by its accessible name |
+| MSG-4 | Image then PDF: ciphertext upload, both render, receiver decodes | `W1 W2` | `PASS` 2026-09-04 19:54 on 0.16.3 - image arrived in 470 ms and DECODED at 32x32 on the receiver (not merely a `blob:` src), PDF rendered by name, both clean. **The fixture it uploads did not exist**: `.gitignore`'s `*.png` had made `fixtures/msg4-image.png` uncommittable, and `./fixtures/` resolved against `archive/` after the runners moved - so CDP staged a file with no bytes and the check hung 30 s on `EN ATTENTE` with no verdict. Fixture committed, `fixtures.mjs` resolves from the harness root |
 | MSG-5 | Channel message converges on all three; no `masterSecret` in any payload | `+A1` | `pending` |
-| MSG-6 | Link preview served through the proxy, never a third-party `<img src>` | `W1 W2` | `pending` |
-| MSG-7 | 30 rapid sends: order preserved, no gap, no duplicate | `W1 W2` | `pending` |
+| MSG-6 | Link preview served through the proxy, never a third-party `<img src>` | `W1 W2` | `PASS` 2026-09-04 19:54 on 0.16.3 - preview rendered in 24 ms, `foreign: []` so no image was fetched from a third party. A first run read PASS-DIRTY on `Erreur envoi media` - that was MSG-4's crashed run leaving a file staged in the composer, and it cleared once MSG-4 stopped dying mid-gesture |
+| MSG-7 | 30 rapid sends: order preserved, no gap, no duplicate | `W1 W2` | `PASS` 2026-09-04 19:54 on 0.16.3 - 30 sent, 30 received, no gap, no duplicate, order settled, 1750 ms end to end. Repeated twice with the same result |
 | MSG-8 | Send to a BACKGROUNDED tab | `W1 W2` `+A1` | `pending` |
 | MSG-8b | Same, receiver on another page: badge and unread count | `W1 W2` `+A1` | `pending` |
 | MSG-9 | **Receiver** offline at the GATEWAY, then restored: lands once on reconnect | `W1 W2` | `pending` |

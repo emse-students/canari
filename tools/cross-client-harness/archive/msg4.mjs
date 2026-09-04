@@ -11,13 +11,13 @@
  * Both directions are observed (watch.mjs) because a media send touches upload endpoints no text
  * send does: a 4xx there is exactly the kind of thing that would otherwise hide behind a green row.
  */
-import { fileURLToPath } from 'node:url';
+import { basename } from 'node:path';
+import { fixture } from '../fixtures.mjs';
 import { APP_TAB, attachFiles, awaitMessage, client, countMessage, ensureChat, evaluate, openConversation, pollFact, realClick, until } from '../chat.mjs';
 import { gate, report, watch } from '../watch.mjs';
 import { record, mark } from '../results.mjs';
 import { peerNameFor } from '../names.mjs';
 
-const abs = (rel) => fileURLToPath(new URL(rel, import.meta.url));
 
 const w1 = await client(9224, APP_TAB);
 const w2 = await client(9223, APP_TAB);
@@ -27,12 +27,22 @@ await openConversation(w1, peerNameFor('W1'));
 await ensureChat(w2);
 await openConversation(w2, peerNameFor('W2'));
 
-/** Sends one staged file with a marker caption, and returns what the receiver ended up showing. */
+/**
+ * Sends one staged file with a marker caption, and returns what the receiver ended up showing.
+ *
+ * `path` IS ABSOLUTE, because `fixture()` resolves it from the harness root - this used to take a
+ * path relative to THIS file and re-resolve it here, which is what broke when the runners moved
+ * into `archive/` and made the check upload a file that does not exist.
+ */
 async function sendFile(path, caption, kind) {
+  // `basename`, not `split('/')`: the resolver hands back a native path, and on Windows that is
+  // separated by backslashes - so the filename assertion below was about to look for the whole
+  // path instead of the name the app renders.
+  const shown = basename(path);
   const ow1 = await watch(w1, `MSG-4-${kind}-W1`);
   const ow2 = await watch(w2, `MSG-4-${kind}-W2`);
 
-  await attachFiles(w1, [abs(path)]);
+  await attachFiles(w1, [path]);
   await until(w1, `document.body.innerText.indexOf('EN ATTENTE') !== -1`, 15000);
 
   await realClick(w1, '.chat-composer-editor');
@@ -59,7 +69,7 @@ async function sendFile(path, caption, kind) {
         var txt = pane.innerText || '';
         return {
           hasCaption: txt.indexOf(${JSON.stringify(caption)}) !== -1,
-          fileNamed: txt.indexOf(${JSON.stringify(path.split('/').pop())}) !== -1,
+          fileNamed: txt.indexOf(${JSON.stringify(shown)}) !== -1,
           // A blob: <img> proves only that the app HANDED bytes to the DOM. It says nothing about
           // whether those bytes were an image: a broken picture has exactly the same src, and the
           // first run of this check passed on a fixture whose PNG chunks did not even have valid
@@ -111,8 +121,8 @@ const pdfCap = mark('MSG4PDF');
 // on the sender, the message has arrived on the receiver AND the receiver has rendered it - three
 // facts, each stronger than the two seconds this used to sleep. A separation that is already proven
 // does not need to be waited for as well.
-const image = await sendFile('./fixtures/msg4-image.png', imgCap, 'image');
-const pdf = await sendFile('./fixtures/msg4-doc.pdf', pdfCap, 'pdf');
+const image = await sendFile(fixture('msg4-image.png'), imgCap, 'image');
+const pdf = await sendFile(fixture('msg4-doc.pdf'), pdfCap, 'pdf');
 
 const imageOk =
   image.arrivedMs !== null && image.copies === 1 && image.rendered.decodedImgs.length > 0;

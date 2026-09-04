@@ -85,6 +85,7 @@
  *   bun mut.mjs                 # all twenty
  *   bun mut.mjs --only 10       # one
  */
+import { fixture } from '../fixtures.mjs';
 import { APP_TAB, armComposer, attachFiles, awaitMessage, clickAtPoint, client, COMPOSER, countMessage, evaluate, fireComposer, hoverBubble, IS_MOVING_FN, longPressBubble, openChannel, openDM, realClick, sameAccountAs, stablePoint, tapSheetIcon, until } from '../chat.mjs';
 import { watch, report, gate, ignoringOfflineCut, longestSilence } from '../watch.mjs';
 import { record, mark } from '../results.mjs';
@@ -1082,7 +1083,7 @@ async function mut3() {
   try {
     // (a) own message WITH media: `MessageBubbleToolbar` gates edit on `!hasMedia`.
     const mediaCaption = mark('MUT3MEDIA');
-    await attachFiles(a, [abs('./fixtures/msg4-image.png')]);
+    await attachFiles(a, [fixture('msg4-image.png')]);
     await until(a, `!document.querySelector('button[aria-label*="Envoyer"]')?.disabled`, 10000, 100).catch(() => {});
     await armComposer(a, mediaCaption);
     await fireComposer(a);
