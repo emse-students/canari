@@ -1460,41 +1460,109 @@ export async function armComposer(cx, text) {
 /** The composer chip a picked mention becomes - `mentionEditor.ts` `MENTION_CHIP_SELECTOR`. */
 export const MENTION_CHIP = '[data-mention-id].mention-editor-chip';
 
-/**
- * The suggestion dropdown. No role or data hook exists on it, so the first match IS the top
- * suggestion: `MentionDropdown` renders the server's order with no re-sort.
- */
-export const MENTION_SUGGESTION = '.mention-composer ul button';
+/** The suggestion dropdown's rows, each carrying the user it would mention. */
+export const MENTION_SUGGESTION = '.mention-composer ul button[data-mention-suggestion]';
 
 /**
- * Clears the composer, types `@<query>`, waits for the dropdown, clicks the TOP suggestion, and
- * returns the resulting chip's `data-mention-id` - the ground truth for anything asserting WHO was
- * mentioned.
+ * Clears the composer, types `@<query>`, and picks ONE suggestion BY IDENTITY.
  *
  * SHARED because two phases need the same gesture for two different questions: MENTION asks what
  * the SENDER puts on the wire (`mentionedUserIds`, the one documented cleartext field), COMM-14 asks
  * what the SERVER does with it. A second copy would be a second place for the chip selector and the
  * dropdown's ordering assumption to drift.
  *
- * `query` must be specific enough that the intended person is the first hit. Against a two-account
- * test environment a first name is - which is the harness's guarantee, not the app's.
+ * **IT USED TO CLICK THE TOP ROW, AND ITS DOCBLOCK CLAIMED THAT WAS SAFE**: "against a two-account
+ * test environment a first name is specific enough - which is the harness's guarantee, not the
+ * app's." The guarantee was false the day it was written. Both campaign accounts are named
+ * `Canari Test <letter>`, so `OWNER_NAME.split(' ')[0]` matches BOTH, and on 2026-09-05 the peer
+ * asked to mention the owner and mentioned ITSELF. The server then correctly pushed to nobody - the
+ * sender is always skipped - and MENTION-2 recorded `FAIL` about a notification level that was
+ * working perfectly. MENTION-3 went `VACUOUS` behind it, because its control is the same send.
+ *
+ * So the row is addressed by `data-mention-suggestion`, the user id the dropdown now publishes, and
+ * `expectId` is how a caller says who it means. Without one, a list offering more than one match is
+ * a REFUSAL naming what was offered - never a choice made on the caller's behalf, which is exactly
+ * how this happened.
+ *
+ * TWO WAYS TO SAY WHO, because two kinds of caller exist. A check holding the other side's client
+ * knows the ID and should pass it - that is the strongest form and it survives a rename. A check
+ * that only ever opens one client knows the display NAME, and `expectName` matches it WHOLE against
+ * the row's own text, which is a different claim from the PREFIX being typed into the box: the query
+ * is what filters the list, the name is what identifies the row in it.
+ *
+ * @param {string} query what to type after the `@` - a prefix, filtered by the app
+ * @param {object} [opts]
+ * @param {string} [opts.expectId] the user id to pick - preferred where the caller has it
+ * @param {string} [opts.expectName] the exact display name to pick, when only the name is known
+ * @returns the chip's `data-mention-id` - the ground truth for anything asserting WHO was mentioned
  */
-export async function mentionInComposer(cx, query) {
+export async function mentionInComposer(cx, query, { expectId = null, expectName = null } = {}) {
   await realClick(cx, COMPOSER);
   await evaluate(cx, `document.querySelector('${COMPOSER}').focus()`);
   await evaluate(cx, `document.execCommand('selectAll')`);
   await cx.send('Input.insertText', { text: '' }); // clear any leftover draft before arming
   await cx.send('Input.insertText', { text: `@${query}` });
   await until(cx, `!!document.querySelector('${MENTION_SUGGESTION}')`, 6000);
-  await realClick(cx, MENTION_SUGGESTION);
+
+  // THE WHOLE LIST, READ BEFORE ANYTHING IS CLICKED - so a refusal can say what was on offer rather
+  // than that "the mention failed", and so an ambiguous list is visible in the row that hit it.
+  const offered = JSON.parse(
+    await evaluate(
+      cx,
+      `JSON.stringify([].map.call(document.querySelectorAll('${MENTION_SUGGESTION}'), function (b) {
+         return { id: b.getAttribute('data-mention-suggestion'), text: (b.innerText || '').trim().slice(0, 40) };
+       }))`
+    )
+  );
+  if (!offered.length) {
+    throw new Error(`the mention dropdown for @${query} is open and offers nothing`);
+  }
+  const shown = () => offered.map((o) => `${o.id.slice(0, 8)}:${o.text}`).join(' | ');
+  if (expectName && !expectId) {
+    // WHOLE, not a prefix: `@Canari` is what filters the list and matches both campaign accounts,
+    // `@Canari Test Beta` is what names one of them. Comparing on the prefix here would re-create
+    // the very ambiguity the query has.
+    const wanted = offered.filter((o) => o.text.replace(/^@/, '').trim() === expectName);
+    if (wanted.length !== 1) {
+      throw new Error(
+        `@${query} does not offer exactly one row reading ${JSON.stringify(expectName)}` +
+          ` - it offers [${shown()}]`
+      );
+    }
+    expectId = wanted[0].id;
+  }
+  if (expectId) {
+    const wanted = offered.filter((o) => o.id === expectId);
+    if (wanted.length !== 1) {
+      throw new Error(
+        `@${query} does not offer ${expectId.slice(0, 8)}... exactly once - it offers [${shown()}]`
+      );
+    }
+  } else if (offered.length > 1) {
+    throw new Error(
+      `@${query} is AMBIGUOUS - ${offered.length} suggestions [${shown()}].` +
+        ' Pass expectId or expectName: picking one for you is how MENTION-2 mentioned the sender.'
+    );
+  }
+  const pick = expectId ? `[data-mention-suggestion="${expectId}"]` : '';
+  await realClick(cx, `${MENTION_SUGGESTION}${pick}`);
   await until(cx, `!!document.querySelector('${MENTION_CHIP}')`, 4000);
-  return evaluate(
+
+  const chipId = await evaluate(
     cx,
     `(function () {
       var chip = document.querySelector('${MENTION_CHIP}');
       return chip ? chip.dataset.mentionId : null;
     })()`
   );
+  // A CLICK THAT LANDED IS NOT A CHIP FOR THE RIGHT PERSON. The list and the chip are two renders of
+  // one decision, and a mismatch here means the pick went somewhere else entirely.
+  if (expectId && chipId !== expectId) {
+    throw new Error(
+      `the chip says ${String(chipId).slice(0, 8)}... but ${expectId.slice(0, 8)}... was picked`
+    );
+  }
+  return chipId;
 }
 
 /**

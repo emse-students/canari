@@ -1362,7 +1362,7 @@ export async function report(w) {
   const renderLine = (l) => {
     if (l.source !== 'network' || !l.url) return l.text;
     const r = l.requestId ? reqs.get(l.requestId) : null;
-    return `${l.text} <- ${r?.method ?? '???'} ${l.url.replace('https://canari-emse.fr', '')}`;
+    return `${l.text} <- ${r?.method ?? '???'} ${l.url}`;
   };
   const errors = lines.filter(
     (l) => (l.level === 'error' || l.level === 'assert') && !isBenignUrl(l.url, l.text)
@@ -1463,8 +1463,8 @@ export async function report(w) {
     severe: severe.map(renderLine),
     errors: errors.map(renderLine),
     exceptions,
-    badHttp: badHttp.map((r) => `${r.method} ${r.url.replace('https://canari-emse.fr', '')} -> ${r.status ?? r.failed}`),
-    knownBadHttp: knownBadHttp.map((r) => `${r.method} ${r.url.replace('https://canari-emse.fr', '')} -> ${r.status ?? r.failed}`),
+    badHttp: badHttp.map((r) => `${r.method} ${r.url} -> ${r.status ?? r.failed}`),
+    knownBadHttp: knownBadHttp.map((r) => `${r.method} ${r.url} -> ${r.status ?? r.failed}`),
     ...(untrackedFailures ? { untrackedFailures } : {}),
     wsEvents: ws.map((w) => `${hhmmss(w.at)} ${w.text}`),
     documentsReplaced,
@@ -2286,13 +2286,38 @@ export function gate(verdict, reports) {
  * @param rep the `report()` of the client that made the request
  * @param expected `[{ path: RegExp, status: number[] }]` - what this check went and asked for
  */
+/**
+ * The PATH a rendered bucket line is about, whatever spelling the line carries.
+ *
+ * **EVERY PATH-ANCHORED FORGIVENESS IN THIS RIG WENT INERT ON 2026-09-03 AND NOTHING SAID SO.** The
+ * renderer used to strip a hardcoded `https://canari-emse.fr` before printing a request, so a rule
+ * written as `/^\/api\/users\/[0-9a-f]{64}$/` matched. The campaign moved to the LOCAL estate that
+ * day, the literal stopped matching anything, and the lines became absolute urls against
+ * `http://localhost:8081` - so MENTION-5 forgave a 404 it goes and causes and was `PASS-DIRTY` on it
+ * anyway, `MINT_REFUSALS` stopped forgiving the refresh 401 every device mint produces, and COMM's
+ * provoked 403s stopped being forgiven too. A rule that CANNOT MATCH fails silently: the reader just
+ * sees a bigger pile, which is the same failure `srvclassify-selftest.mjs` exists for.
+ *
+ * The literal is gone - a rendered line now carries the whole url, which is strictly more evidence -
+ * and the PATH is derived here instead, so a rule keeps working against either spelling and against
+ * whatever estate the rig is pointed at next. `pathname + search`, because the rules that carry a
+ * `(\?|$)` were written against a form that included the query.
+ */
+const pathOfLine = (s) => {
+  try {
+    const u = new URL(s);
+    return u.pathname + u.search;
+  } catch {
+    return s; // already a path, or something that was never a url
+  }
+};
+
 export function ignoringExpectedRefusal(rep, expected) {
-  // Matched against the RENDERED bucket line, which is `METHOD /path -> status`: that is the only
-  // form the report keeps, and re-deriving it here would be a second spelling of one format.
+  // Matched against the RENDERED bucket line, which is `METHOD <url or path> -> status`.
   const forgiven = (line) =>
     expected.some(({ path, status }) => {
       const m = /^(\S+)\s+(\S+)\s+->\s+(\S+)$/.exec(line);
-      return !!m && path.test(m[2]) && status.includes(Number(m[3]));
+      return !!m && path.test(pathOfLine(m[2])) && status.includes(Number(m[3]));
     });
   // The console line Chrome writes ALONGSIDE the failed request - "Failed to load resource: the
   // server responded with a status of 403" - carries no url of its own in the text, so it is

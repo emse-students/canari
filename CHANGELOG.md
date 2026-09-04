@@ -13,6 +13,19 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A channel fan-out that chose nobody returned in silence, so "nobody was notified" and "the
+  notification code never ran" printed the same thing: nothing.** Those are the two halves of every
+  "I did not get a notification" report, and the only line the path could emit was the recipient
+  count printed AFTER the early return. It now says so, with the four reasons counted separately -
+  the sender, members outside the channel's audience, members at `none`, and members at `mentions`
+  the message did not name. Three of those four are ordinary; `outsideAudience` is a permission or
+  scoping fault, and it is only visible because it is counted apart from the rest.
+
+- **The mention dropdown did not say WHO each row was**, so anything resolving a person by the
+  typed query had only a display name to go on - a name the user chooses, that may repeat, and that
+  is the very thing being resolved. It now carries the user id, the same one-attribute fact
+  `data-conversation-tile` publishes and for the same reason.
+
 - **A permission log named a user without saying it was one, so nobody could tell whose traffic it
   was.** `social-service` truncates every id to eight characters, and eight hex is not an identity
   in this system - a trace id is eight hex, so is a card id, so is an association id - so an id is

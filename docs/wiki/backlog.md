@@ -726,6 +726,48 @@ that the DB copy at least keeps behind one deliberate decision. It is a change t
 tooling with its own blast radius, so it is a P2 here rather than something done inline during a
 harness tidy.
 
+### P2 - a mention of a user whose name never resolves renders as a bare `@`, because "not known yet" and "known to have none" are the same answer (measured 2026-09-05)
+
+`MessageMentionChip.svelte` renders `@{resolved ?? ''}`, and its own docblock states the rule it
+cannot actually apply: *"`null` while the name is genuinely not known YET, which is not the same as
+knowing there is none - only the second may be rendered as a word."* `resolveUserDisplayName`
+returns `null` for both, so the chip has no way to tell them apart and picks the empty string for
+each. A message then reads `hey @ can you look at this`.
+
+**Measured on MENTION-5**, which mentions a fabricated user id on purpose:
+`renderedFallbackLabel: "@"`. The same shape reaches a real user through an account that was
+deleted, a profile the server 404s, or any lookup that fails permanently - `shouldSkipRetry` exists
+precisely because some of them never succeed, so the empty label is not transient.
+
+**The fix is the discriminator, not a label.** `resolveUserDisplayName` already distinguishes the
+cases internally (a 404 is memoised in `failedAt`; a transport failure is not), and it collapses
+them on the way out. Carry that out to the caller - `null` for "ask again", a definitive absent for
+"there is nobody" - and the chip can render `m.unknown_user()` for the second while keeping the
+first blank until the name lands. Every other caller of the resolver wants the same distinction and
+is currently guessing at it.
+
+Not fixed inline during the harness tidy because it changes a resolver with a dozen call sites, and
+the campaign row it was found by is asserting something else entirely.
+
+### P3 - the @mention dropdown offers you yourself, and mentioning yourself can do nothing at all (measured 2026-09-05)
+
+Typing `@` in a channel composer lists the signed-in user among the suggestions. Picking it inserts
+a chip and puts your own id in `mentionedUserIds`, and then nothing happens - `notifyChannelRecipients`
+skips `member.userId === input.senderId` before it looks at any notification level, so a self-mention
+cannot produce a notification for anybody, including you. It is a control whose only possible effect
+is on the message text.
+
+**It was measured because it broke an instrument, not a user.** `mentionInComposer` clicked the top
+suggestion; from W2 the top row for the owner's first word was W2 ITSELF, so MENTION-2 mentioned the
+sender, the server correctly pushed to nobody, and the row recorded `FAIL` against a notification
+level that worked. That half is fixed on the rig's side (the row is addressed by id or by whole
+display name, and an ambiguous list is a refusal). What is left is the product question.
+
+`UserAutocomplete` already takes `excludeIds`, and the composer already knows who is signed in, so
+excluding self is one argument. **Whether it SHOULD be excluded is a judgement, not a bug** - some
+chat apps allow a self-mention as a way to bookmark a message - which is why this is a P3 and not a
+fix applied inline: it is the user's call.
+
 ### P3 - NOTHING LINTS THE HARNESS, and the 158 scripts that drive every campaign verdict carry 29 warnings nobody has ever been shown (measured 2026-09-04)
 
 `bun run lint` is scoped to `frontend/`; `make test-harness` runs the self-tests and

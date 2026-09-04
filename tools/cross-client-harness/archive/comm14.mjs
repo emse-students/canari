@@ -139,7 +139,13 @@ async function caseOf(name, { level, text, mention, channelId, workspaceId, owne
     if (mention) {
       // The chip carries the id the sender will put in `mentionedUserIds`; the text follows it so
       // the message is identifiable in the transcript as well as in the tray.
-      const mentioned = await mentionInComposer(w2, mention);
+      //
+      // BY ID, because the query cannot pick a person here. `@Canari` matches BOTH campaign
+      // accounts - the dropdown does not exclude the signed-in user - so the top row on W2 is W2
+      // ITSELF, and this case would have mentioned the sender and asserted that the OWNER's tray
+      // stayed empty. It would have passed, for the wrong reason, for as long as it ran; the same
+      // gesture cost MENTION-2 a wrong `FAIL` on 2026-09-05. `ownerId` is resolved above.
+      const mentioned = await mentionInComposer(w2, mention, { expectId: ownerId });
       await w2.send('Input.insertText', { text: ` ${text}` });
       await fireComposer(w2);
       return mentioned;

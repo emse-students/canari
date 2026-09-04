@@ -75,9 +75,16 @@ import {
 } from '../chat.mjs';
 import { inPanel, openChannelSettings, setChannelNotifLevel } from '../comm.mjs';
 import { errorDetail, mark, record, recordObserved } from '../results.mjs';
-import { ignoringExpectedRefusal, report, watch } from '../watch.mjs';
+import {
+  BLOCK_LIST_READ_NARRATION,
+  ignoringExpectedLog,
+  ignoringExpectedRefusal,
+  report,
+  watch,
+} from '../watch.mjs';
 import { srvLines } from '../srvlog.mjs';
 import * as phone from '../phone.mjs';
+import { whoIs } from './presence.mjs';
 import { OWNER_NAME, PEER_NAME, PORTS, VENUE } from '../names.mjs';
 
 /**
@@ -244,7 +251,10 @@ async function mention1() {
 
   const term = mark('MENTION1');
   const query = PEER_NAME.split(' ')[0];
-  const mentionId = await mentionInComposer(cx, query);
+  // NAMED, NOT TOP-OF-LIST. `@Canari` filters to BOTH campaign accounts - the dropdown does not
+  // exclude the signed-in user - and which of the two is first is the server's order, not a fact
+  // about who was meant. The row is picked by its whole display name.
+  const mentionId = await mentionInComposer(cx, query, { expectName: PEER_NAME });
   await cx.send('Input.insertText', { text: term });
   await until(cx, SEND_ENABLED, 5000, 50);
   await fireComposer(cx);
@@ -273,7 +283,13 @@ async function mention1() {
     chipPointOnTarget: bubbleChip?.onTarget ?? null,
     navigatedPath,
     idsMatch: navigatedId === mentionId,
-  }, { W1: obs });
+  }, {
+    // CLICKING THE CHIP GOES TO A PROFILE, AND A PROFILE READS THE BLOCK LIST. `Log.d` at function
+    // entry is this project's own standard, so the bare `[blocks.listBlockedUsers]` tag is a line
+    // the code is required to print - which is why the campaign forgives that ONE spelling, per
+    // row, and why anything the same module logs WITH a payload is not forgiven here.
+    W1: ignoringExpectedLog(await report(obs), BLOCK_LIST_READ_NARRATION),
+  });
   if (navigatedPath) await goto(cx, '/chat'); // leave W1 on the conversation list, not a profile page
   cx.close();
   return ok;
@@ -330,12 +346,22 @@ async function armOwnerPhone() {
  * Returns what the SENDER put on the wire beside the ciphertext - the `mentionedUserIds` routing
  * hint - because that is what separates "the server suppressed it" from "the sender never asked for
  * it", and a check whose subject is the routing decision must not confuse the two.
+ *
+ * **`ownerId` IS REQUIRED AND THE ASSERTION USED TO BE CIRCULAR.** `mentionsOwner` compared the body
+ * against `mentionId` - the id of whatever chip the click happened to produce - so it was true by
+ * construction whoever was mentioned. On 2026-09-05 the dropdown for the owner's first word offered
+ * BOTH campaign accounts (they are `Canari Test <letter>`), the top row was W2 ITSELF, and the send
+ * mentioned the sender. The server then correctly pushed to nobody, because the sender is always
+ * skipped - and MENTION-2 recorded `FAIL` about a notification level that was working, with
+ * MENTION-3 `VACUOUS` behind it because its control is this same send. The pick is now addressed by
+ * id and the claim is checked against the OWNER, not against itself.
  */
-async function w2MentionsOwner(w2, label) {
+async function w2MentionsOwner(w2, label, ownerId) {
+  if (!ownerId) throw new Error('w2MentionsOwner needs the owner user id - see this function');
   await w2.send('Network.enable');
   const sinceIdx = w2.events.length;
   const term = mark(label);
-  const mentionId = await mentionInComposer(w2, OWNER_NAME.split(' ')[0]);
+  const mentionId = await mentionInComposer(w2, OWNER_NAME.split(' ')[0], { expectId: ownerId });
   await w2.send('Input.insertText', { text: term });
   await until(w2, SEND_ENABLED, 5000, 50);
   await fireComposer(w2);
@@ -346,7 +372,7 @@ async function w2MentionsOwner(w2, label) {
     term,
     mentionId,
     mentionedUserIds,
-    mentionsOwner: Array.isArray(mentionedUserIds) && mentionedUserIds.includes(mentionId),
+    mentionsOwner: Array.isArray(mentionedUserIds) && mentionedUserIds.includes(ownerId),
     sentAt: Date.now(),
   };
 }
@@ -361,13 +387,26 @@ async function w2MentionsOwner(w2, label) {
  *
  * PROD IS SHARED, so the window can catch somebody else's salon. That is exactly why this is not an
  * assertion: an extra number here is another community's traffic, not a defect in this check.
+ *
+ * A ZERO ARRIVES WITH ITS REASONS since 2026-09-05. `notifyChannelRecipients` returned in silence
+ * when it selected nobody, so this read `[]` for that and for a fan-out that never started - and
+ * those are exactly the two things this function exists to tell apart.
  */
 function serverRecipientCounts(sinceMs) {
   const secs = Math.ceil(sinceMs / 1000) + 5;
   return srvLines('social-service', `${secs}s`)
-    .map((l) => /\[CHANNEL_PUSH\] channel=\S+ message=\S+ recipients=(\d+)/.exec(l))
+    .map((l) => /\[CHANNEL_PUSH\] channel=\S+ message=\S+ recipients=(\d+)(.*)$/.exec(l))
     .filter(Boolean)
-    .map((m) => Number(m[1]));
+    .map((m) => {
+      const count = Number(m[1]);
+      if (count > 0) return count;
+      // A ZERO NOW SAYS WHY. The server used to return before printing anything when it chose
+      // nobody, so an empty array here meant "the fan-out never ran" and "it ran and selected
+      // nobody" alike - the two halves of every "I was not notified" report, and this check's whole
+      // subject. The tail carries counts only, never an id, so it is safe in a public record.
+      const why = /sender=\d+ outsideAudience=\d+ levelNone=\d+ notMentioned=\d+ mentioned=\d+/.exec(m[2]);
+      return why ? `0 (${why[0]})` : 0;
+    });
 }
 
 /**
@@ -415,12 +454,15 @@ async function setOwnerLevelAndLeave(cx, level) {
 // ---------------------------------------------------------------------------------------------
 async function mention2() {
   const [cx, obs] = await observed(W1, 'MENTION-2');
+  // WHO THE OWNER IS, read from the owner's own client rather than inferred from a display name -
+  // see `w2MentionsOwner` for the run this cost.
+  const ownerId = (await whoIs(cx))?.user;
   const levelSet = await setOwnerLevelAndLeave(cx, 'mentions');
   const killed = await armOwnerPhone();
 
   const [w2cx, w2obs] = await observed(W2, 'MENTION-2/W2');
   await openChannel(w2cx, VENUE.community, VENUE.channel);
-  const sent = await w2MentionsOwner(w2cx, 'MENTION2');
+  const sent = await w2MentionsOwner(w2cx, 'MENTION2', ownerId);
 
   const notifiedInMs = await phone.awaitNotification(sent.term, 90_000);
   const device = deviceChannelFrames();
@@ -470,13 +512,14 @@ async function mention2() {
 // ---------------------------------------------------------------------------------------------
 async function mention3() {
   const [cx, obs] = await observed(W1, 'MENTION-3');
+  const ownerId = (await whoIs(cx))?.user;
   const [w2cx, w2obs] = await observed(W2, 'MENTION-3/W2');
   await openChannel(w2cx, VENUE.community, VENUE.channel);
 
   // -- the control: same shape, level "mentions", and it must be HEARD --
   const controlLevelSet = await setOwnerLevelAndLeave(cx, 'mentions');
   await armOwnerPhone();
-  const control = await w2MentionsOwner(w2cx, 'MENTION3C');
+  const control = await w2MentionsOwner(w2cx, 'MENTION3C', ownerId);
   const controlMs = await phone.awaitNotification(control.term, 90_000);
   // THE CONTROL CARRIES ITS OWN EVIDENCE, because a control that is not heard is the one case this
   // check cannot explain from the shade alone - and it is the case that actually happened.
@@ -487,7 +530,7 @@ async function mention3() {
   // -- the claim: level "none", and it must be SILENT --
   const levelSet = await setOwnerLevelAndLeave(cx, 'none');
   const killed = await armOwnerPhone();
-  const sent = await w2MentionsOwner(w2cx, 'MENTION3');
+  const sent = await w2MentionsOwner(w2cx, 'MENTION3', ownerId);
   // FOUR TIMES WHAT THE CONTROL TOOK, floored at 45 s. Derived, not chosen: the window has to be
   // long enough that a notification which was going to arrive already has, and the only honest
   // measure of that on this fleet, this hardware and this network is the one just taken. A literal
@@ -563,7 +606,10 @@ async function mention4() {
 
   const term = mark('MENTION4');
   const query = PEER_NAME.split(' ')[0];
-  const mentionId = await mentionInComposer(cx, query);
+  // NAMED, NOT TOP-OF-LIST. `@Canari` filters to BOTH campaign accounts - the dropdown does not
+  // exclude the signed-in user - and which of the two is first is the server's order, not a fact
+  // about who was meant. The row is picked by its whole display name.
+  const mentionId = await mentionInComposer(cx, query, { expectName: PEER_NAME });
   await cx.send('Input.insertText', { text: term });
   await until(cx, SEND_ENABLED, 5000, 50);
   await fireComposer(cx);
@@ -663,7 +709,10 @@ async function mention6() {
 
   const term = mark('MENTION6');
   const query = PEER_NAME.split(' ')[0];
-  const mentionId = await mentionInComposer(cx, query);
+  // NAMED, NOT TOP-OF-LIST. `@Canari` filters to BOTH campaign accounts - the dropdown does not
+  // exclude the signed-in user - and which of the two is first is the server's order, not a fact
+  // about who was meant. The row is picked by its whole display name.
+  const mentionId = await mentionInComposer(cx, query, { expectName: PEER_NAME });
   await cx.send('Input.insertText', { text: term });
   await until(cx, SEND_ENABLED, 5000, 50);
   await fireComposer(cx);

@@ -3016,17 +3016,51 @@ export class ChannelService {
     // door. It also replaces one permission query PER MEMBER with the two `channelAudience` does.
     const audience = new Set(await this.channelAudience(channel));
 
+    // WHY EACH MEMBER WAS DROPPED, counted as it happens. The four reasons mean four different
+    // things and the totals are the only way to tell them apart from outside - see the log below.
+    const dropped = { sender: 0, outsideAudience: 0, levelNone: 0, notMentioned: 0 };
     const recipients: ChannelMember[] = [];
     for (const member of members) {
-      if (member.userId === input.senderId) continue;
-      if (!audience.has(member.userId)) continue;
+      if (member.userId === input.senderId) {
+        dropped.sender += 1;
+        continue;
+      }
+      if (!audience.has(member.userId)) {
+        dropped.outsideAudience += 1;
+        continue;
+      }
       const level: ChannelNotificationLevel = member.notifLevels?.[channel.id] ?? 'all';
-      if (level === 'none') continue;
-      if (level === 'mentions' && !mentioned.has(member.userId.trim().toLowerCase())) continue;
+      if (level === 'none') {
+        dropped.levelNone += 1;
+        continue;
+      }
+      if (level === 'mentions' && !mentioned.has(member.userId.trim().toLowerCase())) {
+        dropped.notMentioned += 1;
+        continue;
+      }
       recipients.push(member);
     }
 
-    if (recipients.length === 0) return;
+    if (recipients.length === 0) {
+      // A FAN-OUT THAT CHOSE NOBODY LOOKED EXACTLY LIKE A FAN-OUT THAT NEVER RAN, and from outside
+      // this process those are the two halves of every "I was not notified" report. The only line
+      // this path could emit was `recipients=N`, printed after this early return, so silence meant
+      // both. It cost a campaign row a wrong verdict on 2026-09-05: a mention that named the SENDER
+      // was skipped here - correctly - and read as the `mentions` level being broken.
+      //
+      // The counts are the evidence, because zero recipients is ORDINARY in three of four shapes: a
+      // message in a channel one member reads, everyone at `none`, or a mention naming nobody who
+      // subscribes that way. `outsideAudience` is the one that is not - a member of the workspace
+      // the channel's own audience refuses is a permission or a scoping fault - so it is what a
+      // reader looks for first, and it is only visible because it is counted separately.
+      this.logger.log(
+        `[CHANNEL_PUSH] channel=${channel.id} message=${message.id} recipients=0 of ` +
+          `${members.length} member(s) - sender=${dropped.sender} ` +
+          `outsideAudience=${dropped.outsideAudience} levelNone=${dropped.levelNone} ` +
+          `notMentioned=${dropped.notMentioned} mentioned=${mentioned.size}`
+      );
+      return;
+    }
     this.logger.log(
       `[CHANNEL_PUSH] channel=${channel.id} message=${message.id} recipients=${recipients.length}`
     );
