@@ -11,6 +11,38 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed
+
+- **The dependency audit was the critical path of every pull request, and its own dependency fails
+  two times in five.** It ran 14 to 39 minutes against two minutes for CodeQL and twenty seconds for
+  the secret scan, and the cause was not the failures: `bun audit` takes about five minutes per tree
+  even when it succeeds, and five trees ran in one sequential shell loop. It is now a five-way
+  matrix with `fail-fast: false`, so the clean case is one audit long instead of five and the
+  degraded case is a quarter of an hour instead of seventy-five minutes; `cargo audit` is its own
+  job, which takes its three-minute `cargo install` off the critical path without a cache to go
+  stale. **The shared attempt budget is gone with the loop** - `AUDIT_ATTEMPTS=1` existed so the
+  first tree to meet a silent registry could spare the other four, and what it bought was
+  sequential time. **And the audit no longer feeds `CI passed`**: measured over twelve runs on
+  2026-09-04, npm's advisory endpoint answered 503 to 26 of 60 requests and exhausted five attempt
+  budgets outright, so a required check resting on it is a coin toss that blocks merges rather than
+  a gate. It still runs on every pull request, and the nightly pass still calls the same file with
+  `registry_outage_is_failure: true`, where an unaudited tree is a failure rather than a warning.
+  The loss is written into `ci.yml` beside the job: a pull request can now merge with a known
+  advisory in a lockfile it edited, and the honest answer is a source that answers - GitHub's
+  Dependabot alert list, already computed for this repository and still read by nothing here.
+
+### Fixed
+
+- **A measurement published four hours earlier counted two empty log fetches as two clean runs.** The
+  503 rate recorded for the npm advisory endpoint - *six in fifty, no exhausted budget* - came from
+  `grep -c` over a log fetched per run, and two of those fetches had returned nothing at all. A
+  count over an empty string is zero, so an absence of data was read as a verdict, which is the one
+  failure mode this repository's rules name outright. Re-measured with every log size-checked and
+  its step marker required, reporting `UNREADABLE` rather than clean: **26 of 60 requests, 43%, and
+  five exhausted budgets - five trees that went unaudited and were tolerated.** The rate is also not
+  stationary, which a single number hid: the older half of the window scores 0, 0, 0, 0, 1, 1 and
+  the newer half 2, 6, 3, 4, 4, 5.
+
 ### Fixed
 
 - **The page that exists to survive an outage could not survive one anywhere but the site root.**

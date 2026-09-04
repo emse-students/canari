@@ -1272,40 +1272,60 @@ spot stops auditing and reports success for ever.* `audit-dependencies.test.sh` 
 both sides of the distinction, the policy flip, and the fact that the `--ignore=` flags the one
 suppressed advisory rests on still reach the tool.
 
-**AND THE RATE IS MEASURED, because the rule says a fallback's name is not believed until it is.**
-Ten consecutive `ci.yml` runs, five trees audited in each, so fifty tree-audits:
+**AND THE RATE IS MEASURED, because the rule says a fallback's name is not believed until it is -
+AND THE FIRST MEASUREMENT WAS WRONG, in the way this repository's rules name explicitly.** It
+counted `grep -c` over a log fetched per run and reported *six 503s in fifty requests, no exhausted
+budget*. Two of those runs had returned **no log at all**, and a count over an empty string is
+zero: an absence of data read as a verdict. The re-measurement checks every log's size and its step
+marker first, and reports `UNREADABLE` rather than clean - the guard is the finding, not the
+numbers.
 
-| run | 503s | which tree |
-| --- | --- | --- |
-| 33847721971 | 0 | - |
-| 33836519287 | 0 | - |
-| 33835252690 | 1 | `apps/core-service` |
-| 33833975381 | 1 | `apps/core-service` |
-| 33832780239 | 0 | - |
-| 33831909478 | 0 | - |
-| 33831223145 | 0 | - |
-| 33831208279 | 2 | `frontend`, `apps/media-service` |
-| 33831187138 | 1 | `frontend` |
-| 33830007519 | 1 | `apps/core-service` |
+Twelve readable `ci.yml` runs on 2026-09-04, five trees each, sixty tree-audits:
 
-**Six single 503s in fifty requests, and not one tree exhausted its three attempts** - the
-`ask once each` notice, which is what a tolerated outage looks like, was never emitted in the
-window. So the endpoint is ordinarily flaky at roughly one request in eight, and one retry has
-always been enough.
+| run | 503s | exhausted | which tree |
+| --- | --- | --- | --- |
+| 33857687014 | 2 | 0 | `chat-delivery-service`, `media-service` |
+| 33854391020 | 6 | 0 | `core-service`, `media-service`, `frontend` |
+| 33851910609 | 3 | 0 | `media-service`, `social-service`, `frontend` |
+| 33850722894 | 4 | **2** | `chat-delivery-service`, `media-service` |
+| 33849668875 | 4 | **2** | `core-service`, `social-service` |
+| 33847721971 | 5 | **1** | `media-service`, `social-service` |
+| 33836519287 | 0 | 0 | - |
+| 33835252690 | 1 | 0 | `core-service` |
+| 33833975381 | 1 | 0 | `core-service` |
+| 33832780239 | 0 | 0 | - |
+| 33831909478 | 0 | 0 | - |
+| 33831223145 | 0 | 0 | - |
 
-**What the distribution RULES OUT matters more than the rate.** It is not this pipeline's own
-request rate: the 503 lands on the first, third and fourth tree of the loop indifferently, and a
-retry twenty seconds later succeeds - a rate limit would spare the first and punish the last. It is
-not an npm outage: forty-four of fifty succeed, `GET registry.npmjs.org` answers 200 in 54ms from a
-workstation, and the status page stays green. And it is not the size of the POST body: `frontend`,
-by a wide margin the largest tree, is not over-represented - `apps/core-service` is.
+**Twenty-six 503s in sixty requests - 43% - and FIVE exhausted attempt budgets, which is five trees
+that went unaudited and were tolerated.** Two further runs were unreadable and are excluded rather
+than scored.
+
+**THE RATE IS NOT STATIONARY, and that is the part a single number hides.** Read the table
+bottom-up: the older six runs score 0, 0, 0, 0, 1, 1 and the newer six score 2, 6, 3, 4, 4, 5. The
+endpoint degraded across one day. *A predicate that named the last incident is not the predicate
+that names the next one* applies to rates as much as to queries: any threshold set on the bottom
+half of this table is already false at the top.
+
+**WHAT THE DISTRIBUTION RULES OUT.** Not this pipeline's own request rate - the 503 lands on the
+first, third and fourth tree indifferently, and a retry twenty seconds later often succeeds; a rate
+limit would spare the first and punish the last. Not the size of the POST body - `frontend`, by a
+wide margin the largest tree, is not over-represented. It is npm's advisory endpoint, and 43% is not
+flakiness to tolerate: it is a dependency that fails two times in five.
+
+**WHAT IT COST, IN BOTH CURRENCIES.** Each 503 is a full five-minute timeout, so twenty-six of them
+is over two hours of runner time in one day - and `bun audit` takes about five minutes per tree even
+when it SUCCEEDS, which is why one sequential job ran 14 to 39 minutes against two minutes for
+CodeQL. **That is what made this the critical path of every pull request, and the audit is now a
+five-way matrix that is no longer part of `CI passed`** - see the block above `dependency-audit` in
+`ci.yml`, which carries the reasoning and names what is lost.
 
 **THE BACKOFF IS WHAT MAKES AN EXHAUSTED BUDGET MEAN SOMETHING.** `BACKOFF_BASE_S=20` sleeps 20s
 then 40s, so three attempts span a minute plus `bun audit`'s own timeout. Three consecutive 503s are
-therefore NOT three independent draws at one-in-eight; they are one npm blip lasting over a minute.
-That is what happened on the `0.16.2-alpha.1` bump commit on 2026-09-04 - three attempts, three
-503s, exit 2, correct. The pass went red anyway, because the CALLER could not read the answer, and
-that defect is above. *The classifier's rate says the design is right; only its reader was wrong.*
+therefore not three independent draws; they are one npm blip lasting minutes. That is what the
+`0.16.2-alpha.1` bump commit met - three attempts, three 503s, exit 2, correct. The pass went red
+anyway, because the CALLER could not read the answer, and that defect is above. *The classifier's
+rate says the design is right; only its reader was wrong.*
 
 ## Notable CI gotchas
 

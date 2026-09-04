@@ -901,6 +901,44 @@ jobs:
       contents: read
       security-events: write
     uses: ./.github/workflows/code-analysis.yml
+    with:
+      scope: code
+
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  # THE DEPENDENCY AUDIT RUNS ON EVERY PULL REQUEST AND IS NOT IN `ci-passed`
+  #
+  # NOT BECAUSE IT IS UNIMPORTANT, BUT BECAUSE ITS DEPENDENCY FAILS TWO TIMES IN FIVE. Measured over
+  # twelve `ci.yml` runs on 2026-09-04: sixty tree-audits, TWENTY-SIX 503s from npm's advisory
+  # endpoint, and FIVE attempt budgets exhausted outright - five trees that went unaudited. The rate
+  # is not even stationary; the older runs in that window scored 0, 0, 0, 0, 1, 1 and the newer ones
+  # 2, 6, 3, 4, 4, 5. A required check that answers "no" on a coin toss stops being a gate and
+  # becomes a tax on every merge, and the standing instruction here is the opposite of that: gates
+  # are for things a test can settle.
+  #
+  # WHAT CARRIES THE VERDICT INSTEAD is `scheduled.yml`, which calls the same file with the default
+  # `scope: all` AND `registry_outage_is_failure: true` - so a tree npm never answered for is a
+  # FAILURE there rather than a tolerated warning. That is the half a pull request cannot see anyway:
+  # a new advisory landing against code nobody touched.
+  #
+  # THIS IS A REAL LOSS AND IT IS WRITTEN DOWN AS ONE: a pull request can now merge with a known
+  # HIGH advisory in a lockfile it edited, and the only thing that will say so is a nightly run. The
+  # honest fix is not to re-gate this on a 43%-failure endpoint - it is a source of advisories that
+  # answers. GitHub's own Dependabot alert list is that source, it is already computed for this
+  # repository, and nothing here reads it yet.
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  dependency-audit:
+    name: Dependency audit
+    # THE SAME GRANT AS ABOVE, and not the smaller one this half needs. A called workflow cannot be
+    # given less than any of its jobs declares, and exceeding or under-granting is a STARTUP FAILURE
+    # with no job, no log and no annotation - the trap this file's header warns about. `codeql` is
+    # skipped by `scope`, but it still declares `security-events: write`.
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    uses: ./.github/workflows/code-analysis.yml
+    with:
+      scope: dependencies
 
   ci-passed:
     name: CI passed
