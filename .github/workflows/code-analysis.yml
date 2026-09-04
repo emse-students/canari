@@ -34,9 +34,25 @@ on:
         default: false
         type: boolean
 
+      # WHICH HALF TO RUN, AND WHY THE HALVES ARE ASKED SEPARATELY ON A PULL REQUEST.
+      # `ci.yml` calls this file TWICE. The `code` half - CodeQL, the secret scan and the two
+      # lockfile guards - takes about two minutes and feeds `CI passed`, so a live secret still
+      # stops a merge. The `dependencies` half does NOT feed it, because the npm advisory endpoint
+      # answered 503 to 26 of 60 requests measured on 2026-09-04 and exhausted five attempt budgets
+      # outright: a gate whose dependency fails two times in five is not a gate, it is a coin toss
+      # that blocks merges. It still runs on every pull request, and it is still the same file the
+      # nightly pass runs with `all`, where nothing is behind it and a silence IS the report.
+      # `default: all` so `scheduled.yml` needs no change to keep asking both.
+      scope:
+        description: 'Which half to run: `all` (the nightly), `code` (CodeQL, secrets, lockfile guards) or `dependencies` (the audits).'
+        required: false
+        default: all
+        type: string
+
 jobs:
   codeql:
     name: CodeQL Security Analysis
+    if: inputs.scope == 'all' || inputs.scope == 'code'
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -89,6 +105,7 @@ jobs:
 
   secret-scan:
     name: Scan for Secrets
+    if: inputs.scope == 'all' || inputs.scope == 'code'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -117,8 +134,17 @@ jobs:
   # It CAN now go red on a morning nobody pushed anything - that is the point. A new advisory
   # against a dependency we already ship is exactly the event this job exists to announce, and
   # `.github/dependabot.yml` (added the same day) opens the pull request that closes it.
-  dependencies:
-    name: Check Dependencies Vulnerabilities
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  # THE TWO LOCKFILE INVARIANTS - CHEAP, DETERMINISTIC, AND THEY STAY A GATE
+  #
+  # These are not audits and they ask nothing of any network: they read committed files. They live in
+  # the `code` half rather than beside the audits because their cost is seconds and what they protect
+  # is not hypothetical - one keeps Dependabot able to read this repository at all, the other is the
+  # only thing between a plugin-version drift and a dead release.
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  guards:
+    name: Guard the committed lockfiles
+    if: inputs.scope == 'all' || inputs.scope == 'code'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -173,34 +199,100 @@ jobs:
         working-directory: frontend
         run: node ./scripts/check-tauri-plugin-versions.mjs
 
-      # `bun audit`, not `npm audit`: the frontend's committed lockfile is bun.lock, and npm audit
-      # against it audits whatever a stray package-lock.json happens to say instead. It goes through
-      # `audit-dependencies.sh`, which is the one place that tells the registry's ANSWER apart from
-      # its SILENCE - `|| [ "$?" -eq 2 ]` is where this caller's policy lands, and the script turns
-      # that 2 into a 1 by itself when the input above says an unaudited tree is a failure.
-      - name: Audit frontend dependencies
+
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  # ONE JOB PER TREE, AND THAT IS THE WHOLE PERFORMANCE FIX
+  #
+  # THIS WAS ONE SEQUENTIAL SHELL LOOP AND IT COST 14 TO 39 MINUTES, measured on 2026-09-04 against
+  # two minutes for CodeQL and twenty seconds for the secret scan - so this single step WAS the
+  # critical path of the whole pull request. The cause was not the failures: `bun audit` takes about
+  # five minutes per tree even when it SUCCEEDS, and five of those in series is twenty-five minutes
+  # before anything goes wrong. Every 503 then adds a full five-minute timeout on top.
+  #
+  # Five jobs in parallel make the clean case one audit long instead of five, and they make the
+  # DEGRADED case better too: five trees x three attempts x five minutes is a wall-clock quarter of
+  # an hour rather than seventy-five minutes.
+  #
+  # AND THE SHARED ATTEMPT BUDGET IS GONE WITH THE LOOP, deliberately. `AUDIT_ATTEMPTS=1` existed so
+  # that the first tree to meet a silent registry could spare the other four from re-discovering it;
+  # parallel jobs cannot tell each other anything, and they no longer need to - the saving it bought
+  # was sequential time, which is exactly what this structure removes. The script still honours the
+  # variable; nothing here sets it.
+  #
+  # `fail-fast: false` IS LOAD-BEARING. The loop this replaces audited every service even after one
+  # failed, on purpose: aborting reports one tree and calls the rest clean by never opening them.
+  # A matrix without this flag reintroduces precisely that.
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  npm-audit:
+    name: npm audit (${{ matrix.tree }})
+    if: inputs.scope == 'all' || inputs.scope == 'dependencies'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The frontend installs its scripts (Tauri and the WASM glue need them) and is audited at
+          # bun's default level; every service skips scripts and is audited at `moderate`.
+          - tree: frontend
+            install: --frozen-lockfile
+            audit: ""
+          - tree: apps/core-service
+            install: --frozen-lockfile --ignore-scripts
+            audit: --audit-level=moderate
+          - tree: apps/social-service
+            install: --frozen-lockfile --ignore-scripts
+            audit: --audit-level=moderate
+          # THE ONE TREE WITH SUPPRESSIONS, and they are keyed to it rather than applied to the
+          # matrix: an `--ignore` spread across every tree would hide the same advisory in four
+          # places where nobody measured whether it is reachable. The reachability arguments, and
+          # the assertions that void them, are below.
+          - tree: apps/media-service
+            install: --frozen-lockfile --ignore-scripts
+            audit: --audit-level=moderate --ignore=GHSA-vcc3-ghjq-m6fr --ignore=GHSA-528h-pc64-c93x
+          - tree: apps/chat-delivery-service
+            install: --frozen-lockfile --ignore-scripts
+            audit: --audit-level=moderate
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: ".bun-version"
+
+      # `bun audit`, not `npm audit`: the committed lockfile is `bun.lock`, and `npm audit` against
+      # it audits whatever a stray `package-lock.json` happens to say instead. It goes through
+      # `audit-dependencies.sh`, the one place that tells the registry's ANSWER apart from its
+      # SILENCE, and the script turns its 2 into a 1 by itself when the input says an unaudited tree
+      # is a failure.
+      - name: Audit ${{ matrix.tree }}
         env:
           REGISTRY_OUTAGE_IS_FAILURE: ${{ inputs.registry_outage_is_failure }}
+          TREE: ${{ matrix.tree }}
+          INSTALL_FLAGS: ${{ matrix.install }}
+          AUDIT_FLAGS: ${{ matrix.audit }}
         run: |
           set -uo pipefail
-          ( cd frontend && bun install --frozen-lockfile )
+          # `$INSTALL_FLAGS` and `$AUDIT_FLAGS` are deliberately word-split lists, and `$AUDIT_FLAGS`
+          # is EMPTY for the frontend - quoting either would pass one empty argument.
+          # shellcheck disable=SC2086
+          ( cd "$TREE" && bun install $INSTALL_FLAGS )
           # `rc=0` FIRST, AND `|| rc=$?` RATHER THAN A BARE CALL. GitHub runs a `run:` block as
-          # `bash -e`, and `set -uo pipefail` above does NOT clear that `-e`. A bare call that exits
-          # non-zero therefore kills the step on the spot and the next line never runs - so
-          # `rc=$?` on its own line is unreachable for every exit status this whole design exists to
-          # tell apart. Shipped that way on 2026-09-04 and a real npm 503 turned the pass red four
-          # hours later, which is the exact failure the classifier was written to prevent.
+          # `bash -e`, and `set -uo pipefail` above does NOT clear that `-e`, so a bare call that
+          # exits non-zero kills the step on the spot and any `rc=$?` on the next line is
+          # unreachable - for every status this design exists to tell apart. Shipped that way on
+          # 2026-09-04 and a real npm 503 turned the pass red four hours later.
           rc=0
-          .github/scripts/audit-dependencies.sh frontend || rc=$?
-
-          # AN OUTAGE IS A PROPERTY OF THE REGISTRY, NOT OF THE FRONTEND. If npm did not answer for
-          # this tree it will not answer for the four services either, and re-discovering that four
-          # more times costs twelve `bun audit` calls carrying bun's own multi-minute timeout each.
-          # The fact is carried forward instead - which is the whole of what `$GITHUB_ENV` is for.
-          if [ "$rc" -eq 2 ]; then
-            echo 'AUDIT_ATTEMPTS=1' >> "$GITHUB_ENV"
-            echo '::notice::npm did not answer for the frontend, so the services below ask once each rather than three times.'
-          fi
+          # shellcheck disable=SC2086
+          .github/scripts/audit-dependencies.sh "$TREE" $AUDIT_FLAGS || rc=$?
           [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ]
 
       # Every service is audited even after one fails. Aborting on the first would report a
@@ -248,43 +340,15 @@ jobs:
       # ignore that rests on it has to be
       # revisited rather than silently outliving the reason it was granted. An advisory suppressed
       # on a premise nothing checks is a hole with a comment over it.
-      - name: Audit backend service dependencies
-        env:
-          REGISTRY_OUTAGE_IS_FAILURE: ${{ inputs.registry_outage_is_failure }}
+      # `!cancelled()` RATHER THAN A PLAIN CONDITION: the premises must be checked even when the
+      # audit step above failed, which is what the sequential loop did by collecting failures instead
+      # of aborting. A missing `node_modules` is itself one of the refusals below - an unmeasurable
+      # premise does not grant the ignore.
+      - name: The premises behind media-service's two ignores
+        if: ${{ !cancelled() && matrix.tree == 'apps/media-service' }}
         run: |
           set -uo pipefail
-
-          ignores_for() {
-            case "$1" in
-              # GHSA-vcc3-ghjq-m6fr - unreachable, see the header above and the assertion below.
-              media-service) echo "--ignore=GHSA-vcc3-ghjq-m6fr --ignore=GHSA-528h-pc64-c93x" ;;
-              *) echo "" ;;
-            esac
-          }
-
           failed=""
-          for svc in core-service social-service media-service chat-delivery-service; do
-            echo "--- $svc"
-            ig=$(ignores_for "$svc")
-            [ -n "$ig" ] && echo "    suppressing, with the reason and the assertion in this workflow: $ig"
-            # Same three outcomes as the frontend, and the same policy: 2 is "the registry never
-            # answered", which is not a finding about this service.
-            ( cd "apps/$svc" && bun install --frozen-lockfile --ignore-scripts ) || { failed="$failed $svc(install)"; continue; }
-            # `$ig` is a deliberately word-split list of `--ignore=` flags built by `ignores_for`,
-            # and it is EMPTY for every service but one - quoting it would pass an empty argument.
-            # shellcheck disable=SC2086
-            # `|| rc=$?`, never a bare call - see the frontend step: `bash -e` would end the
-            # whole job on the first service that is not clean, which is the opposite of a loop
-            # that collects every failing service and names them together.
-            rc=0
-            .github/scripts/audit-dependencies.sh "apps/$svc" --audit-level=moderate $ig || rc=$?
-            # THE SAME FACT, CARRIED ACROSS THE LOOP. The first service to report 2 has established
-            # that npm is not answering; the rest ask once and move on. Without this the loop's worst
-            # case is four services x three attempts x bun's own timeout, to learn one thing.
-            [ "$rc" -eq 2 ] && export AUDIT_ATTEMPTS=1
-            [ "$rc" -eq 0 ] || [ "$rc" -eq 2 ] || failed="$failed $svc"
-          done
-
           # The premise behind the one ignore. Runs after the loop so `node_modules` exists.
           echo "--- the premise behind media-service's ignore"
           dist="apps/media-service/node_modules/minio/dist"
@@ -335,9 +399,28 @@ jobs:
           fi
 
           if [ -n "$failed" ]; then
-            echo "::error::bun audit failed for:$failed"
+            echo "::error::a premise behind an ignore no longer holds:$failed"
             exit 1
           fi
+
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  # THE RUST HALF, AND WHY IT IS NOT CACHED
+  #
+  # `cargo install cargo-audit --locked` compiles from source and takes about three minutes, which
+  # used to be three minutes ADDED to the npm audits because they shared a job. It is now its own
+  # job, so it runs alongside them and costs nothing on the critical path - which is a better answer
+  # than a cache: a cached binary needs a key, a key needs a pinned version, and a pinned audit tool
+  # goes stale with nothing watching it. The build is the cache.
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  cargo-audit:
+    name: cargo audit
+    if: inputs.scope == 'all' || inputs.scope == 'dependencies'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
 
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
