@@ -75,19 +75,28 @@ does in `login.mjs`.
       in 2.9 s on a FACT and reports it: *"Votre PIN a ete change sur un autre appareil. Recuperez vos
       messages avec votre ancien PIN."* - the product refusing, exit 1. It used to spend 25 s and
       throw `until() timed out`, because it waited for the single word "incorrect". **What is left is
-      not code: the PIN in `test-accounts.json` is not this estate's PIN for that account** - see C2.
-      The missing `role="alert"` that forced the atom to key on a colour class is a P2 in
+      not code:** the PIN in `test-accounts.json` was not this estate's PIN for that account - since
+      resolved, see C2, and `bun pin.mjs --android` now exits 0 with the gate gone. The missing
+      `role="alert"` that forced the atom to key on a Tailwind colour class is a P2 in
       [backlog](backlog.md).
-      ~~`pin.mjs` on the phone.~~ The gate is UP on A1 and the scope error is GONE (measured
-      2026-09-04), so this is the last unproven link before A1 is a usable device. Give it the
-      `--android` spelling and `useDevice` binding `login.mjs` has.
-- [ ] **B2. `send.mjs --device W1 --to "<conv>" --text "..."`** - the gesture is `send()` in
-      `chat.mjs`; there is no command over it.
-- [ ] **B3. `recv.mjs --device W2 --expect "..."`** - the receive half, ending on the message being
-      PRESENT rather than on a clock.
+- [x] **B2 - DONE, and it took three attempts to make its post-condition honest.** `send.mjs` wraps
+      `send()` from `chat.mjs` and adds only argument resolution and a post-condition. The first one
+      was the sender's own pane - the app renders optimistically, so it PASSED on a message the server
+      had refused three times. The second read the response in the same tick the request was sent, so
+      the status was `pending` and it passed again. It now waits for the answer and exits 1 on a 4xx,
+      printing the product's own refusal. **It found the P1 above the moment it was honest.**
+- [x] **B3 - DONE.** `recv.mjs` wraps `awaitMessage()`, which already carries the hard part: a miss
+      reports the PANE STATE, so it distinguishes absent from late from below-the-render-window.
+      `--absent` inverts it for the cases that assert a message does NOT arrive. It is a separate
+      command from `send.mjs` deliberately: only a receiver can prove delivery, and one command doing
+      both could not fail honestly.
 - [ ] **B4. `logs.mjs --device A1 [--server]`** - today this is three libraries (`watch.mjs` for the
       client, `phone.mjs` for logcat, `srvlog.mjs` for the estate) and no single command.
-- [ ] **B5. Uniform flags** on `shot.mjs`, `unlock.mjs`, `reload.mjs`.
+- [ ] **B5. Uniform flags** on `shot.mjs` (positional argv today), `unlock.mjs`, `reload.mjs`.
+      `device.mjs` now owns `--device`/`--android`/`--port`/`--account` and the phone-arming ladder;
+      `login.mjs` and `pin.mjs` both use it. **It exists because I wrote the second copy an hour after
+      the first** - the duplication the user reported, happening live - and a third was about to
+      land in `send.mjs`.
 
 ## C. Blocked on the user
 
@@ -107,14 +116,21 @@ does in `login.mjs`.
       session. Two stale facts in that file were corrected at the same time - `_target` still named
       `localhost:1420`, the dev server the campaign moved OFF on 2026-09-03.
 
-- [x] **C3 - MEASURED, AND THE RISK DID NOT HOLD.** I raised it because W1 and W3 hold the OWNER
-      account with a device key minted before the re-key, and a fixture built by a client with a dead
-      key fails later for a reason nobody connects back. Reloaded W1 and asked: session `true`, no
-      gate, no *"change sur un autre appareil"*, its `mls_device_id` still present. **The PIN wraps a
-      device's key, it is not the key**, so a client already holding an unwrapped, persisted key is
-      untouched by the account's verifier changing - it would only meet the new PIN if it lost that
-      key, and the new PIN is now the recorded one. W2 is the PEER and was never in scope. Nothing to
-      do; recorded so the question is not re-opened.
+- [ ] **C3 - THE RISK DID HOLD, AND MY FIRST ANSWER WAS WRONG.** I raised it, checked W1, saw session
+      `true`, no gate and an `mls_device_id` present, and closed it as "the risk did not hold". **I
+      measured the absence of a gate, not the validity of the key.** The user pushed back - *"le PIN
+      n'est plus censé être bon je crois"* - and they were right: W1 cannot send at all. Every
+      `POST /api/mls/send` is refused 403, *"this device holds no leaf ... the roster and the tree
+      disagree"*, and a full page reload does not lift it.
+
+      **`canari_device_key_persist` is a five-character FLAG; the key material is in IndexedDB.** So a
+      client holding a key the server no longer recognises looks exactly like a healthy one from the
+      outside - no gate, an id present, a normal-looking conversation. **The only thing that
+      distinguishes them is trying to send.**
+
+      **What is owed:** W1 and W3 need their device identity re-minted under the current PIN, which is
+      the campaign's fixture step (D2) for all of them - not just for the device that was reset. See
+      the P1 in [backlog](backlog.md) for the evidence and the rule.
 
 - [ ] **C1. `ACCOUNT_OF.A2`.** The second phone (Pixel 6a) is bound and addressable on port 9335, but
       no account is assigned and guessing one would be an identity invented by a tool. Peer, or a

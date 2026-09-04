@@ -21,6 +21,12 @@
  * without regenerating FAILS the gate. A script with no docblock fails it too - "documented" is
  * then a property the tree HAS rather than one a session is asked to remember.
  *
+ * **`git add` YOUR NEW SCRIPT FIRST.** The set comes from `git ls-files`, so a brand-new file is
+ * invisible here until it is staged, and regenerating before staging writes an index that the gate
+ * then rejects one command later. That ordering is a consequence of describing a CHECKOUT rather
+ * than a working directory, and it is the right trade: an index must not name a file a fresh clone
+ * cannot open.
+ *
  * Usage:
  *   bun inventory.mjs            # rewrite INVENTORY.md from the tree
  *   bun inventory.mjs --check    # exit 1 if INVENTORY.md is not what the tree would produce

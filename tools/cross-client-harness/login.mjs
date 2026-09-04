@@ -17,8 +17,9 @@
  */
 import { accountFor } from './accounts.mjs';
 import { connect, evaluate, listTargets, realClick } from './cdp.mjs';
-import { ensure, forwardIdpBrowser, useDevice } from './phone.mjs';
-import { ACCOUNT_OF, PORTS, SITE } from './names.mjs';
+import { forwardIdpBrowser } from './phone.mjs';
+import { armIfPhone, resolveDevice } from './device.mjs';
+import { PORTS, SITE } from './names.mjs';
 
 const argv = process.argv.slice(2);
 const opt = (name, fallback) => {
@@ -26,54 +27,19 @@ const opt = (name, fallback) => {
   return i === -1 ? fallback : argv[i + 1];
 };
 
-// `--android` IS A SPELLING OF `--device A1`, AND IT ARMS WHAT IT NEEDS. The whole point of an atom
-// is that `bun login.mjs --android` leaves the phone logged in with no manual probe first, so the
-// forward this script depends on is MADE here rather than assumed: the devtools socket carries the
-// app's pid, so a relaunch, a reinstall or a replug invalidates it, and every session that hand-typed
-// `adb forward` before calling this was paying for that omission. It is not a second way of naming a
-// device - it resolves to A1 and then goes through exactly the same path as `--device A1`.
-const android = argv.includes('--android');
-const spelt = opt('device', null);
-if (android && spelt && spelt !== 'A1') {
-  throw new Error(`--android IS --device A1, so --device ${spelt} contradicts it`);
-}
-
-// THE ACCOUNT IS DERIVED FROM THE DEVICE, never defaulted to a spelt key. A spelt key is an identity
-// in a public repository, and it is also the wrong answer the moment this is pointed at the other
-// browser: the login then fails on credentials that are perfectly correct for someone else.
-const device = android ? 'A1' : spelt;
-if (device && !PORTS[device]) throw new Error(`unknown device ${device} - known: ${Object.keys(PORTS).join(' ')}`);
-const port = Number(opt('port', device ? PORTS[device] : 9223));
-const forPort = Object.keys(PORTS).find((d) => PORTS[d] === port);
-const account = opt('account', device ? ACCOUNT_OF[device] : ACCOUNT_OF[forPort]);
+// ONE RESOLVER FOR EVERY ATOM - `device.mjs`. This is where `--android`, the port, the account and
+// the phone-arming ladder used to be spelt out, and `pin.mjs` then grew a COPY of them an hour
+// later. Two commands answering the same phone must not carry two ideas of which phone that is.
+//
+// THE ACCOUNT IS DERIVED FROM THE DEVICE, never defaulted to a spelt key: a spelt key is an identity
+// in a public repository, and the wrong answer the moment this is pointed at the other browser.
+const target = resolveDevice(argv, { defaultPort: PORTS.W2 });
+const { device, port, account, isPhone } = target;
 if (!account) throw new Error(`no account known for port ${port} - pass --device or --account`);
 
 const creds = accountFor(account);
 
-// THE PHONE IS ARMED HERE, NOT BY THE CALLER. `forwardIdpBrowser` already did this for the BROWSER
-// half of the hop and the APP half was left to whoever ran the script - which is the manual probe
-// this atom exists to delete. `ensure` is the gesture that already knows the whole ladder: wake,
-// launch if the process is gone, foreground it (a backgrounded WebView keeps its socket listed and
-// then never answers), re-point the forward at the CURRENT pid, and only report success once CDP has
-// actually answered on the port. Every one of those steps has produced a wrong verdict on its own.
-//
-// The bound is 10 s rather than its 20 s default: ten seconds is long enough to show that a launch
-// worked, and a phone that needs longer is a phone worth being told about rather than waited for.
-// A DEVICE NAME CARRIES ITS PLATFORM, and `A` is this rig's spelling for a phone. `W1`/`W2`/`W3` are
-// Chrome profiles, `A1`/`A2` are Android. It is a convention rather than a probe on purpose: which
-// phone a run is about must be decidable BEFORE anything is plugged in or woken, and asking adb what
-// is attached cannot answer a question about intent.
-const isPhone = /^A\d+$/.test(device ?? '');
-
-if (isPhone) {
-  // BOUND BY NAME BEFORE THE FIRST adb CALL. Two phones are attached as of 2026-09-04, and without
-  // this every gesture below would go to whichever one adb listed first - see `serial()`.
-  const bound = useDevice(device);
-  console.log(`[login:${account}] device ${device} -> ${bound}`);
-  const up = await ensure({ port, timeoutMs: 10_000 });
-  if (!up.ok) throw new Error(`the phone is not measurable: ${up.reason}`);
-  console.log(`[login:${account}] phone armed over ${up.how}, app pid ${up.pid}, CDP answering on ${port}`);
-}
+await armIfPhone(target, `login:${account}`);
 
 // THE MOBILE FORM IS NOT IN THE APP. Tauri hands the OIDC hop to a Chrome Custom Tab, which is a
 // different browser and therefore a different devtools endpoint - `phone.mjs` forwards the app's
