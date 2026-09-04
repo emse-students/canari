@@ -123,8 +123,8 @@
 
 <!--
   `data-conversation-tile`, `data-ready` and `data-removed` exist for the cross-client campaign, and
-  they are not decoration either: the ONLY on-screen statement that a conversation is still syncing
-  is the "Sync" badge, whose text is a Paraglide message. A rig counting syncing rows by that text
+  they are not decoration either: the ONLY on-screen statement that a conversation is not joined on
+  this device is the amber badge, whose text is a Paraglide message. A rig counting those rows by it
   would be measuring the translation - it silently counts zero the day the string changes or the
   locale differs, and "no row is syncing" is exactly the answer that makes a HEAL check pass while
   the app is broken. The same reasoning already put `.sidebar-panel` on the list around it.
@@ -194,11 +194,22 @@
 
       <!-- Badges area (unread, sync) -->
       <div class="flex flex-shrink-0 items-center gap-2">
+        <!--
+          IT SAYS WHAT THE STATE IS, AND IT USED TO CLAIM AN ACTIVITY. This badge read "Sync" on
+          `lifecycle !== 'active'`, which is not an activity but a STATE: this device is not an MLS
+          member of the group and holds no key for it. Every one of those that lasts is a WAIT on
+          somebody else - the recovery ladder's rounds are short and each one ends by either joining
+          or handing the work to a member (a `welcome_request`, a base republish), so nothing local
+          is ever "in progress" for more than the moment of an attempt. A word promising progress on
+          a conversation that will not move until another member comes online is the one thing a user
+          cannot act on; naming the wait is something they can.
+        -->
         {#if !isReady && !isRemoved}
           <span
             class="rounded-full border border-amber-500/20 bg-amber-500/15 px-2 py-0.5 text-[0.6rem] font-bold tracking-wider text-amber-700 uppercase dark:bg-amber-500/20 dark:text-amber-400"
+            title={m.chat_not_joined_badge_title()}
           >
-            {m.chat_sync_badge_label()}
+            {m.chat_not_joined_badge_label()}
           </span>
         {/if}
         {#if unreadCount > 0}
