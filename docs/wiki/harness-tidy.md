@@ -143,7 +143,13 @@ does in `login.mjs`.
       only thing that distinguishes them is trying to send - which is now also the only thing that
       REPAIRS them, and is why the silent-reader half is a P2 rather than closed.
 
-- [ ] **C1. `ACCOUNT_OF.A2`.** The second phone (Pixel 6a) is bound and addressable on port 9335, but
+- [ ] **C1. `ACCOUNT_OF.A2` - AND THE PHONE IS NO LONGER ATTACHED, so this is not blocking
+      anything today.** `adb devices` listed only the Mi 9T (A1) at 18:35 on 2026-09-04; the Pixel
+      6a the user plugged in *temporarily* is gone, which is what `state.mjs` reports as
+      `A2 (9335) UNREACHABLE`. **That line is explained, not a defect** - do not spend a session
+      chasing the forward. The question below is still owed the day a second phone comes back.
+
+      **C1 (original).** The second phone (Pixel 6a) is bound and addressable on port 9335, but
       no account is assigned and guessing one would be an identity invented by a tool. Peer, or a
       third account? One line in the out-of-tree `names.mjs` once decided.
 
