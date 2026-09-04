@@ -87,6 +87,16 @@ export interface OutboxDeps {
   log: (msg: string) => void;
   /** Emit a non-destructive welcome_request for a group missing from the WASM. */
   requestReAdd: (groupId: string) => Promise<void>;
+  /**
+   * Repair a group the SERVER refuses our frames for while the WASM still holds it.
+   *
+   * SEPARATE FROM `requestReAdd` BECAUSE THE PROOF IS DIFFERENT, not because the action is. That one
+   * is entered when this device notices it holds no tree; this one is entered on the server's own
+   * refusal, which is the only evidence that a tree we DO hold is worthless. `requestReAdd` alone
+   * cannot serve here - it skips any group still in the WASM, which is every group in this
+   * population.
+   */
+  recoverRosterDisagreement: (groupId: string) => Promise<void>;
   /** True when the group can be sent into (in the WASM, not in an unresolved epoch gap). */
   isGroupHealthy: (groupId: string) => boolean;
   /** Mark a conversation deletedRemotely (banner) when the group is gone server-side. */
@@ -533,18 +543,45 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // has to accuse, because reaching here means `isGroupActive` answered YES one call earlier and
       // the two views of this device's membership disagree. That is the Welcome-livelock signature
       // in `docs/wiki/backlog.md`, and it is the only place a sender can observe it.
-      if (classifyOutgoingSendError(e) === 'sender-not-active') {
+      // ONE READ OF THE DISCRIMINATOR, used by all three branches below. It was classified three
+      // times for the same error, which is three chances for the arms to drift apart on what they
+      // think happened.
+      const kind = classifyOutgoingSendError(e);
+      if (kind === 'sender-not-active') {
         log(
           `[OUTBOX] ${entry.id.slice(0, 8)}… REFUSED by the server: this device holds no leaf in ${terminalId.slice(0, 8)}… while the local MLS state says it is a member - the roster and the tree disagree, and only a Welcome or an external commit lifts it`
         );
+        // AND THE REPAIR IS DRIVEN FROM HERE, because this is the only place that holds the proof.
+        //
+        // Observing the livelock and doing nothing about it is what made it permanent. The entry
+        // stayed, the backoff ladder ran to its 60 s ceiling and re-posted for ever, and every
+        // mechanism that could have repaired the group declined to look at it: the connection sync
+        // and the SYNC_WATCHDOG both skip a group the WASM holds, and the watchdog additionally
+        // called `cancelReAdd` on it every 5 s, so the one bit of recovery bookkeeping that might
+        // have survived was cleared on a cadence. Measured 2026-09-04 with eight messages at
+        // attempt 18-23 against a `pending` roster seat two and a half hours old.
+        //
+        // A RETRY IS NOT A REPAIR, AND THIS FRAME PROVES WHICH IS OWED. The server has just stated
+        // that this device holds no leaf; re-posting the same frame cannot change that, so the
+        // ladder below is only what keeps the MESSAGE (it is never lost, and goes out intact once
+        // the device is a member again). The seam is what makes that "once" arrive. It is throttled
+        // on the shared recovery cooldown, so calling it from a flush that runs every 2 s is safe.
+        await deps
+          .recoverRosterDisagreement(terminalId)
+          .catch((err) =>
+            log(
+              `[OUTBOX] roster repair for ${terminalId.slice(0, 8)}… failed: ${String(err).slice(0, 120)}`
+            )
+          );
       }
-      if (classifyOutgoingSendError(e) === 'evicted') {
+      if (kind === 'evicted') {
         log(
           `[OUTBOX] ${entry.id.slice(0, 8)}… send REFUSED as evicted, after isGroupActive answered that this device is still a member of ${terminalId.slice(0, 8)}… - the two disagree, and OpenMLS is the one that is right`
         );
         return failPermanently(entry, terminalId, 'evicted-late');
       }
-      // Transient (WrongEpoch / network): keep pending, back off. The message is never lost.
+      // Keep pending, back off. The message is never lost - that is true of both arms that reach
+      // here, and it is the only thing they share.
       patchStatus(entry.id, 'pending');
       const attempts = entry.attempts + 1;
       await storage
@@ -562,8 +599,16 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         .catch((err) =>
           log(`[OUTBOX] ${entry.id.slice(0, 8)}… backoff not persisted: ${String(err)}`)
         );
+      // A LINE ITS READER LEARNS TO SKIP HIDES THE NEXT DEFECT, so the two arms that reach here do
+      // not share a sentence. `sender-not-active` is not transient by any reading - the server has
+      // refused this device's leaf and will refuse it identically until the repair above lands - and
+      // reporting it as "transient failure (attempt 23)" is what let eight stuck messages read as
+      // ordinary network noise for two and a half hours. What is retried here is the MESSAGE; what
+      // is being waited on is the REPAIR, and the line now says which.
       log(
-        `[OUTBOX] ${entry.id.slice(0, 8)}… transient failure (attempt ${attempts}): ${String(e).slice(0, 80)}`
+        kind === 'sender-not-active'
+          ? `[OUTBOX] ${entry.id.slice(0, 8)}… held for the roster repair of ${terminalId.slice(0, 8)}… (attempt ${attempts}) - not a transient failure: the server refuses this device's leaf until it is re-admitted`
+          : `[OUTBOX] ${entry.id.slice(0, 8)}… transient failure (attempt ${attempts}): ${String(e).slice(0, 80)}`
       );
       return 'retry';
     }

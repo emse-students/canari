@@ -2,7 +2,13 @@ vi.mock('$lib/utils/hex', () => ({
   saveMlsState: vi.fn().mockResolvedValue(undefined),
 }));
 
-import { requestReAdd, cancelReAdd, recoverForkedGroup, resetReAddCooldowns } from './recovery';
+import {
+  requestReAdd,
+  cancelReAdd,
+  recoverForkedGroup,
+  recoverRosterDisagreement,
+  resetReAddCooldowns,
+} from './recovery';
 import { NotAGroupMemberError } from '$lib/mls-client/mlsDeliveryApi';
 import { saveMlsState } from '$lib/utils/hex';
 import { resetHistoryReconciliation, setHistoryProbeSender } from './historyReconcile';
@@ -435,6 +441,96 @@ describe('recoverForkedGroup', () => {
     expect(mls.forgetGroup).toHaveBeenCalledWith('g-fork', 4);
     // The forgotten group is no longer local -> requestReAdd attempts recovery (external join first).
     expect(mls.externalJoin).toHaveBeenCalledWith('g-fork');
+  });
+});
+
+// -- recoverRosterDisagreement ------------------------------------------------
+
+/**
+ * THE POPULATION EVERY OTHER ENTRANCE SKIPS: a device holding a well-formed tree for a group whose
+ * server roster row never left `pending`. `requestReAdd` returns at its own WASM guard, and the
+ * SYNC_WATCHDOG calls `cancelReAdd` on it every 5 s for the same reason - so the only mechanism
+ * that can see it is the sender, and the only evidence is the server's refusal.
+ */
+describe('recoverRosterDisagreement', () => {
+  beforeEach(() => resetReAddCooldowns());
+
+  /**
+   * A STATEFUL LOCAL SET, because the whole seam turns on the forget being VISIBLE to the guard
+   * that runs after it. A static `getLocalGroups` mock reports the group present for ever, so
+   * `requestReAdd` returns at its WASM guard and the test passes on a fix that does nothing.
+   */
+  function makeMlsHolding(groupIds: string[], overrides: Record<string, unknown> = {}) {
+    const held = new Set(groupIds);
+    return makeMls({
+      getLocalGroups: vi.fn(() => [...held]),
+      forgetGroup: vi.fn((id: string) => {
+        held.delete(id);
+      }),
+      _rejoin: (id: string) => held.add(id),
+      ...overrides,
+    });
+  }
+
+  it('forgets the tree the server holds no leaf for, then recovers the group', async () => {
+    const mls = makeMlsHolding(['g-stuck']);
+    const deps = makeDeps({ mlsService: mls });
+
+    await recoverRosterDisagreement('g-stuck', deps);
+
+    // The forget is what makes the seam reachable at all - without it requestReAdd returns at its
+    // WASM guard, which is the whole defect.
+    expect(mls.forgetGroup).toHaveBeenCalledWith('g-stuck');
+    // And recovery actually ran: this device is owed nothing, so it serves itself.
+    expect(mls.externalJoin).toHaveBeenCalledWith('g-stuck');
+  });
+
+  it('asks the member who owes us a Welcome instead of joining over the top of the Add', async () => {
+    const mls = makeMlsHolding(['g-stuck'], {
+      getDeviceMemberships: vi
+        .fn()
+        .mockResolvedValue([{ groupId: 'g-stuck', status: 'pending', welcomeQueued: true }]),
+    });
+    const deps = makeDeps({ mlsService: mls });
+
+    await recoverRosterDisagreement('g-stuck', deps);
+
+    expect(mls.forgetGroup).toHaveBeenCalledWith('g-stuck');
+    // A pending seat with a Welcome queued is not ours to external-join: two parties would write
+    // the same leaf, which is the GRP-4 kick this discriminator exists to prevent.
+    expect(mls.externalJoin).not.toHaveBeenCalled();
+    expect(mls.sendWelcomeRequest).toHaveBeenCalled();
+  });
+
+  /**
+   * WHAT THE THROTTLE ACTUALLY PROTECTS, which is not the repeated call but the repeated FORGET of
+   * a tree that has since become good. The outbox re-enters on a ladder starting at 2 s, so a
+   * device that rejoins between two stuck sends would have its fresh tree discarded by the very
+   * seam that just repaired it.
+   */
+  it('does not discard a tree that has just been rejoined', async () => {
+    const mls = makeMlsHolding(['g-stuck']);
+    const deps = makeDeps({ mlsService: mls });
+
+    await recoverRosterDisagreement('g-stuck', deps);
+    expect(mls.forgetGroup).toHaveBeenCalledTimes(1);
+
+    // The Welcome lands and the group is healthy again.
+    (mls as unknown as { _rejoin: (id: string) => void })._rejoin('g-stuck');
+    await recoverRosterDisagreement('g-stuck', deps);
+
+    expect(mls.forgetGroup).toHaveBeenCalledTimes(1);
+    expect(mls.getLocalGroups()).toContain('g-stuck');
+  });
+
+  it('leaves a group it holds no state for alone, and still drives recovery', async () => {
+    const mls = makeMlsHolding([]);
+    const deps = makeDeps({ mlsService: mls });
+
+    await recoverRosterDisagreement('g-stuck', deps);
+
+    expect(mls.forgetGroup).not.toHaveBeenCalled();
+    expect(mls.externalJoin).toHaveBeenCalledWith('g-stuck');
   });
 });
 

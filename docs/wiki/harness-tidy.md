@@ -116,21 +116,27 @@ does in `login.mjs`.
       session. Two stale facts in that file were corrected at the same time - `_target` still named
       `localhost:1420`, the dev server the campaign moved OFF on 2026-09-03.
 
-- [ ] **C3 - THE RISK DID HOLD, AND MY FIRST ANSWER WAS WRONG.** I raised it, checked W1, saw session
-      `true`, no gate and an `mls_device_id` present, and closed it as "the risk did not hold". **I
-      measured the absence of a gate, not the validity of the key.** The user pushed back - *"le PIN
-      n'est plus censé être bon je crois"* - and they were right: W1 cannot send at all. Every
-      `POST /api/mls/send` is refused 403, *"this device holds no leaf ... the roster and the tree
-      disagree"*, and a full page reload does not lift it.
+- [x] **C3 - RESOLVED 2026-09-04 BY FIXING THE PRODUCT, NOT THE FIXTURE, AND MY FIRST ANSWER WAS
+      WRONG.** I raised it, checked W1, saw session `true`, no gate and an `mls_device_id` present,
+      and closed it as "the risk did not hold". **I measured the absence of a gate, not the validity
+      of the key.** The user pushed back - *"le PIN n'est plus censé être bon je crois"* - and they
+      were right: W1 could not send at all, every `POST /api/mls/send` refused 403, and a full page
+      reload did not lift it.
 
-      **`canari_device_key_persist` is a five-character FLAG; the key material is in IndexedDB.** So a
-      client holding a key the server no longer recognises looks exactly like a healthy one from the
-      outside - no gate, an id present, a normal-looking conversation. **The only thing that
-      distinguishes them is trying to send.**
+      **It was not a fixture problem.** The DB said what the client could not: W1's
+      `dm_device_group_memberships` row sat `pending` from 15:34:52, two minutes after the PIN reset,
+      while the peer's was `active` from 08:36. Nine messages were queued at attempt 18-40. **No
+      re-mint was owed - a repair was**, and the reason nobody had written one is that all three
+      recovery mechanisms test for a LOCAL absence and this device held its tree. Fixed in the
+      product (`recoverRosterDisagreement`), proven end to end on this very client: refusal at
+      18:28:34, rejoined by external commit and the held message sent at 18:28:37. Story in
+      `CHANGELOG.md`, rules in [durable-rules](durable-rules.md), residual half in
+      [backlog](backlog.md).
 
-      **What is owed:** W1 and W3 need their device identity re-minted under the current PIN, which is
-      the campaign's fixture step (D2) for all of them - not just for the device that was reset. See
-      the P1 in [backlog](backlog.md) for the evidence and the rule.
+      **W1, W2 and W3 are all `active` in `2bd5add9` as of 18:28**, so the campaign's blocker here is
+      gone and D2 owes no re-mint. **The rule this leaves:** *"no gate"* is not *"healthy"*, and the
+      only thing that distinguishes them is trying to send - which is now also the only thing that
+      REPAIRS them, and is why the silent-reader half is a P2 rather than closed.
 
 - [ ] **C1. `ACCOUNT_OF.A2`.** The second phone (Pixel 6a) is bound and addressable on port 9335, but
       no account is assigned and guessing one would be an identity invented by a tool. Peer, or a

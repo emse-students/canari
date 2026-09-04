@@ -257,7 +257,7 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
 8. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
    and audit in [backlog](docs/wiki/backlog.md).
 9. **P1 - A DEVICE ASKS FOR A WELCOME FOR EVER AND THE MEMBER ANSWERING RESETS THE HEALING ROW** -
-   **ALL FOUR HALVES FIXED 2026-09-04; ONE PROD MEASUREMENT OWED AFTER THE RELEASE** ([backlog](docs/wiki/backlog.md#p1---a-device-asks-for-a-welcome-for-ever-and-the-member-that-answers-resets-the-row-that-would-have-let-it-heal-itself-measured-on-prod-2026-09-01)); read with its
+   **FIVE HALVES FIXED 2026-09-04, the fifth made the others unreachable; ONE PROD MEASUREMENT OWED** ([backlog](docs/wiki/backlog.md#p1---a-device-asks-for-a-welcome-for-ever-and-the-member-that-answers-resets-the-row-that-would-have-let-it-heal-itself-measured-on-prod-2026-09-01)); read with its
    [sibling P2](docs/wiki/backlog.md#p2---a-device-was-given-a-roster-seat-and-never-a-welcome-and-why-its-keypackage-was-skipped-is-unmeasured-measured-on-prod-2026-09-01) and with 10.
 10. **TWELVE MESSAGES DROPPED, PERMANENT COMMIT-LOG HOLE AT EPOCH 121** - the four defects are
     FIXED AND DEPLOYED (ancestors of `v0.15.0`); only the RESIDUE is open, and the 13:10 failure

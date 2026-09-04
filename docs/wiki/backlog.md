@@ -1413,6 +1413,17 @@ client", never "clean on the server".
 
 ### P1 - a device asks for a Welcome for ever, and the member that answers RESETS the row that would have let it heal itself (measured on prod 2026-09-01)
 
+> **A FIFTH HALF WAS FOUND ON 2026-09-04 AND FIXED THE SAME DAY, AND IT IS THE ONE THAT MADE THE
+> OTHER FOUR UNREACHABLE FOR PART OF THE POPULATION.** Everything above negotiates what a `pending`
+> row MEANS; none of it runs for a device whose local WASM still holds the group, because
+> `requestReAdd` returns at its `holdsGroupState` guard before any of it is read, the connection sync
+> and the SYNC_WATCHDOG both skip such a group, and the watchdog additionally calls `cancelReAdd` on
+> it every 5 s. The outbox held the only proof - the server's own `SenderNotActive` - and merely
+> logged it. `recoverRosterDisagreement` now converts that proof into the forget the guard asks for
+> and re-enters the seam. Measured end to end on the local estate: refusal at 18:28:34, rejoined by
+> external commit and the held message sent at 18:28:37, `MEMBERSHIP_ACTIVE` in the server log. Story
+> in `CHANGELOG.md`, rules in [durable-rules](durable-rules.md), residual scope in the P2 below.
+>
 > **ALL FOUR ARE FIXED, 2026-09-04. WHAT IS LEFT IS ONE MEASUREMENT ON PROD AFTER THE RELEASE THAT CARRIES THEM.** `pending` no longer decides anything on its own: the endpoint answers per row with
 > `welcomeQueued` and `addInFlight`, a device owed nothing serves itself an external-commit join and
 > clears its own seat. **The residual window (A) was not allowed to ship without is closed by
@@ -1576,6 +1587,33 @@ taken twice - and (C) was verified end to end on the local estate, four bases ar
 and all four repaired within two seconds of a holder connecting. **Production is on `0.16.1`, two
 stables behind, so none of this is deployed yet.** The cause of the skipped Add itself is the P2
 immediately below, and the two want reading together.
+
+### P2 - a device stranded on a roster seat is only discovered by TRYING TO SEND, so a silent reader stays stranded (measured 2026-09-04, alongside the fix above)
+
+`recoverRosterDisagreement` closes the case where a device holding a group tree the server has no
+leaf for **attempts to send**: the refusal is the proof, the outbox holds it, and the repair follows
+in about three seconds. **Nothing detects the same device if it never sends.** It holds a
+well-formed tree, shows a normal-looking conversation, and is refused nothing, because it asks for
+nothing - while every frame the group produces is encrypted to a tree its leaf is absent from.
+
+**The population is real and the server already counts it.** `reportStrandedDeviceMemberships` named
+70 pending memberships past its window on this estate, 25 of them holding a roster seat with no
+Welcome ever queued and no kick recorded, the oldest since 2026-08-27. The report says *"they
+receive nothing and notify nothing"* - which is exactly the half a sender-side repair cannot reach.
+
+**What would close it, and what would not.** A client-side timer that periodically re-asks is the
+shape the durable rules refuse: termination would come from a clock, and the ask would be made by
+the device least able to answer it. The fact is ALREADY authoritative server-side and already read
+on a call every device makes on every connection - `GET /mls/users/:id/groups`, the same read
+`staleBase.ts` repairs a stale base on. **Carrying the membership status on that row is the shape
+that needs no new trigger**, and it is the move [durable-rules](durable-rules.md) names for the
+sibling defect: *never let a repair need a trigger the mechanism does not already have*. That makes
+this a server contract change plus one branch in the sync loop, which is why it is not inlined into
+the session that found it.
+
+**Do not close it by widening the sender-side seam.** The sender-side repair is correct and
+sufficient for what it can see; the gap is a device that produces no evidence at all, and no amount
+of classification at the send site can observe a send that never happens.
 
 ### P2 - a device was given a roster seat and never a Welcome, and WHY its KeyPackage was skipped is unmeasured (measured on prod 2026-09-01)
 

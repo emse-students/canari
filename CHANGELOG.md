@@ -13,6 +13,41 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A device that held a group tree the server had no leaf for could not send, could not be
+  repaired, and every mechanism written to repair it declined to look at it.** Measured on the local
+  estate 2026-09-04: a device re-minted after a PIN reset was given a `dm_device_group_memberships`
+  row at 15:34:52 that never left `pending`. Its outbox held eight messages at attempt 18-23 - each
+  refused `SenderNotActive`, each re-queued as a *"transient failure"* - and a full page reload did
+  not lift it. It stayed that way for two and a half hours, and would have stayed for ever.
+
+  **Three mechanisms could have repaired it and all three asked the wrong question.**
+  `syncConnectionAfterWsOpen` drives recovery only for a group ABSENT from the WASM; the
+  SYNC_WATCHDOG does the same and, worse, called `cancelReAdd` on the group every 5 s *because* the
+  WASM held it; and `requestReAdd` returns at its own `holdsGroupState` guard before reaching the
+  `pending` discriminator written for exactly this population. `getLocalGroups()` answers "do I hold
+  a tree", never "does the server accept me as a member" - and a device can hold a perfectly
+  well-formed tree for a roster seat nobody ever honoured.
+
+  **The one component holding the proof was the sender, and it did nothing with it.** The outbox
+  classified the refusal correctly, logged a line naming the livelock, and then re-posted the same
+  frame on a backoff ladder that has no termination. It now drives the repair:
+  `recoverRosterDisagreement` forgets the tree the server holds no leaf for - which is what
+  `requestReAdd`'s guard asks for in as many words, and costs nothing, since nothing that tree
+  encrypts could be opened by anyone - checkpoints the forget so a reload cannot restore the state
+  it was entered to drop, then re-enters recovery, where the `pending` seat finally reaches either
+  the member who owes a Welcome or the self-service external join. It is throttled on the shared
+  recovery cooldown, so a flush ladder starting at 2 s cannot discard a tree that has just been
+  rejoined.
+
+  **The server already named the population hourly and nobody had written the repair.**
+  `reportStrandedDeviceMemberships` counted 70 pending memberships past its window on this estate,
+  25 of them holding a roster seat with no Welcome ever queued, the oldest since 2026-08-27. A
+  correct report with no repair behind it is found by hand, a day late.
+
+  The retry line no longer calls it transient: what is retried is the MESSAGE (never lost, and it
+  goes out intact once the device is re-admitted), while what is waited on is the REPAIR, and
+  reporting the two identically is what let eight stuck messages read as ordinary network noise.
+
 - **A capability file whose description said "NOT included in production builds" was in every
   production build, and the one thing it was supposed to allow it never allowed.** `development.json`
   granted the Tauri HTTP plugin `http://**` and the WebSocket plugin `ws://localhost:*`, on the

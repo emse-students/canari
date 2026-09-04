@@ -33,6 +33,7 @@ vi.mock('$lib/mls-client/tabMessageSync', async (importOriginal) => ({
 }));
 
 import { createOutbox, buildOutboxProto, type OutboxDeps } from './outbox';
+import { SenderNotActiveError } from '$lib/mls-client/mlsDeliveryApi';
 import { toMirrorEntry } from './outboxMirror';
 import { MediaKind } from '$lib/proto/codec';
 import { encodeOutboxSensitive, decodeOutboxEntry, outboxClearColumns } from '$lib/db/outboxCodec';
@@ -126,6 +127,7 @@ function makeDeps(over: Partial<OutboxDeps> & { mlsService: any; storage: any })
     conversations: new SvelteMap<string, Conversation>(),
     log: () => {},
     requestReAdd: vi.fn().mockResolvedValue(undefined),
+    recoverRosterDisagreement: vi.fn().mockResolvedValue(undefined),
     isGroupHealthy: () => true,
     markDeletedRemotely: vi.fn(),
     ...over,
@@ -391,6 +393,102 @@ describe('outbox flusher', () => {
     expect(requestReAdd).not.toHaveBeenCalled();
     expect(mlsService.sendMessage).not.toHaveBeenCalled();
     expect(storage._map.has('m1')).toBe(false);
+  });
+
+  /**
+   * THE DEFECT THIS PAIR EXISTS FOR, and it shipped because every mechanism that could have caught
+   * it was asking the wrong question. A device holding a well-formed tree for a group whose server
+   * roster row never left `pending` is refused on every send; the connection sync and the
+   * SYNC_WATCHDOG both skip it (they test local ABSENCE, and it is present), `requestReAdd` returns
+   * at its own WASM guard, and the outbox logged the refusal and re-queued it as a "transient
+   * failure" for ever. Measured on the local estate 2026-09-04: eight messages at attempt 18-23
+   * against a roster seat two and a half hours old, surviving a full page reload.
+   */
+  it('drives the roster repair when the server refuses the frame as a non-member', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const notActive = new SenderNotActiveError('g1', 'pending');
+    const mlsService = makeMls({
+      send: async () => {
+        throw notActive;
+      },
+    });
+    const recoverRosterDisagreement = vi.fn().mockResolvedValue(undefined);
+    const requestReAdd = vi.fn().mockResolvedValue(undefined);
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService,
+        storage,
+        recoverRosterDisagreement,
+        requestReAdd,
+        // Healthy by every LOCAL measure - which is exactly the population that was unreachable.
+        isGroupHealthy: () => true,
+      })
+    );
+
+    await outbox.flush();
+
+    // The repair is driven on the group, from the one place that holds the server's own refusal.
+    expect(recoverRosterDisagreement).toHaveBeenCalledWith('g1');
+    // And NOT through the seam that skips groups the WASM holds - it cannot serve this population.
+    expect(requestReAdd).not.toHaveBeenCalled();
+    // The message is kept, not dropped: it goes out intact once the device is a member again.
+    expect(storage._map.get('m1')?.status).toBe('pending');
+    expect(storage._map.get('m1')?.attempts).toBe(1);
+  });
+
+  /**
+   * The refusal is permanent until the repair lands, so calling it "transient" is what let eight
+   * stuck messages read as ordinary network noise. The line has to separate the two arms.
+   */
+  it('does not report a non-member refusal as a transient failure', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls({
+      send: async () => {
+        throw new SenderNotActiveError('g1', 'pending');
+      },
+    });
+    const lines: string[] = [];
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService,
+        storage,
+        log: (l: string) => lines.push(l),
+        isGroupHealthy: () => true,
+      })
+    );
+
+    await outbox.flush();
+
+    // The MISLEADING FORM, not the words: the corrected sentence says "not a transient failure",
+    // so a bare substring match on "transient failure" passes on the defect and fails on the fix.
+    expect(lines.some((l) => l.includes('transient failure (attempt'))).toBe(false);
+    expect(lines.some((l) => l.includes('held for the roster repair'))).toBe(true);
+  });
+
+  it('still reports an ordinary send failure as transient', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls({
+      send: async () => {
+        throw new Error('network went away');
+      },
+    });
+    const lines: string[] = [];
+    const recoverRosterDisagreement = vi.fn().mockResolvedValue(undefined);
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService,
+        storage,
+        recoverRosterDisagreement,
+        log: (l: string) => lines.push(l),
+        isGroupHealthy: () => true,
+      })
+    );
+
+    await outbox.flush();
+
+    expect(lines.some((l) => l.includes('transient failure (attempt'))).toBe(true);
+    // A blip must never cost the group its tree.
+    expect(recoverRosterDisagreement).not.toHaveBeenCalled();
   });
 
   it('does not send into an unhealthy group; emits welcome_request and keeps the entry pending', async () => {
