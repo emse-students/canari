@@ -1131,6 +1131,32 @@ second half is what stops a tolerated outage from becoming a tree nobody has aud
 unknown case fails **CLOSED**, asserted against a fake `bun` by `audit-dependencies.test.sh` in the
 same run that uses the script.
 
+### An npm ALIAS is invisible to Dependabot, and it had been failing every bun job for ten days
+
+**`"@typescript/native": "npm:typescript@^7.0.2"`** is in Sky, MiGallery and Portail-etu (never in
+Canari, which has no alias in any of its six manifests). It exists for a good reason -
+`svelte-check --tsgo` needs BOTH majors present, 6 for svelte-check's own API and 7 behind the flag,
+and one manifest cannot name `typescript` twice.
+
+**Dependabot resolves a dependency by the name it is DECLARED under.** It asks
+`registry.npmjs.org/@typescript%2Fnative`, gets a 404 because no such package exists, and fails the
+WHOLE update job:
+
+```
+| Dependency         | Error Type     | Error Details                                              |
+| @typescript/native | registry_error | { "status": 404, "msg": "Got 404 response with body ..." } |
+```
+
+**Measured in all three, on every `bun` job since at least 2026-08-24** - and found only because the
+CI/CD rebuild made somebody read the last run of every workflow in every repository. *A correct
+mechanism with no report is found by hand, a day late; a job that is red on every single run is
+found by nobody at all,* because the signal and the noise are the same colour.
+
+**The fix is an `ignore`, and NO COVERAGE IS LOST BY IT** - which is the only reason an ignore is the
+right answer rather than a paper over. The 404 means TS 7 behind the alias was NEVER being offered
+an update; ignoring it removes a failure, not a capability. **What retires the entry is deleting the
+alias**, the day `typescript` itself is the 7.x line and svelte-check no longer needs both majors.
+
 ### Per-repository state
 
 | Repo | Workflows now visible | Notes |
