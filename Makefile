@@ -347,6 +347,7 @@ test-ci-scripts: lint-ci-scripts
 
 test-harness:
 	@echo "${BLUE}🧪 Harness self-tests…${RESET}"
+	@bun tools/cross-client-harness/inventory.mjs --check
 	@bun tools/cross-client-harness/archive/rawcheck.mjs
 	@bun tools/cross-client-harness/archive/classify-selftest.mjs
 	@bun tools/cross-client-harness/archive/srvclassify-selftest.mjs

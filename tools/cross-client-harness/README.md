@@ -270,6 +270,19 @@ used to get wrong on its own.
 
 ## The files
 
+> **[`INVENTORY.md`](INVENTORY.md) IS THE COMPLETE, GENERATED LIST - read it first, and read it
+> before writing any new script.** It is derived from the leading docblock of all 156 scripts by
+> `bun inventory.mjs`, and `make test-harness` fails when it and the tree disagree, so it cannot go
+> stale. **This section is the PROSE it cannot carry** - why files are grouped as they are, and what
+> a group is for. It was the inventory until 2026-09-04, and measuring it is what ended that: it
+> named 88 of 155 scripts, missed four atoms entirely, left 69 archived scripts undocumented, and
+> pointed 45 references at a root the files had just left. An index in that state does not fail to
+> help, it sends the reader to write the thing again - which is exactly what kept happening.
+>
+> **A name below without a directory may live in [`archive/`](archive/README.md).** `INVENTORY.md`
+> says which, for every one of them.
+
+
 **The library** - everything else imports these.
 
 | File | Role |

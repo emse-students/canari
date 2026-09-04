@@ -252,7 +252,7 @@ export function forwardIdpBrowser(port) {
   const owners = seen.map((p) => {
     let owner = '';
     try {
-      owner = sh(`cat /proc/${p}/cmdline`).replace(/ /g, ' ').trim();
+      owner = sh(`cat /proc/${p}/cmdline`).replace(/\0/g, ' ').trim();
     } catch {
       /* the process died between the two reads - it is not the one we want */
     }

@@ -219,6 +219,11 @@ workflow.**
 
 ### CANARI - THE QUEUE, IN ORDER
 
+**0. THE HARNESS TIDY IS IN FLIGHT AND ITS WORK LIST IS [harness-tidy](docs/wiki/harness-tidy.md)** -
+delete the file and this line together when it is empty. The bar it carries: **every row must be
+`PASS`, never `PASS-DIRTY`**, a P1 found on the way is fixed in the same session, and P2/P3 go to
+[backlog](docs/wiki/backlog.md) rather than inline.
+
 **A HEADLINE AND A LINK EACH, AND THAT IS ALL THIS SECTION IS FOR.** It was 152 lines for 11 items
 on 2026-09-03 - restating the substance the linked pages carry, in violation of both this file's
 line cap and its own "not restated" rule, and TWO of the items had gone FALSE without anyone

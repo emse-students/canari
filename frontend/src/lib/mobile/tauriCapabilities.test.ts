@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -46,10 +46,29 @@ function pluginsFromCargo(): string[] {
   return [...names].sort();
 }
 
+/** Every capability file on disk, read rather than listed. */
+function capabilityFiles(): string[] {
+  // READ THE DIRECTORY, NEVER A HARD-CODED PAIR. This named `default.json` and `development.json`,
+  // so renaming the second to `local-estate.json` on 2026-09-04 did not make the test say something
+  // useful - it made it throw ENOENT, three tests down, about a file whose absence was the intended
+  // change. A list of filenames is a second copy of what the directory already knows.
+  return readdirSync(resolve(SRC_TAURI, 'capabilities'))
+    .filter((f) => f.endsWith('.json'))
+    .sort();
+}
+
+/** One capability file, parsed. */
+function capability(file: string): {
+  identifier: string;
+  permissions: (string | { identifier: string; allow?: { url: string }[] })[];
+} {
+  return JSON.parse(readFileSync(resolve(SRC_TAURI, 'capabilities', file), 'utf8'));
+}
+
 /** Every permission identifier granted by any capability file, verbatim. */
 function grantedIdentifiers(): Set<string> {
   const identifiers = new Set<string>();
-  for (const file of ['default.json', 'development.json']) {
+  for (const file of capabilityFiles()) {
     const capability = JSON.parse(readFileSync(resolve(SRC_TAURI, 'capabilities', file), 'utf8'));
     for (const permission of capability.permissions as (string | { identifier: string })[]) {
       identifiers.add(typeof permission === 'string' ? permission : permission.identifier);
@@ -98,6 +117,69 @@ describe('Tauri capabilities', () => {
     // `dialog:default` is `allow-save` + `allow-open` + `allow-message`; the save picker is
     // what puts the chosen destination into the fs scope.
     expect(granted.has('dialog:default')).toBe(true);
+  });
+
+  // ---------------------------------------------------------------------------------------------
+  // WHAT A RELEASE BUILD MAY REACH. Added 2026-09-04, after a capability whose own description said
+  // "NOT included in production builds" turned out to be in all of them.
+  // ---------------------------------------------------------------------------------------------
+
+  it('names its capabilities explicitly, because an empty list silently means ALL of them', () => {
+    const conf = JSON.parse(readFileSync(resolve(SRC_TAURI, 'tauri.conf.json'), 'utf8'));
+    const named: string[] = conf.app?.security?.capabilities ?? [];
+    // An ABSENT or empty list is how `development.json` shipped: Tauri documents it as including
+    // every file in `capabilities/`. The subset must be spelt or there is no subset.
+    expect(named.length).toBeGreaterThan(0);
+
+    const identifiers = capabilityFiles().map((f) => capability(f).identifier);
+    for (const name of named) {
+      // A typo here does not fail the build - it silently drops a capability the app needs.
+      expect(identifiers).toContain(name);
+    }
+  });
+
+  it('grants no plaintext or localhost scope in anything a release build compiles', () => {
+    const conf = JSON.parse(readFileSync(resolve(SRC_TAURI, 'tauri.conf.json'), 'utf8'));
+    const named: string[] = conf.app?.security?.capabilities ?? [];
+
+    for (const file of capabilityFiles()) {
+      const cap = capability(file);
+      if (!named.includes(cap.identifier)) continue; // opt-in, added by a debug-only --config overlay
+      for (const permission of cap.permissions) {
+        if (typeof permission === 'string') continue;
+        for (const entry of permission.allow ?? []) {
+          // THE ESTATE IS NOT REACHED IN PLAINTEXT FROM A SHIPPED APP. `http://**` and
+          // `ws://localhost:*` rode into production for months on a description that claimed
+          // otherwise, and a description is not a mechanism.
+          expect(entry.url.startsWith('https://') || entry.url.startsWith('wss://')).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('keeps the local-estate scope opt-in, and spells the port wildcard it needs', () => {
+    const conf = JSON.parse(readFileSync(resolve(SRC_TAURI, 'tauri.conf.json'), 'utf8'));
+    const named: string[] = conf.app?.security?.capabilities ?? [];
+    const local = capabilityFiles()
+      .map((f) => capability(f))
+      .find((c) => c.identifier === 'local-estate');
+    expect(local).toBeDefined();
+
+    // It must NOT be in the base config - only the debug overlay may add it.
+    expect(named).not.toContain('local-estate');
+
+    const overlay = JSON.parse(readFileSync(resolve(SRC_TAURI, 'tauri.local.conf.json'), 'utf8'));
+    expect(overlay.app.security.capabilities).toContain('local-estate');
+
+    // AN EMPTY PORT MEANS THE PROTOCOL'S DEFAULT PORT, so `http://**` matches port 80 and nothing
+    // else - which is why the estate on :8081 was refused while `https://**` appeared to work. Every
+    // entry here must therefore carry an explicit port wildcard.
+    for (const permission of local!.permissions) {
+      if (typeof permission === 'string') continue;
+      for (const entry of permission.allow ?? []) {
+        expect(entry.url).toMatch(/:\*$/);
+      }
+    }
   });
 
   it('never lets the cold-start deep-link probe swallow its own failure', () => {
