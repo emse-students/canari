@@ -62,7 +62,7 @@
  *   - `.msg-status-sent` / `.msg-status-read` (`MessageMetadata.svelte`, added this session).
  *   - `lucide-svelte`'s `Icon.svelte` injects `lucide-<icon-name>` on every icon's own `<svg>`
  *     (verified by reading the installed package, not assumed) - so `svg.lucide-trash-2`,
- *     `.lucide-pencil`, `.lucide-reply`, `.lucide-forward`, `.lucide-smile`, `.lucide-pin` /
+ *     `.lucide-pencil`, `.lucide-reply`, `.lucide-forward`, `.lucide-face-slightly-smiling`, `.lucide-pin` /
  *     `.lucide-pin-off` locate the toolbar's reply/delete/edit/react/pin controls WITHOUT reading
  *     their (localised) `aria-label`. This is a better hook than the harness had for MSG-3's
  *     `clickBubbleAction`, and is offered here as a pattern the rest of the harness could adopt.
@@ -581,7 +581,7 @@ async function pickerOpen(cx, textMatch) {
 
 async function ensurePickerOpen(cx, textMatch) {
   if (!(await pickerOpen(cx, textMatch))) {
-    await clickBubbleIcon(cx, textMatch, 'lucide-smile');
+    await clickBubbleIcon(cx, textMatch, 'lucide-face-slightly-smiling');
     await until(cx, `!!(function(){var p=${paneExpr()};return p;})()`, 3000).catch(() => {});
     await sleep(350); // the panel's own `scale` transition is 250ms
   }
@@ -1925,7 +1925,7 @@ async function mut17() {
     // derivation. So reacting to a deleted message through the FULL picker is reachable from the
     // shipped UI, even though the quick strip hides it - an inconsistency worth surfacing on its
     // own, independent of whatever this check finds when it actually does it.
-    const smileOnDeletedPresent = await bubbleIconPresent(a, row, 'lucide-smile');
+    const smileOnDeletedPresent = await bubbleIconPresent(a, row, 'lucide-face-slightly-smiling');
     const quickStripOnDeletedPresent = await evaluate(
       a,
       `(function () {

@@ -7,6 +7,7 @@
  *
  * See docs/wiki/cross-client-testing.md section 9 (evidence rule).
  */
+import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { GATE_EXPR } from './gate-probe.mjs';
 import { IS_MOVING_FN, RESOLVE, activate, clickAtPoint, connect, dragTo, evaluate, listTargets, pressKey, realClick, reloadAndWait, stablePoint, until } from './cdp.mjs';
@@ -32,6 +33,7 @@ export const APP_TAB = new URL(SITE).host;
 /** The app's hostname, without a port: what a cookie's `domain` can be compared against. */
 export const APP_HOST = new URL(SITE).hostname;
 import { OVERLAYS } from './overlay-probe.mjs';
+import { serial } from './serial.mjs';
 
 // SCOPED TO THE CHAT, and that scoping is the whole point.
 //
@@ -1686,6 +1688,19 @@ export async function sameAccountAs(refCx, otherPort, otherMatch, opts = {}) {
 export const MOBILE_SHEET = '[data-keyboard-aware-actions]';
 
 /** Whether the mobile action sheet is up ANYWHERE - it is a single overlay, never one per row. */
+/**
+ * Whether this client is a REAL DEVICE rather than a browser on this machine.
+ *
+ * The distinction decides how a gesture is injected, not just what is expected of it: a browser is
+ * driven through CDP because there is nothing else, and a phone has an OS underneath that can be
+ * asked for the real thing. `cx.port` is set by {@link client} and the phone ports are named in the
+ * out-of-tree configuration, so this asks the same question `ORIGIN` does and answers it from the
+ * one fact a connection already carries.
+ */
+export function isPhone(cx) {
+  return cx.port === PORTS.A1 || cx.port === PORTS.A2;
+}
+
 export const MOBILE_SHEET_OPEN = `!!document.querySelector('${'[data-keyboard-aware-actions]'}')`;
 
 /**
@@ -1703,22 +1718,57 @@ export const MOBILE_SHEET_OPEN = `!!document.querySelector('${'[data-keyboard-aw
  *
  * The hold is 700 ms against `MessageBubble.svelte`'s 420 ms threshold. The margin covers the round
  * trip, not luck - the post-condition is what decides, and it names the threshold it missed.
+ *
+ * **AND IT IS INJECTED BY THE OS, BECAUSE `Input.dispatchTouchEvent` IS NOT A FINGER.** A real long
+ * press is classified by Chromium's gesture recogniser as a LONG PRESS, and a long press produces no
+ * compatibility mouse events on release; a `touchStart`/`touchEnd` pair sent over CDP is classified
+ * as a TAP however long the gap is, so the lift emits `mousedown`/`mouseup`/`click` 14 ms later, at
+ * the coordinates the finger left - which by then are covered by the sheet that opened under it.
+ * Measured on the phone 2026-09-05, the same message pressed both ways back to back: the OS touch
+ * produced FOUR events and no mouse ones, the CDP touch produced those four plus a full mouse
+ * sequence delivered INSIDE `[data-keyboard-aware-actions]`. When the point happened to sit on one
+ * of the sheet's buttons the sheet closed under its own opening gesture, which is what left MUT-18
+ * `VACUOUS` with `the mobile action sheet is not open` - and what nearly went into the backlog as a
+ * P1 against the phone. **The gesture the product receives has to be the gesture a user makes**;
+ * everything downstream of that is a measurement of the instrument.
  */
 export async function longPressBubble(cx, textMatch, holdMs = 700) {
   const c = await bubbleCentre(cx, textMatch);
-  await cx.send('Input.dispatchTouchEvent', {
-    type: 'touchStart',
-    touchPoints: [{ x: c.x, y: c.y, id: 1 }],
-  });
-  await new Promise((r) => setTimeout(r, holdMs));
-  // The finger must not MOVE: `handleSwipeReply` cancels the long press once the gesture turns
-  // horizontal, so there is deliberately no touchMove between the two events here.
-  await cx.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  const how = isPhone(cx) ? 'adb input swipe' : 'CDP Input.dispatchTouchEvent';
+  if (isPhone(cx)) {
+    // CSS pixels are what the page measures in; `input` speaks device pixels from the screen's own
+    // origin. `screenX`/`screenY` are the viewport's offset inside it - 0 on this edge-to-edge
+    // shell, and read rather than assumed because a shell with a status bar would need them.
+    const g = JSON.parse(
+      await evaluate(
+        cx,
+        `JSON.stringify({ dpr: window.devicePixelRatio, sx: window.screenX, sy: window.screenY })`
+      )
+    );
+    const px = String(Math.round((c.x + g.sx) * g.dpr));
+    const py = String(Math.round((c.y + g.sy) * g.dpr));
+    // `swipe` from a point to ITSELF is a press-and-hold: the finger goes down, does not move - which
+    // `handleSwipeReply` requires, since a horizontal gesture cancels the long press - and comes up.
+    execFileSync('adb', ['-s', serial(), 'shell', 'input', 'swipe', px, py, px, py, String(holdMs)], {
+      encoding: 'utf8',
+      timeout: holdMs + 20_000,
+    });
+  } else {
+    await cx.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [{ x: c.x, y: c.y, id: 1 }],
+    });
+    await new Promise((r) => setTimeout(r, holdMs));
+    // The finger must not MOVE: `handleSwipeReply` cancels the long press once the gesture turns
+    // horizontal, so there is deliberately no touchMove between the two events here.
+    await cx.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  }
 
   const opened = await until(cx, MOBILE_SHEET_OPEN, 3000, 100).catch(() => null);
   if (opened === null) {
     throw new Error(
-      `the long press on ${textMatch} did not open the mobile action sheet - held ${holdMs}ms against a 420ms threshold`
+      `the long press on ${textMatch} did not open the mobile action sheet - held ${holdMs}ms` +
+        ` against a 420ms threshold, injected by ${how} at (${c.x},${c.y})`
     );
   }
   return c;

@@ -131,27 +131,27 @@ cell says both runs twice**, once in the owner-peer DM and once in `Canari Test 
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| MUT-1 | **DM.** Edit a text message: both sides show the new text and an edited marker | `W1 W2` | `pending` |
-| MUT-2 | **DM.** Edit clears `readBy` - the receipt restarts | `W1 W2` | `pending` |
-| MUT-3 | **DM.** Edit refused on a message with media, and on someone else's | `W1 W2` | `pending` |
-| MUT-4 | **DM.** Edit a message the peer has NOT yet received | `W1 W2` | `pending` |
-| MUT-5 | **Channel.** Edit is absent by design - assert the control is not offered | `W1 W2` | `pending` |
-| MUT-6 | **DM.** Delete a message: both sides show the tombstone, not a gap | `W1 W2` | `pending` |
-| MUT-7 | **DM.** The tombstone WINS over a body on merge | `W1 W2` | `pending` |
-| MUT-8 | **Channel.** Delete is a HARD row delete, no tombstone | `W1 W2` | `pending` |
-| MUT-9 | **Channel.** A moderator deletes another user's message | `W1 W2` | `pending` |
-| MUT-10 | **DM.** The toolbar offers Delete to a moderator, where the handler refuses it | `W1 W2` | `pending` |
-| MUT-11 | **Both.** React, un-react, re-react; two users; several emoji | `W1 W2` | `pending` |
-| MUT-12 | **Both.** The 15-distinct-emoji cap, on both transports | `W1 W2` | `pending` |
-| MUT-13 | **Both.** A reaction notifies the author only, never the reactor | `W1 W2` | `pending` |
-| MUT-14 | **Both.** Pin and unpin, seen on the OTHER device | `+A1` | `pending` |
-| MUT-15 | **DM.** A pin reaches a device that was OFFLINE when it was placed | `+A1` | `pending` |
-| MUT-16 | **Channel.** A pin DOES survive, re-hydrated from the server | `+A1` | `pending` |
-| MUT-17 | **DM.** Edit, then delete, then react to the deleted message | `W1 W2` | `pending` |
-| MUT-18 | **DM.** Two devices of the SAME user edit the same message at once | `+A1` | `pending` |
-| MUT-19 | **DM.** Delete a message still in the outbox: no peer sees it, and the sender keeps no row | `W1 W2` | `pending` |
-| MUT-20 | **DM.** Mutate a message older than the 90-day retention window | `W1 W2` | `pending` |
-| MUT-21 | **DM.** The hover action bar stays inside the pane and takes its own clicks | `W1 W2` | `pending` |
+| MUT-1 | **DM.** Edit a text message: both sides show the new text and an edited marker | `W1 W2` | `PASS` 2026-09-05 00:03 on 0.16.3, clean - the new text arrives in 117 ms, no copy of the old one on either side, and the edited marker is on both |
+| MUT-2 | **DM.** Edit clears `readBy` - the receipt restarts | `W1 W2` | `PASS` 2026-09-05 00:03 on 0.16.3, clean - the peer's receipt is re-earned after the edit (2046 ms), so `readBy` really restarts |
+| MUT-3 | **DM.** Edit refused on a message with media, and on someone else's | `W1 W2` | `PASS` 2026-09-05 00:04 on 0.16.3, clean - no Edit control on a message with media, and none on someone else's |
+| MUT-4 | **DM.** Edit a message the peer has NOT yet received | `W1 W2` | `PASS` 2026-09-05 00:04 on 0.16.3, clean - the peer was offline for the original and saw it ZERO times: one edited body arrives, no original |
+| MUT-5 | **Channel.** Edit is absent by design - assert the control is not offered | `W1 W2` | `PASS` 2026-09-05 00:04 on 0.16.3, clean - a channel offers no Edit at all |
+| MUT-6 | **DM.** Delete a message: both sides show the tombstone, not a gap | `W1 W2` | `PASS` 2026-09-05 00:04 on 0.16.3, clean - one styled row on each side, never a gap |
+| MUT-7 | **DM.** The tombstone WINS over a body on merge | `W1 W2` | `PASS` 2026-09-05 00:04 on 0.16.3, clean - a peer holding the original body converges on the tombstone in 309 ms and nothing resurrects |
+| MUT-8 | **Channel.** Delete is a HARD row delete, no tombstone | `W1 W2` | `PASS` 2026-09-05 00:05 on 0.16.3, clean - a channel delete leaves a tombstone live and NO row at all after a reload: the opposite of a DM, by design |
+| MUT-9 | **Channel.** A moderator deletes another user's message | `W1 W2` | `PASS` 2026-09-05 00:05 on 0.16.3, clean - a moderator's delete of another member's message reaches both clients |
+| MUT-10 | **DM.** The toolbar offers Delete to a moderator, where the handler refuses it | `W1 W2` | `PASS` 2026-09-05 00:05 on 0.16.3, clean - **the claim on the dashboard does NOT reproduce**, and the row records why rather than passing quietly: `canModerateSelectedChannel` is false outside a channel by construction, so Delete never renders on a peer's DM message |
+| MUT-11 | **Both.** React, un-react, re-react; two users; several emoji | `W1 W2` | `PASS` 2026-09-05 00:05 on 0.16.3, clean, both transports - react, un-react and re-react converge on both devices, with the reactor's own badge marked pressed |
+| MUT-12 | **Both.** The 15-distinct-emoji cap, on both transports | `W1 W2` | `PASS` 2026-09-05 00:06-00:07 on 0.16.3, clean, both transports - fifteen distinct emoji land and the sixteenth is refused, on the client for a DM and by the server for a channel. It ERRORed until 2026-09-05 on `no settled .lucide-smile action`: Lucide renamed the icon, the app followed it to `FaceSlightlySmiling`, and the check kept aiming at a class that no longer existed - which reads as the ACTION BAR failing to appear. `archive/lucide-selftest.mjs` now refuses any class this rig aims at that the app does not render |
+| MUT-13 | **Both.** A reaction notifies the author only, never the reactor | `W1 W2` | `PASS` 2026-09-05 00:07 on 0.16.3, clean, both transports - the author is notified in ~150 ms and the reactor is not notified at all |
+| MUT-14 | **Both.** Pin and unpin, seen on the OTHER device | `+A1` | `PASS` 2026-09-05 00:07 on 0.16.3, clean, both transports - pin and unpin both cross to the other device in ~300 ms |
+| MUT-15 | **DM.** A pin reaches a device that was OFFLINE when it was placed | `+A1` | `PASS` 2026-09-05 00:07 on 0.16.3, clean - a device absent when the pin was placed reads `unpinned` while cut and converges 253 ms after it is back |
+| MUT-16 | **Channel.** A pin DOES survive, re-hydrated from the server | `+A1` | `PASS` 2026-09-05 00:08 on 0.16.3, clean - a channel pin survives a fresh load, re-hydrated from the server rather than travelling end to end |
+| MUT-17 | **DM.** Edit, then delete, then react to the deleted message | `W1 W2` | `PASS` 2026-09-05 00:08 on 0.16.3, clean - a deleted message offers neither the picker nor the quick strip, and stays styled as deleted on both sides |
+| MUT-18 | **DM.** Two devices of the SAME user edit the same message at once | `+A1` | `PASS` 2026-09-05 00:08 on 0.16.3, clean - **the first run this row has ever had.** Two devices of one account edit the same message at once and all three clients converge in 860 ms; the verdict is convergence, not which edit wins, because the receive-side author check admits both. It was `SKIPPED` for want of a mobile gesture, then `VACUOUS` on `the mobile action sheet is not open` - and that was the INSTRUMENT: a CDP `touchStart`/`touchEnd` pair is classified as a TAP however long the gap, so the lift emitted the compatibility click a real long press suppresses, into the sheet that had opened under the finger. Measured both ways on the phone, back to back. The phone's long press is injected by the OS now |
+| MUT-19 | **DM.** Delete a message still in the outbox: no peer sees it, and the sender keeps no row | `W1 W2` | `PASS` 2026-09-05 00:08 on 0.16.3, clean - deleting a message still in the outbox leaves the peer having never seen it and the sender holding no row |
+| MUT-20 | **DM.** Mutate a message older than the 90-day retention window | `W1 W2` | `SKIPPED` 2026-09-05 00:09 - STRUCTURAL: it needs a message this rig created AND older than 90 days, and the earliest campaign markers date from 2026-08-11. Armable from 2026-11-09 |
+| MUT-21 | **DM.** The hover action bar stays inside the pane and takes its own clicks | `W1 W2` | `PASS` 2026-09-05 00:09 on 0.16.3, clean - the hover action bar stays inside the pane (`overflowsPaneLeftBy: 0`) and its own button is what takes the click at its centre |
 
 ## 5 - SEARCH - finding a message
 

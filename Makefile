@@ -357,6 +357,7 @@ test-harness:
 	@bun tools/cross-client-harness/archive/debris-selftest.mjs
 	@bun tools/cross-client-harness/archive/gate-selftest.mjs
 	@bun tools/cross-client-harness/archive/instrument-selftest.mjs
+	@bun tools/cross-client-harness/archive/lucide-selftest.mjs
 	@bun tools/cross-client-harness/archive/ready-selftest.mjs
 	@bun tools/cross-client-harness/archive/servable-selftest.mjs
 	@bun tools/cross-client-harness/archive/residue-selftest.mjs
