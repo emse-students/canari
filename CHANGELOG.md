@@ -104,6 +104,16 @@ which is also where every release up to and including v0.13.1 now lives.
   arms were measured against the real API; 19 assertions pin all four causes plus a response whose
   shape changed, which must accuse the reader rather than count as zero.
 
+- **The shellcheck CI runs was reachable from no local target, so a red pull request is what found
+  it.** `ci.yml` lints one named file set and treats even an INFO finding as a failure; nothing here
+  ran it, so a self-test whose 19 assertions all passed was refused by the gate - once for
+  `A && B || C` (SC2015, which is a real trap: `C` runs when `A` is true and `B` fails) and once for
+  a backtick inside a single-quoted string, which shellcheck reads as a command substitution that
+  will not expand. `make lint-ci-scripts` runs exactly the file set `ci.yml` does, and
+  `make test-ci-scripts` depends on it. shellcheck is one static binary; when it is absent the target
+  says so by name rather than passing quietly, because a lint that silently does not run is worse
+  than no lint.
+
 - **Three raw NUL bytes made a source file invisible to every search in the repository.**
   `apps/chat-delivery-service/src/app.controller.ts` used a NUL as the separator in a composite
   `deviceId + groupId` map key - deliberate and correct, but typed as the raw character rather than

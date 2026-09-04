@@ -69,9 +69,11 @@ UNPATCHED='[{"number":7,"state":"open",
 printf 'the four causes of an empty answer, kept apart:\n'
 
 f="$(facts clean ok '[]')"
-[ "$(code_of "$f")" = "0" ] &&
-  pass "an empty list from a request that SUCCEEDED is the only clean answer" ||
+if [ "$(code_of "$f")" = "0" ]; then
+  pass "an empty list from a request that SUCCEEDED is the only clean answer"
+else
   fail "a genuinely empty alert list should pass"
+fi
 
 case "$(text_of "$f")" in
   *'no open Dependabot alert'*) pass "and it says GitHub looked, not merely that nothing was found" ;;
@@ -79,9 +81,11 @@ case "$(text_of "$f")" in
 esac
 
 f="$(facts forbidden forbidden)"
-[ "$(code_of "$f")" = "1" ] &&
-  pass "a 403 FAILS the run - a refusal is not a clean report" ||
+if [ "$(code_of "$f")" = "1" ]; then
+  pass "a 403 FAILS the run - a refusal is not a clean report"
+else
   fail "a 403 must fail: nothing looked"
+fi
 
 case "$(text_of "$f")" in
   *'security-events: read'*) pass "and it names the permission that would lift it" ;;
@@ -89,9 +93,11 @@ case "$(text_of "$f")" in
 esac
 
 f="$(facts notfound not-found)"
-[ "$(code_of "$f")" = "1" ] &&
-  pass "a 404 FAILS the run - a DISABLED alert list reads exactly like a clean one" ||
+if [ "$(code_of "$f")" = "1" ]; then
+  pass "a 404 FAILS the run - a DISABLED alert list reads exactly like a clean one"
+else
   fail "a 404 must fail"
+fi
 
 case "$(text_of "$f")" in
   *DISABLED*) pass "and it names the disabled feature as the first candidate" ;;
@@ -99,21 +105,27 @@ case "$(text_of "$f")" in
 esac
 
 f="$(facts down unreachable)"
-[ "$(code_of "$f")" = "1" ] &&
-  pass "an unreachable API FAILS - a transport failure is not an answer" ||
+if [ "$(code_of "$f")" = "1" ]; then
+  pass "an unreachable API FAILS - a transport failure is not an answer"
+else
   fail "an unreachable API must fail, since nothing is behind this run"
+fi
 
 f="$(facts norepo no-repo)"
-[ "$(code_of "$f")" = "1" ] &&
-  pass "an unset GITHUB_REPOSITORY FAILS rather than reporting on nothing" ||
+if [ "$(code_of "$f")" = "1" ]; then
+  pass "an unset GITHUB_REPOSITORY FAILS rather than reporting on nothing"
+else
   fail "with no repository there is nothing to report and that must be loud"
+fi
 
 printf '\nand a real finding is described well enough to act on:\n'
 
 f="$(facts one ok "$ONE_ALERT")"
-[ "$(code_of "$f")" = "1" ] &&
-  pass "one open alert fails the run" ||
+if [ "$(code_of "$f")" = "1" ]; then
+  pass "one open alert fails the run"
+else
   fail "an open alert must fail the run"
+fi
 
 out="$(text_of "$f")"
 for needle in 'GHSA-7gcf-g7xr-8hxj' 'medium' 'serde_with' 'rust' 'frontend/src-tauri/Cargo.lock' '3.14.1'; do
@@ -137,17 +149,21 @@ esac
 printf '\nand a response whose SHAPE changed is reported, never read as zero:\n'
 
 f="$(facts garbage ok 'this is not json')"
-[ "$(code_of "$f")" = "1" ] &&
-  pass "an unparseable payload fails instead of counting as no alerts" ||
+if [ "$(code_of "$f")" = "1" ]; then
+  pass "an unparseable payload fails instead of counting as no alerts"
+else
   fail "unparseable JSON must not be read as an empty list - that is the whole defect class"
+fi
 
 # The counted-but-undescribable case: valid JSON, right count, none of the fields this reader wants.
 # It is the shape that a future API change would produce, and reading it as "nothing to report"
 # would be the same silence one layer deeper.
 f="$(facts shifted ok '[{"number":1,"state":"open"}]')"
-[ "$(code_of "$f")" = "1" ] &&
-  pass "an alert that cannot be described still fails, and accuses this reader" ||
+if [ "$(code_of "$f")" = "1" ]; then
+  pass "an alert that cannot be described still fails, and accuses this reader"
+else
   fail "a described-nothing response must fail"
+fi
 
 printf '\n'
 if [ "$FAIL" -eq 0 ]; then

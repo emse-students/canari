@@ -121,7 +121,7 @@ judge() {
       return 1
       ;;
     forbidden)
-      printf '::error::GitHub refused to list this repository Dependabot alerts (403). The job needs `security-events: read`, and a fine-grained token needs the Dependabot alerts read permission. NOTHING has looked - this is not a clean report. %s\n' "${detail:-}"
+      printf '::error::GitHub refused to list this repository Dependabot alerts (403). The job needs the "security-events: read" permission, and a fine-grained token needs the Dependabot alerts read permission. NOTHING has looked - this is not a clean report. %s\n' "${detail:-}"
       return 1
       ;;
     not-found)

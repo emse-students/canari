@@ -1,4 +1,4 @@
-.PHONY: check-services all install install-node install-bun install-rust install-oxvelte install-wasm-pack install-frontend install-services install-hooks setup-env setup-env-prod local-env dump-prod production production-check build-frontend reload-services test test-gateway test-history test-frontend test-harness test-ci-scripts bench-mls clean run-ci lint-frontend
+.PHONY: lint-ci-scripts check-services all install install-node install-bun install-rust install-oxvelte install-wasm-pack install-frontend install-services install-hooks setup-env setup-env-prod local-env dump-prod production production-check build-frontend reload-services test test-gateway test-history test-frontend test-harness test-ci-scripts bench-mls clean run-ci lint-frontend
 
 # Cible par défaut : installation complète et déploiement LOCAL
 .DEFAULT_GOAL := all
@@ -312,7 +312,18 @@ test-frontend:
 # THE SELF-TESTS FOR THE AUTOMATION ITSELF. `.github/scripts/` decides which dependency updates
 # merge with nobody watching, so the predicate behind that decision is tested like any other logic -
 # on the inputs a live run never produces, which are the ones that fail closed.
-test-ci-scripts:
+# THE LINT CI RUNS AND THIS MACHINE DID NOT, WHICH IS WHY A PULL REQUEST FOUND IT (2026-09-04).
+# `ci.yml` shellchecks exactly this file set and treats even an INFO finding as a failure; nothing
+# here ran it, so a self-test file that passed all 19 of its own assertions was refused by the gate
+# for `A && B || C` and for a backtick inside a single-quoted string. shellcheck is a single static
+# binary and every developer machine that has one can answer this in a second - a gate reachable
+# only from a runner is a gate discovered by a red pull request. Skipped with a NAMED line when the
+# binary is absent, never silently: a lint that quietly does not run is worse than no lint.
+lint-ci-scripts:
+	@echo "${BLUE}🧹 shellcheck (the same file set as ci.yml)…${RESET}"
+	@if command -v shellcheck >/dev/null 2>&1; then 		shellcheck -x 			.github/scripts/*.sh .github/scripts/lib/*.sh .github/scripts/tests/*.sh 			infrastructure/dev/*.sh infrastructure/deploy/*.sh 			scripts/bump-app-version.sh; 	else 		echo "${YELLOW}⚠️  shellcheck absent - CI WILL still run it (winget install koalaman.shellcheck)${RESET}"; 	fi
+
+test-ci-scripts: lint-ci-scripts
 	@echo "${BLUE}🧪 CI script self-tests…${RESET}"
 	@bash .github/scripts/tests/ceiling.test.sh
 	@bash .github/scripts/tests/compose-wiring.test.sh
