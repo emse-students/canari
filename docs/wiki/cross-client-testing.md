@@ -101,11 +101,11 @@ accounts changed.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| TYPE-1 | Typing on W1 shows on W2 within a second, and clears on stop | `W1 W2` | `pending` |
-| TYPE-2 | It expires on its own after 6 s if the stop is never sent | `W1 W2` | `pending` |
-| TYPE-3 | Killing the tab mid-typing leaves no stuck indicator on the peer | `W1 W2` | `pending` |
-| TYPE-4 | An offline peer gets nothing, and nothing is replayed when it returns | `W1 W2` | `pending` |
-| TYPE-5 | Channel typing, a different transport entirely (REST, not WS) | `W1 W2` | `pending` |
+| TYPE-1 | Typing on W1 shows on W2 within a second, and clears on stop | `W1 W2` | `ERROR` 2026-09-04 20:13 - collateral of TYPE-3's teardown, not a finding of its own: `sidebarPanel: false` on W1 because it was sitting behind the PIN gate. Re-run owed |
+| TYPE-2 | It expires on its own after 6 s if the stop is never sent | `W1 W2` | `ERROR` 2026-09-04 20:14 - collateral of TYPE-3's teardown, not a finding of its own: W1 was behind the PIN gate. Re-run owed |
+| TYPE-3 | Killing the tab mid-typing leaves no stuck indicator on the peer | `W1 W2` | `ERROR` 2026-09-04 20:14 on 0.16.3 - and the FIRST pass at 20:10 is the one to read: **the assertion HELD** (indicator shown in 55 ms, cleared 6126 ms after the tab died) **and the TEARDOWN did not**. The restore spawns `pin.mjs` with this runner's own directory as cwd, which became `archive/` when the runners moved, so it re-entered no PIN and left W1 locked; it recorded `unlocked: false` and returned PASS anyway, nothing reading its own report. Every row after it, this one included, then errored on `sidebarPanel: false`. Both halves fixed - the spawn path, and a verdict that may no longer claim PASS on a run that damaged what follows. **Re-run owed, and W1 must be unlocked first** |
+| TYPE-4 | An offline peer gets nothing, and nothing is replayed when it returns | `W1 W2` | `ERROR` 2026-09-04 20:11 - same collateral as TYPE-1. Re-run owed |
+| TYPE-5 | Channel typing, a different transport entirely (REST, not WS) | `W1 W2` | `ERROR` 2026-09-04 20:12 - same collateral as TYPE-1. Re-run owed |
 
 ## 3 - READ - receipts and unread counts
 

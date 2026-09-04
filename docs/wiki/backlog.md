@@ -2963,6 +2963,38 @@ bubble-helper entry above does. The duplication costs nothing while it is identi
 the day one copy is fixed and ten are not, which is the shape `recon.mjs`'s first-database bug already
 had. So this waits for the same wholesale moment: convert all eight, re-run the phases together.
 
+### P2 - re-registering the PIN verifier strands every other client SILENTLY, and only its next unlock finds out (measured 2026-09-04)
+
+`pin_verifier` holds ONE row per user - verifier, salt, `registeredAt` - and minting a fresh device
+re-registers it. The owner's row was re-registered at **15:32:11** during the P1 reproduction, when a
+device was re-minted after a PIN reset.
+
+**Nothing told the other clients, and nothing had to, for four and a half hours.** W1 was already
+unlocked and holds its derived key in memory, so it kept sending, receiving and passing checks all
+afternoon against material the server had replaced. The staleness became visible only at 20:15, when
+TYPE-3 killed W1's tab and forced a fresh unlock: the correct PIN was then refused with *"Votre PIN a
+ete change sur un autre appareil. Recuperez vos messages avec votre ancien PIN."*
+
+**Why this is written down rather than fixed here.** Two of the three parts may well be correct. An
+unlocked session keeping a key in memory is the design; the refusal message is accurate and names the
+remedy. What is NOT obviously correct is the silence: a client whose vault material has been replaced
+is, from that moment, one reload away from being locked out of its own history, and it is told
+nothing while it can still act. The signal exists on the server (`registeredAt` moved) and reaches no
+one.
+
+**What it costs the campaign, which is the immediate cost.** `newdevice.mjs` is the HEAL-NEW runner
+and re-minting is its whole job, so every HEAL-NEW row re-registers the verifier and strands W1 and
+W2 at their next unlock - hours later, in a different rung, reading as a broken client. Its
+`WIPEABLE` allowlist protects the profile it wipes and says nothing about the account-wide effect of
+a PIN reset. **A destructive control needs an allowlist of what it may touch**, and the verifier is
+outside the one it has.
+
+**Owed before this can be closed.** Whether the same digits re-registered produce a verifier the
+other clients would accept (they did not here, so the refusal is about material rather than value);
+whether the "ancien PIN" recovery restores a stranded client's MLS state or resets it, which decides
+whether a stranded W1 is recoverable or must be re-minted; and whether production has ever put a real
+member in this state - `registeredAt` beside each device's `lastSeen` would answer it from the table.
+
 ### P2 - `checkSha` invalidates a verdict when the RUNNER changes and says nothing when the INSTRUMENT does (measured 2026-09-04)
 
 `results.mjs` records `checkSha`, the hash of the runner file, and `rows.mjs` refuses to believe a
