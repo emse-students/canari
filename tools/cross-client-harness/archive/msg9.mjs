@@ -15,7 +15,7 @@
  * key, and the wait below is what turns that into a fact rather than an intention.
  */
 import { APP_TAB, client, countMessage, ensureConversation, send } from '../chat.mjs';
-import { gate, ignoringOfflineCut, report, watch } from '../watch.mjs';
+import { gate, ignoringExpectedLog, ignoringOfflineCut, report, watch } from '../watch.mjs';
 import { armCut, cutHard, link } from './net.mjs';
 import { awaitOffline, awaitOnline, whoIs } from './presence.mjs';
 import { finish, mark } from '../results.mjs';
@@ -93,7 +93,27 @@ const senderCount = await countMessage(w1, m);
 
 // The RECEIVER is the client this check cut, so its disconnected fetches and its closed socket are
 // the instrument, not the app. The SENDER was never touched and is judged raw.
-const obs = { sender: await report(wA), receiver: ignoringOfflineCut(await report(wB)) };
+const cutReceiver = ignoringOfflineCut(await report(wB));
+
+// A RECONNECT MAKES THE LIVE FRAME AND THE PULL CROSS, AND THIS CHECK IS WHAT CAUSES THE RECONNECT.
+//
+// `admitDelivery` in `BaseMlsService.ts` recognises a delivery it has already taken in and
+// acknowledges it once more instead of decrypting it twice - and its own comment says the line is
+// routine at a boot or a reconnect, and that the RATE is the reading that matters. This row severs
+// the link and restores it, so a crossing here is this check's own gesture talking, exactly as the
+// closed socket above is.
+//
+// FORGIVEN, BUT COUNTED FIRST, so forgiving the line cannot forgive a rate. The count goes into the
+// record: two crossings for one reconnect carrying one message and its acknowledgement is the
+// expected shape (measured 2026-09-04), and a run reporting twenty has a pull firing on something
+// other than the reconnect. Nothing is GATED on the number - one measurement is not a population,
+// and a threshold invented from it would name the last incident rather than the next one.
+const CROSSED = /arrived twice \(/;
+const deliveriesCrossed = cutReceiver.unexplained.filter((l) => CROSSED.test(String(l))).length;
+const obs = {
+  sender: await report(wA),
+  receiver: ignoringExpectedLog(cutReceiver, [CROSSED]),
+};
 const delivered =
   whileOffline === 0 && finalCount === 1 && senderCount === 1 && backOnlineAfterMs !== null;
 const gated = gate(delivered ? 'PASS' : 'FAIL', { sender: obs.sender, receiver: obs.receiver });
@@ -105,6 +125,7 @@ console.log(JSON.stringify({ check: 'MSG-9', marker: m, cutState, obs }, null, 1
 finish('MSG-9', gated.verdict, {
   ...gated.detail,
   marker: m,
+  deliveriesCrossed,
   whileOffline,
   socketsClosed: cutInfo.socketsClosed,
   offlineAfterMs,

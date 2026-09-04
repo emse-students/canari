@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-45 scripts.
+46 scripts.
 
 | script | what it is |
 |---|---|
@@ -38,6 +38,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `device.mjs` | WHICH CLIENT AN ATOM IS ABOUT, resolved once, in one place. |
 | `devices.mjs` | THE DEVICE CENSUS - every device the platform knows, with its runtime, OS, app version, owner, |
 | `estate.mjs` | WHICH ESTATE A QUERY IS ABOUT, DERIVED FROM THE ONE CONSTANT THAT DECIDES WHERE THE CAMPAIGN RUNS. |
+| `fixtures.mjs` | WHERE A STAGED INPUT FILE LIVES - resolved from the HARNESS ROOT, never from the caller. |
 | `gate-probe.mjs` | The ONE expression that answers "is the encryption PIN gate on screen". |
 | `grainedb.mjs` | The three questions the COMM phase cannot ask a SCREEN, asked of production's database instead. |
 | `groupnav.mjs` | Opening a GROUP conversation by name, and proving the right one opened. |
@@ -221,4 +222,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-160 scripts in total.
+161 scripts in total.

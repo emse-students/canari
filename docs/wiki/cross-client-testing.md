@@ -94,8 +94,8 @@ accounts changed.
 | MSG-7 | 30 rapid sends: order preserved, no gap, no duplicate | `W1 W2` | `PASS` 2026-09-04 19:54 on 0.16.3 - 30 sent, 30 received, no gap, no duplicate, order settled, 1750 ms end to end. Repeated twice with the same result |
 | MSG-8 | Send to a BACKGROUNDED tab | `W1 W2` `+A1` | `pending` |
 | MSG-8b | Same, receiver on another page: badge and unread count | `W1 W2` `+A1` | `pending` |
-| MSG-9 | **Receiver** offline at the GATEWAY, then restored: lands once on reconnect | `W1 W2` | `pending` |
-| MSG-10 | **Sender** offline: optimistic echo persists, outbox drains, survives a reload | `W1 W2` | `pending` |
+| MSG-9 | **Receiver** offline at the GATEWAY, then restored: lands once on reconnect | `W1 W2` | `PASS` 2026-09-04 20:00 on 0.16.3 - nothing arrived while cut, exactly ONE copy after, 597 ms from reconnect to arrival. `deliveriesCrossed: 2` is recorded and FORGIVEN for this row only: severing the link is this check's own gesture, and `admitDelivery` says a crossing is routine at a reconnect while its RATE is the reading. Counted before it is forgiven, and nothing is gated on the number - one measurement is not a population |
+| MSG-10 | **Sender** offline: optimistic echo persists, outbox drains, survives a reload | `W1 W2` | `PASS` 2026-09-04 20:01 on 0.16.3 - one copy on the sender while cut and none on the receiver, composer emptied, outbox drained 1006 ms after the link returned |
 
 ## 2 - TYPE - typing indicators
 
