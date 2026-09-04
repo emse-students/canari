@@ -43,7 +43,7 @@ on:
         description: 'Which one to run by hand'
         type: choice
         default: all
-        options: [all, hosts, analysis, caches, dev-refresh]
+        options: [all, hosts, analysis, alerts, caches, dev-refresh]
       dry_run:
         description: 'dev-refresh only: report what would happen and change nothing'
         type: boolean
@@ -133,6 +133,44 @@ jobs:
     # from turning into a tree nobody has audited for a week with only warnings to show for it.
     with:
       registry_outage_is_failure: true
+
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  # WHAT GITHUB KNOWS AND THE PASS ABOVE CANNOT SEE
+  #
+  # The analysis job re-asks THIS repository's own questions against an unchanged tree. This one asks
+  # GitHub's, and they are not the same question: GHSA-7gcf-g7xr-8hxj was raised against `serde_with`
+  # in `frontend/src-tauri/Cargo.lock`, and on 2026-09-04 all three of the mechanisms that should
+  # have caught it were blind at once - Dependabot could not open the pull request (a `links`
+  # manifest it cannot parse), `cargo audit` exited 0 (the advisory is GHSA-only and not in RustSec),
+  # and nothing here read the alert list at all. It was found because a `git push` printed a line
+  # about it.
+  #
+  # IT RIDES THE SAME CRON as the analysis rather than taking one of its own. Both answer "has
+  # something landed against code nobody touched", the answer only changes once a day, and a fifth
+  # schedule line would be a fifth thing to reason about for no extra resolution.
+  #
+  # `security-events: read` is what lets the job's `GITHUB_TOKEN` list Dependabot alerts. A refusal
+  # is REPORTED rather than tolerated - the script's whole design is that an empty list and a refused
+  # request must not look alike - so if this permission is ever narrowed the run goes red saying so.
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  alerts:
+    name: Dependabot alerts on the default branch
+    if: >
+      github.event.schedule == '0 2 * * *' ||
+      (github.event_name == 'workflow_dispatch' &&
+      contains(fromJSON('["all", "alerts"]'), inputs.job))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      security-events: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Read GitHub's alert list and judge it
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: bash .github/scripts/dependabot-alerts-report.sh
 
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   # THE ACTIONS CACHE QUOTA IS 10 GB, AND BUILDKIT NEVER EVICTS

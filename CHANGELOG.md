@@ -156,6 +156,46 @@ which is also where every release up to and including v0.13.1 now lives.
   the direct question. Nine assertions, mutation-tested both ways: removing the `include=` names
   itself, and dropping the carried state reproduces `already: false` on a blind list exactly.
 
+- **Nothing in this repository read GitHub's own list of Dependabot alerts, which was the only
+  place one of them ever appeared.** Three mechanisms are meant to keep a vulnerable dependency out
+  of the tree and on 2026-09-04 all three were blind to the same advisory at once: Dependabot could
+  not open the pull request (`frontend/src-tauri` declares a `links` key that cargo refuses in the
+  manifest-only checkout Dependabot materialises, so the app that ships to phones has had no
+  automated update since 2026-08-08), `cargo audit` exited 0 on the unbumped tree (GHSA-7gcf-g7xr-8hxj
+  is GHSA-only and absent from the RustSec database it reads), and nothing read the alert list. It
+  was found because a `git push` happened to print a line about it. `dependabot-alerts-report.sh`
+  now runs in the nightly `Scheduled` pass and an open alert makes the run red - the only alerting
+  channel this estate has. **The report's real work is the empty answer**: a 200 with no alerts is
+  health, a 403 means nothing looked, a 404 means the feature is disabled, and no response at all is
+  a transport failure - the last three fail by name, because a reporter that prints "0 open alerts"
+  when it was refused is the very mechanism this fix accuses `cargo audit` of being. Both refusal
+  arms were measured against the real API; 19 assertions pin all four causes plus a response whose
+  shape changed, which must accuse the reader rather than count as zero.
+
+- **The shellcheck CI runs was reachable from no local target, so a red pull request is what found
+  it.** `ci.yml` lints one named file set and treats even an INFO finding as a failure; nothing here
+  ran it, so a self-test whose 19 assertions all passed was refused by the gate - once for
+  `A && B || C` (SC2015, which is a real trap: `C` runs when `A` is true and `B` fails) and once for
+  a backtick inside a single-quoted string, which shellcheck reads as a command substitution that
+  will not expand. `make lint-ci-scripts` runs exactly the file set `ci.yml` does, and
+  `make test-ci-scripts` depends on it. shellcheck is one static binary; when it is absent the target
+  says so by name rather than passing quietly, because a lint that silently does not run is worse
+  than no lint.
+
+- **Three raw NUL bytes made a source file invisible to every search in the repository.**
+  `apps/chat-delivery-service/src/app.controller.ts` used a NUL as the separator in a composite
+  `deviceId + groupId` map key - deliberate and correct, but typed as the raw character rather than
+  the escape, which is byte-identical at runtime. ripgrep classifies such a file as BINARY and
+  answers `binary file matches` instead of the matching lines, so the file compiled, passed every
+  suite, and could not be found: on 2026-09-01 a search for `reportStrandedDeviceMemberships`
+  returned the spec and not the implementation, and the first conclusion drawn was that the
+  implementation did not exist. CLAUDE.md tells every session to search this repository before
+  reading source, so anything that greps it - a session, a hook, a CI step - was lied to the same
+  way, and nothing else here would ever have noticed. Now written as the escape, and
+  `.github/scripts/tests/no-nul-in-source.test.mjs` reads the bytes of all 1742 tracked source files
+  in `make test-ci-scripts` so it cannot come back silently. **The obvious check is inverted and the
+  test says so**: `git grep -Il ''` lists every file git considers TEXT - the complement of the
+  answer, and a long, reassuring, entirely wrong list.
 
 - **The page that exists to survive an outage could not survive one anywhere but the site root.**
   `app-shell.html` is what nginx answers when `frontend-ssr` is down - a plain shell that boots the

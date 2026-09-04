@@ -263,12 +263,33 @@ open is the blindness, and it is a THIRD mechanism rather than a variant of the 
 
 - Dependabot cannot open the pull request (the `links` manifest, this whole entry).
 - `cargo audit` cannot see the advisory (different database).
-- **Nothing in CI reads GitHub's own alert list** (`repos/{owner}/{repo}/dependabot/alerts`), which
-  is the ONLY place this one appeared. It was found because a `git push` printed a line about it.
+- ~~**Nothing in CI reads GitHub's own alert list**~~ - **CLOSED 2026-09-04.**
+  `.github/scripts/dependabot-alerts-report.sh` runs in the nightly `Scheduled` pass, on the 02:00
+  cron beside the analysis it completes, and an open alert makes the run RED. It was found in the
+  first place because a `git push` happened to print a line about it.
 
 The alert list is a property of the DEFAULT BRANCH, not of a pull request's tree, so a pull request
-can neither be blamed for an open alert nor sensibly blocked by one - which puts the report in the
-nightly pass and nowhere else. That is a small job and it is not written yet.
+can neither be blamed for an open alert nor sensibly blocked by one - which is why the report is in
+the nightly pass and nowhere else.
+
+**WHAT THAT REPORT HAD TO GET RIGHT, because it is the same defect class one layer up.** An empty
+alert list has four causes and only ONE of them is health: a 200 with no alerts, a 403 (the token
+may not read alerts, so NOTHING looked), a 404 (the feature is DISABLED, or the slug is wrong) and
+no response at all (a transport failure, which is not an answer). The last three fail the run by
+name; a reporter that prints "0 open alerts" when it was refused would be exactly the mechanism this
+entry accuses `cargo audit` of being. Both refusal arms were measured against the real API rather
+than reasoned about, and `dependabot-alerts-report.test.sh` pins all four plus a response whose
+SHAPE changed - valid JSON, right count, none of the fields this reader wants - which must accuse the
+reader rather than count as zero. 19 assertions, in `make test-ci-scripts`.
+
+**Adding it made `scheduled.test.sh` fail, and the test was wrong.** Two jobs on one cron is legal,
+and that test says so in its own note - while comparing declared against claimed with `comm` over
+NON-deduped lists, so the second claim on 02:00 came back as a cron no schedule declares. It failed
+and passed the "legal, check it is deliberate" note in the same run. Deduped now, with both
+directions of the real assertion re-validated by planting an undeclared cron.
+
+**Measured the day it was written**: 0 open alerts, 2 dismissed, 98 fixed - including
+GHSA-7gcf-g7xr-8hxj itself, now `fixed`, in `frontend/src-tauri/Cargo.lock`.
 
 Option 3 with a real trigger, plus option 1 attempted behind a mobile build when a device exists, is
 the shape that fits the rest of this repository - but which one is taken is a decision, and it is
@@ -1570,24 +1591,6 @@ a genuinely unusable KeyPackage and a device whose pool is momentarily empty - w
 (reject and re-mint, versus wait and retry). Carry the reason out of the WASM boundary alongside the
 id, then the server report can partition on it instead of on the queue.
 
-### P3 - three RAW NUL bytes in a TypeScript source make the file invisible to ripgrep (found 2026-09-01)
-
-`apps/chat-delivery-service/src/app.controller.ts` carries three literal `\x00` bytes around offset
-25381 - a NUL used, deliberately and correctly, as the separator in a composite `deviceId + groupId`
-map key inside `reportStrandedDeviceMemberships`, but typed as the RAW character instead of the `\0`
-escape. The comment above it means to name the separator and shows an empty pair of backticks,
-because the character it quotes is invisible.
-
-**The cost is not cosmetic: ripgrep classifies the file as binary and reports `binary file matches`
-instead of the matching lines.** During this session that made a search for
-`reportStrandedDeviceMemberships` return the spec file and NOT the implementation, and the first
-conclusion drawn from it was that the implementation did not exist. Anything that greps this repo -
-a session, a hook, a CI step - is lied to the same way. It also violates the repo's ASCII-punctuation
-standard.
-
-The fix is `\0` in the template literal and in the comment, which is byte-identical at runtime, plus
-a check that no other source carries a NUL: `git grep -Il '' -- '*.ts' '*.rs' '*.svelte'` lists every
-file git already considers binary.
 ### P2 - a HEAL verdict says "clean on the web client" and never "clean on the server" (measured 2026-08-29)
 
 **Instrument debt, and it qualifies every verdict this rung has taken.** `healnew.mjs` and
