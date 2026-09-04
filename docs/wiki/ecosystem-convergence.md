@@ -1159,18 +1159,75 @@ alias**, the day `typescript` itself is the 7.x line and svelte-check no longer 
 
 ### Per-repository state
 
-| Repo | Workflows now visible | Notes |
-| --- | --- | --- |
-| **Canari** | `pull-request`, `release`, `arm-auto-merge`, `scheduled` | + 4 `workflow_call` libraries. `CODEOWNERS` deleted. |
-| **Sky** | `ci-bun`, `deploy`, `arm-auto-merge`, `scheduled` | **gained a dependency audit it had never had** - CodeQL and a secret scan never ask whether a SHIPPED dependency was since found vulnerable. Measured clean (327 packages) before it was turned on. |
-| **MiGallery** | `ci`, `cd`, `arm-auto-merge`, `scheduled` | audit moved behind the classifier. |
-| **Portail-etu** | `test`, `deploy`, `arm-auto-merge`, `scheduled`, `release` | `probe-egress.yml` folded into `scheduled.yml` as a dispatch-only job. |
-| **le-cercle** | GitLab, not GitHub | out of scope: no Actions, no Dependabot. |
+**THE TABLE BELOW IS THE STATE AFTER THE SECOND PASS**, later the same day. The first pass left
+each repository with the four workflows it already had, renamed - so `deploy` was still a VISIBLE
+row triggered by a push in three of them, and the CI file was called something different in each.
+Both were closed on 2026-09-04; the section after this one carries what was found doing it.
+
+| Repo | Workflows visible | Libraries (`workflow_call`, no row of their own) | Notes |
+| --- | --- | --- | --- |
+| **Canari** | `ci`, `release`, `arm-auto-merge`, `scheduled` | `code-analysis`, `deploy`, `android`, `ios` | `CODEOWNERS` deleted. The two extra libraries are the app stores, which nothing else here has. |
+| **Sky** | `ci`, `release`, `arm-auto-merge`, `scheduled` | `code-analysis`, `deploy` | **gained a dependency audit it had never had** - CodeQL and a secret scan never ask whether a SHIPPED dependency was since found vulnerable. Measured clean (327 packages) before it was turned on. |
+| **MiGallery** | `ci`, `release`, `arm-auto-merge`, `scheduled` | `code-analysis`, `deploy` | `cd.yml` became the `deploy` library; `ci.yml` gained `push: main`, which it had never had, so the trunk now carries a verdict a release gate can read. |
+| **Portail-etu** | `ci`, `release`, `arm-auto-merge`, `scheduled` | `code-analysis`, `deploy` | `probe-egress.yml` folded into `scheduled.yml` as a dispatch-only job. Held at bun 1.3.8 for a measured reason - see section 10. |
+| **le-cercle** | GitLab, not GitHub | - | out of scope: no Actions, no Dependabot. |
+
+**`bun tools/ecosystem-shape/shape.mjs` in the Canari checkout ASSERTS this table** rather than
+leaving it to be read - the file names, both directions; that no job reachable from a push can
+deploy; that no `workflow_call` lacks a caller; that no script is unreferenced; and that the shared
+files are identical where they are meant to be. It needs the four checkouts side by side, so it is
+run by hand and is wired into no pipeline. Its README says where the four are ALLOWED to differ.
 
 **WHAT ONLY THE USER CAN DO, and it is why mail keeps arriving.** The notification volume is an
 ACCOUNT setting, not a repository one: `github.com/settings/notifications` -> Actions email OFF, and
 Watching email OFF. Deleting `CODEOWNERS` stopped the review REQUESTS; nothing in a repository can
 stop GitHub mailing a user about their own runs.
+
+### The second pass, 2026-09-04 - three things the first pass left, and two silent forks
+
+**1. `deploy` was still a visible workflow, and in three repositories a push still deployed.** The
+user's rule closed it: *"Pour tous les repos, le push sur main ne doit rien deployer, c'est la
+release qui le fait."* `deploy.yml` became a `workflow_call` LIBRARY in Sky, MiGallery and
+Portail-etu, taking `(sha, version)` from the caller; `release.yml` - on `release: published`, with
+the same three-gate `release-preflight.sh` - became its only caller. Three things died with the push
+trigger and are worth naming, because each was compensating for it: MiGallery's `run-ci` job and
+Portail-etu's `verify` job both **re-ran the whole suite** inside the deploy, since a sweep's
+`GITHUB_TOKEN` merge raised no `push` and a dispatch could otherwise ship a combination nothing had
+tested together; and Portail-etu's `skip_ci` input, the escape hatch from the 2026-08-06 Actions
+outage. The preflight READS the verdict already on the commit instead, which is cheaper and stricter
+- it also refuses an ABSENT check, which a re-run cannot even notice.
+
+**2. The CI file had four different names for one job.** `pull-request.yml` (Canari), `ci.yml`
+(MiGallery), `ci-bun.yml` (Sky), `test.yml` (Portail-etu) - four afternoons, one workflow. All four
+are `ci.yml` named `CI` now. Canari's was the last, and its name had stopped being true anyway: the
+file runs on `push: main` and `workflow_dispatch` as well, and the verdict it leaves on a `main`
+commit is precisely what the release gate reads. Nothing outside a repository ever sees the file
+name - the required check is `ci-passed` - which is exactly why it could drift; the one thing that
+WOULD have broken silently is the README badge, which addresses the workflow by path.
+
+**3. The arming named a deprecated input, and said so on every run it made.**
+`actions/create-github-app-token@v3` deprecated `app-id`. Canari moved to `client-id`; the three
+siblings had not, so every one of their arming runs - a job that fires for every pull request -
+printed `Input 'app-id' has been deprecated with message: Use 'client-id' instead.` as a warning
+annotation. *A line its reader learns to skip is the one that hides the next defect.* The two inputs
+take **DIFFERENT VALUES** (a numeric app id against an `Iv23li...` string), so this was a secret
+swap: `AUTOMERGE_APP_CLIENT_ID` was created in the three from
+`gh api orgs/emse-students/installations`, which is where that public identifier lives. With no
+reader left anywhere, **`AUTOMERGE_APP_ID` was then deleted from all four** - the inventory in
+`infrastructure/MIGRATION.md` had said "kept only until nothing references it", and it says how to
+restore it.
+
+**AND TWO SILENT FORKS THE SHAPE SCRIPT FOUND ON ITS FIRST RUN.** Both were prose, and prose is what
+the next person reads before deciding whether a difference is deliberate:
+
+- **Nothing said WHY Canari named `client-id`**, so somebody noticing the difference had an even
+  chance of converging the four the wrong way. The comment now travels with the input, in all four.
+- **Sky's copy justified the App token with a mechanism that had been deleted that morning** - it
+  said a `GITHUB_TOKEN` merge would leave dependency updates "merged and undeployed" because
+  `deploy.yml` listened for a CI run on `main`. Nothing deploys on a push any more. The real reason
+  is sharper: a `GITHUB_TOKEN` merge raises no `push`, so `ci.yml` never runs on the merge commit,
+  the commit carries no `CI passed`, and the release preflight's third gate would refuse EVERY
+  release on a tree that had in fact been tested.
 
 ### A ruleset is what `--auto` waits for, and two repositories had none at all
 
