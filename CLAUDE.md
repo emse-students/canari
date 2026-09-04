@@ -55,14 +55,13 @@
   Four more are `workflow_call` LIBRARIES with no triggers of their own and no row of their own:
   `deploy.yml`, `android.yml`, `ios.yml`, `code-analysis.yml`. **Adding a fifth visible workflow
   needs a reason that is not "it is a different topic".**
-- **WORK GOES THROUGH A PULL REQUEST, AND IT MERGES ITSELF - since 2026-09-03.** `pull-request.yml` arms GitHub auto-merge on every pull request of yours, in PARALLEL with the suite, so the human gesture is OPENING it, never merging it. `main` carries a ruleset (id `22152902`, active): no direct push, no force-push, no delete, and one required check, `CI passed`. The loop is `git switch -c`, commit, `gh pr create` - and then NOTHING: the merge and the branch deletion are automatic. **No approval is required** - a queue nobody drains is worse than the merge it prevented (user, 2026-08-31) - so this costs a minute and buys two things a direct push never gave: a diff somebody can read, and a CI run on the MERGED combination rather than on the branch. **Admin bypass exists and is the EMERGENCY path only**: taking it means production is broken right now, and it is written down in `CHANGELOG.md` when taken.
-- **NOTHING DEPLOYS ON A PUSH - deployment happens at the BUMP** (user, 2026-09-02: *"le deploiement de tout (production, android, ios...) se fait au bump. Pas au push sur main."*). A STABLE release `vX.Y.Z` deploys production and ships the stores; a PRE-RELEASE `vX.Y.Z-alpha.N` deploys `dev.canari-emse.fr` and feeds the store TESTER programmes; a merge to `main` deploys nothing at all and only runs CI. **So a merged fix is not a shipped fix**, and `frontend/package.json`'s version is what decides which kind a release is - a hyphen in it IS the definition of a pre-release, read that way by `release_kind()` in `.github/scripts/lib/release-preconditions.sh` - the ONE implementation - and by `scripts/bump-app-version.sh`'s store band. **`release.yml` IS THE ONLY ENTRY POINT since 2026-09-03**: five gates, then the bump, then `deploy.yml`, `android.yml` and `ios.yml` as CALLED jobs of the same run, all building the commit the bump resolved. **A stable is refused unless dev has already served that commit, `CI passed` is green ON it, and `store/whats-new.txt` names that version** - production being ahead of dev is impossible, not reported. The whole model is on [workflow-migration](docs/wiki/workflow-migration.md) and [cicd](docs/wiki/cicd.md), the only copies.
+- **WORK GOES THROUGH A PULL REQUEST, AND IT MERGES ITSELF; NOTHING DEPLOYS ON A PUSH.** Both are the same fact and the commands are in THE DEVELOPMENT CYCLE below. Two consequences no task escapes: **a merged fix is not a shipped fix**, and a hyphen in the version IS the definition of a pre-release - read that way by `release_kind()` in `.github/scripts/lib/release-preconditions.sh`, the ONE implementation, and by `scripts/bump-app-version.sh`'s store band. Model on [workflow-migration](docs/wiki/workflow-migration.md) and [cicd](docs/wiki/cicd.md), the only copies. **Admin bypass exists and is the EMERGENCY path only**: taking it means production is broken right now, and it is written into `CHANGELOG.md` when taken.
 - NO FALLBACKS: never add a fallback path. Diagnose why the primary path failed and fix it there.
 - FIX, NEVER DEFER: a warning or failure you meet is yours, whether or not you caused it. "Pre-existing" is not a disposition.
 - FACE THE BLOCKAGE: fix the cause of a failing hook (`bun run format`), never stash or bypass it.
 - STATE PRUNING: when updating SESSION STATE, DELETE completed work outright. Its rule goes to `durable-rules`, its story to `CHANGELOG.md`, its mechanism to the wiki page that entry points at. **Do not reconstruct shipped work here.**
-- CLAUDE.md HYGIENE: capped at ~250 lines on purpose, and it is an INDEX first. A rule needing a paragraph belongs in `durable-rules`; a story in `CHANGELOG.md`; a measurement on the topical wiki page. If this file grows, something belongs somewhere else.
-- WORKFLOW CYCLE: Plan -> Ask if uncertain -> Execute (surgical) -> Test -> commit -> pull request -> merge -> update SESSION STATE -> STOP.
+- CLAUDE.md HYGIENE: **INDEX FIRST** - a rule needing a paragraph belongs in `durable-rules`, a story in `CHANGELOG.md`, a measurement on the topical wiki page. If this file grows, something belongs somewhere else. **The cap is ~350 lines and it moved from ~250 on 2026-09-04**, deliberately and once: the user asked for the development cycle to live here so it can be USED (*"tu consigneras le cycle de developpement dans le claude.md de Canari pour pouvoir l'utiliser en pratique"*), and that section is COMMANDS, which is the one thing a pointer cannot replace. It was paid for, not granted: two sections that restated the five gates and the deploy model were cut to pointers in the same commit. A cap the file itself breaks is worse than no cap.
+- WORKFLOW CYCLE: Plan -> Ask if uncertain -> Execute (surgical) -> Test -> commit -> pull request -> merge -> update SESSION STATE -> STOP. **The commands are in THE DEVELOPMENT CYCLE below.**
 - COMMIT **AND PUSH** IN THE BACKGROUND, ALWAYS - both are minutes long and neither is worth a blocked session. The pre-commit hook sweeps the WHOLE frontend (2-3 min) and re-stages it; a push to this remote routinely exceeds a 5-min foreground timeout. Isolate unrelated dirty files first. `rm -rf apps/*/dist` before `git push`.
 - DOCUMENTATION: technical docs in `docs/wiki/` (English, LLM-oriented, **search it before reading source**). User guides in `docs/user-guide/` (French). UML in `docs/diagrams/`. Root: `README.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, `SECURITY.md`. Delete unused code immediately.
 - WIKI IS PREFERRED: update the relevant wiki page alongside code changes - stale wiki is worse than none. Keep `apps/*/README.md` synced with its wiki counterpart. Cross-link freely.
@@ -70,6 +69,75 @@
 - ONE-OFF ACTIONS GO TO THE USER (2026-08-25): *"Pour les choses qui ne se font qu'une fois, tu peux me demander de les faire hein."* Building a tool for a single click is that waste.
 - DELEGATION: broad file-gathering goes to a search subagent; a big, risky or native Work Package goes to a background agent through a precise brief in `AGENTS.md`.
 - PROD ACCESS: `ssh canari`, `ssh mitv`, `ssh cercle` and `ssh miconnect` (the last two via ProxyJump canari). **Either tool works since 2026-09-02, and the old "PowerShell only" rule named the wrong culprit.** It was never Bash: MSYS `ssh` execs the cloudflared `ProxyCommand` through `/bin/bash`, which ate its backslashes. `~/.ssh/config` now spells that path with FORWARD SLASHES, which `bash` and `cmd` both exec - measured on both. A bash script may therefore reach prod directly, which matters because **PowerShell text-encodes stdout and corrupts a binary pipe** (a `pg_dump | gzip` through it is lost). Postgres, the fact that `auth_db` is the ONLY database and the SQL quoting are in [databases](docs/wiki/infrastructure/databases.md#reaching-it-from-a-workstation); `miconnect` is the Authentik box, and its access log is what settles an OIDC question ([authentik](docs/wiki/infrastructure/authentik.md#the-box-and-the-log-that-settles-an-oidc-question)).
+
+## **THE DEVELOPMENT CYCLE - THE COMMANDS, IN ORDER**
+
+Two human gestures and nothing else: **open a pull request**, and **publish a release**. Everything
+between them is mechanical. The same shape is in all four GitHub repositories since 2026-09-04 -
+`ci` + `release` + `arm-auto-merge` + `scheduled` visible, `code-analysis` + `deploy` as libraries -
+so this cycle reads the same in Sky, MiGallery and Portail-etu, minus the bump and the two stores.
+
+```
+                    ONE                                        TWO
+            open a pull request                        publish a release
+                     |                                          |
+   git switch -c fix/what-it-does                gh release create v0.16.2 \
+   ...commit...                                       --generate-notes
+   gh pr create                                             |
+        |                                          release.yml, ONE run
+        +--> CI ------------------+                         |
+        |     tests + security    |                  5 gates (no bypass)
+        |     -> `CI passed`      |                         |
+        +--> arm-auto-merge ------+                    bump + push
+              (IN PARALLEL)       |                         |
+                                  v                +--------+--------+------+
+                        GitHub squash-merges       |        |        |      |
+                        + deletes the branch    deploy   android    ios   notes
+                                  |             (build)   (Play)  (Store)
+                                  v                +--------+--------+
+                       push on main = CI ONLY               |
+                       NOTHING DEPLOYS                production estate
+                                                  (stable only, and only once
+                                                   BOTH stores took the version)
+```
+
+**GESTURE ONE, and the whole of it.** `git switch -c`, commit, `gh pr create` - then **nothing**.
+No approval is required, the merge and the branch deletion are automatic, and `main` carries ruleset
+`22152902`: no direct push, no force-push, one required check, `CI passed`. **A merged fix is not a
+shipped fix.**
+
+**GESTURE TWO, and what it owes.** A STABLE `vX.Y.Z` deploys production and ships both stores; a
+PRE-RELEASE `vX.Y.Z-alpha.N` deploys `dev.canari-emse.fr` and the store TESTER programmes. The
+hyphen IS the definition. **A stable owes exactly one thing written by a human**:
+`store/whats-new.txt`, first line `version: X.Y.Z` - one text reaching the App Store, Play and the
+GitHub release body through ONE implementation. Check it before tagging:
+
+```sh
+MARKETING_VERSION=0.16.2 node tools/app-store/submit.mjs --check-notes
+```
+
+**A STABLE IS REFUSED unless a pre-release served dev at that commit first**, so the ordinary
+sequence is two releases:
+
+```sh
+gh release create v0.16.2-alpha.1 --prerelease --generate-notes   # -> dev + testers, moves the marker
+# wait for it to be green, and do not merge anything in between - gate 2 checks main still points here
+gh release create v0.16.2 --generate-notes                        # -> production + both stores
+```
+
+**The five gates, and there is no bypass input** (`.github/scripts/release-preflight.sh`): the
+version parses; the commit is on `main` AND `main` still points at it; `CI passed` is green ON that
+commit; dev has already served it (stables); the notes name it (stables). *A skip flag is a fallback
+path, and reaching one means the primary path failed - so the fix belongs there.* The emergency path
+is a human with admin rights, written into `CHANGELOG.md` when taken.
+
+**Before every commit**: `bun run check` (0 errors), `bun run lint`, `bun run format` - the hook runs
+them anyway and re-stages, so run them first rather than reading a commit you have not seen. Commit
+AND push in the background: the hook sweeps the whole frontend (2-3 min) and a push here routinely
+exceeds a 5-minute foreground timeout.
+
+**Afterwards**: delete the local branch (`git branch -D`, squash merges are invisible to
+`--merged`), update SESSION STATE, and STOP.
 
 ## **ARCHITECTURE & CONSTRAINTS**
 
@@ -141,19 +209,12 @@ ships. **What only the USER can do is ONE table** -
 [backlog](docs/wiki/backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks), pointers
 only; never re-enumerate it here.
 
-### CANARI - THE DELIVERY PIPELINE, PROVEN END TO END (`v0.16.0`, 2026-09-03)
+### CANARI - THE DELIVERY PIPELINE
 
-**TWO PACKAGES, ONE PER HUMAN GESTURE**, and the whole model - the five gates, the bump, the three
-called arms, the event types, the store band, what was measured on each of the three releases - is
-on [cicd](docs/wiki/cicd.md) and [workflow-migration](docs/wiki/workflow-migration.md), the ONLY
-copies. **Read them before touching any workflow.** Two facts a task trips over without them:
-
-- **A STABLE IS REFUSED** unless the version parses, `main` still POINTS AT the commit, `CI passed`
-  is green ON it, dev has already served it, and `store/whats-new.txt` names that version. No
-  bypass, by design.
-- **WHAT A STABLE OWES A HUMAN IS `store/whats-new.txt`, first line `version: X.Y.Z`, and nothing
-  else** - one text reaching THREE destinations since 2026-09-03 (App Store, Play, GitHub release
-  body) through ONE implementation, `submit.mjs`. The bump deliberately does not write that line.
+**The commands are in THE DEVELOPMENT CYCLE above; the model is on [cicd](docs/wiki/cicd.md) and
+[workflow-migration](docs/wiki/workflow-migration.md), the ONLY copies - read them before touching
+any workflow.** Nothing about the pipeline belongs here: this section existed to restate the five
+gates and the notes rule, and both are now one screen up.
 
 ### CANARI - THE QUEUE, IN ORDER
 
