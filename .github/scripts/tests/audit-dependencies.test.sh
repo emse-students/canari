@@ -103,6 +103,35 @@ expect "a 429 is silence too - rate limiting is not a verdict about the tree" 2 
   'error: POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - 429' \
   REGISTRY_OUTAGE_IS_FAILURE=false
 
+echo "=== the attempt budget is the caller's to lower ==="
+
+# AN OUTAGE IS A PROPERTY OF THE REGISTRY, NOT OF THE DIRECTORY, and Canari audits five trees in one
+# job. Without this, a registry that is down costs five separate three-attempt discoveries of the
+# same fact - fifteen `bun audit` calls, each carrying bun's own multi-minute timeout. The verdict
+# still has to be the same 2, so both halves are asserted: the number of attempts changes, the
+# CLASSIFICATION does not.
+attempts_out=$(PATH="$work/bin:$PATH" FAKE_BUN_STATUS=1 FAKE_BUN_OUTPUT="$OUTAGE_503" \
+  AUDIT_ATTEMPTS=1 bash "$script" "$work/tree" 2>&1)
+attempts_rc=$?
+tries=$(grep -c 'bun audit in' <<<"$attempts_out")
+if [ "$attempts_rc" -eq 2 ] && [ "$tries" -eq 1 ]; then
+  echo "PASS AUDIT_ATTEMPTS=1 asks once and still answers 2"
+else
+  echo "FAIL AUDIT_ATTEMPTS=1: expected exit 2 after 1 attempt, got exit $attempts_rc after $tries"
+  indent "$attempts_out"
+  failures=$((failures + 1))
+fi
+
+default_out=$(PATH="$work/bin:$PATH" FAKE_BUN_STATUS=1 FAKE_BUN_OUTPUT="$OUTAGE_503" \
+  bash "$script" "$work/tree" 2>&1)
+tries=$(grep -c 'bun audit in' <<<"$default_out")
+if [ "$tries" -eq 3 ]; then
+  echo "PASS the default is still three attempts"
+else
+  echo "FAIL the default budget is $tries attempts, expected 3"
+  failures=$((failures + 1))
+fi
+
 echo "=== the case the classifier does NOT recognise ==="
 
 # THE DIRECTION OF THE UNKNOWN CASE, asserted rather than trusted to the comment that states it. The

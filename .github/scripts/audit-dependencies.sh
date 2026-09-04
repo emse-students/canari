@@ -56,7 +56,14 @@ fi
 # THREE ATTEMPTS, NOT MORE. `bun audit` carries its own internal timeout and took five minutes to
 # give up on the 503 above, so attempts are expensive; three of them spread over a couple of minutes
 # of backoff covers a blip, and a longer outage is not something a pull request should sit through.
-ATTEMPTS=3
+#
+# AND THE CALLER MAY SAY ONE, BECAUSE AN OUTAGE IS A PROPERTY OF THE REGISTRY, NOT OF THE DIRECTORY.
+# Canari audits FIVE trees in one job. With a budget that is purely per-directory, a registry that is
+# down costs five separate three-attempt discoveries of the same fact - fifteen `bun audit` calls,
+# each carrying bun's own multi-minute timeout, to learn one thing. *Never learn by failing what a
+# fact could have told you*: the first tree to come back with a 2 has established that npm is not
+# answering, and every caller in this repository hands that forward as `AUDIT_ATTEMPTS=1`.
+ATTEMPTS="${AUDIT_ATTEMPTS:-3}"
 BACKOFF_BASE_S=20
 
 # The registry did not answer. Narrow on purpose - see the header.
