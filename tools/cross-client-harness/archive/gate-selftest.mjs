@@ -61,6 +61,28 @@ const tracked = new Set(
 const HARNESS = join(HERE, '..');
 
 /**
+ * The source with its COMMENTS removed, so a sentence about an import is not read as one.
+ *
+ * THE GATE ACCUSED A FILE OF AN IMPORT IT DOES NOT HAVE (2026-09-04). `inventory.mjs` documents, in
+ * prose, that one script spells its import `from "./results.mjs"` with double quotes - and the walk
+ * below matched that sentence, resolved `results.mjs`, followed it to the gitignored `names.mjs` and
+ * failed the whole gate. `inventory.mjs` imports four node builtins and nothing else.
+ *
+ * **Rewording the comment would have been the wrong fix.** The rig documents import paths in prose
+ * all over, deliberately - that is how a reader learns which spelling a call site uses - and a gate
+ * that quietly forbids writing one down teaches its reader to work around it, which is how a NUL
+ * byte survived in `phone.mjs` for a day. So the parser stops reading prose instead.
+ *
+ * Conservative on purpose: block comments, and line comments that OWN their line. A trailing `//`
+ * is left alone because stripping it means deciding whether the `//` is inside a string, and
+ * `'https://...'` would then eat the rest of a line that might carry a real import. A real import
+ * never sits on a line that starts with a comment marker, so this is sufficient and cannot
+ * under-report - which is the failure direction that matters for a gate.
+ */
+const withoutComments = (src) =>
+  src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+
+/**
  * Transitive closure of relative imports, as harness-relative paths.
  *
  * IT FOLLOWS `../` AS WELL AS `./`, which it did not have to before the rows moved into `archive/`:
@@ -78,7 +100,7 @@ function imports(rel, seen = new Set()) {
     return seen; // Absent here too - `tracked` is what decides, and it will say so.
   }
   const dir = dirname(rel);
-  for (const m of src.matchAll(/from\s+['"](\.\.?\/[\w.\-/]+)['"]/g)) {
+  for (const m of withoutComments(src).matchAll(/from\s+['"](\.\.?\/[\w.\-/]+)['"]/g)) {
     imports(join(dir, m[1]).replace(/\\/g, '/'), seen);
   }
   return seen;

@@ -44,9 +44,36 @@ reader to write the thing again, which is the reported symptom.
       of `make test-harness`, so a script added, moved, renamed, or left undocumented fails the gate.
       **Proven to fail** on each of those three cases and to pass when clean; a gate never seen to
       fail is not a gate.
-- [ ] **A3. Check the split is right.** The atom/row boundary came from an import-closure over a root
-      set I chose. Some of the 42 may be rows; some of the 114 may hold a gesture worth promoting.
-      Re-read the boundary deliberately rather than trusting the closure that drew it.
+- [x] **A3 - DONE, AND THE BOUNDARY WAS WRONG IN THE DIRECTION THAT COSTS.** I re-read it by turning
+      the contract's own words into a predicate instead of re-reading prose: a row WRITES A VERDICT,
+      and it can only do that through `results.mjs`, so the question is asked of the import list.
+
+      **The root was almost right; `archive/` was announced as something 52 of its 114 files are
+      not.** Measured: 43 atoms + 1 primitive at the root, and in `archive/` **62 rows, 13
+      self-tests and 39 gestures, libraries and runners**. `addmember.mjs` opens *"ADDING A MEMBER TO
+      A GROUP - one gesture"* and sat under a heading reading "One QUESTION each, ending in a
+      verdict". **That is the reported defect itself**, not a cosmetic mislabel: a session looking
+      for an add-member gesture reads the atoms section, does not find it, and writes a third one.
+
+      **`inventory.mjs` now files by what a script DOES**, five measured sections, and asserts the
+      sections PARTITION the tree - proven to throw when they do not. So the heading cannot lie and
+      cannot drift. The one root file that writes a verdict, `newdevice.mjs`, is not a filing
+      mistake: ten HEAL-NEW rows rest on it, so the primitive carries a row proving itself. That
+      exception is now written into `atoms.mjs` beside the contract it bends, with the machine check
+      that will surface a second one.
+
+      **Two instrument bugs found on the way, both fixed, both proven.** `inventory.mjs` captured
+      every multi-line headline WITH its leading `*` (a `\s*` swallowed the newline, so the optional
+      prefix group never ran) - every table cell read `| * TURNS A BROWSER... |`. And
+      `gate-selftest.mjs` read a SENTENCE about an import as an import: `inventory.mjs` documents
+      that one script spells its path `from "./results.mjs"`, the walk matched that prose, followed
+      it to the gitignored `names.mjs` and failed the whole gate on a file whose only imports are
+      four node builtins. **Rewording the comment would have been the workaround, not the fix** - the
+      rig documents import paths in prose deliberately - so the parser stops reading comments, and
+      it was re-proven to still catch a REAL gitignored import.
+
+      **One finding went to [backlog](backlog.md) rather than inline**: nothing lints the harness at
+      all, and it carries 29 warnings nobody has been shown.
 
 ### What CI caught that local gates did not, 2026-09-04
 

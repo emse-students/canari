@@ -39,23 +39,104 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = join(HERE, 'INVENTORY.md');
 
-/** The two halves of the rig, and what each half means. Order here is the order in the file. */
+/**
+ * THE ONE THING THAT SEPARATES A ROW FROM A GESTURE: a row WRITES A VERDICT, and it can only do
+ * that through `results.mjs`. So the question is asked of the import list rather than of the
+ * directory the file happens to sit in.
+ *
+ * `mark`, `unmet` and `clientBuild` are deliberately NOT here. Sixty scripts import `mark` and it
+ * records an OBSERVATION inside a run - a step reached, a condition met - which every gesture is
+ * entitled to do. Only these four close a row in `results.ndjson`.
+ */
+const VERDICT_WRITERS = ['record', 'recordObserved', 'finish', 'finishObserved'];
+
+/**
+ * Whether a script ends in a verdict, read off its `results.mjs` import.
+ *
+ * IT MUST NOT BE A TEXT SEARCH FOR `record(`, and that was the first attempt. `chat.mjs` and
+ * `rows.mjs` both DISCUSS `record(...)` in prose - `rows.mjs` says so in as many words, because it
+ * parses those very call sites - so a grep classified two libraries as rows. An import list is
+ * structure; a mention in a comment is not.
+ *
+ * Both quote styles, because that is the OTHER thing the first attempt got wrong: `newdevice.mjs`
+ * writes `from "./results.mjs"` with double quotes and was reported as writing no verdict, which
+ * would have hidden the single genuine finding at the root behind a measurement error.
+ */
+function writesAVerdict(path) {
+  const m = /import\s*\{([^}]*)\}\s*from\s*['"][^'"]*results\.mjs['"]/.exec(
+    readFileSync(path, 'utf8'),
+  );
+  if (!m) return false;
+  return m[1]
+    .split(',')
+    .map((s) => s.trim().split(/\s+as\s+/)[0])
+    .some((n) => VERDICT_WRITERS.includes(n));
+}
+
+/**
+ * THE SECTIONS ARE MEASURED, NOT POSITIONAL, AND THAT IS THE POINT OF THIS FILE.
+ *
+ * The first version had two sections and got them from the DIRECTORY: root was "atoms", `archive/`
+ * was "Rows - one QUESTION each, ending in a verdict in `results.ndjson`". **That sentence was
+ * false about 52 of the 114 files it covered.** Measured 2026-09-04: `archive/` holds 62 rows, 13
+ * self-tests, and 39 gestures, libraries and runners - `addmember.mjs`, whose own docblock opens
+ * *"ADDING A MEMBER TO A GROUP - one gesture"*, sat under a heading announcing it as a question.
+ *
+ * **That is not a cosmetic mislabel, it is the exact failure this index was built to end.** A
+ * session looking for an add-member gesture reads the atoms section, does not find it, and writes a
+ * third one - which is what the user reported (*"tu as recode des choses qui existaient deja parce
+ * que le script n'avait pas ete trouve"*). Filing a gesture under "Rows" makes it unfindable just as
+ * effectively as leaving it out.
+ *
+ * A file is placed by what it DOES, so the heading cannot lie and cannot drift: the classification
+ * is recomputed on every run and `--check` gates it.
+ */
 const SECTIONS = [
   {
-    dir: '.',
+    key: 'atoms',
     title: 'Atoms and libraries - the harness root',
     blurb:
       'One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather ' +
       'than a clock, reads before it acts so a second call is a read, and addresses the product ' +
-      'structurally rather than by pixel or wording. Nothing here takes a verdict. ' +
+      'structurally rather than by pixel or wording. ' +
       'See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.',
+    match: (f) => f.dir === '.' && !f.verdict,
   },
   {
-    dir: 'archive',
+    key: 'primitives-measured',
+    title: 'Primitives that carry their own row',
+    blurb:
+      'A gesture other rows REST ON, measured by a row of its own so a failure in it is attributed ' +
+      'to it rather than to everything built on top. It writes a verdict, so it is not an atom by ' +
+      'the strict reading - and that is deliberate, not an accident of filing.',
+    match: (f) => f.dir === '.' && f.verdict,
+  },
+  {
+    key: 'rows',
     title: 'Rows - `archive/`',
     blurb:
-      'One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`. They still ' +
-      'run and the 14 gated self-tests live here. See [`archive/README.md`](archive/README.md).',
+      'One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`. ' +
+      'See [`archive/README.md`](archive/README.md).',
+    match: (f) => f.dir === 'archive' && f.verdict && !f.selftest,
+  },
+  {
+    key: 'selftests',
+    title: 'Self-tests - `archive/`',
+    blurb:
+      'These test the HARNESS, not the product, and record nothing: they are the gated suite ' +
+      '`make test-harness` runs. A failure here means an instrument is lying, which is worse than ' +
+      'a failing row.',
+    match: (f) => f.selftest,
+  },
+  {
+    key: 'archive-gestures',
+    title: 'Gestures, libraries and runners in `archive/`',
+    blurb:
+      'They live under `archive/` but they are NOT questions - they take no verdict. Runners that ' +
+      'drive other rows, probes, and vocabulary that never moved to the root. ' +
+      '**Search here before writing a gesture**: this is the half that used to be filed as rows, ' +
+      'where nobody looking for a gesture would ever have found it.',
+    match: (f) => f.dir === 'archive' && !f.verdict && !f.selftest,
   },
 ];
 
@@ -74,7 +155,12 @@ function headline(path) {
   // undocumented, which would have made this gate demand a pointless edit to a file that was
   // already right. A gate must accuse real omissions only, or it teaches its reader to work
   // around it.
-  const m = /\/\*\*\s*(?:\n\s*\*\s*)?(.+?)\s*(?:\n|\*\/)/.exec(src);
+  // A HORIZONTAL-SPACE CLASS AND NOT `\s*` BEFORE THE OPTIONAL PREFIX, which is the bug this had.
+  // `\s` matches a newline, so the first quantifier swallowed the line break and the optional
+  // ` * ` group never got a chance to run - every multi-line headline was captured WITH its
+  // leading asterisk and the table read `| * TURNS A BROWSER PROFILE... |`. The one-line form
+  // (`shot.mjs`) was right by accident, which is why it looked like a one-off rather than the rule.
+  const m = /\/\*\*[ \t]*(?:\n[ \t]*\*[ \t]*)?(.+?)[ \t]*(?:\n|\*\/)/.exec(src);
   if (!m) return null;
   // Collapse whitespace and strip the markdown emphasis these headers use, which reads as noise in
   // a table cell where every row is already a title.
@@ -107,8 +193,18 @@ function scan(dir) {
     .map((f) => f.slice(prefix.length))
     .filter((f) => !f.includes('/'))
     .sort()
-    .map((f) => ({ file: f, dir, headline: headline(join(abs, f)) }));
+    .map((f) => ({
+      file: f,
+      dir,
+      name: dir === '.' ? f : `${dir}/${f}`,
+      headline: headline(join(abs, f)),
+      verdict: writesAVerdict(join(abs, f)),
+      selftest: /selftest/.test(f),
+    }));
 }
+
+/** Every script in the rig, each already carrying the two facts the sections are chosen by. */
+const everything = () => [...scan('.'), ...scan('archive')];
 
 /** A table cell must not break the table, and a headline is free prose. */
 const cell = (s) => s.replace(/\|/g, '\\|');
@@ -125,19 +221,37 @@ function render() {
     'that gestures were not findable - three `createGroup`s, and a session that re-coded what already',
     'existed. Search this file first.',
     '',
+    '**A script is filed by what it DOES, not by which directory it sits in.** A row writes a verdict',
+    'to `results.ndjson`; everything else is a gesture, a library or a runner, wherever it lives. That',
+    'distinction is recomputed on every run, so a heading here cannot go stale - and it matters,',
+    'because 39 gestures under `archive/` used to be announced as questions, which is a good way to',
+    'make a gesture as unfindable as leaving it out entirely.',
+    '',
   ];
-  let total = 0;
+  const files = everything();
+  const placed = new Set();
   for (const s of SECTIONS) {
-    const rows = scan(s.dir);
-    total += rows.length;
-    parts.push(`## ${s.title}`, '', s.blurb, '', `${rows.length} scripts.`, '', '| script | what it is |', '|---|---|');
+    const rows = files.filter((f) => s.match(f));
+    for (const r of rows) placed.add(r.name);
+    parts.push(`## ${s.title}`, '', s.blurb, '', `${rows.length} script${rows.length === 1 ? '' : 's'}.`, '', '| script | what it is |', '|---|---|');
     for (const r of rows) {
-      const name = s.dir === '.' ? r.file : `${s.dir}/${r.file}`;
-      parts.push(`| \`${name}\` | ${cell(r.headline ?? '**NO DOCBLOCK**')} |`);
+      parts.push(`| \`${r.name}\` | ${cell(r.headline ?? '**NO DOCBLOCK**')} |`);
     }
     parts.push('');
   }
-  parts.push(`---`, '', `${total} scripts in total.`, '');
+  // EVERY FILE LANDS IN EXACTLY ONE SECTION, ASSERTED RATHER THAN ASSUMED. The sections are
+  // predicates now, so a future edit can leave a hole (a file matching none) or a double count (a
+  // file matching two) without either being visible in the output - the totals would simply be
+  // wrong and nobody would know which way. This is the one thing a generated index cannot be
+  // allowed to get wrong, because its whole value is that a reader can trust a name is absent.
+  if (placed.size !== files.length) {
+    const missed = files.filter((f) => !placed.has(f.name)).map((f) => f.name);
+    throw new Error(
+      `the sections do not partition the tree: ${files.length} scripts, ${placed.size} placed` +
+        (missed.length ? ` - unplaced: ${missed.join(', ')}` : ' - a file matched two sections'),
+    );
+  }
+  parts.push(`---`, '', `${files.length} scripts in total.`, '');
   return parts.join('\n');
 }
 
@@ -146,11 +260,15 @@ const check = process.argv.includes('--check');
 
 // A script with no headline is reported by NAME rather than as a count: the point of the gate is
 // that the next person knows which file to open.
-const undocumented = SECTIONS.flatMap((s) =>
-  scan(s.dir)
-    .filter((r) => !r.headline)
-    .map((r) => (s.dir === '.' ? r.file : `${s.dir}/${r.file}`)),
-);
+const undocumented = everything()
+  .filter((r) => !r.headline)
+  .map((r) => r.name);
+
+/** `62 rows, 13 self-tests, ...` - the counts the sections were chosen by, for the one-line report. */
+function tally() {
+  const files = everything();
+  return SECTIONS.map((s) => `${files.filter((f) => s.match(f)).length} ${s.key}`).join(', ');
+}
 
 if (check) {
   const problems = [];
@@ -173,10 +291,10 @@ if (check) {
     for (const p of problems) console.error(`FAIL ${p}`);
     process.exit(1);
   }
-  console.log(`ok   INVENTORY.md matches the tree (${scan('.').length} atoms, ${scan('archive').length} rows)`);
+  console.log(`ok   INVENTORY.md matches the tree (${tally()})`);
 } else {
   writeFileSync(OUT, wanted);
-  console.log(`wrote INVENTORY.md - ${scan('.').length} atoms, ${scan('archive').length} rows`);
+  console.log(`wrote INVENTORY.md - ${tally()}`);
   if (undocumented.length) {
     console.log(`NOTE ${undocumented.length} script(s) have no docblock: ${undocumented.join(', ')}`);
   }

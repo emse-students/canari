@@ -194,12 +194,22 @@ kind; there was no index of the first, so a session picking the rig up grepped, 
 `createGroup` got written because the first two were not findable. Three copies of one gesture is
 three places for a post-condition to rot, which is exactly what `groupnav.mjs` records happening.
 
-**AND SINCE 2026-09-04 THE SPLIT IS A DIRECTORY, not only an index.** The 114 rows moved to
+**AND SINCE 2026-09-04 THE SPLIT IS A DIRECTORY, not only an index.** 114 scripts moved to
 [`archive/`](archive/README.md); the atoms stayed at this root. Nothing was deleted, everything still
-runs, and the 14 self-tests `make test-harness` gates live there and still pass. `ls` now answers the
+runs, and the self-tests `make test-harness` gates live there and still pass. `ls` now answers the
 question that used to need a grep. Only their imports changed - a row reaches a library that stayed
 behind by `../` - and the three things that resolve script paths (`checks.mjs`'s new `scriptPath()`,
 `gate-selftest.mjs`, the Makefile recipe) had to learn the rig is no longer one flat directory.
+
+**BUT THE DIRECTORY IS NOT THE CLASSIFICATION, AND SAYING IT WAS COST 39 GESTURES THEIR FINDABILITY.**
+Those 114 are not 114 rows. Measured the same day: **62 rows, 13 self-tests, and 39 gestures,
+libraries and runners** - `addmember.mjs` opens *"ADDING A MEMBER TO A GROUP - one gesture"* and sat
+under a heading announcing it as a question. That is the SAME failure as leaving it out of the index:
+a session looking for an add-member gesture reads the atoms section, does not find it, and writes
+another one. So [`INVENTORY.md`](INVENTORY.md) now files every script by **what it does** - does it
+import a verdict writer from `results.mjs` - rather than by where it sits, and the partition is
+asserted on every run. **Search `## Gestures, libraries and runners in archive/` before writing a
+gesture**; that section is the half nobody used to look in.
 
 **[`atoms.mjs`](atoms.mjs) is that index**, and its header is the inventory: every gesture, the file
 that owns it, and what it is for. It re-exports the importable ones so a new script can reach the

@@ -689,6 +689,30 @@ worth a sweep for the same pattern elsewhere: `ChangePinModal.svelte` and `Login
 **Not fixed inline, deliberately** (user, 2026-09-04): P2s go here rather than into the session that
 found them.
 
+### P3 - NOTHING LINTS THE HARNESS, and the 158 scripts that drive every campaign verdict carry 29 warnings nobody has ever been shown (measured 2026-09-04)
+
+`bun run lint` is scoped to `frontend/`; `make test-harness` runs the self-tests and
+`inventory.mjs --check`, and neither lints. So the rig that produces every campaign verdict - 158
+scripts, the instruments the board is believed on - is the one directory in this repository no
+linter has an opinion about.
+
+**Measured**: `bunx oxlint -c frontend/.oxlintrc.json tools/cross-client-harness` reports **29
+warnings** - 26 `no-unused-vars` (dead imports in archived rows: `fwd.mjs`, `fwd5.mjs`, `ws1.mjs`
+and others), plus `no-useless-spread`, `no-useless-fallback-in-spread` and
+`prefer-string-starts-ends-with`. None is a defect today. **That is the point** - the value is not
+the 29, it is that a 158-script tree has no gate, so the 30th will be a real one and will arrive
+silently.
+
+**The fix is the GATE, not the 29.** Add the harness to a lint recipe and make `make test-harness`
+run it, so the count can only go down. Hand-clearing the warnings first buys one clean session and
+guarantees the next drift is invisible again - the same trade `inventory.mjs` was written to end for
+the index.
+
+**Not fixed inline, deliberately.** It surfaced during work item A3 (the atom/row reclassification),
+and clearing 29 warnings across archived rows that cannot be re-run right now is a different change
+with a different risk: a dead import removed from a row is safe, a `no-useless-spread` rewrite
+inside one is not, and the two must not ride together. P3 per the standing rule.
+
 ### P3 - the gateway logs a client that merely went away at ERROR, and a clean goodbye at INFO, so the level says nothing about whether anything is wrong (measured 2026-09-04)
 
 `handlers.rs:529` ends the receive loop with two arms and one of them is unconditional:
