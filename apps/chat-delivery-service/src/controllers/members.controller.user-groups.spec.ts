@@ -9,6 +9,7 @@ import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { Group } from '../entities/group.entity';
 import { KeyPackage } from '../entities/key-package.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
+import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 
 /**
@@ -22,9 +23,11 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
   let controller: MembersController;
   let groupMemberRepo: { find: jest.Mock };
   let groupRepo: { find: jest.Mock };
+  let groupInfoRepo: { find: jest.Mock };
   let warn: jest.SpyInstance;
 
   const ORDINARY = {
+    activeEpoch: 7,
     id: 'g-ordinary',
     name: 'Amis',
     isGroup: true,
@@ -34,6 +37,7 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
     updatedAt: new Date(2_000),
   };
   const DISTRIBUTION = {
+    activeEpoch: 7,
     id: 'g-distribution',
     name: null,
     isGroup: true,
@@ -49,6 +53,7 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
    * nothing at all - and this list is, by the audit's own invariant 2, the single place it could be.
    */
   const SALON_DISTRIBUTION = {
+    activeEpoch: 7,
     id: 'g-salon-distribution',
     name: null,
     isGroup: true,
@@ -62,6 +67,7 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
   beforeEach(async () => {
     groupMemberRepo = { find: jest.fn() };
     groupRepo = { find: jest.fn() };
+    groupInfoRepo = { find: jest.fn().mockResolvedValue([]) };
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [MembersController],
@@ -71,6 +77,7 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
         { provide: getRepositoryToken(Group), useValue: groupRepo },
         { provide: getRepositoryToken(KeyPackage), useValue: {} },
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: {} },
+        { provide: getRepositoryToken(MlsGroupInfo), useValue: groupInfoRepo },
         { provide: 'REDIS_CLIENT', useValue: {} },
         { provide: DataSource, useValue: {} },
       ],
@@ -146,5 +153,79 @@ describe('MembersController.getUserGroups - the distribution group is not a conv
     expect(await controller.getUserGroups('u1', 'u1', undefined)).toEqual([]);
     // A deletion is ordinary and expected; only the distribution case warns.
     expect(warn).not.toHaveBeenCalled();
+  });
+
+  /**
+   * THE TWO EPOCHS THIS LIST CARRIES, AND WHY A LIST OF CONVERSATIONS CARRIES THEM AT ALL.
+   *
+   * A published external-join base is minted only as a FOLLOW-UP to a commit. Lose that follow-up - a
+   * closed tab, an offline moment, a refused request - and the group's epoch has advanced while the
+   * published base has not: the epoch gate accepts `baseEpoch == activeEpoch` and nothing else, so
+   * every device without local MLS state is refused from that moment on, permanently, because only
+   * another commit would ever move it.
+   *
+   * Measured on production 2026-09-04: four of the forty-three groups holding a base were stale, every
+   * one by EXACTLY ONE epoch - the signature of one lost follow-up - two of them since 2026-08-30,
+   * with three devices sitting `pending` on them. The repair existed for distribution groups only, and
+   * three of the four are conversations.
+   *
+   * Only a device HOLDING the tree can mint a base, and this endpoint is the one call every device
+   * makes on every connection. So the fact travels on the read the repairer already performs: no
+   * timer, no queue, and no second copy of state the server holds authoritatively. `null` for the base
+   * is not staleness and must stay distinguishable from a number - a joiner asks for a Welcome in that
+   * state and a holder owes nothing.
+   */
+  it('carries the group epoch and the published base epoch', async () => {
+    groupMemberRepo.find.mockResolvedValue([{ groupId: 'g-ordinary', userId: 'u1' }]);
+    groupRepo.find.mockResolvedValue([ORDINARY]);
+    groupInfoRepo.find.mockResolvedValue([{ groupId: 'g-ordinary', baseEpoch: 6 }]);
+
+    const [row] = await controller.getUserGroups('u1', 'u1', undefined);
+
+    expect(row).toMatchObject({ groupId: 'g-ordinary', activeEpoch: 7, baseEpoch: 6 });
+  });
+
+  it('answers null - never 0 - for a group whose base was never published', async () => {
+    // 0 is a REAL epoch: a brand-new group sits at it. Reporting an absent base as 0 would make
+    // every never-published group look maximally stale and have every holder republish on sight.
+    groupMemberRepo.find.mockResolvedValue([{ groupId: 'g-ordinary', userId: 'u1' }]);
+    groupRepo.find.mockResolvedValue([ORDINARY]);
+    groupInfoRepo.find.mockResolvedValue([]);
+
+    const [row] = await controller.getUserGroups('u1', 'u1', undefined);
+
+    expect(row.baseEpoch).toBeNull();
+  });
+
+  it('matches each base to ITS OWN group rather than to the first one', async () => {
+    const other = { ...ORDINARY, id: 'g-other', activeEpoch: 3, updatedAt: new Date(1_000) };
+    groupMemberRepo.find.mockResolvedValue([
+      { groupId: 'g-ordinary', userId: 'u1' },
+      { groupId: 'g-other', userId: 'u1' },
+    ]);
+    groupRepo.find.mockResolvedValue([ORDINARY, other]);
+    groupInfoRepo.find.mockResolvedValue([{ groupId: 'g-other', baseEpoch: 3 }]);
+
+    const got = await controller.getUserGroups('u1', 'u1', undefined);
+
+    expect(got.map((g) => [g.groupId, g.activeEpoch, g.baseEpoch])).toEqual([
+      ['g-ordinary', 7, null],
+      ['g-other', 3, 3],
+    ]);
+  });
+
+  it('asks for the bases of the groups it is about to return, and no others', async () => {
+    // A distribution group is excluded from this list, so asking for its base would be a read
+    // nobody uses - and would make the query grow with rows the answer never mentions.
+    groupMemberRepo.find.mockResolvedValue([
+      { groupId: 'g-ordinary', userId: 'u1' },
+      { groupId: 'g-distribution', userId: 'u1' },
+    ]);
+    groupRepo.find.mockResolvedValue([ORDINARY, DISTRIBUTION]);
+
+    await controller.getUserGroups('u1', 'u1', undefined);
+
+    const where = groupInfoRepo.find.mock.calls[0][0].where;
+    expect(where.groupId._value ?? where.groupId.value).toEqual(['g-ordinary']);
   });
 });

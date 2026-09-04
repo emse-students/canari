@@ -10,6 +10,7 @@ import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { Group } from '../entities/group.entity';
 import { KeyPackage } from '../entities/key-package.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
+import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 
 /**
@@ -47,6 +48,10 @@ describe('MembersController.addGroupMember - a block refuses the add', () => {
         { provide: getRepositoryToken(Group), useValue: {} },
         { provide: getRepositoryToken(KeyPackage), useValue: keyPackageRepo },
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: {} },
+        {
+          provide: getRepositoryToken(MlsGroupInfo),
+          useValue: { find: jest.fn().mockResolvedValue([]) },
+        },
         { provide: 'REDIS_CLIENT', useValue: { sadd: jest.fn() } },
         { provide: DataSource, useValue: { manager: { query: blockQuery }, transaction } },
       ],

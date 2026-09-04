@@ -168,6 +168,25 @@ export type UserGroupRow = {
   /** Media-service id of the group avatar; null when the group has no custom photo. */
   imageMediaId?: string | null;
   deletedAt?: string | null;
+  /**
+   * The epoch the group is at, server-side.
+   *
+   * Carried so a device that HOLDS the tree can see, on the one read it already makes on every
+   * connection, that the published external-join base is behind - see {@link baseEpoch}. Optional
+   * because a client may be talking to a server that predates it, and a missing pair must read as
+   * "nothing known to be stale" rather than as "everything is stale".
+   */
+  activeEpoch?: number;
+  /**
+   * The epoch the published external-join base describes, `null` when none has ever been published.
+   *
+   * `null` IS NOT STALENESS and the two must not be collapsed: no base published means a joiner asks
+   * a member for a Welcome and a holder has nothing to repair, while a base BEHIND `activeEpoch` is
+   * a group no stateless device can enter until some member republishes. Only a member's commit
+   * mints a base, and that publish is a follow-up that can be lost - so the gap is permanent until
+   * somebody acts on it, which is what `republishBaseIfStale` is for.
+   */
+  baseEpoch?: number | null;
 };
 
 /** Metadata from `GET /api/mls/groups/:id` for recovery checks (`deletedAt` = tombstone). */
@@ -815,6 +834,26 @@ export interface IMlsService {
    * Called once per pending group on connect, after KeyPackage publication.
    */
   sendWelcomeRequest(groupId: string): Promise<void>;
+
+  /**
+   * Ask one online member to republish `groupId`'s external-join base.
+   *
+   * THE FAVOUR THAT MATCHES THE REFUSAL, and NOT a variant of the Welcome above. `externalJoin`
+   * answers `stale_base` when the published GroupInfo names an epoch the group has left - a refusal
+   * no retry can satisfy, because only a member holding the tree can mint a new base. A Welcome
+   * mutates the tree, takes the add lock and replays the duplicate-leaf race; a refresh is a
+   * read-only publish that takes no lock and changes no epoch. Asking for the second is what lets a
+   * device go back to serving itself.
+   */
+  sendBaseRefreshRequest(groupId: string): Promise<void>;
+
+  /**
+   * Register a callback invoked when this device is the member elected to republish a group's
+   * external-join base. Read-only for the tree.
+   */
+  onBaseRefreshRequest(
+    callback: (requesterUserId: string, requesterDeviceId: string, groupId: string) => void
+  ): void;
 
   /**
    * Register a callback invoked when another device broadcasts a welcome_request

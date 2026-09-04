@@ -1369,6 +1369,17 @@ client", never "clean on the server".
 > twice green - two fresh devices each joining all four groups in the same second, rows promoted,
 > epochs advanced, fresh bases republished. Tests:
 > `invitations.controller.device-memberships.spec.ts` (6) and `recovery.test.ts` (21).
+> **(C) IS FIXED TOO, AND ITS CAUSE WITH IT.** The `stale_base` arm no longer asks for a Welcome - it
+> asks for a republish, which is read-only, takes no lock and changes no epoch. But the ask was the
+> band-aid: the CAUSE is that a base is minted only as a fire-and-forget follow-up to a commit
+> (`void refreshGroupInfo`), whose own comment already said the loss was permanent. Measured across
+> prod that day: four of forty-three bases stale, every one by EXACTLY ONE epoch. Any holder now
+> repairs a stale base on the read it already makes on every connection
+> (`GET /mls/users/:id/groups` carries both epochs), one implementation in `staleBase.ts` shared with
+> the distribution-group repair, 11 tests validated against three silent mutations. **So the
+> `4f87267a` base this entry has been waiting on since 2026-08-30 gets a cure it never had** - it
+> heals the next time any member of that group connects, with nobody asking.
+>
 > **(B), the same day, because (A) made it worse rather than better.** `kickStaleLeaf` cleared the
 > routing row whether or not the leaf came out of the tree, and a `pending` row over a LIVE leaf now
 > tells that device to external-join beside it - GRP-4 from the other side, the repair manufacturing
@@ -1490,9 +1501,11 @@ that group cannot external-join until somebody commits into it.
 - The manual UPDATE is the only hand-write performed; nothing was deleted, and the fourteen-day purge
   still owns those rows.
 
-**What closes this entry:** (C) and (D), and the `4f87267a` base refreshed by any means. (A) and (B)
-landed 2026-09-04, (A) with the measurement this line asked for - a device reaching `active` by
-external join with no peer involved and no hand-written UPDATE, taken twice. The cause of the skipped
+**What closes this entry:** (D) alone, plus ONE measurement on prod after the release that carries
+this: the four stale bases at `activeEpoch` and `4f87267a` among them, taken with
+`SELECT ... FROM mls_group_info gi JOIN dm_groups g ...` and no hand-written UPDATE. (A), (B) and
+(C) landed 2026-09-04, (A) with the measurement this line asked for - a device reaching `active` by
+external join with no peer involved, taken twice. The cause of the skipped
 Add itself is the P2 immediately below, and the two want reading together.
 
 ### P2 - a device was given a roster seat and never a Welcome, and WHY its KeyPackage was skipped is unmeasured (measured on prod 2026-09-01)

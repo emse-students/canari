@@ -683,9 +683,13 @@ describe('ensureCommunityDistributionGroup - a published base the group has outr
 
     await run(mls, stale(), (m) => lines.push(m));
 
-    const said = lines.find((l) => l.includes('external-join base is at epoch 5'));
+    // The three numbers and the accusation are what this asserts; the sentence itself moved to
+    // `chat/staleBase.ts` on 2026-09-04, when the connect-time repair for ordinary conversations
+    // started reading the same predicate. What stays Graine's is the scope label.
+    const said = lines.find((l) => l.includes('the published base is at epoch 5'));
     expect(said).toContain('group is at 7');
     expect(said).toContain('republishing');
+    expect(said).toContain('[GRAINE]');
   });
 
   it('publishes nothing from a device whose own tree is behind the group', async () => {
@@ -697,9 +701,10 @@ describe('ensureCommunityDistributionGroup - a published base the group has outr
     expect(await run(mls, stale(), (m) => lines.push(m))).toBe(true);
 
     expect(mls.refreshGroupInfo).not.toHaveBeenCalled();
-    expect(lines.find((l) => l.includes('own tree is at 6'))).toContain(
-      'cannot mint a usable base'
-    );
+    const said = lines.find((l) => l.includes("this device's tree is at 6"));
+    expect(said).toContain('cannot mint a');
+    // Still labelled, so a salon's lockout stays legible in a run log full of other groups.
+    expect(said).toContain('[GRAINE]');
   });
 
   it('sends nothing in the common case, where the two epochs already agree', async () => {

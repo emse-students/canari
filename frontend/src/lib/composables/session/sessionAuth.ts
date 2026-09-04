@@ -1066,6 +1066,46 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       })();
     });
 
+    // A DEVICE ASKING FOR A BASE REFRESH IS A DEVICE THAT CANNOT GET IN AT ALL, so this is answered
+    // before anything else and logged at a level that accuses. The published external-join base names
+    // an epoch the group has left; nothing but a member's publish can move it, and only a commit
+    // otherwise does - so on a quiet conversation a stale base is permanent. Measured on production
+    // 2026-09-04: four groups stale, all by exactly one epoch, two of them since 2026-08-30 with
+    // three devices sitting `pending` on them.
+    //
+    // WHAT THIS IS NOT: it is not an Add. Nothing here mutates the tree, takes the group's add lock
+    // or changes an epoch - `refreshGroupInfo` exports what this device already holds and publishes
+    // it. That is the whole reason the requester asks for THIS rather than for a Welcome.
+    //
+    // A RESPONDER WHOSE OWN TREE IS BEHIND CANNOT HELP, AND DOES NOT HAVE TO CHECK. The publish is
+    // monotonic server-side - a lower `baseEpoch` is ignored - so a behind device cannot make the
+    // base worse, and the requester's next ask is forwarded to a randomly re-elected member. The
+    // epoch this device published at is logged so the two outcomes stay distinguishable.
+    mlsService.onBaseRefreshRequest(
+      async (requesterUserId: string, requesterDeviceId: string, groupId: string) => {
+        const short = groupId.slice(0, 8);
+        cb.log(
+          `[BASE_REFRESH] ${short}... asked by ${requesterUserId.slice(0, 8)}:${requesterDeviceId.slice(0, 12)}` +
+            ` - a device cannot external-join this group`
+        );
+        try {
+          const mls = ctx.ensureMls();
+          if (!(await mls.isGroupActive(groupId))) {
+            // Not a fault of the requester's, and not silent: this device was elected and holds no
+            // usable state for the group, so the ask has to reach somebody else.
+            cb.log(
+              `[BASE_REFRESH] ${short}... this device holds no active MLS state for it - cannot mint a base`
+            );
+            return;
+          }
+          await mls.refreshGroupInfo(groupId);
+          cb.log(`[BASE_REFRESH] ${short}... republished at epoch ${mls.getEpoch(groupId)}`);
+        } catch (e) {
+          cb.log(`[BASE_REFRESH] ${short}... refresh failed: ${String(e).slice(0, 120)}`);
+        }
+      }
+    );
+
     mlsService.onWelcomeRequest(
       async (requesterUserId: string, requesterDeviceId: string, groupId: string) => {
         cb.log(
