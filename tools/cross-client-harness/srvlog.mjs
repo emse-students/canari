@@ -1011,10 +1011,6 @@ export function settleFirstLooks(unexplained) {
   });
 }
 
-export function srvReport(since = '10m', { raw = false, shapes = false, subjects = [] } = {}) {
-const result = {};
-let clean = true;
-
 /** Every 64-hex user id a line names. Devices carry the id too (`tauri-<id>-...`), so one regex finds both. */
 const USER_ID = /[0-9a-f]{64}/g;
 
@@ -1023,18 +1019,41 @@ const USER_ID = /[0-9a-f]{64}/g;
  *
  * ONE SERVICE LOGS NOTHING BUT PREFIXES, so until 2026-08-21 no line it wrote could ever be
  * attributed: social-service slices every id to eight characters, so `USER_ID` found nothing, and
- * `isThirdParty` read "names nobody - always ours to explain" over another contributor's traffic
+ * the partition read "names nobody - always ours to explain" over another contributor's traffic
  * arriving inside our window.
  *
  * ONLY IN A LABELLED POSITION, and that restriction is the whole safety of it. An eight-hex token on
  * its own is not an identity in this system - a trace id is eight hex (`history-req-dc5922d1`), so is
  * a card id, so is an association id. Attributing on shape would let a run's own trace ids decide
- * whose traffic a line was. `user=`/`userId=`/`claimedByUserId=`/`device=` is the line SAYING what
- * the token is, and nothing else counts.
+ * whose traffic a line was. The label is the line SAYING what the token is, and nothing else counts.
+ *
+ * `by`, `for`, `target` and `actor` JOINED THE SET ON 2026-09-05, from a census rather than a guess:
+ * every one of the 38 occurrences of those four labels across the four services carries a user id
+ * and nothing else. Without them a moderation line - `by=<actor> target=<member>` - names a user the
+ * partition cannot see, so it reads as "names nobody, always ours to explain" and would arrive as
+ * server dirt in any window where a stranger was moderating. Extend this list from a census of what
+ * the services actually write, never from what a label sounds like.
  */
-const LABELLED_USER = /\b(?:user|userId|claimedByUserId|device)=(?:tauri-|web-)?([0-9a-f]{8,})/g;
+const LABELLED_USER =
+  /\b(?:user|userId|claimedByUserId|device|by|for|target|actor)=(?:tauri-|web-)?([0-9a-f]{8,})/g;
 
-const isThirdParty = (line) => {
+/**
+ * Whether `line` names USERS and none of them is one of `subjects` - somebody else's traffic.
+ *
+ * **EXPORTED BECAUSE IT DECIDES WHAT THE CAMPAIGN IS ALLOWED TO IGNORE, AND NOTHING COULD PIN IT.**
+ * It lived as a closure inside `srvReport`, which shells out to `docker logs` on a real estate, so
+ * the one predicate that removes lines from the gate could not be exercised by a self-test at all -
+ * the same shape as the six re-implemented probes of 2026-09-04, and the same fix.
+ *
+ * Three answers, and only one of them forgives anything: a line naming NO user is infrastructure and
+ * stays in scope; a line naming a subject is ours; a line naming only others is reported and never
+ * gates. With no `subjects` supplied nothing is foreign, because a partition nobody asked for must
+ * not silently forgive.
+ *
+ * @param {string} line one log line, as the service wrote it
+ * @param {string[]} subjects the campaign's user-id prefixes
+ */
+export function namesOnlyOthers(line, subjects) {
   if (!subjects.length) return false;
   const ids = [...line.matchAll(LABELLED_USER)].map((m) => m[1]);
   ids.push(...(line.match(USER_ID) || []));
@@ -1043,7 +1062,13 @@ const isThirdParty = (line) => {
   // eight-character prefix against a subject spelt out in full. Either way one is a prefix of the
   // other, and a mismatch of eight hex characters is somebody else.
   return !ids.some((id) => subjects.some((s) => id.startsWith(s) || s.startsWith(id)));
-};
+}
+
+export function srvReport(since = '10m', { raw = false, shapes = false, subjects = [] } = {}) {
+const result = {};
+let clean = true;
+
+const isThirdParty = (line) => namesOnlyOthers(line, subjects);
 
 for (const service of SERVICES) {
   let lines;

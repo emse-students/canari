@@ -159,12 +159,12 @@ Client-side, in-conversation, substring-only: no server index, no global search.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| SEARCH-1 | A term in a recent message is found and highlighted; prev/next walk the hits | `W1 W2` | `pending` |
-| SEARCH-2 | A term only in OLD history: does `searchLimitedToLoaded` tell the truth? | `W1 W2` | `pending` |
-| SEARCH-3 | Deleted messages excluded; edited messages match their NEW text | `W1 W2` | `pending` |
-| SEARCH-4 | Channel search pulls up to 2000 rows and decrypts them - time it | `W1 W2` | `pending` |
-| SEARCH-5 | Accents and case: a French corpus is the real corpus here | `W1 W2` | `pending` |
-| SEARCH-6 | The sidebar filter is a DIFFERENT search - assert it does not claim more | `W1 W2` | `pending` |
+| SEARCH-1 | A term in a recent message is found and highlighted; prev/next walk the hits | `W1 W2` | `PASS` 2026-09-05 00:18 on 0.16.3, clean - two hits, `next` walks 1/2 -> 2/2, `prev` walks back and WRAPS, and the jump applies its highlight. The ring itself is not asserted (a style is not a statement) |
+| SEARCH-2 | A term only in OLD history: does `searchLimitedToLoaded` tell the truth? | `W1 W2` | `PASS` 2026-09-05 00:18 on 0.16.3, clean - with the server fetch cut mid-search the term is still found from what is loaded AND the warning is shown, which is `searchLimitedToLoaded` telling the truth rather than hiding a partial answer |
+| SEARCH-3 | Deleted messages excluded; edited messages match their NEW text | `W1 W2` | `PASS` 2026-09-05 00:18 on 0.16.3, clean - a deleted message matches 0/0, an edited one matches its NEW text 1/1 and its OLD text 0/0 |
+| SEARCH-4 | Channel search pulls up to 2000 rows and decrypts them - time it | `W1 W2` | `PASS` 2026-09-05 00:18 on 0.16.3, clean - 152 ms to the answer over one history page, 534 ms wall clock, no stall and no partial-answer warning during a search that succeeded |
+| SEARCH-5 | Accents and case: a French corpus is the real corpus here | `W1 W2` | `PASS` 2026-09-05 00:18 on 0.16.3, clean - the corpus word carries an accent and BOTH an unaccented query and an accented upper-case one find it 1/1. This row exists because the fold used to be applied to one side only, which passes every test written in ASCII |
+| SEARCH-6 | The sidebar filter is a DIFFERENT search - assert it does not claim more | `W1 W2` | `PASS` 2026-09-05 00:19 on 0.16.3, clean - the sidebar filter matches a name and the CURRENT last message, does not match a superseded one, and a junk query leaves zero rows: a different search, claiming no more than it does |
 
 ## 6 - MENTION - mentions and what they trigger
 

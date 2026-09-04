@@ -23,6 +23,7 @@
 // everything that decides its answer offline: `shapeOf`, and the rule lists themselves. The bucket
 // arithmetic around them is exercised on a real window by `run.mjs`, once per pass.
 import {
+  namesOnlyOthers,
   settleFirstLooks,
   shapeOf,
   BENIGN_RULES,
@@ -744,6 +745,46 @@ check(
   settleFirstLooks([READ(G1).replace(' base=none active=1', '')]),
   []
 );
+
+// --- namesOnlyOthers: WHOSE traffic a line is, which is what the gate is allowed to ignore -------
+//
+// This predicate lived as a closure inside `srvReport`, which shells out to `docker logs`, so the
+// one rule that REMOVES lines from the gate was the only rule in this file nothing could pin. Its
+// three answers pull in opposite directions and two of them have already been wrong in production:
+// a line naming somebody else read as ours turned six GRP-6 windows NOT CLEAN while a stranger used
+// the association CMS, and a line naming nobody read as third-party would forgive infrastructure.
+const SUBJ = ['f7a9bb80', 'c71e1a5b'];
+
+check('a line naming another user is theirs', namesOnlyOthers('[PERM] user=afc13486 holds flag=1', SUBJ), true);
+check('a line naming a subject is ours', namesOnlyOthers('[PERM] user=f7a9bb80 holds flag=1', SUBJ), false);
+// EIGHT AGAINST SIXTY-FOUR, in both directions: social-service truncates every id, the gateway
+// prints them whole, and the subject list holds prefixes.
+check(
+  'a full id is matched against a subject prefix',
+  namesOnlyOthers(`[SEND] sender=${'f7a9bb80'.padEnd(64, '0')} ok`, SUBJ),
+  false
+);
+// THE FOUR LABELS ADDED 2026-09-05. A moderation line names both parties and neither is labelled
+// `user=`; without them it named nobody the partition could see and read as ours to explain.
+check('by= and target= name users', namesOnlyOthers('[MOD] removed by=afc13486 target=deadbeef', SUBJ), true);
+check(
+  'and one subject among them makes it ours',
+  namesOnlyOthers('[MOD] removed by=afc13486 target=f7a9bb80', SUBJ),
+  false
+);
+// THE SAFETY THE WHOLE RULE RESTS ON: eight hex is not an identity unless the line says it is. A
+// trace id, a card id and an association id are all eight hex, and attributing on SHAPE would let a
+// run's own correlation ids decide whose traffic a line was.
+check('a trace id is not a user', namesOnlyOthers('[HISTORY_REQ][history-req-dc5922d1] START', SUBJ), false);
+check(
+  'nor is an association id',
+  namesOnlyOthers('[SHOP] create product: association=abcdef12 type=x', SUBJ),
+  false
+);
+check('a line naming nobody is infrastructure, always ours', namesOnlyOthers('[BOOT] mapped 42 routes', SUBJ), false);
+// A PARTITION NOBODY SUPPLIED MUST NOT SILENTLY FORGIVE ANYTHING - a caller passing no subjects is
+// asking about the whole window, not about a filtered one.
+check('with no subjects, nothing is foreign', namesOnlyOthers('[MOD] by=afc13486', []), false);
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall good');
 process.exit(failures ? 1 : 0);

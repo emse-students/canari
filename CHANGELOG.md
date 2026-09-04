@@ -13,6 +13,13 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A permission log named a user without saying it was one, so nobody could tell whose traffic it
+  was.** `social-service` truncates every id to eight characters, and eight hex is not an identity
+  in this system - a trace id is eight hex, so is a card id, so is an association id - so an id is
+  only attributable where the line SAYS what the token is. `[PERM] afc13486 holds flag=1` said
+  nothing, and the campaign's observer read it as infrastructure it was obliged to explain rather
+  than as a stranger's request landing inside its window. Three such lines now spell `user=`.
+
 - **A delivery that arrived twice accused BOTH channels at once, so the one shape that would be a
   server defect read exactly like the three that are routine.** A message is offered by the live
   socket and by the pending pull, and an acknowledgement cannot land before a pull already in
