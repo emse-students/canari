@@ -480,6 +480,10 @@ export class InvitationsController {
     } else {
       membership.status = body.status;
     }
+    // `active` is the device saying it processed its Welcome, which answers "is a re-add still
+    // owed?" with no. A DEMOTION does not clear it: that is a step towards cleanup and promises no
+    // Add, so a row demoted after a kick is still a row a kick left behind.
+    if (body.status === 'active') membership.kickedAt = null;
 
     await this.deviceGroupRepo.save(membership);
     this.logger.log(
@@ -510,8 +514,12 @@ export class InvitationsController {
       where: { userId: safeUserId, groupId: safeGroupId },
     });
 
+    const kickedAt = new Date();
     for (const m of memberships) {
       m.status = 'pending';
+      // Same reason as `kickStaleDevice`: one instant for the whole batch, because one Remove
+      // commit is what reset all of them.
+      m.kickedAt = kickedAt;
     }
 
     if (memberships.length > 0) {
@@ -559,6 +567,12 @@ export class InvitationsController {
     }
 
     membership.status = 'pending';
+    // THE ROW NOW SAYS WHY IT IS PENDING. Without this, the hourly stranded report sees the same
+    // footprint as a device whose KeyPackage was skipped and never entered the tree at all - two
+    // opposite causes wanting opposite fixes. The caller has just removed this device's leaf and
+    // owes it an Add; when that Add throws, its failure is swallowed on the answering device, and
+    // this column is the only thing left that can name the loss server-side.
+    membership.kickedAt = new Date();
     await this.deviceGroupRepo.save(membership);
 
     await this.redis.srem(`group:members:${safeGroupId}`, `${safeUserId}:${safeDeviceId}`);

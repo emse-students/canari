@@ -562,9 +562,36 @@ Welcome actually queued for this device AND this group**.
 
 - **awaiting a queued Welcome** - healthy. The Welcome exists, the device is simply offline. Logged,
   never warned; this half is the population the WARN would otherwise drown in.
-- **no Welcome ever queued** - the defect. WARNed, naming the oldest
-  `STRANDED_MEMBERSHIP_REPORT_TOP_N` as `deviceId@groupId(ISO)`, because a count cannot be chased and
-  a device id can.
+- **no Welcome ever queued** - the defect, and since 2026-09-04 it is **split again**, because that
+  footprint has two opposite causes wanting opposite fixes:
+  - **never added** (`kickedAt IS NULL`) - the device was registered onto the roster and its
+    KeyPackage was skipped, so it was never in the MLS tree. WARNed. The reader's next stop is the
+    inviter's KeyPackage handling.
+  - **kicked with no re-add** (`kickedAt IS NOT NULL`) - a member REMOVED this device's stale leaf
+    and undertook to Add it back, and the Add threw. The device WAS in the tree. Logged at **ERROR**,
+    because this is a failure rather than a state, and it is the ONLY place it is ever reported: the
+    `addMember` fails on the answering device, which is a phone, and the failure is swallowed there.
+    Dated by the KICK rather than by `updatedAt` - the age that matters is how long the promise has
+    been outstanding.
+
+  Both halves name the oldest `STRANDED_MEMBERSHIP_REPORT_TOP_N` as `deviceId@groupId(ISO)`, because
+  a count cannot be chased and a device id can.
+
+`kickedAt` is what makes that split possible, and it is a column written to answer exactly that one
+question - never a second `updatedAt`, which moves for every write and would read an invitation, a
+Welcome queue and a demotion as the same event. It is **set** by `kickStaleDevice` and
+`kickStaleUser`, the only endpoints that reset a live membership (one instant for a whole batch,
+because one Remove commit reset all of them), and **cleared** by the three writes that answer the
+question the other way: `queueWelcome` (a Welcome exists, so the re-add landed),
+`activateDeviceMembership` and `updateInvitationStatus('active')` (the device is in). A demotion to
+`pending` does NOT clear it - that is a step towards cleanup and promises no Add. Left uncleared,
+every successful kick-and-re-add would be reported as a failed one; never set, the ERROR half counts
+zero for ever and reads as health, which is why the write sites have their own spec
+(`invitations.controller.kick-marker.spec.ts`) rather than being covered only through the report.
+
+**It cannot be backfilled**, and is not: null is the honest reading of "no kick is recorded" for
+every row that predates the column, so the first passes after the deploy report the standing backlog
+as *never added* and the split becomes exact as the population turns over.
 
 It deletes nothing - `purgeOrphanedMemberRows` and the fourteen-day queue retention still own that -
 and the point of the hour-scale threshold is that the report names these rows about thirteen days
