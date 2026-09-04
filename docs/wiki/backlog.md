@@ -2978,10 +2978,18 @@ and the credentials file now holds the value registered after. A second, older c
 exists in the other out-of-tree directory and its value does NOT decrypt this profile either - so the
 pre-reset PIN is recorded nowhere.
 
-**The cost, and the choice.** W1 cannot be unlocked, so no row needing it can run. Re-minting it is
-the way forward and is not free: it is a DEVICE, and `newdevice.mjs` re-registers the verifier again,
-which is what stranded W1 in the first place - so W2 must be unlocked and left unlocked across that,
-or it goes the same way. **This is the user's call and is written here rather than taken.**
+**THE CAMPAIGN IS NOT BLOCKED, AND THE FIRST DRAFT OF THIS ENTRY SAID IT WAS.** W3 holds the SAME
+owner account, is unlocked, and its device is `active` on every group - measured 2026-09-04 20:30, it
+lists the peer DM and all three groups exactly as W1 did. It was re-minted at 15:32 and so its vault
+is under the current PIN, which is precisely why it survived what stranded W1. **What blocks the
+rows is not the account, it is that the runners SPELL `PORTS.W1`.**
+
+So there are two ways on, and both are the user's call rather than something to take here. Re-mint
+W1, which is not free - it is a DEVICE, and `newdevice.mjs` re-registers the verifier again, so W2
+and W3 must be unlocked and left unlocked across it or they go the same way. Or teach the runners to
+take the owner's client as a parameter, which `device.mjs` already resolves for every atom written
+since 2026-09-04 and which the archived runners predate: that is the campaign's own principle - a
+device name is data - applied to the twenty-odd files that still hard-code one.
 
 **AND IT IS A LESSON ABOUT THIS SESSION'S OWN MEASUREMENT, WHICH IS WHY IT KEEPS THIS MUCH SPACE.**
 This entry first went in as a P1 reading "the only way back for a locked-out user is inert: no

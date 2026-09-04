@@ -233,8 +233,8 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
 
 1. **THE CAMPAIGN RUNS AGAIN: RUNG 1 IS 9/13 PASS**, rung 2 next, and the four rows left are `+A1`
    - **"the phone logs in" IS NOT THE TEST**, it strands before publishing a key package.
-   **W1 IS LOCKED OUT of its vault and its old PIN is recorded nowhere; re-minting it is the
-   user's call** ([board](docs/wiki/cross-client-testing.md), [backlog](docs/wiki/backlog.md)).
+   **W1 IS LOCKED OUT of its vault; W3 holds the same account and is healthy, so what blocks the
+   rows is that the runners SPELL `PORTS.W1`** ([backlog](docs/wiki/backlog.md)).
 2. **P1 - a PLACEHOLDER held a member's seat**; whether a LEAF is left in the MLS tree only a
    member's CLIENT can say. [backlog](docs/wiki/backlog.md#p1---the-placeholder-is-gone-from-prod-what-it-may-have-left-in-the-mls-tree-is-not-answered).
 3. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - **ONE merge mechanism
