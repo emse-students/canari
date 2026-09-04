@@ -125,7 +125,7 @@ accounts changed.
 ## 4 - MUT - editing, deleting, reacting, pinning
 
 All four are MLS system events in a DM or group and REST calls in a channel, so **every row whose
-cell says both runs twice**, once in the owner-peer DM and once in `Campagne de test`.
+cell says both runs twice**, once in the owner-peer DM and once in `Canari Test Venue`.
 
 21 checks, four of which run in both venues, for 25 verdict rows.
 
@@ -422,7 +422,7 @@ four wipe defects found by hand:
 | HEAL-REVOKE-7 | The **ORDER** of the return: back BEFORE the other devices are online, and back AFTER | `W1 W2` `+user` | `pending` |
 | HEAL-REVOKE-8 | A group **DELETED while the device was revoked** must not return as a Sync row | `W1 W2` `+user` | `pending` |
 | HEAL-REVOKE-9 | Revoked while **OFFLINE**: the wipe is DEFERRED, not lost, and must not fire while the server is unreachable | `W1 W2` | `pending` |
-| HEAL-NEW-0 | The rig can mint a device the server has never seen, repeatably, on ONE 2FA | `+user` | `pending` |
+| HEAL-NEW-0 | The rig can mint a device the server has never seen, repeatably, on ONE 2FA | `+user` | `PASS-DIRTY` 2026-09-04 19:12 on 0.16.3 - every assertion held (wipe, loggedOut, noHumanStep, freshId, neverSeen, sameAccount, registered, addressable) and the re-minted device rejoined FOUR groups by external commit inside one second. **The dirt is 100% the ESTATE**: 20 media 404s from a database copied without its object store, [backlog](backlog.md). Not PASS until that is fixed - it is not this row's to disposition. |
 | HEAL-NEW-1 | Fresh device, **nothing else online** - external join is the only path there is | `+user` | `pending` |
 | HEAL-NEW-2 | Fresh device, **the PEER online** - a responder that is not us | `+user` | `pending` |
 | HEAL-NEW-3 | Fresh device, **another device of the SAME user online** (W1) | `+user` | `pending` |

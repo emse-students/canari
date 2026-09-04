@@ -700,7 +700,7 @@ Two environment traps worth repeating here, because they read as application bug
   object store starts EMPTY: `make dump-prod` copies the database, not Garage, so every avatar and
   every attachment older than this estate 404s. That is not a defect and no row may report it as one.
 - **Every test message goes in the two-test-account DM and nowhere else.** Anything needing a channel
-  uses the `Campagne de test` community, never MiTV - a private channel there is readable by every
+  uses the `Canari Test Venue` community, never MiTV - a private channel there is readable by every
   association admin. **A prod dump does not hand that venue over**: its rows belong to whichever
   accounts owned them on production, so `venue.mjs` will refuse ("owner UNRESOLVED") until the
   campaign's own accounts create it.

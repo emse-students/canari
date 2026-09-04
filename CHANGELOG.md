@@ -13,6 +13,23 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **The campaign venue fixture was identified by a name, so on a copy of production it resolved to
+  a real community the test accounts could neither join nor rebuild.** `workspaceIdOf` asked whether
+  a community by that NAME existed, which was a sufficient key for exactly as long as the campaign
+  was the only thing on the estate using it. The rig moved onto a prod-copy estate on 2026-09-03; on
+  2026-09-04 `Campagne de test` resolved to a community two real members had owned since 2026-08-26,
+  while the campaign's own accounts - created that morning - were in nothing at all. A community's
+  slug is derived from its name and carries a unique index estate-wide, so that name could not be
+  rebuilt either.
+
+  `venue.mjs` took the foreign id for its fixture and went on to invite a peer into a community its
+  client cannot even list, reporting `the community was never listed within 20000ms` - a SIDEBAR
+  defect, for an identity mismatch that one `channel_members` row settles before any click.
+  `workspaceIdOf` now takes an optional `memberUserId`, and the guard resolves the accounts BEFORE
+  its first read, so the fixture is "a community by this name that we are IN". A name held by
+  somebody else is now a refusal naming the slug and the cause, never a build that fails later. The
+  venue is renamed after the campaign's own accounts, since any plausible name collides eventually.
+
 - **A device that held a group tree the server had no leaf for could not send, could not be
   repaired, and every mechanism written to repair it declined to look at it.** Measured on the local
   estate 2026-09-04: a device re-minted after a PIN reset was given a `dm_device_group_memberships`

@@ -134,8 +134,17 @@ export const A1_WIFI = "<phone ip>:5555";
  */
 export const peerNameFor = (device) => (device === "W2" ? OWNER_NAME : PEER_NAME);
 
-/** The campaign's channel venue. Never MiTV: a private channel is readable by every asso admin. */
-export const VENUE = { community: "Campagne de test", channel: "general" };
+/**
+ * The campaign's channel venue. Never MiTV: a private channel is readable by every asso admin.
+ *
+ * IT IS NAMED AFTER THE CAMPAIGN'S OWN ACCOUNTS, and that is a correctness requirement rather than
+ * a convention. A community's slug is derived from its name and is UNIQUE estate-wide, and the rig
+ * has run on a COPY OF PRODUCTION since 2026-09-03 - so a plausible French name collides with a
+ * real community sooner or later. The first one did, on 2026-09-04: it resolved to a community two
+ * real members had owned for a fortnight, which the campaign's accounts could neither join nor
+ * rebuild, and `venue.mjs` reported it as a sidebar defect. Keep this implausible as an asso's.
+ */
+export const VENUE = { community: "Canari Test Venue", channel: "general" };
 
 /*
  * ---------------------------------------------------------------------------------------------

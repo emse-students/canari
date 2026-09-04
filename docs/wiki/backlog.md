@@ -689,6 +689,43 @@ worth a sweep for the same pattern elsewhere: `ChangePinModal.svelte` and `Login
 **Not fixed inline, deliberately** (user, 2026-09-04): P2s go here rather than into the session that
 found them.
 
+### P2 - the local estate's DATABASE references media its OBJECT STORE never received, so any row that renders the feed is PASS-DIRTY on 404s that are the estate's (measured 2026-09-04, first row run after the tidy)
+
+**Measured on HEAL-NEW-0.** Every assertion of the row passed - `wipe`, `loggedOut`, `noHumanStep`,
+`freshId`, `neverSeen`, `sameAccount`, `registered`, `addressable` - and the re-minted device
+rejoined FOUR groups by external commit inside one second. The verdict was still `PASS-DIRTY`, and
+**100% of the dirt was media**: five `[associationLogoCache] fetch failed 404`, one
+`[PostMedia] media download failed`, and fourteen `GET /api/media/... -> 404` in `badHttp`.
+
+**The cause is a restore that copies one half of a pair.** `pull-prod-dump.sh` fetches a Postgres
+dump and nothing else; `restore-into-local.sh` writes those ROWS. Neither touches Garage, and
+`restore-into-local.sh` says so in its own header - *"WHAT A COPY DOES NOT BUY"*. What that header
+does NOT say is the consequence: the copied rows still name media ids, the objects behind them live
+only in production's store, and the product then does exactly the right thing - it asks for what its
+database says exists, and is answered 404 fourteen times.
+
+**Scope, measured rather than assumed.** It is NOT every row. A client sitting on `/chat` is clean -
+`logs.mjs --device W1 --for 8000` and the same on W3 both reported clean minutes after the run. The
+404s fire ONCE, on the first render of the social feed after a login. So the affected class is
+**rows that log in fresh or wipe a profile and land on `/posts`** - the HEAL-NEW, HEAL-REVOKE, LIFE
+and SETUP families - plus anything touching a community feed. That is a large systematic class, and
+it is why this is written down rather than dispositioned.
+
+**Do NOT close it with `ignoringExpectedLog`.** Per-row disposition is the sanctioned mechanism for
+expected noise, but it is per ROW on purpose, and this would be the same excuse copied into every
+member of four rungs - which is a wider classifier wearing a per-row costume, and the thing the
+methodology forbids. The noise is also not *necessary*: it is the visible end of an estate that
+disagrees with itself, and the rule is to explain it or FIX it.
+
+**The fix belongs in the restore, which already does this kind of work.** `restore-into-local.sh`
+exists to strip *"the things a copy must never carry"*; stripping references to objects the copy did
+not carry is the same step. Clearing the dangling media ids on the association and post rows leaves
+the estate SELF-CONSISTENT - a post with no image is a state the product renders correctly and a
+real user can be in - whereas copying production's media blobs would drag the PII half of the estate
+that the DB copy at least keeps behind one deliberate decision. It is a change to infrastructure
+tooling with its own blast radius, so it is a P2 here rather than something done inline during a
+harness tidy.
+
 ### P2 - THE PHONE CANNOT HOLD A SESSION AGAINST THE LOCAL ESTATE, by construction of the cookie rules - so every phone row that outlives an access token is measuring the estate (measured 2026-09-04)
 
 **Measured, not inferred.** `Network.getAllCookies` on both engines, within a minute of each other:
@@ -2912,6 +2949,33 @@ bubble-helper entry above does. The duplication costs nothing while it is identi
 the day one copy is fixed and ten are not, which is the shape `recon.mjs`'s first-database bug already
 had. So this waits for the same wholesale moment: convert all eight, re-run the phases together.
 
+### P3 - TWO out-of-tree directories are both called `canari-harness`, and a decoy `names.mjs` sits in the one the harness does not read (measured 2026-09-04)
+
+The rig keeps its secrets and state outside the public tree, and two different directories now
+answer to that description because two tools resolve the same name to different places:
+
+| Reader | Specifier | Resolves to | Holds |
+| --- | --- | --- | --- |
+| `tools/cross-client-harness/names.mjs` | `../../../../canari-harness/` | `<parent-of-EMSE>/canari-harness/` | `names.mjs`, the three Chrome profiles, `results.ndjson`, `logs`, `test-accounts.json` |
+| `tools/play-vitals/lib.mjs` | `../../../canari-harness/` | `<EMSE>/canari-harness/` | `play-console-sa.json`, `google-services.json`, `dumps`, AND a stale `names.mjs` |
+| `infrastructure/local/pull-prod-dump.sh` | `$ROOT/../canari-harness/dumps` | `<EMSE>/canari-harness/` | the production dumps |
+
+Both are live and neither is wrong on its own - `names.example.mjs` documents `<repo>/../../` and
+`play-vitals/lib.mjs` documents `../canari-harness/`, and each is accurate about itself. What is
+wrong is that they share a NAME while meaning different directories, and that the one the harness
+does NOT read contains a `names.mjs` of its own: same filename, same shape, same constants, one
+`VENUE` line apart. Editing it changes nothing and says nothing, which is exactly what happened
+during the venue rename on 2026-09-04 - the edit landed, `grep` confirmed it, and the run kept
+printing the old value.
+
+**Why this is not fixed here.** Moving either directory breaks the other reader, and both hold
+credentials and state (`play-console-sa.json`, the Chrome profiles) that a wrong move destroys - so
+this is a one-off gesture on the user's own machine rather than a code change, and
+[ONE-OFF ACTIONS GO TO THE USER](../../CLAUDE.md). The cheap half a session can do is make each
+reader PRINT the absolute path it resolved, so a wrong edit is visible in the first line of output
+rather than in a value that refuses to change. Note that `STATE_DIR` is already exported and has
+three consumers, so the resolved path is available and simply never shown.
+
 ## Search
 
 ### P2 - the posts search escapes the feed's filters, and scans the whole base before it answers anything
@@ -4118,7 +4182,7 @@ client can detect that).
 
 Three things must be settled BEFORE writing checks:
 
-- **The venue.** Every existing check sends into the two-test-account DM or `Campagne de test`
+- **The venue.** Every existing check sends into the two-test-account DM or `Canari Test Venue`
   precisely because production is shared. A post or a form alert has an AUDIENCE, so the same
   discipline needs an answer that does not exist yet: what does a test post look like that no real
   member is notified by? Until that is answered, no social check may run on prod.

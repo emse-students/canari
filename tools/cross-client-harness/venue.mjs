@@ -42,14 +42,31 @@ import {
   inviteToCommunity,
   openCommunity,
 } from './comm.mjs';
-import { channelIdOf, communityMemberIds, userIdOf, workspaceIdOf } from './grainedb.mjs';
+import {
+  channelIdOf,
+  communityMemberIds,
+  userIdOf,
+  workspaceFootprint,
+  workspaceIdOf,
+} from './grainedb.mjs';
 import { OWNER_NAME, PEER_NAME, PORTS, VENUE } from './names.mjs';
 
 const dry = process.argv.includes('--dry');
 
+// WHO MUST BE IN IT, resolved BEFORE the first read rather than after it. The owner is not merely
+// something to assert at the end - it is HALF THE FIXTURE'S IDENTITY, because a community is ours
+// by virtue of a membership row and never by virtue of its name. A display name that resolves to
+// nothing is a stale `names.mjs` or a renamed account, and inviting into the void reports success.
+const owner = userIdOf(OWNER_NAME);
+const peer = userIdOf(PEER_NAME);
+if (!owner || !peer) {
+  console.log(`[venue] REFUSING - owner ${owner ? 'ok' : 'UNRESOLVED'}, peer ${peer ? 'ok' : 'UNRESOLVED'}`);
+  process.exit(1);
+}
+
 /** What the tables say about the venue right now. Read once per phase of the build, never cached. */
 function state() {
-  const workspaceId = workspaceIdOf(VENUE.community);
+  const workspaceId = workspaceIdOf(VENUE.community, { memberUserId: owner });
   const channelId = workspaceId ? channelIdOf(workspaceId, VENUE.channel) : null;
   const members = workspaceId ? communityMemberIds(workspaceId) : [];
   return { workspaceId, channelId, members };
@@ -62,20 +79,40 @@ console.log(
     `${before.members.length} member(s)`
 );
 
-// WHO MUST BE IN IT, resolved before any gesture: a display name that resolves to nothing is a
-// stale `names.mjs` or a renamed account, and inviting into the void would report success.
-const owner = userIdOf(OWNER_NAME);
-const peer = userIdOf(PEER_NAME);
-if (!owner || !peer) {
-  console.log(`[venue] REFUSING - owner ${owner ? 'ok' : 'UNRESOLVED'}, peer ${peer ? 'ok' : 'UNRESOLVED'}`);
-  process.exit(1);
+// THE NAME MAY BE HELD BY A COMMUNITY THAT IS NOT OURS, AND THAT IS A REFUSAL RATHER THAN A BUILD.
+// A community's slug is derived from its name and carries a UNIQUE index estate-wide, so a name
+// somebody else holds can be neither joined - we have no membership row and the client cannot even
+// list it - nor created again, because the insert collides. Both gestures then fail a long way from
+// the cause: the create reports a server error, and the invite reports `the community was never
+// listed`, which reads as a sidebar defect. Measured on 2026-09-04, when the local estate was
+// seeded from a production dump and the venue name turned out to belong to two real members.
+if (!before.workspaceId) {
+  const foreign = workspaceIdOf(VENUE.community);
+  if (foreign) {
+    const it = workspaceFootprint(foreign);
+    console.log(
+      `[venue] REFUSING - "${VENUE.community}" already exists as ${foreign.slice(0, 8)} with ` +
+        `${it.members} member(s), and ${OWNER_NAME} is not one of them. Its slug "${it.slug}" is ` +
+        `unique estate-wide, so this fixture can be neither joined nor rebuilt under that name.`
+    );
+    console.log(
+      `[venue] The campaign runs on a COPY OF PRODUCTION, so a human-chosen venue name will ` +
+        `collide with a real community sooner or later. Point VENUE.community at a name the ` +
+        `campaign's OWN accounts hold.`
+    );
+    process.exit(1);
+  }
 }
 
+// CREATING A COMMUNITY MAKES ITS CREATOR A MEMBER, so the owner's seat is never owed separately -
+// it is implied by the create, and by the scoped read above for a community that already exists.
 const owed = [];
-if (!before.workspaceId) owed.push(`create the community "${VENUE.community}"`);
-if (before.workspaceId && !before.channelId) owed.push(`create its "${VENUE.channel}" channel`);
-if (!before.members.includes(owner)) owed.push(`put ${OWNER_NAME} in it`);
-if (!before.members.includes(peer)) owed.push(`put ${PEER_NAME} in it`);
+if (!before.workspaceId) {
+  owed.push(`create the community "${VENUE.community}" (its creator becomes its first member)`);
+} else {
+  if (!before.channelId) owed.push(`create its "${VENUE.channel}" channel`);
+  if (!before.members.includes(peer)) owed.push(`put ${PEER_NAME} in it`);
+}
 
 if (owed.length === 0) {
   console.log('[venue] nothing owed - the fixture is whole');
@@ -140,11 +177,17 @@ console.log(
     `channel ${after.channelId ? after.channelId.slice(0, 8) : 'MISSING'}, ` +
     `${after.members.length} member(s)`
 );
+// SYMMETRIC WITH `owed`, AND SCOPED THE SAME WAY: a missing community and an owner with no seat in
+// it are ONE state here, not two, because the read that produced `after` already required the seat.
+// Reporting them separately printed two sentences for one fault and invited the reader to look for
+// a membership bug that is not there.
 const still = [];
-if (!after.workspaceId) still.push('the community is not there');
-if (after.workspaceId && !after.channelId) still.push(`there is no "${VENUE.channel}" channel`);
-if (!after.members.includes(owner)) still.push(`${OWNER_NAME} is not a member`);
-if (!after.members.includes(peer)) still.push(`${PEER_NAME} is not a member`);
+if (!after.workspaceId) {
+  still.push(`there is no "${VENUE.community}" that ${OWNER_NAME} is a member of`);
+} else {
+  if (!after.channelId) still.push(`there is no "${VENUE.channel}" channel`);
+  if (!after.members.includes(peer)) still.push(`${PEER_NAME} is not a member`);
+}
 for (const s of still) console.log(`  STILL WRONG: ${s}`);
 for (const f of failed) console.log(`  failure: ${f}`);
 

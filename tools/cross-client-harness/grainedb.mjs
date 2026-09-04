@@ -42,9 +42,32 @@ export function channelIdOf(workspaceId, name) {
   return found.length === 1 ? found[0][0] : null;
 }
 
-/** The uuid of a community by name, or null. Ambiguity answers null rather than picking one. */
-export function workspaceIdOf(name) {
-  const found = rows(psql(`SELECT id FROM channel_workspaces WHERE name = '${name}'`));
+/**
+ * The uuid of a community by name, or null. Ambiguity answers null rather than picking one.
+ *
+ * **A NAME IDENTIFIES A COMMUNITY ONLY WHERE THE POPULATION MAKES IT UNIQUE, AND SINCE 2026-09-03
+ * THIS RIG RUNS ON A COPY OF PRODUCTION.** The name was a sufficient key for exactly as long as the
+ * campaign was the only thing on the estate using it. It stopped being one the day the local
+ * database was seeded from a production dump: `Campagne de test` resolved to a real community that
+ * two real members own, the campaign's own accounts were in nothing at all, and `venue.mjs` took
+ * that id for its fixture and went on to invite a peer into a community its client cannot even
+ * list. What it reported was `the community was never listed within 20000ms` - which reads as a
+ * SIDEBAR defect, and was an identity mismatch that one `channel_members` row settles before any
+ * gesture is attempted.
+ *
+ * `memberUserId` scopes the question to "a community by this name THAT THIS ACCOUNT IS IN". Both
+ * questions are real and the caller picks between them rather than falling back: unscoped answers
+ * "is this name taken at all", which is what DIAGNOSES a collision, and scoped answers "is this
+ * one OURS", which is what a fixture guard has always meant.
+ */
+export function workspaceIdOf(name, { memberUserId = null } = {}) {
+  // EXISTS rather than a join: a member holding two rows would otherwise duplicate the community
+  // and trip the ambiguity guard below, reporting "no such community" for one plainly there.
+  const mine = memberUserId
+    ? ` AND EXISTS (SELECT 1 FROM channel_members m WHERE m."workspaceId" = w.id ` +
+      `AND m."userId" = '${memberUserId}')`
+    : '';
+  const found = rows(psql(`SELECT w.id FROM channel_workspaces w WHERE w.name = '${name}'${mine}`));
   return found.length === 1 ? found[0][0] : null;
 }
 
