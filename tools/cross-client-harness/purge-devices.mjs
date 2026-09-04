@@ -35,7 +35,7 @@
  * The current device has no delete button at all (`{#if !isCurrentDevice}`) and the panel refuses to
  * remove the last one, so the account always keeps at least one: the browser running this.
  */
-import { client } from "./chat.mjs";
+import { APP_TAB, client } from "./chat.mjs";
 import { evaluate, realClick, until } from "./cdp.mjs";
 
 const argv = process.argv.slice(2);
@@ -134,7 +134,7 @@ const TAG_BY_ID = (id) => `(function () {
   return null;
 })()`;
 
-const cx = await client(port, "canari-emse.fr");
+const cx = await client(port, APP_TAB);
 stage(`attached on ${port}`);
 
 // Straight to /settings. A pushState would leave the router's data untouched on this route.

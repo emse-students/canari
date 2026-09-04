@@ -9,7 +9,26 @@
  */
 import { IS_MOVING_FN, RESOLVE, activate, clickAtPoint, connect, dragTo, evaluate, listTargets, pressKey, realClick, stablePoint, until } from './cdp.mjs';
 // For the device check in `goto`: the phone is the one client a reload costs something on.
-import { PORTS } from './names.mjs';
+import { PORTS, SITE } from './names.mjs';
+
+/**
+ * THE SUBSTRING THAT IDENTIFIES THE APP'S OWN TAB, and it is DERIVED rather than spelt.
+ *
+ * `client(port, match)` and every `listTargets(...).find(...)` pick a tab by matching a substring of
+ * its URL, and sixty-six call sites spelt `'canari-emse.fr'`. The resume page counted them and
+ * concluded they were harmless - "matched by SUBSTRING, no anchored comparison" - which is true of
+ * the COMPARISON and false of the NEEDLE: a needle no local URL contains matches nothing, so every
+ * one of those call sites threw `no target on 9224 matching canari-emse.fr` against a browser
+ * sitting on the app. The one-line switch of estates was one line plus these.
+ *
+ * `APP_TAB` is the host WITH its port, because that is what a URL contains and what distinguishes
+ * two local estates. `APP_HOST` is the hostname alone, for the one question that is not about a URL:
+ * a COOKIE's `domain`, which carries no port and never will.
+ */
+export const APP_TAB = new URL(SITE).host;
+
+/** The app's hostname, without a port: what a cookie's `domain` can be compared against. */
+export const APP_HOST = new URL(SITE).hostname;
 import { OVERLAYS } from './overlay-probe.mjs';
 
 // SCOPED TO THE CHAT, and that scoping is the whole point.

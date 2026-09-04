@@ -47,7 +47,7 @@
  * A1 to force one rather than waiting on a mechanism the product does not have. Its build is
  * recorded next to the result, because A1's APK is deliberately older than the deployment.
  */
-import { client, dragTo, evaluate } from './chat.mjs';
+import { APP_TAB, client, dragTo, evaluate } from './chat.mjs';
 import {
   createCommunity,
   deleteCommunity,
@@ -183,7 +183,7 @@ const railAfterReload = armed
   ? await step('reload W1 and read the rail again', async () => {
       await evaluate(w1, 'location.reload()').catch(() => null);
       await sleep(6000);
-      const gateW1 = await unlockClient(w1, PORTS.W1, ACCOUNT_OF.W1, { match: 'canari-emse.fr' });
+      const gateW1 = await unlockClient(w1, PORTS.W1, ACCOUNT_OF.W1, { match: APP_TAB });
       if (gateW1.verdict !== 'unlocked') throw new Error(`W1 did not come back from the PIN: ${gateW1.verdict}`);
       await enterCommunities(w1);
       return railSettlingAt(w1, railAfterUp ?? []);

@@ -14,7 +14,7 @@
  * `cutHard` closes the socket as a dropped connection would; the gateway's `Drop` guard removes the
  * key, and the wait below is what turns that into a fact rather than an intention.
  */
-import { client, ensureConversation, send, countMessage } from './chat.mjs';
+import { APP_TAB, client, countMessage, ensureConversation, send } from './chat.mjs';
 import { gate, ignoringOfflineCut, report, watch } from './watch.mjs';
 import { armCut, cutHard, link } from './net.mjs';
 import { awaitOffline, awaitOnline, whoIs } from './presence.mjs';
@@ -26,8 +26,8 @@ import { OWNER_NAME, PEER_NAME, PORTS } from './names.mjs';
 // `openConversation` open NOTHING and the check then reports on whatever was left on screen.
 // `ensureConversation` is used rather than `ensureChat` + `openConversation` for the same reason it
 // exists - a composer proves a conversation is open, never WHICH one.
-const w1 = await client(PORTS.W1, 'canari-emse.fr');
-const w2 = await client(PORTS.W2, 'canari-emse.fr');
+const w1 = await client(PORTS.W1, APP_TAB);
+const w2 = await client(PORTS.W2, APP_TAB);
 // ARMED FIRST, because the patch has to be in the document before the app opens its socket - so it
 // costs a reload, and a reload has to happen before anything is opened or measured.
 const armed = await armCut(w2);

@@ -18,22 +18,14 @@
  * once appeared in the campaign's record - and a check that records nothing is indistinguishable
  * from one that passed, which is the worse of the two directions to be wrong in.
  */
-import {
-  awaitAppReady,
-  awaitMessage,
-  client,
-  ensureConversation,
-  evaluate,
-  send,
-  settledCount,
-} from './chat.mjs';
+import { APP_TAB, awaitAppReady, awaitMessage, client, ensureConversation, evaluate, send, settledCount } from './chat.mjs';
 import { connect, listTargets } from './cdp.mjs';
 import { gate, report, watch } from './watch.mjs';
 import { mark, record } from './results.mjs';
 import { PORTS, SITE, peerNameFor } from './names.mjs';
 
-const w1 = await client(PORTS.W1, 'canari-emse.fr');
-const w2 = await client(PORTS.W2, 'canari-emse.fr');
+const w1 = await client(PORTS.W1, APP_TAB);
+const w2 = await client(PORTS.W2, APP_TAB);
 
 // Both clients are reloaded first, and this is not hygiene: a long-lived tab keeps the bundle it
 // loaded, so a page opened before a deploy runs the OLD code while a tab opened by this script runs
@@ -55,7 +47,7 @@ const OPEN_DEADLINE_MS = 20000;
 const t0 = Date.now();
 let target = null;
 while (!target && Date.now() - t0 < OPEN_DEADLINE_MS) {
-  target = (await listTargets(PORTS.W1)).find((t) => !before.has(t.id) && t.url.includes('canari-emse.fr'));
+  target = (await listTargets(PORTS.W1)).find((t) => !before.has(t.id) && t.url.includes(APP_TAB));
   if (!target) await new Promise((r) => setTimeout(r, 200));
 }
 if (!target) {

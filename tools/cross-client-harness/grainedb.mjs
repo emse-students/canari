@@ -17,7 +17,7 @@
  * caller gets it from `channelIdOf`, which is the one place a display name is turned into one.
  */
 import { pollFact } from './chat.mjs';
-import { psql } from './ssh.mjs';
+import { psql } from './estate.mjs';
 
 /** Splits psql's tuples-only output into rows of fields, dropping the trailing blank line. */
 const rows = (out) =>

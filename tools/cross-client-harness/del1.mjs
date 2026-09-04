@@ -51,7 +51,7 @@
  *
  *   node del1.mjs [--keep]     --keep leaves the group behind for manual inspection
  */
-import { awaitGatewayConnected, client, evaluate, realClick, until } from './chat.mjs';
+import { APP_TAB, awaitGatewayConnected, client, evaluate, realClick, until } from './chat.mjs';
 import { usernames } from './accounts.mjs';
 import { armCut, cutHard } from './net.mjs';
 import { mark, record } from './results.mjs';
@@ -64,8 +64,8 @@ const run = mark('DEL1');
 const NAME = run;
 const keep = process.argv.includes('--keep');
 
-const W1 = await client(9224, 'canari-emse.fr', { focus: false });
-const W2 = await client(9223, 'canari-emse.fr', { focus: false });
+const W1 = await client(9224, APP_TAB, { focus: false });
+const W2 = await client(9223, APP_TAB, { focus: false });
 
 // FROM THE FIRST GESTURE, not from the delete: what a run leaves in the console is evidence about
 // the whole flow, and a window opened at the verdict would miss the join that armed it.

@@ -44,7 +44,7 @@ import {
   MAX_DEVICES_PER_USER,
   userTag,
 } from "./devices.mjs";
-import { client, ensureChat } from "./chat.mjs";
+import { APP_TAB, client, ensureChat } from "./chat.mjs";
 import { evaluate, until } from "./cdp.mjs";
 import { ORIGIN, PORTS } from "./names.mjs";
 import { recordObserved } from "./results.mjs";
@@ -173,7 +173,7 @@ export async function becomeANewDevice({ report = stage } = {}) {
   const knownBefore = new Set(census(today).map((r) => r.deviceId));
   report(`the server knows ${knownBefore.size} enrolled device(s) across the platform`);
 
-  let cx = await client(port, "canari-emse.fr");
+  let cx = await client(port, APP_TAB);
   const before = await readOrigin(cx);
   const wasRaw = await evaluate(cx, DEVICE_ID_NOW);
   const was = wasRaw === "null" ? null : JSON.parse(wasRaw);
@@ -221,7 +221,7 @@ export async function becomeANewDevice({ report = stage } = {}) {
   await evaluate(cx, `location.href = ${JSON.stringify(origin)}`);
   await sleep(6_000);
   cx.close();
-  cx = await client(port, "canari-emse.fr");
+  cx = await client(port, APP_TAB);
   const after = await readOrigin(cx);
   // ASSERTED AGAINST IDENTITY, not against key count. Counting every key asserted against the rig's
   // own reload: it failed HEAL-NEW-0 and all four HEAL-REVOKE rows on 2026-08-28 naming
@@ -253,7 +253,7 @@ export async function becomeANewDevice({ report = stage } = {}) {
   const loginOk = run("login.mjs", ["--device", device]) === 0;
   const landedAt = await evaluate(cx, "location.href").catch(() => "(unreadable)");
   const landedOnTheApp =
-    landedAt.includes("canari-emse.fr") && !landedAt.includes("auth.canari-emse.fr");
+    landedAt.includes(APP_TAB) && !landedAt.includes("auth.canari-emse.fr");
   const challenge = landedOnTheApp
     ? null
     : await evaluate(cx, `document.body.innerText.replace(/\\s+/g, ' ').slice(0, 300)`).catch(

@@ -25,17 +25,7 @@
  * which is after this script has re-attached and begun watching.
  */
 import { spawnSync } from 'node:child_process';
-import {
-  armComposer,
-  client,
-  ensureConversation,
-  fireComposer,
-  send,
-  countMessage,
-  awaitMessage,
-  evaluate,
-  pollFact,
-} from './chat.mjs';
+import { APP_TAB, armComposer, awaitMessage, client, countMessage, ensureConversation, evaluate, fireComposer, pollFact, send } from './chat.mjs';
 import { watch, report, consoleLines } from './watch.mjs';
 import { mark } from './results.mjs';
 import { PORTS, peerNameFor } from './names.mjs';
@@ -101,7 +91,7 @@ const STATE = `(function () {
  * refresh performs, reached by the only route this platform has.
  */
 const IS_NATIVE = DEVICE === 'A1';
-const attach = () => client(PORT, IS_NATIVE ? null : 'canari-emse.fr', { focus: !IS_NATIVE });
+const attach = () => client(PORT, IS_NATIVE ? null : APP_TAB, { focus: !IS_NATIVE });
 const reloadWith = (cx) =>
   IS_NATIVE
     ? evaluate(cx, `location.href = ${JSON.stringify('http://tauri.localhost/chat')}`)
@@ -115,7 +105,7 @@ const stateOf = async () => {
 const out = { device: DEVICE, delayMs: DELAY_MS };
 
 // ── The peer, watching for the fault this whole thing exists to prevent ──────────────────────────
-const w2 = await client(PORTS.W2, 'canari-emse.fr');
+const w2 = await client(PORTS.W2, APP_TAB);
 // `ensureConversation`, never `ensureChat` + `openConversation`: on a phone the sidebar has zero
 // width while a thread is open, so the plain opener times out looking for a row it can see in the
 // DOM but not on screen - and the header is the only thing that NAMES the conversation anyway.

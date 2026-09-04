@@ -31,7 +31,7 @@
  * transition must restore every precondition that transition destroys - the rewound sender is a
  * browser, so only the browser needs the reload that makes the restore stick.
  */
-import { client, openConversation, send, evaluate, markers } from './chat.mjs';
+import { APP_TAB, client, evaluate, markers, openConversation, send } from './chat.mjs';
 import { gotoRoute, ensureConversation } from './nav.mjs';
 import { watch } from './watch.mjs';
 import { mark, record } from './results.mjs';
@@ -112,7 +112,7 @@ const repairLines = (cx, sinceT) =>
 
 // --------------------------------------------------------------------------- clients
 const a1 = await client(PORTS.A1, null, { focus: false });
-const w2 = await client(9223, 'canari-emse.fr', { focus: false });
+const w2 = await client(9223, APP_TAB, { focus: false });
 
 // Park W1 so the responder election has exactly one candidate. Reversible: `about:blank` drops the
 // in-memory access token, not the refresh cookie, so navigating back logs in again (and re-locks

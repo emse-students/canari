@@ -169,6 +169,20 @@ Two details that are the whole point:
   outage is greppable in the access log and nothing caches the degraded answer. **That header is
   now the only external symptom** - with `=200` the status no longer says anything.
 
+- **The shell's asset paths must be ABSOLUTE, and SvelteKit's default is not** (fixed 2026-09-04).
+  `paths.relative` defaults to `true`, which writes `./_app/immutable/...` into every prerendered
+  page - correct for Tauri, which serves the build from an opaque root, and fatal here: this file is
+  served on **whatever URL was requested**, so on `/auth/callback` the browser resolves those hrefs
+  against `/auth/` and asks for `/auth/_app/immutable/...`. That is not a file, `try_files` sends it
+  to `@ssr`, `@ssr` is the upstream that is DOWN, and the browser gets `text/html` back for a module
+  script - so every chunk is refused on its MIME type and the shell renders nothing. **One segment
+  deep it worked**, `./` being the root there, which is why `/chat` and `/posts` hid it for the whole
+  life of the feature. Measured both directions on the local estate with `frontend-ssr` stopped:
+  `/_app/immutable/chunks/<hash>.js` answers `200 application/javascript`, `/auth/_app/...` answers
+  `200 text/html`. `svelte.config.js` now sets `paths: { relative: !buildsForWeb }` - the polarity
+  follows the adapter, like everything else in that file. **A degraded path is verified on a route
+  with more than one segment, or it is not verified.**
+
 What is lost while degraded is exactly the per-page `<head>`: the bonus the SSR container adds.
 The outage stays visible through that container's healthcheck in `docker compose ps`.
 

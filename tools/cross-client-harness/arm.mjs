@@ -17,7 +17,7 @@
  * EVERY WRITE IS SCOPED TO A ROW THE CALLING CHECK ITSELF CREATED, by the community id it just
  * built. Nothing here may touch a row it did not make.
  */
-import { psql } from './ssh.mjs';
+import { psql } from './estate.mjs';
 
 /**
  * Ages a community's live invite so it is EXPIRED, and answers how many rows moved.

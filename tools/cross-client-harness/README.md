@@ -1,7 +1,8 @@
 # Cross-client test harness
 
-The rig that drives **three real Canari clients at once** against the live deployment: two desktop
-Chrome profiles and an Android device. It exists because a whole class of Canari bug is invisible to
+The rig that drives **three real Canari clients at once** against ONE estate named by ONE constant
+(`SITE` in `names.mjs`, the LOCAL docker estate since 2026-09-03): two desktop Chrome profiles and an
+Android device. It exists because a whole class of Canari bug is invisible to
 a unit test and to a single client - a message the sender shows as delivered and the receiver never
 stores, a tab that stops receiving while looking healthy, a notification that is not dismissed on the
 other device. Every defect it found is written up in
@@ -9,9 +10,12 @@ other device. Every defect it found is written up in
 design is [cross-client-campaign](../../docs/wiki/cross-client-campaign.md). This file is about the
 rig itself.
 
-It is **not** a CI suite and must never become one. It drives PRODUCTION with two real accounts, it
-needs a phone plugged in, and several checks take minutes. It is an audit instrument: pick it up when
-you need to know what actually happens across clients, not on every commit.
+It is **not** a CI suite and must never become one. It drives a whole running estate with two real
+accounts, it needs a phone plugged in, and several checks take minutes. It is an audit instrument:
+pick it up when you need to know what actually happens across clients, not on every commit.
+
+**It is built on ATOMS** - one file per gesture, each ending on a fact rather than a clock - and
+[`atoms.mjs`](atoms.mjs) is the index of them. Read that section before writing anything here.
 
 ## Where things live
 
@@ -54,7 +58,16 @@ derives it from the running pid every time and refuses to report success until C
 
 1. **Node 24+** (a global `WebSocket` is assumed - there is no Playwright or Puppeteer here), `adb`
    on `PATH`, and Chrome installed.
-2. Create the state directory `../../../../canari-harness` and put `test-accounts.json` in it,
+2. **Bring the estate up, and point `SITE` at it.** `make run-services` builds and starts
+   `infrastructure/local/docker-compose.yml`; `make dump-prod` copies production's database into it.
+   Then `SITE` in `names.mjs` is `http://localhost:8081` - nginx, the single entry point, NOT the vite
+   dev server. **The dev server is not an estate**: it serves no `_app/version.json`, so every client
+   on it reports a build the rig cannot compare and the preflight cannot gate. Two facts the estate
+   itself will teach you the hard way otherwise: `frontend-ssr` must be running (without it every
+   navigation falls through to `@app_shell` and any route deeper than one segment loads no module at
+   all), and the local Postgres superuser is `admin`, not `canari`, which is why `psql` in `ssh.mjs`
+   picks the user from `SITE` rather than from a flag.
+3. Create the state directory `../../../../canari-harness` and put `test-accounts.json` in it,
    from `test-accounts.example.json`. **It moved one level further out on 2026-09-03**, when the
    campaign restarted from zero - a root the old path cannot reach is a root that cannot be
    half-inherited. `play-console-sa.json` and `google-services.json` stayed in the previous
@@ -62,12 +75,12 @@ derives it from the running pid every time and refuses to report success until C
    their paths. **No credential is ever a command-line argument**: `login.mjs` and
    `pin.mjs` read the file themselves through `accounts.mjs`, so nothing sensitive lands in a
    captured shell or a tool-call log.
-3. `cp names.example.mjs names.mjs` and follow its header - the real display names go in the state
+4. `cp names.example.mjs names.mjs` and follow its header - the real display names go in the state
    directory, this copy is the pointer. Both are gitignored.
-4. `node launch.mjs start w1 && node launch.mjs start w2`. Read the flags in that file before
+5. `node launch.mjs start w1 && node launch.mjs start w2`. Read the flags in that file before
    changing them; they are load-bearing (see *Operating it*).
-5. Phone: plug it in, then `node phone.mjs` (`node phone.mjs <port>` for another port).
-6. `node unlock.mjs` after any launch, kill, reboot, radio cycle or `install -r`: every one of those
+6. Phone: plug it in, then `node phone.mjs` (`node phone.mjs <port>` for another port).
+7. `node unlock.mjs` after any launch, kill, reboot, radio cycle or `install -r`: every one of those
    re-locks the encryption PIN, and a locked client does not fail honestly - it renders, answers, and
    reports on an empty store.
 
@@ -145,6 +158,14 @@ it by hand after editing `tabs.mjs`, `chat.mjs` or the preflight's tab repair. R
 editing `checks.mjs`, any classifier or `debris.mjs` - a phase whose `needs` disagrees with its
 scripts is how MUT-18 skipped on every run it was ever asked for.
 
+**The gate is not decoration, and it caught a live one on 2026-09-04.** Pointing the rig at a local
+estate meant `psql` had to know WHICH estate, which meant reading `SITE`, which meant importing
+`names.mjs` - and `ssh.mjs` is reached by `srvlog.mjs` and `devices.mjs`, so two of the eleven gated
+self-tests stopped being runnable on a fresh checkout while passing perfectly here. That is the same
+fault as the CD failure of `74e9e1ec` below, arrived at from the opposite direction, and the fix is
+the one the gate's own message asks for: `estate.mjs` for the half that needs a machine,
+`device-census.mjs` for the half that does not.
+
 **Four were on disk and outside the gate until 2026-08-24** - `logcatclassify`, `devices`, `tabguard`
 and the new `debris` - so the file said three and the Makefile ran three while six existed. A
 self-test nobody runs is the plainest form of a correct mechanism with no report: it passes forever,
@@ -163,12 +184,58 @@ Makefile recipe, walks each gated script's imports and fails if any of them is n
 What it still cannot see is a script that imports only tracked files and needs a device anyway; only
 running the gate somewhere with no rig proves that, which is what CI does on every push.
 
+## The atoms
+
+**A GESTURE AND A ROW ARE NOT THE SAME KIND OF FILE, and until 2026-09-04 nothing in this directory
+said so.** Roughly twenty files here are GESTURES - log a client in, answer the PIN, open a DM, create
+a group, add a member, mint a device the server has never seen - and the other hundred-odd are ROWS
+that compose gestures into a question and take a verdict. `checks.mjs` is the manifest of the second
+kind; there was no index of the first, so a session picking the rig up grepped, and the third
+`createGroup` got written because the first two were not findable. Three copies of one gesture is
+three places for a post-condition to rot, which is exactly what `groupnav.mjs` records happening.
+
+**[`atoms.mjs`](atoms.mjs) is that index**, and its header is the inventory: every gesture, the file
+that owns it, and what it is for. It re-exports the importable ones so a new script can reach the
+whole vocabulary in one line, and `run()` is the ONE spelling of the arguments for the ones that are
+still CLI scripts.
+
+```js
+import { client, createDM, login, pin, psql, SITE, startBrowser } from './atoms.mjs';
+```
+
+**Three properties define an atom, and a gesture missing one is not an atom yet.** They are not
+style; each is why the campaign can be re-run by someone who was not there:
+
+1. **It ends on a fact, never on a clock.** `createDM` returns when the sidebar names the contact,
+   `login` when the app has committed to a session, `pin` when the gate is gone or an error is on
+   screen. A sleep bounds a wait; it is never the wait.
+2. **It is idempotent, and it reads before it acts.** Called twice, the second call is a read - so a
+   row starts from whatever the previous row left behind instead of demanding a pristine estate.
+3. **It addresses the product structurally, not by pixel and not by wording.** A submit button is
+   `form button[type=submit]`; an autocomplete option is `[role="option"]` reached with the arrow
+   keys; a tab is `APP_TAB`. **THE RIG DRIVES PHONES OF SEVERAL SIZES**, so a coordinate right on one
+   screen is wrong on the next, and a French label is not an API. Where a real pointer sequence IS the
+   thing under test, `realClick` re-measures the centre at the moment it clicks - adaptive, not fixed.
+
+**An atom takes no verdict**, writes nothing to `results.ndjson` and asserts nothing about the
+application. That is what makes it reusable: a row decides what an outcome MEANS, and two rows may
+read the same outcome differently.
+
+**What is deliberately NOT done here.** Half the atoms are importable functions and half are CLI
+scripts with top-level `await`, reached by spawning. Converting the second half into functions with a
+thin CLI wrapper is worth doing and changes the process model of every runner that spawns them - so
+it belongs in its own change rather than riding along with a defect fix. `run()` exists so that in the
+meantime no caller re-derives the argument spelling, and `pin`'s exit 2 ("no gate on screen") is
+documented there as an ANSWER rather than a failure, because that is the distinction each private copy
+used to get wrong on its own.
+
 ## The files
 
 **The library** - everything else imports these.
 
 | File | Role |
 | ---- | ---- |
+| `atoms.mjs` | **The index of the gestures**, and the only file here that is documentation first: what each atom is, the three properties one has to have, and `run()` - the single spelling of the arguments for the atoms that are still CLI scripts. Imports nothing machine-local of its own; re-exports the importable primitives so a new script reaches the whole vocabulary in one line. |
 | `cdp.mjs` | The whole CDP client: targets, `evaluate`, `stableCentreOf`, `clickAtPoint`, `realClick`, `dragTo`, `until`, focus emulation. |
 | `chat.mjs` | Chat primitives shared by every check - `client`, `ensureChat`, `openConversation`, `send`, `clickBubbleAction`. The single definition of "a message arrived", so two checks cannot disagree for harness reasons. |
 | `watch.mjs` | Continuous observation: console, page errors, HTTP, WebSocket. Attached by every runner. |
@@ -178,6 +245,8 @@ running the gate somewhere with no rig proves that, which is what CI does on eve
 | `comm.mjs` | Community and salon gestures, and the panels behind them - `openChannelSettings` and `openChannelAccess` share one modal-open, `setChannelNotifLevel` reads the radio group's `aria-checked` rather than a styling class. |
 | `grainedb.mjs` | The questions a SCREEN cannot answer, asked of production's database: what a device is routed, what sessions a salon holds, what notification level a member stored, what order a member put their communities in. Read-only, always. |
 | `names.mjs` / `accounts.mjs` | The only two readers of machine-local truth. Every other file goes through them. |
+| `estate.mjs` | `psql` and `redis`, aimed at whichever estate `SITE` names - local `docker exec` or production through the tunnel, with no flag and no fallback. **Its own module rather than two more exports in `ssh.mjs`**, because reading `SITE` means importing `names.mjs`, which is gitignored: putting them there made `srvlog.mjs` and `devices.mjs` unimportable on a fresh checkout and `gate-selftest.mjs` failed within the hour. A transport is machine-agnostic; an estate is not. |
+| `device-census.mjs` | The pure half of `devices.mjs` - the census SQL text and every function that turns a row into a fact. Split for the same reason as `native-residue.mjs`, `servable.mjs`, `usability.mjs` and `marker.mjs`: `devices-selftest.mjs` is in the CI gate, and deciding what a row MEANS needs no machine. |
 | `phone.mjs` | adb, app lifecycle, notifications, the WebView - and the only entry point for the devtools forward. Also the NATIVE half of what a device holds: `nativeFootprint()` for a byte total, and `nativeResidue()` for the part that is a criterion - WHICH of Canari's own paths are still under `/data/data/<pkg>` (`mls.bin`, `canari_<userId>.db`, `graine_seeds.json`, `channel_keys.json`, the `avatar_*` cache, `shared_prefs/canari_*`, `keystore_aliases`). Its `OUR_NATIVE` faces `KEPT_AT_TOP_LEVEL` in `src-tauri/src/commands/storage.rs`: that says what the wipe must not touch, this says what must be gone after it. Prefer it to the byte total, which read 19 MB with the account gone and 31 MB with it present on the same device inside an hour. Ids are cut to eight characters, and `logs/` is reported under `rewritten` rather than counted - the running app recreates it in milliseconds. Needs a DEBUGGABLE build (`run-as`). |
 | `login.mjs`, `pin.mjs`, `unlock.mjs` | The auth gates. `unlock.mjs` unlocks every client it can identify. `login.mjs` ends its wait on EITHER the app's own form or a CAS form in the phone's **Chrome Custom Tab** (`--tabPort`, default `port + 1`), fills whichever holds it with one copy of the code, and reads the landing by RE-RESOLVING the app's target - Android may have killed the WebView while the tab was in front. |
 | `gate-probe.mjs` | `GATE_EXPR`, the ONE expression answering "is the encryption PIN gate on screen", imported by `pin.mjs`, `pingate.mjs` and `state.mjs`. It had three copies keyed partly on body text, and `/settings` names the gate in its own security section - so a client parked there read `LOCKED` while perfectly unlocked, and `settle()` returns `LOCKED` to four runners that then produce no verdict. A gate is a MODAL: `role=dialog` plus its `aria-label`. |
@@ -539,9 +608,21 @@ Two environment traps worth repeating here, because they read as application bug
 
 ## Standing constraints
 
-- Runs against **production**. **Every test message goes in the two-test-account DM and nowhere
-  else.** Anything needing a channel uses the `Campagne de test` community, never MiTV - a private
-  channel there is readable by every association admin.
+- **Runs against the LOCAL estate since 2026-09-03** - `SITE` in `names.mjs`, one constant, and
+  every file derives its host from it rather than spelling one (89 literals were swept out on
+  2026-09-04 for exactly that reason). The estate is `infrastructure/local/docker-compose.yml`, built
+  and served by nginx on `${CANARI_LOCAL_API_PORT:-8081}`; `make dump-prod` fills its database with a
+  copy of production. **Two things do NOT become local with it.** The identity provider is still
+  `auth.canari-emse.fr` by decision 8 of the workflow migration, so the accounts and their passwords
+  are production's - and the local Authentik client is a SEPARATE provider (`Canari Local`), which is
+  where a local redirect URI has to be declared or the login dies on "Redirect URI Error". And the
+  object store starts EMPTY: `make dump-prod` copies the database, not Garage, so every avatar and
+  every attachment older than this estate 404s. That is not a defect and no row may report it as one.
+- **Every test message goes in the two-test-account DM and nowhere else.** Anything needing a channel
+  uses the `Campagne de test` community, never MiTV - a private channel there is readable by every
+  association admin. **A prod dump does not hand that venue over**: its rows belong to whichever
+  accounts owned them on production, so `venue.mjs` will refuse ("owner UNRESOLVED") until the
+  campaign's own accounts create it.
 - **No PIN, login, display name, device id, group id or device serial goes in a committed file.** The
   peer's real display name reached the public archive once already, through a check that spelt it
   inline rather than importing it.

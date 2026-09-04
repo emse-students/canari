@@ -23,7 +23,7 @@
  * (`.`, `.*`, `^`) is refused outright rather than confirmed, and a row is only ever dismissed after
  * OPENING it and reading `removed` off the pane - the state, never the name.
  */
-import { client, ensureChat, evaluate, PANE_STATE, parkConversation, until } from './chat.mjs';
+import { APP_TAB, client, ensureChat, evaluate, PANE_STATE, parkConversation, until } from './chat.mjs';
 import { dismissLocally, openGroup } from './groupnav.mjs';
 import { PORTS } from './names.mjs';
 
@@ -43,7 +43,7 @@ if (/^\W*(\.|\.\*|\^|\$)\W*$/.test(pattern)) {
 }
 const match = new RegExp(pattern);
 
-const host = port === PORTS.A1 ? 'tauri.localhost' : 'canari-emse.fr';
+const host = port === PORTS.A1 ? 'tauri.localhost' : APP_TAB;
 const cx = await client(port, host);
 // NOT `goto('/chat')`: on A1 that reloads the Tauri webview and re-locks the PIN, and `chat.mjs`
 // refuses it outright. `ensureChat` alone is not enough either - it returns `'already'` the instant

@@ -12,7 +12,7 @@
  *
  * Usage: node life.mjs 1|2|3|4|5|6|7|8
  */
-import { client, ensureChat, openConversation, countMessage, awaitMessage, send } from './chat.mjs';
+import { APP_TAB, awaitMessage, client, countMessage, ensureChat, openConversation, send } from './chat.mjs';
 import { logcatReport, logcatSince, watch } from './watch.mjs';
 import { finishObserved, mark } from './results.mjs';
 import * as phone from './phone.mjs';
@@ -180,7 +180,7 @@ phone.forwardDevtools(PORTS.A1);
 const a1Setup = await client(PORTS.A1, 'tauri.localhost');
 await ensureChat(a1Setup).catch(() => null);
 await openConversation(a1Setup, peerNameFor('A1')).catch(() => null);
-const w2 = await client(9223, 'canari-emse.fr');
+const w2 = await client(9223, APP_TAB);
 await ensureChat(w2);
 await openConversation(w2, peerNameFor('W2'));
 await sleep(1_000);

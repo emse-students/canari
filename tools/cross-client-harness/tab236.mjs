@@ -14,16 +14,7 @@
  * looks to a user exactly like every conversation having been deleted.
  */
 import { execFileSync } from 'node:child_process';
-import {
-  client,
-  ensureChat,
-  openConversation,
-  countMessage,
-  awaitMessage,
-  send,
-  evaluate,
-  LOGIN_SHOWING,
-} from './chat.mjs';
+import { APP_HOST, APP_TAB, awaitMessage, client, countMessage, ensureChat, evaluate, LOGIN_SHOWING, openConversation, send } from './chat.mjs';
 import { listTargets, connect, until } from './cdp.mjs';
 import { watch } from './watch.mjs';
 import { mark, recordObserved } from './results.mjs';
@@ -58,7 +49,7 @@ function unlock(port, account) {
   try {
     const out = execFileSync(
       process.execPath,
-      ['pin.mjs', '--port', String(port), '--account', account, '--match', 'canari-emse.fr'],
+      ['pin.mjs', '--port', String(port), '--account', account, '--match', APP_TAB],
       { cwd: new URL('.', import.meta.url).pathname.replace(/^\//, ''), encoding: 'utf8' }
     );
     return out.trim().split('\n').pop();
@@ -69,8 +60,8 @@ function unlock(port, account) {
 
 // ── TAB-2: the tab is closed, a message arrives, the tab is reopened ──────────
 if (which === '2') {
-  const w1 = await client(9224, 'canari-emse.fr');
-  const w2 = await client(9223, 'canari-emse.fr');
+  const w1 = await client(9224, APP_TAB);
+  const w2 = await client(9223, APP_TAB);
   await ensureChat(w2);
   await openConversation(w2, peerNameFor('W2'));
 
@@ -78,10 +69,10 @@ if (which === '2') {
   // exit Chrome and turn this into TAB-3.
   await evaluate(w1, `(function () { window.__keep = window.open('about:blank', '_blank'); return !!window.__keep; })()`);
   await sleep(500);
-  const appTarget = (await listTargets(9224)).find((t) => t.url.includes('canari-emse.fr'));
+  const appTarget = (await listTargets(9224)).find((t) => t.url.includes(APP_TAB));
   await fetch(`http://127.0.0.1:9224/json/close/${appTarget.id}`);
   await sleep(1500);
-  const stillThere = (await listTargets(9224)).some((t) => t.url.includes('canari-emse.fr'));
+  const stillThere = (await listTargets(9224)).some((t) => t.url.includes(APP_TAB));
 
   const o2 = await watch(w2, 'tab2-w2');
   const m = mark('TAB2');
@@ -101,7 +92,7 @@ if (which === '2') {
   const pinResult = unlock(PORTS.W1, ACCOUNT_OF.W1);
   await sleep(4_000);
 
-  const w1b = await client(9224, 'canari-emse.fr');
+  const w1b = await client(9224, APP_TAB);
   const o1 = await watch(w1b, 'tab2-w1');
   await openConversation(w1b, peerNameFor('W1'));
   const arrived = await awaitMessage(w1b, m, 30_000).then(() => true, () => false);
@@ -125,7 +116,7 @@ if (which === '2') {
 
 // ── TAB-3: the whole browser is killed, messages arrive, it is relaunched ─────
 if (which === '3') {
-  const w2 = await client(9223, 'canari-emse.fr');
+  const w2 = await client(9223, APP_TAB);
   await ensureChat(w2);
   await openConversation(w2, peerNameFor('W2'));
 
@@ -146,12 +137,12 @@ if (which === '3') {
 
   // Assert the profile carried the login BEFORE unlocking: the PIN modal is not a login form, and
   // the distinction is the whole point of this check.
-  const w1 = await client(9224, 'canari-emse.fr');
+  const w1 = await client(9224, APP_TAB);
   const loginShowing = await evaluate(w1, LOGIN_SHOWING);
   const pinResult = unlock(PORTS.W1, ACCOUNT_OF.W1);
   await sleep(4_000);
 
-  const w1b = await client(9224, 'canari-emse.fr');
+  const w1b = await client(9224, APP_TAB);
   const o1 = await watch(w1b, 'tab3-w1');
   await ensureChat(w1b);
   await openConversation(w1b, peerNameFor('W1'));
@@ -173,7 +164,7 @@ if (which === '3') {
       browserWasDown: down,
       downInMs,
       upInMs: upIn,
-      appTabsOnRelaunch: (await listTargets(9224)).filter((t) => t.url.includes('canari-emse.fr')).length,
+      appTabsOnRelaunch: (await listTargets(9224)).filter((t) => t.url.includes(APP_TAB)).length,
       reLoginRequired: loginShowing,
       pin: pinResult,
       first: { afterMs: got1, count: c1 },
@@ -185,7 +176,7 @@ if (which === '3') {
 
 // ── TAB-6: the refresh cookie is deleted, then the app is made to act ─────────
 if (which === '6') {
-  const w1 = await client(9224, 'canari-emse.fr');
+  const w1 = await client(9224, APP_TAB);
   const o1 = await watch(w1, 'tab6-w1');
   await w1.send('Network.enable');
 
@@ -196,7 +187,7 @@ if (which === '6') {
   // the whole jar, and the cookie is matched BY NAME.
   const { cookies } = await w1.send('Storage.getCookies', {});
   const names = cookies
-    .filter((c) => c.domain.includes('canari-emse.fr'))
+    .filter((c) => c.domain.includes(APP_HOST))
     .map((c) => `${c.name}@${c.domain}${c.path}${c.httpOnly ? ' httpOnly' : ''}`);
   const refresh = cookies.filter((c) => c.name === 'canari_refresh');
   if (refresh.length === 0) throw new Error(`no canari_refresh cookie to delete; jar: ${names.join(' | ')}`);
@@ -204,7 +195,7 @@ if (which === '6') {
     await w1.send('Network.deleteCookies', { name: c.name, domain: c.domain, path: c.path });
   }
   const after = (await w1.send('Storage.getCookies', {})).cookies
-    .filter((c) => c.domain.includes('canari-emse.fr'))
+    .filter((c) => c.domain.includes(APP_HOST))
     .map((c) => c.name);
   if (after.includes('canari_refresh')) throw new Error('canari_refresh survived the delete');
 
@@ -213,7 +204,7 @@ if (which === '6') {
   await w1.send('Page.reload');
   await sleep(15_000);
 
-  const w1b = await client(9224, 'canari-emse.fr');
+  const w1b = await client(9224, APP_TAB);
   const loginShowing = await evaluate(w1b, LOGIN_SHOWING);
   const path = await evaluate(w1b, 'location.pathname');
   const bodyText = String(await evaluate(w1b, 'document.body ? document.body.innerText.slice(0, 400) : ""'));

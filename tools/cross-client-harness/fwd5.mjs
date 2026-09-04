@@ -10,20 +10,7 @@
  *
  * Usage: node fwd5.mjs [iterations]
  */
-import {
-  client,
-  ensureChat,
-  openChannel,
-  openConversation,
-  send,
-  clickBubbleAction,
-  realClick,
-  until,
-  awaitMessage,
-  countMessage,
-  awaitAppReady,
-  settledCount,
-} from './chat.mjs';
+import { APP_TAB, awaitAppReady, awaitMessage, clickBubbleAction, client, countMessage, ensureChat, openChannel, openConversation, realClick, send, settledCount, until } from './chat.mjs';
 import { watch, report, dirtOf } from './watch.mjs';
 import { finishObserved, mark } from './results.mjs';
 // See fwd.mjs: a real display name belongs in names.mjs, which never reaches the public repo.
@@ -49,8 +36,8 @@ function sendsOf(cx) {
   return out;
 }
 
-const w1 = await client(9224, 'canari-emse.fr');
-const w2 = await client(9223, 'canari-emse.fr');
+const w1 = await client(9224, APP_TAB);
+const w2 = await client(9223, APP_TAB);
 await ensureChat(w2);
 await openConversation(w2, peerNameFor('W2'));
 

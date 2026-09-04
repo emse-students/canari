@@ -65,7 +65,7 @@ import {
 } from './watch.mjs';
 import { awaitOutboxDrained, conversationRows, groupIdByName, outboxRows } from './idb.mjs';
 import { PEER_NAME, PORTS } from './names.mjs';
-import { psql } from './ssh.mjs';
+import { psql } from './estate.mjs';
 import * as phone from './phone.mjs';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';

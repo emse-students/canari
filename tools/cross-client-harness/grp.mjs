@@ -54,7 +54,7 @@ import {
 } from './chat.mjs';
 import { addMember, openGroupSettings } from './addmember.mjs';
 import { conversationRows, groupIdByName } from './idb.mjs';
-import { psql } from './ssh.mjs';
+import { psql } from './estate.mjs';
 import { closeOverlays, createGroup, deleteGroup, openGroup } from './groupnav.mjs';
 import { armCut, cutHard } from './net.mjs';
 import { mark, record, recordObserved } from './results.mjs';

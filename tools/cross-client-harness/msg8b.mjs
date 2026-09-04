@@ -8,7 +8,7 @@
  * Nothing here is asserted except that the message is intact on return; the signal is REPORTED,
  * because what the app intends to do is not written down and this run is what establishes it.
  */
-import { client, ensureConversation, send, countMessage, evaluate, goto } from './chat.mjs';
+import { APP_TAB, client, countMessage, ensureConversation, evaluate, goto, send } from './chat.mjs';
 import { gate, report, watch } from './watch.mjs';
 import { background } from './tabs.mjs';
 import { finish, mark } from './results.mjs';
@@ -29,7 +29,7 @@ const SIGNAL = `(function () {
 })()`;
 
 const a1 = await client(PORTS.A1);
-const w2 = await client(9223, 'canari-emse.fr');
+const w2 = await client(9223, APP_TAB);
 
 // PROVEN, not assumed - a composer says a conversation is open, never which. See `ensureConversation`.
 await ensureConversation(a1, PEER_NAME);

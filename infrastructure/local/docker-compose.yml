@@ -362,6 +362,47 @@ services:
         condition: service_started
 
   # ─────────────────────────────────────────────────────
+  # ─────────────────────────────────────────────────────
+  # The SvelteKit server (adapter-node), added 2026-09-04
+  # ─────────────────────────────────────────────────────
+  # PRODUCTION HAS THIS CONTAINER AND THIS ESTATE DID NOT, so every HTML navigation here was served
+  # by the DEGRADED path and nothing said so. `Dockerfile.frontend` routes navigations to
+  # `@ssr -> frontend-ssr:3000` and falls back to `@app_shell` on 502; with no such container the
+  # 502 was permanent, so the fallback WAS the local estate - and `app-shell.html` references its
+  # assets RELATIVELY (`./_app/...`), which resolves under the current path. On `/chat` that is
+  # correct by accident; on `/auth/callback` it asks for `/auth/_app/...`, gets the SPA fallback
+  # HTML, and the module loader refuses it: "Expected a JavaScript-or-Wasm module script but the
+  # server responded with a MIME type of text/html", eighteen times, on a blank page. Measured
+  # 2026-09-04 - every login on the local estate died there, on the one route a login must reach.
+  #
+  # The image was always buildable: `Dockerfile.frontend-ssr` sat beside the others, referenced by
+  # nothing. An estate that is missing a container production has is not a smaller estate, it is a
+  # DIFFERENT one, and the difference is exactly where the campaign's verdicts stop transferring.
+  #
+  # Not published, like production: nginx stays the only container binding a host port.
+  frontend-ssr:
+    build:
+      context: ../../
+      dockerfile: infrastructure/local/Dockerfile.frontend-ssr
+    environment:
+      NODE_ENV: production
+      PORT: '3000'
+      # adapter-node's ONE public origin. Locally that is the port nginx publishes, because the
+      # browser's address bar is what `ORIGIN` has to agree with - a mismatch makes adapter-node
+      # refuse form posts as cross-origin.
+      ORIGIN: http://localhost:${CANARI_LOCAL_API_PORT:-8081}
+      INTERNAL_SECRET: ${INTERNAL_SECRET:-}
+      SOCIAL_SERVICE_URL: http://social-service:3014
+      CORE_SERVICE_URL: http://core-service:3012
+      DELIVERY_SERVICE_URL: http://chat-delivery-service:3010
+    depends_on:
+      social-service:
+        condition: service_started
+      core-service:
+        condition: service_started
+      chat-delivery-service:
+        condition: service_started
+
   # Nginx - THE THING THAT AUTHENTICATES, added 2026-09-02
   # ─────────────────────────────────────────────────────
   # This estate had no nginx, and nginx is not a detail of the deployment: it is where a bearer
@@ -395,6 +436,8 @@ services:
       social-service:
         condition: service_started
       media-service:
+        condition: service_started
+      frontend-ssr:
         condition: service_started
     healthcheck:
       # `/api/version` needs no authentication and reaches core-service, so a 200 proves both that

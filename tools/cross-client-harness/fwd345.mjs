@@ -11,22 +11,7 @@
  * Each records whether `POST /api/mls/send` happened at all: no request means the client dropped
  * it, a 201 means the receiver did. That is the fork the whole diagnosis turns on.
  */
-import {
-  client,
-  ensureChat,
-  openChannel,
-  openConversation,
-  ensureConversation,
-  send,
-  clickBubbleAction,
-  realClick,
-  until,
-  awaitMessage,
-  countMessage,
-  evaluate,
-  awaitAppReady,
-  settledCount,
-} from './chat.mjs';
+import { APP_TAB, awaitAppReady, awaitMessage, clickBubbleAction, client, countMessage, ensureChat, ensureConversation, evaluate, openChannel, openConversation, realClick, send, settledCount, until } from './chat.mjs';
 import { gate, ignoringOfflineCut, report, watch } from './watch.mjs';
 import { cut } from './net.mjs';
 import { mark, record } from './results.mjs';
@@ -67,8 +52,8 @@ async function forwardFromChannel(cx, marker) {
   await until(cx, `!document.querySelector('[role=dialog]')`, 15000);
 }
 
-const w1 = await client(9224, 'canari-emse.fr');
-const w2 = await client(9223, 'canari-emse.fr');
+const w1 = await client(9224, APP_TAB);
+const w2 = await client(9223, APP_TAB);
 const a1 = await client(PORTS.A1);
 await ensureChat(w2);
 await openConversation(w2, peerNameFor('W2'));

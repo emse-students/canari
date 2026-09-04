@@ -27,7 +27,7 @@
  */
 import { client, evaluate } from './chat.mjs';
 import { PORTS } from './names.mjs';
-import { redis } from './ssh.mjs';
+import { redis } from './estate.mjs';
 import { installTag, userTag } from './devices.mjs';
 
 const flag = (n, f) => {

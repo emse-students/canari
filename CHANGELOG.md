@@ -11,6 +11,50 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The page that exists to survive an outage could not survive one anywhere but the site root.**
+  `app-shell.html` is what nginx answers when `frontend-ssr` is down - a plain shell that boots the
+  SPA on whatever URL was asked for, so the site degrades to a missing `<head>` instead of a 502 on
+  every navigation. SvelteKit's `paths.relative` defaults to `true`, so that shell asked for
+  `./_app/immutable/...`, which a browser resolves against the DIRECTORY of the URL it was served
+  from: on `/auth/callback` - the login landing - it went looking for `/auth/_app/immutable/...`,
+  missed, fell through to the upstream that was down and got HTML back for a module script. Every
+  chunk was then refused on its MIME type and the fallback rendered nothing at all. **One segment
+  deep it worked**, `./` being the root there, which is why `/chat` and `/posts` hid this for the
+  whole life of the feature. The web build now sets `paths: { relative: false }`; Tauri keeps
+  relative paths, which it needs, and the polarity follows the adapter exactly as the rest of that
+  file does. Measured both directions on the local estate with `frontend-ssr` stopped: the absolute
+  path answers `application/javascript`, the old relative one answers `text/html`. **A degraded path
+  is verified on a route with more than one segment, or the root is all that was verified.**
+
+- **A device signing in with nobody else online asked for a Welcome once a minute for ever, because
+  `pending` is a STATE and it was read as an EVENT.** A first sign-in on a new machine writes one
+  `dm_device_group_memberships` row per conversation with `status = 'pending'`, meaning "a member has
+  been told to Add this device". It says nothing whatsoever about anyone doing it - and when no other
+  device of any member is online, nobody ever will. The client's recovery path treated the row as
+  proof that a Welcome was owed, so it emitted a `welcome_request` per group per minute and never
+  reached the external-commit join it already had everything for. **Measured on production
+  (read-only) 2026-09-03**: one web device enrolled at 12:49:59 with ELEVEN `pending` rows, ZERO
+  queued Welcomes, an `updatedAt` that had never moved, and a usable `mls_group_info` base published
+  for every one of those groups - ten hours of polling for a party that did not exist, while the
+  member's own conversations stayed empty. Reproduced on the local estate the next day on four
+  groups, with the production console signature line for line.
+
+  **The discriminator existed server-side and was simply not carried to the decision point.**
+  `GET /api/mls/device-memberships/:userId/:deviceId` now answers, PER ROW, with the two facts that
+  separate the situations `pending` collapses: `welcomeQueued`, a `queued_message` carrying a Welcome
+  for this device AND this group, so the Add worked and delivery is owed; and `addInFlight`, the
+  group's `mls:addlock:<groupId>` held right now, which is the window a queued Welcome does not yet
+  cover and the reason the wait exists at all (GRP-4's duplicate-leaf race, 2026-08-26). Neither of
+  them true is a roster seat nothing follows, and that is the only state a device may act on: it
+  serves itself an external-commit join, then clears its own seat to `active` so no member later
+  tries to Add a leaf already in the tree. A client talking to a server that answers neither field
+  waits exactly as it did before. Redis being unreachable reports `addInFlight: false`, which
+  degrades to the old behaviour rather than to a new one. **Never learn by failing what a fact could
+  have told you**: the endpoint knew, and one poll now ends what a clock could not.
+
+
 ## [0.16.2] - 2026-09-04
 
 ### Fixed

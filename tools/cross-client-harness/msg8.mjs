@@ -6,7 +6,7 @@
  * badge) is REPORTED rather than asserted - the app's intent there is not written down anywhere,
  * so this run is what establishes it.
  */
-import { client, ensureConversation, send, countMessage, evaluate } from './chat.mjs';
+import { APP_TAB, client, countMessage, ensureConversation, evaluate, send } from './chat.mjs';
 import { gate, logcatReport, logcatSince, report, watch } from './watch.mjs';
 import { background } from './tabs.mjs';
 import { finish, mark } from './results.mjs';
@@ -18,7 +18,7 @@ const SIDEBAR = `(function () {
 })()`;
 
 const a1 = await client(PORTS.A1);
-const w2 = await client(9223, 'canari-emse.fr');
+const w2 = await client(9223, APP_TAB);
 
 // PROVEN, not assumed. This used to open the DM only when no composer was on screen - and a
 // composer says a conversation is open, never WHICH. A1 was left in the campaign CHANNEL by an
