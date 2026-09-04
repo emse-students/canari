@@ -41,7 +41,7 @@ undoing a decision, not finishing the work.
 | --- | --- | --- |
 | 1 | The `dev` branch | **Gone.** `main` is the only branch. |
 | 2 | What deploys production | **Only the completion of `Bump version on release`.** Not a push. |
-| 3 | The dev ESTATE (`dev.canari-emse.fr`) | **Kept, with a new job: it is the PRE-RELEASE target.** `dev-refresh.yml` keeps feeding it a copy of production every Monday. |
+| 3 | The dev ESTATE (`dev.canari-emse.fr`) | **Kept, with a new job: it is the PRE-RELEASE target.** `scheduled.yml`'s `dev-refresh` job keeps feeding it a copy of production every Monday. |
 | 4 | How a release starts | **A GitHub Release published on a tag** - the mechanism that already exists, with the push-triggered deploy removed. |
 | 5 | Local database | **A full production dump**, PII included, the way `dev-refresh` already copies it to the dev estate. |
 | 6 | Hooks | **`pre-commit` minimal (format only), `pre-push` DELETED**, replaced by a CI that also runs at merge on `main`. |
@@ -475,7 +475,7 @@ package starts.
       BEHIND `main` and 0 ahead, so nothing was lost, and all 19 open pull requests already targeted
       `main`, so nothing was orphaned. Both facts were checked before the delete and neither is
       recoverable afterwards, which is why the order matters
-- [x] `dev-refresh.yml` left running (the estate survives)
+- [x] `scheduled.yml`'s `dev-refresh` job left running (the estate survives)
 - [x] **the `prod-deployed` tag RETIRED AS AN INPUT, and `detect-changed-services` re-pointed
       at the last RELEASE first.** What it was re-pointed at is narrower than "the last release tag", and the
       reason is the moving image tag: production deploys `:latest`, which only a STABLE moves, and

@@ -47,6 +47,14 @@
 - NO BLIND GREP: never run generic grep or find across the project. Check SESSION STATE first, or ask for exact paths.
 - ASK EARLY: state assumptions explicitly. If uncertain about architecture or a bug, ASK during planning. No guessing.
 - SURGICAL EDITS: touch ONLY requested code. Map changes 1:1 to the prompt.
+- **FOUR WORKFLOWS ARE VISIBLE IN THE ACTIONS LIST, AND THAT IS DELIBERATE** (user, 2026-09-04:
+  *"le moins de workflows differents possibles, ca inonde la console github"*). `pull-request.yml`
+  (tests + the `CI passed` aggregate + the security pass + the dependency ceiling), `release.yml`
+  (the one deployment entry point), `arm-auto-merge.yml` (one job, `pull_request_target`, arms every
+  pull request including Dependabot's), `scheduled.yml` (everything on a clock, one job per cron).
+  Four more are `workflow_call` LIBRARIES with no triggers of their own and no row of their own:
+  `deploy.yml`, `android.yml`, `ios.yml`, `code-analysis.yml`. **Adding a fifth visible workflow
+  needs a reason that is not "it is a different topic".**
 - **WORK GOES THROUGH A PULL REQUEST, AND IT MERGES ITSELF - since 2026-09-03.** `pull-request.yml` arms GitHub auto-merge on every pull request of yours, in PARALLEL with the suite, so the human gesture is OPENING it, never merging it. `main` carries a ruleset (id `22152902`, active): no direct push, no force-push, no delete, and one required check, `CI passed`. The loop is `git switch -c`, commit, `gh pr create` - and then NOTHING: the merge and the branch deletion are automatic. **No approval is required** - a queue nobody drains is worse than the merge it prevented (user, 2026-08-31) - so this costs a minute and buys two things a direct push never gave: a diff somebody can read, and a CI run on the MERGED combination rather than on the branch. **Admin bypass exists and is the EMERGENCY path only**: taking it means production is broken right now, and it is written down in `CHANGELOG.md` when taken.
 - **NOTHING DEPLOYS ON A PUSH - deployment happens at the BUMP** (user, 2026-09-02: *"le deploiement de tout (production, android, ios...) se fait au bump. Pas au push sur main."*). A STABLE release `vX.Y.Z` deploys production and ships the stores; a PRE-RELEASE `vX.Y.Z-alpha.N` deploys `dev.canari-emse.fr` and feeds the store TESTER programmes; a merge to `main` deploys nothing at all and only runs CI. **So a merged fix is not a shipped fix**, and `frontend/package.json`'s version is what decides which kind a release is - a hyphen in it IS the definition of a pre-release, read that way by `release_kind()` in `.github/scripts/lib/release-preconditions.sh` - the ONE implementation - and by `scripts/bump-app-version.sh`'s store band. **`release.yml` IS THE ONLY ENTRY POINT since 2026-09-03**: five gates, then the bump, then `deploy.yml`, `android.yml` and `ios.yml` as CALLED jobs of the same run, all building the commit the bump resolved. **A stable is refused unless dev has already served that commit, `CI passed` is green ON it, and `store/whats-new.txt` names that version** - production being ahead of dev is impossible, not reported. The whole model is on [workflow-migration](docs/wiki/workflow-migration.md) and [cicd](docs/wiki/cicd.md), the only copies.
 - NO FALLBACKS: never add a fallback path. Diagnose why the primary path failed and fix it there.
@@ -165,7 +173,12 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    `pull_request_target`, which is the only context where a Dependabot pull request reaches a
    secret. The 448-line hourly sweep, its 179-line script, its 250-line staleness library and
    `CODEOWNERS` are all DELETED - and so is the whole "rebuild a stale branch" question, whose
-   mechanism was refused ten times out of ten. Model on
+   mechanism was refused ten times out of ten. **The SAME four workflows are now in all four GitHub
+   repos**, one arming file each, byte-identical audit classifier
+   ([ecosystem-convergence](docs/wiki/ecosystem-convergence.md#12-the-cicd-rebuild-2026-09-04---the-same-four-workflows-in-every-repository),
+   the only copy). **All four now require `CI passed` on `main`** - Sky and MiGallery had NO branch
+   protection at all until 2026-09-04 - and the chain was watched end to end: Dependabot rebased,
+   `synchronize` fired, five pull requests armed themselves. Model on
    [cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them). Open items
    include **[the suppression CONTROL CASE the NestJS batch destroyed - Monday 2026-09-07 answers
    it](docs/wiki/backlog.md#p2---the-nine-nestjs-pull-requests-were-closed-in-one-batch-so-the-suppression-question-was-never-measured-on-one-first-and-monday-2026-09-07-is-the-only-thing-that-can-answer-it-now-updated-2026-09-03)**

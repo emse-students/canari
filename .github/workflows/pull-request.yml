@@ -14,6 +14,9 @@
 #   2b `dependency-      ONLY on a Dependabot pull request: does a gate HERE exist that would see
 #      ceiling`          this update fail? A human's pull request carries no `updated-dependencies`
 #                        block to decide on, so it skips
+#   2c `security`        CodeQL, the secret scan and the vulnerability audit, called from
+#                        `code-analysis.yml`. NOT behind `changes`: a secret can be committed in a
+#                        documentation change
 #   3. `ci-passed`       aggregates them. `success` AND `skipped` both pass; it is the ONE check
 #                        the branch ruleset requires, and the only one it could require
 #
@@ -49,13 +52,12 @@ on:
   # tested the merged COMBINATION; the sweep is gone and every merge is now made by the App, whose
   # push does raise the event.
   workflow_dispatch:
-  workflow_call:
-    inputs:
-      git_ref:
-        description: 'Explicit ref to checkout (e.g. main after automated version bump)'
-        type: string
-        required: false
-        default: ''
+  # NO `workflow_call`, DELETED 2026-09-04 WITH ITS `git_ref` INPUT: nothing called it. It was the
+  # sweep's way of testing a merged combination its `GITHUB_TOKEN` merge had raised no `push` for,
+  # and every checkout below carried a `inputs.git_ref != '' && inputs.git_ref || github.sha` that
+  # resolved to `github.sha` on every real run this repository has ever had. A trigger nothing uses
+  # is a claim the file makes about itself that is not true, and six expressions were written around
+  # it.
 
 env:
   CARGO_TERM_COLOR: always
@@ -77,7 +79,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.git_ref != '' && inputs.git_ref || github.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
       - name: Build test matrices
@@ -309,7 +311,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.git_ref != '' && inputs.git_ref || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Cache Cargo registry
         uses: actions/cache@v6
@@ -557,7 +559,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.git_ref != '' && inputs.git_ref || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -655,7 +657,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.git_ref != '' && inputs.git_ref || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -737,7 +739,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.git_ref != '' && inputs.git_ref || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
@@ -763,7 +765,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.git_ref != '' && inputs.git_ref || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Run CI script self-tests
         run: make test-ci-scripts
@@ -869,12 +871,37 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: bash .github/scripts/dependency-ceiling.sh
 
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  # THE SECURITY PASS, AND IT CAN NOW STOP A MERGE
+  #
+  # CodeQL, the TruffleHog secret scan and the vulnerability audit ran on every pull request from
+  # their own workflow until 2026-09-04 - and could not block a single merge, because the branch
+  # ruleset requires exactly one check, `CI passed`, and they were not part of it. A live secret in a
+  # PUBLIC repository or a HIGH advisory produced a red tick beside a mergeable pull request. **A red
+  # tick nothing enforces is worse than no tick, because it looks enforced.**
+  #
+  # `code-analysis.yml` is now a `workflow_call` library with no triggers of its own, called here and
+  # nightly by `scheduled.yml` - one definition, asked at both moments. THE PERMISSIONS BELOW ARE
+  # DERIVED FROM WHAT IT DECLARES, not chosen: a caller caps a called workflow, and exceeding that
+  # cap is a startup failure with no log and no annotation.
+  #
+  # NOT BEHIND `changes`, deliberately. Every other job here is gated on the paths a pull request
+  # touched, which is right for a test suite and wrong for this: a secret can be committed in a
+  # documentation change, and an advisory is about the lockfile a pull request did not have to edit.
+  security:
+    name: Security
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    uses: ./.github/workflows/code-analysis.yml
+
   ci-passed:
     name: CI passed
     if: always()
     needs:
       [changes, test-rust, boot-nest-apps, test-typescript-backend, test-frontend, test-harness, test-ci-scripts,
-      dependency-ceiling]
+      dependency-ceiling, security]
     runs-on: ubuntu-latest
     steps:
       - name: Every job either passed or had nothing to do

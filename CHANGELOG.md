@@ -11,6 +11,74 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed
+
+- **An npm outage was reported as a vulnerability, and it walled every merge in the repository.**
+  The security pass went red on `POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk
+  - 503` five minutes after it asked, with nothing wrong in the tree: `bun audit` exits 1 for an
+  unreachable advisory endpoint exactly as it exits 1 for a real advisory, and the pass had just
+  become part of `CI passed`, so an incident in somebody else's datacentre stopped every pull
+  request here. **A status code is an ANSWER, a transport failure is not** - the gate asks one
+  question, *does this tree contain a known advisory?*, and when the registry does not answer it has
+  NO VERDICT, which is a different thing from a bad one.
+
+  `.github/scripts/audit-dependencies.sh` is now the only place that runs `bun audit`, and it
+  classifies once: `0` clean, `1` an advisory was named, `2` the registry never answered after three
+  attempts. **What a `2` costs differs by caller and is passed in, not decided in the script**: a
+  pull request tolerates it, because a refusal whose only remedy is unavailable is a stop rather
+  than a gate; the nightly pass FAILS on it, because nothing is queued behind that run and its
+  failure is the report saying this tree has now gone a day unaudited. That second half is what
+  keeps a tolerated outage from quietly becoming a tree nobody has audited in a week.
+
+  **The unknown case fails CLOSED, and that is asserted rather than commented.** Only a narrow list
+  of recognised transport failures is classified as silence; the day bun rewords its errors the gate
+  goes red and somebody fixes the pattern, instead of the classifier going green on its own blind
+  spot. `audit-dependencies.test.sh` runs the real script against a fake `bun` - ten assertions
+  covering both sides of the distinction, the policy flip, the unrecognised error, and that the
+  `--ignore=` flags the one suppressed advisory depends on still reach the tool.
+
+### Changed
+
+- **Four workflows became one, and the security pass can now block a merge** (user:
+  *"le moins de workflows differents possibles, ca inonde la console github"*, and *"propres,
+  fonctionnelles, testees, fluides"*). `cache-cleanup.yml`, `dev-refresh.yml` and `host-updates.yml`
+  are deleted; `code-analysis.yml` keeps its jobs and loses its triggers.
+
+  | | Before | After |
+  | --- | --- | --- |
+  | Rows in the Actions list | `pull-request`, `release`, `code-analysis`, `cache-cleanup`, `dev-refresh`, `host-updates` | `pull-request`, `release`, `arm-auto-merge`, `scheduled` |
+  | Called libraries (invisible) | `deploy`, `android`, `ios` | + `code-analysis` |
+
+  **`scheduled.yml` holds everything this repository does on a clock**, one job each, routed by
+  `github.event.schedule`. That cron string is the whole routing mechanism and it appears twice -
+  in the `schedule:` list and in the job's `if:` - with nothing in GitHub comparing them, so
+  `scheduled.test.sh` asserts both directions: a cron nobody claims wakes a run in which every job
+  skips and is GREEN, and a job naming an undeclared cron never runs at all, its only symptom an
+  absence. It also asserts that the hand-dispatch menu reaches every job and names no job that is
+  gone.
+
+  **`code-analysis.yml` is now `workflow_call` only, and that is the substantive half.** CodeQL, the
+  TruffleHog secret scan and the vulnerability audit ran on every pull request and **could not block
+  one**: the branch ruleset requires exactly one check, `CI passed`, and they were not part of it. A
+  live secret in a PUBLIC repository produced a red tick beside a mergeable pull request - *a red
+  tick nothing enforces is worse than no tick, because it looks enforced.* It is called from
+  `pull-request.yml` as a job feeding `ci-passed`, and from `scheduled.yml` nightly, which is the
+  half a pull request cannot see: a new advisory landing against code nobody touched. One
+  definition, two moments. This closes the open P2.
+
+  **And `pull-request.yml`'s `workflow_call` trigger is gone with its `git_ref` input**, because
+  nothing called it. It was the sweep's way of testing a merged combination whose `GITHUB_TOKEN`
+  merge raised no `push`; every merge is now made by the App, whose push does raise the event. Six
+  checkout steps carried `inputs.git_ref != '' && inputs.git_ref || github.sha`, which resolved to
+  `github.sha` on every real run this repository has ever had - a trigger nothing uses is a claim a
+  file makes about itself that is not true, and six expressions were written around it.
+
+- **The self-hosted concurrency assertion is asked per JOB rather than per FILE.** It read the
+  workflow for a top-level `concurrency:`, which was right while one workflow meant one estate job -
+  and would have passed `scheduled.yml` outright, either on a file-level group that queues a
+  read-only host report behind a dev refresh, or on a file with one guarded job and one unguarded
+  one. The property is about the job that reaches the machine.
+
 ### Removed
 
 - **The hourly Dependabot sweep, and `CODEOWNERS`** (user: *"pourquoi Dependabot auto-merge existe

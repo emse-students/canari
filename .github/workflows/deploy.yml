@@ -50,7 +50,7 @@ on:
 
 # TWO DEPLOYS OF THE SAME ESTATE MUST NOT OVERLAP, and until 2026-09-02 nothing said so. Three runs
 # were in flight against `/home/canari/canari` at once, each able to `git reset --hard` and
-# `docker compose up` while another was mid-flight; `dev-refresh.yml`
+# `docker compose up` while another was mid-flight; `scheduled.yml`'s `dev-refresh` job
 # both serialise themselves, and the workflow that actually touches production did not. It does not
 # take a burst of human pushes either. The dev arm doubles the exposure, `/home/canari/canari-dev`
 # being a second checkout two runs would race on identically, which is why ONE group covers both
@@ -477,7 +477,7 @@ jobs:
   # WHAT DEV IS FOR SINCE THE MIGRATION (user, 2026-09-02). It is no longer a rehearsal stage that
   # every change passes through - development is LOCAL now - it is where a `X.X.X-alpha.N`
   # pre-release lands, and what the Play internal track and the TestFlight internal group point at.
-  # `dev-refresh.yml` keeps feeding it a copy of production every Monday, so an alpha still meets
+  # `scheduled.yml`'s `dev-refresh` job keeps feeding it a copy of production every Monday, so an alpha still meets
   # production-shaped data.
   #
   # THE GATE IS A REPOSITORY VARIABLE, NOT A SECRET. `vars.DEV_ENVIRONMENT_ENABLED` unset means this

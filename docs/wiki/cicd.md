@@ -249,7 +249,7 @@ production's value. **Production's own deploy job is deliberately NOT on these s
 moves once dev has exercised them. Everything about the estate itself is on
 [dev-environment](infrastructure/dev-environment.md), the only copy.
 
-`dev-refresh.yml` copies production's data into dev weekly (Mondays 04:00 UTC) and on demand, behind
+`scheduled.yml`'s `dev-refresh` job copies production's data into dev weekly (Mondays 04:00 UTC) and on demand, behind
 the same gate.
 
 ### The store arms (`ios.yml`, `android.yml`)
@@ -628,7 +628,7 @@ Three details decide the shape, and only the first is obvious.
 
 `deploy-env.test.sh` asserts this, DERIVED from `runs-on: self-hosted` rather than from a list of
 workflow names - there is exactly one such runner, and a typed list would pass on the day somebody
-adds the third workflow. `dev-refresh.yml` carries its own `dev-refresh` group and satisfies the same
+adds the third workflow. `scheduled.yml`'s `dev-refresh` job carries its own `dev-refresh` group and satisfies the same
 rule.
 
 **Still open, and not covered by either group:** a dev refresh and a dev deploy can overlap, the
@@ -1227,6 +1227,50 @@ curl -sSL -o sc.zip https://github.com/koalaman/shellcheck/releases/download/v0.
 # unzip, then, from the repo root:
 ./shellcheck.exe -x .github/scripts/*.sh .github/scripts/lib/*.sh .github/scripts/tests/*.sh
 ```
+
+### The npm advisory endpoint's silence is not a verdict, and telling them apart is one script
+
+`bun audit` exits **1** for `POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - 503`
+exactly as it exits 1 for a real advisory. On 2026-09-03 that turned a five-minute npm outage into a
+red `Check Dependencies Vulnerabilities`, a red `CI passed`, and a repository in which nothing could
+merge - over a tree in which nothing was wrong. It bit on that day and not before because the
+security pass had just become part of `CI passed`; the same 503 a week earlier produced a red tick
+nobody was waiting on.
+
+`.github/scripts/audit-dependencies.sh` is the only place that runs `bun audit`, and it answers with
+three exit codes rather than two:
+
+| Exit | What it means | Who decides what it costs |
+| --- | --- | --- |
+| `0` | the registry answered and the tree is clean | - |
+| `1` | the registry answered and named an advisory | always a failure |
+| `2` | the registry never answered, after three attempts | **the caller** |
+
+**A `2` is not a verdict about the tree**, so what it costs is passed in as
+`registry_outage_is_failure`, an input on `code-analysis.yml`:
+
+- **a pull request tolerates it.** A refusal whose only remedy is unavailable is a stop, not a gate,
+  and nobody in this repository can restore npm.
+- **the nightly `scheduled.yml` pass FAILS on it.** Nothing is queued behind that run, so the
+  failure costs no merge and IS the report: this tree has now gone a day unaudited. Without that
+  half, a tolerated outage quietly becomes a tree nobody has audited in a week, with only warnings
+  in closed logs to show for it.
+
+**The unknown case fails CLOSED, and that stopped being hypothetical within the hour.** Only a
+narrow list of recognised transport failures is classified as silence; anything else is a finding.
+**The wording differs by bun version** - the same npm 503, the same evening, in two repositories:
+
+| bun | the line |
+| --- | --- |
+| 1.4.0 | `error: POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - 503` |
+| 1.3.8 | `error: audit request failed (status 503)` |
+
+The portal met the second with a classifier that knew only the first, and it did exactly what it
+should: reported a finding, went red, and was fixed. Both shapes are now asserted, so a repository's
+bun version stops being able to decide the verdict. *A classifier that fails open on its own blind
+spot stops auditing and reports success for ever.* `audit-dependencies.test.sh` asserts that direction explicitly, alongside
+both sides of the distinction, the policy flip, and the fact that the `--ignore=` flags the one
+suppressed advisory rests on still reach the tool.
 
 ## Notable CI gotchas
 
