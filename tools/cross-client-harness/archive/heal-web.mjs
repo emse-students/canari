@@ -28,7 +28,7 @@ import { APP_TAB, client, evaluate, markers, openConversation, send } from '../c
 import { watch } from '../watch.mjs';
 import { mark, record } from '../results.mjs';
 import { execFileSync } from 'node:child_process';
-import { peerNameFor } from '../names.mjs';
+import { PORTS, peerNameFor } from '../names.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const REWIND_SENDS = Number(process.env.REWIND_SENDS || 12);
@@ -171,8 +171,8 @@ const repairLines = (cx, sinceT) =>
     .map(stamp);
 
 // --------------------------------------------------------------------------- clients
-const w1 = await client(9224, APP_TAB, { focus: false });
-const w2 = await client(9223, APP_TAB, { focus: false });
+const w1 = await client(PORTS.W1, APP_TAB, { focus: false });
+const w2 = await client(PORTS.W2, APP_TAB, { focus: false });
 // BOTH are reloaded, and W2's reload is not optional. A history bundle inserts hundreds of OLDER
 // messages into a virtualised list, and the mounted window then stays anchored in the past: after
 // one run, W2's pane ended on messages from 12:40 with the scroller already at its maximum, so

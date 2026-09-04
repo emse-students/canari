@@ -15,7 +15,7 @@
  *   bun invite.mjs --port 9223               (invites the OTHER party, whoever this port is)
  *   bun invite.mjs --port 9223 --probe       (report the panel, change nothing)
  */
-import { APP_TAB, client, evaluate, goto, realClick, until } from './chat.mjs';
+import { APP_TAB, clickAtPoint, client, evaluate, goto, realClick, until } from './chat.mjs';
 import { PORTS, peerNameFor } from './names.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -165,16 +165,7 @@ const spot = JSON.parse(
 );
 const picked = spot?.text ?? null;
 if (spot) {
-  await cx.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: spot.x, y: spot.y, buttons: 0 });
-  for (const type of ['mousePressed', 'mouseReleased'])
-    await cx.send('Input.dispatchMouseEvent', {
-      type,
-      x: spot.x,
-      y: spot.y,
-      button: 'left',
-      clickCount: 1,
-      buttons: type === 'mousePressed' ? 1 : 0,
-    });
+  await clickAtPoint(cx, spot.x, spot.y);
   await sleep(1200);
 }
 if (!picked) throw new Error(`no search result for ${who}`);

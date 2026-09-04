@@ -1810,6 +1810,7 @@ export const AUTH_TEARDOWN_NARRATION = [/^\[A\] clear$/, /^\[A\] ws-$/];
  */
 export const BLOCK_LIST_READ_NARRATION = [/^\[blocks\.listBlockedUsers\]$/];
 
+
 /**
  * THE REFUSAL A CLIENT THAT HAS JUST DELETED ITS OWN COOKIES GETS BACK, forgiven per row.
  *

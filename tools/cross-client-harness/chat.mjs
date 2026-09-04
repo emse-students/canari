@@ -10,7 +10,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { GATE_EXPR } from './gate-probe.mjs';
-import { IS_MOVING_FN, RESOLVE, activate, clickAtPoint, connect, dragTo, evaluate, listTargets, pressKey, realClick, reloadAndWait, stablePoint, until } from './cdp.mjs';
+import { IS_MOVING_FN, RESOLVE, activate, clickAtPoint, connect, dragTo, evaluate, listTargets, parkPointer, pressKey, realClick, reloadAndWait, stablePoint, until } from './cdp.mjs';
 // For the device check in `goto`: the phone is the one client a reload costs something on.
 import { PORTS, SITE, VENUE } from './names.mjs';
 
@@ -707,6 +707,15 @@ export async function clearOverlays(cx) {
  * user's click does not, and that difference is itself a bug this campaign has already found once.
  */
 export async function ensureChat(cx) {
+  // A POINTER LEFT OVER THE NAV RAIL IS A PRECONDITION TOO, AND IT IS AMBIENT UNTIL SOMETHING
+  // ESTABLISHES IT. `AppSidebar` expands on hover and stays expanded for as long as the synthetic
+  // pointer rests on it, covering the whole conversation list - so a client picked up after a run
+  // that was killed mid-gesture, or after any click that did not park, fails its first tile click
+  // with `no stable element` and accuses the sidebar. `parkPointer` is the one implementation, and
+  // this is the one place every runner passes through before it touches anything. See FWD-1,
+  // 2026-09-05.
+  await parkPointer(cx);
+
   // A SIGNED-OUT OR LOCKED CLIENT IS A PRECONDITION, NOT A MISSING BUTTON.
   //
   // Neither screen has a "Discussions" link, so both used to die four frames later inside
@@ -895,13 +904,27 @@ export async function openChannel(cx, community = VENUE.community, channel = VEN
       )
     );
 
-  // A1 reloads here, DECLARED rather than accidental: there is no click path to `/communities` from
-  // an arbitrary screen on the phone the way `ensureChat` gives one to `/chat`, so this is the only
-  // way in until one is written. It costs what `goto` documents - a PIN re-lock and, if a command is
-  // in flight, a `runCallback` exception into the fresh document - so a phone verdict that goes dirty
-  // on either of those inside a channel check is the RIG, not the app. Writing that click path is
-  // what removes the last A1 reload from the campaign.
-  await goto(cx, '/communities', { relaunch: 'no click path to /communities on the phone yet' });
+  // THE PHONE'S CONSTRAINT WAS BEING PAID BY THE BROWSERS TOO, AND IT CHANGED WHAT ROWS MEASURED.
+  // This was an unconditional `goto`, which is a FULL PAGE LOAD - justified on A1, where there is
+  // no click path to `/communities` the way `ensureChat` gives one to `/chat`. On W1/W2 there is
+  // one: the nav rail's own anchor, present in the DOM whether the rail is collapsed or expanded,
+  // and clicking it is a SvelteKit client-side navigation. Measured 2026-09-05: three `openChannel`
+  // calls produced THREE `Page.loadEventFired` and wiped a page-level stamp each time; the click
+  // path produces none and lands on `/communities` just the same.
+  //
+  // WHAT THAT COST WAS NOT ONLY TIME. Every row that opens a channel was measuring a COLD BOOT, and
+  // a loop of them was a loop of cold boots - FWD-2 asks for "the same forward 25 times in a loop"
+  // and was reloading the application between every one, which is a different question with a
+  // different answer. It is also why anything the app counts per session reset on every round.
+  if (isPhone(cx)) {
+    // Still declared rather than accidental here, and it costs what `goto` documents: a PIN re-lock
+    // and, if a command is in flight, a `runCallback` exception into the fresh document. A phone
+    // verdict that goes dirty on either of those inside a channel check is the RIG, not the app.
+    await goto(cx, '/communities', { relaunch: 'no click path to /communities on the phone yet' });
+  } else {
+    await realClick(cx, 'a[href="/communities"]');
+    await until(cx, `location.pathname.indexOf('/communities') === 0`, 10000);
+  }
   await awaitListed(cx, `!!${RESOLVE}('text=${community}')`, 20000, 'the community', cx.port);
   // SETTLE BEFORE EVERY CLICK, not once at the top: the community click itself starts work that can
   // raise a strip again, so the state has to be re-established rather than assumed to persist.
@@ -1693,7 +1716,15 @@ export async function bubbleCentre(cx, textMatch) {
   return seen;
 }
 
-/** Hovers a bubble so its action row appears, and returns what became clickable. */
+/**
+ * Hovers a bubble so its action row appears, and returns what became clickable.
+ *
+ * THE ONE PLACE IN THIS RIG THAT LEAVES THE POINTER WHERE IT PUT IT, and it is deliberate: the
+ * action row is rendered BY the hover and disappears with it, so parking here would close the thing
+ * the caller is about to click. Every other raw mouse dispatch went through `clickAtPoint` on
+ * 2026-09-05 - five copies of the same gesture, none of which parked - after a pointer left on the
+ * nav rail kept `AppSidebar` expanded over the whole conversation list and failed FWD-1.
+ */
 export async function hoverBubble(cx, textMatch) {
   const c = await bubbleCentre(cx, textMatch);
   await cx.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: c.x, y: c.y, buttons: 0 });

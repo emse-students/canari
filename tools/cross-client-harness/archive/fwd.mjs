@@ -16,18 +16,19 @@
  */
 import { APP_TAB, awaitMessage, clickBubbleAction, client, countMessage, ensureChat, evaluate, openChannel, openConversation, realClick, send, settledCount, until } from '../chat.mjs';
 import { watch, report, dirtOf, gate } from '../watch.mjs';
+import { ignoringStrandedMentions } from '../stranded.mjs';
 import { finish, mark } from '../results.mjs';
 // NO DISPLAY NAME IS EVER SPELT IN A CHECK. `names.mjs` is the one file that holds real identities
 // and the one file that never reaches the repo, which is PUBLIC - so a check that imports cannot
 // leak, and a check that spells the name relies on someone noticing before the mirror. One did not:
 // the peer's full name reached the public archive in 95d76fdf that way.
-import { peerNameFor } from '../names.mjs';
+import { PORTS, peerNameFor } from '../names.mjs';
 
 const N = Number(process.argv[2] || 1);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const w1 = await client(9224, APP_TAB);
-const w2 = await client(9223, APP_TAB);
+const w1 = await client(PORTS.W1, APP_TAB);
+const w2 = await client(PORTS.W2, APP_TAB);
 
 // The receiver sits in the DM for the whole run: the loss is about what ARRIVES there, and moving
 // it around would add navigation as a variable the original report did not have.
@@ -77,8 +78,12 @@ for (let i = 0; i < N; i++) {
       sends.push(`FAILED ${p.errorText}`);
   }
 
-  const obs2 = await report(ow2);
-  const obs1 = await report(ow1);
+  // THE VENUE CHANNEL CARRIES THREE MENTIONS OF ACCOUNTS THAT DO NOT EXIST, and this check posts
+  // into it - so the sender renders those chips every round and collects their 404s. It has no
+  // opinion about user profiles; `ignoringStrandedMentions` names exactly those three ids and
+  // nothing else, and its docblock carries the reason the fixture is left in place.
+  const obs2 = ignoringStrandedMentions(await report(ow2));
+  const obs1 = ignoringStrandedMentions(await report(ow1));
   reports[`W1#${i}`] = obs1;
   reports[`W2#${i}`] = obs2;
   rows.push({

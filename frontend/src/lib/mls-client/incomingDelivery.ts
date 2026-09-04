@@ -35,3 +35,13 @@ export function parseServerTimestampMs(raw: unknown): number | undefined {
 
 /** @deprecated Prefer {@link parseServerTimestampMs}. */
 export const parseQueuedCreatedAt = parseServerTimestampMs;
+
+/**
+ * A repeat, named by WHO offered the second copy and WHAT this device had already done with it.
+ *
+ * The four combinations are not four spellings of one event: three are crossings nothing can
+ * prevent, and `live:done` is the only one no crossing explains - the socket publishes once, at
+ * send, and never replays the queue on connect. Keeping them apart as a type is what lets the
+ * counters be per shape, which is what makes their rate mean anything.
+ */
+export type DeliveryRepeatShape = `${DeliveryChannel}:${'queued' | 'done'}`;

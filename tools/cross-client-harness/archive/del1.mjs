@@ -51,11 +51,12 @@
  *
  *   bun del1.mjs [--keep]     --keep leaves the group behind for manual inspection
  */
-import { APP_TAB, awaitGatewayConnected, client, evaluate, realClick, until } from '../chat.mjs';
+import { APP_TAB, awaitGatewayConnected, clickAtPoint, client, evaluate, realClick, until } from '../chat.mjs';
 import { usernames } from '../accounts.mjs';
 import { armCut, cutHard } from './net.mjs';
 import { mark, record } from '../results.mjs';
 import { consoleLines, gate, report, watch } from '../watch.mjs';
+import { PORTS } from '../names.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // THE CAMPAIGN'S OWN STAMP, so the group this check leaves behind on a failure is recognisable as
@@ -64,8 +65,8 @@ const run = mark('DEL1');
 const NAME = run;
 const keep = process.argv.includes('--keep');
 
-const W1 = await client(9224, APP_TAB, { focus: false });
-const W2 = await client(9223, APP_TAB, { focus: false });
+const W1 = await client(PORTS.W1, APP_TAB, { focus: false });
+const W2 = await client(PORTS.W2, APP_TAB, { focus: false });
 
 // FROM THE FIRST GESTURE, not from the delete: what a run leaves in the console is evidence about
 // the whole flow, and a window opened at the verdict would miss the join that armed it.
@@ -300,16 +301,7 @@ for (const q of candidates) {
   const hit = await trySearch(q);
   if (!hit) continue;
   console.log(`[del1] trying ${JSON.stringify(q)} -> option ${JSON.stringify(hit.text)}`);
-  await W1.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: hit.x, y: hit.y, buttons: 0 });
-  for (const type of ['mousePressed', 'mouseReleased'])
-    await W1.send('Input.dispatchMouseEvent', {
-      type,
-      x: hit.x,
-      y: hit.y,
-      button: 'left',
-      clickCount: 1,
-      buttons: type === 'mousePressed' ? 1 : 0,
-    });
+  await clickAtPoint(W1, hit.x, hit.y);
   await sleep(1200);
   const enabled = await evaluate(
     W1,

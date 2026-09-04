@@ -521,6 +521,33 @@ export async function whyNotStable(cx, selector) {
 }
 
 /**
+ * PUTS THE POINTER BACK ON NEUTRAL GROUND, and it is a PRECONDITION rather than a courtesy.
+ *
+ * A synthetic pointer never leaves where it was put. `AppSidebar` expands on `onmouseenter` after a
+ * hover-intent delay and dims a backdrop over the page while it is open, so a pointer left anywhere
+ * over the left rail keeps the whole navigation drawer standing for the rest of the session - and
+ * every hit-test in the sidebar then resolves to a nav link. Measured 2026-09-05 on W2: FWD-1 died
+ * on `no stable element for selector: [data-conversation-tile="..."]`, naming
+ * `A.group relative flex h-12 w-full ...` as what was on top, which reads as the conversation list
+ * being broken. One `mouseMoved` to the right edge collapsed it and the tile was reachable again.
+ *
+ * The right edge at mid-height is chosen because nothing in this application opens on hovering it:
+ * the rail is left, the header is top, the composer and the action bars are inside the pane.
+ *
+ * EXPORTED because a click is not the only thing that leaves a pointer somewhere. A run killed
+ * mid-gesture leaves one too, and no amount of care at the click sites can undo that - so anything
+ * that PICKS UP an existing client establishes this rather than assuming it.
+ */
+export async function parkPointer(cx) {
+  const rest = await evaluate(
+    cx,
+    `JSON.stringify({ x: innerWidth - 3, y: Math.round(innerHeight / 2) })`
+  );
+  const { x, y } = JSON.parse(rest);
+  await cx.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, buttons: 0 });
+}
+
+/**
  * Dispatches ONE recorded click at a point, with the input modality the target actually listens to.
  *
  * THE TRAP, paid for on A1: mobile Chrome does NOT activate a button from
@@ -573,11 +600,7 @@ export async function clickAtPoint(cx, x, y, { park = true, expect = null } = {}
     // over the conversation list and every later hit-test returned the NAV, which read exactly like
     // a layout bug in the app. Clicking is an event, not a resting state - so return the pointer to
     // neutral ground. Pass { park: false } where sustained hover is the thing under test.
-    if (park) {
-      const rest = await evaluate(cx, `JSON.stringify({ x: innerWidth - 3, y: Math.round(innerHeight / 2) })`);
-      const { x: rx, y: ry } = JSON.parse(rest);
-      await cx.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: rx, y: ry, buttons: 0 });
-    }
+    if (park) await parkPointer(cx);
   }
   return { modality: touch ? 'touch' : 'mouse', received: await lastClick(cx) };
 }

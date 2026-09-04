@@ -69,8 +69,8 @@ async function forwardFromChannel(cx, marker) {
   await until(cx, `!document.querySelector('[role=dialog]')`, 15000);
 }
 
-const w1 = await client(9224, APP_TAB);
-const w2 = await client(9223, APP_TAB);
+const w1 = await client(PORTS.W1, APP_TAB);
+const w2 = await client(PORTS.W2, APP_TAB);
 const a1 = await client(PORTS.A1);
 await ensureChat(w2);
 await openConversation(w2, peerNameFor('W2'));

@@ -13,8 +13,8 @@ import { gate, logcatReport, logcatSince, report, sanity, watch } from '../watch
 import { mark, record } from '../results.mjs';
 import { PORTS } from "../names.mjs";
 
-const w1 = await client(9224);
-const w2 = await client(9223);
+const w1 = await client(PORTS.W1);
+const w2 = await client(PORTS.W2);
 const a1 = await client(PORTS.A1);
 const named = [
   ['W1', w1],

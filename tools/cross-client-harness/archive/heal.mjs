@@ -17,7 +17,7 @@ const a1 = await client(PORTS.A1, 'tauri.localhost');
 await ensureChat(a1).catch(() => null);
 await openConversation(a1, peerNameFor('A1')).catch(() => null);
 
-const w2 = await client(9223, APP_TAB);
+const w2 = await client(PORTS.W2, APP_TAB);
 await ensureChat(w2);
 await openConversation(w2, peerNameFor('W2'));
 

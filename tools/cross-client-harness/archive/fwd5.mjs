@@ -29,7 +29,7 @@ import {
 import { watch, report, dirtOf } from '../watch.mjs';
 import { finishObserved, mark } from '../results.mjs';
 // See fwd.mjs: a real display name belongs in names.mjs, which never reaches the public repo.
-import { peerNameFor } from '../names.mjs';
+import { PORTS, peerNameFor } from '../names.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 
 const N = Number(process.argv[2] || 3);
@@ -51,8 +51,8 @@ function sendsOf(cx) {
   return out;
 }
 
-const w1 = await client(9224, APP_TAB);
-const w2 = await client(9223, APP_TAB);
+const w1 = await client(PORTS.W1, APP_TAB);
+const w2 = await client(PORTS.W2, APP_TAB);
 await ensureChat(w2);
 await openConversation(w2, peerNameFor('W2'));
 

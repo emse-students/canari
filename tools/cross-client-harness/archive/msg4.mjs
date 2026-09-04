@@ -19,8 +19,8 @@ import { record, mark } from '../results.mjs';
 import { peerNameFor } from '../names.mjs';
 
 
-const w1 = await client(9224, APP_TAB);
-const w2 = await client(9223, APP_TAB);
+const w1 = await client(PORTS.W1, APP_TAB);
+const w2 = await client(PORTS.W2, APP_TAB);
 
 await ensureChat(w1);
 await openConversation(w1, peerNameFor('W1'));

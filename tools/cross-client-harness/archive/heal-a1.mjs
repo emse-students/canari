@@ -112,14 +112,14 @@ const repairLines = (cx, sinceT) =>
 
 // --------------------------------------------------------------------------- clients
 const a1 = await client(PORTS.A1, null, { focus: false });
-const w2 = await client(9223, APP_TAB, { focus: false });
+const w2 = await client(PORTS.W2, APP_TAB, { focus: false });
 
 // Park W1 so the responder election has exactly one candidate. Reversible: `about:blank` drops the
 // in-memory access token, not the refresh cookie, so navigating back logs in again (and re-locks
 // the PIN, which `pin.mjs` handles).
 // No `match`: a previous run may already have parked it, and a check that cannot run twice is a
 // check that will be run once and then trusted forever.
-const w1 = await client(9224, null, { focus: false });
+const w1 = await client(PORTS.W1, null, { focus: false });
 const w1Url = await evaluate(w1, 'location.href');
 if (!w1Url.startsWith('about:')) await w1.send('Page.navigate', { url: 'about:blank' });
 console.log(`[heal-a1] W1 parked (was ${w1Url}) - W2 is the only device that can answer`);

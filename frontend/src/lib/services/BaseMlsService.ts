@@ -50,7 +50,11 @@ import {
 import { attemptCommitReplay } from '$lib/utils/chat/commitReplay';
 import { markEpochGap, clearEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { runAsEpochAdvance, runAsEpochSend } from '$lib/utils/chat/epochSendBarrier';
-import { parseServerTimestampMs, type DeliveryChannel } from '$lib/mls-client/incomingDelivery';
+import {
+  parseServerTimestampMs,
+  type DeliveryChannel,
+  type DeliveryRepeatShape,
+} from '$lib/mls-client/incomingDelivery';
 import { classifyIncomingDecryptError } from '$lib/mls-client/mlsDecryptError';
 import { scopeKey, scopeLabel, type DistributionScope } from '$lib/mls-client/distributionScope';
 import {
@@ -963,6 +967,40 @@ export abstract class BaseMlsService implements IMlsService {
     },
   };
 
+  /**
+   * HOW OFTEN EACH REPEAT SHAPE HAPPENS, which is the reading the shape's SENTENCE cannot give.
+   *
+   * Three of the four are crossings nothing can prevent - two channels carry the same row and one
+   * is always late - so their per-occurrence lines said the same true thing over and over. What
+   * decides anything is the rate: `pull:done` at one per send is the ordinary cost of a send under
+   * load (measured 23/25 by FWD-2, 2026-09-05), and the same shape appearing many times for ONE
+   * group is a pull firing on something other than an event, which is a defect.
+   *
+   * In the instance and not the module because two services can exist at once in a test.
+   */
+  private readonly repeats: Record<DeliveryRepeatShape, number> = {
+    'pull:queued': 0,
+    'pull:done': 0,
+    'live:queued': 0,
+    'live:done': 0,
+  };
+
+  /** The counters as a sentence, for the accusing line. Only shapes that happened are named. */
+  private repeatSummary(): string {
+    const seen = Object.entries(this.repeats).filter(([, n]) => n > 0);
+    return seen.length ? seen.map(([k, n]) => `${k}=${n}`).join(' ') : 'none';
+  }
+
+  /**
+   * What the repeat counters say right now.
+   *
+   * Exported through the instance rather than read off module state, so a test and a debug surface
+   * ask the same question in the same way - the shape {@link displayNameLookupStats} established.
+   */
+  deliveryRepeatStats(): Record<DeliveryRepeatShape, number> {
+    return { ...this.repeats };
+  }
+
   /** Enqueues a message and starts the per-group fair drain loop if idle. */
   /**
    * True when this delivery has never been taken in, so it may enter the queue.
@@ -988,12 +1026,29 @@ export abstract class BaseMlsService implements IMlsService {
     // is a pull firing on something other than an event - but the SHAPE is what says whose defect
     // it would be, and the shape is now named.
     const meaning = BaseMlsService.REPEAT_MEANS[channel][known];
+    const shape = `${channel}:${known}` as DeliveryRepeatShape;
+    this.repeats[shape] += 1;
     const line =
       `[QUEUE] delivery ${queuedMessageId.slice(0, 8)}... arrived twice - ${meaning.say};` +
       ` not decrypting it again` +
       (known === 'done' ? ', acknowledging it once more' : '');
-    if (meaning.accuse) console.warn(line);
-    else console.log(line);
+    // A RATE IS NOT READ ONE LINE AT A TIME, and this comment used to say so while the code printed
+    // one line at a time anyway. FWD-2 measured it on 2026-09-05: twenty-five forwards back to back,
+    // and `pull:done` - the ack still in flight when the pull was answered - fired in TWENTY-THREE
+    // of them. That is not a race, it is what a send costs under load; a reader learns to skip it,
+    // and the line it hides next is the one that mattered.
+    //
+    // SO THE ROUTINE SHAPES EXPLAIN THEMSELVES ONCE AND ARE COUNTED AFTERWARDS. Not demoted - a
+    // `debug` line is still a line, and the first occurrence still says the whole sentence. The
+    // count is what answers the question the sentence cannot ("is this every send, or one in
+    // three hundred"), it rides on the accusation below where a reader is already looking, and
+    // {@link deliveryRepeatStats} hands it to a test and a debug surface without either reaching
+    // into module state.
+    if (meaning.accuse) {
+      console.warn(`${line} [repeats so far: ${this.repeatSummary()}]`);
+    } else if (this.repeats[shape] === 1) {
+      console.log(`${line}. Further ones of this shape are counted, not printed`);
+    }
     if (known === 'done') {
       void this.delivery
         .ackMessages([queuedMessageId])

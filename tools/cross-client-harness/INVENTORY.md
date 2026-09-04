@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-48 scripts.
+49 scripts.
 
 | script | what it is |
 |---|---|
@@ -67,6 +67,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `srvlog.mjs` | THE THIRD OBSERVER: production's own logs, classified the way the browser's are. |
 | `ssh.mjs` | THE ONE WAY THIS HARNESS REACHES PRODUCTION. |
 | `state.mjs` | One-line health read of every web client - the thing to run when a check behaves oddly. |
+| `stranded.mjs` | WHAT THE VENUE CHANNEL'S HISTORY PERMANENTLY CONTAINS, AND THE ONLY 404s IT MAY PRODUCE. |
 | `unlock.mjs` | Unlocks every client that needs it, resolving WHICH ACCOUNT owns each port by itself. |
 | `venue.mjs` | Builds the campaign's SHARED venue if it is not there, and states what it found if it is. |
 | `watch.mjs` | Continuous observation of a client while a check runs: console, page errors, HTTP, WebSocket. |
@@ -156,7 +157,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-15 scripts.
+16 scripts.
 
 | script | what it is |
 |---|---|
@@ -169,6 +170,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/instrument-selftest.mjs` | THE HASH THAT SAYS WHAT A CHECK MEASURES WITH IS ONLY WORTH ANYTHING IF IT SEES EVERY FILE. |
 | `archive/logcatclassify-selftest.mjs` | EVERY RULE OF THE PHONE CLASSIFIER, PINNED AGAINST A LINE WHOSE BUCKET IS KNOWN. |
 | `archive/lucide-selftest.mjs` | EVERY `.lucide-*` CLASS THIS RIG AIMS AT MUST BE ONE THE APPLICATION ACTUALLY RENDERS. |
+| `archive/ports-selftest.mjs` | NO CHECK MAY SPELL A DEVTOOLS PORT. `names.mjs` IS WHERE A DEVICE IS NAMED. |
 | `archive/ready-selftest.mjs` | The preflight's readiness probe, exercised on the pages it has to tell apart. |
 | `archive/residue-selftest.mjs` | Pins the border between what a native wipe must leave nothing of and what it may leave. |
 | `archive/servable-selftest.mjs` | The subset rule that decides HEAL-NEW-2 and -12, exercised on the sidebars it has to tell apart. |
@@ -226,4 +228,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-165 scripts in total.
+167 scripts in total.

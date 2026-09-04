@@ -32,7 +32,7 @@ import { APP_TAB, client, evaluate, goto, markers, openConversation, send } from
 import { openGroup as openGroupByName } from '../groupnav.mjs';
 import { watch, report, consoleLines, gate } from '../watch.mjs';
 import { mark, record } from '../results.mjs';
-import { peerNameFor } from '../names.mjs';
+import { PORTS, peerNameFor } from '../names.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const GROUP = `HGRP${Math.random().toString(36).slice(2, 7)}`;
@@ -64,8 +64,8 @@ const seen = async (cx, prefix, budgetMs) => {
   return best;
 };
 
-const w1 = await client(9224, APP_TAB, { focus: false }); // the OWNER - the device under test
-const w2 = await client(9223, APP_TAB, { focus: false }); // the PEER - the one that sends
+const w1 = await client(PORTS.W1, APP_TAB, { focus: false }); // the OWNER - the device under test
+const w2 = await client(PORTS.W2, APP_TAB, { focus: false }); // the PEER - the one that sends
 
 /** The group under test, opened by name with a post-condition - see `groupnav.mjs`. */
 const openGroup = (cx, label, opts = {}) => openGroupByName(cx, GROUP, { ...opts, label });

@@ -29,7 +29,7 @@ const SIGNAL = `(function () {
 })()`;
 
 const a1 = await client(PORTS.A1);
-const w2 = await client(9223, APP_TAB);
+const w2 = await client(PORTS.W2, APP_TAB);
 
 // PROVEN, not assumed - a composer says a conversation is open, never which. See `ensureConversation`.
 await ensureConversation(a1, PEER_NAME);

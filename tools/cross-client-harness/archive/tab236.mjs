@@ -60,8 +60,8 @@ function unlock(port, account) {
 
 // ── TAB-2: the tab is closed, a message arrives, the tab is reopened ──────────
 if (which === '2') {
-  const w1 = await client(9224, APP_TAB);
-  const w2 = await client(9223, APP_TAB);
+  const w1 = await client(PORTS.W1, APP_TAB);
+  const w2 = await client(PORTS.W2, APP_TAB);
   await ensureChat(w2);
   await openConversation(w2, peerNameFor('W2'));
 
@@ -92,7 +92,7 @@ if (which === '2') {
   const pinResult = unlock(PORTS.W1, ACCOUNT_OF.W1);
   await sleep(4_000);
 
-  const w1b = await client(9224, APP_TAB);
+  const w1b = await client(PORTS.W1, APP_TAB);
   const o1 = await watch(w1b, 'tab2-w1');
   await openConversation(w1b, peerNameFor('W1'));
   const arrived = await awaitMessage(w1b, m, 30_000).then(() => true, () => false);
@@ -116,7 +116,7 @@ if (which === '2') {
 
 // ── TAB-3: the whole browser is killed, messages arrive, it is relaunched ─────
 if (which === '3') {
-  const w2 = await client(9223, APP_TAB);
+  const w2 = await client(PORTS.W2, APP_TAB);
   await ensureChat(w2);
   await openConversation(w2, peerNameFor('W2'));
 
@@ -137,12 +137,12 @@ if (which === '3') {
 
   // Assert the profile carried the login BEFORE unlocking: the PIN modal is not a login form, and
   // the distinction is the whole point of this check.
-  const w1 = await client(9224, APP_TAB);
+  const w1 = await client(PORTS.W1, APP_TAB);
   const loginShowing = await evaluate(w1, LOGIN_SHOWING);
   const pinResult = unlock(PORTS.W1, ACCOUNT_OF.W1);
   await sleep(4_000);
 
-  const w1b = await client(9224, APP_TAB);
+  const w1b = await client(PORTS.W1, APP_TAB);
   const o1 = await watch(w1b, 'tab3-w1');
   await ensureChat(w1b);
   await openConversation(w1b, peerNameFor('W1'));
@@ -176,7 +176,7 @@ if (which === '3') {
 
 // ── TAB-6: the refresh cookie is deleted, then the app is made to act ─────────
 if (which === '6') {
-  const w1 = await client(9224, APP_TAB);
+  const w1 = await client(PORTS.W1, APP_TAB);
   const o1 = await watch(w1, 'tab6-w1');
   await w1.send('Network.enable');
 
@@ -204,7 +204,7 @@ if (which === '6') {
   await w1.send('Page.reload');
   await sleep(15_000);
 
-  const w1b = await client(9224, APP_TAB);
+  const w1b = await client(PORTS.W1, APP_TAB);
   const loginShowing = await evaluate(w1b, LOGIN_SHOWING);
   const path = await evaluate(w1b, 'location.pathname');
   const bodyText = String(await evaluate(w1b, 'document.body ? document.body.innerText.slice(0, 400) : ""'));

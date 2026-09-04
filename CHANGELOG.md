@@ -13,6 +13,17 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A delivery crossing that happens on nearly every send printed a line every time, and its own
+  comment said the RATE was the reading that mattered.** Two channels carry the same row - the live
+  socket and the pending pull - and an acknowledgement cannot land before a pull already in flight,
+  so a row this device has just acked comes back once more. That is not a race; FWD-2 measured it at
+  twenty-three of twenty-five back-to-back forwards. Twenty-three identical true sentences is a line
+  its reader learns to skip, and the one it hides next is the one that mattered. The three routine
+  shapes now say the whole sentence ONCE and are counted after that, per shape; the fourth -
+  `live:done`, which no crossing explains and which would be the server publishing a row twice -
+  still warns every time, and carries the counts, because that is where a reader is already looking.
+  Nothing about what is decrypted or acknowledged changed.
+
 - **A mention of an account that does not exist re-asked the server for its name for ever, and
   rendered as a bare `@` in the meantime.** Two layers read a 404 as a failure to ASK rather than as
   the answer to what was asked. The thirty-second profile cache evicted every rejection "so the next

@@ -141,6 +141,46 @@ describe('a delivery that arrives twice', () => {
     expect(warned()).toBe('');
   });
 
+  it('explains a routine crossing ONCE and counts the rest, because a rate is not read line by line', async () => {
+    // THE MEASUREMENT THAT FORCED THIS. FWD-2 ran twenty-five forwards back to back on 2026-09-05
+    // and `pull:done` - this device's own ack still in flight when the pull was answered - fired in
+    // TWENTY-THREE of them. Every line said the same true thing, so every line was skipped, and a
+    // check that opens a busy conversation could not be clean while doing its job. The sentence is
+    // worth saying; saying it once per send is not.
+    for (const id of ['d4ecf0fe', 'a1b2c3d4', 'beefcafe']) {
+      await deliver(row(id));
+      await deliver(row(id));
+    }
+
+    const explained = logged()
+      .split('\n')
+      .filter((l) => l.includes('arrived twice'));
+    expect(explained).toHaveLength(1);
+    expect(explained[0]).toContain('Further ones of this shape are counted, not printed');
+    // Silence is not what replaced them: the count is the thing that answers "how often".
+    expect(svc.deliveryRepeatStats()['pull:done']).toBe(3);
+    // And every repeat is still acknowledged - the counting changed what is PRINTED, nothing else.
+    expect(ack.mock.calls.flatMap((c) => c[0] as string[])).toHaveLength(6);
+  });
+
+  it('counts each shape apart, so one loud shape cannot silence another', async () => {
+    await deliver(row('d4ecf0fe'), 'live');
+    await deliver(row('d4ecf0fe'), 'pull'); // pull:done
+    await deliver(row('a1b2c3d4'), 'pull');
+    await deliver(row('a1b2c3d4'), 'live'); // live:done - the accusing one
+
+    expect(svc.deliveryRepeatStats()).toEqual({
+      'pull:queued': 0,
+      'pull:done': 1,
+      'live:queued': 0,
+      'live:done': 1,
+    });
+    // THE RATE RIDES ON THE ACCUSATION, where a reader is already looking - the shape that would be
+    // a server defect is also the one place worth printing how much of everything else happened.
+    expect(warned()).toContain('pull:done=1');
+    expect(warned()).toContain('live:done=1');
+  });
+
   it('ACCUSES when a live frame repeats a row already acknowledged, because no crossing explains it', async () => {
     // The gateway publishes a frame once, at send, and never replays the queue on connect - so this
     // shape is the same row published twice and is not this client losing a race with itself. It has
