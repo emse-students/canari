@@ -1,8 +1,9 @@
-version: 0.16.1
+version: 0.16.2
 Cette version ne change rien a ce que vous voyez dans l'application.
 
-Une seule chose change, et surtout sur Android : le texte que vous lisez. Jusqu'ici les notes de
-mise a jour n'etaient publiees que sur l'App Store, et la fiche Play gardait celles de la version
-precedente sans que rien ne le signale.
+Tout ce qui a bouge est la machinerie qui la publie. Une panne du registre de paquets etait
+comptee comme une faille de securite et bloquait toute mise a jour du code ; elle est maintenant
+distinguee d'une vraie alerte. Et les controles de securite, qui tournaient sans pouvoir rien
+arreter, peuvent desormais retenir une modification.
 
-Le reste porte sur la publication elle-meme. Ca ne se voit pas, sauf quand ca manque.
+Rien de tout cela ne se voit. C'est le but.
