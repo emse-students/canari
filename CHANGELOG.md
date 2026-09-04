@@ -11,6 +11,8 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+## [0.16.2] - 2026-09-04
+
 ### Fixed
 
 - **The line that read the dependency audit's verdict could never run, and a real npm 503 proved it
