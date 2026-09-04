@@ -1578,6 +1578,39 @@ owed.**
 **0.14.15 also carries `48d31eaa` itself**, which is owed regardless of calls: it is why an iPad
 could not obtain an FCM token either, and therefore received no message notification of any kind.
 
+### Where the three channels actually are, 2026-09-04, and the ONE call that is missing
+
+**READ THIS BEFORE PLANNING A RELEASE.** Two stables were published on 2026-09-04 and NEITHER
+reached production, because the production estate is gated on both stores taking the version. The
+state is not guessable from any version number:
+
+| | version | how it got there |
+| --- | --- | --- |
+| production web | `0.16.1` | the `production` job was `skipped` in both runs - it needs `android` AND `ios` green |
+| Google Play `production` | `0.16.2` | committed by the `0.16.2` run; `0.16.3`'s Play job was also green |
+| App Store | **nothing published** | version `0.16.3` exists, holds build `1600399` and its notes, and sits UN-SUBMITTED in review submission `575c5bbb` |
+
+**The only request never made is `PATCH /v1/reviewSubmissions/575c5bbb {submitted: true}`.**
+Everything before it succeeded on the `0.16.3` run: the prepared-and-forgotten `0.16.1` slot was
+renamed, the build attached, the notes written. The item POST then answered 409, for the reason in
+the entry under `[Unreleased]` in `CHANGELOG.md` - a check that compared a JSON:API linkage its own
+request had not asked for, and so read `undefined` for every item.
+
+**WHY A RE-RUN OF THE `v0.16.3` iOS JOB DOES NOT FINISH IT, and why the reason people reach for is
+the wrong one.** The duplicate TestFlight upload is NOT the obstacle: `ios.yml` reads
+`ITMS-4238 / Redundant Binary Upload` as success precisely so that *Re-run failed jobs* works, which
+is what the section above this one is about. The obstacle is that **the tag carries the code**: a
+re-run checks out `v0.16.3`, which predates the fix, and replays the same 409. So the next stable is
+what completes this - the corrected script finds the `0.16.3` slot under a different name, renames
+it, and this time does not re-add the item.
+
+**Two version numbers were spent on two defects that no gate here could have caught**, and each was
+invisible for one reason: the App Store submission is the only part of the release that talks to
+a system whose state a human edits. `0.16.2` died on a version prepared and never submitted;
+`0.16.3` died on the check for whether that version was already in a submission. Both are fixed and
+both are asserted, but *the assertions are about decisions, not about Apple* - the next release is
+still the first real test of either.
+
 ## Reading live state out of a running WebView, over adb
 
 `android:dev`'s own HMR occasionally stops picking up file changes (observed twice in one session,
