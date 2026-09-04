@@ -645,19 +645,30 @@ jobs:
       # that cause is unknown and is in `docs/wiki/backlog.md` - and it is not a
       # `continue-on-error`, which would swallow the failure. A refusal here still fails the job,
       # loudly. What changes is only what it can no longer take down with it.
+      #
+      # AND IT NO LONGER ASKS TO UPDATE THE RELEASE, WHICH IS ALL IT WAS EVER REFUSED (measured
+      # 2026-09-04). `softprops/action-gh-release` FINDS the release and then PATCHES it, and the
+      # 403 named that call: *"Unexpected error fetching GitHub release for tag refs/tags/v0.16.0"*,
+      # pointing at `update-a-release`. Attaching a file needs no release update at all, so the
+      # capability that was refused is one this step never wanted - which is the fix regardless of
+      # WHY the PATCH was refused, and that cause is still unmeasured in `docs/wiki/backlog.md`.
+      # `gh release upload` performs exactly the one call: POST to the release's assets.
+      #
+      # `--clobber` because a re-run of a release job must be able to replace the artefact it
+      # already attached; without it the second run fails on the existing name, and re-running a
+      # release whose chain died is the documented recovery.
+      #
+      # ONLY WHEN A PUBLISHED RELEASE IS WHAT STARTED THIS, and this is the one event test left in
+      # this file for a reason. `release.yml` also has a hand-dispatched path, for re-running a
+      # release whose chain died on an infrastructure fault; on that path a GitHub release for the
+      # version may not exist. `gh release upload` FAILS there instead of creating one - the action
+      # it replaces would have created a release, which would publish a release, which would start
+      # `release.yml` again - but the condition stays: the question is about the caller's event.
+      # Attach the artefact to the release that triggered this run, and to nothing else.
       - name: Upload to Release
-        uses: softprops/action-gh-release@v3
-        # ONLY WHEN A PUBLISHED RELEASE IS WHAT STARTED THIS, and this is the one event test
-        # left in this file for a reason. `release.yml` also has a hand-dispatched path, for
-        # re-running a release whose chain died on an infrastructure fault; on that path a GitHub
-        # release for the version may not exist, and this action would CREATE one - which would
-        # publish a release, which would start `release.yml` again. So the question really is about
-        # the caller's event: attach the artefact to the release that triggered this run, and to
-        # nothing else.
         if: inputs.publish && github.event_name == 'release'
-        with:
-          tag_name: v${{ steps.release_tag.outputs.version }}
-          fail_on_unmatched_files: true
-          files: ${{ steps.outputs.outputs.ipa }}
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IPA: ${{ steps.outputs.outputs.ipa }}
+          TAG: v${{ steps.release_tag.outputs.version }}
+        run: gh release upload "$TAG" "$IPA" --clobber --repo "$GITHUB_REPOSITORY"

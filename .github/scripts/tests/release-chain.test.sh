@@ -563,6 +563,26 @@ for f in ios android; do
   fi
 done
 
+# AND NEITHER MAY ASK TO *UPDATE* THE RELEASE, WHICH IS THE ONLY CALL EITHER WAS EVER REFUSED.
+# `softprops/action-gh-release` finds the release and then PATCHES it, and the 403 that cost Apple
+# 0.16.0 named that PATCH - `update-a-release` - with `Contents: write` granted and printed by the
+# runner. Attaching a file needs no release update, so the capability that was refused is one
+# neither step ever wanted. Re-introducing the action would restore the dependency whether or not
+# the refusal's cause is ever explained, and the two are separate: the cause is still unmeasured.
+for f in ios android; do
+  block="$(sed -n '/^      - name: Upload to Release$/,/^      - name:/p' "$WF/$f.yml")"
+  if printf '%s' "$block" | grep -qE '^ +uses:'; then
+    fail "$f.yml attaches the release asset through an ACTION again - if it updates the release, it re-adds the capability that was refused on 0.16.0"
+  else
+    pass "$f.yml attaches the asset with no action, so it asks for no release update"
+  fi
+  if printf '%s' "$block" | grep -q 'gh release upload'; then
+    pass "$f.yml uses the one call the job actually needs"
+  else
+    fail "$f.yml no longer attaches the asset with 'gh release upload' - name what replaced it and why it needs no PATCH"
+  fi
+done
+
 printf '\nevery arm is granted what it asks for, because a caller CAPS a called workflow\n'
 # =================================================================================================
 # THE DEFECT THIS EXISTS FOR, and it killed the first real release. A called workflow cannot be

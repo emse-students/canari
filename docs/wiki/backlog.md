@@ -122,45 +122,56 @@ the `paraglide:compile` step the `test` script runs first, or a `node_modules` s
 this box. `bun test` as a runner is NOT the answer to reach for: the suites are written for vitest,
 and swapping the runner to dodge a broken worker would change what is being asserted.
 
-### P1 - a release-asset upload was refused with the permission it was granted, and the CAUSE IS UNMEASURED (v0.16.0, 2026-09-03)
+### ~~P1 - a release-asset upload was refused with the permission it was granted~~ - RETIRED 2026-09-04, the call that was refused is deleted
 
-**WHAT HAPPENED.** On the stable `v0.16.0`, the iOS arm's `softprops/action-gh-release@v3` step
-found the release and was then refused:
+**Not fixed: withdrawn, because the step no longer makes the call.** On the stable `v0.16.0` the iOS
+arm's `softprops/action-gh-release@v3` step found the release and was then refused:
 
 ```
 Found release v0.16.0 (with id=382122297)
-HttpError: Resource not accessible by integration
+Unexpected error fetching GitHub release for tag refs/tags/v0.16.0: HttpError: Resource not accessible by integration
   https://docs.github.com/rest/releases/releases#update-a-release
 ```
 
-**WHAT IS RULED OUT, EACH BY MEASUREMENT AND NOT BY REASONING:**
+**THE FULL POPULATION, MEASURED 2026-09-04** across every release since the gated chain began -
+five stables and five pre-releases:
 
-| Candidate | Measurement | Verdict |
+| arm | pre-release | stable |
 |---|---|---|
-| The token lacked `contents: write` | the runner PRINTS the granted scopes at "Set up job": `Contents: write` | ruled out |
-| The caller capped it | the same assertion that caught the `startup_failure` passes: `release.yml` grants `ios` everything `ios.yml` asks | ruled out |
-| The two arms differ | `ios.yml` and `android.yml` declare identical `permissions:` and an identical step; the ANDROID upload to the SAME release SUCCEEDED in the same run (`.aab` and `.apk` are attached) | ruled out |
-| The release is immutable | `immutable: false` on `v0.16.0` and on `v0.16.0-alpha.2` alike | ruled out |
-| A tag ruleset | the repository has exactly one ruleset, `22152902`, target `branch` | ruled out |
-| An ORG-level ruleset or release policy | **NOT MEASURED** - `gh api orgs/emse-students/rulesets` needs `admin:org`, which this token lacks | **open** |
-| A transient GitHub fault | a re-run of the failed job was started; whether it reproduces is the discriminator | **open, and cheap** |
+| iOS (`Canari.ipa`) | attached, 5/5 | **refused on 0.16.0**; SKIPPED on 0.16.1, 0.16.2, 0.16.3 |
+| Android (`.aab` + `.apk`) | attached | attached, 5/5 |
 
-**THE ONE STRUCTURAL DIFFERENCE NOBODY HAS EXCLUDED: this was the first STABLE to reach that step.**
-`v0.15.0` shipped on a RED run, and both alphas passed it. So `prerelease: false` is the only
-attribute that separates the failures from the successes, and it is not obvious why it would matter.
-**Do not write a fix against that suspicion** - the rule about not writing a fix against a suspected
-arm applies exactly here.
+Four things that measurement settles, each of which was open:
 
-**WHAT IS ALREADY FIXED, AND IT IS NOT THIS.** The step used to sit BEFORE the store steps in both
-arms, so this refusal `skipped` TestFlight and the App Store submission: production and Google Play
-received 0.16.0 and **Apple received nothing**. The order is reversed and asserted five ways
-([cicd](cicd.md)). That bounds the blast radius; it does not explain the 403.
+- **It is not transient.** The re-run this entry called "open, and cheap" was attempt 2 of run
+  `33771324318`, and it **reproduced the 403 identically**.
+- **It is not `prerelease: false`.** The Android arm's identical step - same action, same token, same
+  run, same release - SUCCEEDED on that very stable 24 minutes earlier (15:24:34 against the iOS
+  failure at 15:48:21), and on all three stables since.
+- **It is not the asset upload.** The error names `update-a-release`, and the action's own message
+  says *"fetching ... for tag refs/tags/v0.16.0"* - it FINDS the release by `tag_name`, then makes a
+  second, `github.ref`-shaped call. **That hostile second lookup was already documented in
+  [cicd](cicd.md#notable-ci-gotchas) before 0.16.0**, with the same error string, for the
+  `refs/heads/main` variant under `workflow_dispatch`. The tag variant under a `release` event is
+  new; the class is not.
+- **The missing `Canari.ipa` on the other four stables is not this defect at all.** Since the
+  ordering fix the step runs AFTER the App Store submission, and that submission failed on 0.16.1,
+  0.16.2 and 0.16.3 - so `Upload to Release` was `skipped`, not refused. The 403 has had no
+  opportunity to recur.
 
-**HOW TO RETIRE THIS ROW:** read the org rulesets with a token carrying `admin:org`, and read the
-re-run's outcome. If the re-run succeeds, the row becomes "a transient fault took a platform down
-because a convenience gated a deliverable" - already fixed - and closes. If it reproduces, the
-`prerelease` difference is the next thing to measure, by attaching an asset to a stable release by
-hand with a `GITHUB_TOKEN`-equivalent.
+**WHY THE ROW IS WITHDRAWN RATHER THAN CARRIED.** Attaching a file to a release needs no release
+UPDATE, so the capability that was refused is one neither arm ever wanted. Both now use
+`gh release upload "$TAG" ... --clobber`, which performs exactly one call - POST to the release's
+assets - and creates nothing when the release is absent, which is strictly better than the action it
+replaces (that one would have CREATED a release, publishing a release, restarting `release.yml`;
+hence the `github.event_name == 'release'` guard, which stays). `release-chain.test.sh` refuses an
+`uses:` in either step and requires `gh release upload`, validated in negative.
+
+**What is NOT explained, and now has no consumer:** why that second lookup was refused for a
+stable's tag and not a pre-release's. The org-ruleset candidate still needs `admin:org`, which this
+token lacks. Nothing calls that endpoint any more, so nothing can answer it and nothing depends on
+the answer - which is why the mechanism note in [cicd](cicd.md#notable-ci-gotchas) is where the
+lesson lives instead of here.
 
 ### P2 - the nine NestJS pull requests were closed IN ONE BATCH, so the suppression question was never measured on one first, and Monday 2026-09-07 is the only thing that can answer it now (updated 2026-09-03)
 
