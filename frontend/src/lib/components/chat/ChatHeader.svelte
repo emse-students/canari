@@ -191,19 +191,18 @@
       </span>
     {:else}
       <!--
-        NO PULSE ON THE NOT-JOINED HALF, AND THE TITLE NO LONGER CLAIMS A NEGOTIATION. `isReady` is
-        `lifecycle === 'active'`, which means this device holds MLS state for the group; its
-        negation means it holds none, and nothing local is negotiating anything - a member has to
-        come online and let it in. An animation is a promise of progress, and the state it was
-        promising on can last days.
+        ONE LOCK, ONE COLOUR, ONE TITLE - AND IT IS ABOUT THE CONVERSATION, NOT ABOUT THIS DEVICE.
+        It forked on `isReady` (`lifecycle === 'active'`, i.e. this device holds MLS state) and
+        turned amber with a "not joined" title, which told the user about a transient the recovery
+        ladder owns and can close by itself: a device holding a roster seat nobody owes a Welcome
+        for joins by external commit with no member involved. The conversation is end-to-end
+        encrypted either way, so the lock states that and nothing else.
       -->
       <LockKeyhole
         size={12}
         strokeWidth={2.5}
-        class={isReady
-          ? 'text-emerald-600 dark:text-emerald-400'
-          : 'text-amber-600 dark:text-amber-500'}
-        title={isReady ? m.chat_e2e_verified_title() : m.chat_e2e_not_joined_title()}
+        class="text-emerald-600 dark:text-emerald-400"
+        title={m.chat_e2e_verified_title()}
       />
     {/if}
   </div>
@@ -295,7 +294,6 @@
     {effectiveDisplayName}
     {contactName}
     {groupId}
-    {isReady}
     {isGroupConversation}
     {imageMediaId}
     currentUserId={currentUserId ?? ''}

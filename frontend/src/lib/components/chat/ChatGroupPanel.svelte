@@ -37,8 +37,6 @@
     contactName: string;
     /** MLS group id (used to generate shareable invite links for group chats). */
     groupId?: string;
-    /** Whether the MLS session is fully established. */
-    isReady: boolean;
     /** Whether this is a group conversation (vs. a direct message). */
     isGroupConversation: boolean;
     /** Media-service id of the current group avatar; null when none is set. */
@@ -70,7 +68,6 @@
     effectiveDisplayName,
     contactName,
     groupId = '',
-    isReady,
     isGroupConversation,
     imageMediaId = null,
     currentUserId,
@@ -298,15 +295,16 @@
             <div
               class="text-text-muted inline-flex items-center gap-1.5 text-[0.7rem] font-bold tracking-wider uppercase"
             >
-              {#if isReady}
-                <Shield size={14} class="text-emerald-500" strokeWidth={2.5} />
-                {m.chat_group_secured_sync_label()}
-              {:else}
-                <!-- Same correction as the sidebar badge: this device holds no key for the group,
-                     which is a wait on a member rather than a synchronisation under way. -->
-                <Clock size={14} class="text-amber-500" strokeWidth={2.5} />
-                {m.chat_group_not_joined_label()}
-              {/if}
+              <!--
+                UNCONDITIONAL, BECAUSE IT STATES A FACT ABOUT THE CONVERSATION AND NOT ABOUT THIS
+                DEVICE. It used to fork on `isReady` and show an amber "not joined" line, which is
+                the machinery the user asked to stop exposing: the conversation is end-to-end
+                encrypted whether or not this device already holds a key for it, and whether it
+                does is a transient the recovery ladder owns. The only progress a user may see is
+                "en cours de reception".
+              -->
+              <Shield size={14} class="text-emerald-500" strokeWidth={2.5} />
+              {m.chat_group_secured_sync_label()}
             </div>
           </div>
         </div>
