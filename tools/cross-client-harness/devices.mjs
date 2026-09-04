@@ -3,14 +3,14 @@
  * THE DEVICE CENSUS - every device the platform knows, with its runtime, OS, app version, owner,
  * routing reach and push reachability.
  *
- *   node devices.mjs                     the whole estate, ids redacted
- *   node devices.mjs --unpushable        only the devices a push SHOULD reach and cannot
- *   node devices.mjs --runtime tauri     one runtime (`tauri`, `web`, `legacy`)
- *   node devices.mjs --os android        one OS (matches `deviceOs`, case-insensitive)
- *   node devices.mjs --user '#c080cb'    every device of one owner, by its redacted tag
- *   node devices.mjs --stale 30          only devices silent for 30+ days
- *   node devices.mjs --json              one NDJSON record per device, for a runner to assert on
- *   node devices.mjs --full              real device ids, user ids and device names - see REDACTION
+ *   bun devices.mjs                     the whole estate, ids redacted
+ *   bun devices.mjs --unpushable        only the devices a push SHOULD reach and cannot
+ *   bun devices.mjs --runtime tauri     one runtime (`tauri`, `web`, `legacy`)
+ *   bun devices.mjs --os android        one OS (matches `deviceOs`, case-insensitive)
+ *   bun devices.mjs --user '#c080cb'    every device of one owner, by its redacted tag
+ *   bun devices.mjs --stale 30          only devices silent for 30+ days
+ *   bun devices.mjs --json              one NDJSON record per device, for a runner to assert on
+ *   bun devices.mjs --full              real device ids, user ids and device names - see REDACTION
  *
  * WHY THIS EXISTS, AND WHY IT IS NOT A LOG RULE. `[PUSH_SEND] No push token for user=X device=Y`
  * fires once per send, forever, for every device that cannot be pushed to. That line is a fine

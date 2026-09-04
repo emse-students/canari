@@ -77,10 +77,10 @@ derives it from the running pid every time and refuses to report success until C
    captured shell or a tool-call log.
 4. `cp names.example.mjs names.mjs` and follow its header - the real display names go in the state
    directory, this copy is the pointer. Both are gitignored.
-5. `node launch.mjs start w1 && node launch.mjs start w2`. Read the flags in that file before
+5. `bun launch.mjs start w1 && bun launch.mjs start w2`. Read the flags in that file before
    changing them; they are load-bearing (see *Operating it*).
-6. Phone: plug it in, then `node phone.mjs` (`node phone.mjs <port>` for another port).
-7. `node unlock.mjs` after any launch, kill, reboot, radio cycle or `install -r`: every one of those
+6. Phone: plug it in, then `bun phone.mjs` (`bun phone.mjs <port>` for another port).
+7. `bun unlock.mjs` after any launch, kill, reboot, radio cycle or `install -r`: every one of those
    re-locks the encryption PIN, and a locked client does not fail honestly - it renders, answers, and
    reports on an empty store.
 
@@ -91,12 +91,12 @@ verdicts back from the record rather than off stdout, because several scripts pr
 dump *after* their verdict.
 
 ```
-node run.mjs                      what exists, what is covered, what is not
-node run.mjs MSG                  every script of one phase
-node run.mjs MSG TYPE READ        several phases, in order
-node run.mjs FWD --repeat 5       five passes, with a cross-pass table and a per-pass server window
-node run.mjs --file msg3.mjs      one script, still with the preflight
-node run.mjs --preflight W1 A1    the rig check ALONE, no script, no verdict
+bun run.mjs                      what exists, what is covered, what is not
+bun run.mjs MSG                  every script of one phase
+bun run.mjs MSG TYPE READ        several phases, in order
+bun run.mjs FWD --repeat 5       five passes, with a cross-pass table and a per-pass server window
+bun run.mjs --file msg3.mjs      one script, still with the preflight
+bun run.mjs --preflight W1 A1    the rig check ALONE, no script, no verdict
 ```
 
 `checks.mjs` is the manifest - which script covers which phase, and which devices each phase needs.
@@ -194,6 +194,13 @@ kind; there was no index of the first, so a session picking the rig up grepped, 
 `createGroup` got written because the first two were not findable. Three copies of one gesture is
 three places for a post-condition to rot, which is exactly what `groupnav.mjs` records happening.
 
+**AND SINCE 2026-09-04 THE SPLIT IS A DIRECTORY, not only an index.** The 114 rows moved to
+[`archive/`](archive/README.md); the atoms stayed at this root. Nothing was deleted, everything still
+runs, and the 14 self-tests `make test-harness` gates live there and still pass. `ls` now answers the
+question that used to need a grep. Only their imports changed - a row reaches a library that stayed
+behind by `../` - and the three things that resolve script paths (`checks.mjs`'s new `scriptPath()`,
+`gate-selftest.mjs`, the Makefile recipe) had to learn the rig is no longer one flat directory.
+
 **[`atoms.mjs`](atoms.mjs) is that index**, and its header is the inventory: every gesture, the file
 that owns it, and what it is for. It re-exports the importable ones so a new script can reach the
 whole vocabulary in one line, and `run()` is the ONE spelling of the arguments for the ones that are
@@ -216,6 +223,38 @@ style; each is why the campaign can be re-run by someone who was not there:
    keys; a tab is `APP_TAB`. **THE RIG DRIVES PHONES OF SEVERAL SIZES**, so a coordinate right on one
    screen is wrong on the next, and a French label is not an API. Where a real pointer sequence IS the
    thing under test, `realClick` re-measures the centre at the moment it clicks - adaptive, not fixed.
+
+### Driving a phone, and WHICH phone
+
+```sh
+bun a1apk.mjs                  # build the debug APK, install it, prove the origin it points at
+bun login.mjs --android        # log the phone in, end to end, with no manual probe first
+bun login.mjs --device A2      # the same on the second phone
+bun pin.mjs --device A1        # the encryption gate
+```
+
+**`--android` IS `--device A1`, and it arms what it needs.** It calls `phone.mjs`'s `ensure()`: wake,
+launch if the process is gone, foreground it (a backgrounded WebView keeps its devtools socket listed
+and then answers nothing), re-point the `adb forward` at the CURRENT pid, and report success only
+once CDP has actually answered. Every one of those steps has produced a wrong verdict on its own, and
+every session that hand-typed `adb forward` before calling an atom was paying for the omission.
+
+**A SECOND PHONE MAKES `serial()` A QUESTION, AND IT NOW REFUSES TO ANSWER IT ALONE.** It used to take
+the first USB entry adb listed - harmless with one phone, silently wrong with two: on 2026-09-04 a
+Pixel 6a was attached beside the Mi 9T and `serial()` answered the PIXEL, so every atom would have
+woken, forwarded, logged into and measured a phone the run was not about while reporting confidently
+about A1. Ambiguity is an ERROR now, resolved in one of two explicit ways: `useDevice('A1')` from a
+name in `SERIAL_OF`, or `ANDROID_SERIAL` - adb's own variable, which `useDevice` also sets so that
+every adb this rig shells out to inherits the binding. A device name carries its platform: `W*` is a
+Chrome profile, `A*` is Android.
+
+**THE APK MUST BE BUILT WITH THE LOCAL-ESTATE OVERLAY OR IT REFUSES THE ESTATE IT IS POINTED AT.**
+`tauri.conf.json` names capability `default` alone, whose fetch scope is `https://**`;
+`src-tauri/tauri.local.conf.json` adds `local-estate`, and `a1apk.mjs` passes it. Without it the
+phone reaches the IdP, authenticates, comes back - and then shows the product's own red
+`url not allowed on the configured scope: http://localhost:8081/...` under the PIN field, because
+`https://**` matches port 443 and `http://**` matches port 80, neither of which is 8081. See
+[`frontend/src-tauri/capabilities/local-estate.json`](../../frontend/src-tauri/capabilities/local-estate.json).
 
 **An atom takes no verdict**, writes nothing to `results.ndjson` and asserts nothing about the
 application. That is what makes it reusable: a row decides what an outcome MEANS, and two rows may
@@ -251,15 +290,17 @@ used to get wrong on its own.
 | `login.mjs`, `pin.mjs`, `unlock.mjs` | The auth gates. `unlock.mjs` unlocks every client it can identify. `login.mjs` ends its wait on EITHER the app's own form or a CAS form in the phone's **Chrome Custom Tab** (`--tabPort`, default `port + 1`), fills whichever holds it with one copy of the code, and reads the landing by RE-RESOLVING the app's target - Android may have killed the WebView while the tab was in front. |
 | `gate-probe.mjs` | `GATE_EXPR`, the ONE expression answering "is the encryption PIN gate on screen", imported by `pin.mjs`, `pingate.mjs` and `state.mjs`. It had three copies keyed partly on body text, and `/settings` names the gate in its own security section - so a client parked there read `LOCKED` while perfectly unlocked, and `settle()` returns `LOCKED` to four runners that then produce no verdict. A gate is a MODAL: `role=dialog` plus its `aria-label`. |
 | `pingate.mjs` | The PIN gate as a LIBRARY, for a check that has to re-unlock mid-run. `unlockClient` types the PIN and then RE-READS the client to say whether it got through - see below. |
+| `phone.mjs` | The device, as a check sees it - and `forwardIdpBrowser`, which finds the browser holding the identity-provider page instead of assuming Chrome. This phone is LineageOS and the OIDC hop lands in `org.lineageos.jelly`; the forward `login.mjs` needed had never been created at all, so every phone login typed nothing and showed only "Redirection...". |
 | `net.mjs` | The radios. `armCut`/`cutHard` exist because CDP offline emulation leaves an already-established WebSocket alone - the plain cut could never produce a receiver-side disconnection, so MSG-9 had never once measured the thing it was named for. |
 | `a1.py` | Native Android surfaces via `uiautomator2`, for what the WebView cannot see. |
+| `a1apk.mjs` | **The A1 build, install and reverse, as one gesture** - and the assertions that each happened. The SDK and the NDK are DISCOVERED (the README's hardcoded `ndk/26.1.10909125` had rotted), `BUILD_WEB` is deleted from the child environment so Tauri gets its adapter-static shape, the seven `VITE_*_URL` travel as environment rather than an edit to the shared `frontend/.env`, and the packaged bundle is grepped for `SITE` - an APK silently pointing at production fails a row for a reason nobody can see. Importable as `armA1`. |
 | `syncrows.mjs` | The sidebar's readiness, read off `data-ready` / `data-removed` on `[data-conversation-tile]` and NEVER off the translated "Sync" badge - plus `whoAmI`, `navigationCost` and the server-side counterpart (`active`, `tombstoned`, `dismissed`, `dismissedStillMember`). Every HEAL row's numbers come from here, which is why one gate before the rung asks whether the hook is in the SERVED artefact. |
 | `usability.mjs` | The two tile targets and the two answer predicates that decide HEAL-NEW-15 - `OPENED` for a ready row (the list selects it AND the conversation renders), `REACTED` for a syncing one (the list may not stay unmoved, but the app may decline to render a group it holds no MLS state for). Split out of `syncrows.mjs` for the reason `servable.mjs` was: a self-test in the CI gate cannot reach `names.mjs`. `usability-selftest.mjs` pins both faults that produce a NUMBER rather than an error - a composer that was already on the page, and a click on the conversation already open. |
 | `newdevice.mjs` | The device-minting primitive, and HEAL-NEW-0 when run directly. Wipes one browser's origin to factory, brings the same account back, and asserts the server has never seen the id that comes out. Eleven rows import it rather than re-mint, and `--keep-open` is why it is a module. |
 | `roster.mjs` | MULTI-7/8/9/10 - the four rows that read `dm_device_group_memberships` instead of a screen. Every query is a READ. Its venue is the owner-peer CONVERSATION resolved by membership, not a community channel: a channel's distribution group is workspace-scoped and carries no `dm_group_members` at all. |
 | `healnew.mjs` | HEAL-NEW-1/2/3/11/12/15 - one runner, rows as data, so the order pairs (3 vs 11, 2 vs 12) run the same code with `respondersAt` moved and a difference between them is the app's. Kills a responder rather than navigating it away, stops the PHONE for every row, and records a comparable `finalState` fingerprint. |
 | `healrevoke.mjs` | HEAL-REVOKE-5/7/8 - a revoked device that missed a great deal and comes back. Mints an enrolled W3, revokes it with the census as proof, moves the world, brings it back WITHOUT a wipe so a survivor would show, then mints a fresh reference device in the same world and asserts the two states differ in nothing. |
-| `footprint.mjs` | What a device still HOLDS, read off the device rather than out of its own log - the WebView's localStorage, sessionStorage, `CanariDB*` count, identity keys, response caches and bytes in use. `node footprint.mjs --device W1`. Counts only, never names: a surviving key is `mls_not_ready_since:<userId>:<groupId>` and this output reaches a PUBLIC repo. **Two criteria** (`nothingOfTheAccountRemains`): the `CanariDB*` count AND `identityKeys`, being `mls_device_id_<userId>` plus `canari_device_key_vault`. The database count alone is NOT enough - on a Tauri client the message store is native SQLite, so it reads 0 on an enrolled phone too, and this tool answered "nothing of the account remains" about an A1 displaying eleven conversations. The other counts are evidence beside them: an empty app rewrites a locale key and re-caches its shell the moment it is looked at, so asserting those at zero fails a correct wipe for having been observed. **The verdict is `deviceResidue(label, cx)`, exported, and that is what a runner must assert on** - for a `tauri` origin it is the AND of both halves, the native one from `nativeResidue()` below, and a native half that cannot be read VOIDS the verdict instead of passing it. `nothingOfTheAccountRemains` is the WEB half alone and must not be called about a device that might be a phone; the pure combiner is `residueVerdict` in `native-residue.mjs`, pinned by `residue-selftest.mjs`. |
+| `footprint.mjs` | What a device still HOLDS, read off the device rather than out of its own log - the WebView's localStorage, sessionStorage, `CanariDB*` count, identity keys, response caches and bytes in use. `bun footprint.mjs --device W1`. Counts only, never names: a surviving key is `mls_not_ready_since:<userId>:<groupId>` and this output reaches a PUBLIC repo. **Two criteria** (`nothingOfTheAccountRemains`): the `CanariDB*` count AND `identityKeys`, being `mls_device_id_<userId>` plus `canari_device_key_vault`. The database count alone is NOT enough - on a Tauri client the message store is native SQLite, so it reads 0 on an enrolled phone too, and this tool answered "nothing of the account remains" about an A1 displaying eleven conversations. The other counts are evidence beside them: an empty app rewrites a locale key and re-caches its shell the moment it is looked at, so asserting those at zero fails a correct wipe for having been observed. **The verdict is `deviceResidue(label, cx)`, exported, and that is what a runner must assert on** - for a `tauri` origin it is the AND of both halves, the native one from `nativeResidue()` below, and a native half that cannot be read VOIDS the verdict instead of passing it. `nothingOfTheAccountRemains` is the WEB half alone and must not be called about a device that might be a phone; the pure combiner is `residueVerdict` in `native-residue.mjs`, pinned by `residue-selftest.mjs`. |
 | `native-residue.mjs` | The pure half of the native criterion: `OUR_NATIVE`, the paths that exist only because an account was signed in on this phone, and `REWRITTEN_WHILE_RUNNING`, the ones a live app recreates in milliseconds. Its own module so `residue-selftest.mjs` runs on a fresh checkout - deciding what a path MEANS needs no device and no `names.mjs`. |
 
 **Checks** - `msg*` `type` `read` `mut` `search` `mention` `fwd*` `grp-traffic` `del1` `tab*` `life`
@@ -470,17 +511,17 @@ next one's symptom names the wrong cause.
 
 1. `adb devices` must list it. An empty list here is the CABLE - the `A1_WIFI` fallback needs a prior
    `adb tcpip 5555` it does not have.
-2. `node phone.mjs 9333` (ONE positional port, not `--ensure`). It forwards the app's WebView on
+2. `bun phone.mjs 9333` (ONE positional port, not `--ensure`). It forwards the app's WebView on
    9333 **and Chrome's own on 9334** - both are needed, because the login is not in the app.
-3. `node login.mjs --device A1`. Idempotent: a device the IdP still knows reports `already
+3. `bun login.mjs --device A1`. Idempotent: a device the IdP still knows reports `already
    authenticated` and fills nothing. When CAS's cookie has expired the form appears in the Custom
    Tab, and this fills it there. **The app's WebView may die during the hop** - that is not a
    failure, and the landing is re-resolved.
-4. `node pin.mjs --device A1`. Required after ANY relaunch, kill, reboot, radio cycle or
+4. `bun pin.mjs --device A1`. Required after ANY relaunch, kill, reboot, radio cycle or
    `install -r`.
 5. The biometric offer is answered with **Plus tard**, by `clearOverlays` and by `pin.mjs`. Never
    "Activer": it erases the PIN, and the PIN is the only credential this rig can present.
-6. `node state.mjs` and `node identity.mjs --device A1` to prove it - a path, a sidebar, a device id
+6. `bun state.mjs` and `bun identity.mjs --device A1` to prove it - a path, a sidebar, a device id
    and the right user. `LOCKED` on a route that merely mentions the PIN is no longer possible, but a
    client with no sidebar and no dialog on `/settings` is simply on `/settings`.
 
@@ -496,7 +537,7 @@ next one's symptom names the wrong cause.
 
 **The phone**
 
-- The WebView pid changes on every cold start, so redo the forward with `node phone.mjs`. **The socket
+- The WebView pid changes on every cold start, so redo the forward with `bun phone.mjs`. **The socket
   exists only once the WebView does**: a process started by a broadcast has neither a window nor a
   devtools socket (see WP-DIRECTBOOT-1), so poll for the socket rather than concluding the app is not
   running - and a stale forward does not error, it connects to nothing.
@@ -513,17 +554,34 @@ next one's symptom names the wrong cause.
 
 **Building for it**
 
+- **`bun a1apk.mjs` IS THE GESTURE, and nothing below should be retyped.** Reverse, build, install,
+  and the assertions that each of those actually happened - one command, because the next campaign
+  needs the APK rebuilt several times and an invocation spelt in prose is one nobody re-measures.
+  `--no-build` installs what is already on disk; `--reverse` alone is what a replug costs. It is a
+  MODULE too (`armA1`), so a phase that arms the phone calls it instead of shelling out.
+
+  **Everything it needs is DISCOVERED, which is why the paragraph below went stale.** The SDK comes
+  from `ANDROID_HOME`, then `ANDROID_SDK_ROOT`, then `%LOCALAPPDATA%/Android/Sdk`; the NDK is the
+  highest version present under it. The line here used to name `ndk/26.1.10909125`, and this
+  workstation has `29.0.13846066` and nothing else.
+
+  **And it asserts the three things a wrong APK would hide.** `BUILD_WEB` is deleted from the child
+  environment (Tauri needs adapter-static, and a shell that has just deployed the local estate has it
+  set); the seven `VITE_*_URL` are passed as environment rather than written into `frontend/.env`,
+  which `bun run dev` shares and needs same-origin; and the packaged bundle is then GREPPED for
+  `SITE`, because an APK silently pointing at production fails a row for a reason nobody can see.
+
 - **A1 MUST STAY A LOCAL `--debug` BUILD, and the CI artefact cannot replace it (measured
   2026-08-28).** The pipeline produces a RELEASE APK: not debuggable, and signed with the release
   keystore, so `adb install -r` fails on the signature mismatch and the only way through would be an
   uninstall - which destroys the very data a footprint row measures. And **`run-as` needs
-  debuggable**, while `run-as` IS the native half of the footprint, the half that found two P1s. The
-  invocation that works here, from `frontend/`:
-  `ANDROID_HOME=<sdk> ANDROID_SDK_ROOT=<sdk> NDK_HOME=<sdk>/ndk/26.1.10909125 bun tauri android build --debug --apk --target aarch64`,
-  then `adb install -r` the arm64 debug APK. It names itself from `tauri.conf.json`, and the upgrade
-  KEEPS the app data - verified, 355 bytes of drift. **Do not pipe that build to `tail`**: the output
-  is buffered until exit, so all progress visibility is lost. Redirect instead, and read `cargo` /
-  `rustc` in the process list to tell a running build from a stalled one.
+  debuggable**, while `run-as` IS the native half of the footprint, the half that found two P1s. A
+  debug build is also the ONLY one that can reach the local estate at all: `build.gradle.kts` sets
+  `usesCleartextTraffic=true` for the debug type only, and `network_security_config.xml` permits
+  cleartext to `localhost`. The upgrade KEEPS the app data - verified, 355 bytes of drift, and again
+  2026-09-04 going from 0.5.0 to 0.16.3. **Do not pipe that build to `tail`**: the output is buffered
+  until exit, so all progress visibility is lost. Redirect instead, and read `cargo` / `rustc` in the
+  process list to tell a running build from a stalled one.
 - `./node_modules/.bin/tauri.exe android build --debug` from `frontend/`, then
   `adb install -r .../apk/universal/debug/app-universal-debug.apk` - **not** `arm64/`, which is
   stale. Three details, each of which has cost a session:
@@ -550,7 +608,7 @@ next one's symptom names the wrong cause.
 - **A phone `offline` in adb is a HUMAN action, and no `adb reconnect` clears it.** The screen has to
   be unlocked and the authorisation prompt accepted on the device itself.
 - A fresh install is a NEW PROCESS, so the old devtools forward is dead and `pin.mjs --device A1`
-  alone reports `ECONNREFUSED`. `node run.mjs --preflight A1` forwards, foregrounds, sends the app to
+  alone reports `ECONNREFUSED`. `bun run.mjs --preflight A1` forwards, foregrounds, sends the app to
   `/chat` (the PIN gate does not mount on `/posts`) and unlocks - use it rather than the pieces.
 - A Kotlin-only change does **not** need the Tauri build: `gradlew :app:assembleUniversalDebug` in
   `gen/android` packages the assets already on disk. The unit-test variants are

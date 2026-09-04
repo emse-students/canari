@@ -1,8 +1,8 @@
 /**
  * Unlocks every client that needs it, resolving WHICH ACCOUNT owns each port by itself.
  *
- *   node unlock.mjs               - W1, W2, A1
- *   node unlock.mjs --ports 9224  - just one
+ *   bun unlock.mjs               - W1, W2, A1
+ *   bun unlock.mjs --ports 9224  - just one
  *
  * TWO PROBLEMS THIS EXISTS TO REMOVE, both of which have cost measurements.
  *

@@ -1478,7 +1478,7 @@ The rule is cheap to apply and there is no excuse for skipping it: **before reco
 cannot be automated, name the tool that would do it and show it missing.** One `ls` over the harness
 answers it. A blocker written without that costs more than a failed run - it retires a capability the
 rig has, and every check downstream of it is then owed to a person who was never actually needed. The
-same evening it was written, `node pin.mjs --device A1 --stay` unlocked the phone in 4.2 s and the
+same evening it was written, `bun pin.mjs --device A1 --stay` unlocked the phone in 4.2 s and the
 run that had been declared impossible produced the phase's first attributable verdict.
 
 #### 30. A GATE THAT REFUSES WITHOUT A REASON TEACHES ITS OPERATOR THE FLAG THAT DISARMS IT
@@ -1486,7 +1486,7 @@ run that had been declared impossible produced the phase's first attributable ve
 Two things happened within an hour on 2026-08-21 and they are the same mistake seen from both ends.
 
 **First, the gate was skipped.** COMM-22 was owed its eighth attempt, the phone was unauthorised, and
-`run.mjs --file comm22.mjs` refuses without A1 - so the check was started as `node comm22.mjs`
+`run.mjs --file comm22.mjs` refuses without A1 - so the check was started as `bun comm22.mjs`
 instead, straight past the preflight. The push that deployed a backend fix was minutes old. Prod was
 mid-restart, the gateway answered 502 and 503, the community was never created, and the run recorded
 VACUOUS with `redeployedMidRun` naming the CD run by id. **The instrument was right and it saved the
@@ -1685,7 +1685,7 @@ one call.
 
 **So the order is fixed:**
 
-1. **Look at the client.** `node state.mjs` for the four-field health read, `node shot.mjs <port>` for
+1. **Look at the client.** `bun state.mjs` for the four-field health read, `bun shot.mjs <port>` for
    the screen. A claim about what a client is doing is checked against the client, never against the
    code that describes it.
 2. **Then reload it.** A web client in an unexpected state is not a puzzle to solve: a reload is
@@ -1863,7 +1863,7 @@ third of the system.
 **The server observer now meets that bar and is tested like the other two.** `srvlog.mjs` classifies
 every application container's `docker logs` over a run's own window into the same buckets, `run.mjs`
 calls it at the end of every pass so the bar is not enforced by somebody remembering to type a
-command, and `node srvlog.mjs --since <t> --shapes` collapses `unexplained` and `notable` to distinct
+command, and `bun srvlog.mjs --since <t> --shapes` collapses `unexplained` and `notable` to distinct
 sentences for triage. Its buckets have one addition the client's classifier does not need:
 `expectedErrors`, for errors that are real, named and not defects - `WebSocket protocol error:
 Connection reset without closing handshake` is the gateway describing a *client* that vanished
@@ -1931,7 +1931,7 @@ the last four classifier additions were near-misses on an existing rule, not new
 
 Found 2026-08-25, chasing a contradiction that did not exist - and worth the chase, because two
 instruments disagreeing about one line would make every `server clean` on the board suspect. GRP
-pass 3 reported the server clean; `node srvlog.mjs --since <that pass's window>`, run by hand
+pass 3 reported the server clean; `bun srvlog.mjs --since <that pass's window>`, run by hand
 afterwards over the same window, reported two `unexplained` lines timestamped inside it.
 
 Neither was wrong. `run.mjs` calls `srvReport(window, { subjects: [...SUBJECTS] })`, and
@@ -2426,7 +2426,7 @@ intermittent, which is worse.** COMM-18 makes the point sharply: it holds a `PAS
 summarised the evidence, it has selected from it. The newest verdict holds, always, and a superseded
 one survives in the cell only as prose that names it as superseded.
 
-`node rows.mjs` answers this in one command: it reads the board and the ledger and prints every row
+`bun rows.mjs` answers this in one command: it reads the board and the ledger and prints every row
 where they disagree, every row the board claims and the ledger cannot corroborate, and every verdict
 taken by a runner that has since changed. **Run it before believing a cell, and before writing a
 phase's summary line.** It had been reporting these fourteen divergences for a day before anyone
@@ -2847,7 +2847,7 @@ step that was never taken:
   and a native half it cannot read voids the verdict rather than passing it.
 
 **AND "IN ONE PLACE" MEANT IN THE COMMAND-LINE BLOCK, WHICH IS NOT A PLACE A RUNNER CAN REACH.** The
-AND above was written inside `footprint.mjs`'s `import.meta.url === ...` guard, so `node footprint.mjs
+AND above was written inside `footprint.mjs`'s `import.meta.url === ...` guard, so `bun footprint.mjs
 --device A1` was correct while `healrevoke.mjs` - the runner that actually records the row - imported
 `nothingOfTheAccountRemains` and asserted the WEB HALF ALONE. The fix that closed the defect for a
 human reading a terminal left it open for every row, which is worse: a row's verdict is believed

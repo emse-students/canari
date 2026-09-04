@@ -1384,7 +1384,7 @@ population now includes "a device minted as a revocation row's seed", which is a
 
 **And on those two rows the refusal was invisible from the client half.** `healnew.mjs` records only
 `observers: { w3 }`; the server window is taken by `run.mjs` per PASS and printed, not written to the
-ledger row - so `node rows.mjs` and every HEAL-NEW cell are silent about it, and it was found by
+ledger row - so `bun rows.mjs` and every HEAL-NEW cell are silent about it, and it was found by
 reading the run's stdout. Nothing here is wrong, but a HEAL-NEW verdict says "clean on the web
 client", never "clean on the server".
 
@@ -1607,7 +1607,7 @@ id, then the server report can partition on it instead of on the queue.
 **Instrument debt, and it qualifies every verdict this rung has taken.** `healnew.mjs` and
 `healrevoke.mjs` record `observers: { w3 }` and nothing else. The server window IS taken - `run.mjs`
 does it per pass and `srvlog.mjs` classifies it - but it is PRINTED, never written to the ledger row,
-so `gate()` never sees it, `node rows.mjs` cannot report it, and no cell on the board can say
+so `gate()` never sees it, `bun rows.mjs` cannot report it, and no cell on the board can say
 anything about it either way.
 
 **It is not hypothetical: both windows of the 2/12 pair were NOT clean**, and the `no_key_package`
@@ -1756,7 +1756,7 @@ not read.** The server does not close the gap either: `getUserGroups` (`members.
 filters distribution groups and `deletedAt` tombstones, never dismissals.
 
 **IT IS NOT THE CAUSE OF THE USER'S SYMPTOM, AND THAT WAS MEASURED, NOT ASSUMED.** Read from the
-owner's own session on 2026-08-27 (`node syncrows.mjs --device W3`): 9 active groups, 0 tombstoned,
+owner's own session on 2026-08-27 (`bun syncrows.mjs --device W3`): 9 active groups, 0 tombstoned,
 **876** dismissed-group rows, and `dismissedStillMember: 0`. The intersection is EMPTY, so the branch
 cannot currently fire - which is why this is a P3 latent gap and not the explanation for the Sync
 rows the user reported. A predicate that names an incident has to be re-measured against the

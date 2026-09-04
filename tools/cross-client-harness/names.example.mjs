@@ -69,7 +69,24 @@ export const SITE = "http://localhost:1420";
  * account-level, so the fresh device enters the same one. `newdevice.mjs` refuses any other device
  * by name - see its `WIPEABLE`.
  */
-export const PORTS = { W1: 9224, W2: 9223, A1: 9333, W3: 9225 };
+export const PORTS = { W1: 9224, W2: 9223, A1: 9333, W3: 9225, A2: 9335 };
+
+/**
+ * WHICH PHYSICAL PHONE EACH ANDROID NAME IS - and it is REQUIRED as soon as two are attached.
+ *
+ * `serial()` used to take the first USB entry adb listed, which was harmless while there was one
+ * phone and silently wrong the moment there were two: on 2026-09-04 a Pixel 6a was plugged in beside
+ * the Mi 9T and every atom would have woken, forwarded, logged into and measured the wrong device
+ * while reporting confidently about A1. Ambiguity is now an error, and this map is how it is
+ * resolved - `ANDROID_SERIAL` being the other way, which adb itself honours.
+ *
+ * A SERIAL IS A DEVICE ID, so the real map lives out of tree with the rest of `names.mjs`. Read the
+ * values off `adb devices`.
+ *
+ * A phone also needs a devtools port of its own in `PORTS` (`A2` above), and the IdP browser takes
+ * the NEXT port up - `login.mjs` derives `TAB_PORT` as `port + 1`, so leave a gap between phones.
+ */
+export const SERIAL_OF = { A1: "<adb serial of the first phone>", A2: "<adb serial of the second>" };
 
 /**
  * WHERE EACH DEVICE'S APP LIVES. The phone's is NOT the site's.
@@ -84,7 +101,7 @@ export const PORTS = { W1: 9224, W2: 9223, A1: 9333, W3: 9225 };
  * So route by DEVICE, never by the one constant that happens to be a URL. `SITE` remains what the
  * browsers load and what a link points at; it is not where the phone runs.
  */
-export const ORIGIN = { W1: SITE, W2: SITE, W3: SITE, A1: "http://tauri.localhost" };
+export const ORIGIN = { W1: SITE, W2: SITE, W3: SITE, A1: "http://tauri.localhost", A2: "http://tauri.localhost" };
 
 /**
  * Which account key in `test-accounts.json` each device is logged in as.
@@ -92,7 +109,7 @@ export const ORIGIN = { W1: SITE, W2: SITE, W3: SITE, A1: "http://tauri.localhos
  * `pin.mjs` used to take the account by name, so unlocking a client meant remembering which of the
  * two owned it - and the wrong answer does not error, it types the other account's PIN and reports
  * "PIN incorrect" about a PIN that is perfectly correct. The device is the thing a caller actually
- * knows, so it is the thing to pass: `node pin.mjs --device W1`.
+ * knows, so it is the thing to pass: `bun pin.mjs --device W1`.
  */
 export const ACCOUNT_OF = {
   W1: "<owner key>",

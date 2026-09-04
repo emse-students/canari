@@ -218,7 +218,7 @@ export async function client(port, match = null, { focus = true, allowMany = fal
     throw new Error(
       `${hits.length} tabs on ${port}${match ? ` match ${match}` : ''}, so no tab can be chosen: ` +
         `${hits.map((x) => new URL(x.url).pathname).join(' | ')}. ` +
-        'Close the extras (node onetab.mjs) or pass { allowMany: true } if the sibling is deliberate.'
+        'Close the extras (bun onetab.mjs) or pass { allowMany: true } if the sibling is deliberate.'
     );
   const t = hits[0];
   if (!t) throw new Error(`no target on ${port} matching ${match}; have ${targets.map((x) => x.url).join(' | ')}`);

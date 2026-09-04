@@ -55,28 +55,28 @@
  * **Bringing a client up**
  *   `startBrowser` `killBrowser`   `launch.mjs`   a Chrome profile IS a device; the profile lives
  *                                                 outside the work tree.
- *   `node login.mjs --device W1`                  the two IdP paths: Authentik's service-account
+ *   `bun login.mjs --device W1`                  the two IdP paths: Authentik's service-account
  *                                                 flow (default) and the school's CAS (`--flow cas`).
- *   `node pin.mjs --device W1`                    the encryption gate, in BOTH its shapes - the
+ *   `bun pin.mjs --device W1`                    the encryption gate, in BOTH its shapes - the
  *                                                 returning "Deverrouiller" and the first-run
  *                                                 "Creer mon PIN" - and both keyboard shapes, the
  *                                                 desktop input and the mobile keypad.
- *   `node unlock.mjs`                             the phone's PIN after any relaunch or reinstall.
- *   `node phone.mjs`                              the A1 forward, derived from the running pid.
+ *   `bun unlock.mjs`                             the phone's PIN after any relaunch or reinstall.
+ *   `bun phone.mjs`                              the A1 forward, derived from the running pid.
  *   `client(port, APP_TAB)`         `chat.mjs`    attach to a client and refuse an ambiguous tab.
  *
  * **Making a device**
- *   `node newdevice.mjs [--keep-open]`            turns W3 into a device the server has never seen,
+ *   `bun newdevice.mjs [--keep-open]`            turns W3 into a device the server has never seen,
  *                                                 and MEASURES that it did. Destructive, so it has
  *                                                 an allowlist (`WIPEABLE`), not a denylist.
- *   `node purge-devices.mjs --only <id>`          removes a device through the product's own panel.
+ *   `bun purge-devices.mjs --only <id>`          removes a device through the product's own panel.
  *
  * **Building the venue and the conversations**
- *   `node venue.mjs`                              the shared community and its channel, idempotent,
+ *   `bun venue.mjs`                              the shared community and its channel, idempotent,
  *                                                 answered from the tables rather than the screen.
  *   `createDM(cx, name)`            `groupnav.mjs`  a DM with someone, created if absent.
  *   `createGroup(cx, name)`         `groupnav.mjs`  a group conversation.
- *   `node invite.mjs --port <p> --group <name>`     adds a member - the campaign's only cheap,
+ *   `bun invite.mjs --port <p> --group <name>`     adds a member - the campaign's only cheap,
  *                                                   deterministic epoch generator.
  *   `deleteGroup` `dismissLocally`  `groupnav.mjs`  the two ways a conversation ends.
  *
@@ -135,12 +135,12 @@ export function run(script, args = [], { timeoutMs = 300_000 } = {}) {
   return { code: r.status, out: `${r.stdout ?? ''}${r.stderr ?? ''}`.trim() };
 }
 
-/** `node login.mjs --device <device>`, with the flow the campaign's accounts use. */
+/** `bun login.mjs --device <device>`, with the flow the campaign's accounts use. */
 export const login = (device, { flow = 'service-account' } = {}) =>
   run('login.mjs', ['--device', device, '--flow', flow]);
 
 /**
- * `node pin.mjs --device <device>`.
+ * `bun pin.mjs --device <device>`.
  *
  * EXIT 2 IS AN ANSWER, NOT A FAILURE: it means no gate was on screen, which is either a client
  * already past it or one that never mounted it - and `pin.mjs` prints which. Callers decide.

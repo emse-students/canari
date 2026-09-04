@@ -114,7 +114,7 @@ hyphen IS the definition. **A stable owes exactly one thing written by a human**
 GitHub release body through ONE implementation. Check it before tagging:
 
 ```sh
-MARKETING_VERSION=0.16.2 node tools/app-store/submit.mjs --check-notes
+MARKETING_VERSION=0.16.2 bun tools/app-store/submit.mjs --check-notes
 ```
 
 **A STABLE IS REFUSED unless a pre-release served dev at that commit first**, so the ordinary
@@ -164,6 +164,7 @@ exceeds a 5-minute foreground timeout.
 
 ## **KEY COMMANDS**
 
+- **BUN RUNS THE SCRIPTS TOO, NEVER `node`** (user, 2026-09-04: *"Jamais node, toujours bun"*). Every `.mjs` in `tools/` is invoked `bun x.mjs`, the Makefile's harness gate included; a script that spawns another uses `process.execPath` so it inherits the runtime rather than naming one. `archive/gate-selftest.mjs` parses the `test-harness` recipe and would match nothing if the two ever disagreed - it accepts both spellings and FAILS on an empty gate, which is how a silent mismatch surfaces.
 - Package manager: bun everywhere - frontend and the four NestJS apps each commit a `bun.lock`, CI installs `--frozen-lockfile`, the Makefile calls bun. **`.bun-version` is the ONE place this repo names a bun version.** No `packageManager` field, no `engines.bun`, no npm.
 - Setup/dev: `make install`, `make run-services`, `cd frontend && bun run dev`.
 - Tests: `make test`, `make test-frontend`, `cargo test`.
@@ -293,7 +294,7 @@ a blocker** (a 409 means the JWT was accepted). Whether the fix works is answere
 stable.
 
 **Never infer a store or CI state from a line here, which has been stale twice.** Play is a
-MEASUREMENT (`node tools/play-vitals/vitals.mjs`, [README](tools/play-vitals/README.md)); CI is
+MEASUREMENT (`bun tools/play-vitals/vitals.mjs`, [README](tools/play-vitals/README.md)); CI is
 `gh run list`. **No HEAL-REVOKE verdict about a clean device may be taken on a build older than
 0.14.12.** **An APK is not reached by a deploy** - `frontendDist: "../build"` means the app EMBEDS
 the frontend, so `minClientVersion` and check S reason about a NAME unless a version identifies its
@@ -317,7 +318,7 @@ methodology = how a result earns belief, README = operating manual. **Read them 
 re-deriving anything here, and keep no second copy.**
 
 **Five facts that are NOT on those pages, or that a session gets wrong by skipping them.**
-`node rows.mjs` SETTLES whether the board matches the ledger - run it before believing a cell, it
+`bun rows.mjs` SETTLES whether the board matches the ledger - run it before believing a cell, it
 has caught the board wrong three times. **The rig targets the LOCAL estate since 2026-09-03, and
 the mutual-exclusion rule died with that move**: a push deploys nothing now, so there is no event
 left to be exclusive with, and the accident that voided three cells cannot recur; what replaces it

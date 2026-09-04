@@ -12,8 +12,8 @@
  * NEXT run fail with "no stable element" for a control that is plainly in the DOM and not disabled.
  * That cost three runs here. `settle()` is the fix, and it asserts rather than hopes.
  *
- *   node invite.mjs --port 9223               (invites the OTHER party, whoever this port is)
- *   node invite.mjs --port 9223 --probe       (report the panel, change nothing)
+ *   bun invite.mjs --port 9223               (invites the OTHER party, whoever this port is)
+ *   bun invite.mjs --port 9223 --probe       (report the panel, change nothing)
  */
 import { APP_TAB, client, evaluate, goto, realClick, until } from './chat.mjs';
 import { PORTS, peerNameFor } from './names.mjs';

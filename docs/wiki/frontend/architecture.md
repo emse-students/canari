@@ -265,7 +265,7 @@ Rules:
 
 ### Finding one-way colours
 
-`node scripts/find-oneway-colors.mjs [pathFilter]` (from `frontend/`) reports them. Two things it
+`bun scripts/find-oneway-colors.mjs [pathFilter]` (from `frontend/`) reports them. Two things it
 gets right that a grep does not:
 
 - Detection is **per class list**, not per file: `bg-white dark:bg-slate-900` flips and is fine, so

@@ -3,9 +3,9 @@
  * THE BOARD AND THE EVIDENCE, RECONCILED - which rows nothing has ever answered, and which answers
  * no row asked for.
  *
- *   node rows.mjs             the gaps, and a per-phase count
- *   node rows.mjs --build X   also flag rows whose newest verdict was not taken on build X
- *   node rows.mjs --strict    exit non-zero if anything is owed
+ *   bun rows.mjs             the gaps, and a per-phase count
+ *   bun rows.mjs --build X   also flag rows whose newest verdict was not taken on build X
+ *   bun rows.mjs --strict    exit non-zero if anything is owed
  *
  * WHY THIS EXISTS. `cross-client-testing.md` is the board and its row ids are the campaign's only
  * vocabulary: a verdict is a row id plus a verdict word. Nothing checked that the two vocabularies

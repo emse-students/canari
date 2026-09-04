@@ -342,7 +342,7 @@ forbids of any decision.
    than a deploy ever was and it has no run to watch, so `bundle.mjs`'s check is the only thing
    standing between it and a verdict about the wrong build. Do not edit the frontend during a run.
 7. **Where the verdict is written.** The board cell - a verdict, a count, a time, four or five words -
-   and the ledger; then `node rows.mjs`, which is what proves the two vocabularies still agree.
+   and the ledger; then `bun rows.mjs`, which is what proves the two vocabularies still agree.
 8. **A branch CARRIES ITS ROW TO GREEN - it tests, and it FIXES, the product included** (user,
    2026-08-29). A row that ends `FAIL` because the product is wrong is not finished by reporting the
    `FAIL`: the branch diagnoses it, fixes it where the cause is, re-runs the row, and comes back with
@@ -1135,7 +1135,7 @@ where FCM is cancelled, and every later push row would silently measure this row
 build the phone must carry is NEWER THAN `v0.14.11`, for the reason below.
 
 **So the owed cell is now writable, and its predicate is the tool.** A HEAL-REVOKE row asserting
-`node footprint.mjs --device A1` reads `residue: 0` and `identityKeys: 0` is the row that would have
+`bun footprint.mjs --device A1` reads `residue: 0` and `identityKeys: 0` is the row that would have
 caught all three of these defects, and none of the ~200 existing rows would have caught any. The
 BEFORE reading for it, taken on a fully enrolled A1: `identityKeys: 3`, native `residue: 28`.
 

@@ -44,10 +44,10 @@ first write. It needs the three App Store Connect secrets and nothing else.
 ```sh
 ASC_KEY_ID=… ASC_ISSUER_ID=… ASC_API_KEY_P8="$(base64 -w0 AuthKey_XXX.p8)" \
 APP_BUNDLE_ID=fr.emse.canari MARKETING_VERSION=0.16.0 BUILD_NUMBER=1600099 \
-DRY_RUN=1 node tools/app-store/submit.mjs
+DRY_RUN=1 bun tools/app-store/submit.mjs
 ```
 
-`node tools/app-store/submit.mjs --check-notes` needs no credentials at all - it is the notes rule
+`bun tools/app-store/submit.mjs --check-notes` needs no credentials at all - it is the notes rule
 alone, and it is the mode the release preflight calls so that the rule has exactly one
 implementation.
 
@@ -70,7 +70,7 @@ Two decisions are worth knowing because their failure mode is silence:
 
 ## Tests
 
-`node tools/app-store/submit.test.mjs` (also run by `make test-ci-scripts`). It covers the
+`bun tools/app-store/submit.test.mjs` (also run by `make test-ci-scripts`). It covers the
 classifiers and the notes rule, and asserts the JWT is the shape App Store Connect accepts -
 including that the ECDSA signature is the raw 64-byte `r||s` pair rather than Node's default DER,
 which every verifier rejects with a bare 401 that says nothing about why. The HTTP calls are not

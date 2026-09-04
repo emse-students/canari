@@ -1,7 +1,7 @@
 /**
  * Reloads the web clients onto the CURRENTLY DEPLOYED bundle, and proves it took.
  *
- *   node reload.mjs [--ports 9224,9223]
+ *   bun reload.mjs [--ports 9224,9223]
  *
  * THE REPAIR AND ITS REASONING LIVE IN `bundle.mjs`, shared with `bundle-id.mjs` and with the
  * preflight - this file is the operator's entry point for doing it by hand. It held its own copy of

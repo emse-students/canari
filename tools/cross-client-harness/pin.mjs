@@ -5,7 +5,7 @@
  * Kept out of the cdp.mjs CLI for the same reason as login.mjs: the value comes from
  * scratchpad/test-accounts.json, never from argv, so it never lands in a captured shell.
  *
- * Usage: node pin.mjs --device W2 [--stay] [--value 9999]
+ * Usage: bun pin.mjs --device W2 [--stay] [--value 9999]
  *   --stay   tick "Rester connecte" (the vault path - PIN-9 depends on this being explicit)
  *   --value  override the PIN, for the wrong-PIN and short-PIN checks (PIN-2, PIN-3)
  */

@@ -594,6 +594,15 @@ What must not be forgotten between the pages:
 Push transports, the App Group, the NSE, the decrypt ladder and the update target are all on that
 page. `mob` = [mobile](frontend/mobile.md), `auth` = [auth](frontend/modules/auth.md).
 
+**A capability scope is a URL PATTERN, and a build profile is not one of its dimensions**
+
+- **AN EMPTY PORT IN A URL PATTERN MEANS THE PROTOCOL'S DEFAULT PORT, NEVER "ANY PORT".** `http://**` matches port 80 and nothing else; `https://**` works only because 443 is https's default, which is what makes the pair look symmetric and hides the bug. A Tauri capability granting `http://**` therefore refused the local estate on `:8081` for every call the HTTP plugin made, and the product said so in red under the PIN field on a phone that had just logged in successfully. Spell the wildcard - `http://localhost:*` - and validate a pattern against a REAL url before believing it. [cross-client-campaign-resume](cross-client-campaign-resume.md)
+- **A CAPABILITY FILE IS COMPILED INTO EVERY BUILD UNLESS THE CONFIG NAMES A SUBSET, AND ITS DESCRIPTION IS NOT A MECHANISM.** `development.json` said "NOT included in production builds" and shipped in all of them: `Capability` has no dev/release switch (its only filter is `platforms`, by target OS), and an absent `app.security.capabilities` means ALL files are included. A dev-only scope is made opt-in by naming the subset in `tauri.conf.json` and adding the extra capability through a `--config` overlay that only a debug build passes. Verify which way it went by grepping the built artefact for the scope string, never by reading the intent. [cross-client-campaign-resume](cross-client-campaign-resume.md)
+
+**A phone is not THE phone once there are two**
+
+- **A RESOLVER THAT PICKS "THE FIRST ONE" IS CORRECT UNTIL THE POPULATION IS TWO, AND THEN IT IS SILENTLY WRONG.** `serial()` took the first USB entry adb listed; a second phone was attached and it answered the other one, so every gesture would have woken, forwarded, logged into and measured a device the run was not about while reporting confidently about the first. Ambiguity in a device selector is an ERROR, resolved explicitly (a name -> serial map, or the tool's own `ANDROID_SERIAL`), never a choice made for the caller. [cross-client-testing](cross-client-testing.md)
+
 **A placeholder is not an identity**
 
 - **A VALUE THE SENDER DEFINES AS "NOT AN IDENTITY YET" MUST BE REFUSED AT BOTH ENDS, AND A SHAPE ALLOWLIST IS NOT AN IDENTITY ALLOWLIST.** `unknown` and `pending` are what a Canari client holds before its session resolves; on 2026-08-27 one of them was stored as an `active` member of a real conversation 0.84 s before its real members joined, and held the peer's place for 134 minutes while both directions of it were lost. Both literals pass the regex perfectly, and the ghost gate that exists for this class passed too, because the placeholder had registered a KeyPackage. Refuse the VALUE, on every path that can write an identity, on the client and on the server - a client of any version reaches the endpoint. [backlog](backlog.md)

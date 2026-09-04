@@ -347,19 +347,19 @@ test-ci-scripts: lint-ci-scripts
 
 test-harness:
 	@echo "${BLUE}🧪 Harness self-tests…${RESET}"
-	@node tools/cross-client-harness/rawcheck.mjs
-	@node tools/cross-client-harness/classify-selftest.mjs
-	@node tools/cross-client-harness/srvclassify-selftest.mjs
-	@node tools/cross-client-harness/checks-selftest.mjs
-	@node tools/cross-client-harness/logcatclassify-selftest.mjs
-	@node tools/cross-client-harness/devices-selftest.mjs
-	@node tools/cross-client-harness/debris-selftest.mjs
-	@node tools/cross-client-harness/gate-selftest.mjs
-	@node tools/cross-client-harness/ready-selftest.mjs
-	@node tools/cross-client-harness/servable-selftest.mjs
-	@node tools/cross-client-harness/residue-selftest.mjs
-	@node tools/cross-client-harness/gate-probe-selftest.mjs
-	@node tools/cross-client-harness/usability-selftest.mjs
+	@bun tools/cross-client-harness/archive/rawcheck.mjs
+	@bun tools/cross-client-harness/archive/classify-selftest.mjs
+	@bun tools/cross-client-harness/archive/srvclassify-selftest.mjs
+	@bun tools/cross-client-harness/archive/checks-selftest.mjs
+	@bun tools/cross-client-harness/archive/logcatclassify-selftest.mjs
+	@bun tools/cross-client-harness/archive/devices-selftest.mjs
+	@bun tools/cross-client-harness/archive/debris-selftest.mjs
+	@bun tools/cross-client-harness/archive/gate-selftest.mjs
+	@bun tools/cross-client-harness/archive/ready-selftest.mjs
+	@bun tools/cross-client-harness/archive/servable-selftest.mjs
+	@bun tools/cross-client-harness/archive/residue-selftest.mjs
+	@bun tools/cross-client-harness/archive/gate-probe-selftest.mjs
+	@bun tools/cross-client-harness/archive/usability-selftest.mjs
 	@echo "${GREEN}✅ Harness self-tests OK${RESET}"
 
 # THE SELF-TESTS THAT NEED THE RIG UP, and therefore not the CI gate. `test-harness` runs on a fresh
@@ -368,7 +368,7 @@ test-harness:
 # stops one of these being added back to the gate, where it can only fail.
 test-harness-device:
 	@echo "${BLUE}🧪 Harness self-tests needing a live rig…${RESET}"
-	@node tools/cross-client-harness/tabguard-selftest.mjs
+	@bun tools/cross-client-harness/archive/tabguard-selftest.mjs
 	@echo "${GREEN}✅ Device self-tests OK${RESET}"
 
 # Criterion benchmarks for mls-core hot paths (Phase 3 baseline)

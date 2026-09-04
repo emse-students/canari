@@ -8,7 +8,7 @@
  * run reads as a layout bug. `--user-data-dir` is what makes the login survive a relaunch: the
  * profile is persistent, so a relaunched browser is still logged in (only the PIN is re-asked).
  *
- * Usage:  node launch.mjs kill w1        node launch.mjs start w1
+ * Usage:  bun launch.mjs kill w1        bun launch.mjs start w1
  */
 import { spawn, execSync } from "node:child_process";
 import { join } from "node:path";
@@ -132,7 +132,7 @@ if (process.argv[1] && process.argv[1].endsWith("launch.mjs")) {
   } else if (action === "start") {
     console.log(`${which} up in ${await startBrowser(which)}ms`);
   } else {
-    console.log("usage: node launch.mjs kill|start w1|w2");
+    console.log("usage: bun launch.mjs kill|start w1|w2");
   }
   process.exit(0);
 }

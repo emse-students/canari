@@ -6,9 +6,9 @@ did not crash; none runs the app on a stranger's phone. All three Android defect
 found there.
 
 ```
-node vitals.mjs            # the report
-node vitals.mjs --stacks   # plus one stack trace per issue that is not already known
-node vitals.mjs --json     # plus the raw payloads, for diffing two runs
+bun vitals.mjs            # the report
+bun vitals.mjs --stacks   # plus one stack trace per issue that is not already known
+bun vitals.mjs --json     # plus the raw payloads, for diffing two runs
 ```
 
 Exit code `0` nothing new, `1` a NEW or REGRESSED issue is present, `2` the run itself failed.

@@ -350,13 +350,13 @@ been run. To re-arm the precondition - it is NOT ambient, and a run made without
 1. `adb shell input keyevent KEYCODE_HOME`, then `am kill fr.emse.canari`, and assert `pidof` is
    empty. **Never `force-stop`**, which puts the app in the STOPPED state and cancels every FCM
    broadcast.
-2. `node run.mjs --preflight A1` - it foregrounds, sends the app to `/chat` and unlocks the PIN.
+2. `bun run.mjs --preflight A1` - it foregrounds, sends the app to `/chat` and unlocks the PIN.
    That unlock is what calls `/register` and writes the file.
 3. **Assert the precondition is armed**: `run-as fr.emse.canari ls -l /data/data/fr.emse.canari/pending_push_secret.txt`
    must show 32 bytes. If the file is ABSENT the window is closed (a resume already migrated it) and
    the run measures nothing - go back to step 1. Use the PowerShell tool for this, never Bash, which
    rewrites the absolute device path.
-4. `node scratch/k-run.mjs "<marker>" --background`, then answer from the shade.
+4. `bun scratch/k-run.mjs "<marker>" --background`, then answer from the shade.
 5. **Verdict lines:** `retrievePushSecret: newer secret adopted from pending_push_secret.txt -> Keystore`,
    then `sendQueuedMessagePush: HTTP 201`, then `1 sent, 0 remaining`. A `403` means the fix is
    wrong, not that the rig is.
@@ -744,7 +744,7 @@ HEAL-REVOKE rows must run on a build carrying that fix - which for A1 means a ne
 Tauri app embeds the frontend and a CD deploy never reaches it.**
 
 **AND ASKING THE PHONE THE SAME QUESTION FOUND A SECOND DEFECT BEFORE ANY ROW RAN, 2026-08-28.**
-`node footprint.mjs --device A1` answered `canariDatabases: 1`, `bytesInUse: 5939115` on a device
+`bun footprint.mjs --device A1` answered `canariDatabases: 1`, `bytesInUse: 5939115` on a device
 whose message store is SQLite - so the WebView held 5.9 MB that nothing on that platform writes and,
 until that morning, nothing on that platform deleted: `wipeDeviceToFactory` had the native stores and
 the WebView's as the two ARMS of one branch. The database existed because the posts mini panel named
@@ -804,6 +804,6 @@ nothing to measure because a revocation had already put a device in that state.
 
 **What this does NOT close: neither reading came from a RUNNER, so neither is in the ledger and
 `rows.mjs` will not see them.** They are hand-taken, like the six SETUP rows. The HEAL-REVOKE cell is
-still owed as a script, and its predicate is now written for it: `node footprint.mjs --device <d>`
+still owed as a script, and its predicate is now written for it: `bun footprint.mjs --device <d>`
 must read `residue: 0` on a phone and `identityKeys: 0` everywhere, with the offline variant driven by
 a reload rather than a frame.

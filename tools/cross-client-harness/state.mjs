@@ -7,7 +7,7 @@
  * populated. A check that starts against a client failing any of these does not fail - it HANGS, or
  * worse, reports on whatever was left on screen.
  *
- *   node state.mjs
+ *   bun state.mjs
  */
 import { client, evaluate } from './chat.mjs';
 import { GATE_EXPR } from './gate-probe.mjs';

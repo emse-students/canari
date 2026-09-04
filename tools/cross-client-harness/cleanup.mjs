@@ -1,7 +1,7 @@
 /**
  * Deletes the communities, the salons AND the throwaway GROUPS a CRASHED check left on production.
  *
- *   node cleanup.mjs [--dry]
+ *   bun cleanup.mjs [--dry]
  *
  * THREE ESTATES, NOT ONE, and for a while this swept only the first. A runner that builds its own
  * community takes it down with it, so debris there is rare - but most checks build a SALON inside the
