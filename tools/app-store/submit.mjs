@@ -26,8 +26,8 @@
  * repository, that file NAMES THE VERSION it was written for, and `release-preflight.sh` runs the
  * same check through `--check-notes` before anything moves at all.
  *
- * Usage: node tools/app-store/submit.mjs
- *        node tools/app-store/submit.mjs --check-notes   # the notes rule alone, no credentials
+ * Usage: bun tools/app-store/submit.mjs
+ *        bun tools/app-store/submit.mjs --check-notes   # the notes rule alone, no credentials
  *   env  ASC_KEY_ID, ASC_ISSUER_ID, ASC_API_KEY_P8 (base64 of the .p8)
  *        APP_BUNDLE_ID     the app to act on
  *        MARKETING_VERSION the versionString, e.g. 0.15.0 - numeric, no pre-release suffix

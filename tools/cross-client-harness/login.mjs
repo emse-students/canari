@@ -11,12 +11,13 @@
  * `--flow cas` takes the main button and answers the school's CAS form, which ends at a 2FA no tool
  * here can pass. See `LAUNCHER_BUTTON` below for why that is the default rather than an option.
  *
- * Usage: node login.mjs --device W2          (preferred - fixes the port and the account together)
- *        node login.mjs --port 9223 --account <key as spelt in test-accounts.json>
- *        node login.mjs --device W1 --flow cas
+ * Usage: bun login.mjs --device W2          (preferred - fixes the port and the account together)
+ *        bun login.mjs --port 9223 --account <key as spelt in test-accounts.json>
+ *        bun login.mjs --device W1 --flow cas
  */
 import { accountFor } from './accounts.mjs';
 import { connect, evaluate, listTargets, realClick } from './cdp.mjs';
+import { ensure, forwardIdpBrowser, useDevice } from './phone.mjs';
 import { ACCOUNT_OF, PORTS, SITE } from './names.mjs';
 
 const argv = process.argv.slice(2);
@@ -25,10 +26,22 @@ const opt = (name, fallback) => {
   return i === -1 ? fallback : argv[i + 1];
 };
 
+// `--android` IS A SPELLING OF `--device A1`, AND IT ARMS WHAT IT NEEDS. The whole point of an atom
+// is that `bun login.mjs --android` leaves the phone logged in with no manual probe first, so the
+// forward this script depends on is MADE here rather than assumed: the devtools socket carries the
+// app's pid, so a relaunch, a reinstall or a replug invalidates it, and every session that hand-typed
+// `adb forward` before calling this was paying for that omission. It is not a second way of naming a
+// device - it resolves to A1 and then goes through exactly the same path as `--device A1`.
+const android = argv.includes('--android');
+const spelt = opt('device', null);
+if (android && spelt && spelt !== 'A1') {
+  throw new Error(`--android IS --device A1, so --device ${spelt} contradicts it`);
+}
+
 // THE ACCOUNT IS DERIVED FROM THE DEVICE, never defaulted to a spelt key. A spelt key is an identity
 // in a public repository, and it is also the wrong answer the moment this is pointed at the other
 // browser: the login then fails on credentials that are perfectly correct for someone else.
-const device = opt('device', null);
+const device = android ? 'A1' : spelt;
 if (device && !PORTS[device]) throw new Error(`unknown device ${device} - known: ${Object.keys(PORTS).join(' ')}`);
 const port = Number(opt('port', device ? PORTS[device] : 9223));
 const forPort = Object.keys(PORTS).find((d) => PORTS[d] === port);
@@ -36,6 +49,31 @@ const account = opt('account', device ? ACCOUNT_OF[device] : ACCOUNT_OF[forPort]
 if (!account) throw new Error(`no account known for port ${port} - pass --device or --account`);
 
 const creds = accountFor(account);
+
+// THE PHONE IS ARMED HERE, NOT BY THE CALLER. `forwardIdpBrowser` already did this for the BROWSER
+// half of the hop and the APP half was left to whoever ran the script - which is the manual probe
+// this atom exists to delete. `ensure` is the gesture that already knows the whole ladder: wake,
+// launch if the process is gone, foreground it (a backgrounded WebView keeps its socket listed and
+// then never answers), re-point the forward at the CURRENT pid, and only report success once CDP has
+// actually answered on the port. Every one of those steps has produced a wrong verdict on its own.
+//
+// The bound is 10 s rather than its 20 s default: ten seconds is long enough to show that a launch
+// worked, and a phone that needs longer is a phone worth being told about rather than waited for.
+// A DEVICE NAME CARRIES ITS PLATFORM, and `A` is this rig's spelling for a phone. `W1`/`W2`/`W3` are
+// Chrome profiles, `A1`/`A2` are Android. It is a convention rather than a probe on purpose: which
+// phone a run is about must be decidable BEFORE anything is plugged in or woken, and asking adb what
+// is attached cannot answer a question about intent.
+const isPhone = /^A\d+$/.test(device ?? '');
+
+if (isPhone) {
+  // BOUND BY NAME BEFORE THE FIRST adb CALL. Two phones are attached as of 2026-09-04, and without
+  // this every gesture below would go to whichever one adb listed first - see `serial()`.
+  const bound = useDevice(device);
+  console.log(`[login:${account}] device ${device} -> ${bound}`);
+  const up = await ensure({ port, timeoutMs: 10_000 });
+  if (!up.ok) throw new Error(`the phone is not measurable: ${up.reason}`);
+  console.log(`[login:${account}] phone armed over ${up.how}, app pid ${up.pid}, CDP answering on ${port}`);
+}
 
 // THE MOBILE FORM IS NOT IN THE APP. Tauri hands the OIDC hop to a Chrome Custom Tab, which is a
 // different browser and therefore a different devtools endpoint - `phone.mjs` forwards the app's
@@ -50,26 +88,109 @@ const creds = accountFor(account);
 // through this, drove the form in the wrong browser, and then failed on a tab that had never been
 // asked for anything. So the phone's port arithmetic is done only for the phone; a browser has no
 // Custom Tab, and `null` says so instead of pointing at a neighbour.
-const TAB_PORT = opt('tabPort', null) ? Number(opt('tabPort', null)) : port === PORTS.A1 ? port + 1 : null;
+const TAB_PORT = opt('tabPort', null) ? Number(opt('tabPort', null)) : isPhone ? port + 1 : null;
 
-/** The credential form when it is in Chrome rather than in the app, or null. */
+/**
+ * The credential form when it is in the phone's BROWSER rather than in the app, or null.
+ *
+ * IT FORWARDS THE PORT BEFORE LOOKING, WHICH IS THE HALF THAT WAS MISSING. `TAB_PORT` was computed
+ * and then listed, and nothing had ever created the forward - so this answered `null` for every
+ * phone login ever attempted. The visible symptom was the phone sitting on "Redirection..." while
+ * the script clicked the launcher and then timed out on `Input.dispatchTouchEvent` against a WebView
+ * that had already handed the page away; nothing was typed into the IdP form at any point. Measured
+ * 2026-09-04, and noticed by a person watching the screen rather than by any assertion here.
+ *
+ * The browser is DISCOVERED, never named: this device is LineageOS and the hop lands in
+ * `org.lineageos.jelly`, so a forward written for Chrome would have found nothing even once the
+ * missing call was added. See `forwardIdpBrowser`.
+ *
+ * The forward is re-made on every call rather than once: the abstract socket carries the browser's
+ * pid, and a Custom Tab that is dismissed and re-opened is a different process.
+ */
+const atAnIdP = (url) => url.includes('auth.canari-emse.fr') || url.includes('cas.emse.fr');
+
+/**
+ * The IdP page on port `p` THAT IS ACTUALLY ON SCREEN, or null - and the choice is MEASURED.
+ *
+ * POSITION IS NOT A PREDICATE, AND USING IT AS ONE TYPED A PASSWORD INTO A DEAD TAB. This took the
+ * LAST match on the theory that it was the newest; `/json/list` promises no such order, and the
+ * phone's browser is `org.lineageos.jelly`, which KEEPS EVERY TAB IT HAS EVER OPENED - eight of
+ * them on 2026-09-04, two still showing Authentik's "Redirect URI Error" from before the provider
+ * was fixed. So the credential went into a tab nobody was looking at, repeatedly, while the live
+ * form sat untouched and the script reported a form it had filled.
+ *
+ * `document.visibilityState` is the question actually being asked - WHICH ONE IS THE USER LOOKING AT
+ * - put to each candidate rather than inferred from its rank. A tab that will not answer is not the
+ * one being shown, so a dead endpoint disqualifies itself instead of throwing.
+ *
+ * IT IS A TIE-BREAK, NOT A REQUIREMENT, and that asymmetry is deliberate. With a single candidate
+ * there is nothing to choose between and the measurement is skipped - which keeps the WEB path
+ * exactly as it was, where the form is the profile's only tab and a merely occluded window would
+ * otherwise read as "no form at all".
+ */
+const idpTargetOn = async (p) => {
+  const seen = await listTargets(p).catch(() => []);
+  const idp = seen.filter((t) => atAnIdP(t.url));
+  if (idp.length <= 1) return idp[0] ?? null;
+  for (const t of idp) {
+    const c = connect(t.webSocketDebuggerUrl);
+    try {
+      await c.ready;
+      await c.send('Runtime.enable');
+      if ((await evaluate(c, 'document.visibilityState')) === 'visible') return t;
+    } catch {
+      /* a tab that cannot answer is not the one on screen - and `connect` is bounded, so this ends */
+    } finally {
+      c.close();
+    }
+  }
+  console.log(`[login:${account}] ${idp.length} IdP tab(s) on ${p} and NONE is on screen`);
+  return null;
+};
+
 const casTab = async () => {
   if (TAB_PORT === null) return null;
-  const seen = await listTargets(TAB_PORT).catch(() => []);
-  return seen.find((t) => t.url.includes('cas.emse.fr') || t.url.includes('auth.canari-emse.fr')) ?? null;
+  if (isPhone) {
+    const fwd = forwardIdpBrowser(TAB_PORT);
+    if (!fwd.ok) return null;
+  }
+  return idpTargetOn(TAB_PORT);
 };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const wanted = opt('match', null);
-const targets = await listTargets(port);
-const target = wanted ? targets.find((t) => t.url.includes(wanted) || t.title.includes(wanted)) : targets[0];
-if (!target) throw new Error(`no target matching ${wanted}; have: ${targets.map((t) => t.url).join(' | ')}`);
-const cx = connect(target.webSocketDebuggerUrl);
-await cx.ready;
-await cx.send('Runtime.enable');
 
-const here = () => evaluate(cx, 'location.href');
+/**
+ * The APP's page, connected ON FIRST USE rather than at startup - and that laziness is the fix.
+ *
+ * ANDROID FREEZES THE APP WHILE THE IdP FORM IS IN FRONT, and this script used to begin by talking
+ * to it. Once the hop leaves for the browser the Tauri process is backgrounded and then frozen, so
+ * its devtools socket is still LISTED and still ACCEPTS a connection while answering nothing: the
+ * first line of work blocked on a phone whose login was one password away from finishing. Reading
+ * the app is not what this atom is for - it is for answering a form - and the form lives in a
+ * DIFFERENT process, which asks the app for nothing at all.
+ *
+ * So the order is now: find the visible IdP tab, fill it, submit it, and only THEN look at the app -
+ * by which time the deep link has woken it. Nothing before the submit touches the WebView unless
+ * there is no form to answer, which is the web path and the first-run path, where the app is
+ * necessarily awake because it is what is on screen.
+ */
+let cx = null;
+const appCx = async () => {
+  if (cx) return cx;
+  const targets = await listTargets(port);
+  const target = wanted
+    ? targets.find((t) => t.url.includes(wanted) || t.title.includes(wanted))
+    : targets[0];
+  if (!target) throw new Error(`no target matching ${wanted}; have: ${targets.map((t) => t.url).join(' | ')}`);
+  cx = connect(target.webSocketDebuggerUrl);
+  await cx.ready;
+  await cx.send('Runtime.enable');
+  return cx;
+};
+
+const here = async () => evaluate(await appCx(), 'location.href');
 
 // THE ONE PREDICATE FOR "the browser is back on the app". It has two readers - the classification of
 // a missing form below, and the poll that ends after a submit - and they must never drift, because a
@@ -172,7 +293,7 @@ let onForm = false;
 // filled by the SAME code below, because a second copy is a second place for the focus assertion to
 // rot.
 let tabTarget = null;
-let formCx = cx;
+let formCx = null;
 
 // IDEMPOTENT BY READING BEFORE ACTING. What this script is for is leaving the browser holding an
 // authenticated session, so a browser that already holds one needs no gesture at all - and clicking a
@@ -200,7 +321,7 @@ let formCx = cx;
 const holdsASession = async () => {
   const url = await here();
   if (!onTheApp(url) || onTheLauncher(url)) return false;
-  return (await evaluate(cx, `!!localStorage.getItem('canari_saved_user')`)) === true;
+  return (await evaluate(await appCx(), `!!localStorage.getItem('canari_saved_user')`)) === true;
 };
 
 /**
@@ -226,7 +347,6 @@ const holdsASession = async () => {
  * from being logged in. There is no launcher to click from there and no session to keep: the form is
  * already the state, so it is named rather than refused.
  */
-const atAnIdP = (url) => url.includes('auth.canari-emse.fr') || url.includes('cas.emse.fr');
 const whatTheAppHasCommittedTo = async () => {
   const url = await here();
   if (onTheLauncher(url)) return 'launcher';
@@ -235,8 +355,23 @@ const whatTheAppHasCommittedTo = async () => {
   return null;
 };
 
+// THE FORM IS LOOKED FOR FIRST, AND THIS ORDER IS THE WHOLE POINT OF THE MOVE.
+//
+// Everything below asks the APP a question, and on the phone the app is frozen precisely when there
+// is a form to answer - so the cheapest, safest question comes first, and it is put to the BROWSER:
+// is a credential form on screen right now? A `yes` means the flow is already mid-hop, there is no
+// launcher to click and nothing to learn from a WebView Android has suspended.
+//
+// It used to sit AFTER the commitment wait, which is why `--device A1` hung on its first line: the
+// app was asked to describe itself while frozen behind the very form this script exists to fill.
+tabTarget = await casTab();
+if (tabTarget) {
+  onForm = true;
+  console.log(`[login:${account}] the IdP is already open in the phone's browser - the app is not touched`);
+}
+
 let committed = null;
-for (let i = 0; i < 150 && committed === null; i++) {
+for (let i = 0; i < 150 && committed === null && !onForm; i++) {
   committed = await whatTheAppHasCommittedTo();
   if (committed === null) await sleep(100);
 }
@@ -247,32 +382,45 @@ for (let i = 0; i < 150 && committed === null; i++) {
 // client that only needed sending back to the launcher. Measured 2026-09-04, three times in a row.
 // The recovery is a NAVIGATION rather than a wider predicate, because there is nothing on that page
 // to wait for; and it is attempted ONCE, so a launcher that genuinely never renders still throws.
-if (committed === null && String(await here()).includes('/auth/callback')) {
+if (!onForm && committed === null && String(await here()).includes('/auth/callback')) {
   console.log(`[login:${account}] parked on a spent /auth/callback - back to the launcher`);
-  await evaluate(cx, `location.href=${JSON.stringify(`${SITE}/login`)}`).catch(() => {});
+  await evaluate(await appCx(), `location.href=${JSON.stringify(`${SITE}/login`)}`).catch(() => {});
   for (let i = 0; i < 150 && committed === null; i++) {
     committed = await whatTheAppHasCommittedTo();
     if (committed === null) await sleep(100);
   }
 }
-if (committed === null) {
+if (!onForm && committed === null) {
   throw new Error(
     `the app committed to neither the launcher nor a session within 15s, at ${await here()}`,
   );
 }
 let theIdPAnsweredForUs = committed === 'session';
 if (theIdPAnsweredForUs) console.log(`[login:${account}] already on the app, no launcher to click`);
+
+// THE FORM MAY ALREADY BE OPEN SOMEWHERE ELSE, AND ON THE PHONE THAT IS THE NORMAL CASE.
+//
+// On the web the launcher navigates the same tab, so being on `/login` means the form is not up
+// yet. On the phone it hands the hop to an EXTERNAL browser, and the app's own page stays on
+// `/login` for ever afterwards, showing "Redirection...". So `committed === 'launcher'` says
+// nothing about whether the IdP is already waiting - and clicking again is not merely redundant:
+// the WebView that has handed its page away stops answering `Input.dispatchTouchEvent`, so the
+// click TIMES OUT and the script dies without ever having typed a character. Measured 2026-09-04,
+// on a phone that had four live Authentik tabs open at the time.
+//
+// Reading before acting is what the rest of this file already does for the session; this is the
+// same rule applied to the form.
 for (let attempt = 1; attempt <= 3 && !onForm && !theIdPAnsweredForUs; attempt++) {
   // THE CLICK IS GATED ON BEING ON THE LAUNCHER, because that is the only page carrying the button.
   // Reached mid-flow (`committed === 'idp'`) there is nothing to click, and asking `realClick` for a
   // button that is not there is a throw - which would turn a recoverable interrupted login into a
   // rig fault.
-  if (!(await evaluate(cx, FORM_SHAPE)) && onTheLauncher(await here())) {
-    await realClick(cx, LAUNCHER_BUTTON);
+  if (!(await evaluate(await appCx(), FORM_SHAPE)) && onTheLauncher(await here())) {
+    await realClick(await appCx(), LAUNCHER_BUTTON);
   }
   for (let i = 0; i < 100; i++) {
     await sleep(100);
-    if (await evaluate(cx, FORM_SHAPE)) {
+    if (await evaluate(await appCx(), FORM_SHAPE)) {
       onForm = true;
       break;
     }
@@ -307,7 +455,7 @@ if (!onForm) {
   }
   console.log(`[login:${account}] already authenticated - the IdP kept its session, nothing to fill`);
   console.log(`[login:${account}] final ${url}`);
-  cx.close();
+  cx?.close();
   process.exit(0);
 }
 if (tabTarget) {
@@ -409,8 +557,11 @@ const answerOneStage = async (shape, formCx) => {
  */
 const formPort = tabTarget ? TAB_PORT : port;
 const freshFormCx = async () => {
-  const seen = await listTargets(formPort).catch(() => []);
-  const at = seen.find((t) => atAnIdP(t.url));
+  // THE SAME CHOICE, SO THE SAME PREDICATE. This used to take the FIRST IdP target on the port,
+  // which on the phone is one of the stale tabs `idpTargetOn` exists to reject - so a run that had
+  // correctly found the live form would hand the NEXT stage to a dead one and report that the flow
+  // never advanced. Two places choosing a tab must not choose it two ways.
+  const at = await idpTargetOn(formPort);
   if (!at) return null;
   const c = connect(at.webSocketDebuggerUrl);
   await c.ready;
@@ -472,19 +623,34 @@ const landing = async () => {
   return app ? app.url : '(the app has no target yet)';
 };
 
+// `/auth/callback` IS NOT A LANDING, IT IS THE EXCHANGE STILL RUNNING. The deep link returns the
+// app to that route carrying a code, and the app is on the app's own origin from that instant - so a
+// poll that ends on the ORIGIN ends while the screen still says "Echange du code d'autorisation..."
+// and no session has been written yet. Measured 2026-09-04: this atom exited 0 on
+// `/auth/callback?code=...`, and the login only finished afterwards, unobserved. A caller handed
+// that would go on to ask a logged-out app for a sidebar, which is the failure the session predicate
+// upstream was written to remove - the same mistake, one page later.
+//
+// An atom ends on a FACT. The fact here is the one the app itself writes.
+const stillExchanging = (url) => url.includes('/auth/callback');
+
 // CAS -> auth.canari-emse.fr -> back to the app. Poll rather than guess a single delay.
+let arrived = null;
 for (let i = 0; i < 300; i++) {
   await sleep(100);
   const url = await landing();
-  if (onTheApp(url)) {
+  if (onTheApp(url) && !stillExchanging(url)) {
+    arrived = url;
     console.log(`[login:${account}] landed ${url} after ${((i + 1) / 10).toFixed(1)}s`);
     break;
   }
   if (i === 299) console.log(`[login:${account}] STILL AT ${url}`);
 }
+if (!arrived) console.log(`[login:${account}] the code exchange never left /auth/callback`);
 
-// Read the app through a FRESH connection on the tab path, for the same reason.
-let readCx = cx;
+// Read the app through a FRESH connection on the tab path, for the same reason - and on the tab path
+// `cx` may never have been opened at all, which is now the NORMAL phone case rather than an edge.
+let readCx = tabTarget ? null : await appCx();
 if (tabTarget) {
   formCx.close();
   const seen = await listTargets(port).catch(() => []);
@@ -495,7 +661,19 @@ if (tabTarget) {
   await readCx.send('Runtime.enable');
 }
 
+// THE POST-CONDITION, ASSERTED RATHER THAN ASSUMED - and read through the target that exists NOW.
+// `canari_saved_user` is what the app writes at login and erases at logout, the same key the
+// idempotence check at the top of this file reads. Saying "logged in" without it is saying "a page
+// rendered".
+const session = await evaluate(readCx, `!!localStorage.getItem('canari_saved_user')`);
+console.log(`[login:${account}] session held: ${session}`);
 console.log(`[login:${account}] final ${await evaluate(readCx, 'location.href')}`);
 console.log(await evaluate(readCx, 'document.body.innerText.replace(/\\s+/g," ").slice(0,500)'));
 readCx.close();
-if (readCx !== cx) cx.close();
+if (cx && readCx !== cx) cx.close();
+
+// A NON-ZERO EXIT, because a caller reads the code and not the prose. This atom's whole purpose is
+// to leave the client holding a session, so not holding one is a failure however far the flow got.
+if (!session) {
+  throw new Error(`the flow completed but no session was written - the app is not logged in`);
+}

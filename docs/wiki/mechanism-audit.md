@@ -16,7 +16,7 @@ Four commands, and they are the whole method. Anything below that is not reprodu
 marked as read off the source by hand.
 
 ```bash
-node tools/cross-client-harness/rows.mjs                  # board rows, verdicts, and the gaps
+bun tools/cross-client-harness/rows.mjs                  # board rows, verdicts, and the gaps
 find frontend/src -name '*.test.ts' | wc -l               # frontend unit tests
 find apps -name '*.spec.ts' -not -path '*/node_modules/*' # backend specs, by service
 grep -rc '#\[test\]\|#\[tokio::test\]' apps/*/src libs/*/src frontend/src-tauri/src

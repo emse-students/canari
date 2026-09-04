@@ -217,7 +217,7 @@ Client-side, in-conversation, substring-only: no server index, no global search.
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
 | FWD-1 | Channel -> DM forward, the exact shape of the reported prod loss | `W1 W2` | `PASS` 5/5 - `46d392cdd788` |
-| FWD-2 | The same, 25 times in a loop - any single miss is the bug | `W1 W2` | `PASS` 25/25 - `46d392cdd788`, by hand (`node fwd.mjs 25`) |
+| FWD-2 | The same, 25 times in a loop - any single miss is the bug | `W1 W2` | `PASS` 25/25 - `46d392cdd788`, by hand (`bun fwd.mjs 25`) |
 | FWD-3 | Forward while the sender goes offline mid-send | `W1 W2` | `PASS` 5/5 - `31e6989802bb` |
 | FWD-4 | Forward from A1, backgrounded 200 ms later | `+A1` | `PASS` 5/5 - `31e6989802bb` |
 | FWD-5 | Forward into a conversation not opened this session | `W1 W2` | `PASS` 5/5 - `31e6989802bb` |

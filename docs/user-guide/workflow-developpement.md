@@ -298,7 +298,7 @@ Il n'y a pas de cadence imposee. Ce qui compte :
   meme code tourne depuis assez longtemps pour qu'on la croie.
 
 Verifier que Play a bien pris le build est une **mesure**, pas une deduction :
-`node tools/play-vitals/vitals.mjs`. La soumission App Store elle-meme reste un acte humain ; ou en
+`bun tools/play-vitals/vitals.mjs`. La soumission App Store elle-meme reste un acte humain ; ou en
 est chaque moitie est sur [`docs/wiki/frontend/mobile.md`](../wiki/frontend/mobile.md).
 
 ---

@@ -747,12 +747,15 @@ jobs:
         with:
           ref: ${{ github.sha }}
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v7
+      # BUN RUNS THE HARNESS, so the job that gates it needs bun. It set up node alone until
+      # 2026-09-04 and the recipe moved to `bun` the same day, which failed with `Error 127` -
+      # command not found - a message that names nothing about what was missing.
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: '24'
+          bun-version-file: .bun-version
 
-      # No install step: the harness has no dependencies outside the Node standard library.
+      # No install step: the harness has no dependencies outside the standard library.
       - name: Run harness self-tests
         run: make test-harness
 

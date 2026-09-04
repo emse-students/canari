@@ -6,7 +6,7 @@
  * `DELETE /api/mls/devices/:userId/:deviceId` - so driving the panel is the only way to find out
  * whether the product's own path really cleans up, which is the question being asked.
  *
- *   node purge-devices.mjs --only <deviceId>[,<deviceId>...] [--expect N] [--port 9224] [--dry]
+ *   bun purge-devices.mjs --only <deviceId>[,<deviceId>...] [--expect N] [--port 9224] [--dry]
  *
  * WHY IT WAS IMPOUNDED, AND WHAT CHANGED. Until 2026-08-27 this took `--keep`, a substring of the row
  * text that had to SURVIVE - a denylist, and one keyed on `/Appareil\s*\d/`, a string the product does

@@ -77,6 +77,38 @@ The following must be configured in the Authentik admin UI (not automated via CD
 - **Redirect URIs**: `https://<domain>/auth/callback`
 - **Users**: managed in Authentik; synced to Canari's `users` table on first login
 
+### The one redirect URI a mobile client needs, added by hand on 2026-09-04
+
+The `Canari Local` OIDC provider - the one the LOCAL estate authenticates against - now carries
+`fr.emse.canari://callback` as an **authorization** redirect URI with **strict** matching, alongside
+its `http://localhost:8081/...` web entry. It was added by hand, in the admin shell, and this
+paragraph is the only record of it:
+
+```sh
+ssh miconnect
+docker exec -i miconnect-server-1 ak shell    # then set the RedirectURI on the provider, and re-read it
+```
+
+**Why it was needed.** A packaged mobile client does not come back to a URL, it comes back to its
+own custom scheme - `fr.emse.canari://callback`, the deep link declared in
+[`tauri.conf.json`](../../../frontend/src-tauri/tauri.conf.json). That scheme existed only on the
+PRODUCTION client, so a phone pointed at the local estate reached the IdP, authenticated, and was
+then refused at the last hop with Authentik's own **"Redirect URI Error"** - a message that names
+the provider's configuration and not the client, which is why it reads like an app fault and is
+worth recognising on sight.
+
+**Why it does not weaken the separation `infrastructure/.env` exists to enforce.** The danger that
+split is aimed at is a page served from `localhost` obtaining tokens for PRODUCTION. This URI is on
+the LOCAL provider, and that provider is **confidential**: an authorization code handed to the
+custom scheme is worthless without the client secret, which only the local backend holds. So the
+addition widens what may RECEIVE a code on the local client, never what may exchange one, and it
+grants nothing on the production client at all.
+
+**It is a hand mutation on a production box, so it is owed to the restore path.** It lives in
+Authentik's Postgres and nowhere else, exactly like the login CSS below: a restore from a backup
+taken before 2026-09-04 brings it back missing, and the symptom is the "Redirect URI Error" above
+rather than anything that names a redirect URI. Re-add it after any restore that predates that date.
+
 ## Login page branding
 
 `infrastructure/authentik/custom-login.css` is the versioned source of truth for the login flow's

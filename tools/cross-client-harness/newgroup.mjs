@@ -13,7 +13,7 @@
  * separate step - and that step is a membership commit, which is what HEAL-W1 needs. Reporting the
  * surface here is therefore part of the job, not a debugging aid.
  *
- *   node newgroup.mjs --port 9223 --name HEALW2-xxxx [--add "<the other party's display name>"]
+ *   bun newgroup.mjs --port 9223 --name HEALW2-xxxx [--add "<the other party's display name>"]
  */
 import { APP_TAB, client, evaluate, realClick, until } from './chat.mjs';
 

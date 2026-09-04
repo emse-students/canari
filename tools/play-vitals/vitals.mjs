@@ -7,9 +7,9 @@
  * found. This reads the field.
  *
  * Usage:
- *   node vitals.mjs               report
- *   node vitals.mjs --stacks      also pull one stack trace per unresolved issue
- *   node vitals.mjs --json        raw payloads, for diffing between runs
+ *   bun vitals.mjs               report
+ *   bun vitals.mjs --stacks      also pull one stack trace per unresolved issue
+ *   bun vitals.mjs --json        raw payloads, for diffing between runs
  *
  * Exit codes: 0 nothing new, 1 a NEW or REGRESSED issue is present, 2 the run itself failed.
  */

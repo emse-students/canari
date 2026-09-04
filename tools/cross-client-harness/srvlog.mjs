@@ -1,10 +1,10 @@
 /**
  * THE THIRD OBSERVER: production's own logs, classified the way the browser's are.
  *
- *   node srvlog.mjs --since 2026-08-14T11:00:00Z    everything since an instant
- *   node srvlog.mjs --since 15m                     everything in the last 15 minutes
- *   node srvlog.mjs --since 15m --raw               every line, unclassified
- *   node srvlog.mjs --since 15m --shapes            distinct unexplained SHAPES, with counts
+ *   bun srvlog.mjs --since 2026-08-14T11:00:00Z    everything since an instant
+ *   bun srvlog.mjs --since 15m                     everything in the last 15 minutes
+ *   bun srvlog.mjs --since 15m --raw               every line, unclassified
+ *   bun srvlog.mjs --since 15m --shapes            distinct unexplained SHAPES, with counts
  *
  * WHY IT EXISTS. The campaign's bar is that every log line is expected - "y compris dans les logs
  * web, mobile, et serveur" - and two of those three had an instrument. `watch.mjs` classifies the
@@ -1238,7 +1238,7 @@ export function srvSummary(rep) {
 //
 // VIA `pathToFileURL`, NOT STRING SURGERY. Hand-building `file://${argv[1]}` produces `file://C:/…`
 // on Windows where `import.meta.url` is `file:///C:/…` - two slashes against three - so the guard
-// never matched, the CLI never ran, and `node srvlog.mjs` printed NOTHING and exited 0. A command
+// never matched, the CLI never ran, and `bun srvlog.mjs` printed NOTHING and exited 0. A command
 // that succeeds silently is worse than one that fails: it reads as "the window was clean".
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const flag = (n, f) => {

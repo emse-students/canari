@@ -2,10 +2,10 @@
 /**
  * TURNS A BROWSER PROFILE INTO A DEVICE THE SERVER HAS NEVER SEEN, and measures that it did.
  *
- *   node newdevice.mjs               HEAL-NEW-0: build the device and record the row
- *   node newdevice.mjs --keep-open   ... and leave the client logged in and unlocked for the
+ *   bun newdevice.mjs               HEAL-NEW-0: build the device and record the row
+ *   bun newdevice.mjs --keep-open   ... and leave the client logged in and unlocked for the
  *                                    caller, which is how the ten HEAL-NEW rows use it
- *   node newdevice.mjs --dry         read the profile and the census, change nothing
+ *   bun newdevice.mjs --dry         read the profile and the census, change nothing
  *
  * WHY A PRIMITIVE, AND WHY IT IS MEASURED BEFORE ANY ROW RESTS ON IT. Eleven rows ask what a device
  * with NO local MLS state does when it meets an account that already has conversations - the user's
@@ -524,7 +524,7 @@ if (invokedDirectly) {
   if (r.refused) {
     console.error(`\n[newdevice] REFUSED - ${r.refused} (${r.spent}/${MAX_DEVICES_PER_USER})`);
     console.error(
-      `[newdevice] purge the abandoned mints first: node purge-devices.mjs --dry --port ${port}`,
+      `[newdevice] purge the abandoned mints first: bun purge-devices.mjs --dry --port ${port}`,
     );
     process.exit(3);
   }

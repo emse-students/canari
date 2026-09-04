@@ -666,6 +666,29 @@ and `didBecomeActive`, which the FCM fix has just made load-bearing.
 entry here. **What must NOT happen is a fix written against a suspected iOS lifecycle bug that nobody
 has seen** - the repo has no way to tell whether it worked.
 
+### P2 - the PIN modal's error is a bare paragraph, so a refused unlock is never announced to a screen reader (measured 2026-09-04)
+
+`PinModal.svelte` renders its failure as `<p class="...text-red-500">{displayError}</p>` in BOTH
+shapes - line 156 (the keypad) and line 229 (the manual input). No `role="alert"`, no `aria-live`.
+The element is inserted after the submit, and an insertion that carries neither is one assistive
+technology has no reason to read out: a user who cannot see the screen submits a PIN, hears nothing,
+and has no way to learn that the attempt was refused or why.
+
+**Found because an instrument hit the same wall.** `pin.mjs` waited for the gate to close or for the
+body to contain "incorrect", and the product refused with something else entirely - *"Votre PIN a ete
+change sur un autre appareil"* - so the atom spent 25 s and threw `until() timed out` about a message
+plainly on screen. The atom was fixed the same day to key on the error ELEMENT rather than on any
+wording, which is why the missing role was noticed at all: **the only handle the modal offers is a
+Tailwind colour class**, and a test keying on `text-red-500` is a test that breaks on a restyle.
+
+**The fix is one attribute per site** (`role="alert"`, which implies `aria-live="assertive"`), and it
+makes the accessible name the handle - so the harness can stop keying on a colour. Both shapes, and
+worth a sweep for the same pattern elsewhere: `ChangePinModal.svelte` and `LoginForm.svelte` carry
+`text-red-500` too and were not checked.
+
+**Not fixed inline, deliberately** (user, 2026-09-04): P2s go here rather than into the session that
+found them.
+
 ### P3 - the dirt classifier fails a row on the OIDC callback that row performs on purpose (2026-08-28)
 
 **Measured.** `healnew.mjs --row 0` recorded `FAIL` on `03d015fd` with **no unmet condition and no
@@ -1384,7 +1407,7 @@ population now includes "a device minted as a revocation row's seed", which is a
 
 **And on those two rows the refusal was invisible from the client half.** `healnew.mjs` records only
 `observers: { w3 }`; the server window is taken by `run.mjs` per PASS and printed, not written to the
-ledger row - so `node rows.mjs` and every HEAL-NEW cell are silent about it, and it was found by
+ledger row - so `bun rows.mjs` and every HEAL-NEW cell are silent about it, and it was found by
 reading the run's stdout. Nothing here is wrong, but a HEAL-NEW verdict says "clean on the web
 client", never "clean on the server".
 
@@ -1607,7 +1630,7 @@ id, then the server report can partition on it instead of on the queue.
 **Instrument debt, and it qualifies every verdict this rung has taken.** `healnew.mjs` and
 `healrevoke.mjs` record `observers: { w3 }` and nothing else. The server window IS taken - `run.mjs`
 does it per pass and `srvlog.mjs` classifies it - but it is PRINTED, never written to the ledger row,
-so `gate()` never sees it, `node rows.mjs` cannot report it, and no cell on the board can say
+so `gate()` never sees it, `bun rows.mjs` cannot report it, and no cell on the board can say
 anything about it either way.
 
 **It is not hypothetical: both windows of the 2/12 pair were NOT clean**, and the `no_key_package`
@@ -1756,7 +1779,7 @@ not read.** The server does not close the gap either: `getUserGroups` (`members.
 filters distribution groups and `deletedAt` tombstones, never dismissals.
 
 **IT IS NOT THE CAUSE OF THE USER'S SYMPTOM, AND THAT WAS MEASURED, NOT ASSUMED.** Read from the
-owner's own session on 2026-08-27 (`node syncrows.mjs --device W3`): 9 active groups, 0 tombstoned,
+owner's own session on 2026-08-27 (`bun syncrows.mjs --device W3`): 9 active groups, 0 tombstoned,
 **876** dismissed-group rows, and `dismissedStillMember: 0`. The intersection is EMPTY, so the branch
 cannot currently fire - which is why this is a P3 latent gap and not the explanation for the Sync
 rows the user reported. A predicate that names an incident has to be re-measured against the

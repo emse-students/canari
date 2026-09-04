@@ -11,6 +11,30 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A capability file whose description said "NOT included in production builds" was in every
+  production build, and the one thing it was supposed to allow it never allowed.** `development.json`
+  granted the Tauri HTTP plugin `http://**` and the WebSocket plugin `ws://localhost:*`, on the
+  understanding that Tauri would leave it out of a release. Nothing does: `Capability` has no
+  dev/release switch, its only filter is by target OS, and `app.security.capabilities` was absent from
+  `tauri.conf.json` - which the config documents as meaning *all* capability files are included. Both
+  halves were measured rather than argued: `http://**` and `ws://localhost:*` are both present as
+  strings in the built `.so`, and the release workflow runs `bun tauri android build` with no
+  `--config`. So the shipped app has been carrying a scope nobody intended since the file was written.
+  It is now opt-in: `tauri.conf.json` names `default` alone, `capabilities/local-estate.json` holds
+  the local scope, and only `src-tauri/tauri.local.conf.json` - passed by the harness's `a1apk.mjs` -
+  adds it. No release build can compile it.
+
+  **And the scope it did grant never matched the estate anyway.** Scope entries are URL patterns, and
+  an EMPTY port in a URLPattern means the protocol's DEFAULT port - so `http://**` matches port 80 and
+  nothing else. `https://**` only ever worked because 443 is https's default. The local estate is on
+  `:8081`, so every call the plugin made to it was refused, which the product reported honestly in red
+  under the PIN field (`url not allowed on the configured scope: http://localhost:8081/api/mls/...`)
+  on a phone that had just logged in successfully - MLS calls go through the plugin, ordinary auth
+  calls through the browser's own `fetch`, which is why the login worked and the PIN could not. The
+  replacement spells the port wildcard: `http://localhost:*`, `http://127.0.0.1:*`.
+
 ### Changed
 
 - **"Can I use this group?" was spelt out nineteen times, and it is three different questions.**

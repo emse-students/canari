@@ -1,7 +1,7 @@
 /**
  * Builds the campaign's SHARED venue if it is not there, and states what it found if it is.
  *
- *   node venue.mjs [--dry]
+ *   bun venue.mjs [--dry]
  *
  * `Campagne de test` / `general` IS A FIXTURE, NOT ONE ROW'S SETUP. Twenty-odd runners build their
  * salon inside it rather than minting a community of their own - the community is the expensive half

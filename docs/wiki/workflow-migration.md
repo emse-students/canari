@@ -197,7 +197,7 @@ committed directly on `main` until WP-2 existed - the flow it creates cannot gov
       `google-services.json` did NOT move - they are store and build credentials rather than rig
       state, `lib.mjs` still resolves the first at the path above, and the sentence about
       `PLAY_SA_KEY` above stays true because of that
-- [x] verified END TO END, not by the file existing: `node tools/play-vitals/vitals.mjs` reads the
+- [x] verified END TO END, not by the file existing: `bun tools/play-vitals/vitals.mjs` reads the
       key, authenticates, and reports production on `0.14.15` / code `14015`
 - [x] the handoff memory installed - **11 files, not 12**: the `bunx` shim note was dropped as false
       here (see below)

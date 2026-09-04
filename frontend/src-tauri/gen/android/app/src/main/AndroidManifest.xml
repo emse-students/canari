@@ -159,6 +159,7 @@
                 <data android:path="/calendar" />
                 <data android:path="/shop" />
                 <data android:path="/" />
+                
                 <data android:pathPrefix="/posts/" />
                 <data android:pathPrefix="/forms/" />
                 <data android:pathPrefix="/associations/" />
@@ -170,9 +171,6 @@
                 <data android:pathPrefix="/notifications/" />
                 <data android:pathPrefix="/calendar/" />
                 <data android:pathPrefix="/shop/" />
-                
-                
-                
                 
             </intent-filter>
             <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->

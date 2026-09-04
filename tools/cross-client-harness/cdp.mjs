@@ -15,16 +15,16 @@
  * because a password then never has to appear as a tool-call argument in the transcript.
  *
  * Usage:
- *   node cdp.mjs --port 9223 targets
- *   node cdp.mjs --port 9223 nav https://canari-emse.fr
- *   node cdp.mjs --port 9223 snapshot            # compact list of interactive elements
- *   node cdp.mjs --port 9223 eval "location.href"
- *   node cdp.mjs --port 9223 click "text=Se connecter"
- *   node cdp.mjs --port 9223 fill "input[name=username]" "someone"
- *   node cdp.mjs --port 9223 key Enter
- *   node cdp.mjs --port 9223 wait "text=Conversations" 15000
- *   node cdp.mjs --port 9223 screenshot out.png
- *   node cdp.mjs --port 9223 offline | online
+ *   bun cdp.mjs --port 9223 targets
+ *   bun cdp.mjs --port 9223 nav https://canari-emse.fr
+ *   bun cdp.mjs --port 9223 snapshot            # compact list of interactive elements
+ *   bun cdp.mjs --port 9223 eval "location.href"
+ *   bun cdp.mjs --port 9223 click "text=Se connecter"
+ *   bun cdp.mjs --port 9223 fill "input[name=username]" "someone"
+ *   bun cdp.mjs --port 9223 key Enter
+ *   bun cdp.mjs --port 9223 wait "text=Conversations" 15000
+ *   bun cdp.mjs --port 9223 screenshot out.png
+ *   bun cdp.mjs --port 9223 offline | online
  *
  * Design notes that cost time to learn, keep them:
  * - Svelte does NOT react to `input.value = x`. Every text entry goes through Input.insertText
@@ -103,20 +103,63 @@ export const RESOLVE = `(function (sel) {
   return document.querySelector(sel);
 })`;
 
-export async function listTargets(p = port) {
-  const res = await fetch(`http://127.0.0.1:${p}/json/list`);
+/**
+ * The page targets a devtools endpoint is serving, WITHIN A BOUND.
+ *
+ * THE BOUND IS THE WHOLE POINT, AND ITS ABSENCE HUNG THE RIG FOR EVER. A port nobody listens on
+ * refuses the connection instantly, which is why an unbounded `fetch` looked safe for a year - but
+ * `adb forward` ACCEPTS the TCP connection on the workstation and only then discovers that the
+ * device-side socket is gone, so the request sits open with no response and no error. That is the
+ * ordinary state of a phone: the forward outlives the process it was created for (a browser killed
+ * between two runs leaves `webview_devtools_remote_<pid>` behind in `adb forward --list`). Measured
+ * 2026-09-04 - `login.mjs --device A1` printed its first line and then hung, and a caller's
+ * `.catch(() => [])` cannot rescue a promise that never settles.
+ *
+ * `AbortSignal.timeout` therefore turns "forwarded but dead" into the same answer as "nothing
+ * there": a rejection the caller already handles. The default is generous for a localhost JSON read
+ * and still short enough that a poll loop keeps polling.
+ */
+export async function listTargets(p = port, timeoutMs = 2000) {
+  const res = await fetch(`http://127.0.0.1:${p}/json/list`, {
+    signal: AbortSignal.timeout(timeoutMs),
+  });
   const all = await res.json();
   return all.filter((t) => t.type === 'page' && !String(t.url).startsWith('devtools://'));
 }
 
-export function connect(wsUrl) {
+/**
+ * Opens a CDP connection. `ready` is BOUNDED, which is the half that was missing.
+ *
+ * IT IS THE SAME DEFECT `listTargets` CARRIED, one layer down: a forwarded port whose target is gone
+ * still ACCEPTS the TCP connection, so the socket neither opens nor errors and `ready` never settles.
+ * A `.catch()` cannot help a promise that does not reject, so the caller hangs for ever rather than
+ * failing - `login.mjs --device A1` spent 240 s on its first line that way. Every wait in this rig
+ * has to end in a fact or an accusation, and this one now ends in an accusation that names the URL.
+ *
+ * The bound is deliberately short: a devtools handshake on a LOCAL forward is a few milliseconds, so
+ * anything approaching a second is a dead endpoint rather than a slow one.
+ */
+export function connect(wsUrl, readyTimeoutMs = 5000) {
   const ws = new WebSocket(wsUrl);
   let nextId = 1;
   const pending = new Map();
   const events = [];
   const ready = new Promise((resolve, reject) => {
-    ws.addEventListener('open', () => resolve());
-    ws.addEventListener('error', (e) => reject(new Error(`ws error: ${e.message || e.type}`)));
+    // Unref'd for the reason the command timer below is: an armed timer keeps Node alive, so a run
+    // that had finished would still sit here until it fired.
+    const timer = setTimeout(
+      () => reject(new Error(`ws never opened within ${readyTimeoutMs}ms: ${wsUrl}`)),
+      readyTimeoutMs,
+    );
+    timer.unref?.();
+    ws.addEventListener('open', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+    ws.addEventListener('error', (e) => {
+      clearTimeout(timer);
+      reject(new Error(`ws error: ${e.message || e.type}`));
+    });
   });
   ws.addEventListener('message', (m) => {
     const msg = JSON.parse(m.data);

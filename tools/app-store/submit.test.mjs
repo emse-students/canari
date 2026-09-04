@@ -13,7 +13,7 @@
  * says nothing about why. So an unknown state is a refusal in both classifiers, and that is
  * asserted rather than assumed.
  *
- * Run: node tools/app-store/submit.test.mjs
+ * Run: bun tools/app-store/submit.test.mjs
  */
 
 import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';

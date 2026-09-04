@@ -1,3 +1,8 @@
+import { existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const HARNESS = dirname(fileURLToPath(import.meta.url));
 /**
  * THE MANIFEST: which script covers which phase, and what each phase needs to be meaningful.
  *
@@ -339,7 +344,7 @@ export const PHASES = {
  * preflight asks for the devices THAT SCRIPT uses instead of the union its phase needs.
  *
  * A phase's `needs` is the union over its scripts. That is exactly right for running the phase and
- * wrong for running one of them: `node run.mjs --file comm22.mjs` is a two-browser check and was
+ * wrong for running one of them: `bun run.mjs --file comm22.mjs` is a two-browser check and was
  * refused on a phone that has nothing to do with it, because four OTHER COMM rows need one. **A
  * preflight that refuses a run it has no reason to refuse teaches its operator `--no-preflight`**,
  * and that flag disarms the one gate stopping a check from reporting on a locked client. Found
@@ -489,3 +494,24 @@ export function devicesFor(file, args = []) {
  * that phase produced, not as one more check among them.
  */
 export const RECON = "recon.mjs";
+
+/**
+ * WHERE A SCRIPT THIS MANIFEST NAMES ACTUALLY LIVES, now that the rig is split in two.
+ *
+ * The 2026-09-04 tidy moved the ROWS - the ~114 scripts that compose gestures into a question - into
+ * `archive/`, and left the ATOMS at the harness root. This manifest names both kinds and should not
+ * have to know which is which: a phase's `scripts` are rows, but an arming step like `newdevice.mjs`
+ * is an atom, and both are spelt the same way here.
+ *
+ * TWO KNOWN PLACES, NOT A SEARCH AND NOT A FALLBACK. The set is closed and each entry means
+ * something: root is an atom, `archive/` is a row. A name in neither is an error worth raising,
+ * because the manifest has then drifted from the tree - which is exactly what `checks-selftest`
+ * exists to catch.
+ */
+export function scriptPath(name) {
+  for (const dir of [HARNESS, join(HARNESS, 'archive')]) {
+    const p = join(dir, name);
+    if (existsSync(p)) return p;
+  }
+  throw new Error(`${name} is named by the manifest but exists neither at the harness root nor in archive/`);
+}

@@ -52,31 +52,52 @@
  *                                  through the tunnel, decided by `SITE`, never by a flag. Its own
  *                                  module because `ssh` is machine-agnostic and an ESTATE is not.
  *
+ * **THE ROWS ARE NO LONGER BESIDE THE ATOMS.** Since 2026-09-04 the ~114 row scripts live in
+ * `archive/` and only atoms remain at this root, so `ls` answers the question this file was written
+ * because a grep could not. Nothing was deleted; a row reaches a library that stayed behind by `../`.
+ * See `archive/README.md`.
+ *
  * **Bringing a client up**
  *   `startBrowser` `killBrowser`   `launch.mjs`   a Chrome profile IS a device; the profile lives
  *                                                 outside the work tree.
- *   `node login.mjs --device W1`                  the two IdP paths: Authentik's service-account
+ *   `bun login.mjs --device W1`                  the two IdP paths: Authentik's service-account
  *                                                 flow (default) and the school's CAS (`--flow cas`).
- *   `node pin.mjs --device W1`                    the encryption gate, in BOTH its shapes - the
+ *   `bun login.mjs --android`                     the same on the phone, ARMING what it needs -
+ *                                                 `--android` is `--device A1`, and it wakes,
+ *                                                 launches, foregrounds and forwards before it looks
+ *                                                 at anything. It answers the form in the phone's
+ *                                                 BROWSER first and touches the app only after the
+ *                                                 submit, because Android freezes the app while the
+ *                                                 form is in front. It ends on the session the app
+ *                                                 writes, never on a URL.
+ *   `useDevice('A1')`               `phone.mjs`   WHICH phone, when more than one is attached. A
+ *                                                 device selector that picks "the first" is silently
+ *                                                 wrong at two, so ambiguity throws; this and adb's
+ *                                                 own `ANDROID_SERIAL` are the two ways out.
+ *   `bun a1apk.mjs`                               build the debug APK, install it, prove the origin
+ *                                                 it points at - and it is the ONLY build that adds
+ *                                                 the `local-estate` capability, without which the
+ *                                                 phone refuses the estate it was pointed at.
+ *   `bun pin.mjs --device W1`                    the encryption gate, in BOTH its shapes - the
  *                                                 returning "Deverrouiller" and the first-run
  *                                                 "Creer mon PIN" - and both keyboard shapes, the
  *                                                 desktop input and the mobile keypad.
- *   `node unlock.mjs`                             the phone's PIN after any relaunch or reinstall.
- *   `node phone.mjs`                              the A1 forward, derived from the running pid.
+ *   `bun unlock.mjs`                             the phone's PIN after any relaunch or reinstall.
+ *   `bun phone.mjs`                              the A1 forward, derived from the running pid.
  *   `client(port, APP_TAB)`         `chat.mjs`    attach to a client and refuse an ambiguous tab.
  *
  * **Making a device**
- *   `node newdevice.mjs [--keep-open]`            turns W3 into a device the server has never seen,
+ *   `bun newdevice.mjs [--keep-open]`            turns W3 into a device the server has never seen,
  *                                                 and MEASURES that it did. Destructive, so it has
  *                                                 an allowlist (`WIPEABLE`), not a denylist.
- *   `node purge-devices.mjs --only <id>`          removes a device through the product's own panel.
+ *   `bun purge-devices.mjs --only <id>`          removes a device through the product's own panel.
  *
  * **Building the venue and the conversations**
- *   `node venue.mjs`                              the shared community and its channel, idempotent,
+ *   `bun venue.mjs`                              the shared community and its channel, idempotent,
  *                                                 answered from the tables rather than the screen.
  *   `createDM(cx, name)`            `groupnav.mjs`  a DM with someone, created if absent.
  *   `createGroup(cx, name)`         `groupnav.mjs`  a group conversation.
- *   `node invite.mjs --port <p> --group <name>`     adds a member - the campaign's only cheap,
+ *   `bun invite.mjs --port <p> --group <name>`     adds a member - the campaign's only cheap,
  *                                                   deterministic epoch generator.
  *   `deleteGroup` `dismissLocally`  `groupnav.mjs`  the two ways a conversation ends.
  *
@@ -135,12 +156,12 @@ export function run(script, args = [], { timeoutMs = 300_000 } = {}) {
   return { code: r.status, out: `${r.stdout ?? ''}${r.stderr ?? ''}`.trim() };
 }
 
-/** `node login.mjs --device <device>`, with the flow the campaign's accounts use. */
+/** `bun login.mjs --device <device>`, with the flow the campaign's accounts use. */
 export const login = (device, { flow = 'service-account' } = {}) =>
   run('login.mjs', ['--device', device, '--flow', flow]);
 
 /**
- * `node pin.mjs --device <device>`.
+ * `bun pin.mjs --device <device>`.
  *
  * EXIT 2 IS AN ANSWER, NOT A FAILURE: it means no gate was on screen, which is either a client
  * already past it or one that never mounted it - and `pin.mjs` prints which. Callers decide.

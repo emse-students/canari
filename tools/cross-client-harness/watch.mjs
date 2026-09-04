@@ -467,6 +467,23 @@ const STATE_CHANGE = [
   // Sighted in `unexplained` from GRP-7 on 2026-08-24, on a reconnect where the batch-primed history
   // gave the two devices something real to compare for the first time.
   /^\[HISTORY_STATE\] Keys differ for \S+ - asked \S+ to describe$/,
+  // THE SCROLLBACK RANGE EXCHANGE - the FIFTH spelling of the same conversation, and it arrives on
+  // every check that merely OPENS a conversation with history behind its floor. Three lines: the
+  // asker naming the range, the peer restating what it was asked for, and the peer's honest empty
+  // answer. Same reasoning as the four above: the finding is the TRIGGER, and a reader who wants
+  // "was scrollback fetched" reads `stateChanges`.
+  //
+  // `Hold nothing before that point ... staying silent` is deliberately here rather than in
+  // `BENIGN`: it means a peer could NOT serve the range, which is not an error but is exactly the
+  // shape a coverage gap has. Filed as routine it would make a real gap invisible.
+  //
+  // Measured on the local estate 2026-09-04, on an ordinary two-client exchange that was otherwise
+  // clean: three of them, and they were the only thing standing between a correct check and a clean
+  // run - the same footing on which the `HISTORY_STATE` spellings were added.
+  /^\[HISTORY_RANGE\] (Asked for up to \d+|\S+ wants up to \d+) message\(s\) before \S+ in \S+$/,
+  /^\[HISTORY_RANGE\] Hold nothing before that point in \S+ - staying silent$/,
+  /^\[HISTORY_RANGE\] Sent \d+ of \d+ message\(s\) older than \S+ for \S+$/,
+  /^\[HISTORY_RANGE\] \S+ already reaches its floor - not asking$/,
   // LEAVING AND JOINING, SEEN LOCALLY. Both are real changes to what this client holds, so they are
   // reported rather than forgiven - and neither is a defect, so neither breaks `clean`. GRP-6 and
   // GRP-4 produce them by design: a member who leaves purges the conversation locally, and a member

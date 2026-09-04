@@ -125,7 +125,7 @@ anything**, from `tools/cross-client-harness/`:
 
 ```bash
 node -e "import('./names.mjs').then(n=>console.log(n.SITE, n.OWNER_NAME))"
-node rows.mjs     # fails loudly if the ledger and the board disagree
+bun rows.mjs     # fails loudly if the ledger and the board disagree
 ```
 
 ### The accounts, and the fixtures they do not have
@@ -144,8 +144,23 @@ browser to `/if/flow/password-login/?next=<authorize>`: identification + passwor
   and a password, but a fresh profile is a new device with no history, so every HEAL row's
   precondition has to be rebuilt and any row whose verdict depends on an existing device must be
   re-run rather than trusted.
-- Nothing is changed in Authentik's flows and **production's main login page is untouched**. Users
-  are created; that is the whole change on the identity provider.
+- Nothing is changed in Authentik's FLOWS and **production's main login page is untouched**. Two
+  things beyond the users have changed on the identity provider, both on the `Canari Local` provider
+  and neither touching production's client: the users themselves, and - on **2026-09-04** - the
+  redirect URI `fr.emse.canari://callback`, without which a PHONE pointed at the local estate
+  authenticates and is then refused at the last hop with Authentik's own "Redirect URI Error". It was
+  added by hand in the admin shell and lives only in Authentik's Postgres, so **a restore from a
+  backup predating 2026-09-04 brings it back missing**. What it is, why it does not weaken the
+  local/production split, and how to re-add it are in
+  [`infrastructure/authentik.md`](infrastructure/authentik.md#the-one-redirect-uri-a-mobile-client-needs-added-by-hand-on-2026-09-04),
+  the only copy.
+
+- **THE PHONE'S APK MUST CARRY THE `local-estate` CAPABILITY, and `bun a1apk.mjs` is what puts it
+  there.** A debug build made any other way compiles capability `default` alone, whose fetch scope is
+  `https://**`, and the phone then shows the product's own red
+  `url not allowed on the configured scope: http://localhost:8081/...` under the PIN field - after a
+  login that worked. It is a PRECONDITION of every A1 row on the local estate, not a symptom to
+  diagnose.
 
 **The accounts own NOTHING to begin with**: no DM, no `Campagne de test` community, no group under
 test, no enrolled device. None of it needs a privilege - `POST channels/workspaces` is guarded by
@@ -196,8 +211,8 @@ Everything below is in order, and nothing else goes first.
    while the rig was asking PRODUCTION about a device that only existed locally. The local Postgres
    superuser is `admin`, not `canari`; that follows `SITE` as well, and no flag selects it. Verify with the `node -e` line in section 4 before anything else.
 4. **Create the accounts, log both in, set the PINs, build the fixtures** (section 4).
-5. **`node state.mjs`** - the clients, what they are logged into, and what they are running.
-6. **`node rows.mjs`** - the board against the ledger. Both are empty now, which is the one time
+5. **`bun state.mjs`** - the clients, what they are logged into, and what they are running.
+6. **`bun rows.mjs`** - the board against the ledger. Both are empty now, which is the one time
    that agreement means nothing; run it anyway, because the first disagreement is the one worth
    catching early.
 7. **If the phone is in play**: `adb reverse` first, per device, and again after any replug. The

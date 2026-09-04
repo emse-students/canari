@@ -8,21 +8,91 @@
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { A1_WIFI, ACCOUNT_OF, PORTS } from './names.mjs';
+// A NAMESPACE IMPORT, DELIBERATELY. `SERIAL_OF` is newer than the out-of-tree `names.mjs` on any
+// machine that has not added it yet, and a NAMED import of an absent export is a LINK error - the
+// module cannot be imported at all, so every phone-less browser phase dies with it too. Read off the
+// namespace instead and the omission surfaces where it can be explained: `useDevice` says which map
+// to add the serial to. This is the trap `estate.mjs` records paying for once already.
+import * as NAMES from './names.mjs';
 import { classifyNativePaths } from './native-residue.mjs';
 
-/** The USB serial if there is one, else the wireless entry. */
-export function serial() {
+/** Every device adb currently lists as `device`, in the order adb gives them. */
+function attached() {
   const out = execFileSync('adb', ['devices'], { encoding: 'utf8' });
-  const ids = out
+  return out
     .split('\n')
     .slice(1)
     .map((l) => l.trim().split(/\s+/))
     .filter((p) => p[1] === 'device')
     .map((p) => p[0]);
-  const usb = ids.find((id) => !id.includes(':'));
-  const id = usb || ids[0];
-  if (!id) throw new Error('no adb device');
-  return id;
+}
+
+/**
+ * WHICH PHONE, and it REFUSES TO GUESS between two of them.
+ *
+ * THIS PICKED THE WRONG PHONE THE MOMENT A SECOND ONE WAS PLUGGED IN. It took the first USB entry,
+ * on the assumption - true for a year - that there was only ever one; on 2026-09-04 a Pixel 6a was
+ * attached beside the Mi 9T and `serial()` answered the PIXEL, because adb happened to list it
+ * first. Nothing would have failed: every atom would have woken, forwarded, logged into and
+ * measured a phone the run was not about, and reported confidently about A1.
+ *
+ * So ambiguity is an ERROR rather than a choice, and there are exactly two ways to resolve it, both
+ * explicit: `ANDROID_SERIAL` - adb's OWN convention, so it also reaches any adb this rig shells out
+ * to - or `useDevice()` from a named device. A wireless entry is still preferred last, because the
+ * LIFE phase cuts the radios.
+ *
+ * A serial is a DEVICE ID and this repository is PUBLIC, so the name -> serial map lives in the
+ * out-of-tree `names.mjs` (`SERIAL_OF`), never here.
+ */
+export function serial() {
+  const ids = attached();
+  if (!ids.length) throw new Error('no adb device');
+
+  const named = process.env.ANDROID_SERIAL;
+  if (named) {
+    if (!ids.includes(named)) {
+      throw new Error(`ANDROID_SERIAL=${named} is not attached - adb lists: ${ids.join(' ')}`);
+    }
+    return named;
+  }
+
+  const usb = ids.filter((id) => !id.includes(':'));
+  const pool = usb.length ? usb : ids;
+  if (pool.length > 1) {
+    throw new Error(
+      `${pool.length} phones are attached (${pool.join(' ')}) and nothing says which this is about. ` +
+        `Name one: ANDROID_SERIAL=<serial>, or pass --device to an atom so it can call useDevice(). ` +
+        `Choosing for you drives the wrong phone and still reports success.`,
+    );
+  }
+  return pool[0];
+}
+
+/**
+ * Binds THIS PROCESS to one named phone, and returns the serial it bound.
+ *
+ * It sets `ANDROID_SERIAL` rather than only this module's own variable, which is the point: the rig
+ * shells out to `adb` from several places and spawns other atoms, and a binding only this module
+ * honoured would leave those talking to whichever phone adb listed first. One name, one transport,
+ * for every process below this one.
+ *
+ * @param name a device as `names.mjs` spells it - `A1`, `A2`.
+ */
+export function useDevice(name) {
+  const want = NAMES.SERIAL_OF?.[name];
+  if (!want) {
+    throw new Error(
+      `no serial known for device ${name} - add it to SERIAL_OF in the out-of-tree names.mjs ` +
+        `(the template is names.example.mjs). A serial is a device id and this repo is public.`,
+    );
+  }
+  const ids = attached();
+  if (!ids.includes(want)) {
+    throw new Error(`device ${name} is not attached - adb lists: ${ids.join(' ') || '(nothing)'}`);
+  }
+  process.env.ANDROID_SERIAL = want;
+  SERIAL = want;
+  return want;
 }
 
 // Exported so that the NATIVE driver (`a1.py`, uiautomator2) is pointed at the SAME transport this
@@ -148,6 +218,65 @@ export const pid = () => {
     return null;
   }
 };
+
+/**
+ * Forwards the devtools socket of the BROWSER holding the identity-provider page, discovered rather
+ * than assumed, and says which app it belongs to.
+ *
+ * THE ASSUMPTION THIS REPLACES WAS "CHROME", AND IT COST A SILENT FAILURE. `login.mjs` computes a
+ * Custom Tab port as `PORTS.A1 + 1` and then lists targets on it - but nothing ever created that
+ * forward, and on this phone the browser handling the OIDC hop is not Chrome at all: it is
+ * `org.lineageos.jelly`, this being a LineageOS device. So `casTab()` listed an unforwarded port,
+ * found nothing, and the login clicked the launcher and then timed out on `Input.dispatchTouchEvent`
+ * against a WebView that had already handed the page away. Nothing was ever typed into the IdP form,
+ * and the only visible symptom was a phone sitting on "Redirection..." - measured 2026-09-04, and
+ * spotted by the user watching the screen rather than by any check.
+ *
+ * HOW IT FINDS IT. `/proc/net/unix` lists every `webview_devtools_remote_<pid>` socket on the
+ * device; the owner of each pid comes from `/proc/<pid>/cmdline`. This app's own pid is EXCLUDED,
+ * and so is anything that is not plausibly a browser - a Google app keeps a WebView socket open at
+ * all times and would otherwise be forwarded in its place. When several remain, the highest pid
+ * wins: the browser that was launched most recently is the one holding the hop.
+ *
+ * @returns `{ ok, port, pkg, pid }`, or `{ ok: false, reason }` - never throws for "no browser is
+ *   open", because that is the ordinary state of a phone that is already signed in.
+ */
+export function forwardIdpBrowser(port) {
+  if (!port) throw new Error('forwardIdpBrowser needs a port - login.mjs calls it PORTS.A1 + 1');
+  const mine = pid();
+  const sockets = [
+    ...sh('cat /proc/net/unix').matchAll(/webview_devtools_remote_(\d+)/g),
+  ].map((m) => m[1]);
+  const seen = [...new Set(sockets)].filter((p) => p !== mine);
+
+  const owners = seen.map((p) => {
+    let owner = '';
+    try {
+      owner = sh(`cat /proc/${p}/cmdline`).replace(/\0/g, ' ').trim();
+    } catch {
+      /* the process died between the two reads - it is not the one we want */
+    }
+    return { pid: p, owner };
+  });
+
+  // AN ALLOWLIST OF WHAT MAY BE FORWARDED, not a denylist of what may not. A denylist forwards the
+  // next unknown WebView-bearing app to appear on the device and reports it as the browser.
+  const BROWSERS = /(browser|chrome|jelly|firefox|fennec|webview|bromite|vanadium)/i;
+  const found = owners
+    .filter((o) => o.owner && BROWSERS.test(o.owner))
+    .sort((a, b) => Number(b.pid) - Number(a.pid))[0];
+
+  if (!found) {
+    return {
+      ok: false,
+      reason: `no browser devtools socket on the device - saw: ${
+        owners.map((o) => `${o.pid}=${o.owner || '?'}`).join(', ') || 'nothing'
+      }`,
+    };
+  }
+  adb(['forward', `tcp:${port}`, `localabstract:webview_devtools_remote_${found.pid}`]);
+  return { ok: true, port, pkg: found.owner.split(':')[0], pid: found.pid };
+}
 
 /**
  * (Re)points the devtools forward at the CURRENT process.
@@ -509,7 +638,7 @@ export const clearLogcat = () => adb(['logcat', '-c']);
 // throws - at IMPORT time, in a module every browser-only runner imports. That is the same fault the
 // SERIAL resolution above was written to avoid, arriving through a different door.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  // THE PORT IS POSITIONAL, AND A FLAG IN ITS PLACE USED TO BECOME NaN IN SILENCE. `node phone.mjs
+  // THE PORT IS POSITIONAL, AND A FLAG IN ITS PLACE USED TO BECOME NaN IN SILENCE. `bun phone.mjs
   // --ensure --port 9333` read `--ensure` as the port, `Number` gave NaN, and `forwardDevtools`
   // reported "needs a port - pass PORTS.A1" - an error about the API, raised by a mistake in the
   // command line, which cost a cycle on 2026-08-22. There are no flags here and there is no reason
@@ -517,7 +646,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const raw = process.argv[2];
   if (raw !== undefined && !/^\d+$/.test(raw)) {
     console.error(`phone.mjs takes ONE optional argument, a port number - got "${raw}".`);
-    console.error(`Usage: node phone.mjs [port]   (default ${PORTS.A1})`);
+    console.error(`Usage: bun phone.mjs [port]   (default ${PORTS.A1})`);
     process.exit(2);
   }
   const port = Number(raw || PORTS.A1);
