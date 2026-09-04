@@ -25,7 +25,8 @@
  *   bun inventory.mjs            # rewrite INVENTORY.md from the tree
  *   bun inventory.mjs --check    # exit 1 if INVENTORY.md is not what the tree would produce
  */
-import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -74,11 +75,31 @@ function headline(path) {
   return m[1].replace(/\s+/g, ' ').replace(/\*\*/g, '').trim();
 }
 
-/** Every `.mjs` in one section directory, sorted, with the sentence each one opens with. */
+/**
+ * Every `.mjs` GIT WILL PUT ON A FRESH CHECKOUT, in one section directory, sorted.
+ *
+ * IT IS `git ls-files`, NOT `readdirSync`, AND CI IS WHAT TAUGHT ME THAT. Reading the directory
+ * describes MY MACHINE: `names.mjs` is gitignored - it is the machine-local pointer at the
+ * out-of-tree credential store - so a listing that included it could never match on a runner, and
+ * `--check` failed on CI while passing here. An index of files a fresh clone does not have is an
+ * index that sends its reader to a file they cannot open, which is the whole failure this was
+ * written to end. `gate-selftest.mjs` already reasons this way, for the same reason.
+ */
 function scan(dir) {
+  const rel = dir === '.' ? '.' : dir;
+  const listed = execFileSync('git', ['ls-files', '--', rel], { cwd: HERE, encoding: 'utf8' })
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
   const abs = dir === '.' ? HERE : join(HERE, dir);
-  return readdirSync(abs)
-    .filter((f) => f.endsWith('.mjs'))
+  // `git ls-files` answers paths relative to HERE, so `archive/x.mjs` appears in BOTH scans. Strip
+  // the section's own prefix, then keep only what is directly at this level - one entry per file,
+  // in exactly one section.
+  const prefix = dir === '.' ? '' : `${dir}/`;
+  return listed
+    .filter((f) => f.endsWith('.mjs') && f.startsWith(prefix))
+    .map((f) => f.slice(prefix.length))
+    .filter((f) => !f.includes('/'))
     .sort()
     .map((f) => ({ file: f, dir, headline: headline(join(abs, f)) }));
 }

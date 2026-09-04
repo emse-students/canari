@@ -12,7 +12,7 @@ existed. Search this file first.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. Nothing here takes a verdict. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-42 scripts.
+41 scripts.
 
 | script | what it is |
 |---|---|
@@ -40,7 +40,6 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `login.mjs` | * Drives the login for one of the campaign accounts, over CDP. |
 | `marker.mjs` | * THE MARKER VOCABULARY: minting one, recognising one in rendered text, and decoding when it was |
 | `names.example.mjs` | * TEMPLATE for the ONE machine-local file this rig needs. Setting it up is two steps, because the |
-| `names.mjs` | * POINTER ONLY. The real values live outside the work tree, at `<repo>/../../canari-harness/`. |
 | `native-residue.mjs` | * WHAT of a phone's account state is still on disk, as a classification of paths. |
 | `newdevice.mjs` | * TURNS A BROWSER PROFILE INTO A DEVICE THE SERVER HAS NEVER SEEN, and measures that it did. |
 | `newgroup.mjs` | * Creates a group conversation, and reports the surface that adds a member to it. |
@@ -184,4 +183,4 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 ---
 
-156 scripts in total.
+155 scripts in total.

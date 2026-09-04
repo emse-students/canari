@@ -91,13 +91,30 @@ does in `login.mjs`.
 
 ## C. Blocked on the user
 
-- [ ] **C2. THE PIN FOR THE OWNER ACCOUNT ON THE LOCAL ESTATE.** A1 is logged in and its gate is up,
-      but the PIN from `test-accounts.json` is refused with *"votre PIN a ete change sur un autre
-      appareil"*. The credential store is yours and the recovery path (*"Mon PIN a change sur un autre
-      appareil -> Recuperer mes messages"*) destroys or re-keys message history, so nothing here
-      guesses or resets it. **Needed: the current PIN, or permission to take the recovery path.**
-      Until then every A1 row that needs decryption is blocked, and the campaign's step 4 ("set each
-      PIN") cannot be assumed done.
+- [x] **C2 - RESOLVED 2026-09-04, and the cause is a process defect worth keeping.** The PIN in
+      `test-accounts.json` was refused on A1 with *"Votre PIN a ete change sur un autre appareil"*.
+      **Measured rather than guessed**: the owner's `pin_verifier` row - `f7a9bb80...`, the same user
+      id that appeared in the scope error earlier that day - carried `registeredAt = 2026-09-04
+      08:33`, while the file records a rotation of 2026-09-03. **Someone re-registered the PIN that
+      morning and never wrote the new value back to the one file that records it.** Resolved through
+      the PRODUCT's own reset path on A1 - authorised, the accounts being throwaway, and no venue
+      fixtures existed so the *"efface definitivement l'historique"* warning cost nothing - then
+      re-created from the file, which is true again as of 15:32. `bun pin.mjs --android` exits 0 with
+      the gate gone, and **A1 is a usable device for the first time this campaign.**
+
+      **The rule this leaves:** a PIN changed on ANY client is written back to `test-accounts.json`
+      the same minute. It is the same failure as a fact living only in a chat history, and it cost a
+      session. Two stale facts in that file were corrected at the same time - `_target` still named
+      `localhost:1420`, the dev server the campaign moved OFF on 2026-09-03.
+
+- [x] **C3 - MEASURED, AND THE RISK DID NOT HOLD.** I raised it because W1 and W3 hold the OWNER
+      account with a device key minted before the re-key, and a fixture built by a client with a dead
+      key fails later for a reason nobody connects back. Reloaded W1 and asked: session `true`, no
+      gate, no *"change sur un autre appareil"*, its `mls_device_id` still present. **The PIN wraps a
+      device's key, it is not the key**, so a client already holding an unwrapped, persisted key is
+      untouched by the account's verifier changing - it would only meet the new PIN if it lost that
+      key, and the new PIN is now the recorded one. W2 is the PEER and was never in scope. Nothing to
+      do; recorded so the question is not re-opened.
 
 - [ ] **C1. `ACCOUNT_OF.A2`.** The second phone (Pixel 6a) is bound and addressable on port 9335, but
       no account is assigned and guessing one would be an identity invented by a tool. Peer, or a
