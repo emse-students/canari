@@ -123,10 +123,21 @@
  *                                                                   shapes of the same gesture.
  *
  * **Observing**
+ *   `logs.mjs`                      `logs.mjs`     THE COMMAND over all three observers - a client's
+ *                                                  console, the phone's logcat, or the estate -
+ *                                                  classified into the same buckets, exit 0 clean /
+ *                                                  1 dirty. Reach for this first; the libraries
+ *                                                  below are what a ROW composes with.
+ *                                                  **A browser can only be watched FORWARD** - it
+ *                                                  keeps no buffer, so attach before the thing you
+ *                                                  want to see. The phone and the estate read back.
  *   `watch(cx)`                     `watch.mjs`    console, page errors, HTTP and WebSocket, with
  *                                                  the classifier every row reports next to its
  *                                                  verdict. Expected noise is dispositioned PER ROW
  *                                                  with `ignoringExpectedLog`, never widened here.
+ *   `serial()`                      `serial.mjs`   WHICH PHONE adb talks to, for every caller. It
+ *                                                  refuses to choose between two, because the copy
+ *                                                  that chose silently read the wrong device's log.
  *   `srvlog.mjs` `state.mjs` `rows.mjs`            the server window, what the clients are, and the
  *                                                  board against the ledger.
  * ---------------------------------------------------------------------------------------------

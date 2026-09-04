@@ -117,8 +117,39 @@ does in `login.mjs`.
       `--absent` inverts it for the cases that assert a message does NOT arrive. It is a separate
       command from `send.mjs` deliberately: only a receiver can prove delivery, and one command doing
       both could not fail honestly.
-- [ ] **B4. `logs.mjs --device A1 [--server]`** - today this is three libraries (`watch.mjs` for the
-      client, `phone.mjs` for logcat, `srvlog.mjs` for the estate) and no single command.
+- [x] **B4 - DONE, and the note that named it had the files slightly wrong.** The three observers
+      are `watch.mjs` (client console), **`watch.mjs` again** (`logcatSince` / `logcatReport` live
+      there, not in `phone.mjs`, which holds only `clearLogcat` and `notifications`) and
+      `srvlog.mjs` - and only the third had a CLI. `logs.mjs` is the one command over all three:
+      `--device W1`, `--android --logcat`, `--server`, with `--since` / `--for`, `--grep`, `--raw`,
+      and exit 0 clean / 1 dirty / 2 misuse. `srvlog.mjs` keeps its own CLI and is DELEGATED to, not
+      reimplemented.
+
+      **The asymmetry is written into the docblock because forgetting it cost a measurement today.**
+      The phone and the estate are read BACKWARD; a browser keeps no buffer at all - `appendLog`
+      writes straight to `console.log` and stores nothing - so a client line is only observable by an
+      observer already attached. That is why the `[ROSTER]` line proving the P1 repair had to be
+      reproduced from scratch rather than read back.
+
+      **A silent wrong-subject bug was found and fixed on the way, and it is the reason `serial.mjs`
+      now exists.** There were TWO serial resolvers with OPPOSITE policies: `phone.mjs`'s honours
+      `ANDROID_SERIAL` and refuses to choose between two phones, while `watch.mjs` carried a private
+      one that ignored `ANDROID_SERIAL` and returned `lines[0]`. With the Pixel attached beside the
+      Mi 9T, `useDevice('A2')` bound every GESTURE to the Pixel while `logcatSince` read the Mi 9T -
+      evidence gathered from a device the run was not about, with nothing saying so. It was also
+      resolved at IMPORT, so a later `useDevice()` could not be seen. `watch.mjs` cannot import
+      `phone.mjs` (that would drag in the gitignored `names.mjs` and break two gated self-tests on
+      CI), so the pure half moved to its own module - the same split `estate.mjs` documents. Proven
+      both ways: a correct `ANDROID_SERIAL` reads that phone, a bogus one reports
+      `LOGCAT UNAVAILABLE: ... is not attached` instead of throwing, because an observer that crashes
+      destroys the measurement it was gathering.
+
+      **And my own renderer had the bug it exists to catch.** It derived "clean" from `dirtOf()`
+      being empty - but `dirtOf` collects what should TRAVEL WITH a row, `notable` included, and
+      `notable` never breaks clean. So `media-service`, carrying one routine purge line, was rendered
+      as a finding while its own report said `clean`. Caught by diffing against `srvlog.mjs`, which
+      disagreed and was right. Every report already carries `clean`; it is read now, not recomputed.
+
 - [ ] **B5. Uniform flags** on `shot.mjs` (positional argv today), `unlock.mjs`, `reload.mjs`.
       `device.mjs` now owns `--device`/`--android`/`--port`/`--account` and the phone-arming ladder;
       `login.mjs` and `pin.mjs` both use it. **It exists because I wrote the second copy an hour after

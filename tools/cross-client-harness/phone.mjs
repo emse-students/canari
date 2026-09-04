@@ -16,57 +16,17 @@ import { A1_WIFI, ACCOUNT_OF, PORTS } from './names.mjs';
 import * as NAMES from './names.mjs';
 import { classifyNativePaths } from './native-residue.mjs';
 
-/** Every device adb currently lists as `device`, in the order adb gives them. */
-function attached() {
-  const out = execFileSync('adb', ['devices'], { encoding: 'utf8' });
-  return out
-    .split('\n')
-    .slice(1)
-    .map((l) => l.trim().split(/\s+/))
-    .filter((p) => p[1] === 'device')
-    .map((p) => p[0]);
-}
-
 /**
- * WHICH PHONE, and it REFUSES TO GUESS between two of them.
- *
- * THIS PICKED THE WRONG PHONE THE MOMENT A SECOND ONE WAS PLUGGED IN. It took the first USB entry,
- * on the assumption - true for a year - that there was only ever one; on 2026-09-04 a Pixel 6a was
- * attached beside the Mi 9T and `serial()` answered the PIXEL, because adb happened to list it
- * first. Nothing would have failed: every atom would have woken, forwarded, logged into and
- * measured a phone the run was not about, and reported confidently about A1.
- *
- * So ambiguity is an ERROR rather than a choice, and there are exactly two ways to resolve it, both
- * explicit: `ANDROID_SERIAL` - adb's OWN convention, so it also reaches any adb this rig shells out
- * to - or `useDevice()` from a named device. A wireless entry is still preferred last, because the
- * LIFE phase cuts the radios.
- *
- * A serial is a DEVICE ID and this repository is PUBLIC, so the name -> serial map lives in the
- * out-of-tree `names.mjs` (`SERIAL_OF`), never here.
+ * WHICH PHONE, RE-EXPORTED FROM THE ONE RESOLVER. `a1apk.mjs` and `archive/fwd345.mjs` import
+ * `serial` from here, and this module is still the right place to ASK from - it is the phone's
+ * module. What moved to `serial.mjs` is the implementation, because `watch.mjs` needs the same
+ * answer and cannot import this file: `names.mjs` is gitignored and `watch.mjs` is reachable from
+ * two gated self-tests. The duplicate it used to keep silently drove the wrong phone; see
+ * `serial.mjs` for the measurement.
  */
-export function serial() {
-  const ids = attached();
-  if (!ids.length) throw new Error('no adb device');
+import { attached, serial } from './serial.mjs';
 
-  const named = process.env.ANDROID_SERIAL;
-  if (named) {
-    if (!ids.includes(named)) {
-      throw new Error(`ANDROID_SERIAL=${named} is not attached - adb lists: ${ids.join(' ')}`);
-    }
-    return named;
-  }
-
-  const usb = ids.filter((id) => !id.includes(':'));
-  const pool = usb.length ? usb : ids;
-  if (pool.length > 1) {
-    throw new Error(
-      `${pool.length} phones are attached (${pool.join(' ')}) and nothing says which this is about. ` +
-        `Name one: ANDROID_SERIAL=<serial>, or pass --device to an atom so it can call useDevice(). ` +
-        `Choosing for you drives the wrong phone and still reports success.`,
-    );
-  }
-  return pool[0];
-}
+export { attached, serial };
 
 /**
  * Binds THIS PROCESS to one named phone, and returns the serial it bound.

@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-43 scripts.
+45 scripts.
 
 | script | what it is |
 |---|---|
@@ -45,6 +45,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `invite.mjs` | Invites a user into the open group conversation - i.e. produces an MLS Add commit. |
 | `launch.mjs` | Launching and killing the two test browsers. |
 | `login.mjs` | Drives the login for one of the campaign accounts, over CDP. |
+| `logs.mjs` | READS THE LOGS OF ONE SUBJECT - a web client, the phone, or the estate - and classifies them. |
 | `marker.mjs` | THE MARKER VOCABULARY: minting one, recognising one in rendered text, and decoding when it was |
 | `names.example.mjs` | TEMPLATE for the ONE machine-local file this rig needs. Setting it up is two steps, because the |
 | `native-residue.mjs` | WHAT of a phone's account state is still on disk, as a classification of paths. |
@@ -58,6 +59,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `results.mjs` | Append-only result log for the campaign. |
 | `rows.mjs` | THE BOARD AND THE EVIDENCE, RECONCILED - which rows nothing has ever answered, and which answers |
 | `send.mjs` | Sends one message from one client, and ends when that client's own pane shows it. |
+| `serial.mjs` | WHICH PHONE adb SHOULD TALK TO - one resolver, and it REFUSES TO GUESS between two of them. |
 | `shot.mjs` | Saves a PNG screenshot of a client, so a layout claim is looked at rather than inferred. |
 | `srvlog.mjs` | THE THIRD OBSERVER: production's own logs, classified the way the browser's are. |
 | `ssh.mjs` | THE ONE WAY THIS HARNESS REACHES PRODUCTION. |
@@ -219,4 +221,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-158 scripts in total.
+160 scripts in total.

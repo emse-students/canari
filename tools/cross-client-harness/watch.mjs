@@ -1591,34 +1591,48 @@ export function longestSilence(timeline) {
  */
 
 /**
- * The phone's adb serial, RESOLVED rather than hard-coded.
+ * The phone's adb serial, RESOLVED rather than hard-coded, and BY THE ONE RESOLVER since 2026-09-04.
  *
  * Its DHCP lease changes between sessions (it has already moved subnet once), so a literal address
  * turns every logcat call into `LOGCAT UNAVAILABLE` - and a check whose verdict lives on a logcat
- * line then fails for a reason that has nothing to do with the app. The wireless entry is preferred
- * because USB drops on this device mid-capture; USB is only the fallback that lets a run start.
+ * line then fails for a reason that has nothing to do with the app.
+ *
+ * **IT USED TO BE A SECOND RESOLVER WITH THE OPPOSITE POLICY, AND THAT WAS A SILENT WRONG-SUBJECT
+ * BUG.** The copy that stood here ignored `ANDROID_SERIAL` and returned `lines[0]`, preferring the
+ * wireless entry; `phone.mjs` honours `ANDROID_SERIAL` and REFUSES to choose between two phones. So
+ * with a Pixel 6a attached beside the Mi 9T, `useDevice('A2')` bound every gesture to the Pixel
+ * while this function read the Mi 9T's logcat, and the row would have gathered its evidence from a
+ * device the run was not about without a single line saying so. Both now call `serial.mjs`, which
+ * exists as its own module because `watch.mjs` cannot import `phone.mjs` - that would drag in the
+ * gitignored `names.mjs` and make two gated self-tests unimportable on CI.
+ *
+ * **RESOLVED AT USE, NOT AT IMPORT.** It was a module-level `const`, evaluated the moment anything
+ * imported this file - so a binding made afterwards by `useDevice()` could not be seen, which is
+ * precisely the case the fix is for. It is read per call now, and cached for nothing.
  */
-import { execFileSync as execSync_ } from 'node:child_process';
+import { serial as resolveSerial } from './serial.mjs';
 
-function resolveSerial() {
+/**
+ * The serial to read logs from, or `null` with the reason - NEVER a throw.
+ *
+ * A GESTURE THAT CANNOT TELL WHICH PHONE IT DRIVES MUST STOP; AN OBSERVER MUST NOT. `serial()`
+ * throws on "no device" and on "two devices and nothing says which", both correct for an atom about
+ * to act. Here the caller is gathering evidence for a row that is already running, and a crashed
+ * observer destroys the measurement it exists to collect - so the refusal is returned as the report
+ * line, which says the same thing to the same reader without ending the run.
+ */
+function logcatSerial() {
   try {
-    const lines = execSync_('adb', ['devices'], { encoding: 'utf8', timeout: 10000 })
-      .split(/\r?\n/)
-      .slice(1)
-      .map((l) => l.trim().split(/\s+/))
-      .filter((p) => p.length >= 2 && p[1] === 'device')
-      .map((p) => p[0]);
-    return lines.find((s) => /^\d+\.\d+\.\d+\.\d+:\d+$/.test(s)) ?? lines[0] ?? null;
-  } catch {
-    return null;
+    return { serial: resolveSerial(), why: null };
+  } catch (e) {
+    return { serial: null, why: String(e?.message ?? e) };
   }
 }
 
-export const A1_SERIAL = resolveSerial();
-
 export async function logcatSince(sinceMs) {
   const { execFileSync } = await import('node:child_process');
-  if (!A1_SERIAL) return ['LOGCAT UNAVAILABLE: no adb device attached'];
+  const { serial: A1_SERIAL, why } = logcatSerial();
+  if (!A1_SERIAL) return [`LOGCAT UNAVAILABLE: ${why ?? 'no adb device attached'}`];
   // logcat -T wants "MM-DD hh:mm:ss.mmm" in the DEVICE's local time, not ISO and not UTC.
   const d = new Date(sinceMs - 1500);
   const p2 = (n) => String(n).padStart(2, '0');
