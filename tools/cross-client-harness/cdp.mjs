@@ -164,10 +164,19 @@ export function connect(wsUrl, readyTimeoutMs = 5000) {
   ws.addEventListener('message', (m) => {
     const msg = JSON.parse(m.data);
     if (msg.id && pending.has(msg.id)) {
-      const { resolve, reject } = pending.get(msg.id);
+      const { resolve, reject, method, from } = pending.get(msg.id);
       pending.delete(msg.id);
-      if (msg.error) reject(new Error(`${msg.error.message} (${msg.error.code})`));
-      else resolve(msg.result);
+      if (msg.error) {
+        // NAMED AND LOCATED, because an anonymous one cost a dozen runs. A CDP error is built HERE,
+        // in a message handler, so its own stack is this listener and nothing else - every failure
+        // in the campaign recorded `Inspected target navigated or closed (-32000)` with no method
+        // and no caller, and TYPE-4 and READ-7 turned out to be two different faults wearing the
+        // same sentence. The method is known at send time and so is the caller, so both are carried
+        // across the async boundary rather than reconstructed after it.
+        const err = new Error(`${msg.error.message} (${msg.error.code}) on ${method}`);
+        if (from) err.stack = `${err.message}\n${from}`;
+        reject(err);
+      } else resolve(msg.result);
     } else if (msg.method) {
       events.push(msg);
     }
@@ -177,6 +186,13 @@ export function connect(wsUrl, readyTimeoutMs = 5000) {
   const send = (method, params = {}) =>
     new Promise((resolve, reject) => {
       const id = nextId++;
+      // CAPTURED SYNCHRONOUSLY, which is the whole point: by the time the answer comes back this
+      // call frame is gone, and a stack taken in the handler names the handler. Two lines dropped so
+      // the first frame is the caller rather than this function.
+      const from = String(new Error().stack ?? '')
+        .split(/\r?\n/)
+        .slice(2)
+        .join('\n');
       const timer = setTimeout(() => {
         if (pending.has(id)) {
           pending.delete(id);
@@ -185,6 +201,8 @@ export function connect(wsUrl, readyTimeoutMs = 5000) {
       }, 30000);
       timer.unref?.();
       pending.set(id, {
+        method,
+        from,
         resolve: (v) => {
           clearTimeout(timer);
           resolve(v);
@@ -214,6 +232,36 @@ export async function evaluate(cx, expression) {
   return r.result.value;
 }
 
+
+/**
+ * Reloads a page and waits for the load to FIRE, not for a poll to succeed.
+ *
+ * **POLLING ACROSS YOUR OWN RELOAD IS A RACE YOU CREATED.** `until(cx, "document.readyState ===
+ * 'complete'")` after `Page.reload` sends `Runtime.evaluate` every 60 ms into a target whose
+ * execution context is being torn down by the reload the same check just asked for. When a poll
+ * lands inside that window CDP answers `Inspected target navigated or closed (-32000)` and the check
+ * ERRORs - three times in four on READ-7, measured 2026-09-04, with no verdict and a message naming
+ * a CDP condition rather than anything in this rig.
+ *
+ * The reload is a FACT this caller already has, so the wait is built on the event the browser sends
+ * when it is done rather than on asking a dying context whether it is finished. `Page.enable` is
+ * idempotent, and `connect()` already collects every `method`-bearing frame, so the load event is
+ * waiting in `cx.events` whether or not anything was listening at the instant it arrived - which
+ * closes the other half of the same race, a load that completes before the wait begins.
+ */
+export async function reloadAndWait(cx, { ignoreCache = false, timeoutMs = 20000 } = {}) {
+  await cx.send('Page.enable');
+  const before = cx.events.length;
+  const t0 = Date.now();
+  await cx.send('Page.reload', { ignoreCache });
+  while (Date.now() - t0 < timeoutMs) {
+    if (cx.events.slice(before).some((m) => m.method === 'Page.loadEventFired')) {
+      return Date.now() - t0;
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error(`reloadAndWait: no Page.loadEventFired within ${timeoutMs}ms`);
+}
 
 /** Polls a page-side boolean until true. Returns the elapsed ms, or throws on timeout. */
 export async function until(cx, predicate, timeoutMs = 20000, stepMs = 60) {

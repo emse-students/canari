@@ -36,7 +36,7 @@ import { client, evaluate, openDM, openChannel, realClick, until, COMPOSER } fro
 import { gate, ignoringOfflineCut, report, watch } from '../watch.mjs';
 import { armCut, cutHard } from './net.mjs';
 import { awaitOffline, awaitOnline, whoIs } from './presence.mjs';
-import { record } from '../results.mjs';
+import { errorDetail, record } from '../results.mjs';
 import { OWNER_NAME, PEER_NAME, PORTS, SITE } from '../names.mjs';
 
 const { W1, W2 } = PORTS;
@@ -342,7 +342,7 @@ async function type5() {
     await openChannel(b);
   } catch (e) {
     const gated = gate('ERROR', { W1: await report(wA), W2: await report(wB) });
-    record('TYPE-5', 'ERROR', { ...gated.detail, stage: 'setup', error: e.message });
+    record('TYPE-5', 'ERROR', { ...gated.detail, stage: 'setup', ...errorDetail(e) });
     [a, b].forEach((c) => c.close());
     // RETURNED, NOT RETHROWN: the file's top-level handler would record a SECOND `TYPE-5 ERROR`
     // carrying only the message, and the poorer of the two rows is the one a reader would find last.
@@ -382,7 +382,7 @@ for (const [n, fn] of Object.entries(CHECKS)) {
   try {
     results.push([n, await fn()]);
   } catch (e) {
-    record(`TYPE-${n}`, 'ERROR', { error: e.message });
+    record(`TYPE-${n}`, 'ERROR', { ...errorDetail(e) });
     results.push([n, false]);
   }
 }

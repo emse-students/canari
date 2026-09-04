@@ -10,7 +10,22 @@
  *
  * Usage: bun fwd5.mjs [iterations]
  */
-import { APP_TAB, awaitAppReady, awaitMessage, clickBubbleAction, client, countMessage, ensureChat, openChannel, openConversation, realClick, send, settledCount, until } from '../chat.mjs';
+import {
+  APP_TAB,
+  awaitAppReady,
+  awaitMessage,
+  clickBubbleAction,
+  client,
+  countMessage,
+  ensureChat,
+  openChannel,
+  openConversation,
+  realClick,
+  reloadAndWait,
+  send,
+  settledCount,
+  until,
+} from '../chat.mjs';
 import { watch, report, dirtOf } from '../watch.mjs';
 import { finishObserved, mark } from '../results.mjs';
 // See fwd.mjs: a real display name belongs in names.mjs, which never reaches the public repo.
@@ -48,7 +63,11 @@ for (let i = 0; i < N; i++) {
   const m = mark('FWD5');
 
   // Fresh session, then straight to the channel: the DM is never opened before the forward.
-  await w1.send('Page.reload');
+  // THE RELOAD IS WAITED FOR ON ITS OWN EVENT BEFORE ANYTHING POLLS. `awaitAppReady` is an
+  // `until`, so it sends `Runtime.evaluate` into the context this reload is destroying, and CDP
+  // answers `Inspected target navigated or closed` when the two meet - which cost READ-7 three
+  // runs in four before it was located (2026-09-04).
+  await reloadAndWait(w1);
   await awaitAppReady(w1);
   await ensureChat(w1);
 

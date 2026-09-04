@@ -54,7 +54,7 @@ import {
 import { addMember, openGroupSettings } from './addmember.mjs';
 import { closeOverlays, createGroup, deleteGroup, dismissLocally, openGroup } from '../groupnav.mjs';
 import { armCut, cut, cutHard, throttleUpload } from './net.mjs';
-import { mark, record, recordObserved } from '../results.mjs';
+import { errorDetail, mark, record, recordObserved } from '../results.mjs';
 import {
   COLD_START_NARRATION,
   consoleLines,
@@ -1341,7 +1341,7 @@ for (const [n, fn] of Object.entries(CHECKS)) {
   try {
     results.push([n, await fn()]);
   } catch (e) {
-    record(`DEL-${n}`, 'ERROR', { error: e.message });
+    record(`DEL-${n}`, 'ERROR', { ...errorDetail(e) });
     results.push([n, false]);
   }
 }

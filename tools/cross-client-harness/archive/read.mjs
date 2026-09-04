@@ -62,7 +62,9 @@ import {
   PANE,
   parkConversation,
   realClick,
+  reloadAndWait,
   send,
+  TILE_BY_TITLE,
   awaitMessage,
   countMessage,
   sameAccountAs,
@@ -70,7 +72,7 @@ import {
 } from '../chat.mjs';
 import { armCut, cutHard } from './net.mjs';
 import { gate, ignoringNavigation, ignoringOfflineCut, report, watch } from '../watch.mjs';
-import { record, mark, markSeq } from '../results.mjs';
+import { errorDetail, mark, markSeq, record } from '../results.mjs';
 import { OWNER_NAME, PEER_NAME, PORTS } from '../names.mjs';
 
 const { W1, W2 } = PORTS;
@@ -88,20 +90,24 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * on screen - `document.querySelectorAll` over an empty sidebar is a harness fault, not a "0
  * unread" reading), `''` when the row exists with no badge, or the badge's own text ('3', '99+').
  *
- * SHORTEST-MATCH WINS, same heuristic as `openConversation` in chat.mjs and `openGroup` in
- * groupnav.mjs: a scroll container wrapping the whole list also contains the name and would win
- * on a naive first-match.
+ * **IT READS THE TILE'S TITLE NOW, AND IT USED TO SEARCH FOR THE NAME ANYWHERE AND BREAK TIES BY
+ * SHORTEST TEXT** - the same heuristic that made `openConversation` send into a group it was never
+ * asked for. A tile is `<initials>` / `<title>` / `<last message preview>`, and a group whose
+ * preview says "<owner> a ajoute <peer> au groupe" matches the peer's name exactly as well as the
+ * peer's own DM row does. Measured 2026-09-04: with W1 parked on the sidebar and two messages
+ * arriving, this returned the row for `Repro Alpha` - a GROUP - which carries no unread badge, so
+ * READ-9 waited 30 s for a count that was sitting on a row it was not looking at and reported that
+ * the application had failed to count an unread message.
+ *
+ * `TILE_BY_TITLE` in `chat.mjs` is the one implementation, shared with `openConversation`, and it
+ * REFUSES an ambiguous match rather than picking. Ambiguity therefore reads as `null` here - "the
+ * row cannot be identified" - which is the same answer as a missing row and deliberately NOT the
+ * same as "no badge".
  */
 const unreadBadgeExpr = (name) => `(function () {
-  var wanted = ${JSON.stringify(name.toLowerCase())};
-  var rows = [].slice.call(document.querySelectorAll('li, button, a, [role=button]'));
-  var hits = rows.filter(function (e) {
-    var t = (e.innerText || '').toLowerCase();
-    return t && t.indexOf(wanted) !== -1 && e.getBoundingClientRect().width > 0;
-  });
-  if (!hits.length) return null;
-  hits.sort(function (a, b) { return a.innerText.length - b.innerText.length; });
-  var badge = hits[0].querySelector('span[aria-label]');
+  var r = (${TILE_BY_TITLE})(${JSON.stringify(name)});
+  if (!r.ok) return null;
+  var badge = r.el.querySelector('span[aria-label]');
   return badge ? (badge.innerText || '').trim() : '';
 })()`;
 
@@ -160,16 +166,27 @@ const hasStatus = (cls) =>
  * Only ONE message ever carries the anchor (`isReadReceiptAnchor`, the last read own message), so
  * the question that discriminates is not whether it exists but WHICH message it sits on. Comparing
  * that against this check's own marker is rule 2: "did it change into the RIGHT state".
+ *
+ * **IT CLIMBS TO THE APP'S OWN HOOK NOW, AND IT USED TO GUESS BY TEXT LENGTH.** The walk returned the
+ * first ancestor whose `innerText` was `> 12 && < 600` characters - and the metadata row that HOLDS
+ * the indicator is `"<initials>
+Message lu"`, which measured 13. So the climb stopped one level
+ * short of the bubble, every time, by a margin of one character. The consequences were both halves of
+ * READ-3: `readWhileHidden` was false because a marker can never appear in "CT Message lu", making
+ * the negative half true BY CONSTRUCTION, and `readMs` was null because the positive half asks the
+ * same question - so the row could not pass and its FAIL said nothing about the application. Measured
+ * 2026-09-04: W1 sends the receipt correctly, `[OUTBOX] ... (control) ... sent`, six seconds after
+ * visibility is restored.
+ *
+ * `MessageBubble.svelte` gives every message `id="msg-<messageId>"`. That is a structural fact the
+ * app maintains, where a text length is a coincidence this rig was relying on.
  */
 const readAnchorText = `(function () {
   var p = ${PANE};
   var s = p && p.querySelector('.msg-status-read');
   if (!s) return '';
-  for (var e = s; e && e !== p; e = e.parentElement) {
-    var t = (e.innerText || '').trim();
-    if (t.length > 12 && t.length < 600) return t;
-  }
-  return '';
+  var bubble = s.closest('[id^="msg-"]');
+  return bubble ? (bubble.innerText || '').trim() : '';
 })()`;
 
 /**
@@ -562,8 +579,10 @@ async function read7() {
   // then reload WHILE the receipt is in flight, well inside the window, never after it resolved.
   await openDM(w1, PEER_NAME);
   await sleep(500);
-  await w1.send('Page.reload');
-  await until(w1, `document.readyState === 'complete'`, 20000);
+  // `reloadAndWait`, NOT reload-then-poll: the poll sends `Runtime.evaluate` into the context this
+  // very line is destroying, and CDP answers `Inspected target navigated or closed` when the two
+  // meet. This row ERRORed on three runs in four that way, recording no verdict at all.
+  await reloadAndWait(w1);
   await openDM(w1, PEER_NAME); // reload drops all SPA state; re-open the way a real user would
 
   // W1 IS WATCHED ONLY FROM HERE. The reload this check performs is its own instrument, and the
@@ -675,6 +694,14 @@ async function read9() {
 
   const [oW2, oA1] = [await watch(w2, 'sender'), await watch(a1, 'phone-reader')];
   const N = 2;
+
+  // THE COUNT THIS ROW ALREADY HAD, because `unreadAtLeast(..., 1)` is true the instant a LEFTOVER
+  // badge exists and would arm on nothing. Measured 2026-09-04: after the badge locator was
+  // repaired this row armed in 1 ms - the row's own doc says nothing crossing a network arrives that
+  // fast - because two messages from an earlier probe were still unread. Asking for `before + N` is
+  // rule 2: wait for CHANGED, assert changed to the RIGHT value.
+  const before = await unreadCountOf(w1, PEER_NAME);
+
   const markers = [];
   for (let i = 1; i <= N; i++) {
     const mk = markSeq('READ9', i);
@@ -683,7 +710,7 @@ async function read9() {
   }
   await awaitMessage(w2, markers[N - 1], 20000);
 
-  const armedMs = await until(w1, unreadAtLeast(PEER_NAME, 1), 30000, 200).catch(() => null);
+  const armedMs = await until(w1, unreadAtLeast(PEER_NAME, before + N), 30000, 200).catch(() => null);
 
   // The phone reads. `ensureConversation` rather than a navigation: a reload on A1 re-locks the PIN
   // and a check that navigates it hangs on a modal it never expected.
@@ -704,6 +731,7 @@ async function read9() {
   });
   record('READ-9', gated.verdict, {
     ...gated.detail,
+    before,
     markers,
     parked,
     armedMs,
@@ -916,7 +944,7 @@ for (const [n, fn] of Object.entries(CHECKS)) {
   try {
     results.push([n, await fn()]);
   } catch (e) {
-    record(`READ-${n}`, 'ERROR', { error: e.message });
+    record(`READ-${n}`, 'ERROR', { ...errorDetail(e) });
     results.push([n, false]);
   }
 }

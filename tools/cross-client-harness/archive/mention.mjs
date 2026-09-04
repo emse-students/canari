@@ -74,7 +74,7 @@ import {
   mentionInComposer,
 } from '../chat.mjs';
 import { inPanel, openChannelSettings, setChannelNotifLevel } from '../comm.mjs';
-import { record, recordObserved, mark } from '../results.mjs';
+import { errorDetail, mark, record, recordObserved } from '../results.mjs';
 import { ignoringExpectedRefusal, report, watch } from '../watch.mjs';
 import { srvLines } from '../srvlog.mjs';
 import * as phone from '../phone.mjs';
@@ -722,7 +722,7 @@ for (const [n, fn] of Object.entries(CHECKS)) {
   try {
     results.push([n, await fn()]);
   } catch (e) {
-    record(`MENTION-${n}`, 'ERROR', { error: e.message });
+    record(`MENTION-${n}`, 'ERROR', { ...errorDetail(e) });
     results.push([n, false]);
   }
 }

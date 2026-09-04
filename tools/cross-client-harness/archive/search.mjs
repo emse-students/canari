@@ -76,7 +76,7 @@ import {
   activate,
   goto,
 } from '../chat.mjs';
-import { record, recordObserved, mark } from '../results.mjs';
+import { errorDetail, mark, record, recordObserved } from '../results.mjs';
 import { ignoringOfflineCut, report, watch } from '../watch.mjs';
 import { PEER_NAME, PORTS, VENUE } from '../names.mjs';
 
@@ -676,7 +676,7 @@ for (const [n, fn] of Object.entries(CHECKS)) {
   try {
     results.push([n, await fn()]);
   } catch (e) {
-    record(`SEARCH-${n}`, 'ERROR', { error: e.message });
+    record(`SEARCH-${n}`, 'ERROR', { ...errorDetail(e) });
     results.push([n, false]);
   }
 }

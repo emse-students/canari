@@ -331,6 +331,42 @@ const observed = (detail) =>
  */
 const RESERVED = ['id', 'verdict', 'at', 'build', 'builtAt', 'checkSha', 'instrumentSha'];
 
+/**
+ * An `ERROR` verdict's detail: what was thrown, AND WHERE.
+ *
+ * **EVERY `ERROR` ROW IN THIS CAMPAIGN CARRIED A MESSAGE AND NO LOCATION** - 33 call sites across
+ * eight runners all spelled `{ error: e.message }`. That is enough to know a check died and never
+ * enough to know what it was doing. Measured 2026-09-04: TYPE-4 and READ-7 both recorded
+ * `Inspected target navigated or closed (-32000)`, a message that names a CDP condition and not one
+ * line of this rig - and the two turned out to have different causes, one in the orchestration and
+ * one in the check itself. Telling them apart took a dozen runs that a stack frame would have
+ * settled.
+ *
+ * The frame chosen is the FIRST one inside the harness, not the top of the stack: the top is
+ * usually `cdp.mjs`'s `send`, which is where every CDP failure is raised and therefore says nothing
+ * about which gesture raised it. The path is made repository-relative so two checkouts produce the
+ * same string.
+ */
+export function errorDetail(e) {
+  const frames = String(e?.stack ?? '')
+    .split(/\r?\n/)
+    .slice(1)
+    .map((l) => l.trim());
+  const where = frames
+    .filter((l) => l.includes('cross-client-harness'))
+    .map((l) =>
+      l
+        .replace(/^at\s+/, '')
+        .replace(/.*[\\/]cross-client-harness[\\/]/, '')
+        .replace(/\\/g, '/')
+        .replace(/\)$/, '')
+    )
+    // Five is past the transport and into the check on every stack this rig produces, and short
+    // enough that the row stays readable in a terminal.
+    .slice(0, 5);
+  return { error: e?.message ?? String(e), where: where.length ? where : null };
+}
+
 export function record(id, verdict, detail) {
   // A PASS THAT LOOKED AT NOTHING IS NOT A PASS, AND THIS IS THE ONLY PLACE THAT CAN KNOW IT.
   //

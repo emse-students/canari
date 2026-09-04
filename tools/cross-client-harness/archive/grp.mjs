@@ -57,7 +57,7 @@ import { conversationRows, groupIdByName } from './idb.mjs';
 import { psql } from '../estate.mjs';
 import { closeOverlays, createGroup, deleteGroup, openGroup } from '../groupnav.mjs';
 import { armCut, cutHard } from './net.mjs';
-import { mark, record, recordObserved } from '../results.mjs';
+import { errorDetail, mark, record, recordObserved } from '../results.mjs';
 import { awaitLine, consoleLines, ignoringOfflineCut, report, watch } from '../watch.mjs';
 import { OWNER_NAME, PEER_NAME, PORTS } from '../names.mjs';
 
@@ -1346,7 +1346,7 @@ for (const [n, fn] of Object.entries(CHECKS)) {
   try {
     results.push([n, await fn()]);
   } catch (e) {
-    record(`GRP-${n}`, 'ERROR', { error: e.message });
+    record(`GRP-${n}`, 'ERROR', { ...errorDetail(e) });
     results.push([n, false]);
   }
 }

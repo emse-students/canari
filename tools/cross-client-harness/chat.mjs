@@ -9,7 +9,7 @@
  */
 import { existsSync } from 'node:fs';
 import { GATE_EXPR } from './gate-probe.mjs';
-import { IS_MOVING_FN, RESOLVE, activate, clickAtPoint, connect, dragTo, evaluate, listTargets, pressKey, realClick, stablePoint, until } from './cdp.mjs';
+import { IS_MOVING_FN, RESOLVE, activate, clickAtPoint, connect, dragTo, evaluate, listTargets, pressKey, realClick, reloadAndWait, stablePoint, until } from './cdp.mjs';
 // For the device check in `goto`: the phone is the one client a reload costs something on.
 import { PORTS, SITE, VENUE } from './names.mjs';
 
@@ -976,6 +976,58 @@ export async function openChannel(cx, community = VENUE.community, channel = VEN
 }
 
 /**
+ * THE SIDEBAR ROW A NAME REFERS TO, as a page-side function every caller shares.
+ *
+ * **THREE COPIES OF THE WRONG HEURISTIC IS WHY THIS IS A CONSTANT.** `openConversation` here,
+ * `unreadBadgeExpr` in `read.mjs` and `openGroup` in `groupnav.mjs` each searched every `li`,
+ * `button` and `a` whose text CONTAINED the name and then broke ties by shortest text. A tile is
+ * `<initials>` / `<title>` / `<last message preview>`, and the preview carries other people's
+ * sentences - "<owner> a ajoute <peer> au groupe" contains the peer's name as surely as their own DM
+ * row does - so the tie-break decided between a DM and a GROUP by how much had been said lately.
+ *
+ * `openConversation` was repaired on 2026-09-04 after MSG-1 sent into a group it was never asked
+ * for. The other two were left, and READ-9 then failed the same way on the same day: its unread
+ * badge was read off `Repro Alpha`, a group whose preview mentions the peer, so no badge ever
+ * appeared and the row reported the application had not counted an unread message. Fixing a defect
+ * where it is found, three times, is how it survives.
+ *
+ * THE TITLE IS THE ROW'S IDENTITY - a DM is titled with the peer's display name, a group with its
+ * own name - and `data-conversation-tile` is the app's own id for the row. AMBIGUITY IS REFUSED
+ * rather than resolved: two tiles whose titles both match is a fixture problem or a name collision,
+ * and picking one is how the fault above happened in the first place.
+ *
+ * Returns `{ ok, el, id, title, matched, tiles, titles }`. `el` is a live node, so this is only
+ * useful INSIDE a page evaluation - callers wrap it and return whatever crosses the wire.
+ */
+export const TILE_BY_TITLE = `(function (name) {
+  var wanted = String(name).toLowerCase();
+  var scope = document.querySelector('.sidebar-panel') || document.body;
+  var tiles = [].slice.call(scope.querySelectorAll('[data-conversation-tile]')).filter(function (e) {
+    return e.getBoundingClientRect().width > 0;
+  });
+  var titled = tiles.map(function (e) {
+    var lines = (e.innerText || '').split(String.fromCharCode(10)).map(function (x) {
+      return x.trim();
+    }).filter(Boolean);
+    // The avatar block is the tile's first child and its text is the initials, so it is dropped by
+    // IDENTITY rather than by position-in-text - a tile with no avatar keeps its title.
+    var avatar = ((e.children[0] && e.children[0].innerText) || '').trim();
+    if (lines.length && avatar && lines[0] === avatar) lines.shift();
+    return { el: e, id: e.getAttribute('data-conversation-tile'), title: lines[0] || '' };
+  });
+  var hits = titled.filter(function (t) { return t.title.toLowerCase().indexOf(wanted) !== -1; });
+  // An exact title wins over a containing one, so a peer named "Alex" still resolves to their own DM
+  // when a group called "Alex and friends" is listed beside it.
+  var exact = hits.filter(function (t) { return t.title.toLowerCase() === wanted; });
+  var chosen = exact.length ? exact : hits;
+  var titles = hits.map(function (t) { return t.title.slice(0, 40); }).slice(0, 6);
+  if (chosen.length !== 1) {
+    return { ok: false, el: null, id: null, title: '', matched: chosen.length, tiles: tiles.length, titles: titles };
+  }
+  return { ok: true, el: chosen[0].el, id: chosen[0].id, title: chosen[0].title, matched: 1, tiles: tiles.length, titles: titles };
+})`;
+
+/**
  * Waits for an entry to be LISTED, and says what the list held when it never was.
  *
  * `until(RESOLVE('text=X'))` rethrows its own source on timeout, which is forty lines of resolver
@@ -1062,32 +1114,12 @@ export async function openConversation(cx, name) {
   // AMBIGUITY IS REFUSED RATHER THAN RESOLVED. Two tiles whose titles both match is a fixture
   // problem or a name collision, and picking one is how the fault above happened in the first place.
   const FIND = `(function () {
-      var wanted = ${JSON.stringify(name)}.toLowerCase();
-      var scope = document.querySelector('.sidebar-panel') || document.body;
-      var tiles = [].slice.call(scope.querySelectorAll('[data-conversation-tile]')).filter(function (e) {
-        return e.getBoundingClientRect().width > 0;
-      });
-      var titled = tiles.map(function (e) {
-        var lines = (e.innerText || '').split(String.fromCharCode(10)).map(function (x) {
-          return x.trim();
-        }).filter(Boolean);
-        // The avatar block is the tile's first child and its text is the initials, so it is dropped
-        // by IDENTITY rather than by position-in-text - a tile with no avatar keeps its title.
-        var avatar = ((e.children[0] && e.children[0].innerText) || '').trim();
-        if (lines.length && avatar && lines[0] === avatar) lines.shift();
-        return { el: e, id: e.getAttribute('data-conversation-tile'), title: lines[0] || '' };
-      });
-      var hits = titled.filter(function (t) { return t.title.toLowerCase().indexOf(wanted) !== -1; });
-      // An exact title wins over a containing one, so a peer named "Alex" still opens their own DM
-      // when a group called "Alex and friends" is listed beside it.
-      var exact = hits.filter(function (t) { return t.title.toLowerCase() === wanted; });
-      var chosen = exact.length ? exact : hits;
-      if (chosen.length !== 1) {
-        return JSON.stringify({ ok: false, matched: chosen.length, tiles: tiles.length,
-          titles: hits.map(function (t) { return t.title.slice(0, 40); }).slice(0, 6) });
+      var r = (${TILE_BY_TITLE})(${JSON.stringify(name)});
+      if (!r.ok) {
+        return JSON.stringify({ ok: false, matched: r.matched, tiles: r.tiles, titles: r.titles });
       }
-      chosen[0].el.scrollIntoView({ block: 'center' });
-      return JSON.stringify({ ok: true, id: chosen[0].id, title: chosen[0].title.slice(0, 60) });
+      r.el.scrollIntoView({ block: 'center' });
+      return JSON.stringify({ ok: true, id: r.id, title: r.title.slice(0, 60) });
     })()`;
   // THE TIMEOUT HERE USED TO RETHROW THE PREDICATE, WHICH IS BOTH USELESS AND UNSAFE.
   //
@@ -1877,7 +1909,7 @@ export async function attachFiles(cx, files) {
   return files.length;
 }
 
-export { IS_MOVING_FN, activate, clickAtPoint, dragTo, evaluate, pressKey, realClick, stablePoint, until };
+export { IS_MOVING_FN, activate, clickAtPoint, dragTo, evaluate, pressKey, realClick, reloadAndWait, stablePoint, until };
 
 /**
  * One authenticated request, made from a client's OWN page, as that client's account.

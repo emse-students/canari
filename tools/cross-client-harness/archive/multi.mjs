@@ -53,7 +53,7 @@ import { closeExtraAppTabs } from './tabs.mjs';
 import { connect } from '../cdp.mjs';
 import { fromStore } from './idb.mjs';
 import { gate, logcatReport, logcatSince, report, watch } from '../watch.mjs';
-import { mark, record, recordObserved } from '../results.mjs';
+import { errorDetail, mark, record, recordObserved } from '../results.mjs';
 import { OWNER_NAME, PEER_NAME, PORTS, SITE } from '../names.mjs';
 import * as phone from '../phone.mjs';
 
@@ -463,7 +463,7 @@ for (const [n, fn] of Object.entries(CHECKS)) {
     // way to place it was to re-run by hand. An ERROR is the one verdict that cannot describe what
     // it measured, so it owes the stack instead.
     record(`MULTI-${n}`, 'ERROR', {
-      error: e.message,
+      ...errorDetail(e),
       // NOT `at`: that is the LEDGER's own timestamp field, and `record` spreads the detail OVER it,
       // so a stack put there erases the time the row was written - which is what filters a run's
       // verdicts. Two rows were corrupted that way on 2026-08-27 before the collision was seen.

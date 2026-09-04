@@ -11,7 +11,24 @@
  * Each records whether `POST /api/mls/send` happened at all: no request means the client dropped
  * it, a 201 means the receiver did. That is the fork the whole diagnosis turns on.
  */
-import { APP_TAB, awaitAppReady, awaitMessage, clickBubbleAction, client, countMessage, ensureChat, ensureConversation, evaluate, openChannel, openConversation, realClick, send, settledCount, until } from '../chat.mjs';
+import {
+  APP_TAB,
+  awaitAppReady,
+  awaitMessage,
+  clickBubbleAction,
+  client,
+  countMessage,
+  ensureChat,
+  ensureConversation,
+  evaluate,
+  openChannel,
+  openConversation,
+  realClick,
+  reloadAndWait,
+  send,
+  settledCount,
+  until,
+} from '../chat.mjs';
 import { gate, ignoringOfflineCut, report, watch } from '../watch.mjs';
 import { cut } from './net.mjs';
 import { mark, record } from '../results.mjs';
@@ -131,7 +148,11 @@ const results = [];
   const m = mark('FWD5');
   // A fresh session: reload, then go straight to the channel. The DM is never opened before the
   // forward, so the sender holds no loaded state for the conversation it is forwarding into.
-  await w1.send('Page.reload');
+  // THE RELOAD IS WAITED FOR ON ITS OWN EVENT BEFORE ANYTHING POLLS. `awaitAppReady` is an
+  // `until`, so it sends `Runtime.evaluate` into the context this reload is destroying, and CDP
+  // answers `Inspected target navigated or closed` when the two meet - which cost READ-7 three
+  // runs in four before it was located (2026-09-04).
+  await reloadAndWait(w1);
   await awaitAppReady(w1);
   await ensureChat(w1);
   const o1 = await watch(w1, 'FWD5-W1');
