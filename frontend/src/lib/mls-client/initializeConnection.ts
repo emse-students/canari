@@ -29,10 +29,16 @@ export interface ConnectionDeps {
   log: (msg: string) => void;
   /**
    * Called for each group absent from WASM at connection time. Drives the single recovery seam
-   * (`requestReAdd`: external join, else welcome_request). When omitted, falls back to
-   * `sendWelcomeRequest` alone (the session watchdog takes over the cadence when available).
+   * (`requestReAdd`: external join first, `welcome_request` only when no base can be used).
+   *
+   * REQUIRED, AND IT USED TO HAVE A FALLBACK. When it was omitted this pass called
+   * `sendWelcomeRequest` directly, which skips the whole ladder: no self-service external join, no
+   * `readWelcomeOwed` (so it could race a member's in-flight Add into a duplicate leaf), no
+   * throttle, and no terminal reading of a 403. Both call sites - `sessionAuth` and
+   * `sessionConnection` - have always passed it, so the fallback was a path that existed only to be
+   * silently worse than the one next to it.
    */
-  onGroupMissing?: (groupId: string) => Promise<void>;
+  onGroupMissing: (groupId: string) => Promise<void>;
   /**
    * Called when sync detects that a group was deleted server-side (deletedAt set). Lets the UI
    * mark the conversation `deletedRemotely` instead of removing it silently.
@@ -116,9 +122,8 @@ export async function openGatewayConnection(deps: ConnectionDeps): Promise<boole
 /**
  * Post-WS-open: publish KeyPackages and reconcile group state with the server.
  *
- * Single pass over getUserGroups. For each group active on the server with no local WASM state:
- *   - if `onGroupMissing` is provided: calls it (recovery seam - external join / welcome_request).
- *   - otherwise: sendWelcomeRequest alone (useChatSession watchdog takes over when available).
+ * Single pass over getUserGroups. Every group active on the server with no local WASM state goes to
+ * `onGroupMissing` - the single recovery seam - and nowhere else.
  *
  * Deleted groups (tombstones): WASM state purged and the UI notified.
  */
@@ -234,13 +239,8 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
         );
         continue;
       }
-      if (deps.onGroupMissing) {
-        await deps.onGroupMissing(g.groupId).catch(() => {});
-        // onGroupMissing (requestReAdd) handles its own logging based on the actual outcome.
-      } else {
-        await mlsService.sendWelcomeRequest(g.groupId).catch(() => {});
-        log(`[SYNC] welcome_request → ${g.groupId.slice(0, 8)}…`);
-      }
+      // requestReAdd handles its own logging, based on the actual outcome.
+      await deps.onGroupMissing(g.groupId).catch(() => {});
       continue;
     }
 

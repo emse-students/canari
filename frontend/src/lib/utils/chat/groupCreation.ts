@@ -13,6 +13,7 @@ import { requestReAdd } from '$lib/utils/chat/recovery';
 import { findActiveDirectGroupForPeer } from '$lib/utils/chat/groupSyncEligibility';
 import { isRawId } from '$lib/utils/chat/conversations';
 import { isBlockedWith } from '$lib/users/blocks';
+import { holdsGroupState } from './groupUsability';
 
 /** Dependencies injected into all group-creation and conversation-management helpers. */
 interface GroupCreationDeps {
@@ -207,7 +208,7 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
     // the only question that matters here - does this device hold the state - and it answers false
     // exactly when something forgot the group. Failing here hands the outer catch a group to clean
     // up server-side, which is the correct outcome: no group at all beats an unusable one.
-    if (!mlsService.getLocalGroups().includes(groupId)) {
+    if (!holdsGroupState(mlsService, groupId)) {
       throw new Error(
         `Local MLS state for ${groupId} disappeared during creation - refusing to present the group`
       );
@@ -568,7 +569,7 @@ export async function startNewConversation(
       };
 
       // If local MLS state exists for this group, just ensure the conversation is ready.
-      if (mlsService.getLocalGroups().includes(key)) {
+      if (holdsGroupState(mlsService, key)) {
         await ensureDirectConvo(key, true);
         maybeSelect(key);
         return;
@@ -683,7 +684,7 @@ export async function startNewConversation(
     // The same fact the group path checks, for the same reason: `pending` is an honest placeholder,
     // `active` is a claim that this device can decrypt the conversation. Never promote on state
     // that is gone - the outer catch then cleans both estates.
-    if (!mlsService.getLocalGroups().includes(groupId)) {
+    if (!holdsGroupState(mlsService, groupId)) {
       throw new Error(
         `Local MLS state for ${groupId} disappeared during creation - refusing to activate the conversation`
       );

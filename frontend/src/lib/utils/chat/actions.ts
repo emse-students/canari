@@ -1,5 +1,5 @@
 import { exportBackup, importBackup } from '$lib/backup';
-import { fromHex, toHex, saveMlsState, loadMlsState, exportMlsStateAsHex } from '$lib/utils/hex';
+import { fromHex, saveMlsState, loadMlsState, exportMlsStateAsHex } from '$lib/utils/hex';
 import type { IStorage } from '$lib/db';
 import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
@@ -36,6 +36,7 @@ import {
   type GroupServerStatus,
 } from '$lib/utils/chat/groupLifecycle';
 import { saveBlobAs } from '$lib/utils/fileDownload';
+import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 
 /**
  * Whether `userId:deviceId`'s leaf is in OUR copy of `groupId`'s ratchet tree.
@@ -99,9 +100,20 @@ export async function processPendingInvitations(params: {
   userId: string;
   deviceKeyB64: string;
   conversations: Map<string, Conversation>;
+  /**
+   * The single recovery seam (`requestReAdd`), injected the way the outbox takes it.
+   *
+   * THIS PASS CAN DISCOVER THAT **THIS** DEVICE HOLDS NO STATE, and it used to answer that with a
+   * bare `sendWelcomeRequest`: no self-service external join - the PRIMARY path, and the only one
+   * that needs nobody online - no `readWelcomeOwed` (so it could race a member's in-flight Add into
+   * the duplicate leaf that GRP-4 named), and no throttle, on a pass that runs on every connection.
+   * It is a callback rather than an import because `RecoveryDeps` carries selection and persistence
+   * hooks this function has no business knowing about.
+   */
+  requestReAdd: (groupId: string) => Promise<void>;
   log: (msg: string) => void;
 }) {
-  const { mlsService, storage, userId, deviceKeyB64, conversations, log } = params;
+  const { mlsService, storage, userId, deviceKeyB64, conversations, requestReAdd, log } = params;
 
   const myDeviceId = mlsService.getDeviceId();
 
@@ -140,8 +152,7 @@ export async function processPendingInvitations(params: {
     // has left WASM: calling addMember would loop on "Group not found". We fall into the
     // not-ready branch (recovery welcome_request already in flight).
     const readyForInvites =
-      conversations.get(groupId)?.lifecycle === 'active' &&
-      mlsService.getLocalGroups().includes(groupId);
+      conversations.get(groupId)?.lifecycle === 'active' && holdsGroupState(mlsService, groupId);
     if (!readyForInvites) {
       // Group not ready locally. If completely absent (not even an active:false placeholder),
       // send a welcome_request. A placeholder indicates the Welcome may already be in transit
@@ -155,10 +166,13 @@ export async function processPendingInvitations(params: {
             mlsService.deleteDeviceMembership(inv.userId, inv.deviceId, groupId).catch(() => {});
           }
         } else {
-          // Group present on server but absent from local WASM -> welcome_request.
-          // The SYNC_WATCHDOG keeps re-driving recovery until the group is back.
-          mlsService.sendWelcomeRequest(groupId).catch(() => {});
-          log(`[PENDING] Group ${groupId} absent locally -> welcome_request sent`);
+          // Group present on server but absent from local WASM -> the recovery seam, which decides
+          // between joining ourselves and asking a member. The SYNC_WATCHDOG keeps re-driving it
+          // until the group is back, and the seam owns all the pacing.
+          requestReAdd(groupId).catch((e: unknown) =>
+            log(`[PENDING] Group ${groupId} recovery request failed: ${String(e).slice(0, 120)}`)
+          );
+          log(`[PENDING] Group ${groupId} absent locally -> recovery requested`);
         }
       } else {
         log(`[PENDING] Group ${groupId}: local conversation not ready - skip`);
@@ -615,7 +629,7 @@ export async function discoverMissingGroups(params: {
     // A group already present in the local WASM (e.g. joined via an external commit before this
     // discovery ran) is live: mark it active so the UI leaves the "syncing" placeholder state
     // without a reload. Otherwise it stays pending until the Welcome is processed.
-    const joinedLocally = mlsService.getLocalGroups().includes(g.groupId);
+    const joinedLocally = holdsGroupState(mlsService, g.groupId);
     conversations.set(key, {
       id: g.groupId,
       contactName: displayName,
@@ -751,43 +765,6 @@ export async function importUserBackup(params: {
     messages: backup.messages.length,
     isSameDevice,
   };
-}
-
-/** Dev helper: generates a new MLS KeyPackage for this device and returns it as a hex string. */
-export async function generateDevKeyPackage(params: {
-  mlsService: IMlsService;
-  deviceKeyB64: string;
-}) {
-  const { mlsService, deviceKeyB64 } = params;
-  const bytes = await mlsService.generateKeyPackage(deviceKeyB64);
-  return toHex(bytes);
-}
-
-/**
- * Dev helper: adds a member to a group using a hex-encoded KeyPackage. The Add is a staged
- * transaction (validate + merge + broadcast handled internally); returns the resulting Welcome and
- * post-merge ratchet tree as hex strings for manual inspection.
- */
-export async function addDevMember(params: {
-  mlsService: IMlsService;
-  groupId: string;
-  incomingBytesHex: string;
-}) {
-  const { mlsService, groupId, incomingBytesHex } = params;
-  const result = await mlsService.addMember(groupId, fromHex(incomingBytesHex));
-  return {
-    welcomeHex: result.welcome ? toHex(result.welcome) : '',
-    ratchetTreeHex: result.ratchetTree ? toHex(result.ratchetTree) : '',
-  };
-}
-
-/** Dev helper: processes an MLS Welcome message from a hex-encoded byte string. */
-export async function processDevWelcome(params: {
-  mlsService: IMlsService;
-  incomingBytesHex: string;
-}) {
-  const { mlsService, incomingBytesHex } = params;
-  await mlsService.processWelcome(fromHex(incomingBytesHex));
 }
 
 // In-process guard: prevents the same tab from handling two welcome_requests
@@ -1173,7 +1150,7 @@ export async function handleHistoryRequest(params: {
     probeWaitMs = HISTORY_PROBE_WAIT_MS,
   } = params;
   const short = groupId.slice(0, 8);
-  if (!mlsService.getLocalGroups().includes(groupId)) {
+  if (!holdsGroupState(mlsService, groupId)) {
     log(`[HISTORY_REQ] ${short}... not local - cannot serve history, skip`);
     return;
   }

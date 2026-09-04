@@ -40,7 +40,7 @@ import {
 import { onPeersCameOnline } from '$lib/stores/presenceStore';
 import { sendHistoryStateKey } from '$lib/utils/chat/groupActions';
 import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
-import { isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
+import { canSendInGroup } from '$lib/utils/chat/groupUsability';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { setGraineRuntime } from '$lib/utils/graine/runtime';
 import { handleDistributionFrame } from '$lib/utils/graine/frameHandler';
@@ -151,8 +151,7 @@ export function makeConnectionDeps(ctx: SessionContext, cb: ChatSessionCallbacks
     setReconnectAttempts: (v: number) => ctx.setReconnectAttempts(v),
     processDeviceInvitationsLocally: () => processDeviceInvitationsLocally(ctx, cb),
     log: cb.log,
-    onGroupMissing: (groupId: string) =>
-      requestReAdd(groupId, makeRecoveryDeps(ctx, cb), ctx.connectionRecoveryTimers),
+    onGroupMissing: (groupId: string) => requestReAdd(groupId, makeRecoveryDeps(ctx, cb)),
     onGroupDeletedRemotely: (groupId: string) =>
       markConversationDeletedRemotely(
         cb.conversations,
@@ -180,10 +179,8 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
     deviceKeyB64: ctx.getDeviceKey(),
     conversations: cb.conversations,
     log: cb.log,
-    requestReAdd: (groupId: string) =>
-      requestReAdd(groupId, makeRecoveryDeps(ctx, cb), ctx.connectionRecoveryTimers),
-    isGroupHealthy: (groupId: string) =>
-      ctx.ensureMls().getLocalGroups().includes(groupId) && !isInEpochGap(groupId),
+    requestReAdd: (groupId: string) => requestReAdd(groupId, makeRecoveryDeps(ctx, cb)),
+    isGroupHealthy: (groupId: string) => canSendInGroup(ctx.ensureMls(), groupId),
     // A session unlocked offline holds no token: hold the queue until promoteOfflineSession has
     // one and has reopened the socket, then it flushes explicitly.
     canFlush: () => !ctx.isOfflineSession(),
@@ -223,6 +220,7 @@ export async function processDeviceInvitationsLocally(
       userId: ctx.getUserId(),
       deviceKeyB64: ctx.getDeviceKey(),
       conversations: cb.conversations,
+      requestReAdd: (groupId: string) => requestReAdd(groupId, makeRecoveryDeps(ctx, cb)),
       log: cb.log,
     });
   } finally {
@@ -893,7 +891,6 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
           appendLog('⚠️ Push notifications degraded - restart the app to re-enable them.');
         }
       },
-      recoveryTimers: ctx.connectionRecoveryTimers,
       log: cb.log,
     });
 
@@ -1681,8 +1678,6 @@ export function tearDownLiveSession(
     clearInterval(ctx.timers.syncWatchdog);
     ctx.timers.syncWatchdog = null;
   }
-  for (const t of ctx.connectionRecoveryTimers.values()) clearTimeout(t);
-  ctx.connectionRecoveryTimers.clear();
   stopConnectionWatchdogImpl(ctx);
   ctx.setReconnectAttempts(0);
   ctx.setTabLeaderSessionCb(null);

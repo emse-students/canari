@@ -23,6 +23,7 @@ import { installMlsStatePersisterLifecycle } from '../mlsStatePersisterLifecycle
 import { registerMlsStatePersister } from '../mlsStatePersisterRegistry';
 import type { MessageHandlerDeps } from './deps';
 import { readLocalMembership, retireIfEvicted } from '$lib/utils/chat/eviction';
+import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 export type { MessageHandlerDeps } from './deps';
 
 /** Short-lived message buffered while waiting for a Welcome. */
@@ -95,14 +96,10 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   // the same frames also stay server-side (handleUnknownGroup returns false) as a fallback.
   const pendingBuffer = new Map<string, { msgs: PendingMsg[] }>();
 
-  // Per-group recovery timers - map shared with the connection layer
-  // (connectionRecoveryTimers): only one timer armed per group regardless of source.
-  const recoveryTimers = deps.recoveryTimers;
-
   // Shared callback for all out-of-sync cases.
   const onOutOfSync = async (groupId: string) => {
     log(`[PIPELINE] Out-of-sync for ${groupId.slice(0, 8)}… - requestReAdd`);
-    await requestReAdd(groupId, deps, recoveryTimers);
+    await requestReAdd(groupId, deps);
   };
 
   /**
@@ -161,7 +158,6 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
           deps,
           statePersister,
           pendingBuffer,
-          recoveryTimers,
           startRecovery,
         });
       }
@@ -179,7 +175,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       }
 
       // ── Unknown group (not in the local WASM) ─────────────────────────────
-      const inGroup = mlsService.getLocalGroups().includes(groupId);
+      const inGroup = holdsGroupState(mlsService, groupId);
       if (!inGroup) {
         return handleUnknownGroup({
           sender: senderNorm,
@@ -216,7 +212,6 @@ interface WelcomeArgs {
   deps: MessageHandlerDeps;
   statePersister: ReturnType<typeof createMlsStatePersister>;
   pendingBuffer: Map<string, { msgs: PendingMsg[] }>;
-  recoveryTimers: Map<string, ReturnType<typeof setTimeout>>;
   /** Starts a recovery and returns immediately - never awaited, see `startRecovery`. */
   startRecovery: (groupId: string) => void;
 }
@@ -235,7 +230,6 @@ async function handleWelcome({
   deps,
   statePersister,
   pendingBuffer,
-  recoveryTimers,
   startRecovery,
 }: WelcomeArgs): Promise<boolean> {
   const {
@@ -255,7 +249,7 @@ async function handleWelcome({
   // Group deleted server-side - do not join a dead group.
   if (groupMeta?.deletedAt) {
     log(`[WELCOME] ${terminalId.slice(0, 8)}… deleted server-side - Welcome ignored`);
-    cancelReAdd(terminalId, recoveryTimers);
+    cancelReAdd(terminalId);
     return true;
   }
 
@@ -280,7 +274,7 @@ async function handleWelcome({
   //
   // A FAILURE TO READ MEMBERSHIP IS NOT AN EVICTION: `null` keeps the idempotent path, because
   // treating "could not tell" as "removed" would forget the state of groups this device is still in.
-  const heldLocally = mlsService.getLocalGroups().includes(terminalId);
+  const heldLocally = holdsGroupState(mlsService, terminalId);
   const readmittedAfterEviction =
     heldLocally &&
     (await readLocalMembership({
@@ -295,7 +289,7 @@ async function handleWelcome({
     );
   }
   if (heldLocally && !readmittedAfterEviction) {
-    cancelReAdd(terminalId, recoveryTimers);
+    cancelReAdd(terminalId);
     noMatchKpFailures.delete(terminalId);
     const convo = deps.conversations.get(terminalId);
     if (convo && convo.lifecycle !== 'active') {
@@ -373,7 +367,7 @@ async function handleWelcome({
       // Drop the pending buffer for this group; cancel any recovery bookkeeping (cooldown + timer).
       const buf = pendingBuffer.get(joinedGroupId);
       if (buf) pendingBuffer.delete(joinedGroupId);
-      cancelReAdd(joinedGroupId, recoveryTimers);
+      cancelReAdd(joinedGroupId);
       noMatchKpFailures.delete(joinedGroupId); // Welcome processed - reset NoMatchingKeyPackage escalation
 
       // Persist immediately after Welcome (epoch initialised).

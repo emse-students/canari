@@ -17,6 +17,7 @@ import {
   type HistoryDigest,
   type HistoryEntry,
 } from './historyManifest';
+import { holdsGroupState } from './groupUsability';
 
 /**
  * Reports (log + `console.warn`) devices skipped by `addMembersBulk` because their KeyPackage
@@ -128,7 +129,7 @@ export async function deleteGroupAndBroadcast(params: {
   // 1. Notify peers via MLS BEFORE server deletion.
   // Encryption requires WASM state (group must be local),
   // and routing requires dm_group_members (group must be on server).
-  if (mlsService.getLocalGroups().includes(groupId)) {
+  if (holdsGroupState(mlsService, groupId)) {
     try {
       const controlMsg = encodeAppMessage(
         mkSystem('groupDeleted', JSON.stringify({ deletedBy: userId }))

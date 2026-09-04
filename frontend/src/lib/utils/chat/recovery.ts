@@ -5,9 +5,10 @@ import type { Conversation } from '$lib/types';
 import type { SvelteMap } from 'svelte/reactivity';
 import { persistMlsStateAfterMutation, purgeLocalConversationRecord } from './groupActions';
 import { classifyServerStatus } from './groupLifecycle';
-import { markGroupNotReady, clearGroupNotReady } from './notReadyRegistry';
+import { markGroupNotReady, clearGroupNotReady, readNotReadySince } from './notReadyRegistry';
 import { reconcileGroup } from './historyReconcile';
 import { retireConversation } from './conversations';
+import { holdsGroupState } from './groupUsability';
 
 /**
  * Minimum interval between two recovery attempts for the same not-ready group (throttle + cadence).
@@ -17,6 +18,23 @@ import { retireConversation } from './conversations';
  * 60s gives FCM iOS (background) time to wake a peer for the welcome_request fallback.
  */
 export const RECOVERY_TIMEOUT_MS = 60_000;
+
+/**
+ * A wait, in the coarsest unit that still reads: `42s`, `17m`, `3h`, `5d`.
+ *
+ * Coarse ON PURPOSE. This goes in a log line whose only job is to separate "this group is on its
+ * first pass" from "this group has never been joined", and a millisecond count makes a reader do
+ * the division. Nothing branches on it.
+ */
+function formatWaitedFor(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.round(m / 60);
+  if (h < 48) return `${h}h`;
+  return `${Math.round(h / 24)}d`;
+}
 
 /**
  * Per-group timestamp (ms) of the last recovery attempt by {@link requestReAdd}. requestReAdd owns
@@ -84,7 +102,7 @@ function findByGroupId(
 async function purgePhantomConversation(groupId: string, deps: RecoveryDeps): Promise<boolean> {
   const entry = findByGroupId(deps.conversations, groupId);
   if (entry?.[1].lifecycle === 'removed') return false; // kept until manual local deletion
-  const mutated = deps.mlsService.getLocalGroups().includes(groupId);
+  const mutated = holdsGroupState(deps.mlsService, groupId);
   if (mutated) deps.mlsService.forgetGroup(groupId);
   if (entry) {
     await purgeLocalConversationRecord({
@@ -113,13 +131,8 @@ async function purgePhantomConversation(groupId: string, deps: RecoveryDeps): Pr
  * long as the group existed - a 403 and a broadcast per minute, ending only if somebody else deleted
  * the group. GRP-6 caught it on 2026-08-24 because it watches for thirty seconds after a leave.
  */
-async function stopRecovering(
-  groupId: string,
-  reason: string,
-  deps: RecoveryDeps,
-  timers: Map<string, ReturnType<typeof setTimeout>>
-): Promise<void> {
-  cancelReAdd(groupId, timers);
+async function stopRecovering(groupId: string, reason: string, deps: RecoveryDeps): Promise<void> {
+  cancelReAdd(groupId);
   clearGroupNotReady(deps.userId, groupId);
   const entry = findByGroupId(deps.conversations, groupId);
   if (!entry || entry[1].lifecycle === 'removed') return;
@@ -154,11 +167,7 @@ async function stopRecovering(
  *  9. Any other failure -> fall back to a single welcome_request (a reachable member re-adds us).
  *     The watchdog re-invokes on its cadence.
  */
-export async function requestReAdd(
-  groupId: string,
-  deps: RecoveryDeps,
-  timers: Map<string, ReturnType<typeof setTimeout>> = new Map()
-): Promise<void> {
+export async function requestReAdd(groupId: string, deps: RecoveryDeps): Promise<void> {
   // Idempotence: an already-dead conversation does not restart a network recovery.
   const known = findByGroupId(deps.conversations, groupId)?.[1];
   if (known?.lifecycle === 'removed') return;
@@ -176,7 +185,18 @@ export async function requestReAdd(
   // Entry log, and it earns its noise: the throttle above returns silently, so an attempt that got
   // stuck on one of the network calls below was indistinguishable from one that never started.
   // Measured on the device 2026-08-06 - `requestReAdd` never returned and never logged a thing.
-  deps.log(`[READD] ${groupId.slice(0, 8)}... attempt starting`);
+  //
+  // THE AGE IS THE HALF THAT ACCUSES. Every attempt logged the same sentence, so a group on its
+  // first pass and one that had been waiting five days read identically - and the second is the
+  // stranded population `reportStrandedDeviceMemberships` names hourly on the server, with nothing
+  // saying it client-side. The registry already stored the instant; nothing read it.
+  const notReadySince = readNotReadySince(deps.userId, groupId);
+  deps.log(
+    `[READD] ${groupId.slice(0, 8)}... attempt starting` +
+      (notReadySince === undefined
+        ? ''
+        : ` (not ready for ${formatWaitedFor(now - notReadySince)})`)
+  );
 
   const meta = await deps.mlsService.getGroupMeta(groupId).catch(() => null);
   deps.log(`[READD] ${groupId.slice(0, 8)}... getGroupMeta -> ${meta === null ? 'null' : 'ok'}`);
@@ -194,7 +214,7 @@ export async function requestReAdd(
       // The group no longer exists AT ALL server-side. Purge the local phantom instead of
       // re-emitting recovery indefinitely for a group that does not exist and is invisible in the UI.
       deps.log(`[READD] ${groupId.slice(0, 8)}... absent from server (confirmed) - phantom purged`);
-      cancelReAdd(groupId, timers);
+      cancelReAdd(groupId);
       clearGroupNotReady(deps.userId, groupId);
       if (await purgePhantomConversation(groupId, deps))
         await persistMlsStateAfterMutation(
@@ -208,7 +228,7 @@ export async function requestReAdd(
     // Transient network error: skip this round, the watchdog retries on its cadence.
   }
 
-  if (deps.mlsService.getLocalGroups().includes(groupId)) {
+  if (holdsGroupState(deps.mlsService, groupId)) {
     clearGroupNotReady(deps.userId, groupId);
     deps.log(
       `[READD] ${groupId.slice(0, 8)}... already in WASM - skip (call forgetGroup before recovery if out of sync)`
@@ -218,7 +238,7 @@ export async function requestReAdd(
 
   // Tombstoned server-side: mark the conversation removed, stop recovering.
   if (meta?.deletedAt) {
-    await stopRecovering(groupId, 'deleted server-side', deps, timers);
+    await stopRecovering(groupId, 'deleted server-side', deps);
     return;
   }
 
@@ -265,7 +285,7 @@ export async function requestReAdd(
     // is the proof this loop never had: the refusal used to arrive as a bare `false`, land in the
     // welcome_request fallback below, and come back every minute until the group was deleted.
     if (e instanceof NotAGroupMemberError) {
-      await stopRecovering(groupId, 'server holds no membership row for us', deps, timers);
+      await stopRecovering(groupId, 'server holds no membership row for us', deps);
       return;
     }
     // Anything else says NOTHING about membership, so it must not retire a conversation: the
@@ -284,7 +304,7 @@ export async function requestReAdd(
   if (outcome.joined) {
     deps.log(`[READD] ${groupId.slice(0, 8)}... rejoined via external commit (self-service)`);
     clearGroupNotReady(deps.userId, groupId);
-    cancelReAdd(groupId, timers);
+    cancelReAdd(groupId);
     // THE ROSTER SEAT IS A WORK ITEM, AND JOINING BY OURSELVES DOES NOT CLEAR IT. `pending` is what
     // `getPendingInvitations` serves to every member: leaving it behind means the next member to come
     // online calls `addMember` for a leaf that is ALREADY in the tree, gets `DuplicateSignature`, and
@@ -485,30 +505,27 @@ async function askAMemberToReAddUs(
 export async function recoverForkedGroup(
   groupId: string,
   deps: RecoveryDeps,
-  timers: Map<string, ReturnType<typeof setTimeout>>,
   minEpoch = 0
 ): Promise<void> {
   deps.log(`[FORK] ${groupId.slice(0, 8)}... local state forked behind server - forget + re-add`);
   // minEpoch = known server epoch: rejects a stale re-Welcome from a diverged branch
   // (a commit queued at the old epoch must not re-fork us).
   deps.mlsService.forgetGroup(groupId, minEpoch);
-  await requestReAdd(groupId, deps, timers);
+  await requestReAdd(groupId, deps);
 }
 
 /**
- * Cancels any in-flight recovery bookkeeping for `groupId`: clears the recovery cooldown (so a
- * later desync re-triggers immediately) and any residual timer in `timers`.
+ * Clears the recovery cooldown for `groupId`, so a later desync re-triggers immediately instead of
+ * waiting out {@link RECOVERY_TIMEOUT_MS}.
  *
  * Called as soon as a Welcome / external join succeeds for this group.
+ *
+ * IT USED TO TAKE A TIMER MAP, AND NOTHING HAD ARMED ONE SINCE 2026-07-04. The timer existed to
+ * schedule the `reboot` step; `reboot` was retired with the CAS/successor machinery, and the only
+ * `timers.set` in the codebase went with it - leaving a map that was created, threaded through eight
+ * modules, read, cleared and deleted from, and never written. `requestReAdd`'s own doc already said
+ * "no private timer".
  */
-export function cancelReAdd(
-  groupId: string,
-  timers: Map<string, ReturnType<typeof setTimeout>>
-): void {
+export function cancelReAdd(groupId: string): void {
   lastReAddAt.delete(groupId);
-  const t = timers.get(groupId);
-  if (t !== undefined) {
-    clearTimeout(t);
-    timers.delete(groupId);
-  }
 }
