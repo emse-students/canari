@@ -8,12 +8,15 @@
 # 2026-09-03, when the bump's push was rejected and the whole chain quietly declined to run. This is
 # the same mechanism, used on purpose.
 #
-# THE FOUR QUESTIONS, in the order that makes a refusal cheapest to read:
+# THE FIVE QUESTIONS, in the order that makes a refusal cheapest to read:
 #
 #   1. Is the version a version?          - a typo must not reach a store band computation
 #   2. Is the released commit on `main`?  - everything downstream reads the trunk
 #   3. Did the tests pass ON THAT COMMIT? - "if the tests are green" was written nowhere at all
 #   4. Has dev already served it?         - stable releases only, and the reason this file exists
+#   5. Are the release notes written?     - stable releases only; Apple REFUSES a submission
+#                                           without them, and finding that out at the end costs
+#                                           the bump, production, Play and a macOS build first
 #
 # WHY THERE IS NO BYPASS INPUT. A skip flag is a fallback path, and reaching one means the primary
 # path failed - so the fix belongs there. The emergency path is unchanged and is not in software: a

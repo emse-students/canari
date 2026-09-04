@@ -84,7 +84,7 @@ jobs:
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   # MAY THIS RELEASE START?
   #
-  # Four questions, all of them in `.github/scripts/release-preflight.sh` so they can be tested on
+  # Five questions, all of them in `.github/scripts/release-preflight.sh` so they can be tested on
   # inputs the API will not produce on demand, and replayed against a release that already happened.
   # The one that matters most is the fourth: a stable may only be published from a commit the dev
   # estate has already served, which is what makes production being ahead of dev IMPOSSIBLE rather
