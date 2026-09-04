@@ -689,6 +689,33 @@ worth a sweep for the same pattern elsewhere: `ChangePinModal.svelte` and `Login
 **Not fixed inline, deliberately** (user, 2026-09-04): P2s go here rather than into the session that
 found them.
 
+### P3 - the gateway logs a client that merely went away at ERROR, and a clean goodbye at INFO, so the level says nothing about whether anything is wrong (measured 2026-09-04)
+
+`handlers.rs:529` ends the receive loop with two arms and one of them is unconditional:
+`Ok(Message::Close(c))` logs `info!("Client closed connection")`, and `Err(e)` logs
+`error!("WebSocket Error from {user_id}: {e}")` whatever `e` is. **A browser that reloads,
+navigates away or is killed sends no close frame** - the socket resets - so the ordinary end of a
+web session is recorded at the same level as a genuine protocol fault.
+
+**Measured, and the cause is visible in the timestamps.** Three ERROR lines at `16:19:49.602`,
+`.603490` and `.603505` - three sockets dying inside a millisecond of each other, which is
+`make local-frontend` recreating the nginx container in front of them, not three clients
+misbehaving. The one `Client closed connection` line in the same window carries `code: 1001`
+("going away"), the polite version of the same event.
+
+**The fix is a classification, not a demotion**, which is the distinction
+[durable-rules](durable-rules.md) draws when it says never to demote a line: `axum` 0.8 surfaces the
+tungstenite error, so `ProtocolError::ResetWithoutClosingHandshake` is a TYPE and reading it is
+reading a discriminator rather than prose. A reset with no handshake from a web client is the
+expected end of a connection and belongs at `info!`/`debug!` beside the clean close; everything else
+stays `error!` and finally means something when it appears.
+
+**The rate here is NOT the rate that matters and must be measured before the name is believed.**
+This estate is idle apart from one operator, so three lines is all it produced; on production the
+line fires once per client that ever closes a tab without a handshake, and nobody has counted that.
+Measure it on the production gateway first - if it is the dominant ERROR line there, that alone is
+the argument.
+
 ### P3 - the dirt classifier fails a row on the OIDC callback that row performs on purpose (2026-08-28)
 
 **Measured.** `healnew.mjs --row 0` recorded `FAIL` on `03d015fd` with **no unmet condition and no

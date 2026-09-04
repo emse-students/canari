@@ -133,8 +133,13 @@ does in `login.mjs`.
       `CHANGELOG.md`, rules in [durable-rules](durable-rules.md), residual half in
       [backlog](backlog.md).
 
-      **W1, W2 and W3 are all `active` in `2bd5add9` as of 18:28**, so the campaign's blocker here is
-      gone and D2 owes no re-mint. **The rule this leaves:** *"no gate"* is not *"healthy"*, and the
+      **W1, W2 and W3 are all `active` in `2bd5add9` as of 18:28**, and a full round trip was then
+      measured with the new atoms - `send.mjs --device W1` accepted 201, `recv.mjs --device W2`
+      saw it, and the reverse direction the same - so the campaign's blocker here is gone and D2
+      owes no re-mint. `recv.mjs` earned its keep in the same run: its first miss reported
+      `hasPane:false` rather than "absent", which is the precondition the caller owed (W2 had just
+      reloaded and had nothing open) and not a delivery failure - the message was already in the
+      sidebar with an unread badge. **The rule this leaves:** *"no gate"* is not *"healthy"*, and the
       only thing that distinguishes them is trying to send - which is now also the only thing that
       REPAIRS them, and is why the silent-reader half is a P2 rather than closed.
 

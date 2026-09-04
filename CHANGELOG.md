@@ -44,6 +44,11 @@ which is also where every release up to and including v0.13.1 now lives.
   25 of them holding a roster seat with no Welcome ever queued, the oldest since 2026-08-27. A
   correct report with no repair behind it is found by hand, a day late.
 
+  **The cost, counted on the server:** 392 `REJECT sender_not_active` for that one device, several
+  a minute, continuously, until the fixed bundle loaded at 18:21:20 - after which the estate
+  recorded exactly two more, each a deliberate reproduction and each repaired within three seconds.
+  A storm with no termination became two isolated events that heal themselves.
+
   The retry line no longer calls it transient: what is retried is the MESSAGE (never lost, and it
   goes out intact once the device is re-admitted), while what is waited on is the REPAIR, and
   reporting the two identically is what let eight stuck messages read as ordinary network noise.
