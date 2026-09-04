@@ -85,6 +85,11 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@v3
         with:
+          # `client-id`, NOT `app-id`. Version 3 of this action deprecated `app-id`, and every run
+          # that uses it prints `Input 'app-id' has been deprecated` as a warning annotation - on a
+          # file that fires for EVERY pull request, which is the definition of a line its reader
+          # learns to skip. The two inputs take DIFFERENT values, a numeric App id against an
+          # `Iv23li...` string, so this is a secret swap and not a rename.
           client-id: ${{ secrets.AUTOMERGE_APP_CLIENT_ID }}
           private-key: ${{ secrets.AUTOMERGE_APP_PRIVATE_KEY }}
 
