@@ -73,20 +73,28 @@ This is not a sensitive secret (just a user ID), but exposing it as a secret all
 changing it without a commit.
 
 
-**THREE SECRETS ABOVE ARE NOT DEPLOYMENT SECRETS, AND THEY WERE MISSING FROM THIS INVENTORY UNTIL
-2026-09-03.** `AUTOMERGE_APP_CLIENT_ID`, `AUTOMERGE_APP_ID` and `AUTOMERGE_APP_PRIVATE_KEY` identify
-the `canari-auto-merge` GitHub App, and nothing in a `.env` ever sees them - they exist because two
+**TWO SECRETS ABOVE ARE NOT DEPLOYMENT SECRETS, AND THEY WERE MISSING FROM THIS INVENTORY UNTIL
+2026-09-03.** `AUTOMERGE_APP_CLIENT_ID` and `AUTOMERGE_APP_PRIVATE_KEY` identify the
+`canari-auto-merge` GitHub App, and nothing in a `.env` ever sees them - they exist because two
 workflows need an identity the branch ruleset on `main` accepts, which `GITHUB_TOKEN` is not:
 
 | Secret | Value | Why it cannot be something simpler |
 |---|---|---|
-| `AUTOMERGE_APP_CLIENT_ID` | the App's `Iv23li...` client id | what `actions/create-github-app-token@v3` asks for; `app-id` still works but is deprecated and annotates every run |
-| `AUTOMERGE_APP_ID` | the numeric app id, `4791068` | the deprecated input. **It is a DIFFERENT VALUE, not another name for the client id** - kept only until nothing references it |
-| `AUTOMERGE_APP_PRIVATE_KEY` | the App's private key, PEM | the only one of the three that is genuinely secret; the other two are public identifiers |
+| `AUTOMERGE_APP_CLIENT_ID` | the App's `Iv23li...` client id | what `actions/create-github-app-token@v3` asks for |
+| `AUTOMERGE_APP_PRIVATE_KEY` | the App's private key, PEM | the only one of the two that is genuinely secret |
 
-**Neither of the first two is confidential** - an App's ids are readable by anyone who can see the
-installation (`gh api orgs/<org>/installations`). They are stored as secrets for consistency with
-the key, not for secrecy.
+**The client id is not confidential** - an App's ids are readable by anyone who can see the
+installation (`gh api orgs/<org>/installations`). It is stored as a secret for consistency with the
+key, not for secrecy.
+
+**`AUTOMERGE_APP_ID` WAS A THIRD ONE, AND IT IS DELETED FROM ALL FOUR REPOSITORIES (2026-09-04).**
+It held the numeric app id `4791068` and fed `actions/create-github-app-token@v3`'s `app-id` input,
+which that version deprecated: every run using it printed `Input 'app-id' has been deprecated` as a
+warning annotation, on a job that fires for every single pull request. This repository moved to
+`client-id`; the three siblings did so on 2026-09-04, and the secret then had no reader anywhere.
+The two inputs take **DIFFERENT VALUES** - a number against an `Iv23li...` string - so restoring it
+is not a rename: `gh secret set AUTOMERGE_APP_ID --repo <repo> --body 4791068`, and the number is
+public in `gh api orgs/emse-students/installations`.
 
 **ON A NEW REPO OR FORK, THE APP IS THE PART THAT DOES NOT COPY.** A GitHub App is installed in an
 ORGANISATION, and a repository ruleset will only accept a bypass actor from its own owner
