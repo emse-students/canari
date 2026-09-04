@@ -15,6 +15,19 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A version prepared and never submitted held the App Store's only slot, and the release script
+  called that a human decision.** An app has ONE non-terminal version slot, and `0.16.1` was sitting
+  in it in state `READY_FOR_REVIEW` - attached to a review submission nobody had sent, which is what
+  the App Store Connect UI leaves behind when someone prepares a release and stops before *Submit to
+  App Review*. Apple did not have that version. `submit.mjs` listed `READY_FOR_REVIEW` in none of its
+  three state sets, so it read as an UNKNOWN state, and the unknown arm refuses: the `0.16.2` stable
+  stopped there, naming a decision that did not exist to make. The cost was the whole second half of
+  the release - Play had committed `0.16.2` and the IPA had reached TestFlight, but the production
+  estate is gated on both stores, so the web stayed on `0.16.1`. The state now sits in
+  `VERSION_EDITABLE` beside `PREPARE_FOR_SUBMISSION`, which makes the existing `rename` arm do what
+  its own comment always said it was for. An occupied slot nobody can free without a click blocks
+  EVERY later stable, and a queue nobody drains is worse than the release it prevented.
+
 - **The line that read the dependency audit's verdict could never run, and a real npm 503 proved it
   four hours after it shipped.** `audit-dependencies.sh` tells the registry's ANSWER apart from its
   SILENCE and exits 2 for the latter - and it did exactly that on the `0.16.2-alpha.1` bump commit:

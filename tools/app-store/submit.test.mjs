@@ -81,6 +81,14 @@ try {
     'edit'
   );
   eq('REJECTED is editable again', classifyVersionState('REJECTED').action, 'edit');
+  // THE STATE THAT COST THE 0.16.2 STABLE. `READY_FOR_REVIEW` means the version sits in a review
+  // submission nobody sent, so Apple does not have it and it is ours to write into. It was in none
+  // of the three sets, which made it an UNKNOWN state - and an unknown state refuses.
+  eq(
+    'READY_FOR_REVIEW is editable, because nobody has submitted it',
+    classifyVersionState('READY_FOR_REVIEW').action,
+    'edit'
+  );
   // A RE-RUN IS AN ORDINARY EVENT - a release can be re-published, and the workflow has a
   // hand-dispatched path. A version already with Apple must be reported as done, never resubmitted.
   eq('WAITING_FOR_REVIEW is done', classifyVersionState('WAITING_FOR_REVIEW').action, 'done');
@@ -230,6 +238,19 @@ process.stdout.write('\nwhich version slot does this release belong in?\n');
     'the slot holds ANOTHER version, editable -> rename it, which is what the UI does',
     slot([V('0.14.15', 'PREPARE_FOR_SUBMISSION', 'e')]).action,
     'rename'
+  );
+  // THE EXACT SHAPE THAT BLOCKED 0.16.2, asserted from the slot side as well as the state side: a
+  // prepared-and-forgotten version under a different name must be renamed, not refused. Refusing it
+  // stops every later stable until a human clicks, and no click was ever going to come.
+  eq(
+    'the slot holds ANOTHER version prepared but never submitted -> rename it too',
+    slot([V('0.16.1', 'READY_FOR_REVIEW', 'r')]).action,
+    'rename'
+  );
+  eq(
+    'and the same version READY_FOR_REVIEW under THIS name is used, not refused',
+    slot([V('0.16.0', 'READY_FOR_REVIEW', 's')]).action,
+    'use'
   );
 
   // A RELEASE SCRIPT MUST NEVER CANCEL A REVIEW. That is a human decision with a cost - a cancelled
