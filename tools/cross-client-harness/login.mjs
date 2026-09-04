@@ -1,17 +1,23 @@
 #!/usr/bin/env node
 /**
- * Drives the MiConnect (CAS) login for one of the campaign accounts, over CDP.
+ * Drives the login for one of the campaign accounts, over CDP.
  *
  * This exists so that a password is NEVER an argv value: it is read from `test-accounts.json`
  * (outside the repository, see `STATE_DIR`) and handed straight to Input.insertText. Nothing it
  * prints contains the secret.
  *
+ * TWO IDENTITY PATHS, AND THE DEFAULT IS THE CAMPAIGN'S. `--flow service-account` (the default)
+ * takes the "Connexion externe (service-account)" link and answers Authentik's own two-stage flow;
+ * `--flow cas` takes the main button and answers the school's CAS form, which ends at a 2FA no tool
+ * here can pass. See `LAUNCHER_BUTTON` below for why that is the default rather than an option.
+ *
  * Usage: node login.mjs --device W2          (preferred - fixes the port and the account together)
  *        node login.mjs --port 9223 --account <key as spelt in test-accounts.json>
+ *        node login.mjs --device W1 --flow cas
  */
 import { accountFor } from './accounts.mjs';
 import { connect, evaluate, listTargets, realClick } from './cdp.mjs';
-import { ACCOUNT_OF, PORTS } from './names.mjs';
+import { ACCOUNT_OF, PORTS, SITE } from './names.mjs';
 
 const argv = process.argv.slice(2);
 const opt = (name, fallback) => {
@@ -37,10 +43,18 @@ const creds = accountFor(account);
 // the WebView alone, so a phone whose IdP session had expired sat on a form this script could not
 // see, and reported "no credential form" about a form plainly on screen (measured 2026-08-28, A1
 // after a factory wipe: CAS's cookie had expired while Authentik's had not).
-const TAB_PORT = Number(opt('tabPort', port + 1));
+//
+// "THE NEXT PORT UP" IS A1'S CONVENTION AND NOBODY ELSE'S, and applying it to a browser is a
+// COLLISION rather than a wasted lookup: W2 is 9223, so its "Custom Tab port" was 9224, which is
+// W1. Measured 2026-09-04 - logging W2 in while W1 happened to be sitting on the IdP found W1's page
+// through this, drove the form in the wrong browser, and then failed on a tab that had never been
+// asked for anything. So the phone's port arithmetic is done only for the phone; a browser has no
+// Custom Tab, and `null` says so instead of pointing at a neighbour.
+const TAB_PORT = opt('tabPort', null) ? Number(opt('tabPort', null)) : port === PORTS.A1 ? port + 1 : null;
 
 /** The credential form when it is in Chrome rather than in the app, or null. */
 const casTab = async () => {
+  if (TAB_PORT === null) return null;
   const seen = await listTargets(TAB_PORT).catch(() => []);
   return seen.find((t) => t.url.includes('cas.emse.fr') || t.url.includes('auth.canari-emse.fr')) ?? null;
 };
@@ -64,11 +78,76 @@ const here = () => evaluate(cx, 'location.href');
 // THE PHONE'S APP IS NOT ON canari-emse.fr AT ALL. A Tauri client serves its embedded frontend from
 // `tauri.localhost` (`frontendDist: "../build"`), so this answered `false` for every landing A1 has
 // ever made and the step could only end on its own timeout.
+//
+// AND IT IS DERIVED FROM `SITE`, NOT SPELT. Spelling `canari-emse.fr` here made this predicate FALSE
+// for every landing on the local estate, which is where the campaign has run since 2026-09-03: the
+// browser came back to `http://localhost:1420/chat` and this said "not on the app", so the poll
+// below spent its whole 30 s budget and every caller was handed a login that had in fact succeeded.
+// It is the anchored comparison the resume page measured as ZERO - it was written after that count.
+const APP_ORIGIN = new URL(SITE).origin;
 const onTheApp = (url) =>
-  (url.includes('canari-emse.fr') || url.includes('tauri.localhost')) &&
+  (url.startsWith(APP_ORIGIN) || url.includes('tauri.localhost')) &&
   !url.includes('auth.canari-emse.fr') &&
   !url.includes('cas.emse.fr');
 console.log(`[login:${account}] start ${await here()}`);
+
+/**
+ * WHICH LAUNCHER BUTTON, and why the campaign's default is not the main one.
+ *
+ * The main button federates to the school: canari -> auth.canari-emse.fr -> cas.emse.fr, and CAS
+ * asks for the EMSE 2FA, which no tool here can answer. The campaign's two accounts are ordinary
+ * Authentik users instead, and they sign in through the "Connexion externe (service-account)" link
+ * the login page already carries - `PASSWORD_LOGIN_FLOW_SLUG` in `frontend/src/lib/stores/auth.ts`,
+ * a flow with identification + password and NO `AuthenticatorValidateStage`. That is the whole
+ * reason losing a Chrome profile costs no 2FA, so it is the DEFAULT here rather than an option
+ * somebody has to remember; `--flow cas` is for driving a real school account by hand.
+ */
+const FLOW = opt('flow', 'service-account');
+const LAUNCHER_BUTTON =
+  FLOW === 'cas' ? 'text=Se connecter' : 'text=Connexion externe (service-account)';
+
+/**
+ * Resolves a selector THROUGH SHADOW ROOTS, because one of the two forms lives inside one.
+ *
+ * Authentik's flow executor renders its stages in web components, so `document.querySelector` sees
+ * none of its fields: the identification stage's `input[name=uidField]` and the password stage's
+ * `input[type=password]` are both several shadow roots down. A probe that cannot see them reports
+ * "no credential form" about a form filling the screen - the same failure shape the CAS half of
+ * this file was written to stop. Plain DOM lookups still work: the walk starts at `document`.
+ *
+ * IT PREFERS A VISIBLE MATCH, and that is not cosmetic. Authentik ships a hidden autofill trio -
+ * `username`, `password`, `code` - on every stage, so `input[type=password]` matches an invisible
+ * field while the identification stage is still on screen. Typing into it succeeds silently and
+ * submits nothing, which is a filled form that never logs anybody in.
+ */
+const DEEP = `(function (sel) {
+  var hits = [];
+  (function walk(root) {
+    Array.prototype.push.apply(hits, root.querySelectorAll(sel));
+    root.querySelectorAll('*').forEach(function (n) { if (n.shadowRoot) walk(n.shadowRoot); });
+  })(document);
+  var shown = hits.filter(function (e) {
+    var r = e.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  });
+  return shown[0] || null;
+})`;
+
+/**
+ * THE TWO CREDENTIAL FORMS, each named by what it actually renders.
+ *
+ * `cas` is the school's server-rendered page (`#username`, `#password`, `#submitBtn`, top level).
+ * `authentik` is the service-account flow, which is TWO stages one after the other on the same URL:
+ * the identifier first, then the password, each its own render. So the fill loop below is a loop -
+ * it answers whichever stage is on screen and looks again - rather than a fixed pair of fields.
+ */
+const FORM_SHAPE = `(function () {
+  var q = ${DEEP};
+  if (document.querySelector('#username')) return 'cas';
+  if (q('input[name=uidField]')) return 'authentik-uid';
+  if (q('input[type=password]')) return 'authentik-password';
+  return null;
+})()`;
 
 // The Canari login page is only a launcher. The hop is canari -> auth.canari (Authentik flow)
 // -> cas.emse.fr, and the middle page is a real render, so poll for the FIELD rather than for a
@@ -134,14 +213,24 @@ const holdsASession = async () => {
  * clicked a launcher button that was not on screen. Both were the same mistake at different
  * moments.
  *
- * There are exactly two states this script can act on, and each has a POSITIVE proof: the launcher
- * is a route, a live session is a key the app itself wrote. Anything else is a page mid-decision,
- * so it is not an answer and is not treated as one - the wait below ends when the app has decided,
- * never on a clock, and the bound only exists so a page that never decides is REPORTED.
+ * There are THREE states this script can act on, and each has a POSITIVE proof: the launcher is a
+ * route, a live session is a key the app itself wrote, and an IdP page is an IdP host. Anything
+ * else is a page mid-decision, so it is not an answer and is not treated as one - the wait below
+ * ends when the app has decided, never on a clock, and the bound only exists so a page that never
+ * decides is REPORTED.
+ *
+ * THE THIRD ONE IS THE INTERRUPTED FLOW, and it used to be a throw. A run killed between the two
+ * Authentik stages, or a browser relaunched while the IdP still had the form up, leaves the profile
+ * sitting on `auth.canari-emse.fr` - neither the launcher nor a session - and this reported "the app
+ * committed to neither within 15s" about a credential form on screen, for a client one password away
+ * from being logged in. There is no launcher to click from there and no session to keep: the form is
+ * already the state, so it is named rather than refused.
  */
+const atAnIdP = (url) => url.includes('auth.canari-emse.fr') || url.includes('cas.emse.fr');
 const whatTheAppHasCommittedTo = async () => {
   const url = await here();
   if (onTheLauncher(url)) return 'launcher';
+  if (atAnIdP(url)) return 'idp';
   if (onTheApp(url) && (await holdsASession())) return 'session';
   return null;
 };
@@ -151,6 +240,21 @@ for (let i = 0; i < 150 && committed === null; i++) {
   committed = await whatTheAppHasCommittedTo();
   if (committed === null) await sleep(100);
 }
+// A SPENT `/auth/callback` IS A PAGE THAT NEVER DECIDES, and it is the one this rig parks on. An
+// authorization code is single-use, so a browser relaunched - or a run interrupted - on the callback
+// URL replays a code the IdP has already burnt: the app cannot exchange it, cannot claim a session,
+// and is not on the launcher either, so the wait above spends its whole budget and throws about a
+// client that only needed sending back to the launcher. Measured 2026-09-04, three times in a row.
+// The recovery is a NAVIGATION rather than a wider predicate, because there is nothing on that page
+// to wait for; and it is attempted ONCE, so a launcher that genuinely never renders still throws.
+if (committed === null && String(await here()).includes('/auth/callback')) {
+  console.log(`[login:${account}] parked on a spent /auth/callback - back to the launcher`);
+  await evaluate(cx, `location.href=${JSON.stringify(`${SITE}/login`)}`).catch(() => {});
+  for (let i = 0; i < 150 && committed === null; i++) {
+    committed = await whatTheAppHasCommittedTo();
+    if (committed === null) await sleep(100);
+  }
+}
 if (committed === null) {
   throw new Error(
     `the app committed to neither the launcher nor a session within 15s, at ${await here()}`,
@@ -159,12 +263,16 @@ if (committed === null) {
 let theIdPAnsweredForUs = committed === 'session';
 if (theIdPAnsweredForUs) console.log(`[login:${account}] already on the app, no launcher to click`);
 for (let attempt = 1; attempt <= 3 && !onForm && !theIdPAnsweredForUs; attempt++) {
-  if (!(await evaluate(cx, `!!document.querySelector('#username')`))) {
-    await realClick(cx, 'text=Se connecter');
+  // THE CLICK IS GATED ON BEING ON THE LAUNCHER, because that is the only page carrying the button.
+  // Reached mid-flow (`committed === 'idp'`) there is nothing to click, and asking `realClick` for a
+  // button that is not there is a throw - which would turn a recoverable interrupted login into a
+  // rig fault.
+  if (!(await evaluate(cx, FORM_SHAPE)) && onTheLauncher(await here())) {
+    await realClick(cx, LAUNCHER_BUTTON);
   }
   for (let i = 0; i < 100; i++) {
     await sleep(100);
-    if (await evaluate(cx, `!!document.querySelector('#username')`)) {
+    if (await evaluate(cx, FORM_SHAPE)) {
       onForm = true;
       break;
     }
@@ -209,7 +317,7 @@ if (tabTarget) {
   // The TARGET appears before its render does, so the fields are waited for on the tab as they are
   // on the app - and a tab that never grows a `#username` is a throw, not a fill against nothing.
   for (let i = 0; i < 100; i++) {
-    if (await evaluate(formCx, `!!document.querySelector('#username')`)) break;
+    if (await evaluate(formCx, FORM_SHAPE)) break;
     await sleep(100);
     if (i === 99) throw new Error(`the Custom Tab on ${TAB_PORT} never rendered a credential form`);
   }
@@ -218,51 +326,139 @@ if (tabTarget) {
   console.log(`[login:${account}] form at ${await here()}`);
 }
 
+/**
+ * What each shape wants typed into it, and what submits it.
+ *
+ * CAS puts both credentials on one page; the service-account flow asks for them in two successive
+ * renders. Expressing them as one table rather than two code paths is what keeps the fill loop
+ * below a loop over STAGES instead of a branch that has to know which IdP it is talking to.
+ */
+const STAGE = {
+  cas: { fields: [['#username', creds.username], ['#password', creds.password]], submit: '#submitBtn' },
+  'authentik-uid': { fields: [['input[name=uidField]', creds.username]], submit: 'button[type=submit]' },
+  'authentik-password': { fields: [['input[type=password]', creds.password]], submit: 'button[type=submit]' },
+};
+
 // Focused BY ELEMENT, never by a synthetic click - the same reasoning the submit below already
 // carried, and it applies to the fields for the same reason. On the phone's narrow CAS layout a
 // click resolved to the "mot de passe oublié" link sitting beside the password field and navigated
 // away mid-fill, which surfaced as a null `#username` on the read below rather than as a wrong
 // click. `Input.insertText` targets whatever holds focus, so focus is the only thing that must be
 // right, and it is now asserted instead of assumed.
-for (const [selector, value] of [
-  ['#username', creds.username],
-  ['#password', creds.password],
-]) {
-  const focused = await evaluate(
+//
+// THE ASSERTION IS MADE ON THE FIELD'S OWN ROOT. `document.activeElement` is the shadow HOST for
+// anything inside a web component, so comparing against it would fail on every Authentik stage
+// while the focus was perfectly correct. `getRootNode().activeElement` is the same question asked
+// where the answer lives.
+const answerOneStage = async (shape, formCx) => {
+  for (const [selector, value] of STAGE[shape].fields) {
+    const focused = await evaluate(
+      formCx,
+      `(function () {
+        var e = ${DEEP}(${JSON.stringify(selector)});
+        if (!e) return 'missing';
+        e.value = '';
+        e.focus();
+        return e.getRootNode().activeElement === e ? 'ok' : 'not-focused';
+      })()`,
+    );
+    if (focused !== 'ok') throw new Error(`cannot focus ${selector} on the ${shape} stage: ${focused}`);
+    await formCx.send('Input.insertText', { text: value });
+    const len = await evaluate(
+      formCx,
+      `(function () { var e = ${DEEP}(${JSON.stringify(selector)}); return e ? e.value.length : -1; })()`,
+    );
+    console.log(`[login:${account}] ${shape}: ${selector} <- ${len} chars`);
+  }
+  // Activate the button BY ELEMENT, not by coordinates. On the phone the focused field raises the
+  // IME, the viewport resizes, and a centre computed a moment earlier lands somewhere else - a race
+  // that costs a silent non-submit. Neither IdP is the system under test, so event fidelity buys
+  // nothing here; every click INSIDE Canari still goes through realClick.
+  const submitted = await evaluate(
     formCx,
     `(function () {
-      var e = document.querySelector('${selector}');
-      if (!e) return 'missing';
-      e.value = '';
-      e.focus();
-      return document.activeElement === e ? 'ok' : 'active=' + (document.activeElement && document.activeElement.id);
+      var b = ${DEEP}(${JSON.stringify(STAGE[shape].submit)});
+      if (!b) return 'no button';
+      b.click();
+      return 'clicked';
     })()`,
   );
-  if (focused !== 'ok') throw new Error(`cannot focus ${selector}: ${focused}`);
-  await formCx.send('Input.insertText', { text: value });
+  console.log(`[login:${account}] ${shape}: submit ${submitted}`);
+  if (submitted !== 'clicked') throw new Error(`no submit button on the ${shape} stage`);
+};
+
+/**
+ * A connection to whatever page holds the credential flow RIGHT NOW - re-resolved, never reused.
+ *
+ * A CDP CONNECTION SURVIVES A NAVIGATION AND ITS EXECUTION CONTEXT DOES NOT, and that is the whole
+ * reason this exists. Measured 2026-09-04 driving the service-account flow: every submit landed, the
+ * flow advanced identification -> password -> the app, and the very same connection kept answering
+ * `authentik-uid` and the PRE-SUBMIT url afterwards. So the loop re-typed a stage that was no longer
+ * on screen four times and then reported "still on a form after 4 stages" about a client already
+ * sitting on the feed - a login that had entirely succeeded, recorded as a failure.
+ *
+ * Reading the URL harder does not fix it, because the stale answer IS the URL. The fix is to stop
+ * holding a handle across the navigation: resolve the target again, and read the document that
+ * exists now. It is the same move the phone path already makes for the landing, and for the same
+ * reason.
+ *
+ * `null` MEANS THE FLOW IS DONE WITH US: no page on that port is at an IdP any more. That is a fact
+ * about the browser rather than about a form's absence - Authentik shows no field at all for a frame
+ * or two between its two stages, and treating THAT as the end would exit with the password never
+ * typed.
+ */
+const formPort = tabTarget ? TAB_PORT : port;
+const freshFormCx = async () => {
+  const seen = await listTargets(formPort).catch(() => []);
+  const at = seen.find((t) => atAnIdP(t.url));
+  if (!at) return null;
+  const c = connect(at.webSocketDebuggerUrl);
+  await c.ready;
+  await c.send('Runtime.enable');
+  return c;
+};
+
+// ONE STAGE AT A TIME, ending on a FACT rather than on a count. The service-account flow renders
+// identification and password as two separate stages on the SAME url, so nothing about the address
+// says how many are left - the loop asks what is on screen and answers it. The bound exists only so
+// a flow that keeps producing stages is REPORTED rather than looping for ever; `MAX_STAGES` is
+// deliberately larger than the two either IdP asks for today.
+// THE STAGE JUST ANSWERED IS NOT THE NEXT ONE, and reading it as such is what makes this loop
+// re-type a field it has already submitted. Authentik re-renders in place: for a second or so after
+// the click the identification stage is STILL on screen, so a wait that ends on "some form is up"
+// ends on the one that was just answered - measured 2026-09-04, four rounds of typing the username
+// into a stage that had already accepted it, then a throw about a login one keystroke from done.
+// So the wait ends on a DIFFERENT shape, on leaving the IdP, or on neither - and those are three
+// outcomes with three messages, never one silence.
+const MAX_STAGES = 4;
+let answered = null;
+for (let n = 0; n <= MAX_STAGES; n++) {
+  let cxNow = null;
+  let shape = null;
+  let atAnIdPStill = true;
+  for (let i = 0; i < 60; i++) {
+    cxNow = await freshFormCx();
+    if (!cxNow) {
+      atAnIdPStill = false;
+      break;
+    }
+    shape = await evaluate(cxNow, FORM_SHAPE).catch(() => null);
+    if (shape && shape !== answered) break;
+    shape = null;
+    cxNow.close();
+    cxNow = null;
+    await sleep(400);
+  }
+  if (!atAnIdPStill) break;
+  if (!shape) throw new Error(`the ${answered} stage never gave way to another within 24s`);
+  if (n === MAX_STAGES) {
+    cxNow.close();
+    throw new Error(`still on a ${shape} form after ${MAX_STAGES} stages`);
+  }
+  await answerOneStage(shape, cxNow);
+  answered = shape;
+  cxNow.close();
 }
-
-const filled = await evaluate(
-  formCx,
-  `JSON.stringify({ user: document.querySelector('#username').value, pwLen: document.querySelector('#password').value.length })`,
-);
-console.log(`[login:${account}] fields ${filled}`);
-
-// Activate the button BY ELEMENT, not by coordinates. On the phone the focused field raises the
-// IME, the viewport resizes, and a centre computed a moment earlier lands somewhere else - a race
-// that costs a silent non-submit. CAS is a third-party server-rendered form, not the system under
-// test, so event fidelity buys nothing here; every click INSIDE Canari still goes through
-// realClick.
-const submitted = await evaluate(
-  formCx,
-  `(function () {
-    var b = document.querySelector('#submitBtn');
-    if (!b) return 'no button';
-    b.click();
-    return 'clicked';
-  })()`,
-);
-console.log(`[login:${account}] submit: ${submitted}`);
 
 // THE APP'S WEBVIEW CAN BE GONE BY NOW, and the socket opened before the hop then answers nothing.
 // Android is free to kill the Tauri process while the Custom Tab is in front, and it did - measured

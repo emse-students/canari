@@ -29,16 +29,7 @@
  *
  *   node tab7.mjs
  */
-import {
-  awaitGatewayConnected,
-  awaitMessage,
-  armComposer,
-  client,
-  ensureConversation,
-  evaluate,
-  send,
-  settledCount,
-} from './chat.mjs';
+import { APP_TAB, armComposer, awaitGatewayConnected, awaitMessage, client, ensureConversation, evaluate, send, settledCount } from './chat.mjs';
 import { activate } from './cdp.mjs';
 import { armCut, awaitSevered, cutHard, link } from './net.mjs';
 import { mark, recordObserved } from './results.mjs';
@@ -48,8 +39,8 @@ import { PORTS, peerNameFor } from './names.mjs';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const OFFLINE_HOLD_MS = 8000;
 
-const w1 = await client(PORTS.W1, 'canari-emse.fr', { focus: false });
-const w2 = await client(PORTS.W2, 'canari-emse.fr', { focus: false });
+const w1 = await client(PORTS.W1, APP_TAB, { focus: false });
+const w2 = await client(PORTS.W2, APP_TAB, { focus: false });
 
 const fromW2 = mark('TAB7OFF');
 const fromW1 = mark('TAB7IN');

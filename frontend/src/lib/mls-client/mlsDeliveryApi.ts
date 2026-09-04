@@ -2,7 +2,7 @@ import { assertOkMlsDeliveryResponse, deliveryKeepalivePost } from './mlsDeliver
 import { fetchJsonUnderProgressDeadline } from './progressDeadline';
 import { ackMessagesWithRetry } from './ackRetry';
 import { DELIVERY, type FrameDelivery } from './frameDelivery';
-import type { GroupMeta, UserGroupRow } from './IMlsService';
+import type { DeviceMembershipRow, GroupMeta, UserGroupRow } from './IMlsService';
 import { toBase64, fromBase64 } from '$lib/utils/hex';
 
 export type MlsDeliveryFetch = typeof fetch;
@@ -1243,18 +1243,7 @@ export class MlsDeliveryApi {
    * the time (GRP-4, 2026-08-26). An empty array is the server saying it holds no row; an
    * unreachable server says nothing at all, and must not be able to impersonate an answer.
    */
-  async getDeviceMemberships(
-    userId: string,
-    deviceId: string
-  ): Promise<
-    Array<{
-      id: string;
-      userId: string;
-      deviceId: string;
-      groupId: string;
-      status: string;
-    }>
-  > {
+  async getDeviceMemberships(userId: string, deviceId: string): Promise<DeviceMembershipRow[]> {
     const res = await this.f(
       `${this.historyUrl}/api/mls/device-memberships/${userId}/${deviceId}`,
       {

@@ -11,15 +11,7 @@
  * receiver raises when it thinks a generation was already consumed. Order is asserted on the
  * RECEIVER's rendered sequence, and every marker is counted so a duplicate cannot hide.
  */
-import {
-  awaitMessage,
-  awaitRequestsQuiet,
-  client,
-  ensureConversation,
-  evaluate,
-  pollFact,
-  send,
-} from './chat.mjs';
+import { APP_TAB, awaitMessage, awaitRequestsQuiet, client, ensureConversation, evaluate, pollFact, send } from './chat.mjs';
 import { gate, report, watch } from './watch.mjs';
 import { record, mark } from './results.mjs';
 import { OWNER_NAME, PEER_NAME, PORTS } from './names.mjs';
@@ -30,8 +22,8 @@ import { OWNER_NAME, PEER_NAME, PORTS } from './names.mjs';
 // account makes `openConversation` open NOTHING while the check reports on whatever was on screen.
 // `ensureConversation` replaces `ensureChat` + `openConversation` for the reason it exists: a
 // composer proves a conversation is open, never WHICH one.
-const w1 = await client(PORTS.W1, 'canari-emse.fr');
-const w2 = await client(PORTS.W2, 'canari-emse.fr');
+const w1 = await client(PORTS.W1, APP_TAB);
+const w2 = await client(PORTS.W2, APP_TAB);
 
 await ensureConversation(w1, PEER_NAME);
 await ensureConversation(w2, OWNER_NAME);

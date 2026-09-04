@@ -1358,6 +1358,24 @@ client", never "clean on the server".
 
 ### P1 - a device asks for a Welcome for ever, and the member that answers RESETS the row that would have let it heal itself (measured on prod 2026-09-01)
 
+> **(A) IS FIXED AND MEASURED, 2026-09-04. (B), (C) and (D) ARE OPEN and this stays a P1 until they
+> land.** `pending` no longer decides anything on its own: the endpoint answers per row with
+> `welcomeQueued` and `addInFlight`, a device owed nothing serves itself an external-commit join and
+> clears its own seat. **The residual window (A) was not allowed to ship without is closed by
+> `addInFlight` - the group's `mls:addlock:<groupId>` held right now - and NOT by the inviter's own
+> refusal as this entry proposed**: the lock is held for the whole of the `registerMember` ->
+> `addMembersBulk` interval, which is exactly the interval in which the queue is legitimately empty,
+> so it needs no second party to answer and no new failure to classify. **It was reproduced first**,
+> on the local estate on four groups with the production signature line for line, and then measured
+> twice green - two fresh devices each joining all four groups in the same second, rows promoted,
+> epochs advanced, fresh bases republished. Tests:
+> `invitations.controller.device-memberships.spec.ts` (6) and `recovery.test.ts` (21).
+> **What (A) does NOT touch:** the `[KICK]` still writes `pending` before it knows the Add will land,
+> so a device the repair is actively kicking is still reset - only now it can escape between turns.
+> A second measurement is owed on that arm specifically. The `4f87267a` base is a separate matter and
+> is still stale on prod.
+
+
 **A LIVELOCK, NOT A WAIT: each side re-creates the other's precondition, and it ran for 20 HOURS on
 the owner's own account.** Reported from the web client 2026-09-01: three conversations stuck on the
 `SYNC` badge for ever, `[READD] ... throttled` printed every 5 s for each, while the SAME
@@ -1468,10 +1486,10 @@ that group cannot external-join until somebody commits into it.
 - The manual UPDATE is the only hand-write performed; nothing was deleted, and the fourteen-day purge
   still owns those rows.
 
-**What closes this entry:** (B) and (A) in the tree with tests, the `4f87267a` base refreshed by any
-means, and one measurement showing a device enrolled into a group whose Add fails reaching `active` by
-external join without a peer - the sequence of `10:10:31` above, obtained without a hand-written
-UPDATE. The cause of the skipped Add itself is the P2 immediately below, and the two want reading
+**What closes this entry:** (B) in the tree with tests - (A) landed 2026-09-04 with the measurement
+this line asked for, a device reaching `active` by external join with no peer involved and no
+hand-written UPDATE, taken twice - the `4f87267a` base refreshed by any means, and (C) and (D)
+answered. The cause of the skipped Add itself is the P2 immediately below, and the two want reading
 together.
 
 ### P2 - a device was given a roster seat and never a Welcome, and WHY its KeyPackage was skipped is unmeasured (measured on prod 2026-09-01)
@@ -1501,6 +1519,15 @@ notification on his phone** - which is the only reason anyone noticed.
   not read before the device healed.
 - Whether the 3 h 41 is the external-join ladder's ordinary latency for a device in this state or a
   device that only healed because it happened to be opened. Nothing here paces that heal.
+
+**THE 3 H 41 IS NOW BOUNDED, AND THAT CHANGES WHAT THIS ENTRY IS FOR (2026-09-04).** The heal at
+`00:26:54` happened because the device was opened; nothing paced it, and its sibling P1 explains why a
+device in that state could go 20 hours instead. With (A) fixed, a device holding a roster seat that
+nothing follows joins on its next poll rather than when a human touches it - so the stranding is no
+longer a user-visible outage and this entry loses its user-facing half. **What it keeps is the whole
+of its question**: a skip that cannot name its own cause. The heal being fast does not make the Add
+correct, and a device that external-joins every time is a device whose KeyPackage is being rejected
+every time with nobody counting.
 
 **Until the reason is typed, the skip is a count.** The rule that a skip printing a count cannot name
 its own cause applies exactly: `warnSkippedKeyPackages` prints ids, and the two causes it collapses -

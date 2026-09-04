@@ -43,11 +43,11 @@
  * also the only coverage that control has.
  */
 import { pathToFileURL } from 'node:url';
-import { client, evaluate } from './chat.mjs';
+import { APP_TAB, client, evaluate } from './chat.mjs';
 import { isGroupDebris } from './debris.mjs';
 import { dismissLocally, openGroup } from './groupnav.mjs';
 import { PORTS } from './names.mjs';
-import { psql } from './ssh.mjs';
+import { psql } from './estate.mjs';
 
 /**
  * The conversation store, read from the page.
@@ -227,7 +227,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   const limit = Number(arg('--limit', Infinity));
 
   console.log(`[dismiss] port=${port} dry=${dry}`);
-  const cx = await client(port, 'canari-emse.fr', { focus: false });
+  const cx = await client(port, APP_TAB, { focus: false });
   const tombstoned = groupTombstones();
   console.log(`[dismiss] server knows ${tombstoned.size} group(s)`);
 

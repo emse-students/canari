@@ -85,34 +85,14 @@
  *   node mut.mjs                 # all twenty
  *   node mut.mjs --only 10       # one
  */
-import {
-  client,
-  openDM,
-  openChannel,
-  evaluate,
-  realClick,
-  clickAtPoint,
-  hoverBubble,
-  armComposer,
-  fireComposer,
-  awaitMessage,
-  countMessage,
-  attachFiles,
-  longPressBubble,
-  tapSheetIcon,
-  sameAccountAs,
-  until,
-  COMPOSER,
-  IS_MOVING_FN,
-  stablePoint,
-} from './chat.mjs';
+import { APP_TAB, armComposer, attachFiles, awaitMessage, clickAtPoint, client, COMPOSER, countMessage, evaluate, fireComposer, hoverBubble, IS_MOVING_FN, longPressBubble, openChannel, openDM, realClick, sameAccountAs, stablePoint, tapSheetIcon, until } from './chat.mjs';
 import { watch, report, gate, ignoringOfflineCut, longestSilence } from './watch.mjs';
 import { record, mark } from './results.mjs';
 import { OWNER_NAME, PEER_NAME, PORTS, VENUE } from './names.mjs';
 import { fileURLToPath } from 'node:url';
 
 const { W1, W2 } = PORTS;
-const MATCH = 'canari-emse.fr';
+const MATCH = APP_TAB;
 const abs = (rel) => fileURLToPath(new URL(rel, import.meta.url));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

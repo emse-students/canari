@@ -19,7 +19,7 @@
  * a separate question with a separate answer, `SLOW`, and a separate cause - which `msToReconnect`
  * now names rather than leaving to be guessed.
  */
-import { client, ensureConversation, send, countMessage, evaluate } from './chat.mjs';
+import { APP_TAB, client, countMessage, ensureConversation, evaluate, send } from './chat.mjs';
 import { gate, ignoringOfflineCut, longestSilence, report, watch } from './watch.mjs';
 import { cut } from './net.mjs';
 import { finish, mark } from './results.mjs';
@@ -27,8 +27,8 @@ import { OWNER_NAME, PEER_NAME, PORTS } from './names.mjs';
 
 // Ports and display names come from `names.mjs`, never as literals - see the header of `msg2.mjs`
 // for what a stale literal of either costs. `ensureConversation` proves WHICH conversation is open.
-const w1 = await client(PORTS.W1, 'canari-emse.fr');
-const w2 = await client(PORTS.W2, 'canari-emse.fr');
+const w1 = await client(PORTS.W1, APP_TAB);
+const w2 = await client(PORTS.W2, APP_TAB);
 await ensureConversation(w1, PEER_NAME);
 await ensureConversation(w2, OWNER_NAME);
 

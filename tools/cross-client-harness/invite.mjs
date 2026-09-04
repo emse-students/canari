@@ -15,13 +15,13 @@
  *   node invite.mjs --port 9223               (invites the OTHER party, whoever this port is)
  *   node invite.mjs --port 9223 --probe       (report the panel, change nothing)
  */
-import { client, evaluate, realClick, until, goto } from './chat.mjs';
+import { APP_TAB, client, evaluate, goto, realClick, until } from './chat.mjs';
 import { PORTS, peerNameFor } from './names.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const arg = (n, d) => (process.argv.includes(`--${n}`) ? process.argv[process.argv.indexOf(`--${n}`) + 1] : d);
 const port = Number(arg('port', 9223));
-const cx = await client(port, 'canari-emse.fr', { focus: false });
+const cx = await client(port, APP_TAB, { focus: false });
 
 /**
  * WHO TO INVITE IS DERIVED FROM THE PORT, not spelt.

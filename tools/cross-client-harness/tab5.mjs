@@ -15,16 +15,7 @@
  * had never appeared in `results.ndjson`. It also held the peer's real display name inline, which is
  * the shape that put that name into the public repository once already.
  */
-import {
-  COMPOSER,
-  SEND_ENABLED,
-  awaitAppReady,
-  awaitMessage,
-  client,
-  ensureConversation,
-  evaluate,
-  settledCount,
-} from './chat.mjs';
+import { APP_TAB, awaitAppReady, awaitMessage, client, COMPOSER, ensureConversation, evaluate, SEND_ENABLED, settledCount } from './chat.mjs';
 import { activate, realClick, until } from './cdp.mjs';
 import { dirtOf, gate, report, watch } from './watch.mjs';
 import { mark, record } from './results.mjs';
@@ -32,8 +23,8 @@ import { PORTS, peerNameFor } from './names.mjs';
 
 const ROUNDS = Number(process.argv[2] || 3);
 
-const w1 = await client(PORTS.W1, 'canari-emse.fr');
-const w2 = await client(PORTS.W2, 'canari-emse.fr');
+const w1 = await client(PORTS.W1, APP_TAB);
+const w2 = await client(PORTS.W2, APP_TAB);
 
 /** Back into the conversation after the reload, waiting on the app rather than on a number. */
 async function reopenW1() {

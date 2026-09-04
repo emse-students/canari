@@ -14,20 +14,7 @@
  *
  * Usage: node fwd.mjs [iterations]
  */
-import {
-  client,
-  ensureChat,
-  openChannel,
-  openConversation,
-  evaluate,
-  send,
-  clickBubbleAction,
-  realClick,
-  until,
-  awaitMessage,
-  countMessage,
-  settledCount,
-} from './chat.mjs';
+import { APP_TAB, awaitMessage, clickBubbleAction, client, countMessage, ensureChat, evaluate, openChannel, openConversation, realClick, send, settledCount, until } from './chat.mjs';
 import { watch, report, dirtOf, gate } from './watch.mjs';
 import { finish, mark } from './results.mjs';
 // NO DISPLAY NAME IS EVER SPELT IN A CHECK. `names.mjs` is the one file that holds real identities
@@ -39,8 +26,8 @@ import { peerNameFor } from './names.mjs';
 const N = Number(process.argv[2] || 1);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const w1 = await client(9224, 'canari-emse.fr');
-const w2 = await client(9223, 'canari-emse.fr');
+const w1 = await client(9224, APP_TAB);
+const w2 = await client(9223, APP_TAB);
 
 // The receiver sits in the DM for the whole run: the loss is about what ARRIVES there, and moving
 // it around would add navigation as a variable the original report did not have.

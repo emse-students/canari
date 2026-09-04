@@ -10,7 +10,8 @@ import { appendFileSync, readFileSync, existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { request } from 'node:https';
+import { request as requestOverHttp } from 'node:http';
+import { request as requestOverHttps } from 'node:https';
 import { SITE, STATE_DIR } from './names.mjs';
 import { gate, report } from './watch.mjs';
 
@@ -103,8 +104,16 @@ export function commitDate(commit) {
  * exit to 0xC0000409 and prints two lines AFTER the real error. Measured 2026-08-21 on the identical
  * script: `fetch` aborts, `node:https` exits 1. Closing the global dispatcher first does NOT help,
  * so the transport is the fix rather than the teardown. `agent: false` keeps no socket alive.
+ *
+ * THE MODULE IS CHOSEN BY THE URL, because `node:https` REFUSES an `http:` one outright - "Protocol
+ * http: not supported. Expected https:", thrown during module init, which is the whole rig failing
+ * to load rather than a check failing. That is what every runner did on the local estate the day the
+ * campaign moved to it: the transport had been pinned to the scheme production happened to use, in a
+ * file whose only address comes from `SITE`. The reason for using `node:*` at all is unchanged - it
+ * is about `process.exit` after a `fetch`, not about TLS.
  */
 function getText(url) {
+  const request = new URL(url).protocol === 'http:' ? requestOverHttp : requestOverHttps;
   return new Promise((resolve, reject) => {
     const call = request(url, { agent: false }, (answer) => {
       let body = '';

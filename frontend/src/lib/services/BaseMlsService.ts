@@ -29,7 +29,11 @@ import {
   resetSendRatchetLedger,
   snapshotEmitted,
 } from '$lib/mls-client/sendRatchetLedger';
-import type { HistoryRequestOutcome, IncomingDeliveryMeta } from '$lib/mls-client/IMlsService';
+import type {
+  DeviceMembershipRow,
+  HistoryRequestOutcome,
+  IncomingDeliveryMeta,
+} from '$lib/mls-client/IMlsService';
 import { MlsPerGroupScheduler, type MlsQueuedMessage } from '$lib/mls-client/mlsPerGroupScheduler';
 import {
   shouldAckAfterSuccess,
@@ -1719,18 +1723,7 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.getPendingInvitations(userId, deviceId);
   }
 
-  async getDeviceMemberships(
-    userId: string,
-    deviceId: string
-  ): Promise<
-    Array<{
-      id: string;
-      userId: string;
-      deviceId: string;
-      groupId: string;
-      status: string;
-    }>
-  > {
+  async getDeviceMemberships(userId: string, deviceId: string): Promise<DeviceMembershipRow[]> {
     return this.delivery.getDeviceMemberships(userId, deviceId);
   }
 

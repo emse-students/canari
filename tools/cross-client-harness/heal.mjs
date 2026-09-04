@@ -3,7 +3,7 @@
  * arrive? The frame that triggered the escalation is unrecoverable by construction; the only
  * question a verification can ask is whether the group works again afterwards.
  */
-import { client, ensureChat, openConversation, awaitMessage, send, countMessage } from './chat.mjs';
+import { APP_TAB, awaitMessage, client, countMessage, ensureChat, openConversation, send } from './chat.mjs';
 import { finishObserved, mark } from './results.mjs';
 import { logcatReport, logcatSince, watch } from './watch.mjs';
 import * as phone from './phone.mjs';
@@ -17,7 +17,7 @@ const a1 = await client(PORTS.A1, 'tauri.localhost');
 await ensureChat(a1).catch(() => null);
 await openConversation(a1, peerNameFor('A1')).catch(() => null);
 
-const w2 = await client(9223, 'canari-emse.fr');
+const w2 = await client(9223, APP_TAB);
 await ensureChat(w2);
 await openConversation(w2, peerNameFor('W2'));
 

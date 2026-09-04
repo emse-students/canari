@@ -28,7 +28,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
-import { client, openConversation, send, evaluate, markers, goto } from './chat.mjs';
+import { APP_TAB, client, evaluate, goto, markers, openConversation, send } from './chat.mjs';
 import { openGroup as openGroupByName } from './groupnav.mjs';
 import { watch, report, consoleLines, gate } from './watch.mjs';
 import { mark, record } from './results.mjs';
@@ -64,8 +64,8 @@ const seen = async (cx, prefix, budgetMs) => {
   return best;
 };
 
-const w1 = await client(9224, 'canari-emse.fr', { focus: false }); // the OWNER - the device under test
-const w2 = await client(9223, 'canari-emse.fr', { focus: false }); // the PEER - the one that sends
+const w1 = await client(9224, APP_TAB, { focus: false }); // the OWNER - the device under test
+const w2 = await client(9223, APP_TAB, { focus: false }); // the PEER - the one that sends
 
 /** The group under test, opened by name with a post-condition - see `groupnav.mjs`. */
 const openGroup = (cx, label, opts = {}) => openGroupByName(cx, GROUP, { ...opts, label });

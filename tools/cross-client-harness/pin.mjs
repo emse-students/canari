@@ -168,7 +168,14 @@ const len = hasField
   : String(pin).length;
 console.log(`[pin] ${account}: ${len} ${hasField ? 'chars' : 'taps'}${has('value') ? ' (override)' : ''}`);
 
-await activate(cx, 'text=Déverrouiller');
+// THE GATE HAS TWO SHAPES AND ONE FORM, AND THIS USED TO NAME ONLY ONE OF THEM. `PinModal` renders
+// a single `<form>` whose submit button says "Deverrouiller" for a returning device and
+// "Creer mon PIN" on an account that has never set one - same field, same submit, different LABEL.
+// Matching the label therefore threw `no element to activate: text=Deverrouiller` on exactly the
+// gesture the campaign's fourth restart step is made of ("set each PIN from test-accounts.json"),
+// on a modal plainly on screen. A localized string is not a handle: the button is identified by
+// what it IS in the form, which is the same in both shapes and in every locale.
+await activate(cx, 'form button[type=submit]');
 // The modal either closes (unlocked) or shows an error - poll for whichever comes first.
 // "Gone" is the gate predicate NEGATED, never a second reading of it: the keypad shape carries
 // no `#encryption-pin`, so a check keyed on the input alone never settles there.

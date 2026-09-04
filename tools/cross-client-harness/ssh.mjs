@@ -64,15 +64,3 @@ export function ssh(host, command, { timeoutMs = 30_000, maxBuffer = 256 * 1024 
     }
   }
 }
-
-/** `redis-cli <args...>` inside the gateway's Redis container. Arguments are already quoted by the caller. */
-export const redis = (args, opts) =>
-  ssh('canari', `docker exec infrastructure-redis-1 redis-cli ${args}`, opts);
-
-/** Runs `sql` on the production database, tuples-only and unaligned. Read-only by convention. */
-export const psql = (sql, opts) =>
-  ssh(
-    'canari',
-    `docker exec infrastructure-postgres-1 psql -U canari -d auth_db -tAc "${sql.replace(/"/g, '\\"')}"`,
-    { timeoutMs: 60_000, ...opts }
-  );

@@ -16,14 +16,14 @@
  *   node mlsdb.mjs --port 9224 restore     - put it back
  *   node mlsdb.mjs --port 9224 digest      - what is there right now
  */
-import { client, evaluate } from './chat.mjs';
+import { APP_TAB, client, evaluate } from './chat.mjs';
 
 const arg = (name, dflt) =>
   process.argv.includes(name) ? process.argv[process.argv.indexOf(name) + 1] : dflt;
 const port = Number(arg('--port', 9224));
 const cmd = process.argv.find((a) => !a.startsWith('--') && !/node(\.exe)?$/.test(a) && !a.endsWith('mlsdb.mjs') && a !== String(port)) ?? 'list';
 
-const cx = await client(port, 'canari-emse.fr', { focus: false });
+const cx = await client(port, APP_TAB, { focus: false });
 
 /** Opens a database at its CURRENT version - never bump it, an upgrade would rewrite the schema. */
 const OPEN = `function openDb(name) {

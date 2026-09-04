@@ -220,6 +220,33 @@ export type HistoryRequestOutcome = {
   excludedOnline: number;
 };
 
+/**
+ * ONE device's membership of ONE group, as the server answers it.
+ *
+ * NAMED, BECAUSE THREE FILES DECLARED IT INLINE AND A FOURTH HAD TO AGREE WITH ALL OF THEM. The
+ * shape was written out in `IMlsService`, `MlsDeliveryApi` and `BaseMlsService`, so adding a field
+ * meant editing three copies and the compiler could not say which one a caller was reading.
+ *
+ * `welcomeQueued` and `addInFlight` ARE THE POINT OF THE TYPE. `status` alone cannot say which kind
+ * of `pending` a row is - see `getDeviceMemberships` in
+ * `apps/chat-delivery-service/src/controllers/invitations.controller.ts` for the two situations it
+ * collapses and what reading it as one cost on production. They are optional so that a client
+ * talking to a server older than the field does not read `false` as an answer: `undefined` means
+ * "this server does not say", which `readWelcomeOwed` treats as the old behaviour rather than as a
+ * licence to serve itself.
+ */
+export type DeviceMembershipRow = {
+  id: string;
+  userId: string;
+  deviceId: string;
+  groupId: string;
+  status: string;
+  /** A `queued_message` carrying a Welcome exists for this device AND this group. */
+  welcomeQueued?: boolean;
+  /** Some member holds this group's add lock right now, so an Add really is in flight. */
+  addInFlight?: boolean;
+};
+
 export interface IMlsService {
   /** Initialises the MLS identity for the given user, decrypting stored state with the device key. */
   init(
@@ -692,18 +719,7 @@ export interface IMlsService {
    * REJECTS when the server could not be asked - `[]` means "no row", never "I could not tell".
    * See the implementation for why one caller cannot live with the two collapsed.
    */
-  getDeviceMemberships(
-    userId: string,
-    deviceId: string
-  ): Promise<
-    Array<{
-      id: string;
-      userId: string;
-      deviceId: string;
-      groupId: string;
-      status: string;
-    }>
-  >;
+  getDeviceMemberships(userId: string, deviceId: string): Promise<DeviceMembershipRow[]>;
   /** Update the status of a device-group membership on the server */
   updateInvitationStatus(
     deviceId: string,

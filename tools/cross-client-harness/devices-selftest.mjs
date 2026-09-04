@@ -16,7 +16,7 @@
  * point is not to test string splitting: it is to keep the three corrections above from being
  * quietly undone by a later edit that "simplifies" the predicate back to one column.
  */
-import { daysBetween, installTag, parseRow, runtimeOf, summarize, userTag } from './devices.mjs';
+import { daysBetween, installTag, parseRow, runtimeOf, summarize, userTag } from './device-census.mjs';
 
 const TODAY = '2026-08-24';
 let failures = 0;

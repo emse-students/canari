@@ -22,6 +22,7 @@ import { GroupMember } from '../entities/group-member.entity';
 import { Group } from '../entities/group.entity';
 import { GroupInvite } from '../entities/group-invite.entity';
 import { KeyPackage } from '../entities/key-package.entity';
+import { QueuedMessage } from '../entities/queued-message.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { IsNull } from 'typeorm';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
@@ -53,6 +54,8 @@ export class InvitationsController {
     private keyPackageRepo: Repository<KeyPackage>,
     @InjectRepository(RevokedDevice)
     private revokedDeviceRepo: Repository<RevokedDevice>,
+    @InjectRepository(QueuedMessage)
+    private queuedMessageRepo: Repository<QueuedMessage>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
     private readonly messagingService: MessagingService
   ) {}
@@ -295,7 +298,44 @@ export class InvitationsController {
 
   /**
    * Returns all device-group memberships for a specific device (so the device
-   * knows which groups it's `pending` or `active` in).
+   * knows which groups it's `pending` or `active` in), EACH CARRYING THE TWO FACTS THAT SAY WHICH
+   * KIND OF `pending` IT IS.
+   *
+   * **`pending` IS A STATE THAT WAS BEING READ AS AN EVENT, AND THAT COST A DEVICE TWENTY HOURS.**
+   * The row means "a member has been told to Add this device"; it does NOT mean anyone is doing so,
+   * or ever did. Two opposite situations wear it and the row cannot tell them apart:
+   *
+   * - an Add really is in flight, or its Welcome is already queued for a device that is merely
+   *   offline - the requester must WAIT, because serving itself an external commit here is the
+   *   duplicate-leaf race of 2026-08-26 (GRP-4), where two parties wrote the same leaf and the
+   *   member's handler evicted the joiner it had just added;
+   * - the roster seat was written and NOTHING followed it - the enrolling device was registered into
+   *   every group of its user and no member was online to honour any of them. Measured on production
+   *   2026-09-03: a web device enrolled at 12:49:59 with ELEVEN `pending` rows, zero queued Welcomes,
+   *   `updatedAt` never once moved, and ten hours later it was still emitting a `welcome_request` per
+   *   group per minute. Its client could have joined every one of them by external commit - the
+   *   bases were published - and exactly one `if` forbade it, because the only fact it had was the
+   *   status.
+   *
+   * **SO THE DISCRIMINATOR IS CARRIED TO WHERE THE DECISION IS MADE, FROM WHERE IT IS ALREADY
+   * KNOWN** - the repo's own rule against learning by failing what a fact could have told you. Both
+   * facts are server-side, and one of them was already being computed hourly by
+   * `reportStrandedDeviceMemberships` for exactly this partition:
+   *
+   * - `welcomeQueued` - a `queued_message` with `isWelcome` for THIS device and THIS group. The
+   *   Welcome is what separates a roster seat from a set of keys.
+   * - `addInFlight` - the group's add lock is held right now. This is what keeps GRP-4 shut: every
+   *   path that Adds (`processPendingInvitations`, `handleWelcomeRequest`, group creation's own
+   *   device sync) takes `mls:addlock:<groupId>` BEFORE writing the roster row and releases it after
+   *   the Welcome is queued, so the window in which a legitimate Add has a `pending` row and no
+   *   queued Welcome yet is exactly the window in which the lock is held. It is durable state with
+   *   the server's own bound on it, not a clock the client guesses at.
+   *
+   * Both are false only when nothing is happening and nothing has happened, which is the one state
+   * from which a device may serve itself. Neither is a permission: the client still decides.
+   *
+   * TWO QUERIES FOR THE WHOLE SET, NOT ONE PER ROW. A device holds one membership per conversation -
+   * eleven on the account above - and this is polled by the sync watchdog.
    */
   @UseGuards(HeaderAuthGuard)
   @Get('mls/device-memberships/:userId/:deviceId')
@@ -316,10 +356,55 @@ export class InvitationsController {
     const memberships = await this.deviceGroupRepo.find({
       where: { userId: safeUserId, deviceId: safeDeviceId },
     });
+
+    const pendingGroupIds = memberships.filter((m) => m.status === 'pending').map((m) => m.groupId);
+    const welcomed = new Set<string>();
+    const locked = new Set<string>();
+    if (pendingGroupIds.length > 0) {
+      const queued = await this.queuedMessageRepo.find({
+        select: { groupId: true },
+        where: {
+          deviceId: safeDeviceId,
+          isWelcome: true,
+          groupId: In(pendingGroupIds),
+        },
+      });
+      for (const q of queued) if (q.groupId) welcomed.add(q.groupId);
+
+      // ONE ROUND TRIP FOR THE WHOLE SET. `mget` answers null per absent key, so a group nobody is
+      // adding into costs nothing and a Redis that is down answers for none of them - which is the
+      // conservative direction: `addInFlight` false only ever makes the client ask a member, and
+      // asking a member is what it does today.
+      const held = await this.redis
+        .mget(pendingGroupIds.map((g) => `mls:addlock:${g}`))
+        .catch(() => pendingGroupIds.map(() => null));
+      pendingGroupIds.forEach((g, i) => {
+        if (held[i] !== null && held[i] !== undefined) locked.add(g);
+      });
+    }
+
+    const answer = memberships.map((m) => ({
+      ...m,
+      welcomeQueued: welcomed.has(m.groupId),
+      addInFlight: locked.has(m.groupId),
+    }));
+
+    // THE STRANDED COUNT IS ON THE LINE, because this endpoint is now the only place that sees the
+    // partition at the moment a device asks about it - the hourly report sees it an hour later and
+    // only past its own window. A non-zero count here on a device that keeps asking IS the defect.
+    const stranded = answer.filter(
+      (m) => m.status === 'pending' && !m.welcomeQueued && !m.addInFlight
+    ).length;
     this.logger.log(
-      `[DEVICE_MEMBERSHIPS] user=${safeUserId} device=${safeDeviceId} count=${memberships.length} statuses=${memberships.map((m) => `${m.groupId}:${m.status}`).join(',')}`
+      `[DEVICE_MEMBERSHIPS] user=${safeUserId} device=${safeDeviceId} count=${memberships.length} ` +
+        `stranded=${stranded} statuses=${answer
+          .map(
+            (m) =>
+              `${m.groupId}:${m.status}${m.status === 'pending' ? `(welcome=${m.welcomeQueued},adding=${m.addInFlight})` : ''}`
+          )
+          .join(',')}`
     );
-    return memberships;
+    return answer;
   }
 
   /**

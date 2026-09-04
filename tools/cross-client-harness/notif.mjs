@@ -11,7 +11,7 @@
  *
  * Usage: node notif.mjs 4|4b|9|10|11
  */
-import { client, ensureChat, openConversation, countMessage, awaitMessage, send, evaluate, COMPOSER } from './chat.mjs';
+import { APP_TAB, awaitMessage, client, COMPOSER, countMessage, ensureChat, evaluate, openConversation, send } from './chat.mjs';
 import { gate, logcatReport, logcatSince, report, watch } from './watch.mjs';
 import { mark, record } from './results.mjs';
 import * as phone from './phone.mjs';
@@ -65,7 +65,7 @@ await withDeadline(ensureChat(a1Setup), 60_000, 'A1 ensureChat').catch(() => nul
 await withDeadline(openConversation(a1Setup, peerNameFor('A1')), 90_000, 'A1 openConversation').catch(() => null);
 
 stage('attaching W2');
-const w2 = await withDeadline(client(9223, 'canari-emse.fr'), 60_000, 'W2 attach');
+const w2 = await withDeadline(client(9223, APP_TAB), 60_000, 'W2 attach');
 await withDeadline(ensureChat(w2), 60_000, 'W2 ensureChat');
 await withDeadline(openConversation(w2, peerNameFor('W2')), 90_000, 'W2 openConversation');
 
@@ -74,7 +74,7 @@ await withDeadline(openConversation(w2, peerNameFor('W2')), 90_000, 'W2 openConv
 // before the check ever asserted it was there. NOTIF-4 then needs it to open that DM on cue, so
 // the conversation is opened ONCE here to prove the row is reachable, then left.
 stage('attaching W1');
-const w1 = await withDeadline(client(9224, 'canari-emse.fr'), 60_000, 'W1 attach');
+const w1 = await withDeadline(client(9224, APP_TAB), 60_000, 'W1 attach');
 await withDeadline(ensureChat(w1), 60_000, 'W1 ensureChat');
 await withDeadline(openConversation(w1, peerNameFor('W1')), 90_000, 'W1 openConversation (pre-flight)');
 // NOTIF-4b IS THE ONE ROW THAT WANTS W1 LEFT IN THE CONVERSATION. Every other check parks it so the

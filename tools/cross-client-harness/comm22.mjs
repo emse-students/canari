@@ -56,7 +56,7 @@
  *
  * IT BUILDS ITS OWN VENUE and deletes it.
  */
-import { client, countMessage, evaluate, realClick, send } from './chat.mjs';
+import { APP_TAB, client, countMessage, evaluate, realClick, send } from './chat.mjs';
 import {
   acceptInviteLink,
   channelRow,
@@ -440,7 +440,7 @@ const coldRead = armed
   ? await step('the peer reads it cold', async () => {
       await evaluate(w2, 'location.reload()').catch(() => null);
       await sleep(6000);
-      const gateW2 = await unlockClient(w2, PORTS.W2, ACCOUNT_OF.W2, { match: 'canari-emse.fr' });
+      const gateW2 = await unlockClient(w2, PORTS.W2, ACCOUNT_OF.W2, { match: APP_TAB });
       if (gateW2.verdict !== 'unlocked') {
         return { ms: null, seen: 0, of: everyMarker.length, gate: gateW2.verdict, pin: gateW2.said };
       }

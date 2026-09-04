@@ -39,7 +39,7 @@ import { client, openChannel } from './chat.mjs';
 import { deleteChannel, deleteCommunity, enterCommunities, openCommunity } from './comm.mjs';
 import { isGroupDebris } from './debris.mjs';
 import { deleteGroup } from './groupnav.mjs';
-import { psql } from './ssh.mjs';
+import { psql } from './estate.mjs';
 import { PORTS } from './names.mjs';
 
 /**

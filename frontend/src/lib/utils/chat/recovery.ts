@@ -285,6 +285,25 @@ export async function requestReAdd(
     deps.log(`[READD] ${groupId.slice(0, 8)}... rejoined via external commit (self-service)`);
     clearGroupNotReady(deps.userId, groupId);
     cancelReAdd(groupId, timers);
+    // THE ROSTER SEAT IS A WORK ITEM, AND JOINING BY OURSELVES DOES NOT CLEAR IT. `pending` is what
+    // `getPendingInvitations` serves to every member: leaving it behind means the next member to come
+    // online calls `addMember` for a leaf that is ALREADY in the tree, gets `DuplicateSignature`, and
+    // its handler kicks the live leaf we just published - which is the duplicate-leaf repair firing
+    // on a device that needed no repair. The Welcome path promotes the row (`setupMessageHandler`)
+    // and the inviter's path promotes it (`processPendingInvitations`); this path never did, and it
+    // is the path this commit makes reachable, so it owes the same write.
+    //
+    // Best-effort and LOGGED rather than thrown: the join has already landed and the group is live
+    // locally, so failing here costs one wrongly-served invitation, not the conversation. A swallowed
+    // branch with no line is all a loss leaves.
+    await deps.mlsService
+      .updateInvitationStatus(deps.mlsService.getDeviceId(), deps.userId, groupId, 'active')
+      .catch((e) =>
+        deps.log(
+          `[READD] ${groupId.slice(0, 8)}... joined, but the roster seat is still pending: ` +
+            `${String(e).slice(0, 120)} - a member may try to Add a leaf already in the tree`
+        )
+      );
     // External join does not go through the Welcome path that normally promotes the conversation:
     // the group is now live in WASM, so mark it active here so the UI leaves the "syncing" state
     // without waiting for a page reload.
@@ -315,15 +334,42 @@ export async function requestReAdd(
 }
 
 /**
- * Answers "does a member already owe this device a Welcome for `groupId`?" from the server's own
- * per-device membership row - the row the invitation flow writes and the kick path resets.
+ * Answers "does a member already owe this device a Welcome for `groupId`, RIGHT NOW?" from the
+ * server's own per-device membership row and the two facts the row cannot carry.
  *
- * THREE ANSWERS, AND THE THIRD IS NOT A "NO". `true` an Add is in flight for our leaf, `false` the
- * server holds no pending row, `null` the question could not be asked. Collapsing `null` into
- * `false` is precisely the mistake this seam exists to stop making: it would send the invited
+ * THREE ANSWERS, AND THE THIRD IS NOT A "NO". `true` an Add is in flight for our leaf, `false`
+ * nobody owes us anything that exists, `null` the question could not be asked. Collapsing `null`
+ * into `false` is precisely the mistake this seam exists to stop making: it would send the invited
  * population back down the external-join path on exactly the network conditions where losing the
  * race is likeliest. `getDeviceMemberships` rejects rather than answering `[]` so that this function
  * can tell the two apart at all.
+ *
+ * **`pending` ALONE USED TO BE THE ANSWER, AND IT IS A STATE READ AS AN EVENT.** The row says a
+ * member has been TOLD to Add this device; it says nothing about anyone doing it. So a device that
+ * enrolled while nobody was online - which writes one `pending` row per conversation of its user and
+ * nothing else - read "a member owes me a Welcome" about every one of them, returned here before
+ * reaching the self-service external join, and asked again every 60 s for as long as it stayed open.
+ * Measured on production 2026-09-03: eleven groups, ten hours, 552 requests, zero queued Welcomes,
+ * `updatedAt` never moved; and reproduced on the local estate 2026-09-04 on four groups whose
+ * external-join base was published the whole time. The device could have joined every one of them by
+ * itself. **The gate itself is right and stays** - it is what deleted the GRP-4 duplicate-leaf race
+ * of 2026-08-26 - it simply had no way to tell "in flight for 200 ms" from "registered yesterday and
+ * never honoured", and the fact that separates them was already known server-side.
+ *
+ * **THE TWO NEW FACTS, AND WHY BOTH ARE NEEDED.** `welcomeQueued` says a Welcome is really sitting
+ * in the queue for this device and this group, so it will arrive the moment delivery runs -
+ * `reportStrandedDeviceMemberships` has partitioned on exactly this since 2026-09-01. `addInFlight`
+ * says a member holds this group's add lock, which is the window a queued Welcome does not yet cover:
+ * every Add path takes the lock BEFORE writing the roster row and releases it after the Welcome is
+ * queued, so `welcomeQueued` alone would let the requester race a legitimate Add and re-open GRP-4.
+ * Together they are true for every `pending` row somebody is actually working on, and false only for
+ * a roster seat nothing follows.
+ *
+ * **A SERVER THAT DOES NOT SAY IS NOT A SERVER SAYING NO.** Both fields are optional, and a row from
+ * a server that carries neither falls back to the old reading - `pending` means owed. A native client
+ * ships its own frontend (`frontendDist`), so an APK older than this change talks to a server that
+ * has it and vice versa; treating a missing field as `false` would hand the whole invited population
+ * the external join, which is the race, not the fix.
  */
 async function readWelcomeOwed(groupId: string, deps: RecoveryDeps): Promise<boolean | null> {
   try {
@@ -331,7 +377,26 @@ async function readWelcomeOwed(groupId: string, deps: RecoveryDeps): Promise<boo
       deps.userId,
       deps.mlsService.getDeviceId()
     );
-    return rows.find((r) => r.groupId === groupId)?.status === 'pending';
+    const row = rows.find((r) => r.groupId === groupId);
+    if (row?.status !== 'pending') return false;
+
+    // A server that carries neither field cannot be asked the question, so the row's status is all
+    // there is - the behaviour every client had before this change.
+    if (row.welcomeQueued === undefined && row.addInFlight === undefined) return true;
+
+    const owed = row.welcomeQueued === true || row.addInFlight === true;
+    if (!owed) {
+      // THIS LINE IS THE DEFECT'S NAME, and it accuses. A roster seat with no Welcome and no Add in
+      // flight is the population `reportStrandedDeviceMemberships` names hourly; reaching it here
+      // means this device was given a seat nobody ever honoured, and the next lines are the
+      // self-service join that used to be unreachable. If it is common, the inviter is dropping
+      // devices - which is the P2 next door, not this seam.
+      deps.log(
+        `[READD] ${groupId.slice(0, 8)}... roster seat with NO queued Welcome and NO add in flight` +
+          ` - nobody owes us anything; serving ourselves`
+      );
+    }
+    return owed;
   } catch (e) {
     deps.log(
       `[READD] ${groupId.slice(0, 8)}... getDeviceMemberships threw: ${String(e).slice(0, 120)}`

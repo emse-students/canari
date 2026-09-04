@@ -146,7 +146,7 @@ invite tokens, and `/app-shell`.
 meant a 502 on *every* navigation — the whole site, to spare a `<head>`. `routes/app-shell/` is
 prerendered into `build/prerendered/app-shell.html`: a plain shell that boots the SPA on whatever
 URL was requested (`kit.start(app, element)` with no route data, exactly like the static build's
-fallback). nginx serves it from `@app_shell` on 502/503/504.
+fallback). nginx serves it from `@app_shell` on 502/503/504. **Its asset paths have to be absolute, which is why the web build sets `paths.relative: false`** - a page served on a URL it does not own cannot resolve `./_app/...`; see [nginx](../infrastructure/nginx.md#when-frontend-ssr-is-down-app_shell).
 
 That `error_page` carries **`=200`**, and the reasoning went the other way first. Preserving the 5xx
 is better for a crawler (a status it retries, rather than a 200 whose head is the generic one), and

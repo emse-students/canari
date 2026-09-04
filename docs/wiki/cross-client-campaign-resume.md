@@ -18,7 +18,7 @@ the [board](cross-client-testing.md); what the old board said is
 | What changed | When | What it does to a run |
 |---|---|---|
 | **The rig is GONE** | 2026-09-02 | This machine was reconstituted from a handoff bundle collected without `-WithRig`: no `chrome-w1` / `chrome-w2` profiles, no `results.ndjson`, no `apk/`, no `a1-baseline/`. The profiles ARE the devices, so every device is new; the ledger is what made a verdict readable, so every old verdict is a claim with nothing behind it. |
-| **The target is LOCAL** | 2026-09-03 | `http://localhost:1420`, not `https://canari-emse.fr`. Different origin, different cookie policy, a database that is a SNAPSHOT of production rather than production. |
+| **The target is LOCAL** | 2026-09-03 | **`http://localhost:8081` - nginx, the BUILT estate**, not `https://canari-emse.fr` and not the vite dev server on 1420 (see the correction in section 5). Different origin, different cookie policy, a database that is a SNAPSHOT of production rather than production, and an object store that is EMPTY. |
 | **Nothing deploys at a push** | 2026-09-03 | The mutual-exclusion rule is retired outright - see section 3. |
 | **The accounts are new again** | 2026-09-03 | The rig restarts on fresh dedicated accounts, and the fixtures they own have to be built by hand once. |
 
@@ -63,6 +63,12 @@ deliberately, which is what rung 18 CORRUPT has always wanted and never had.
   having no `Secure` cookie to send. A differing PORT is still same-site, so local is sound for what
   it measures; **a row whose question is about CROSS-SITE behaviour is measuring something else, and
   says so in its own cell.**
+- **THE OBJECT STORE IS EMPTY, and `make dump-prod` does not fill it.** The dump copies the
+  DATABASE; Garage starts with **zero objects**. So every avatar, every attachment and every post
+  image that predates this estate answers 404 while its row in Postgres says it exists. Measured
+  2026-09-04 on `/posts`, where it reads exactly like a broken media path. **It is not a defect and
+  no row may report it as one** - a row whose question is about media uploads what it then reads,
+  in the same pass.
 - **FCM reaches no real device**, so every `+push` row needs the local estate given its own push
   credentials before it means anything.
 - **The phone needs `adb reverse`, per device, and it does not survive a replug.** Neither phone can
@@ -157,13 +163,38 @@ is a numbered step rather than an assumption.
 Everything below is in order, and nothing else goes first.
 
 1. **Bring the local estate up and prove it ANSWERS**, because containers starting proves nothing:
-   `make run-services`, then `cd frontend && bun run dev`, then
-   `curl -s http://localhost:8081/api/version`. That version is what every verdict from this session
-   is stamped with.
+   `make run-services`, then `curl -s http://localhost:8081/api/version`. That version is what every
+   verdict from this session is stamped with.
+
+   **THE ESTATE IS THE BUILT ONE ON `:8081`, NOT `bun run dev` ON 1420 (corrected 2026-09-04, after
+   the campaign was pointed at the dev server first).** Three reasons, each measured that day:
+   the dev server serves no `_app/version.json`, so `bundle.mjs` cannot read what a client is
+   EXECUTING and the preflight has nothing to gate on - the one protection against a stale client;
+   `SITE` has to be an origin the identity provider will redirect to, and each port is a separate
+   redirect URI on the **`Canari Local`** Authentik provider, which is not the production `Canari`
+   one; and a SAVE reloads every client, which section 3 already names as what replaced the deploy.
+   Rebuild with `BUILD_WEB=1 npx vite build` in `frontend/`, then
+   `docker compose ... build nginx && up -d nginx`, and reload the clients.
+
+   **`frontend-ssr` must be RUNNING, and it was missing from the local compose file until
+   2026-09-04.** Without it every navigation 502s into `@app_shell`, and the shell used to load no
+   module at all on any route deeper than one segment - `/auth/callback` included, which is the login
+   landing, so the campaign could not even log in. Both halves are fixed; if a client renders a blank
+   page after a login, `docker compose ps` is the first thing to read.
+
+   **`make run-services` passes `--env-file infrastructure/.env`, and a bare `docker compose up`
+   does not.** Running compose without it recreates `garage` with no `GARAGE_RPC_SECRET`, which
+   exits(1) on the spot and takes `nginx`, `media-service` and `social-service` with it. Use the
+   Makefile target, or carry the flag.
 2. **Seed the database from a production dump** (decision 5 - a full copy, PII included). A campaign
    against an empty schema measures an empty schema.
-3. **Create the rig root and its `names.mjs`**, `SITE = "http://localhost:1420"`, and the two-line
-   pointer inside the repo. Verify with the `node -e` line in section 4 before anything else.
+3. **Create the rig root and its `names.mjs`**, `SITE = "http://localhost:8081"`, and the two-line
+   pointer inside the repo. **89 literals naming the production host were swept out of the rig on
+   2026-09-04** so that this really is one line: `APP_TAB` / `APP_HOST` in `chat.mjs` derive the tab
+   matcher and the cookie domain from `SITE`, and `psql` / `redis` in `ssh.mjs` pick a local `docker
+   exec` or production's tunnel from it too - which is why a fresh device once read as `registered=false`
+   while the rig was asking PRODUCTION about a device that only existed locally. The local Postgres
+   superuser is `admin`, not `canari`; that follows `SITE` as well, and no flag selects it. Verify with the `node -e` line in section 4 before anything else.
 4. **Create the accounts, log both in, set the PINs, build the fixtures** (section 4).
 5. **`node state.mjs`** - the clients, what they are logged into, and what they are running.
 6. **`node rows.mjs`** - the board against the ledger. Both are empty now, which is the one time
@@ -200,7 +231,12 @@ Everything below is in order, and nothing else goes first.
 - the four population rows written into rung 12 MULTI (7-10), which need only `W1 W2` - **though on
   local they now measure a snapshot, and the row says so**
 - the second iPhone that acquires no push token and reports nothing, diagnosable with no phone
-- the P1 livelock of 2026-09-01 (a device asking for a Welcome every 60 s for 20 hours while the
-  member answering `[KICK]`s it back to `pending`), which is a server-side question
+- **the P1 livelock of 2026-09-01 - its half (A) is FIXED, 2026-09-04, and what is left is a row.**
+  `pending` no longer decides on its own: the endpoint answers with `welcomeQueued` and `addInFlight`
+  per row, and a device owed nothing joins itself. It was reproduced on this estate and measured
+  twice green with no phone at all. **What no row yet asks** is the `[KICK]` arm - a device the
+  repair is actively kicking is still reset to `pending` before the Add is known to land, so it can
+  now escape between turns but the write order is unchanged. That row needs `W1 W2 W3` and nothing
+  else.
 
 ---

@@ -48,13 +48,35 @@ function makeMls(overrides: Record<string, unknown> = {}) {
     // populations `requestReAdd` serves, so a stub that answers nothing puts every case on the
     // "could not tell" path and none of them reach the join at all.
     getDeviceMemberships: vi.fn().mockResolvedValue([]),
+    // The self-service join now CLEARS the roster seat it joined on, so the stub owes this call.
+    // Without it the success path would reject on `undefined.catch` and every join test would pass
+    // for the wrong reason.
+    updateInvitationStatus: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   };
 }
 
-/** One membership row in the shape `getDeviceMemberships` returns. */
-function membership(groupId: string, status: 'pending' | 'active') {
-  return { id: `m-${groupId}`, userId: 'user-a', deviceId: 'self-device', groupId, status };
+/**
+ * One membership row in the shape `getDeviceMemberships` returns.
+ *
+ * `facts` IS OMITTED BY DEFAULT ON PURPOSE. A row carrying neither `welcomeQueued` nor `addInFlight`
+ * is what a server older than those fields answers, and the rows above pin that a `pending` row is
+ * still read as "owed" in that case - the behaviour every shipped client has. A test that always
+ * passed the facts could not tell that branch from the new one.
+ */
+function membership(
+  groupId: string,
+  status: 'pending' | 'active',
+  facts?: { welcomeQueued?: boolean; addInFlight?: boolean }
+) {
+  return {
+    id: `m-${groupId}`,
+    userId: 'user-a',
+    deviceId: 'self-device',
+    groupId,
+    status,
+    ...facts,
+  };
 }
 
 function makeConversations(entries: Array<[string, object]> = []) {
@@ -105,6 +127,85 @@ describe('requestReAdd', () => {
     await requestReAdd('g1', deps, new Map());
 
     expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1');
+  });
+
+  it('waits when a Welcome is actually queued for this device and this group', async () => {
+    // `welcomeQueued` is the healthy half of `pending`: the Add worked, delivery is owed, and the
+    // frame arrives the moment this device drains its queue. Serving ourselves an external commit
+    // here is the GRP-4 race with extra steps.
+    const deps = makeDeps();
+    deps.mlsService.getDeviceMemberships = vi
+      .fn()
+      .mockResolvedValue([
+        membership('g1', 'pending', { welcomeQueued: true, addInFlight: false }),
+      ]);
+    deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
+
+    await requestReAdd('g1', deps, new Map());
+
+    expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
+    expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledWith('g1');
+  });
+
+  it('waits while a member holds the add lock, even with no Welcome queued yet', async () => {
+    // THE WINDOW A QUEUED WELCOME DOES NOT COVER, and the reason `welcomeQueued` alone is not the
+    // discriminator. Every Add path takes `mls:addlock:<groupId>` BEFORE writing the roster row and
+    // releases it after the Welcome is queued, so "row written, Welcome not yet" is precisely when
+    // the lock is held. Reading that instant as "nobody owes me anything" re-opens GRP-4.
+    const deps = makeDeps();
+    deps.mlsService.getDeviceMemberships = vi
+      .fn()
+      .mockResolvedValue([
+        membership('g1', 'pending', { welcomeQueued: false, addInFlight: true }),
+      ]);
+    deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
+
+    await requestReAdd('g1', deps, new Map());
+
+    expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
+    expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledWith('g1');
+  });
+
+  it('serves itself when the roster seat has no Welcome and no Add in flight', async () => {
+    // THE P1 OF 2026-09-03, PINNED. A device that enrols while nobody is online gets one `pending`
+    // row per conversation and nothing else - no Welcome queued, no member adding - and used to
+    // return here and ask again every 60 s for as long as it stayed open: eleven groups, ten hours,
+    // 552 requests on production, and every base was published the whole time. Nothing owes this
+    // device anything that exists, so the self-service join is its to make.
+    const deps = makeDeps();
+    deps.mlsService.getDeviceMemberships = vi
+      .fn()
+      .mockResolvedValue([
+        membership('g1', 'pending', { welcomeQueued: false, addInFlight: false }),
+      ]);
+    deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
+
+    await requestReAdd('g1', deps, new Map());
+
+    expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1');
+    expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
+  });
+
+  it('clears the roster seat it joined on, so no member re-adds a leaf already in the tree', async () => {
+    // A `pending` row is a WORK ITEM `getPendingInvitations` serves to every member. Joining by
+    // external commit and leaving it behind means the next member online calls `addMember` for a
+    // leaf that is already there, gets `DuplicateSignature`, and its handler kicks the live leaf.
+    const deps = makeDeps();
+    deps.mlsService.getDeviceMemberships = vi
+      .fn()
+      .mockResolvedValue([
+        membership('g1', 'pending', { welcomeQueued: false, addInFlight: false }),
+      ]);
+    deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
+
+    await requestReAdd('g1', deps, new Map());
+
+    expect(deps.mlsService.updateInvitationStatus).toHaveBeenCalledWith(
+      'self-device',
+      'user-a',
+      'g1',
+      'active'
+    );
   });
 
   it('skips the round entirely when the membership status cannot be read', async () => {

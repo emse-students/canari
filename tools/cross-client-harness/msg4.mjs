@@ -12,26 +12,15 @@
  * send does: a 4xx there is exactly the kind of thing that would otherwise hide behind a green row.
  */
 import { fileURLToPath } from 'node:url';
-import {
-  client,
-  ensureChat,
-  openConversation,
-  evaluate,
-  attachFiles,
-  awaitMessage,
-  countMessage,
-  pollFact,
-  realClick,
-  until,
-} from './chat.mjs';
+import { APP_TAB, attachFiles, awaitMessage, client, countMessage, ensureChat, evaluate, openConversation, pollFact, realClick, until } from './chat.mjs';
 import { gate, report, watch } from './watch.mjs';
 import { record, mark } from './results.mjs';
 import { peerNameFor } from './names.mjs';
 
 const abs = (rel) => fileURLToPath(new URL(rel, import.meta.url));
 
-const w1 = await client(9224, 'canari-emse.fr');
-const w2 = await client(9223, 'canari-emse.fr');
+const w1 = await client(9224, APP_TAB);
+const w2 = await client(9223, APP_TAB);
 
 await ensureChat(w1);
 await openConversation(w1, peerNameFor('W1'));

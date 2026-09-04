@@ -30,17 +30,7 @@
  *   node tab3b.mjs            - five runs
  *   node tab3b.mjs --runs 2   - fewer, while working on it
  */
-import {
-  LOGIN_SHOWING,
-  awaitAppReady,
-  awaitMessage,
-  client,
-  countMessage,
-  ensureChat,
-  evaluate,
-  openConversation,
-  send,
-} from './chat.mjs';
+import { APP_TAB, awaitAppReady, awaitMessage, client, countMessage, ensureChat, evaluate, LOGIN_SHOWING, openConversation, send } from './chat.mjs';
 import { listTargets } from './cdp.mjs';
 import { killBrowser, startBrowser } from './launch.mjs';
 import { unlockClient } from './pingate.mjs';
@@ -97,7 +87,7 @@ for (let i = 1; i <= RUNS; i++) {
 
   // 5. the PIN, and a PROVEN verdict rather than "the CLI said something".
   const tUnlock = Date.now();
-  const pin = await unlockClient(w1, PORTS.W1, ACCOUNT_OF.W1, { match: 'canari-emse.fr' });
+  const pin = await unlockClient(w1, PORTS.W1, ACCOUNT_OF.W1, { match: APP_TAB });
   const unlockMs = Date.now() - tUnlock;
 
   // 6. the queue. `openConversation` is what puts the messages on screen; the wait is for the one

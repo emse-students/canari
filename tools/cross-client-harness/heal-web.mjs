@@ -24,7 +24,7 @@
  * name nothing reconciled - DEL-1's fault seen from the other end, and what `rows.mjs` exists to
  * catch. The board's vocabulary is the campaign's only vocabulary; a runner does not get its own.
  */
-import { client, openConversation, send, evaluate, markers } from './chat.mjs';
+import { APP_TAB, client, evaluate, markers, openConversation, send } from './chat.mjs';
 import { watch } from './watch.mjs';
 import { mark, record } from './results.mjs';
 import { execFileSync } from 'node:child_process';
@@ -171,8 +171,8 @@ const repairLines = (cx, sinceT) =>
     .map(stamp);
 
 // --------------------------------------------------------------------------- clients
-const w1 = await client(9224, 'canari-emse.fr', { focus: false });
-const w2 = await client(9223, 'canari-emse.fr', { focus: false });
+const w1 = await client(9224, APP_TAB, { focus: false });
+const w2 = await client(9223, APP_TAB, { focus: false });
 // BOTH are reloaded, and W2's reload is not optional. A history bundle inserts hundreds of OLDER
 // messages into a virtualised list, and the mounted window then stays anchored in the past: after
 // one run, W2's pane ended on messages from 12:40 with the scroller already at its maximum, so

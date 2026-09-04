@@ -28,7 +28,7 @@
  * filter matches no target there and `client()` dies naming what it did find. The flag existed and
  * was documented eighty lines below, where nobody about to type a command is looking.
  */
-import { client, evaluate } from './chat.mjs';
+import { APP_TAB, client, evaluate } from './chat.mjs';
 import { logcatSince, logcatReport } from './watch.mjs';
 
 /**
@@ -152,8 +152,8 @@ const flag = (name, fallback) => {
 // `canari-emse.fr`, while the phone's WebView serves the app from `tauri.localhost`, so the browser
 // filter matches nothing there and `client()` would attach to whatever it found first.
 const sides = [
-  { label: flag('leftName', 'W1'), port: Number(flag('left', 9224)), url: flag('leftUrl', 'canari-emse.fr') },
-  { label: flag('rightName', 'W2'), port: Number(flag('right', 9223)), url: flag('rightUrl', 'canari-emse.fr') },
+  { label: flag('leftName', 'W1'), port: Number(flag('left', 9224)), url: flag('leftUrl', APP_TAB) },
+  { label: flag('rightName', 'W2'), port: Number(flag('right', 9223)), url: flag('rightUrl', APP_TAB) },
 ];
 
 /**

@@ -18,7 +18,7 @@
  * the thing under test - `am start` with a deep link would bypass the PendingIntent entirely and
  * measure nothing.
  */
-import { client, ensureChat, openConversation, countMessage, send, evaluate, goto, COMPOSER } from './chat.mjs';
+import { APP_TAB, client, COMPOSER, countMessage, ensureChat, evaluate, goto, openConversation, send } from './chat.mjs';
 import { logcatReport, logcatSince, watch } from './watch.mjs';
 import { finishObserved, mark } from './results.mjs';
 import * as phone from './phone.mjs';
@@ -132,7 +132,7 @@ stage(`A1 before: ${out.beforeUrl}`);
 // The first run of this check used W1 and reported "no notification ever reached the shade" - a FAIL
 // against a build that was behaving correctly. The sender must be the PEER.
 stage('attaching W2, the peer, as the sender');
-const w2 = await client(9223, 'canari-emse.fr');
+const w2 = await client(9223, APP_TAB);
 await ensureChat(w2);
 await openConversation(w2, peerNameFor('W2'));
 const w = await watch(w2, 'W2');
@@ -147,7 +147,7 @@ const phoneWindowFrom = Date.now();
 // mechanism NOTIF-4 verifies - and the notification under test is cancelled by design. Seen in the
 // previous run's log, arriving BEFORE the message push it was meant to dismiss.
 stage('parking W1 off the conversation, so it cannot dismiss the notification by reading it');
-const w1 = await client(9224, 'canari-emse.fr');
+const w1 = await client(9224, APP_TAB);
 await goto(w1, '/posts');
 await sleep(3_000);
 out.w1Url = await evaluate(w1, 'location.href');

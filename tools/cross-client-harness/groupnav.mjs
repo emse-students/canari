@@ -11,6 +11,7 @@
  * call sites disagreeing about which conversation is on screen.
  */
 import { evaluate, goto, PANE_HAS_CONVERSATION, realClick, until } from './chat.mjs';
+import { pressKey } from './cdp.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const COMPOSER = '.chat-composer-footer .chat-composer-editor';
@@ -266,6 +267,92 @@ export async function createGroup(cx, name, { label = 'createGroup' } = {}) {
   await until(cx, `document.body.innerText.indexOf(${JSON.stringify(name)}) !== -1`, 25000);
   await sleep(2500);
   return name;
+}
+
+/**
+ * Opens a DM with `contact` by name, CREATING it if the sidebar does not already list it.
+ *
+ * THE FIXTURE STEP THAT HAD NO ATOM. Restart step 4 of the campaign says "let W1 open a DM to the
+ * peer", and until this existed there was nothing to call: `openDM` CLICKS a row that has to be
+ * there already, and a fresh pair of accounts owns no conversation at all. So the one gesture every
+ * MSG, READ, TYPE and FWD row stands on was the one gesture nobody could take twice the same way.
+ *
+ * IT IS IDEMPOTENT, AND THAT IS THE POINT. The product refuses a second DM between the same two
+ * people, so a blind create is a modal that cannot be submitted; the sidebar is asked first and the
+ * whole gesture is skipped when the row is there. Run it twice and the second run is one read.
+ *
+ * THE SUBMIT IS GATED ON A SELECTION, NOT ON TEXT. `#new-contact-id` is a SEARCH box: typing the
+ * exact display name leaves "Démarrer la discussion" disabled, because the modal wants a chosen
+ * contact rather than a matching string - and a click on a disabled control is discarded in silence,
+ * which is the same trap `createGroup` records for the group name. So the suggestion is clicked, and
+ * the button's own `disabled` is the post-condition waited on before it is pressed.
+ *
+ * THE SUGGESTION IS PICKED BY NAME AND NOT BY POSITION, for the reason `names.mjs` exists: a search
+ * for a name that matches two accounts must not silently open a DM with whichever one the list
+ * happened to sort first. A match that is not unique is a throw.
+ *
+ * @param cx a connected client
+ * @param contact the other party's DISPLAY name, as `names.mjs` spells it
+ */
+export async function createDM(cx, contact, { label = 'createDM' } = {}) {
+  await closeOverlays(cx);
+  if ((await evaluate(cx, 'location.pathname')) !== '/chat') await goto(cx, '/chat');
+
+  const listed = `document.body.innerText.indexOf(${JSON.stringify(contact)}) !== -1`;
+  if ((await evaluate(cx, listed)) === true) return 'already listed';
+
+  await realClick(cx, '[aria-label="Nouvelle discussion"]');
+  await until(cx, `/Nouvelle discussion/.test(document.body.innerText)`, 10000);
+  // The modal OPENS on the Contact tab, so this click changes nothing today - it is here so the tab
+  // is a state this function asserted rather than one it inherited, the same reason `createGroup`
+  // clicks "Groupe" before looking for the group input.
+  await realClick(cx, 'text=Contact');
+  await until(cx, `!!document.querySelector('#new-contact-id')`, 10000);
+
+  await realClick(cx, '#new-contact-id');
+  await cx.send('Input.insertText', { text: contact });
+
+  // THE OPTION IS AN `li[role="option"]`, NOT A BUTTON, and it answers `mousedown` rather than
+  // `click` - `UserAutocomplete` says why in its own markup: the option IS the li, because wrapping
+  // a button in it would break the listbox relation, and `handleBlur` fires before a click would.
+  // Looking for a button therefore found nothing and timed out on a dropdown plainly open, which is
+  // the failure this comment exists to stop repeating. `role="option"` is the stable handle the
+  // component was written to offer.
+  const OPTIONS = `[].slice.call(document.querySelectorAll('[role="option"]')).map(function (o) { return (o.innerText || '').trim(); })`;
+  await until(cx, `(${OPTIONS}).length > 0`, 15000);
+  const options = JSON.parse(await evaluate(cx, `JSON.stringify(${OPTIONS})`));
+  const matching = options.filter((t) => t.includes(contact));
+  if (matching.length !== 1)
+    throw new Error(
+      `${label}: ${matching.length} of ${options.length} suggestions match ${contact}, so none can be chosen: ${options.join(' | ')}`
+    );
+
+  // SELECTED BY KEYBOARD, and that is deliberate rather than convenient. The dropdown is PORTALLED
+  // and positioned by an effect, so where it lands depends on the viewport - a click into it is the
+  // one gesture in this file whose target moves with the screen, and the rig drives phones of
+  // several sizes. The combobox pattern the component implements offers the size-independent path
+  // itself: `aria-activedescendant` moves with ArrowDown, Enter takes the highlighted option.
+  const index = options.findIndex((t) => t.includes(contact));
+  for (let i = 0; i <= index; i++) await pressKey(cx, 'ArrowDown');
+  await pressKey(cx, 'Enter');
+
+  await until(
+    cx,
+    `(function () {
+       var b = [].slice.call(document.querySelectorAll('button')).filter(function (x) {
+         return /Démarrer la discussion/.test(x.innerText || '');
+       })[0];
+       return !!b && !b.disabled;
+     })()`,
+    8000
+  );
+  await realClick(cx, 'text=Démarrer la discussion');
+
+  // The SIDEBAR row is what "the DM exists" implies - not the composer, for the reason `createGroup`
+  // records: with several conversations listed the sidebar re-sorts and the selection is lost.
+  await until(cx, listed, 25000);
+  await sleep(2500);
+  return 'created';
 }
 
 /**

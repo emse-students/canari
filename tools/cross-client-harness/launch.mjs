@@ -12,7 +12,7 @@
  */
 import { spawn, execSync } from "node:child_process";
 import { join } from "node:path";
-import { STATE_DIR } from "./names.mjs";
+import { SITE, STATE_DIR } from "./names.mjs";
 
 const CHROME = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 const POWERSHELL = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
@@ -84,8 +84,15 @@ export async function killBrowser(which, timeoutMs = 20_000) {
  * Refuses to run against a live instance: a second `chrome.exe` on the same `--user-data-dir` does
  * not start a browser, it hands the URL to the running one and exits - so the "relaunch" would
  * silently be an extra TAB in the browser that was never killed.
+ *
+ * THE LANDING URL IS `SITE`, NOT A SPELT HOST. It used to be `https://canari-emse.fr/chat`, which
+ * survived the 2026-09-03 move to the local estate because nothing reads a default argument back:
+ * every browser this rig started opened PRODUCTION while `names.mjs` said `http://localhost:1420`,
+ * and the first gesture of every row then acted on whichever estate the previous navigation had
+ * left behind. A default is a navigation literal like any other and belongs to the one constant
+ * that decides where the campaign runs.
  */
-export async function startBrowser(which, url = "https://canari-emse.fr/chat") {
+export async function startBrowser(which, url = `${SITE}/chat`) {
   const { port, profile } = BROWSERS[which];
   if (await isUp(which)) throw new Error(`${which} is already up on ${port} - kill it first`);
   const child = spawn(

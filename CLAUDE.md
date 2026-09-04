@@ -229,23 +229,13 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    [resume](docs/wiki/cross-client-campaign-resume.md).
 2. **P1 - a PLACEHOLDER held a member's seat**; whether a LEAF is left in the MLS tree only a
    member's CLIENT can say. [backlog](docs/wiki/backlog.md#p1---the-placeholder-is-gone-from-prod-what-it-may-have-left-in-the-mls-tree-is-not-answered).
-3. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - **ONE merge
-   mechanism and ONE arming point since 2026-09-04**: `arm-auto-merge.yml` on
-   `pull_request_target`, which is the only context where a Dependabot pull request reaches a
-   secret. The 448-line hourly sweep, its 179-line script, its 250-line staleness library and
-   `CODEOWNERS` are all DELETED - and so is the whole "rebuild a stale branch" question, whose
-   mechanism was refused ten times out of ten. **The SAME four workflows are now in all four GitHub
-   repos**, one arming file each, byte-identical audit classifier
-   ([ecosystem-convergence](docs/wiki/ecosystem-convergence.md#12-the-cicd-rebuild-2026-09-04---the-same-four-workflows-in-every-repository),
-   the only copy). **All four now require `CI passed` on `main`** - Sky and MiGallery had NO branch
-   protection at all until 2026-09-04 - and the chain was watched end to end: Dependabot rebased,
-   `synchronize` fired, five pull requests armed themselves. A SECOND PASS the same day made
-   `deploy.yml` a library everywhere and the CI file `ci.yml` everywhere; **`bun
-   tools/ecosystem-shape/shape.mjs` asserts that and is the only thing reading the four at once.**
-   Model on
-   [cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them). Open items
-   include **[the suppression CONTROL CASE the NestJS batch destroyed - Monday 2026-09-07 answers
-   it](docs/wiki/backlog.md#p2---the-nine-nestjs-pull-requests-were-closed-in-one-batch-so-the-suppression-question-was-never-measured-on-one-first-and-monday-2026-09-07-is-the-only-thing-that-can-answer-it-now-updated-2026-09-03)**
+3. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - **ONE merge mechanism
+   and ONE arming point since 2026-09-04**, the same four workflows in all four GitHub repos, and
+   `bun tools/ecosystem-shape/shape.mjs` is the only thing that asserts it
+   ([rebuild](docs/wiki/ecosystem-convergence.md#12-the-cicd-rebuild-2026-09-04---the-same-four-workflows-in-every-repository),
+   [cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them), the only
+   copies). Open: **[the suppression CONTROL CASE the NestJS batch destroyed - Monday 2026-09-07
+   answers it](docs/wiki/backlog.md#p2---the-nine-nestjs-pull-requests-were-closed-in-one-batch-so-the-suppression-question-was-never-measured-on-one-first-and-monday-2026-09-07-is-the-only-thing-that-can-answer-it-now-updated-2026-09-03)**,
    and **nothing tells anybody prod is down**. Hosts:
    [host-updates](docs/wiki/infrastructure/host-updates.md).
 4. **P1 - a release-asset upload was refused WITH the permission granted, cause UNMEASURED**; six
@@ -261,7 +251,7 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
 9. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
    and audit in [backlog](docs/wiki/backlog.md).
 10. **P1 - A DEVICE ASKS FOR A WELCOME FOR EVER AND THE MEMBER ANSWERING RESETS THE HEALING ROW** -
-    a livelock proved on prod, state LEFT there ([backlog](docs/wiki/backlog.md#p1---a-device-asks-for-a-welcome-for-ever-and-the-member-that-answers-resets-the-row-that-would-have-let-it-heal-itself-measured-on-prod-2026-09-01)); read with its
+    **(A) FIXED 2026-09-04, (B) (C) (D) OPEN** ([backlog](docs/wiki/backlog.md#p1---a-device-asks-for-a-welcome-for-ever-and-the-member-that-answers-resets-the-row-that-would-have-let-it-heal-itself-measured-on-prod-2026-09-01)); read with its
     [sibling P2](docs/wiki/backlog.md#p2---a-device-was-given-a-roster-seat-and-never-a-welcome-and-why-its-keypackage-was-skipped-is-unmeasured-measured-on-prod-2026-09-01) and with 11.
 11. **TWELVE MESSAGES DROPPED, PERMANENT COMMIT-LOG HOLE AT EPOCH 121** - the four defects are
     FIXED AND DEPLOYED (ancestors of `v0.15.0`); only the RESIDUE is open, and the 13:10 failure
