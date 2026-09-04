@@ -79,6 +79,18 @@ const BUILD_TERMINAL_BAD = new Set(['INVALID', 'FAILED']);
  */
 const VERSION_EDITABLE = new Set([
   'PREPARE_FOR_SUBMISSION',
+  // `READY_FOR_REVIEW` IS NOT A VERSION APPLE HAS. It is a version that has been ATTACHED to a
+  // review submission nobody has sent - the state the App Store Connect UI leaves behind when a
+  // human prepares a release and stops before "Submit to App Review". Apple's own progression puts
+  // `WAITING_FOR_REVIEW` after it, and that is where `VERSION_IN_REVIEW` below correctly begins.
+  //
+  // IT WAS IN NONE OF THE THREE SETS, so `classifyVersionState` answered `unknown version state`
+  // and `chooseVersionSlot` refused - naming a human decision that did not exist to make. That cost
+  // the `0.16.2` stable on 2026-09-04: Play took the version, the IPA reached TestFlight, and the
+  // submission stopped on a prepared-and-forgotten `0.16.1`, which left the production estate on
+  // the previous release because it is gated on both stores. An occupied slot nobody can free
+  // without a click blocks EVERY later stable, which is the queue this project does not keep.
+  'READY_FOR_REVIEW',
   'DEVELOPER_REJECTED',
   'REJECTED',
   'METADATA_REJECTED',
