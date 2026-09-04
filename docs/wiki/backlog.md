@@ -1358,8 +1358,7 @@ client", never "clean on the server".
 
 ### P1 - a device asks for a Welcome for ever, and the member that answers RESETS the row that would have let it heal itself (measured on prod 2026-09-01)
 
-> **(A) IS FIXED AND MEASURED, 2026-09-04. (B), (C) and (D) ARE OPEN and this stays a P1 until they
-> land.** `pending` no longer decides anything on its own: the endpoint answers per row with
+> **(A) AND (B) ARE FIXED AND MEASURED, 2026-09-04. (C) AND (D) ARE OPEN.** `pending` no longer decides anything on its own: the endpoint answers per row with
 > `welcomeQueued` and `addInFlight`, a device owed nothing serves itself an external-commit join and
 > clears its own seat. **The residual window (A) was not allowed to ship without is closed by
 > `addInFlight` - the group's `mls:addlock:<groupId>` held right now - and NOT by the inviter's own
@@ -1370,10 +1369,15 @@ client", never "clean on the server".
 > twice green - two fresh devices each joining all four groups in the same second, rows promoted,
 > epochs advanced, fresh bases republished. Tests:
 > `invitations.controller.device-memberships.spec.ts` (6) and `recovery.test.ts` (21).
-> **What (A) does NOT touch:** the `[KICK]` still writes `pending` before it knows the Add will land,
-> so a device the repair is actively kicking is still reset - only now it can escape between turns.
-> A second measurement is owed on that arm specifically. The `4f87267a` base is a separate matter and
-> is still stale on prod.
+> **(B), the same day, because (A) made it worse rather than better.** `kickStaleLeaf` cleared the
+> routing row whether or not the leaf came out of the tree, and a `pending` row over a LIVE leaf now
+> tells that device to external-join beside it - GRP-4 from the other side, the repair manufacturing
+> the fault it cleans up. The row is cleared only when the tree is genuinely without the leaf, and
+> "the leaf was never there" is a TYPE (`MlsError::NoSuchMember`) rather than a substring of an
+> OpenMLS message, because it is the one refusal that means the caller's goal is already met.
+> `groupActions.kickStaleLeaf.test.ts` (5) pins the order and was validated in negative against the
+> unfixed function; `roster_removal.rs` pins the variant and that the tree is untouched.
+> **The `4f87267a` base is a separate matter and is still stale on prod.**
 
 
 **A LIVELOCK, NOT A WAIT: each side re-creates the other's precondition, and it ran for 20 HOURS on
@@ -1486,11 +1490,10 @@ that group cannot external-join until somebody commits into it.
 - The manual UPDATE is the only hand-write performed; nothing was deleted, and the fourteen-day purge
   still owns those rows.
 
-**What closes this entry:** (B) in the tree with tests - (A) landed 2026-09-04 with the measurement
-this line asked for, a device reaching `active` by external join with no peer involved and no
-hand-written UPDATE, taken twice - the `4f87267a` base refreshed by any means, and (C) and (D)
-answered. The cause of the skipped Add itself is the P2 immediately below, and the two want reading
-together.
+**What closes this entry:** (C) and (D), and the `4f87267a` base refreshed by any means. (A) and (B)
+landed 2026-09-04, (A) with the measurement this line asked for - a device reaching `active` by
+external join with no peer involved and no hand-written UPDATE, taken twice. The cause of the skipped
+Add itself is the P2 immediately below, and the two want reading together.
 
 ### P2 - a device was given a roster seat and never a Welcome, and WHY its KeyPackage was skipped is unmeasured (measured on prod 2026-09-01)
 

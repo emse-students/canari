@@ -11,6 +11,34 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A repair that could not remove a stale leaf cleared the routing row anyway, which is now an
+  invitation to add a second leaf.** `kickStaleLeaf` does two things to two different estates: it
+  removes the stale leaf from the MLS TREE, which decides who can read the group, and it clears the
+  device's ROUTING ROW to `pending`, which decides who the delivery service ships to. Both ran
+  unconditionally, so a refused Remove still wrote `pending` - a destructive write made before its
+  own prerequisite was known to hold, which is the invariant `f46e7660` established for the function
+  next door and the third time it has been needed in this area.
+
+  **It became load-bearing the same day the other half of its P1 was fixed.** `pending` used to mean
+  "wait for a member to Add you", and a wrong one cost a delay. It now means, when no Welcome is
+  queued and no add lock is held, "stop waiting and join by external commit". So clearing the
+  routing row over a leaf that is STILL IN THE TREE asks that device to add a second leaf beside the
+  first - the duplicate-leaf race of 2026-08-26 reached from the other side, with the repair
+  manufacturing the fault it exists to clean up. The row is now cleared only when the tree is
+  genuinely without the leaf.
+
+  **"Nothing to remove" is not a refusal, and it needed a type to say so.** A tree that never held
+  the leaf is the outcome the caller wants; a Remove that was refused is the opposite state. Both
+  were one `OpenMls("No member found for identities: ...")` string, so telling them apart meant
+  matching prose - which this repository forbids precisely because a distinction carried in a
+  message is one exactly one call site will ever make. `MlsError::NoSuchMember` carries it as a
+  variant now, `mlsRemoveError.ts` is the only thing that reads the token, and it fails towards
+  "still present" because the two mistakes are not symmetric: reading a refusal as success invites a
+  duplicate leaf, while reading an absent leaf as present only leaves a row for the next pass.
+
+
 ### Changed
 
 - **The dependency audit was the critical path of every pull request, and its own dependency fails

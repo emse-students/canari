@@ -76,8 +76,8 @@ impl MlsManager {
         })?;
 
         if leaf_indices.is_empty() {
-            return Err(MlsError::OpenMls(format!(
-                "No member found for identities: {:?}",
+            return Err(MlsError::NoSuchMember(format!(
+                "no leaf carries any of the identities {:?}",
                 user_ids
             )));
         }
@@ -111,9 +111,13 @@ impl MlsManager {
         let leaf_indices =
             leaf_indices_where(group, |identity| device_identities.contains(&identity))?;
 
+        // NOTHING TO REMOVE IS ITS OWN ANSWER, not a crypto failure - see `MlsError::NoSuchMember`.
+        // The caller that clears a stale leaf must distinguish "the leaf was never there" from "the
+        // Remove was refused and the leaf still is", because only the second forbids it from
+        // clearing the routing row.
         if leaf_indices.is_empty() {
-            return Err(MlsError::OpenMls(format!(
-                "No member found for identities: {:?}",
+            return Err(MlsError::NoSuchMember(format!(
+                "no leaf carries any of the identities {:?}",
                 device_identities
             )));
         }

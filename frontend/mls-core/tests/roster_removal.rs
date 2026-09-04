@@ -9,7 +9,7 @@
 //! - `remove_members_for_users` compared a bare user id with the full identity, so it matched
 //!   nothing and could only ever answer "No member found" - the user-level removal path was inert,
 //!   and a departed member's leaf therefore stayed in the tree for ever.
-use mls_core::MlsManager;
+use mls_core::{MlsError, MlsManager};
 
 fn make_device(user_id: &str, device_id: &str) -> MlsManager {
     MlsManager::load_or_create(user_id, device_id, None)
@@ -59,6 +59,40 @@ fn member_identities_names_every_leaf_as_user_colon_device() {
         sorted_identities(&alice, gid),
         vec!["alice:dev1", "bob:dev1", "bob:dev2"],
         "one entry per DEVICE, each carrying the user it belongs to"
+    );
+}
+
+/// NOTHING TO REMOVE IS ITS OWN ANSWER, AND A CALLER'S NEXT WRITE DEPENDS ON WHICH ONE IT IS.
+///
+/// `kickStaleLeaf` clears a device's routing row to `pending` after removing its leaf, and since
+/// 2026-09-04 a `pending` row with no queued Welcome invites that device to join by external
+/// commit. So clearing the row while the leaf is STILL in the tree asks for a second leaf beside
+/// the first - the duplicate-leaf race of 2026-08-26, reached from the other side. "The leaf was
+/// never there" and "the Remove was refused" used to be one `OpenMls` string; they are two types
+/// now, and this pins the one that is safe to treat as success.
+#[test]
+fn removing_a_leaf_that_is_not_there_is_its_own_error_and_not_a_crypto_failure() {
+    let gid = "g-absent";
+    let (mut alice, _others) = group_with(gid, &[("bob", "dev1")]);
+
+    let by_device = alice.remove_members_for_devices(gid, &["carol:dev9"]);
+    assert!(
+        matches!(by_device, Err(MlsError::NoSuchMember(_))),
+        "a device with no leaf must answer NoSuchMember, not a generic OpenMls error: {by_device:?}"
+    );
+
+    let by_user = alice.remove_members_for_users(gid, &["carol"]);
+    assert!(
+        matches!(by_user, Err(MlsError::NoSuchMember(_))),
+        "and so must a user with no leaf: {by_user:?}"
+    );
+
+    // AND THE TREE IS UNTOUCHED, which is the property that makes it safe to read as success: a
+    // refusal that had staged a commit would leave the caller merging a Remove of nobody.
+    assert_eq!(
+        sorted_identities(&alice, gid),
+        vec!["alice:dev1", "bob:dev1"],
+        "a Remove naming nobody changes nothing"
     );
 }
 
