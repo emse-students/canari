@@ -2963,46 +2963,6 @@ bubble-helper entry above does. The duplication costs nothing while it is identi
 the day one copy is fixed and ten are not, which is the shape `recon.mjs`'s first-database bug already
 had. So this waits for the same wholesale moment: convert all eight, re-run the phases together.
 
-### P3 - W1's profile is locked out of its own vault, and the PIN that would open it is not recorded anywhere (measured 2026-09-04)
-
-Not a product defect. The recovery path was driven end to end on 2026-09-04 and works: entering the
-old PIN, the new one and its confirmation produces `[PIN_RECOVER] Starting recovery...`, two HTTP
-requests, an attempt to load the encrypted state with the old device key, and - when that key is
-wrong - the accurate sentence *"L'ancien PIN est incorrect (il ne dechiffre pas l'etat de cet
-appareil)."* over `aead::Error`. Entry log, network, decrypt attempt and a precise refusal, all
-present.
-
-**What is actually missing is the old PIN.** The verifier was re-registered at 15:32:11 during this
-session's P1 reproduction, so W1's vault is encrypted under whatever PIN was in force before that,
-and the credentials file now holds the value registered after. A second, older copy of the file
-exists in the other out-of-tree directory and its value does NOT decrypt this profile either - so the
-pre-reset PIN is recorded nowhere.
-
-**THE CAMPAIGN IS NOT BLOCKED, AND THE FIRST DRAFT OF THIS ENTRY SAID IT WAS.** W3 holds the SAME
-owner account, is unlocked, and its device is `active` on every group - measured 2026-09-04 20:30, it
-lists the peer DM and all three groups exactly as W1 did. It was re-minted at 15:32 and so its vault
-is under the current PIN, which is precisely why it survived what stranded W1. **What blocks the
-rows is not the account, it is that the runners SPELL `PORTS.W1`.**
-
-So there are two ways on, and both are the user's call rather than something to take here. Re-mint
-W1, which is not free - it is a DEVICE, and `newdevice.mjs` re-registers the verifier again, so W2
-and W3 must be unlocked and left unlocked across it or they go the same way. Or teach the runners to
-take the owner's client as a parameter, which `device.mjs` already resolves for every atom written
-since 2026-09-04 and which the archived runners predate: that is the campaign's own principle - a
-device name is data - applied to the twenty-odd files that still hard-code one.
-
-**AND IT IS A LESSON ABOUT THIS SESSION'S OWN MEASUREMENT, WHICH IS WHY IT KEEPS THIS MUCH SPACE.**
-This entry first went in as a P1 reading "the only way back for a locked-out user is inert: no
-request, no log, no change", on `httpCount = 0` and `consoleCount = 0` measured across a click on the
-recovery submit. Both numbers were real and the conclusion was wrong. `ChangePinModal` has THREE
-required fields - `#current-pin`, `#new-pin`, `#confirm-pin` - and only the GATE's `#encryption-pin`
-had been filled, so the form refused itself before doing anything, exactly as it should. The refusal
-text quoted as evidence was read from `document.querySelector('[role=dialog]')`, which returned the
-gate behind the recovery modal rather than the modal itself. **A silent path is evidence of nothing
-until the reader has proved they addressed the control they think they did** - and reading one
-dialog's error while clicking another's button is the same fault as `openConversation` matching a
-group's preview, committed on the same day by the same session.
-
 ### P2 - re-registering the PIN verifier strands every other client SILENTLY, and only its next unlock finds out (measured 2026-09-04)
 
 `pin_verifier` holds ONE row per user - verifier, salt, `registeredAt` - and minting a fresh device
@@ -3028,6 +2988,16 @@ W2 at their next unlock - hours later, in a different rung, reading as a broken 
 `WIPEABLE` allowlist protects the profile it wipes and says nothing about the account-wide effect of
 a PIN reset. **A destructive control needs an allowlist of what it may touch**, and the verifier is
 outside the one it has.
+
+**THE REPAIR IS KNOWN AND CHEAP, MEASURED 2026-09-04 21:27.** A stranded client is fixed by WIPING
+it, not by recovering it: `bun newdevice.mjs --device W1` removed the stale local material, logged
+back in with no human step, answered the account's current PIN, minted `...mtnci3lc-7mhd`, and
+rejoined all four conversations plus the venue's distribution group by external commit, self-service,
+inside a second. The two `pending` seats the old device held on Repro Alpha and Repro Beta went with
+it - `READD ... roster seat with NO queued Welcome and NO add in flight - nobody owes us anything;
+serving ourselves`. It does NOT touch `pin_verifier`, so the other clients are unaffected, which a
+re-registration would not have left true. **What the wipe costs is the local history, and that is
+already unreadable by the time anyone notices - so the repair is free exactly when it is needed.**
 
 **Owed before this can be closed.** Whether the same digits re-registered produce a verifier the
 other clients would accept (they did not here, so the refusal is about material rather than value);

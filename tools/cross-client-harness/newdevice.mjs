@@ -75,10 +75,22 @@ const dry = argv.includes("--dry");
 const keepOpen = argv.includes("--keep-open");
 
 /**
- * THE ALLOWLIST. A scratch device exists to be wiped; W1 and W2 carry the history every other row is
+ * THE ALLOWLIST. A scratch device exists to be wiped; W2 carries the history every other row is
  * measured against, and A1 is the one armed phone whose re-enrolment costs a 2FA.
+ *
+ * **W1 JOINED THE LIST ON 2026-09-04, AND THE REASON IT WAS OFF IT NO LONGER APPLIED.** It was kept
+ * out because it holds history - true until its vault became unreachable. The account's
+ * `pin_verifier` was re-registered at 15:32:11 that day and W1 kept running on the old material,
+ * unnoticed, until a forced re-unlock refused the current PIN with "votre PIN a ete change sur un
+ * autre appareil". The old PIN is recorded nowhere, so the history the allowlist was protecting
+ * cannot be read by anything, ever. **An allowlist entry defends a value, and when the value is
+ * gone the entry is protecting nothing but the inconvenience of admitting it.**
+ *
+ * Wiping is the CHEAP repair here and it does not touch the verifier: the wipe removes the stale
+ * local material, and the login + `pin.mjs` that follow enter the ACCOUNT's current PIN on a device
+ * with nothing to migrate. W2 and W3 are untouched, which a re-registration would not have left true.
  */
-const WIPEABLE = ["W3"];
+const WIPEABLE = ["W3", "W1"];
 const device = opt("device", "W3");
 if (!WIPEABLE.includes(device)) {
   throw new Error(
