@@ -11,7 +11,88 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed
+
+- **"Can I use this group?" was spelt out nineteen times, and it is three different questions.**
+  Every site wrote `getLocalGroups().includes(id)` by hand across eleven files. All of them were
+  asking the same thing and asking it correctly - but there was no name to grep for, no place to hang
+  the caveat, and the caveat lived in one doc comment on a DIFFERENT method none of them mention.
+  `groupUsability.ts` names the three: **holds the state** (`holdsGroupState`), **is still a member**
+  (`isGroupActive`, false exactly on an eviction, which leaves the first TRUE - reading one as the
+  other is what let the outbox retry an evicted group until its entries expired), and **may send
+  right now** (`canSendInGroup`, the composition that was inline in the session layer with one
+  caller). Free functions rather than interface methods on purpose: both derive from
+  `getLocalGroups()`, so a method would be a second knob a mock could set to disagree with the
+  first.
+
+- **The not-ready marker's timestamp is read now.** `notReadyRegistry` documented *"the wall-clock
+  deadline is stable across sessions"* and no deadline existed - `enumerateNotReadyGroups` reads only
+  the keys, so the stored instant was indistinguishable from a `'1'`. Nothing terminates on it and
+  nothing should (termination is a proof: a join, a confirmed-absent group, a 403 from the roster),
+  but the instant is the right EVIDENCE: it now feeds the `[READD] ... attempt starting` line, so a
+  group on its first pass no longer reads exactly like one that has waited five days - the second
+  being the stranded population `reportStrandedDeviceMemberships` names hourly on the server, with
+  nothing saying it client-side.
+
+- **The dependency audit was the critical path of every pull request, and its own dependency fails
+  two times in five.** It ran 14 to 39 minutes against two minutes for CodeQL and twenty seconds for
+  the secret scan, and the cause was not the failures: `bun audit` takes about five minutes per tree
+  even when it succeeds, and five trees ran in one sequential shell loop. It is now a five-way
+  matrix with `fail-fast: false`, so the clean case is one audit long instead of five and the
+  degraded case is a quarter of an hour instead of seventy-five minutes; `cargo audit` is its own
+  job, which takes its three-minute `cargo install` off the critical path without a cache to go
+  stale. **The shared attempt budget is gone with the loop** - `AUDIT_ATTEMPTS=1` existed so the
+  first tree to meet a silent registry could spare the other four, and what it bought was
+  sequential time. **And the audit no longer feeds `CI passed`**: measured over twelve runs on
+  2026-09-04, npm's advisory endpoint answered 503 to 26 of 60 requests and exhausted five attempt
+  budgets outright, so a required check resting on it is a coin toss that blocks merges rather than
+  a gate. It still runs on every pull request, and the nightly pass still calls the same file with
+  `registry_outage_is_failure: true`, where an unaudited tree is a failure rather than a warning.
+  The loss is written into `ci.yml` beside the job: a pull request can now merge with a known
+  advisory in a lockfile it edited, and the honest answer is a source that answers - GitHub's
+  Dependabot alert list, already computed for this repository and still read by nothing here.
+
+### Removed
+
+- **A timer map nothing had armed since 2026-07-04**, threaded through eight modules:
+  `requestReAdd`'s third parameter with a silent `= new Map()` default, `cancelReAdd`'s second,
+  `recoverForkedGroup`, `stopRecovering`, the message pipeline's `recoveryTimers` dep, a field in
+  `sessionTypes` and a teardown loop. The timer scheduled the `reboot` step; `reboot` went with the
+  CAS/successor retirement (`e70300572`) and the only `timers.set` in the tree went with it - leaving
+  a map that was created, read, cleared, deleted from and **never written**, plus a comment promising
+  *"only one timer armed per group regardless of source"* about a mechanism that was gone, while
+  `requestReAdd`'s own doc already said "no private timer".
+
+- **Three dev-only MLS entrances with no consumers**: `devGenerateKeyPackage`, `devAddMember`,
+  `devProcessWelcome`, their whole `sessionDevTools.ts`, three helpers in `actions.ts`, and four
+  write-only context accessors with their backing state - a closed loop no dev panel has called for a
+  long time. Not innocuous: `devProcessWelcome` joined a group from an arbitrary blob and
+  `devAddMember` added an arbitrary KeyPackage, both with no add lock, no roster and no invitation
+  row, which made them a fourth and fifth way into a group that existed only to be wrong.
+
 ### Fixed
+
+- **The user was told three times about a state they cannot act on, and that resolves itself.** A
+  sidebar chip, a banner and the header padlock's amber half all announced the same thing - this
+  device holds no MLS state for this conversation yet - in the three places a person is only scanning
+  names, reading messages, or glancing at a lock. The product call is that the machinery should be as
+  invisible as possible (user, 2026-09-04): *"tu peux le laisser dans les logs. L'utilisateur doit
+  voir le moins possible qu'il se passe des choses, d'ou l'absence de badge ou de bandeau a part etre
+  en cours de reception."* And the state needs no reader at all: a device holding a roster seat that
+  nobody owes a Welcome for joins by external commit on its own next pass, with no member involved.
+  What is left is the one banner about MESSAGES ARRIVING; the padlock and the group panel now state a
+  fact about the CONVERSATION - it is end-to-end encrypted - unconditionally. Five Paraglide keys
+  deleted; `data-ready` / `data-removed` untouched, being what the cross-client rig measures.
+
+- **Two paths into an MLS group bypassed the one seam that decides how to get in.** They called
+  `sendWelcomeRequest` directly, skipping the self-service external join (the PRIMARY path, and the
+  only one that needs nobody online), `readWelcomeOwed` (so they could race a member's in-flight
+  `addMember` into the duplicate leaf GRP-4 named), the throttle, and the terminal reading of a 403.
+  `syncConnectionAfterWsOpen` took `onGroupMissing` as OPTIONAL and fell back when it was absent -
+  both call sites have always passed it, so the fallback existed only to be silently worse than the
+  path beside it; `processPendingInvitations`, which can discover that THIS device holds no state,
+  now takes `requestReAdd` as a dep the way the outbox does. No rung, cadence or throttle was
+  added.
 
 - **The emoji list could not be scrolled, and the backlog's own diagnosis of why was wrong.** The
   picker was given `flex-1` plus an inline `height: min(22rem, calc(var(--popover-max-h) - 5.5rem))`,
@@ -118,6 +199,7 @@ which is also where every release up to and including v0.13.1 now lives.
   next login's reconciliation happened to notice. `findByGroupId` had been written for exactly this
   and this was the last call site in the module still reading by key; four tests pin both
   conventions, and the one for a received DM fails against the old lookup.
+
 - **"Sync" promised a synchronisation that was not happening, on a state that can last days.** The
   sidebar badge, the header's pulsing padlock (*"Negociation securisee en cours..."*) and the group
   panel's pulsing clock (*"Synchronisation..."*) all read off one flag: `lifecycle !== 'active'`,
@@ -154,29 +236,6 @@ which is also where every release up to and including v0.13.1 now lives.
   variant now, `mlsRemoveError.ts` is the only thing that reads the token, and it fails towards
   "still present" because the two mistakes are not symmetric: reading a refusal as success invites a
   duplicate leaf, while reading an absent leaf as present only leaves a row for the next pass.
-
-
-### Changed
-
-- **The dependency audit was the critical path of every pull request, and its own dependency fails
-  two times in five.** It ran 14 to 39 minutes against two minutes for CodeQL and twenty seconds for
-  the secret scan, and the cause was not the failures: `bun audit` takes about five minutes per tree
-  even when it succeeds, and five trees ran in one sequential shell loop. It is now a five-way
-  matrix with `fail-fast: false`, so the clean case is one audit long instead of five and the
-  degraded case is a quarter of an hour instead of seventy-five minutes; `cargo audit` is its own
-  job, which takes its three-minute `cargo install` off the critical path without a cache to go
-  stale. **The shared attempt budget is gone with the loop** - `AUDIT_ATTEMPTS=1` existed so the
-  first tree to meet a silent registry could spare the other four, and what it bought was
-  sequential time. **And the audit no longer feeds `CI passed`**: measured over twelve runs on
-  2026-09-04, npm's advisory endpoint answered 503 to 26 of 60 requests and exhausted five attempt
-  budgets outright, so a required check resting on it is a coin toss that blocks merges rather than
-  a gate. It still runs on every pull request, and the nightly pass still calls the same file with
-  `registry_outage_is_failure: true`, where an unaudited tree is a failure rather than a warning.
-  The loss is written into `ci.yml` beside the job: a pull request can now merge with a known
-  advisory in a lockfile it edited, and the honest answer is a source that answers - GitHub's
-  Dependabot alert list, already computed for this repository and still read by nothing here.
-
-### Fixed
 
 - **A measurement published four hours earlier counted two empty log fetches as two clean runs.** The
   503 rate recorded for the npm advisory endpoint - *six in fifty, no exhausted budget* - came from
@@ -286,7 +345,6 @@ which is also where every release up to and including v0.13.1 now lives.
   waits exactly as it did before. Redis being unreachable reports `addInFlight: false`, which
   degrades to the old behaviour rather than to a new one. **Never learn by failing what a fact could
   have told you**: the endpoint knew, and one poll now ends what a clock could not.
-
 
 ## [0.16.2] - 2026-09-04
 

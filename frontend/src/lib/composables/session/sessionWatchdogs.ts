@@ -68,7 +68,7 @@ export function startSyncWatchdogImpl(ctx: SessionContext, cb: ChatSessionCallba
         // Healthy group: clear recovery bookkeeping (cooldown + persistent not-ready marker) so a
         // stale marker cannot trigger a spurious re-add if the group later becomes not-ready.
         clearGroupNotReady(recoveryDeps.userId, id);
-        cancelReAdd(id, ctx.connectionRecoveryTimers);
+        cancelReAdd(id);
 
         // Safety net for a stuck epoch gap: the group is in WASM but frozen behind the current
         // epoch, and no incoming frame/commit is coming to escalate or resolve it. Force the
@@ -79,7 +79,7 @@ export function startSyncWatchdogImpl(ctx: SessionContext, cb: ChatSessionCallba
             `[SYNC_WATCHDOG] Group ${id.slice(0, 8)}… epoch gap stuck >${STUCK_EPOCH_GAP_MS / 1000}s - forget + welcome_request`
           );
           clearEpochGap(id);
-          recoverForkedGroup(id, recoveryDeps, ctx.connectionRecoveryTimers).catch((e: unknown) =>
+          recoverForkedGroup(id, recoveryDeps).catch((e: unknown) =>
             cb.log(`[SYNC_WATCHDOG] gap recovery failed for ${id}: ${String(e)}`)
           );
         }
@@ -93,7 +93,7 @@ export function startSyncWatchdogImpl(ctx: SessionContext, cb: ChatSessionCallba
       // Not in WASM → drive the single recovery seam. It marks the group not-ready on the first
       // attempt and throttles to one attempt per RECOVERY_TIMEOUT_MS. Calling it every poll is
       // intentional - the seam owns all pacing.
-      requestReAdd(id, recoveryDeps, ctx.connectionRecoveryTimers).catch((e: unknown) =>
+      requestReAdd(id, recoveryDeps).catch((e: unknown) =>
         cb.log(`[SYNC_WATCHDOG] requestReAdd failed for ${id}: ${String(e)}`)
       );
     }

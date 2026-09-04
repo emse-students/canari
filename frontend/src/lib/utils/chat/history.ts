@@ -29,6 +29,7 @@ import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 import { applyReaction } from '$lib/utils/chat/messageReactions';
 import { mergeReadWatermarks } from '$lib/utils/chat/readState';
 import { mergeHistoryFloor } from '$lib/utils/chat/historyWindow';
+import { holdsGroupState } from './groupUsability';
 
 /** Return the localStorage key used to persist the set of already-processed ciphertext fingerprints for a group. */
 function seenHistoryKey(userId: string, groupId: string): string {
@@ -359,7 +360,7 @@ export async function replayConversationHistory(params: {
   // Stale-behind detection: a group present in local WASM whose replay hits an epoch gap
   // (missing commit) is forked behind the server. We capture the epoch on entry to tell a real
   // gap from a transient one that a catch-up commit resolves during this same replay.
-  const groupWasLocal = mlsService.getLocalGroups().includes(id);
+  const groupWasLocal = holdsGroupState(mlsService, id);
   const epochBefore = groupWasLocal ? mlsService.getEpoch(id) : -1;
   let sawEpochGap = false;
   /**

@@ -112,7 +112,7 @@ describe('requestReAdd', () => {
     deps.mlsService.getDeviceMemberships = vi.fn().mockResolvedValue([membership('g1', 'pending')]);
     deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
 
-    await requestReAdd('g1', deps, new Map());
+    await requestReAdd('g1', deps);
 
     expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
     expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledWith('g1');
@@ -125,7 +125,7 @@ describe('requestReAdd', () => {
     deps.mlsService.getDeviceMemberships = vi.fn().mockResolvedValue([membership('g1', 'active')]);
     deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
 
-    await requestReAdd('g1', deps, new Map());
+    await requestReAdd('g1', deps);
 
     expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1');
   });
@@ -142,7 +142,7 @@ describe('requestReAdd', () => {
       ]);
     deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
 
-    await requestReAdd('g1', deps, new Map());
+    await requestReAdd('g1', deps);
 
     expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
     expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledWith('g1');
@@ -161,7 +161,7 @@ describe('requestReAdd', () => {
       ]);
     deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
 
-    await requestReAdd('g1', deps, new Map());
+    await requestReAdd('g1', deps);
 
     expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
     expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledWith('g1');
@@ -181,7 +181,7 @@ describe('requestReAdd', () => {
       ]);
     deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
 
-    await requestReAdd('g1', deps, new Map());
+    await requestReAdd('g1', deps);
 
     expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1');
     expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
@@ -199,7 +199,7 @@ describe('requestReAdd', () => {
       ]);
     deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
 
-    await requestReAdd('g1', deps, new Map());
+    await requestReAdd('g1', deps);
 
     expect(deps.mlsService.updateInvitationStatus).toHaveBeenCalledWith(
       'self-device',
@@ -216,7 +216,7 @@ describe('requestReAdd', () => {
     const deps = makeDeps();
     deps.mlsService.getDeviceMemberships = vi.fn().mockRejectedValue(new Error('offline'));
 
-    await requestReAdd('g1', deps, new Map());
+    await requestReAdd('g1', deps);
 
     expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
     expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
@@ -225,9 +225,8 @@ describe('requestReAdd', () => {
   it('external join success short-circuits the welcome_request fallback', async () => {
     const deps = makeDeps();
     deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
-    const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
-    await requestReAdd('g1', deps, timers);
+    await requestReAdd('g1', deps);
 
     expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1');
     expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
@@ -244,9 +243,8 @@ describe('requestReAdd', () => {
 
   it('falls back to a welcome_request when external join is unavailable, and marks not-ready', async () => {
     const deps = makeDeps();
-    const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
-    await requestReAdd('g1', deps, timers);
+    await requestReAdd('g1', deps);
 
     expect(deps.mlsService.externalJoin).toHaveBeenCalledWith('g1');
     expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledWith('g1');
@@ -256,10 +254,9 @@ describe('requestReAdd', () => {
 
   it('throttles: two immediate calls make a single recovery attempt (cooldown)', async () => {
     const deps = makeDeps();
-    const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
-    await requestReAdd('g1', deps, timers);
-    await requestReAdd('g1', deps, timers);
+    await requestReAdd('g1', deps);
+    await requestReAdd('g1', deps);
 
     // The second call is within RECOVERY_TIMEOUT_MS -> throttled by the internal cooldown.
     expect(deps.mlsService.externalJoin).toHaveBeenCalledTimes(1);
@@ -269,9 +266,8 @@ describe('requestReAdd', () => {
   it('already in WASM -> no recovery attempt (caller must forgetGroup first if forked)', async () => {
     const deps = makeDeps();
     deps.mlsService.getLocalGroups = vi.fn().mockReturnValue(['g1']);
-    const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
-    await requestReAdd('g1', deps, timers);
+    await requestReAdd('g1', deps);
 
     expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
     expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
@@ -288,9 +284,8 @@ describe('requestReAdd', () => {
         ['ghost', { id: 'ghost', name: 'Ghost', lifecycle: 'pending' }],
       ]),
     });
-    const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
-    await requestReAdd('ghost', deps, timers);
+    await requestReAdd('ghost', deps);
 
     expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
     expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
@@ -307,9 +302,8 @@ describe('requestReAdd', () => {
         ['tomb', { id: 'tomb', name: 'Gone', lifecycle: 'active' }],
       ]),
     });
-    const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
-    await requestReAdd('tomb', deps, timers);
+    await requestReAdd('tomb', deps);
 
     expect(deps.conversations.get('tomb')?.lifecycle).toBe('removed');
     expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
@@ -334,9 +328,8 @@ describe('requestReAdd', () => {
         ['left', { id: 'left', name: 'A group we are out of', lifecycle: 'active' }],
       ]),
     });
-    const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
-    await requestReAdd('left', deps, timers);
+    await requestReAdd('left', deps);
 
     expect(deps.conversations.get('left')?.lifecycle).toBe('removed');
     // The whole point: nobody is asked to re-add us to a group whose roster refused us.
@@ -366,7 +359,7 @@ describe('requestReAdd', () => {
       ]),
     });
 
-    await requestReAdd('g-dm', deps, new Map());
+    await requestReAdd('g-dm', deps);
 
     expect(deps.conversations.get('peer-user-id')?.lifecycle).toBe('removed');
   });
@@ -376,7 +369,7 @@ describe('requestReAdd', () => {
       conversations: makeConversations([['peer-user-id', { id: 'g-dm', lifecycle: 'removed' }]]),
     });
 
-    await requestReAdd('g-dm', deps, new Map());
+    await requestReAdd('g-dm', deps);
 
     // Idempotence is the whole contract of step 1: a dead conversation starts no network recovery.
     expect(deps.mlsService.getGroupMeta).not.toHaveBeenCalled();
@@ -390,13 +383,12 @@ describe('requestReAdd', () => {
       }),
       conversations: makeConversations([['left', { id: 'left', lifecycle: 'active' }]]),
     });
-    const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
-    await requestReAdd('left', deps, timers);
+    await requestReAdd('left', deps);
     // The cooldown is what USED to be the only thing containing this loop, so clearing it is exactly
     // how to tell a real termination from a throttled one: a proof survives the cooldown going away.
     resetReAddCooldowns();
-    await requestReAdd('left', deps, timers);
+    await requestReAdd('left', deps);
 
     expect(deps.mlsService.externalJoin).toHaveBeenCalledTimes(1);
     expect(deps.mlsService.getGroupMeta).toHaveBeenCalledTimes(1);
@@ -410,9 +402,8 @@ describe('requestReAdd', () => {
       }),
       conversations: makeConversations([['g1', { id: 'g1', lifecycle: 'active' }]]),
     });
-    const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
-    await requestReAdd('g1', deps, timers);
+    await requestReAdd('g1', deps);
 
     expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledWith('g1');
     expect(deps.conversations.get('g1')?.lifecycle).toBe('active');
@@ -423,9 +414,8 @@ describe('requestReAdd', () => {
     const deps = makeDeps({
       conversations: makeConversations([['g1', { id: 'g1', lifecycle: 'removed' }]]),
     });
-    const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
-    await requestReAdd('g1', deps, timers);
+    await requestReAdd('g1', deps);
 
     expect(deps.mlsService.getGroupMeta).not.toHaveBeenCalled();
     expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
@@ -438,9 +428,8 @@ describe('recoverForkedGroup', () => {
   it('forgets the forked group at the known minEpoch then re-adds it', async () => {
     const mls = makeMls({ getLocalGroups: vi.fn().mockReturnValue([]) });
     const deps = makeDeps({ mlsService: mls });
-    const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
-    await recoverForkedGroup('g-fork', deps, timers, 4);
+    await recoverForkedGroup('g-fork', deps, 4);
 
     // minEpoch rejects a stale re-Welcome from the diverged branch.
     expect(mls.forgetGroup).toHaveBeenCalledWith('g-fork', 4);
@@ -454,14 +443,13 @@ describe('recoverForkedGroup', () => {
 describe('cancelReAdd', () => {
   it('clears the cooldown so a later desync re-triggers immediately', async () => {
     const deps = makeDeps();
-    const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
-    await requestReAdd('g1', deps, timers);
+    await requestReAdd('g1', deps);
     expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledTimes(1);
 
     // Without cancelReAdd a second immediate call would be throttled; cancelling lets it fire again.
-    cancelReAdd('g1', timers);
-    await requestReAdd('g1', deps, timers);
+    cancelReAdd('g1');
+    await requestReAdd('g1', deps);
     expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledTimes(2);
   });
 });
@@ -493,7 +481,7 @@ describe('requestReAdd - a stale base asks for a republish, not for a Welcome', 
     const deps = makeDeps();
     deps.mlsService.externalJoin = staleBase();
 
-    await requestReAdd('g1', deps, new Map());
+    await requestReAdd('g1', deps);
 
     expect(deps.mlsService.sendBaseRefreshRequest).toHaveBeenCalledWith('g1');
     expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
@@ -505,7 +493,7 @@ describe('requestReAdd - a stale base asks for a republish, not for a Welcome', 
     deps.log = (m: string) => lines.push(m);
     deps.mlsService.externalJoin = staleBase();
 
-    await requestReAdd('g1', deps, new Map());
+    await requestReAdd('g1', deps);
 
     const out = lines.join(' | ');
     expect(out).toContain('283');
@@ -520,7 +508,7 @@ describe('requestReAdd - a stale base asks for a republish, not for a Welcome', 
       .fn()
       .mockResolvedValue({ joined: false, reason: 'no_base_published' });
 
-    await requestReAdd('g1', deps, new Map());
+    await requestReAdd('g1', deps);
 
     expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledWith('g1');
     expect(deps.mlsService.sendBaseRefreshRequest).not.toHaveBeenCalled();
@@ -536,7 +524,7 @@ describe('requestReAdd - a stale base asks for a republish, not for a Welcome', 
     deps.mlsService.externalJoin = staleBase();
     deps.mlsService.sendBaseRefreshRequest = vi.fn().mockRejectedValue(new Error('offline'));
 
-    await expect(requestReAdd('g1', deps, new Map())).resolves.toBeUndefined();
+    await expect(requestReAdd('g1', deps)).resolves.toBeUndefined();
     expect(lines.join(' | ')).toContain('did not reach the server');
   });
 });
@@ -567,7 +555,7 @@ describe('requestReAdd - the promotion after a successful external join', () => 
       conversations: makeConversations([['peer-user-42', { id: 'g1', lifecycle: 'pending' }]]),
     });
 
-    await requestReAdd('g1', deps, new Map());
+    await requestReAdd('g1', deps);
 
     expect(deps.conversations.get('peer-user-42').lifecycle).toBe('active');
     expect(deps.saveConversation).toHaveBeenCalledWith('peer-user-42');
@@ -582,7 +570,7 @@ describe('requestReAdd - the promotion after a successful external join', () => 
       conversations: makeConversations([['g1', { id: 'g1', lifecycle: 'pending' }]]),
     });
 
-    await requestReAdd('g1', deps, new Map());
+    await requestReAdd('g1', deps);
 
     expect(deps.conversations.get('g1').lifecycle).toBe('active');
     expect(deps.saveConversation).toHaveBeenCalledWith('g1');
@@ -594,7 +582,7 @@ describe('requestReAdd - the promotion after a successful external join', () => 
       conversations: makeConversations([['peer-user-42', { id: 'g1', lifecycle: 'active' }]]),
     });
 
-    await requestReAdd('g1', deps, new Map());
+    await requestReAdd('g1', deps);
 
     expect(deps.saveConversation).not.toHaveBeenCalled();
   });
@@ -604,7 +592,7 @@ describe('requestReAdd - the promotion after a successful external join', () => 
     // watchdog enumerates for those, and the row is created by the paths that name the peer.
     const deps = makeDeps({ mlsService: joined(), conversations: makeConversations() });
 
-    await requestReAdd('g1', deps, new Map());
+    await requestReAdd('g1', deps);
 
     expect(deps.conversations.size).toBe(0);
     expect(deps.saveConversation).not.toHaveBeenCalled();

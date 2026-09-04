@@ -90,14 +90,6 @@ export interface MessageHandlerDeps {
    */
   onGroupReady?: (groupId: string) => void;
   /**
-   * Shared map of per-group recovery timers (the same one as
-   * `useChatSession.connectionRecoveryTimers`). Single source of truth: the message pipeline and
-   * the connection layer arm/cancel their timers in this common map, so a `cancelReAdd` after a
-   * successful Welcome cancels ALL of the group's timers - no more need for a
-   * `cancelGroupRecovery` callback to bridge two separate maps.
-   */
-  recoveryTimers: SvelteMap<string, ReturnType<typeof setTimeout>>;
-  /**
    * Called on a fatal, unrecoverable MLS error requiring user action.
    * - `'oom'`: WASM OOM detected -> app reload recommended.
    * - `'private_mode'`: private browsing detected (storage unavailable) -> state lost on close.

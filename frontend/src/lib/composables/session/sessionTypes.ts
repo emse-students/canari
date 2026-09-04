@@ -163,13 +163,6 @@ export interface SessionContext {
   /** Returns the current CallService instance (null before initServices). */
   getCallService(): any;
 
-  // ── Dev tools ──────────────────────────────────────────────────────────────
-  setLastKeyPackage(v: string): void;
-  setIncomingBytesHex(v: string): void;
-  getIncomingBytesHex(): string;
-  setLastCommit(v: string): void;
-  setLastWelcome(v: string): void;
-
   // ── MLS errors ─────────────────────────────────────────────────────────────
   setMlsFatalError(v: 'oom' | 'private_mode' | 'keystore_lost' | null): void;
 
@@ -183,7 +176,6 @@ export interface SessionContext {
     syncWatchdog: ReturnType<typeof setInterval> | null;
     connectionWatchdog: ReturnType<typeof setInterval> | null;
   };
-  connectionRecoveryTimers: SvelteMap<string, ReturnType<typeof setTimeout>>;
   deferredWelcomeRequests: SvelteMap<
     string,
     Array<{ requesterUserId: string; requesterDeviceId: string }>

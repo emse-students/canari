@@ -62,6 +62,7 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
       userId: 'u1',
       deviceKeyB64: 'pin1',
       processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
+      onGroupMissing: vi.fn().mockResolvedValue(undefined),
       log,
     });
     await done;
@@ -124,6 +125,7 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
       userId: 'u1',
       deviceKeyB64: 'pin1',
       processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
+      onGroupMissing: vi.fn().mockResolvedValue(undefined),
       log,
     });
     await done;
@@ -161,6 +163,7 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
       userId: 'u1',
       deviceKeyB64: 'pin1',
       processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
+      onGroupMissing: vi.fn().mockResolvedValue(undefined),
       log,
     });
 
@@ -192,6 +195,7 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
       userId: 'u1',
       deviceKeyB64: 'pin1',
       processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
+      onGroupMissing: vi.fn().mockResolvedValue(undefined),
       log,
     });
 
@@ -241,6 +245,7 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
       userId: 'u1',
       deviceKeyB64: 'pin1',
       processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
+      onGroupMissing: vi.fn().mockResolvedValue(undefined),
       log: vi.fn(),
     });
 
@@ -270,6 +275,7 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
       userId: 'u1',
       deviceKeyB64: 'pin1',
       processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
+      onGroupMissing: vi.fn().mockResolvedValue(undefined),
       log: vi.fn(),
     });
 
@@ -310,6 +316,7 @@ describe('syncConnectionAfterWsOpen (a refused device is not a deferred one)', (
       userId: 'u1',
       deviceKeyB64: 'pin1',
       processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
+      onGroupMissing: vi.fn().mockResolvedValue(undefined),
       log,
     });
 
@@ -327,6 +334,7 @@ describe('syncConnectionAfterWsOpen (a refused device is not a deferred one)', (
       userId: 'u1',
       deviceKeyB64: 'pin1',
       processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
+      onGroupMissing: vi.fn().mockResolvedValue(undefined),
       log,
     });
 

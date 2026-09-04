@@ -70,6 +70,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       setIsWsConnected: vi.fn(),
       setReconnectAttempts: vi.fn(),
       processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
+      onGroupMissing: vi.fn().mockResolvedValue(undefined),
       log,
     });
     expect(mls.connect).not.toHaveBeenCalled();
@@ -173,6 +174,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       setIsWsConnected: vi.fn(),
       setReconnectAttempts: vi.fn(),
       processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
+      onGroupMissing: vi.fn().mockResolvedValue(undefined),
       log: vi.fn(),
     });
 
@@ -219,6 +221,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       setIsWsConnected: vi.fn(),
       setReconnectAttempts: vi.fn(),
       processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
+      onGroupMissing: vi.fn().mockResolvedValue(undefined),
       log,
       onGroupDeletedRemotely,
     });
@@ -289,6 +292,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       setIsWsConnected: vi.fn(),
       setReconnectAttempts: vi.fn(),
       processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
+      onGroupMissing: vi.fn().mockResolvedValue(undefined),
       log,
     });
     expect(log).toHaveBeenCalledWith(expect.stringMatching(/Gateway inaccessible/));

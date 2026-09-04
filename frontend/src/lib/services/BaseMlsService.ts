@@ -65,6 +65,7 @@ import type {
   DistributionGroupInfoTransport,
   ExternalJoinOutcome,
 } from '$lib/mls-client/IMlsService';
+import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 
 /**
  * How many times {@link BaseMlsService.externalJoin} may re-read the base and resubmit.
@@ -2209,8 +2210,7 @@ export abstract class BaseMlsService implements IMlsService {
    * @returns whether this device held anything under that id
    */
   forgetDistributionGroupById(groupId: string): boolean {
-    const held =
-      this.getLocalGroups().includes(groupId) || this.knownDistributionGroups.has(groupId);
+    const held = holdsGroupState(this, groupId) || this.knownDistributionGroups.has(groupId);
     if (!held) return false;
     this.forgetGroup(groupId);
     this.distributionScopeByGroup.delete(groupId);
@@ -2652,7 +2652,7 @@ export abstract class BaseMlsService implements IMlsService {
     const { groupId } = ref;
     this.registerDistributionGroup(scope, groupId);
 
-    if (this.getLocalGroups().includes(groupId)) return { joined: true };
+    if (holdsGroupState(this, groupId)) return { joined: true };
 
     if (ref.groupInfo !== null) {
       return this.externalJoin(groupId);
@@ -2857,6 +2857,7 @@ export abstract class BaseMlsService implements IMlsService {
     keyLen: number
   ): Promise<Uint8Array>;
   abstract getLocalGroups(): string[];
+
   /** See {@link IMlsService.isGroupActive}. Platform-specific: WASM query vs Tauri `invoke`. */
   abstract isGroupActive(groupId: string): Promise<boolean>;
   abstract getEpoch(groupId: string): number;

@@ -72,6 +72,7 @@ describe('processPendingInvitations - leaf already in tree', () => {
       userId: 'self',
       deviceKeyB64: 'pin',
       conversations,
+      requestReAdd: () => Promise.resolve(),
       log,
     });
 
@@ -112,6 +113,7 @@ describe('processPendingInvitations - leaf already in tree', () => {
       userId: 'self',
       deviceKeyB64: 'pin',
       conversations: new Map([['g1', readyConversation('g1')]]),
+      requestReAdd: () => Promise.resolve(),
       log,
     });
 
@@ -145,6 +147,7 @@ describe('processPendingInvitations - leaf already in tree', () => {
       userId: 'self',
       deviceKeyB64: 'pin',
       conversations: new Map([['g1', readyConversation('g1')]]),
+      requestReAdd: () => Promise.resolve(),
       log: vi.fn(),
     });
 
@@ -177,6 +180,7 @@ describe('processPendingInvitations - leaf already in tree', () => {
       userId: 'self',
       deviceKeyB64: 'pin',
       conversations: new Map([['g1', readyConversation('g1')]]),
+      requestReAdd: () => Promise.resolve(),
       log: vi.fn(),
     });
 
@@ -210,6 +214,7 @@ describe('processPendingInvitations - leaf already in tree', () => {
       userId: 'self',
       deviceKeyB64: 'pin',
       conversations: new Map([['g1', readyConversation('g1')]]),
+      requestReAdd: () => Promise.resolve(),
       log,
     });
 
@@ -243,6 +248,7 @@ describe('processPendingInvitations - leaf already in tree', () => {
       userId: 'self',
       deviceKeyB64: 'pin',
       conversations,
+      requestReAdd: () => Promise.resolve(),
       log,
     });
 
@@ -283,6 +289,7 @@ describe('processPendingInvitations - staged Add commit outcomes', () => {
       userId: 'self',
       deviceKeyB64: 'pin',
       conversations,
+      requestReAdd: () => Promise.resolve(),
       log,
     });
 
@@ -317,6 +324,7 @@ describe('processPendingInvitations - staged Add commit outcomes', () => {
       userId: 'self',
       deviceKeyB64: 'pin',
       conversations,
+      requestReAdd: () => Promise.resolve(),
       log,
     });
 
@@ -330,5 +338,87 @@ describe('processPendingInvitations - staged Add commit outcomes', () => {
       'g1',
       'active'
     );
+  });
+});
+
+// THE PASS CAN DISCOVER THAT **THIS** DEVICE IS THE ONE MISSING, and what it does then used to
+// bypass the ladder entirely: a bare `sendWelcomeRequest`, which asks a member for something the
+// device can very often serve itself, races that member's in-flight Add, and is subject to no
+// throttle on a pass that runs on every connection.
+describe('processPendingInvitations - the group is absent from THIS device', () => {
+  function absentLocally() {
+    return makeMls({
+      // No local state for g1, and no conversation record either - the `isAbsent` branch.
+      getLocalGroups: vi.fn().mockReturnValue([]),
+      getPendingInvitations: vi
+        .fn()
+        .mockResolvedValue([
+          { id: 'i1', userId: 'peer', deviceId: 'peer-dev', groupId: 'g1', status: 'pending' },
+        ]),
+      // Present and live on the server: the group exists, we simply hold nothing for it.
+      getUserGroups: vi.fn().mockResolvedValue([{ groupId: 'g1', deletedAt: null }]),
+      sendWelcomeRequest: vi.fn().mockResolvedValue(undefined),
+      deleteDeviceMembership: vi.fn().mockResolvedValue(undefined),
+    });
+  }
+
+  it('drives the single recovery seam and never asks a member directly', async () => {
+    const mlsService = absentLocally();
+    const requestReAdd = vi.fn().mockResolvedValue(undefined);
+
+    await processPendingInvitations({
+      mlsService,
+      storage: null,
+      userId: 'self',
+      deviceKeyB64: 'pin',
+      conversations: new Map<string, Conversation>(),
+      requestReAdd,
+      log: vi.fn(),
+    });
+
+    expect(requestReAdd).toHaveBeenCalledWith('g1');
+    expect(mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
+  });
+
+  // A rejected recovery must not take the invitation pass down with it: the remaining groups still
+  // have to be processed, and the watchdog re-drives this one on its own cadence.
+  it('logs and continues when the seam rejects', async () => {
+    const mlsService = absentLocally();
+    const log = vi.fn();
+
+    await processPendingInvitations({
+      mlsService,
+      storage: null,
+      userId: 'self',
+      deviceKeyB64: 'pin',
+      conversations: new Map<string, Conversation>(),
+      requestReAdd: () => Promise.reject(new Error('offline')),
+      log,
+    });
+
+    const lines = log.mock.calls.map((c) => String(c[0]));
+    expect(lines.some((l) => l.includes('recovery requested'))).toBe(true);
+    expect(lines.some((l) => l.includes('recovery request failed'))).toBe(true);
+  });
+
+  // The opposite answer, and the one that must NOT reach recovery: the server says the group is
+  // gone, so the invitations are residue to delete rather than a group to rejoin.
+  it('cleans up the invitations instead when the server says the group is gone', async () => {
+    const mlsService = absentLocally();
+    (mlsService.getUserGroups as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    const requestReAdd = vi.fn().mockResolvedValue(undefined);
+
+    await processPendingInvitations({
+      mlsService,
+      storage: null,
+      userId: 'self',
+      deviceKeyB64: 'pin',
+      conversations: new Map<string, Conversation>(),
+      requestReAdd,
+      log: vi.fn(),
+    });
+
+    expect(requestReAdd).not.toHaveBeenCalled();
+    expect(mlsService.deleteDeviceMembership).toHaveBeenCalledWith('peer', 'peer-dev', 'g1');
   });
 });

@@ -10,6 +10,7 @@ import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
 import { requestCommunityHistory } from './repair';
 import { reconcileDistributionGroupRoster } from './rosterReconcile';
 import { isGraineReady, requireGraineRuntime } from './runtime';
+import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 
 /**
  * Joining a Graine key-distribution group, on first use - a community's, or a private salon's.
@@ -106,7 +107,7 @@ async function joinDistributionGroup(
   // WHAT THIS DEVICE HOLDS, BEFORE ASKING. Only used to decide what a FAILED read may conclude; the
   // membership decision below is taken against the group the SERVER names, not this one.
   const known = mlsService.distributionGroupFor(scope);
-  const heldLocally = !!known && mlsService.getLocalGroups().includes(known);
+  const heldLocally = !!known && holdsGroupState(mlsService, known);
 
   let ref: {
     groupId: string;
@@ -206,7 +207,7 @@ async function joinDistributionGroup(
   // GROUP ID - so a device whose registration did not name the group skipped the check AND skipped
   // the join, which is the bug wearing the fix's clothes. `ref.groupId` is the one name both the
   // server and the MLS layer agree on.
-  const holdsTheGroup = mlsService.getLocalGroups().includes(ref.groupId);
+  const holdsTheGroup = holdsGroupState(mlsService, ref.groupId);
   const roster = ref.memberDevices;
   const rosterOmitsThisDevice = Array.isArray(roster) && !roster.includes(mlsService.getDeviceId());
 

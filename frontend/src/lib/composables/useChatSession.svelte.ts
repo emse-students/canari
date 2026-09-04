@@ -44,13 +44,8 @@ import {
 } from './session/sessionConnection';
 import { exportBackupImpl, importBackupImpl } from './session/sessionBackup';
 import { processDeviceInvitationsLocally } from './session/sessionAuth';
-import {
-  addDevMemberImpl,
-  generateDevKeyPackageImpl,
-  processDevWelcomeImpl,
-} from './session/sessionDevTools';
 
-/** Creates and returns the reactive chat session store covering login, MLS init, WebSocket, biometrics, device sync, backup, and dev tools. */
+/** Creates and returns the reactive chat session store covering login, MLS init, WebSocket, biometrics, device sync and backup. */
 export function useChatSession() {
   // ── Identity ──────────────────────────────────────────────────────────────
   let userId = $state('');
@@ -86,11 +81,6 @@ export function useChatSession() {
   const RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 16000, 30000];
   /** Index into RECONNECT_DELAYS; reset to 0 by a successful connect and by resumeConnection. */
   let reconnectAttempts = 0;
-  /**
-   * Per-group recovery bookkeeping timers used by the `requestReAdd` seam (cancelReAdd clears
-   * them). Shared across the connection sync and the syncWatchdog. Cleared on logout.
-   */
-  const connectionRecoveryTimers = new SvelteMap<string, ReturnType<typeof setTimeout>>();
   /** welcome_requests received while the target group was not yet ready.
    *  Reprocessed immediately when onGroupReady() fires for that groupId. */
   const deferredWelcomeRequests = new SvelteMap<
@@ -111,12 +101,6 @@ export function useChatSession() {
   let isWipingRevokedDevice = false; // plain boolean - a login must not race the wipe that erases it
   /** True from MLS unlock until the full startup login path finishes (messaging catch-up). */
   let isMessagingInitializing = $state(false);
-
-  // ── Dev tools ─────────────────────────────────────────────────────────────
-  let lastKeyPackage = $state('');
-  let incomingBytesHex = $state('');
-  let lastCommit = $state('');
-  let lastWelcome = $state('');
 
   // ── Fatal MLS errors ──────────────────────────────────────────────────────
   /** Unrecoverable MLS error requiring user action (OOM, private mode, keystore lost). */
@@ -229,21 +213,6 @@ export function useChatSession() {
     // Services
     getCallService: () => callService,
 
-    // Dev tools
-    setLastKeyPackage: (v) => {
-      lastKeyPackage = v;
-    },
-    setIncomingBytesHex: (v) => {
-      incomingBytesHex = v;
-    },
-    getIncomingBytesHex: () => incomingBytesHex,
-    setLastCommit: (v) => {
-      lastCommit = v;
-    },
-    setLastWelcome: (v) => {
-      lastWelcome = v;
-    },
-
     // MLS errors
     setMlsFatalError: (v) => {
       mlsFatalError = v;
@@ -251,7 +220,6 @@ export function useChatSession() {
 
     // Timers
     timers,
-    connectionRecoveryTimers,
     deferredWelcomeRequests,
 
     // Tab leader
@@ -426,27 +394,6 @@ export function useChatSession() {
       return isImporting;
     },
 
-    // dev tools state
-    /** Last generated MLS KeyPackage as a hex string (dev panel). */
-    get lastKeyPackage() {
-      return lastKeyPackage;
-    },
-    /** Hex string pasted into the dev panel for incoming MLS bytes. */
-    get incomingBytesHex() {
-      return incomingBytesHex;
-    },
-    set incomingBytesHex(v: string) {
-      incomingBytesHex = v;
-    },
-    /** Last produced MLS Commit bytes as hex (dev panel). */
-    get lastCommit() {
-      return lastCommit;
-    },
-    /** Last produced MLS Welcome bytes as hex (dev panel). */
-    get lastWelcome() {
-      return lastWelcome;
-    },
-
     // actions
     /** Initialises the MLS service and CallService; must be called from onMount. */
     initServices(log: (msg: string) => void) {
@@ -512,15 +459,6 @@ export function useChatSession() {
     /** Processes pending MLS invitations from our other devices (multi-device sync). */
     processDeviceInvitationsLocally: (cb: import('./session/sessionTypes').ChatSessionCallbacks) =>
       processDeviceInvitationsLocally(ctx, cb),
-    /** Dev-tool: generates a new MLS KeyPackage for this device. */
-    devGenerateKeyPackage: (cb: import('./session/sessionTypes').ChatSessionCallbacks) =>
-      generateDevKeyPackageImpl(ctx, cb),
-    /** Dev-tool: adds a member (KeyPackage hex) to an MLS group. */
-    devAddMember: (cb: import('./session/sessionTypes').ChatSessionCallbacks, groupId: string) =>
-      addDevMemberImpl(ctx, cb, groupId),
-    /** Dev-tool: processes a Welcome message (hex) so this device joins the group. */
-    devProcessWelcome: (cb: import('./session/sessionTypes').ChatSessionCallbacks) =>
-      processDevWelcomeImpl(ctx, cb),
     /** Resets this device's MLS state and returns to a fresh state (called on server revocation). */
     resetDeviceAsFresh: (
       userIdToReset: string,

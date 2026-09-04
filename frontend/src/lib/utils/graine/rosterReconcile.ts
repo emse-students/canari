@@ -2,6 +2,7 @@ import type { ChannelService } from '$lib/services/ChannelService';
 import { scopeLabel, type DistributionScope } from '$lib/mls-client/distributionScope';
 import { isGraineReady, requireGraineRuntime } from './runtime';
 import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
+import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 
 /**
  * Making a departure move the community's distribution-group epoch.
@@ -102,7 +103,7 @@ export async function reconcileDistributionGroupRoster(
   );
 
   const groupId = mlsService.distributionGroupFor(scope);
-  if (!groupId || !mlsService.getLocalGroups().includes(groupId)) {
+  if (!groupId || !holdsGroupState(mlsService, groupId)) {
     // Not an error and not silent: only a member may commit, so a device that has not joined yet
     // simply is not the one that reconciles - and saying so is what distinguishes this from a pass
     // that ran and found nothing.

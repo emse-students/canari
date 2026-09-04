@@ -149,8 +149,7 @@ export async function attemptReconnectImpl(
       setReconnectAttempts: (v: number) => ctx.setReconnectAttempts(v),
       processDeviceInvitationsLocally: () => processDeviceInvitationsLocally(ctx, cb),
       log: cb.log,
-      onGroupMissing: (groupId: string) =>
-        requestReAdd(groupId, makeRecoveryDeps(ctx, cb), ctx.connectionRecoveryTimers),
+      onGroupMissing: (groupId: string) => requestReAdd(groupId, makeRecoveryDeps(ctx, cb)),
       onGroupDeletedRemotely: (groupId: string) =>
         markConversationDeletedRemotely(
           cb.conversations,

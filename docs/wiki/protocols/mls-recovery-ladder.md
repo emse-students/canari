@@ -131,6 +131,50 @@ requester did not need. The connect-time repair heals the steady state with nobo
 serves the party that is locked out. Neither is a retry: the requester re-asks on its own cadence and
 each ask is forwarded to a randomly re-elected member.
 
+## Every entrance is the same seam, and the two that were not
+
+**`requestReAdd` is the ONLY action seam, `SYNC_WATCHDOG` the only cadence owner, and eight call
+sites reach the seam rather than duplicating it** - the connection sync, the watchdog, the message
+pipeline's out-of-sync path, the outbox's held-message path, the fork recovery, the conversation
+verify, the group-creation reconciliation, and the pending-invitation pass. Reaching it every poll is
+correct: it self-throttles to one attempt per `RECOVERY_TIMEOUT_MS` per group.
+
+**Two paths used to reach `sendWelcomeRequest` DIRECTLY, and both were removed on 2026-09-04.** They
+skipped everything the seam decides: the self-service external join (the primary path, and the only
+one needing nobody online), `readWelcomeOwed` (so they could race a member's in-flight `addMember`
+into the duplicate leaf GRP-4 named), the throttle, and the terminal reading of a 403.
+
+| Where | What it was | What it is now |
+|---|---|---|
+| `syncConnectionAfterWsOpen` | `onGroupMissing` was OPTIONAL, and its absence fell back to `sendWelcomeRequest` alone | the dep is REQUIRED - both call sites (`sessionAuth`, `sessionConnection`) always passed it, so the fallback existed only to be silently worse |
+| `processPendingInvitations` | the pass that adds OTHER devices can find that THIS one holds no state, and answered with a bare `sendWelcomeRequest` on every connection | takes `requestReAdd` as a dep, the way the outbox does |
+
+**No cadence, no rung and no throttle was added** - both now enter the ladder at its documented
+entrance.
+
+### What the timer map was, and why there is none
+
+`requestReAdd` took a `Map<groupId, Timeout>` threaded through eight modules, and **nothing had
+armed a timer in it since 2026-07-04**: the map existed to schedule the `reboot` step, `reboot` went
+with the CAS/successor retirement (`e70300572`), and the only `timers.set` in the tree went with it.
+What survived was a map that was created, read, cleared, deleted from and never written - plus a
+comment promising "only one timer armed per group regardless of source", about a mechanism that was
+gone. `cancelReAdd(groupId)` now clears the cooldown and nothing else, which is all it ever did.
+
+**The pacing this seam has is the one it documents**: `RECOVERY_TIMEOUT_MS` between attempts, and
+`SYNC_WATCHDOG`'s 5 s poll driving them. Nothing else.
+
+### The marker is a set, and its instant is evidence
+
+`notReadyRegistry` writes `mls_not_ready_since:<user>:<group>`. **Presence selects the group; the
+stored instant terminates nothing** - termination is a proof (a join, a confirmed-absent group, a 403
+from the roster), never a clock. The instant had no reader at all until 2026-09-04, which made it
+indistinguishable from a `'1'` while the module's own doc described a wall-clock deadline that did
+not exist. `readNotReadySince` now feeds the `[READD] ... attempt starting` line, so a group on its
+first pass and one that has been waiting five days no longer read identically - the second is the
+stranded population `reportStrandedDeviceMemberships` names hourly on the server, and nothing said it
+client-side.
+
 ## Verification (tests + runtime)
 
 | Step | What must hold | How we check |
@@ -145,6 +189,8 @@ each ask is forwarded to a randomly re-elected member.
 | External-join self-recovery (rung 2) | `requestReAdd` tries `externalJoin` first; welcome_request only as fallback; GroupInfo store is membership-gated + monotonic | `external_join.rs`, `BaseMlsService.externalJoin.test.ts`, `messaging.group-info.spec.ts`, `recovery.test.ts` |
 | A join never leaves the base behind | The joiner exports at `base + 1` before merging, the blob travels in the commit submission, and the server stores it in the same transaction as the advance; a wrong-epoch instance abandons the join | `external_join.rs` (`a_joiner_exports_the_base_its_own_commit_created_before_merging`), `BaseMlsService.externalJoin.test.ts`, `messaging.commit-log.spec.ts` |
 | A refused GroupInfo read terminates the ladder | 403 is typed at the throw, survives `externalJoin`, retires the conversation; 401/404/5xx and a `200`-with-`null` stay retryable | `mlsDeliveryApi.groupStatus.test.ts`, `BaseMlsService.externalJoin.test.ts`, `recovery.test.ts` |
+| Every entrance is the seam | `processPendingInvitations` drives `requestReAdd` and never `sendWelcomeRequest`; a rejected seam is logged and the pass continues; a group the server says is gone reaches cleanup instead | `actions.pendingInvitations.test.ts` |
+| The not-ready instant answers "since when" | first mark wins, a second does not move it, cleared marker reads undefined, an unusable value loses only the age | `notReadyRegistry.test.ts` |
 | Kick API | Authenticated clients only | `HeaderAuthGuard` on `kick-stale-device`, `kick-stale-user` |
 
 ## Backend identity binding

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { foldForSearch } from '$lib/utils/textFold';
-  import { ShieldCheck, TriangleAlert, LoaderCircle, CloudOff, Clock } from '@lucide/svelte';
+  import { ShieldCheck, TriangleAlert, LoaderCircle, CloudOff } from '@lucide/svelte';
   import {
     ArrowDown,
     Search,
@@ -1048,24 +1048,13 @@
           </div>
         {/if}
         <!--
-          THE ONE PLACE A PHONE CAN READ WHY THE CONVERSATION IS EMPTY. The sidebar badge and the
-          padlock's tooltip both need a pointer to say anything, and this app is mostly used without
-          one. `lifecycle === 'pending'` means this device holds no MLS state for the group, so there
-          is nothing to show and nothing to decrypt - and the composer stays, deliberately: a TEXT
-          send is captured by the durable outbox and flushed on join, which is exactly what the
-          second sentence promises. Only inline MEDIA needs a live group, and it keeps its own guard.
-          NO SPINNER: this waits on a member coming online, not on work in progress here.
+          AND NOTHING ELSE STACKS HERE. A second banner for "this device has not joined this
+          conversation yet" was written on 2026-09-04 and removed the same day, on the product call
+          that the reader should see as little of the machinery as possible: that state resolves
+          itself (a roster seat with nothing behind it is joined by external commit on the next pass),
+          and it is not something a person can act on. The banner above is the exception, and the
+          reason it earns its place is that MESSAGES ARRIVING is what the reader is waiting for.
         -->
-        {#if !isChannel && conversation?.lifecycle === 'pending'}
-          <div
-            class="bg-banner-warn text-text-main border-amber-warn/30 pointer-events-none flex items-center justify-center gap-2 border-b px-4 py-1.5 text-center text-xs font-medium"
-            role="status"
-            aria-live="polite"
-          >
-            <Clock size={11} class="shrink-0" strokeWidth={2.5} aria-hidden="true" />
-            {m.chat_not_joined_banner()}
-          </div>
-        {/if}
       </div>
 
       <div

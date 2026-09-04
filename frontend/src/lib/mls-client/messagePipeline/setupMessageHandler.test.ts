@@ -217,11 +217,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     });
     // New behaviour: requestReAdd is called (which sends sendWelcomeRequest).
     const { requestReAdd } = await import('$lib/utils/chat/recovery');
-    expect(vi.mocked(requestReAdd)).toHaveBeenCalledWith(
-      groupId,
-      expect.anything(),
-      expect.anything()
-    );
+    expect(vi.mocked(requestReAdd)).toHaveBeenCalledWith(groupId, expect.anything());
   });
 
   it('processes Welcome for known placeholder conversation (not ready)', async () => {
@@ -403,7 +399,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     expect(ok).toBe(true);
     // First detection: republish fresh key material, then drive the externalJoin-first seam.
     expect(mls.republishKeyMaterial).toHaveBeenCalledWith('device-key');
-    expect(recovery.requestReAdd).toHaveBeenCalledWith(gid, expect.anything(), expect.anything());
+    expect(recovery.requestReAdd).toHaveBeenCalledWith(gid, expect.anything());
     // The self-heal seam owns welcome_request (fallback); the handler no longer calls it directly.
     expect(mls.sendWelcomeRequest).not.toHaveBeenCalled();
   });
@@ -431,7 +427,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     // No 3-strike wait: the peer-independent externalJoin (via requestReAdd) is attempted at once,
     // so a device whose peers have suspended re-adds can still self-heal.
     await onMsg('peer', new Uint8Array([1]), gid, true, undefined);
-    expect(recovery.requestReAdd).toHaveBeenCalledWith(gid, expect.anything(), expect.anything());
+    expect(recovery.requestReAdd).toHaveBeenCalledWith(gid, expect.anything());
   });
 
   it('Welcome (GroupAlreadyExists) → noop, ACK', async () => {
@@ -553,11 +549,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     expect(result).toBe(false);
     // The single recovery seam is fired at once (no 10 s timer); it sends the welcome_request and
     // marks the group not-ready for the SYNC_WATCHDOG cadence.
-    expect(vi.mocked(requestReAdd)).toHaveBeenCalledWith(
-      unknownGroupId,
-      expect.anything(),
-      expect.anything()
-    );
+    expect(vi.mocked(requestReAdd)).toHaveBeenCalledWith(unknownGroupId, expect.anything());
   });
 
   it('second frame for the same unknown group → no duplicate recovery (buffer dedup)', async () => {
@@ -600,11 +592,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     const ok = await onMsg('peer', new Uint8Array([1]), groupId, false, undefined, false);
     expect(ok).toBe(true);
     const { requestReAdd } = await import('$lib/utils/chat/recovery');
-    expect(vi.mocked(requestReAdd)).toHaveBeenCalledWith(
-      groupId,
-      expect.anything(),
-      expect.anything()
-    );
+    expect(vi.mocked(requestReAdd)).toHaveBeenCalledWith(groupId, expect.anything());
   });
 
   it('delivers decrypted app text for known group (non-welcome)', async () => {
@@ -677,7 +665,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     // No clock was advanced between the frame and these assertions.
     expect(ok1).toBe(true);
     expect(mls.forgetGroup).toHaveBeenCalledWith(gid);
-    expect(vi.mocked(requestReAdd)).toHaveBeenCalledWith(gid, expect.anything(), expect.anything());
+    expect(vi.mocked(requestReAdd)).toHaveBeenCalledWith(gid, expect.anything());
     vi.useRealTimers();
   });
 
@@ -725,7 +713,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     vi.advanceTimersByTime(31_000);
     await onMsg('peer', new Uint8Array([1]), gid, false, undefined, false);
     expect(mls.forgetGroup).toHaveBeenCalledWith(gid);
-    expect(vi.mocked(requestReAdd)).toHaveBeenCalledWith(gid, expect.anything(), expect.anything());
+    expect(vi.mocked(requestReAdd)).toHaveBeenCalledWith(gid, expect.anything());
     vi.useRealTimers();
   });
 
@@ -764,7 +752,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     const ok1 = await onMsg('peer', new Uint8Array([1]), gid, false, undefined, false);
     expect(ok1).toBe(true);
     expect(mls.forgetGroup).toHaveBeenCalledWith(gid);
-    expect(vi.mocked(requestReAdd)).toHaveBeenCalledWith(gid, expect.anything(), expect.anything());
+    expect(vi.mocked(requestReAdd)).toHaveBeenCalledWith(gid, expect.anything());
     vi.useRealTimers();
   });
 
@@ -845,6 +833,6 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     expect(ok).toBe(true);
     expect(mls.fetchCommitsSince).not.toHaveBeenCalled();
     expect(mls.forgetGroup).toHaveBeenCalledWith(gid);
-    expect(vi.mocked(requestReAdd)).toHaveBeenCalledWith(gid, expect.anything(), expect.anything());
+    expect(vi.mocked(requestReAdd)).toHaveBeenCalledWith(gid, expect.anything());
   });
 });

@@ -4,6 +4,7 @@ import type { StoredGraineSession } from '$lib/db/types';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
 import { encodeAppMessage, mkGraine } from '$lib/proto/codec';
 import { fromBase64 } from '$lib/utils/hex';
+import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 
 /**
  * Putting a Graine seed into the hands of a community, over its MLS distribution group.
@@ -42,7 +43,7 @@ export function distributionEpochFor(
   scope: DistributionScope
 ): number | null {
   const groupId = mlsService.distributionGroupFor(scope);
-  if (!groupId || !mlsService.getLocalGroups().includes(groupId)) return null;
+  if (!groupId || !holdsGroupState(mlsService, groupId)) return null;
   if (!mlsService.isDistributionBaseSettled(groupId)) return null;
   return mlsService.getEpoch(groupId);
 }
