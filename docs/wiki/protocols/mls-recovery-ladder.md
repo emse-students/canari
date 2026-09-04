@@ -80,6 +80,57 @@ This document describes how the **client** recovers from MLS and delivery-queue 
 
 6. **Last resort** — Full resync / re-login / clearing local MLS state is outside normal operation; prefer fixing the specific gap (queue item, epoch, membership row) first.
 
+## The external-join base, and who repairs it when it falls behind
+
+The base is a self-contained `GroupInfo` stored by the delivery service. It is the whole of what
+lets a device with **no local MLS state** re-enter a group without asking anybody - rung 4,
+`externalJoin` - and the commit gate accepts `baseEpoch == activeEpoch` and nothing else.
+
+**Only a member holding the tree can mint one, and it is minted as a follow-up.** `runCommitTransaction`
+ends with `void this.refreshGroupInfo(groupId)`: off the critical path, deliberately, because a
+commit that the server accepted must not be reported as failed just because a follow-up did not
+land. The cost was documented in that comment for months and was exactly as stated - lose the
+follow-up and the group's epoch has advanced while the published base has not, **permanently**,
+because nothing else ever mints one.
+
+**Measured on production 2026-09-04**, and the shape of the number is the diagnosis:
+
+| Groups with a base | Stale | Gap | Oldest | Devices `pending` on a stale one |
+| --- | --- | --- | --- | --- |
+| 43 | **4** | **exactly 1 epoch, all four** | 2026-08-30 | 3 |
+
+A uniform gap of one is one lost follow-up per group, not drift. Three of the four are
+CONVERSATIONS, and the only repair that existed (`republishStaleBase`) ran for distribution groups.
+
+**The repair, and why it is where it is.** `GET /mls/users/:userId/groups` is the one call every
+device makes on every connection, and it now carries `activeEpoch` and `baseEpoch`. A device holding
+the current tree republishes when they disagree - `republishBaseIfStale` in
+`frontend/src/lib/utils/chat/staleBase.ts`, the single implementation, which the Graine repair
+delegates to and decorates with its own `[GRAINE]` label.
+
+Four properties, each a house rule rather than a preference:
+
+1. **The durable state is the server's two columns**, and there is no second copy. A client-side
+   owed-work queue (the `pendingGroupExits` shape) would duplicate a fact another member may already
+   have fixed, and durable state answers only the question it was written for.
+2. **The trigger is an event that already happens** - a connection - not a clock. Nothing polls, and
+   a device that never connects owes nothing.
+3. **Termination is a proof**: `baseEpoch == activeEpoch`. Never an attempt count or a deadline. A
+   failed republish leaves the group exactly as stale, and the next holder's connection tries again.
+4. **Idempotence is free**: the server's publish is monotonic, so two holders repairing at once, or
+   one repairing twice, cannot make the base worse.
+
+A holder whose OWN tree is behind cannot mint a usable base either. That is a distinct verdict and it
+is logged, because a run in which every holder is behind is a group nobody can repair.
+
+**The immediate arm is separate and is not a duplicate.** A device refused with `stale_base` right
+now asks one online member to republish (`base_refresh_request`, `notifyBaseRefreshRequest`) instead
+of falling into the shared `welcome_request` fallback - which asks for a Welcome, a tree MUTATION
+that takes the group's add lock and replays the duplicate-leaf race, to obtain something the
+requester did not need. The connect-time repair heals the steady state with nobody asking; this one
+serves the party that is locked out. Neither is a retry: the requester re-asks on its own cadence and
+each ask is forwarded to a randomly re-elected member.
+
 ## Verification (tests + runtime)
 
 | Step | What must hold | How we check |

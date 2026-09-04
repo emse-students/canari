@@ -2077,6 +2077,108 @@ export class MessagingService {
   }
 
   /**
+   * Asks one online member to REPUBLISH this group's external-join base, and asks for nothing else.
+   *
+   * WHY A SIGNAL OF ITS OWN, AND NOT THE WELCOME REQUEST NEXT DOOR. A device that cannot join a
+   * group by external commit has two very different problems, and until 2026-09-04 both were
+   * answered with `welcome_request`:
+   *
+   *  - **no base is published** - only a member can mint one, and a Welcome is a fine way to be let
+   *    in;
+   *  - **the published base is STALE** - it names an epoch the group has left, so `join_by_external_commit`
+   *    refuses it and NO retry can ever change that. Asking for a Welcome here is asking for the
+   *    wrong favour: a Welcome MUTATES the tree, takes the group's add lock, and replays the
+   *    duplicate-leaf race, when what is needed is a read-only publish that changes no epoch and
+   *    takes no lock.
+   *
+   * **THE POPULATION IS REAL AND IT DOES NOT DRAIN ITSELF.** Measured on production 2026-09-04:
+   * four of the forty-three groups holding a base were stale, every one of them by exactly ONE
+   * epoch, two of them since 2026-08-30 - and three devices sat `pending` on those two, unable to
+   * join for five days. A stale base is not a transient: only a member's next commit republishes
+   * one, so a quiet conversation stays shut for ever.
+   *
+   * The election is the history request's, for the history request's reason: a backgrounded Android
+   * holds its socket open, so `user:online` can be true for a device that will not process the
+   * frame. Randomising lets the requester's retries rotate past it.
+   *
+   * **NOTHING IS STORED FOR AN OFFLINE MEMBER**, deliberately - unlike `welcome_request`, which
+   * queues in `pending_welcome:` so a newly-online peer drains it. A base refresh is idempotent and
+   * cheap, the requester re-asks on its own cadence as long as it still cannot join, and a queue of
+   * requests to republish something that may already have been republished is a queue that says
+   * nothing. `no_peer_online` is the honest answer, and it is the one this returns.
+   */
+  async notifyBaseRefreshRequest(
+    authUserIdRaw: string | undefined,
+    body: NotifyWelcomeRequestBody
+  ): Promise<{ status: string; target?: string }> {
+    const traceId = this.makeTraceId('base-refresh');
+    const groupId = sanitizeQueryValue(body.groupId, 'groupId');
+    const requesterUserId = sanitizeQueryValue(body.requesterUserId, 'requesterUserId');
+    const requesterDeviceId = sanitizeQueryValue(body.requesterDeviceId, 'requesterDeviceId');
+    this.assertRequesterMatchesCaller(authUserIdRaw, requesterUserId, traceId, 'BASE_REFRESH');
+
+    let members: string[] = await this.redis.smembers(`group:members:${groupId}`);
+    const senderKey = `${requesterUserId}:${requesterDeviceId}`;
+    // The Redis routing set is a cache and is empty after a restart or a flush; the rows are the
+    // truth. Without this a request lands on an empty member list and reports `no_peer_online`
+    // about a group full of people.
+    if (members.length === 0) {
+      const dbMembers = await this.deviceGroupRepo.find({
+        where: { groupId, status: 'active' as const },
+      });
+      if (dbMembers.length > 0) {
+        members = dbMembers.map((m) => `${m.userId}:${m.deviceId}`);
+        await this.redis.sadd(`group:members:${groupId}`, ...members);
+      }
+    }
+
+    const notification = JSON.stringify({
+      type: 'base_refresh_request',
+      groupId,
+      requesterUserId,
+      requesterDeviceId,
+    });
+
+    for (let i = members.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [members[i], members[j]] = [members[j], members[i]];
+    }
+
+    for (const member of members) {
+      if (member === senderKey) continue;
+      const [memberUserId, memberDeviceId] = member.split(':');
+      if (!memberUserId || !memberDeviceId) continue;
+      if (!(await this.redis.exists(`user:online:${memberUserId}:${memberDeviceId}`))) continue;
+      await this.redis.publish(
+        'chat:messages',
+        JSON.stringify({
+          recipientId: memberUserId,
+          deviceId: memberDeviceId,
+          // `isWelcomeRequest` is the gateway's generic "relay this base64 JSON control frame"
+          // flag; the inner `type` is what drives the client.
+          proto: Buffer.from(notification).toString('base64'),
+          isWelcomeRequest: true,
+          groupId,
+          senderId: requesterUserId,
+          senderDeviceId: requesterDeviceId,
+        })
+      );
+      this.logger.log(
+        `[BASE_REFRESH][${traceId}] FORWARDED target=${member} group=${groupId} requester=${senderKey}`
+      );
+      return { status: 'forwarded', target: member };
+    }
+
+    // AT A LEVEL THAT ACCUSES, because this is a group nobody can enter right now. Its rate is what
+    // says whether a stale base is a moment or a state.
+    this.logger.warn(
+      `[BASE_REFRESH][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} members=${members.length}` +
+        ` - the published base stays stale and no device can external-join until a member returns`
+    );
+    return { status: 'no_peer_online' };
+  }
+
+  /**
    * Broadcasts a welcome_request signal to one online group member to trigger
    * a re-invite for the requesting device.  Falls back to the DB to repopulate
    * the Redis routing cache when the set is empty after a service restart.

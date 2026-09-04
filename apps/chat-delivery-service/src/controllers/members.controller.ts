@@ -20,6 +20,7 @@ import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { Group } from '../entities/group.entity';
 import { KeyPackage } from '../entities/key-package.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
+import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import {
   sanitizeQueryValue,
@@ -45,6 +46,8 @@ export class MembersController {
     private keyPackageRepo: Repository<KeyPackage>,
     @InjectRepository(DeviceGroupMembership)
     private deviceGroupRepo: Repository<DeviceGroupMembership>,
+    @InjectRepository(MlsGroupInfo)
+    private groupInfoRepo: Repository<MlsGroupInfo>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
     private readonly dataSource: DataSource
   ) {}
@@ -181,12 +184,38 @@ export class MembersController {
     this.logger.log(
       `[USER_GROUPS] user=${safeUserId} groups=${activeGroups.length} ids=${activeGroups.map((g) => g.id).join(',')}`
     );
+    // THE TWO EPOCHS, SO A HOLDER CAN SEE THAT THE PUBLISHED EXTERNAL-JOIN BASE IS BEHIND.
+    //
+    // Nothing but a member's own publish mints a base, and that publish is a follow-up to a commit:
+    // when it is lost - a closed tab, an offline moment, a refused request - the group's epoch has
+    // advanced and the published base stays where it was. The epoch gate accepts `baseEpoch ==
+    // activeEpoch` and nothing else, so from that moment EVERY device without local MLS state is
+    // refused, every time, and only another commit into that group would ever fix it. Measured on
+    // production 2026-09-04: four of the forty-three groups holding a base were stale, every one by
+    // exactly ONE epoch, two of them since 2026-08-30 with three devices sitting `pending` on them.
+    //
+    // WHY HERE AND NOT IN A REPAIR ENDPOINT OF ITS OWN. This is the one call every device makes on
+    // every connection, and a device that HOLDS the tree is the only thing that can mint a base. So
+    // the fact travels on the read the repairer already performs: no timer, no queue, no second copy
+    // of the state - the two columns ARE the durable record of "a republish is owed", they are
+    // authoritative, and they answer exactly that question. `republishBaseIfStale` on the client is
+    // the other half.
+    //
+    // `baseEpoch: null` means no base has ever been published, which is NOT staleness: a joiner
+    // asks a member for a Welcome then, and a holder has nothing to repair.
+    const bases = await this.groupInfoRepo.find({
+      select: { groupId: true, baseEpoch: true },
+      where: { groupId: In(activeGroups.map((g) => g.id)) },
+    });
+    const baseOf = new Map(bases.map((b) => [b.groupId, b.baseEpoch]));
     return activeGroups.map((g) => ({
       groupId: g.id,
       name: g.name,
       isGroup: g.isGroup,
       imageMediaId: g.imageMediaId ?? null,
       deletedAt: g.deletedAt ?? null,
+      activeEpoch: g.activeEpoch,
+      baseEpoch: baseOf.get(g.id) ?? null,
     }));
   }
 

@@ -1,4 +1,5 @@
 import type { IMlsService } from '$lib/mls-client/IMlsService';
+import { republishBaseIfStale } from '$lib/utils/chat/staleBase';
 import {
   scopeLabel,
   workspaceScope,
@@ -301,24 +302,18 @@ async function joinDistributionGroup(
 /**
  * Republishes a scope's external-join base when the published one is behind the group's real epoch.
  *
- * THE REPAIR OF A DEFECT THAT HAS NO OTHER CURE, and only a device holding the tree can perform it.
- * The base is minted by the device whose commit was just accepted, in a follow-up call, and nothing
- * else ever mints one - so when that call is lost (offline, closed tab, a refused refresh) the
- * group's epoch advances and the published base stays where it was, for ever. The commit gate
- * accepts a base equal to the active epoch and nothing else, so from that moment every device
- * without local MLS state is refused, every time. A distribution group has no peer-Welcome fallback
- * by construction: that device is locked out of a salon it is entitled to, permanently. Measured on
- * production 2026-08-25 (COMM-8) on a two-member private salon.
+ * ONE IMPLEMENTATION, IN `staleBase.ts`, SINCE 2026-09-04. This function was the only repair for a
+ * lost base publish, and it ran for distribution groups alone - so the three CONVERSATIONS measured
+ * stale on production that day had no cure at all. The predicate, the self-check and the two log
+ * shapes moved to `chat/staleBase.ts`, where the connect-time repair for every group also reads
+ * them; what stays here is the Graine label, because a `[GRAINE]` line naming its scope is what
+ * makes a salon's lockout legible in a run log.
  *
- * NOT A TIMER, AND NOT A SWEEP. The trigger is this device's ordinary read of a scope it is already
- * in - the same read every member performs on every load - and the termination condition is a proof
- * the server itself hands over: `baseEpoch >= activeEpoch`. Idempotent, because the far side is
- * monotonic, and free in the common case, where the two numbers already agree and nothing is sent.
- *
- * A DEVICE BEHIND THE GROUP CANNOT MINT THE BASE EITHER, and says so rather than publishing an
- * equally unusable one: its own tree is at an older epoch, so the GroupInfo it could export would be
- * refused by the same gate. Some other member will be current - it is the receiving half of the
- * fan-out that leaves them so - and this line is what names the wait.
+ * The reasoning it carried is on the shared module: only a holder can mint a base, the trigger is
+ * this device's ordinary read rather than a timer, termination is the server's own proof
+ * (`baseEpoch >= activeEpoch`), and a device whose own tree is behind says so instead of publishing
+ * an equally unusable base. Measured on production 2026-08-25 (COMM-8) on a two-member private
+ * salon, and again 2026-09-04 across the whole estate.
  */
 async function republishStaleBase(
   mlsService: IMlsService,
@@ -326,24 +321,9 @@ async function republishStaleBase(
   scope: DistributionScope,
   log: (message: string) => void
 ): Promise<void> {
-  if (ref.baseEpoch === null || ref.baseEpoch >= ref.activeEpoch) return;
-
-  const localEpoch = mlsService.getEpoch(ref.groupId);
-  if (localEpoch < ref.activeEpoch) {
-    log(
-      `[GRAINE] ${scopeLabel(scope)}: the published external-join base is at epoch ${ref.baseEpoch} while the group is at ` +
-        `${ref.activeEpoch}, and this device's own tree is at ${localEpoch} - it cannot mint a usable base either`
-    );
-    return;
-  }
-
-  // AT A LEVEL THAT ACCUSES: reaching this means at least one device is currently unable to enter a
-  // scope it belongs to, and the rate of this line is what says whether lost republishes are rare.
-  log(
-    `[GRAINE] ${scopeLabel(scope)}: the published external-join base is at epoch ${ref.baseEpoch} while the group is at ` +
-      `${ref.activeEpoch} - no device without the tree can get in; republishing from the tree this one holds`
+  await republishBaseIfStale(mlsService, ref, (message) =>
+    log(`[GRAINE] ${scopeLabel(scope)}: ${message}`)
   );
-  await mlsService.refreshGroupInfo(ref.groupId);
 }
 
 /** {@link ensureDistributionGroupFor} for a whole community. */

@@ -1,4 +1,5 @@
 import type { IMlsService, UserGroupRow } from './IMlsService';
+import { republishBaseIfStale } from '$lib/utils/chat/staleBase';
 import { DeviceLimitReachedError } from './mlsDeliveryApi';
 import { getIsTabLeader } from './tabLeader';
 import { showToast } from '$lib/stores/toast.svelte';
@@ -240,7 +241,26 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
         await mlsService.sendWelcomeRequest(g.groupId).catch(() => {});
         log(`[SYNC] welcome_request → ${g.groupId.slice(0, 8)}…`);
       }
+      continue;
     }
+
+    // THE SYMMETRIC BRANCH, AND IT WAS MISSING. Above: this device holds no state for the group and
+    // asks somebody. Here: this device HOLDS the tree, which makes it the only kind of thing that
+    // can mint an external-join base - so it is the one that repairs a base that has fallen behind.
+    //
+    // A base is minted only as a follow-up to a commit (`void refreshGroupInfo`), so losing that
+    // call strands the published base one epoch behind for ever: the epoch gate accepts
+    // `baseEpoch == activeEpoch` and nothing else, so every stateless device is refused from that
+    // moment on. Measured on production 2026-09-04 - four groups stale, all by exactly one epoch,
+    // two of them for five days with three devices waiting on them. The repair existed for
+    // distribution groups only, and three of those four are conversations.
+    //
+    // It belongs HERE because this loop is the one read every device already makes on every
+    // connection, and both epochs now travel on it: no timer, no queue, and no second copy of a
+    // fact the server holds authoritatively. See `staleBase.ts` for the four properties.
+    await republishBaseIfStale(mlsService, g, log).catch((e) =>
+      log(`[BASE] ${g.groupId.slice(0, 8)}… republish check failed: ${String(e).slice(0, 120)}`)
+    );
   }
 
   // 3. Purge WASM state for groups no longer known to the server.

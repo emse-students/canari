@@ -170,6 +170,13 @@ export abstract class BaseMlsService implements IMlsService {
     | ((requesterUserId: string, requesterDeviceId: string, groupId: string) => void)
     | null = null;
 
+  /**
+   * Installed by the session so this device can republish a group's external-join base when another
+   * device asks. Read-only for the tree: no lock, no epoch change, nothing to merge.
+   */
+  protected baseRefreshRequestCallback:
+    | ((requesterUserId: string, requesterDeviceId: string, groupId: string) => void)
+    | undefined;
   protected historyRequestCallback:
     | ((requesterUserId: string, requesterDeviceId: string, groupId: string) => void)
     | null = null;
@@ -489,6 +496,12 @@ export abstract class BaseMlsService implements IMlsService {
     callback: (requesterUserId: string, requesterDeviceId: string, groupId: string) => void
   ): void {
     this.welcomeRequestCallback = callback;
+  }
+
+  onBaseRefreshRequest(
+    callback: (requesterUserId: string, requesterDeviceId: string, groupId: string) => void
+  ): void {
+    this.baseRefreshRequestCallback = callback;
   }
 
   onHistoryRequest(
@@ -1348,6 +1361,31 @@ export abstract class BaseMlsService implements IMlsService {
   /** Announces to group members that this device needs a Welcome. */
   async sendWelcomeRequest(groupId: string): Promise<void> {
     await this.delivery.deliveryPost('welcome-request', {
+      groupId,
+      requesterUserId: this.userId,
+      requesterDeviceId: this.deviceId,
+    });
+  }
+
+  /**
+   * Asks one online member to REPUBLISH this group's external-join base, and asks for nothing else.
+   *
+   * THE FAVOUR THAT MATCHES THE REFUSAL. `externalJoin` answers `stale_base` when the published
+   * GroupInfo names an epoch the group has left: no retry can ever satisfy it, because only a member
+   * holding the tree can mint a new one. Until 2026-09-04 that refusal fell into the shared
+   * `sendWelcomeRequest` fallback, which asks for something far more expensive and entirely
+   * different - a Welcome MUTATES the tree, takes the group's add lock and replays the
+   * duplicate-leaf race, where a refresh is a read-only publish that changes no epoch and takes no
+   * lock. Measured on production the same day: four of the forty-three groups holding a base were
+   * stale, all by exactly one epoch, two of them since 2026-08-30 with three devices sitting
+   * `pending` on them - a stale base does not drain itself, because only a member's next commit
+   * republishes one and a quiet conversation has none.
+   *
+   * Best-effort by construction: the requester keeps its own cadence and asks again while it still
+   * cannot join, so nothing here is retried and nothing is stored for an offline member.
+   */
+  async sendBaseRefreshRequest(groupId: string): Promise<void> {
+    await this.delivery.deliveryPost('base-refresh-request', {
       groupId,
       requesterUserId: this.userId,
       requesterDeviceId: this.deviceId,

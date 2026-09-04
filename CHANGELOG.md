@@ -13,6 +13,53 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A group's external-join base fell one epoch behind and stayed there for ever, and the code said
+  so in its own comment.** A base is what lets a device with no MLS state join a group, and only a
+  member holding the tree can mint one - as a FOLLOW-UP to a commit, fire-and-forget:
+  `void this.refreshGroupInfo(groupId)`, under a comment reading *"this is the ONLY thing that mints
+  a base, so losing it strands the group's published base one epoch behind - permanently"*. The
+  epoch gate accepts `baseEpoch == activeEpoch` and nothing else, so from that moment every
+  stateless device is refused, every time, and only another commit into that group would ever move
+  it. The repair that comment pointed at ran for DISTRIBUTION groups only.
+
+  **The measurement said the comment was right.** Production, 2026-09-04: four of the forty-three
+  groups holding a base were stale, and every one of them by **exactly one epoch** - the signature of
+  one lost follow-up rather than of drift. Two had been stale since 2026-08-30, with three devices
+  sitting `pending` on them, unable to join for five days. Three of the four are conversations, so
+  the existing repair could never have reached them.
+
+  **Any holder now repairs it on a read it already performs.** `GET /mls/users/:id/groups` - the one
+  call every device makes on every connection - carries the group's epoch and the published base's,
+  and a device holding the current tree republishes when they disagree. The four properties are the
+  house ones: the durable state is the SERVER'S two columns and there is no second copy of it; the
+  trigger is an event that already happens rather than a clock; termination is a proof
+  (`baseEpoch == activeEpoch`); and idempotence is free because the server's publish is monotonic. A
+  holder whose own tree is behind says so instead of replacing a stale base with another one.
+  `staleBase.ts` is the single implementation - the distribution-group repair now delegates to it
+  and keeps only its `[GRAINE]` label - and its predicate is pinned by 11 tests, validated against
+  three mutations that each fail silently in production: defaulting a missing `activeEpoch` to 0
+  (every base reads stale), reading an absent base as 0 (every unpublished group reads stale), and
+  dropping the self-check (a stale base republished over a stale base).
+
+  **And a device that is refused RIGHT NOW no longer asks for the wrong favour.** `externalJoin`
+  answers `stale_base`, a refusal no retry can lift; the shared fallback asked a member for a
+  Welcome, which MUTATES the tree, takes the group's add lock and replays the duplicate-leaf race, to
+  obtain something the requester did not need. It asks for a republish instead - read-only, no lock,
+  no epoch change - and serves itself on the next pass. The two halves are not duplicates: the
+  connect-time repair heals the steady state with nobody asking, and this one makes it immediate for
+  the device that is locked out.
+
+- **A conversation that had just rejoined and worked kept wearing the "Sync" badge.** After a
+  successful external-commit join, `requestReAdd` promotes the local conversation out of `pending` -
+  it is the one join path the Welcome flow never touches - and it read the conversation map by
+  groupId. Two key conventions live in that map: a DM created on this device is keyed by its
+  groupId, one learnt from a Welcome by the PEER'S USER ID. So for every RECEIVED direct message the
+  lookup found nothing, wrote nothing, and `saveConversation(groupId)` would have persisted nothing
+  either - the group was live in WASM, readable and sendable, and the badge said otherwise until the
+  next login's reconciliation happened to notice. `findByGroupId` had been written for exactly this
+  and this was the last call site in the module still reading by key; four tests pin both
+  conventions, and the one for a received DM fails against the old lookup.
+
 - **A repair that could not remove a stale leaf cleared the routing row anyway, which is now an
   invitation to add a second leaf.** `kickStaleLeaf` does two things to two different estates: it
   removes the stale leaf from the MLS TREE, which decides who can read the group, and it clears the

@@ -134,6 +134,21 @@ export class MessagingController {
   }
 
   @UseGuards(HeaderAuthGuard)
+  @Post('mls/base-refresh-request')
+  /**
+   * Asks a member to republish the group's external-join base. Its own route rather than a flag on
+   * the welcome request, because it asks for something else entirely: a read-only publish that
+   * takes no lock and changes no epoch, against a Welcome that mutates the tree.
+   */
+  async notifyBaseRefreshRequest(
+    @Headers('x-user-id') authUserId: string | undefined,
+    @Body()
+    body: { groupId: string; requesterUserId: string; requesterDeviceId: string }
+  ) {
+    return this.messagingService.notifyBaseRefreshRequest(authUserId, body);
+  }
+
+  @UseGuards(HeaderAuthGuard)
   @Post('mls/history-request')
   async notifyHistoryRequest(
     @Headers('x-user-id') authUserId: string | undefined,

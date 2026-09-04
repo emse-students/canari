@@ -288,6 +288,16 @@ export class TauriMlsService extends BaseMlsService {
             this.welcomeRequestCallback?.(requesterUserId, requesterDeviceId, groupId);
             return;
           }
+          if (msgType === 'base_refresh_request') {
+            const requesterUserId = (parsed.requesterUserId as string) || '';
+            const requesterDeviceId = (parsed.requesterDeviceId as string) || '';
+            const groupId = (parsed.groupId as string) || '';
+            console.log(
+              `[WS RCV] base_refresh_request from ${requesterUserId}:${requesterDeviceId} for group ${groupId}`
+            );
+            this.baseRefreshRequestCallback?.(requesterUserId, requesterDeviceId, groupId);
+            return;
+          }
           if (msgType === 'history_request') {
             const requesterUserId = (parsed.requesterUserId as string) || '';
             const requesterDeviceId = (parsed.requesterDeviceId as string) || '';

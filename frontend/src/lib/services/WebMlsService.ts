@@ -486,6 +486,16 @@ export class WebMlsService extends BaseMlsService {
             this.welcomeRequestCallback?.(requesterUserId, requesterDeviceId, groupId);
             return;
           }
+          if (msg.type === 'base_refresh_request') {
+            const requesterUserId = (msg.requesterUserId as string) || '';
+            const requesterDeviceId = (msg.requesterDeviceId as string) || '';
+            const groupId = (msg.groupId as string) || '';
+            console.log(
+              `[WS RCV] base_refresh_request from ${sanitizeForLog(requesterUserId)}:${sanitizeForLog(requesterDeviceId)} for group ${sanitizeForLog(groupId)}`
+            );
+            this.baseRefreshRequestCallback?.(requesterUserId, requesterDeviceId, groupId);
+            return;
+          }
           if (msg.type === 'history_request') {
             const requesterUserId = (msg.requesterUserId as string) || '';
             const requesterDeviceId = (msg.requesterDeviceId as string) || '';

@@ -32,6 +32,7 @@ function makeMls(overrides: Record<string, unknown> = {}) {
     getGroupServerStatus: vi.fn().mockResolvedValue({ groupId: 'mock-group', deletedAt: null }),
     getLocalGroups: vi.fn().mockReturnValue([]),
     sendWelcomeRequest: vi.fn().mockResolvedValue(undefined),
+    sendBaseRefreshRequest: vi.fn().mockResolvedValue(undefined),
     sendHistoryRequest: vi.fn().mockResolvedValue({ noPeerOnline: false }),
     // A reconciliation waits for this device's own inbound queue before asking anybody anything;
     // no case here is about the mailbox, so it is already idle.
@@ -462,5 +463,150 @@ describe('cancelReAdd', () => {
     cancelReAdd('g1', timers);
     await requestReAdd('g1', deps, timers);
     expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * A STALE BASE IS A REFUSAL NO RETRY CAN LIFT, AND IT WAS ANSWERED BY ASKING FOR THE WRONG THING.
+ *
+ * `externalJoin` answers `stale_base` when the published GroupInfo names an epoch the group has
+ * left. Only a member holding the tree can mint a new base, so no amount of retrying helps - and
+ * until 2026-09-04 this fell into the shared `welcome_request` fallback, which asks a member to
+ * MUTATE the tree, take the group's add lock and replay the duplicate-leaf race, in order to obtain
+ * something the requester did not need.
+ *
+ * Measured on production the same day: four of the forty-three groups holding a base were stale, all
+ * by exactly ONE epoch, two of them since 2026-08-30 with three devices sitting `pending` on them. A
+ * stale base does not drain itself - only a member's next commit republishes one, and a quiet
+ * conversation has no next commit.
+ */
+describe('requestReAdd - a stale base asks for a republish, not for a Welcome', () => {
+  const staleBase = () =>
+    vi.fn().mockResolvedValue({
+      joined: false,
+      reason: 'stale_base',
+      baseEpoch: 283,
+      serverEpoch: 284,
+    });
+
+  it('asks for a base refresh and NOT for a Welcome', async () => {
+    const deps = makeDeps();
+    deps.mlsService.externalJoin = staleBase();
+
+    await requestReAdd('g1', deps, new Map());
+
+    expect(deps.mlsService.sendBaseRefreshRequest).toHaveBeenCalledWith('g1');
+    expect(deps.mlsService.sendWelcomeRequest).not.toHaveBeenCalled();
+  });
+
+  it('names both epochs, so the log says how far behind the base is', async () => {
+    const lines: string[] = [];
+    const deps = makeDeps();
+    deps.log = (m: string) => lines.push(m);
+    deps.mlsService.externalJoin = staleBase();
+
+    await requestReAdd('g1', deps, new Map());
+
+    const out = lines.join(' | ');
+    expect(out).toContain('283');
+    expect(out).toContain('284');
+  });
+
+  it('still asks for a Welcome when NO base is published - that one a member CAN answer', async () => {
+    // The two refusals are not the same question: nothing published means nothing to republish, and
+    // a Welcome is then exactly the right favour to ask for.
+    const deps = makeDeps();
+    deps.mlsService.externalJoin = vi
+      .fn()
+      .mockResolvedValue({ joined: false, reason: 'no_base_published' });
+
+    await requestReAdd('g1', deps, new Map());
+
+    expect(deps.mlsService.sendWelcomeRequest).toHaveBeenCalledWith('g1');
+    expect(deps.mlsService.sendBaseRefreshRequest).not.toHaveBeenCalled();
+  });
+
+  it('a request that never reaches the server is logged, never thrown', async () => {
+    // Best-effort by construction: the watchdog runs this seam again while the device still cannot
+    // join, and each ask is forwarded to a randomly re-elected member. A swallowed branch with no
+    // line is all a loss leaves.
+    const lines: string[] = [];
+    const deps = makeDeps();
+    deps.log = (m: string) => lines.push(m);
+    deps.mlsService.externalJoin = staleBase();
+    deps.mlsService.sendBaseRefreshRequest = vi.fn().mockRejectedValue(new Error('offline'));
+
+    await expect(requestReAdd('g1', deps, new Map())).resolves.toBeUndefined();
+    expect(lines.join(' | ')).toContain('did not reach the server');
+  });
+});
+
+/**
+ * THE BADGE STAYED ON A CONVERSATION THAT HAD JUST REJOINED AND WORKED.
+ *
+ * Two key conventions live in one map: a DM created on this device is keyed by its groupId, one
+ * learnt from a Welcome by the PEER'S USER ID (`deriveConversationIdentity`). The promotion after a
+ * successful external join read the map by groupId, so for every RECEIVED DM it found nothing and
+ * wrote nothing - and `saveConversation(groupId)` would have persisted nothing either. The
+ * conversation was live in WASM, sendable and readable, wearing a badge that claimed otherwise until
+ * the next login's reconciliation happened to notice.
+ *
+ * `findByGroupId` had already been written for exactly this, and the rule it carries is that any
+ * `[key]` lookup over this heterogeneously-keyed map is a defect on sight.
+ */
+describe('requestReAdd - the promotion after a successful external join', () => {
+  const joined = () =>
+    makeMls({
+      getDeviceMemberships: vi.fn().mockResolvedValue([membership('g1', 'active')]),
+      externalJoin: vi.fn().mockResolvedValue({ joined: true }),
+    });
+
+  it('promotes a conversation keyed by the PEER USER ID, and saves it by that key', async () => {
+    const deps = makeDeps({
+      mlsService: joined(),
+      conversations: makeConversations([['peer-user-42', { id: 'g1', lifecycle: 'pending' }]]),
+    });
+
+    await requestReAdd('g1', deps, new Map());
+
+    expect(deps.conversations.get('peer-user-42').lifecycle).toBe('active');
+    expect(deps.saveConversation).toHaveBeenCalledWith('peer-user-42');
+    // The groupId is NOT a key here, and writing under it would leave the real row pending while
+    // adding a second, unreachable one.
+    expect(deps.conversations.has('g1')).toBe(false);
+  });
+
+  it('promotes a conversation keyed by its own groupId, which is the other convention', async () => {
+    const deps = makeDeps({
+      mlsService: joined(),
+      conversations: makeConversations([['g1', { id: 'g1', lifecycle: 'pending' }]]),
+    });
+
+    await requestReAdd('g1', deps, new Map());
+
+    expect(deps.conversations.get('g1').lifecycle).toBe('active');
+    expect(deps.saveConversation).toHaveBeenCalledWith('g1');
+  });
+
+  it('writes nothing when the conversation is already active - the common case is free', async () => {
+    const deps = makeDeps({
+      mlsService: joined(),
+      conversations: makeConversations([['peer-user-42', { id: 'g1', lifecycle: 'active' }]]),
+    });
+
+    await requestReAdd('g1', deps, new Map());
+
+    expect(deps.saveConversation).not.toHaveBeenCalled();
+  });
+
+  it('joins with no local conversation record at all, and does not invent one', async () => {
+    // A commit can arrive before any conversation row exists; the not-ready registry is what the
+    // watchdog enumerates for those, and the row is created by the paths that name the peer.
+    const deps = makeDeps({ mlsService: joined(), conversations: makeConversations() });
+
+    await requestReAdd('g1', deps, new Map());
+
+    expect(deps.conversations.size).toBe(0);
+    expect(deps.saveConversation).not.toHaveBeenCalled();
   });
 });

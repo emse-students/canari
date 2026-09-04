@@ -307,10 +307,17 @@ export async function requestReAdd(
     // External join does not go through the Welcome path that normally promotes the conversation:
     // the group is now live in WASM, so mark it active here so the UI leaves the "syncing" state
     // without waiting for a page reload.
-    const convo = deps.conversations.get(groupId);
-    if (convo && convo.lifecycle !== 'active') {
-      deps.conversations.set(groupId, { ...convo, lifecycle: 'active' });
-      await deps.saveConversation(groupId).catch(() => {});
+    //
+    // BY `id`, AND SAVED BY THE MAP KEY - the two are not the same string, and this call site was
+    // the last one in this module still reading the map by groupId. A direct conversation learnt
+    // from a Welcome is keyed by the PEER'S USER ID ({@link findByGroupId}), so for every received
+    // DM this lookup missed, the promotion never happened, and the badge stayed on a conversation
+    // that had just rejoined and worked - until the next login's reconciliation noticed. The write
+    // that follows takes the KEY: `saveConversation(groupId)` would have persisted nothing.
+    const entry = findByGroupId(deps.conversations, groupId);
+    if (entry && entry[1].lifecycle !== 'active') {
+      deps.conversations.set(entry[0], { ...entry[1], lifecycle: 'active' });
+      await deps.saveConversation(entry[0]).catch(() => {});
     }
     // An external join lands at the current epoch WITHOUT the pre-join history, which only a member
     // can re-encrypt. Nothing has to decide whether anything is actually missing any more - this
@@ -327,6 +334,38 @@ export async function requestReAdd(
   // sentence, and it was the bug: that case cannot be answered by any member and now exits at step 8
   // instead of arriving here.
   //
+  // A STALE BASE WANTS A DIFFERENT FAVOUR, AND ASKING FOR THE WRONG ONE IS WHY IT NEVER HEALED.
+  // `stale_base` means the published GroupInfo names an epoch the group has left: no retry can
+  // satisfy it, because only a member holding the tree can mint a new base. The shared fallback
+  // asked for a Welcome instead - which MUTATES the tree, takes the group's add lock and replays the
+  // duplicate-leaf race, to obtain something this device did not need. What it needs is a read-only
+  // publish that takes no lock and changes no epoch, after which it serves itself on the next pass.
+  //
+  // MEASURED ON PRODUCTION 2026-09-04, and this is not a hypothetical population: four of the
+  // forty-three groups holding a base were stale, every one by exactly ONE epoch, two of them since
+  // 2026-08-30 - with three devices sitting `pending` on those two, unable to join for five days. A
+  // stale base does not drain itself: only a member's next commit republishes one, and a quiet
+  // conversation has no next commit.
+  //
+  // The re-ask is the caller's existing cadence, not a retry here: the watchdog runs this seam again
+  // while the device still cannot join, and each ask is forwarded to a randomly re-elected member,
+  // so a responder whose own tree is behind does not absorb the request for ever.
+  if (outcome.reason === 'stale_base') {
+    deps.log(
+      `[READD] ${groupId.slice(0, 8)}... the published base is at epoch ${outcome.baseEpoch} and the group ` +
+        `is at ${outcome.serverEpoch} - asking a member to REPUBLISH it, not to re-add us`
+    );
+    await deps.mlsService
+      .sendBaseRefreshRequest(groupId)
+      .catch((e) =>
+        deps.log(
+          `[READD] ${groupId.slice(0, 8)}... base-refresh request did not reach the server: ` +
+            `${String(e).slice(0, 120)}`
+        )
+      );
+    return;
+  }
+
   // WHAT REACHES HERE IS THEREFORE BOUNDED BY SOMETHING: a group whose base is unpublished has a
   // member who will publish one, or a peer who can send a Welcome. Nothing that reaches this line
   // any longer has a server-side answer proving the request is hopeless.
