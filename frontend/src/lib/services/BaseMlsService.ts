@@ -50,7 +50,7 @@ import {
 import { attemptCommitReplay } from '$lib/utils/chat/commitReplay';
 import { markEpochGap, clearEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { runAsEpochAdvance, runAsEpochSend } from '$lib/utils/chat/epochSendBarrier';
-import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
+import { parseServerTimestampMs, type DeliveryChannel } from '$lib/mls-client/incomingDelivery';
 import { classifyIncomingDecryptError } from '$lib/mls-client/mlsDecryptError';
 import { scopeKey, scopeLabel, type DistributionScope } from '$lib/mls-client/distributionScope';
 import {
@@ -910,6 +910,59 @@ export abstract class BaseMlsService implements IMlsService {
     return this.messageScheduler.runUnderMlsLock(fn);
   }
 
+  /**
+   * WHAT A REPEATED DELIVERY MEANS, by the channel that offered the second copy and by what this
+   * device already knew about the row. Four cells, four different findings, and only three of them
+   * are explained by a crossing.
+   *
+   * Three are the SAME event seen from either side, and neither side is at fault: an acknowledgement
+   * cannot land before a pull already in flight, so a row can be listed by the pull after the socket
+   * delivered it, or delivered by the socket after the pull listed it. Both are ordinary at a
+   * reconnect and both are healed here by not decrypting twice.
+   *
+   * THE FOURTH IS NOT A CROSSING AND IS THEREFORE LOUD. The socket publishes a frame ONCE, when the
+   * delivery service accepts the message - it does not replay the queue on connect - so a live frame
+   * for a row this device has already ACKNOWLEDGED is not this client losing a race with itself. It
+   * is the same row published twice, and nothing here can fix that; the ack is repeated so the row
+   * cannot be left pending, and the line accuses so the next occurrence is investigated rather than
+   * absorbed. It has never been observed, which is exactly why it must not be printed at the same
+   * level as the three that are routine.
+   */
+  private static readonly REPEAT_MEANS: Record<
+    DeliveryChannel,
+    Record<'queued' | 'done', { say: string; accuse: boolean }>
+  > = {
+    pull: {
+      queued: {
+        say:
+          'the pull listed a row the socket had already handed in and this device has not drained' +
+          ' yet - the ordinary crossing, and nothing is wrong',
+        accuse: false,
+      },
+      done: {
+        say:
+          'the pull listed a row this device had already acknowledged - its own ack was still in' +
+          ' flight when the pull was answered, so the server still held the row',
+        accuse: false,
+      },
+    },
+    live: {
+      queued: {
+        say:
+          'the socket delivered a row the pull had already listed and this device has not drained' +
+          ' yet - the ordinary crossing, seen from the other side',
+        accuse: false,
+      },
+      done: {
+        say:
+          'THE SERVER PUBLISHED THE SAME ROW TWICE: a live frame arrived for a delivery this device' +
+          ' had already acknowledged, and no crossing explains that - the socket publishes once, at' +
+          ' send, and never replays the queue on connect',
+        accuse: true,
+      },
+    },
+  };
+
   /** Enqueues a message and starts the per-group fair drain loop if idle. */
   /**
    * True when this delivery has never been taken in, so it may enter the queue.
@@ -918,22 +971,29 @@ export abstract class BaseMlsService implements IMlsService {
    * persisted, there is nothing to acknowledge and nothing can re-offer it, so there is no second
    * copy to recognise. See {@link deliveries} for the race this closes and for why a repeat of an
    * acknowledged row is acknowledged again instead of dropped.
+   *
+   * @param channel which side offered this copy - see {@link REPEAT_MEANS} for what each of the
+   *   four combinations of channel and prior state actually says.
    */
-  private admitDelivery(queuedMessageId: string | undefined): boolean {
+  private admitDelivery(queuedMessageId: string | undefined, channel: DeliveryChannel): boolean {
     if (!queuedMessageId) return true;
     const known = this.deliveries.get(queuedMessageId);
     if (!known) {
       this.rememberDelivery(queuedMessageId, 'queued');
       return true;
     }
-    // NOT A FALLBACK AND NOT SILENT. Reaching this means the socket and the pull crossed, which is
-    // routine at boot and says nothing is wrong - but its RATE is the reading that matters, because
-    // many of these for one group is a pull firing on something other than an event.
-    console.log(
-      `[QUEUE] delivery ${queuedMessageId.slice(0, 8)}... arrived twice (${known}) - the live frame` +
-        ` and the pull crossed; not decrypting it again` +
-        (known === 'done' ? ', acknowledging it once more' : '')
-    );
+    // NOT A FALLBACK AND NOT SILENT, and no longer a guess: this used to report "the live frame and
+    // the pull crossed" whichever way round it had happened, which is why a repeat could never be
+    // triaged from a log. Its RATE is still the reading that matters - many of these for one group
+    // is a pull firing on something other than an event - but the SHAPE is what says whose defect
+    // it would be, and the shape is now named.
+    const meaning = BaseMlsService.REPEAT_MEANS[channel][known];
+    const line =
+      `[QUEUE] delivery ${queuedMessageId.slice(0, 8)}... arrived twice - ${meaning.say};` +
+      ` not decrypting it again` +
+      (known === 'done' ? ', acknowledging it once more' : '');
+    if (meaning.accuse) console.warn(line);
+    else console.log(line);
     if (known === 'done') {
       void this.delivery
         .ackMessages([queuedMessageId])
@@ -973,8 +1033,14 @@ export abstract class BaseMlsService implements IMlsService {
     }
   }
 
-  protected enqueueMessage(msg: MlsQueuedMessage): void {
-    if (!this.admitDelivery(msg.queuedMessageId)) return;
+  /**
+   * @param channel which side handed this delivery in. REQUIRED, and required here rather than on
+   *   {@link MlsQueuedMessage}: it is a fact about the ARRIVAL, not about the message, and the same
+   *   row can arrive twice by two different routes - which is the only thing {@link admitDelivery}
+   *   cannot work out for itself.
+   */
+  protected enqueueMessage(msg: MlsQueuedMessage, channel: DeliveryChannel): void {
+    if (!this.admitDelivery(msg.queuedMessageId, channel)) return;
     this.messageScheduler.enqueue(msg);
     if (!this.messageScheduler.draining) {
       void this.processQueue();
@@ -1300,16 +1366,19 @@ export abstract class BaseMlsService implements IMlsService {
       // These have no MLS payload (empty proto). Both platforms ACK and ignore:
       // WebSocket reconnect is sufficient to re-sync state.
       if (msg.type === 'group_reset') {
-        this.enqueueMessage({
-          senderId: (msg.senderId as string) || 'unknown',
-          ciphertext: new Uint8Array(0),
-          groupId: (msg.groupId as string) || undefined,
-          isWelcome: false,
-          isCommit: false,
-          queuedMessageId: msgId,
-          type: 'group_reset',
-          queuedCreatedAt,
-        });
+        this.enqueueMessage(
+          {
+            senderId: (msg.senderId as string) || 'unknown',
+            ciphertext: new Uint8Array(0),
+            groupId: (msg.groupId as string) || undefined,
+            isWelcome: false,
+            isCommit: false,
+            queuedMessageId: msgId,
+            type: 'group_reset',
+            queuedCreatedAt,
+          },
+          'pull'
+        );
         continue;
       }
 
@@ -1317,19 +1386,22 @@ export abstract class BaseMlsService implements IMlsService {
         try {
           const ciphertext = fromBase64(proto);
           if (ciphertext.length > 0) {
-            this.enqueueMessage({
-              senderId: (msg.senderId as string) || 'unknown',
-              ciphertext,
-              groupId: (msg.groupId as string) || undefined,
-              isWelcome: msg.isWelcome === true,
-              isCommit: msg.isCommit === true,
-              ratchetTreeBytes:
-                typeof msg.ratchetTree === 'string' && msg.ratchetTree.length > 0
-                  ? fromBase64(msg.ratchetTree as string)
-                  : undefined,
-              queuedMessageId: msgId,
-              queuedCreatedAt,
-            });
+            this.enqueueMessage(
+              {
+                senderId: (msg.senderId as string) || 'unknown',
+                ciphertext,
+                groupId: (msg.groupId as string) || undefined,
+                isWelcome: msg.isWelcome === true,
+                isCommit: msg.isCommit === true,
+                ratchetTreeBytes:
+                  typeof msg.ratchetTree === 'string' && msg.ratchetTree.length > 0
+                    ? fromBase64(msg.ratchetTree as string)
+                    : undefined,
+                queuedMessageId: msgId,
+                queuedCreatedAt,
+              },
+              'pull'
+            );
             continue;
           }
         } catch (e) {

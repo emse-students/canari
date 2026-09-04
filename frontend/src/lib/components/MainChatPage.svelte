@@ -479,18 +479,41 @@
           pendingReadWatermark = 0;
           readReceiptTimer = null;
           if (toSend <= 0) return;
+          // THREE WAYS OUT OF HERE AND ALL THREE USED TO BE SILENT. The debounce has already zeroed
+          // `pendingReadWatermark`, so nothing will retry: whatever this device has read up to is
+          // lost for the peer, which keeps showing the conversation unread until something else
+          // moves the mark. That is a best-effort path, and a line is all a loss leaves behind it.
           try {
             const mlsService = session.ensureMls();
             const fresh = convs.conversations.get(currentContact);
-            if (!fresh) return;
+            if (!fresh) {
+              console.warn(
+                `[READ] watermark ${toSend} dropped: conversation ${currentContact} left the store` +
+                  ' between the debounce arming and its expiry, so the receipt is never sent'
+              );
+              return;
+            }
             sendReadWatermark(toSend, {
               mlsService,
               userId: session.userId,
               deviceKeyB64: session.deviceKeyB64,
               conversation: fresh,
-            }).catch(() => {});
-          } catch {
-            /* MLS not ready */
+            }).catch((e) =>
+              console.warn(
+                `[READ] watermark ${toSend} for ${currentContact} was not sent - the peer keeps` +
+                  ' showing it unread until this device reads again:',
+                e
+              )
+            );
+          } catch (e) {
+            // The comment here used to READ `/* MLS not ready */` and assert a cause nothing had
+            // checked. `session.ensureMls()` is the only call above that can throw, so that reading
+            // is probably right - but "probably" is not what a swallowed branch may claim, and the
+            // throw itself says it for free.
+            console.warn(
+              `[READ] watermark ${toSend} for ${currentContact} could not be sent - no MLS client:`,
+              e
+            );
           }
         });
       }, 2000);
