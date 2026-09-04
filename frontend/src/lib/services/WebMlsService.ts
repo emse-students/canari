@@ -443,9 +443,15 @@ export class WebMlsService extends BaseMlsService {
           if (frameType === 'pong' || frameType === 'ping') {
             return;
           }
-          console.log(
-            `[WS RCV] JSON frame: senderId=${msg.senderId}, groupId=${msg.groupId}, isWelcome=${msg.isWelcome}, protoLen=${(msg.proto as string)?.length}`
-          );
+          // THE ONE FIELD EVERY FRAME HAS IS ITS TYPE, and this line used to print four that only a
+          // PAYLOAD frame carries - so every control frame (a read receipt, a typing signal, a
+          // channel event) announced itself as `senderId=undefined, isWelcome=undefined,
+          // protoLen=undefined`. Measured on the local estate 2026-09-04: two of the thirty-six
+          // lines of an ordinary two-client exchange, each reporting three `undefined`s about a
+          // frame that was perfectly well formed. A reader who learns to skip that is a reader who
+          // will skip the next real one, and one who does not learns nothing from three `undefined`s.
+          // The payload fields are logged on the payload branch below, where they exist.
+          console.log(`[WS RCV] ${frameType || 'payload'} frame for group ${msg.groupId ?? '-'}`);
           if (isChannelEventFrame(frameType)) {
             if (this.onChannelEvent) {
               console.log(`[WS RCV] Triggering onChannelEvent for ${msg.type}`);
@@ -527,6 +533,13 @@ export class WebMlsService extends BaseMlsService {
                 : undefined;
 
             if (ciphertext.length > 0) {
+              // The payload frame's own fields, where they are known to exist - the half of the
+              // entry line above that only this branch can honestly print.
+              console.log(
+                `[WS RCV] payload: sender=${sanitizeForLog((msg.senderId as string) || 'unknown')},` +
+                  ` welcome=${msg.isWelcome === true}, commit=${msg.isCommit === true},` +
+                  ` bytes=${ciphertext.length}`
+              );
               // Queue the message for sequential processing
               this.enqueueMessage({
                 senderId: (msg.senderId as string) || 'unknown',

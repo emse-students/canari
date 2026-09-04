@@ -94,6 +94,37 @@ const CASES = [
     '[01:40:12] [HISTORY_STATE] Keys differ for 6bd37588… - asked b78568a3…:web-b78568a3…-msglwqh6-vegy to describe',
     'stateChanges',
   ],
+  // THE FIFTH SPELLING - the SCROLLBACK RANGE, sighted on the local estate 2026-09-04 on a
+  // two-client exchange that was otherwise clean, where these three were the only thing between a
+  // correct check and a clean run. `stateChanges` with their four siblings, for the same reason: the
+  // finding is the TRIGGER.
+  [
+    'log',
+    '[15:12:59] [HISTORY_RANGE] Asked for up to 50 message(s) before 2026-09-04T08:41:33.920Z in 15335785…',
+    'stateChanges',
+  ],
+  [
+    'log',
+    '[15:12:59] [HISTORY_RANGE] c71e1a5b… wants up to 50 message(s) before 2026-09-04T08:41:33.920Z in 15335785…',
+    'stateChanges',
+  ],
+  [
+    'log',
+    '[15:12:59] [HISTORY_RANGE] Hold nothing before that point in 15335785… - staying silent',
+    'stateChanges',
+  ],
+  ['log', '[15:13:04] [HISTORY_RANGE] Sent 3 of 7 message(s) older than 2026-09-04T08:41:33.920Z for 15335785…', 'stateChanges'],
+  ['log', '[15:13:04] [HISTORY_RANGE] 15335785… already reaches its floor - not asking', 'stateChanges'],
+  // AND THE TWO THAT MUST NOT BE COVERED. Both mean the range could not be served for a REASON -
+  // a malformed request, and no local store at all - which is not an error but is exactly the shape
+  // a coverage gap has. Filed as routine they would make a real gap invisible, so they stay
+  // unexplained until somebody reads one.
+  [
+    'log',
+    '[15:13:04] [HISTORY_RANGE] Unusable range from b78568a3… for 15335785… - ignoring',
+    'unexplained',
+  ],
+  ['log', '[15:13:04] [HISTORY_RANGE] No storage - cannot serve 15335785…', 'unexplained'],
   // THE SAME EXCHANGE REPORTING A REAL DIFF, the sibling of the `nothing to do` case above. Both
   // variants of the one template are pinned, because a rule written from the sighting alone would
   // have covered the first and left `(identical stores)` in `unexplained` for the next run to find.

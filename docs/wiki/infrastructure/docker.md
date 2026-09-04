@@ -203,14 +203,43 @@ make reload-services   # restart
 make reset-services    # restart + clear DBs (drops volumes)
 ```
 
-Or directly - note the path, which is `local/`:
+Or directly - note the path, which is `local/`, **and the project name, which is not the default**:
 
 ```bash
-docker compose -f infrastructure/local/docker-compose.yml --env-file infrastructure/.env up -d
+docker compose -p canari-local -f infrastructure/local/docker-compose.yml --env-file infrastructure/.env up -d
 ```
+
+**`-p canari-local` IS PART OF THE COMMAND.** Compose derives the project name from the compose
+file's DIRECTORY, so omitting it drives a project called `local` - and this workstation has one, left
+by an older checkout under `D:\Documents\...`, whose containers bind 3000, 3010, 3012, 3014 and
+9092. Without the flag a `run-services` did `down --remove-orphans` and `up --build` on THAT project
+and left the real estate untouched: two estates, conflicting ports, and a `docker compose ps` that
+does not describe the one the harness is talking to. Measured 2026-09-04, `docker compose ls` listing
+both. The name now lives once, as `LOCAL_PROJECT` in the `Makefile`, and every target goes through
+`$(LOCAL_COMPOSE)`.
 
 **Not `infrastructure/docker-compose.dev.yml`.** That file is the deployed dev estate and refuses to
 start without an immutable `TAG`; see the compose-file table above.
+
+### Putting the CURRENT frontend on the local estate
+
+```bash
+make local-frontend    # BUILD_WEB=1 build + assert the shape + rebuild BOTH frontend images
+```
+
+**A bare `bun run build` produces the wrong artefact and the failure is a SUCCESS.**
+`svelte.config.js` picks adapter-**static** unless `BUILD_WEB` is set - deliberately, so a Tauri
+build is what you get by default. Both of the estate's frontend images want the other shape:
+`Dockerfile.frontend-ssr` does `COPY frontend/build ./` and runs `node index.js`, and
+`Dockerfile.frontend` (nginx) copies `frontend/build/client` and `build/prerendered`. A static build
+has none of the three, the image builds without complaint, and the container dies on
+`Cannot find module '/app/index.js'`.
+
+**Rebuilding `frontend-ssr` alone is not enough either**: nginx holds its own copy of the assets, so
+a reloaded client would take the old JS with the new shell. `make local-frontend` builds with
+`BUILD_WEB=1`, asserts `index.js` + `client/` + `prerendered/` exist, rebuilds both images and waits
+to see the containers survive. A browser already open keeps the old code until it reloads - which is
+what `bundle.mjs` in the harness compares and fixes.
 
 ## Health checks
 

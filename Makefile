@@ -397,15 +397,54 @@ build-frontend:
 	@echo "${BLUE}🚀 Building frontend…${RESET}"
 	@echo "${BLUE}🔄 Generating WASM + protobuf bindings…${RESET}"
 	@cd frontend && bun run generate
-	@echo "${BLUE}🔄 Building SvelteKit…${RESET}"
+	@echo "${BLUE}🔄 Building SvelteKit (adapter-static, la forme TAURI)…${RESET}"
 	@cd frontend && bun run build
 	@echo "${GREEN}✅ Frontend buildé${RESET}"
+	@echo "${YELLOW}ℹ️  Ceci n'est PAS la forme que la pile locale sert : voir 'make local-frontend'${RESET}"
+
+# ── METTRE LE CODE COURANT SUR LA PILE LOCALE ────────────────────────────────────────────────
+# LA CIBLE QUI MANQUAIT, ET SON ABSENCE COÛTE UN CONTENEUR MORT (2026-09-04).
+#
+# `svelte.config.js` choisit adapter-STATIC sauf si `BUILD_WEB` est posé - la polarité est
+# volontaire (Tauri par défaut). Les deux images frontend de la pile locale veulent l'autre forme :
+# `Dockerfile.frontend-ssr` fait `COPY frontend/build ./` et lance `node index.js`, `Dockerfile.
+# frontend` fait `COPY frontend/build/client` et `build/prerendered`. Un `bun run build` nu ne
+# produit aucun des trois : l'image se construit sans erreur et le conteneur meurt au démarrage sur
+# `Cannot find module '/app/index.js'`. C'est exactement le mode de défaillance que le commentaire
+# du `.dockerignore` appelle « le pire possible : un succès ».
+#
+# Et rebâtir `frontend-ssr` seul ne suffit pas : nginx détient SA copie des assets, donc un client
+# rechargé prendrait l'ancien JS avec le nouveau shell. Les deux images, toujours.
+#
+# La forme est ASSERTÉE, pas espérée : trois chemins, et un échec nomme la variable manquante.
+local-frontend:
+	@echo "${BLUE}🔄 Building SvelteKit pour la pile locale (BUILD_WEB=1, adapter-node)…${RESET}"
+	@cd frontend && BUILD_WEB=1 bun run build
+	@for f in frontend/build/index.js frontend/build/client frontend/build/prerendered; do 	  if [ ! -e "$$f" ]; then 	    echo "${RED}❌ $$f absent : le build n'a pas la forme web. BUILD_WEB=1 a-t-il été pris ?${RESET}"; 	    exit 1; 	  fi; 	done
+	@echo "${GREEN}✅ Forme web vérifiée (index.js + client/ + prerendered/)${RESET}"
+	@echo "${BLUE}🔄 Rebuild des DEUX images frontend (nginx sert les assets, ssr sert le HTML)…${RESET}"
+	@$(LOCAL_COMPOSE) up -d --build frontend-ssr nginx
+	@$(MAKE) --no-print-directory check-services
+	@echo "${BLUE}ℹ️  Un navigateur déjà ouvert garde l'ancien code : recharger (le harness le fait via bundle.mjs)${RESET}"
+
+# ── LA PILE LOCALE : UN SEUL NOM DE PROJET, ÉCRIT UNE FOIS ───────────────────────────────────
+# `docker compose` déduit le nom du projet du DOSSIER du fichier compose, soit `local` - et il
+# existe sur cette machine un projet `local` venant d'un ancien checkout (`D:\Documents\...`), avec
+# ses propres conteneurs qui lient 3000, 3010, 3012, 3014 et 9092. Sans `-p`, `make run-services`
+# faisait donc `down --remove-orphans` puis `up --build` sur CE projet-là, en laissant la vraie pile
+# intacte : deux estates, des ports en conflit, et un `docker compose ps` qui ne parle pas de celle
+# que le harness interroge. Mesuré le 2026-09-04 - `docker compose ls` listait les deux.
+#
+# `canari-local` est le nom que la campagne, le harness et toutes les commandes de cette session
+# utilisent. Il est ici, une fois, et chaque cible passe par $(LOCAL_COMPOSE).
+LOCAL_PROJECT ?= canari-local
+LOCAL_COMPOSE = docker compose -p $(LOCAL_PROJECT) -f infrastructure/local/docker-compose.yml --env-file infrastructure/.env
 
 run-services:
 	@echo "${BLUE}🚀 Starting services…${RESET}"
 	@echo "${BLUE}ℹ️ call-service (SFU) démarré sur le port 3004${RESET}"
-	@docker compose -f infrastructure/local/docker-compose.yml --env-file infrastructure/.env down --remove-orphans || true
-	@docker compose -f infrastructure/local/docker-compose.yml --env-file infrastructure/.env up -d --build --remove-orphans
+	@$(LOCAL_COMPOSE) down --remove-orphans || true
+	@$(LOCAL_COMPOSE) up -d --build --remove-orphans
 	@$(MAKE) --no-print-directory check-services
 
 # `up -d` REND 0 DÈS QUE LES CONTENEURS SONT LANCÉS, PAS QUAND ILS TIENNENT (2026-09-02).
@@ -415,12 +454,12 @@ run-services:
 # un portail vert n'est pas un système qui marche. On laisse le temps de mourir, puis on regarde.
 check-services:
 	@sleep 8
-	@dead=$$(docker compose -f infrastructure/local/docker-compose.yml --env-file infrastructure/.env ps -a --format '{{.Service}}\t{{.State}}' | awk -F'\t' '$$2 != "running" { print $$1 }'); \
+	@dead=$$($(LOCAL_COMPOSE) ps -a --format '{{.Service}}\t{{.State}}' | awk -F'\t' '$$2 != "running" { print $$1 }'); \
 	  if [ -n "$$dead" ]; then \
 	    echo "${RED}❌ Services non démarrés :${RESET} $$(echo $$dead | tr '\n' ' ')"; \
 	    for s in $$dead; do \
 	      echo "${YELLOW}── logs $$s ──${RESET}"; \
-	      docker compose -f infrastructure/local/docker-compose.yml --env-file infrastructure/.env logs --tail 15 "$$s"; \
+	      $(LOCAL_COMPOSE) logs --tail 15 "$$s"; \
 	    done; \
 	    exit 1; \
 	  fi
@@ -428,14 +467,14 @@ check-services:
 
 reload-services:
 	@echo "${BLUE}🔄 Reloading services…${RESET}"
-	@docker compose -f infrastructure/local/docker-compose.yml --env-file infrastructure/.env down --remove-orphans && \
-		docker compose -f infrastructure/local/docker-compose.yml --env-file infrastructure/.env up -d --build --remove-orphans
+	@$(LOCAL_COMPOSE) down --remove-orphans && \
+		$(LOCAL_COMPOSE) up -d --build --remove-orphans
 	@echo "${GREEN}✅ Services rechargés${RESET}"
 
 reset-services:
 	@echo "${BLUE}🔄 Resetting services (stop + remove volumes)…${RESET}"
-	@docker compose -f infrastructure/local/docker-compose.yml --env-file infrastructure/.env down -v --remove-orphans && \
-		docker compose -f infrastructure/local/docker-compose.yml --env-file infrastructure/.env up -d --build --remove-orphans
+	@$(LOCAL_COMPOSE) down -v --remove-orphans && \
+		$(LOCAL_COMPOSE) up -d --build --remove-orphans
 	@echo "${GREEN}✅ Services reset${RESET}"
 
 reset-services-prod: production-check
