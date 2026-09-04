@@ -1272,6 +1272,41 @@ spot stops auditing and reports success for ever.* `audit-dependencies.test.sh` 
 both sides of the distinction, the policy flip, and the fact that the `--ignore=` flags the one
 suppressed advisory rests on still reach the tool.
 
+**AND THE RATE IS MEASURED, because the rule says a fallback's name is not believed until it is.**
+Ten consecutive `ci.yml` runs, five trees audited in each, so fifty tree-audits:
+
+| run | 503s | which tree |
+| --- | --- | --- |
+| 33847721971 | 0 | - |
+| 33836519287 | 0 | - |
+| 33835252690 | 1 | `apps/core-service` |
+| 33833975381 | 1 | `apps/core-service` |
+| 33832780239 | 0 | - |
+| 33831909478 | 0 | - |
+| 33831223145 | 0 | - |
+| 33831208279 | 2 | `frontend`, `apps/media-service` |
+| 33831187138 | 1 | `frontend` |
+| 33830007519 | 1 | `apps/core-service` |
+
+**Six single 503s in fifty requests, and not one tree exhausted its three attempts** - the
+`ask once each` notice, which is what a tolerated outage looks like, was never emitted in the
+window. So the endpoint is ordinarily flaky at roughly one request in eight, and one retry has
+always been enough.
+
+**What the distribution RULES OUT matters more than the rate.** It is not this pipeline's own
+request rate: the 503 lands on the first, third and fourth tree of the loop indifferently, and a
+retry twenty seconds later succeeds - a rate limit would spare the first and punish the last. It is
+not an npm outage: forty-four of fifty succeed, `GET registry.npmjs.org` answers 200 in 54ms from a
+workstation, and the status page stays green. And it is not the size of the POST body: `frontend`,
+by a wide margin the largest tree, is not over-represented - `apps/core-service` is.
+
+**THE BACKOFF IS WHAT MAKES AN EXHAUSTED BUDGET MEAN SOMETHING.** `BACKOFF_BASE_S=20` sleeps 20s
+then 40s, so three attempts span a minute plus `bun audit`'s own timeout. Three consecutive 503s are
+therefore NOT three independent draws at one-in-eight; they are one npm blip lasting over a minute.
+That is what happened on the `0.16.2-alpha.1` bump commit on 2026-09-04 - three attempts, three
+503s, exit 2, correct. The pass went red anyway, because the CALLER could not read the answer, and
+that defect is above. *The classifier's rate says the design is right; only its reader was wrong.*
+
 ## Notable CI gotchas
 
 - **A Tauri plugin's JS package and its Rust crate must agree on major.minor, and only a RELEASE used to discover when they did not.** The CLI refuses to build (`tauri-plugin-log (v2.8.0) : @tauri-apps/plugin-log (v2.9.0)`), but nothing else in this pipeline compiles the Tauri app, so an ordinary `bun install` that re-resolves the JS half lands green and kills the next tag - it took out Android Release and AppImage Release on v0.14.6, while iOS Release passed because its path never runs the check. `frontend/scripts/check-tauri-plugin-versions.mjs` (step `Guard the Tauri JS/Rust version parity` in `code-analysis.yml`) now compares the two committed files on every run. Fix the Rust side with `cd frontend/src-tauri && cargo update -p <crate>`.
