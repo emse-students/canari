@@ -172,6 +172,54 @@ else
   failures=$((failures + 1))
 fi
 
+
+echo "=== the caller's seam: a run: block is bash -e, and the callers must survive it ==="
+
+# THE CLASSIFIER IS ONLY HALF THE MECHANISM. It answers 0 / 1 / 2, and every assertion above proves
+# it answers correctly - but a correct answer nobody can read is worth nothing, and the reading
+# happens in `code-analysis.yml` under a shell this file cannot see. GitHub runs a `run:` block as
+# `bash --noprofile --norc -e -o pipefail`, and the `set -uo pipefail` those blocks open with does
+# NOT clear that `-e`. So a bare call to this script ENDS THE STEP the moment it exits non-zero, and
+# any `rc=$?` on the following line is unreachable for exactly the two statuses the design exists to
+# tell apart.
+#
+# That shipped on 2026-09-04 and a real npm 503 turned the security pass red four hours later - the
+# precise failure this script was written to prevent, reintroduced one layer up. The classifier's
+# own tests could not see it: they run the script, and the defect was in the caller.
+#
+# So the caller is asserted here, by PATTERN rather than by execution: a `run:` block cannot be
+# invoked outside Actions without reimplementing it, and a reimplementation drifts. What is checked
+# is that no workflow reads `$?` on a line of its own, which is the shape that cannot work.
+wf_dir="$(cd "$(dirname "$0")/../../workflows" && pwd)"
+bare=$(grep -rn '^[[:space:]]*rc=\$?[[:space:]]*$' "$wf_dir" || true)
+if [ -z "$bare" ]; then
+  echo "PASS no workflow captures \$? on a line of its own, where bash -e can never reach it"
+else
+  echo "FAIL a workflow reads \$? on its own line; under bash -e that line is unreachable when the"
+  echo "     command failed. Write 'rc=0' then 'cmd || rc=\$?' instead:"
+  indent "$bare"
+  failures=$((failures + 1))
+fi
+
+# AND THE CORRECT SHAPE IS ASSERTED TO WORK, so the rule above is not merely a spelling preference.
+cat > "$work/caller.sh" <<'CALLER'
+set -uo pipefail
+rc=0
+"$FAKE_CLASSIFIER" || rc=$?
+echo "caller saw rc=$rc"
+[ "$rc" -eq 0 ] || [ "$rc" -eq 2 ]
+CALLER
+printf '#!/usr/bin/env bash\nexit 2\n' > "$work/bin/classifier-2"
+chmod +x "$work/bin/classifier-2"
+caller_out=$(FAKE_CLASSIFIER="$work/bin/classifier-2" bash -e -o pipefail "$work/caller.sh" 2>&1)
+caller_rc=$?
+if [ "$caller_rc" -eq 0 ] && grep -qF 'caller saw rc=2' <<<"$caller_out"; then
+  echo "PASS under bash -e the 'cmd || rc=\$?' shape reads a 2 and tolerates it"
+else
+  echo "FAIL the tolerated-outage shape did not survive bash -e (exit $caller_rc):"
+  indent "$caller_out"
+  failures=$((failures + 1))
+fi
 echo
 if [ "$failures" -gt 0 ]; then
   echo "$failures assertion(s) failed."

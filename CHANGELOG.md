@@ -11,6 +11,21 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The line that read the dependency audit's verdict could never run, and a real npm 503 proved it
+  four hours after it shipped.** `audit-dependencies.sh` tells the registry's ANSWER apart from its
+  SILENCE and exits 2 for the latter - and it did exactly that on the `0.16.2-alpha.1` bump commit:
+  three attempts, three 503s, the warning printed as designed. The step failed anyway, and
+  `CI passed` with it, which blocks the release gate that reads it. GitHub runs a `run:` block as
+  `bash -e`, and the `set -uo pipefail` those blocks open with does not clear it, so a bare call
+  ends the step before the following `rc=$?` executes - for precisely the two exit codes the
+  classifier exists to distinguish. It read `|| [ "$?" -eq 2 ]` before 2026-09-04 and was `-e`-safe;
+  the refactor that added a shared attempt budget lost that property without touching the classifier
+  itself. Both call sites now capture through `|| rc=$?`. The classifier's own tests could not see
+  this, because the defect was in the CALLER - so two assertions were added there: no workflow may
+  read `$?` on a line of its own, and the correct shape is proven under a real `bash -e`.
+
 ### Process
 
 - **A commit reached `main` by admin bypass on 2026-09-04, and it was not an emergency.** `66df9399`
