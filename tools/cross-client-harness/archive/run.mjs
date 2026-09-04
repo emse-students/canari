@@ -208,7 +208,7 @@ async function reviveThePhone() {
  * Whether the campaign's SHARED venue is still on production, with its channel and this run's people
  * in it - and it is a PREFLIGHT question because it was not one, and that cost six rows.
  *
- * `Campagne de test` / `general` is a FIXTURE. Twenty-odd runners build their salon inside it rather
+ * The shared venue `VENUE` names is a FIXTURE. Twenty-odd runners build their salon inside it rather
  * than minting a community of their own, so it is not one row's setup but the ground every one of
  * them stands on. On 2026-08-25 it was gone from production - cleanly, through the product, by a
  * gesture no log window still covers - and rung 9 discovered it one row at a time: COMM-5, COMM-8,

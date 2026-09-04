@@ -10,7 +10,7 @@
  * coordinates at all while the soft keyboard is up.
  *
  * THE CENTRAL POINT OF THIS PHASE: every row that applies to both venues runs TWICE - once in the
- * DM (MLS transport, `messaging.ts` / `useMessaging.svelte.ts`) and once in the `Campagne de test`
+ * DM (MLS transport, `messaging.ts` / `useMessaging.svelte.ts`) and once in the shared venue
  * channel (REST transport, `ChannelService.ts` / `useChannelWorkspaces.svelte.ts`). They look the
  * same on screen and are NOT the same code, which is exactly what MUT-6 vs MUT-8 and MUT-15 vs
  * MUT-16 exist to prove: a DM delete is a client-side tombstone with no server enforcement at all,
@@ -1350,7 +1350,7 @@ async function mut9() {
       // NOT a pass and not a skip: the check is armable in principle and could not be armed HERE, so
       // it stays visible as an unmet precondition rather than resolving to a colour.
       await finish('MUT-9/channel', 'VACUOUS', w, {
-        reason: 'neither test account holds channel.moderate in Campagne de test/general - tried both directions',
+        reason: `neither test account holds channel.moderate in ${VENUE.community}/${VENUE.channel} - tried both directions`,
         checkedW1OnW2Message: markerAB,
       });
       return true;

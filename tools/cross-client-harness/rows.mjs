@@ -193,6 +193,11 @@ for (const line of readFileSync(LEDGER, 'utf8').split('\n')) {
         recordedAs: r.id,
         check: r.check,
         checkSha: r.checkSha,
+        // KEPT EXPLICITLY, like every field above, and forgetting it made the new column read as
+        // absent on rows that carried it - the report said "predates instrumentSha" about verdicts
+        // recorded minutes earlier. A projection that names its fields is right; one that names all
+        // but the newest is a silent zero.
+        instrumentSha: r.instrumentSha,
       });
     }
   }

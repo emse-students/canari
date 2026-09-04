@@ -11,7 +11,7 @@ import { existsSync } from 'node:fs';
 import { GATE_EXPR } from './gate-probe.mjs';
 import { IS_MOVING_FN, RESOLVE, activate, clickAtPoint, connect, dragTo, evaluate, listTargets, pressKey, realClick, stablePoint, until } from './cdp.mjs';
 // For the device check in `goto`: the phone is the one client a reload costs something on.
-import { PORTS, SITE } from './names.mjs';
+import { PORTS, SITE, VENUE } from './names.mjs';
 
 /**
  * THE SUBSTRING THAT IDENTIFIES THE APP'S OWN TAB, and it is DERIVED rather than spelt.
@@ -852,7 +852,16 @@ export async function awaitAppSettled(cx, timeoutMs = 20000) {
 }
 
 /**
- * Opens the campaign's channel: community "Campagne de test", channel `general`.
+ * Opens the campaign's channel - the one `VENUE` names, never a literal.
+ *
+ * **THE DEFAULT USED TO BE THE STRING `'Campagne de test'`, AND ON A PROD-COPY ESTATE THAT IS
+ * SOMEBODY ELSE'S COMMUNITY.** Measured 2026-09-04: this database holds both, and the literal one -
+ * created 2026-08-26, two members, neither of them a test account - came down with the production
+ * dump. `Canari Test Venue` is the campaign's, created the same day by the rig, holding exactly W1
+ * and W2. So TYPE-5 asked for a community W1 is not a member of and reported `the community was
+ * never listed`, which reads as a broken sidebar and was a stale literal. Half the runners already
+ * passed `VENUE.community` explicitly - the ones repaired when this was first met - and the other
+ * half took the default, so the fixture had two names and the sweep tools used the wrong one.
  *
  * THE FAILURE CARRIES THE SCREEN, because the bare timeout did not and cost a whole run to diagnose.
  * `until() timed out: !!document.querySelector('.chat-composer-editor')` says the composer never
@@ -862,7 +871,7 @@ export async function awaitAppSettled(cx, timeoutMs = 20000) {
  * is a fact the harness can read and must: `realClick` returns the point, and the hit test below
  * names the element that was actually under it.
  */
-export async function openChannel(cx, community = 'Campagne de test', channel = 'general') {
+export async function openChannel(cx, community = VENUE.community, channel = VENUE.channel) {
   /** The screen, at the moment something did not happen. */
   const screen = async (point) =>
     JSON.parse(

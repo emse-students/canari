@@ -726,6 +726,34 @@ that the DB copy at least keeps behind one deliberate decision. It is a change t
 tooling with its own blast radius, so it is a P2 here rather than something done inline during a
 harness tidy.
 
+### P2 - TYPE-4 passes standalone and fails through `run.mjs`, so the orchestration changes the measurement (measured 2026-09-04)
+
+`bun archive/type.mjs --only 4` is `PASS`, clean, repeatedly: the peer goes offline at the gateway in
+~100 ms, nothing arrives while it is cut, nothing is replayed when it returns. The same script driven
+by `bun archive/run.mjs TYPE` is `ERROR` with `Inspected target navigated or closed (-32000)`, also
+repeatedly. **A check whose answer depends on who started it is not a measurement of the
+application**, and the row cannot be believed in either direction until this is understood.
+
+**Already measured out, so nobody repeats these.**
+
+| Hypothesis | Measurement | Verdict |
+| --- | --- | --- |
+| leftovers from TYPE-3 | ran `--only 3` then `--only 4` by hand, in sequence | both PASS - not it |
+| the preflight before each job | ran the standalone preflight, then `--only 4` | PASS - not it |
+| TYPE-3 kills a tab, leaving two page targets | counted `type: page` targets on 9223/9224 before and after a phase | ONE each, throughout - not it |
+
+**What is left, and it is the difference nothing has ruled out.** `run.mjs` runs the preflight
+IN-PROCESS before every job (`runOnce`), so the parent holds live CDP connections to W1 and W2 while
+the child drives them; a hand-run preflight is a separate process whose sockets close when it exits.
+TYPE-4 is the only check in the phase that reloads the page (`armCut` must patch `WebSocket` before
+the app opens its socket) and the only one that closes a socket underneath the client (`cutHard`). A
+second CDP client attached across that reload is the remaining candidate.
+
+**Owed:** print the stack, not just `e.message`, from `type.mjs`'s top-level handler - the current
+row carries `{"error":"Inspected target navigated or closed (-32000)"}` and nothing about WHERE. Then
+either the parent releases its connections around a spawn, or the reason it may keep them is written
+down.
+
 ### P3 - NOTHING LINTS THE HARNESS, and the 158 scripts that drive every campaign verdict carry 29 warnings nobody has ever been shown (measured 2026-09-04)
 
 `bun run lint` is scoped to `frontend/`; `make test-harness` runs the self-tests and
