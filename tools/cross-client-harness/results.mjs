@@ -12,6 +12,7 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { request as requestOverHttp } from 'node:http';
 import { request as requestOverHttps } from 'node:https';
+import { instrumentShaOf } from './instrument.mjs';
 import { SITE, STATE_DIR } from './names.mjs';
 import { gate, report } from './watch.mjs';
 
@@ -216,10 +217,16 @@ try {
  * So a row now names the check it ran as, exactly as it already names the build it ran against, and
  * "this verdict predates the current runner" is computed rather than remembered.
  *
- * ITS LIMIT IS STATED RATHER THAN PAPERED OVER: this hashes the ENTRY script, where a check's own
- * assertions live. A change to a shared gesture in `comm.mjs` or `chat.mjs` can change what a check
- * measures and will NOT move this hash. Hashing the whole harness instead would retire every verdict
- * on every edit, which is a different way of saying nothing.
+ * ITS LIMIT WAS STATED HERE RATHER THAN PAPERED OVER, AND ON 2026-09-04 IT WAS PAID. This hashes the
+ * ENTRY script, where a check's own assertions live; a change to a shared gesture in `comm.mjs` or
+ * `chat.mjs` changes what a check measures and does NOT move this hash. That is not hypothetical any
+ * more - `openConversation` was opening the wrong conversation, MSG-1 recorded a verdict naming a
+ * conversation it never touched, and fixing it flagged nothing because `msg1.mjs` was untouched.
+ *
+ * The objection this comment used to raise against a fix - "hashing the whole harness would retire
+ * every verdict on every edit, which is a different way of saying nothing" - is answered by hashing
+ * the runner's OWN IMPORT GRAPH instead: see `instrumentSha` below. Editing a module a row does not
+ * import leaves that row alone, which is what makes the signal readable.
  */
 const CHECK = (() => {
   const entry = process.argv[1];
@@ -229,6 +236,11 @@ const CHECK = (() => {
   return {
     file: basename(entry),
     sha: createHash('sha256').update(readFileSync(entry)).digest('hex').slice(0, 12),
+    // THE SECOND QUESTION, kept as a SEPARATE column because it sends the reader somewhere else. A
+    // changed runner means "this check now asks something else"; a changed instrument means "every
+    // check that shares this gesture now looks at something else". Merging them would make one edit
+    // to `chat.mjs` read as a rewrite of twenty runners.
+    instrumentSha: instrumentShaOf(entry),
   };
 })();
 
@@ -317,7 +329,7 @@ const observed = (detail) =>
  * them. It goes back in once those runners rename their field; until then the loss is written down
  * here rather than demoted, and `rows.mjs` must not be taught to trust `check` on those phases.
  */
-const RESERVED = ['id', 'verdict', 'at', 'build', 'builtAt', 'checkSha'];
+const RESERVED = ['id', 'verdict', 'at', 'build', 'builtAt', 'checkSha', 'instrumentSha'];
 
 export function record(id, verdict, detail) {
   // A PASS THAT LOOKED AT NOTHING IS NOT A PASS, AND THIS IS THE ONLY PLACE THAT CAN KNOW IT.
@@ -354,6 +366,7 @@ export function record(id, verdict, detail) {
     builtAt: BUILD.builtAt,
     check: CHECK.file,
     checkSha: CHECK.sha,
+    instrumentSha: CHECK.instrumentSha,
     // BEFORE `detail`, so a runner that read the phone at its OWN arming moment overrides this one.
     // Four COMM checks do, and theirs is the more precise of the two.
     ...(A1_BUILD ? { a1Build: A1_BUILD.commit, a1BuiltAt: A1_BUILD.builtAt } : {}),

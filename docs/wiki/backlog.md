@@ -50,34 +50,6 @@ the rule in [durable-rules](durable-rules.md). Delete the line once the measurem
 | the auto-merge ceiling refuses a major | **half taken.** The workflow is enabled again and its shipped loop body was replayed over all 33 open Dependabot PRs: 26 merge, 6 refuse, and the 6 collapse to the two gates below. What replay cannot show is the workflow REFUSING in its own run log, because no major has opened since - so the row stays until a real one does, logging `REFUSED` and staying open |
 | the five products the boutique never sold are buyable | **ONE MANUAL FLIP IS OWED, and it is the user's** (2026-08-31). `activationWithheld` releases a product when payments BECOME ready, and BDE's Stripe onboarding completed long ago - no event will ever fire for it, which is the correct behaviour for an allowlist and the reason a per-tier on-sale switch now exists. So: open `/associations/bde/edit`, Cotisations tab, tick **En vente** on the 170 EUR tier, then buy nothing and simply confirm it appears in `/shop`. The other four associations have no payment account at all, so their products are correctly withheld and release themselves when one arrives - what closes THAT half is the next association to finish onboarding, whose products must go on sale with nobody touching them |
 
-### P2 - a WEB login on the local estate is refused by Authentik, because moving the estate to HTTPS changed the redirect URI and the provider lives on PRODUCTION (measured read-only 2026-09-04)
-
-The local estate became `https://localhost:8081` on 2026-09-04 - the change that unblocks the phone,
-and the reasoning is on [docker](infrastructure/docker.md#the-local-estate-is-https-since-2026-09-04-and-the-scheme-is-the-whole-change).
-Login is OIDC against `auth.canari-emse.fr`, which is the `miconnect` box - PRODUCTION - and
-`oidcRedirectUri()` in `frontend/src/lib/stores/auth.ts` is `window.location.origin + '/auth/callback'`.
-So the estate's scheme IS the redirect URI's scheme.
-
-**Measured, without writing anything**, by asking the provider's own authorize endpoint:
-
-| redirect_uri | status | reading |
-| --- | --- | --- |
-| `http://localhost:8081/auth/callback` | `302` | registered - the flow starts |
-| `https://localhost:8081/auth/callback` | `400` | not registered |
-
-**What this does NOT block, which is most of it.** The three browser profiles are persistent and
-authenticated; a refresh cookie is not re-negotiated through the authorize endpoint, and W1, W2 and
-W3 were all verified rendering the app over HTTPS after the switch. **The phone is not affected at
-all**: A1's page is `http://tauri.localhost`, so its redirect URI is its own origin and never
-mentions the estate. What is blocked is a fresh WEB login - which is what a new browser device, or a
-profile whose refresh token has finally expired, would need.
-
-**Owed to the user, and it is one click**: add `https://localhost:8081/auth/callback` to the
-`Canari Local` provider's redirect URIs, BESIDE the existing `http://` one rather than replacing it,
-so a checkout that has not moved to TLS still works. Nothing in this repository may perform it - the
-box is production, and the standing rule is that production is read-only except where the user says
-otherwise.
-
 ---
 
 ## Owed to the USER - decisions, rotations and one-off clicks
@@ -98,7 +70,6 @@ else holds, a console owned by the user, or hardware that does not exist.
 | how `frontend/src-tauri` gets its cargo updates - Dependabot cannot parse it and the fix that would let it is verified only by an Android AND an iOS build | decision | [P1 - two of the six cargo directories are invisible to Dependabot](#p1---two-of-the-six-cargo-directories-are-invisible-to-dependabot-and-one-of-them-is-the-app-that-ships-to-phones-measured-2026-09-02) |
 | rotate `CF_DNS_TOKEN` **and** the cloudflared tunnel run token - both reached a transcript on 2026-09-01 | rotation | agent memory names both; neither may enter this repo |
 | put the BDE 170 EUR tier on sale - an allowlist correctly withholds it and no event will ever fire | 1 click | the verification table above |
-| add `https://localhost:8081/auth/callback` to the `Canari Local` provider on **miconnect** - beside the `http://` one, not replacing it | 1 click | [P2 - a WEB login on the local estate is refused by Authentik](#p2---a-web-login-on-the-local-estate-is-refused-by-authentik-because-moving-the-estate-to-https-changed-the-redirect-uri-and-the-provider-lives-on-production-measured-read-only-2026-09-04) |
 | App Store Connect: the 2.3.6 radio button | 1 click | [mobile](frontend/mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on) |
 | Lydia's credentials, which Lydia owes | blocked upstream | WP-LYDIA-1 |
 | an Android phone and an iPhone - unblocks the whole verification table above and the campaign | hardware | [device-verification](device-verification.md) |
@@ -754,67 +725,6 @@ real user can be in - whereas copying production's media blobs would drag the PI
 that the DB copy at least keeps behind one deliberate decision. It is a change to infrastructure
 tooling with its own blast radius, so it is a P2 here rather than something done inline during a
 harness tidy.
-
-### P2 - THE PHONE CANNOT HOLD A SESSION AGAINST THE LOCAL ESTATE, by construction of the cookie rules - so every phone row that outlives an access token is measuring the estate (measured 2026-09-04)
-
-**Measured, not inferred.** `Network.getAllCookies` on both engines, within a minute of each other:
-
-| client | page origin | cookies matching `canari|refresh|session` |
-|---|---|---|
-| W1 (Chrome) | `http://localhost:8081` | **3** - `canari_refresh` `domain=localhost path=/api/auth secure=false sameSite=Lax` |
-| A1 (Android WebView) | `http://tauri.localhost` | **0** |
-
-The phone does not hold the cookie and never did - this is not "holds it but will not send it". The
-server sees the consequence and says so: `Refresh refused for the NATIVE app: no canari_refresh
-cookie. cookies=[] x-canari-refresh=absent client=0.16.3 origin=http://tauri.localhost`. And
-`auth_sessions` shows the shape end to end - **three Android rows created today (14:21, 14:46,
-15:41), every one with `rotatedAt` NULL and `lastUsedAt` equal to `createdAt`**, beside Windows rows
-rotating normally at 16:21 and 16:22. A session created and never used again, three times.
-
-**The mechanism.** `setRefreshCookie` picks its attributes from the DEPLOYMENT: HTTPS gets
-`secure: true, sameSite: 'none'`, and the comment says exactly why - *"because the mobile app calls
-in cross-origin from `tauri.localhost`"*. The local branch (`allowInsecureCookies`) drops to
-`sameSite: 'lax'`, which is right for a browser whose page IS `localhost:8081` and fatal for the
-native app, whose page is `tauri.localhost`: a `Lax` cookie cannot be SET in a third-party context,
-so the WebView discards it on arrival. **It is not an oversight to be reverted** - `SameSite=None`
-requires `Secure`, and a `Secure` cookie cannot be set over plain HTTP at all, so the local branch
-has no third option available to it.
-
-**What this costs the campaign, which is the reason it is written down.** A1 logs itself out on a
-timer nobody set: measured today it signed in, then died at 19:05 with `refresh 401 -> session dead
--> logout` while its `auth_sessions` row was valid until 2026-09-11. Any phone row that needs a
-session to survive one access-token lifetime is therefore measuring the ESTATE's HTTP-ness and not
-the product - the exact "instrument answering about itself while reading as an answer about the
-application" failure `estate.mjs` was written for. **Re-run `pin.mjs`/`login.mjs` before any long
-phone row, and do not record a session-persistence verdict for A1 from the local estate.**
-
-**IT IS WORSE THAN "PERSISTENCE ROWS", MEASURED AGAIN 2026-09-04 20:10.** The session does not
-merely fail to survive a long row - it dies before the device has REGISTERED. `bun login.mjs
---android` reported `session held: true` and landed on `/posts`; `bun pin.mjs --android` answered the
-gate in 643 ms and the feed rendered. Minutes later `key_package` held rows for the owner's two `web-`
-devices and NONE for the phone, `dm_device_group_memberships` likewise, the phone's conversation list
-read `Aucune discussion` with zero tiles, and the next probe found it back on `/login` having logged
-itself out in silence - its console produced not one line in a 12 s window.
-
-So a phone with no key package can be added to no group, which means **every `+A1` row is blocked,
-not only the ones about session lifetime**: MSG-2, MSG-5, MSG-8 and MSG-8b all need a conversation on
-a device that never gets one. The login and the PIN are not the precondition; a device identity
-surviving long enough to be published is. Nothing on the local estate can supply that while the
-cookie branch is `Lax`, so those rows wait for an HTTPS-bearing estate rather than for another login.
-
-**NOT a production defect as far as this measurement goes, and it must not be written up as one.**
-Production and `dev.canari-emse.fr` are HTTPS, take the `none`+`Secure` branch, and that is the
-branch the mobile flow was designed for. Nothing here re-verified prod, so the honest claim is about
-the local estate only.
-
-**Two candidate fixes, and the second is the interesting one.** Serve the local estate over HTTPS
-with a trusted local certificate (heavy, and it changes what the campaign is testing); or carry the
-credential in `X-Canari-Refresh` on Android too. **The header path already exists and already
-ships** - it is what iOS, macOS and Linux use because WKWebView drops the cookie on
-`tauri://localhost` ([sessions](sessions.md#the-credential-a-client-carries-itself)) - and "the
-engine will not keep our cookie" is the same condition, reached for a different reason. That would
-make the native client depend on no cookie policy at all, which is a smaller surface than the one it
-has now. It is a change to the AUTH path, so it is a P2 here rather than something to do inline.
 
 ### P3 - NOTHING LINTS THE HARNESS, and the 158 scripts that drive every campaign verdict carry 29 warnings nobody has ever been shown (measured 2026-09-04)
 
@@ -3033,31 +2943,6 @@ other clients would accept (they did not here, so the refusal is about material 
 whether the "ancien PIN" recovery restores a stranded client's MLS state or resets it, which decides
 whether a stranded W1 is recoverable or must be re-minted; and whether production has ever put a real
 member in this state - `registeredAt` beside each device's `lastSeen` would answer it from the table.
-
-### P2 - `checkSha` invalidates a verdict when the RUNNER changes and says nothing when the INSTRUMENT does (measured 2026-09-04)
-
-`results.mjs` records `checkSha`, the hash of the runner file, and `rows.mjs` refuses to believe a
-verdict whose runner has changed since. That rule was written after HEAL-W2's `FAIL` survived the
-rewrite that made its own failing branch unreachable, and for a runner it works.
-
-**It does not cover what the runner IMPORTS, which is where the measuring is done.** On 2026-09-04
-`openConversation` in `chat.mjs` was found to be opening the wrong conversation - MSG-1 asked for
-the DM and was handed a group - and fixing it changed what every MSG, READ, MUT, FWD and NOTIF row
-actually looks at. Not one verdict was flagged: `msg1.mjs` had not been touched, so its hash still
-matched, and `rows.mjs` reported the row as believable. The verdicts happened to be re-taken by hand
-that afternoon, which is not a mechanism.
-
-**A column is only evidence for the question it was written to answer.** `checkSha` answers "did
-this runner change"; nothing answers "did the thing it measures WITH change", and the second
-question is the one that decides whether a green board means anything. `chat.mjs`, `watch.mjs`,
-`comm.mjs`, `results.mjs` and `grainedb.mjs` are shared by nearly every row, so a single edit there
-silently ages the whole board.
-
-**What would close it.** Record a second hash beside `checkSha` covering the harness modules the
-runner imports - resolved from its own import graph rather than a hand-kept list, since a hand-kept
-list is the thing that goes stale. `rows.mjs` then reports "its instrument changed" separately from
-"its runner changed": they send the reader to different work, and merging them would make every
-shared-module edit look like a rewrite of twenty runners.
 
 ### P3 - a check that dies mid-gesture leaves a file staged in the composer, and the NEXT check sends it (measured 2026-09-04)
 

@@ -144,13 +144,3 @@ google-services.json
 # Python (test_adb.py tooling)
 __pycache__/
 *.py[cod]
-
-# TLS material for the LOCAL estate, minted by make-local-cert.sh. The CA private key is a
-# development secret and the leaf is machine-specific; both are regenerable in one command, so
-# neither belongs in a PUBLIC repository.
-infrastructure/local/certs/
-
-# The debug-only Android trust override, written by tools/cross-client-harness/a1apk.mjs. It holds a
-# COPY of the local development CA, which is a credential and is gitignored at its source - and the
-# whole directory is generated, per workstation, from a certificate that `--force` can replace.
-frontend/src-tauri/gen/android/app/src/debug/

@@ -39,6 +39,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PHASES } from './checks.mjs';
+import { instrumentShaOf } from './instrument.mjs';
 import { STATE_DIR } from './names.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -305,8 +306,21 @@ const RUNNER_DIRS = [HERE, join(HERE, 'archive')];
 const runnerPath = (name) =>
   RUNNER_DIRS.map((d) => join(d, name)).find((f) => existsSync(f)) ?? null;
 
+// AND THE SAME QUESTION ABOUT WHAT THE RUNNER MEASURES **WITH**, WHICH IS A DIFFERENT QUESTION.
+// `checkSha` answers "did this runner change". It said nothing on 2026-09-04 when `openConversation`
+// in `chat.mjs` turned out to be opening the WRONG CONVERSATION - MSG-1 asked for a DM, was handed a
+// group, and recorded a verdict naming a conversation it never touched. `msg1.mjs` was untouched, so
+// its hash still matched and this listed nothing. `instrumentSha` hashes the runner's own transitive
+// in-tree import graph (`instrument.mjs`), so a shared gesture changing under a row is visible.
+//
+// REPORTED SEPARATELY, DELIBERATELY. "Your runner changed" and "the gesture twenty rows share
+// changed" send the reader to different work, and merging them would make one edit to `chat.mjs`
+// read as a rewrite of twenty runners.
 const superseded = [];
+const instrumentMoved = [];
+const preInstrument = [];
 const shaOf = new Map();
+const instrumentOf = new Map();
 for (const r of rows) {
   const e = latest.get(r);
   if (!e || !e.check) continue;
@@ -317,9 +331,17 @@ for (const r of rows) {
   }
   if (!shaOf.has(e.check)) {
     shaOf.set(e.check, createHash('sha256').update(readFileSync(file)).digest('hex').slice(0, 12));
+    instrumentOf.set(e.check, instrumentShaOf(file));
   }
   if (!e.checkSha) superseded.push([r, e, 'recorded before checkSha existed']);
   else if (e.checkSha !== shaOf.get(e.check)) superseded.push([r, e, `runner is now ${shaOf.get(e.check)}`]);
+  // A verdict older than the field is NOT listed as a change: a warning that fires on every row is
+  // not a warning, which this file already learnt the hard way about `runnerPath`. It gets its own
+  // quiet line, and the population decays to nothing as rows are re-run.
+  else if (!e.instrumentSha) preInstrument.push([r, e]);
+  else if (e.instrumentSha !== instrumentOf.get(e.check)) {
+    instrumentMoved.push([r, e, `instrument is now ${instrumentOf.get(e.check)}`]);
+  }
 }
 const noSha = rows.filter((r) => latest.has(r) && !latest.get(r).check);
 if (superseded.length || noSha.length) {
@@ -332,6 +354,26 @@ if (superseded.length || noSha.length) {
     const e = latest.get(r);
     console.log('  ' + r.padEnd(14) + String(e.verdict).padEnd(12) + '(no check recorded)  predates the field entirely');
   }
+}
+
+if (instrumentMoved.length) {
+  console.log(
+    `
+[rows] ${instrumentMoved.length} verdict(s) whose RUNNER is unchanged but whose shared instrument moved:`
+  );
+  for (const [r, e, why] of instrumentMoved) {
+    console.log('  ' + r.padEnd(14) + String(e.verdict).padEnd(12) + String(e.check).padEnd(16) + why);
+  }
+  console.log('  (`bun instrument.mjs <runner>` lists the files behind that hash)');
+}
+
+if (preInstrument.length) {
+  console.log(
+    `
+[rows] ${preInstrument.length} verdict(s) predate instrumentSha - their runner is unchanged, ` +
+      `and nothing can say whether what they measure WITH is:`
+  );
+  console.log('  ' + preInstrument.map(([r]) => r).join(' '));
 }
 
 if (sinceBuild) {

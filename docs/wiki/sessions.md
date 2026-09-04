@@ -201,13 +201,34 @@ rather than written down, and `auth.controller.spec.ts` asserts the attributes a
 ## The credential a client carries itself
 
 Where the cookie cannot live, the credential travels explicitly: sent in `X-Canari-Refresh`, returned
-in the response body, and kept between launches in a store file. Both halves decide from ONE fact -
-the request's `Origin` on the server (`refresh-transport.ts`), the document's scheme on the client
-(`nativeRefreshToken.ts`) - so neither side infers the other's platform, and nothing is learnt by
-being refused.
+in the response body, and kept between launches in a store file. Both halves decide from the SAME TWO
+FACTS - the request's `Origin` and `ALLOW_INSECURE_COOKIES` on the server (`refresh-transport.ts`),
+the document's scheme and the API's scheme on the client (`nativeRefreshToken.ts`) - so neither side
+infers the other's platform, and nothing is learnt by being refused.
 
-- **`tauri://localhost` only.** `http(s)://tauri.localhost` is Android and Windows, whose cookie works
-  and whose durability is proven on hardware; routing them through here would unprove it.
+- **Two reasons a cookie cannot be kept, and they are not the same reason.** The ENGINE:
+  `tauri://localhost` is WKWebView, which blocks the third-party class through ITP and publishes no
+  opt-in, so those clients carry the credential on every deployment including production. The
+  DEPLOYMENT: `setRefreshCookie` can issue `SameSite=None; Secure` over HTTPS and only
+  `SameSite=Lax` over plain HTTP - `None` requires `Secure`, `Secure` requires TLS - and **a `Lax`
+  cookie cannot be SET in a third-party context at all**.
+- **So `http(s)://tauri.localhost` - Android and Windows - takes the cookie path wherever one can be
+  issued, which includes production and `dev.canari-emse.fr`.** Its durability there is proven on
+  hardware (WP-ANDROID-SESS-1) and that is not re-decided. Against a PLAIN-HTTP deployment it takes
+  the header path, because there is no cookie for it to keep.
+
+  **Measured 2026-09-04, on the local estate.** `Network.getAllCookies` returned 0 matching cookies
+  on the phone against 3 in a browser; the server logged `no canari_refresh cookie. cookies=[]
+  x-canari-refresh=absent origin=http://tauri.localhost`; `auth_sessions` held three Android rows
+  created and never used again, `rotatedAt` NULL and `lastUsedAt` equal to `createdAt`. The device
+  logged itself out before it had published a key package, so it could be added to no group - which
+  blocked every phone row of the campaign, on the estate rather than on the product.
+
+  **Serving the local estate over TLS was tried first and does not work**, which is why the fix is
+  here instead: the phone's API calls go through the Tauri http plugin, which is Rust `reqwest`
+  built against `webpki-roots` with no platform verifier, so it trusts the bundled Mozilla root set
+  and nothing else - not the Android system store, not a user CA, not a network security config. A
+  private certificate cannot be made to work on that client at all.
 - **The cookie is still SET for everyone**, including the clients that will drop it. It is unreadable
   by the page's own JavaScript, so it stays the better credential wherever it survives - and
   `tauri://localhost` is also macOS and a Linux desktop build, where nobody has measured whether it does.
@@ -233,9 +254,11 @@ same protection class (iOS Data Protection, app container). Moving it into the p
 without biometric flags is a strict improvement on BOTH platforms and is filed as one
 ([`backlog.md`](backlog.md)); it needs a new command in the vendored plugin, so it is not this change.
 
-The general rule: **a cookie a native shell depends on is third-party by construction, and each
-platform decides that for itself.** The question is never "does the server set the cookie" but "does
-THIS engine keep it" - and where the answer is no, the credential stops being a cookie there.
+The general rule: **a cookie a native shell depends on is third-party by construction, and whether it
+survives is decided by TWO parties.** The question is never "does the server set the cookie" but "can
+this deployment issue one this engine will keep" - and where the answer is no, for either reason, the
+credential stops being a cookie there. Asking only about the engine is what left the Android client
+correct on production and silently sessionless everywhere else.
 
 ## One session per device, enforced where the device becomes KNOWN
 

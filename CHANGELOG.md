@@ -13,32 +13,64 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
-- **The local test estate logged the phone out before it could publish a key package, and the cause
-  was one line of compose.** `core-service` picks the refresh cookie's attributes from
-  `ALLOW_INSECURE_COOKIES`; the local estate was plain HTTP, so it ran with `true` and issued the
-  cookie `SameSite=Lax` without `Secure`. `localhost` is a trustworthy origin, so the three browser
-  devices never noticed. The phone did: the Android WebView's page is `tauri.localhost`, so the
-  cookie arrives in a THIRD-PARTY context, and a `Lax` cookie **cannot be SET** there. It was
-  discarded on arrival, the client logged itself out mid-enrolment, and every `+A1` row of the
-  campaign was blocked - on the estate, not on the product, which is why "the phone logs in" kept
-  looking like a passing test.
+- **The Android client asked "can my ENGINE keep a cookie" when the question is also "can this
+  server ISSUE one", so it was silently sessionless on every deployment that is not HTTPS.** The
+  refresh credential travels in `X-Canari-Refresh` where the WebView cannot keep the cookie, and the
+  predicate deciding that - on both sides of the wire - named ONE fact: the client's origin.
+  `tauri://localhost` (iOS, macOS, Linux) carries it, `http(s)://tauri.localhost` (Android, Windows)
+  does not, because its cookie works and is proven on hardware.
 
-  `SameSite=None` requires `Secure`, and `Secure` cannot be set over plain HTTP, so the estate is now
-  served over TLS at the same host and port (`https://localhost:8081`) with
-  `ALLOW_INSECURE_COOKIES=false` beside it - one change, not two, since either alone breaks a
-  client. nginx terminates it in a second server block mounted into the container, leaving
-  `Dockerfile.frontend` - the single source of truth for that configuration - untouched, because
-  production terminates no TLS in that container either. Trust is a pin on one public key for the
-  browsers and a debug-only Android source set for the phone; nothing installs a root authority on
-  the machine. Three sibling services declared `ALLOW_INSECURE_COOKIES` and nothing read it, so they
-  were removed rather than flipped.
+  It is proven on hardware served over HTTPS. `setRefreshCookie` issues `SameSite=None; Secure` over
+  TLS and `SameSite=Lax` without `Secure` over plain HTTP - there is no third option, since `None`
+  requires `Secure` and `Secure` requires TLS - and **a `Lax` cookie cannot be SET in a third-party
+  context at all.** The Android shell's page is `tauri.localhost` while the credential belongs to the
+  API's origin, so against any HTTP deployment the phone was handed a cookie its engine discarded on
+  arrival. Measured 2026-09-04: `Network.getAllCookies` returned 0 matching cookies on the phone
+  against 3 in a browser, the server logged `no canari_refresh cookie. cookies=[]
+  origin=http://tauri.localhost`, and `auth_sessions` held three Android rows created and never used
+  again - `rotatedAt` NULL, `lastUsedAt` equal to `createdAt`. The device logged itself out before it
+  had published a key package, so it could be added to no group and listed no conversation. Every
+  phone row of the cross-client campaign was blocked on it.
 
-  Two things surfaced on the way and are fixed here. The first request over TLS answered `502 Bad
-  Gateway`: `proxy_buffering off` streams the body, but response HEADERS get a separate buffer of one
-  page by default and this estate's CSP is about 1.5 kB - a server that GENERATES a header never
-  parses it back, so one hop had never exercised it and two hops did. And the container stayed
-  HEALTHY throughout, because the health check asked for `/api/version`, the one route that sets no
-  CSP; it now asks for `/chat` as well, so it fails when a user would fail.
+  Both predicates now decide from the same TWO facts: the origin, and whether the deployment can
+  issue a cookie a third-party context accepts - `ALLOW_INSECURE_COOKIES` on the server, the API's
+  scheme on the client, which are two spellings of one thing. **Production and `dev.canari-emse.fr`
+  are HTTPS, so Android keeps taking the cookie path exactly as it does today** and nothing proven on
+  hardware is re-decided; the new branch can only be reached by a deployment that cannot issue the
+  cookie at all. Verified on the phone: `refresh carries=stored credential` then `refresh OK 171ms`
+  across an `am force-stop`, a key package published for the first time, and the feed and
+  conversation list rendering.
+
+  **Serving the local estate over TLS was tried first and is not available**, which is the
+  measurement that makes this the fix rather than a workaround. The phone's API calls go through the
+  Tauri http plugin, which is Rust `reqwest` built against `webpki-roots` with no platform verifier:
+  it trusts the bundled Mozilla root set and nothing else - not the Android system store, not a user
+  CA, not a network security config. With a local CA installed for the WebView and staged into the
+  debug APK, TCP still connected and every request died as `error sending request for url`. A private
+  certificate cannot be made to work on that client at all.
+
+  Two things were kept from that attempt, because they are true whatever the transport. A second
+  proxy hop makes a server PARSE headers it only ever GENERATED, and they get their own buffer of one
+  page by default - this estate's CSP is ~1.5 kB, so every page answered `502` while the container
+  stayed HEALTHY, because the health check asked for `/api/version`, the one route that sets no CSP.
+  A probe chosen for being cheap had been selected for not resembling the traffic; it now fetches
+  `/chat` too.
+
+- **A verdict could be invalidated by its runner changing and not by the gesture it measures with.**
+  `results.mjs` records `checkSha`, the hash of the runner file, and `rows.mjs` refuses to believe a
+  verdict whose runner moved since. It says nothing about what that runner IMPORTS, which is where
+  the measuring is done: when `openConversation` in `chat.mjs` was found opening the wrong
+  conversation, fixing it changed what every MSG, READ, MUT, FWD and NOTIF row looks at, and not one
+  verdict was flagged - `msg1.mjs` was untouched, so its hash still matched.
+
+  A second hash now travels beside it, over the runner's own transitive in-tree import graph,
+  discovered from its specifiers rather than a hand-kept list - a hand-kept list is the thing that
+  goes stale, in the direction that matters. Anything resolving outside the harness is excluded, so
+  the out-of-tree credentials file cannot enter a digest and two checkouts stay comparable. `rows.mjs`
+  reports "its instrument changed" separately from "its runner changed", because they send the reader
+  to different work; verdicts predating the field get a quiet line rather than being listed as
+  changes, since a warning that fires on every row is not a warning. `archive/instrument-selftest.mjs`
+  asserts every specifier form the walker must follow and is in `make test-harness`.
 
 - **A check that asked for a DM was silently handed a group, and recorded a verdict about it.**
   `openConversation` matched the requested name anywhere in a sidebar row and broke ties by shortest
