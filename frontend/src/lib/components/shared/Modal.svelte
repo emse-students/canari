@@ -11,7 +11,12 @@
     open?: boolean;
     title?: string;
     maxWidth?: string;
-    /** When false, backdrop click, Escape, and the header close button are disabled. */
+    /**
+     * When false, EVERY way of dismissing the modal is disabled - backdrop click, Escape, the
+     * header close button, AND the platform back gesture. The last one is the reason this is
+     * spelt out: the back button does not come through any of the other three, it comes through
+     * the history entry pushed below, and a gate a back press can close is not a gate.
+     */
     dismissible?: boolean;
     /** Extra classes appended to the dialog panel (e.g. custom height for near-fullscreen modals). */
     panelClass?: string;
@@ -54,11 +59,31 @@
 
   let historyClose: (() => void) | null = null;
 
+  /**
+   * THE BACK GESTURE IS A DISMISSAL, AND IT IS THE ONE `dismissible` USED TO MISS.
+   *
+   * `pushHistoryOverlay` exists so the Android back button closes the overlay a person is looking
+   * at rather than navigating the whole app away from underneath it - the entry it pushes is popped
+   * by `onPopState`, which calls this `close` callback. It ran for EVERY open modal, including the
+   * three that pass `dismissible={false}`, so a back press on a blocking gate called its `onClose`
+   * while the backdrop, Escape and the header button were all refusing to.
+   *
+   * The three gates get away with it today only because each happens to pass `onClose={() => {}}`,
+   * which is a property of their call sites and not of this component. The cost was still paid: a
+   * gate that pushes an entry nothing will ever pop eats one back press silently, and the person
+   * pressing it sees nothing happen.
+   *
+   * The registration is therefore gated on `dismissible`, which now governs all four paths. A modal
+   * whose `dismissible` FLIPS while open (`dismissible={!loading}` on three dialogs) keeps whatever
+   * it registered when it opened: the flag is about the person's gesture during a two-second
+   * operation, not about the history stack, and abandoning an entry mid-flight would put the two
+   * out of step.
+   */
   $effect(() => {
-    if (open && !historyClose) {
+    if (open && dismissible && !historyClose) {
       historyClose = () => onClose();
       pushHistoryOverlay(historyClose);
-    } else if (!open) {
+    } else if (!open && historyClose) {
       historyClose = null;
     }
   });

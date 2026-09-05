@@ -13,6 +13,42 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **The PIN gate could be closed, so people who had forgotten their PIN walked the whole app closing
+  it on every page - and it offered them nothing but a reset that erases their messages.** Reported
+  from real use: *"elles naviguent de page en page en fermant le modal de PIN"*. `Modal.svelte` has
+  carried a `dismissible` prop the whole time; `PinModal` simply never passed it, so Escape, the
+  backdrop and the header cross all closed the one dialog in the app that must not close. What is
+  underneath is not an unlocked client - the PIN gates the local MLS store - so every page they
+  reached rendered an application with nothing decrypted in it, and nothing said so. `pinrows.mjs
+  --row 11` reproduced it on the local estate the same day: Escape closed the gate, a backdrop click
+  closed the gate, and `exits: {signOut: 0, reset: 0, leaves: 0}` - the modal carried no way out at
+  all in its default state, the reset and the account link both sitting behind a disclosure.
+  **`dismissible` also missed a fourth path, and it is the one a phone uses**: the back gesture does
+  not come through any of the three, it comes through the history entry `pushHistoryOverlay` pushes
+  when a modal opens, and `onPopState` calls `onClose` on it. It ran for every open modal, the three
+  blocking gates included, which survived only because each happens to pass `onClose={() => {}}` - a
+  property of their call sites, not of the component. The registration is now gated on `dismissible`
+  too, so one flag governs all four paths and a gate no longer eats a back press for nothing.
+  **AND CLOSING EVERY DOOR IS ONLY SAFE BECAUSE ONE WAS OPENED**: the gate now carries a sign-out
+  that is on screen from the start rather than behind the disclosure, on the first PIN setup as much
+  as on an unlock, and pressable while a submit is still in flight - the hung-unlock case is one of
+  the states it exists for. It is the app's ORDINARY sign-out, `clearAuth()` then `/login`, the same
+  two lines the navbar runs: the session ends, `mls.bin` and the message database stay exactly where
+  they are, and someone who signs out here and remembers their PIN tomorrow finds their history
+  intact. The destructive reset keeps its disclosure and its two-step confirmation.
+
+- **A copy of production into dev or a local stack passed its own media check while three rows still
+  pointed at production's object store.** Neither copy fetches Garage, so `copy-strips.sh` clears
+  every reference to an object the copy did not receive and then COUNTS what is left, refusing the
+  restore unless the answer is zero. It enumerates media-bearing COLUMNS - and a post COMMENT can
+  carry an attachment, one level down inside a jsonb array of objects, where no column list could see
+  it. So the count said zero and the feed answered 404. Found by a campaign row that did nothing but
+  navigate to the dashboard and read the console. The strip and the count now both cover
+  `posts.comments`, the comment rows themselves are kept because replies address their parent by id,
+  and the file carries the query that found the gap: a scan of every text and jsonb column for
+  `mediaId` and `/api/media/`, which answers nothing else on this schema. **A list of columns is a
+  claim about a schema, and it goes stale in silence.**
+
 - **A message sent at the instant its conversation was deleted was queued into a group that no
   longer existed, and stayed there until the 90-day reaper.** `sendMessage` resolved its recipients
   from the membership table and then saved; `deleteGroup` wrote the tombstone and swept everything

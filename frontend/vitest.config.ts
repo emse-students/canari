@@ -13,7 +13,7 @@ export default defineConfig({
     // THE CLIENT BUILD OF SVELTE, NOT THE SERVER ONE. Without it `svelte` resolves to
     // `index-server.js`, whose `mount()` throws `lifecycle_function_unavailable` - so a component
     // could only ever be tested through the functions it happens to export, and a defect that lives
-    // in the DOM event path (see `Modal.escape.svelte.test.ts`) has nowhere to be caught. Measured
+    // in the DOM event path (see `Modal.dismissal.svelte.test.ts`) has nowhere to be caught. Measured
     // 2026-09-05: the 257 files and 2449 tests that predate this answer identically with it.
     conditions: ['browser'],
     alias: {

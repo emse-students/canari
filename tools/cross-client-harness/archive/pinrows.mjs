@@ -17,9 +17,25 @@
  * never a PASS over a question it could not ask. `A precondition is NOT ambient` is the campaign's
  * rule and this is the phase that tests the precondition itself.
  */
-import { APP_TAB, awaitAppReady, client, evaluate, pollFact, pressKey, reloadAndWait } from '../chat.mjs';
+import {
+  APP_TAB,
+  activate,
+  awaitAppReady,
+  client,
+  evaluate,
+  pollFact,
+  pressKey,
+  reloadAndWait,
+} from '../chat.mjs';
 import { GATE_EXPR } from '../gate-probe.mjs';
-import { dirtOf, gate, report, watch } from '../watch.mjs';
+import {
+  BROWSER_PASSWORD_FORM_HINT,
+  dirtOf,
+  gate,
+  ignoringExpectedLog,
+  report,
+  watch,
+} from '../watch.mjs';
 import { exitOnRecorded, record } from '../results.mjs';
 import { ACCOUNT_OF, PORTS } from '../names.mjs';
 import { unlockClient } from './pingate.mjs';
@@ -93,6 +109,13 @@ const FORGET_DEVICE_KEY = `(function () {
  *                  from the state, only from the dialog: the next page raises it again.
  *
  * A user who forgot their PIN needs the first.
+ *
+ * THE TEXT IS STRIPPED OF ITS ACCENTS BEFORE IT IS MATCHED, and that is not cosmetic: the interface
+ * is French, so the two controls this row is looking for read "Se deconnecter" and "PIN oublie ?"
+ * WITH accents, and an ASCII needle never touches them. Written unstripped on 2026-09-05, it
+ * reported `{signOut: 0, reset: 0, leaves: 0}` on a gate that carried both - a zero that says
+ * "nothing found", indistinguishable from a zero that says "nothing there", which is the reading
+ * this row's whole verdict turns on.
  */
 const EXITS = `(function () {
   var dialog = null;
@@ -105,7 +128,7 @@ const EXITS = `(function () {
   var controls = dialog.querySelectorAll('button, a[href]');
   for (var j = 0; j < controls.length; j++) {
     var c = controls[j];
-    var t = (c.innerText || '').trim().toLowerCase();
+    var t = (c.innerText || '').trim().toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '');
     if (!t) continue;
     if (t.indexOf('deconnect') !== -1 || t.indexOf('deconnex') !== -1 ||
         t.indexOf('sign out') !== -1 || t.indexOf('log out') !== -1) out.signOut++;
@@ -195,27 +218,44 @@ const exits = (await evaluate(w1, EXITS)) ?? { signOut: 0, reset: 0, leaves: 0 }
 await pressKey(w1, 'Escape');
 const survivedEscape = await gateUp();
 
+// ── THE LOOP THE USER DESCRIBED, and it only exists while the gate can be dismissed at all ───────
+//
+// "elles naviguent de page en page en fermant le modal de PIN (qui s'ouvre a chaque fois)". So the
+// question is not whether a navigation removes the gate - it is whether, having closed it, the user
+// is put back in front of it on the next page. That is the app's only current mitigation, and it is
+// worth knowing whether it holds.
+//
+// IT IS DRIVEN THROUGH THE APP'S OWN ROUTER, by clicking a real navigation control. The first draft
+// used `history.pushState` and a synthetic `popstate`, which is not what a user does and not what
+// SvelteKit expects: `pushState` overwrites the history state SvelteKit keeps its own index in, so
+// the router is being handed a navigation it did not author. It reported `false` and a fix written
+// against that would have been aimed at a product doing nothing wrong.
+//
+// Unaskable rather than failed when the gate is still up: a modal that cannot be dismissed has no
+// loop to measure, which is exactly what this row is asking the product to become.
+let reopenedAfterNavigation = null;
+let navigatedTo = null;
+if (!survivedEscape) {
+  navigatedTo = await activate(w1, 'text=Agenda').catch(() => null);
+  if (navigatedTo) {
+    await awaitAppReady(w1).catch(() => null);
+    reopenedAfterNavigation = (await pollFact(() => gateUp(), { timeoutMs: 10000, everyMs: 400 })).ok;
+  }
+}
+
 const backdropOn = await raiseGate();
 const backdrop = backdropOn.up ? await evaluate(w1, CLICK_BACKDROP) : 'gate-not-raised';
 const survivedBackdrop = backdropOn.up ? await gateUp() : null;
 
-// THE THIRD WAY OUT IS THE ONE THE USER DESCRIBED: not closing the modal but walking past it, page
-// after page. Whatever the two gestures above did, the gate must still be there after the app has
-// changed route.
-const navOn = await raiseGate();
-if (navOn.up) {
-  await evaluate(
-    w1,
-    `history.pushState({}, '', '/agenda'); dispatchEvent(new PopStateEvent('popstate'))`
-  );
-  await awaitAppReady(w1).catch(() => null);
-}
-const survivedNavigation = navOn.up ? await gateUp() : null;
-
-const rep = await report(observer);
+// THE ONE LINE THIS ROW IS GUARANTEED TO PROVOKE, and it is Chrome's rather than the app's: every
+// gesture here raises a form carrying a password field, which is exactly what the hint is about.
+// One needle, named here rather than taken from a list - `FRESH_CLIENT_NARRATION` would forgive
+// four more sentences this row has no business excusing. Nothing else is touched, and `badHttp`
+// cannot be forgiven by this gate at all, which is how the media 404s stayed a finding.
+const rep = ignoringExpectedLog(await report(observer), [BROWSER_PASSWORD_FORM_HINT]);
 // A gesture whose gate could not be raised measured nothing, so it is UNDECIDED rather than a
 // finding - `null` is not `false`, and the verdict must not read one as the other.
-const attempted = [survivedEscape, survivedBackdrop, survivedNavigation];
+const attempted = [survivedEscape, survivedBackdrop];
 const unaskable = attempted.some((a) => a === null);
 const held = attempted.every((a) => a === true);
 const verdict = unaskable ? 'INCONCLUSIVE' : held && exits.signOut > 0 ? 'PASS' : 'FAIL';
@@ -226,8 +266,10 @@ record(row.id, gated.verdict, {
   scenario: row.what,
   survivedEscape,
   survivedBackdrop,
-  survivedNavigation,
   backdrop,
+  // Not part of the verdict: it measures the MITIGATION, which only exists while the defect does.
+  navigatedTo,
+  reopenedAfterNavigation,
   // Counted, never named: a label is a translation and printing it would put a display string in
   // the record. What matters is that exactly one non-destructive exit exists.
   exits,
@@ -235,7 +277,9 @@ record(row.id, gated.verdict, {
   failedBecause: [
     survivedEscape === false ? 'Escape closed the gate' : null,
     survivedBackdrop === false ? 'a backdrop click closed the gate' : null,
-    survivedNavigation === false ? 'the gate was gone after a navigation to another route' : null,
+    reopenedAfterNavigation === false
+      ? 'and once dismissed it did NOT come back on the next page, so the app has not even the mitigation the user described'
+      : null,
     exits.signOut === 0
       ? 'the gate offers no way out that keeps the messaging state - a user who has forgotten their PIN can only reset it or leave'
       : null,

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
-  import { LoaderCircle, FingerprintPattern, TriangleAlert } from '@lucide/svelte';
+  import { LoaderCircle, FingerprintPattern, LogOut, TriangleAlert } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { isValidPin } from '$lib/utils/chat/pinValidation';
 
@@ -10,8 +10,17 @@
     open: boolean;
     /** Called with the entered PIN when the user submits the form. */
     onSubmit: (pin: string) => void;
-    /** Called when the user dismisses the modal without submitting. */
+    /**
+     * Called when the user leaves the gate DELIBERATELY, which is now only the account-deletion
+     * link below - the modal itself is not dismissible, so nothing else calls this.
+     */
     onClose?: () => void;
+    /**
+     * Ends the session and leaves the encrypted state on the device. REQUIRED, and required is the
+     * whole point: this modal blocks the app, so it must carry the way out itself. See the exit
+     * button at the bottom of the form for what it is for.
+     */
+    onSignOut: () => void | Promise<void>;
     /** Called when the user taps the biometric authentication button. */
     onBiometricRequest?: () => void;
     /** Whether to render the biometric authentication button. */
@@ -52,6 +61,7 @@
     open,
     onSubmit,
     onClose,
+    onSignOut,
     onBiometricRequest,
     showBiometricButton = false,
     showStaySignedIn = false,
@@ -67,6 +77,8 @@
   let pin = $state('');
   let internalError = $state('');
   let showForgotPin = $state(false);
+  // Set for the round trip of the sign-out so the button cannot be pressed twice.
+  let signingOut = $state(false);
   // Two-step guard so a single tap never triggers the destructive PIN reset.
   let confirmReset = $state(false);
   // Default to numpad on touch devices, keyboard input on desktop.
@@ -97,11 +109,48 @@
     internalError = '';
     onSubmit(trimmed);
   }
+
+  async function handleSignOut() {
+    if (signingOut) return;
+    signingOut = true;
+    try {
+      await onSignOut();
+    } finally {
+      signingOut = false;
+    }
+  }
 </script>
 
+<!--
+  NOT DISMISSIBLE, AND THAT IS THE WHOLE OF THE FIX.
+
+  Reported by the user on 2026-09-05: people who have forgotten their PIN close this modal instead
+  of resetting it, and since it is raised again on the next page they walk the app closing it on
+  every one. `pinrows.mjs --row 11` measured it on the local estate the same day - Escape closed the
+  gate, a backdrop click closed the gate, and `exits: {signOut: 0, reset: 0, leaves: 0}` said the
+  modal carried no way out at all in its default state, the reset and the account link both sitting
+  behind a disclosure.
+
+  A gate whose only property is that it comes back is not a gate: the session is unlocked-looking
+  underneath it, every page renders, and the person is browsing an app whose messaging is dead
+  without ever being told so. `dismissible={false}` closes Escape, the backdrop, the header button
+  and the platform back gesture in one place (see `Modal.svelte` for why the fourth needed saying).
+
+  `onClose` IS STILL HANDED DOWN, and deliberately - a modal that also swallowed the callback would
+  be sealed twice, and the second seal would hide the first one failing. This way the flag is the
+  only thing holding the gate shut, and `PinModal.gate.svelte.test.ts` can prove it by flipping it.
+
+  AND CLOSING EVERY WAY OUT IS ONLY HALF OF IT - the other half is that there must BE a way out, or
+  the fix is a softlock. The sign-out button at the bottom is that way out, and it is deliberately
+  the app's ORDINARY sign-out (`clearAuth` + `/login`, the same gesture as the navbar's): it ends the
+  session and touches neither `mls.bin` nor the message database, so the person who signs out here
+  and remembers their PIN tomorrow finds their history where they left it. The destructive reset
+  stays where it was, behind its disclosure and its two-step confirmation.
+-->
 <Modal
   {open}
   title={isFirstSetup ? m.auth_pin_title_setup() : m.auth_pin_title()}
+  dismissible={false}
   onClose={onClose ?? (() => {})}
 >
   <form onsubmit={handleSubmit} class="space-y-6 p-1">
@@ -341,5 +390,36 @@
         {/if}
       </div>
     {/if}
+
+    <!--
+      THE WAY OUT, AND IT IS ALWAYS ON SCREEN.
+
+      Outside the "forgot PIN" disclosure on purpose: the person who needs it is by definition the
+      person who cannot get past this modal, and an exit they have to go looking for is the softlock
+      the fix above would otherwise create. Shown on the first setup too - someone who has just
+      signed in and does not want to choose a PIN right now is stuck in exactly the same way.
+
+      NOT disabled by `isLoading`. A submit that hangs is one of the states this button exists for,
+      and the watchdog that unblocks the keypad is ten seconds long.
+    -->
+    <div class="border-cn-border/30 border-t pt-4">
+      <button
+        type="button"
+        disabled={signingOut}
+        onclick={() => void handleSignOut()}
+        class="border-cn-border/60 text-text-muted hover:text-text-main flex w-full items-center justify-center gap-2 rounded-xl border bg-white/5 py-2.5 text-xs font-semibold transition-all hover:bg-white/10 disabled:opacity-50 dark:bg-black/20 dark:hover:bg-black/30"
+      >
+        {#if signingOut}
+          <LoaderCircle size={14} class="animate-spin" />
+          {m.auth_pin_signing_out()}
+        {:else}
+          <LogOut size={14} />
+          {m.auth_pin_sign_out()}
+        {/if}
+      </button>
+      <p class="text-text-muted mt-2 text-center text-xs leading-relaxed">
+        {m.auth_pin_sign_out_desc()}
+      </p>
+    </div>
   </form>
 </Modal>
