@@ -17,12 +17,12 @@
  * never a PASS over a question it could not ask. `A precondition is NOT ambient` is the campaign's
  * rule and this is the phase that tests the precondition itself.
  */
-import { APP_TAB, awaitAppReady, client, evaluate, pressKey, reloadAndWait } from '../chat.mjs';
+import { APP_TAB, awaitAppReady, client, evaluate, pollFact, pressKey, reloadAndWait } from '../chat.mjs';
 import { GATE_EXPR } from '../gate-probe.mjs';
 import { dirtOf, gate, report, watch } from '../watch.mjs';
 import { exitOnRecorded, record } from '../results.mjs';
 import { ACCOUNT_OF, PORTS } from '../names.mjs';
-import { settle, unlockClient } from './pingate.mjs';
+import { unlockClient } from './pingate.mjs';
 
 const argv = process.argv.slice(2);
 const opt = (name, fallback) => {
@@ -152,15 +152,21 @@ async function raiseGate() {
   const forgotten = await evaluate(w1, FORGET_DEVICE_KEY);
   await reloadAndWait(w1);
   await awaitAppReady(w1).catch(() => null);
-  // NOT A BARE READ OF THE GATE, AND NOT A SLEEP EITHER. A booting client shows no gate the same
-  // way an unlocked one does: `readyState` reaches `complete` while the app is still deciding
-  // whether the device key is available, so a probe taken straight after the reload reported
-  // "no gate" about a client one second away from raising it - which is how this row recorded
-  // INCONCLUSIVE against a client whose vault it had just emptied. `settle` is the rig s own
-  // answer to that: it races the two sightings - the gate, or the chat having actually MOUNTED -
-  // and returns UNDECIDED if neither lands, which is a third answer and never spelt "fine".
-  const seen = await settle(w1, 20000);
-  return { forgotten, up: seen === 'LOCKED', seen };
+  // NOT A BARE READ, AND NOT `settle` EITHER - THE ROW ASKS ABOUT THE GATE, SO ITS PROBE MUST TOO.
+  //
+  // A booting client shows no gate the same way an unlocked one does: `readyState` reaches
+  // `complete` while the app is still deciding whether the device key is available, so a probe
+  // taken straight after the reload reported "no gate" about a client one second from raising it.
+  // `settle` fixes that for every OTHER caller by racing two sightings - the gate, or the chat
+  // having mounted - and it is the wrong instrument HERE for the very reason this row exists: a
+  // client whose gate was DISMISSED is mounted AND has no device key, so `settle` answers
+  // "unlocked" about exactly the state under test. That is what left this row s third gesture
+  // unmeasured on its first complete run.
+  //
+  // `pollFact` waits for the gate ITSELF, bounded, and reports how long it took - so a gate that
+  // never comes up is a stated deadline rather than a sample taken too early.
+  const seen = await pollFact(() => gateUp(), { timeoutMs: 15000, everyMs: 400 });
+  return { forgotten, up: seen.ok, tookMs: seen.elapsedMs };
 }
 
 const observer = await watch(w1, 'W1');
@@ -174,7 +180,7 @@ if (!first.up) {
     scenario: row.what,
     precondition: 'the PIN gate did not come up after the device key vault was emptied',
     forgotten: first.forgotten,
-    settled: first.seen,
+    raiseTookMs: first.tookMs,
     why: first.forgotten
       ? 'the vault keys were removed and the gate still did not mount - something else answers for the device key on this client'
       : 'this client held none of the five vault keys, so it was never keeping a device key here',
