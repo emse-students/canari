@@ -13,7 +13,7 @@
  *
  *   bun archive/instrument-selftest.mjs
  */
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { instrumentFilesOf, instrumentShaOf } from '../instrument.mjs';
@@ -27,12 +27,28 @@ const ok = (label, cond) => {
 // ── every specifier form this rig writes ────────────────────────────────────────────────────────
 // The fixture is written INSIDE the harness, because `instrument.mjs` deliberately drops anything
 // resolving outside it - one in the OS temp directory would be excluded for the right reason and
-// would prove nothing. And at the harness ROOT rather than beside this file, so the fixture's
-// `../names.mjs` names the real one: getting that wrong is what failed this test's first run.
+// would prove nothing. It is a TWO-LEVEL tree so the `../` form has an in-tree target the fixture
+// owns; see the note beside `nest` for what pointing it at a real file cost.
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 const dir = mkdtempSync(join(ROOT, 'instrument-selftest-'));
 try {
-  const write = (name, body) => writeFileSync(join(dir, name), body, 'utf8');
+  // ONE LEVEL DOWN, SO THE `../` FORM HAS A TARGET THIS TEST OWNS.
+  //
+  // It used to point the fixture's `../` at the harness's real `names.mjs` - and that file is in
+  // `.gitignore`, because it carries the test accounts' display names and machine-local paths. So the
+  // assertion passed on any machine that had run the campaign and FAILED on every fresh checkout,
+  // which is CI: `an in-tree module reached with '../' is in`, red on 2026-09-05 and green here
+  // since the day it was written. A self-test that needs a file the repository cannot contain is not
+  // a gate - and `gate-selftest.mjs` could not catch this one, because the specifier lives in a
+  // FIXTURE's source, assembled through `FROM` precisely so that gate would not read it.
+  //
+  // `leaf-i.mjs` is written in the parent and everything else beside the entry, so the walk still has
+  // to leave the entry's own directory to find it - which is the whole assertion - while both files
+  // die with the temp tree.
+  const nest = join(dir, 'nested');
+  mkdirSync(nest);
+  const write = (name, body) => writeFileSync(join(nest, name), body, 'utf8');
+  writeFileSync(join(dir, 'leaf-i.mjs'), 'export const i = 9;' + String.fromCharCode(10), 'utf8');
 
   // `from` IS SPELLED THROUGH A VARIABLE ON PURPOSE, and it is not obfuscation. `gate-selftest.mjs`
   // proves every self-test can run on a fresh checkout by scanning its source for `from './x'`, and
@@ -64,14 +80,14 @@ try {
       'async function late() {',
       "  return await import('./leaf-e.mjs');",
       '}',
-      `import { PORTS } ${FROM} '../names.mjs';`,
+      `import { i } ${FROM} '../leaf-i.mjs';`,
       `import { existsSync } ${FROM} 'node:fs';`,
       `import { load } ${FROM} '@tauri-apps/plugin-store';`,
       // The two spawn shapes this rig writes, and a name in prose that must NOT be followed.
       "function spawnOne() { return runScript('leaf-f.mjs', ['--device', 'A1']); }",
       "function spawnTwo() { return spawnSync(execPath, ['leaf-g.mjs', '--port', '9222']); }",
       "// see leaf-h.mjs for the older shape, and the note in 'leaf-h.mjs is where this used to live'",
-      'export { a, late, PORTS, existsSync, load, spawnOne, spawnTwo };',
+      'export { a, late, i, existsSync, load, spawnOne, spawnTwo };',
       '',
     ].join('\n')
   );
@@ -79,7 +95,7 @@ try {
   // the file: a mention in a comment, and a filename embedded in a quoted sentence, are both prose.
   write('leaf-h.mjs', 'export const h = 8;\n');
 
-  const found = instrumentFilesOf(join(dir, 'entry.mjs')).map((f) => basename(f));
+  const found = instrumentFilesOf(join(nest, 'entry.mjs')).map((f) => basename(f));
 
   ok('the entry itself is in its own graph', found.includes('entry.mjs'));
   ok('`import x from` is followed', found.includes('leaf-a.mjs'));
@@ -87,7 +103,7 @@ try {
   ok('a bare `import` for side effects is followed', found.includes('leaf-c.mjs'));
   ok('`export * from` is followed', found.includes('leaf-d.mjs'));
   ok('a dynamic `import()` is followed', found.includes('leaf-e.mjs'));
-  ok('an in-tree module reached with `../` is in', found.includes('names.mjs'));
+  ok('an in-tree module reached with `../` is in', found.includes('leaf-i.mjs'));
   ok('a node: builtin is not a file and is not in', !found.some((f) => f.includes('node:')));
   ok('a bare package specifier is not followed', !found.some((f) => f.includes('plugin-store')));
   // WHAT THE ENTRY RUNS, not only what it loads. `phone.mjs` spawns `pin.mjs` and `del.mjs` spawns
@@ -107,21 +123,21 @@ try {
   // compare a verdict and a moved STATE_DIR would read as a changed instrument.
   ok(
     'the out-of-tree configuration is NOT in the graph',
-    !instrumentFilesOf(join(dir, 'entry.mjs')).some((f) => f.replace(/\\/g, '/').includes('/canari-harness/'))
+    !instrumentFilesOf(join(nest, 'entry.mjs')).some((f) => f.replace(/\\/g, '/').includes('/canari-harness/'))
   );
 
   // ── the hash itself ───────────────────────────────────────────────────────────────────────────
-  const before = instrumentShaOf(join(dir, 'entry.mjs'));
+  const before = instrumentShaOf(join(nest, 'entry.mjs'));
   ok('a hash is produced', typeof before === 'string' && before.length === 12);
-  ok('it is stable across two reads of an unchanged tree', before === instrumentShaOf(join(dir, 'entry.mjs')));
+  ok('it is stable across two reads of an unchanged tree', before === instrumentShaOf(join(nest, 'entry.mjs')));
 
   // THE ONE THAT MATTERS: an edit to a module the entry merely IMPORTS must move the hash. This is
   // the case `checkSha` could not see - `openConversation` in `chat.mjs` opening the wrong
   // conversation while every runner's own hash still matched (2026-09-04).
   write('leaf-b.mjs', 'export const b = 22;\n');
-  ok('editing an IMPORTED module moves it', instrumentShaOf(join(dir, 'entry.mjs')) !== before);
+  ok('editing an IMPORTED module moves it', instrumentShaOf(join(nest, 'entry.mjs')) !== before);
 
-  ok('a file that does not exist hashes to null', instrumentShaOf(join(dir, 'nope.mjs')) === null);
+  ok('a file that does not exist hashes to null', instrumentShaOf(join(nest, 'nope.mjs')) === null);
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }
