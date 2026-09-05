@@ -161,3 +161,39 @@ S3-compatible object storage. Used exclusively by media-service, through the sam
 The `garage_data` (object bytes) and `garage_meta` (bucket/key metadata) Docker volumes are
 backed up via the deduplicated restic repository in `infrastructure/backup/backup-objects.sh`,
 not as a tar archive. See [backup](backup.md).
+
+### Finding every media reference a COPY carries but cannot serve
+
+A copy of production - into `dev.canari-emse.fr` or into a local stack - fetches a Postgres dump and
+nothing else. Neither touches Garage, so every media id in the restored rows names a blob that
+exists only in production's store, and `infrastructure/lib/copy-strips.sh` clears them all and then
+COUNTS what is left, refusing the restore unless the answer is zero.
+
+**That count enumerates COLUMNS, which is a claim about a schema, and it goes stale in silence.** It
+reported 0 over three rows that still pointed at production's store on 2026-09-05: a post COMMENT
+can carry an attachment, and `posts.comments` is a jsonb array of objects whose `media` sits one
+level below anything a column list can see. The feed 404ed while the copy's own verification passed.
+
+**What settles it is asking the database rather than reading harder.** This walks every text and
+jsonb column, and it is what found that one - run it against a fresh copy after any schema change
+that adds a place a media reference can hide, and add whatever it names to BOTH the strip and the
+count in `copy-strips.sh` (which deliberately cannot run this itself: `dev-copy-guards.test.sh`
+fails the build if that file so much as mentions `docker exec` or `psql`, because the allowlist of
+writable targets belongs in the script that owns the target):
+
+```sh
+docker exec canari-local-postgres-1 psql -U admin -d auth_db -tAc "
+do \$\$ declare r record; n bigint; begin
+  for r in select c.table_name, c.column_name from information_schema.columns c
+           join information_schema.tables t on t.table_name = c.table_name
+             and t.table_schema = 'public' and t.table_type = 'BASE TABLE'
+           where c.table_schema = 'public'
+             and c.data_type in ('text','jsonb','character varying') loop
+    execute format('select count(*) from %I where %I::text ~ %L',
+                   r.table_name, r.column_name, 'mediaId|/api/media/') into n;
+    if n > 0 then raise notice 'RESIDUE % . % rows=%', r.table_name, r.column_name, n; end if;
+  end loop; end \$\$;"
+```
+
+It answered nothing at all on the local estate of 2026-09-05, after the `posts.comments` strip and
+the ten that predate it - so the enumeration is complete AS OF that schema, and only as of it.

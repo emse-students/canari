@@ -27,6 +27,24 @@
 #
 # It counts ROWS that still reference something, not references: the number is only ever compared
 # against zero, and a per-column breakdown would be a second list to keep in step with the first.
+#
+# IT REPORTED 0 OVER THREE ROWS THAT STILL POINTED AT PRODUCTION'S OBJECT STORE, which is the exact
+# failure the sentence above says cannot happen. A comment on a post can carry an attachment, and
+# `posts.comments` is a jsonb ARRAY OF OBJECTS whose media sits one level down - so neither the
+# column list here nor the strip below saw it, and a copy passed its own verification while the feed
+# 404ed. Found by `pinrows.mjs --row 11` on 2026-09-05, whose only crime was to navigate W1 to the
+# dashboard: `GET /api/media/4a805a13-... -> 404` twice, `[PostMedia] media download failed`, and a
+# PASS-DIRTY on a row that had answered its question perfectly.
+#
+# **A LIST OF COLUMNS IS A CLAIM ABOUT A SCHEMA, AND IT GOES STALE IN SILENCE.** What settles it is
+# not reading harder, it is asking the database: a loop over every text and jsonb column looking for
+# `mediaId` and `/api/media/`, which is what found this one and answered nothing else on the schema
+# of 2026-09-05. It is written out in
+# `docs/wiki/infrastructure/databases.md#finding-every-media-reference-a-copy-carries-but-cannot-serve`
+# rather than here, and it has to be: `dev-copy-guards.test.sh` fails the build if this file so much
+# as mentions a container or a client, because the allowlist of writable targets belongs in the
+# script that owns the target. Run it against a fresh copy after any schema change that adds a place
+# a media reference can hide, and add whatever it names to BOTH the strip and the count.
 # shellcheck disable=SC2034
 COPY_STRIPS_MEDIA_RESIDUE_SQL="SELECT
     (SELECT count(*) FROM associations WHERE \"logoMediaId\" IS NOT NULL OR \"logoMediaId2\" IS NOT NULL OR \"logoUrl\" IS NOT NULL)
@@ -37,6 +55,7 @@ COPY_STRIPS_MEDIA_RESIDUE_SQL="SELECT
   + (SELECT count(*) FROM channel_workspaces WHERE \"imageMediaId\" IS NOT NULL)
   + (SELECT count(*) FROM dm_groups WHERE \"imageMediaId\" IS NOT NULL)
   + (SELECT count(*) FROM posts WHERE \"images\" <> '[]'::jsonb)
+  + (SELECT count(*) FROM posts p WHERE EXISTS (SELECT 1 FROM jsonb_array_elements(p.\"comments\") c WHERE c ? 'media'))
   + (SELECT count(*) FROM channel_messages WHERE \"attachments\" <> '[]'::jsonb)
   + (SELECT count(*) FROM association_documents);"
 
@@ -121,6 +140,17 @@ apply_copy_strips() {
   # nulled - and compared against that literal rather than measured with `jsonb_array_length`, which
   # ERRORS on a jsonb value that is not an array instead of reporting one.
   "$sql" "UPDATE posts SET \"images\" = '[]'::jsonb WHERE \"images\" <> '[]'::jsonb;" "$database"
+  # A COMMENT CAN CARRY AN ATTACHMENT TOO, and it is the one this list did not know about until a
+  # campaign row navigated to the dashboard and read the console (see the residue query's own
+  # comment). `comments` is an array of objects and the reference is a `media` OBJECT one level down,
+  # so there is no column to null: the key is removed from each element and the array rebuilt in
+  # order. `jsonb_agg` over no rows answers NULL rather than `[]`, and the column is NOT NULL.
+  #
+  # THE COMMENT ITSELF STAYS, unlike `association_documents` below, and the difference is that a
+  # comment is ADDRESSABLE: replies carry their parent's id in `parentId`, so deleting one orphans
+  # whatever hangs off it. A comment left with an empty body renders as an empty bubble, which is a
+  # cosmetic oddity in a copy; an orphaned reply is a broken tree in one.
+  "$sql" "UPDATE posts SET \"comments\" = coalesce((SELECT jsonb_agg(c - 'media' ORDER BY ord) FROM jsonb_array_elements(\"comments\") WITH ORDINALITY AS t(c, ord)), '[]'::jsonb) WHERE EXISTS (SELECT 1 FROM jsonb_array_elements(\"comments\") c WHERE c ? 'media');" "$database"
   "$sql" "UPDATE channel_messages SET \"attachments\" = '[]'::jsonb WHERE \"attachments\" <> '[]'::jsonb;" "$database"
   # `association_documents` is DELETED rather than nulled, because its `mediaId` is NOT NULL: the row
   # has no way to express "the file is gone", nothing holds a foreign key to it (checked), and a row

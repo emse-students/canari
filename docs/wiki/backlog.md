@@ -703,10 +703,78 @@ non-destructive exit this screen has never had.
 user who closes it walks an application with nothing decrypted in it. This is P1 for the PATH being
 broken - people are stuck in it now - not for a disclosure.
 
-**AND THE ROW THAT WOULD HAVE CAUGHT IT DOES NOT EXIST.** PIN is 0/10 on the board and had no runner
-until 2026-09-05. Whatever is written here is asserted by a PIN row, not by a reading: the assertion
-is that the modal survives a backdrop click, an Escape, a navigation and a reload, and that exactly
-one control on it leads out without destroying anything.
+**AND THE ROW REPRODUCED IT BEFORE ANYTHING WAS TOUCHED.** PIN-11 (`pinrows.mjs --row 11`) empties
+the device key vault by an allowlist of its five named keys, reloads to raise the gate, and measures
+each gesture against a FRESHLY raised one - the first draft used a single gate for all three, so the
+moment Escape closed it the other two measured an absence and reported it as their own finding.
+Measured 2026-09-05 on the local estate, verdict `FAIL`:
+
+| gesture | gate survived |
+| --- | --- |
+| `Escape` | **no** |
+| backdrop click (`backdrop: "clicked"`, so the event landed) | **no** |
+| a control that ends the session and KEEPS the state | `signOut: 0` |
+| navigation after a dismissal (the MITIGATION, not the defect) | the gate DID come back - `reopenedAfterNavigation: true` |
+
+`exits: {signOut: 0, reset: 0, leaves: 0}` says the modal carried no exit AT ALL in its default
+state: the reset and the account link both sit behind a disclosure the row never opened. So the
+"forgot my PIN" path was not merely destructive, it was not even on screen until the user went
+looking.
+
+**TWO INSTRUMENT ERRORS ARE WORTH KEEPING, because both produced a confident wrong reading.** The
+navigation gesture first reported `survivedNavigation: false` - it navigated with `history.pushState`
+plus a synthetic `popstate`, which overwrites the history state SvelteKit keeps its router index in,
+so the router was handed a navigation it did not author. A fix written against that reading would
+have been aimed at a product doing nothing wrong. And `EXITS` matched ASCII needles against a French
+interface, so `deconnect` never touched "Se deconnecter" and `oublie` never touched "PIN oublie ?" -
+a zero meaning "nothing found", indistinguishable from the zero meaning "nothing there" that the
+whole verdict turns on. It is stripped of diacritics before matching now.
+
+**FIXED 2026-09-05, both halves in one commit** (story in `CHANGELOG.md`, rule in
+[durable-rules](durable-rules.md)): `dismissible={false}` on the gate, `dismissible` extended in
+`Modal.svelte` to govern the BACK GESTURE as well - it does not come through the backdrop, Escape or
+the cross, it comes through the history entry every open modal pushed - and a sign-out on screen from
+the first frame, running the app's ordinary `clearAuth()` + `/login` so `mls.bin` and the message
+database are untouched. Pinned by `PinModal.gate.svelte.test.ts` and
+`Modal.dismissal.svelte.test.ts`, both of which fail against the old component.
+
+**PIN-11 re-read the fixed build and recorded `PASS`, clean**: `survivedEscape: true`,
+`survivedBackdrop: true` with `backdrop: "clicked"` so the event still landed, and
+`exits: {signOut: 1, reset: 1, leaves: 0}`.
+
+**GETTING TO A CLEAN `PASS` COST ONE MORE FIX, AND IT WAS THE ESTATE'S.** The first re-run was
+`PASS-DIRTY` on `GET /api/media/4a805a13-... -> 404` twice plus `[PostMedia] media download failed` -
+a post COMMENT carrying an attachment whose object the local copy never received.
+`infrastructure/lib/copy-strips.sh` exists to make that impossible and its own residue query
+reported **0** over three such rows: it enumerates media-bearing COLUMNS, and a comment's attachment
+lives inside a jsonb array of objects, one level below anything the list could see. Both the strip
+and the count now cover `posts.comments`, and the file carries the loop that FOUND it - a scan of
+every text and jsonb column for `mediaId` and `/api/media/`, which answered nothing else on this
+schema. **A list of columns is a claim about a schema, and it goes stale in silence.** The remaining
+line, Chrome's `[DOM] Password forms should have ... username fields`, is the browser's and not the
+app's: the documented remedy would invite a password manager to store an end-to-end encryption
+secret, so the row NAMES it through `ignoringExpectedLog` and nothing wider.
+
+**Still owed: the fix is merged, not shipped.** This entry goes when a release carries it.
+
+### P3 - a media object that is gone reads as a hard error unless one JSON file survived, and that file is known to be losable (found 2026-09-05)
+
+`MediaService.download` answers `purged` - which the controller turns into a 410 and the client into
+a calm *"media expired"* label - only when `media_metadata.json` still holds an entry with
+`purgedAt` and `purgeReason === 'retention_expired'`. If the object is gone and that entry is not,
+the answer is a 404, and `PostMedia` renders the red failure and writes `console.error`. The two are
+the same event to the user.
+
+**The metadata file is known to be losable, in this very service**: `downloadPublic` carries an
+explicit *"metadata lost after a container restart"* fallback that backfills an entry from storage.
+`download` has no equivalent, so the private path depends on a file the public path is written not
+to trust.
+
+**What is NOT known** is how often a 404 on this endpoint means "purged" rather than "never existed
+here" - that is a measurement on production's media service, not a reading. **A predicate that named
+the last incident is not the predicate that names the next one**, and this one has not been measured
+on the population it would run on. Cheap and worth doing before deciding anything: count 404s and
+410s on `/api/media/:id` over a week.
 
 ### P2 - the PIN modal's error is a bare paragraph, so a refused unlock is never announced to a screen reader (measured 2026-09-04)
 

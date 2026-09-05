@@ -79,6 +79,14 @@ const CLAIM = {
   partial: 'PARTIAL',
   PARTIAL: 'PARTIAL',
   VACUOUS: 'VACUOUS',
+  // A VERDICT THE RECORDER WRITES AND THIS READER COULD NOT READ. `results.mjs` names
+  // `INCONCLUSIVE` in the same breath as `PASS-DIRTY`, `VACUOUS` and `INVALID` - it is what a row
+  // records when its question could not be ASKED, which is a third answer and never spelt "fine".
+  // It was missing here, so PIN-11 - the first row to record one - read as `unstated` and was
+  // reported as work the board had not written down, which it had. A word the ledger can produce
+  // and the reconciler cannot recognise makes the reconciler wrong about the board, which is the
+  // one thing it exists to be right about.
+  INCONCLUSIVE: 'INCONCLUSIVE',
   INVALID: 'INVALID',
   ERROR: 'ERROR',
   UNOBSERVED: 'UNOBSERVED',

@@ -1803,9 +1803,25 @@ export const EVICTED_REJOIN_NARRATION = [
  * twenty lines at once again would mean the shared wait had come undone, and this list is not what
  * should hide it. Nothing here forgives `Flush skipped`, which is a different claim entirely.
  */
+/**
+ * CHROME'S OWN HINT AGAINST ANY FORM CARRYING A PASSWORD FIELD - the browser's line, not the app's.
+ *
+ * Emitted at `verbose` on the login screen and on the PIN gate, and nothing in this repository can
+ * silence it: the documented remedy is a username field beside the password one, which on the PIN
+ * gate would invite a password manager to store an END-TO-END ENCRYPTION secret the product
+ * promises is never transmitted anywhere. Explaining it is the right disposition and demoting it is
+ * not, so it stays a needle a row NAMES rather than a rule the classifier applies to everyone.
+ *
+ * Exported on its own because two lists want it and a second copy of a regex is a second thing to
+ * keep in step: `FRESH_CLIENT_NARRATION` includes it below, and any row that merely raises a
+ * password field - `pinrows.mjs --row 11` is the first - takes this one needle and nothing else.
+ */
+export const BROWSER_PASSWORD_FORM_HINT =
+  /^\[DOM\] Password forms should have \(optionally hidden\) username fields for accessibility/;
+
 export const FRESH_CLIENT_NARRATION = [
   /^\[A\] login returnTo=\S+ uri=\S+ flow=\S+$/,
-  /^\[DOM\] Password forms should have \(optionally hidden\) username fields for accessibility/,
+  BROWSER_PASSWORD_FORM_HINT,
   /^Initialising MLS\.\.\.$/,
   /^\[OUTBOX\] Flush deferred - tab leadership undecided; waiting for the election\.$/,
   /^\[OUTBOX\] Leadership decided as (?:leader|follower) after \d+ ms\.$/,

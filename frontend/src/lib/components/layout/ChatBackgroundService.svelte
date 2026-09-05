@@ -446,6 +446,39 @@
   }
 
   /**
+   * The PIN gate's way out, and the ONE that destroys nothing.
+   *
+   * The gate stopped being dismissible on 2026-09-05 (see the comment on `PinModal.svelte`), which
+   * makes an exit mandatory rather than optional: without one, a person who has forgotten their PIN
+   * has only the destructive reset, and a modal that cannot be closed and offers nothing but "erase
+   * my message history" is a softlock with a button on it.
+   *
+   * IT IS THE APP'S ORDINARY SIGN-OUT, deliberately - `clearAuth()` then `/login`, the same two
+   * lines the navbar's logout runs. `clearAuth` ends the session on the server, drops the access
+   * token, the refresh credential and the persisted ACKs, and touches NOTHING that a PIN protects:
+   * `mls.bin`, the message database and the device key vault are all still there afterwards. The
+   * user asked for exactly this ("deconnecter seulement, garder l'etat"), and it is what makes the
+   * exit safe to offer without a confirmation step.
+   *
+   * THE GATE COMES DOWN LAST, which is the opposite order to `handleSessionExpired` and for the
+   * opposite reason. There, callers are blocked on a promise and the release is what unblocks them.
+   * Here nobody is waiting: the person pressed a button, and taking the gate down before `clearAuth`
+   * has come back would show them the app they are not allowed into for as long as the round trip
+   * lasts. `PlatformGateOverlay` holds its own gate the same way, on the same argument.
+   */
+  async function handlePinSignOut() {
+    appendLog('[AUTH] Sign-out from the PIN gate - ending the session, keeping the local state.');
+    // A failure here is a failure to REVOKE, never a reason to strand the user on a gate they asked
+    // to leave - and a swallowed one would leave nothing behind, so it is accused by name.
+    await clearAuth().catch((e) => appendLog(`[AUTH] Sign-out: clearAuth failed - ${e}`));
+    await goto('/login', { replaceState: true });
+    dismissAuthPrompts();
+    pinError = '';
+    _loginInProgress = false;
+    globalSession.isLoginInProgress = false;
+  }
+
+  /**
    * Called when a stored PIN is rejected; resets state and shows the PIN modal again.
    *
    * Re-asking is only worth it while a session could still use the answer. A login that failed
@@ -1491,6 +1524,7 @@
     _loginInProgress = false;
     globalSession.isLoginInProgress = false;
   }}
+  onSignOut={handlePinSignOut}
   onBiometricRequest={handleBiometricFromModal}
   showBiometricButton={biometricConfigured}
   {showStaySignedIn}
