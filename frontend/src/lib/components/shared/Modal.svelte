@@ -80,6 +80,29 @@
     if (!dismissible) return;
     if (e.key === 'Escape') dismiss();
   }
+
+  /**
+   * Escape, handled WHERE THE KEY ACTUALLY LANDS - inside the panel.
+   *
+   * The panel stops `keydown` from bubbling (see the handler on the dialog element), and that stop
+   * is what made the `svelte:window` listener below dead code for every consumer of this component:
+   * `focusTrap` focuses the first control inside the panel on mount, so every keystroke a person
+   * makes with a modal open ORIGINATES inside it and is stopped one node above the panel. Measured
+   * 2026-09-05 on the community-settings modal: the keydown reached `window` in the CAPTURE phase
+   * and never came back in the bubble phase, and the dialog stayed open.
+   *
+   * The window listener is kept rather than replaced: a keystroke made while focus sits on the
+   * BACKDROP - the panel not yet mounted, or focus deliberately moved out - bubbles normally and has
+   * no panel to pass through. The two cover disjoint origins, and `dismiss()` is idempotent through
+   * `closeHistoryOverlayFromUi` in any case.
+   */
+  function handlePanelKeydown(e: KeyboardEvent) {
+    // STOPPED FIRST, AND STILL STOPPED. Two modals are portaled as SIBLINGS of `body`, not nested,
+    // so both window listeners are live at once; without this, one Escape would dismiss the stack
+    // rather than the modal the person is looking at.
+    e.stopPropagation();
+    handleKeydown(e);
+  }
 </script>
 
 <svelte:window onkeydown={open && dismissible ? handleKeydown : undefined} />
@@ -103,7 +126,7 @@
         class="keyboard-aware-modal-panel border-cn-border w-full border bg-(--cn-surface) shadow-2xl {maxWidth} text-text-main flex flex-col sm:mx-4 {panelSizeClass} {panelClass}"
         in:fly={{ duration: 220, y: 24 }}
         onclick={(e) => e.stopPropagation()}
-        onkeydown={(e) => e.stopPropagation()}
+        onkeydown={handlePanelKeydown}
       >
         {#if title}
           <div

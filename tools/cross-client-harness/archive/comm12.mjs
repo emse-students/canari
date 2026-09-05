@@ -77,7 +77,14 @@ import {
 } from '../grainedb.mjs';
 import { PEER_NAME, PORTS } from '../names.mjs';
 import { mark, record } from '../results.mjs';
-import { consoleLines, gate, report, watch } from '../watch.mjs';
+import {
+  DELIVERY_CROSSING_NARRATION,
+  consoleLines,
+  gate,
+  ignoringExpectedLog,
+  report,
+  watch,
+} from '../watch.mjs';
 
 const w1 = await client(PORTS.W1);
 const w2 = await client(PORTS.W2);
@@ -310,7 +317,16 @@ const verdict = !armed
 
 const linesW1 = consoleLines(wa.cx);
 const linesW2 = consoleLines(wb.cx);
-const gated = gate(verdict, { W1: await report(wa), W2: await report(wb) });
+// THE CROSSING THIS ROW GOES AND PROVOKES. The peer is removed, re-invited and re-joins, so its
+// client is rebuilt twice and each rebuild pulls a queue whose acknowledgements are still in flight
+// - `pull:done`, the shape that is this device losing a race with itself and not a server defect.
+// Once per client is exactly what the seam prints, which is why there are two lines and not two
+// hundred. The shape that WOULD be a finding (`live:done`) is not in this list and never forgiven.
+const forgiven = (rep) => ignoringExpectedLog(rep, DELIVERY_CROSSING_NARRATION);
+const gated = gate(verdict, {
+  W1: forgiven(await report(wa)),
+  W2: forgiven(await report(wb)),
+});
 
 record('COMM-12', gated.verdict, {
   ...gated.detail,

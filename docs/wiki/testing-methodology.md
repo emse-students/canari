@@ -2255,6 +2255,38 @@ of a probe sender, so the sidebar went green on the READD path rather than on a 
 the fresh-device bulk of `TooDistantInThePast` is the documented past-epoch noise, which is exactly
 the kind of line a reader learns to skip - and the 500 was three lines away from it.
 
+## AN OBSERVER POINTED AT THE WRONG ESTATE ANSWERS, AND ITS ANSWER IS ALWAYS "NO"
+
+The campaign moved to the local estate on 2026-09-03. `psql` and `redis` were made to follow `SITE`
+that day and `estate.mjs` was written to hold the decision. **`srvlog.mjs` - the THIRD observer, the
+one that reads the platform's own logs - was not, and nobody noticed for two days**, because it
+still spelt `ssh canari docker logs infrastructure-<service>-1` and production is never quiet: every
+window it returned was full of real lines, so it read as a working instrument.
+
+**What it costs is not an error, it is a NEGATIVE.** Every predicate of the form "this line is
+absent" is satisfied for free in an estate where the subject was never created. COMM-14 asks whether
+the three channel notification levels are enforced and reads
+`[CHANNEL_PUSH] channel=<id> message=<id> recipients=N` as the decision itself; on 2026-09-05 it
+recorded **FAIL** on a product that was working, while the PHONE's tray held both notifications it
+said had not been sent. The local container had logged thirty such lines. The instrument had read
+production's, where that channel id has never existed.
+
+Two rules come out of it, and the second is the one that generalises:
+
+- **EVERY OBSERVER FOLLOWS `SITE`, AND THERE IS NO SECOND MECHANISM.** A rig cannot be
+  half-configured: `estate.mjs` decides once, at import, for the database, the cache and now the
+  logs. `srvlog.mjs` stays PURE - it may not import `names.mjs`, because eleven gated self-tests take
+  its rule lists in CI from a checkout that has no `names.mjs` - so the reader lives in `estate.mjs`
+  and is PASSED IN. That is why `srvReport` takes its reader as an argument rather than reaching for
+  one.
+- **AN ABSENCE IS THE WEAKEST EVIDENCE THERE IS, AND IT FAILS SILENTLY IN BOTH DIRECTIONS.** The same
+  row also read "no `[CHANNEL_PUSH]` line for this message" as "the server chose to notify nobody",
+  on a stated premise about the service that was simply false - it logs `recipients=0 of N ...`
+  precisely so those two stop looking alike. Two wrong things agreed, and the row was green on the
+  cases that mattered least. **Assert a COUNT, never a silence**: `recipients=0` says the decision
+  was taken and selected nobody; an absence cannot tell that from a message that never arrived, and
+  those want opposite repairs.
+
 ## A STATUS WITH NO REQUEST IS EVIDENCE FOR NOTHING
 
 **Measured 2026-08-29, on HEAL-NEW-15's gate.** The row was demoted to `PASS-DIRTY` partly on

@@ -25,6 +25,9 @@
     <string name="notif_new_message_from">New message from %1$s</string>
     <string name="notif_new_message_generic">You received an encrypted message</string>
 
+    <string name="notif_mention_you">you</string>
+    <string name="notif_mention_someone">someone</string>
+
     <string name="notif_reaction_body">reacted %1$s to your message</string>
     <string name="notif_action_reply">Reply</string>
     <string name="notif_action_mark_read">Mark as read</string>

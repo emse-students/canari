@@ -77,7 +77,7 @@ import { inPanel, openChannelSettings, setChannelNotifLevel } from '../comm.mjs'
 import { errorDetail, mark, record, recordObserved } from '../results.mjs';
 import { BLOCK_LIST_READ_NARRATION, ignoringExpectedLog, report, watch } from '../watch.mjs';
 import { ABSENT_MENTION_ID, ignoringStrandedMentions } from '../stranded.mjs';
-import { srvLines } from '../srvlog.mjs';
+import { srvLines } from '../estate.mjs';
 import * as phone from '../phone.mjs';
 import { whoIs } from './presence.mjs';
 import { OWNER_NAME, PEER_NAME, PORTS, VENUE } from '../names.mjs';

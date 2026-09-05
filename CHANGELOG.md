@@ -13,6 +13,29 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A mention arrived on a phone as a sixty-four character hex blob.** A mention is stored inside
+  the ciphertext as `@[<64 hex>]`; the web splits it and renders a chip carrying the display name,
+  and the Android push handler put the decrypted text straight into the notification body. So the
+  ONE channel a mention posts on - the high-priority `CHANNEL_MENTIONS`, which requests a
+  do-not-disturb bypass - showed the reader `@[f7a9bb80...5d8ce1]  <message>`, plus the double space
+  the token left behind. The push path has no name directory and adding one would put a network
+  round trip per token in front of a banner that must appear in seconds, so it renders the one id
+  the device knows for certain - its own, as `@vous` / `@you` - and says `@quelqu'un` / `@someone`
+  for the rest, rather than showing an id and calling it a name. Both the DM/group and the channel
+  path went through it; both are fixed. Measured on real hardware by COMM-14, which now refuses any
+  tray body containing `@[`.
+
+- **No modal in the application could be closed with Escape, and there are twenty-two of them.**
+  `Modal.svelte` bound its Escape handler on `svelte:window`, which is a BUBBLE-phase listener,
+  while the dialog panel stopped `keydown` from bubbling - a mirror of the `click` stop that keeps a
+  click inside the panel from reaching the dismissing backdrop. `focusTrap` focuses the first
+  control inside the panel on mount, so every keystroke made with a modal open originates inside it
+  and dies one node above the panel. Measured on the community-settings modal: the key reached
+  `window` in the capture phase, never in the bubble phase, and the dialog stayed open. Escape is
+  now handled on the panel itself, where the key actually lands; the stop remains, because two
+  modals are portaled as siblings of `body` and one Escape must close the one being looked at rather
+  than the whole stack. `dismissible={false}` is unaffected.
+
 - **A joiner asked the server to register itself into the group it was being welcomed into, which
   the server refuses by construction - so the "safety net" was a no-op when it worked and a 403 when
   it was needed.** Its own comment said what it was for: the case where the inviter has not yet

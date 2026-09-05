@@ -14,7 +14,7 @@ import { accounts as readAccounts } from './accounts.mjs';
 import { activate, connect, evaluate, listTargets, realClick, until } from './cdp.mjs';
 import { declineBiometricOffer } from './chat.mjs';
 import { GATE_EXPR } from './gate-probe.mjs';
-import { PORTS } from './names.mjs';
+import { PORTS, SITE } from './names.mjs';
 import { armIfPhone, resolveDevice } from './device.mjs';
 
 const argv = process.argv.slice(2);
@@ -112,6 +112,60 @@ if (!hasField && hasKeypad) {
   }
 }
 
+/**
+ * WHICH ESTATE THE APP IS ACTUALLY TALKING TO, MEASURED ON THE RUNNING CLIENT.
+ *
+ * A phone client embeds its frontend (`frontendDist: "../build"`), so the origins it calls are BAKED
+ * INTO THE APK and no deploy can move them. `a1apk.mjs` asserts them at BUILD time by grepping the
+ * packaged chunks - and `--no-build`, which is the flag every session actually uses, skips that
+ * branch entirely and installs the artefact anyway. An APK built against production would then run
+ * every `+A1` row against the real estate while the ledger recorded the verdict against localhost.
+ *
+ * IT CANNOT BE ANSWERED FROM THE ARTEFACT. Measured 2026-09-05: the APK carries no plain copy of
+ * either origin - Tauri compresses the bundle into `libmines_app_lib.so`, so a grep of the file
+ * finds `localhost:8081` zero times and `canari-emse.fr` twice, which is the CSP and not a caller.
+ *
+ * SO IT IS ASKED OF THE CLIENT, HERE, WHERE THE ANSWER CANNOT BE VACUOUS. This runs on both ways out
+ * of the gate - answered, or already past it - and either way the app has booted and fetched, so the
+ * resource timeline is non-empty. An EMPTY one is a failure rather than a pass: "contacted nothing"
+ * is not "contacted the right thing", and a gate over an empty set is the vacuous pass this rig
+ * refuses everywhere else. `tauri.localhost` and `ipc.localhost` are the engine's own two schemes,
+ * not an estate, and are the only origins excused.
+ *
+ * IT REFUSES AS WELL AS ACCEPTS, which is the half a gate usually lacks. Exercised 2026-09-05 on
+ * five origin sets: local only ACCEPTED; production, `dev.`, engine-schemes-only, and local WITH a
+ * production stray alongside it - all four REFUSED. The stray case is why the test is "every estate
+ * origin is SITE" rather than "SITE is among them".
+ *
+ * @param {object} cx CDP connection to the client
+ * @returns {Promise<void>} exits the process 1 rather than returning, when the estate is wrong
+ */
+async function assertLocalEstate(cx) {
+  const ENGINE_ORIGINS = ['http://tauri.localhost', 'http://ipc.localhost'];
+  const contacted = JSON.parse(
+    await evaluate(
+      cx,
+      `JSON.stringify([...new Set(performance.getEntriesByType('resource').map(function (e) {
+         try { return new URL(e.name).origin; } catch (_) { return 'unparseable:' + e.name; }
+       }))])`,
+    ),
+  );
+  const estates = contacted.filter((o) => !ENGINE_ORIGINS.includes(o));
+  const strangers = estates.filter((o) => o !== SITE);
+  console.log(`[pin] estate origins contacted: ${estates.join(' ') || '(none)'}`);
+  if (!strangers.length && estates.length > 0) return;
+  console.error(
+    estates.length === 0
+      ? `[pin] THIS CLIENT HAS CONTACTED NO ESTATE AT ALL, so which one it is built against is ` +
+          `unknown - and a row that ran now would record a verdict nothing corroborates`
+      : `[pin] THIS CLIENT IS NOT ON THE LOCAL ESTATE: it called ${strangers.join(' ')} and the rig ` +
+          `reports on ${SITE}. Rebuild and reinstall the APK (bun a1apk.mjs) - a --no-build install ` +
+          `keeps whatever origins the artefact on disk was baked with`,
+  );
+  cx.close();
+  process.exit(1);
+}
+
 if (!hasField && !hasKeypad) {
   // THREE OUTCOMES, THREE MESSAGES. "No modal" was one line for two situations wanting opposite
   // repairs - a client already unlocked needs nothing, a client that never mounted the gate needs
@@ -123,6 +177,9 @@ if (!hasField && !hasKeypad) {
       `[pin] no unlock modal within ${GATE_DEADLINE_MS} ms - on ${seen.path}, sidebar ${seen.sidebar}`,
     );
   }
+  // The estate is asserted on THIS way out too. "Already unlocked" is the ordinary path on every
+  // run after the first, so skipping it here would mean the check almost never ran.
+  await assertLocalEstate(cx);
   process.exit(2);
 }
 
@@ -219,4 +276,4 @@ const state = await evaluate(
   `JSON.stringify({ url: location.href, modal: ${GATE_EXPR}, body: document.body.innerText.replace(/\\s+/g,' ').slice(0, 300) })`,
 );
 console.log(`[pin] after: ${state}`);
-cx.close();
+await assertLocalEstate(cx);

@@ -22,7 +22,6 @@
  * anything nginx terminates before the app is out of scope.
  */
 import { pathToFileURL } from 'node:url';
-import { ssh } from './ssh.mjs';
 
 /** The application containers. Infrastructure (redis, postgres, garage) is deliberately out. */
 const SERVICES = [
@@ -34,9 +33,6 @@ const SERVICES = [
   'call-service',
   'frontend-ssr',
 ];
-
-/** Tracing and Nest both colour their output; every pattern below would miss on the escape codes. */
-const ANSI = /\[[0-9;]*m/g;
 
 /**
  * Routine traffic. Each entry is one thing the platform does on the happy path of a delivery check,
@@ -907,8 +903,6 @@ const SEVERE = [
 // cannot match has no symptom on a live window - it just makes the unexplained pile bigger - so the
 // only way to catch one is to assert it against a line whose bucket is known. See
 // `srvclassify-selftest.mjs`.
-export { linesOf as srvLines };
-
 export {
   BENIGN as BENIGN_RULES,
   NOTABLE as NOTABLE_RULES,
@@ -916,28 +910,6 @@ export {
   EXPECTED_ERRORS as EXPECTED_ERROR_RULES,
 };
 
-/**
- * One service's lines in the window, ANSI stripped and blanks dropped.
- *
- * EXPORTED as `srvLines` because a check that asserts one SPECIFIC server line does not want the
- * whole classified report: COMM-14's subject is `[CHANNEL_PUSH] ... recipients=N`, and the only
- * honest source for it is the service's own log. A second copy of the `docker logs` incantation in a
- * runner would be a second place for the window, the `2>&1` and the ANSI stripping to drift.
- */
-function linesOf(service, since) {
-  // `2>&1` because Nest logs to stdout and tracing to stderr, and a check that read only one of them
-  // would be blind to half the platform. Quoted for `sh -c` on the far side, single quotes only.
-  const out = ssh(
-    'canari',
-    `docker logs --since ${since} infrastructure-${service}-1 2>&1 || true`,
-    { timeoutMs: 90_000 }
-  );
-  return out
-    .replace(ANSI, '')
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter(Boolean);
-}
 
 /**
  * THE SERVER HALF OF A RUN'S OBSERVATION, as a value - so it can run INSIDE the phase runner.
@@ -1064,7 +1036,7 @@ export function namesOnlyOthers(line, subjects) {
   return !ids.some((id) => subjects.some((s) => id.startsWith(s) || s.startsWith(id)));
 }
 
-export function srvReport(since = '10m', { raw = false, shapes = false, subjects = [] } = {}) {
+export function srvReport(read, since = '10m', { raw = false, shapes = false, subjects = [] } = {}) {
 const result = {};
 let clean = true;
 
@@ -1073,7 +1045,7 @@ const isThirdParty = (line) => namesOnlyOthers(line, subjects);
 for (const service of SERVICES) {
   let lines;
   try {
-    lines = linesOf(service, since);
+    lines = read(service, since);
   } catch (e) {
     // AN UNREACHABLE SERVICE IS NOT A QUIET ONE. Returning `[]` here would report a torn-down
     // container as a clean window, which is the exact substitution this whole harness exists to
@@ -1274,7 +1246,12 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
   // `--subjects <prefix,prefix>` partitions the window by user, exactly as `run.mjs` does from the
   // preflight. Omit it and nothing is forgiven - an unpartitioned window judges every line.
   const subjects = String(flag('subjects', '')).split(',').map((s) => s.trim()).filter(Boolean);
-  const rep = srvReport(String(flag('since', '10m')), {
+  // THE ESTATE IS REACHED ONLY WHEN THIS FILE IS RUN AS A COMMAND. `estate.mjs` reads `names.mjs`,
+  // which is gitignored because this repository is PUBLIC - so a STATIC import here would make this
+  // module unimportable on a fresh checkout, and `srvclassify-selftest.mjs` takes four rule lists and
+  // three pure functions from it in CI. Importing inside the CLI guard keeps the module itself pure.
+  const { srvLines } = await import('./estate.mjs');
+  const rep = srvReport(srvLines, String(flag('since', '10m')), {
     raw: process.argv.includes('--raw'),
     shapes: wantShapes,
     subjects,

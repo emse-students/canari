@@ -36,6 +36,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { PHASES, devicesFor } from '../checks.mjs';
 import { awaitQuiet } from '../deploy.mjs';
 import { groupTombstones, sweepDismissed } from './dismiss.mjs';
+import { srvLines } from '../estate.mjs';
 import { srvReport, srvSummary } from '../srvlog.mjs';
 import { client } from '../chat.mjs';
 import * as phone from '../phone.mjs';
@@ -1107,7 +1108,9 @@ let server = null;
 const windowFrom = serverWindowFrom;
 serverWindowFrom = new Date().toISOString();
 try {
-  server = srvReport(windowFrom, { subjects: [...SUBJECTS] });
+  // The reader is passed in rather than reached for: `srvlog.mjs` is pure so a CI self-test can take
+  // its rule lists, and WHICH ESTATE to read is a fact only `estate.mjs` holds (it follows `SITE`).
+  server = srvReport(srvLines, windowFrom, { subjects: [...SUBJECTS] });
   console.log(`SERVER (since ${windowFrom})\n`);
   for (const line of srvSummary(server)) console.log(line);
   console.log(`\n  ${server.clean ? 'server clean' : 'SERVER NOT CLEAN - run srvlog.mjs --since ' + windowFrom + ' for the lines'}`);

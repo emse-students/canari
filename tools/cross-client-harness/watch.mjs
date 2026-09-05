@@ -1834,6 +1834,28 @@ export const GROUP_CREATION_NARRATION = [
   /^\[SYNC\] bulk\.addedDeviceIds: /,
 ];
 
+/**
+ * THE ONE SENTENCE A DELIVERY CROSSING IS ALLOWED TO SAY, and it says it once per session.
+ *
+ * A row is offered by the live socket AND by the pending pull, and an acknowledgement cannot land
+ * before a pull already in flight - so a device is handed the same row twice, decrypts it once, and
+ * acknowledges it again. Three of the four shapes that produces are crossings nothing can prevent.
+ * They used to print per occurrence; FWD-2 measured that at 23 of 25 back-to-back forwards, which
+ * is a rate rather than an event, so the app now says the whole sentence ONCE per shape and counts
+ * the rest (`BaseMlsService.REPEAT_MEANS`). A check that reloads a client still meets that first
+ * one, and it has no opinion about delivery plumbing.
+ *
+ * IT IS KEYED ON THE ACCUSING PHRASE'S ABSENCE, AND ON NOTHING AT THE END OF THE LINE. The fourth
+ * shape - a LIVE frame for a row already acknowledged, which no crossing explains and which would
+ * be the server publishing a row twice - opens its explanation with `THE SERVER PUBLISHED THE SAME
+ * ROW TWICE`, immediately after the dash, so a negative lookahead there is exact. The first attempt
+ * anchored on the routine branch's trailer instead and forgave nothing at all: this observer
+ * TRUNCATES a captured line, and the trailer is precisely the part that gets cut.
+ */
+export const DELIVERY_CROSSING_NARRATION = [
+  /^\[QUEUE\] delivery .* arrived twice - (?!THE SERVER PUBLISHED)/,
+];
+
 
 /**
  * THE REFUSAL A CLIENT THAT HAS JUST DELETED ITS OWN COOKIES GETS BACK, forgiven per row.
