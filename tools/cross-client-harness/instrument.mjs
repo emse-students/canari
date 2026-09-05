@@ -57,22 +57,47 @@ const HERE = fileURLToPath(new URL('.', import.meta.url));
  *
  * A REGEX AND NOT A PARSER, DELIBERATELY. The alternative is to import the module to read its
  * bindings, and importing a runner RUNS it - which is how a hash would come to drive a phone. The
- * three forms below are the only ones this rig uses, and `archive/instrument-selftest.mjs` asserts
- * each of them: a specifier this misses makes the hash miss a file, which is the failure mode being
- * fixed, so it is asserted rather than hoped for.
+ * forms below are the only ones this rig uses, and `archive/instrument-selftest.mjs` asserts each of
+ * them: a specifier this misses makes the hash miss a file, which is the failure mode being fixed,
+ * so it is asserted rather than hoped for.
  *
  * It cannot tell a real import from one quoted inside a string, and that is the SAFE direction: the
  * worst case is a file counted that nothing actually imports, which over-invalidates a verdict. A
  * path that does not resolve is skipped, so a quoted example costs nothing at all.
+ *
+ * ## The fifth form: CODE EXECUTED BY NAME, which an import walk cannot see
+ *
+ * An import graph answers "what does this file LOAD". It does not answer "what does this file RUN",
+ * and the two differ everywhere this rig spawns an atom: `phone.mjs` spawns `pin.mjs`, `del.mjs`
+ * spawns `mlsdb.mjs`, `healrevoke.mjs` spawns `login.mjs` and `purge-devices.mjs`, `atoms.mjs`
+ * spawns whatever it is handed. Those files decide what a row can read, and `pin.mjs` in particular
+ * decides whether a phone row can read ANYTHING - and none of them were in any hash.
+ *
+ * MEASURED 2026-09-05, which is why this exists. `pin.mjs` never exited on its success path, so
+ * `phone.unlockPin()` timed out after 120 s and reported `pin.mjs failed` on a pin that had worked;
+ * DEL-7 carried that as dirt. Fixing it changed what every `+A1` row that meets the gate is able to
+ * observe. Not one verdict was flagged, for the same reason the docstring above gives about
+ * `chat.mjs`: the runner's own bytes had not moved. **A column is only evidence for the question it
+ * was written to answer**, and "did the thing it measures WITH change" was being answered by a walk
+ * that could only see half of what it measures with.
+ *
+ * ANCHORED ON CALL AND ARRAY POSITION, so prose stays out. Every spawn site in this rig is a bare
+ * `.mjs` filename directly after `(`, `[` or `,` - `spawnSync(execPath, ['pin.mjs', ...])`,
+ * `run('login.mjs', ...)`. A file NAMED in a comment is not in one of those positions, and a quoted
+ * string long enough to be a sentence cannot match a pattern that is a filename end to end. That
+ * keeps the over-inclusion the docstring above tolerates from becoming the thing that kills the
+ * signal: a hash invalidated by every edit anywhere is worth exactly as much as no hash.
  */
 function specifiersIn(source) {
   const out = [];
-  // `import x from './y.mjs'`, `import './y.mjs'`, `export * from './y.mjs'`, `import('./y.mjs')`
+  // `import x from './y.mjs'`, `import './y.mjs'`, `export * from './y.mjs'`, `import('./y.mjs')`,
+  // and a bare `'y.mjs'` in call or array position - a script this one SPAWNS.
   const patterns = [
     /(?:^|\n)\s*import\s+[^;'"]*?from\s*['"](\.[^'"]+)['"]/g,
     /(?:^|\n)\s*import\s*['"](\.[^'"]+)['"]/g,
     /(?:^|\n)\s*export\s+[^;'"]*?from\s*['"](\.[^'"]+)['"]/g,
     /\bimport\s*\(\s*['"](\.[^'"]+)['"]\s*\)/g,
+    /[[(,]\s*['"]([A-Za-z0-9._-]+\.mjs)['"]/g,
   ];
   for (const re of patterns) {
     let m;
@@ -101,11 +126,20 @@ export function instrumentFilesOf(entryFile) {
     if (seen.has(file) || !existsSync(file) || !statSync(file).isFile()) continue;
     seen.add(file);
     for (const spec of specifiersIn(readFileSync(file, 'utf8'))) {
-      const next = resolve(dirname(file), spec);
-      // The `inHarness` test is applied to the RESOLVED path rather than to the specifier: `../..`
-      // is perfectly ordinary between `archive/` and the root, and only where it LANDS decides
-      // whether the file is an instrument or somebody's credentials.
-      if (inHarness(next)) queue.push(next);
+      // TWO ROOTS FOR A BARE NAME, ONE FOR A RELATIVE SPECIFIER. An `import './x.mjs'` means exactly
+      // one file and resolving it anywhere else would be wrong. A SPAWNED name means whatever the
+      // spawn's `cwd` makes it mean, and this rig uses two: the spawning file's own directory
+      // (`del.mjs` -> `archive/mlsdb.mjs`) and the harness root, which `phone.mjs` and `atoms.mjs`
+      // both pass explicitly as `cwd: HERE` (`archive/burn.mjs` -> `pin.mjs`). Both are tried and
+      // whichever exists is taken; a name that resolves to neither is skipped like any other.
+      const roots = spec.startsWith('.') ? [dirname(file)] : [dirname(file), HERE];
+      for (const root of roots) {
+        const next = resolve(root, spec);
+        // The `inHarness` test is applied to the RESOLVED path rather than to the specifier: `../..`
+        // is perfectly ordinary between `archive/` and the root, and only where it LANDS decides
+        // whether the file is an instrument or somebody's credentials.
+        if (inHarness(next) && existsSync(next)) queue.push(next);
+      }
     }
   }
   return [...seen].sort((a, b) => relative(HERE, a).localeCompare(relative(HERE, b)));

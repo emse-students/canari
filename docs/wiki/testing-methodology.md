@@ -2600,6 +2600,43 @@ making `PASS-DIRTY` structurally unreachable for itself and mislabelling environ
 product defect. **An assertion answers the row's own question and nothing else. Cleanliness is the
 gate's job, once, for every row.**
 
+### A spawned atom that never exits turns SUCCESS into a timeout, and only on the rows that need it
+
+DEL-7 came back `PASS-DIRTY` on 2026-09-05 carrying `pinOnWake: "pin.mjs failed: ...[pin] after:"`,
+while a screenshot taken at the same moment showed the phone unlocked and past the gate. Both were
+true. `pin.mjs` closes its CDP socket and names an exit code on every REFUSAL - a PIN the product
+rejected (exit 1), no gate to answer (exit 2) - and the path where the PIN WORKED fell off the end of
+the file with the socket still open. An open socket keeps the event loop alive, so the process never
+exited. `phone.unlockPin()` runs it under `execFileSync(..., { timeout: 120_000 })`: unlock in 2.7 s,
+sit for 117 more, get killed, report `pin.mjs failed`.
+
+**It hid behind the path that worked.** A client already past the gate leaves at the `exit(2)` branch
+and its caller reads `no modal` instantly - which is the state of the phone on every run except the
+first after a restart. So the hang could only appear on rows that RESTART the app, the one population
+that cannot afford two lost minutes, and it looked like a phone problem every time.
+
+Two rules came out of it, and only the first is about exit codes.
+
+- **A process must end as deliberately when it succeeds as when it fails.** An exit code is part of a
+  contract; a success path that simply runs out of file has opted out of it, and its caller is left
+  inferring the outcome from a clock.
+- **A failure report built from STDOUT is built from the one stream that says nothing about why.**
+  `unlockPin` kept 200 characters of stdout and discarded the exit code and stderr - so "the product
+  refused the PIN", "the app is on an estate that is not the local one" and "the CDP context died"
+  all rendered as the same truncated line, ending mid-sentence on the most interesting word in it.
+  The record must carry the evidence separating the causes it cannot itself distinguish.
+
+**And the instrument hash could not have flagged the fix.** `instrument.mjs` walked `import`
+specifiers, and `pin.mjs` is SPAWNED, never imported - so the file that decides whether a phone row
+can read anything at all was in no hash, and repairing it changed what every `+A1` row meeting the
+gate observes without ageing one verdict. That is the same failure the hash was built for (`chat.mjs`
+opening the wrong conversation under runners whose own bytes had not moved), one level further out:
+**an import graph answers what a file LOADS, never what it RUNS.** The walk now follows a bare `.mjs`
+name in call or array position, anchored there so a filename in prose stays out - over-inclusion is
+the safe direction only while it stays bounded, and a hash invalidated by every edit anywhere is
+worth what no hash is worth. Measured on `del.mjs`: 20 files to 25, the five being exactly the
+spawned scripts and their imports.
+
 ### A campaign run and a push to `main` are mutually exclusive - three measurements died of it in one day
 
 On 2026-08-27, COMM-12, COMM-22 and DEL-9 all recorded `VACUOUS` with `failures: []`. Nothing they

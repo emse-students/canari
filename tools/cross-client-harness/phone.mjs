@@ -502,6 +502,16 @@ const HERE = new URL('.', import.meta.url).pathname.replace(/^\//, '');
  * so `openConversation` cannot find anything and the check refused a verdict. EVERY PHASE THAT
  * RELAUNCHES THE APP MUST UNLOCK BEFORE IT NAVIGATES - which is why this is here and not in the
  * three runners that each carried their own copy of it.
+ *
+ * A FAILURE CARRIES THE REASON IT FAILED FOR, and this used to carry the 200 first characters of
+ * STDOUT - the one stream that says nothing about why. `pin.mjs` has three distinct failures and
+ * writes all three to stderr: exit 1 = the product REFUSED the PIN (and names which refusal), a
+ * throw out of `assertLocalEstate` = the app is pointing at an estate that is not the local one,
+ * and anything else = the CDP context died mid-answer. DEL-7 recorded
+ * `pin.mjs failed: ...[pin] after:` on 2026-09-05 - a truncation ending on an EMPTY `after:`, which
+ * is the most interesting line in the run and the one thing the record could not explain. Exit code
+ * and stderr are what separate the three, so both are reported and the stdout TAIL keeps its place
+ * as context rather than as the message.
  */
 export function unlockPin(port = PORTS.A1) {
   try {
@@ -515,7 +525,14 @@ export function unlockPin(port = PORTS.A1) {
       .pop();
   } catch (e) {
     if (e.status === 2) return 'no modal';
-    return `pin.mjs failed: ${String(e.stdout || e.message).slice(0, 200)}`;
+    const why = String(e.stderr || e.message)
+      .trim()
+      .replace(/\s+/g, ' ');
+    const lastOut = String(e.stdout || '')
+      .trim()
+      .split('\n')
+      .pop();
+    return `pin.mjs failed (exit ${e.status ?? 'none'}): ${why.slice(0, 300)} [last stdout: ${lastOut}]`;
   }
 }
 

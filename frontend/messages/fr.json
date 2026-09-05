@@ -246,6 +246,8 @@
   "chat_message_placeholder": "Écrire…",
   "chat_send_message_label": "Envoyer le message",
   "chat_send_error": "Échec de l'envoi : {reason}",
+  "chat_media_send_error": "Échec de l'envoi du média : {reason}",
+  "chat_media_too_large": "Fichier trop volumineux ({size} Mo). Limite : {limit} Mo.",
   "chat_send_session_establishing": "Session sécurisée en cours d'établissement. Réessayez dans un instant.",
   "chat_channel_members_title": "Membres du canal",
   "chat_admins_count_label": "Administrateurs - {admins}",

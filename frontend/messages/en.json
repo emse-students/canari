@@ -225,6 +225,8 @@
   "chat_message_placeholder": "Write…",
   "chat_send_message_label": "Send message",
   "chat_send_error": "Send failed: {reason}",
+  "chat_media_send_error": "Media send failed: {reason}",
+  "chat_media_too_large": "File too large ({size} MB). Limit: {limit} MB.",
   "chat_send_session_establishing": "Secure session being established. Please try again in a moment.",
   "chat_channel_members_title": "Channel members",
   "chat_admins_count_label": "Administrators - {admins}",

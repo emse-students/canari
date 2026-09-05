@@ -290,3 +290,19 @@ const state = await evaluate(
 );
 console.log(`[pin] after: ${state}`);
 await assertLocalEstate(cx);
+
+// THE SUCCESS PATH HAS TO END AS DELIBERATELY AS THE FAILURE ONES, and for fourteen days it did not.
+// Every refusal above closes the socket and names an exit code; a PIN that WORKED just fell off the
+// end of the file with the CDP WebSocket still open, and an open socket keeps the event loop alive
+// for ever. `phone.unlockPin()` runs this under `execFileSync(..., { timeout: 120_000 })`, so the
+// ordinary outcome was: unlock the app in 2.7 s, sit there for 117 more, get killed, and report
+// `pin.mjs failed` - a FALSE failure recorded against a pin that had worked, on every `+A1` row that
+// met the gate. DEL-7 carried it as dirt on 2026-09-05 (`pinOnWake: pin.mjs failed`) while the
+// screenshot showed the app unlocked and past it.
+//
+// It hid behind exit 2. A client ALREADY unlocked leaves at line 196 and its caller reads `no modal`
+// instantly, which is the state of the phone on every run but the first after a restart - so the
+// hang only appeared on the rows that restart the app, which is exactly the population that cannot
+// afford two lost minutes.
+cx.close();
+process.exit(0);

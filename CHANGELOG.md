@@ -13,6 +13,30 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A typing indicator could be written under a key naming no channel, because the guard meant to
+  stop it tested a string this client had already prefixed.** `channel.typing` builds its key as
+  `` `channel_${data.channelId || ''}` `` and then checked THAT for emptiness - which is
+  `'channel_'` when the id is absent, and truthy. So the guard could never fire for half the events
+  it covered. It tests the server's own field now.
+
+  **And five branches of the same dispatcher dropped an event they could not address without saying
+  so.** The tail of `handleChannelEvent` already accuses on an unhandled TYPE, calling it "silent
+  data loss dressed as a no-op"; the identical thing one level down - a handled type whose id is
+  missing - was five bare `return`s. The consequence is named in the file's own comment twelve lines
+  above one of them: a `workspace.role.changed` with no `workspaceId` leaves a demoted administrator
+  holding every control they have just lost, until they reload. All five now name the field that was
+  absent, at a level that accuses.
+
+- **A device could be added to a group's commit and never sent its Welcome, leaving nothing behind
+  but arithmetic.** `deliverWelcomes` maps each id in `bulk.addedDeviceIds` back to its owner and
+  returned silently when it could not - after the commit had already moved the epoch for everyone,
+  so the device is in the ratchet tree holding no key material it can use. Its owner never reaches
+  `delivered`, so `registerMember` never runs for them either: a member the group believes it has
+  and who can decrypt nothing. The only trace was two numbers in two different lines - `[SYNC]
+  bulk.addedDeviceIds` listing N ids and `[OK] Added ... (M user(s) delivered)` with M short - and
+  nobody subtracts two numbers in a log. The branch names the device now. **Every swallowed branch
+  logs; in a best-effort path that is all a loss leaves.**
+
 - **The native app never carried its refresh credential on any session-scoped call, so the one
   mechanism that closes the reinstall hole never ran there.** Four endpoints answer from
   `currentSessionId(req)`, which reads the presented REFRESH credential and nothing else - the
@@ -320,6 +344,32 @@ which is also where every release up to and including v0.13.1 now lives.
   on a phone that had just logged in successfully - MLS calls go through the plugin, ordinary auth
   calls through the browser's own `fetch`, which is why the login worked and the PIN could not. The
   replacement spells the port wildcard: `http://localhost:*`, `http://127.0.0.1:*`.
+
+- **The test rig's PIN atom never exited when it succeeded, so every phone row that met the unlock
+  gate recorded a false failure two minutes after unlocking the phone.** Each of `pin.mjs`'s refusal
+  paths closes the CDP socket and names an exit code; the path where the PIN WORKED fell off the end
+  of the file with the socket still open, and an open socket keeps the event loop alive for ever.
+  `phone.unlockPin()` runs it under `execFileSync(..., { timeout: 120_000 })`, so the ordinary
+  outcome was: unlock the app in 2.7 s, sit there for 117 more, get killed, report `pin.mjs failed`.
+  It hid behind the "no modal" path, which exits 2 correctly and is the state of the phone on every
+  run except the first after a restart - so the hang appeared only on rows that restart the app,
+  which is exactly the population that cannot afford two lost minutes. DEL-7 carried it as dirt on
+  2026-09-05 with a screenshot showing the app unlocked and past the gate. The reason a pin failed is
+  now reported too: `unlockPin` kept 200 characters of STDOUT, the one stream that says nothing about
+  why, and discarded the exit code and stderr - which are what separate "the product refused the
+  PIN", "the app is on the wrong estate" and "the CDP context died".
+
+- **The hash that says what a check measures with could not see code the check RUNS**, only code it
+  imports. `instrument.mjs` walks `import` specifiers, and this rig spawns atoms by name:
+  `phone.mjs` spawns `pin.mjs`, `del.mjs` spawns `mlsdb.mjs`, `healrevoke.mjs` spawns `login.mjs`.
+  `pin.mjs` decides whether a phone row can read anything at all and was in no hash, so fixing its
+  hang - which changes what every `+A1` row meeting the gate can observe - flagged not one verdict.
+  This is the same failure the mechanism was built for in the first place (`chat.mjs` opening the
+  wrong conversation under runners whose own bytes had not moved), one level further out. The walk
+  now also follows a bare `.mjs` filename in call or array position, anchored there so a name in
+  prose stays out: over-inclusion is the safe direction only while it stays bounded, and a hash
+  invalidated by every edit anywhere is worth what no hash is worth. Measured cost on `del.mjs`:
+  20 files to 25, the five being exactly the spawned ones and their imports.
 
 ### Changed
 

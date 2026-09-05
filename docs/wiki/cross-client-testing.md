@@ -251,21 +251,27 @@ and COMM-18's four defects: [cross-client-campaign](cross-client-campaign.md).
 
 Deletion removes state while OTHER state keeps pointing at it, so each row pairs it with something
 mid-flight. All ten have a runner - `del1.mjs` for DEL-1, `del.mjs --only N` for the rest, the phase
-order and the phone row justified in `checks.mjs`. The three harness faults DEL-7 and DEL-9 cost are
-on [testing-methodology](testing-methodology.md).
+order and the phone row justified in `checks.mjs`. The four harness faults DEL-7 and DEL-9 cost are
+on [testing-methodology](testing-methodology.md) - the fourth being a spawned atom that never exited
+on success, which turned every phone unlock into a 120-second false failure and was invisible to the
+instrument hash because a spawned script is not an imported one.
+
+**`del.mjs --only 1` RECORDS `SKIPPED` FOR DEL-1 AND WOULD OVERWRITE ITS VERDICT.** DEL-1 has its own
+runner; the dispatcher keeps the number so the gap is explained rather than silent, so the rung is
+run as `bun del1.mjs` then `bun del.mjs` with no `--only` at all.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| DEL-1 | Peer deletes while a history solicitation for that group is outstanding | `W1 W2` | `pending` |
-| DEL-2 | Peer deletes while a message from us is in the outbox | `W1 W2` | `pending` |
-| DEL-3 | Both peers delete the same conversation within a second | `W1 W2` | `pending` |
-| DEL-4 | Delete a conversation while its media is still uploading | `W1 W2` | `pending` |
-| DEL-5 | Delete, then the peer sends into it anyway | `W1 W2` | `pending` |
-| DEL-6 | Delete while a drain is in flight for that group | `W1 W2` | `pending` |
-| DEL-7 | Delete on W1 while A1 is killed, then wake A1 | `+push` | `pending` |
-| DEL-8 | Delete a group, then restore an MLS snapshot from BEFORE the deletion | `+snapshot` | `pending` |
-| DEL-9 | Delete the conversation currently OPEN on screen | `W1 W2` | `pending` |
-| DEL-10 | Delete while offline, then reconnect | `W1 W2` | `pending` |
+| DEL-1 | Peer deletes while a history solicitation for that group is outstanding | `W1 W2` | `PASS` 2026-09-05 06:40 on 0.16.3, clean - the premise is ARMED and recorded (`askedBefore: 2`, the reconciliation lines for this group), and across W1's delete the peer's row goes `active` -> `removed` while STAYING in the list with its notice on screen. One socket closed, the gateway was back in 101 ms, and no solicitation survived the 25 s quiet window: `retried: []`. The row is kept, it explains itself, and it stops asking |
+| DEL-2 | Peer deletes while a message from us is in the outbox | `W1 W2` | `PASS` 2026-09-05 06:41 on 0.16.3, clean - one frame queued while cut, the outbox drained in 2.0 s, the attempt counter did NOT grow and no row was left behind. The sender ends `removed`, and the two permanent-failure lines name what was lost rather than dropping it silently. **The refusal this row used to carry was a PRODUCT defect and is fixed**: opening a `removed` conversation fired `GET /api/mls/history/<id>` at a soft-deleted group, eleven seconds after this client's own deletion |
+| DEL-3 | Both peers delete the same conversation within a second | `W1 W2` | `PASS` 2026-09-05 06:42 on 0.16.3, clean - the two deletes landed **4 ms** apart, one gesture from each client, both answered `deleted`, and neither side resurfaced it in a 30 s negative window. Two deletions of one row race and the loser is not an error |
+| DEL-4 | Delete a conversation while its media is still uploading | `W1 W2` | `PASS` 2026-09-05 06:43 on 0.16.3, clean - 1 MiB throttled to 48 KiB/s opens a ~21 s window; the upload request was SEEN, the delete landed inside it, and the upload did not complete afterwards. No `mediaId` was minted, so there is no orphan to read back - the object never reaches storage rather than being cleaned up after it does |
+| DEL-5 | Delete, then the peer sends into it anyway | `W1 W2` | `PASS` 2026-09-05 06:44 on 0.16.3, clean - one socket closed on the peer, and on the deleter neither the message nor the group resurfaced, with no decryption failure recorded. The peer's own outbox death is FORGIVEN by disposition and only there: a peer that has not been told cannot know, which is the opposite of DEL-2/DEL-3, where the deleter asked about its own deletion |
+| DEL-6 | Delete while a drain is in flight for that group | `W1 W2` | `PASS` 2026-09-05 06:46 on 0.16.3, clean - four frames queued while offline and the drain BEGAN before the deletion (first drain at 39.0 s), which is the premise; starts and completes then BALANCE at 5/5, so the deletion did not strand one mid-flight. **This row is where the retired-group P1 was found** - a frame for a deliberately deleted group provoked a re-add request and stayed in the server queue for ever |
+| DEL-7 | Delete on W1 while A1 is killed, then wake A1 | `+push` | `PASS` 2026-09-05 06:52 on 0.16.3 + APK `2eb116c3`, clean - the group reached A1 in 10 ms, the app was killed from state `LAST` and proved dead in 50 ms, and on wake the conversation is `purged` immediately (`convergedInMs: 0`) and STAYS purged: **zero** mentions of the group and **zero** solicitations across a 30 s window. Two defects this row found are fixed: the native shell carried no refresh credential on any session-scoped call (`PUT /api/auth/sessions/current/device -> 404`), and the rig's PIN atom never exited on success, so every unlock was reported as a failure 120 s later. The pin now returns what it contacted (`http://localhost:8081`), which doubles as the estate assertion |
+| DEL-8 | Delete a group, then restore an MLS snapshot from BEFORE the deletion | `+snapshot` | `PASS` 2026-09-05 06:54 on 0.16.3, clean - `purged` after the deletion, and restoring an MLS snapshot taken BEFORE it does not resurrect the conversation: not listed, still `purged`, and no solicitation follows the restore. MLS state coming back is not membership coming back, which is the whole question |
+| DEL-9 | Delete the conversation currently OPEN on screen | `W1 W2` | `PASS` 2026-09-05 06:56 on 0.16.3, clean - the pane goes from `composer` to `nothing`, and `nothing` is asserted as its own state rather than inferred: it holds no conversation at all, instead of silently landing on a neighbour. The row is neither listed nor live afterwards |
+| DEL-10 | Delete while offline, then reconnect | `W1 W2` | `PASS` 2026-09-05 06:58 on 0.16.3, clean - the gesture is accepted while cut (one attempt sent, none answered), the FIRST reconnect replays it exactly once (`[EXIT] 6f7f7f05... delete replayed - server deleted it`) and is answered `200`, and the SECOND reconnect sends nothing at all with no drain - so the replay is driven by durable state and retires itself, rather than firing on every reconnect. The server row ends soft-deleted and the deleter does not list it |
 
 ## 11 - TAB - tabs and windows
 

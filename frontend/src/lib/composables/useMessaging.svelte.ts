@@ -867,8 +867,10 @@ export function useMessaging() {
         if (sentMediaMessageCount < fileEntries.length) {
           pendingMediaFiles = [...fileEntries.slice(sentMediaMessageCount), ...pendingMediaFiles];
         }
-        ctx.setSendError(`Echec de l'envoi du media : ${errorMessage}`);
-        ctx.log(`Erreur envoi media: ${errorMessage}`);
+        ctx.setSendError(m.chat_media_send_error({ reason: errorMessage }));
+        ctx.log(
+          `[MEDIA] send failed, ${fileEntries.length - sentMediaMessageCount} file(s) re-staged: ${errorMessage}`
+        );
       } finally {
         isUploadingMedia = false;
       }
@@ -905,9 +907,12 @@ export function useMessaging() {
     const readyFiles: import('$lib/media').PendingMediaFile[] = [];
     for (const file of files) {
       if (Number.isFinite(mediaMaxSizeBytes) && file.size > mediaMaxSizeBytes) {
-        const errorMessage = `Fichier trop volumineux (${(file.size / 1024 / 1024).toFixed(1)} Mo). Limite: ${mediaMaxSizeMb} Mo.`;
-        ctx.setSendError(errorMessage);
-        ctx.log(`Erreur envoi media: ${errorMessage}`);
+        const size = (file.size / 1024 / 1024).toFixed(1);
+        ctx.setSendError(m.chat_media_too_large({ size, limit: mediaMaxSizeMb }));
+        // The LOG is dev-facing and stays English, and it names the file the banner cannot: the
+        // banner tells the user one file was too big, this says WHICH, so a report of "it refused my
+        // picture" is answerable without asking them to reproduce it.
+        ctx.log(`[MEDIA] refused "${file.name}" - ${size} Mo over the ${mediaMaxSizeMb} Mo limit`);
         continue;
       }
       let entry: import('$lib/media').PendingMediaFile = { file };

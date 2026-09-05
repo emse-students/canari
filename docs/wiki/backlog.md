@@ -752,6 +752,23 @@ never have been`); the refusal is thrown in `mlsDeliveryApi.ts` and reported by
 `sendHistoryStateKey` in `groupActions.ts`. The row that produced it keeps it ACCUSING on purpose -
 `del1.mjs` forgives its own group creation and its own cut, and deliberately not this.
 
+### P3 - `[BUFFER] welcome_request sent for unknown group` announces a send that has not happened and may not happen (found 2026-09-05, DEL-6)
+
+`handleUnknownGroup` logs that line immediately after calling `startRecovery`, which is `void`-ed
+on purpose - an await there stalls the whole inbound drain. So the sentence is written before
+`requestReAdd` has looked at anything, and that seam has several early returns: a throttle inside
+`RECOVERY_TIMEOUT_MS`, a group already held locally, a tombstone, a membership still `pending`.
+In each the line claims a `welcome_request` that never went out.
+
+**The case that mattered is FIXED and this is the residue.** A frame for a conversation at
+`lifecycle: 'removed'` is now acknowledged and dropped before any of this runs, which is where the
+real cost was - a queue row nothing would ever take out. What is left is wording.
+
+**It is not changed inline because the sentence has three consumers**, and one of them is a
+predicate of a rung that has not run yet in this campaign: `heal-w2.mjs` requires the line to have
+fired, `classify-selftest.mjs` pins its bucket, and `chat-delivery.md` quotes it. Renaming it to
+what it can honestly claim - a recovery STARTED - moves the instrument and the subject in the same
+commit, before HEAL has produced a single verdict. It belongs in the same pass as the HEAL rung.
 ### P3 - the remove control in a group panel announces a raw 64-hex user id, so a screen reader reads the id where everyone else reads a name (measured 2026-09-05)
 
 `Sidebar`'s member rows render display names correctly - GRP-9 measured zero of five rows showing a

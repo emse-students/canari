@@ -46,6 +46,12 @@ try {
   write('leaf-c.mjs', 'export const c = 3;\n');
   write('leaf-d.mjs', 'export const d = 4;\n');
   write('leaf-e.mjs', 'export const e = 5;\n');
+  // SPAWNED, NEVER IMPORTED - the form an import walk is blind to by construction. `leaf-f` stands
+  // for `pin.mjs`, which decides whether a phone row can read anything at all and was in no hash
+  // until 2026-09-05. `leaf-g` is the same name in ARRAY position, which is how `spawnSync` is
+  // actually written here (`[process.execPath, ['pin.mjs', ...]]`).
+  write('leaf-f.mjs', 'export const f = 6;\n');
+  write('leaf-g.mjs', 'export const g = 7;\n');
   // `leaf-b` is reached only THROUGH `leaf-a`, so its presence is what proves the walk is transitive
   // rather than one level deep.
   write('leaf-a.mjs', `import { b } ${FROM} './leaf-b.mjs';\nexport const a = b;\n`);
@@ -61,10 +67,17 @@ try {
       `import { PORTS } ${FROM} '../names.mjs';`,
       `import { existsSync } ${FROM} 'node:fs';`,
       `import { load } ${FROM} '@tauri-apps/plugin-store';`,
-      'export { a, late, PORTS, existsSync, load };',
+      // The two spawn shapes this rig writes, and a name in prose that must NOT be followed.
+      "function spawnOne() { return runScript('leaf-f.mjs', ['--device', 'A1']); }",
+      "function spawnTwo() { return spawnSync(execPath, ['leaf-g.mjs', '--port', '9222']); }",
+      "// see leaf-h.mjs for the older shape, and the note in 'leaf-h.mjs is where this used to live'",
+      'export { a, late, PORTS, existsSync, load, spawnOne, spawnTwo };',
       '',
     ].join('\n')
   );
+  // Exists on disk, so being absent from the graph is a statement about the WALK rather than about
+  // the file: a mention in a comment, and a filename embedded in a quoted sentence, are both prose.
+  write('leaf-h.mjs', 'export const h = 8;\n');
 
   const found = instrumentFilesOf(join(dir, 'entry.mjs')).map((f) => basename(f));
 
@@ -77,6 +90,16 @@ try {
   ok('an in-tree module reached with `../` is in', found.includes('names.mjs'));
   ok('a node: builtin is not a file and is not in', !found.some((f) => f.includes('node:')));
   ok('a bare package specifier is not followed', !found.some((f) => f.includes('plugin-store')));
+  // WHAT THE ENTRY RUNS, not only what it loads. `phone.mjs` spawns `pin.mjs` and `del.mjs` spawns
+  // `mlsdb.mjs`; neither was in any hash until 2026-09-05, so fixing `pin.mjs`'s hang flagged
+  // nothing. Both call shapes are asserted because both are written in this rig.
+  ok('a SPAWNED script named in call position is followed', found.includes('leaf-f.mjs'));
+  ok('a SPAWNED script named in array position is followed', found.includes('leaf-g.mjs'));
+  // THE OTHER HALF, and the one that keeps the hash worth reading. Over-inclusion is the safe
+  // direction only while it stays bounded: a walk that followed every `.mjs` written anywhere would
+  // pull in half the harness from the docstrings alone, and a hash invalidated by every edit
+  // anywhere says exactly as much as no hash. `leaf-h.mjs` is on disk and named twice in prose.
+  ok('a name in PROSE is not followed, so docstrings cannot inflate the set', !found.includes('leaf-h.mjs'));
 
   // THE BOUNDARY THAT KEEPS CREDENTIALS OUT. `names.mjs` in the harness re-exports the real values
   // from `<repo>/../../canari-harness/names.mjs`, which holds logins and machine-local absolute
