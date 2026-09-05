@@ -286,8 +286,17 @@
           ? 'pointer-events-none opacity-50'
           : ''}"
       >
+        <!--
+          `data-stay-signed-in` is a test handle, and it is here for the same reason the change-PIN
+          button carries one: this checkbox has no accessible name of its own (the label's text sits
+          in a sibling `<span>`, and it is a Paraglide message that may be reworded in either
+          locale), so the only other way to reach it is `input[type=checkbox]` over the whole
+          document - which is a POSITION, and would silently move to another box the day the modal
+          grows a second one.
+        -->
         <input
           type="checkbox"
+          data-stay-signed-in
           bind:checked={staySignedIn}
           disabled={isLoading}
           class="border-cn-border/60 accent-cn-yellow mt-0.5 h-4 w-4 shrink-0 rounded"

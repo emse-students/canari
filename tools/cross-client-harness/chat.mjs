@@ -270,11 +270,47 @@ export async function goto(cx, path, { relaunch = null } = {}) {
         'IPC callbacks into the old document. Use ensureChat/openConversation, or pass ' +
         "{ relaunch: 'why this check needs a reload' } if that is the subject."
     );
+  const base = await origin(cx);
+  // AND IT REFUSES A DOCUMENT THAT HAS NO ORIGIN, because the alternative is a SILENT wrong
+  // navigation. `location.origin` is the string `null` on `about:blank`, so the URL built below
+  // would be `null/chat` - which navigates nowhere while `readyState === 'complete'` is already
+  // true of the blank page, so every assertion after it reads a document the check never opened.
+  // The one caller that meets this is a row which RESTARTED its browser (PIN-9), and it has an
+  // origin to spell rather than one to read: `openSite` is that, and it is named here because a
+  // refusal that does not say what to do instead is a second lookup.
+  if (!base || base === 'null')
+    throw new Error(
+      `goto('${path}') needs a document that is already on the app - this one reports origin ` +
+        `'${base}', which is what a browser that has just started shows. Use openSite(cx, path).`
+    );
   const before = cx.events.length;
-  await cx.send('Page.navigate', { url: `${await origin(cx)}${path}` });
+  await cx.send('Page.navigate', { url: `${base}${path}` });
   await until(cx, `document.readyState === 'complete'`, 20000);
   const ms = await awaitGatewayConnected(cx, before);
   if (ms === null) console.log(`  [goto] ${path}: no gateway connection line within 30 s - the client may still be coming up`);
+  return ms;
+}
+
+/**
+ * Opens the app from a browser that is not on it yet - the one navigation that SPELLS its estate.
+ *
+ * `goto` is relative to wherever the client already is, which is right for every check that acts on
+ * a running client and impossible for one that has just started a browser: a fresh Chrome sits on
+ * `about:blank`, whose origin is opaque. This is the only other way in, and it goes through `SITE`
+ * - the single constant that decides which estate the campaign runs against - so it cannot drift to
+ * a spelt host the way `startBrowser`'s default landing URL once did.
+ *
+ * It is NOT a fallback for `goto`: a check calls one or the other because it knows which state its
+ * client is in, and `goto` refuses rather than quietly borrowing this one.
+ *
+ * @returns milliseconds waited for the gateway, or `null` - same contract as `goto`.
+ */
+export async function openSite(cx, path) {
+  const before = cx.events.length;
+  await cx.send('Page.navigate', { url: `${SITE}${path}` });
+  await until(cx, `document.readyState === 'complete'`, 20000);
+  const ms = await awaitGatewayConnected(cx, before);
+  if (ms === null) console.log(`  [openSite] ${path}: no gateway connection line within 30 s - the client may still be coming up`);
   return ms;
 }
 

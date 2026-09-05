@@ -74,7 +74,9 @@
  *
  * **Bringing a client up**
  *   `startBrowser` `killBrowser`   `launch.mjs`   a Chrome profile IS a device; the profile lives
- *                                                 outside the work tree.
+ *   `closeBrowser`                                outside the work tree. `kill` is a CRASH and
+ *                                                 `close` is a QUIT: only the second flushes, so
+ *                                                 only it can be asked what survives a restart.
  *   `bun login.mjs --device W1`                  the two IdP paths: Authentik's service-account
  *                                                 flow (default) and the school's CAS (`--flow cas`).
  *   `bun login.mjs --android`                     the same on the phone, ARMING what it needs -
@@ -148,7 +150,7 @@ import { dirname, join } from 'node:path';
 
 export { APP_HOST, APP_TAB, client, ensureChat, goto, openConversation, openDM, send } from './chat.mjs';
 export { createDM, createGroup, deleteGroup, dismissLocally, openGroup } from './groupnav.mjs';
-export { BROWSERS, isUp, killBrowser, startBrowser } from './launch.mjs';
+export { BROWSERS, closeBrowser, isUp, killBrowser, startBrowser } from './launch.mjs';
 export { ORIGIN, PORTS, SITE, VENUE } from './names.mjs';
 export { psql, redis } from './estate.mjs';
 export { ssh } from './ssh.mjs';

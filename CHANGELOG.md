@@ -13,6 +13,30 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **The campaign's own "browser closed and reopened" gesture destroyed what it was measuring, and
+  accused the product twice.** PIN-9 asks whether "stay signed in" really lets a device open its
+  messages without a server round trip, and it force-killed the browser to ask - but Chrome commits
+  `localStorage` asynchronously, so the vault read back 1 ms earlier (`persist: "true"`, blob and
+  wrap key both present) was rolled back by the kill itself. The client came up with the flag at a
+  value from a previous run, no vault, and the gate returned: two `FAIL`s against a product doing
+  exactly the right thing. `closeBrowser` uses Chrome's own shutdown path, and on the identical
+  sequence everything survives - no gate, four conversations, no PIN request at all. **A crash and a
+  quit are different gestures, and only the second can be asked what SURVIVES a restart**
+  ([durable-rules](docs/wiki/durable-rules.md)). `killBrowser` keeps its meaning and TAB-3, whose
+  subject IS a crash, keeps its verdict.
+
+- **A harness navigation could open nothing and report that it had.** `goto(cx, path)` builds its
+  URL from the document's own origin, which is the string `null` on `about:blank` - so a
+  just-started browser navigated to `null/chat` while `readyState === 'complete'`, already true of
+  the blank page, said the navigation had landed. A row asserting "no request was sent" would have
+  passed on a page it never opened. `goto` refuses an origin-less document now and names `openSite`,
+  which spells `SITE` rather than reading an origin.
+
+- **`pin.mjs --stay` ticked whichever checkbox came first in the document and carried on when there
+  was none.** `input[type=checkbox]` is a position, not an identity; the gate's opt-in now carries
+  `data-stay-signed-in`, and a `--stay` that cannot tick it exits rather than logging `null` - a
+  gesture the caller asked for and did not get is a broken instrument, not a state of the client.
+
 - **Someone unlocking their messages with no network was shown `Failed to fetch`.** The three calls
   behind the encryption gate each handled `if (!res.ok)` with a proper French sentence and let a
   REJECTED `fetch` walk past into the outer catch, whose message becomes the text in the modal - so
