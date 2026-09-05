@@ -703,10 +703,25 @@ non-destructive exit this screen has never had.
 user who closes it walks an application with nothing decrypted in it. This is P1 for the PATH being
 broken - people are stuck in it now - not for a disclosure.
 
-**AND THE ROW THAT WOULD HAVE CAUGHT IT DOES NOT EXIST.** PIN is 0/10 on the board and had no runner
-until 2026-09-05. Whatever is written here is asserted by a PIN row, not by a reading: the assertion
-is that the modal survives a backdrop click, an Escape, a navigation and a reload, and that exactly
-one control on it leads out without destroying anything.
+**AND THE ROW NOW EXISTS AND REPRODUCES IT.** PIN-11 (`pinrows.mjs --row 11`) empties the device key
+vault by an allowlist of its five named keys, reloads to raise the gate, and measures each gesture
+against a FRESHLY raised one - the first draft used a single gate for all three, so the moment Escape
+closed it the other two measured an absence and reported it as their own finding. Measured 2026-09-05
+on the local estate:
+
+| gesture | gate survived |
+| --- | --- |
+| `Escape` | **no** |
+| backdrop click (`backdrop: "clicked"`, so the event landed) | **no** |
+| navigation to another route | not measured - its gate did not settle inside 20 s |
+| a control that ends the session and KEEPS the state | `signOut: 0` |
+
+`exits: {signOut: 0, reset: 0, leaves: 0}` says the modal carries no exit AT ALL in its default
+state: the reset and the account link both sit behind a disclosure the row never opened. So the
+"forgot my PIN" path is not merely destructive, it is not even on screen until the user goes looking.
+
+The row records `INCONCLUSIVE` rather than `FAIL` because one third of it could not be asked, and
+`null` is not `false`. That third is the ROW's to fix, not the product's.
 
 ### P2 - the PIN modal's error is a bare paragraph, so a refused unlock is never announced to a screen reader (measured 2026-09-04)
 

@@ -423,7 +423,7 @@ four wipe defects found by hand:
 | HEAL-W2 | Restore from BEFORE the group was joined at all | `+snapshot` | `pending` |
 | HEAL-W3 | Freeze one client while the peer advances past 2 000 frames in one epoch - `TooDistantInTheFuture` must beat `GAP_QUEUED` | `+snapshot` | `pending` |
 | HEAL-W4 | HEAL-W2 with a SECOND tab holding the leader role - no prior art on either client | `+snapshot` | `pending` |
-| HEAL-repair | Does the history diff repair a rewound sender end to end? Quantitative | `+snapshot` | `pending` |
+| HEAL-repair | Does the history diff repair a rewound sender end to end? Quantitative | `+snapshot` | **`PARTIAL`** 2026-09-05, first run - **7 of 14 reached the peer**, and the seven that failed are the first seven: nothing arrived until round 8, then every round did. The mechanisms say which repair fired and it is not the one the row is named for: `lossDetected=true`, `historyDiffRan=true`, but `narrowRetransmission=false` and `escalated=false`, and the diff asked three times without being answered - `[HISTORY_REQ] ... asked ... to describe itself, no digest came`. So the group came back without the mechanism that is supposed to bring it back. Teardown clean: W1 delivered again after 1 probe. [backlog](backlog.md) |
 | HEAL-A1 | HEAL-repair mirrored onto the phone: **W2** is rewound and **A1** must detect and repair, W1 parked so W2 is the only possible responder | `+A1` `+snapshot` | `pending` |
 | HEAL-NEXT | After an escalation has ALREADY happened, does the next message arrive? The escalating frame is unrecoverable by construction | `+A1` `+snapshot` | `pending` |
 | HEAL-REVOKE-1 | A device revoked through the connected-devices UI: is its local store actually gone? The user found one that kept everything, P1 in [backlog](backlog.md) | `W1 W2` | `pending` |
@@ -458,6 +458,13 @@ four wipe defects found by hand:
 Read [auth](frontend/modules/auth.md) first - the PIN, the device key vault and `mls.bin` are one
 mechanism.
 
+**One runner, one row per invocation: `pinrows.mjs --row N`.** It is not called `pin.mjs` because
+that name is the GESTURE at the harness root, which enters a PIN into a client several rows use -
+a runner and a gesture sharing a vocabulary is what left `HEAL-WEB` recording an id no row named.
+**Every row here needs the gate ON SCREEN and nothing in the rig raises it**, so each raises it and
+then PROVES it is up; a client that came back unlocked (stay-signed-in, or biometrics) makes the
+question unaskable and the row records `INCONCLUSIVE` naming that precondition, never a PASS.
+
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
 | PIN-1 | Correct PIN, online | `W1 W2` | `pending` |
@@ -470,6 +477,7 @@ mechanism.
 | PIN-8 | The PIN gate while the server is unreachable - a transport failure must NOT log the user out | `W1 W2` | `pending` |
 | PIN-9 | "Stay signed in", browser closed and reopened: vault path, no server round trip | `W1 W2` | `pending` |
 | PIN-10 | A PIN change while a message is in flight - explicit failure, never a silent wrong-key state | `+snapshot` | `pending` |
+| PIN-11 | **The gate cannot be walked away from**, and it offers an exit that destroys nothing. Escape, a backdrop click and a navigation must all leave it standing, and exactly one control must end the session while KEEPING the messaging state. Written 2026-09-05 from a user report: people who forget their PIN close the modal on every page rather than take the destructive reset | `W1 W2` | **`INCONCLUSIVE`** 2026-09-05 - and the two halves it DID measure both fail. `Escape` closes the gate; a backdrop click closes it (`backdrop: "clicked"`, so the event landed); and `exits: {signOut: 0, reset: 0, leaves: 0}` - the modal carries no way out at all in its default state. The third gesture, the navigation, is `null`: its gate did not settle within 20 s, and a gesture whose gate was never raised measured nothing. **`null` is not `false`** - one unaskable third is what holds the row off `FAIL`, and it is the row's own instrument to fix, not the product's. [backlog](backlog.md) |
 
 ## 18 - CORRUPT - deliberate store damage
 
