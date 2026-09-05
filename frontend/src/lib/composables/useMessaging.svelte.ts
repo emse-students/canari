@@ -296,6 +296,53 @@ export function useMessaging() {
    * IndexedDB, and scrolls to bottom. Deduplicates by id. No-op if the conversation is
    * not in the map.
    */
+  /**
+   * The OS notification for ONE inbound message, and the only place that decides to raise it.
+   *
+   * IT LIVED INSIDE `addMessageToChat` AND THEREFORE COVERED ONE OF THE TWO INBOUND PATHS. The
+   * other is the bulk buffer: while a catch-up is draining, `addMessageToChat` files an inbound
+   * message into `bulkIngestBuffer` and RETURNS - above this decision - and the flush hands it to
+   * `batchAddMessages`, which never had one. So a message that arrived inside a drain window
+   * notified nobody, and a backgrounded tab is exactly the state that produces a drain: TAB-1
+   * recorded permission `granted`, the tab hidden, the message arrived, and zero notifications
+   * constructed (2026-09-05). The probe's evidence was one line - `[ADD_MSG] Batch into "...":
+   * 1 added` - which named the path that had no branch.
+   *
+   * Per-conversation throttling belongs to `sendSystemNotification` (800 ms) and is not repeated
+   * here, so a batch that ends in several messages for one conversation still raises one.
+   */
+  function notifyInbound(
+    ctx: MessagingContext,
+    conversationKey: string,
+    conversationName: string,
+    senderId: string,
+    content: string,
+    isSystem: boolean,
+    isOwn: boolean
+  ): void {
+    if (isOwn || isSystem) return;
+    // Native mobile (Android + iOS) posts its own OS notification from the background push handler,
+    // so the JS layer must NOT also fire one - the user would get two. Both platforms are covered
+    // by isMobileTauriRuntime().
+    if (isMobileTauriRuntime()) return;
+    if (typeof document === 'undefined') return;
+    if (document.visibilityState === 'visible' && document.hasFocus()) return;
+    // THE DECISION LINE, and it fires only when a notification is actually expected - the tab is
+    // not in front of the user. Everything downstream of here already speaks (`[NOTIF] Raised`,
+    // `Throttled`, `permission is ...`), and everything upstream is the ordinary case of a visible
+    // tab. Without it "no notification" and "never asked for one" are the same silence, which is
+    // what left TAB-1 unattributable across three probes.
+    console.log(
+      `[NOTIF] Inbound in ${conversationKey} while ${document.visibilityState} - asking.`
+    );
+    const preview = getPreviewText(parseEnvelope(content));
+    void ctx.sendSystemNotification(
+      getUserDisplayNameSync(senderId, conversationName),
+      preview || m.notif_new_message(),
+      conversationKey
+    );
+  }
+
   async function addMessageToChat(
     senderId: string,
     content: string,
@@ -485,23 +532,8 @@ export function useMessaging() {
       (ctx.playReceiveTone ?? ctx.playNotificationTone)();
     }
 
-    // Native mobile (Android + iOS) posts its own OS notification from the background
-    // push handler, so the JS layer must NOT also fire one - otherwise the user gets a
-    // duplicate notification. Both platforms are covered by isMobileTauriRuntime().
-    const isNativeMobileTauri = isMobileTauriRuntime();
-
-    const shouldSendSystemNotification =
-      !isOwn &&
-      !options.isSystem &&
-      !isNativeMobileTauri &&
-      typeof document !== 'undefined' &&
-      (document.visibilityState !== 'visible' || !document.hasFocus());
-
-    if (shouldSendSystemNotification) {
-      const preview = getPreviewText(parseEnvelope(content));
-      const title = getUserDisplayNameSync(senderId, convo.name);
-      void ctx.sendSystemNotification(title, preview || m.notif_new_message(), normalized);
-    }
+    // ONE DECISION, ASKED BY BOTH INBOUND PATHS - see `notifyInbound`.
+    notifyInbound(ctx, normalized, convo.name, senderId, content, !!options.isSystem, isOwn);
 
     const skipDbSave = options.skipDbSave ?? isChannelConversationId(normalized);
     if (ctx.storage && !skipDbSave) {
@@ -678,6 +710,39 @@ export function useMessaging() {
       `[ADD_MSG] Batch into "${normalized}": ${brandNew.length} added, ${upgradedById.size} upgraded` +
         (systemIds.length > 0 ? ` - system: ${systemIds.join(', ')}` : '')
     );
+
+    // THE SAME QUESTION THE LIVE PATH ASKS, and until 2026-09-05 this path never asked it. A message
+    // buffered during a catch-up reaches the user through here and through nowhere else, so a tab
+    // in the background - the state that produces a catch-up in the first place - was told about
+    // nothing at all (TAB-1). ONE notification per flush, for the LAST inbound message: the
+    // 800 ms throttle in `sendSystemNotification` would collapse a per-message loop to one anyway,
+    // and the one a reader wants is the most recent, not the oldest.
+    const lastInbound = [...brandNew]
+      .reverse()
+      .find((msg) => !msg.isSystem && !isOwnMessage(msg.senderId, ctx.userId));
+    if (
+      !lastInbound &&
+      brandNew.length &&
+      typeof document !== 'undefined' &&
+      document.visibilityState !== 'visible'
+    ) {
+      // The other half of the same question: a flush that added messages while the tab was away and
+      // raised nothing has either seen only own/system rows, or lost them to a predicate.
+      console.log(
+        `[NOTIF] Batch into "${normalized}" added ${brandNew.length} while ${document.visibilityState}, none of them an inbound message - nothing to raise.`
+      );
+    }
+    if (lastInbound) {
+      notifyInbound(
+        ctx,
+        normalized,
+        convo.name,
+        lastInbound.senderId,
+        lastInbound.content,
+        false,
+        false
+      );
+    }
 
     publishTabMessageUpdate({
       type: 'messages_batch',

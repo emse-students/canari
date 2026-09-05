@@ -9,15 +9,27 @@
  *
  * This asks the client all four at the moment of arrival. It records NO verdict.
  */
-import { awaitMessage, client, ensureConversation, evaluate, send } from '../chat.mjs';
+import { APP_TAB, awaitMessage, client, ensureConversation, evaluate, send } from '../chat.mjs';
 import { background } from './tabs.mjs';
-import { PORTS, peerNameFor } from '../names.mjs';
+import { ORIGIN, PORTS, peerNameFor } from '../names.mjs';
 
 const marker = `T1P-${Math.random().toString(36).slice(2, 10)}`;
-const w1 = await client(PORTS.W1);
-const w2 = await client(PORTS.W2);
-await ensureConversation(w2, peerNameFor(PORTS.W2));
-await ensureConversation(w1, peerNameFor(PORTS.W1));
+const w1 = await client(PORTS.W1, APP_TAB);
+const w2 = await client(PORTS.W2, APP_TAB);
+// `peerNameFor` takes the DEVICE, not its port: a number falls through to the else branch, so both
+// clients were told to look for the same name and W2 searched its sidebar for itself. It failed as
+// "the peer's conversation row was never listed", which is what the application looks like when a
+// conversation is genuinely missing - two minutes were spent on a healthy client's screen.
+await ensureConversation(w2, peerNameFor('W2'));
+await ensureConversation(w1, peerNameFor('W1'));
+
+// PERMISSION FIRST, or this probe answers a question nobody asked. Without the grant the product
+// returns early at `Notification.permission !== 'granted'` and constructs nothing - which is the
+// same zero TAB-1 reports, arrived at for a reason TAB-1 does not have. Measured 2026-09-05: the
+// first run of this probe read `perm: "default"` and its zero meant nothing at all.
+await w2
+  .send('Browser.grantPermissions', { origin: ORIGIN.W2, permissions: ['notifications'] })
+  .catch(() => {});
 
 // The recorder, plus a log of EVERY decision input at the moment each message is appended.
 await evaluate(
@@ -33,7 +45,7 @@ await evaluate(
     var log = console.log;
     console.log = function () {
       var line = Array.prototype.map.call(arguments, String).join(' ');
-      if (line.indexOf('[ADD_MSG]') !== -1 || line.indexOf('Duplicate ignored') !== -1) {
+      if (line.indexOf('[ADD_MSG]') !== -1 || line.indexOf('Duplicate ignored') !== -1 || line.indexOf('[NOTIF]') !== -1) {
         s.adds.push({ line: line.slice(0, 160), vis: document.visibilityState, focus: document.hasFocus() });
       }
       return log.apply(console, arguments);

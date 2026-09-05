@@ -35,10 +35,11 @@
  *
  *   bun tab1.mjs
  */
-import { awaitMessage, client, ensureConversation, evaluate, send } from '../chat.mjs';
+import { awaitMessage, client, ensureConversation, evaluate, send, awaitAppReady } from '../chat.mjs';
+import { reloadAndWait } from '../cdp.mjs';
 import { background } from './tabs.mjs';
 import { mark, recordObserved } from '../results.mjs';
-import { watch } from '../watch.mjs';
+import { ignoringExpectedLog, report, watch } from '../watch.mjs';
 import { ORIGIN, PORTS, SITE, peerNameFor } from '../names.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -51,6 +52,14 @@ const w2 = await client(PORTS.W2, SITE);
 const quiet = mark('TAB1VIS');
 const loud = mark('TAB1HID');
 
+// BOTH CLIENTS ARE RELOADED FIRST, and it is not hygiene - it is what makes the `build` this row
+// records true of the code it measured. A long-lived tab keeps the bundle it loaded, so a check run
+// after a rebuild asserts the OLD application while the ledger stamps the new commit. `tab4.mjs`
+// carries the same paragraph after the first run following the WP-HIDDEN-1 deploy failed that way;
+// TAB-1 did not, and on 2026-09-05 it recorded FAIL against a build whose fix it never loaded -
+// three probes were spent before the stale tab was the answer.
+for (const cx of [w1, w2]) await reloadAndWait(cx);
+for (const cx of [w1, w2]) await awaitAppReady(cx);
 await ensureConversation(w1, peerNameFor('W1'));
 await ensureConversation(w2, peerNameFor('W2'));
 
@@ -215,7 +224,19 @@ const row = await recordObserved('TAB-1', verdict, {
   titleOrFaviconUnreadSignal: false,
   vacuousBecause: vacuous,
   failures: fail,
-}, { W1: o1, W2: o2 });
+}, {
+  W1: o1,
+  // THE TWO LINES THIS ROW EXISTS TO PROVOKE, on the client it hides and on no other. A message
+  // reaching a backgrounded tab IS the decision `[NOTIF] Inbound ... while hidden` reports, and
+  // `[NOTIF] Raised` is the assertion of this check written by the application itself. Their
+  // ABSENCE is the defect: TAB-1 failed for a day with neither of them in the log, because the
+  // bulk-ingest path had no notification branch at all. W1 stays unfiltered - it is never hidden,
+  // so either line there would be a finding.
+  W2: ignoringExpectedLog(await report(o2), [
+    '[NOTIF] Inbound in',
+    '[NOTIF] Raised for',
+  ]),
+});
 console.log(
   `[tab1] VERDICT ${row.verdict}${vacuous.length ? ' - ' + vacuous.join('; ') : fail.length ? ' - ' + fail.join('; ') : ''}`
 );

@@ -13,6 +13,19 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A backgrounded tab was told about nothing, because only one of the two inbound paths could
+  speak.** The decision to raise an OS notification lived inside `addMessageToChat`. While a
+  catch-up drains, that function files an INBOUND message into the bulk buffer and returns ABOVE
+  that decision, and the flush hands it to `batchAddMessages` - which never had one. A backgrounded
+  tab is exactly the state that produces a catch-up, so the case the feature exists for was the case
+  it could not serve. Both paths now ask one `notifyInbound`, and the batch raises ONE per flush for
+  the most recent message rather than one per message. **And the four returns that decided against a
+  notification were all silent** - the 800 ms throttle, the ungranted permission, an engine with no
+  `Notification` API, and an empty `catch` around the constructor - so "the user was not notified"
+  and "the code never got there" were the same observation from outside. That is what left TAB-1
+  unattributable across three probes; every one of them now says which it was. **Every swallowed
+  branch logs.**
+
 - **A message sent and then interrupted a few milliseconds later was kept on the sender's screen for
   ever and sent to nobody.** The echo and the outbox entry that delivers it were two awaits in that
   order: persist the message, then queue it. A document torn down in between - a reload fired inside
