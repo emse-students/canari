@@ -1330,6 +1330,51 @@ no check waits on wall-clock time at all. It belongs with the rendering pass, no
 
 ## Messaging convergence
 
+### P2 - every silent push on the phone fails to decrypt, the notification loses its preview, and the fallback it falls back to does nothing (measured 2026-09-05, first run of NOTIF)
+
+All five NOTIF rows show it and NOTIF-10 FAILS on it. On the phone, for every message:
+
+```
+E/openmls: Ciphertext generation out of bounds 433 / SecretReuseError
+E/mls_core::messaging: MLS decryption failed at exactly its own epoch, so no redelivery can help
+   group=2bd5add9 msg_epoch=12 group_epoch=12
+E/mines_app_lib::mobile::background: [PushBG] key-based: process_incoming_message Err(... same-epoch refusal ...)
+W/CanariFCM: decryptProto: ok=false -> decryption failed
+D/CanariFCM: fetchCommitsFromBackend: 0 commit(s) since epoch=12
+D/CanariFCM: catchup: no commit to catch up (epoch=12) -> fallback
+W/CanariFCM: Decryption failed -> MlsBackgroundWorker enqueued
+D/CanariWorker: doWork: background cleanup completed          <- 60 ms, and it decrypts nothing
+```
+
+**What the user sees**: `Nouveau message de <name>` with no preview, and on NOTIF-10 that is the only
+notification there ever is - `notifiedInMs: null` for all five messages.
+
+**Why the generation is already consumed.** NOTIF-10 cuts the RADIOS; it does not kill the app. When
+they come back, the app's own WebSocket and the FCM push handler process the same messages, and
+whichever loses meets a ratchet generation the winner has already spent. Three consecutive
+generations (433, 434, 435) failed and NO push ever succeeded, so the consumer was the app. **Two
+consumers of one ratchet, on one device** - the WP-MULTITAB-1 shape, across the app process and its
+push handler rather than across two tabs.
+
+**Three rules this sits on.** *A race that heals cleanly is still a defect* - and this one does not
+heal: the preview is gone for good. *A fallback is a signal, never a path* - this one is taken 100%
+of the time and leads to a worker that only runs `background cleanup`. *Never learn by failing what
+a fact could have told you* - `queuedMessageId` is in hand before the decrypt is attempted.
+
+**The discriminator already exists one layer down and is thrown away one layer up.** `mls_core`
+names this exactly - "same-epoch refusal", distinct from an epoch gap - and `CanariFirebaseMessaging-
+Service` collapses both into `decrypted == null`, then answers with a commit catch-up whose own
+comment says it is for "an epoch gap (a commit arrived while the app was closed)". For a same-epoch
+refusal the catch-up cannot help by construction, and it costs a backend round trip and a worker
+enqueue per message.
+
+**What a fix owes.** The kind must reach Kotlin as a TYPE, not as a message - *never branch on an
+error message* - so the FFI has to carry it. Then: a same-epoch refusal means the message is already
+on this device, so the honest response is to build the notification from the copy the app holds, not
+to retry a decrypt that cannot succeed. Needs Rust + Kotlin + an APK rebuild, so it is not a
+same-session fix; NOTIF-10 stays `FAIL` until it is done.
+
+
 ### P2 - a frame this device already read is re-accused as lost on every later cold start, and the reconciliation it triggers finds nothing (measured 2026-09-05)
 
 TAB-3b runs five cold starts. Each one printed `[History] frame never read here and unreadable for
