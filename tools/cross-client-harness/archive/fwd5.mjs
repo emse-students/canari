@@ -27,6 +27,10 @@ import {
   until,
 } from '../chat.mjs';
 import { watch, report, dirtOf } from '../watch.mjs';
+// The venue channel carries three mentions of accounts that do not exist and this check opens
+// it from a FRESH SESSION every round, so each round asks for all three again. See
+// `stranded.mjs` for the allowlist and why the fixture is left in place.
+import { ignoringStrandedMentions } from '../stranded.mjs';
 import { finishObserved, mark } from '../results.mjs';
 // See fwd.mjs: a real display name belongs in names.mjs, which never reaches the public repo.
 import { PORTS, peerNameFor } from '../names.mjs';
@@ -98,7 +102,10 @@ for (let i = 0; i < N; i++) {
     // A count still moving at the deadline is not a measurement, and the record has to say so.
     countSettled: settled.settled,
     sends,
-    obs: { w1: await report(o1), w2: await report(o2) },
+    obs: {
+      w1: ignoringStrandedMentions(await report(o1)),
+      w2: ignoringStrandedMentions(await report(o2)),
+    },
   };
   reports[`W1#${i}`] = row.obs.w1;
   reports[`W2#${i}`] = row.obs.w2;

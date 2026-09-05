@@ -871,7 +871,16 @@
   }
 </script>
 
-<div class="app-layout" in:fade>
+<!--
+  WHICH PAGE IS MOUNTED, published rather than inferred from the URL. `location.pathname` changes
+  when SvelteKit STARTS a navigation and this component swaps after it, so for a moment the address
+  says `/communities` while the `/chat` document is still on screen - and both pages render a
+  sidebar with the same rows, so nothing in the DOM told the two apart. An instrument that read the
+  URL and then clicked found the element it wanted on the page it was leaving, clicked into the
+  swap, and reported `no stable element` about a screen where the thing was plainly there
+  (`openChannel`, 2026-09-05). Same one-attribute cost as `data-conversation-tile`, same reason.
+-->
+<div class="app-layout" data-route-mode={routeMode} in:fade>
   {#if session.isLoggedIn}
     <!-- NO BANNERS HERE ANY MORE, and the two that were are why this comment exists. Both said what
          another banner was already saying: "En attente de connexion" duplicated `OfflineBanner` at

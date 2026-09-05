@@ -30,6 +30,10 @@ import {
   until,
 } from '../chat.mjs';
 import { gate, ignoringOfflineCut, report, watch } from '../watch.mjs';
+// The venue channel's history carries three mentions of accounts that do not exist, and every
+// one of these three checks opens it. See `stranded.mjs` for the allowlist and why the fixture
+// is left in place; none of these rows has an opinion about user profiles.
+import { ignoringStrandedMentions } from '../stranded.mjs';
 import { cut } from './net.mjs';
 import { mark, record } from '../results.mjs';
 import { execFileSync } from 'node:child_process';
@@ -106,7 +110,10 @@ const results = [];
     sends: sendsOf(w1),
     // W1 IS THE CLIENT THIS CHECK CUT, so its own disconnected fetches are the experiment working
     // rather than the app failing. W2 was never touched and is judged as it is.
-    obs: { W1: ignoringOfflineCut(await report(o1)), W2: await report(o2) },
+    obs: {
+      W1: ignoringStrandedMentions(ignoringOfflineCut(await report(o1))),
+      W2: ignoringStrandedMentions(await report(o2)),
+    },
   });
 }
 
@@ -139,7 +146,10 @@ const results = [];
     onReceiver: onReceiver.count,
     onSender: onSender.count,
     countSettled: onReceiver.settled && onSender.settled,
-    obs: { A1: await report(oa), W2: await report(o2) },
+    obs: {
+      A1: ignoringStrandedMentions(await report(oa)),
+      W2: ignoringStrandedMentions(await report(o2)),
+    },
   });
 }
 
@@ -169,7 +179,10 @@ const results = [];
     msToArrive: arrived,
     onReceiver: settled.count,
     sends: sendsOf(w1),
-    obs: { W1: await report(o1), W2: await report(o2) },
+    obs: {
+      W1: ignoringStrandedMentions(await report(o1)),
+      W2: ignoringStrandedMentions(await report(o2)),
+    },
   });
 }
 

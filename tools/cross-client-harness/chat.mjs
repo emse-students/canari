@@ -904,6 +904,9 @@ export async function openChannel(cx, community = VENUE.community, channel = VEN
       )
     );
 
+  /** The page is already the one we are trying to reach - a fact, asked of the document. */
+  const alreadyOnCommunities = `!!document.querySelector('[data-route-mode="communities"]')`;
+
   // THE PHONE'S CONSTRAINT WAS BEING PAID BY THE BROWSERS TOO, AND IT CHANGED WHAT ROWS MEASURED.
   // This was an unconditional `goto`, which is a FULL PAGE LOAD - justified on A1, where there is
   // no click path to `/communities` the way `ensureChat` gives one to `/chat`. On W1/W2 there is
@@ -922,17 +925,64 @@ export async function openChannel(cx, community = VENUE.community, channel = VEN
     // verdict that goes dirty on either of those inside a channel check is the RIG, not the app.
     await goto(cx, '/communities', { relaunch: 'no click path to /communities on the phone yet' });
   } else {
-    await realClick(cx, 'a[href="/communities"]');
-    await until(cx, `location.pathname.indexOf('/communities') === 0`, 10000);
+    // NOT IF WE ARE ALREADY THERE. Clicking the rail to reach the page it is already showing is
+    // not merely wasted - it is the whole hover hazard for nothing: the click moves the pointer
+    // onto the rail, and on a busy freshly-loaded page the four CDP round-trips of one click can
+    // outlast the 150 ms hover-intent timer, so the drawer opens and its backdrop covers the list.
+    if (!JSON.parse(await evaluate(cx, `JSON.stringify(${alreadyOnCommunities})`))) {
+      await realClick(cx, 'a[href="/communities"]');
+      // THE DOCUMENT, NOT THE ADDRESS. `location.pathname` changes when the navigation STARTS and
+      // the page component swaps after it, so a question asked on the URL alone gets answered by
+      // the page being left - and the click that followed then raced the swap.
+      await until(cx, `!!document.querySelector('[data-route-mode="communities"]')`, 10000);
+    }
   }
+  // WHETHER THE COMMUNITY STILL NEEDS SELECTING IS A FACT, NOT SOMETHING TO LEARN BY FAILING.
+  // A reload always arrived with nothing selected, so clicking the community was unconditional and
+  // safe. A client-side navigation does not: the app restores the community that was open, and the
+  // name then appears as the PANEL HEADER rather than as a tile - `awaitListed` still resolves it
+  // and the click that follows finds nothing, which is `no stable element for selector: text=<the
+  // community> - {"found":false}` on a screen where the community is plainly open. Worse, the two
+  // states can swap between the wait and the click while the restore lands.
+  //
+  // The channel list belongs to the SELECTED community, so "is this channel listed" answers "is the
+  // right community open" and is exactly what the caller needs next. Asked once, and branched on.
+  //
+  // AND THE QUESTION IS ASKED ONCE THE PAGE IT IS ABOUT EXISTS. `until(pathname)` returns when the
+  // URL changes, which is BEFORE SvelteKit has swapped the document - so asking "is this channel
+  // listed" at that instant reads the page being left. `/chat` has a row for this very channel in
+  // its sidebar, so the answer was yes, the selection was skipped, and the click then raced the
+  // navigation: `no stable element for selector: text=general - {"found":false}`. Waiting for the
+  // community to appear establishes that the communities page is up, and costs nothing when it is.
   await awaitListed(cx, `!!${RESOLVE}('text=${community}')`, 20000, 'the community', cx.port);
-  // SETTLE BEFORE EVERY CLICK, not once at the top: the community click itself starts work that can
-  // raise a strip again, so the state has to be re-established rather than assumed to persist.
-  const settledBefore = await awaitAppSettled(cx);
-  await realClick(cx, `text=${community}`);
-  await awaitListed(cx, `!!${RESOLVE}('text=${channel}')`, 15000, 'the channel', cx.port);
+
+  // IS THIS COMMUNITY ALREADY OPEN - asked of the PANEL HEADER, exactly, and not of the document.
+  // `text=` matches by SUBSTRING over every visible element, so a channel called `general` answers
+  // for itself twelve times over once its conversation is on screen (the pane header, the composer
+  // placeholder, every message naming it). A reload never showed that because a freshly loaded page
+  // has no messages yet. The panel's `h2` is the community whose channels are listed, it is empty
+  // on `/chat`, and it cannot be confused with anything else.
+  const panelHeader = `((document.querySelector('.sidebar-panel h2') || {}).textContent || '').trim()`;
+  const alreadyOpen = JSON.parse(
+    await evaluate(cx, `JSON.stringify(${panelHeader} === ${JSON.stringify(community)})`)
+  );
+  let settledBefore = null;
+  if (!alreadyOpen) {
+    // SETTLE BEFORE EVERY CLICK, not once at the top: the community click itself starts work that
+    // can raise a strip again, so the state has to be re-established rather than assumed to persist.
+    settledBefore = await awaitAppSettled(cx);
+    await realClick(cx, `text=${community}`);
+  }
+  // THE ROW, BY ITS OWN NAME. `[data-channel-row]` is the sidebar button and nothing else - see the
+  // comment beside it in `Sidebar.svelte` for the dozen elements the text match was choosing among.
+  const row = `[data-channel-row="${channel}"]`;
+  await awaitListed(cx, `!!document.querySelector('${row}')`, 15000, 'the channel', cx.port);
   const settledAfter = await awaitAppSettled(cx);
-  const point = await realClick(cx, `text=${channel}`);
+  // IMMEDIATELY BEFORE THE CLICK THAT NEEDS IT, because the backdrop mounts on a timer and a check
+  // made earlier can pass before it has been rendered at all - which is exactly how it was still
+  // covering the row three fixes later.
+  await until(cx, `!document.querySelector('[data-nav-backdrop]')`, 5000);
+  const point = await realClick(cx, row);
 
   // HIT-TEST NOW, NOT AT THE FAILURE. This used to read `elementFromPoint` only inside the catch -
   // fifteen seconds after the click - and then present the answer as `hitAtClick`, which it was not.

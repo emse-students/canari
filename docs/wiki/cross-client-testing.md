@@ -181,12 +181,12 @@ Client-side, in-conversation, substring-only: no server index, no global search.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| FWD-1 | Channel -> DM forward, the exact shape of the reported prod loss | `W1 W2` | `PASS` 2026-09-05 01:39 on 0.16.3, clean - the reported shape does not reproduce: the channel message is forwarded to the DM, `POST -> 201`, and the peer has it 110 ms later in exactly one copy. Both sides clean. FWD-2 is where a single miss would show |
-| FWD-2 | The same, 25 times in a loop - any single miss is the bug | `W1 W2` | `PASS` 2026-09-05 01:54 on 0.16.3, clean - 25 forwards, ZERO lost and ZERO duplicated, 106-126 ms (mean 110). The reported production loss does not reproduce at this volume. **And it is a loop now**: `openChannel` used to full-load the page on every call, so this row was 25 COLD BOOTS with one forward each - a different question with a different answer, and the reason anything the app counts per session reset every round. The browsers click the nav rail's own anchor; only the phone still reloads |
-| FWD-3 | Forward while the sender goes offline mid-send | `W1 W2` | `pending` |
-| FWD-4 | Forward from A1, backgrounded 200 ms later | `+A1` | `pending` |
-| FWD-5 | Forward into a conversation not opened this session | `W1 W2` | `pending` |
-| FWD-5-repeat | The same shape N rounds from a FRESH session each - the volume FWD-5 cannot carry alone | `W1 W2` | `pending` |
+| FWD-1 | Channel -> DM forward, the exact shape of the reported prod loss | `W1 W2` | `PASS` 2026-09-05 02:12 on 0.16.3, clean - the reported shape does not reproduce: `POST -> 201` and the peer holds exactly one copy 106 ms later, both sides clean |
+| FWD-2 | The same, 25 times in a loop - any single miss is the bug | `W1 W2` | `PASS` 2026-09-05 02:13 on 0.16.3, clean - 25 forwards, ZERO lost and ZERO duplicated, 103-114 ms. **And it is a loop now**: `openChannel` full-loaded the page on every call, so this row was 25 COLD BOOTS with one forward each - a different question with a different answer, and why anything the app counts per session reset every round |
+| FWD-3 | Forward while the sender goes offline mid-send | `W1 W2` | `PASS` 2026-09-05 02:15 on 0.16.3, clean - the network is cut the instant the picker closes and the outbox still delivers it: `POST -> 201`, exactly one copy on the receiver. The presence fetch that dies with the link is forgiven as the cut this row performs |
+| FWD-4 | Forward from A1, backgrounded 200 ms later | `+A1` | `PASS` 2026-09-05 02:15 on 0.16.3, clean - the phone is sent to the home screen 200 ms after the forward and the send completes anyway: one copy on the receiver, 2 ms after the foreground gave up. The background service path delivers |
+| FWD-5 | Forward into a conversation not opened this session | `W1 W2` | `PASS` 2026-09-05 02:15 on 0.16.3, clean - the sender holds no loaded state for the target (the shape the original report came from) and the forward still lands in 110 ms, one copy |
+| FWD-5-repeat | The same shape N rounds from a FRESH session each - the volume FWD-5 cannot carry alone | `W1 W2` | `PASS` 2026-09-05 02:16 on 0.16.3, clean - 5 rounds, each from a reloaded sender holding no state for the target: 5/5 delivered, 109-116 ms, zero lost, every round clean on both sides |
 
 ## 8 - GRP - group membership and invitations
 

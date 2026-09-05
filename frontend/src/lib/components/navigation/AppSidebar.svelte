@@ -71,7 +71,15 @@
 {#if isExpanded}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <!--
+    NAMED, because it is the thing that COVERS. `isExpanded` goes false the moment the pointer
+    leaves the rail, but this element survives its own 300 ms fade and keeps taking every click
+    underneath it for that whole time - so the rail's state does not answer "can I click yet" and
+    the only honest answer is whether this div is still in the document. Without the name the
+    question could only be asked as a geometry poll against a Tailwind class string.
+  -->
   <div
+    data-nav-backdrop
     class="fixed inset-0 top-[calc(3.5rem+env(safe-area-inset-top))] z-[22] hidden bg-black/10 backdrop-blur-[2px] md:block dark:bg-black/30"
     transition:fade={{ duration: 300, easing: (t) => t * (2 - t) }}
     onclick={() => (isExpanded = false)}
