@@ -102,6 +102,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # BUN, NEVER NODE (user, 2026-09-04: "Jamais node, toujours bun"), and pinned by the ONE
+      # file that names a bun version. `submit.mjs` is the single implementation of the notes
+      # rule, called by this gate and by the Play arm - it was reached here through `node` while
+      # CLAUDE.md documented the very same command as `bun`, so the shipped runtime and the
+      # documented one had quietly diverged on the release path.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: ".bun-version"
+
       # WHAT IS BEING RELEASED, AND FROM WHICH COMMIT - the only two facts the gates need.
       #
       # `github.event.release.target_commitish` is NOT the answer: it carries a branch NAME (`main`)
@@ -438,6 +447,15 @@ jobs:
         with:
           ref: ${{ needs.bump.outputs.sha }}
 
+      # BUN, NEVER NODE (user, 2026-09-04: "Jamais node, toujours bun"), and pinned by the ONE
+      # file that names a bun version. `submit.mjs` is the single implementation of the notes
+      # rule, called by this gate and by the Play arm - it was reached here through `node` while
+      # CLAUDE.md documented the very same command as `bun`, so the shipped runtime and the
+      # documented one had quietly diverged on the release path.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: ".bun-version"
+
       - name: Put the release notes in the release body
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -458,7 +476,7 @@ jobs:
 
           # ONE IMPLEMENTATION OF THE NOTES RULE, the same call the fifth preflight gate makes and
           # the same one the Play arm makes. Nothing here re-parses the file.
-          notes="$(node tools/app-store/submit.mjs --print-notes)"
+          notes="$(bun tools/app-store/submit.mjs --print-notes)"
 
           # THE BODY IS READ LIVE, and not from `github.event.release.body`: on a re-run that
           # payload is the ORIGINAL event's, so writing from it would resurrect a body somebody has

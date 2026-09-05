@@ -25,6 +25,7 @@ import { classifyNativePaths } from './native-residue.mjs';
  * `serial.mjs` for the measurement.
  */
 import { attached, serial } from './serial.mjs';
+import { requireScript } from './scriptpath.mjs';
 
 export { attached, serial };
 
@@ -517,7 +518,7 @@ export function unlockPin(port = PORTS.A1) {
   try {
     return execFileSync(
       process.execPath,
-      ['pin.mjs', '--port', String(port), '--account', ACCOUNT_OF.A1, '--match', 'tauri.localhost'],
+      [requireScript('pin.mjs'), '--port', String(port), '--account', ACCOUNT_OF.A1, '--match', 'tauri.localhost'],
       { cwd: HERE, encoding: 'utf8', timeout: 120_000 }
     )
       .trim()

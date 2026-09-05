@@ -47,6 +47,7 @@ import { all, clientBuild } from '../results.mjs';
 import { deployedBundleId, isOnTheDeployment, reloadOntoBundle } from '../bundle.mjs';
 import { stateOf } from './ready-probe.mjs';
 import { bringToReady } from './ready-repair.mjs';
+import { requireScript } from '../scriptpath.mjs';
 
 const argv = process.argv.slice(2);
 const flag = (n) => argv.includes(`--${n}`);
@@ -447,7 +448,7 @@ async function preflight(devices, { quiet = false } = {}) {
     const deadline = Date.now() + 25000;
     let r;
     for (;;) {
-      r = spawnSync(process.execPath, ['presence.mjs', '--ports', ports.join(',')], {
+      r = spawnSync(process.execPath, [requireScript('presence.mjs'), '--ports', ports.join(',')], {
         cwd,
         encoding: 'utf8',
       });

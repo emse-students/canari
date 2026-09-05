@@ -978,9 +978,22 @@ export async function openChannel(cx, community = VENUE.community, channel = VEN
   const row = `[data-channel-row="${channel}"]`;
   await awaitListed(cx, `!!document.querySelector('${row}')`, 15000, 'the channel', cx.port);
   const settledAfter = await awaitAppSettled(cx);
+  // PARK FIRST, THEN WAIT - and the two are not the same guard. Parking COLLAPSES a rail a pointer
+  // is resting on; the wait rides out the 300 ms fade the backdrop survives its own `isExpanded`
+  // with. A wait alone cannot end a hover, so against a parked pointer it can only spend its budget
+  // and throw.
+  //
+  // THE HOLE WAS THE PATH THAT CLICKS NOTHING. `realClick` parks, so the `!alreadyOpen` branch above
+  // leaves the pointer somewhere harmless - but when the community is ALREADY open that branch is
+  // skipped, no click happens, and whatever the previous runner left on the rail is still there.
+  // MSG-5 died exactly there on 2026-09-05 (`until() timed out after 5000ms:
+  // !document.querySelector('[data-nav-backdrop]')`), on its first ever run, against a working
+  // application - the community was open from the row before it.
+  //
   // IMMEDIATELY BEFORE THE CLICK THAT NEEDS IT, because the backdrop mounts on a timer and a check
   // made earlier can pass before it has been rendered at all - which is exactly how it was still
   // covering the row three fixes later.
+  await parkPointer(cx);
   await until(cx, `!document.querySelector('[data-nav-backdrop]')`, 5000);
   const point = await realClick(cx, row);
 

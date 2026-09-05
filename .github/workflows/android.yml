@@ -378,7 +378,7 @@ jobs:
           set -euo pipefail
           dir="$RUNNER_TEMP/whatsnew"
           mkdir -p "$dir"
-          notes="$(node tools/app-store/submit.mjs --print-notes)"
+          notes="$(bun tools/app-store/submit.mjs --print-notes)"
           for locale in fr-FR en-US; do
             printf '%s\n' "$notes" > "$dir/whatsnew-$locale"
           done

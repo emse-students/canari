@@ -75,6 +75,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { requireScript } from '../scriptpath.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const { W1, W2 } = PORTS;
@@ -1057,7 +1058,7 @@ async function del8() {
   const [w1, o1] = await observed(W1, 'DEL-W1');
   const [w2, o2] = await observed(W2, 'DEL-W2');
   const mlsdb = (...args) =>
-    execFileSync(process.execPath, ['mlsdb.mjs', '--port', String(W1), ...args], { encoding: 'utf8' });
+    execFileSync(process.execPath, [requireScript('mlsdb.mjs'), '--port', String(W1), ...args], { encoding: 'utf8' });
   try {
     await ensureChat(w1);
     await ensureChat(w2);

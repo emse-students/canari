@@ -37,6 +37,7 @@ import { watch } from '../watch.mjs';
 import { mark, record } from '../results.mjs';
 import { execFileSync } from 'node:child_process';
 import { PORTS, peerNameFor } from '../names.mjs';
+import { requireScript } from '../scriptpath.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const REWIND_SENDS = Number(process.env.REWIND_SENDS || 12);
@@ -138,7 +139,7 @@ await sleep(8000);
 // --------------------------------------------------------------------------- 1. baseline + rewind
 console.log(
   '[heal-a1] snapshot:',
-  JSON.parse(execFileSync(process.execPath, ['mlsdb.mjs', '--port', '9223', 'snapshot'], { encoding: 'utf8' }))
+  JSON.parse(execFileSync(process.execPath, [requireScript('mlsdb.mjs'), '--port', '9223', 'snapshot'], { encoding: 'utf8' }))
     .report.map((r) => `${r.store} ${r.rows} rows`)
     .join(', ')
 );
@@ -180,7 +181,7 @@ try {
   // ------------------------------------------------------------------------- 2. break it
   console.log(
     '[heal-a1] restore:',
-    execFileSync(process.execPath, ['mlsdb.mjs', '--port', '9223', 'restore'], { encoding: 'utf8' })
+    execFileSync(process.execPath, [requireScript('mlsdb.mjs'), '--port', '9223', 'restore'], { encoding: 'utf8' })
       .replace(/\s+/g, ' ')
       .slice(0, 200)
   );

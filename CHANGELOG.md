@@ -373,6 +373,26 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Changed
 
+- **Seven places still reached for `node`, and one of them made the documented command and the
+  shipped command different programs.** The rule is "bun runs the scripts too, never `node`", and
+  `CLAUDE.md` spells the release-notes gate `bun tools/app-store/submit.mjs --check-notes` - while
+  `release-preflight.sh` ran that exact call under `node`, as did `release.yml`, `ios.yml` and
+  `android.yml`. `release.yml` had no bun at all, so the two jobs that needed it got the standard
+  pinned step every other workflow already uses (`.bun-version`, the one place this repo names a bun
+  version). The three `@node` lines in the Makefile went the same way, all three verified under bun
+  first. `ci.yml` is untouched: its node use is jest, deliberate, and documented in place with the
+  measurement behind it.
+
+  **And one of the seven was broken on this machine and could only ever have worked on Linux.**
+  `scripts/read-app-version.sh` interpolated an absolute `$ROOT` into `require()`, which under MSYS
+  is `/f/Programmation/...` - a shape no Windows runtime resolves. CI is Linux, which is exactly why
+  it could stay broken: the release path reads this helper, and a workstation asking it the same
+  question got `Cannot find module`. It resolves from the working directory now.
+
+  One test asserted the old spelling: `release-chain.test.sh` checked that iOS submits by grepping
+  for `node tools/app-store/submit.mjs`. The claim is "it submits", not "it submits with node", and
+  a test that breaks on a change it is not about is one that gets weakened rather than read.
+
 - **"Can I use this group?" was spelt out nineteen times, and it is three different questions.**
   Every site wrote `getLocalGroups().includes(id)` by hand across eleven files. All of them were
   asking the same thing and asking it correctly - but there was no name to grep for, no place to hang

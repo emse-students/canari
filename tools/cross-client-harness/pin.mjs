@@ -13,6 +13,7 @@
 import { accounts as readAccounts } from './accounts.mjs';
 import { activate, connect, evaluate, listTargets, realClick, until } from './cdp.mjs';
 import { declineBiometricOffer } from './chat.mjs';
+import { estateOriginsAmong } from './estate-origins.mjs';
 import { GATE_EXPR } from './gate-probe.mjs';
 import { PORTS, SITE } from './names.mjs';
 import { armIfPhone, resolveDevice } from './device.mjs';
@@ -131,7 +132,18 @@ if (!hasField && hasKeypad) {
  * vacuous pass this rig refuses everywhere else) - but it is WAITED for first, up to ten seconds,
  * because a cold-started client that has just answered the gate may legitimately not have reached
  * the API yet. `tauri.localhost` and `ipc.localhost` are the engine's own two schemes, not an
- * estate, and are the only origins excused.
+ * estate, and are excused - as is the OPAQUE origin, which is not an origin at all.
+ *
+ * **AN OPAQUE ORIGIN IS THE STRING `'null'`, AND IT IS NOT A STRANGER.** `new URL(name).origin`
+ * answers `'null'` for every `data:` and `blob:` resource - they have no host to be an estate of.
+ * This guard compared that string against `SITE`, found it different, and REFUSED, with the loudest
+ * message it has: *"THIS CLIENT IS NOT ON THE LOCAL ESTATE: it called null"*, telling the reader to
+ * rebuild an APK. Measured on W1, 2026-09-05: the offender is the application's own noise texture,
+ * a `data:image/svg+xml` in its CSS that is on EVERY page. It is INTERMITTENT, which is worse - the
+ * resource timeline holds 250 entries by default and is cleared by a navigation, so whether the
+ * texture is still in it depends on how long the tab has been up and what it has fetched since. A
+ * gate that refuses the correct estate some of the time, naming the most alarming cause it knows,
+ * costs more than no gate.
  *
  * IT REFUSES AS WELL AS ACCEPTS, which is the half a gate usually lacks. Exercised 2026-09-05 on
  * five origin sets: local only ACCEPTED; production, `dev.`, engine-schemes-only, and local WITH a
@@ -142,18 +154,19 @@ if (!hasField && hasKeypad) {
  * @returns {Promise<void>} exits the process 1 rather than returning, when the estate is wrong
  */
 async function assertLocalEstate(cx) {
-  const ENGINE_ORIGINS = ['http://tauri.localhost', 'http://ipc.localhost'];
-  const read = async () => {
-    const contacted = JSON.parse(
-      await evaluate(
-        cx,
-        `JSON.stringify([...new Set(performance.getEntriesByType('resource').map(function (e) {
-           try { return new URL(e.name).origin; } catch (_) { return 'unparseable:' + e.name; }
-         }))])`,
+  // THE PAGE-SIDE READ IS ALL THAT LIVES HERE. What counts as an estate is `estate-origins.mjs`,
+  // which imports nothing and is therefore gatable - see `archive/estate-selftest.mjs`.
+  const read = async () =>
+    estateOriginsAmong(
+      JSON.parse(
+        await evaluate(
+          cx,
+          `JSON.stringify([...new Set(performance.getEntriesByType('resource').map(function (e) {
+             try { return new URL(e.name).origin; } catch (_) { return 'unparseable:' + e.name; }
+           }))])`,
+        ),
       ),
     );
-    return contacted.filter((o) => !ENGINE_ORIGINS.includes(o));
-  };
   // WAITED FOR, NOT SAMPLED ONCE. A client that has just answered the gate on a COLD START may not
   // have reached the API yet, and the first version of this called that a failure - a vacuity guard
   // firing on a legitimate state, which is its own kind of wrong answer. Ten seconds is the cap this

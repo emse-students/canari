@@ -29,6 +29,7 @@ import { watch } from '../watch.mjs';
 import { mark, record } from '../results.mjs';
 import { execFileSync } from 'node:child_process';
 import { PORTS, peerNameFor } from '../names.mjs';
+import { requireScript } from '../scriptpath.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const REWIND_SENDS = Number(process.env.REWIND_SENDS || 12);
@@ -187,7 +188,7 @@ console.log('[heal] W2:', await openConversation(w2, peerNameFor('W2')));
 await sleep(8000);
 
 // --------------------------------------------------------------------------- 1. baseline + rewind
-console.log('[heal] snapshot:', JSON.parse(execFileSync(process.execPath, ['mlsdb.mjs', '--port', '9224', 'snapshot'], { encoding: 'utf8' })).report.map((r) => `${r.store} ${r.rows} rows`).join(', '));
+console.log('[heal] snapshot:', JSON.parse(execFileSync(process.execPath, [requireScript('mlsdb.mjs'), '--port', '9224', 'snapshot'], { encoding: 'utf8' })).report.map((r) => `${r.store} ${r.rows} rows`).join(', '));
 
 const pre = mark('HEALPRE');
 for (let i = 1; i <= REWIND_SENDS; i++) {
@@ -214,7 +215,7 @@ if (preOnW2 < REWIND_SENDS) {
 let row = null;
 try {
 // --------------------------------------------------------------------------- 2. break it
-console.log('[heal] restore:', execFileSync(process.execPath, ['mlsdb.mjs', '--port', '9224', 'restore'], { encoding: 'utf8' }).replace(/\s+/g, ' ').slice(0, 200));
+console.log('[heal] restore:', execFileSync(process.execPath, [requireScript('mlsdb.mjs'), '--port', '9224', 'restore'], { encoding: 'utf8' }).replace(/\s+/g, ' ').slice(0, 200));
 await w1.send('Page.reload', { ignoreCache: false });
 await sleep(12_000);
 await watch(w1, 'W1');

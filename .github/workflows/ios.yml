@@ -631,7 +631,7 @@ jobs:
         # `node` and not `bun`: this runs on a macOS runner where node is preinstalled, the script
         # uses nothing but `node:crypto`, `node:fs` and global `fetch`, and setting bun up again
         # after the archive would be a step for no gain.
-        run: node tools/app-store/submit.mjs
+        run: bun tools/app-store/submit.mjs
 
       # LAST, AND THAT ORDERING IS THE FIX FOR SOMETHING THAT COST A WHOLE PLATFORM. It used to sit
       # BEFORE the store steps, so on `v0.16.0` this action was refused a release update

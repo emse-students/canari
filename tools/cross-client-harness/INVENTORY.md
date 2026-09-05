@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-50 scripts.
+51 scripts.
 
 | script | what it is |
 |---|---|
@@ -37,6 +37,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `device-census.mjs` | THE PURE HALF OF THE DEVICE CENSUS - the SQL text, and every function that turns one of its rows |
 | `device.mjs` | WHICH CLIENT AN ATOM IS ABOUT, resolved once, in one place. |
 | `devices.mjs` | THE DEVICE CENSUS - every device the platform knows, with its runtime, OS, app version, owner, |
+| `estate-origins.mjs` | WHICH ESTATE A RUNNING CLIENT IS ACTUALLY TALKING TO, as a pure function of what it fetched. |
 | `estate.mjs` | WHICH ESTATE A QUERY IS ABOUT, DERIVED FROM THE ONE CONSTANT THAT DECIDES WHERE THE CAMPAIGN RUNS. |
 | `fixtures.mjs` | WHERE A STAGED INPUT FILE LIVES - resolved from the HARNESS ROOT, never from the caller. |
 | `gate-probe.mjs` | The ONE expression that answers "is the encryption PIN gate on screen". |
@@ -158,7 +159,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-17 scripts.
+19 scripts.
 
 | script | what it is |
 |---|---|
@@ -166,6 +167,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/classify-selftest.mjs` | THE CLASSIFIER, RUN OVER LINES WHOSE RIGHT BUCKET IS KNOWN. |
 | `archive/debris-selftest.mjs` | Asserts that the allowlist deciding what may be DESTROYED matches every name a runner mints, and |
 | `archive/devices-selftest.mjs` | SELFTEST FOR THE DEVICE CENSUS - pins the classification against rows measured on production. |
+| `archive/estate-selftest.mjs` | WHICH ESTATE A CLIENT IS ON IS A GATE, AND A GATE THAT ONLY EVER ACCEPTS IS NOT ONE. |
 | `archive/gate-probe-selftest.mjs` | `pin.mjs`'s gate probe, exercised on the pages it has to tell apart. |
 | `archive/gate-selftest.mjs` | EVERY SELF-TEST IN THE CI GATE MUST BE IMPORTABLE ON A MACHINE THAT HAS NO RIG. |
 | `archive/instrument-selftest.mjs` | THE HASH THAT SAYS WHAT A CHECK MEASURES WITH IS ONLY WORTH ANYTHING IF IT SEES EVERY FILE. |
@@ -176,6 +178,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/ready-selftest.mjs` | The preflight's readiness probe, exercised on the pages it has to tell apart. |
 | `archive/residue-selftest.mjs` | Pins the border between what a native wipe must leave nothing of and what it may leave. |
 | `archive/servable-selftest.mjs` | The subset rule that decides HEAL-NEW-2 and -12, exercised on the sidebars it has to tell apart. |
+| `archive/spawn-selftest.mjs` | A SPAWN GIVEN A NAME IT CANNOT RESOLVE FAILS SILENTLY, AND THIS RIG HAS PAID FOR IT EIGHT TIMES. |
 | `archive/srvclassify-selftest.mjs` | THE SERVER CLASSIFIER AND ITS NORMALISER, RUN OVER LINES WHOSE RIGHT BUCKET IS KNOWN. |
 | `archive/tabguard-selftest.mjs` | DOES THE REFUSAL FIRE? A guard that has never been seen to trigger is a guard nobody has tested. |
 | `archive/usability-selftest.mjs` | WHAT COUNTS AS THE APP ANSWERING A CLICK - the two predicates and the two targets that decide |
@@ -230,4 +233,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-169 scripts in total.
+172 scripts in total.

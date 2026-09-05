@@ -20,6 +20,7 @@ import { watch } from '../watch.mjs';
 import { mark, recordObserved } from '../results.mjs';
 import { killBrowser, startBrowser, BROWSERS } from '../launch.mjs';
 import { ACCOUNT_OF, PORTS, SITE, peerNameFor } from '../names.mjs';
+import { requireScript } from '../scriptpath.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const which = String(process.argv[2] || '2');
@@ -49,12 +50,18 @@ function unlock(port, account) {
   try {
     const out = execFileSync(
       process.execPath,
-      ['pin.mjs', '--port', String(port), '--account', account, '--match', APP_TAB],
+      [requireScript('pin.mjs'), '--port', String(port), '--account', account, '--match', APP_TAB],
       { cwd: new URL('.', import.meta.url).pathname.replace(/^\//, ''), encoding: 'utf8' }
     );
     return out.trim().split('\n').pop();
   } catch (e) {
-    return `pin.mjs failed: ${String(e.stdout || e.message).slice(0, 200)}`;
+    // THE REASON, NOT THE TAIL OF STDOUT - the one stream that says nothing about why. This is the
+    // third copy of this wrapper in the rig and the second to be fixed today; see the P3 in
+    // `backlog.md` for the one implementation the three of them owe.
+    const why = String(e.stderr || e.message)
+      .trim()
+      .replace(/\s+/g, ' ');
+    return `pin.mjs failed (exit ${e.status ?? 'none'}): ${why.slice(0, 300)}`;
   }
 }
 
@@ -245,3 +252,15 @@ if (which === '6') {
 console.log(`\n${rows.filter((r) => r.verdict === 'PASS').length}/${rows.length} pass`);
 // No exit code and no second JSON dump: `record` printed each row as it was written, and
 // `results.mjs` derives the code from the verdicts it holds.
+
+// AND IT HAS TO ACTUALLY END. This file opens CDP sockets - `client()` for each device, and its own
+// `connect()` on the reopened tab in TAB-2 - and closed none of them, so an open socket kept the
+// event loop alive after the last line had printed. Measured 2026-09-05: TAB-2 printed `1/1 pass`
+// at 07:00 and the process was still there twenty-five minutes later, holding up every row queued
+// behind it. Nothing looked wrong - the verdict was in the ledger and the summary was on screen.
+//
+// The same defect, on the same day, in `pin.mjs`: a success path that runs out of file has opted out
+// of its own contract, and its caller is left inferring the outcome from a clock. `archive/spawn-
+// selftest.mjs` gates the sibling class (a spawn that cannot resolve its script); this one is gated
+// by the audit in `inventory.mjs` terms only, so the explicit exit stays here where it is read.
+process.exit(0);

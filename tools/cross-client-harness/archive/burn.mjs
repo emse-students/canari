@@ -29,6 +29,7 @@ import { APP_TAB, armComposer, awaitMessage, client, countMessage, ensureConvers
 import { watch, report, consoleLines } from '../watch.mjs';
 import { mark } from '../results.mjs';
 import { PORTS, peerNameFor } from '../names.mjs';
+import { requireScript } from '../scriptpath.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const arg = (name, fallback) => {
@@ -183,7 +184,7 @@ w1 = await attach();
 const loadWatch = await watch(w1, `burn-${DEVICE}`);
 
 if (back.value?.pin) {
-  const pin = spawnSync(process.execPath, ['pin.mjs', '--device', DEVICE], {
+  const pin = spawnSync(process.execPath, [requireScript('pin.mjs'), '--device', DEVICE], {
     cwd: import.meta.dirname,
     encoding: 'utf8',
   });

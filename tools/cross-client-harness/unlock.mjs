@@ -27,6 +27,7 @@ import { spawnSync } from 'node:child_process';
 import { client, evaluate } from './chat.mjs';
 import { PORTS } from './names.mjs';
 import { resolveDevices } from './device.mjs';
+import { requireScript } from './scriptpath.mjs';
 
 // `--device W1,A1` is the spelling; `--ports 9224,9333` still resolves, through the same one
 // implementation in `device.mjs`. Naming neither means every client this rig knows, which is the
@@ -123,7 +124,7 @@ for (const [label, port] of Object.entries(PORTS)) {
   // The PIN itself never crosses this boundary: pin.mjs reads it from the file by account key.
   const r = spawnSync(
     process.execPath,
-    ['pin.mjs', '--port', String(port), '--account', account],
+    [requireScript('pin.mjs'), '--port', String(port), '--account', account],
     { cwd: new URL('.', import.meta.url).pathname.replace(/^\//, ''), encoding: 'utf8' }
   );
   const tail = String(r.stdout || r.stderr || '')

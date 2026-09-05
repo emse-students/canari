@@ -25,6 +25,7 @@ import * as phone from '../phone.mjs';
 import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { ACCOUNT_OF, PEER_NAME, PORTS, peerNameFor } from '../names.mjs';
+import { requireScript } from '../scriptpath.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const HERE = new URL('.', import.meta.url).pathname.replace(/^\//, '');
@@ -73,7 +74,7 @@ function unlock(port = PORTS.A1) {
   try {
     return execFileSync(
       process.execPath,
-      ['pin.mjs', '--port', String(port), '--account', ACCOUNT_OF.A1, '--match', 'tauri.localhost'],
+      [requireScript('pin.mjs'), '--port', String(port), '--account', ACCOUNT_OF.A1, '--match', 'tauri.localhost'],
       { cwd: HERE, encoding: 'utf8', timeout: 120_000 }
     )
       .trim()

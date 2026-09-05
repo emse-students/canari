@@ -341,9 +341,9 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/scheduled.test.sh
 	@bash .github/scripts/tests/audit-dependencies.test.sh
 	@bash .github/scripts/tests/host-update-report.test.sh
-	@node .github/scripts/tests/no-nul-in-source.test.mjs
-	@node .github/scripts/tests/wiki-links.test.mjs
-	@node tools/app-store/submit.test.mjs
+	@bun .github/scripts/tests/no-nul-in-source.test.mjs
+	@bun .github/scripts/tests/wiki-links.test.mjs
+	@bun tools/app-store/submit.test.mjs
 
 test-harness:
 	@echo "${BLUE}🧪 Harness self-tests…${RESET}"
@@ -357,6 +357,8 @@ test-harness:
 	@bun tools/cross-client-harness/archive/debris-selftest.mjs
 	@bun tools/cross-client-harness/archive/gate-selftest.mjs
 	@bun tools/cross-client-harness/archive/instrument-selftest.mjs
+	@bun tools/cross-client-harness/archive/spawn-selftest.mjs
+	@bun tools/cross-client-harness/archive/estate-selftest.mjs
 	@bun tools/cross-client-harness/archive/lucide-selftest.mjs
 	@bun tools/cross-client-harness/archive/ports-selftest.mjs
 	@bun tools/cross-client-harness/archive/origin-selftest.mjs
