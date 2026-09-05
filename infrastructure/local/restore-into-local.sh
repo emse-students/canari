@@ -206,8 +206,9 @@ apply_copy_strips local_sql "$DATABASE" "[restore-into-local]"
 LOCAL_ROWS=$(local_sql_ro "SELECT count(*) FROM users;")
 LOCAL_TOKENS=$(local_sql_ro "SELECT count(*) FROM push_token;")
 LOCAL_STRIPE=$(local_sql_ro "SELECT count(*) FROM users WHERE \"stripeCustomerId\" IS NOT NULL;")
+LOCAL_MEDIA=$(local_sql_ro "$COPY_STRIPS_MEDIA_RESIDUE_SQL" | tr -d '[:space:]')
 
-log "verification: users local=$LOCAL_ROWS (prod at dump time=${PROD_USERS:-unknown}) | push_token=$LOCAL_TOKENS | stripe ids=$LOCAL_STRIPE"
+log "verification: users local=$LOCAL_ROWS (prod at dump time=${PROD_USERS:-unknown}) | push_token=$LOCAL_TOKENS | stripe ids=$LOCAL_STRIPE | media references=$LOCAL_MEDIA"
 
 problems=0
 if [ -n "$PROD_USERS" ]; then
@@ -222,6 +223,14 @@ fi
 }
 [ "$LOCAL_STRIPE" = "0" ] || {
   printf '[restore-into-local] ERROR %s Stripe customer ids survived, and the local Stripe key is production'"'"'s\n' "$LOCAL_STRIPE" >&2
+  problems=1
+}
+# A copy that still references media is not a security problem, it is an INCONSISTENT estate: the
+# objects live only in production's Garage, so every render of one of these rows is a 404 that reads
+# as an application defect. It fails the restore for the same reason the others do - what is not
+# trustworthy is the database, and the campaign measures against it.
+[ "$LOCAL_MEDIA" = "0" ] || {
+  printf '[restore-into-local] ERROR %s row(s) still reference media objects this copy never received\n' "$LOCAL_MEDIA" >&2
   problems=1
 }
 [ "$problems" -eq 0 ] || fail "the restore completed but did not verify - the local database is NOT trustworthy"

@@ -13,6 +13,377 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A message sent at the instant its conversation was deleted was queued into a group that no
+  longer existed, and stayed there until the 90-day reaper.** `sendMessage` resolved its recipients
+  from the membership table and then saved; `deleteGroup` wrote the tombstone and swept everything
+  the group owns - its queue included - in one transaction. Nothing ordered the two, so a send that
+  read its recipients BEFORE the sweep and saved AFTER it wrote rows into a queue that had just been
+  emptied. Measured on the local estate 2026-09-05, three consecutive lines nine milliseconds apart:
+  `[SEND] START group=7e931024`, `[DELETE_GROUP] 7e931024 soft-deleted, 14 row(s) purged`,
+  `[SEND] QUEUED count=2`. Those two rows were permanent - no device can decrypt or ACK a frame for
+  a tombstoned group, so every device re-fetched and re-dropped them on every connection, twenty
+  `dropped 1 undeliverable message(s)` warnings in a thirty-minute window - and the sender was told
+  its message had gone out. **The liveness check and the write are now one transaction**, holding the
+  group row under `FOR SHARE`: a delete that got there first blocks the send until it can see the
+  tombstone and refuse; a send that got there first holds the delete until its rows are committed, so
+  the delete's own sweep takes them. All three queue writes take that seam - the send, the Welcome
+  and the activation redelivery. **The client already asked, and that is exactly why this was owed at
+  the writer**: the outbox reads `deletedAt` before it sends, and the trace above carries its
+  `[GET_GROUP] found=true` one line before the START. A fact checked over a round trip is a fact
+  that can go stale inside it. The refusal arrives as `GroupDeletedError`, classified at the throw
+  and retired by the outbox as the permanent failure it is, rather than climbing a backoff ladder
+  towards a group that ended.
+
+- **A backgrounded tab was told about nothing, because only one of the two inbound paths could
+  speak.** The decision to raise an OS notification lived inside `addMessageToChat`. While a
+  catch-up drains, that function files an INBOUND message into the bulk buffer and returns ABOVE
+  that decision, and the flush hands it to `batchAddMessages` - which never had one. A backgrounded
+  tab is exactly the state that produces a catch-up, so the case the feature exists for was the case
+  it could not serve. Both paths now ask one `notifyInbound`, and the batch raises ONE per flush for
+  the most recent message rather than one per message. **And the four returns that decided against a
+  notification were all silent** - the 800 ms throttle, the ungranted permission, an engine with no
+  `Notification` API, and an empty `catch` around the constructor - so "the user was not notified"
+  and "the code never got there" were the same observation from outside. That is what left TAB-1
+  unattributable across three probes; every one of them now says which it was. **Every swallowed
+  branch logs.**
+
+- **A message sent and then interrupted a few milliseconds later was kept on the sender's screen for
+  ever and sent to nobody.** The echo and the outbox entry that delivers it were two awaits in that
+  order: persist the message, then queue it. A document torn down in between - a reload fired inside
+  the send's own async tail, a tab closed on the way out, an app killed - left a `pending` row on
+  disk that no queue knew about. It was never sent, never retried and never reported, and the only
+  thing its author ever saw was their own message sitting there. **The pair is now one write**:
+  `saveMessageWithOutboxEntry` puts both rows in a single IndexedDB transaction, so neither state
+  can exist without the other. SQLite cannot span two tables in one statement (the plugin pools
+  connections, so `BEGIN`/`COMMIT` can land on three of them - see `sqliteBatch.ts`), so there the
+  entry is written FIRST and the message second: of the two possible tears, only that one still
+  delivers the message. Measured by TAB-5, which reloads 15 ms after the click; the console showed
+  `sendChatMessage` with no `[OUTBOX] Queued` after it. **Reconciling the two afterwards was the
+  alternative and is refused: a ledger that repairs a race is a witness to it, never a fix.**
+
+- **A second tab queued every message it was given, told the user they had been accepted, and handed
+  none of them to the tab that could send them.** The Web Locks election - the branch every real
+  browser takes - recorded `leader` when it won and recorded NOTHING when it lost, so a follower
+  stayed `undecided` for the whole life of the document. Nothing looked wrong, because
+  `getIsTabLeader()` reads `undecided` as `false` and every follower behaviour was therefore
+  correct: read-only mode, no WebSocket, no `initializeConnection`. The one caller that asks the
+  question the third state actually answers - `runFlush`, awaiting `whenTabLeadershipDecided()` -
+  waited for an election that had already happened, and it memoises that wait, so the tab's outbox
+  was dead from then on. The localStorage fallback beside it decided on all four of its outcomes.
+  **A predicate is only evidence for the question it was written to answer** - and the module's own
+  docstring says exactly that, three lines above the branch that forgot it. Its tests missed it for
+  the same reason the code did: every assertion in the file read `getIsTabLeader()`.
+
+- **A typing indicator could be written under a key naming no channel, because the guard meant to
+  stop it tested a string this client had already prefixed.** `channel.typing` builds its key as
+  `` `channel_${data.channelId || ''}` `` and then checked THAT for emptiness - which is
+  `'channel_'` when the id is absent, and truthy. So the guard could never fire for half the events
+  it covered. It tests the server's own field now.
+
+  **And five branches of the same dispatcher dropped an event they could not address without saying
+  so.** The tail of `handleChannelEvent` already accuses on an unhandled TYPE, calling it "silent
+  data loss dressed as a no-op"; the identical thing one level down - a handled type whose id is
+  missing - was five bare `return`s. The consequence is named in the file's own comment twelve lines
+  above one of them: a `workspace.role.changed` with no `workspaceId` leaves a demoted administrator
+  holding every control they have just lost, until they reload. All five now name the field that was
+  absent, at a level that accuses.
+
+- **A device could be added to a group's commit and never sent its Welcome, leaving nothing behind
+  but arithmetic.** `deliverWelcomes` maps each id in `bulk.addedDeviceIds` back to its owner and
+  returned silently when it could not - after the commit had already moved the epoch for everyone,
+  so the device is in the ratchet tree holding no key material it can use. Its owner never reaches
+  `delivered`, so `registerMember` never runs for them either: a member the group believes it has
+  and who can decrypt nothing. The only trace was two numbers in two different lines - `[SYNC]
+  bulk.addedDeviceIds` listing N ids and `[OK] Added ... (M user(s) delivered)` with M short - and
+  nobody subtracts two numbers in a log. The branch names the device now. **Every swallowed branch
+  logs; in a best-effort path that is all a loss leaves.**
+
+- **The native app never carried its refresh credential on any session-scoped call, so the one
+  mechanism that closes the reinstall hole never ran there.** Four endpoints answer from
+  `currentSessionId(req)`, which reads the presented REFRESH credential and nothing else - the
+  access token names the user, never the login. On a shell whose engine will not keep a
+  third-party cookie that credential travels in `X-Canari-Refresh`; `auth.ts` sent it on `refresh`
+  and on `logout`, and `authSessions.ts` sent it nowhere. The server then fell back to whatever
+  cookie the WebView still held, which is BY CONSTRUCTION a value the client stopped maintaining,
+  because rotation goes through the header - so it named a session that no longer existed.
+  Measured on the phone by DEL-7 on 2026-09-05: `POST /api/auth/refresh` answered 200 at 04:02:40
+  and `PUT /api/auth/sessions/current/device` was answered 404 thirteen seconds later, naming a
+  sid absent from the database while the session the refresh had just rotated was alive. The cost
+  is not the 404: `bindCurrentSessionDevice` is the only writer of `auth_sessions."deviceId"`, and
+  its purge of unreachable sessions claiming a device is what ends a credential left behind by a
+  reinstall - so on iOS, Android, macOS and Linux that credential stayed valid for its full idle
+  lifetime. `revokeOtherAuthSessions` is worse: the server keeps the session that id names, so
+  with it unresolvable, "sign out everywhere else" had no reason to spare the caller. All four
+  now carry the credential through one helper, and the preflight the original note warned about is
+  one these requests already paid.
+
+- **A device asked to be re-added to a group that had just been deliberately deleted, and the
+  frame that provoked it stayed in the server queue for ever.** `requestReAdd` already declines a
+  conversation marked `removed` at its first step, but `startRecovery` is deliberately not awaited
+  - an await there stalls the whole inbound drain - so by the time that seam read the map,
+  `handleUnknownGroup` had buffered the frame, logged that a `welcome_request` had been sent (it
+  had not) and returned `false`, which keeps the row server-side. Nothing ever took it out again:
+  the group was gone, no Welcome was coming, and the row came back on every reconnect. The
+  discriminator was local, durable and already in the map, which is where the decision belongs.
+  Found by the campaign's own regression sentinel for GRP-3/GRP-8 on DEL-6.
+
+- **Opening a conversation whose group was deleted asked the server for its history and was
+  refused.** The row is kept at `lifecycle: 'removed'` on purpose so the UI can explain the
+  absence, which means a real user opens one - and every open fired `GET /api/mls/history/<id>` at
+  a soft-deleted group. `fetchHistory` swallowed any non-ok status into an empty page, so the
+  refusal was invisible in the app and showed only as a console error nobody could attribute.
+  Measured on DEL-2 and DEL-3: the request went out ELEVEN SECONDS after the client's own
+  deletion, so it was never one already in flight. The load now renders what is on disk, and a
+  refusal that does happen says so instead of reading as an empty conversation.
+
+- **A failed send cleared the composer and told nobody.** `MainChatPage` fired the send with
+  `void` and cleared the box synchronously, over a `sendChatMessage` that awaits
+  `enqueueOutboxMessage` with no `catch` of its own - so an aborted IndexedDB transaction left an
+  empty composer, a bubble stuck on `pending`, no error and nothing in the log. The one failure a
+  durable outbox cannot survive is the one it never hears about.
+
+- **Every structured debug line reached its readers as the word `Object`.** `Log.d(tag, payload)`
+  handed the payload to `console.debug` as a second argument, which a DevTools panel expands and
+  every other consumer of the same stream - the cross-client harness's CDP capture, a copied
+  console dump, the Android relay - receives as four characters. The payload is rendered into the
+  line now, with an Error additionally passed through because a stack is the one thing text cannot
+  carry.
+- **A mention arrived on a phone as a sixty-four character hex blob.** A mention is stored inside
+  the ciphertext as `@[<64 hex>]`; the web splits it and renders a chip carrying the display name,
+  and the Android push handler put the decrypted text straight into the notification body. So the
+  ONE channel a mention posts on - the high-priority `CHANNEL_MENTIONS`, which requests a
+  do-not-disturb bypass - showed the reader `@[f7a9bb80...5d8ce1]  <message>`, plus the double space
+  the token left behind. The push path has no name directory and adding one would put a network
+  round trip per token in front of a banner that must appear in seconds, so it renders the one id
+  the device knows for certain - its own, as `@vous` / `@you` - and says `@quelqu'un` / `@someone`
+  for the rest, rather than showing an id and calling it a name. Both the DM/group and the channel
+  path went through it; both are fixed. Measured on real hardware by COMM-14, which now refuses any
+  tray body containing `@[`.
+
+- **No modal in the application could be closed with Escape, and there are twenty-two of them.**
+  `Modal.svelte` bound its Escape handler on `svelte:window`, which is a BUBBLE-phase listener,
+  while the dialog panel stopped `keydown` from bubbling - a mirror of the `click` stop that keeps a
+  click inside the panel from reaching the dismissing backdrop. `focusTrap` focuses the first
+  control inside the panel on mount, so every keystroke made with a modal open originates inside it
+  and dies one node above the panel. Measured on the community-settings modal: the key reached
+  `window` in the capture phase, never in the bubble phase, and the dialog stayed open. Escape is
+  now handled on the panel itself, where the key actually lands; the stop remains, because two
+  modals are portaled as siblings of `body` and one Escape must close the one being looked at rather
+  than the whole stack. `dismissible={false}` is unaffected.
+
+- **A joiner asked the server to register itself into the group it was being welcomed into, which
+  the server refuses by construction - so the "safety net" was a no-op when it worked and a 403 when
+  it was needed.** Its own comment said what it was for: the case where the inviter has not yet
+  called `registerMember` for this user. But `assertCallerMayMutateMembership` only lets an existing
+  member of the group mutate membership, plus the creator of an EMPTY group - and a group somebody
+  is being welcomed into is not empty. So if the inviter had already registered them the call
+  changed nothing, and in the one case it existed for the answer was `403`, printed at ERROR level
+  beside a failed request, on ordinary joins. Deleted rather than repaired. The residual risk it
+  never actually covered - an inviter dying between sending the Welcome and registering the joiner -
+  is written down instead of papered over.
+
+- **The invitation link of a group pointed at a server that was not serving the app**, on any
+  estate built locally. `publicAppOrigin()` prefers `VITE_FRONTEND_URL` to the window's own origin,
+  which it must (a Tauri build would otherwise share `tauri.localhost`), and the local generator
+  writes the DEV SERVER's url there - correct for `bun run dev`, wrong for a build nginx serves on
+  another port. One variable, two consumers, two different right answers; the estate build now sets
+  its own.
+
+- **A delivery crossing that happens on nearly every send printed a line every time, and its own
+  comment said the RATE was the reading that mattered.** Two channels carry the same row - the live
+  socket and the pending pull - and an acknowledgement cannot land before a pull already in flight,
+  so a row this device has just acked comes back once more. That is not a race; FWD-2 measured it at
+  twenty-three of twenty-five back-to-back forwards. Twenty-three identical true sentences is a line
+  its reader learns to skip, and the one it hides next is the one that mattered. The three routine
+  shapes now say the whole sentence ONCE and are counted after that, per shape; the fourth -
+  `live:done`, which no crossing explains and which would be the server publishing a row twice -
+  still warns every time, and carries the counts, because that is where a reader is already looking.
+  Nothing about what is decrypted or acknowledged changed.
+
+- **A mention of an account that does not exist re-asked the server for its name for ever, and
+  rendered as a bare `@` in the meantime.** Two layers read a 404 as a failure to ASK rather than as
+  the answer to what was asked. The thirty-second profile cache evicted every rejection "so the next
+  caller retries", which is right for a dead radio and meaningless for an account that is gone; the
+  display-name resolver then filed the same 404 in the two-minute failure backoff, accused it in a
+  `warn`, counted it in the failure RATE that decides whether that backoff is earning its keep, and
+  cleared it on every reconnect - so regaining the network provoked a fresh round of the same 404s.
+  A deleted member in a conversation cost one request per mount of every chip naming them,
+  indefinitely. A 404 is now an answer at both layers: asked once, cached for the session, reported
+  as a fact rather than an accusation. The resolver's own docblocks had stated the rule twice - *not
+  knowing a name is not the same as knowing there is none* - and the code had no way to write the
+  second one down; now that it does, the chip renders "Utilisateur inconnu" instead of nothing, and
+  `userExists`, which was the same conflation with no callers at all, is deleted.
+
+- **A channel fan-out that chose nobody returned in silence, so "nobody was notified" and "the
+  notification code never ran" printed the same thing: nothing.** Those are the two halves of every
+  "I did not get a notification" report, and the only line the path could emit was the recipient
+  count printed AFTER the early return. It now says so, with the four reasons counted separately -
+  the sender, members outside the channel's audience, members at `none`, and members at `mentions`
+  the message did not name. Three of those four are ordinary; `outsideAudience` is a permission or
+  scoping fault, and it is only visible because it is counted apart from the rest.
+
+- **The mention dropdown did not say WHO each row was**, so anything resolving a person by the
+  typed query had only a display name to go on - a name the user chooses, that may repeat, and that
+  is the very thing being resolved. It now carries the user id, the same one-attribute fact
+  `data-conversation-tile` publishes and for the same reason.
+
+- **A permission log named a user without saying it was one, so nobody could tell whose traffic it
+  was.** `social-service` truncates every id to eight characters, and eight hex is not an identity
+  in this system - a trace id is eight hex, so is a card id, so is an association id - so an id is
+  only attributable where the line SAYS what the token is. `[PERM] afc13486 holds flag=1` said
+  nothing, and the campaign's observer read it as infrastructure it was obliged to explain rather
+  than as a stranger's request landing inside its window. Three such lines now spell `user=`.
+
+- **A delivery that arrived twice accused BOTH channels at once, so the one shape that would be a
+  server defect read exactly like the three that are routine.** A message is offered by the live
+  socket and by the pending pull, and an acknowledgement cannot land before a pull already in
+  flight - so the same row legitimately reaches the client twice, is decrypted once and acknowledged
+  again. The seam that does that printed one sentence for every repeat, `the live frame and the pull
+  crossed`, whichever way round it had actually happened. It could therefore be counted and never
+  triaged: two campaign rows sat `PASS-DIRTY` on it for a day against a line nobody could explain or
+  fix. The channel was KNOWN at both call sites and thrown away one frame above the decision; it is
+  carried now, and the four combinations of channel and prior state say four different things. Three
+  are the ordinary crossing seen from one side or the other. The fourth - a LIVE frame repeating a
+  row this device has already acknowledged - is not a crossing at all, since the gateway publishes a
+  frame once at send and never replays the queue on connect, so it means one message was published
+  twice; it is the only one printed as a warning, and it has never been observed.
+
+- **A read watermark had three silent ways out, all of them in a debounce that had already zeroed
+  the pending mark.** Nothing retries after that, so what the device had read was lost for the peer,
+  which keeps showing the conversation unread until something else moves the mark - and one of the
+  three carried the comment `/* MLS not ready */`, asserting a cause nothing had checked. All three
+  now say what was lost and what follows from it.
+
+- **The Android client asked "can my ENGINE keep a cookie" when the question is also "can this
+  server ISSUE one", so it was silently sessionless on every deployment that is not HTTPS.** The
+  refresh credential travels in `X-Canari-Refresh` where the WebView cannot keep the cookie, and the
+  predicate deciding that - on both sides of the wire - named ONE fact: the client's origin.
+  `tauri://localhost` (iOS, macOS, Linux) carries it, `http(s)://tauri.localhost` (Android, Windows)
+  does not, because its cookie works and is proven on hardware.
+
+  It is proven on hardware served over HTTPS. `setRefreshCookie` issues `SameSite=None; Secure` over
+  TLS and `SameSite=Lax` without `Secure` over plain HTTP - there is no third option, since `None`
+  requires `Secure` and `Secure` requires TLS - and **a `Lax` cookie cannot be SET in a third-party
+  context at all.** The Android shell's page is `tauri.localhost` while the credential belongs to the
+  API's origin, so against any HTTP deployment the phone was handed a cookie its engine discarded on
+  arrival. Measured 2026-09-04: `Network.getAllCookies` returned 0 matching cookies on the phone
+  against 3 in a browser, the server logged `no canari_refresh cookie. cookies=[]
+  origin=http://tauri.localhost`, and `auth_sessions` held three Android rows created and never used
+  again - `rotatedAt` NULL, `lastUsedAt` equal to `createdAt`. The device logged itself out before it
+  had published a key package, so it could be added to no group and listed no conversation. Every
+  phone row of the cross-client campaign was blocked on it.
+
+  Both predicates now decide from the same TWO facts: the origin, and whether the deployment can
+  issue a cookie a third-party context accepts - `ALLOW_INSECURE_COOKIES` on the server, the API's
+  scheme on the client, which are two spellings of one thing. **Production and `dev.canari-emse.fr`
+  are HTTPS, so Android keeps taking the cookie path exactly as it does today** and nothing proven on
+  hardware is re-decided; the new branch can only be reached by a deployment that cannot issue the
+  cookie at all. Verified on the phone: `refresh carries=stored credential` then `refresh OK 171ms`
+  across an `am force-stop`, a key package published for the first time, and the feed and
+  conversation list rendering.
+
+  **Serving the local estate over TLS was tried first and is not available**, which is the
+  measurement that makes this the fix rather than a workaround. The phone's API calls go through the
+  Tauri http plugin, which is Rust `reqwest` built against `webpki-roots` with no platform verifier:
+  it trusts the bundled Mozilla root set and nothing else - not the Android system store, not a user
+  CA, not a network security config. With a local CA installed for the WebView and staged into the
+  debug APK, TCP still connected and every request died as `error sending request for url`. A private
+  certificate cannot be made to work on that client at all.
+
+  Two things were kept from that attempt, because they are true whatever the transport. A second
+  proxy hop makes a server PARSE headers it only ever GENERATED, and they get their own buffer of one
+  page by default - this estate's CSP is ~1.5 kB, so every page answered `502` while the container
+  stayed HEALTHY, because the health check asked for `/api/version`, the one route that sets no CSP.
+  A probe chosen for being cheap had been selected for not resembling the traffic; it now fetches
+  `/chat` too.
+
+- **A verdict could be invalidated by its runner changing and not by the gesture it measures with.**
+  `results.mjs` records `checkSha`, the hash of the runner file, and `rows.mjs` refuses to believe a
+  verdict whose runner moved since. It says nothing about what that runner IMPORTS, which is where
+  the measuring is done: when `openConversation` in `chat.mjs` was found opening the wrong
+  conversation, fixing it changed what every MSG, READ, MUT, FWD and NOTIF row looks at, and not one
+  verdict was flagged - `msg1.mjs` was untouched, so its hash still matched.
+
+  A second hash now travels beside it, over the runner's own transitive in-tree import graph,
+  discovered from its specifiers rather than a hand-kept list - a hand-kept list is the thing that
+  goes stale, in the direction that matters. Anything resolving outside the harness is excluded, so
+  the out-of-tree credentials file cannot enter a digest and two checkouts stay comparable. `rows.mjs`
+  reports "its instrument changed" separately from "its runner changed", because they send the reader
+  to different work; verdicts predating the field get a quiet line rather than being listed as
+  changes, since a warning that fires on every row is not a warning. `archive/instrument-selftest.mjs`
+  asserts every specifier form the walker must follow and is in `make test-harness`.
+
+- **A check that asked for a DM was silently handed a group, and recorded a verdict about it.**
+  `openConversation` matched the requested name anywhere in a sidebar row and broke ties by shortest
+  text. A tile is `<initials>` / `<title>` / `<last message preview>`, and the preview carries other
+  people's sentences - "<owner> a ajoute <peer> au groupe" contains the peer's name as surely as
+  their own DM row does. Shortest-match then chose between them by how much had been said lately.
+
+  Measured 2026-09-04: MSG-1 asked for the DM and opened `Repro Gamma`, because inviting the peer to
+  the venue minutes earlier had left a 89-character notice in the DM's preview against the group's
+  68. Nothing failed - it opened a real conversation, sent into it, saw the message arrive in 254 ms
+  and recorded a verdict naming a conversation it never touched. The search now matches the row's
+  TITLE, prefers an exact title over a containing one, clicks by the app's own
+  `data-conversation-tile` id rather than a re-located description, and REFUSES an ambiguous match
+  instead of resolving it. Re-run on the same estate: MSG-1 PASS, clean, on the DM, 252 ms.
+
+- **The campaign venue fixture was identified by a name, so on a copy of production it resolved to
+  a real community the test accounts could neither join nor rebuild.** `workspaceIdOf` asked whether
+  a community by that NAME existed, which was a sufficient key for exactly as long as the campaign
+  was the only thing on the estate using it. The rig moved onto a prod-copy estate on 2026-09-03; on
+  2026-09-04 `Campagne de test` resolved to a community two real members had owned since 2026-08-26,
+  while the campaign's own accounts - created that morning - were in nothing at all. A community's
+  slug is derived from its name and carries a unique index estate-wide, so that name could not be
+  rebuilt either.
+
+  `venue.mjs` took the foreign id for its fixture and went on to invite a peer into a community its
+  client cannot even list, reporting `the community was never listed within 20000ms` - a SIDEBAR
+  defect, for an identity mismatch that one `channel_members` row settles before any click.
+  `workspaceIdOf` now takes an optional `memberUserId`, and the guard resolves the accounts BEFORE
+  its first read, so the fixture is "a community by this name that we are IN". A name held by
+  somebody else is now a refusal naming the slug and the cause, never a build that fails later. The
+  venue is renamed after the campaign's own accounts, since any plausible name collides eventually.
+
+- **A device that held a group tree the server had no leaf for could not send, could not be
+  repaired, and every mechanism written to repair it declined to look at it.** Measured on the local
+  estate 2026-09-04: a device re-minted after a PIN reset was given a `dm_device_group_memberships`
+  row at 15:34:52 that never left `pending`. Its outbox held eight messages at attempt 18-23 - each
+  refused `SenderNotActive`, each re-queued as a *"transient failure"* - and a full page reload did
+  not lift it. It stayed that way for two and a half hours, and would have stayed for ever.
+
+  **Three mechanisms could have repaired it and all three asked the wrong question.**
+  `syncConnectionAfterWsOpen` drives recovery only for a group ABSENT from the WASM; the
+  SYNC_WATCHDOG does the same and, worse, called `cancelReAdd` on the group every 5 s *because* the
+  WASM held it; and `requestReAdd` returns at its own `holdsGroupState` guard before reaching the
+  `pending` discriminator written for exactly this population. `getLocalGroups()` answers "do I hold
+  a tree", never "does the server accept me as a member" - and a device can hold a perfectly
+  well-formed tree for a roster seat nobody ever honoured.
+
+  **The one component holding the proof was the sender, and it did nothing with it.** The outbox
+  classified the refusal correctly, logged a line naming the livelock, and then re-posted the same
+  frame on a backoff ladder that has no termination. It now drives the repair:
+  `recoverRosterDisagreement` forgets the tree the server holds no leaf for - which is what
+  `requestReAdd`'s guard asks for in as many words, and costs nothing, since nothing that tree
+  encrypts could be opened by anyone - checkpoints the forget so a reload cannot restore the state
+  it was entered to drop, then re-enters recovery, where the `pending` seat finally reaches either
+  the member who owes a Welcome or the self-service external join. It is throttled on the shared
+  recovery cooldown, so a flush ladder starting at 2 s cannot discard a tree that has just been
+  rejoined.
+
+  **The server already named the population hourly and nobody had written the repair.**
+  `reportStrandedDeviceMemberships` counted 70 pending memberships past its window on this estate,
+  25 of them holding a roster seat with no Welcome ever queued, the oldest since 2026-08-27. A
+  correct report with no repair behind it is found by hand, a day late.
+
+  **The cost, counted on the server:** 392 `REJECT sender_not_active` for that one device, several
+  a minute, continuously, until the fixed bundle loaded at 18:21:20 - after which the estate
+  recorded exactly two more, each a deliberate reproduction and each repaired within three seconds.
+  A storm with no termination became two isolated events that heal themselves.
+
+  The retry line no longer calls it transient: what is retried is the MESSAGE (never lost, and it
+  goes out intact once the device is re-admitted), while what is waited on is the REPAIR, and
+  reporting the two identically is what let eight stuck messages read as ordinary network noise.
+
 - **A capability file whose description said "NOT included in production builds" was in every
   production build, and the one thing it was supposed to allow it never allowed.** `development.json`
   granted the Tauri HTTP plugin `http://**` and the WebSocket plugin `ws://localhost:*`, on the
@@ -35,7 +406,53 @@ which is also where every release up to and including v0.13.1 now lives.
   calls through the browser's own `fetch`, which is why the login worked and the PIN could not. The
   replacement spells the port wildcard: `http://localhost:*`, `http://127.0.0.1:*`.
 
+- **The test rig's PIN atom never exited when it succeeded, so every phone row that met the unlock
+  gate recorded a false failure two minutes after unlocking the phone.** Each of `pin.mjs`'s refusal
+  paths closes the CDP socket and names an exit code; the path where the PIN WORKED fell off the end
+  of the file with the socket still open, and an open socket keeps the event loop alive for ever.
+  `phone.unlockPin()` runs it under `execFileSync(..., { timeout: 120_000 })`, so the ordinary
+  outcome was: unlock the app in 2.7 s, sit there for 117 more, get killed, report `pin.mjs failed`.
+  It hid behind the "no modal" path, which exits 2 correctly and is the state of the phone on every
+  run except the first after a restart - so the hang appeared only on rows that restart the app,
+  which is exactly the population that cannot afford two lost minutes. DEL-7 carried it as dirt on
+  2026-09-05 with a screenshot showing the app unlocked and past the gate. The reason a pin failed is
+  now reported too: `unlockPin` kept 200 characters of STDOUT, the one stream that says nothing about
+  why, and discarded the exit code and stderr - which are what separate "the product refused the
+  PIN", "the app is on the wrong estate" and "the CDP context died".
+
+- **The hash that says what a check measures with could not see code the check RUNS**, only code it
+  imports. `instrument.mjs` walks `import` specifiers, and this rig spawns atoms by name:
+  `phone.mjs` spawns `pin.mjs`, `del.mjs` spawns `mlsdb.mjs`, `healrevoke.mjs` spawns `login.mjs`.
+  `pin.mjs` decides whether a phone row can read anything at all and was in no hash, so fixing its
+  hang - which changes what every `+A1` row meeting the gate can observe - flagged not one verdict.
+  This is the same failure the mechanism was built for in the first place (`chat.mjs` opening the
+  wrong conversation under runners whose own bytes had not moved), one level further out. The walk
+  now also follows a bare `.mjs` filename in call or array position, anchored there so a name in
+  prose stays out: over-inclusion is the safe direction only while it stays bounded, and a hash
+  invalidated by every edit anywhere is worth what no hash is worth. Measured cost on `del.mjs`:
+  20 files to 25, the five being exactly the spawned ones and their imports.
+
 ### Changed
+
+- **Seven places still reached for `node`, and one of them made the documented command and the
+  shipped command different programs.** The rule is "bun runs the scripts too, never `node`", and
+  `CLAUDE.md` spells the release-notes gate `bun tools/app-store/submit.mjs --check-notes` - while
+  `release-preflight.sh` ran that exact call under `node`, as did `release.yml`, `ios.yml` and
+  `android.yml`. `release.yml` had no bun at all, so the two jobs that needed it got the standard
+  pinned step every other workflow already uses (`.bun-version`, the one place this repo names a bun
+  version). The three `@node` lines in the Makefile went the same way, all three verified under bun
+  first. `ci.yml` is untouched: its node use is jest, deliberate, and documented in place with the
+  measurement behind it.
+
+  **And one of the seven was broken on this machine and could only ever have worked on Linux.**
+  `scripts/read-app-version.sh` interpolated an absolute `$ROOT` into `require()`, which under MSYS
+  is `/f/Programmation/...` - a shape no Windows runtime resolves. CI is Linux, which is exactly why
+  it could stay broken: the release path reads this helper, and a workstation asking it the same
+  question got `Cannot find module`. It resolves from the working directory now.
+
+  One test asserted the old spelling: `release-chain.test.sh` checked that iOS submits by grepping
+  for `node tools/app-store/submit.mjs`. The claim is "it submits", not "it submits with node", and
+  a test that breaks on a change it is not about is one that gets weakened rather than read.
 
 - **"Can I use this group?" was spelt out nineteen times, and it is three different questions.**
   Every site wrote `getLocalGroups().includes(id)` by hand across eleven files. All of them were

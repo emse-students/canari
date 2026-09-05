@@ -33,6 +33,7 @@ import { APP_TAB, armComposer, awaitGatewayConnected, awaitMessage, client, ensu
 import { activate } from '../cdp.mjs';
 import { armCut, awaitSevered, cutHard, link } from './net.mjs';
 import { mark, recordObserved } from '../results.mjs';
+import { ignoringOfflineCut, report } from '../watch.mjs';
 import { watch } from '../watch.mjs';
 import { PORTS, peerNameFor } from '../names.mjs';
 
@@ -136,6 +137,13 @@ const settled = onPeer.settled && onSender.settled && inbound.settled;
 const verdict = vacuous.length ? 'VACUOUS' : !settled ? 'INCONCLUSIVE' : fail.length ? 'FAIL' : 'PASS';
 
 // `recordObserved` gates on cleanliness and on a mid-run redeploy, and records the dirt itself.
+//
+// W2 IS THE CLIENT THIS CHECK TAKES OFFLINE, so its report is read through `ignoringOfflineCut` -
+// the disposition written for exactly this and, until 2026-09-05, applied by every check that cuts
+// a link except this one. Without it TAB-7 cannot be clean on any run: severing the transport is
+// the whole method, and the `ERR_INTERNET_DISCONNECTED`s, the closed socket and the
+// "Gateway inaccessible" line are lines this script caused on purpose. W1 stays unfiltered, because
+// nothing was done to W1 and a disconnection there would be a finding.
 const row = await recordObserved('TAB-7', verdict, {
   offlineMarker: fromW2,
   inboundMarker: fromW1,
@@ -154,7 +162,7 @@ const row = await recordObserved('TAB-7', verdict, {
   countsSettled: settled,
   vacuousBecause: vacuous,
   failures: fail,
-}, { W1: o1, W2: o2 });
+}, { W1: o1, W2: ignoringOfflineCut(await report(o2)) });
 console.log(
   `[tab7] VERDICT ${row.verdict}${vacuous.length ? ' - ' + vacuous.join('; ') : fail.length ? ' - ' + fail.join('; ') : ''}`
 );

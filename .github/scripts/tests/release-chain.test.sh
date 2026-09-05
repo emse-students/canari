@@ -629,7 +629,10 @@ printf '\nboth stores are reached all the way, and iOS no longer stops at TestFl
 # create the version, attach the build, press Submit - while the same release put Android on the
 # Play `production` track by itself. Nothing asked for that gesture and nothing reported its
 # absence, so a stable release was half-shipped by construction.
-if grep -q 'node tools/app-store/submit\.mjs' "$WF/ios.yml"; then
+# THE CLAIM IS "IT SUBMITS", NOT "IT SUBMITS WITH NODE". The runtime was baked into this pattern
+# incidentally and made the assertion fail the day the call moved to bun - a test that breaks on a
+# change it is not about is a test that gets weakened rather than read.
+if grep -qE '(node|bun) tools/app-store/submit\.mjs' "$WF/ios.yml"; then
   pass 'ios.yml submits the version for review after the upload'
 else
   fail 'ios.yml no longer submits - a stable release would stop at TestFlight and wait for a human nothing reminds'

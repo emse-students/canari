@@ -77,81 +77,81 @@ accounts changed.
 | SETUP-6 | A1: log in as owner, decline biometrics | `+A1` `+user` | `pending` |
 | SETUP-7 | Discovery pass over the real at-rest artefacts | `+A1` | `pending` - owed before CORRUPT and PIN |
 | SETUP-8 | Baseline snapshot of intact Android app data | `+A1` | `pending` - owed before CORRUPT and PIN |
-| SETUP-9 | The dedicated venue for channel traffic, recreated through the UI after the 2026-08-17 purge | `W1 W2` | `pending` |
+| SETUP-9 | The dedicated venue for channel traffic, recreated through the UI after the 2026-08-17 purge | `W1 W2` | BUILT 2026-09-04 19:30 on 0.16.3 by `bun venue.mjs`, through the product on W1 and W2 - community + public `general`, both accounts members AND both devices `active` on the community's distribution group (epoch 0 -> 1). Not a recorded verdict: `venue.mjs` is the fixture builder, and the row it answers is asserted from the tables on every run. The venue was RENAMED this day - the old name resolved to a real community on the prod-copy estate ([durable-rules](durable-rules.md)) |
 
 ## 1 - MSG - the plain path
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| MSG-1 | W1 -> W2 plain DM: under 2 s, one copy, correct author | `W1 W2` | `pending` |
-| MSG-1-cold | Same, after a reload | `W1 W2` | `pending` |
-| MSG-1b | Delivery DURING a history load | `W1 W2` | `pending` |
-| MSG-2 | W2 -> A1 with the app foreground: no duplicate against the push | `+A1` | `pending` |
-| MSG-3 | Reply renders with its quoted parent on both sides | `W1 W2` | `pending` |
-| MSG-4 | Image then PDF: ciphertext upload, both render, receiver decodes | `W1 W2` | `pending` |
-| MSG-5 | Channel message converges on all three; no `masterSecret` in any payload | `+A1` | `pending` |
-| MSG-6 | Link preview served through the proxy, never a third-party `<img src>` | `W1 W2` | `pending` |
-| MSG-7 | 30 rapid sends: order preserved, no gap, no duplicate | `W1 W2` | `pending` |
-| MSG-8 | Send to a BACKGROUNDED tab | `W1 W2` `+A1` | `pending` |
-| MSG-8b | Same, receiver on another page: badge and unread count | `W1 W2` `+A1` | `pending` |
-| MSG-9 | **Receiver** offline at the GATEWAY, then restored: lands once on reconnect | `W1 W2` | `pending` |
-| MSG-10 | **Sender** offline: optimistic echo persists, outbox drains, survives a reload | `W1 W2` | `pending` |
+| MSG-1 | W1 -> W2 plain DM: under 2 s, one copy, correct author | `W1 W2` | `PASS` 2026-09-04 19:41 on 0.16.3 - 252 ms against a 1 s budget, one copy each side, no disappearance over 16 samples. **The first run of this row was PASS-DIRTY on the WRONG CONVERSATION**: `openConversation` matched the peer's name in a group's message PREVIEW and broke the tie by shortest text, so the check sent into `Repro Gamma` and reported on a DM it never opened. Fixed at the instrument, then re-run |
+| MSG-1-cold | Same, after a reload | `W1 W2` | `PASS` 2026-09-04 19:43 on 0.16.3 - 253 ms against the 3 s cold budget, one copy each side. The historical cold cost (2142 ms, prod 2026-08-13) does not reproduce on the local estate, so the two budgets are no longer telling the two modes apart here |
+| MSG-1b | Delivery DURING a history load | `W1 W2` | `PASS` 2026-09-04 19:43 on 0.16.3 - 1 ms, one copy of the marker AND one of the primer on the receiver, so the message that landed mid-load was neither lost behind the history nor duplicated by it |
+| MSG-2 | W2 -> A1 with the app foreground: no duplicate against the push | `+A1` | `PASS` 2026-09-05 07:15 on 0.16.3 + APK `2eb116c3`, clean - **first run ever, and it passes.** The phone had the conversation open and visible, the message arrived in **302 ms**, and there is exactly ONE copy on screen against a push for the same message: `before: 0`, `copiesOnPhone: 1` over 17 samples, and no later duplicate (`lostAgainMs: null`). The row was blocked for weeks by a client defect, not by itself - the phone logged itself out before publishing a key package, having been handed a `SameSite=Lax` cookie its engine discards ([sessions](sessions.md#the-credential-a-client-carries-itself)) |
+| MSG-3 | Reply renders with its quoted parent on both sides | `W1 W2` | `PASS` 2026-09-04 19:44 on 0.16.3 - 111 ms, parent and reply both rendered, the `Repondre` action addressed by its accessible name |
+| MSG-4 | Image then PDF: ciphertext upload, both render, receiver decodes | `W1 W2` | `PASS` 2026-09-04 19:54 on 0.16.3 - image arrived in 470 ms and DECODED at 32x32 on the receiver (not merely a `blob:` src), PDF rendered by name, both clean. **The fixture it uploads did not exist**: `.gitignore`'s `*.png` had made `fixtures/msg4-image.png` uncommittable, and `./fixtures/` resolved against `archive/` after the runners moved - so CDP staged a file with no bytes and the check hung 30 s on `EN ATTENTE` with no verdict. Fixture committed, `fixtures.mjs` resolves from the harness root |
+| MSG-5 | Channel message converges on all three; no `masterSecret` in any payload | `+A1` | `PASS` 2026-09-05 07:20 on 0.16.3 + APK `2eb116c3`, clean - **first run ever.** The salon message converges on all three clients (one copy each, W2 in 151 ms and the PHONE in 1248 ms), and `secretsLeaked: []` is the half that matters: no `masterSecret` appears in any payload on any of the three. Recorded `PASS-DIRTY` once first, on DEL-10's deletion reaching the sleeping phone late (`[DISCOVERY] UI group ... dismissed by user - removing`) - a correct line about an earlier row, consumed once and gone |
+| MSG-6 | Link preview served through the proxy, never a third-party `<img src>` | `W1 W2` | `PASS` 2026-09-04 19:54 on 0.16.3 - preview rendered in 24 ms, `foreign: []` so no image was fetched from a third party. A first run read PASS-DIRTY on `Erreur envoi media` - that was MSG-4's crashed run leaving a file staged in the composer, and it cleared once MSG-4 stopped dying mid-gesture |
+| MSG-7 | 30 rapid sends: order preserved, no gap, no duplicate | `W1 W2` | `PASS` 2026-09-04 19:54 on 0.16.3 - 30 sent, 30 received, no gap, no duplicate, order settled, 1750 ms end to end. Repeated twice with the same result |
+| MSG-8 | Send to a BACKGROUNDED tab | `W1 W2` `+A1` | `PASS` 2026-09-05 07:17 on 0.16.3 + APK `2eb116c3`, clean - **first run ever.** The message reaches a tab that is HIDDEN (`arrivedWhileHiddenMs: 1087`) and lands exactly once. `titleChanged: false` is recorded as DATA, not asserted: the product has no title or badge signal, which is the gap TAB-1 was re-scoped around and is P3 in [backlog](backlog.md) |
+| MSG-8b | Same, receiver on another page: badge and unread count | `W1 W2` `+A1` | `PASS` 2026-09-05 07:18 on 0.16.3 + APK `2eb116c3`, clean - **first run ever.** With the receiver on a DIFFERENT page entirely, the message still arrives exactly once and the unread state is signalled (`unreadSignalled: true`) - so the count survives the conversation not being on screen, which is the half a backgrounded-tab row cannot ask |
+| MSG-9 | **Receiver** offline at the GATEWAY, then restored: lands once on reconnect | `W1 W2` | `PASS` 2026-09-04 20:00 on 0.16.3 - nothing arrived while cut, exactly ONE copy after, 597 ms from reconnect to arrival. `deliveriesCrossed: 2` is recorded and FORGIVEN for this row only: severing the link is this check's own gesture, and `admitDelivery` says a crossing is routine at a reconnect while its RATE is the reading. Counted before it is forgiven, and nothing is gated on the number - one measurement is not a population |
+| MSG-10 | **Sender** offline: optimistic echo persists, outbox drains, survives a reload | `W1 W2` | `PASS` 2026-09-04 20:01 on 0.16.3 - one copy on the sender while cut and none on the receiver, composer emptied, outbox drained 1006 ms after the link returned |
 
 ## 2 - TYPE - typing indicators
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| TYPE-1 | Typing on W1 shows on W2 within a second, and clears on stop | `W1 W2` | `pending` |
-| TYPE-2 | It expires on its own after 6 s if the stop is never sent | `W1 W2` | `pending` |
-| TYPE-3 | Killing the tab mid-typing leaves no stuck indicator on the peer | `W1 W2` | `pending` |
-| TYPE-4 | An offline peer gets nothing, and nothing is replayed when it returns | `W1 W2` | `pending` |
-| TYPE-5 | Channel typing, a different transport entirely (REST, not WS) | `W1 W2` | `pending` |
+| TYPE-1 | Typing on W1 shows on W2 within a second, and clears on stop | `W1 W2` | `PASS` 2026-09-04 23:39 on 0.16.3, clean - 3/3 passes |
+| TYPE-2 | It expires on its own after 6 s if the stop is never sent | `W1 W2` | `PASS` 2026-09-04 23:39 on 0.16.3, clean - 3/3 passes, the indicator expires on its own |
+| TYPE-3 | Killing the tab mid-typing leaves no stuck indicator on the peer | `W1 W2` | `PASS` 2026-09-04 23:39 on 0.16.3, clean - 3/3 passes, `assertionHeld` AND `teardownRestored`, which is the pair this row demands since its teardown was found spawning `pin.mjs` from the wrong directory, leaving W1 locked and returning PASS anyway |
+| TYPE-4 | An offline peer gets nothing, and nothing is replayed when it returns | `W1 W2` | `PASS` 2026-09-04 23:39 on 0.16.3, clean - 3/3 passes, peer offline in ~100 ms, `whileOffline: ""` and `afterReconnect: ""`. **The ERROR was the check's own reload**, and it took a dozen runs because the message named a CDP condition and no location: `armCut` reloaded the page and then polled `document.readyState` on the context that reload was destroying, so roughly one poll in three landed inside the window. It waits on `Page.loadEventFired` now, and `until` treats a navigation as `not yet` while COUNTING it, so the next one reads as a page reloading rather than as a predicate that never held |
+| TYPE-5 | Channel typing, a different transport entirely (REST, not WS) | `W1 W2` | `PASS` 2026-09-04 23:39 on 0.16.3, clean - 3/3 passes, the REST transport. It failed first on `the community was never listed`, which was a STALE LITERAL and not a sidebar fault: `openChannel` defaulted to a string that names a real community belonging to two production users. It follows `VENUE` now |
 
 ## 3 - READ - receipts and unread counts
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| READ-1 | Reading on W1 clears the badge on W1 and marks it read for the sender | `W1 W2` | `pending` |
-| READ-2 | The SAME user's other device also clears | `+A1` | `pending` |
-| READ-3 | The receipt only fires with the window FOCUSED and the tab visible | `W1 W2` | `pending` |
-| READ-4 | The 2 s debounce batches: twenty messages send ONE watermark | `W1 W2` | `pending` |
-| READ-5 | "Seen by" resolves to display names, and to `+N` past three - the watermark is per USER, so it needs FOUR readers where the estate has TWO accounts | `+user` | `pending` |
-| READ-6 | Channels send no receipts at all; read state comes from the server tally | `W1 W2` | `pending` |
-| READ-7 | Unread count after a reload, with the receipt still in flight | `W1 W2` | `pending` |
-| READ-8 | Unread count on a conversation whose messages arrived while logged out | `W1 W2` | `pending` |
-| READ-9 | Read on A1 while W1 is open: the count on W1 goes without a reload | `+A1` | `pending` |
-| READ-10 | Reading a conversation whose peer has deleted it | `+A1` | `pending` |
+| READ-1 | Reading on W1 clears the badge on W1 and marks it read for the sender | `W1 W2` | `PASS` 2026-09-04 23:28 on 0.16.3, clean - badge armed in 103 ms, cleared in 3 ms, the sender's indicator flipped in 1 ms |
+| READ-2 | The SAME user's other device also clears | `+A1` | `PASS` 2026-09-04 23:29 on 0.16.3, clean - A1 armed in 52 ms and cleared 2106 ms after W1 read, with A1 never touched: the clear travels by the per-USER watermark. It was `PASS-DIRTY` until this run on `[QUEUE] delivery ... arrived twice`, a line that accused both channels at once and could therefore be neither explained nor fixed; the seam now names the channel that offered the second copy, and this row forgives the PULL half by name so the one shape that would be a server defect still fails it |
+| READ-3 | The receipt only fires with the window FOCUSED and the tab visible | `W1 W2` | `PASS` 2026-09-04 23:29 on 0.16.3, clean - hidden and unfocused, the receipt is ARMED and not sent (`stillSentHidden`), and fires 2136 ms after the tab comes back |
+| READ-4 | The 2 s debounce batches: twenty messages send ONE watermark | `W1 W2` | `PASS` 2026-09-04 23:29 on 0.16.3, clean - twenty markers, one flip 1 ms after the read, inside the 2 s debounce. Batching is INFERRED from that timing: only the last own message renders an indicator and the frames are ciphertext. Same forgiveness as READ-2, for the same line and by the same name |
+| READ-5 | "Seen by" resolves to display names, and to `+N` past three - the watermark is per USER, so it needs FOUR readers where the estate has TWO accounts | `+user` | `SKIPPED` 2026-09-04 23:29 - STRUCTURAL, not a gap in the rig: `+N` renders only past three readers (`MessageMetadata.svelte:118`) and the estate has TWO accounts, so a fourth reader cannot be produced. It needs `+user`, and it is the only row of this rung that does |
+| READ-6 | Channels send no receipts at all; read state comes from the server tally | `W1 W2` | `PASS` 2026-09-04 23:29 on 0.16.3, clean - a channel sends no receipt at all: no indicator appeared, no exception was raised. Read state in a channel is the server's tally, not MLS |
+| READ-7 | Unread count after a reload, with the receipt still in flight | `W1 W2` | `PASS` 2026-09-04 23:29 on 0.16.3, clean - the count is 0 before and after a reload taken with the receipt still in flight, and exactly ONE copy survives it (`dupCount: 1`). The row used to ERROR three runs in four: it polled `document.readyState` across the reload it had itself asked for, so `Runtime.evaluate` landed in a context being torn down. It waits on `Page.loadEventFired` now |
+| READ-8 | Unread count on a conversation whose messages arrived while logged out | `W1 W2` | `PASS` 2026-09-04 23:29 on 0.16.3, clean - three messages that arrived while logged out give a badge of exactly 3, 109 ms after the client returns |
+| READ-9 | Read on A1 while W1 is open: the count on W1 goes without a reload | `+A1` | `PASS` 2026-09-04 23:30 on 0.16.3, clean - A1 reads, and W1's count goes 203 ms later WITHOUT a reload, from the watermark alone. The row now reads its `before` and asserts against it: it used to assert `>= N` from a count it had never read, which passes on its own even when nothing arrives |
+| READ-10 | Reading a conversation whose peer has deleted it | `+A1` | `PASS` 2026-09-04 23:31 on 0.16.3, clean - reading a conversation the peer has deleted throws nothing and raises no exception, and both clients cleaned up after it |
 
 ## 4 - MUT - editing, deleting, reacting, pinning
 
 All four are MLS system events in a DM or group and REST calls in a channel, so **every row whose
-cell says both runs twice**, once in the owner-peer DM and once in `Campagne de test`.
+cell says both runs twice**, once in the owner-peer DM and once in `Canari Test Venue`.
 
 21 checks, four of which run in both venues, for 25 verdict rows.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| MUT-1 | **DM.** Edit a text message: both sides show the new text and an edited marker | `W1 W2` | `pending` |
-| MUT-2 | **DM.** Edit clears `readBy` - the receipt restarts | `W1 W2` | `pending` |
-| MUT-3 | **DM.** Edit refused on a message with media, and on someone else's | `W1 W2` | `pending` |
-| MUT-4 | **DM.** Edit a message the peer has NOT yet received | `W1 W2` | `pending` |
-| MUT-5 | **Channel.** Edit is absent by design - assert the control is not offered | `W1 W2` | `pending` |
-| MUT-6 | **DM.** Delete a message: both sides show the tombstone, not a gap | `W1 W2` | `pending` |
-| MUT-7 | **DM.** The tombstone WINS over a body on merge | `W1 W2` | `pending` |
-| MUT-8 | **Channel.** Delete is a HARD row delete, no tombstone | `W1 W2` | `pending` |
-| MUT-9 | **Channel.** A moderator deletes another user's message | `W1 W2` | `pending` |
-| MUT-10 | **DM.** The toolbar offers Delete to a moderator, where the handler refuses it | `W1 W2` | `pending` |
-| MUT-11 | **Both.** React, un-react, re-react; two users; several emoji | `W1 W2` | `pending` |
-| MUT-12 | **Both.** The 15-distinct-emoji cap, on both transports | `W1 W2` | `pending` |
-| MUT-13 | **Both.** A reaction notifies the author only, never the reactor | `W1 W2` | `pending` |
-| MUT-14 | **Both.** Pin and unpin, seen on the OTHER device | `+A1` | `pending` |
-| MUT-15 | **DM.** A pin reaches a device that was OFFLINE when it was placed | `+A1` | `pending` |
-| MUT-16 | **Channel.** A pin DOES survive, re-hydrated from the server | `+A1` | `pending` |
-| MUT-17 | **DM.** Edit, then delete, then react to the deleted message | `W1 W2` | `pending` |
-| MUT-18 | **DM.** Two devices of the SAME user edit the same message at once | `+A1` | `pending` |
-| MUT-19 | **DM.** Delete a message still in the outbox: no peer sees it, and the sender keeps no row | `W1 W2` | `pending` |
-| MUT-20 | **DM.** Mutate a message older than the 90-day retention window | `W1 W2` | `pending` |
-| MUT-21 | **DM.** The hover action bar stays inside the pane and takes its own clicks | `W1 W2` | `pending` |
+| MUT-1 | **DM.** Edit a text message: both sides show the new text and an edited marker | `W1 W2` | `PASS` 2026-09-05 00:03 on 0.16.3, clean - the new text arrives in 117 ms, no copy of the old one on either side, and the edited marker is on both |
+| MUT-2 | **DM.** Edit clears `readBy` - the receipt restarts | `W1 W2` | `PASS` 2026-09-05 00:03 on 0.16.3, clean - the peer's receipt is re-earned after the edit (2046 ms), so `readBy` really restarts |
+| MUT-3 | **DM.** Edit refused on a message with media, and on someone else's | `W1 W2` | `PASS` 2026-09-05 00:04 on 0.16.3, clean - no Edit control on a message with media, and none on someone else's |
+| MUT-4 | **DM.** Edit a message the peer has NOT yet received | `W1 W2` | `PASS` 2026-09-05 00:04 on 0.16.3, clean - the peer was offline for the original and saw it ZERO times: one edited body arrives, no original |
+| MUT-5 | **Channel.** Edit is absent by design - assert the control is not offered | `W1 W2` | `PASS` 2026-09-05 00:04 on 0.16.3, clean - a channel offers no Edit at all |
+| MUT-6 | **DM.** Delete a message: both sides show the tombstone, not a gap | `W1 W2` | `PASS` 2026-09-05 00:04 on 0.16.3, clean - one styled row on each side, never a gap |
+| MUT-7 | **DM.** The tombstone WINS over a body on merge | `W1 W2` | `PASS` 2026-09-05 00:04 on 0.16.3, clean - a peer holding the original body converges on the tombstone in 309 ms and nothing resurrects |
+| MUT-8 | **Channel.** Delete is a HARD row delete, no tombstone | `W1 W2` | `PASS` 2026-09-05 00:05 on 0.16.3, clean - a channel delete leaves a tombstone live and NO row at all after a reload: the opposite of a DM, by design |
+| MUT-9 | **Channel.** A moderator deletes another user's message | `W1 W2` | `PASS` 2026-09-05 00:05 on 0.16.3, clean - a moderator's delete of another member's message reaches both clients |
+| MUT-10 | **DM.** The toolbar offers Delete to a moderator, where the handler refuses it | `W1 W2` | `PASS` 2026-09-05 00:05 on 0.16.3, clean - **the claim on the dashboard does NOT reproduce**, and the row records why rather than passing quietly: `canModerateSelectedChannel` is false outside a channel by construction, so Delete never renders on a peer's DM message |
+| MUT-11 | **Both.** React, un-react, re-react; two users; several emoji | `W1 W2` | `PASS` 2026-09-05 00:05 on 0.16.3, clean, both transports - react, un-react and re-react converge on both devices, with the reactor's own badge marked pressed |
+| MUT-12 | **Both.** The 15-distinct-emoji cap, on both transports | `W1 W2` | `PASS` 2026-09-05 00:06-00:07 on 0.16.3, clean, both transports - fifteen distinct emoji land and the sixteenth is refused, on the client for a DM and by the server for a channel. It ERRORed until 2026-09-05 on `no settled .lucide-smile action`: Lucide renamed the icon, the app followed it to `FaceSlightlySmiling`, and the check kept aiming at a class that no longer existed - which reads as the ACTION BAR failing to appear. `archive/lucide-selftest.mjs` now refuses any class this rig aims at that the app does not render |
+| MUT-13 | **Both.** A reaction notifies the author only, never the reactor | `W1 W2` | `PASS` 2026-09-05 00:07 on 0.16.3, clean, both transports - the author is notified in ~150 ms and the reactor is not notified at all |
+| MUT-14 | **Both.** Pin and unpin, seen on the OTHER device | `+A1` | `PASS` 2026-09-05 00:07 on 0.16.3, clean, both transports - pin and unpin both cross to the other device in ~300 ms |
+| MUT-15 | **DM.** A pin reaches a device that was OFFLINE when it was placed | `+A1` | `PASS` 2026-09-05 00:07 on 0.16.3, clean - a device absent when the pin was placed reads `unpinned` while cut and converges 253 ms after it is back |
+| MUT-16 | **Channel.** A pin DOES survive, re-hydrated from the server | `+A1` | `PASS` 2026-09-05 00:08 on 0.16.3, clean - a channel pin survives a fresh load, re-hydrated from the server rather than travelling end to end |
+| MUT-17 | **DM.** Edit, then delete, then react to the deleted message | `W1 W2` | `PASS` 2026-09-05 00:08 on 0.16.3, clean - a deleted message offers neither the picker nor the quick strip, and stays styled as deleted on both sides |
+| MUT-18 | **DM.** Two devices of the SAME user edit the same message at once | `+A1` | `PASS` 2026-09-05 00:08 on 0.16.3, clean - **the first run this row has ever had.** Two devices of one account edit the same message at once and all three clients converge in 860 ms; the verdict is convergence, not which edit wins, because the receive-side author check admits both. It was `SKIPPED` for want of a mobile gesture, then `VACUOUS` on `the mobile action sheet is not open` - and that was the INSTRUMENT: a CDP `touchStart`/`touchEnd` pair is classified as a TAP however long the gap, so the lift emitted the compatibility click a real long press suppresses, into the sheet that had opened under the finger. Measured both ways on the phone, back to back. The phone's long press is injected by the OS now |
+| MUT-19 | **DM.** Delete a message still in the outbox: no peer sees it, and the sender keeps no row | `W1 W2` | `PASS` 2026-09-05 00:08 on 0.16.3, clean - deleting a message still in the outbox leaves the peer having never seen it and the sender holding no row |
+| MUT-20 | **DM.** Mutate a message older than the 90-day retention window | `W1 W2` | `SKIPPED` 2026-09-05 00:09 - STRUCTURAL: it needs a message this rig created AND older than 90 days, and the earliest campaign markers date from 2026-08-11. Armable from 2026-11-09 |
+| MUT-21 | **DM.** The hover action bar stays inside the pane and takes its own clicks | `W1 W2` | `PASS` 2026-09-05 00:09 on 0.16.3, clean - the hover action bar stays inside the pane (`overflowsPaneLeftBy: 0`) and its own button is what takes the click at its centre |
 
 ## 5 - SEARCH - finding a message
 
@@ -159,34 +159,34 @@ Client-side, in-conversation, substring-only: no server index, no global search.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| SEARCH-1 | A term in a recent message is found and highlighted; prev/next walk the hits | `W1 W2` | `pending` |
-| SEARCH-2 | A term only in OLD history: does `searchLimitedToLoaded` tell the truth? | `W1 W2` | `pending` |
-| SEARCH-3 | Deleted messages excluded; edited messages match their NEW text | `W1 W2` | `pending` |
-| SEARCH-4 | Channel search pulls up to 2000 rows and decrypts them - time it | `W1 W2` | `pending` |
-| SEARCH-5 | Accents and case: a French corpus is the real corpus here | `W1 W2` | `pending` |
-| SEARCH-6 | The sidebar filter is a DIFFERENT search - assert it does not claim more | `W1 W2` | `pending` |
+| SEARCH-1 | A term in a recent message is found and highlighted; prev/next walk the hits | `W1 W2` | `PASS` 2026-09-05 00:18 on 0.16.3, clean - two hits, `next` walks 1/2 -> 2/2, `prev` walks back and WRAPS, and the jump applies its highlight. The ring itself is not asserted (a style is not a statement) |
+| SEARCH-2 | A term only in OLD history: does `searchLimitedToLoaded` tell the truth? | `W1 W2` | `PASS` 2026-09-05 00:18 on 0.16.3, clean - with the server fetch cut mid-search the term is still found from what is loaded AND the warning is shown, which is `searchLimitedToLoaded` telling the truth rather than hiding a partial answer |
+| SEARCH-3 | Deleted messages excluded; edited messages match their NEW text | `W1 W2` | `PASS` 2026-09-05 00:18 on 0.16.3, clean - a deleted message matches 0/0, an edited one matches its NEW text 1/1 and its OLD text 0/0 |
+| SEARCH-4 | Channel search pulls up to 2000 rows and decrypts them - time it | `W1 W2` | `PASS` 2026-09-05 00:18 on 0.16.3, clean - 152 ms to the answer over one history page, 534 ms wall clock, no stall and no partial-answer warning during a search that succeeded |
+| SEARCH-5 | Accents and case: a French corpus is the real corpus here | `W1 W2` | `PASS` 2026-09-05 00:18 on 0.16.3, clean - the corpus word carries an accent and BOTH an unaccented query and an accented upper-case one find it 1/1. This row exists because the fold used to be applied to one side only, which passes every test written in ASCII |
+| SEARCH-6 | The sidebar filter is a DIFFERENT search - assert it does not claim more | `W1 W2` | `PASS` 2026-09-05 00:19 on 0.16.3, clean - the sidebar filter matches a name and the CURRENT last message, does not match a superseded one, and a junk query leaves zero rows: a different search, claiming no more than it does |
 
 ## 6 - MENTION - mentions and what they trigger
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| MENTION-1 | The autocomplete inserts the `@[uuid]` token and it renders as a chip | `W1 W2` | `pending` |
-| MENTION-2 | In a CHANNEL at level `mentions`, the mention REACHES the receiver's phone | `+A1` | `pending` |
-| MENTION-3 | At level `none` it reaches nothing - carrying its own positive control | `+A1` | `pending` |
-| MENTION-4 | In a DM or group a mention triggers NOTHING extra | `W1 W2` | `pending` |
-| MENTION-5 | Mention a user who is not a member of the channel | `W1 W2` | `pending` |
-| MENTION-6 | The channel path sends `mentionedUserIds` in CLEARTEXT - confirm the documented leak and nothing more | `W1 W2` | `pending` |
+| MENTION-1 | The autocomplete inserts the `@[uuid]` token and it renders as a chip | `W1 W2` | `PASS` 2026-09-05 01:17 on 0.16.3, clean - the autocomplete inserts `@[uuid]`, the bubble renders it as `@Canari Test Beta`, and clicking the chip lands on `/profile/<that same id>`. The row is addressed by id now, not by the top of the list |
+| MENTION-2 | In a CHANNEL at level `mentions`, the mention REACHES the receiver's phone | `+A1` | `PASS` 2026-09-05 01:17 on 0.16.3, clean - a REAL push: the owner sets their own level to `mentions`, the peer mentions them by id, and the owner's phone - killed 52 ms earlier, out of the foreground - raises a notification carrying the send marker in 2231 ms. So the frame was routed AND decrypted on the device |
+| MENTION-3 | At level `none` it reaches nothing - carrying its own positive control | `+A1` | `PASS` 2026-09-05 01:20 on 0.16.3, clean - a REAL suppression, and it carries its own positive control: the identical send at `mentions` was heard in 2251 ms, the same send at `none` raised nothing over 45 s, and the sender attached `mentionedUserIds` both times. So the silence is the SERVER's routing decision, not the client declining to ask |
+| MENTION-4 | In a DM or group a mention triggers NOTHING extra | `W1 W2` | `PASS` 2026-09-05 01:20 on 0.16.3, clean - a mention in a DM triggers nothing extra: no channel endpoint touched across 9 requests and `mentionedUserIds` on none of them. `messaging.ts:101` computes it only inside the channel branch |
+| MENTION-5 | Mention a user who is not a member of the channel | `W1 W2` | `PASS` 2026-09-05 01:25 on 0.16.3, clean - a fabricated `@[64-hex]` typed past the autocomplete is SENT, with the id attached: the client neither blocks it nor checks membership. A finding about the CLIENT - whether the server routes a push for it is not observed here. It also carries the evidence for the fix it provoked: the chip reads `@Utilisateur inconnu`, where three earlier runs read a bare `@` because the resolver answered `null` both for "not known yet" and for "there is nobody". The id is a CONSTANT now (`ABSENT_MENTION_ID`); it used to be random, so every run stranded one more unresolvable mention in the venue channel and three later rows paid for it |
+| MENTION-6 | The channel path sends `mentionedUserIds` in CLEARTEXT - confirm the documented leak and nothing more | `W1 W2` | `PASS` 2026-09-05 01:20 on 0.16.3, clean - the documented leak and nothing wider: the channel send carries exactly `ciphertext`, `nonce`, `senderSessionId`, `messageIndex`, `messageId`, `mentionedUserIds`, no unexpected key, and the one mentioned id is the peer's |
 
 ## 7 - FWD - forwarding
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| FWD-1 | Channel -> DM forward, the exact shape of the reported prod loss | `W1 W2` | `pending` |
-| FWD-2 | The same, 25 times in a loop - any single miss is the bug | `W1 W2` | `pending` |
-| FWD-3 | Forward while the sender goes offline mid-send | `W1 W2` | `pending` |
-| FWD-4 | Forward from A1, backgrounded 200 ms later | `+A1` | `pending` |
-| FWD-5 | Forward into a conversation not opened this session | `W1 W2` | `pending` |
-| FWD-5-repeat | The same shape N rounds from a FRESH session each - the volume FWD-5 cannot carry alone | `W1 W2` | `pending` |
+| FWD-1 | Channel -> DM forward, the exact shape of the reported prod loss | `W1 W2` | `PASS` 2026-09-05 02:12 on 0.16.3, clean - the reported shape does not reproduce: `POST -> 201` and the peer holds exactly one copy 106 ms later, both sides clean |
+| FWD-2 | The same, 25 times in a loop - any single miss is the bug | `W1 W2` | `PASS` 2026-09-05 02:13 on 0.16.3, clean - 25 forwards, ZERO lost and ZERO duplicated, 103-114 ms. **And it is a loop now**: `openChannel` full-loaded the page on every call, so this row was 25 COLD BOOTS with one forward each - a different question with a different answer, and why anything the app counts per session reset every round |
+| FWD-3 | Forward while the sender goes offline mid-send | `W1 W2` | `PASS` 2026-09-05 02:15 on 0.16.3, clean - the network is cut the instant the picker closes and the outbox still delivers it: `POST -> 201`, exactly one copy on the receiver. The presence fetch that dies with the link is forgiven as the cut this row performs |
+| FWD-4 | Forward from A1, backgrounded 200 ms later | `+A1` | `PASS` 2026-09-05 02:15 on 0.16.3, clean - the phone is sent to the home screen 200 ms after the forward and the send completes anyway: one copy on the receiver, 2 ms after the foreground gave up. The background service path delivers |
+| FWD-5 | Forward into a conversation not opened this session | `W1 W2` | `PASS` 2026-09-05 02:15 on 0.16.3, clean - the sender holds no loaded state for the target (the shape the original report came from) and the forward still lands in 110 ms, one copy |
+| FWD-5-repeat | The same shape N rounds from a FRESH session each - the volume FWD-5 cannot carry alone | `W1 W2` | `PASS` 2026-09-05 02:16 on 0.16.3, clean - 5 rounds, each from a reloaded sender holding no state for the target: 5/5 delivered, 109-116 ms, zero lost, every round clean on both sides |
 
 ## 8 - GRP - group membership and invitations
 
@@ -198,16 +198,16 @@ rung is believed.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| GRP-1 | Create a group, add a member, both sides see the roster and the Add commit merges | `W1 W2` | `pending` |
-| GRP-2 | The picker must not offer existing members or yourself, and a no-op submission must not report success | `W1 W2` | `pending` |
-| GRP-3 | Remove a member: the Remove commit, and what the removed device can still read | `W1 W2` | `pending` |
-| GRP-4 | The group invitation LINK: generate, open it on the other account | `W1 W2` | `pending` |
-| GRP-5 | Rename a group, seen on the other side | `W1 W2` | `pending` |
-| GRP-6 | Leave a group - which deliberately commits nothing | `W1 W2` | `pending` |
-| GRP-7 | Add a member who is offline; they join on their next connection | `W1 W2` | `pending` |
-| GRP-8 | Add and remove the same member twice in a row, fast | `W1 W2` | `pending` |
-| GRP-9 | A member row rendering a raw user id instead of a display name | `W1 W2` | `pending` |
-| GRP-10 | The invitation link of one group must not appear in another group's panel | `W1 W2` | `pending` |
+| GRP-1 | Create a group, add a member, both sides see the roster and the Add commit merges | `W1 W2` | `PASS` 2026-09-05 02:56 on 0.16.3, clean - the Add commit merges and the roster goes 1 -> 2 on the creator and 2 on the peer, a message crosses BOTH ways 1 ms later, and the stored id sets converge (the peer's one surplus row predates the commit, which is why the check dates it rather than counting it) |
+| GRP-2 | The picker must not offer existing members or yourself, and a no-op submission must not report success | `W1 W2` | `PASS` 2026-09-05 02:57 on 0.16.3, clean - the picker offers neither the existing member nor yourself, the submit button is present but DISABLED with nothing picked, and the roster is unchanged after trying |
+| GRP-3 | Remove a member: the Remove commit, and what the removed device can still read | `W1 W2` | `PASS` 2026-09-05 02:58 on 0.16.3, clean - both halves: the removed device KEEPS what it had already decrypted and receives nothing sent after the commit, over a 30 s negative window, and it learnt from the commit rather than from a notice. Asserting only the second half would pass against a client that simply wiped the conversation |
+| GRP-4 | The group invitation LINK: generate, open it on the other account | `W1 W2` | `PASS` 2026-09-05 02:59 on 0.16.3, clean - a 24-char token, the invitation page names the group, the join lands in 365 ms, the roster reads 2 on both sides, the SERVER holds 2 user members and 5 device routes, and a message then reaches the joiner. **It took three stacked defects to get here** - see the row's story below |
+| GRP-5 | Rename a group, seen on the other side | `W1 W2` | `PASS` 2026-09-05 03:00 on 0.16.3, clean - the creator shows the new name and the peer sees it 1 ms later. It was PASS-DIRTY on a `POST .../members -> 403` from the PEER, which turned out to be a product defect and is fixed |
+| GRP-6 | Leave a group - which deliberately commits nothing | `W1 W2` | `PASS` 2026-09-05 03:01 on 0.16.3, clean - the leaver stops listing the group and receives nothing sent after the departure over a 30 s window, and the remaining member's roster is 1. The guarantee here is SERVER-SIDE, so the row asserts the observable consequence and says nothing about a tree it cannot see |
+| GRP-7 | Add a member who is offline; they join on their next connection | `W1 W2` | `PASS` 2026-09-05 03:02 on 0.16.3, clean - added while the socket is cut, the group is NOT listed during the outage, and 63 ms after the gateway returns the join lands; the message sent before the join is then read 2.7 s later |
+| GRP-8 | Add and remove the same member twice in a row, fast | `W1 W2` | `PASS` 2026-09-05 03:03 on 0.16.3, clean - two rounds of add -> remove both go 2 then 1, the final roster is 1, and the removed account receives nothing over a 30 s window. The eviction and re-admission path narrates itself correctly throughout (Remove commit at epoch 3, `forget_group`, then a Welcome recognised as a re-admission rather than a redelivery) |
+| GRP-9 | A member row rendering a raw user id instead of a display name | `W1 W2` | `PASS` 2026-09-05 03:04 on 0.16.3, clean - zero of five rows render a raw id and both display names resolve. **But the remove control's accessible name IS a raw 64-hex id** (`Retirer <id>`), so a screen reader announces the id where sighted users read a name - a P3 in [backlog](backlog.md), not a failure of what this row asserts |
+| GRP-10 | The invitation link of one group must not appear in another group's panel | `W1 W2` | `PASS` 2026-09-05 03:05 on 0.16.3, clean - a link generated on group A leaves group B's panel offering `Generer un lien` with no link, no `Regenerer`, and no `Lien copie`: no leak of a capability between panels |
 
 ## 9 - COMM - communities, channels, roles
 
@@ -221,64 +221,77 @@ and COMM-18's four defects: [cross-client-campaign](cross-client-campaign.md).
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| COMM-1 | Create a community, create a channel, post, both peers converge | `W1 W2` | `pending` |
-| COMM-2 | Invite link: create, preview, accept from the other account | `W1 W2` | `pending` |
-| COMM-3 | An expired link, a `maxUses`-exhausted one, a REVOKED one and one to a deleted community all refused, and the rotation's new link accepted as the positive control | `W1 W2` | `pending` |
-| COMM-4 | The `channel_invitation` card appears in the DM on both sides, deduped | `W1 W2` | `pending` |
-| COMM-5 | Promote to moderator, then admin; the grid takes effect immediately | `W1 W2` | `pending` |
-| COMM-6 | SIX enforced permissions and no seventh, the three default roles as documented, and a toggle reaching the column a decision reads | `W1` | `pending` |
-| COMM-7 | `writePolicy` = admins only: refused server-side as well as in the UI | `W1 W2` | `pending` |
-| COMM-8 | A private salon: a non-member cannot see it, cannot fetch it by id, and **is never sent its seed** | `W1 W2` | `pending` |
-| COMM-9 | Removed from a salon: routing rows dropped (`evicted=true`), the next message sealed under a session they do not hold | `W1 W2` | `pending` |
-| COMM-10 | Removed from a salon: what they ALREADY hold stays readable - Graine retains seeds on purpose | `W1 W2` | `pending` |
-| COMM-11 | Kicked from the COMMUNITY: the workspace purged and every private salon group left | `W1 W2` | `pending` |
-| COMM-12 | Re-invited after a removal: sessions minted from now on, and the past only as `history_visibility` allows | `W1 W2` | `pending` |
-| COMM-13 | An admin JOINS a salon: 403 before and 200 after, the member list gains them, the transcript gains NOTHING | `W1 W2` | `pending` |
-| COMM-14 | Channel notification levels enforced server-side | `+push` | `pending` |
-| COMM-15 | Polls: create, vote, close; auto-pinned | `W1 W2` | `pending` |
-| COMM-16 | Delete a channel, then a community by typing its name: the rows really gone, the slug free again | `W1 W2` | `pending` |
-| COMM-17 | Reorder communities by drag and drop; survives a reload, reaches the other device | `+A1` | `pending` |
-| COMM-18 | Deep link into a channel from a cold start | `+A1` | `pending` |
-| COMM-19 | The last admin tries to leave: refused, unless they are the last MEMBER, which deletes the community | `W1 W2` | `pending` |
-| COMM-20 | Two admins change the same role at the same moment | `W1 W2` | `pending` |
-| COMM-21 | A member is removed while composing a message in that salon | `W1 W2` | `pending` |
-| COMM-22 | A salon carrying many Graine sessions: time the first render, and the repair when one seed is missing | `W1 W2` | `pending` |
-| COMM-23 | Public -> private: a group is minted, and a reader outside `allowedUsers` stops being routed | `W1 W2` | `pending` |
-| COMM-24 | Private -> public: the salon's group is tombstoned and the community's carries it again | `W1 W2` | `pending` |
-| COMM-25 | An admin's SECOND device receives the salon's seeds after the join, without a second join | `W1 A1` | `pending` |
+| COMM-1 | Create a community, create a channel, post, both peers converge | `W1 W2` | `PASS` 2026-09-05 03:04 on 0.16.3, clean - the community mints an invite link, the peer joins and the new channel reaches it, both sides open the same channel by slug, and the marker crosses in 254 ms and is still there one reload later, ONE copy each side |
+| COMM-2 | Invite link: create, preview, accept from the other account | `W1 W2` | `PASS` 2026-09-05 03:05 on 0.16.3, clean - the link is a `/c/join/<token>` URL and is STABLE across two reads (so it is minted once, not per view), the preview names the community without joining it, and accepting makes the peer a `member` - two members, three roles, one live-distribution group, and the check deletes what it made |
+| COMM-3 | An expired link, a `maxUses`-exhausted one, a REVOKED one and one to a deleted community all refused, and the rotation's new link accepted as the positive control | `W1 W2` | `PASS` 2026-09-05 03:05 on 0.16.3, clean - all four refused at the PREVIEW, before any join. The exhausted one was really spent (the peer joined on it, then left), the rotation minted a DIFFERENT token that previews valid - the positive control that keeps the other three from being a preview endpoint that answers `invalid` to everything - and the peer ends in none of the four |
+| COMM-4 | The `channel_invitation` card appears in the DM on both sides, deduped | `W1 W2` | `PASS` 2026-09-05 03:10 on 0.16.3, clean - ONE card each side, worded for its reader (the inviter is told they invited, the invitee is offered the join), the invitee's carrying the Join control and the inviter's not, and both survive a reload without a second copy. Dirty on its first three runs over the delivery-crossing narration, which is expected and now forgiven by shape |
+| COMM-5 | Promote to moderator, then admin; the grid takes effect immediately | `W1 W2` | `PASS` 2026-09-05 03:13 on 0.16.3, clean - `member -> moderator -> admin` on the server, and the peer's own panel followed WITHOUT a reload, then again after one. The capability is read as a SHAPE (a `<select>` per member appears only to someone who may set a role), not as a label, so it cannot be satisfied by a translation. The venue is put back to `member` at the end and the restoration is asserted |
+| COMM-6 | SIX enforced permissions and no seventh, the three default roles as documented, and a toggle reaching the column a decision reads | `W1` | `PASS` 2026-09-05 03:20 on 0.16.3, clean - the grid offers exactly the six that are enforced and no retired seventh; Administrateur holds all six and its column is LOCKED, Moderateur holds `channel.moderate` + `member.invite` + `member.kick`, Membre holds none. Revoking `channel.moderate` reached the stored row and restoring it came back, so the toggle writes the column a decision actually reads |
+| COMM-7 | `writePolicy` = admins only: refused server-side as well as in the UI | `W1 W2` | `PASS` 2026-09-05 03:20 on 0.16.3, clean - the member wrote BEFORE the policy (so the refusal is the policy and not a broken channel), and after it the API answered 403 `Not allowed to post in this channel` to a direct probe while the composer was not rendered at all. Nothing the member sent landed, and the administrator still wrote. The probe's earlier 400 is what proves it reached the write check rather than being turned away at validation |
+| COMM-8 | A private salon: a non-member cannot see it, cannot fetch it by id, and **is never sent its seed** | `W1 W2` | `PASS` 2026-09-05 03:21 on 0.16.3, clean - the peer is in the COMMUNITY and resolvable, and still: absent from its sidebar, 403 on a fetch by id, and NEVER SEALED A SEED - the salon's distribution group holds the owner's device alone while the community's holds all three. Granting access afterwards seals one, which is the positive control that keeps the absence from being a salon that seals nobody |
+| COMM-9 | Removed from a salon: routing rows dropped (`evicted=true`), the next message sealed under a session they do not hold | `W1 W2` | `PASS` 2026-09-05 03:22 on 0.16.3, clean (recorded jointly with COMM-10 by `comm910.mjs`) - the peer is off `allowedUsers` and off the roster afterwards, and the message sent NEXT never arrived at all, while the one sent before removal had arrived in 254 ms. The salon stays private and keeps its group: a removal is not a retirement |
+| COMM-10 | Removed from a salon: what they ALREADY hold stays readable - Graine retains seeds on purpose | `W1 W2` | `PASS` 2026-09-05 03:22 on 0.16.3, clean (joint with COMM-9) - the seed count is compared rather than merely non-zero, so a removal that quietly dropped every OTHER session would fail: 1 received before, the same 1 after, same session id. The salon does leave the peer's sidebar, so its messages are unreachable in the UI - recorded, not asserted, because the row is about the KEY MATERIAL not being taken back |
+| COMM-11 | Kicked from the COMMUNITY: the workspace purged and every private salon group left | `W1 W2` | `PASS` 2026-09-05 03:24 on 0.16.3, clean - the membership row is gone, BOTH distribution groups drop the peer (the community's and the private salon's), the salon's `allowedUsers` is cleared, and the community leaves the peer's sidebar. The sidebar is listed BEFORE and after, so a community that had never been there could not pass |
+| COMM-12 | Re-invited after a removal: sessions minted from now on, and the past only as `history_visibility` allows | `W1 W2` | `PASS` 2026-09-05 03:27 on 0.16.3, clean - run twice, on a `joined` salon and a `shared` one, with four markers each (before, inside, outside, after re-joining). `joined` gives the returning member ONLY what comes next and never the window it missed; `shared` gives all four back, including the ones the removal had wiped. Dirty on its first run over the delivery-crossing narration, which this row provokes twice by rebuilding the peer's client twice |
+| COMM-13 | An admin JOINS a salon: 403 before and 200 after, the member list gains them, the transcript gains NOTHING | `W1 W2` | `PASS` 2026-09-05 03:30 on 0.16.3, clean - the keys endpoint answers 403 before and 200 after, the salon's roster goes 1 -> 2, and the transcript records NOTHING either side. The admin sees the salon listed as unjoined first, which is what makes the 403 a refusal of a salon they can see rather than of one they cannot |
+| COMM-14 | Channel notification levels enforced server-side | `+push` | `PASS` 2026-09-05 04:07 on 0.16.3 + APK `2eb116c3`, clean - all four cases decided server-side and observed on the PHONE's tray: `none` and `mentions`-while-unmentioned printed `recipients=0` and left the tray empty, `mentions`-while-mentioned and `all` printed `recipients=1` and posted. **Two instrument defects and one product defect were found getting here**: `srvLines` was reading PRODUCTION's log (so the row FAILED on a working product), the row read an ABSENCE where the service prints `recipients=0`, and the mention notification's body showed a raw `@[<64 hex>]` token - now `@vous`, asserted by `noRawMentionTokenInATray` |
+| COMM-15 | Polls: create, vote, close; auto-pinned | `W1 W2` | `PASS` 2026-09-05 04:11 on 0.16.3, clean - the poll is created PINNED, reaches the peer as ONE card with the three options at zero, the peer's vote is stored against their own id and the inviter sees the count move, and closing it ends the card. The peer's card carries no close control, which is what separates a poll only its author may close from one anybody may |
+| COMM-16 | Delete a channel, then a community by typing its name: the rows really gone, the slug free again | `W1 W2` | `PASS` 2026-09-05 04:12 on 0.16.3, clean - the footprint is counted before and after, per table: deleting the channel takes the channel row and leaves the community standing (2 -> 1 channels, workspace still 1), and deleting the community takes workspace, channels, members, roles, invites and the live distribution group to ZERO with no orphan messages. A second community then takes the same slug, which is the only proof the slug was really released |
+| COMM-17 | Reorder communities by drag and drop; survives a reload, reaches the other device | `+A1` | `PASS` 2026-09-05 04:22 on 0.16.3 + APK `2eb116c3`, clean - the drag moves the subject to the top and nothing else moves, `channel_members.sortOrder` holds the new order, a reload of W1 comes back to it, the PHONE shows the same rail, and the reverse drag restores the original. Recorded **FAIL** first on all four assertions against a working product: the row waited on the RAIL, which `Sidebar` updates optimistically, where the post-condition is a WRITE the UI never awaits - the `PATCH` answers 200 in 7 ms and the row now polls the column |
+| COMM-18 | Deep link into a channel from a cold start | `+A1` | `PASS` 2026-09-05 05:17 on 0.16.3 + APK `2eb116c3`, clean - the app is force-stopped (pid asserted gone), `fr.emse.canari://chat/channel_<uuid>` is followed, the PIN is answered, and all four hold: the handler logged the link, the app landed on `/communities`, the salon opened, and its message was on screen **97 ms** later. **This row was failing because of the RIG, in three separate places**: `unlockClient` had never once been able to spawn `pin.mjs` (wrong cwd, `Module not found` swallowed into a string nobody recorded); `resolveDevice` computed `isPhone` from the SPELT name, so `--port` never armed the adb forward; and `phone.ensure` foregrounds with a plain MAIN intent, which `singleTask` + `setIntent` made overwrite the VIEW intent this row exists to measure. Driven by hand, the same build read the launch URL on attempt 1 in 38 ms every time |
+| COMM-19 | The last admin tries to leave: refused, unless they are the last MEMBER, which deletes the community | `W1 W2` | `PASS` 2026-09-05 04:26 on 0.16.3, clean - the sole admin is refused WITH an explanation shown and is still a member afterwards, the ordinary member leaves (roster 2 -> 1), and the last member leaving takes workspace, channels, members, roles, invites and the live distribution group to zero |
+| COMM-20 | Two admins change the same role at the same moment | `W1 W2` | `PASS` 2026-09-05 04:34 on 0.16.3, clean - both grids took the click and the stored role ends in ONE coherent state that both admins' screens agree with. The outcome is recorded as data (`both edits applied`) rather than asserted to a single winner: what the row refuses is a role holding half of each edit, or a client disagreeing with the server. `channel.moderate`, which neither admin touched, is untouched |
+| COMM-21 | A member is removed while composing a message in that salon | `W1 W2` | `PASS` 2026-09-05 04:35 on 0.16.3, clean - the peer wrote before, had a draft on screen at the moment of removal, and the API answers 403 `Not allowed to access this channel` after. The earlier 400 on a sessionless probe is what proves the request reached the write path rather than being turned away at validation |
+| COMM-22 | A salon carrying many Graine sessions: time the first render, and the repair when one seed is missing | `W1 W2` | `PASS` 2026-09-05 04:36 on 0.16.3, clean - six join/leave cycles drive the epoch 1 -> 13 and mint TWELVE distinct sessions, one message under each; all twelve are on the server and all twelve render. That the sessions are really distinct (one message each, not twelve under one) is what makes the first render a test of the seed ladder rather than of a single key |
+| COMM-23 | Public -> private: a group is minted, and a reader outside `allowedUsers` stops being routed | `W1 W2` | `PASS` 2026-09-05 04:39 on 0.16.3, clean (recorded jointly with COMM-24 by `comm2324.mjs`) - it starts public, a DIFFERENT group is minted on the switch and linked to the salon, the owner is the only allowed user and is routed in 194 ms, and the panel agrees with the stored row |
+| COMM-24 | Private -> public: the salon's group is tombstoned and the community's carries it again | `W1 W2` | `PASS` 2026-09-05 04:39 on 0.16.3, clean (joint with COMM-23) - it starts private, and the switch unlinks the group, RETIRES it, releases the scope and empties the roster. Retiring rather than deleting is the point: the past stays decryptable to whoever already held a seed |
+| COMM-25 | An admin's SECOND device receives the salon's seeds after the join, without a second join | `W1 A1` | `PASS` 2026-09-05 04:40 on 0.16.3 + APK `2eb116c3`, clean - the owner holds two devices (`tauri` + `web`) and BOTH platforms appear on the salon's distribution group 196 ms after the join, with no second join gesture. The phone's own line names the mechanism (`[GRAINE] no base published ... creating group`), and the build it ran on is recorded, because an APK older than the mechanism could not exhibit it |
 
 ## 10 - DEL - deleting a conversation, crossed
 
 Deletion removes state while OTHER state keeps pointing at it, so each row pairs it with something
 mid-flight. All ten have a runner - `del1.mjs` for DEL-1, `del.mjs --only N` for the rest, the phase
-order and the phone row justified in `checks.mjs`. The three harness faults DEL-7 and DEL-9 cost are
-on [testing-methodology](testing-methodology.md).
+order and the phone row justified in `checks.mjs`. The four harness faults DEL-7 and DEL-9 cost are
+on [testing-methodology](testing-methodology.md) - the fourth being a spawned atom that never exited
+on success, which turned every phone unlock into a 120-second false failure and was invisible to the
+instrument hash because a spawned script is not an imported one.
+
+**`del.mjs --only 1` RECORDS `SKIPPED` FOR DEL-1 AND WOULD OVERWRITE ITS VERDICT.** DEL-1 has its own
+runner; the dispatcher keeps the number so the gap is explained rather than silent, so the rung is
+run as `bun del1.mjs` then `bun del.mjs` with no `--only` at all.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| DEL-1 | Peer deletes while a history solicitation for that group is outstanding | `W1 W2` | `pending` |
-| DEL-2 | Peer deletes while a message from us is in the outbox | `W1 W2` | `pending` |
-| DEL-3 | Both peers delete the same conversation within a second | `W1 W2` | `pending` |
-| DEL-4 | Delete a conversation while its media is still uploading | `W1 W2` | `pending` |
-| DEL-5 | Delete, then the peer sends into it anyway | `W1 W2` | `pending` |
-| DEL-6 | Delete while a drain is in flight for that group | `W1 W2` | `pending` |
-| DEL-7 | Delete on W1 while A1 is killed, then wake A1 | `+push` | `pending` |
-| DEL-8 | Delete a group, then restore an MLS snapshot from BEFORE the deletion | `+snapshot` | `pending` |
-| DEL-9 | Delete the conversation currently OPEN on screen | `W1 W2` | `pending` |
-| DEL-10 | Delete while offline, then reconnect | `W1 W2` | `pending` |
+| DEL-1 | Peer deletes while a history solicitation for that group is outstanding | `W1 W2` | `PASS` 2026-09-05 06:40 on 0.16.3, clean - the premise is ARMED and recorded (`askedBefore: 2`, the reconciliation lines for this group), and across W1's delete the peer's row goes `active` -> `removed` while STAYING in the list with its notice on screen. One socket closed, the gateway was back in 101 ms, and no solicitation survived the 25 s quiet window: `retried: []`. The row is kept, it explains itself, and it stops asking |
+| DEL-2 | Peer deletes while a message from us is in the outbox | `W1 W2` | `PASS` 2026-09-05 06:41 on 0.16.3, clean - one frame queued while cut, the outbox drained in 2.0 s, the attempt counter did NOT grow and no row was left behind. The sender ends `removed`, and the two permanent-failure lines name what was lost rather than dropping it silently. **The refusal this row used to carry was a PRODUCT defect and is fixed**: opening a `removed` conversation fired `GET /api/mls/history/<id>` at a soft-deleted group, eleven seconds after this client's own deletion |
+| DEL-3 | Both peers delete the same conversation within a second | `W1 W2` | `PASS` 2026-09-05 06:42 on 0.16.3, clean - the two deletes landed **4 ms** apart, one gesture from each client, both answered `deleted`, and neither side resurfaced it in a 30 s negative window. Two deletions of one row race and the loser is not an error |
+| DEL-4 | Delete a conversation while its media is still uploading | `W1 W2` | `PASS` 2026-09-05 06:43 on 0.16.3, clean - 1 MiB throttled to 48 KiB/s opens a ~21 s window; the upload request was SEEN, the delete landed inside it, and the upload did not complete afterwards. No `mediaId` was minted, so there is no orphan to read back - the object never reaches storage rather than being cleaned up after it does |
+| DEL-5 | Delete, then the peer sends into it anyway | `W1 W2` | `PASS` 2026-09-05 06:44 on 0.16.3, clean - one socket closed on the peer, and on the deleter neither the message nor the group resurfaced, with no decryption failure recorded. The peer's own outbox death is FORGIVEN by disposition and only there: a peer that has not been told cannot know, which is the opposite of DEL-2/DEL-3, where the deleter asked about its own deletion |
+| DEL-6 | Delete while a drain is in flight for that group | `W1 W2` | `PASS` 2026-09-05 06:46 on 0.16.3, clean - four frames queued while offline and the drain BEGAN before the deletion (first drain at 39.0 s), which is the premise; starts and completes then BALANCE at 5/5, so the deletion did not strand one mid-flight. **This row is where the retired-group P1 was found** - a frame for a deliberately deleted group provoked a re-add request and stayed in the server queue for ever |
+| DEL-7 | Delete on W1 while A1 is killed, then wake A1 | `+push` | `PASS` 2026-09-05 06:52 on 0.16.3 + APK `2eb116c3`, clean - the group reached A1 in 10 ms, the app was killed from state `LAST` and proved dead in 50 ms, and on wake the conversation is `purged` immediately (`convergedInMs: 0`) and STAYS purged: **zero** mentions of the group and **zero** solicitations across a 30 s window. Two defects this row found are fixed: the native shell carried no refresh credential on any session-scoped call (`PUT /api/auth/sessions/current/device -> 404`), and the rig's PIN atom never exited on success, so every unlock was reported as a failure 120 s later. The pin now returns what it contacted (`http://localhost:8081`), which doubles as the estate assertion |
+| DEL-8 | Delete a group, then restore an MLS snapshot from BEFORE the deletion | `+snapshot` | `PASS` 2026-09-05 06:54 on 0.16.3, clean - `purged` after the deletion, and restoring an MLS snapshot taken BEFORE it does not resurrect the conversation: not listed, still `purged`, and no solicitation follows the restore. MLS state coming back is not membership coming back, which is the whole question |
+| DEL-9 | Delete the conversation currently OPEN on screen | `W1 W2` | `PASS` 2026-09-05 06:56 on 0.16.3, clean - the pane goes from `composer` to `nothing`, and `nothing` is asserted as its own state rather than inferred: it holds no conversation at all, instead of silently landing on a neighbour. The row is neither listed nor live afterwards |
+| DEL-10 | Delete while offline, then reconnect | `W1 W2` | `PASS` 2026-09-05 06:58 on 0.16.3, clean - the gesture is accepted while cut (one attempt sent, none answered), the FIRST reconnect replays it exactly once (`[EXIT] 6f7f7f05... delete replayed - server deleted it`) and is answered `200`, and the SECOND reconnect sends nothing at all with no drain - so the replay is driven by durable state and retires itself, rather than firing on every reconnect. The server row ends soft-deleted and the deleter does not list it |
 
 ## 11 - TAB - tabs and windows
 
+**The rung is 10/10, and four of them were bought with product fixes on 2026-09-05.** Two rows
+were `FAIL` and one could not be run at all; the defects behind them are in `CHANGELOG.md` and the
+rules they left behind are in [durable-rules](durable-rules.md). TAB-3b is the only one still
+owed anything, and what it owes is written in [backlog](backlog.md) rather than here.
+
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| TAB-1 | Backgrounded tab receives; title/badge updates - RE-SCOPED 2026-08-24 onto the web `Notification`, the only out-of-page signal the product has, and the gap it cannot assert is P3 in [backlog](backlog.md) | `W1 W2` | `pending` |
-| TAB-2 | Tab closed, message arrives, tab reopened: present exactly once | `W1 W2` | `pending` |
-| TAB-3 | Whole browser killed and relaunched: all arrive, no re-login | `W1 W2` | `pending` |
-| TAB-3b | Cold-start timing, five runs | `W1 W2` | `pending` - one unexplained 77.7 s run |
-| TAB-4 | Two tabs of the SAME account: no double-send, no epoch fight | `W1 W2` | `pending` |
-| TAB-5 | Reload fired under 100 ms after submit: sent once or clearly queued, never lost | `W1 W2` | `pending` |
-| TAB-6 | Delete the refresh cookie, then act: clean re-login, not a silent empty list | `+user` | `pending` - the re-login costs the 2FA |
-| TAB-7 | Offline -> act -> online, tab never reloaded | `W1 W2` | `pending` - written 2026-08-24, never run |
+| TAB-1 | Backgrounded tab receives; the web `Notification` is raised - RE-SCOPED 2026-08-24 onto the only out-of-page signal the product has | `W1 W2` | `PASS` 2026-09-05 09:57 on `768a6c1b`, clean - **was `FAIL`, and the cause was a product defect.** Exactly 1 notification while hidden carrying the marker, titled with the sender, tagged per conversation; 0 while visible. The decision lived in `addMessageToChat` only, so a message arriving during a catch-up - which is the state a backgrounded tab produces - reached the user through `batchAddMessages`, which had no notification branch. Two instrument faults were found on the way: the check never reloaded, so it asserted a bundle older than the build it stamped, and its four downstream returns were all silent |
+| TAB-2 | Tab closed, message arrives, tab reopened: present exactly once | `W1 W2` | `PASS` 2026-09-05 09:56 on `768a6c1b`, clean |
+| TAB-3 | Whole browser killed and relaunched: all arrive, no re-login | `W1 W2` | `PASS` 2026-09-05 09:57 on `768a6c1b`, clean - browser down 5 ms, up 356 ms, one app tab on relaunch, no re-login |
+| TAB-3b | Cold-start timing, five runs | `W1 W2` | `PASS-DIRTY` 2026-09-05 09:10 on `768a6c1b` - **the 77.7 s is answered and a new question is open.** Five cold starts, catch-up 61 263 / 61 294 / 61 352 ms (fastest / median / slowest), every one of them *dominated by queue*: the phase is the queue drain and it is flat, not an outlier. The dirt is SEVERE and real - `[History] frame never read here and unreadable for good (secret-reuse)`, re-accusing the SAME row keys on each later cold start - and it is a P2 in [backlog](backlog.md), not expected noise |
+| TAB-4a | Two tabs of one account, the PEER sends: both tabs show it exactly once | `W1 W2` | `PASS` 2026-09-05 09:03 on `768a6c1b`, clean |
+| TAB-4b | Two tabs of one account, the SECOND (follower) tab sends | `W1 W2` | `PASS` 2026-09-05 09:03 on `768a6c1b`, clean - **was `FAIL`: the message was queued, acknowledged to the user and handed to nobody.** The Web Locks election recorded `leader` when it won and nothing when it lost, so a follower stayed `undecided` and `runFlush` awaited an election that had already happened. The leader now logs `[OUTBOX] Flush requested by a follower tab.` and drains it. `counts.tab1: 0` is recorded and not asserted: the leader does not RENDER a follower-sent message until it re-reads, which is the P2 in [backlog](backlog.md) |
+| TAB-4c | Two tabs of one account, the FIRST tab sends right after | `W1 W2` | `PASS` 2026-09-05 09:03 on `768a6c1b`, clean |
+| TAB-5 | Reload fired under 100 ms after submit: sent once or clearly queued, never lost | `W1 W2` | `PASS` 2026-09-05 09:31 on `768a6c1b`, clean - **was `FAIL` on 2 of 3 rounds, and it was silent message loss.** Gaps 16 / 17 / 15 ms. The echo was persisted and the outbox entry queued as two awaits; a teardown between them left a `pending` message on disk no queue knew about. Both rows are now one IndexedDB transaction |
+| TAB-6 | Delete the refresh cookie, then act: clean re-login, not a silent empty list | `+user` | `PASS` 2026-09-05 09:02 on `768a6c1b`, clean - the 401 on `/api/auth/refresh` is this row's STIMULUS and is dispositioned as one. Two instrument faults: a watch handle was passed where a report was required, so the row died before being recorded and left W1 signed out; and the refusal pattern was anchored `$` against a path that carries `?clientVersion=` |
+| TAB-7 | Offline -> act -> online, tab never reloaded | `W1 W2` | `PASS` 2026-09-05 08:34 on `768a6c1b`, clean - **first run ever**, written 2026-08-24. Severed in 1 ms, one socket closed, gateway back in 101 ms, never reloaded. It cuts the link itself, so its own client reads through `ignoringOfflineCut` - the disposition every other cutting check already used |
 
 ## 12 - MULTI - one user, two devices
 
@@ -306,14 +319,14 @@ Cross every LIFE state with: receive a DM, a channel message, a commit, a call.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| LIFE-1 | Foreground baseline | `+A1` | `pending` |
-| LIFE-2 | Background (`HOME`): the notification carries the real decrypted text | `+push` | `pending` |
-| LIFE-3 | Killed - **swipe from recents, not `am force-stop`** | `+push` | `pending` |
-| LIFE-4 | Doze (`dumpsys deviceidle force-idle`) | `+push` | `pending` |
+| LIFE-1 | Foreground baseline | `+A1` | `PASS` 2026-09-05 09:46 on `768a6c1b` + APK `93856118`, clean - **first run ever.** The phone reaches the estate and renders in the foreground, which is what makes LIFE-2 below a finding rather than a broken rig |
+| LIFE-2 | Background (`HOME`): the notification carries the real decrypted text | `+push` | **`FAIL`** 2026-09-05 09:49 on `768a6c1b` + APK `93856118` - **first run ever, and the sharpest form of the push defect.** No notification AT ALL (`afterMs: null`; the shade held only the USB notice) and the message took **95 s** to appear. The phone decrypted it over its WebSocket - spending the ratchet generation - while its uplink was failing (`[OUTBOX] transient failure (attempt 1..3): ... /api/mls/send`), so it never ACKed; the server pushed after its 10 s unACKed deadline, and the push could not decrypt what the device already held. P2 in [backlog](backlog.md) |
+| LIFE-3 | Killed - **swipe from recents, not `am force-stop`** | `+push` | `PASS-DIRTY` 2026-09-05 09:50 on `768a6c1b` + APK `93856118` - **first run ever, and it passes for the reason LIFE-2 fails**: a killed app has spent no generation, so its push decrypts and notifies. A phone in a pocket is the failing case and a phone that was killed is the passing one |
+| LIFE-4 | Doze (`dumpsys deviceidle force-idle`) | `+push` | `PASS-DIRTY` 2026-09-05 09:51 on `768a6c1b` + APK `93856118` - **first run ever**; same phone-side dirt as every other row, the P2 in [backlog](backlog.md) |
 | LIFE-5 | After a reboot, app never opened - exercises `CanariBootReceiver` | `+push` `+user` | `pending` - needs the unlock pattern |
-| LIFE-6 | Offline (both radios) | `+A1` | `pending` |
-| LIFE-7 | Notification permission revoked mid-life | `+push` | `pending` |
-| LIFE-8 | Process death (`am kill`), keeping WorkManager state | `+push` | `pending` |
+| LIFE-6 | Offline (both radios) | `+A1` | `pending` - **the phone went behind its CREDENTIAL lock screen mid-phase on 2026-09-05** (`deviceLocked=1`, `wm dismiss-keyguard` refused; no credential is in the rig by design). The runner refused it rather than measuring through it, which is right: every fetch inside the WebView hangs behind that screen. Owed a human unlock |
+| LIFE-7 | Notification permission revoked mid-life | `+push` | `pending` - **the phone went behind its CREDENTIAL lock screen mid-phase on 2026-09-05** (`deviceLocked=1`, `wm dismiss-keyguard` refused; no credential is in the rig by design). The runner refused it rather than measuring through it, which is right: every fetch inside the WebView hangs behind that screen. Owed a human unlock |
+| LIFE-8 | Process death (`am kill`), keeping WorkManager state | `+push` | `pending` - **the phone went behind its CREDENTIAL lock screen mid-phase on 2026-09-05** (`deviceLocked=1`, `wm dismiss-keyguard` refused; no credential is in the rig by design). The runner refused it rather than measuring through it, which is right: every fetch inside the WebView hangs behind that screen. Owed a human unlock |
 
 ## 14 - NOTIF - notifications
 
@@ -324,8 +337,8 @@ Sweeps every `+push` row left behind above it.
 | NOTIF-1 | App killed, DM arrives: decrypted notification with real content | `+push` | `pending` |
 | NOTIF-2 | App killed, a **commit** pushed, then a message - a generic fallback is CORRECT, and opening the app must recover | `+push` | `pending` |
 | NOTIF-3 | The same, message several epochs later | `+push` | `pending` |
-| NOTIF-4 | Read on W1 while A1 is killed, W1 arriving at the salon AFTERWARDS: notification dismissed on A1 | `+push` | `pending` |
-| NOTIF-4b | The same, W1 holding the salon ALREADY OPEN when the message lands - the case an unread counter cannot see | `+push` | `pending` |
+| NOTIF-4 | Read on W1 while A1 is killed, W1 arriving at the salon AFTERWARDS: notification dismissed on A1 | `+push` | `PASS-DIRTY` 2026-09-05 09:22 on `768a6c1b` + APK `93856118` - **first run ever.** The dismissal holds; it is taken on three CLEARTEXT fields before any decryption, which is why it still works while the decrypt does not. The phone-side dirt is the SAME on all five and is a P2 in [backlog](backlog.md): every silent push fails to decrypt with `SecretReuseError` at its own epoch, fetches 0 commits, and falls back to a worker that only does `background cleanup` |
+| NOTIF-4b | The same, W1 holding the salon ALREADY OPEN when the message lands - the case an unread counter cannot see | `+push` | `PASS-DIRTY` 2026-09-05 09:23 on `768a6c1b` + APK `93856118` - **first run ever.** The phone-side dirt is the SAME on all five and is a P2 in [backlog](backlog.md): every silent push fails to decrypt with `SecretReuseError` at its own epoch, fetches 0 commits, and falls back to a worker that only does `background cleanup` |
 | NOTIF-5 | Per-channel level muted on W1: A1 does not notify, message still arrives | `+push` | `pending` |
 | NOTIF-6 | Quick reply from the shade, app **KILLED** (= device check K) | `+push` | `pending` - MEASURED by hand on 0.14.12, works; not a campaign verdict (no gate, no ledger row). See [check K](device-verification.md) |
 | NOTIF-6c | Quick reply from the shade, app **BACKGROUNDED** - the branch that does NOT restart the process | `+push` | `pending` - **FAILED `HTTP 403` on 0.14.12, P1 found and fixed 2026-08-30; the fix is installed on A1 and NOT yet re-measured** |
@@ -336,9 +349,9 @@ Sweeps every `+push` row left behind above it.
 | NOTIF-7c | Tap -> deep link into a CHANNEL, **backgrounded**: the salon is on screen and holds the marker - 7/7b are the DM only | `+push` | `pending` |
 | NOTIF-7d | The same into a CHANNEL with the app **KILLED**, so the PIN gate mounts first - the case most likely to lose a pending deep link | `+push` | `pending` |
 | NOTIF-8 | Doze + message: delivered, or on wake - record which | `+push` | `pending` |
-| NOTIF-9 | Two devices of one user: exactly one notification surface behaves | `+push` | `pending` |
-| NOTIF-10 | Airplane mode 10 min, 5 messages, then reconnect: all five survive | `+push` | `pending` |
-| NOTIF-11 | Three messages into one salon: ONE notification carrying three stacked lines, not three notifications | `+push` | `pending` |
+| NOTIF-9 | Two devices of one user: exactly one notification surface behaves | `+push` | `PASS-DIRTY` 2026-09-05 09:25 on `768a6c1b` + APK `93856118` - **first run ever.** The phone-side dirt is the SAME on all five and is a P2 in [backlog](backlog.md): every silent push fails to decrypt with `SecretReuseError` at its own epoch, fetches 0 commits, and falls back to a worker that only does `background cleanup` |
+| NOTIF-10 | Airplane mode 10 min, 5 messages, then reconnect: all five survive | `+push` | **`FAIL`** 2026-09-05 09:40 on `768a6c1b` + APK `93856118` - **first run ever, and the one row where the shared dirt becomes the verdict.** The shade holds `Nouveau message de ...` with no preview and `notifiedInMs: null`: no decrypted notification ever arrived for any of the five. The radios are CUT here rather than the app killed, so when they return the app's own WebSocket and the FCM push handler process the same messages and the push loses - `Ciphertext generation out of bounds 433/434/435`, three consumed generations, no push ever succeeding. P2 in [backlog](backlog.md) |
+| NOTIF-11 | Three messages into one salon: ONE notification carrying three stacked lines, not three notifications | `+push` | `PASS-DIRTY` 2026-09-05 09:26 on `768a6c1b` + APK `93856118` - **first run ever.** The stacking holds. The phone-side dirt is the SAME on all five and is a P2 in [backlog](backlog.md): every silent push fails to decrypt with `SecretReuseError` at its own epoch, fetches 0 commits, and falls back to a worker that only does `background cleanup` |
 | NOTIF-12 | Who each stacked line is attributed to inside a salon - RECORDED, not asserted | `+push` | `pending` |
 | NOTIF-13 | The BODY is readable: a mention renders as a name, never as its `@[uuid]` token | `+push` | `pending` - expected to `FAIL` until the P2 ships |
 | NOTIF-14 | The TITLE names its conversation: community and salon for a channel, the sender's resolved display name for a DM | `+push` | `pending` |
@@ -422,7 +435,7 @@ four wipe defects found by hand:
 | HEAL-REVOKE-7 | The **ORDER** of the return: back BEFORE the other devices are online, and back AFTER | `W1 W2` `+user` | `pending` |
 | HEAL-REVOKE-8 | A group **DELETED while the device was revoked** must not return as a Sync row | `W1 W2` `+user` | `pending` |
 | HEAL-REVOKE-9 | Revoked while **OFFLINE**: the wipe is DEFERRED, not lost, and must not fire while the server is unreachable | `W1 W2` | `pending` |
-| HEAL-NEW-0 | The rig can mint a device the server has never seen, repeatably, on ONE 2FA | `+user` | `pending` |
+| HEAL-NEW-0 | The rig can mint a device the server has never seen, repeatably, on ONE 2FA | `+user` | `PASS-DIRTY` 2026-09-04 19:12 on 0.16.3 - every assertion held (wipe, loggedOut, noHumanStep, freshId, neverSeen, sameAccount, registered, addressable) and the re-minted device rejoined FOUR groups by external commit inside one second. **The dirt is 100% the ESTATE**: 20 media 404s from a database copied without its object store, [backlog](backlog.md). Not PASS until that is fixed - it is not this row's to disposition. |
 | HEAL-NEW-1 | Fresh device, **nothing else online** - external join is the only path there is | `+user` | `pending` |
 | HEAL-NEW-2 | Fresh device, **the PEER online** - a responder that is not us | `+user` | `pending` |
 | HEAL-NEW-3 | Fresh device, **another device of the SAME user online** (W1) | `+user` | `pending` |

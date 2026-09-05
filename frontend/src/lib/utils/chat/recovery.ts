@@ -515,6 +515,61 @@ export async function recoverForkedGroup(
 }
 
 /**
+ * Recovery of a group the SERVER refuses this device's frames for, while local WASM still holds a
+ * tree for it - the roster and the tree disagree, and the server is the one that is right.
+ *
+ * THE ONLY SEAM ENTERED ON THE SERVER'S WORD RATHER THAN ON THIS DEVICE'S OWN, which is why it
+ * exists at all. Every other entrance infers a desync from a LOCAL absence:
+ * `syncConnectionAfterWsOpen` and the SYNC_WATCHDOG both ask `getLocalGroups()`, and
+ * `requestReAdd` skips anything that answers yes. That test answers "do I hold a tree", never "does
+ * the server accept me as a member", and a device can hold a perfectly well-formed tree for a group
+ * whose `dm_device_group_memberships` row has never left `pending`. Such a device is invisible to
+ * all three: it looks healthy, it is not, and nothing it encrypts can be opened by anyone.
+ *
+ * MEASURED ON THE LOCAL ESTATE 2026-09-04, and it is not a corner. A device re-minted after a PIN
+ * reset was given a `pending` roster seat at 15:34:52 and never a Welcome. Its outbox held eight
+ * messages at attempt 18-23, refused `SenderNotActive` every time and re-queued each as a
+ * "transient failure"; the SYNC_WATCHDOG called `cancelReAdd` on the group every 5 s because WASM
+ * held it; a full page reload did not lift it. The server names the whole population hourly -
+ * `reportStrandedDeviceMemberships`, 70 pending past the window, 25 of them holding a roster seat
+ * with no Welcome ever queued, the oldest since 2026-08-27. The report existed; the repair did not.
+ *
+ * THE FORGET IS WHAT MAKES THE SEAM REACHABLE, and it is what `requestReAdd`'s own guard asks for in
+ * as many words ("call forgetGroup before recovery if out of sync"). Dropping the tree costs
+ * nothing that was not already worthless - the server holds no leaf for it, so it can neither
+ * encrypt for anyone nor be opened by anyone - and it is what lets `requestReAdd` reach the
+ * `pending` discriminator written for exactly this population: a member owes us a Welcome, or
+ * nobody does and we serve ourselves an external commit. Both were unreachable from here.
+ *
+ * IT IS THROTTLED ON THE SHARED COOLDOWN AND ARMS NOTHING ITSELF. The outbox re-enters on its own
+ * backoff ladder, which starts at 2 s - so an unthrottled forget would discard the tree repeatedly,
+ * including a Welcome that had just been processed. The check is read-only here and
+ * {@link requestReAdd} still owns the marker, so one attempt per {@link RECOVERY_TIMEOUT_MS} per
+ * group holds across every caller, this one included.
+ *
+ * The checkpoint is NOT optional: without it the forgotten tree is still in IndexedDB, and a reload
+ * before the rejoin lands restores the very state this was entered to drop. That is precisely what
+ * made the measured device survive a reload still stuck.
+ */
+export async function recoverRosterDisagreement(
+  groupId: string,
+  deps: RecoveryDeps
+): Promise<void> {
+  const sinceLast = Date.now() - (lastReAddAt.get(groupId) ?? 0);
+  if (sinceLast < RECOVERY_TIMEOUT_MS) return;
+
+  deps.log(
+    `[ROSTER] ${groupId.slice(0, 8)}... the server refuses our frames while WASM holds the group` +
+      ' - forgetting the tree the server has no leaf for, then re-entering recovery'
+  );
+  if (holdsGroupState(deps.mlsService, groupId)) {
+    deps.mlsService.forgetGroup(groupId);
+    await persistMlsStateAfterMutation(deps.mlsService, deps.userId, deps.deviceKeyB64, deps.log);
+  }
+  await requestReAdd(groupId, deps);
+}
+
+/**
  * Clears the recovery cooldown for `groupId`, so a later desync re-triggers immediately instead of
  * waiting out {@link RECOVERY_TIMEOUT_MS}.
  *

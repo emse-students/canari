@@ -22,6 +22,7 @@ import {
   DEVICE_PANEL_NARRATION,
   EVICTED_REJOIN_NARRATION,
   ignoringExpectedLog,
+  ignoringExpectedRefusal,
   report,
 } from '../watch.mjs';
 
@@ -523,6 +524,29 @@ const CASES = [
     '[14:32:47] [MLS] No application payload for 4ad03375… - not a commit: stale commit already applied, or a frame older than the kept ratchet window',
     'unexplained',
   ],
+  // THE COVERAGE LEG OF THE HISTORY EXCHANGE, and the three failures wearing the same tag. The
+  // success spelling is the responder stating its own window - sent only when NARROWER, and the one
+  // thing that lets an asker tell a clipped answer from a conversation with no more past - so it
+  // belongs with the request and the bundle it answers. The other three are failures of that same
+  // mechanism and must keep breaking `clean`, which is why the rule is pinned to one spelling
+  // instead of the tag: a `^\[HISTORY_COVERAGE\]` prefix would forgive all four. Seen on DEL-1,
+  // 2026-09-05.
+  [
+    'log',
+    '[06:15:35] [HISTORY_COVERAGE] Told f7a9bb80…:tauri-f7a9bb80…-mtn445lg-25sy we are complete only from 2026-06-07T00:00:00.000Z in cb9f3a9a…',
+    'notable',
+  ],
+  ['log', '[06:15:35] [HISTORY_COVERAGE] Unusable coverage from f7a9bb80… for cb9f3a9a…', 'unexplained'],
+  [
+    'log',
+    '[06:15:35] [HISTORY_COVERAGE] Chase failed for cb9f3a9a…: TypeError: nope',
+    'unexplained',
+  ],
+  [
+    'log',
+    '[06:15:35] [HISTORY_COVERAGE] Could not state our coverage to f7a9bb80… for cb9f3a9a…: TypeError: nope',
+    'unexplained',
+  ],
   // AND THE TWO EVICTION LINES THAT MUST NOT BE CLASSIFIED. Both are the defects GRP-3 and GRP-8
   // found on 2026-08-23: a removed member's pipeline attempting recovery on a group it was
   // legitimately evicted from, and its outbox retrying an encrypt that can never succeed. Both are
@@ -964,7 +988,12 @@ const named = await report({
   label: 'selftest',
 });
 {
-  const ok = named.errors.some((l) => l.includes('415') && l.includes('POST /api/media/upload'));
+  // THE CLAIM IS THAT THE LINE NAMES ITS REQUEST, not that an origin was stripped from it. This used
+  // to assert `POST /api/media/upload`, which held only because the renderer removed a hardcoded
+  // `https://canari-emse.fr` - a literal that stopped matching anything the day the rig moved to the
+  // local estate, taking every path-anchored forgiveness with it (see `pathOfLine`). The origin is
+  // kept now, so the assertion is written against the fact rather than against the spelling.
+  const ok = named.errors.some((l) => l.includes('415') && l.includes('POST') && l.includes('/api/media/upload'));
   if (!ok) failures++;
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${'named'.padEnd(12)} a 415 error line carries the request that earned it`);
   if (!ok) console.log(`       errors=${JSON.stringify(named.errors)}`);
@@ -1148,5 +1177,34 @@ for (const [what, lines, needles, want] of FORGIVE_CASES) {
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${'forgive'.padEnd(12)} ${what}`);
   if (!ok) console.log(`       want=${JSON.stringify(want)} got=${JSON.stringify(got)} rep=${JSON.stringify({ severe: rep.severe, errors: rep.errors, unexplained: rep.unexplained })}`);
 }
+/**
+ * A PATH RULE MUST FORGIVE THE SAME REQUEST WHATEVER ESTATE IT WAS MADE AGAINST.
+ *
+ * THE ONE THAT SHIPPED: the renderer stripped a hardcoded `https://canari-emse.fr` before printing
+ * a request, so every rule in the campaign was written against a bare path. The rig moved to the
+ * LOCAL estate on 2026-09-03, the literal matched nothing, the lines became absolute urls - and
+ * every path-anchored forgiveness went inert WITHOUT A WORD. MENTION-5 forgave a 404 it goes and
+ * causes and was `PASS-DIRTY` on it anyway; `MINT_REFUSALS` stopped forgiving the refresh 401 every
+ * device mint produces. A rule that cannot match fails silently, which is why both spellings are
+ * pinned here rather than trusted to whichever one the estate happens to render.
+ */
+const REFUSAL_CASES = [
+  // [what it is, url, status, the rule, must the report stay clean]
+  ['a local-estate url is forgiven by a path rule', 'http://localhost:8081/api/users/' + 'a'.repeat(64), 404, [{ path: /^\/api\/users\/[0-9a-f]{64}$/, status: [404] }], true],
+  ['and so is the production spelling of the same request', 'https://canari-emse.fr/api/users/' + 'a'.repeat(64), 404, [{ path: /^\/api\/users\/[0-9a-f]{64}$/, status: [404] }], true],
+  // THE QUERY IS PART OF WHAT A RULE SEES - `MINT_REFUSALS` is written `(\?|$)` precisely for this.
+  ['a refresh 401 with a query string is forgiven', 'http://localhost:8081/api/auth/refresh?clientVersion=0.16.3', 401, [{ path: /^\/api\/auth\/refresh(\?|$)/, status: [401] }], true],
+  // NARROW IN BOTH DIRECTIONS, which is the whole safety of a pair rule.
+  ['the same path with another status is NOT forgiven', 'http://localhost:8081/api/users/' + 'a'.repeat(64), 500, [{ path: /^\/api\/users\/[0-9a-f]{64}$/, status: [404] }], false],
+  ['the same status on another path is NOT forgiven', 'http://localhost:8081/api/mls/send', 404, [{ path: /^\/api\/users\/[0-9a-f]{64}$/, status: [404] }], false],
+];
+for (const [what, url, status, rule, shouldBeClean] of REFUSAL_CASES) {
+  const rep = ignoringExpectedRefusal(await report({ cx: netOf([[url, status, null]]), label: 'selftest' }), rule);
+  const ok = rep.clean === shouldBeClean;
+  if (!ok) failures++;
+  console.log(`${ok ? 'ok  ' : 'FAIL'} ${'refusal'.padEnd(12)} ${what}`);
+  if (!ok) console.log(`       clean=${rep.clean} badHttp=${JSON.stringify(rep.badHttp)}`);
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall good');
 process.exit(failures ? 1 : 0);

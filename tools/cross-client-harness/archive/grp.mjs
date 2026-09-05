@@ -57,9 +57,17 @@ import { conversationRows, groupIdByName } from './idb.mjs';
 import { psql } from '../estate.mjs';
 import { closeOverlays, createGroup, deleteGroup, openGroup } from '../groupnav.mjs';
 import { armCut, cutHard } from './net.mjs';
-import { mark, record, recordObserved } from '../results.mjs';
-import { awaitLine, consoleLines, ignoringOfflineCut, report, watch } from '../watch.mjs';
-import { OWNER_NAME, PEER_NAME, PORTS } from '../names.mjs';
+import { errorDetail, mark, record, recordObserved } from '../results.mjs';
+import {
+  GROUP_CREATION_NARRATION,
+  awaitLine,
+  consoleLines,
+  ignoringExpectedLog,
+  ignoringOfflineCut,
+  report,
+  watch,
+} from '../watch.mjs';
+import { OWNER_NAME, PEER_NAME, PORTS, SITE } from '../names.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const { W1, W2 } = PORTS;
@@ -87,6 +95,17 @@ const CROSS_MS = 60_000;
  * way that goes wrong - a Welcome for an epoch already past, a commit applied out of order, a leaf
  * that duplicates - says so in the receiver's console and nowhere else. A roster count cannot.
  */
+/**
+ * The report of a client that CREATED A GROUP, with what creating one says about itself forgiven.
+ *
+ * Every row in this file makes its own group - that is what keeps them isolated - so every row
+ * provokes `[blocks.isBlockedWith]` (the standard's function-entry log, asked before opening a
+ * conversation nobody wanted) and `[SYNC] bulk.addedDeviceIds:` (which devices got into the staged
+ * commit). Eight of the ten recorded PASS-DIRTY on those two lines and nothing else. See
+ * `GROUP_CREATION_NARRATION` for why neither is chatter and why this is not a wider classifier.
+ */
+const asCreator = async (o) => ignoringExpectedLog(await report(o), GROUP_CREATION_NARRATION);
+
 async function observed(port, label) {
   const cx = await client(port);
   return [cx, await watch(cx, label)];
@@ -478,7 +497,7 @@ async function grp1() {
           peerSurplusRows: surplus.length, // expected: the invitation event, one per group
           peerSurplusMintedAfterTheCommit: surplusAfterCommit, // must be empty - a real divergence
         },
-        { W1: o1, W2: o2 }
+        { W1: await asCreator(o1), W2: await asCreator(o2) }
       );
       return ok;
     });
@@ -594,7 +613,7 @@ async function grp2() {
           emptySubmit: submit,
           rosterUnchanged: roster.count,
         },
-        { W1: o1 }
+        { W1: await asCreator(o1) }
       );
       return ok;
     });
@@ -648,7 +667,7 @@ async function grp3() {
             peerAmongRemovableIds: false,
             invitationStillPending: invitationPending,
           },
-          { W1: o1, W2: o2 }
+          { W1: await asCreator(o1), W2: await asCreator(o2) }
         );
         return false;
       }
@@ -724,7 +743,7 @@ async function grp3() {
           removedDeviceAskedToComeBack: cameBack.slice(0, 4),
           negativeWindowMs: NEGATIVE_WINDOW_MS,
         },
-        { W1: o1, W2: o2 }
+        { W1: await asCreator(o1), W2: await asCreator(o2) }
       );
       return ok;
     });
@@ -760,8 +779,18 @@ async function grp4() {
       await closeOverlays(w1);
 
       const url = share.value;
+      // THE ORIGIN IS DERIVED, NOT SPELT. This pinned `https://canari-emse.fr` and the campaign has
+      // targeted the LOCAL estate since 2026-09-03, so it could not match and GRP-4 recorded FAIL
+      // against a link that was perfectly well formed - `urlShapeOk: false, tokenLength: null` with
+      // `linkGenerationError: false` beside it, which is an instrument saying the app is broken.
+      // `publicAppOrigin()` answers with the window's OWN origin unless it is `tauri.localhost`, so
+      // the origin a browser client must produce IS `SITE`. Third time this rig has been caught
+      // anchoring a rule on a hardcoded production origin (see `pathOfLine` in `watch.mjs`).
+      const joinPrefix = `${SITE}/g/join/`;
       const shapeOk =
-        typeof url === 'string' && /^https:\/\/canari-emse\.fr\/g\/join\/[A-Za-z0-9_-]{8,}$/.test(url);
+        typeof url === 'string' &&
+        url.startsWith(joinPrefix) &&
+        /^[A-Za-z0-9_-]{8,}$/.test(url.slice(joinPrefix.length));
 
       let invitationNamesGroup = null;
       let joinedMs = null;
@@ -769,7 +798,12 @@ async function grp4() {
       let rosterAtOpen = null;
       let rosterWaitMs = null;
       if (shapeOk) {
-        await goto(w2, url.replace('https://canari-emse.fr', ''));
+        // THE PATH IS PARSED OUT, NOT STRIPPED BY NAME. `url.replace('https://canari-emse.fr', '')`
+        // stood here, and once the link stopped carrying that origin it removed nothing - so `goto`
+        // was handed a whole URL as a PATH and concatenated it onto the estate's own origin,
+        // producing `Cannot navigate to invalid URL (-32000) on Page.navigate`. Fourth hardcoded
+        // production origin found in this rig; `origin-selftest.mjs` is what stops the fifth.
+        await goto(w2, new URL(url).pathname);
         // THE LINK OPENS AN INVITATION, IT DOES NOT JOIN. The page reads "Vous avez ete invite(e) a
         // rejoindre le groupe <name>" and offers `Rejoindre le groupe` / `Annuler`; navigating and
         // waiting - which is what this check did on its first run - measures a page, not a join.
@@ -909,7 +943,7 @@ async function grp4() {
           redactionNote:
             'the join token is a capability for a real group on production and is never recorded.',
         },
-        { W1: o1, W2: o2 }
+        { W1: await asCreator(o1), W2: await asCreator(o2) }
       );
       return ok;
     });
@@ -948,7 +982,7 @@ async function grp5() {
         'GRP-5',
         ok ? 'PASS' : 'FAIL',
         { from: name, to: renamed, creatorShowsNewName: creatorShows, peerSawNewNameMs: peerMs },
-        { W1: o1, W2: o2 }
+        { W1: await asCreator(o1), W2: await asCreator(o2) }
       );
       return ok;
     } finally {
@@ -1044,7 +1078,7 @@ async function grp6() {
           recoveryOnLeaver, // EVIDENCE: which seam, if any, reached for the group after the leave
           negativeWindowMs: NEGATIVE_WINDOW_MS,
         },
-        { W1: o1, W2: o2 }
+        { W1: await asCreator(o1), W2: await asCreator(o2) }
       );
       return ok;
     });
@@ -1108,7 +1142,7 @@ async function grp7() {
             joinedAfterReconnectMs: joinedMs,
             readPreJoinMessageMs: readMs,
           },
-          { W1: await report(o1), W2: ignoringOfflineCut(await report(o2)) }
+          { W1: await asCreator(o1), W2: ignoringExpectedLog(ignoringOfflineCut(await report(o2)), GROUP_CREATION_NARRATION) }
         );
         return ok;
       } finally {
@@ -1197,7 +1231,7 @@ async function grp8() {
           removedAccountReceivedFinalMessage: peerGot,
           negativeWindowMs: NEGATIVE_WINDOW_MS,
         },
-        { W1: o1, W2: o2 }
+        { W1: await asCreator(o1), W2: await asCreator(o2) }
       );
       return ok;
     });
@@ -1249,7 +1283,7 @@ async function grp9() {
           removeControlAccessibleNameIsARawId: p.removableIds.every((id) => /^[0-9a-f]{64}$/.test(id)),
           removeControlIdLength: p.removableIds[0]?.length ?? null,
         },
-        { W1: o1 }
+        { W1: await asCreator(o1) }
       );
       return ok;
     });
@@ -1314,7 +1348,7 @@ async function grp10() {
           secondPanelSaysCopied: onB.saysCopied,
           redactionNote: 'link values are compared, never recorded - a join token is a capability.',
         },
-        { W1: o1 }
+        { W1: await asCreator(o1) }
       );
       return ok;
     } finally {
@@ -1346,7 +1380,7 @@ for (const [n, fn] of Object.entries(CHECKS)) {
   try {
     results.push([n, await fn()]);
   } catch (e) {
-    record(`GRP-${n}`, 'ERROR', { error: e.message });
+    record(`GRP-${n}`, 'ERROR', { ...errorDetail(e) });
     results.push([n, false]);
   }
 }

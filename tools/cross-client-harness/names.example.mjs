@@ -134,8 +134,37 @@ export const A1_WIFI = "<phone ip>:5555";
  */
 export const peerNameFor = (device) => (device === "W2" ? OWNER_NAME : PEER_NAME);
 
-/** The campaign's channel venue. Never MiTV: a private channel is readable by every asso admin. */
-export const VENUE = { community: "Campagne de test", channel: "general" };
+/**
+ * The campaign's channel venue. Never MiTV: a private channel is readable by every asso admin.
+ *
+ * IT IS NAMED AFTER THE CAMPAIGN'S OWN ACCOUNTS, and that is a correctness requirement rather than
+ * a convention. A community's slug is derived from its name and is UNIQUE estate-wide, and the rig
+ * has run on a COPY OF PRODUCTION since 2026-09-03 - so a plausible French name collides with a
+ * real community sooner or later. The first one did, on 2026-09-04: it resolved to a community two
+ * real members had owned for a fortnight, which the campaign's accounts could neither join nor
+ * rebuild, and `venue.mjs` reported it as a sidebar defect. Keep this implausible as an asso's.
+ */
+export const VENUE = { community: "Canari Test Venue", channel: "general" };
+
+/**
+ * MENTIONS OF ACCOUNTS THAT DO NOT EXIST, LEFT IN THE VENUE CHANNEL BY EARLIER RUNS.
+ *
+ * MENTION-5 types a well-formed `@[64-hex]` belonging to nobody - that is the row - and the message
+ * SURVIVES the check. Every later check that opens that conversation re-renders the chip, asks
+ * `/api/users/<id>`, and collects a 404 it has no opinion about: MENTION-2, MENTION-3 and MENTION-6
+ * all recorded PASS-DIRTY on echoes of a row they are not related to. The id is a CONSTANT since
+ * 2026-09-05 (`ABSENT_MENTION_ID` in `archive/mention.mjs`, derived from a phrase and committed),
+ * so the list below can only SHRINK - it holds what the randomised era stranded, and a new entry
+ * appearing in it would mean that property broke.
+ *
+ * OUT OF TREE because 64 hex digits read like an account whether or not they are one, and the
+ * repository is public. AN ALLOWLIST, NOT THE `[0-9a-f]{64}` SHAPE: forgiving the shape would
+ * forgive a 404 on a real member's profile, which is a defect the campaign exists to catch.
+ *
+ * Leave it empty on a fresh estate. Read a value off the `dirt_*` payload of a PASS-DIRTY row:
+ * `GET .../api/users/<id> -> 404`.
+ */
+export const STRANDED_ABSENT_MENTION_IDS = [];
 
 /*
  * ---------------------------------------------------------------------------------------------

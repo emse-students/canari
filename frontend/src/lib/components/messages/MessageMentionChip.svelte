@@ -12,6 +12,12 @@
    * `null` while the name is genuinely not known YET, which is not the same as knowing there is
    * none - only the second may be rendered as a word.
    *
+   * BOTH USED TO ARRIVE HERE AS `null`, so the chip could not apply the rule its own comment
+   * states and rendered the empty string for each: a message mentioning a deleted account read
+   * `hey @ can you look at this`. The resolver now answers the unknown-user label for an id the
+   * server has said does not exist - a definitive answer, permanent for the session - and `null`
+   * only while the question is still open, so nothing here needs a case for it.
+   *
    * The chip resolves for itself rather than taking a label from the parser, because the parser
    * runs once per message body and cannot re-render when a name arrives: whatever it guessed on a
    * cold cache was frozen into the message. It used to guess the raw user id, so a mention read

@@ -33,6 +33,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PHASES, PHONE_SCRIPTS, SCRATCH_SCRIPTS, devicesFor, scriptPath } from "../checks.mjs";
+import { codeOnly } from "../srcscan.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -55,13 +56,16 @@ const A1_DOORS = /PORTS\.A1|sameAccountAs|a1SameAccountAs|tauri\.localhost/;
 const W3_DOORS = new RegExp("PORTS" + "\\." + "W3|becomeANewDevice");
 
 /** Whether a runner file contains any door to the phone. Throws if the file is unreadable. */
+// A DOOR IS CODE, NOT PROSE. `tauri.localhost` in a COMMENT explaining why `publicAppOrigin()`
+// refuses it made this declare that GRP drives the PHONE - the sentence was right, the gate was
+// right, only the reading was wrong. `codeOnly` is the one stripper, shared with the origin gate.
 function drivesPhone(file) {
-  return A1_DOORS.test(readFileSync(scriptPath(file), "utf8"));
+  return A1_DOORS.test(codeOnly(readFileSync(scriptPath(file), "utf8")));
 }
 
 /** Whether a runner file contains any door to the scratch device. Throws if it is unreadable. */
 function drivesScratch(file) {
-  return W3_DOORS.test(readFileSync(scriptPath(file), "utf8"));
+  return W3_DOORS.test(codeOnly(readFileSync(scriptPath(file), "utf8")));
 }
 
 const problems = [];

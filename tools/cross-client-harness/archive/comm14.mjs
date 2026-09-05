@@ -12,8 +12,9 @@
  * TWO OBSERVERS, BECAUSE ONE OF THEM CANNOT SAY WHY.
  *
  *  - The SERVER's own line, `[CHANNEL_PUSH] channel=<id> message=<id> recipients=N`, is the decision
- *    itself, and it is emitted only when the filtered list is non-empty. Its absence for a message
- *    that definitely reached the server is the assertion `none` and `mentions` are owed.
+ *    itself, and it is emitted on BOTH outcomes - `recipients=0 of N member(s) - sender=.. ...` when
+ *    the filter chose nobody. So `none` and `mentions` are owed a COUNT OF ZERO, not a silence: an
+ *    absence cannot tell a fan-out that chose nobody from a message that never arrived.
  *  - The PHONE's notification tray is the fact that the decision reaches a person. A row that only
  *    read the server would pass on a platform where no push has ever been delivered - which is
  *    precisely the state this row's `+push` requirement exists to refuse. A capability is unproven
@@ -56,9 +57,9 @@ import {
 } from '../comm.mjs';
 import { channelIdOf, channelNotifLevelOf, userIdOf, workspaceIdOf } from '../grainedb.mjs';
 import { OWNER_NAME, PORTS, VENUE } from '../names.mjs';
-import { home as phoneHome, notifications, pid as phonePid, wake } from '../phone.mjs';
+import { foreground, home as phoneHome, notifications, pid as phonePid, wake } from '../phone.mjs';
 import { clientBuild, mark, record } from '../results.mjs';
-import { srvLines } from '../srvlog.mjs';
+import { srvLines } from '../estate.mjs';
 import { consoleLines, gate, report, watch } from '../watch.mjs';
 
 const run = mark('COMM14');
@@ -139,7 +140,13 @@ async function caseOf(name, { level, text, mention, channelId, workspaceId, owne
     if (mention) {
       // The chip carries the id the sender will put in `mentionedUserIds`; the text follows it so
       // the message is identifiable in the transcript as well as in the tray.
-      const mentioned = await mentionInComposer(w2, mention);
+      //
+      // BY ID, because the query cannot pick a person here. `@Canari` matches BOTH campaign
+      // accounts - the dropdown does not exclude the signed-in user - so the top row on W2 is W2
+      // ITSELF, and this case would have mentioned the sender and asserted that the OWNER's tray
+      // stayed empty. It would have passed, for the wrong reason, for as long as it ran; the same
+      // gesture cost MENTION-2 a wrong `FAIL` on 2026-09-05. `ownerId` is resolved above.
+      const mentioned = await mentionInComposer(w2, mention, { expectId: ownerId });
       await w2.send('Input.insertText', { text: ` ${text}` });
       await fireComposer(w2);
       return mentioned;
@@ -163,7 +170,7 @@ async function caseOf(name, { level, text, mention, channelId, workspaceId, owne
     levelStored,
     text,
     mentionedId: sent ? String(sent).slice(0, 8) : null,
-    pushed: fresh.length > 0,
+    decided: fresh.length > 0,
     recipients: fresh.map((d) => d.recipients),
     trayBefore,
     trayAfter: tray.length,
@@ -180,6 +187,14 @@ const ownerId = await step('resolve the owner user id', () => userIdOf(OWNER_NAM
 const workspaceId = await step('read the community id', () => workspaceIdOf(VENUE.community));
 const phoneUp = await step('is the phone running', () => phonePid());
 const a1 = await step('read the build the phone is running', async () => {
+  // FOREGROUNDED FIRST, BECAUSE A BACKGROUNDED WEBVIEW NEVER ANSWERS. `clientBuild` reads the app's
+  // own `/_app/version.json` with a `fetch` inside the page, and Android throttles timers and network
+  // in a backgrounded WebView - the promise simply never settles and the CDP call times out. This
+  // check BACKGROUNDS the phone itself (it has to: a foreground app posts no tray notification), so
+  // the very next run of it arms against the state the previous one left, which is how it failed on
+  // 2026-09-05 with `read the build the phone is running: The operation timed out` while the same
+  // step had answered `2eb116c3` nine minutes earlier.
+  await foreground({ port: PORTS.A1 });
   const cx = await client(PORTS.A1);
   try {
     return await clientBuild(cx);
@@ -248,18 +263,47 @@ const measured = cases.length > 0;
 const only = (v) => (measured ? v : null);
 
 const levelsStored = only(cases.every((c) => c.levelStored === c.levelAsked));
-const noneIsSilent = only(byName.none?.pushed === false && byName.none?.trayAfter === 0);
-const mentionsSkipsTheUnmentioned = only(
-  byName['mentions, unmentioned']?.pushed === false &&
-    byName['mentions, unmentioned']?.trayAfter === 0
+/**
+ * A case that chose NOBODY - the decision was taken, and it selected zero recipients.
+ *
+ * IT IS THE COUNT, NEVER THE ABSENCE OF A LINE. This check used to read "no `[CHANNEL_PUSH]` line
+ * for this message" as silence, on the stated premise that the service logs one only when the
+ * filtered list is non-empty. That premise was false - the service logs `recipients=0 of N ...`
+ * precisely so a fan-out that chose nobody stops looking like a fan-out that never ran - and the
+ * check never noticed, because `srvLines` was reading PRODUCTION's log for a channel id that only
+ * exists locally, where every absence is guaranteed. Two wrong things agreed.
+ *
+ * An absence cannot distinguish "the server decided to notify nobody" from "the message never
+ * reached the server", and those want opposite repairs. `recipients=0` says the first, positively.
+ */
+const choseNobody = (c) =>
+  c?.decided === true && (c?.recipients ?? []).every((n) => n === 0) && c?.trayAfter === 0;
+/** A case that chose somebody: the decision was taken and every count it printed is at least one. */
+const choseSomebody = (c) =>
+  c?.decided === true &&
+  (c?.recipients ?? []).length > 0 &&
+  (c?.recipients ?? []).every((n) => n >= 1);
+
+/**
+ * NO TRAY BODY MAY SHOW A RAW MENTION TOKEN.
+ *
+ * A mention is stored in the ciphertext as `@[<64 hex>]` and the web renders it as a chip. The
+ * Android push handler put the decrypted text in the banner untouched, so the ONE notification
+ * channel a mention posts on - the high-priority one - showed the reader a sixty-four character hex
+ * blob followed by a double space. Measured here on 2026-09-05:
+ * `@[f7a9bb80..5d8ce1]  COMM14-mtnq7c2dlh3-tagged`.
+ *
+ * It is asserted on the tray rather than in a unit test because the body is built in Kotlin, in a
+ * push handler, from a blob only the device can decrypt - there is no other observer.
+ */
+const noRawMentionTokenInATray = only(
+  cases.every((c) => (c.trayBodies ?? []).every((b) => !String(b).includes('@[')))
 );
-const mentionsDelivers = only(
-  byName['mentions, mentioned']?.pushed === true &&
-    (byName['mentions, mentioned']?.recipients ?? []).every((n) => n >= 1)
-);
-const allDelivers = only(
-  byName.all?.pushed === true && (byName.all?.recipients ?? []).every((n) => n >= 1)
-);
+
+const noneIsSilent = only(choseNobody(byName.none));
+const mentionsSkipsTheUnmentioned = only(choseNobody(byName['mentions, unmentioned']));
+const mentionsDelivers = only(choseSomebody(byName['mentions, mentioned']));
+const allDelivers = only(choseSomebody(byName.all));
 // THE CAPABILITY ITSELF. Without one real notification in the tray the four cases above are a story
 // about a log line, and three of them read identically on a phone that has never received a push.
 const thePhoneWasReallyPushed = only((byName['mentions, mentioned']?.trayAfter ?? 0) > 0);
@@ -277,6 +321,7 @@ const verdict = !armed
       mentionsSkipsTheUnmentioned !== true ||
       mentionsDelivers !== true ||
       allDelivers !== true ||
+      noRawMentionTokenInATray !== true ||
       thePhoneWasReallyPushed !== true
     ? 'FAIL'
     : 'PASS';
@@ -311,6 +356,7 @@ record('COMM-14', gated.verdict, {
   mentionsSkipsTheUnmentioned,
   mentionsDelivers,
   allDelivers,
+  noRawMentionTokenInATray,
   thePhoneWasReallyPushed,
   // THE USER'S OBSERVATION OF 2026-08-20, recorded and not asserted: a body that does not carry the
   // message is a question about the APK's decrypt path, not about the filter this row measures.

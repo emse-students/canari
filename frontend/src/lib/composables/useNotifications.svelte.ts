@@ -418,7 +418,13 @@ export function useNotifications() {
     const convKey = conversationId ?? '__default__';
     const now = Date.now();
     const lastAt = lastNotifAtByConv.get(convKey) ?? 0;
-    if (now - lastAt < 800) return;
+    if (now - lastAt < 800) {
+      // EVERY SWALLOWED BRANCH LOGS. Three returns here were silent, so "the user was not notified"
+      // and "the code never got there" were the same observation from outside - which is what made
+      // TAB-1's zero unattributable for a day.
+      console.log(`[NOTIF] Throttled for ${convKey} - ${now - lastAt} ms since the last (800 ms).`);
+      return;
+    }
     lastNotifAtByConv.set(convKey, now);
 
     if (isTauriRuntime()) {
@@ -462,8 +468,15 @@ export function useNotifications() {
       }
     }
 
-    if ('Notification' in window) {
+    if (!('Notification' in window)) {
+      console.log(`[NOTIF] Not raised for ${convKey} - this engine exposes no Notification API.`);
+      return;
+    }
+    {
       if (Notification.permission !== 'granted') {
+        console.log(
+          `[NOTIF] Not raised for ${convKey} - permission is "${Notification.permission}"; asking.`
+        );
         void requestSystemNotificationPermission();
         return;
       }
@@ -490,9 +503,12 @@ export function useNotifications() {
           }
           n.close();
         };
+        console.log(`[NOTIF] Raised for ${convKey}.`);
         setTimeout(() => n.close(), 8000);
-      } catch {
-        /* ignore */
+      } catch (e) {
+        // A browser refuses a Notification for reasons a page cannot test for in advance, and an
+        // empty catch here is indistinguishable from never having tried.
+        console.log(`[NOTIF] Constructor threw for ${convKey}: ${String(e)}`);
       }
     }
   }

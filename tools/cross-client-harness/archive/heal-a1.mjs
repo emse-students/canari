@@ -37,6 +37,7 @@ import { watch } from '../watch.mjs';
 import { mark, record } from '../results.mjs';
 import { execFileSync } from 'node:child_process';
 import { PORTS, peerNameFor } from '../names.mjs';
+import { requireScript } from '../scriptpath.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const REWIND_SENDS = Number(process.env.REWIND_SENDS || 12);
@@ -112,14 +113,14 @@ const repairLines = (cx, sinceT) =>
 
 // --------------------------------------------------------------------------- clients
 const a1 = await client(PORTS.A1, null, { focus: false });
-const w2 = await client(9223, APP_TAB, { focus: false });
+const w2 = await client(PORTS.W2, APP_TAB, { focus: false });
 
 // Park W1 so the responder election has exactly one candidate. Reversible: `about:blank` drops the
 // in-memory access token, not the refresh cookie, so navigating back logs in again (and re-locks
 // the PIN, which `pin.mjs` handles).
 // No `match`: a previous run may already have parked it, and a check that cannot run twice is a
 // check that will be run once and then trusted forever.
-const w1 = await client(9224, null, { focus: false });
+const w1 = await client(PORTS.W1, null, { focus: false });
 const w1Url = await evaluate(w1, 'location.href');
 if (!w1Url.startsWith('about:')) await w1.send('Page.navigate', { url: 'about:blank' });
 console.log(`[heal-a1] W1 parked (was ${w1Url}) - W2 is the only device that can answer`);
@@ -138,7 +139,7 @@ await sleep(8000);
 // --------------------------------------------------------------------------- 1. baseline + rewind
 console.log(
   '[heal-a1] snapshot:',
-  JSON.parse(execFileSync(process.execPath, ['mlsdb.mjs', '--port', '9223', 'snapshot'], { encoding: 'utf8' }))
+  JSON.parse(execFileSync(process.execPath, [requireScript('mlsdb.mjs'), '--port', '9223', 'snapshot'], { encoding: 'utf8' }))
     .report.map((r) => `${r.store} ${r.rows} rows`)
     .join(', ')
 );
@@ -180,7 +181,7 @@ try {
   // ------------------------------------------------------------------------- 2. break it
   console.log(
     '[heal-a1] restore:',
-    execFileSync(process.execPath, ['mlsdb.mjs', '--port', '9223', 'restore'], { encoding: 'utf8' })
+    execFileSync(process.execPath, [requireScript('mlsdb.mjs'), '--port', '9223', 'restore'], { encoding: 'utf8' })
       .replace(/\s+/g, ' ')
       .slice(0, 200)
   );

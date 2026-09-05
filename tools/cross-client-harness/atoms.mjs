@@ -30,6 +30,21 @@
  * asserts nothing about the application. That is what makes it reusable: a row decides what a
  * gesture's outcome MEANS, and two rows may read the same outcome differently.
  *
+ * **WITH EXACTLY ONE EXCEPTION, AND IT IS DELIBERATE: `newdevice.mjs`.** It imports `recordObserved`
+ * and closes `HEAL-NEW-0`. That is not a filing mistake to be tidied away - ten HEAL-NEW rows reach
+ * it with `--keep-open` and rest on the device it builds, so the primitive is measured by a row of
+ * its own and a failure inside it is attributed to IT rather than surfacing as ten unrelated rows
+ * failing for reasons none of them owns. A gesture load-bearing enough that other rows depend on it
+ * earns a row proving it works; nothing else here does.
+ *
+ * **The boundary is machine-checked rather than trusted, since 2026-09-04.** `inventory.mjs` asks
+ * every script whether it imports a verdict writer from `results.mjs` and files it on the answer, so
+ * a second atom growing a `record(...)` shows up in `INVENTORY.md` under "Primitives that carry
+ * their own row" on the next `make test-harness` rather than quietly contradicting this paragraph.
+ * The audit that produced this note (work item A3) found the reverse error to be the common one:
+ * 39 GESTURES were filed under `archive/` and announced as rows, where nobody looking for a gesture
+ * would find them - which is the duplication this whole rig was being tidied to stop.
+ *
  * **TWO SHAPES, AND THE REASON IS HISTORICAL RATHER THAN PRINCIPLED.** Some atoms are importable
  * functions (`createDM`, `createGroup`, `client`, `psql`); some are CLI scripts with top-level
  * `await` (`login.mjs`, `pin.mjs`, `newdevice.mjs`), which a bigger script reaches by spawning -
@@ -108,10 +123,21 @@
  *                                                                   shapes of the same gesture.
  *
  * **Observing**
+ *   `logs.mjs`                      `logs.mjs`     THE COMMAND over all three observers - a client's
+ *                                                  console, the phone's logcat, or the estate -
+ *                                                  classified into the same buckets, exit 0 clean /
+ *                                                  1 dirty. Reach for this first; the libraries
+ *                                                  below are what a ROW composes with.
+ *                                                  **A browser can only be watched FORWARD** - it
+ *                                                  keeps no buffer, so attach before the thing you
+ *                                                  want to see. The phone and the estate read back.
  *   `watch(cx)`                     `watch.mjs`    console, page errors, HTTP and WebSocket, with
  *                                                  the classifier every row reports next to its
  *                                                  verdict. Expected noise is dispositioned PER ROW
  *                                                  with `ignoringExpectedLog`, never widened here.
+ *   `serial()`                      `serial.mjs`   WHICH PHONE adb talks to, for every caller. It
+ *                                                  refuses to choose between two, because the copy
+ *                                                  that chose silently read the wrong device's log.
  *   `srvlog.mjs` `state.mjs` `rows.mjs`            the server window, what the clients are, and the
  *                                                  board against the ledger.
  * ---------------------------------------------------------------------------------------------

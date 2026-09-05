@@ -197,7 +197,7 @@ else
   # `--check-notes` is a MODE of the submission script rather than a rule restated in bash, because
   # two implementations of "valid release notes" drift and the drift is invisible: the preflight
   # would pass and Apple would refuse.
-  if NOTES_OUT="$(MARKETING_VERSION="$VERSION" node tools/app-store/submit.mjs --check-notes 2>&1)"; then
+  if NOTES_OUT="$(MARKETING_VERSION="$VERSION" bun tools/app-store/submit.mjs --check-notes 2>&1)"; then
     ok "$NOTES_OUT"
   else
     refuse "$NOTES_OUT"

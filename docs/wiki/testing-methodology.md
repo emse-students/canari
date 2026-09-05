@@ -2255,6 +2255,79 @@ of a probe sender, so the sidebar went green on the READD path rather than on a 
 the fresh-device bulk of `TooDistantInThePast` is the documented past-epoch noise, which is exactly
 the kind of line a reader learns to skip - and the 500 was three lines away from it.
 
+## AN OBSERVER POINTED AT THE WRONG ESTATE ANSWERS, AND ITS ANSWER IS ALWAYS "NO"
+
+The campaign moved to the local estate on 2026-09-03. `psql` and `redis` were made to follow `SITE`
+that day and `estate.mjs` was written to hold the decision. **`srvlog.mjs` - the THIRD observer, the
+one that reads the platform's own logs - was not, and nobody noticed for two days**, because it
+still spelt `ssh canari docker logs infrastructure-<service>-1` and production is never quiet: every
+window it returned was full of real lines, so it read as a working instrument.
+
+**What it costs is not an error, it is a NEGATIVE.** Every predicate of the form "this line is
+absent" is satisfied for free in an estate where the subject was never created. COMM-14 asks whether
+the three channel notification levels are enforced and reads
+`[CHANNEL_PUSH] channel=<id> message=<id> recipients=N` as the decision itself; on 2026-09-05 it
+recorded **FAIL** on a product that was working, while the PHONE's tray held both notifications it
+said had not been sent. The local container had logged thirty such lines. The instrument had read
+production's, where that channel id has never existed.
+
+Two rules come out of it, and the second is the one that generalises:
+
+- **EVERY OBSERVER FOLLOWS `SITE`, AND THERE IS NO SECOND MECHANISM.** A rig cannot be
+  half-configured: `estate.mjs` decides once, at import, for the database, the cache and now the
+  logs. `srvlog.mjs` stays PURE - it may not import `names.mjs`, because eleven gated self-tests take
+  its rule lists in CI from a checkout that has no `names.mjs` - so the reader lives in `estate.mjs`
+  and is PASSED IN. That is why `srvReport` takes its reader as an argument rather than reaching for
+  one.
+- **AN ABSENCE IS THE WEAKEST EVIDENCE THERE IS, AND IT FAILS SILENTLY IN BOTH DIRECTIONS.** The same
+  row also read "no `[CHANNEL_PUSH]` line for this message" as "the server chose to notify nobody",
+  on a stated premise about the service that was simply false - it logs `recipients=0 of N ...`
+  precisely so those two stop looking alike. Two wrong things agreed, and the row was green on the
+  cases that mattered least. **Assert a COUNT, never a silence**: `recipients=0` says the decision
+  was taken and selected nobody; an absence cannot tell that from a message that never arrived, and
+  those want opposite repairs.
+
+## THE INSTRUMENT DESTROYED THE EVENT IT WAS MEASURING - COMM-18, THREE TIMES OVER
+
+COMM-18 asks one thing: force-stop the app, follow `fr.emse.canari://chat/channel_<uuid>`, and land
+in that salon. It recorded `FAIL` or `VACUOUS` all session on 2026-09-05, and **every symptom pointed
+at the product** - the deep-link listener registered, `getCurrent()` returned nothing, the app sat on
+`/posts`, the PIN gate read as refused. The build was correct throughout: driven by hand, the same
+APK read the launch URL on attempt 1, 38 ms after the bundle ran, every single time.
+
+Three separate rig defects, each of which alone produced a believable product story:
+
+- **`unlockClient` had never once been able to spawn `pin.mjs`.** It passed the bare name with
+  `archive/` as the cwd, and `pin.mjs` is in the harness root: the child answered
+  `error: Module not found "pin.mjs"` on every call since the helper was written. It looked like it
+  worked because its early return covers the common case - a client already past the gate - and
+  because the failure went into a `said` string most callers drop. **`requireScript` exists for
+  exactly this** and says why in its own docstring; the helper simply did not use it.
+- **`resolveDevice` computed `isPhone` from the SPELT device name.** It already resolves a port back
+  to its device for `account` and for `device`, then threw that away for the one field that ARMS the
+  phone - so `--port 9333` was A1 for every purpose except re-deriving the adb forward. After a
+  force-stop the devtools socket is named after the new pid, so the caller connected to a socket
+  belonging to a process that no longer existed.
+- **`phone.ensure` foregrounds the app with `am start -n <pkg>/.MainActivity`, and its comment
+  called that "a no-op on an app already in front".** It is not. That is a plain MAIN intent;
+  `MainActivity` is `launchMode="singleTask"`, so it arrives at `onNewIntent`, which calls
+  `setIntent(it)` - and the deep-link plugin reads `activity.intent` in `load(webView)` to find the
+  URL the app was started with. Fired 1.5 s after the row's own `am start -d <link>`, with the
+  WebView still booting, it **replaced the intent under test**.
+
+**THE RULE. An instrument that touches the subject must say what it touches.** Two of the three were
+gestures the rig makes on every phone row and had no visible cost anywhere else; they were only ever
+wrong on the ONE row whose subject is the launch intent. So the question to ask of any arming step is
+not "does this work" but "what does this CHANGE", and a step that changes the thing under test needs
+an opt-out the row can take - `ensure({ keepIntent: true })` - rather than a comment asserting it
+changes nothing.
+
+**AND THE CORROLLARY THAT COST THE MOST TIME.** All three failures were swallowed into strings: a
+`said` nobody recorded, a `verdict` with no reason beside it, an intent nobody logged. The row now
+records `a1GateSaid`, and `pingate` PRINTS a non-zero exit rather than only returning it, because
+`LOCKED` has three causes that read alike - the PIN was refused, the modal never mounted, or the tool
+never reached the phone.
+
 ## A STATUS WITH NO REQUEST IS EVIDENCE FOR NOTHING
 
 **Measured 2026-08-29, on HEAL-NEW-15's gate.** The row was demoted to `PASS-DIRTY` partly on
@@ -2526,6 +2599,69 @@ it never rescues a `FAIL`. So a row that ANDs `clean` into its assertion is not 
 making `PASS-DIRTY` structurally unreachable for itself and mislabelling environmental noise as a
 product defect. **An assertion answers the row's own question and nothing else. Cleanliness is the
 gate's job, once, for every row.**
+
+### The ending a check owes, and the repair for it that lies
+
+`results.mjs` derives the exit code from the verdicts a script recorded, through a `beforeExit`
+hook whose whole design is that there is nothing to add to a script and therefore nothing to omit.
+It fires when the event loop IDLES - and a check holding a CDP socket never idles, because nothing
+closes one. `client()` alone is enough: a two-line script that opens one and prints a line was
+measured on 2026-09-05 still running 25 s later, killed by its timeout.
+
+So such a script runs off its end and sits there with its verdict already on disk, blocking whatever
+was queued behind it. `tab236.mjs` was alive twenty-five minutes after printing `1/1 pass`;
+`tab5.mjs` and `notif.mjs` were in the same state; `tab4.mjs` cost six minutes a run.
+
+**THE OBVIOUS REPAIR IS THE DEFECT.** A bare `process.exit(0)` ends the process and claims a pass
+in the same breath, so a recorded `FAIL` is reported as `done` - which is exactly what `beforeExit`
+was written to stop. Six files in the tree carry a comment saying so, each written the day that file
+was caught, and `tab236.mjs` acquired a seventh on 2026-09-05 UNDER a comment stating the code was
+derived. Both halves have to be the same call: `exitOnRecorded()` is the derivation, invoked rather
+than waited for.
+
+**Five endings are honest and closing the socket is one of them** - it lets the loop idle, which is
+precisely what the hook waits for; thirty checks end `w1.close(); w2.close();` and are correct. A
+first draft of the gate condemned all thirty, and a gate that condemns the correct majority gets
+deleted rather than obeyed. `archive/exit-selftest.mjs` asserts both halves, and asserts its own
+predicate on fixtures first: an exit-0 downstream of a `record(` is flagged, an early opt-out before
+any verdict is not, and prose about `record(...)` is not an import.
+
+### A spawned atom that never exits turns SUCCESS into a timeout, and only on the rows that need it
+
+DEL-7 came back `PASS-DIRTY` on 2026-09-05 carrying `pinOnWake: "pin.mjs failed: ...[pin] after:"`,
+while a screenshot taken at the same moment showed the phone unlocked and past the gate. Both were
+true. `pin.mjs` closes its CDP socket and names an exit code on every REFUSAL - a PIN the product
+rejected (exit 1), no gate to answer (exit 2) - and the path where the PIN WORKED fell off the end of
+the file with the socket still open. An open socket keeps the event loop alive, so the process never
+exited. `phone.unlockPin()` runs it under `execFileSync(..., { timeout: 120_000 })`: unlock in 2.7 s,
+sit for 117 more, get killed, report `pin.mjs failed`.
+
+**It hid behind the path that worked.** A client already past the gate leaves at the `exit(2)` branch
+and its caller reads `no modal` instantly - which is the state of the phone on every run except the
+first after a restart. So the hang could only appear on rows that RESTART the app, the one population
+that cannot afford two lost minutes, and it looked like a phone problem every time.
+
+Two rules came out of it, and only the first is about exit codes.
+
+- **A process must end as deliberately when it succeeds as when it fails.** An exit code is part of a
+  contract; a success path that simply runs out of file has opted out of it, and its caller is left
+  inferring the outcome from a clock.
+- **A failure report built from STDOUT is built from the one stream that says nothing about why.**
+  `unlockPin` kept 200 characters of stdout and discarded the exit code and stderr - so "the product
+  refused the PIN", "the app is on an estate that is not the local one" and "the CDP context died"
+  all rendered as the same truncated line, ending mid-sentence on the most interesting word in it.
+  The record must carry the evidence separating the causes it cannot itself distinguish.
+
+**And the instrument hash could not have flagged the fix.** `instrument.mjs` walked `import`
+specifiers, and `pin.mjs` is SPAWNED, never imported - so the file that decides whether a phone row
+can read anything at all was in no hash, and repairing it changed what every `+A1` row meeting the
+gate observes without ageing one verdict. That is the same failure the hash was built for (`chat.mjs`
+opening the wrong conversation under runners whose own bytes had not moved), one level further out:
+**an import graph answers what a file LOADS, never what it RUNS.** The walk now follows a bare `.mjs`
+name in call or array position, anchored there so a filename in prose stays out - over-inclusion is
+the safe direction only while it stays bounded, and a hash invalidated by every edit anywhere is
+worth what no hash is worth. Measured on `del.mjs`: 20 files to 25, the five being exactly the
+spawned scripts and their imports.
 
 ### A campaign run and a push to `main` are mutually exclusive - three measurements died of it in one day
 

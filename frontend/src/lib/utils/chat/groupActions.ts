@@ -71,7 +71,17 @@ export async function deliverWelcomes(params: {
   await Promise.all(
     bulk.addedDeviceIds.map(async (did) => {
       const owner = ownerOf(did);
-      if (!owner) return;
+      if (!owner) {
+        // A DEVICE THAT GOT INTO THE COMMIT AND WILL NEVER GET ITS WELCOME, and it used to leave
+        // NOTHING behind. The commit has already moved the epoch for everyone, so this device is in
+        // the ratchet tree; without a Welcome it can decrypt nothing, and its owner is never added
+        // to `delivered`, so `registerMember` never runs for them either - a member the group thinks
+        // it has and who holds no key material. The only trace was arithmetic: `[SYNC]
+        // bulk.addedDeviceIds` listing N ids and `[OK] Added ... (M user(s) delivered)` with M
+        // short, and nobody subtracts two numbers in a log. Every swallowed branch logs.
+        log(`${tag} no owner known for ${did} - added to the commit, Welcome NOT sent`);
+        return;
+      }
       try {
         await mlsService.sendWelcome(welcome, owner, groupId, did, bulk.ratchetTree);
         delivered.add(owner);

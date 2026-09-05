@@ -14,6 +14,47 @@
 
 import { apiFetch } from '$lib/utils/apiFetch';
 import { coreUrl } from '$lib/utils/apiUrl';
+import {
+  readNativeRefreshToken,
+  REFRESH_HEADER,
+  usesBodyRefreshTransport,
+} from '$lib/stores/nativeRefreshToken';
+
+/**
+ * The headers a call the server resolves to a SESSION has to carry, on the platforms that carry
+ * their own refresh credential.
+ *
+ * EVERY ENDPOINT IN THIS FILE IS ANSWERED FROM `currentSessionId(req)`, which reads the presented
+ * REFRESH credential and nothing else - the access token names the user, never the login. On a
+ * native shell that credential travels in a header, because the engine will not keep a
+ * third-party cookie; `auth.ts` sends it on `refresh` and on `logout`, and this file sent it
+ * nowhere. The server then fell back to whatever cookie the WebView still happened to hold, which
+ * is by construction A VALUE THE CLIENT STOPPED MAINTAINING (rotation goes through the header),
+ * so it named a session that no longer exists.
+ *
+ * MEASURED ON DEL-7, 2026-09-05, on the phone: `POST /api/auth/refresh` answered 200 at 04:02:40
+ * and `PUT /api/auth/sessions/current/device` was answered 404 thirteen seconds later, naming sid
+ * `9a29c2e8...` - a row absent from the database, while the session the refresh had just rotated
+ * was alive. Two credentials, one client.
+ *
+ * WHAT IT COST IS NOT ONE LOG LINE. `bindCurrentSessionDevice` is the ONLY writer of
+ * `auth_sessions.deviceId`, and its purge of unreachable sessions claiming a device is what closes
+ * the reinstall hole - so on the native shell that hole never closed. Worse, `revokeOtherAuthSessions`
+ * passes the same resolved id to the server as the one to KEEP: with it unresolvable, "sign out
+ * everywhere else" had no reason to spare the caller.
+ *
+ * IT ADDS NO ROUND TRIP HERE, which is what the note on {@link bindCurrentSessionDevice} was
+ * guarding: every call in this file is already non-simple (a `PUT` with a JSON body, a `DELETE`),
+ * so the preflight it warns about is one these requests already pay. The refresh path is still
+ * deliberately not folded in.
+ */
+async function sessionScopedHeaders(
+  base: Record<string, string> = {}
+): Promise<Record<string, string>> {
+  if (!usesBodyRefreshTransport()) return base;
+  const carried = await readNativeRefreshToken();
+  return carried ? { ...base, [REFRESH_HEADER]: carried } : base;
+}
 
 /** One live session of the current user, as returned by the server. */
 export interface AuthSessionInfo {
@@ -55,6 +96,7 @@ export async function fetchAuthSessions(): Promise<AuthSessionInfo[]> {
   console.log('[SESSIONS] Loading account sessions');
   const res = await apiFetch(`${coreUrl()}/api/auth/sessions`, {
     credentials: 'include',
+    headers: await sessionScopedHeaders(),
   });
   if (!res.ok) {
     console.warn(`[SESSIONS] List failed (HTTP ${res.status})`);
@@ -71,6 +113,7 @@ export async function revokeAuthSession(id: string): Promise<boolean> {
   const res = await apiFetch(`${coreUrl()}/api/auth/sessions/${encodeURIComponent(id)}`, {
     method: 'DELETE',
     credentials: 'include',
+    headers: await sessionScopedHeaders(),
   });
   if (!res.ok) {
     console.warn(`[SESSIONS] Revoke failed (HTTP ${res.status})`);
@@ -96,7 +139,7 @@ export async function bindCurrentSessionDevice(deviceId: string): Promise<void> 
   const res = await apiFetch(`${coreUrl()}/api/auth/sessions/current/device`, {
     method: 'PUT',
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
+    headers: await sessionScopedHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ deviceId }),
   });
   if (!res.ok) {
@@ -110,6 +153,7 @@ export async function revokeOtherAuthSessions(): Promise<number> {
   const res = await apiFetch(`${coreUrl()}/api/auth/sessions`, {
     method: 'DELETE',
     credentials: 'include',
+    headers: await sessionScopedHeaders(),
   });
   if (!res.ok) {
     console.warn(`[SESSIONS] Revoke-others failed (HTTP ${res.status})`);

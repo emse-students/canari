@@ -75,6 +75,7 @@ import { stateOf } from "./ready-probe.mjs";
 import { bringToReady } from "./ready-repair.mjs";
 import { finishObserved, record, unmet } from "../results.mjs";
 import { subsetArrivedAndSettled } from "./servable.mjs";
+import { HARNESS_ROOT, requireScript } from "../scriptpath.mjs";
 import {
   activeGroupIds,
   navigationCost,
@@ -253,9 +254,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * exits cleanly still reports what it did on its final line, exactly as before.
  */
 function runScript(file, args) {
-  const r = spawnSync(process.execPath, [file, ...args], {
+  // RESOLVED, not a bare name against this directory: `login.mjs`, `pin.mjs` and
+  // `purge-devices.mjs` live at the harness root and this file lives in `archive/`, so every one of
+  // them failed with `Module not found`. This one at least CAPTURED the failure, unlike
+  // `ready-repair.mjs`, which is the only reason it was found by reading rather than by a run.
+  const r = spawnSync(process.execPath, [requireScript(file), ...args], {
     encoding: "utf8",
-    cwd: import.meta.dirname,
+    cwd: HARNESS_ROOT,
     maxBuffer: 64 * 1024 * 1024,
   });
   const out = `${r.stdout || ""}${r.stderr || ""}`

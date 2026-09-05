@@ -5,7 +5,7 @@
  *
  * THREE ESTATES, NOT ONE, and for a while this swept only the first. A runner that builds its own
  * community takes it down with it, so debris there is rare - but most checks build a SALON inside the
- * shared `Campagne de test` venue, and a shared venue is never deleted, so every salon a crashed
+ * shared venue `VENUE` names, and a shared venue is never deleted, so every salon a crashed
  * runner left sits there for ever. Measured 2026-08-21: 25 salons in that one community, 23 of them
  * from COMM runs, against a sweep reporting "nothing to sweep". That is not cosmetic. The channel
  * list grows downward, and at 25 rows the community's own "add a channel" control sat at y=1149 in a
@@ -20,7 +20,7 @@
  *
  * **AN ALLOWLIST, NEVER A DENYLIST**, and here the NAME is the allowlist. Every venue a check builds
  * is named `C<n> COMM<n>-<mark>`, where the mark is minted by `results.mjs` and cannot collide with
- * anything a person would type. Nothing else is eligible - not the shared `Campagne de test`, not
+ * anything a person would type. Nothing else is eligible - not the shared venue itself, not
  * MiTV, not a community whose name merely looks like a test. A destructive control that decides what
  * to spare has already got it backwards.
  *
@@ -40,7 +40,7 @@ import { deleteChannel, deleteCommunity, enterCommunities, openCommunity } from 
 import { isGroupDebris } from './debris.mjs';
 import { deleteGroup } from './groupnav.mjs';
 import { psql } from './estate.mjs';
-import { PORTS } from './names.mjs';
+import { PORTS, VENUE } from './names.mjs';
 
 /**
  * AN ALLOWLIST, and it is only as good as its enumeration. COMM-12 builds TWO venues per run and
@@ -84,7 +84,13 @@ const SALON_DEBRIS = /^c\d+(-[a-z]+)?-comm\d+-[0-9a-z]+$/;
  * leaves on each MEMBER'S CLIENT is a different estate with a different owner - `dismiss.mjs`.
  */
 
-const SHARED = 'Campagne de test';
+// THE SHARED VENUE IS WHATEVER `VENUE` NAMES, AND A LITERAL HERE SWEPT THE WRONG COMMUNITY. This
+// said `'Campagne de test'` until 2026-09-04; on an estate seeded from a production dump that is a
+// REAL community belonging to two production users, so the salon sweep enumerated a place no check
+// had ever written to and reported "0 match a check's venue" - which the comment above calls out by
+// name as the failure mode of an allowlist. Nothing was wrongly deleted, because `SALON_DEBRIS`
+// gates every deletion; what was lost is the sweep itself, silently.
+const SHARED = VENUE.community;
 
 const dry = process.argv.includes('--dry');
 

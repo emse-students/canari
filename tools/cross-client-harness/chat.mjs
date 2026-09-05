@@ -7,9 +7,12 @@
  *
  * See docs/wiki/cross-client-testing.md section 9 (evidence rule).
  */
-import { IS_MOVING_FN, RESOLVE, activate, clickAtPoint, connect, dragTo, evaluate, listTargets, pressKey, realClick, stablePoint, until } from './cdp.mjs';
+import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { GATE_EXPR } from './gate-probe.mjs';
+import { IS_MOVING_FN, RESOLVE, activate, clickAtPoint, connect, dragTo, evaluate, listTargets, parkPointer, pressKey, realClick, reloadAndWait, stablePoint, until } from './cdp.mjs';
 // For the device check in `goto`: the phone is the one client a reload costs something on.
-import { PORTS, SITE } from './names.mjs';
+import { PORTS, SITE, VENUE } from './names.mjs';
 
 /**
  * THE SUBSTRING THAT IDENTIFIES THE APP'S OWN TAB, and it is DERIVED rather than spelt.
@@ -30,6 +33,7 @@ export const APP_TAB = new URL(SITE).host;
 /** The app's hostname, without a port: what a cookie's `domain` can be compared against. */
 export const APP_HOST = new URL(SITE).hostname;
 import { OVERLAYS } from './overlay-probe.mjs';
+import { serial } from './serial.mjs';
 
 // SCOPED TO THE CHAT, and that scoping is the whole point.
 //
@@ -703,6 +707,47 @@ export async function clearOverlays(cx) {
  * user's click does not, and that difference is itself a bug this campaign has already found once.
  */
 export async function ensureChat(cx) {
+  // A POINTER LEFT OVER THE NAV RAIL IS A PRECONDITION TOO, AND IT IS AMBIENT UNTIL SOMETHING
+  // ESTABLISHES IT. `AppSidebar` expands on hover and stays expanded for as long as the synthetic
+  // pointer rests on it, covering the whole conversation list - so a client picked up after a run
+  // that was killed mid-gesture, or after any click that did not park, fails its first tile click
+  // with `no stable element` and accuses the sidebar. `parkPointer` is the one implementation, and
+  // this is the one place every runner passes through before it touches anything. See FWD-1,
+  // 2026-09-05.
+  await parkPointer(cx);
+
+  // A SIGNED-OUT OR LOCKED CLIENT IS A PRECONDITION, NOT A MISSING BUTTON.
+  //
+  // Neither screen has a "Discussions" link, so both used to die four frames later inside
+  // `realClick` as `no stable element for selector: text=Discussions` - a sentence about the DOM,
+  // for a fact the session state knew before anything was clicked. Measured
+  // 2026-09-04 when MSG-2 was run against a phone that had never been logged in: the check produced
+  // no verdict at all, recorded nothing, and read as a broken app.
+  //
+  // The two states are named apart because their remedies are different commands, and a run that
+  // cannot tell them apart sends its reader to the wrong one. `GATE_EXPR` is `gate-probe.mjs`'s
+  // single definition of the PIN gate, the same one `state.mjs` and `pin.mjs` read.
+  const session = await evaluate(
+    cx,
+    `(function () {
+      if (location.pathname.indexOf('/login') === 0 || !!document.querySelector('#username')) {
+        return 'signedOut';
+      }
+      return ${GATE_EXPR} ? 'locked' : 'in';
+    })()`
+  );
+  if (session !== 'in') {
+    throw new Error(
+      `ensureChat: port ${cx.port} is ` +
+        `${session === 'signedOut' ? 'SIGNED OUT' : 'behind the PIN gate'}, so there is no ` +
+        `Discussions list to reach. ` +
+        (session === 'signedOut'
+          ? 'Log it in first (`bun login.mjs --device <name>`, or `--android` for the phone).'
+          : 'Unlock it first (`bun pin.mjs --device <name>`).') +
+        ' This is a PRECONDITION the run did not meet, not a defect in the app.'
+    );
+  }
+
   // BEFORE the route test, not after: an overlay is what stops the clicks below from landing, and
   // the early return would otherwise hand back `already` for a screen nothing can be clicked on.
   await clearOverlays(cx);
@@ -818,7 +863,16 @@ export async function awaitAppSettled(cx, timeoutMs = 20000) {
 }
 
 /**
- * Opens the campaign's channel: community "Campagne de test", channel `general`.
+ * Opens the campaign's channel - the one `VENUE` names, never a literal.
+ *
+ * **THE DEFAULT USED TO BE THE STRING `'Campagne de test'`, AND ON A PROD-COPY ESTATE THAT IS
+ * SOMEBODY ELSE'S COMMUNITY.** Measured 2026-09-04: this database holds both, and the literal one -
+ * created 2026-08-26, two members, neither of them a test account - came down with the production
+ * dump. `Canari Test Venue` is the campaign's, created the same day by the rig, holding exactly W1
+ * and W2. So TYPE-5 asked for a community W1 is not a member of and reported `the community was
+ * never listed`, which reads as a broken sidebar and was a stale literal. Half the runners already
+ * passed `VENUE.community` explicitly - the ones repaired when this was first met - and the other
+ * half took the default, so the fixture had two names and the sweep tools used the wrong one.
  *
  * THE FAILURE CARRIES THE SCREEN, because the bare timeout did not and cost a whole run to diagnose.
  * `until() timed out: !!document.querySelector('.chat-composer-editor')` says the composer never
@@ -828,7 +882,7 @@ export async function awaitAppSettled(cx, timeoutMs = 20000) {
  * is a fact the harness can read and must: `realClick` returns the point, and the hit test below
  * names the element that was actually under it.
  */
-export async function openChannel(cx, community = 'Campagne de test', channel = 'general') {
+export async function openChannel(cx, community = VENUE.community, channel = VENUE.channel) {
   /** The screen, at the moment something did not happen. */
   const screen = async (point) =>
     JSON.parse(
@@ -850,21 +904,98 @@ export async function openChannel(cx, community = 'Campagne de test', channel = 
       )
     );
 
-  // A1 reloads here, DECLARED rather than accidental: there is no click path to `/communities` from
-  // an arbitrary screen on the phone the way `ensureChat` gives one to `/chat`, so this is the only
-  // way in until one is written. It costs what `goto` documents - a PIN re-lock and, if a command is
-  // in flight, a `runCallback` exception into the fresh document - so a phone verdict that goes dirty
-  // on either of those inside a channel check is the RIG, not the app. Writing that click path is
-  // what removes the last A1 reload from the campaign.
-  await goto(cx, '/communities', { relaunch: 'no click path to /communities on the phone yet' });
+  /** The page is already the one we are trying to reach - a fact, asked of the document. */
+  const alreadyOnCommunities = `!!document.querySelector('[data-route-mode="communities"]')`;
+
+  // THE PHONE'S CONSTRAINT WAS BEING PAID BY THE BROWSERS TOO, AND IT CHANGED WHAT ROWS MEASURED.
+  // This was an unconditional `goto`, which is a FULL PAGE LOAD - justified on A1, where there is
+  // no click path to `/communities` the way `ensureChat` gives one to `/chat`. On W1/W2 there is
+  // one: the nav rail's own anchor, present in the DOM whether the rail is collapsed or expanded,
+  // and clicking it is a SvelteKit client-side navigation. Measured 2026-09-05: three `openChannel`
+  // calls produced THREE `Page.loadEventFired` and wiped a page-level stamp each time; the click
+  // path produces none and lands on `/communities` just the same.
+  //
+  // WHAT THAT COST WAS NOT ONLY TIME. Every row that opens a channel was measuring a COLD BOOT, and
+  // a loop of them was a loop of cold boots - FWD-2 asks for "the same forward 25 times in a loop"
+  // and was reloading the application between every one, which is a different question with a
+  // different answer. It is also why anything the app counts per session reset on every round.
+  if (isPhone(cx)) {
+    // Still declared rather than accidental here, and it costs what `goto` documents: a PIN re-lock
+    // and, if a command is in flight, a `runCallback` exception into the fresh document. A phone
+    // verdict that goes dirty on either of those inside a channel check is the RIG, not the app.
+    await goto(cx, '/communities', { relaunch: 'no click path to /communities on the phone yet' });
+  } else {
+    // NOT IF WE ARE ALREADY THERE. Clicking the rail to reach the page it is already showing is
+    // not merely wasted - it is the whole hover hazard for nothing: the click moves the pointer
+    // onto the rail, and on a busy freshly-loaded page the four CDP round-trips of one click can
+    // outlast the 150 ms hover-intent timer, so the drawer opens and its backdrop covers the list.
+    if (!JSON.parse(await evaluate(cx, `JSON.stringify(${alreadyOnCommunities})`))) {
+      await realClick(cx, 'a[href="/communities"]');
+      // THE DOCUMENT, NOT THE ADDRESS. `location.pathname` changes when the navigation STARTS and
+      // the page component swaps after it, so a question asked on the URL alone gets answered by
+      // the page being left - and the click that followed then raced the swap.
+      await until(cx, `!!document.querySelector('[data-route-mode="communities"]')`, 10000);
+    }
+  }
+  // WHETHER THE COMMUNITY STILL NEEDS SELECTING IS A FACT, NOT SOMETHING TO LEARN BY FAILING.
+  // A reload always arrived with nothing selected, so clicking the community was unconditional and
+  // safe. A client-side navigation does not: the app restores the community that was open, and the
+  // name then appears as the PANEL HEADER rather than as a tile - `awaitListed` still resolves it
+  // and the click that follows finds nothing, which is `no stable element for selector: text=<the
+  // community> - {"found":false}` on a screen where the community is plainly open. Worse, the two
+  // states can swap between the wait and the click while the restore lands.
+  //
+  // The channel list belongs to the SELECTED community, so "is this channel listed" answers "is the
+  // right community open" and is exactly what the caller needs next. Asked once, and branched on.
+  //
+  // AND THE QUESTION IS ASKED ONCE THE PAGE IT IS ABOUT EXISTS. `until(pathname)` returns when the
+  // URL changes, which is BEFORE SvelteKit has swapped the document - so asking "is this channel
+  // listed" at that instant reads the page being left. `/chat` has a row for this very channel in
+  // its sidebar, so the answer was yes, the selection was skipped, and the click then raced the
+  // navigation: `no stable element for selector: text=general - {"found":false}`. Waiting for the
+  // community to appear establishes that the communities page is up, and costs nothing when it is.
   await awaitListed(cx, `!!${RESOLVE}('text=${community}')`, 20000, 'the community', cx.port);
-  // SETTLE BEFORE EVERY CLICK, not once at the top: the community click itself starts work that can
-  // raise a strip again, so the state has to be re-established rather than assumed to persist.
-  const settledBefore = await awaitAppSettled(cx);
-  await realClick(cx, `text=${community}`);
-  await awaitListed(cx, `!!${RESOLVE}('text=${channel}')`, 15000, 'the channel', cx.port);
+
+  // IS THIS COMMUNITY ALREADY OPEN - asked of the PANEL HEADER, exactly, and not of the document.
+  // `text=` matches by SUBSTRING over every visible element, so a channel called `general` answers
+  // for itself twelve times over once its conversation is on screen (the pane header, the composer
+  // placeholder, every message naming it). A reload never showed that because a freshly loaded page
+  // has no messages yet. The panel's `h2` is the community whose channels are listed, it is empty
+  // on `/chat`, and it cannot be confused with anything else.
+  const panelHeader = `((document.querySelector('.sidebar-panel h2') || {}).textContent || '').trim()`;
+  const alreadyOpen = JSON.parse(
+    await evaluate(cx, `JSON.stringify(${panelHeader} === ${JSON.stringify(community)})`)
+  );
+  let settledBefore = null;
+  if (!alreadyOpen) {
+    // SETTLE BEFORE EVERY CLICK, not once at the top: the community click itself starts work that
+    // can raise a strip again, so the state has to be re-established rather than assumed to persist.
+    settledBefore = await awaitAppSettled(cx);
+    await realClick(cx, `text=${community}`);
+  }
+  // THE ROW, BY ITS OWN NAME. `[data-channel-row]` is the sidebar button and nothing else - see the
+  // comment beside it in `Sidebar.svelte` for the dozen elements the text match was choosing among.
+  const row = `[data-channel-row="${channel}"]`;
+  await awaitListed(cx, `!!document.querySelector('${row}')`, 15000, 'the channel', cx.port);
   const settledAfter = await awaitAppSettled(cx);
-  const point = await realClick(cx, `text=${channel}`);
+  // PARK FIRST, THEN WAIT - and the two are not the same guard. Parking COLLAPSES a rail a pointer
+  // is resting on; the wait rides out the 300 ms fade the backdrop survives its own `isExpanded`
+  // with. A wait alone cannot end a hover, so against a parked pointer it can only spend its budget
+  // and throw.
+  //
+  // THE HOLE WAS THE PATH THAT CLICKS NOTHING. `realClick` parks, so the `!alreadyOpen` branch above
+  // leaves the pointer somewhere harmless - but when the community is ALREADY open that branch is
+  // skipped, no click happens, and whatever the previous runner left on the rail is still there.
+  // MSG-5 died exactly there on 2026-09-05 (`until() timed out after 5000ms:
+  // !document.querySelector('[data-nav-backdrop]')`), on its first ever run, against a working
+  // application - the community was open from the row before it.
+  //
+  // IMMEDIATELY BEFORE THE CLICK THAT NEEDS IT, because the backdrop mounts on a timer and a check
+  // made earlier can pass before it has been rendered at all - which is exactly how it was still
+  // covering the row three fixes later.
+  await parkPointer(cx);
+  await until(cx, `!document.querySelector('[data-nav-backdrop]')`, 5000);
+  const point = await realClick(cx, row);
 
   // HIT-TEST NOW, NOT AT THE FAILURE. This used to read `elementFromPoint` only inside the catch -
   // fifteen seconds after the click - and then present the answer as `hitAtClick`, which it was not.
@@ -933,6 +1064,58 @@ export async function openChannel(cx, community = 'Campagne de test', channel = 
 }
 
 /**
+ * THE SIDEBAR ROW A NAME REFERS TO, as a page-side function every caller shares.
+ *
+ * **THREE COPIES OF THE WRONG HEURISTIC IS WHY THIS IS A CONSTANT.** `openConversation` here,
+ * `unreadBadgeExpr` in `read.mjs` and `openGroup` in `groupnav.mjs` each searched every `li`,
+ * `button` and `a` whose text CONTAINED the name and then broke ties by shortest text. A tile is
+ * `<initials>` / `<title>` / `<last message preview>`, and the preview carries other people's
+ * sentences - "<owner> a ajoute <peer> au groupe" contains the peer's name as surely as their own DM
+ * row does - so the tie-break decided between a DM and a GROUP by how much had been said lately.
+ *
+ * `openConversation` was repaired on 2026-09-04 after MSG-1 sent into a group it was never asked
+ * for. The other two were left, and READ-9 then failed the same way on the same day: its unread
+ * badge was read off `Repro Alpha`, a group whose preview mentions the peer, so no badge ever
+ * appeared and the row reported the application had not counted an unread message. Fixing a defect
+ * where it is found, three times, is how it survives.
+ *
+ * THE TITLE IS THE ROW'S IDENTITY - a DM is titled with the peer's display name, a group with its
+ * own name - and `data-conversation-tile` is the app's own id for the row. AMBIGUITY IS REFUSED
+ * rather than resolved: two tiles whose titles both match is a fixture problem or a name collision,
+ * and picking one is how the fault above happened in the first place.
+ *
+ * Returns `{ ok, el, id, title, matched, tiles, titles }`. `el` is a live node, so this is only
+ * useful INSIDE a page evaluation - callers wrap it and return whatever crosses the wire.
+ */
+export const TILE_BY_TITLE = `(function (name) {
+  var wanted = String(name).toLowerCase();
+  var scope = document.querySelector('.sidebar-panel') || document.body;
+  var tiles = [].slice.call(scope.querySelectorAll('[data-conversation-tile]')).filter(function (e) {
+    return e.getBoundingClientRect().width > 0;
+  });
+  var titled = tiles.map(function (e) {
+    var lines = (e.innerText || '').split(String.fromCharCode(10)).map(function (x) {
+      return x.trim();
+    }).filter(Boolean);
+    // The avatar block is the tile's first child and its text is the initials, so it is dropped by
+    // IDENTITY rather than by position-in-text - a tile with no avatar keeps its title.
+    var avatar = ((e.children[0] && e.children[0].innerText) || '').trim();
+    if (lines.length && avatar && lines[0] === avatar) lines.shift();
+    return { el: e, id: e.getAttribute('data-conversation-tile'), title: lines[0] || '' };
+  });
+  var hits = titled.filter(function (t) { return t.title.toLowerCase().indexOf(wanted) !== -1; });
+  // An exact title wins over a containing one, so a peer named "Alex" still resolves to their own DM
+  // when a group called "Alex and friends" is listed beside it.
+  var exact = hits.filter(function (t) { return t.title.toLowerCase() === wanted; });
+  var chosen = exact.length ? exact : hits;
+  var titles = hits.map(function (t) { return t.title.slice(0, 40); }).slice(0, 6);
+  if (chosen.length !== 1) {
+    return { ok: false, el: null, id: null, title: '', matched: chosen.length, tiles: tiles.length, titles: titles };
+  }
+  return { ok: true, el: chosen[0].el, id: chosen[0].id, title: chosen[0].title, matched: 1, tiles: tiles.length, titles: titles };
+})`;
+
+/**
  * Waits for an entry to be LISTED, and says what the list held when it never was.
  *
  * `until(RESOLVE('text=X'))` rethrows its own source on timeout, which is forty lines of resolver
@@ -996,21 +1179,35 @@ export async function openConversation(cx, name) {
   // `.sidebar-panel` is a stable hook added to the conversation list for this (its `aria-label` is
   // localized prose, so it cannot be the selector). Scoping first also means the shortest-match rule
   // now only ever chooses BETWEEN CONVERSATION ROWS, which is what it was written for.
-  const scope = `(document.querySelector('.sidebar-panel') || document.body)`;
-  // The list is fetched, so it is EMPTY for the first few hundred ms after a navigation. Failing
-  // on the first look would make every check that navigates flaky for a reason that is the
-  // harness's, not the app's.
-  const find = `(function () {
-      var wanted = ${JSON.stringify(name)}.toLowerCase();
-      var els = [].slice.call(${scope}.querySelectorAll('button, [role=button], a, li'));
-      var best = els.filter(function (e) {
-        var t = (e.innerText || '').trim();
-        return t && t.toLowerCase().indexOf(wanted) !== -1 && e.getBoundingClientRect().width > 0;
-      });
-      best.sort(function (a, b) { return a.innerText.length - b.innerText.length; });
-      if (!best.length) return null;
-      best[0].scrollIntoView({ block: 'center' });
-      return best[0].innerText.trim().slice(0, 60);
+  // MATCH THE TITLE, NEVER THE WHOLE ROW, AND NEVER "THE SHORTEST ONE".
+  //
+  // A tile's innerText is `<initials>\n<title>\n<last message preview>`, and the preview is somebody
+  // else's sentence - it routinely carries the very name being searched for ("<owner> a ajoute
+  // <peer> au groupe", "<owner> vous a invite a rejoindre <community>"). Searching the whole row
+  // therefore matched every group the peer was ever added to, and the tie was broken by SHORTEST
+  // TEXT, which is not a statement about identity at all: it is a statement about how much has been
+  // said in each conversation lately.
+  //
+  // MEASURED 2026-09-04, AND IT SILENTLY MOVED A CHECK TO THE WRONG CONVERSATION. MSG-1 asked for
+  // the DM and was handed the group `Repro Gamma`, because inviting the peer to the venue minutes
+  // earlier had put a long notice in the DM's preview (89 chars) while the group's preview was 68.
+  // Nothing failed: the check opened a real conversation, sent into it, saw the message arrive and
+  // recorded a verdict about a DM it never touched. An instrument that measures the wrong subject
+  // and says so nowhere is worse than one that breaks.
+  //
+  // THE TITLE IS THE ROW'S IDENTITY - a DM is titled with the peer's display name, a group with its
+  // own name - and `data-conversation-tile` carries the id, so the click addresses exactly what the
+  // search chose without the tagging round-trip this used to need.
+  //
+  // AMBIGUITY IS REFUSED RATHER THAN RESOLVED. Two tiles whose titles both match is a fixture
+  // problem or a name collision, and picking one is how the fault above happened in the first place.
+  const FIND = `(function () {
+      var r = (${TILE_BY_TITLE})(${JSON.stringify(name)});
+      if (!r.ok) {
+        return JSON.stringify({ ok: false, matched: r.matched, tiles: r.tiles, titles: r.titles });
+      }
+      r.el.scrollIntoView({ block: 'center' });
+      return JSON.stringify({ ok: true, id: r.id, title: r.title.slice(0, 60) });
     })()`;
   // THE TIMEOUT HERE USED TO RETHROW THE PREDICATE, WHICH IS BOTH USELESS AND UNSAFE.
   //
@@ -1019,7 +1216,7 @@ export async function openConversation(cx, name) {
   // label never resolved are three different findings and two of them are the application's. It
   // fired on MUT-19 and again on MUT-7 on 2026-08-16 and neither sighting could be attributed.
   //
-  // Unsafe: `find` embeds the peer's display name, so the message carries a real person's name into
+  // Unsafe: `FIND` embeds the peer's display name, so the message carries a real person's name into
   // a run log. The rig is anonymised BY CONSTRUCTION - no check spells a name - but an error built
   // at runtime escapes that, and `idcheck.mjs` cannot see it because it guards the git index only.
   //
@@ -1027,29 +1224,36 @@ export async function openConversation(cx, name) {
   // owner's REAL conversations, so dumping row text would leak far more than the peer's name.
   // `unknownLabelRows` is the discriminator that matters - a row rendered under the "Utilisateur
   // inconnu" fallback exists but can never match a search by name.
-  await awaitListed(cx, `${find} !== null`, 20000, "the peer's conversation row", cx.port);
-  const hit = await evaluate(cx, find);
-  if (!hit) throw new Error(`no conversation entry matching the requested peer on port ${cx.port}`);
-
-  // CLICK THE ELEMENT WE FOUND, not a description of it.
-  //
-  // This used to hand `realClick` a `text=<first line>` selector, so the element was located
-  // TWICE by two different rules - and the second one is ambiguous by construction: a peer's name
-  // appears in the DM row AND in the preview line of every group they were added to ("<peer> a
-  // ajoute <owner> au groupe"). Eight elements matched on W2, `realClick` picked one that
-  // failed its own hit test, and the check died with `no stable element` - after the reload only,
-  // because until then the conversation was already open and nothing ever clicked.
-  //
-  // The found element is tagged instead, so the click addresses exactly what the search chose.
-  // The attribute is removed afterwards: a stray marker left in the DOM would be picked up by the
-  // NEXT call, which is how a harness fix becomes the next harness fault.
-  const TAG = 'data-harness-open-conversation';
-  await evaluate(cx, find.replace('return best[0].innerText.trim().slice(0, 60);', `best[0].setAttribute('${TAG}', '1'); return best[0].innerText.trim().slice(0, 60);`));
   try {
-    await realClick(cx, `[${TAG}]`);
-  } finally {
-    await evaluate(cx, `(function () { var e = document.querySelector('[${TAG}]'); if (e) e.removeAttribute('${TAG}'); return 'cleared'; })()`);
+    await awaitListed(cx, `JSON.parse(${FIND}).ok === true`, 20000, "the peer's conversation row", cx.port);
+  } catch (e) {
+    // AMBIGUITY AND ABSENCE ARE DIFFERENT FINDINGS AND THE DEADLINE CANNOT TELL THEM APART, so the
+    // state is re-read once here to say which one happened. Waiting 20 s for a second matching tile
+    // to go away would never succeed, and reporting it as "never listed" sends the reader hunting
+    // for a row that is on screen twice.
+    const why = JSON.parse(await evaluate(cx, FIND));
+    if (!why.ok && why.matched > 1) {
+      throw new Error(
+        `openConversation: ${why.matched} of ${why.tiles} conversation tiles match the requested ` +
+          `name on port ${cx.port}, so the row is AMBIGUOUS and none was opened. This is a fixture ` +
+          `or naming collision, not a missing row.`
+      );
+    }
+    throw e;
   }
+  const found = JSON.parse(await evaluate(cx, FIND));
+  if (!found.ok) throw new Error(`no conversation entry matching the requested peer on port ${cx.port}`);
+  const hit = found.title;
+
+  // CLICK THE TILE BY ITS ID, not by a description of it.
+  //
+  // This used to hand `realClick` a `text=<first line>` selector, so the element was located TWICE
+  // by two different rules - and the second one is ambiguous by construction, for exactly the reason
+  // the search above no longer is. It was then fixed by TAGGING the found element with a temporary
+  // attribute, which worked but had to be cleaned up afterwards or the next call would pick up the
+  // stray marker. `data-conversation-tile` is the app's own identity for the row, so it needs
+  // neither a round-trip nor a teardown.
+  await realClick(cx, `[data-conversation-tile="${found.id}"]`);
   // THE POST-CONDITION MUST SAY WHAT IT SAW, and this one said nothing for as long as it existed.
   //
   // `openChannel` above learnt this the hard way and got a sentence naming the port, the target and
@@ -1342,41 +1546,109 @@ export async function armComposer(cx, text) {
 /** The composer chip a picked mention becomes - `mentionEditor.ts` `MENTION_CHIP_SELECTOR`. */
 export const MENTION_CHIP = '[data-mention-id].mention-editor-chip';
 
-/**
- * The suggestion dropdown. No role or data hook exists on it, so the first match IS the top
- * suggestion: `MentionDropdown` renders the server's order with no re-sort.
- */
-export const MENTION_SUGGESTION = '.mention-composer ul button';
+/** The suggestion dropdown's rows, each carrying the user it would mention. */
+export const MENTION_SUGGESTION = '.mention-composer ul button[data-mention-suggestion]';
 
 /**
- * Clears the composer, types `@<query>`, waits for the dropdown, clicks the TOP suggestion, and
- * returns the resulting chip's `data-mention-id` - the ground truth for anything asserting WHO was
- * mentioned.
+ * Clears the composer, types `@<query>`, and picks ONE suggestion BY IDENTITY.
  *
  * SHARED because two phases need the same gesture for two different questions: MENTION asks what
  * the SENDER puts on the wire (`mentionedUserIds`, the one documented cleartext field), COMM-14 asks
  * what the SERVER does with it. A second copy would be a second place for the chip selector and the
  * dropdown's ordering assumption to drift.
  *
- * `query` must be specific enough that the intended person is the first hit. Against a two-account
- * test environment a first name is - which is the harness's guarantee, not the app's.
+ * **IT USED TO CLICK THE TOP ROW, AND ITS DOCBLOCK CLAIMED THAT WAS SAFE**: "against a two-account
+ * test environment a first name is specific enough - which is the harness's guarantee, not the
+ * app's." The guarantee was false the day it was written. Both campaign accounts are named
+ * `Canari Test <letter>`, so `OWNER_NAME.split(' ')[0]` matches BOTH, and on 2026-09-05 the peer
+ * asked to mention the owner and mentioned ITSELF. The server then correctly pushed to nobody - the
+ * sender is always skipped - and MENTION-2 recorded `FAIL` about a notification level that was
+ * working perfectly. MENTION-3 went `VACUOUS` behind it, because its control is the same send.
+ *
+ * So the row is addressed by `data-mention-suggestion`, the user id the dropdown now publishes, and
+ * `expectId` is how a caller says who it means. Without one, a list offering more than one match is
+ * a REFUSAL naming what was offered - never a choice made on the caller's behalf, which is exactly
+ * how this happened.
+ *
+ * TWO WAYS TO SAY WHO, because two kinds of caller exist. A check holding the other side's client
+ * knows the ID and should pass it - that is the strongest form and it survives a rename. A check
+ * that only ever opens one client knows the display NAME, and `expectName` matches it WHOLE against
+ * the row's own text, which is a different claim from the PREFIX being typed into the box: the query
+ * is what filters the list, the name is what identifies the row in it.
+ *
+ * @param {string} query what to type after the `@` - a prefix, filtered by the app
+ * @param {object} [opts]
+ * @param {string} [opts.expectId] the user id to pick - preferred where the caller has it
+ * @param {string} [opts.expectName] the exact display name to pick, when only the name is known
+ * @returns the chip's `data-mention-id` - the ground truth for anything asserting WHO was mentioned
  */
-export async function mentionInComposer(cx, query) {
+export async function mentionInComposer(cx, query, { expectId = null, expectName = null } = {}) {
   await realClick(cx, COMPOSER);
   await evaluate(cx, `document.querySelector('${COMPOSER}').focus()`);
   await evaluate(cx, `document.execCommand('selectAll')`);
   await cx.send('Input.insertText', { text: '' }); // clear any leftover draft before arming
   await cx.send('Input.insertText', { text: `@${query}` });
   await until(cx, `!!document.querySelector('${MENTION_SUGGESTION}')`, 6000);
-  await realClick(cx, MENTION_SUGGESTION);
+
+  // THE WHOLE LIST, READ BEFORE ANYTHING IS CLICKED - so a refusal can say what was on offer rather
+  // than that "the mention failed", and so an ambiguous list is visible in the row that hit it.
+  const offered = JSON.parse(
+    await evaluate(
+      cx,
+      `JSON.stringify([].map.call(document.querySelectorAll('${MENTION_SUGGESTION}'), function (b) {
+         return { id: b.getAttribute('data-mention-suggestion'), text: (b.innerText || '').trim().slice(0, 40) };
+       }))`
+    )
+  );
+  if (!offered.length) {
+    throw new Error(`the mention dropdown for @${query} is open and offers nothing`);
+  }
+  const shown = () => offered.map((o) => `${o.id.slice(0, 8)}:${o.text}`).join(' | ');
+  if (expectName && !expectId) {
+    // WHOLE, not a prefix: `@Canari` is what filters the list and matches both campaign accounts,
+    // `@Canari Test Beta` is what names one of them. Comparing on the prefix here would re-create
+    // the very ambiguity the query has.
+    const wanted = offered.filter((o) => o.text.replace(/^@/, '').trim() === expectName);
+    if (wanted.length !== 1) {
+      throw new Error(
+        `@${query} does not offer exactly one row reading ${JSON.stringify(expectName)}` +
+          ` - it offers [${shown()}]`
+      );
+    }
+    expectId = wanted[0].id;
+  }
+  if (expectId) {
+    const wanted = offered.filter((o) => o.id === expectId);
+    if (wanted.length !== 1) {
+      throw new Error(
+        `@${query} does not offer ${expectId.slice(0, 8)}... exactly once - it offers [${shown()}]`
+      );
+    }
+  } else if (offered.length > 1) {
+    throw new Error(
+      `@${query} is AMBIGUOUS - ${offered.length} suggestions [${shown()}].` +
+        ' Pass expectId or expectName: picking one for you is how MENTION-2 mentioned the sender.'
+    );
+  }
+  const pick = expectId ? `[data-mention-suggestion="${expectId}"]` : '';
+  await realClick(cx, `${MENTION_SUGGESTION}${pick}`);
   await until(cx, `!!document.querySelector('${MENTION_CHIP}')`, 4000);
-  return evaluate(
+
+  const chipId = await evaluate(
     cx,
     `(function () {
       var chip = document.querySelector('${MENTION_CHIP}');
       return chip ? chip.dataset.mentionId : null;
     })()`
   );
+  // A CLICK THAT LANDED IS NOT A CHIP FOR THE RIGHT PERSON. The list and the chip are two renders of
+  // one decision, and a mismatch here means the pick went somewhere else entirely.
+  if (expectId && chipId !== expectId) {
+    throw new Error(
+      `the chip says ${String(chipId).slice(0, 8)}... but ${expectId.slice(0, 8)}... was picked`
+    );
+  }
+  return chipId;
 }
 
 /**
@@ -1507,7 +1779,15 @@ export async function bubbleCentre(cx, textMatch) {
   return seen;
 }
 
-/** Hovers a bubble so its action row appears, and returns what became clickable. */
+/**
+ * Hovers a bubble so its action row appears, and returns what became clickable.
+ *
+ * THE ONE PLACE IN THIS RIG THAT LEAVES THE POINTER WHERE IT PUT IT, and it is deliberate: the
+ * action row is rendered BY the hover and disappears with it, so parking here would close the thing
+ * the caller is about to click. Every other raw mouse dispatch went through `clickAtPoint` on
+ * 2026-09-05 - five copies of the same gesture, none of which parked - after a pointer left on the
+ * nav rail kept `AppSidebar` expanded over the whole conversation list and failed FWD-1.
+ */
 export async function hoverBubble(cx, textMatch) {
   const c = await bubbleCentre(cx, textMatch);
   await cx.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: c.x, y: c.y, buttons: 0 });
@@ -1570,6 +1850,19 @@ export async function sameAccountAs(refCx, otherPort, otherMatch, opts = {}) {
 export const MOBILE_SHEET = '[data-keyboard-aware-actions]';
 
 /** Whether the mobile action sheet is up ANYWHERE - it is a single overlay, never one per row. */
+/**
+ * Whether this client is a REAL DEVICE rather than a browser on this machine.
+ *
+ * The distinction decides how a gesture is injected, not just what is expected of it: a browser is
+ * driven through CDP because there is nothing else, and a phone has an OS underneath that can be
+ * asked for the real thing. `cx.port` is set by {@link client} and the phone ports are named in the
+ * out-of-tree configuration, so this asks the same question `ORIGIN` does and answers it from the
+ * one fact a connection already carries.
+ */
+export function isPhone(cx) {
+  return cx.port === PORTS.A1 || cx.port === PORTS.A2;
+}
+
 export const MOBILE_SHEET_OPEN = `!!document.querySelector('${'[data-keyboard-aware-actions]'}')`;
 
 /**
@@ -1587,22 +1880,57 @@ export const MOBILE_SHEET_OPEN = `!!document.querySelector('${'[data-keyboard-aw
  *
  * The hold is 700 ms against `MessageBubble.svelte`'s 420 ms threshold. The margin covers the round
  * trip, not luck - the post-condition is what decides, and it names the threshold it missed.
+ *
+ * **AND IT IS INJECTED BY THE OS, BECAUSE `Input.dispatchTouchEvent` IS NOT A FINGER.** A real long
+ * press is classified by Chromium's gesture recogniser as a LONG PRESS, and a long press produces no
+ * compatibility mouse events on release; a `touchStart`/`touchEnd` pair sent over CDP is classified
+ * as a TAP however long the gap is, so the lift emits `mousedown`/`mouseup`/`click` 14 ms later, at
+ * the coordinates the finger left - which by then are covered by the sheet that opened under it.
+ * Measured on the phone 2026-09-05, the same message pressed both ways back to back: the OS touch
+ * produced FOUR events and no mouse ones, the CDP touch produced those four plus a full mouse
+ * sequence delivered INSIDE `[data-keyboard-aware-actions]`. When the point happened to sit on one
+ * of the sheet's buttons the sheet closed under its own opening gesture, which is what left MUT-18
+ * `VACUOUS` with `the mobile action sheet is not open` - and what nearly went into the backlog as a
+ * P1 against the phone. **The gesture the product receives has to be the gesture a user makes**;
+ * everything downstream of that is a measurement of the instrument.
  */
 export async function longPressBubble(cx, textMatch, holdMs = 700) {
   const c = await bubbleCentre(cx, textMatch);
-  await cx.send('Input.dispatchTouchEvent', {
-    type: 'touchStart',
-    touchPoints: [{ x: c.x, y: c.y, id: 1 }],
-  });
-  await new Promise((r) => setTimeout(r, holdMs));
-  // The finger must not MOVE: `handleSwipeReply` cancels the long press once the gesture turns
-  // horizontal, so there is deliberately no touchMove between the two events here.
-  await cx.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  const how = isPhone(cx) ? 'adb input swipe' : 'CDP Input.dispatchTouchEvent';
+  if (isPhone(cx)) {
+    // CSS pixels are what the page measures in; `input` speaks device pixels from the screen's own
+    // origin. `screenX`/`screenY` are the viewport's offset inside it - 0 on this edge-to-edge
+    // shell, and read rather than assumed because a shell with a status bar would need them.
+    const g = JSON.parse(
+      await evaluate(
+        cx,
+        `JSON.stringify({ dpr: window.devicePixelRatio, sx: window.screenX, sy: window.screenY })`
+      )
+    );
+    const px = String(Math.round((c.x + g.sx) * g.dpr));
+    const py = String(Math.round((c.y + g.sy) * g.dpr));
+    // `swipe` from a point to ITSELF is a press-and-hold: the finger goes down, does not move - which
+    // `handleSwipeReply` requires, since a horizontal gesture cancels the long press - and comes up.
+    execFileSync('adb', ['-s', serial(), 'shell', 'input', 'swipe', px, py, px, py, String(holdMs)], {
+      encoding: 'utf8',
+      timeout: holdMs + 20_000,
+    });
+  } else {
+    await cx.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [{ x: c.x, y: c.y, id: 1 }],
+    });
+    await new Promise((r) => setTimeout(r, holdMs));
+    // The finger must not MOVE: `handleSwipeReply` cancels the long press once the gesture turns
+    // horizontal, so there is deliberately no touchMove between the two events here.
+    await cx.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  }
 
   const opened = await until(cx, MOBILE_SHEET_OPEN, 3000, 100).catch(() => null);
   if (opened === null) {
     throw new Error(
-      `the long press on ${textMatch} did not open the mobile action sheet - held ${holdMs}ms against a 420ms threshold`
+      `the long press on ${textMatch} did not open the mobile action sheet - held ${holdMs}ms` +
+        ` against a 420ms threshold, injected by ${how} at (${c.x},${c.y})`
     );
   }
   return c;
@@ -1760,6 +2088,28 @@ export async function clickBubbleAction(cx, textMatch, label, timeoutMs = 5000) 
  * @param {string[]} files absolute paths
  */
 export async function attachFiles(cx, files) {
+  // A MISSING FIXTURE IS A PRECONDITION, AND `DOM.setFileInputFiles` DOES NOT SAY SO.
+  //
+  // CDP accepts a path that does not exist without complaint: the input ends up holding a `File`
+  // whose bytes cannot be read, so the app stages it, shows `EN ATTENTE`, and the upload fails far
+  // away with Chromium's own wording - `Erreur envoi media: A requested file or directory could not
+  // be found at the time an operation was processed`. Measured 2026-09-04, when
+  // `fixtures/msg4-image.png` was absent because `.gitignore`'s `*.png` rule had made it
+  // uncommittable: MSG-4 hung 30 s on the staging tray and died in an `until() timed out` about
+  // `EN ATTENTE`, which names neither the file nor its absence, and recorded no verdict at all.
+  // MSG-6 met the same fixture and recorded PASS-DIRTY on
+  // the resulting error line, blaming the product for a file the harness never had.
+  //
+  // The paths are checked here rather than in each check because this is the ONE place they are
+  // handed to the browser, and a check cannot report on bytes the browser never had.
+  const missing = files.filter((f) => !existsSync(f));
+  if (missing.length) {
+    throw new Error(
+      `attachFiles: ${missing.length} of ${files.length} file(s) do not exist, so nothing ` +
+        `can be uploaded: ${missing.join(', ')}. This is a MISSING FIXTURE, not an app defect - ` +
+        `check that the file is committed and that no ignore rule swallows it.`
+    );
+  }
   await cx.send('DOM.enable');
   const { root } = await cx.send('DOM.getDocument', { depth: -1 });
   const { nodeId } = await cx.send('DOM.querySelector', {
@@ -1771,7 +2121,7 @@ export async function attachFiles(cx, files) {
   return files.length;
 }
 
-export { IS_MOVING_FN, activate, clickAtPoint, dragTo, evaluate, pressKey, realClick, stablePoint, until };
+export { IS_MOVING_FN, activate, clickAtPoint, dragTo, evaluate, pressKey, realClick, reloadAndWait, stablePoint, until };
 
 /**
  * One authenticated request, made from a client's OWN page, as that client's account.

@@ -18,10 +18,28 @@
  */
 import { APP_TAB, client, evaluate } from '../chat.mjs';
 
-const arg = (name, dflt) =>
-  process.argv.includes(name) ? process.argv[process.argv.indexOf(name) + 1] : dflt;
+/**
+ * THE ARGUMENTS, TAKEN FROM WHERE THEY ARE RATHER THAN RECOGNISED AMONG EVERYTHING ELSE.
+ *
+ * This used to scan the WHOLE of `process.argv` for the first entry that was not a flag, not
+ * `mlsdb.mjs`, not the port, and not something ending in `node` or `node.exe`. Every one of those
+ * exclusions is a guess at what the runtime put in front of the script, and one of them went stale
+ * the day this repository moved off node: under bun, `argv[0]` is `...\bun.exe`, which the `node`
+ * test does not match - so the RUNTIME'S OWN PATH was selected as the command and the tool answered
+ * `unknown command: C:\Users\jolan\.bun\bin\bun.exe` and exited non-zero.
+ *
+ * It cost DEL-8 outright: the row spawns `mlsdb.mjs digest` to fingerprint the MLS store before
+ * rewinding it, so the check died in its first instruction and recorded `ERROR` - a destructive row
+ * that never ran, on a build where nothing was wrong.
+ *
+ * `argv.slice(2)` is the user's arguments BY DEFINITION, on every runtime, so there is nothing left
+ * to recognise: the command is the first entry that is neither a flag nor a flag's value.
+ */
+const args = process.argv.slice(2);
+const arg = (name, dflt) => (args.includes(name) ? args[args.indexOf(name) + 1] : dflt);
 const port = Number(arg('--port', 9224));
-const cmd = process.argv.find((a) => !a.startsWith('--') && !/node(\.exe)?$/.test(a) && !a.endsWith('mlsdb.mjs') && a !== String(port)) ?? 'list';
+const cmd =
+  args.find((a, i) => !a.startsWith('--') && !(i > 0 && args[i - 1].startsWith('--'))) ?? 'list';
 
 const cx = await client(port, APP_TAB, { focus: false });
 

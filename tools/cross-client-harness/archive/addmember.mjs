@@ -26,7 +26,7 @@
  * OPENING a conversation, and this is a membership commit. Keeping them apart is what stops the next
  * reader importing half of one to get the other.
  */
-import { evaluate, realClick, until } from '../chat.mjs';
+import { clickAtPoint, evaluate, realClick, until } from '../chat.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -109,17 +109,7 @@ async function optionFor(cx, who) {
 
 /** A real pointer sequence at a point - `element.click()` leaves the submit button disabled. */
 async function pointerAt(cx, { x, y }) {
-  await cx.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, buttons: 0 });
-  for (const type of ['mousePressed', 'mouseReleased']) {
-    await cx.send('Input.dispatchMouseEvent', {
-      type,
-      x,
-      y,
-      button: 'left',
-      clickCount: 1,
-      buttons: type === 'mousePressed' ? 1 : 0,
-    });
-  }
+  await clickAtPoint(cx, x, y);
   await sleep(1200);
 }
 

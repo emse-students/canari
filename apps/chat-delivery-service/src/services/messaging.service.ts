@@ -3,6 +3,7 @@ import {
   Logger,
   ForbiddenException,
   BadRequestException,
+  GoneException,
   ServiceUnavailableException,
   Inject,
 } from '@nestjs/common';
@@ -940,7 +941,7 @@ export class MessagingService {
 
     // 1. Persist ALL messages first (survives crashes / timing races)
     if (toDeliver.length > 0) {
-      await this.queuedMessageRepo.save(toDeliver);
+      await this.enqueueForLiveGroup(toDeliver, body.groupId, 'SEND', traceId);
       this.logger.log(`[SEND][${traceId}] QUEUED count=${toDeliver.length}`);
     } else {
       // TWO CAUSES, AND THE SENTENCE USED TO NAME NEITHER. `toDeliver` empties for one of exactly
@@ -1694,7 +1695,10 @@ export class MessagingService {
       ratchetTree: body.ratchetTreePayload,
       createdAt: new Date(),
     });
-    await this.queuedMessageRepo.save(queuedWelcome);
+    // Same seam as the send: a Welcome for a group that ended between the target lookup and this
+    // write is worse than an undeliverable message - the device that receives it asks for a group
+    // nobody can hand it, on every reconnection. See {@link enqueueForLiveGroup}.
+    await this.enqueueForLiveGroup([queuedWelcome], safeGroupId, 'WELCOME', traceId);
     this.logger.log(
       `[WELCOME][${traceId}] QUEUED id=${queuedWelcome.id} recipient=${deviceInfo.userId}:${targetDeviceId} group=${safeGroupId}`
     );
@@ -1889,6 +1893,8 @@ export class MessagingService {
     if (!entries || entries.length === 0) return;
 
     let redelivered = 0;
+    /** Every entry of this page that is owed to the device, built before anything is written. */
+    const toRedeliver: QueuedMessage[] = [];
     for (const [, fields] of entries) {
       // fields = ['sender_id', <id>, 'content', <protoB64>, 'timestamp', <iso>, 'silent', '0'|'1']
       const map = new Map<string, string>();
@@ -1900,7 +1906,7 @@ export class MessagingService {
       // stream held nothing else then - so an absent `silent` reads as '0'.
       if ((map.get('silent') ?? '0') === '1') continue; // a mutation: it must never re-notify
 
-      const queued = await this.queuedMessageRepo.save(
+      toRedeliver.push(
         this.queuedMessageRepo.create({
           recipientId: userId,
           deviceId,
@@ -1912,8 +1918,23 @@ export class MessagingService {
           createdAt: new Date(),
         })
       );
-      await this.sendFcmForQueued(queued, traceId, groupId, senderId, false);
-      redelivered++;
+    }
+
+    // THE WHOLE PAGE IN ONE UNIT OF WORK, for the reason {@link enqueueForLiveGroup} gives - a group
+    // deleted while a device activates into it takes these rows with it, or they are never written.
+    // Saving row by row inside the loop also took one transaction per entry and interleaved a push
+    // with each; the pushes are I/O and have no business inside a transaction, so they follow.
+    if (toRedeliver.length > 0) {
+      const saved = await this.enqueueForLiveGroup(
+        toRedeliver,
+        groupId,
+        'ACTIVATION_REDELIVER',
+        traceId
+      );
+      for (const queued of saved) {
+        await this.sendFcmForQueued(queued, traceId, groupId, queued.senderId ?? '', false);
+        redelivered++;
+      }
     }
 
     if (redelivered > 0) {
@@ -2355,6 +2376,74 @@ export class MessagingService {
       `[WELCOME_REQ][${traceId}] NO_PEER_ONLINE group=${groupId} requester=${senderKey} - stored in Redis, FCM sent to peers`
     );
     return { status: 'no_peer_online' };
+  }
+
+  /**
+   * Writes the queue rows for one send, refusing if the group stopped being a destination while the
+   * send was in flight.
+   *
+   * THIS IS THE OVERLAP DELETED, NOT A REPAIR OF IT. `sendMessage` resolves its recipients from the
+   * membership table and then saves, and `deleteGroup` writes the tombstone and sweeps everything
+   * the group owns - including its queue - in one transaction. Nothing ordered the two, so a send
+   * that read its recipients BEFORE the sweep and saved AFTER it wrote rows into a queue that had
+   * just been emptied, for a group that no longer exists. Measured on the local estate 2026-09-05:
+   *
+   *     [SEND][send-bc9c9815] START group=7e931024...
+   *     [DELETE_GROUP] 7e931024... soft-deleted, 14 row(s) purged: {"queuedMessages":4,...}
+   *     [SEND][send-bc9c9815] QUEUED count=2
+   *
+   * Nine milliseconds, and the two rows are permanent: no device can decrypt or ACK a frame for a
+   * tombstoned group, so `fetchMessages` drops them on every connection and nothing consumes them
+   * before the 90-day reaper. Twenty `dropped 1 undeliverable message(s)` warnings in one
+   * thirty-minute window came from those two rows. A race that heals cleanly is still a defect, and
+   * this one does not heal - the drop filter is the witness, never the fix.
+   *
+   * THE SHARED ROW LOCK IS WHAT ORDERS THEM, and it orders them in both directions:
+   *
+   *   - The delete got there first: it holds the row exclusively (its own `UPDATE`), so this read
+   *     BLOCKS until it commits and then sees `deletedAt` - the send is refused and writes nothing.
+   *   - This send got there first: it holds the row shared, so the delete's `UPDATE` waits for this
+   *     transaction to commit, and its sweep - which runs after that `UPDATE`, in the same
+   *     transaction - then sees these rows and takes them with the group.
+   *
+   * There is no third interleaving, and no window in between: the liveness and the write are one
+   * transaction, so no fact this reads can go stale before it is acted on. Both parties take
+   * `dm_groups` first and in the same order, so the pair cannot deadlock, and `FOR SHARE` is
+   * compatible with itself, so concurrent sends into the same group do not serialise.
+   *
+   * THE CLIENT ALREADY ASKS, AND THAT IS EXACTLY WHY THIS IS OWED HERE. `flushOne` reads
+   * `getGroupMeta().deletedAt` and refuses before it sends - the trace above even carries its
+   * `[GET_GROUP] found=true` one line before the START. A fact checked over a round trip is a fact
+   * that can go stale inside it; only the writer can make the check and the write atomic.
+   *
+   * Refused rather than silently skipped: the sender is told its message is never going out, which
+   * the outbox turns into a permanent failure rather than a ladder that spins. A send with no
+   * `groupId` addresses no group and has nothing to check.
+   */
+  private async enqueueForLiveGroup(
+    rows: QueuedMessage[],
+    groupId: string | undefined,
+    tag: string,
+    traceId: string
+  ): Promise<QueuedMessage[]> {
+    if (!groupId) return this.queuedMessageRepo.save(rows);
+    return this.queuedMessageRepo.manager.transaction(async (manager) => {
+      const [group] = await manager.getRepository(Group).find({
+        where: { id: groupId },
+        select: { id: true, deletedAt: true },
+        lock: { mode: 'pessimistic_read' },
+      });
+      if (!group || group.deletedAt) {
+        this.logger.warn(
+          `[${tag}][${traceId}] REJECT group_deleted group=${groupId} - ` +
+            (group ? `tombstoned at ${group.deletedAt?.toISOString()}` : 'absent from dm_groups') +
+            ` while this send was in flight, so its ${rows.length} row(s) would be undeliverable ` +
+            `for ever - nothing queued`
+        );
+        throw new GoneException({ error: 'group_deleted', groupId });
+      }
+      return manager.getRepository(QueuedMessage).save(rows);
+    });
   }
 
   /**

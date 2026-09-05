@@ -92,3 +92,42 @@ describe('loadHistoryForConversation - the full replay path', () => {
     expect(convs.isLoadingHistory).toBe(false);
   });
 });
+
+/**
+ * A conversation whose group is gone is KEPT, at `lifecycle: 'removed'`, so the UI can explain the
+ * absence - which means a user really does open one. Every open used to fire
+ * `GET /api/mls/history/<id>` at a group the server has soft-deleted and refuses, and `fetchHistory`
+ * swallowed the 403 into an empty page, so the refusal was invisible in the app and showed only as a
+ * console error nobody could attribute. Measured on DEL-2 and DEL-3, 2026-09-05: the request went
+ * out eleven seconds AFTER the client's own deletion, so it was never one already in flight.
+ */
+describe('loadHistoryForConversation - a conversation whose group is gone', () => {
+  it('renders what is on disk and asks the server for nothing', async () => {
+    const convs = useConversations();
+    convs.conversations.set(DM, { ...conversation(), lifecycle: 'removed' } as Conversation);
+    convs.selectConversation(DM);
+    const { ctx, log } = makeCtx();
+
+    await convs.loadHistoryForConversation(DM, GROUP_ID, ctx);
+
+    // THE ASSERTION IS THE ABSENCE OF A REQUEST, and both halves matter: no probe, no replay.
+    expect(
+      (ctx as unknown as { ensureMls: () => { fetchHistory: unknown } }).ensureMls().fetchHistory
+    ).not.toHaveBeenCalled();
+    expect(replayConversationHistory).not.toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalled();
+    expect(convs.isLoadingHistory).toBe(false);
+  });
+
+  it('still replays an ACTIVE conversation, so the guard is the lifecycle and not the branch', async () => {
+    const convs = useConversations();
+    convs.conversations.set(DM, { ...conversation(), lifecycle: 'active' } as Conversation);
+    convs.selectConversation(DM);
+    const { ctx } = makeCtx();
+    replayConversationHistory.mockResolvedValue(undefined);
+
+    await convs.loadHistoryForConversation(DM, GROUP_ID, ctx);
+
+    expect(replayConversationHistory).toHaveBeenCalledTimes(1);
+  });
+});

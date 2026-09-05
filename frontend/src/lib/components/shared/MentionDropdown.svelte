@@ -17,8 +17,18 @@
   >
     {#each suggestions as user, i (user.id)}
       <li>
+        <!--
+          WHO this row is, published rather than left to the rendered name. The list is filtered by a
+          typed query, so several accounts routinely match one - two campaign accounts share a first
+          word - and the only thing distinguishing them in the DOM was a display name that is chosen
+          by the user, may repeat, and is what a reader is trying to resolve in the first place.
+          `MENTION-2` picked the first row for "Canari", mentioned the SENDER, and the server
+          correctly pushed to nobody: the check read that as the notification level being broken.
+          Same fact and same one-attribute cost as `data-conversation-tile`.
+        -->
         <button
           type="button"
+          data-mention-suggestion={user.id}
           class="w-full px-4 py-2 text-left text-sm transition-colors first:rounded-t-xl last:rounded-b-xl {i ===
           selectedIdx
             ? 'bg-amber-100/60 dark:bg-amber-900/30'

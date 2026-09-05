@@ -164,10 +164,19 @@ export function connect(wsUrl, readyTimeoutMs = 5000) {
   ws.addEventListener('message', (m) => {
     const msg = JSON.parse(m.data);
     if (msg.id && pending.has(msg.id)) {
-      const { resolve, reject } = pending.get(msg.id);
+      const { resolve, reject, method, from } = pending.get(msg.id);
       pending.delete(msg.id);
-      if (msg.error) reject(new Error(`${msg.error.message} (${msg.error.code})`));
-      else resolve(msg.result);
+      if (msg.error) {
+        // NAMED AND LOCATED, because an anonymous one cost a dozen runs. A CDP error is built HERE,
+        // in a message handler, so its own stack is this listener and nothing else - every failure
+        // in the campaign recorded `Inspected target navigated or closed (-32000)` with no method
+        // and no caller, and TYPE-4 and READ-7 turned out to be two different faults wearing the
+        // same sentence. The method is known at send time and so is the caller, so both are carried
+        // across the async boundary rather than reconstructed after it.
+        const err = new Error(`${msg.error.message} (${msg.error.code}) on ${method}`);
+        if (from) err.stack = `${err.message}\n${from}`;
+        reject(err);
+      } else resolve(msg.result);
     } else if (msg.method) {
       events.push(msg);
     }
@@ -177,6 +186,13 @@ export function connect(wsUrl, readyTimeoutMs = 5000) {
   const send = (method, params = {}) =>
     new Promise((resolve, reject) => {
       const id = nextId++;
+      // CAPTURED SYNCHRONOUSLY, which is the whole point: by the time the answer comes back this
+      // call frame is gone, and a stack taken in the handler names the handler. Two lines dropped so
+      // the first frame is the caller rather than this function.
+      const from = String(new Error().stack ?? '')
+        .split(/\r?\n/)
+        .slice(2)
+        .join('\n');
       const timer = setTimeout(() => {
         if (pending.has(id)) {
           pending.delete(id);
@@ -185,6 +201,8 @@ export function connect(wsUrl, readyTimeoutMs = 5000) {
       }, 30000);
       timer.unref?.();
       pending.set(id, {
+        method,
+        from,
         resolve: (v) => {
           clearTimeout(timer);
           resolve(v);
@@ -215,14 +233,70 @@ export async function evaluate(cx, expression) {
 }
 
 
-/** Polls a page-side boolean until true. Returns the elapsed ms, or throws on timeout. */
+/**
+ * Reloads a page and waits for the load to FIRE, not for a poll to succeed.
+ *
+ * **POLLING ACROSS YOUR OWN RELOAD IS A RACE YOU CREATED.** `until(cx, "document.readyState ===
+ * 'complete'")` after `Page.reload` sends `Runtime.evaluate` every 60 ms into a target whose
+ * execution context is being torn down by the reload the same check just asked for. When a poll
+ * lands inside that window CDP answers `Inspected target navigated or closed (-32000)` and the check
+ * ERRORs - three times in four on READ-7, measured 2026-09-04, with no verdict and a message naming
+ * a CDP condition rather than anything in this rig.
+ *
+ * The reload is a FACT this caller already has, so the wait is built on the event the browser sends
+ * when it is done rather than on asking a dying context whether it is finished. `Page.enable` is
+ * idempotent, and `connect()` already collects every `method`-bearing frame, so the load event is
+ * waiting in `cx.events` whether or not anything was listening at the instant it arrived - which
+ * closes the other half of the same race, a load that completes before the wait begins.
+ */
+export async function reloadAndWait(cx, { ignoreCache = false, timeoutMs = 20000 } = {}) {
+  await cx.send('Page.enable');
+  const before = cx.events.length;
+  const t0 = Date.now();
+  await cx.send('Page.reload', { ignoreCache });
+  while (Date.now() - t0 < timeoutMs) {
+    if (cx.events.slice(before).some((m) => m.method === 'Page.loadEventFired')) {
+      return Date.now() - t0;
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error(`reloadAndWait: no Page.loadEventFired within ${timeoutMs}ms`);
+}
+
+/**
+ * Polls a page-side boolean until true. Returns the elapsed ms, or throws on timeout.
+ *
+ * **A NAVIGATION IS A STATE OF THE PAGE, NOT A FAILURE OF THIS INSTRUMENT.** A poll that lands while
+ * an execution context is being replaced gets `Inspected target navigated or closed (-32000)`, and
+ * this used to turn straight into an `ERROR` verdict - a message naming a CDP condition, no
+ * location, and nothing about the check. TYPE-4 spent a dozen runs on it (2026-09-04) before the
+ * frames were carried: `armCut` reloaded the page and then polled `document.readyState` on the
+ * context that reload was tearing down. Reloads that no caller asked for produce the same thing -
+ * SvelteKit reloads a tab by itself when `version.json` moves, which `bundle.mjs` is entirely about.
+ *
+ * So a destroyed context COUNTS AS "not true yet" and the poll continues. Nothing is hidden by that:
+ * the deadline is unchanged, and a wait that ends in a timeout says how many navigations it saw, so
+ * a page reloading in a loop reads as exactly that rather than as a predicate that never held. What
+ * it must not become is a way to WAIT OUT a reload you issued yourself - `reloadAndWait` is the
+ * fact-based primitive for that, and it exists because polling across your own reload is a race you
+ * created.
+ */
 export async function until(cx, predicate, timeoutMs = 20000, stepMs = 60) {
   const t0 = Date.now();
+  let navigations = 0;
   while (Date.now() - t0 < timeoutMs) {
-    if (await evaluate(cx, `!!(${predicate})`)) return Date.now() - t0;
+    try {
+      if (await evaluate(cx, `!!(${predicate})`)) return Date.now() - t0;
+    } catch (e) {
+      if (!/navigated or closed/.test(String(e?.message ?? e))) throw e;
+      navigations += 1;
+    }
     await new Promise((r) => setTimeout(r, stepMs));
   }
-  throw new Error(`until() timed out after ${timeoutMs}ms: ${predicate}`);
+  throw new Error(
+    `until() timed out after ${timeoutMs}ms: ${predicate}` +
+      (navigations ? ` (the target navigated or closed under ${navigations} of the polls)` : '')
+  );
 }
 
 /**
@@ -447,6 +521,33 @@ export async function whyNotStable(cx, selector) {
 }
 
 /**
+ * PUTS THE POINTER BACK ON NEUTRAL GROUND, and it is a PRECONDITION rather than a courtesy.
+ *
+ * A synthetic pointer never leaves where it was put. `AppSidebar` expands on `onmouseenter` after a
+ * hover-intent delay and dims a backdrop over the page while it is open, so a pointer left anywhere
+ * over the left rail keeps the whole navigation drawer standing for the rest of the session - and
+ * every hit-test in the sidebar then resolves to a nav link. Measured 2026-09-05 on W2: FWD-1 died
+ * on `no stable element for selector: [data-conversation-tile="..."]`, naming
+ * `A.group relative flex h-12 w-full ...` as what was on top, which reads as the conversation list
+ * being broken. One `mouseMoved` to the right edge collapsed it and the tile was reachable again.
+ *
+ * The right edge at mid-height is chosen because nothing in this application opens on hovering it:
+ * the rail is left, the header is top, the composer and the action bars are inside the pane.
+ *
+ * EXPORTED because a click is not the only thing that leaves a pointer somewhere. A run killed
+ * mid-gesture leaves one too, and no amount of care at the click sites can undo that - so anything
+ * that PICKS UP an existing client establishes this rather than assuming it.
+ */
+export async function parkPointer(cx) {
+  const rest = await evaluate(
+    cx,
+    `JSON.stringify({ x: innerWidth - 3, y: Math.round(innerHeight / 2) })`
+  );
+  const { x, y } = JSON.parse(rest);
+  await cx.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, buttons: 0 });
+}
+
+/**
  * Dispatches ONE recorded click at a point, with the input modality the target actually listens to.
  *
  * THE TRAP, paid for on A1: mobile Chrome does NOT activate a button from
@@ -499,11 +600,7 @@ export async function clickAtPoint(cx, x, y, { park = true, expect = null } = {}
     // over the conversation list and every later hit-test returned the NAV, which read exactly like
     // a layout bug in the app. Clicking is an event, not a resting state - so return the pointer to
     // neutral ground. Pass { park: false } where sustained hover is the thing under test.
-    if (park) {
-      const rest = await evaluate(cx, `JSON.stringify({ x: innerWidth - 3, y: Math.round(innerHeight / 2) })`);
-      const { x: rx, y: ry } = JSON.parse(rest);
-      await cx.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: rx, y: ry, buttons: 0 });
-    }
+    if (park) await parkPointer(cx);
   }
   return { modality: touch ? 'touch' : 'mouse', received: await lastClick(cx) };
 }

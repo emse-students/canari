@@ -53,7 +53,14 @@ import {
 import { communityRole, userIdOf, workspaceIdOf } from '../grainedb.mjs';
 import { OWNER_NAME, PEER_NAME, PORTS } from '../names.mjs';
 import { mark, record } from '../results.mjs';
-import { consoleLines, gate, report, watch } from '../watch.mjs';
+import {
+  DELIVERY_CROSSING_NARRATION,
+  consoleLines,
+  gate,
+  ignoringExpectedLog,
+  report,
+  watch,
+} from '../watch.mjs';
 
 const w1 = await client(PORTS.W1);
 const w2 = await client(PORTS.W2);
@@ -328,7 +335,15 @@ const said = (lines) => lines.filter((l) => /System event|CHANNEL_INVITE|ADD_MSG
 const inviteeSaid = said(linesW2);
 const inviterSaid = said(linesW1);
 
-const gated = gate(verdict, { W1: await report(wa), W2: await report(wb) });
+// THE ONE LINE A FRESHLY CONNECTED CLIENT SAYS ABOUT DELIVERY, and this row reloads one. See
+// `DELIVERY_CROSSING_NARRATION`: it forgives the three crossings nothing can prevent, keyed on the
+// trailer only their branch prints, so the fourth shape - which would be the server publishing a
+// row twice - is untouched by it. This check is about an invitation CARD, not about the queue.
+const forgiven = (rep) => ignoringExpectedLog(rep, DELIVERY_CROSSING_NARRATION);
+const gated = gate(verdict, {
+  W1: forgiven(await report(wa)),
+  W2: forgiven(await report(wb)),
+});
 
 record('COMM-4', gated.verdict, {
   ...gated.detail,

@@ -1152,7 +1152,7 @@ export class AssociationsService {
     if (opts?.isGlobalAdmin) return true;
     if ((flag & SUPER_ADMIN_EXCLUDED_FLAGS) === 0 && (await this.isAssociationSuperAdmin(userId))) {
       this.logger.debug(
-        `[PERM] super-admin ${userId.slice(0, 8)} granted flag=${flag} on assoc=${associationId.slice(0, 8)}`
+        `[PERM] super-admin granted user=${userId.slice(0, 8)} flag=${flag} assoc=${associationId.slice(0, 8)}`
       );
       return true;
     }
@@ -1184,7 +1184,7 @@ export class AssociationsService {
 
     if ((flag & SUPER_ADMIN_EXCLUDED_FLAGS) === 0 && (await this.isAssociationSuperAdmin(userId))) {
       this.logger.debug(
-        `[PERM] super-admin ${userId.slice(0, 8)} granted flag=${flag} on ${unique.length} assocs`
+        `[PERM] super-admin granted user=${userId.slice(0, 8)} flag=${flag} on ${unique.length} assocs`
       );
       return new Set(unique);
     }
@@ -1197,7 +1197,7 @@ export class AssociationsService {
       rows.filter((row) => (row.permissions & flag) !== 0).map((row) => row.associationId)
     );
     this.logger.debug(
-      `[PERM] ${userId.slice(0, 8)} holds flag=${flag} on ${granted.size}/${unique.length} assocs`
+      `[PERM] user=${userId.slice(0, 8)} holds flag=${flag} on ${granted.size}/${unique.length} assocs`
     );
     return granted;
   }

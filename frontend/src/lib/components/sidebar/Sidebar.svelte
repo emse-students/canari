@@ -559,8 +559,19 @@
                    markup and the badge announced a bare number, so "general 3" was all a screen
                    reader had. `aria-current` is what says WHICH channel is open; the yellow tint
                    says it to everyone else. -->
+              <!--
+                WHICH CHANNEL THIS ROW IS, published rather than left to its rendered name. A
+                channel called `general` puts that word in a dozen places once its conversation is
+                open - the panel header, the pane header, the composer placeholder, every message
+                that says it - so anything resolving a row by visible text is choosing among all of
+                them, and which one it picks changes as the page settles. That was invisible while
+                every channel open went through a full page reload, because a freshly loaded page
+                has no messages yet. Same one-attribute cost as `data-conversation-tile`, same
+                reason. Measured 2026-09-05: twelve visible elements matched "general".
+              -->
               <button
                 type="button"
+                data-channel-row={channel.name}
                 onclick={() =>
                   unjoined
                     ? onJoinPrivateChannel?.(channel.id, channel.name)

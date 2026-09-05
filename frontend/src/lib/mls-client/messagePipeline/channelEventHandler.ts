@@ -35,6 +35,24 @@ export interface ChannelEventContext extends Pick<
 }
 
 /**
+ * An event of a type this bundle DOES handle, dropped because the field that addresses it is absent.
+ *
+ * The tail of the dispatcher already accuses on an unhandled TYPE, for a reason that applies word
+ * for word one level down: it is silent data loss dressed as a no-op, and it can never fire on a
+ * matched pair. A `workspace.role.changed` carrying no `workspaceId` is not a smaller version of
+ * that - it is the same event lost with the same consequence, and the consequence is named in this
+ * file's own comment twelve lines above the branch: a demoted administrator keeps every control
+ * they have just lost, until they reload.
+ *
+ * It accuses rather than informs, and it is per-field rather than per-type, because "which one was
+ * missing" is the whole content of the report - a server sending an event with no id and a server
+ * sending one with an empty string are the same bug, and neither is visible from a count.
+ */
+function unaddressable(log: ChannelEventContext['log'], type: string, field: string): void {
+  log(`[ERROR] ${type} arrived with no ${field} - nothing to address it to, the event is lost`);
+}
+
+/**
  * Dispatches a server-push channel event (received via mlsService.onChannelEvent) to
  * the appropriate UI callback or local key-store mutation.
  *
@@ -73,12 +91,19 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
   if (event.type === 'typing' || event.type === 'channel.typing') {
     const data = event.data || {};
     const userId = String(data.userId || '');
-    if (!userId) return;
+    if (!userId) return unaddressable(log, event.type, 'userId');
     const conversationId =
       event.type === 'channel.typing'
         ? `channel_${String(data.channelId || '')}`
         : String(data.groupId || '');
-    if (!conversationId) return;
+    // `channel_` is a prefix this client puts on, so the emptiness to test is the SERVER's field.
+    if (!(event.type === 'channel.typing' ? data.channelId : data.groupId)) {
+      return unaddressable(
+        log,
+        event.type,
+        event.type === 'channel.typing' ? 'channelId' : 'groupId'
+      );
+    }
     setTyping(conversationId, userId, data.state !== 'stop');
     return;
   }
@@ -91,6 +116,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     // order, so there is nothing to merge it against - the date only has to beat what we hold.
     if (channelId && messageId)
       applyPin(`channel_${channelId}`, messageId, !!data.pinned, Date.now());
+    else unaddressable(log, event.type, channelId ? 'messageId' : 'channelId');
     return;
   }
 
@@ -101,6 +127,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
     const messageId = String(data.messageId || '');
     const poll = data.poll as ChannelPollMeta | undefined;
     if (messageId && poll) setPollMeta(messageId, poll);
+    else unaddressable(log, event.type, messageId ? 'poll' : 'messageId');
     return;
   }
 
@@ -144,7 +171,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
   if (event.type === 'workspace.role.changed') {
     const data = event.data || {};
     const workspaceId = String(data.workspaceId || '');
-    if (!workspaceId) return;
+    if (!workspaceId) return unaddressable(log, event.type, 'workspaceId');
     onWorkspaceRoleChanged?.({
       workspaceId,
       roleName: String(data.roleName || ''),
@@ -166,7 +193,7 @@ export async function handleChannelEvent(event: any, ctx: ChannelEventContext): 
   if (event.type === 'workspace.role.permissions') {
     const data = event.data || {};
     const roleId = String(data.roleId || '');
-    if (!roleId) return;
+    if (!roleId) return unaddressable(log, event.type, 'roleId');
     onRolePermissionsChanged?.({
       roleId,
       permissions: Array.isArray(data.permissions) ? data.permissions.map(String) : [],

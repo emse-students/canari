@@ -221,6 +221,40 @@ both. The name now lives once, as `LOCAL_PROJECT` in the `Makefile`, and every t
 **Not `infrastructure/docker-compose.dev.yml`.** That file is the deployed dev estate and refuses to
 start without an immutable `TAG`; see the compose-file table above.
 
+### The local estate is PLAIN HTTP, and TLS was tried and is not available (2026-09-04)
+
+`http://localhost:8081`. It is not an omission and it is not a "we did not get round to it": a
+certificate was minted, nginx terminated TLS on the same port, the browsers trusted it by SPKI pin
+and the debug APK carried the CA in an Android network security config. **The phone still could not
+reach it.**
+
+**The reason is that a Tauri app has TWO HTTP stacks and only one of them is the WebView.** Page
+loads go through the WebView, which honours the network security config; every `fetch` the app makes
+goes through the Tauri http plugin, which is Rust `reqwest`. `frontend/src-tauri/Cargo.lock` has
+`webpki-roots` and neither `rustls-native-certs` nor `rustls-platform-verifier`, so that client
+trusts the bundled Mozilla root set and **nothing else** - not the Android system store, not a
+user-installed CA, not the config the WebView reads. Measured: TCP connected to `127.0.0.1:8081` and
+every request died as `error sending request for url (https://localhost:8081/...)`. No private
+certificate can be trusted there without changing the app.
+
+So the local estate stays HTTP, `ALLOW_INSECURE_COOKIES` stays `true`, and the problem TLS was
+reached for - the Android client being handed a `SameSite=Lax` cookie it discards, so it logs itself
+out before publishing a key package - is fixed in the CLIENT, where the fact that decides it already
+lives: [sessions](../sessions.md#the-credential-a-client-carries-itself).
+
+Three things worth keeping from the attempt:
+
+- **`ALLOW_INSECURE_COOKIES` is read by `core-service` and by nothing else.** Three sibling services
+  declared it; the declarations were removed rather than flipped, because a compose file whose job is
+  to say what the estate is should not say it three times, wrongly.
+- **A second proxy hop makes a server parse headers it only ever generated**, and those headers get
+  their own buffer - `proxy_buffering off` streams the body only. This estate's CSP is ~1.5 kB, so
+  every page answered `502 Bad Gateway` the moment a TLS listener sat in front of the `:80` one.
+- **And the container stayed HEALTHY throughout**, because the probe asked for `/api/version`, the
+  one route that sets no CSP - chosen originally because it was cheap and unauthenticated. A probe
+  picked for cheapness is a probe selected for not resembling the traffic. It now fetches `/chat` as
+  well, so it fails when a user would fail.
+
 ### Putting the CURRENT frontend on the local estate
 
 ```bash

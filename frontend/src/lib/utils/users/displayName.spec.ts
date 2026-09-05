@@ -11,11 +11,20 @@ vi.mock('$lib/paraglide/messages', () => ({
 // ---------------------------------------------------------------------------
 // Mock $lib/stores/user — only the functions used by displayName.ts.
 // ---------------------------------------------------------------------------
-vi.mock('$lib/stores/user', () => ({
-  currentUserId: vi.fn(() => null),
-  getSavedDisplayName: vi.fn(() => null),
-  fetchUserProfile: vi.fn(),
-}));
+// `UserProfileFetchError` and `isAbsentUserError` are taken from the REAL module rather than
+// restated here. They are the seam this file's newest case turns on - "the server answered: no such
+// user" against "we could not go and ask" - and a second copy of that predicate living in a mock is
+// a copy that passes after the real one changes.
+vi.mock('$lib/stores/user', async () => {
+  const actual = await vi.importActual<typeof import('$lib/stores/user')>('$lib/stores/user');
+  return {
+    currentUserId: vi.fn(() => null),
+    getSavedDisplayName: vi.fn(() => null),
+    fetchUserProfile: vi.fn(),
+    UserProfileFetchError: actual.UserProfileFetchError,
+    isAbsentUserError: actual.isAbsentUserError,
+  };
+});
 
 // resolveDisplayNames is imported dynamically inside its own suite: those tests call
 // vi.resetModules() to get a fresh display-name cache, which a static import would defeat.
@@ -337,6 +346,65 @@ describe('formatProfileDisplayName (indirect)', () => {
     expect(result).toBeNull();
     // And it accuses: a fallback is a signal, and this one hides a name with no retry.
     expect(warn).toHaveBeenCalled();
+  });
+
+  it('answers the label for a user the server says does not exist, and asks only once', async () => {
+    // THE DISTINCTION THIS PINS, and the one the file said twice it wanted and could not express:
+    // a 404 is an ANSWER. It used to land in `failedAt` beside a dead radio, which gave it a
+    // two-minute expiry and then re-asked for an account that will never exist - once per mount of
+    // a mention chip, in every check that opened the conversation. Answering the label rather than
+    // null is what stops `MessageMentionChip` rendering a bare `@`, and it is the same answer the
+    // resolver already gives for a profile that exists and carries no name.
+    vi.resetModules();
+    const userModule = await import('$lib/stores/user');
+    const mod = await import('./displayName');
+    // `spyOn` hands back the SAME spy when the method is already spied, history included.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    warn.mockClear();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // The mock instance outlives `vi.resetModules()`, so its history belongs to the whole file
+    // until it is cleared - and the count of requests is exactly what this case measures.
+    vi.mocked(userModule.fetchUserProfile).mockClear();
+    vi.mocked(userModule.fetchUserProfile).mockRejectedValue(
+      new userModule.UserProfileFetchError(404)
+    );
+
+    expect(await mod.resolveUserDisplayName('usr_deleted')).toBe(UNKNOWN_LABEL);
+    expect(await mod.resolveUserDisplayName('usr_deleted')).toBe(UNKNOWN_LABEL);
+    expect(await mod.resolveUserDisplayName('usr_deleted')).toBe(UNKNOWN_LABEL);
+    expect(vi.mocked(userModule.fetchUserProfile)).toHaveBeenCalledTimes(1);
+
+    // It does not accuse: nothing failed. And it is not in the failure rate that decides whether
+    // the two-minute suppression is earning its keep.
+    expect(warn).not.toHaveBeenCalled();
+    expect(mod.displayNameLookupStats()).toEqual({ attempted: 1, failed: 0, failureRate: 0 });
+  });
+
+  it('does not re-ask for an absent user when connectivity returns', async () => {
+    // `failedAt` is cleared on reconnect, because a failure recorded while the network was down is
+    // evidence about the network. An absent account is evidence about the account, so a reconnect
+    // has nothing to revise - and routing the 404 through `failedAt` made every reconnect provoke
+    // a fresh round of the same 404s.
+    vi.resetModules();
+    const connectivityModule = await import('$lib/stores/connectivity.svelte');
+    const userModule = await import('$lib/stores/user');
+    const mod = await import('./displayName');
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    vi.mocked(userModule.fetchUserProfile).mockClear();
+    vi.mocked(userModule.fetchUserProfile).mockRejectedValue(
+      new userModule.UserProfileFetchError(404)
+    );
+    await mod.resolveUserDisplayName('usr_deleted_2');
+
+    connectivityModule.connectivity.notifyServerUnreachable();
+    connectivityModule.connectivity.notifyServerReachable();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(await mod.resolveUserDisplayName('usr_deleted_2')).toBe(UNKNOWN_LABEL);
+    expect(vi.mocked(userModule.fetchUserProfile)).toHaveBeenCalledTimes(1);
   });
 
   it('counts the DENOMINATOR, so a lost name is a rate rather than an anecdote', async () => {

@@ -28,7 +28,8 @@ import { APP_TAB, client, evaluate, markers, openConversation, send } from '../c
 import { watch } from '../watch.mjs';
 import { mark, record } from '../results.mjs';
 import { execFileSync } from 'node:child_process';
-import { peerNameFor } from '../names.mjs';
+import { PORTS, peerNameFor } from '../names.mjs';
+import { requireScript } from '../scriptpath.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const REWIND_SENDS = Number(process.env.REWIND_SENDS || 12);
@@ -171,8 +172,8 @@ const repairLines = (cx, sinceT) =>
     .map(stamp);
 
 // --------------------------------------------------------------------------- clients
-const w1 = await client(9224, APP_TAB, { focus: false });
-const w2 = await client(9223, APP_TAB, { focus: false });
+const w1 = await client(PORTS.W1, APP_TAB, { focus: false });
+const w2 = await client(PORTS.W2, APP_TAB, { focus: false });
 // BOTH are reloaded, and W2's reload is not optional. A history bundle inserts hundreds of OLDER
 // messages into a virtualised list, and the mounted window then stays anchored in the past: after
 // one run, W2's pane ended on messages from 12:40 with the scroller already at its maximum, so
@@ -187,7 +188,7 @@ console.log('[heal] W2:', await openConversation(w2, peerNameFor('W2')));
 await sleep(8000);
 
 // --------------------------------------------------------------------------- 1. baseline + rewind
-console.log('[heal] snapshot:', JSON.parse(execFileSync(process.execPath, ['mlsdb.mjs', '--port', '9224', 'snapshot'], { encoding: 'utf8' })).report.map((r) => `${r.store} ${r.rows} rows`).join(', '));
+console.log('[heal] snapshot:', JSON.parse(execFileSync(process.execPath, [requireScript('mlsdb.mjs'), '--port', '9224', 'snapshot'], { encoding: 'utf8' })).report.map((r) => `${r.store} ${r.rows} rows`).join(', '));
 
 const pre = mark('HEALPRE');
 for (let i = 1; i <= REWIND_SENDS; i++) {
@@ -214,7 +215,7 @@ if (preOnW2 < REWIND_SENDS) {
 let row = null;
 try {
 // --------------------------------------------------------------------------- 2. break it
-console.log('[heal] restore:', execFileSync(process.execPath, ['mlsdb.mjs', '--port', '9224', 'restore'], { encoding: 'utf8' }).replace(/\s+/g, ' ').slice(0, 200));
+console.log('[heal] restore:', execFileSync(process.execPath, [requireScript('mlsdb.mjs'), '--port', '9224', 'restore'], { encoding: 'utf8' }).replace(/\s+/g, ' ').slice(0, 200));
 await w1.send('Page.reload', { ignoreCache: false });
 await sleep(12_000);
 await watch(w1, 'W1');

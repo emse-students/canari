@@ -165,6 +165,73 @@ else
   fail "push_token is not truncated - copied tokens belong to production's FCM sender"
 fi
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 2b. The media strips are complete, DERIVED the same way and for a different reason
+# ─────────────────────────────────────────────────────────────────────────────
+# The payment columns are things a copy MUST NOT carry. These are things it CANNOT carry: neither
+# copy fetches the object store, so every media id in the restored rows names a blob that lives only
+# in production's Garage, and the product is then answered 404 for asking exactly the right question.
+# The failure mode is the same absence - a media column added to an entity next month would dangle
+# with nothing to say so - so the list is derived rather than written out.
+#
+# WHICH PROPERTIES COUNT IS A DECISION, exactly as "which payment providers exist" is one: any
+# property whose name contains `media`, plus the three mirrors that carry a media reference without
+# saying so in their name. `logoUrl` and `imageUrl` hold `/api/media/public/<uuid>` - `logoUrl` is
+# the one `associationLogoCache` actually fetches, so clearing the id without it fixes nothing - and
+# `attachments` is a jsonb array whose elements each carry a `mediaId`.
+#
+# THE COLUMN IS NOT ALWAYS THE PROPERTY, which is why the decorator is read and not just the name:
+# `post.media` is declared `@Column('jsonb', { name: 'images' })`. A derivation reading property
+# names alone would look for a column that does not exist, find no strip for it, and report a gap
+# that is not there - or worse, be "fixed" by writing a strip against a column name Postgres has
+# never had. `sprintf("%c", 39)` builds the quote character: a literal one inside this awk program
+# inside a single-quoted shell string is four levels of escaping for one byte.
+printf '\nthe media strips cover every media column an entity declares:\n'
+
+# shellcheck disable=SC2016
+media_columns=$(find apps -name '*.entity.ts' -print0 2>/dev/null | xargs -0 -r awk '
+  BEGIN { q = sprintf("%c", 39) }
+  FNR == 1 { col = "" }
+  /@Column\(/ {
+    col = "";
+    n = index($0, "name:");
+    if (n > 0) {
+      rest = substr($0, n);
+      a = index(rest, q);
+      if (a > 0) {
+        rest = substr(rest, a + 1);
+        b = index(rest, q);
+        if (b > 1) col = substr(rest, 1, b - 1);
+      }
+    }
+    next
+  }
+  /^[ \t]+[A-Za-z0-9_]+[?!]?[ \t]*:/ {
+    name = $0;
+    sub(/^[ \t]+/, "", name);
+    sub(/[?!]?[ \t]*:.*$/, "", name);
+    low = tolower(name);
+    if (index(low, "media") > 0 || name == "logoUrl" || name == "imageUrl" || name == "attachments")
+      print (col != "" ? col : name);
+    col = "";
+  }
+' | sort -u)
+
+if [ -z "$media_columns" ]; then
+  fail "no media columns could be derived from the entities - the parser and the code have diverged"
+else
+  count=$(printf '%s\n' "$media_columns" | wc -l | tr -d ' ')
+  ok "derived $count media column(s) from the entity declarations"
+  for col in $media_columns; do
+    # shellcheck disable=SC2016
+    if grep '"\$sql"' "$STRIPS" | grep -qF "\\\"$col\\\""; then
+      ok "$col is cleared"
+    else
+      fail "$col is declared by an entity and NOT cleared by the copies - the copy would reference objects it never received, and every render of them is a 404"
+    fi
+  done
+fi
+
 # The shared file must never reach a database itself: it is handed the name of its caller's guarded
 # function precisely so that the ALLOWLIST of writable targets stays in the script that owns one.
 if grep -qE 'docker (exec|ps|inspect)|psql ' "$STRIPS"; then
@@ -190,7 +257,7 @@ done
 # ─────────────────────────────────────────────────────────────────────────────
 printf '\nthe copy checks its own result:\n'
 
-for probe in 'push_token' 'stripeCustomerId' 'FROM users'; do
+for probe in 'push_token' 'stripeCustomerId' 'FROM users' 'COPY_STRIPS_MEDIA_RESIDUE_SQL'; do
   # Anchored on the text alone: the section rules are box-drawing characters, and a dot-per-char
   # regex counts bytes rather than characters under a C locale.
   if awk '/5\. Verify, do not assert/,0' "$SCRIPT" | grep -q "$probe"; then
@@ -253,7 +320,7 @@ else
     ok "the local restore never reaches production (no ssh, scp or pg_dump invocation)"
   fi
 
-  for probe in 'push_token' 'stripeCustomerId' 'FROM users'; do
+  for probe in 'push_token' 'stripeCustomerId' 'FROM users' 'COPY_STRIPS_MEDIA_RESIDUE_SQL'; do
     if awk '/5\. Verify, do not assert/,0' "$LOCAL_SCRIPT" | grep -q "$probe"; then
       ok "the local verification reads $probe back"
     else

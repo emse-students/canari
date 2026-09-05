@@ -9,9 +9,11 @@
 import { client, evaluate } from '../chat.mjs';
 import { realClick, until, RESOLVE } from '../cdp.mjs';
 import { consoleLines, watch } from '../watch.mjs';
-import { PORTS } from '../names.mjs';
+import { PORTS, VENUE } from '../names.mjs';
 
-const COMMUNITY = 'Campagne de test';
+// `VENUE`, never a literal: on a prod-copy estate the old string named a REAL community belonging to
+// two production users, and this probe would have opened theirs (measured 2026-09-04).
+const COMMUNITY = VENUE.community;
 const cx = await client(PORTS.W1);
 const marks = [];
 let stop = false;

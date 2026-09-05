@@ -122,6 +122,28 @@ export class SenderNotActiveError extends Error {
 }
 
 /**
+ * The delivery service refused a frame because the GROUP is no longer a destination - tombstoned in
+ * `dm_groups`, or gone from it altogether.
+ *
+ * **TERMINAL, AND FOR EVERYONE**: unlike {@link SenderNotActiveError}, which says this device is not
+ * in a group that still exists, this says the group itself ended. No Welcome, no external commit and
+ * no retry brings it back, and a frame queued for it could never be decrypted or acknowledged by
+ * anybody.
+ *
+ * IT IS RAISED ON A RACE THE CLIENT CANNOT WIN ALONE. `flushOne` already refuses to send into a
+ * group whose `deletedAt` it knows, but that fact is read over a round trip and the deletion can
+ * land inside it - measured 2026-09-05, a delete's sweep running between a send's recipient
+ * resolution and its enqueue, leaving two rows undeliverable for ever. The server is the only place
+ * the liveness and the write are one transaction, so this refusal is the answer it owes.
+ */
+export class GroupDeletedError extends Error {
+  constructor(readonly groupId: string) {
+    super(`Group ${groupId} no longer exists on the server`);
+    this.name = 'GroupDeletedError';
+  }
+}
+
+/**
  * The server refused a membership mutation because a BLOCK stands between the two people.
  *
  * Typed rather than message-matched, like every other refusal here: the neutral wording the server
@@ -877,6 +899,12 @@ export class MlsDeliveryApi {
           throw new SenderNotActiveError(groupId, body.status ?? null);
         }
       }
+      // AND THE OTHER REFUSAL NO RETRY LIFTS, for the opposite reason: not "this device is not in
+      // the group" but "there is no group". 410 is the delivery service refusing to queue rows for
+      // a tombstone - see {@link GroupDeletedError}.
+      if (res.status === 410) {
+        throw new GroupDeletedError(groupId);
+      }
       throw new Error(`Message send HTTP error: ${res.status}`);
     }
   }
@@ -903,7 +931,23 @@ export class MlsDeliveryApi {
       const res = await this.f(url.toString(), {
         headers: await this.auth(),
       });
-      if (!res.ok) return { rows: [] };
+      // A REFUSAL AND AN EMPTY GROUP ARE THE SAME RETURN VALUE, so the refusal has to say so.
+      //
+      // This branch turned every non-ok status - 403 for a group the server has soft-deleted, 404,
+      // a 500, a gateway error - into `{ rows: [] }`, which is exactly what a group with no history
+      // returns. The caller then renders an empty conversation and there is nothing, anywhere, to
+      // say the server was asked and refused: the sibling branch three lines below already warns
+      // about a non-JSON body, and this one was the asymmetry. A status is an ANSWER; an answer
+      // nobody records is one the next reader has to reproduce on a live browser.
+      //
+      // `warn` rather than `error` because it is not, on its own, a defect - the caller may
+      // legitimately have raced a deletion. What makes it worth a line is that it is the ONLY
+      // trace: `[HISTORY] refused` next to an empty conversation is the difference between a
+      // diagnosis and a mystery.
+      if (!res.ok) {
+        console.warn(`[HISTORY] refused for group ${groupId}: ${res.status}`);
+        return { rows: [] };
+      }
       const contentType = res.headers.get('content-type') ?? '';
       if (!contentType.toLowerCase().includes('application/json')) {
         console.warn(

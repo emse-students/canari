@@ -697,6 +697,19 @@ const NOTABLE = [
   // carries a refusal, an abort on a missing KeyPackage, a kick-and-re-add, and `re-add suspended
   // (fix needed client-side)` - four failures a prefix rule would forgive in silence.
   /history_(request|bundle|digest|digest_request|pull)|\[HISTORY_RECONCILE\]/i,
+  // THE COVERAGE LEG OF THAT SAME EXCHANGE, which postdates the rule above and was therefore the one
+  // leg landing in `unexplained`. `sendHistoryCoverage` is sent LAST and ONLY when the responder's
+  // window is NARROWER than what was asked for, and its own docblock says why it is load-bearing:
+  // without it the asker sees an absence, and an absence cannot be told from "there is no more
+  // history", so it either believes itself complete or re-asks the same peer for ever. A device
+  // stating its own window is the mechanism working, and it belongs with the request and the bundle
+  // it answers rather than three buckets away from them.
+  //
+  // PINNED TO THE SUCCESS SPELLING ALONE, the way the `[WELCOME_REQ]` rule above is and for the same
+  // reason: this tag also carries `Unusable coverage from ...`, `Chase failed for ...` and `Could not
+  // state our coverage to ...`, three failures a `^\[HISTORY_COVERAGE\]` prefix would forgive in
+  // silence. Seen on DEL-1, 2026-09-05, on the owner's web client answering its own phone.
+  /^\[HISTORY_COVERAGE\] Told \S+ we are complete only from \S+ in \S+$/,
   // A reconciliation that actually DELIVERED something, which the line above does not cover: that one
   // says a device decided it was out of sync, this one says a peer answered and the gap closed. It
   // was landing in `unexplained`, and it is the opposite of unexplained - it is the repair reporting
@@ -1362,7 +1375,7 @@ export async function report(w) {
   const renderLine = (l) => {
     if (l.source !== 'network' || !l.url) return l.text;
     const r = l.requestId ? reqs.get(l.requestId) : null;
-    return `${l.text} <- ${r?.method ?? '???'} ${l.url.replace('https://canari-emse.fr', '')}`;
+    return `${l.text} <- ${r?.method ?? '???'} ${l.url}`;
   };
   const errors = lines.filter(
     (l) => (l.level === 'error' || l.level === 'assert') && !isBenignUrl(l.url, l.text)
@@ -1463,8 +1476,8 @@ export async function report(w) {
     severe: severe.map(renderLine),
     errors: errors.map(renderLine),
     exceptions,
-    badHttp: badHttp.map((r) => `${r.method} ${r.url.replace('https://canari-emse.fr', '')} -> ${r.status ?? r.failed}`),
-    knownBadHttp: knownBadHttp.map((r) => `${r.method} ${r.url.replace('https://canari-emse.fr', '')} -> ${r.status ?? r.failed}`),
+    badHttp: badHttp.map((r) => `${r.method} ${r.url} -> ${r.status ?? r.failed}`),
+    knownBadHttp: knownBadHttp.map((r) => `${r.method} ${r.url} -> ${r.status ?? r.failed}`),
     ...(untrackedFailures ? { untrackedFailures } : {}),
     wsEvents: ws.map((w) => `${hhmmss(w.at)} ${w.text}`),
     documentsReplaced,
@@ -1591,34 +1604,48 @@ export function longestSilence(timeline) {
  */
 
 /**
- * The phone's adb serial, RESOLVED rather than hard-coded.
+ * The phone's adb serial, RESOLVED rather than hard-coded, and BY THE ONE RESOLVER since 2026-09-04.
  *
  * Its DHCP lease changes between sessions (it has already moved subnet once), so a literal address
  * turns every logcat call into `LOGCAT UNAVAILABLE` - and a check whose verdict lives on a logcat
- * line then fails for a reason that has nothing to do with the app. The wireless entry is preferred
- * because USB drops on this device mid-capture; USB is only the fallback that lets a run start.
+ * line then fails for a reason that has nothing to do with the app.
+ *
+ * **IT USED TO BE A SECOND RESOLVER WITH THE OPPOSITE POLICY, AND THAT WAS A SILENT WRONG-SUBJECT
+ * BUG.** The copy that stood here ignored `ANDROID_SERIAL` and returned `lines[0]`, preferring the
+ * wireless entry; `phone.mjs` honours `ANDROID_SERIAL` and REFUSES to choose between two phones. So
+ * with a Pixel 6a attached beside the Mi 9T, `useDevice('A2')` bound every gesture to the Pixel
+ * while this function read the Mi 9T's logcat, and the row would have gathered its evidence from a
+ * device the run was not about without a single line saying so. Both now call `serial.mjs`, which
+ * exists as its own module because `watch.mjs` cannot import `phone.mjs` - that would drag in the
+ * gitignored `names.mjs` and make two gated self-tests unimportable on CI.
+ *
+ * **RESOLVED AT USE, NOT AT IMPORT.** It was a module-level `const`, evaluated the moment anything
+ * imported this file - so a binding made afterwards by `useDevice()` could not be seen, which is
+ * precisely the case the fix is for. It is read per call now, and cached for nothing.
  */
-import { execFileSync as execSync_ } from 'node:child_process';
+import { serial as resolveSerial } from './serial.mjs';
 
-function resolveSerial() {
+/**
+ * The serial to read logs from, or `null` with the reason - NEVER a throw.
+ *
+ * A GESTURE THAT CANNOT TELL WHICH PHONE IT DRIVES MUST STOP; AN OBSERVER MUST NOT. `serial()`
+ * throws on "no device" and on "two devices and nothing says which", both correct for an atom about
+ * to act. Here the caller is gathering evidence for a row that is already running, and a crashed
+ * observer destroys the measurement it exists to collect - so the refusal is returned as the report
+ * line, which says the same thing to the same reader without ending the run.
+ */
+function logcatSerial() {
   try {
-    const lines = execSync_('adb', ['devices'], { encoding: 'utf8', timeout: 10000 })
-      .split(/\r?\n/)
-      .slice(1)
-      .map((l) => l.trim().split(/\s+/))
-      .filter((p) => p.length >= 2 && p[1] === 'device')
-      .map((p) => p[0]);
-    return lines.find((s) => /^\d+\.\d+\.\d+\.\d+:\d+$/.test(s)) ?? lines[0] ?? null;
-  } catch {
-    return null;
+    return { serial: resolveSerial(), why: null };
+  } catch (e) {
+    return { serial: null, why: String(e?.message ?? e) };
   }
 }
 
-export const A1_SERIAL = resolveSerial();
-
 export async function logcatSince(sinceMs) {
   const { execFileSync } = await import('node:child_process');
-  if (!A1_SERIAL) return ['LOGCAT UNAVAILABLE: no adb device attached'];
+  const { serial: A1_SERIAL, why } = logcatSerial();
+  if (!A1_SERIAL) return [`LOGCAT UNAVAILABLE: ${why ?? 'no adb device attached'}`];
   // logcat -T wants "MM-DD hh:mm:ss.mmm" in the DEVICE's local time, not ISO and not UTC.
   const d = new Date(sinceMs - 1500);
   const p2 = (n) => String(n).padStart(2, '0');
@@ -1703,6 +1730,21 @@ export const COLD_START_NARRATION = [
   /\[FCM_CACHE\] \d+ message\(s\) to pre-inject from the FCM cache/,
   /\[FCM_CACHE\] . id=\S+ group=\S+ type=\S+/,
   /\[FCM_CACHE\] Injection done: \d+\/\d+ message\(s\) injected/,
+  // The fourth line of the same sequence, and the only one the list was missing: `sessionAuth`'s
+  // startup catch-up merges whatever the cache injected into the in-memory conversations, and it is
+  // logged ONLY when that count is non-zero - so it appears exactly on the cold start that had a
+  // push waiting, which is what DEL-7 arranges. Found on A1 there, 2026-09-05.
+  /\[FCM_CACHE\] \d+ message\(s\) merged in memory at login/,
+  // THE REST OF WHAT A KILLED APP SAYS ON ITS WAY BACK, added 2026-09-05 when COMM-18 finally
+  // reached its landing and could be read past. Each is a sentence only a process that did not exist
+  // a moment ago can produce, and each is TRUE: the push token is unchanged so nothing is
+  // re-registered; the refresh rides the stored credential because the access token died with the
+  // process; there is no device key in the vault because this account did not ask to stay signed in,
+  // which is why the row has to answer the PIN at all; and the MLS client is built from disk.
+  /\[Push\] Token and locale unchanged, skip backend registration/,
+  /^\[A\] refresh carries=stored credential$/,
+  /\[PIN\] No device key in vault - auto-login impossible/,
+  /^Initialising MLS\.\.\.$/,
 ];
 
 /**
@@ -1795,6 +1837,74 @@ export const AUTH_TEARDOWN_NARRATION = [/^\[A\] clear$/, /^\[A\] ws-$/];
  * - has a different spelling and is not forgiven here.
  */
 export const BLOCK_LIST_READ_NARRATION = [/^\[blocks\.listBlockedUsers\]$/];
+
+/**
+ * WHAT CREATING A GROUP SAYS ABOUT ITSELF, and both lines are load-bearing rather than chatter.
+ *
+ * `[blocks.isBlockedWith] <payload>` is the function-entry log this project's own standard requires
+ * (`CLAUDE.md`: a log at function entry, at decisions, at error branches), emitted because every
+ * creation path ASKS the server whether the target is blocked before opening a conversation nobody
+ * wanted. Its payload is the ANSWER, which is the useful half - so unlike
+ * {@link BLOCK_LIST_READ_NARRATION} this one cannot be pinned to a bare tag, and it is pinned to
+ * the tag at the START of the sentence instead.
+ *
+ * `[SYNC] bulk.addedDeviceIds: <ids>` names exactly which devices got into the staged commit,
+ * immediately before the Welcomes go out. That is the single most useful line in the phase this
+ * campaign spends the most time on, and a rule that counted it as dirt would be asking the code to
+ * stop saying the thing worth saying.
+ *
+ * IT IS NOT A WIDER CLASSIFIER. Every check that forgives these is a check that CREATED A GROUP, so
+ * it provoked them; a check that did not create one and sees them has found something, and gets no
+ * forgiveness from here.
+ */
+export const GROUP_CREATION_NARRATION = [
+  /^\[blocks\.isBlockedWith\]/,
+  /^\[SYNC\] bulk\.addedDeviceIds: /,
+];
+
+/**
+ * THE APP NARRATING A DELETION IT LEARNT OF - the peer-side half of the DEL phase's whole subject.
+ *
+ * In a phase whose every row deletes a group on purpose, this line is the mechanism reporting
+ * success. In any other phase a group disappearing underneath a check is a finding, so it is NAMED
+ * here and applied NOWHERE - which is what every list in this section is, and is not the same thing
+ * as classifying it: nothing in `BENIGN` claims it, so a runner that does not ask for it still sees
+ * it as dirt.
+ *
+ * IT MOVED HERE FROM `del.mjs` ON 2026-09-05, when the second file of the same phase needed it.
+ * `del1.mjs` owns DEL-1 alone, produces the identical sentence on the identical peer, and had no
+ * forgiveness of any kind - so DEL-1 recorded `PASS-DIRTY` on its own subject. A per-phase needle
+ * living inside ONE of a phase's two runners is a needle the other cannot use.
+ *
+ * IT NAMES A REAL PERSON, so the needle matches the SHAPE and no display name enters the repository:
+ * the accounts behind W1 and W2 are the campaign's own, and `idcheck.mjs` refuses a commit that
+ * carries one. `[INFO]` is deliberately not in the pattern either - the level is not what makes the
+ * line expected, and anchoring on it would let a re-levelled line reappear as dirt.
+ */
+export const PEER_DELETED_NARRATION = /Group deleted by .+ - conversation marked removed$/;
+
+/**
+ * THE ONE SENTENCE A DELIVERY CROSSING IS ALLOWED TO SAY, and it says it once per session.
+ *
+ * A row is offered by the live socket AND by the pending pull, and an acknowledgement cannot land
+ * before a pull already in flight - so a device is handed the same row twice, decrypts it once, and
+ * acknowledges it again. Three of the four shapes that produces are crossings nothing can prevent.
+ * They used to print per occurrence; FWD-2 measured that at 23 of 25 back-to-back forwards, which
+ * is a rate rather than an event, so the app now says the whole sentence ONCE per shape and counts
+ * the rest (`BaseMlsService.REPEAT_MEANS`). A check that reloads a client still meets that first
+ * one, and it has no opinion about delivery plumbing.
+ *
+ * IT IS KEYED ON THE ACCUSING PHRASE'S ABSENCE, AND ON NOTHING AT THE END OF THE LINE. The fourth
+ * shape - a LIVE frame for a row already acknowledged, which no crossing explains and which would
+ * be the server publishing a row twice - opens its explanation with `THE SERVER PUBLISHED THE SAME
+ * ROW TWICE`, immediately after the dash, so a negative lookahead there is exact. The first attempt
+ * anchored on the routine branch's trailer instead and forgave nothing at all: this observer
+ * TRUNCATES a captured line, and the trailer is precisely the part that gets cut.
+ */
+export const DELIVERY_CROSSING_NARRATION = [
+  /^\[QUEUE\] delivery .* arrived twice - (?!THE SERVER PUBLISHED)/,
+];
+
 
 /**
  * THE REFUSAL A CLIENT THAT HAS JUST DELETED ITS OWN COOKIES GETS BACK, forgiven per row.
@@ -2272,13 +2382,38 @@ export function gate(verdict, reports) {
  * @param rep the `report()` of the client that made the request
  * @param expected `[{ path: RegExp, status: number[] }]` - what this check went and asked for
  */
+/**
+ * The PATH a rendered bucket line is about, whatever spelling the line carries.
+ *
+ * **EVERY PATH-ANCHORED FORGIVENESS IN THIS RIG WENT INERT ON 2026-09-03 AND NOTHING SAID SO.** The
+ * renderer used to strip a hardcoded `https://canari-emse.fr` before printing a request, so a rule
+ * written as `/^\/api\/users\/[0-9a-f]{64}$/` matched. The campaign moved to the LOCAL estate that
+ * day, the literal stopped matching anything, and the lines became absolute urls against
+ * `http://localhost:8081` - so MENTION-5 forgave a 404 it goes and causes and was `PASS-DIRTY` on it
+ * anyway, `MINT_REFUSALS` stopped forgiving the refresh 401 every device mint produces, and COMM's
+ * provoked 403s stopped being forgiven too. A rule that CANNOT MATCH fails silently: the reader just
+ * sees a bigger pile, which is the same failure `srvclassify-selftest.mjs` exists for.
+ *
+ * The literal is gone - a rendered line now carries the whole url, which is strictly more evidence -
+ * and the PATH is derived here instead, so a rule keeps working against either spelling and against
+ * whatever estate the rig is pointed at next. `pathname + search`, because the rules that carry a
+ * `(\?|$)` were written against a form that included the query.
+ */
+const pathOfLine = (s) => {
+  try {
+    const u = new URL(s);
+    return u.pathname + u.search;
+  } catch {
+    return s; // already a path, or something that was never a url
+  }
+};
+
 export function ignoringExpectedRefusal(rep, expected) {
-  // Matched against the RENDERED bucket line, which is `METHOD /path -> status`: that is the only
-  // form the report keeps, and re-deriving it here would be a second spelling of one format.
+  // Matched against the RENDERED bucket line, which is `METHOD <url or path> -> status`.
   const forgiven = (line) =>
     expected.some(({ path, status }) => {
       const m = /^(\S+)\s+(\S+)\s+->\s+(\S+)$/.exec(line);
-      return !!m && path.test(m[2]) && status.includes(Number(m[3]));
+      return !!m && path.test(pathOfLine(m[2])) && status.includes(Number(m[3]));
     });
   // The console line Chrome writes ALONGSIDE the failed request - "Failed to load resource: the
   // server responded with a status of 403" - carries no url of its own in the text, so it is

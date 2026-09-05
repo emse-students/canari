@@ -11,8 +11,29 @@
  * Each records whether `POST /api/mls/send` happened at all: no request means the client dropped
  * it, a 201 means the receiver did. That is the fork the whole diagnosis turns on.
  */
-import { APP_TAB, awaitAppReady, awaitMessage, clickBubbleAction, client, countMessage, ensureChat, ensureConversation, evaluate, openChannel, openConversation, realClick, send, settledCount, until } from '../chat.mjs';
+import {
+  APP_TAB,
+  awaitAppReady,
+  awaitMessage,
+  clickBubbleAction,
+  client,
+  countMessage,
+  ensureChat,
+  ensureConversation,
+  evaluate,
+  openChannel,
+  openConversation,
+  realClick,
+  reloadAndWait,
+  send,
+  settledCount,
+  until,
+} from '../chat.mjs';
 import { gate, ignoringOfflineCut, report, watch } from '../watch.mjs';
+// The venue channel's history carries three mentions of accounts that do not exist, and every
+// one of these three checks opens it. See `stranded.mjs` for the allowlist and why the fixture
+// is left in place; none of these rows has an opinion about user profiles.
+import { ignoringStrandedMentions } from '../stranded.mjs';
 import { cut } from './net.mjs';
 import { mark, record } from '../results.mjs';
 import { execFileSync } from 'node:child_process';
@@ -52,8 +73,8 @@ async function forwardFromChannel(cx, marker) {
   await until(cx, `!document.querySelector('[role=dialog]')`, 15000);
 }
 
-const w1 = await client(9224, APP_TAB);
-const w2 = await client(9223, APP_TAB);
+const w1 = await client(PORTS.W1, APP_TAB);
+const w2 = await client(PORTS.W2, APP_TAB);
 const a1 = await client(PORTS.A1);
 await ensureChat(w2);
 await openConversation(w2, peerNameFor('W2'));
@@ -79,7 +100,11 @@ const results = [];
   const arrived = await awaitMessage(w2, m, 60000).then(() => Date.now() - at, () => null);
   const settled = await settledCount(w2, m);
   results.push({
-    check: 'FWD-3',
+    // The `check` field is NOT free to reuse: `results.mjs` stamps it with the RUNNER's
+    // filename, and a detail of the same name overwrites it. These three held the row id -
+    // which `id` already carries - so `rows.mjs` read "its runner no longer exists" for all
+    // three, a false alarm in the one tool that settles board-versus-ledger. Dropped, not
+    // renamed: nothing was being said that the row did not already say.
     marker: m,
     severed: info.severed,
     whileOffline,
@@ -89,7 +114,10 @@ const results = [];
     sends: sendsOf(w1),
     // W1 IS THE CLIENT THIS CHECK CUT, so its own disconnected fetches are the experiment working
     // rather than the app failing. W2 was never touched and is judged as it is.
-    obs: { W1: ignoringOfflineCut(await report(o1)), W2: await report(o2) },
+    obs: {
+      W1: ignoringStrandedMentions(ignoringOfflineCut(await report(o1))),
+      W2: ignoringStrandedMentions(await report(o2)),
+    },
   });
 }
 
@@ -116,13 +144,15 @@ const results = [];
   const onReceiver = await settledCount(w2, m);
   const onSender = await settledCount(a1, m);
   results.push({
-    check: 'FWD-4',
     marker: m,
     msToArrive: arrived,
     onReceiver: onReceiver.count,
     onSender: onSender.count,
     countSettled: onReceiver.settled && onSender.settled,
-    obs: { A1: await report(oa), W2: await report(o2) },
+    obs: {
+      A1: ignoringStrandedMentions(await report(oa)),
+      W2: ignoringStrandedMentions(await report(o2)),
+    },
   });
 }
 
@@ -131,7 +161,11 @@ const results = [];
   const m = mark('FWD5');
   // A fresh session: reload, then go straight to the channel. The DM is never opened before the
   // forward, so the sender holds no loaded state for the conversation it is forwarding into.
-  await w1.send('Page.reload');
+  // THE RELOAD IS WAITED FOR ON ITS OWN EVENT BEFORE ANYTHING POLLS. `awaitAppReady` is an
+  // `until`, so it sends `Runtime.evaluate` into the context this reload is destroying, and CDP
+  // answers `Inspected target navigated or closed` when the two meet - which cost READ-7 three
+  // runs in four before it was located (2026-09-04).
+  await reloadAndWait(w1);
   await awaitAppReady(w1);
   await ensureChat(w1);
   const o1 = await watch(w1, 'FWD5-W1');
@@ -142,13 +176,15 @@ const results = [];
   const arrived = await awaitMessage(w2, m, 60000).then(() => Date.now() - at, () => null);
   const settled = await settledCount(w2, m);
   results.push({
-    check: 'FWD-5',
     marker: m,
     countSettled: settled.settled,
     msToArrive: arrived,
     onReceiver: settled.count,
     sends: sendsOf(w1),
-    obs: { W1: await report(o1), W2: await report(o2) },
+    obs: {
+      W1: ignoringStrandedMentions(await report(o1)),
+      W2: ignoringStrandedMentions(await report(o2)),
+    },
   });
 }
 

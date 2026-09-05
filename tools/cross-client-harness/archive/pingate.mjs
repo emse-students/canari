@@ -27,9 +27,25 @@
 import { execFileSync } from 'node:child_process';
 import { evaluate } from '../chat.mjs';
 import { GATE_EXPR } from '../gate-probe.mjs';
+import { requireScript } from '../scriptpath.mjs';
 
-/** This directory, as `spawn`'s cwd - `pin.mjs` resolves its own imports relative to it. */
-const HERE = new URL('.', import.meta.url).pathname.replace(/^\//, '');
+/**
+ * `pin.mjs`, BY ABSOLUTE PATH, RESOLVED THE WAY EVERY OTHER SPAWN IN THIS RIG RESOLVES A SCRIPT.
+ *
+ * This used to spawn the bare name `pin.mjs` with this file's own directory as the cwd - and this
+ * file is in `archive/`, while `pin.mjs` is in the harness root one level up. So the child answered
+ * `error: Module not found "pin.mjs"` on EVERY call, and had done since the helper was written: the
+ * one thing `unlockClient` exists to do had never once happened. It looked like it worked, because
+ * the early return below covers the common case - a client already past the gate - and because the
+ * failure went into `said`, a string most callers drop.
+ *
+ * COMM-18 is where it finally showed, because that row FORCE-STOPS the app, so the gate is really up
+ * and really has to be answered. It recorded `a1Gate: LOCKED` three times running - a phone reported
+ * as refusing its PIN by a tool that had never reached it. `requireScript` is what this rig already
+ * has for the problem, and its own docstring says why: a spawn given a name it cannot resolve fails
+ * quietly, in the child, where the parent usually discards the message.
+ */
+const PIN_SCRIPT = requireScript('pin.mjs');
 
 /**
  * The two things that can be PROVED about a client at the gate, read in one pass.
@@ -91,12 +107,12 @@ export async function unlockClient(cx, port, account, opts = {}) {
   // rendering, and the gate is one of the two things that could be holding it - so it is still worth
   // trying, and the verdict below comes from the sample taken AFTER, never from this one.
 
-  const args = ['pin.mjs', '--port', String(port), '--account', account];
+  const args = [PIN_SCRIPT, '--port', String(port), '--account', account];
   if (match) args.push('--match', match);
 
   let said;
   try {
-    said = execFileSync(process.execPath, args, { cwd: HERE, encoding: 'utf8', timeout: timeoutMs })
+    said = execFileSync(process.execPath, args, { encoding: 'utf8', timeout: timeoutMs })
       .trim()
       .split('\n')
       .pop();
@@ -104,10 +120,15 @@ export async function unlockClient(cx, port, account, opts = {}) {
     // Exit 2 is `pin.mjs` reporting no modal on screen, which is a STATE and not a failure: the
     // client was already past the gate, or has not raised it yet. Either way the proof below is what
     // settles it, so this is recorded and not thrown.
-    said =
-      e.status === 2
-        ? 'no modal'
-        : `pin.mjs failed: ${String(e.stdout || e.message).slice(0, 200)}`;
+    if (e.status === 2) {
+      said = 'no modal';
+    } else {
+      // AND IT IS PRINTED, NOT ONLY RETURNED. Any other exit code means the tool did not do its job,
+      // which is a broken INSTRUMENT rather than a state of the client - and a caller that records
+      // only the verdict, which is most of them, would otherwise show a locked phone with no reason.
+      said = `pin.mjs failed: ${String(e.stdout || e.message).slice(0, 200)}`;
+      console.error(`[pingate] ${said.replace(/\s+/g, ' ')}`);
+    }
   }
 
   return { verdict: await settle(cx, deadlineMs), said };

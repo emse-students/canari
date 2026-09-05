@@ -13,13 +13,14 @@
  * that a session it cannot refresh is a session with nothing in it - a silent empty list, which
  * looks to a user exactly like every conversation having been deleted.
  */
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { APP_HOST, APP_TAB, awaitMessage, client, countMessage, ensureChat, evaluate, LOGIN_SHOWING, openConversation, send } from '../chat.mjs';
 import { listTargets, connect, until } from '../cdp.mjs';
-import { watch } from '../watch.mjs';
-import { mark, recordObserved } from '../results.mjs';
+import { ignoringExpectedLog, ignoringExpectedRefusal, watch, report } from '../watch.mjs';
+import { mark, recordObserved, exitOnRecorded } from '../results.mjs';
 import { killBrowser, startBrowser, BROWSERS } from '../launch.mjs';
-import { ACCOUNT_OF, PORTS, peerNameFor } from '../names.mjs';
+import { ACCOUNT_OF, PORTS, SITE, peerNameFor } from '../names.mjs';
+import { requireScript } from '../scriptpath.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const which = String(process.argv[2] || '2');
@@ -49,19 +50,25 @@ function unlock(port, account) {
   try {
     const out = execFileSync(
       process.execPath,
-      ['pin.mjs', '--port', String(port), '--account', account, '--match', APP_TAB],
+      [requireScript('pin.mjs'), '--port', String(port), '--account', account, '--match', APP_TAB],
       { cwd: new URL('.', import.meta.url).pathname.replace(/^\//, ''), encoding: 'utf8' }
     );
     return out.trim().split('\n').pop();
   } catch (e) {
-    return `pin.mjs failed: ${String(e.stdout || e.message).slice(0, 200)}`;
+    // THE REASON, NOT THE TAIL OF STDOUT - the one stream that says nothing about why. This is the
+    // third copy of this wrapper in the rig and the second to be fixed today; see the P3 in
+    // `backlog.md` for the one implementation the three of them owe.
+    const why = String(e.stderr || e.message)
+      .trim()
+      .replace(/\s+/g, ' ');
+    return `pin.mjs failed (exit ${e.status ?? 'none'}): ${why.slice(0, 300)}`;
   }
 }
 
 // ── TAB-2: the tab is closed, a message arrives, the tab is reopened ──────────
 if (which === '2') {
-  const w1 = await client(9224, APP_TAB);
-  const w2 = await client(9223, APP_TAB);
+  const w1 = await client(PORTS.W1, APP_TAB);
+  const w2 = await client(PORTS.W2, APP_TAB);
   await ensureChat(w2);
   await openConversation(w2, peerNameFor('W2'));
 
@@ -87,12 +94,16 @@ if (which === '2') {
   const reopened = connect(blanks[0].webSocketDebuggerUrl);
   await reopened.ready;
   await reopened.send('Page.enable');
-  await reopened.send('Page.navigate', { url: 'https://canari-emse.fr/chat' });
+  // THE ESTATE, NOT PRODUCTION. This spelt `https://canari-emse.fr/chat`, so a row about reopening
+  // a tab would have driven a browser holding a campaign session to the REAL SITE - and on an
+  // estate that has been local since 2026-09-03 the row would measure production while reporting
+  // on localhost. `SITE` is the one place the target estate is named.
+  await reopened.send('Page.navigate', { url: `${SITE}/chat` });
   await sleep(12_000);
   const pinResult = unlock(PORTS.W1, ACCOUNT_OF.W1);
   await sleep(4_000);
 
-  const w1b = await client(9224, APP_TAB);
+  const w1b = await client(PORTS.W1, APP_TAB);
   const o1 = await watch(w1b, 'tab2-w1');
   await openConversation(w1b, peerNameFor('W1'));
   const arrived = await awaitMessage(w1b, m, 30_000).then(() => true, () => false);
@@ -103,7 +114,10 @@ if (which === '2') {
     'TAB-2',
     !stillThere && count === 1 ? 'PASS' : 'FAIL',
     {
-      check: 'tab closed -> message -> reopened',
+      // NOT `check`: `results.mjs` stamps that with the RUNNER's filename, and a detail field of
+      // the same name overwrites it - `rows.mjs` then read all three rows as "its runner no longer
+      // exists", which is a false alarm in the one tool that settles board-versus-ledger.
+      scenario: 'tab closed -> message -> reopened',
       marker: m,
       tabReallyClosed: !stillThere,
       pin: pinResult,
@@ -116,7 +130,7 @@ if (which === '2') {
 
 // ── TAB-3: the whole browser is killed, messages arrive, it is relaunched ─────
 if (which === '3') {
-  const w2 = await client(9223, APP_TAB);
+  const w2 = await client(PORTS.W2, APP_TAB);
   await ensureChat(w2);
   await openConversation(w2, peerNameFor('W2'));
 
@@ -137,12 +151,12 @@ if (which === '3') {
 
   // Assert the profile carried the login BEFORE unlocking: the PIN modal is not a login form, and
   // the distinction is the whole point of this check.
-  const w1 = await client(9224, APP_TAB);
+  const w1 = await client(PORTS.W1, APP_TAB);
   const loginShowing = await evaluate(w1, LOGIN_SHOWING);
   const pinResult = unlock(PORTS.W1, ACCOUNT_OF.W1);
   await sleep(4_000);
 
-  const w1b = await client(9224, APP_TAB);
+  const w1b = await client(PORTS.W1, APP_TAB);
   const o1 = await watch(w1b, 'tab3-w1');
   await ensureChat(w1b);
   await openConversation(w1b, peerNameFor('W1'));
@@ -160,7 +174,7 @@ if (which === '3') {
     'TAB-3',
     down && !loginShowing && c1 === 1 && c2 === 1 ? 'PASS' : 'FAIL',
     {
-      check: 'browser killed -> 2 messages -> relaunched',
+      scenario: 'browser killed -> 2 messages -> relaunched',
       browserWasDown: down,
       downInMs,
       upInMs: upIn,
@@ -176,7 +190,7 @@ if (which === '3') {
 
 // ── TAB-6: the refresh cookie is deleted, then the app is made to act ─────────
 if (which === '6') {
-  const w1 = await client(9224, APP_TAB);
+  const w1 = await client(PORTS.W1, APP_TAB);
   const o1 = await watch(w1, 'tab6-w1');
   await w1.send('Network.enable');
 
@@ -204,7 +218,7 @@ if (which === '6') {
   await w1.send('Page.reload');
   await sleep(15_000);
 
-  const w1b = await client(9224, APP_TAB);
+  const w1b = await client(PORTS.W1, APP_TAB);
   const loginShowing = await evaluate(w1b, LOGIN_SHOWING);
   const path = await evaluate(w1b, 'location.pathname');
   const bodyText = String(await evaluate(w1b, 'document.body ? document.body.innerText.slice(0, 400) : ""'));
@@ -221,11 +235,32 @@ if (which === '6') {
   // line that mattered. So this runs honestly first: whatever it reports lands in the record as dirt,
   // gets read, and only the lines that ARE the deliberate logout get named. A PASS-DIRTY on the first
   // run is the instrument working, not the app failing.
+  //
+  // THE FIRST RUN HAPPENED ON 2026-09-05, AND THIS IS WHAT IT REPORTED. Five lines, and every one of
+  // them is this row's own gesture arriving where it was aimed:
+  //
+  //   POST /api/auth/refresh -> 401       the stimulus - the cookie this row deleted, missing
+  //   [A] ws-                             the socket closing, because the session is gone
+  //   [A] clear                           the auth store emptying
+  //   [A] refresh latched                 the client REFUSING to ask again, having proven it dead
+  //   [platform] PIN prompt declined      and declining to raise a PIN over a dead credential
+  //
+  // The last two are the interesting half and are forgiven rather than celebrated: they are the app
+  // declining to loop on a credential it has proven dead, which is the behaviour this row wants and
+  // the opposite of the empty-list failure it looks for. The needles are anchored on their own
+  // wording and scoped to THIS row - never to a shared classifier, which would silence them in the
+  // twenty other rows where a latched refresh means something is badly wrong.
+  const DELIBERATE_LOGOUT = [
+    /^\[A\] ws-$/,
+    /^\[A\] clear$/,
+    /^\[A\] refresh.latched \(cookie already proven dead - not asking again\)$/,
+    /^\[platform\] PIN prompt declined - refresh credential already proven dead\.$/,
+  ];
   await row(
     'TAB-6',
     loginShowing && !emptyListInstead ? 'PASS' : 'FAIL',
     {
-      check: 'refresh cookie deleted -> reload',
+      scenario: 'refresh cookie deleted -> reload',
       cookiesBefore: names,
       deleted: refresh.map((c) => c.name),
       cookiesAfter: after,
@@ -234,10 +269,60 @@ if (which === '6') {
       emptyListInstead,
       excerpt: bodyText.replace(/\s+/g, ' ').slice(0, 200),
     },
-    { W1: o1 },
+    {
+      W1: ignoringExpectedLog(
+        // BOTH DISPOSITIONS TAKE A REPORT, NOT A WATCH HANDLE. `recordObserved` accepts either and
+        // computes the report itself when handed a handle, so passing `o1` straight into a filter is
+        // accepted by the type system and throws at run time on the first field it reads. Measured
+        // 2026-09-05: TAB-6 died on `rep.badHttp.filter` with the row never recorded at all.
+        //
+        // `(\?|$)`, never a bare `$`: `pathOfLine` renders `pathname + search`, and this request
+        // carries `?clientVersion=`. An anchored pattern matched nothing and the row stayed dirty
+        // on the very line it was written to forgive.
+        ignoringExpectedRefusal(await report(o1), [
+          { path: /^\/api\/auth\/refresh(\?|$)/, status: [401] },
+        ]),
+        DELIBERATE_LOGOUT,
+      ),
+    },
   );
+
+  // THE TEARDOWN THIS ROW'S OWN HEADER ALREADY PROMISED, and did not have. The header said "it
+  // re-logs in at the end"; nothing did, and W1 was simply left on the login screen. It cost three
+  // rows on 2026-09-05 - TAB-4, TAB-5 and TAB-7 ran next and all three died inside `ensureChat` with
+  // `port 9224 is SIGNED OUT`, which is the precondition guard working and three measurements gone.
+  //
+  // AFTER THE VERDICT IS RECORDED, so a teardown that fails cannot cost the row its result - and it
+  // is REPORTED rather than thrown, because "the row passed and the fixture is broken" and "the row
+  // failed" are different sentences and the next runner needs to be able to tell them apart.
+  // Nothing after a destructive row is trusted until its teardown restored the invariant.
+  const relogin = spawnSync(process.execPath, [requireScript('login.mjs'), '--device', 'W1'], {
+    encoding: 'utf8',
+    timeout: 300_000,
+  });
+  if (relogin.status === 0) {
+    console.log(`[tab6] W1 logged back in; PIN: ${unlock(PORTS.W1, ACCOUNT_OF.W1)}`);
+  } else {
+    console.error(
+      `[tab6] W1 IS STILL LOGGED OUT - every row after this one will fail inside ensureChat for ` +
+        `that reason and not its own. Run \`bun login.mjs --device W1\` before the next row. ` +
+        `login.mjs exited ${relogin.status}: ${String(relogin.stderr || '').replace(/\s+/g, ' ').slice(0, 200)}`,
+    );
+  }
 }
 
 console.log(`\n${rows.filter((r) => r.verdict === 'PASS').length}/${rows.length} pass`);
-// No exit code and no second JSON dump: `record` printed each row as it was written, and
-// `results.mjs` derives the code from the verdicts it holds.
+// No second JSON dump: `record` printed each row as it was written. The code is still derived -
+// `exitOnRecorded` is the same derivation `beforeExit` runs, called rather than waited for.
+
+// AND IT HAS TO ACTUALLY END. This file opens CDP sockets - `client()` for each device, and its own
+// `connect()` on the reopened tab in TAB-2 - and closed none of them, so an open socket kept the
+// event loop alive after the last line had printed. Measured 2026-09-05: TAB-2 printed `1/1 pass`
+// at 07:00 and the process was still there twenty-five minutes later, holding up every row queued
+// behind it. Nothing looked wrong - the verdict was in the ledger and the summary was on screen.
+//
+// The same defect, on the same day, in `pin.mjs`: a success path that runs out of file has opted out
+// of its own contract, and its caller is left inferring the outcome from a clock. `archive/spawn-
+// selftest.mjs` gates the sibling class (a spawn that cannot resolve its script); this one is gated
+// by the audit in `inventory.mjs` terms only, so the explicit exit stays here where it is read.
+exitOnRecorded();

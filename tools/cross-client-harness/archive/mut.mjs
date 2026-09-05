@@ -10,7 +10,7 @@
  * coordinates at all while the soft keyboard is up.
  *
  * THE CENTRAL POINT OF THIS PHASE: every row that applies to both venues runs TWICE - once in the
- * DM (MLS transport, `messaging.ts` / `useMessaging.svelte.ts`) and once in the `Campagne de test`
+ * DM (MLS transport, `messaging.ts` / `useMessaging.svelte.ts`) and once in the shared venue
  * channel (REST transport, `ChannelService.ts` / `useChannelWorkspaces.svelte.ts`). They look the
  * same on screen and are NOT the same code, which is exactly what MUT-6 vs MUT-8 and MUT-15 vs
  * MUT-16 exist to prove: a DM delete is a client-side tombstone with no server enforcement at all,
@@ -62,7 +62,7 @@
  *   - `.msg-status-sent` / `.msg-status-read` (`MessageMetadata.svelte`, added this session).
  *   - `lucide-svelte`'s `Icon.svelte` injects `lucide-<icon-name>` on every icon's own `<svg>`
  *     (verified by reading the installed package, not assumed) - so `svg.lucide-trash-2`,
- *     `.lucide-pencil`, `.lucide-reply`, `.lucide-forward`, `.lucide-smile`, `.lucide-pin` /
+ *     `.lucide-pencil`, `.lucide-reply`, `.lucide-forward`, `.lucide-face-slightly-smiling`, `.lucide-pin` /
  *     `.lucide-pin-off` locate the toolbar's reply/delete/edit/react/pin controls WITHOUT reading
  *     their (localised) `aria-label`. This is a better hook than the harness had for MSG-3's
  *     `clickBubbleAction`, and is offered here as a pattern the rest of the harness could adopt.
@@ -85,9 +85,10 @@
  *   bun mut.mjs                 # all twenty
  *   bun mut.mjs --only 10       # one
  */
+import { fixture } from '../fixtures.mjs';
 import { APP_TAB, armComposer, attachFiles, awaitMessage, clickAtPoint, client, COMPOSER, countMessage, evaluate, fireComposer, hoverBubble, IS_MOVING_FN, longPressBubble, openChannel, openDM, realClick, sameAccountAs, stablePoint, tapSheetIcon, until } from '../chat.mjs';
 import { watch, report, gate, ignoringOfflineCut, longestSilence } from '../watch.mjs';
-import { record, mark } from '../results.mjs';
+import { errorDetail, mark, record, exitOnRecorded } from '../results.mjs';
 import { OWNER_NAME, PEER_NAME, PORTS, VENUE } from '../names.mjs';
 import { fileURLToPath } from 'node:url';
 
@@ -580,7 +581,7 @@ async function pickerOpen(cx, textMatch) {
 
 async function ensurePickerOpen(cx, textMatch) {
   if (!(await pickerOpen(cx, textMatch))) {
-    await clickBubbleIcon(cx, textMatch, 'lucide-smile');
+    await clickBubbleIcon(cx, textMatch, 'lucide-face-slightly-smiling');
     await until(cx, `!!(function(){var p=${paneExpr()};return p;})()`, 3000).catch(() => {});
     await sleep(350); // the panel's own `scale` transition is 250ms
   }
@@ -992,7 +993,7 @@ async function mut1() {
       note: 'edited-marker assertion has no stable hook, matched against "modifi" (fr: "(modifie)") - see header comment',
     });
   } catch (e) {
-    return await finish('MUT-1/dm', 'ERROR', w, { error: e.message });
+    return await finish('MUT-1/dm', 'ERROR', w, { ...errorDetail(e) });
   } finally {
     closeAll(a, b);
   }
@@ -1069,7 +1070,7 @@ async function mut2() {
           : 'accepted tradeoff, recorded on purpose: the bubble still reads as READ although the peer has not seen the NEW text',
     });
   } catch (e) {
-    return await finish('MUT-2/dm', 'ERROR', w, { error: e.message });
+    return await finish('MUT-2/dm', 'ERROR', w, { ...errorDetail(e) });
   } finally {
     closeAll(a, b);
   }
@@ -1082,7 +1083,7 @@ async function mut3() {
   try {
     // (a) own message WITH media: `MessageBubbleToolbar` gates edit on `!hasMedia`.
     const mediaCaption = mark('MUT3MEDIA');
-    await attachFiles(a, [abs('./fixtures/msg4-image.png')]);
+    await attachFiles(a, [fixture('msg4-image.png')]);
     await until(a, `!document.querySelector('button[aria-label*="Envoyer"]')?.disabled`, 10000, 100).catch(() => {});
     await armComposer(a, mediaCaption);
     await fireComposer(a);
@@ -1099,7 +1100,7 @@ async function mut3() {
     const ok = mediaEditPresent === false && othersEditPresent === false;
     return await finish('MUT-3/dm', ok ? 'PASS' : 'FAIL', w, { mediaEditPresent, othersEditPresent });
   } catch (e) {
-    return await finish('MUT-3/dm', 'ERROR', w, { error: e.message });
+    return await finish('MUT-3/dm', 'ERROR', w, { ...errorDetail(e) });
   } finally {
     closeAll(a, b);
   }
@@ -1144,7 +1145,7 @@ async function mut4() {
       cut
     );
   } catch (e) {
-    return await finish('MUT-4/dm', 'ERROR', w, { error: e.message }, cut);
+    return await finish('MUT-4/dm', 'ERROR', w, { ...errorDetail(e) }, cut);
   } finally {
     await setOffline(b, false).catch(() => {});
     closeAll(a, b);
@@ -1166,7 +1167,7 @@ async function mut5() {
     const ok = editPresent === false;
     return await finish('MUT-5/channel', ok ? 'PASS' : 'FAIL', w, { editPresent });
   } catch (e) {
-    return await finish('MUT-5/channel', 'ERROR', w, { error: e.message });
+    return await finish('MUT-5/channel', 'ERROR', w, { ...errorDetail(e) });
   } finally {
     closeAll(a, b);
   }
@@ -1211,7 +1212,7 @@ async function mut6() {
       receiverConvergedMs: bGapMs,
     });
   } catch (e) {
-    return await finish('MUT-6/dm', 'ERROR', w, { error: e.message });
+    return await finish('MUT-6/dm', 'ERROR', w, { ...errorDetail(e) });
   } finally {
     closeAll(a, b);
   }
@@ -1261,7 +1262,7 @@ async function mut7() {
       cut
     );
   } catch (e) {
-    return await finish('MUT-7/dm', 'ERROR', w, { error: e.message }, cut);
+    return await finish('MUT-7/dm', 'ERROR', w, { ...errorDetail(e) }, cut);
   } finally {
     await setOffline(b, false).catch(() => {});
     closeAll(a, b);
@@ -1313,7 +1314,7 @@ async function mut8() {
       contrastNote: 'compare against MUT-6/dm: same immediate shape, opposite shape after a reload',
     });
   } catch (e) {
-    return await finish('MUT-8/channel', 'ERROR', w, { error: e.message });
+    return await finish('MUT-8/channel', 'ERROR', w, { ...errorDetail(e) });
   } finally {
     closeAll(a, b);
   }
@@ -1349,7 +1350,7 @@ async function mut9() {
       // NOT a pass and not a skip: the check is armable in principle and could not be armed HERE, so
       // it stays visible as an unmet precondition rather than resolving to a colour.
       await finish('MUT-9/channel', 'VACUOUS', w, {
-        reason: 'neither test account holds channel.moderate in Campagne de test/general - tried both directions',
+        reason: `neither test account holds channel.moderate in ${VENUE.community}/${VENUE.channel} - tried both directions`,
         checkedW1OnW2Message: markerAB,
       });
       return true;
@@ -1370,7 +1371,7 @@ async function mut9() {
     const ok = aGone === 0 && bGone === 0;
     return await finish('MUT-9/channel', ok ? 'PASS' : 'FAIL', w, { actor, target, aGone, bGone });
   } catch (e) {
-    return await finish('MUT-9/channel', 'ERROR', w, { error: e.message });
+    return await finish('MUT-9/channel', 'ERROR', w, { ...errorDetail(e) });
   } finally {
     closeAll(a, b);
   }
@@ -1413,7 +1414,7 @@ async function mut10() {
         : 'does not reproduce: canModerateSelectedChannel is false outside a channel by construction, so Delete never renders on a peer\'s DM message',
     });
   } catch (e) {
-    return await finish('MUT-10/dm', 'ERROR', w, { error: e.message });
+    return await finish('MUT-10/dm', 'ERROR', w, { ...errorDetail(e) });
   } finally {
     closeAll(a, b);
   }
@@ -1482,7 +1483,7 @@ async function mut11() {
   try {
     dmOk = await mut11Body(a, b, w, 'dm');
   } catch (e) {
-    await finish('MUT-11/dm', 'ERROR', w, { error: e.message });
+    await finish('MUT-11/dm', 'ERROR', w, { ...errorDetail(e) });
   } finally {
     closeAll(a, b);
   }
@@ -1492,7 +1493,7 @@ async function mut11() {
   try {
     chOk = await mut11Body(a, b, w, 'channel');
   } catch (e) {
-    await finish('MUT-11/channel', 'ERROR', w, { error: e.message });
+    await finish('MUT-11/channel', 'ERROR', w, { ...errorDetail(e) });
   } finally {
     closeAll(a, b);
   }
@@ -1596,7 +1597,7 @@ async function mut12() {
   try {
     dmOk = await mut12Guarded(a, b, w, 'dm');
   } catch (e) {
-    await finish('MUT-12/dm', 'ERROR', w, { error: e.message });
+    await finish('MUT-12/dm', 'ERROR', w, { ...errorDetail(e) });
   } finally {
     closeAll(a, b);
   }
@@ -1606,7 +1607,7 @@ async function mut12() {
   try {
     chOk = await mut12Guarded(a, b, w, 'channel');
   } catch (e) {
-    await finish('MUT-12/channel', 'ERROR', w, { error: e.message });
+    await finish('MUT-12/channel', 'ERROR', w, { ...errorDetail(e) });
   } finally {
     closeAll(a, b);
   }
@@ -1704,7 +1705,7 @@ async function mut13() {
   try {
     dmOk = await mut13Body(a, b, w, 'dm');
   } catch (e) {
-    await finish('MUT-13/dm', 'ERROR', w, { error: e.message });
+    await finish('MUT-13/dm', 'ERROR', w, { ...errorDetail(e) });
   } finally {
     closeAll(a, b);
   }
@@ -1714,7 +1715,7 @@ async function mut13() {
   try {
     chOk = await mut13Body(a, b, w, 'channel');
   } catch (e) {
-    await finish('MUT-13/channel', 'ERROR', w, { error: e.message });
+    await finish('MUT-13/channel', 'ERROR', w, { ...errorDetail(e) });
   } finally {
     closeAll(a, b);
   }
@@ -1766,7 +1767,7 @@ async function mut14() {
   try {
     dmOk = await mut14Body(a, b, w, 'dm');
   } catch (e) {
-    await finish('MUT-14/dm', 'ERROR', w, { error: e.message });
+    await finish('MUT-14/dm', 'ERROR', w, { ...errorDetail(e) });
   } finally {
     closeAll(a, b);
   }
@@ -1776,7 +1777,7 @@ async function mut14() {
   try {
     chOk = await mut14Body(a, b, w, 'channel');
   } catch (e) {
-    await finish('MUT-14/channel', 'ERROR', w, { error: e.message });
+    await finish('MUT-14/channel', 'ERROR', w, { ...errorDetail(e) });
   } finally {
     closeAll(a, b);
   }
@@ -1838,7 +1839,7 @@ async function mut15() {
       cut
     );
   } catch (e) {
-    return await finish('MUT-15/dm', 'ERROR', w, { error: e.message }, cut);
+    return await finish('MUT-15/dm', 'ERROR', w, { ...errorDetail(e) }, cut);
   } finally {
     await setOffline(a, false).catch(() => {});
     closeAll(a, b);
@@ -1880,7 +1881,7 @@ async function mut16() {
         'compare against MUT-15/dm: a channel pin is re-hydrated from the server on every open, a DM pin has to travel end to end',
     });
   } catch (e) {
-    return await finish('MUT-16/channel', 'ERROR', w, { error: e.message });
+    return await finish('MUT-16/channel', 'ERROR', w, { ...errorDetail(e) });
   } finally {
     // IN `finally`, because a channel pin is SERVER-side: left standing it is visible to every
     // member of the community, and the paths that throw are exactly the ones that pinned and then
@@ -1924,7 +1925,7 @@ async function mut17() {
     // derivation. So reacting to a deleted message through the FULL picker is reachable from the
     // shipped UI, even though the quick strip hides it - an inconsistency worth surfacing on its
     // own, independent of whatever this check finds when it actually does it.
-    const smileOnDeletedPresent = await bubbleIconPresent(a, row, 'lucide-smile');
+    const smileOnDeletedPresent = await bubbleIconPresent(a, row, 'lucide-face-slightly-smiling');
     const quickStripOnDeletedPresent = await evaluate(
       a,
       `(function () {
@@ -1979,7 +1980,7 @@ async function mut17() {
         : undefined,
     });
   } catch (e) {
-    return await finish('MUT-17/dm', 'ERROR', w, { error: e.message });
+    return await finish('MUT-17/dm', 'ERROR', w, { ...errorDetail(e) });
   } finally {
     closeAll(a, b);
   }
@@ -2124,7 +2125,7 @@ async function mut18() {
         'applies whichever arrives.',
     });
   } catch (e) {
-    return await finish('MUT-18/dm', 'ERROR', w, { error: e.message });
+    return await finish('MUT-18/dm', 'ERROR', w, { ...errorDetail(e) });
   } finally {
     closeAll(w1, w2, a1);
   }
@@ -2238,7 +2239,7 @@ async function mut19() {
       cut
     );
   } catch (e) {
-    return await finish('MUT-19/dm', 'ERROR', w, { error: e.message }, cut);
+    return await finish('MUT-19/dm', 'ERROR', w, { ...errorDetail(e) }, cut);
   } finally {
     await setOffline(a, false).catch(() => {});
     closeAll(a, b);
@@ -2349,7 +2350,7 @@ async function mut21() {
     // open - which would have hidden the strip escaping the pane again behind a green tally.
     return ok;
   } catch (e) {
-    return await finish('MUT-21/dm', 'ERROR', w, { error: e.message });
+    return await finish('MUT-21/dm', 'ERROR', w, { ...errorDetail(e) });
   } finally {
     closeAll(a, b);
   }
@@ -2385,9 +2386,13 @@ for (const [n, fn] of Object.entries(CHECKS)) {
   try {
     results.push([n, await fn()]);
   } catch (e) {
-    record(`MUT-${n}`, 'ERROR', { error: e.message });
+    record(`MUT-${n}`, 'ERROR', { ...errorDetail(e) });
     results.push([n, false]);
   }
 }
 console.log(`\nMUT: ${results.filter(([, ok]) => ok).length}/${results.length} checks reported ok`);
-process.exit(0);
+// EXIT ON THE VERDICT, NOT ON HAVING REACHED THE END. `process.exit(0)` sat under a summary line counting how many checks
+// reported ok, which is a COUNT and not a verdict: `2/9 checks reported ok` exited 0.
+// `exitOnRecorded` is the derivation `beforeExit` already runs, called rather than waited for -
+// this script holds CDP sockets, so the loop never idles and the hook can never fire.
+exitOnRecorded();

@@ -12,6 +12,8 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { request as requestOverHttp } from 'node:http';
 import { request as requestOverHttps } from 'node:https';
+import { LOCAL } from './estate.mjs';
+import { instrumentShaOf } from './instrument.mjs';
 import { SITE, STATE_DIR } from './names.mjs';
 import { gate, report } from './watch.mjs';
 
@@ -142,7 +144,25 @@ async function deployedBuild() {
   if (answer.status !== 200) {
     throw new Error(`${SITE}/_app/version.json answered ${answer.status}`);
   }
-  return resolveStamp(Number(JSON.parse(answer.body)?.version), `${SITE}/_app/version.json`, 'origin/main');
+  // THE HISTORY THAT CONTAINS THE BUNDLE IS A PROPERTY OF THE ESTATE, NOT A CONSTANT.
+  //
+  // `origin/main` is right for a deployment, which CD builds from a pushed commit by definition. It
+  // is WRONG for the local estate, which `make local-frontend` builds from the working tree - and it
+  // does not fail when it is wrong, it answers. From 2026-09-03, when the campaign moved local, every
+  // verdict was dated against `origin/main` and therefore named whatever was last PUSHED. It read
+  // correct for a day because the tree happened to match the remote; the moment a session started
+  // committing locally it went silently stale, and on 2026-09-05 twelve rows recorded `667d93fb`
+  // against an estate serving two commits' worth of fixes that commit does not contain - including
+  // the very fix one of those rows existed to confirm.
+  //
+  // This is `clientBuild`'s reasoning applied to the other client. That function has said `HEAD` and
+  // said why since it was written; the phone half followed the campaign onto a locally built bundle
+  // and the deployment half never did.
+  return resolveStamp(
+    Number(JSON.parse(answer.body)?.version),
+    `${SITE}/_app/version.json`,
+    LOCAL ? 'HEAD' : 'origin/main'
+  );
 }
 
 /**
@@ -216,10 +236,16 @@ try {
  * So a row now names the check it ran as, exactly as it already names the build it ran against, and
  * "this verdict predates the current runner" is computed rather than remembered.
  *
- * ITS LIMIT IS STATED RATHER THAN PAPERED OVER: this hashes the ENTRY script, where a check's own
- * assertions live. A change to a shared gesture in `comm.mjs` or `chat.mjs` can change what a check
- * measures and will NOT move this hash. Hashing the whole harness instead would retire every verdict
- * on every edit, which is a different way of saying nothing.
+ * ITS LIMIT WAS STATED HERE RATHER THAN PAPERED OVER, AND ON 2026-09-04 IT WAS PAID. This hashes the
+ * ENTRY script, where a check's own assertions live; a change to a shared gesture in `comm.mjs` or
+ * `chat.mjs` changes what a check measures and does NOT move this hash. That is not hypothetical any
+ * more - `openConversation` was opening the wrong conversation, MSG-1 recorded a verdict naming a
+ * conversation it never touched, and fixing it flagged nothing because `msg1.mjs` was untouched.
+ *
+ * The objection this comment used to raise against a fix - "hashing the whole harness would retire
+ * every verdict on every edit, which is a different way of saying nothing" - is answered by hashing
+ * the runner's OWN IMPORT GRAPH instead: see `instrumentSha` below. Editing a module a row does not
+ * import leaves that row alone, which is what makes the signal readable.
  */
 const CHECK = (() => {
   const entry = process.argv[1];
@@ -229,6 +255,11 @@ const CHECK = (() => {
   return {
     file: basename(entry),
     sha: createHash('sha256').update(readFileSync(entry)).digest('hex').slice(0, 12),
+    // THE SECOND QUESTION, kept as a SEPARATE column because it sends the reader somewhere else. A
+    // changed runner means "this check now asks something else"; a changed instrument means "every
+    // check that shares this gesture now looks at something else". Merging them would make one edit
+    // to `chat.mjs` read as a rewrite of twenty runners.
+    instrumentSha: instrumentShaOf(entry),
   };
 })();
 
@@ -317,7 +348,43 @@ const observed = (detail) =>
  * them. It goes back in once those runners rename their field; until then the loss is written down
  * here rather than demoted, and `rows.mjs` must not be taught to trust `check` on those phases.
  */
-const RESERVED = ['id', 'verdict', 'at', 'build', 'builtAt', 'checkSha'];
+const RESERVED = ['id', 'verdict', 'at', 'build', 'builtAt', 'checkSha', 'instrumentSha'];
+
+/**
+ * An `ERROR` verdict's detail: what was thrown, AND WHERE.
+ *
+ * **EVERY `ERROR` ROW IN THIS CAMPAIGN CARRIED A MESSAGE AND NO LOCATION** - 33 call sites across
+ * eight runners all spelled `{ error: e.message }`. That is enough to know a check died and never
+ * enough to know what it was doing. Measured 2026-09-04: TYPE-4 and READ-7 both recorded
+ * `Inspected target navigated or closed (-32000)`, a message that names a CDP condition and not one
+ * line of this rig - and the two turned out to have different causes, one in the orchestration and
+ * one in the check itself. Telling them apart took a dozen runs that a stack frame would have
+ * settled.
+ *
+ * The frame chosen is the FIRST one inside the harness, not the top of the stack: the top is
+ * usually `cdp.mjs`'s `send`, which is where every CDP failure is raised and therefore says nothing
+ * about which gesture raised it. The path is made repository-relative so two checkouts produce the
+ * same string.
+ */
+export function errorDetail(e) {
+  const frames = String(e?.stack ?? '')
+    .split(/\r?\n/)
+    .slice(1)
+    .map((l) => l.trim());
+  const where = frames
+    .filter((l) => l.includes('cross-client-harness'))
+    .map((l) =>
+      l
+        .replace(/^at\s+/, '')
+        .replace(/.*[\\/]cross-client-harness[\\/]/, '')
+        .replace(/\\/g, '/')
+        .replace(/\)$/, '')
+    )
+    // Five is past the transport and into the check on every stack this rig produces, and short
+    // enough that the row stays readable in a terminal.
+    .slice(0, 5);
+  return { error: e?.message ?? String(e), where: where.length ? where : null };
+}
 
 export function record(id, verdict, detail) {
   // A PASS THAT LOOKED AT NOTHING IS NOT A PASS, AND THIS IS THE ONLY PLACE THAT CAN KNOW IT.
@@ -354,6 +421,7 @@ export function record(id, verdict, detail) {
     builtAt: BUILD.builtAt,
     check: CHECK.file,
     checkSha: CHECK.sha,
+    instrumentSha: CHECK.instrumentSha,
     // BEFORE `detail`, so a runner that read the phone at its OWN arming moment overrides this one.
     // Four COMM checks do, and theirs is the more precise of the two.
     ...(A1_BUILD ? { a1Build: A1_BUILD.commit, a1BuiltAt: A1_BUILD.builtAt } : {}),
@@ -386,13 +454,37 @@ export function record(id, verdict, detail) {
  * claimed one. A phase script that records nothing is a real fault, but a different one, and
  * `run.mjs` already shows it as a job with no row rather than as a pass.
  */
-process.on('beforeExit', () => {
-  if (!recorded.length || process.exitCode) return;
+function codeForRecorded() {
+  if (!recorded.length) return 0;
   const owed = recorded.filter((r) => r.verdict !== 'PASS');
-  if (!owed.length) return;
+  if (!owed.length) return 0;
   console.log(`\n  ${owed.length} verdict(s) other than PASS - exiting non-zero: ${owed.map((r) => `${r.id}=${r.verdict}`).join(', ')}`);
-  process.exitCode = 1;
+  return 1;
+}
+
+process.on('beforeExit', () => {
+  if (process.exitCode) return;
+  process.exitCode = codeForRecorded();
 });
+
+/**
+ * THE ENDING FOR A SCRIPT THAT CANNOT REACH `beforeExit` - it exits on the verdicts it recorded.
+ *
+ * The hook above is the right default and needs nothing added to any script, but it only fires
+ * when the loop IDLES. A check holding CDP sockets never idles: nothing closes them, so the
+ * process sits there after its last line has printed. Measured 2026-09-05 on `tab236.mjs` (still
+ * alive twenty-five minutes after `1/1 pass`, holding up every row queued behind it) and on
+ * `tab4.mjs` (three rows written at 07:54, the runner still blocked at 08:00).
+ *
+ * THE OBVIOUS REPAIR IS THE ONE TO REFUSE. A bare `process.exit(0)` ends the process and reports a
+ * pass in the same breath, so it turns a recorded `FAIL` into `done` - the exact defect
+ * `beforeExit` was written to end, reintroduced by the fix for the hang. `tab236.mjs` carried one
+ * for a day, under a comment saying the code was derived. Both halves have to be the same call, or
+ * the next script will get one of them right and the other wrong.
+ */
+export function exitOnRecorded() {
+  process.exit(process.exitCode || codeForRecorded());
+}
 
 /**
  * RECORD THE VERDICT AND EXIT ON IT - the whole contract, in the one place that cannot be half done.

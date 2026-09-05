@@ -162,11 +162,11 @@ browser to `/if/flow/password-login/?next=<authorize>`: identification + passwor
   login that worked. It is a PRECONDITION of every A1 row on the local estate, not a symptom to
   diagnose.
 
-**The accounts own NOTHING to begin with**: no DM, no `Campagne de test` community, no group under
+**The accounts own NOTHING to begin with**: no DM, no `Canari Test Venue` community, no group under
 test, no enrolled device. None of it needs a privilege - `POST channels/workspaces` is guarded by
 `NginxAuthGuard` alone, so an ordinary member builds the venue. In order: log both in through the
 service-account link, set each PIN from `test-accounts.json`, let W1 open a DM to the peer, create
-the `Campagne de test` community with a `general` channel, then the group the DEL and HEAL rungs
+the `Canari Test Venue` community with a `general` channel, then the group the DEL and HEAL rungs
 use. **A row run before the fixtures exist opens nothing and then reports on whatever conversation
 happened to be on screen** - which is the failure `names.mjs` exists to prevent, and the reason this
 is a numbered step rather than an assumption.

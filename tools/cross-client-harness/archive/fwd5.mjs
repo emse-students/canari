@@ -10,11 +10,30 @@
  *
  * Usage: bun fwd5.mjs [iterations]
  */
-import { APP_TAB, awaitAppReady, awaitMessage, clickBubbleAction, client, countMessage, ensureChat, openChannel, openConversation, realClick, send, settledCount, until } from '../chat.mjs';
+import {
+  APP_TAB,
+  awaitAppReady,
+  awaitMessage,
+  clickBubbleAction,
+  client,
+  countMessage,
+  ensureChat,
+  openChannel,
+  openConversation,
+  realClick,
+  reloadAndWait,
+  send,
+  settledCount,
+  until,
+} from '../chat.mjs';
 import { watch, report, dirtOf } from '../watch.mjs';
+// The venue channel carries three mentions of accounts that do not exist and this check opens
+// it from a FRESH SESSION every round, so each round asks for all three again. See
+// `stranded.mjs` for the allowlist and why the fixture is left in place.
+import { ignoringStrandedMentions } from '../stranded.mjs';
 import { finishObserved, mark } from '../results.mjs';
 // See fwd.mjs: a real display name belongs in names.mjs, which never reaches the public repo.
-import { peerNameFor } from '../names.mjs';
+import { PORTS, peerNameFor } from '../names.mjs';
 import { writeFileSync, mkdirSync } from 'node:fs';
 
 const N = Number(process.argv[2] || 3);
@@ -36,8 +55,8 @@ function sendsOf(cx) {
   return out;
 }
 
-const w1 = await client(9224, APP_TAB);
-const w2 = await client(9223, APP_TAB);
+const w1 = await client(PORTS.W1, APP_TAB);
+const w2 = await client(PORTS.W2, APP_TAB);
 await ensureChat(w2);
 await openConversation(w2, peerNameFor('W2'));
 
@@ -48,7 +67,11 @@ for (let i = 0; i < N; i++) {
   const m = mark('FWD5');
 
   // Fresh session, then straight to the channel: the DM is never opened before the forward.
-  await w1.send('Page.reload');
+  // THE RELOAD IS WAITED FOR ON ITS OWN EVENT BEFORE ANYTHING POLLS. `awaitAppReady` is an
+  // `until`, so it sends `Runtime.evaluate` into the context this reload is destroying, and CDP
+  // answers `Inspected target navigated or closed` when the two meet - which cost READ-7 three
+  // runs in four before it was located (2026-09-04).
+  await reloadAndWait(w1);
   await awaitAppReady(w1);
   await ensureChat(w1);
 
@@ -79,7 +102,10 @@ for (let i = 0; i < N; i++) {
     // A count still moving at the deadline is not a measurement, and the record has to say so.
     countSettled: settled.settled,
     sends,
-    obs: { w1: await report(o1), w2: await report(o2) },
+    obs: {
+      w1: ignoringStrandedMentions(await report(o1)),
+      w2: ignoringStrandedMentions(await report(o2)),
+    },
   };
   reports[`W1#${i}`] = row.obs.w1;
   reports[`W2#${i}`] = row.obs.w2;

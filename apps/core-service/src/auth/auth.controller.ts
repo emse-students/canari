@@ -234,9 +234,22 @@ export class AuthController {
    * credential in {@link REFRESH_HEADER} instead; everyone else sends the cookie, and for them the
    * header is not even consulted, so presenting one cannot become a way around the cookie.
    */
+  /**
+   * Whether THIS request's client carries its refresh credential itself, from the two facts that
+   * decide it: the caller's origin, and whether this deployment can issue a cookie a third-party
+   * context accepts.
+   *
+   * The second is `!allowInsecureCookies` - the same flag `setRefreshCookie` reads to choose between
+   * `SameSite=None; Secure` and `SameSite=Lax`. It is spelled ONCE, here, because five call sites
+   * each re-deriving it is five chances for one of them to keep the old answer.
+   */
+  private carriesOwnRefreshCredential(origin: string | undefined): boolean {
+    return usesBodyRefreshTransport(origin, !this.allowInsecureCookies);
+  }
+
   private presentedRefreshToken(req: Request): string | undefined {
     const cookie = req.cookies?.[REFRESH_COOKIE] as string | undefined;
-    if (!usesBodyRefreshTransport(req.get('origin'))) return cookie;
+    if (!this.carriesOwnRefreshCredential(req.get('origin'))) return cookie;
 
     // The header is authoritative when it is there, because a client that sends one is carrying its
     // own copy and rotating it - the cookie beside it, if any, is a value it stopped maintaining.
@@ -395,7 +408,7 @@ export class AuthController {
     // `tauri://localhost` covers desktop builds where it may well survive. The body copy is added
     // only for origins whose engine can refuse the cookie, and only they are told to carry it.
     this.setRefreshCookie(res, refresh_token);
-    const bodyTransport = usesBodyRefreshTransport(req.get('origin'));
+    const bodyTransport = this.carriesOwnRefreshCredential(req.get('origin'));
     if (bodyTransport) {
       this.logger.debug(
         `OIDC callback: credential also returned in the body (origin=${req.get('origin')} may not keep a third-party cookie)`
@@ -460,7 +473,7 @@ export class AuthController {
       // the only one that accuses - a body-transport client that sent the header with nothing in it.
       const headerState = !req.get(REFRESH_HEADER)
         ? 'absent'
-        : usesBodyRefreshTransport(origin)
+        : this.carriesOwnRefreshCredential(origin)
           ? 'empty'
           : 'ignored';
       const detail =
@@ -547,7 +560,7 @@ export class AuthController {
     // value is spent, and 60 s from now it reads as a replay that revokes the row - so a client
     // carrying its own copy must persist the new one before relying on it.
     this.setRefreshCookie(res, new_refresh);
-    if (usesBodyRefreshTransport(req.get('origin'))) {
+    if (this.carriesOwnRefreshCredential(req.get('origin'))) {
       return { access_token, refresh_token: new_refresh };
     }
 

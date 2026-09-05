@@ -13,8 +13,9 @@
 import { accounts as readAccounts } from './accounts.mjs';
 import { activate, connect, evaluate, listTargets, realClick, until } from './cdp.mjs';
 import { declineBiometricOffer } from './chat.mjs';
+import { estateOriginsAmong } from './estate-origins.mjs';
 import { GATE_EXPR } from './gate-probe.mjs';
-import { PORTS } from './names.mjs';
+import { PORTS, SITE } from './names.mjs';
 import { armIfPhone, resolveDevice } from './device.mjs';
 
 const argv = process.argv.slice(2);
@@ -112,6 +113,85 @@ if (!hasField && hasKeypad) {
   }
 }
 
+/**
+ * WHICH ESTATE THE APP IS ACTUALLY TALKING TO, MEASURED ON THE RUNNING CLIENT.
+ *
+ * A phone client embeds its frontend (`frontendDist: "../build"`), so the origins it calls are BAKED
+ * INTO THE APK and no deploy can move them. `a1apk.mjs` asserts them at BUILD time by grepping the
+ * packaged chunks - and `--no-build`, which is the flag every session actually uses, skips that
+ * branch entirely and installs the artefact anyway. An APK built against production would then run
+ * every `+A1` row against the real estate while the ledger recorded the verdict against localhost.
+ *
+ * IT CANNOT BE ANSWERED FROM THE ARTEFACT. Measured 2026-09-05: the APK carries no plain copy of
+ * either origin - Tauri compresses the bundle into `libmines_app_lib.so`, so a grep of the file
+ * finds `localhost:8081` zero times and `canari-emse.fr` twice, which is the CSP and not a caller.
+ *
+ * SO IT IS ASKED OF THE CLIENT, HERE, WHERE THE ANSWER CANNOT BE VACUOUS. This runs on both ways out
+ * of the gate - answered, or already past it. An EMPTY resource timeline is a failure rather than a
+ * pass ("contacted nothing" is not "contacted the right thing", and a gate over an empty set is the
+ * vacuous pass this rig refuses everywhere else) - but it is WAITED for first, up to ten seconds,
+ * because a cold-started client that has just answered the gate may legitimately not have reached
+ * the API yet. `tauri.localhost` and `ipc.localhost` are the engine's own two schemes, not an
+ * estate, and are excused - as is the OPAQUE origin, which is not an origin at all.
+ *
+ * **AN OPAQUE ORIGIN IS THE STRING `'null'`, AND IT IS NOT A STRANGER.** `new URL(name).origin`
+ * answers `'null'` for every `data:` and `blob:` resource - they have no host to be an estate of.
+ * This guard compared that string against `SITE`, found it different, and REFUSED, with the loudest
+ * message it has: *"THIS CLIENT IS NOT ON THE LOCAL ESTATE: it called null"*, telling the reader to
+ * rebuild an APK. Measured on W1, 2026-09-05: the offender is the application's own noise texture,
+ * a `data:image/svg+xml` in its CSS that is on EVERY page. It is INTERMITTENT, which is worse - the
+ * resource timeline holds 250 entries by default and is cleared by a navigation, so whether the
+ * texture is still in it depends on how long the tab has been up and what it has fetched since. A
+ * gate that refuses the correct estate some of the time, naming the most alarming cause it knows,
+ * costs more than no gate.
+ *
+ * IT REFUSES AS WELL AS ACCEPTS, which is the half a gate usually lacks. Exercised 2026-09-05 on
+ * five origin sets: local only ACCEPTED; production, `dev.`, engine-schemes-only, and local WITH a
+ * production stray alongside it - all four REFUSED. The stray case is why the test is "every estate
+ * origin is SITE" rather than "SITE is among them".
+ *
+ * @param {object} cx CDP connection to the client
+ * @returns {Promise<void>} exits the process 1 rather than returning, when the estate is wrong
+ */
+async function assertLocalEstate(cx) {
+  // THE PAGE-SIDE READ IS ALL THAT LIVES HERE. What counts as an estate is `estate-origins.mjs`,
+  // which imports nothing and is therefore gatable - see `archive/estate-selftest.mjs`.
+  const read = async () =>
+    estateOriginsAmong(
+      JSON.parse(
+        await evaluate(
+          cx,
+          `JSON.stringify([...new Set(performance.getEntriesByType('resource').map(function (e) {
+             try { return new URL(e.name).origin; } catch (_) { return 'unparseable:' + e.name; }
+           }))])`,
+        ),
+      ),
+    );
+  // WAITED FOR, NOT SAMPLED ONCE. A client that has just answered the gate on a COLD START may not
+  // have reached the API yet, and the first version of this called that a failure - a vacuity guard
+  // firing on a legitimate state, which is its own kind of wrong answer. Ten seconds is the cap this
+  // campaign puts on every wait: enough to show it works, and long enough that a client still silent
+  // afterwards is not one whose estate can be established.
+  let estates = await read();
+  for (const deadline = Date.now() + 10_000; !estates.length && Date.now() < deadline; ) {
+    await new Promise((r) => setTimeout(r, 400));
+    estates = await read();
+  }
+  const strangers = estates.filter((o) => o !== SITE);
+  console.log(`[pin] estate origins contacted: ${estates.join(' ') || '(none)'}`);
+  if (!strangers.length && estates.length > 0) return;
+  console.error(
+    estates.length === 0
+      ? `[pin] THIS CLIENT CONTACTED NO ESTATE IN TEN SECONDS, so which one it is built against is ` +
+          `unknown - and a row that ran now would record a verdict nothing corroborates`
+      : `[pin] THIS CLIENT IS NOT ON THE LOCAL ESTATE: it called ${strangers.join(' ')} and the rig ` +
+          `reports on ${SITE}. Rebuild and reinstall the APK (bun a1apk.mjs) - a --no-build install ` +
+          `keeps whatever origins the artefact on disk was baked with`,
+  );
+  cx.close();
+  process.exit(1);
+}
+
 if (!hasField && !hasKeypad) {
   // THREE OUTCOMES, THREE MESSAGES. "No modal" was one line for two situations wanting opposite
   // repairs - a client already unlocked needs nothing, a client that never mounted the gate needs
@@ -123,6 +203,9 @@ if (!hasField && !hasKeypad) {
       `[pin] no unlock modal within ${GATE_DEADLINE_MS} ms - on ${seen.path}, sidebar ${seen.sidebar}`,
     );
   }
+  // The estate is asserted on THIS way out too. "Already unlocked" is the ordinary path on every
+  // run after the first, so skipping it here would mean the check almost never ran.
+  await assertLocalEstate(cx);
   process.exit(2);
 }
 
@@ -219,4 +302,20 @@ const state = await evaluate(
   `JSON.stringify({ url: location.href, modal: ${GATE_EXPR}, body: document.body.innerText.replace(/\\s+/g,' ').slice(0, 300) })`,
 );
 console.log(`[pin] after: ${state}`);
+await assertLocalEstate(cx);
+
+// THE SUCCESS PATH HAS TO END AS DELIBERATELY AS THE FAILURE ONES, and for fourteen days it did not.
+// Every refusal above closes the socket and names an exit code; a PIN that WORKED just fell off the
+// end of the file with the CDP WebSocket still open, and an open socket keeps the event loop alive
+// for ever. `phone.unlockPin()` runs this under `execFileSync(..., { timeout: 120_000 })`, so the
+// ordinary outcome was: unlock the app in 2.7 s, sit there for 117 more, get killed, and report
+// `pin.mjs failed` - a FALSE failure recorded against a pin that had worked, on every `+A1` row that
+// met the gate. DEL-7 carried it as dirt on 2026-09-05 (`pinOnWake: pin.mjs failed`) while the
+// screenshot showed the app unlocked and past it.
+//
+// It hid behind exit 2. A client ALREADY unlocked leaves at line 196 and its caller reads `no modal`
+// instantly, which is the state of the phone on every run but the first after a restart - so the
+// hang only appeared on the rows that restart the app, which is exactly the population that cannot
+// afford two lost minutes.
 cx.close();
+process.exit(0);

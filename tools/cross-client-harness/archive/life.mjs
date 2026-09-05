@@ -180,7 +180,7 @@ phone.forwardDevtools(PORTS.A1);
 const a1Setup = await client(PORTS.A1, 'tauri.localhost');
 await ensureChat(a1Setup).catch(() => null);
 await openConversation(a1Setup, peerNameFor('A1')).catch(() => null);
-const w2 = await client(9223, APP_TAB);
+const w2 = await client(PORTS.W2, APP_TAB);
 await ensureChat(w2);
 await openConversation(w2, peerNameFor('W2'));
 await sleep(1_000);

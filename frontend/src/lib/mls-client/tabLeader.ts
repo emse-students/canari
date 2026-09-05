@@ -252,6 +252,17 @@ async function initWithWebLocks(log: (msg: string) => void): Promise<boolean> {
   });
 
   if (!acquired) {
+    // THE ELECTION IS OVER FOR THIS TAB AND ITS ANSWER IS `follower`, SO IT IS RECORDED HERE.
+    //
+    // This line was missing, and this is the branch EVERY REAL BROWSER TAKES - Web Locks is the
+    // preferred path, and the localStorage twin below decides on all four of its outcomes. Nothing
+    // looked wrong: `getIsTabLeader()` reads `undecided` as false, so read-only mode, the skipped
+    // WebSocket and the skipped `initializeConnection` were all correct. The one caller asking the
+    // question this state actually answers - `runFlush`, awaiting `whenTabLeadershipDecided()` -
+    // hung for ever, and it memoises that wait: a second tab queued every send it was given, told
+    // the user it was accepted, and handed none of them to the leader for the rest of its life
+    // (TAB-4b, measured 2026-09-05; the entire handover below it was built and never once reached).
+    decide('follower');
     log('[TAB] Another tab is active - read-only mode (Web Locks).');
 
     void navigator.locks

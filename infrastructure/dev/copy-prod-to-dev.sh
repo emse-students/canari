@@ -212,8 +212,9 @@ fi
 DEV_ROWS=$(dev_sql_ro "SELECT count(*) FROM users;")
 DEV_TOKENS=$(dev_sql_ro "SELECT count(*) FROM push_token;")
 DEV_STRIPE=$(dev_sql_ro "SELECT count(*) FROM users WHERE \"stripeCustomerId\" IS NOT NULL;")
+DEV_MEDIA=$(dev_sql_ro "$COPY_STRIPS_MEDIA_RESIDUE_SQL" | tr -d '[:space:]')
 
-log "verification: users prod=$PROD_ROWS dev=$DEV_ROWS | push_token dev=$DEV_TOKENS | stripe ids dev=$DEV_STRIPE"
+log "verification: users prod=$PROD_ROWS dev=$DEV_ROWS | push_token dev=$DEV_TOKENS | stripe ids dev=$DEV_STRIPE | media references dev=$DEV_MEDIA"
 
 problems=0
 [ "$PROD_ROWS" = "$DEV_ROWS" ] || {
@@ -226,6 +227,12 @@ problems=0
 }
 [ "$DEV_STRIPE" = "0" ] || {
   printf '[copy-prod-to-dev] ERROR %s Stripe customer ids survived\n' "$DEV_STRIPE" >&2
+  problems=1
+}
+# Not a leak but an INCONSISTENCY: this copy carries rows and never the objects behind them, so a row
+# that still names one renders as a 404 on an estate that is meant to be a faithful rehearsal.
+[ "$DEV_MEDIA" = "0" ] || {
+  printf '[copy-prod-to-dev] ERROR %s row(s) still reference media objects this copy never received\n' "$DEV_MEDIA" >&2
   problems=1
 }
 [ "$problems" -eq 0 ] || fail "the copy completed but did not verify - the dev environment is NOT trustworthy"

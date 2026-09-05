@@ -39,6 +39,8 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PHASES } from './checks.mjs';
+import { instrumentShaOf } from './instrument.mjs';
+import { findScript } from './scriptpath.mjs';
 import { STATE_DIR } from './names.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -126,16 +128,30 @@ function boardRowsFor(id) {
   const slash = id.indexOf('/');
   if (slash === -1) return [];
   const base = id.slice(0, slash);
-  if (known.has(base)) return [base];
+
   // A JOINT ID: `COMM-9/10` is one script answering two rows. The prefix is everything up to the
   // last `-`, and every `/`-separated tail is pasted back onto it. All of them must land, or this is
-  // not the shape and the id stays a divergence.
+  // not the shape.
+  //
+  // TRIED BEFORE THE SUFFIX READING, WHICH IS THE WHOLE FIX. Both shapes are `X/Y` with `X` a board
+  // row - `MUT-1/dm` is MUT-1 run in the venue, `COMM-9/10` is two rows - so an early
+  // `if (known.has(base)) return [base]` matched the joint form first and credited COMM-9 alone.
+  // COMM-10 then sat on the board as `PASS` that "the ledger cannot corroborate" FOR EVER: the
+  // report's most valuable line, printed about a row that had in fact been measured, in a file whose
+  // own docstring names `COMM-9/10` as the case it handles. The discriminator is data, not order -
+  // `prefix + tail` is a board row for the joint form (`COMM-10`) and is not for the suffixed one
+  // (`MUT-dm`) - so asking that question first costs nothing and cannot mistake one for the other.
   const dash = base.lastIndexOf('-');
-  if (dash === -1) return [];
-  const prefix = base.slice(0, dash + 1);
-  const parts = [base.slice(dash + 1), ...id.slice(slash + 1).split('/')];
-  const hits = parts.map((t) => prefix + t).filter((r) => known.has(r));
-  return hits.length === parts.length ? hits : [];
+  if (dash !== -1) {
+    const prefix = base.slice(0, dash + 1);
+    const parts = [base.slice(dash + 1), ...id.slice(slash + 1).split('/')];
+    const hits = parts.map((t) => prefix + t).filter((r) => known.has(r));
+    if (hits.length === parts.length && hits.length > 1) return hits;
+  }
+
+  // A VENUE SUFFIX: `MUT-1/dm` is MUT-1, measured in a DM. The tail names where, not what.
+  if (known.has(base)) return [base];
+  return [];
 }
 
 /**
@@ -192,6 +208,11 @@ for (const line of readFileSync(LEDGER, 'utf8').split('\n')) {
         recordedAs: r.id,
         check: r.check,
         checkSha: r.checkSha,
+        // KEPT EXPLICITLY, like every field above, and forgetting it made the new column read as
+        // absent on rows that carried it - the report said "predates instrumentSha" about verdicts
+        // recorded minutes earlier. A projection that names its fields is right; one that names all
+        // but the newest is a silent zero.
+        instrumentSha: r.instrumentSha,
       });
     }
   }
@@ -289,21 +310,59 @@ if (notGreen.length) {
 // nothing consumed it.
 //
 // A row with no `checkSha` at all predates the field, which is the same answer for the same reason.
+// WHERE A RUNNER LIVES, AND WHY THIS IS A SEARCH RATHER THAN A JOIN.
+//
+// `results.mjs` records `check` as a BARE FILENAME (`msg1.mjs`), which was the whole path while
+// every runner sat at the harness root. They now live in `archive/`, so joining the name onto
+// `HERE` named a file that does not exist and EVERY archived row reported `its runner no longer
+// exists` - all seven MSG verdicts on 2026-09-04, each of them taken minutes earlier by a runner
+// sitting right there. A warning that fires on every row is not a warning: it hides the one case it
+// was written for, which is HEAL-W2's `FAIL` surviving the rewrite that made it unreachable.
+//
+// The directories are searched in order and the FIRST hit wins, which is safe because a name is
+// unique across them - two runners with one name would be a fault of its own, and `inventory.mjs`
+// is what would catch it.
+// `findScript` rather than a fourth copy of this search: the same "a script moved to archive/" bug
+// has now been fixed in four places, so the directories live in `scriptpath.mjs` and nowhere else.
+// `null` is the right answer HERE - a runner that no longer exists is a fact about the ledger.
+const runnerPath = findScript;
+
+// AND THE SAME QUESTION ABOUT WHAT THE RUNNER MEASURES **WITH**, WHICH IS A DIFFERENT QUESTION.
+// `checkSha` answers "did this runner change". It said nothing on 2026-09-04 when `openConversation`
+// in `chat.mjs` turned out to be opening the WRONG CONVERSATION - MSG-1 asked for a DM, was handed a
+// group, and recorded a verdict naming a conversation it never touched. `msg1.mjs` was untouched, so
+// its hash still matched and this listed nothing. `instrumentSha` hashes the runner's own transitive
+// in-tree import graph (`instrument.mjs`), so a shared gesture changing under a row is visible.
+//
+// REPORTED SEPARATELY, DELIBERATELY. "Your runner changed" and "the gesture twenty rows share
+// changed" send the reader to different work, and merging them would make one edit to `chat.mjs`
+// read as a rewrite of twenty runners.
 const superseded = [];
+const instrumentMoved = [];
+const preInstrument = [];
 const shaOf = new Map();
+const instrumentOf = new Map();
 for (const r of rows) {
   const e = latest.get(r);
   if (!e || !e.check) continue;
-  const file = join(HERE, e.check);
-  if (!existsSync(file)) {
+  const file = runnerPath(e.check);
+  if (!file) {
     superseded.push([r, e, 'its runner no longer exists']);
     continue;
   }
   if (!shaOf.has(e.check)) {
     shaOf.set(e.check, createHash('sha256').update(readFileSync(file)).digest('hex').slice(0, 12));
+    instrumentOf.set(e.check, instrumentShaOf(file));
   }
   if (!e.checkSha) superseded.push([r, e, 'recorded before checkSha existed']);
   else if (e.checkSha !== shaOf.get(e.check)) superseded.push([r, e, `runner is now ${shaOf.get(e.check)}`]);
+  // A verdict older than the field is NOT listed as a change: a warning that fires on every row is
+  // not a warning, which this file already learnt the hard way about `runnerPath`. It gets its own
+  // quiet line, and the population decays to nothing as rows are re-run.
+  else if (!e.instrumentSha) preInstrument.push([r, e]);
+  else if (e.instrumentSha !== instrumentOf.get(e.check)) {
+    instrumentMoved.push([r, e, `instrument is now ${instrumentOf.get(e.check)}`]);
+  }
 }
 const noSha = rows.filter((r) => latest.has(r) && !latest.get(r).check);
 if (superseded.length || noSha.length) {
@@ -316,6 +375,26 @@ if (superseded.length || noSha.length) {
     const e = latest.get(r);
     console.log('  ' + r.padEnd(14) + String(e.verdict).padEnd(12) + '(no check recorded)  predates the field entirely');
   }
+}
+
+if (instrumentMoved.length) {
+  console.log(
+    `
+[rows] ${instrumentMoved.length} verdict(s) whose RUNNER is unchanged but whose shared instrument moved:`
+  );
+  for (const [r, e, why] of instrumentMoved) {
+    console.log('  ' + r.padEnd(14) + String(e.verdict).padEnd(12) + String(e.check).padEnd(16) + why);
+  }
+  console.log('  (`bun instrument.mjs <runner>` lists the files behind that hash)');
+}
+
+if (preInstrument.length) {
+  console.log(
+    `
+[rows] ${preInstrument.length} verdict(s) predate instrumentSha - their runner is unchanged, ` +
+      `and nothing can say whether what they measure WITH is:`
+  );
+  console.log('  ' + preInstrument.map(([r]) => r).join(' '));
 }
 
 if (sinceBuild) {

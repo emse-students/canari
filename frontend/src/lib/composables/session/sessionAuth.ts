@@ -29,7 +29,7 @@ import {
 } from '$lib/utils/chat/pendingGroupExits';
 import { m } from '$lib/paraglide/messages';
 import { saveUserLocally, clearUserLocally, currentUserId, isGlobalAdmin } from '$lib/stores/user';
-import { requestReAdd } from '$lib/utils/chat/recovery';
+import { recoverRosterDisagreement, requestReAdd } from '$lib/utils/chat/recovery';
 import {
   answerAfterMailboxDrained,
   reconcileGroup,
@@ -180,6 +180,8 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
     conversations: cb.conversations,
     log: cb.log,
     requestReAdd: (groupId: string) => requestReAdd(groupId, makeRecoveryDeps(ctx, cb)),
+    recoverRosterDisagreement: (groupId: string) =>
+      recoverRosterDisagreement(groupId, makeRecoveryDeps(ctx, cb)),
     isGroupHealthy: (groupId: string) => canSendInGroup(ctx.ensureMls(), groupId),
     // A session unlocked offline holds no token: hold the queue until promoteOfflineSession has
     // one and has reopened the socket, then it flushes explicitly.

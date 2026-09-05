@@ -21,3 +21,14 @@ scratch/
 *.log
 *.png
 logs/
+
+# ...BUT `fixtures/` IS INPUT, NOT OUTPUT, AND THE RULE ABOVE SWALLOWED IT.
+#
+# `*.png` was written for `shot.mjs`, which drops `shot-W1.png` beside the runner and must never
+# commit a screenshot of a logged-in client. It also matched `fixtures/msg4-image.png`, the picture
+# MSG-4 uploads - so that fixture could not be committed, was absent on a machine rebuilt from a
+# handoff bundle, and the check hung 30 s on an attachment stuck in `EN ATTENTE` before dying in a
+# `until() timed out` that named neither the file nor the fact that it was missing (2026-09-04).
+# A required input that the ignore rules make uncommittable is a fixture nobody can restore.
+!fixtures/
+!fixtures/*.png

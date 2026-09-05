@@ -35,6 +35,15 @@
     <string name="notif_new_message_from">Nouveau message de %1$s</string>
     <string name="notif_new_message_generic">Vous avez reçu un message chiffré</string>
 
+    <!-- A MENTION IS A TOKEN IN THE CIPHERTEXT, NOT A NAME. A decrypted body carries `@[<64 hex>]`
+         where the web renders a chip, and a notification that printed it raw showed the reader a
+         sixty-four character blob. This device has no name directory - `fetchAvatar` is the only
+         thing the push path can resolve over the network - so it renders the ONE id it knows for
+         certain, its own, and says plainly that it does not know the others. Neither string takes a
+         placeholder: a token is replaced by its label, whole. -->
+    <string name="notif_mention_you">vous</string>
+    <string name="notif_mention_someone">quelqu\'un</string>
+
     <!-- Rendered under the reactor's name in the conversation's notification, so it reads
          "Claire: a réagi 😂 à votre message". %1$s is the emoji. -->
     <string name="notif_reaction_body">a réagi %1$s à votre message</string>

@@ -442,12 +442,19 @@ services:
     healthcheck:
       # `/api/version` needs no authentication and reaches core-service, so a 200 proves both that
       # nginx started and that it can route - which "the container is up" does not.
+      #
+      # TWO URLS, AND THE SECOND ONE IS THERE BECAUSE THE FIRST STAYED GREEN THROUGH AN OUTAGE. While
+      # a TLS listener was briefly in front of this one (2026-09-04), every page answered `502 Bad
+      # Gateway` - the proxy hop's header buffer was too small for the CSP - and this check kept
+      # passing, because `/api/version` is the one route that sets no CSP. A probe chosen for being
+      # cheap had been selected for not resembling the traffic. `/chat` carries the full header set
+      # and the SSR hop, so it fails when a user would fail.
       test:
         [
           'CMD',
           'sh',
           '-c',
-          'wget -q -O /dev/null http://127.0.0.1/api/version || exit 1',
+          'wget -q -O /dev/null http://127.0.0.1/api/version && wget -q -O /dev/null http://127.0.0.1/chat || exit 1',
         ]
       interval: 15s
       timeout: 5s

@@ -541,16 +541,19 @@ export class WebMlsService extends BaseMlsService {
                   ` bytes=${ciphertext.length}`
               );
               // Queue the message for sequential processing
-              this.enqueueMessage({
-                senderId: (msg.senderId as string) || 'unknown',
-                ciphertext,
-                groupId: (msg.groupId as string) || undefined,
-                isWelcome: msg.isWelcome === true,
-                isCommit: msg.isCommit === true,
-                ratchetTreeBytes,
-                queuedMessageId: (msg.queuedMessageId as string) || undefined,
-                queuedCreatedAt: parseServerTimestampMs(msg.createdAt),
-              });
+              this.enqueueMessage(
+                {
+                  senderId: (msg.senderId as string) || 'unknown',
+                  ciphertext,
+                  groupId: (msg.groupId as string) || undefined,
+                  isWelcome: msg.isWelcome === true,
+                  isCommit: msg.isCommit === true,
+                  ratchetTreeBytes,
+                  queuedMessageId: (msg.queuedMessageId as string) || undefined,
+                  queuedCreatedAt: parseServerTimestampMs(msg.createdAt),
+                },
+                'live'
+              );
             }
           } else if (msg.proto && !this.messageCallback) {
             console.warn(

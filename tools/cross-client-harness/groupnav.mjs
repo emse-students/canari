@@ -10,7 +10,7 @@
  * One module rather than a copy in each check, because the failure it prevents is precisely two
  * call sites disagreeing about which conversation is on screen.
  */
-import { evaluate, goto, PANE_HAS_CONVERSATION, realClick, until } from './chat.mjs';
+import { clickAtPoint, evaluate, goto, PANE_HAS_CONVERSATION, realClick, until } from './chat.mjs';
 import { pressKey } from './cdp.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -36,16 +36,7 @@ const OPENED = PANE_HAS_CONVERSATION;
 
 /** A real mouse click at a point - `element.click()` is not what these components listen for. */
 export async function clickAt(cx, x, y) {
-  await cx.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y, buttons: 0 });
-  for (const type of ['mousePressed', 'mouseReleased'])
-    await cx.send('Input.dispatchMouseEvent', {
-      type,
-      x,
-      y,
-      button: 'left',
-      clickCount: 1,
-      buttons: type === 'mousePressed' ? 1 : 0,
-    });
+  await clickAtPoint(cx, x, y);
 }
 
 /**

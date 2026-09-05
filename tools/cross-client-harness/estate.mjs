@@ -27,8 +27,16 @@ import { execFileSync } from 'node:child_process';
 import { SITE } from './names.mjs';
 import { ssh } from './ssh.mjs';
 
-/** Whether the campaign's target is on this machine. One read, at import, no flag. */
-const LOCAL = new URL(SITE).hostname === 'localhost' || new URL(SITE).hostname === '127.0.0.1';
+/**
+ * Whether the campaign's target is on this machine. One read, at import, no flag.
+ *
+ * EXPORTED because "which estate" decides more than which container to talk to. `results.mjs` needs
+ * it to know which git history contains the bundle a client is running: a deployment is built by CD
+ * from a commit on `origin/main`, and the local estate is built by `make local-frontend` from the
+ * WORKING TREE. Same question, same answer, one place.
+ */
+export const LOCAL =
+  new URL(SITE).hostname === 'localhost' || new URL(SITE).hostname === '127.0.0.1';
 
 /**
  * Runs a command in a container of whichever estate `SITE` names.
@@ -68,3 +76,48 @@ export const psql = (sql, opts) =>
     `psql -U ${LOCAL ? 'admin' : 'canari'} -d auth_db -tAc "${sql.replace(/"/g, '\\"')}"`,
     { timeoutMs: 60_000, ...opts }
   );
+
+/** Chrome and Nest colour their output; a rule matching a bare word must not meet an escape. */
+const ANSI = /\u001b\[[0-9;]*m/g;
+
+/**
+ * One service's log lines in the window, from WHICHEVER ESTATE `SITE` NAMES - ANSI stripped, blanks
+ * dropped.
+ *
+ * ## The defect this moved here to end
+ *
+ * THE THIRD OBSERVER NEVER FOLLOWED THE CAMPAIGN OFF PRODUCTION. `psql` and `redis` were made to
+ * follow `SITE` when the rig moved to the local estate on 2026-09-03; this reader was left spelling
+ * `ssh canari docker logs infrastructure-<service>-1`, so it answered about PRODUCTION for every
+ * local run - and answered CONFIDENTLY, because production is busy and a window is never empty.
+ *
+ * It cost a verdict the same day it was noticed. COMM-14 asks whether the three channel notification
+ * levels are enforced, and reads `[CHANNEL_PUSH] channel=<id> ... recipients=N` as the decision
+ * itself. On 2026-09-05 the row recorded **FAIL** on `mentionsDelivers` and `allDelivers` while the
+ * PHONE's tray held both notifications: the local container had logged thirty such lines and the
+ * instrument had read production's, where this run's channel id has never existed. An absence in the
+ * wrong estate is indistinguishable from a decision not taken.
+ *
+ * `2>&1` because Nest logs to stdout and tracing to stderr, and a check reading only one of them
+ * would be blind to half the platform.
+ *
+ * @param {string} service the compose service name, e.g. `social-service`
+ * @param {string} since a docker `--since` value: an ISO instant, or `900s`
+ * @returns {string[]} the window's lines, trimmed, in order
+ */
+export function srvLines(service, since) {
+  const out = LOCAL
+    ? execFileSync(
+        'docker',
+        ['logs', '--since', since, `canari-local-${service}-1`],
+        { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] }
+      )
+    : ssh('canari', `docker logs --since ${since} infrastructure-${service}-1 2>&1 || true`, {
+        timeoutMs: 90_000,
+      });
+  return out
+    .replace(ANSI, '')
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+}

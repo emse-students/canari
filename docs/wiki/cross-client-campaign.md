@@ -59,7 +59,7 @@ and refuses the commit; run it before every commit that touches the rig.
 
 **Every test message goes in the owner-peer DM, and nowhere else.** A one-off probe once fired a
 "dangerous link" warning into a real colleague's thread. Anything needing a CHANNEL uses the
-`Campagne de test` community - never MiTV, whose private channels are readable by every association
+`Canari Test Venue` community - never MiTV, whose private channels are readable by every association
 admin.
 
 ## How a check is written
@@ -488,7 +488,7 @@ and the debris still breaks the instrument between restores, which is the half t
 on which database it was. Clearing it is the last step of the ladder, after CORRUPT's rollback.
 
 **IT IS ALSO THE FIRST STEP, because debris does not merely get measured - it BREAKS the instrument.**
-Most checks build a salon inside the shared `Campagne de test` venue, which no runner deletes, so a
+Most checks build a salon inside the shared `Canari Test Venue` venue, which no runner deletes, so a
 crashed runner's salon stays for ever. Measured 2026-08-21: 25 salons in that one community, 23 of
 them debris, and at that length the community's own "add a channel" control sat at y=1149 in a
 944-tall viewport - below the fold and unclickable. COMM-14 failed on it. The check could not build
@@ -573,7 +573,7 @@ both learnt by nearly getting them wrong:
 A cleanup script must also only ever match the harness's own name prefixes: a real user's group sits
 in the same sidebar.
 
-**The messages themselves are NOT debris, and are deliberately not swept.** `Campagne de test` /
+**The messages themselves are NOT debris, and are deliberately not swept.** `Canari Test Venue` /
 `general` is the standing venue nearly every channel row writes into, and nothing prunes it: measured
 2026-08-22, 805 rows since 2026-08-19, growing with every pass of every phase. That is the one large
 realistic corpus this campaign owns, and two things depend on it. SEARCH-4 times a channel search

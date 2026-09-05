@@ -51,11 +51,21 @@
  *
  *   bun del1.mjs [--keep]     --keep leaves the group behind for manual inspection
  */
-import { APP_TAB, awaitGatewayConnected, client, evaluate, realClick, until } from '../chat.mjs';
+import { APP_TAB, awaitGatewayConnected, clickAtPoint, client, evaluate, realClick, until } from '../chat.mjs';
 import { usernames } from '../accounts.mjs';
 import { armCut, cutHard } from './net.mjs';
 import { mark, record } from '../results.mjs';
-import { consoleLines, gate, report, watch } from '../watch.mjs';
+import {
+  consoleLines,
+  gate,
+  GROUP_CREATION_NARRATION,
+  ignoringExpectedLog,
+  ignoringOfflineCut,
+  PEER_DELETED_NARRATION,
+  report,
+  watch,
+} from '../watch.mjs';
+import { PORTS } from '../names.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // THE CAMPAIGN'S OWN STAMP, so the group this check leaves behind on a failure is recognisable as
@@ -64,8 +74,8 @@ const run = mark('DEL1');
 const NAME = run;
 const keep = process.argv.includes('--keep');
 
-const W1 = await client(9224, APP_TAB, { focus: false });
-const W2 = await client(9223, APP_TAB, { focus: false });
+const W1 = await client(PORTS.W1, APP_TAB, { focus: false });
+const W2 = await client(PORTS.W2, APP_TAB, { focus: false });
 
 // FROM THE FIRST GESTURE, not from the delete: what a run leaves in the console is evidence about
 // the whole flow, and a window opened at the verdict would miss the join that armed it.
@@ -300,16 +310,7 @@ for (const q of candidates) {
   const hit = await trySearch(q);
   if (!hit) continue;
   console.log(`[del1] trying ${JSON.stringify(q)} -> option ${JSON.stringify(hit.text)}`);
-  await W1.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: hit.x, y: hit.y, buttons: 0 });
-  for (const type of ['mousePressed', 'mouseReleased'])
-    await W1.send('Input.dispatchMouseEvent', {
-      type,
-      x: hit.x,
-      y: hit.y,
-      button: 'left',
-      clickCount: 1,
-      buttons: type === 'mousePressed' ? 1 : 0,
-    });
+  await clickAtPoint(W1, hit.x, hit.y);
   await sleep(1200);
   const enabled = await evaluate(
     W1,
@@ -455,7 +456,22 @@ if (!triggered)
       'the quiet window proves nothing and the verdict is VACUOUS'
   );
 const verdict = !armed || !triggered ? 'VACUOUS' : fail.length > 0 ? 'FAIL' : 'PASS';
-const gated = gate(verdict, { W1: await report(wa), W2: await report(wb) });
+// WHAT THIS ROW DOES TO ITSELF, FORGIVEN PER HANDLE - and it had NONE until 2026-09-05, so DEL-1
+// recorded `PASS-DIRTY` on its own subject while every assertion held.
+//
+// W1 CREATES THE GROUP, so it emits `GROUP_CREATION_NARRATION`'s two lines; W2 never creates one
+// here, and if the peer's window carried them something opened a conversation nobody asked for.
+// W2 LEARNS OF THE DELETE, which is the sentence this check exists to see land, and its socket is
+// CUT on purpose after the delete - `ignoringOfflineCut` is what says the gateway going away was
+// this runner's doing and not the application's.
+//
+// NOTHING ELSE IS FORGIVEN. `SenderNotActiveError` on the peer is left accusing deliberately: a
+// device that holds no leaf being asked to encrypt is a question the client already knows the answer
+// to, and a needle here would bury it.
+const gated = gate(verdict, {
+  W1: ignoringExpectedLog(await report(wa), GROUP_CREATION_NARRATION),
+  W2: ignoringExpectedLog(ignoringOfflineCut(await report(wb)), [PEER_DELETED_NARRATION]),
+});
 
 record('DEL-1', gated.verdict, {
   ...gated.detail,

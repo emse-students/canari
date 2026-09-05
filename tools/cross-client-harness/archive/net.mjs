@@ -17,7 +17,7 @@
  * SENDING stays in flight. A check that needs to act while something is still uploading needs that
  * and not an outage - see DEL-4.
  */
-import { evaluate, until } from '../cdp.mjs';
+import { evaluate, reloadAndWait } from '../cdp.mjs';
 import { awaitGatewayConnected } from '../chat.mjs';
 
 const OFFLINE = {
@@ -191,8 +191,12 @@ export async function armCut(cx) {
   await cx.send('Network.enable');
   await cx.send('Page.addScriptToEvaluateOnNewDocument', { source: CUT_PATCH });
   const before = cx.events.length;
-  await cx.send('Page.reload');
-  await until(cx, `document.readyState === 'complete'`, 20000);
+  // NOT `until(readyState === 'complete')`, WHICH IS THE RACE THIS LINE USED TO BE. The poll is a
+  // `Runtime.evaluate` into the context the reload on the line above is tearing down, so one poll in
+  // three or four landed inside that window and the check died on `Inspected target navigated or
+  // closed` - TYPE-4, reproducibly, and only when run inside its phase, which is what made it look
+  // like an orchestration fault for a dozen runs. The load is a FACT the browser reports.
+  await reloadAndWait(cx);
   const ms = await awaitGatewayConnected(cx, before);
   const armed = await evaluate(cx, `typeof window.__wsCut === 'function'`);
   if (!armed) throw new Error('the socket patch is not in the page after the reload - cutHard cannot work');

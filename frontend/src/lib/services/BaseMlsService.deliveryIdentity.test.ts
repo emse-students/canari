@@ -17,6 +17,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { BaseMlsService } from '$lib/services/BaseMlsService';
+import type { DeliveryChannel } from '$lib/mls-client/incomingDelivery';
 import type { MlsPerGroupScheduler, MlsQueuedMessage } from '$lib/mls-client/mlsPerGroupScheduler';
 
 /** @see BaseMlsService.mailboxBarrier.test.ts - same reason the cast is what instantiates the base. */
@@ -34,7 +35,7 @@ const poke = (svc: BaseMlsService, patch: Record<string, unknown>): void => {
 const inner = (svc: BaseMlsService) =>
   svc as unknown as {
     messageScheduler: MlsPerGroupScheduler;
-    enqueueMessage(msg: MlsQueuedMessage): void;
+    enqueueMessage(msg: MlsQueuedMessage, channel: DeliveryChannel): void;
   };
 
 /** A delivery the server persisted, so it carries the row id both channels quote. */
@@ -57,6 +58,7 @@ describe('a delivery that arrives twice', () => {
   let applied: string[];
   let ack: ReturnType<typeof vi.fn>;
   let note: ReturnType<typeof vi.spyOn>;
+  let grumble: ReturnType<typeof vi.spyOn>;
   let complaint: ReturnType<typeof vi.spyOn>;
 
   /** A pipeline that accepts everything, or refuses the ids named - `false` is "not acknowledged". */
@@ -77,9 +79,18 @@ describe('a delivery that arrives twice', () => {
       }
     );
 
-  /** Enqueues and waits for the drain the enqueue started, so nothing here waits on a duration. */
-  const deliver = async (msg: MlsQueuedMessage): Promise<void> => {
-    inner(svc).enqueueMessage(msg);
+  /**
+   * Enqueues and waits for the drain the enqueue started, so nothing here waits on a duration.
+   *
+   * The channel defaults to the PULL, which is the shape every repeat in this file is about and the
+   * one the campaign actually measures. The live side is asserted separately, because it is the
+   * only combination the seam is allowed to be loud about.
+   */
+  const deliver = async (
+    msg: MlsQueuedMessage,
+    channel: DeliveryChannel = 'pull'
+  ): Promise<void> => {
+    inner(svc).enqueueMessage(msg, channel);
     await inner(svc).messageScheduler.waitUntilIdle();
   };
 
@@ -88,6 +99,7 @@ describe('a delivery that arrives twice', () => {
     applied = [];
     ack = vi.fn().mockResolvedValue(undefined);
     note = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    grumble = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     complaint = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     poke(svc, {
       userId: 'user-a',
@@ -98,11 +110,16 @@ describe('a delivery that arrives twice', () => {
 
   afterEach(() => {
     note.mockRestore();
+    grumble.mockRestore();
     complaint.mockRestore();
   });
 
   /** Every `console.log` the drain emitted - the repeat reports itself on this channel. */
   const logged = (): string => (note.mock.calls as unknown[][]).map((c) => String(c[0])).join('\n');
+
+  /** Every `console.warn` - reserved for the one repeat shape no crossing explains. */
+  const warned = (): string =>
+    (grumble.mock.calls as unknown[][]).map((c) => String(c[0])).join('\n');
 
   it('is decrypted once, and says so', async () => {
     await deliver(row('d4ecf0fe'));
@@ -110,6 +127,70 @@ describe('a delivery that arrives twice', () => {
 
     expect(applied).toEqual(['d4ecf0fe']);
     expect(logged()).toContain('arrived twice');
+  });
+
+  it('names the channel that offered the second copy, not a guess about both', async () => {
+    // THE LINE USED TO SAY "the live frame and the pull crossed" WHATEVER HAD HAPPENED. Three of the
+    // four shapes are healed the same way and differ only in who was late, so a repeat could be
+    // counted but never triaged - which is what left READ-2 and READ-4 PASS-DIRTY on 2026-09-04
+    // against a log line that no one could either explain or fix.
+    await deliver(row('d4ecf0fe'), 'live');
+    await deliver(row('d4ecf0fe'), 'pull');
+
+    expect(logged()).toContain('the pull listed a row this device had already acknowledged');
+    expect(warned()).toBe('');
+  });
+
+  it('explains a routine crossing ONCE and counts the rest, because a rate is not read line by line', async () => {
+    // THE MEASUREMENT THAT FORCED THIS. FWD-2 ran twenty-five forwards back to back on 2026-09-05
+    // and `pull:done` - this device's own ack still in flight when the pull was answered - fired in
+    // TWENTY-THREE of them. Every line said the same true thing, so every line was skipped, and a
+    // check that opens a busy conversation could not be clean while doing its job. The sentence is
+    // worth saying; saying it once per send is not.
+    for (const id of ['d4ecf0fe', 'a1b2c3d4', 'beefcafe']) {
+      await deliver(row(id));
+      await deliver(row(id));
+    }
+
+    const explained = logged()
+      .split('\n')
+      .filter((l) => l.includes('arrived twice'));
+    expect(explained).toHaveLength(1);
+    expect(explained[0]).toContain('Further ones of this shape are counted, not printed');
+    // Silence is not what replaced them: the count is the thing that answers "how often".
+    expect(svc.deliveryRepeatStats()['pull:done']).toBe(3);
+    // And every repeat is still acknowledged - the counting changed what is PRINTED, nothing else.
+    expect(ack.mock.calls.flatMap((c) => c[0] as string[])).toHaveLength(6);
+  });
+
+  it('counts each shape apart, so one loud shape cannot silence another', async () => {
+    await deliver(row('d4ecf0fe'), 'live');
+    await deliver(row('d4ecf0fe'), 'pull'); // pull:done
+    await deliver(row('a1b2c3d4'), 'pull');
+    await deliver(row('a1b2c3d4'), 'live'); // live:done - the accusing one
+
+    expect(svc.deliveryRepeatStats()).toEqual({
+      'pull:queued': 0,
+      'pull:done': 1,
+      'live:queued': 0,
+      'live:done': 1,
+    });
+    // THE RATE RIDES ON THE ACCUSATION, where a reader is already looking - the shape that would be
+    // a server defect is also the one place worth printing how much of everything else happened.
+    expect(warned()).toContain('pull:done=1');
+    expect(warned()).toContain('live:done=1');
+  });
+
+  it('ACCUSES when a live frame repeats a row already acknowledged, because no crossing explains it', async () => {
+    // The gateway publishes a frame once, at send, and never replays the queue on connect - so this
+    // shape is the same row published twice and is not this client losing a race with itself. It has
+    // never been observed; printing it at the level of the three routine ones is how it would stay
+    // that way.
+    await deliver(row('d4ecf0fe'), 'pull');
+    await deliver(row('d4ecf0fe'), 'live');
+
+    expect(warned()).toContain('THE SERVER PUBLISHED THE SAME ROW TWICE');
+    expect(applied).toEqual(['d4ecf0fe']);
   });
 
   it('is acknowledged again, because an ack that never landed is the only way it can come back', async () => {

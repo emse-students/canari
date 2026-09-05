@@ -195,6 +195,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          */
         private const val DRAIN_CHECKPOINT_EVERY = 25
 
+        /**
+         * The inline mention token a decrypted body carries: `@[` + 64 lowercase hex + `]`.
+         *
+         * Spelt once and used twice - to decide whether a message names ME (which chooses the
+         * notification channel) and to render the tokens for a reader. It used to be spelt only as
+         * the literal `"@[" + myUserId + "]"`, which answers the first question and cannot answer
+         * the second at all.
+         */
+        private val MENTION_TOKEN = Regex("@\\[([0-9a-fA-F]{64})\\]")
+
         /** Maximum number of messages stacked in a per-conversation MessagingStyle notification. */
         private const val MAX_NOTIF_MESSAGES = 6
 
@@ -1525,7 +1535,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 return@runSerializedWithWakeLock
             }
 
-            val body: String = decrypted?.text
+            // Read once and used twice below: to render the mention tokens the decrypted body
+            // carries, and to decide whether one of them names ME (which chooses the channel).
+            val myUserId = MlsContextLoader.loadPushContext(this)?.userId
+            val body: String = decrypted?.text?.let {
+                renderMentions(it, myUserId, appLocaleContext(this))
+            }
                 ?: run {
                     // Insufficient catch-up (no commit, below the floor, or group not joined yet):
                     // enqueue the worker to retry on the next cycle.
@@ -1561,7 +1576,6 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // @-mention of me (WP-XP-5): decrypted text carries inline `@[uuid]` tokens; when one
             // targets my own userId the notification is posted on the higher-tier mentions channel
             // (bypass-DND request) instead of the regular messages channel.
-            val myUserId = MlsContextLoader.loadPushContext(this)?.userId
             val mentionsMe = myUserId != null &&
                 decrypted?.text?.contains("@[$myUserId]", ignoreCase = true) == true
             val channel = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES
@@ -3105,13 +3119,19 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // (absent or unparsable) and never on falsiness.
         val seedB64 = if (ciphertext != null && nonce != null && messageIndex != null)
             lookupGraineSeed(channelId, sessionId) else null
+        // Read once: the only id this device can name in a mention token is its own.
+        val myUserId = MlsContextLoader.loadPushContext(this)?.userId
         val body: String = if (seedB64 != null && ciphertext != null && nonce != null && messageIndex != null) {
             try {
                 val json = JSONObject(
                     nativeDecryptGraineMessage(seedB64, sessionId, messageIndex, nonce, ciphertext)
                 )
                 if (json.optBoolean("ok", false)) {
-                    json.optString("text").takeIf { it.isNotEmpty() }?.take(200)
+                    // RENDERED, NOT PRINTED. The decrypted text carries `@[<64 hex>]` tokens; taking
+                    // it raw put a hex blob in the banner - see `renderMentions`. The truncation is
+                    // applied AFTER, so a token near the 200-character edge cannot be cut in half.
+                    json.optString("text").takeIf { it.isNotEmpty() }
+                        ?.let { renderMentions(it, myUserId, res).take(200) }
                         ?: buildChannelFallbackText(res, channelName)
                 } else {
                     Log.w(TAG, "handleChannelMessage: decrypt ok=false channel=$channelId")
@@ -3182,6 +3202,40 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         if (workspaceName.isNotEmpty()) "$workspaceName - #$channelName" else "#$channelName"
 
     /** Generic channel notification body used when the message cannot be decrypted. */
+    /**
+     * Replaces the `@[<64 hex>]` mention tokens a decrypted body carries with something readable.
+     *
+     * WHAT IT IS FOR. A mention is stored as a TOKEN, not a name: the web splits it and renders a
+     * chip carrying the display name, and every consumer that forgot to do so printed the raw id.
+     * The notification path was one - measured on 2026-09-05 by COMM-14, whose tray body came back
+     * `@[f7a9bb80...5d8ce1]  COMM14-mtnq7c2dlh3-tagged` - and it is the worst place for it, because a
+     * mention is exactly what posts on the high-priority `CHANNEL_MENTIONS` channel.
+     *
+     * WHY IT DOES NOT RESOLVE NAMES. This runs in a push handler with no name directory: the only
+     * thing the push path can fetch is an avatar, by id, over `PushSecret`. Adding a name lookup
+     * would put a network round trip per token on the path that has to post a banner in seconds, and
+     * would still fail offline. So it renders the one id this device knows for certain - its own -
+     * and states plainly that it does not know the others, rather than showing a hex blob and
+     * calling it a name. That matches the web, whose own unresolved-name label is a WORD.
+     *
+     * The double space the old body showed is gone with it: a token is replaced by its label, and
+     * the run of whitespace that used to sit between `]` and the text is collapsed.
+     *
+     * @param text the decrypted message body, possibly carrying tokens
+     * @param myUserId this device's user id, or null when the push context could not be read
+     * @param res the (locale-aware) context the strings are read from
+     */
+    private fun renderMentions(text: String, myUserId: String?, res: Context): String {
+        if (!text.contains("@[")) return text
+        val me = myUserId?.lowercase()
+        return MENTION_TOKEN.replace(text) { m ->
+            val id = m.groupValues[1].lowercase()
+            val label = if (me != null && id == me) res.getString(R.string.notif_mention_you)
+                        else res.getString(R.string.notif_mention_someone)
+            "@" + label
+        }.replace(Regex("[ \t]{2,}"), " ")
+    }
+
     private fun buildChannelFallbackText(res: Context, channelName: String): String =
         res.getString(R.string.notif_channel_new_message, channelName)
 

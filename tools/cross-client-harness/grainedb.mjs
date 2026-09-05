@@ -42,9 +42,32 @@ export function channelIdOf(workspaceId, name) {
   return found.length === 1 ? found[0][0] : null;
 }
 
-/** The uuid of a community by name, or null. Ambiguity answers null rather than picking one. */
-export function workspaceIdOf(name) {
-  const found = rows(psql(`SELECT id FROM channel_workspaces WHERE name = '${name}'`));
+/**
+ * The uuid of a community by name, or null. Ambiguity answers null rather than picking one.
+ *
+ * **A NAME IDENTIFIES A COMMUNITY ONLY WHERE THE POPULATION MAKES IT UNIQUE, AND SINCE 2026-09-03
+ * THIS RIG RUNS ON A COPY OF PRODUCTION.** The name was a sufficient key for exactly as long as the
+ * campaign was the only thing on the estate using it. It stopped being one the day the local
+ * database was seeded from a production dump: `Campagne de test` resolved to a real community that
+ * two real members own, the campaign's own accounts were in nothing at all, and `venue.mjs` took
+ * that id for its fixture and went on to invite a peer into a community its client cannot even
+ * list. What it reported was `the community was never listed within 20000ms` - which reads as a
+ * SIDEBAR defect, and was an identity mismatch that one `channel_members` row settles before any
+ * gesture is attempted.
+ *
+ * `memberUserId` scopes the question to "a community by this name THAT THIS ACCOUNT IS IN". Both
+ * questions are real and the caller picks between them rather than falling back: unscoped answers
+ * "is this name taken at all", which is what DIAGNOSES a collision, and scoped answers "is this
+ * one OURS", which is what a fixture guard has always meant.
+ */
+export function workspaceIdOf(name, { memberUserId = null } = {}) {
+  // EXISTS rather than a join: a member holding two rows would otherwise duplicate the community
+  // and trip the ambiguity guard below, reporting "no such community" for one plainly there.
+  const mine = memberUserId
+    ? ` AND EXISTS (SELECT 1 FROM channel_members m WHERE m."workspaceId" = w.id ` +
+      `AND m."userId" = '${memberUserId}')`
+    : '';
+  const found = rows(psql(`SELECT w.id FROM channel_workspaces w WHERE w.name = '${name}'${mine}`));
   return found.length === 1 ? found[0][0] : null;
 }
 
@@ -158,6 +181,44 @@ export function communityDistribution(workspaceId) {
     )
   ).map(([userId, deviceId, status]) => ({ userId, deviceId, status }));
   return { groupId, epoch: Number(epoch), devices };
+}
+
+/**
+ * Waits until a user's devices either HOLD or do not hold delivery rows on the COMMUNITY's own
+ * distribution group - the sibling of `awaitUserRouting`, one level up.
+ *
+ * A COMMUNITY'S ROSTER IS WHAT A PUBLIC SALON DELIVERS ON, and that is why this exists separately.
+ * A public salon carries no group of its own (`salonDistribution` answers null for one, correctly),
+ * so `awaitUserRouting` has nothing to poll there and a caller reaching for it on `general` would
+ * read "no roster" as "not routed" for ever. The community group is the one that fans a public
+ * salon's frames out, so it is the roster a member of a public salon has to appear on.
+ *
+ * AN INVITATION DOES NOT MOVE IT. Membership is entitlement; the delivery row is minted when THE
+ * MEMBER'S OWN DEVICE commits its add, which happens when that member LOADS the community. So a
+ * fixture is not usable the moment the invite lands - measured 2026-09-04, when a freshly built
+ * venue carried the owner's single device and nothing else, and a peer invited seconds earlier was
+ * absent from the only roster its messages would travel on.
+ *
+ * A DEADLINE IS A RESULT, NEVER A THROW, exactly as in `awaitUserRouting`: only the caller knows
+ * whether a roster that never settled is the product's answer or its own missing gesture.
+ *
+ * @param {string} workspaceId the community
+ * @param {string} userId whose devices to look for; matched case-insensitively
+ * @param {boolean} wanted whether they should be on the roster by the end
+ * @returns {Promise<{ok, elapsedMs, dist: ReturnType<typeof communityDistribution>}>}
+ */
+export async function awaitCommunityRouting(workspaceId, userId, wanted, timeoutMs = 10_000) {
+  if (!workspaceId || !userId) throw new Error('awaitCommunityRouting needs a community + user');
+  const mine = userId.toLowerCase();
+  let dist = null;
+  const outcome = await pollFact(
+    () => {
+      dist = communityDistribution(workspaceId);
+      return (dist?.devices ?? []).some((d) => d.userId.toLowerCase() === mine) === wanted;
+    },
+    { timeoutMs, everyMs: 1000 }
+  );
+  return { ok: outcome.ok, elapsedMs: outcome.elapsedMs, dist };
 }
 
 /** The user id behind a display name, or null. Used to name a device roster's rows. */

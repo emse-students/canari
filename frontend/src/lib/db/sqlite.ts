@@ -666,6 +666,31 @@ export class SqliteStorage implements IStorage {
   }
 
   /** Encrypt the sensitive payload and upsert a queued outbound message. */
+  /**
+   * The message and the entry that will send it - THE ENTRY FIRST, because here they cannot be one.
+   *
+   * IndexedDB gives this pair a real two-store transaction. SQLite, as reached through
+   * `tauri-plugin-sql`, does not: the plugin pools connections, so a `BEGIN`/`COMMIT` issued as
+   * separate `execute` calls can land on three different ones (measured on device 2026-08-11, see
+   * `sqliteBatch.ts`) - a statement is the largest unit of atomicity available, and two tables need
+   * two statements.
+   *
+   * So the choice is not whether a tear can happen but WHICH HALF SURVIVES it, and the two are not
+   * equally bad. Entry without message: the flush sends it, the peer receives the message, and what
+   * is missing is the sender's own echo. Message without entry: nothing is ever sent, nothing
+   * retries, nothing reports, and the author keeps a message no one else will ever have (TAB-5,
+   * 2026-09-05). The first is recoverable in the only direction that matters, so the entry is
+   * written first and the message second.
+   */
+  async saveMessageWithOutboxEntry(
+    msg: StoredMessage,
+    entry: OutboxEntry,
+    deviceKeyB64: string
+  ): Promise<void> {
+    await this.saveOutboxEntry(entry, deviceKeyB64);
+    await this.saveMessages([msg], deviceKeyB64);
+  }
+
   async saveOutboxEntry(entry: OutboxEntry, deviceKeyB64: string): Promise<void> {
     const encrypted = await encryptData(encodeOutboxSensitive(entry), deviceKeyB64);
     const c = outboxClearColumns(entry);

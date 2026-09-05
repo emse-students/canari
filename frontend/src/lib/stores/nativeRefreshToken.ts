@@ -25,6 +25,7 @@
  * vendored plugin and an iOS build to verify.
  */
 
+import { coreUrl } from '$lib/utils/apiUrl';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 
 /** Store file holding the native refresh credential. Separate from OIDC state, which is per-login. */
@@ -40,20 +41,49 @@ export const REFRESH_HEADER = 'X-Canari-Refresh';
  * True when this runtime cannot keep the refresh cookie, so the credential must be carried
  * explicitly.
  *
- * Decided on the document's SCHEME, which is what makes the cookie third-party in the first place,
- * and which is exactly what the server sees as the request's `Origin` (`tauri://localhost`, measured
- * in the production log). Not decided on the user agent: the platform is a consequence here, not the
- * cause, and `tauri://` is equally the origin on macOS and Linux desktop builds - which have the
- * same problem for the same reason.
+ * TWO REASONS, AND THEY ARE NOT THE SAME REASON.
  *
- * `http://tauri.localhost` (Android, Windows) is deliberately NOT included. The cookie works there,
- * its durability is proven on hardware (WP-ANDROID-SESS-1), and routing it through here would
- * unprove it.
+ * **The engine.** `tauri://localhost` - iOS, macOS, a Linux desktop build - is WKWebView, which
+ * blocks the third-party class through ITP and publishes no opt-in. No server can rescue it, so
+ * those clients carry the credential on every deployment. Decided on the document's SCHEME rather
+ * than the user agent: the platform is a consequence here, not the cause, and the scheme is exactly
+ * what the server sees as the request's `Origin`.
+ *
+ * **The deployment, and this half was missing until 2026-09-04.** On `http://tauri.localhost`
+ * (Android, Windows) the engine keeps the cookie - Android opts in explicitly and its durability is
+ * proven on hardware (WP-ANDROID-SESS-1) - but only if the server can ISSUE one a third-party
+ * context accepts. It can issue `SameSite=None; Secure` over HTTPS and only `SameSite=Lax` over
+ * plain HTTP, since `None` requires `Secure` and `Secure` requires TLS; and **a `Lax` cookie cannot
+ * be SET in a third-party context.** Against an HTTP deployment the shell is therefore handed a
+ * cookie its engine discards on arrival - measured on the local estate, where the phone held 0
+ * matching cookies against a browser's 3, the server logged `cookies=[]`, and the device logged
+ * itself out before publishing a key package.
+ *
+ * So the second fact is the API's SCHEME, which this build already knows: `coreUrl()` is where the
+ * refresh call goes. **In production and on `dev.canari-emse.fr` it is `https:`, so Android keeps
+ * taking the cookie path exactly as it does today** and nothing that was proven on hardware is
+ * re-decided. The twin is `usesBodyRefreshTransport(origin, thirdPartyCookieIsIssuable)` in
+ * `apps/core-service/src/auth/refresh-transport.ts`, which reads `ALLOW_INSECURE_COOKIES` where this
+ * reads the scheme that flag describes.
  */
 export function usesBodyRefreshTransport(): boolean {
   if (!isTauriRuntime()) return false;
   if (typeof window === 'undefined') return false;
-  return window.location.protocol === 'tauri:';
+  if (window.location.protocol === 'tauri:') return true;
+  return !apiCanIssueThirdPartyCookie();
+}
+
+/**
+ * Whether the deployment this build talks to can issue a cookie a third-party context accepts.
+ *
+ * `coreUrl()` always returns an absolute origin - the configured `VITE_CORE_URL`, or
+ * `window.location.origin` when it is unset - so this parses without a guard. A native build with
+ * no `VITE_CORE_URL` would fall back to the shell's own origin, which is never `https:`, and would
+ * answer false: the safe direction, since a client carrying its credential explicitly still works
+ * against a server that also sets the cookie, while the reverse strands it.
+ */
+function apiCanIssueThirdPartyCookie(): boolean {
+  return new URL(coreUrl(), window.location.href).protocol === 'https:';
 }
 
 /** Opens the store. Isolated so the three accessors below cannot drift on its options. */

@@ -36,6 +36,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { PHASES, devicesFor } from '../checks.mjs';
 import { awaitQuiet } from '../deploy.mjs';
 import { groupTombstones, sweepDismissed } from './dismiss.mjs';
+import { srvLines } from '../estate.mjs';
 import { srvReport, srvSummary } from '../srvlog.mjs';
 import { client } from '../chat.mjs';
 import * as phone from '../phone.mjs';
@@ -46,6 +47,7 @@ import { all, clientBuild } from '../results.mjs';
 import { deployedBundleId, isOnTheDeployment, reloadOntoBundle } from '../bundle.mjs';
 import { stateOf } from './ready-probe.mjs';
 import { bringToReady } from './ready-repair.mjs';
+import { requireScript } from '../scriptpath.mjs';
 
 const argv = process.argv.slice(2);
 const flag = (n) => argv.includes(`--${n}`);
@@ -208,7 +210,7 @@ async function reviveThePhone() {
  * Whether the campaign's SHARED venue is still on production, with its channel and this run's people
  * in it - and it is a PREFLIGHT question because it was not one, and that cost six rows.
  *
- * `Campagne de test` / `general` is a FIXTURE. Twenty-odd runners build their salon inside it rather
+ * The shared venue `VENUE` names is a FIXTURE. Twenty-odd runners build their salon inside it rather
  * than minting a community of their own, so it is not one row's setup but the ground every one of
  * them stands on. On 2026-08-25 it was gone from production - cleanly, through the product, by a
  * gesture no log window still covers - and rung 9 discovered it one row at a time: COMM-5, COMM-8,
@@ -446,7 +448,7 @@ async function preflight(devices, { quiet = false } = {}) {
     const deadline = Date.now() + 25000;
     let r;
     for (;;) {
-      r = spawnSync(process.execPath, ['presence.mjs', '--ports', ports.join(',')], {
+      r = spawnSync(process.execPath, [requireScript('presence.mjs'), '--ports', ports.join(',')], {
         cwd,
         encoding: 'utf8',
       });
@@ -1107,7 +1109,9 @@ let server = null;
 const windowFrom = serverWindowFrom;
 serverWindowFrom = new Date().toISOString();
 try {
-  server = srvReport(windowFrom, { subjects: [...SUBJECTS] });
+  // The reader is passed in rather than reached for: `srvlog.mjs` is pure so a CI self-test can take
+  // its rule lists, and WHICH ESTATE to read is a fact only `estate.mjs` holds (it follows `SITE`).
+  server = srvReport(srvLines, windowFrom, { subjects: [...SUBJECTS] });
   console.log(`SERVER (since ${windowFrom})\n`);
   for (const line of srvSummary(server)) console.log(line);
   console.log(`\n  ${server.clean ? 'server clean' : 'SERVER NOT CLEAN - run srvlog.mjs --since ' + windowFrom + ' for the lines'}`);

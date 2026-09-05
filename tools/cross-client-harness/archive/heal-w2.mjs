@@ -32,7 +32,8 @@ import { APP_TAB, client, evaluate, goto, markers, openConversation, send } from
 import { openGroup as openGroupByName } from '../groupnav.mjs';
 import { watch, report, consoleLines, gate } from '../watch.mjs';
 import { mark, record } from '../results.mjs';
-import { peerNameFor } from '../names.mjs';
+import { PORTS, peerNameFor } from '../names.mjs';
+import { requireScript } from '../scriptpath.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const GROUP = `HGRP${Math.random().toString(36).slice(2, 7)}`;
@@ -64,8 +65,8 @@ const seen = async (cx, prefix, budgetMs) => {
   return best;
 };
 
-const w1 = await client(9224, APP_TAB, { focus: false }); // the OWNER - the device under test
-const w2 = await client(9223, APP_TAB, { focus: false }); // the PEER - the one that sends
+const w1 = await client(PORTS.W1, APP_TAB, { focus: false }); // the OWNER - the device under test
+const w2 = await client(PORTS.W2, APP_TAB, { focus: false }); // the PEER - the one that sends
 
 /** The group under test, opened by name with a post-condition - see `groupnav.mjs`. */
 const openGroup = (cx, label, opts = {}) => openGroupByName(cx, GROUP, { ...opts, label });
@@ -87,14 +88,14 @@ await sleep(18_000);
 // gone; see its docblock for why that changes nothing about the security posture.
 await goto(w1, '/chat');
 await sleep(4000);
-const snap = JSON.parse(execFileSync(process.execPath, ['mlsdb.mjs', '--port', '9224', 'snapshot'], { encoding: 'utf8' }));
+const snap = JSON.parse(execFileSync(process.execPath, [requireScript('mlsdb.mjs'), '--port', '9224', 'snapshot'], { encoding: 'utf8' }));
 console.log(`[w2] snapshot taken at ${snap.takenAt}: ${snap.report.map((r) => `${r.store} ${r.rows} rows`).join(', ')}`);
 
 // ---------------------------------------------------------------- 1. build the group on W2
-execFileSync(process.execPath, ['newgroup.mjs', '--port', '9223', '--name', GROUP], { encoding: 'utf8', stdio: 'inherit' });
+execFileSync(process.execPath, [requireScript('newgroup.mjs'), '--port', '9223', '--name', GROUP], { encoding: 'utf8', stdio: 'inherit' });
 // `invite.mjs` derives WHO from the port, so the name is not spelt here either - W2 invites the
 // other party, which is the device under test.
-execFileSync(process.execPath, ['invite.mjs', '--port', '9223', '--group', GROUP], {
+execFileSync(process.execPath, [requireScript('invite.mjs'), '--port', '9223', '--group', GROUP], {
   encoding: 'utf8',
   stdio: 'inherit',
 });
@@ -173,7 +174,7 @@ let row = null;
 try {
 // ---------------------------------------------------------------- 3. break it
 console.log(
-  `[w2] restore: ${execFileSync(process.execPath, ['mlsdb.mjs', '--port', '9224', 'restore'], { encoding: 'utf8' }).replace(/\s+/g, ' ').slice(0, 160)}`
+  `[w2] restore: ${execFileSync(process.execPath, [requireScript('mlsdb.mjs'), '--port', '9224', 'restore'], { encoding: 'utf8' }).replace(/\s+/g, ' ').slice(0, 160)}`
 );
 // DIGEST IMMEDIATELY AFTER THE RESTORE AND AGAIN AFTER THE RELOAD.
 //
@@ -184,7 +185,7 @@ console.log(
 // the server. The blob is opaque, but its DIGEST is not: if the post-reload digest differs from the
 // restored one, something rewrote it, and that is cause one.
 const digestOf = () =>
-  JSON.parse(execFileSync(process.execPath, ['mlsdb.mjs', '--port', '9224', 'digest'], { encoding: 'utf8' })).report[0]
+  JSON.parse(execFileSync(process.execPath, [requireScript('mlsdb.mjs'), '--port', '9224', 'digest'], { encoding: 'utf8' })).report[0]
     .entries.map((e) => `${e.key}:${e.len}:${e.hash}`)
     .join(' ');
 const afterRestore = digestOf();

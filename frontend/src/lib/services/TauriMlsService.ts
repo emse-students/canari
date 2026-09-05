@@ -327,16 +327,19 @@ export class TauriMlsService extends BaseMlsService {
                 ? fromBase64(parsed.ratchetTree as string)
                 : undefined;
             if (ciphertext.length > 0) {
-              this.enqueueMessage({
-                senderId: (parsed.senderId as string) || 'unknown',
-                ciphertext,
-                groupId: (parsed.groupId as string) || undefined,
-                isWelcome: !!parsed.isWelcome,
-                isCommit: !!parsed.isCommit,
-                ratchetTreeBytes,
-                queuedMessageId: (parsed.queuedMessageId as string) || undefined,
-                queuedCreatedAt: parseServerTimestampMs(parsed.createdAt),
-              });
+              this.enqueueMessage(
+                {
+                  senderId: (parsed.senderId as string) || 'unknown',
+                  ciphertext,
+                  groupId: (parsed.groupId as string) || undefined,
+                  isWelcome: !!parsed.isWelcome,
+                  isCommit: !!parsed.isCommit,
+                  ratchetTreeBytes,
+                  queuedMessageId: (parsed.queuedMessageId as string) || undefined,
+                  queuedCreatedAt: parseServerTimestampMs(parsed.createdAt),
+                },
+                'live'
+              );
             }
           } else if (parsed.proto && !this.messageCallback) {
             console.warn(

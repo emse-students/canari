@@ -479,18 +479,41 @@
           pendingReadWatermark = 0;
           readReceiptTimer = null;
           if (toSend <= 0) return;
+          // THREE WAYS OUT OF HERE AND ALL THREE USED TO BE SILENT. The debounce has already zeroed
+          // `pendingReadWatermark`, so nothing will retry: whatever this device has read up to is
+          // lost for the peer, which keeps showing the conversation unread until something else
+          // moves the mark. That is a best-effort path, and a line is all a loss leaves behind it.
           try {
             const mlsService = session.ensureMls();
             const fresh = convs.conversations.get(currentContact);
-            if (!fresh) return;
+            if (!fresh) {
+              console.warn(
+                `[READ] watermark ${toSend} dropped: conversation ${currentContact} left the store` +
+                  ' between the debounce arming and its expiry, so the receipt is never sent'
+              );
+              return;
+            }
             sendReadWatermark(toSend, {
               mlsService,
               userId: session.userId,
               deviceKeyB64: session.deviceKeyB64,
               conversation: fresh,
-            }).catch(() => {});
-          } catch {
-            /* MLS not ready */
+            }).catch((e) =>
+              console.warn(
+                `[READ] watermark ${toSend} for ${currentContact} was not sent - the peer keeps` +
+                  ' showing it unread until this device reads again:',
+                e
+              )
+            );
+          } catch (e) {
+            // The comment here used to READ `/* MLS not ready */` and assert a cause nothing had
+            // checked. `session.ensureMls()` is the only call above that can throw, so that reading
+            // is probably right - but "probably" is not what a swallowed branch may claim, and the
+            // throw itself says it for free.
+            console.warn(
+              `[READ] watermark ${toSend} for ${currentContact} could not be sent - no MLS client:`,
+              e
+            );
           }
         });
       }, 2000);
@@ -617,9 +640,32 @@
 
   // ─── Thin forwarding helpers (keep template free of logic) ────────────────
 
+  /**
+   * Sends `text`, and makes sure a failure on the way cannot vanish.
+   *
+   * `void promise` DISCARDS A REJECTION, and this is the send path. `sendChatMessage` writes the
+   * optimistic echo and then awaits `enqueueOutboxMessage` with no `catch` of its own, so an
+   * IndexedDB transaction that aborts rejects all the way up to here - where the promise was thrown
+   * away. The user then sees the composer empty (it is cleared synchronously below, without waiting
+   * for the enqueue), a bubble stuck on `pending`, no error, and NOTHING in the log: a message they
+   * wrote, believe sent, and that no durable queue ever received. That is the one failure the
+   * outbox cannot survive, because it is the one it never hears about.
+   *
+   * The catch does not restore the text - the echo is already on screen and pulling it back would
+   * be a second surprise. It says so, out loud, on both surfaces: the error banner the media path
+   * already uses, and the log, because a best-effort path that swallows leaves nothing else behind.
+   */
+  function sendText(text: string) {
+    void messaging.handleSendChat(msgCtx(), text).catch((e: unknown) => {
+      const reason = e instanceof Error ? e.message : String(e);
+      convs.sendError = m.chat_send_error({ reason });
+      log(`[SEND] handleSendChat threw - the message was NOT queued: ${reason}`);
+    });
+  }
+
   /** Sends the current messageText via MLS then clears the input. */
   function handleSendChat() {
-    void messaging.handleSendChat(msgCtx(), messageText);
+    sendText(messageText);
     messageText = '';
   }
 
@@ -780,7 +826,7 @@
 
   /** Sends a picked GIF as a message (its direct URL is rendered inline as a GIF). */
   function handleSendGif(url: string) {
-    void messaging.handleSendChat(msgCtx(), url);
+    sendText(url);
   }
 
   /** Encrypts and sends a community poll in the currently selected channel. */
@@ -848,7 +894,16 @@
   }
 </script>
 
-<div class="app-layout" in:fade>
+<!--
+  WHICH PAGE IS MOUNTED, published rather than inferred from the URL. `location.pathname` changes
+  when SvelteKit STARTS a navigation and this component swaps after it, so for a moment the address
+  says `/communities` while the `/chat` document is still on screen - and both pages render a
+  sidebar with the same rows, so nothing in the DOM told the two apart. An instrument that read the
+  URL and then clicked found the element it wanted on the page it was leaving, clicked into the
+  swap, and reported `no stable element` about a screen where the thing was plainly there
+  (`openChannel`, 2026-09-05). Same one-attribute cost as `data-conversation-tile`, same reason.
+-->
+<div class="app-layout" data-route-mode={routeMode} in:fade>
   {#if session.isLoggedIn}
     <!-- NO BANNERS HERE ANY MORE, and the two that were are why this comment exists. Both said what
          another banner was already saying: "En attente de connexion" duplicated `OfflineBanner` at

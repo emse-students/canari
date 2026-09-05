@@ -62,6 +62,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 
 | What | Kind | Where the substance is |
 | --- | --- | --- |
+| **UNLOCK THE CAMPAIGN PHONE** - it went behind its credential lock screen on 2026-09-05 and three LIFE rows plus every later phone row cannot run until it is cleared | 1 gesture on the device | [P2 - every silent push on the phone fails to decrypt](#p2---every-silent-push-on-the-phone-fails-to-decrypt-the-notification-loses-its-preview-and-the-fallback-it-falls-back-to-does-nothing-measured-2026-09-05-first-run-of-notif) |
 | choose how production says it is down - the probe must hit `/api/version`, which needs the database | decision, then ~1 click | [P2 - nothing tells anybody production is down](#p2---nothing-tells-anybody-production-is-down-and-both-outages-of-2026-09-01-were-reported-by-the-user-owed-to-the-user-a-decision-then-one-click) |
 | should a dev-ONLY trigger exist - today one push deploys both estates and a broken dev BLOCKS production, by design | decision | [dev.canari-emse.fr becomes a real second environment](#devcanari-emsefr-becomes-a-real-second-environment---decided-2026-08-17) |
 | a fine-grained PAT from an account WITH PUSH ACCESS - the App token was measured refused, ten times | decision | [P1 - no identity CI can mint may ask Dependabot to rebuild a branch](#p1---no-identity-ci-can-mint-may-ask-dependabot-to-rebuild-a-branch-so-a-moved-gate-parks-the-whole-queue---and-the-app-token-was-the-recommendation-this-row-itself-made-measured-2026-09-03) |
@@ -666,6 +667,47 @@ and `didBecomeActive`, which the FCM fix has just made load-bearing.
 entry here. **What must NOT happen is a fix written against a suspected iOS lifecycle bug that nobody
 has seen** - the repo has no way to tell whether it worked.
 
+### P1 - the PIN modal can be DISMISSED, so a user who forgot their PIN walks the app closing it on every page, and there is no way to sign out (user, 2026-09-05)
+
+**Observed on real people, not inferred.** Verbatim: *"Certaines personnes oublient leur PIN et
+plutot que de le reinitialiser, elles naviguent de page en page en fermant le modal de PIN (qui
+s'ouvre a chaque fois). Il faut trouver une solution, que ce ne soit pas possible de dismiss ce
+modal. Mais il faut aussi mettre un bouton pour se deconnecter pour ne pas etre softlock en cas de
+probleme."*
+
+**WHAT THE CODE DOES TODAY, so picking this up does not start with a rediscovery.**
+
+- `Modal.svelte` ALREADY carries the prop this needs: `dismissible?: boolean`, and when false it
+  disables the backdrop click, Escape AND the header close button, in one place. `PinModal.svelte`
+  simply does not pass it, so it defaults to `true`.
+- The call site's `onClose` (`ChatBackgroundService.svelte`) hides the modal and clears
+  `_loginInProgress` / `globalSession.isLoginInProgress` - so dismissing does not merely hide a
+  dialog, it ends the login attempt, and the next page re-opens it from scratch.
+- `PinModal` carries a SECOND way out that `dismissible={false}` would not touch: an
+  `<a href="/profile">` labelled with `auth_pin_delete_account_link` that calls `onClose` on its way.
+  Whatever is decided about the backdrop has to be decided about that link too, or the fix closes one
+  door and leaves the other open.
+- A reset EXISTS - `onForgotPinReset` -> `handlePinReset`, behind a `confirmReset` confirmation -
+  and it is destructive: it wipes the PIN-protected messaging state. It is the path the user says
+  people are avoiding, and avoiding it is rational.
+- **There is no sign-out control anywhere in the modal.**
+
+**THE TWO HALVES ARE ONE CHANGE, AND THE SECOND IS WHAT MAKES THE FIRST SAFE.** Making the modal
+undismissable without an exit turns a loop into a wall: the user who cannot remember their PIN would
+be left with a destructive reset or the account-deletion link, on a modal that no longer closes. So
+the sign-out button lands FIRST, or both land in the same commit - never the lock alone.
+**A destructive control needs an allowlist of what it may touch**, and "sign out" is the
+non-destructive exit this screen has never had.
+
+**WHAT THIS IS NOT.** Dismissing the modal exposes nothing: the PIN gates the local MLS store, so a
+user who closes it walks an application with nothing decrypted in it. This is P1 for the PATH being
+broken - people are stuck in it now - not for a disclosure.
+
+**AND THE ROW THAT WOULD HAVE CAUGHT IT DOES NOT EXIST.** PIN is 0/10 on the board and had no runner
+until 2026-09-05. Whatever is written here is asserted by a PIN row, not by a reading: the assertion
+is that the modal survives a backdrop click, an Escape, a navigation and a reload, and that exactly
+one control on it leads out without destroying anything.
+
 ### P2 - the PIN modal's error is a bare paragraph, so a refused unlock is never announced to a screen reader (measured 2026-09-04)
 
 `PinModal.svelte` renders its failure as `<p class="...text-red-500">{displayError}</p>` in BOTH
@@ -688,6 +730,190 @@ worth a sweep for the same pattern elsewhere: `ChangePinModal.svelte` and `Login
 
 **Not fixed inline, deliberately** (user, 2026-09-04): P2s go here rather than into the session that
 found them.
+
+### P2 - the local estate's DATABASE references media its OBJECT STORE never received, so any row that renders the feed is PASS-DIRTY on 404s that are the estate's (measured 2026-09-04, first row run after the tidy)
+
+**Measured on HEAL-NEW-0.** Every assertion of the row passed - `wipe`, `loggedOut`, `noHumanStep`,
+`freshId`, `neverSeen`, `sameAccount`, `registered`, `addressable` - and the re-minted device
+rejoined FOUR groups by external commit inside one second. The verdict was still `PASS-DIRTY`, and
+**100% of the dirt was media**: five `[associationLogoCache] fetch failed 404`, one
+`[PostMedia] media download failed`, and fourteen `GET /api/media/... -> 404` in `badHttp`.
+
+**The cause is a restore that copies one half of a pair.** `pull-prod-dump.sh` fetches a Postgres
+dump and nothing else; `restore-into-local.sh` writes those ROWS. Neither touches Garage, and
+`restore-into-local.sh` says so in its own header - *"WHAT A COPY DOES NOT BUY"*. What that header
+does NOT say is the consequence: the copied rows still name media ids, the objects behind them live
+only in production's store, and the product then does exactly the right thing - it asks for what its
+database says exists, and is answered 404 fourteen times.
+
+**Scope, measured rather than assumed.** It is NOT every row. A client sitting on `/chat` is clean -
+`logs.mjs --device W1 --for 8000` and the same on W3 both reported clean minutes after the run. The
+404s fire ONCE, on the first render of the social feed after a login. So the affected class is
+**rows that log in fresh or wipe a profile and land on `/posts`** - the HEAL-NEW, HEAL-REVOKE, LIFE
+and SETUP families - plus anything touching a community feed. That is a large systematic class, and
+it is why this is written down rather than dispositioned.
+
+**Do NOT close it with `ignoringExpectedLog`.** Per-row disposition is the sanctioned mechanism for
+expected noise, but it is per ROW on purpose, and this would be the same excuse copied into every
+member of four rungs - which is a wider classifier wearing a per-row costume, and the thing the
+methodology forbids. The noise is also not *necessary*: it is the visible end of an estate that
+disagrees with itself, and the rule is to explain it or FIX it.
+
+**The fix belongs in the restore, which already does this kind of work.** `restore-into-local.sh`
+exists to strip *"the things a copy must never carry"*; stripping references to objects the copy did
+not carry is the same step. Clearing the dangling media ids on the association and post rows leaves
+the estate SELF-CONSISTENT - a post with no image is a state the product renders correctly and a
+real user can be in - whereas copying production's media blobs would drag the PII half of the estate
+that the DB copy at least keeps behind one deliberate decision. It is a change to infrastructure
+tooling with its own blast radius, so it is a P2 here rather than something done inline during a
+harness tidy.
+
+### P2 - a device reconciles history for a group it has not joined yet, and learns by 403 what its own store already knew (measured on DEL-1, 2026-09-05)
+
+**The line.** `[HISTORY_STATE] Send failed for b0b436ed...: SenderNotActiveError: This device holds
+no leaf in group b0b436ed... (membership pending)`, on W2, seconds after W1 added it to a group and
+before its Welcome had been processed.
+
+**Nothing is lost, and that is why this is a P2 and not a P1.** `sendHistoryStateKey` returns
+`false`, and its contract says what that means - *"the caller treats that as 'this group was not
+reconciled', never as 'we agree'"* - so the sweep simply has not happened yet and happens later. The
+server is also right to refuse: a device with no leaf encrypts frames no member can open, which is
+the defect `SenderNotActiveError` was typed for after production turned six messages into thirty
+unopenable rows on 2026-09-02.
+
+**What is wrong is the ASKING.** The reconciliation sweep audits every group the device has a row
+for, including one it has been given a roster seat in and has not yet joined - and the only thing
+that tells it so is a round trip that ends in 403. That is
+[durable-rules](durable-rules.md)' *"never learn by failing what a fact could have told you"*: whether
+this device holds a leaf in a group is answerable from the local MLS store, at the point the sweep
+picks its candidates, with no network at all. Carrying that discriminator into the sweep's predicate
+removes a frame, a refusal, and a line that reads like a delivery defect to anybody who meets it.
+
+**Where.** The candidate set is chosen by the `[HISTORY_RECONCILE]` sweep (`auditing N group(s) that
+never have been`); the refusal is thrown in `mlsDeliveryApi.ts` and reported by
+`sendHistoryStateKey` in `groupActions.ts`. The row that produced it keeps it ACCUSING on purpose -
+`del1.mjs` forgives its own group creation and its own cut, and deliberately not this.
+
+### P3 - `[BUFFER] welcome_request sent for unknown group` announces a send that has not happened and may not happen (found 2026-09-05, DEL-6)
+
+`handleUnknownGroup` logs that line immediately after calling `startRecovery`, which is `void`-ed
+on purpose - an await there stalls the whole inbound drain. So the sentence is written before
+`requestReAdd` has looked at anything, and that seam has several early returns: a throttle inside
+`RECOVERY_TIMEOUT_MS`, a group already held locally, a tombstone, a membership still `pending`.
+In each the line claims a `welcome_request` that never went out.
+
+**The case that mattered is FIXED and this is the residue.** A frame for a conversation at
+`lifecycle: 'removed'` is now acknowledged and dropped before any of this runs, which is where the
+real cost was - a queue row nothing would ever take out. What is left is wording.
+
+**It is not changed inline because the sentence has three consumers**, and one of them is a
+predicate of a rung that has not run yet in this campaign: `heal-w2.mjs` requires the line to have
+fired, `classify-selftest.mjs` pins its bucket, and `chat-delivery.md` quotes it. Renaming it to
+what it can honestly claim - a recovery STARTED - moves the instrument and the subject in the same
+commit, before HEAL has produced a single verdict. It belongs in the same pass as the HEAL rung.
+### P3 - the remove control in a group panel announces a raw 64-hex user id, so a screen reader reads the id where everyone else reads a name (measured 2026-09-05)
+
+`Sidebar`'s member rows render display names correctly - GRP-9 measured zero of five rows showing a
+raw id, both names resolving - and the panel's per-member remove control carries
+`aria-label="Retirer <userId>"` with the full 64-hex id. So the one surface that exists to be read
+aloud is the one that says the id.
+
+It is also the ONLY per-member hook the panel offers, which is why the campaign addresses members
+through it (`grp.mjs`'s header says so). Giving it a name would need a second hook for the rig, or
+the rig switching to a `data-` attribute - the same one-attribute pattern `data-channel-row` and
+`data-conversation-tile` already use, which is the cleaner end state.
+
+Not fixed inline during rung 8 because the accessible name is load-bearing for the instrument and
+swapping both halves at once is a change that wants its own measurement.
+
+### P2 - an inviter that dies between sending a Welcome and registering the joiner leaves a member in the MLS tree with no server-side membership, and nothing repairs it (measured 2026-09-05)
+
+`groupCreation.ts` delivers Welcomes and THEN calls `registerMember` for each user whose Welcome was
+delivered. Between those two the joiner is cryptographically in the group and unknown to the
+delivery service, so nothing routes to it.
+
+A line in `setupMessageHandler.ts` claimed to cover this - the joiner registering ITSELF, described
+as a "safety net ... if the inviter has not yet called registerMember" - and it could not: the
+server's `assertCallerMayMutateMembership` refuses a caller who is not already a member, exempting
+only the creator of an empty group. It has been deleted (see `CHANGELOG.md`), which removes a 403
+on every join and changes nothing about the exposure.
+
+**What would actually close it** is registering before delivering rather than after, so the server
+knows the member before the Welcome can arrive - which is the order the delivery service's own
+docblock already assumes ("Freshly-invited joiners are registered as members BEFORE their Welcome").
+The reason it is not that way is visible in the code: only users whose Welcome was DELIVERED get
+registered, so inverting the order also changes which users end up registered when a delivery fails.
+That is a real design decision and wants measuring, not guessing.
+
+### P3 - the @mention dropdown offers you yourself, and mentioning yourself can do nothing at all (measured 2026-09-05)
+
+Typing `@` in a channel composer lists the signed-in user among the suggestions. Picking it inserts
+a chip and puts your own id in `mentionedUserIds`, and then nothing happens - `notifyChannelRecipients`
+skips `member.userId === input.senderId` before it looks at any notification level, so a self-mention
+cannot produce a notification for anybody, including you. It is a control whose only possible effect
+is on the message text.
+
+**It was measured because it broke an instrument, not a user.** `mentionInComposer` clicked the top
+suggestion; from W2 the top row for the owner's first word was W2 ITSELF, so MENTION-2 mentioned the
+sender, the server correctly pushed to nobody, and the row recorded `FAIL` against a notification
+level that worked. That half is fixed on the rig's side (the row is addressed by id or by whole
+display name, and an ambiguous list is a refusal). What is left is the product question.
+
+`UserAutocomplete` already takes `excludeIds`, and the composer already knows who is signed in, so
+excluding self is one argument. **Whether it SHOULD be excluded is a judgement, not a bug** - some
+chat apps allow a self-mention as a way to bookmark a message - which is why this is a P3 and not a
+fix applied inline: it is the user's call.
+
+### P3 - NOTHING LINTS THE HARNESS, and the 158 scripts that drive every campaign verdict carry 29 warnings nobody has ever been shown (measured 2026-09-04)
+
+`bun run lint` is scoped to `frontend/`; `make test-harness` runs the self-tests and
+`inventory.mjs --check`, and neither lints. So the rig that produces every campaign verdict - 158
+scripts, the instruments the board is believed on - is the one directory in this repository no
+linter has an opinion about.
+
+**Measured**: `bunx oxlint -c frontend/.oxlintrc.json tools/cross-client-harness` reports **29
+warnings** - 26 `no-unused-vars` (dead imports in archived rows: `fwd.mjs`, `fwd5.mjs`, `ws1.mjs`
+and others), plus `no-useless-spread`, `no-useless-fallback-in-spread` and
+`prefer-string-starts-ends-with`. None is a defect today. **That is the point** - the value is not
+the 29, it is that a 158-script tree has no gate, so the 30th will be a real one and will arrive
+silently.
+
+**The fix is the GATE, not the 29.** Add the harness to a lint recipe and make `make test-harness`
+run it, so the count can only go down. Hand-clearing the warnings first buys one clean session and
+guarantees the next drift is invisible again - the same trade `inventory.mjs` was written to end for
+the index.
+
+**Not fixed inline, deliberately.** It surfaced during work item A3 (the atom/row reclassification),
+and clearing 29 warnings across archived rows that cannot be re-run right now is a different change
+with a different risk: a dead import removed from a row is safe, a `no-useless-spread` rewrite
+inside one is not, and the two must not ride together. P3 per the standing rule.
+
+### P3 - the gateway logs a client that merely went away at ERROR, and a clean goodbye at INFO, so the level says nothing about whether anything is wrong (measured 2026-09-04)
+
+`handlers.rs:529` ends the receive loop with two arms and one of them is unconditional:
+`Ok(Message::Close(c))` logs `info!("Client closed connection")`, and `Err(e)` logs
+`error!("WebSocket Error from {user_id}: {e}")` whatever `e` is. **A browser that reloads,
+navigates away or is killed sends no close frame** - the socket resets - so the ordinary end of a
+web session is recorded at the same level as a genuine protocol fault.
+
+**Measured, and the cause is visible in the timestamps.** Three ERROR lines at `16:19:49.602`,
+`.603490` and `.603505` - three sockets dying inside a millisecond of each other, which is
+`make local-frontend` recreating the nginx container in front of them, not three clients
+misbehaving. The one `Client closed connection` line in the same window carries `code: 1001`
+("going away"), the polite version of the same event.
+
+**The fix is a classification, not a demotion**, which is the distinction
+[durable-rules](durable-rules.md) draws when it says never to demote a line: `axum` 0.8 surfaces the
+tungstenite error, so `ProtocolError::ResetWithoutClosingHandshake` is a TYPE and reading it is
+reading a discriminator rather than prose. A reset with no handshake from a web client is the
+expected end of a connection and belongs at `info!`/`debug!` beside the clean close; everything else
+stays `error!` and finally means something when it appears.
+
+**The rate here is NOT the rate that matters and must be measured before the name is believed.**
+This estate is idle apart from one operator, so three lines is all it produced; on production the
+line fires once per client that ever closes a tab without a handshake, and nobody has counted that.
+Measure it on the production gateway first - if it is the dominant ERROR line there, that alone is
+the argument.
 
 ### P3 - the dirt classifier fails a row on the OIDC callback that row performs on purpose (2026-08-28)
 
@@ -1004,6 +1230,29 @@ hypotheses differ, and the stall will already have been measured.
 
 ## Communities and permissions
 
+### Question - does an invitation into a community notify somebody the inviter has never spoken to? (user, 2026-09-05)
+
+Verbatim: *"Inviter dans communaute sans avoir discussion prealable : notification ?"*
+
+**A QUESTION, NOT A DEFECT REPORT - and its first task is to answer itself.** Nobody here has asked
+it, so the current behaviour is unknown rather than wrong, and an entry that guessed would be worse
+than one that does not.
+
+**WHY IT IS WORTH A ROW RATHER THAN A READ OF THE CODE.** "No prior conversation" is not a cosmetic
+variation on the invitation path - it is the state in which the two parties share the least. Reading
+the source can say which call is made; it cannot say whether a device with no prior anything is
+addressable at the moment the invitation is sent, which is a fact about the server's roster and the
+push token, not about the branch. The campaign has already found one defect of exactly that
+shape - a device given a roster seat and never a Welcome - and it was invisible to every reading.
+
+**WHAT WOULD ANSWER IT.** One row: a fresh peer with no conversation history with the inviter, the
+app backgrounded, invited into a community. Three outcomes to tell apart, and they want different
+fixes: no notification is raised at all (the push was never sent, or the device holds no token), one
+is raised but carries nothing readable (the decrypt failed - the
+[community notification P2](#p2---a-community-message-is-not-decrypted-in-a-background-notification-and-the-killed-case-is-unmeasured-for-both-kinds-user-2026-09-05)),
+or it works. The logcat is what separates the first from the second; the shade alone cannot.
+
+
 Six entries came out of ONE audit on 2026-08-17, prompted by a user question rather than by a
 failure. **All six are closed as of 2026-08-19** and are not repeated here - the last one, two communities
 sharing a name, the user closed by decision rather than by code (2026-08-19: it is not a defect).
@@ -1145,6 +1394,160 @@ asserts a deadline arriving live (the campaign closes polls with the close contr
 no check waits on wall-clock time at all. It belongs with the rendering pass, not with a rung.
 
 ## Messaging convergence
+
+### P2 - every silent push on the phone fails to decrypt, the notification loses its preview, and the fallback it falls back to does nothing (measured 2026-09-05, first run of NOTIF)
+
+All five NOTIF rows show it and NOTIF-10 FAILS on it. On the phone, for every message:
+
+```
+E/openmls: Ciphertext generation out of bounds 433 / SecretReuseError
+E/mls_core::messaging: MLS decryption failed at exactly its own epoch, so no redelivery can help
+   group=2bd5add9 msg_epoch=12 group_epoch=12
+E/mines_app_lib::mobile::background: [PushBG] key-based: process_incoming_message Err(... same-epoch refusal ...)
+W/CanariFCM: decryptProto: ok=false -> decryption failed
+D/CanariFCM: fetchCommitsFromBackend: 0 commit(s) since epoch=12
+D/CanariFCM: catchup: no commit to catch up (epoch=12) -> fallback
+W/CanariFCM: Decryption failed -> MlsBackgroundWorker enqueued
+D/CanariWorker: doWork: background cleanup completed          <- 60 ms, and it decrypts nothing
+```
+
+**What the user sees**: `Nouveau message de <name>` with no preview, and on NOTIF-10 that is the only
+notification there ever is - `notifiedInMs: null` for all five messages.
+
+**Why the generation is already consumed, from the server's own log.** The push is not
+unconditional: `[PUSH_DEFERRED] queuedId=... still unACKed after 10 s -> FCM fallback`, then
+`[PUSH_SEND] FCM sent`. So the server pushes only what the device has not ACKNOWLEDGED.
+
+The phone had DECRYPTED the message - spending the generation - and had not ACKED it, because its
+network was failing in exactly that window: `[OUTBOX] a461056f... transient failure (attempt 1..3):
+error sending request for url (http://localhost:8081/api/mls/send)`. Ten seconds later the server
+pushed a message the device already held, and the push could not decrypt it, because a ratchet
+generation can be spent once.
+
+**The notification falls into the gap between DECRYPTED and ACKNOWLEDGED**, and the ACK is being
+asked a question it was not written to answer: it says whether the SERVER's copy was collected, and
+it is read as whether the DEVICE needs telling. On a phone whose uplink is degraded - the ordinary
+case for a backgrounded app - those two come apart on every message.
+
+**LIFE-2 is the same defect and it is worse there.** Backgrounded via HOME (not killed), the shade
+held nothing but the USB notice, `notification.afterMs: null`, and the message took 95 s to appear.
+LIFE-3, which KILLS the app, passes: a killed app has spent no generation, so its push decrypts and
+notifies. **A phone in a pocket is the failing case and a phone that was killed is the passing one.**
+
+**Three rules this sits on.** *A race that heals cleanly is still a defect* - and this one does not
+heal: the preview is gone for good. *A fallback is a signal, never a path* - this one is taken 100%
+of the time and leads to a worker that only runs `background cleanup`. *Never learn by failing what
+a fact could have told you* - `queuedMessageId` is in hand before the decrypt is attempted.
+
+**The discriminator already exists one layer down and is thrown away one layer up.** `mls_core`
+names this exactly - "same-epoch refusal", distinct from an epoch gap - and `CanariFirebaseMessaging-
+Service` collapses both into `decrypted == null`, then answers with a commit catch-up whose own
+comment says it is for "an epoch gap (a commit arrived while the app was closed)". For a same-epoch
+refusal the catch-up cannot help by construction, and it costs a backend round trip and a worker
+enqueue per message.
+
+**What a fix owes, and why none was written on 2026-09-05.** Two candidate shapes, and the second
+is the cheap one:
+
+1. Carry the kind to Kotlin as a TYPE - *never branch on an error message* - so a same-epoch refusal
+   stops costing a backend round trip and a worker enqueue per message, and can be answered from the
+   copy the device already holds.
+2. **Let the JS layer notify when IT is the path that decrypted.** `notifyInbound` excludes native
+   mobile wholesale, on the ground that "the background push handler posts its own" - true only when
+   the push CAN decrypt, and by the ratchet argument exactly one of the two ever can. Both already
+   key their notification per conversation (`stableNotifId` / tag `canari-<id>`), so the app's would
+   REPLACE the contentless fallback rather than duplicate it.
+
+Neither was attempted, and the reason is a rule rather than a budget: **a green gate is not a working
+system, and three of three iOS defects were invisible to every gate here.** Both shapes change
+notification behaviour on a surface that only hardware can judge, and **the phone went behind its
+credential lock screen mid-phase** (`deviceLocked=1`, `wm dismiss-keyguard` refused, no credential in
+the rig), so LIFE-6/7/8 never ran and nothing could be re-measured. A notification fix verified only
+by unit tests is exactly the shape that has cost this project three times.
+
+
+### P2 - a COMMUNITY message is not decrypted in a background notification, and the KILLED case is unmeasured for both kinds (user, 2026-09-05)
+
+**Reported by the user, who has seen it**, and asked in the same breath for the question the campaign
+has so far half-answered: *"Notification non dechiffrees en background - Communaute"*, and *"Les
+messages sont ils bien dechiffres en notification quand l'app est tuee OU en background ?"*
+
+**FOUR CELLS, AND ONLY TWO HAVE EVER BEEN MEASURED.** The two axes are the conversation's encryption
+and the app's lifecycle state, and they are independent - so the answer to one cell says nothing
+about any other.
+
+| | app BACKGROUNDED | app KILLED |
+| --- | --- | --- |
+| DM or group (per-conversation MLS ratchet) | **FAIL** - LIFE-2, no notification at all and 95 s to arrival | **PASS-DIRTY** - LIFE-3 |
+| Community salon (the community's shared key) | **the user reports it is not decrypted** - nothing here has measured it | **UNMEASURED** |
+
+**THE DM ROW'S CAUSE IS ESTABLISHED AND IS NOT THIS ENTRY'S.** It is
+[the silent-push P2](#p2---every-silent-push-on-the-phone-fails-to-decrypt-the-notification-loses-its-preview-and-the-fallback-it-falls-back-to-does-nothing-measured-2026-09-05-first-run-of-notif):
+the phone decrypts over its WebSocket - spending the ratchet generation - but cannot ACK, so the
+server pushes after 10 s a message the device already holds, and a generation is spent once. That is
+also exactly why the KILLED cell passes where the BACKGROUNDED one fails: a killed app has spent no
+generation. **The phone in a pocket is the failing case and the phone that was killed is the passing
+one**, which is the opposite of what anyone would guess.
+
+**A COMMUNITY SALON CANNOT INHERIT THAT ANSWER, BECAUSE IT IS NOT THE SAME KEY PATH.** A salon is
+encrypted with the community's shared key
+([channel-encryption](protocols/channel-encryption.md)), not with a per-conversation MLS ratchet, so
+the spent-generation argument that explains the DM failure may not apply to it at all - and if it
+does not, the cause is a second, unrelated one wearing the same symptom. **Two causes that produce
+the same screen want opposite fixes**, so the two rows are measured apart before either is touched.
+
+**WHAT IS OWED, and it is measurement first.** Four NOTIF rows - salon x {backgrounded, killed} and
+the two DM cells re-taken on the same build so the comparison is from one afternoon rather than from
+two. All four need the phone, which is
+[owed a human unlock](#owed-to-the-user---decisions-rotations-and-one-off-clicks). Read the salon
+rows with the invitation question in
+[Communities and permissions](#communities-and-permissions): a notification that never arrives and a
+notification that arrives undecryptable are different failures, and only the logcat separates them.
+
+### P2 - a frame this device already read is re-accused as lost on every later cold start, and the reconciliation it triggers finds nothing (measured 2026-09-05)
+
+TAB-3b runs five cold starts. Each one printed `[History] frame never read here and unreadable for
+good (secret-reuse); will reconcile` - and the later runs re-printed **the same row keys** as the
+earlier ones (`row 1788591833954-0` appears in run 1 and again in run 2), alongside
+`Ciphertext generation out of bounds` and
+`MLS decryption failed at exactly its own epoch ... msg_epoch=12 group_epoch=12`.
+
+**Same-epoch `SecretReuseError` means the generation was already consumed, which means this device
+already decrypted that frame.** So the verdict is a false alarm, and it is the loudest line the
+history replay has: the harness's severity rule fires on it, and its reader is being taught to skip
+the one line that would name a real loss.
+
+The ledger that should prevent it is `seenCipherHashes` (`utils/chat/history.ts`), which IS durable -
+localStorage, capped at 5 000 - and the unreadable path does `seenCipherHashes.add(rowKey)` before
+warning. But the save is a THUNK returned to the caller and committed only "AFTER the encrypted
+checkpoint flush", deliberately, so the cursor never runs ahead of the persisted ratchet. **A session
+that ends before that flush keeps the accusation and loses the record of having made it**, which is
+exactly what five cold starts manufacture.
+
+Two things are owed before a fix: whether the thunk is reached at all on these runs, and where the
+duplicate delivery that reaches the decryptor comes from - `[QUEUE] delivery ... arrived twice`
+recognises one class of duplicate and acknowledges it without decrypting, so this one took a
+different path. **A race that heals cleanly is still a defect**, and this one heals by asking the
+peer for history it already has.
+
+### P2 - the leader tab does not render a message the follower tab sent, until it re-reads (measured 2026-09-05)
+
+TAB-4b: with two tabs of one account open, a message sent from the SECOND tab renders there, reaches
+the peer, and does NOT appear in the first tab - `counts.tab1: 0`, against `tab2: 1, peer: 1`. The
+reverse direction works (TAB-4c measured `tab2: 1` for a message sent from the first tab), and an
+inbound message reaches both (TAB-4a). It is not loss: a reload of the leader shows it, so the row IS
+persisted - measured directly, the message survives closing the follower and reloading.
+
+What is missing is a live fan-out. `tabMessageSync` carries three events - `outbox_flush_request`,
+`outbox_entry_sent`, `outbox_entry_cancelled` - and the second is a STATUS echo: the follower uses it
+to settle a row it already shows (`patchStatus` needs `findMessage` to succeed). There is no
+"a message was composed" event, so the sibling tab has nothing to render from. The symmetric fix is
+one more event carrying the optimistic row; the throttle question is whose copy wins if both tabs
+hold one.
+
+The row does not assert it - TAB-4b expects the sending tab and the peer - so this is recorded rather
+than failing a cell.
+
 
 ### P1 - twelve of sixteen messages were FETCHED AND DROPPED, and the commit log has a PERMANENT HOLE at epoch 121 (measured on prod 2026-09-02)
 
@@ -1413,6 +1816,17 @@ client", never "clean on the server".
 
 ### P1 - a device asks for a Welcome for ever, and the member that answers RESETS the row that would have let it heal itself (measured on prod 2026-09-01)
 
+> **A FIFTH HALF WAS FOUND ON 2026-09-04 AND FIXED THE SAME DAY, AND IT IS THE ONE THAT MADE THE
+> OTHER FOUR UNREACHABLE FOR PART OF THE POPULATION.** Everything above negotiates what a `pending`
+> row MEANS; none of it runs for a device whose local WASM still holds the group, because
+> `requestReAdd` returns at its `holdsGroupState` guard before any of it is read, the connection sync
+> and the SYNC_WATCHDOG both skip such a group, and the watchdog additionally calls `cancelReAdd` on
+> it every 5 s. The outbox held the only proof - the server's own `SenderNotActive` - and merely
+> logged it. `recoverRosterDisagreement` now converts that proof into the forget the guard asks for
+> and re-enters the seam. Measured end to end on the local estate: refusal at 18:28:34, rejoined by
+> external commit and the held message sent at 18:28:37, `MEMBERSHIP_ACTIVE` in the server log. Story
+> in `CHANGELOG.md`, rules in [durable-rules](durable-rules.md), residual scope in the P2 below.
+>
 > **ALL FOUR ARE FIXED, 2026-09-04. WHAT IS LEFT IS ONE MEASUREMENT ON PROD AFTER THE RELEASE THAT CARRIES THEM.** `pending` no longer decides anything on its own: the endpoint answers per row with
 > `welcomeQueued` and `addInFlight`, a device owed nothing serves itself an external-commit join and
 > clears its own seat. **The residual window (A) was not allowed to ship without is closed by
@@ -1576,6 +1990,33 @@ taken twice - and (C) was verified end to end on the local estate, four bases ar
 and all four repaired within two seconds of a holder connecting. **Production is on `0.16.1`, two
 stables behind, so none of this is deployed yet.** The cause of the skipped Add itself is the P2
 immediately below, and the two want reading together.
+
+### P2 - a device stranded on a roster seat is only discovered by TRYING TO SEND, so a silent reader stays stranded (measured 2026-09-04, alongside the fix above)
+
+`recoverRosterDisagreement` closes the case where a device holding a group tree the server has no
+leaf for **attempts to send**: the refusal is the proof, the outbox holds it, and the repair follows
+in about three seconds. **Nothing detects the same device if it never sends.** It holds a
+well-formed tree, shows a normal-looking conversation, and is refused nothing, because it asks for
+nothing - while every frame the group produces is encrypted to a tree its leaf is absent from.
+
+**The population is real and the server already counts it.** `reportStrandedDeviceMemberships` named
+70 pending memberships past its window on this estate, 25 of them holding a roster seat with no
+Welcome ever queued and no kick recorded, the oldest since 2026-08-27. The report says *"they
+receive nothing and notify nothing"* - which is exactly the half a sender-side repair cannot reach.
+
+**What would close it, and what would not.** A client-side timer that periodically re-asks is the
+shape the durable rules refuse: termination would come from a clock, and the ask would be made by
+the device least able to answer it. The fact is ALREADY authoritative server-side and already read
+on a call every device makes on every connection - `GET /mls/users/:id/groups`, the same read
+`staleBase.ts` repairs a stale base on. **Carrying the membership status on that row is the shape
+that needs no new trigger**, and it is the move [durable-rules](durable-rules.md) names for the
+sibling defect: *never let a repair need a trigger the mechanism does not already have*. That makes
+this a server contract change plus one branch in the sync loop, which is why it is not inlined into
+the session that found it.
+
+**Do not close it by widening the sender-side seam.** The sender-side repair is correct and
+sufficient for what it can see; the gap is a device that produces no evidence at all, and no amount
+of classification at the send site can observe a send that never happens.
 
 ### P2 - a device was given a roster seat and never a Welcome, and WHY its KeyPackage was skipped is unmeasured (measured on prod 2026-09-01)
 
@@ -2479,6 +2920,26 @@ running.
 
 ## The harness itself
 
+### P3 - a check run BY HAND can measure a bundle older than the build it stamps, and nothing refuses it (measured 2026-09-05)
+
+`bundle.mjs` exists precisely for this and states it: a browser left open across a deploy keeps
+executing the old bundle and its console reads exactly like a reloaded one. `run.mjs` asks; a check
+invoked directly does not, and `record()` stamps `build` from the repository rather than from the
+client.
+
+Measured: TAB-1 was re-run three times against a fixed application and recorded `FAIL` each time
+against a build whose fix its tab had never loaded. Three probes were spent before the stale tab was
+the answer, and the ledger holds three rows naming a commit they did not measure. `tab1.mjs` now
+reloads (as `tab4.mjs` and `tab5.mjs` already did), but that is one file remembering, not a rule:
+`tab3b.mjs`, `tab7.mjs`, `notif.mjs`, `del1.mjs`, `msg4.mjs` and `mut.mjs` still do not.
+
+The fix belongs in `recordObserved`, which is the only place that knows BOTH the verdict and the
+clients it was observed on: compare each observed client's running bundle id against the deployed one
+and refuse the row rather than stamp it. That is the rig's own rule - never learn by failing what a
+fact could have told you - and the discriminator is already written and already exported. The care
+needed is that TAB-7 asserts `neverReloaded`, so the check must REFUSE, never silently reload.
+
+
 ### P2 - no row on the board can tell a healthy conversation from an epoch-forked one (measured 2026-08-29)
 
 Two production conversations sat forked one epoch behind for twenty-four hours, refusing 191 and 172
@@ -2775,6 +3236,96 @@ those rows under [testing-methodology](testing-methodology.md) 33, exactly as th
 bubble-helper entry above does. The duplication costs nothing while it is identical; it costs a phase
 the day one copy is fixed and ten are not, which is the shape `recon.mjs`'s first-database bug already
 had. So this waits for the same wholesale moment: convert all eight, re-run the phases together.
+
+### P2 - re-registering the PIN verifier strands every other client SILENTLY, and only its next unlock finds out (measured 2026-09-04)
+
+`pin_verifier` holds ONE row per user - verifier, salt, `registeredAt` - and minting a fresh device
+re-registers it. The owner's row was re-registered at **15:32:11** during the P1 reproduction, when a
+device was re-minted after a PIN reset.
+
+**Nothing told the other clients, and nothing had to, for four and a half hours.** W1 was already
+unlocked and holds its derived key in memory, so it kept sending, receiving and passing checks all
+afternoon against material the server had replaced. The staleness became visible only at 20:15, when
+TYPE-3 killed W1's tab and forced a fresh unlock: the correct PIN was then refused with *"Votre PIN a
+ete change sur un autre appareil. Recuperez vos messages avec votre ancien PIN."*
+
+**Why this is written down rather than fixed here.** Two of the three parts may well be correct. An
+unlocked session keeping a key in memory is the design; the refusal message is accurate and names the
+remedy. What is NOT obviously correct is the silence: a client whose vault material has been replaced
+is, from that moment, one reload away from being locked out of its own history, and it is told
+nothing while it can still act. The signal exists on the server (`registeredAt` moved) and reaches no
+one.
+
+**What it costs the campaign, which is the immediate cost.** `newdevice.mjs` is the HEAL-NEW runner
+and re-minting is its whole job, so every HEAL-NEW row re-registers the verifier and strands W1 and
+W2 at their next unlock - hours later, in a different rung, reading as a broken client. Its
+`WIPEABLE` allowlist protects the profile it wipes and says nothing about the account-wide effect of
+a PIN reset. **A destructive control needs an allowlist of what it may touch**, and the verifier is
+outside the one it has.
+
+**THE REPAIR IS KNOWN AND CHEAP, MEASURED 2026-09-04 21:27.** A stranded client is fixed by WIPING
+it, not by recovering it: `bun newdevice.mjs --device W1` removed the stale local material, logged
+back in with no human step, answered the account's current PIN, minted `...mtnci3lc-7mhd`, and
+rejoined all four conversations plus the venue's distribution group by external commit, self-service,
+inside a second. The two `pending` seats the old device held on Repro Alpha and Repro Beta went with
+it - `READD ... roster seat with NO queued Welcome and NO add in flight - nobody owes us anything;
+serving ourselves`. It does NOT touch `pin_verifier`, so the other clients are unaffected, which a
+re-registration would not have left true. **What the wipe costs is the local history, and that is
+already unreadable by the time anyone notices - so the repair is free exactly when it is needed.**
+
+**Owed before this can be closed.** Whether the same digits re-registered produce a verifier the
+other clients would accept (they did not here, so the refusal is about material rather than value);
+whether the "ancien PIN" recovery restores a stranded client's MLS state or resets it, which decides
+whether a stranded W1 is recoverable or must be re-minted; and whether production has ever put a real
+member in this state - `registeredAt` beside each device's `lastSeen` would answer it from the table.
+
+### P3 - a check that dies mid-gesture leaves a file staged in the composer, and the NEXT check sends it (measured 2026-09-04)
+
+MSG-4 stages a file, types a caption and clicks send. When it died between those steps - which it
+did all afternoon, on a fixture that did not exist - the composer kept the staged attachment. The
+next runner opened the same conversation, typed its own text and sent, and the orphaned file went
+with it. MSG-6 recorded `PASS-DIRTY` on `Erreur envoi media: A requested file or directory could not
+be found`, an error about MSG-4's fixture, in a check that never attaches anything. Both rows came
+back clean once MSG-4 stopped dying.
+
+**Why this is the same fault the campaign already names.** `openDM`'s docblock states that a check
+may not inherit a precondition from whatever ran before it, and every runner now navigates for
+itself. The composer's staging tray is a piece of state that survives that navigation, so it is
+exactly the residue the rule was written about, and nothing asserts it is empty.
+
+**What would close it.** A staged-tray assertion in the shared entry point rather than in each
+runner - the same shape as `clearOverlays`, which already runs at the top of `ensureChat` for the
+same reason. It is P3 and not P2 only because the dirt is LOUD: it surfaced as a recorded
+`PASS-DIRTY` naming a file the check does not use, which is a verdict pointing at its own cause.
+The danger is the quiet version - a valid file staged by a check that then passes, sending an
+attachment nobody asked for into a row about plain text.
+
+### P3 - TWO out-of-tree directories are both called `canari-harness`, and a decoy `names.mjs` sits in the one the harness does not read (measured 2026-09-04)
+
+The rig keeps its secrets and state outside the public tree, and two different directories now
+answer to that description because two tools resolve the same name to different places:
+
+| Reader | Specifier | Resolves to | Holds |
+| --- | --- | --- | --- |
+| `tools/cross-client-harness/names.mjs` | `../../../../canari-harness/` | `<parent-of-EMSE>/canari-harness/` | `names.mjs`, the three Chrome profiles, `results.ndjson`, `logs`, `test-accounts.json` |
+| `tools/play-vitals/lib.mjs` | `../../../canari-harness/` | `<EMSE>/canari-harness/` | `play-console-sa.json`, `google-services.json`, `dumps`, AND a stale `names.mjs` |
+| `infrastructure/local/pull-prod-dump.sh` | `$ROOT/../canari-harness/dumps` | `<EMSE>/canari-harness/` | the production dumps |
+
+Both are live and neither is wrong on its own - `names.example.mjs` documents `<repo>/../../` and
+`play-vitals/lib.mjs` documents `../canari-harness/`, and each is accurate about itself. What is
+wrong is that they share a NAME while meaning different directories, and that the one the harness
+does NOT read contains a `names.mjs` of its own: same filename, same shape, same constants, one
+`VENUE` line apart. Editing it changes nothing and says nothing, which is exactly what happened
+during the venue rename on 2026-09-04 - the edit landed, `grep` confirmed it, and the run kept
+printing the old value.
+
+**Why this is not fixed here.** Moving either directory breaks the other reader, and both hold
+credentials and state (`play-console-sa.json`, the Chrome profiles) that a wrong move destroys - so
+this is a one-off gesture on the user's own machine rather than a code change, and
+[ONE-OFF ACTIONS GO TO THE USER](../../CLAUDE.md). The cheap half a session can do is make each
+reader PRINT the absolute path it resolved, so a wrong edit is visible in the first line of output
+rather than in a value that refuses to change. Note that `STATE_DIR` is already exported and has
+three consumers, so the resolved path is available and simply never shown.
 
 ## Search
 
@@ -3079,6 +3630,37 @@ than three local patches.
 
 ## Storage and retention
 
+### P2 - the MLS snapshot version is a PER-DOCUMENT counter compared ACROSS documents, so a second tab's write is dropped on a collision (measured on TAB-4, 2026-09-05)
+
+`saveMlsStateEncrypted` refuses any tagged write whose version is not strictly newer than the stored
+one. The version comes from `tagMlsSnapshot`, which is `++_snapshotSeq` - a module-level counter,
+and therefore **one counter per DOCUMENT**, seeded from the persisted version by
+`seedMlsSnapshotSeq` when the tab loads.
+
+Within one tab this is exactly right and is what the guard was written for: a slow off-thread Argon2
+flush finishing after a fresher one must not clobber it, and there `version < stored` is a true
+statement about ordering.
+
+**Across two tabs it is comparing two unrelated sequences.** Both tabs load, both seed from stored
+version *N*, and both then produce *N+1* for their next snapshot - different bytes, same number. The
+guard sees `version <= stored` and drops the second one. Measured on TAB-4, which drives two tabs of
+one client: `Skipping stale MLS state write (v3294 <= stored v3294)` on an ordinary run.
+
+**What is not yet answered is whether anything is LOST.** The dropped snapshot may hold state the
+winner does not - the second tab may have processed a frame the first had not - and the counter
+cannot say, because it is not a clock over the pair. In practice a later flush from either tab
+carries a higher number and lands, so the state is expected to converge; that expectation is
+untested and the window is unmeasured. **A clock written by one writer is not evidence about
+another's ordering** - the same rule as a liveness column written by something other than the thing
+whose liveness it measures.
+
+The wording is already fixed (2026-09-05): the collision case says so instead of claiming staleness,
+and `hex.mlsVersion.test.ts` pins both branches. That makes the event visible; it does not decide
+it. Deciding it means either making the version a shared counter (a `BroadcastChannel` claim, or an
+IndexedDB read-modify-write inside the same transaction as the put - the transaction is already
+there) or establishing that convergence always happens and how long it takes.
+
+
 The server side has a page already - [storage-forecast](infrastructure/storage-forecast.md) - and it
 is where any measurement belongs.
 
@@ -3221,6 +3803,24 @@ feature is therefore coherent with E2EE - it removes a password prompt, not a re
 
 
 ## Tooling
+
+### P3 - "unlock the PIN through the CLI" is written three times in the rig, and all three had to be fixed separately (measured 2026-09-05)
+
+`phone.mjs:unlockPin`, `archive/notif7.mjs:unlock` and `archive/tab236.mjs:unlock` are the same
+wrapper around `pin.mjs`, differing only in which device they name and which origin they match. They
+were written independently, and on 2026-09-05 all three carried the same two defects: the script was
+spawned by BARE NAME (so two of the three resolved it to `archive/`, where it does not live, and did
+nothing at all while reporting a string), and the failure was reported from STDOUT, the one stream
+that cannot say why. Both were repaired in each copy, one at a time - which is the shape the rule
+about re-implemented CLI predicates already names.
+
+`atoms.mjs` is the home that exists for this and says so in its own docstring: *"ONE SPELLING OF THE
+ARGUMENTS, IN ONE PLACE."* The three copies simply predate it. The change is `unlockPin({ port,
+account, match })` there, returning `{ ok, line, why }`, with the three sites delegating - and it is
+P3 rather than P2 because the defect is gone and only the duplication is left.
+
+**It is not free**: `atoms.mjs` and `phone.mjs` are in the instrument set of nearly every runner, so
+the change ages a large part of the ledger. It belongs between rungs, or after the campaign.
 
 ### P3 - `scripts/` is the one shell directory CI does not shellcheck, and it holds the release's first step (measured 2026-09-03)
 
@@ -3589,6 +4189,42 @@ sits at P3 beside the two prod hosts above rather than being called fixed. **Ask
 deleting anything that is not a build cache.**
 
 ## Post-campaign projects - decided, not scheduled
+
+### Separating ICM and ISMIN - two schools on one deployment (user, 2026-09-05)
+
+**A direction, decided and not scheduled.** Verbatim: *"Dans la perspective d'avoir des ismin,
+separer associations et listes ICM/ISMIN (notamment la possibilite de faire apparaitre ou non une
+association sur la cartographie des associations, et pouvoir n'afficher que les associations ICM sur
+le portail ICM). Meme plus largement, tout doit pouvoir etre separe, comme si on avait deux instances
+de Canari. Seule la partie admin et la messagerie/communautes doivent etre en commun."*
+
+**THE SHAPE, IN THE USER'S OWN TERMS**: two instances that share exactly two things - administration,
+and messaging/communities. Everything else - associations, the association cartography, the lists -
+is per-school and must be able to be shown to one school and not the other.
+
+**IT IS TWO PIECES OF WORK WITH DIFFERENT MATURITY, AND CONFLATING THEM IS HOW THE NARROW ONE NEVER
+SHIPS.**
+
+- **The narrow half is already actionable and is a feature**: a per-association flag deciding whether
+  it appears on the cartography, and a school attribute the portal filters on. It is additive,
+  reversible, and does not commit the second half to any shape.
+- **The broad half - "as if we had two instances" - is a PARTITIONING DECISION and must be designed
+  before anything is built.** The question it has to answer first is not which tables gain a column;
+  it is what a shared object means when the two halves disagree. Messaging and communities are
+  explicitly COMMON, so a community can hold members of both schools while an association may be
+  visible to only one - which means the boundary does not fall between two databases, it falls
+  through the middle of the object graph. A migration that assumed otherwise would be very hard to
+  reverse.
+
+**WHAT MUST BE SETTLED BEFORE ANY SCHEMA CHANGES**, none of which the code can answer: whether a
+person belongs to exactly one school or can hold both; whether an administrator is global or
+per-school (the user says admin is COMMON, which suggests global, and that has to be confirmed
+because it decides every permission check); and whether a member of one school may see the other's
+associations at all, or merely does not by default. **These are the user's decisions, and the first
+task here is to obtain them - not to write code against a guess.**
+
+Not scheduled. It belongs after the campaign for the reason everything in this section does: it is
+large, it is not a defect, and it changes a schema the campaign is currently measuring.
 
 ### The MLS + Graine explanation, written FOR THE USER - audience settled 2026-08-20
 
@@ -3982,7 +4618,7 @@ client can detect that).
 
 Three things must be settled BEFORE writing checks:
 
-- **The venue.** Every existing check sends into the two-test-account DM or `Campagne de test`
+- **The venue.** Every existing check sends into the two-test-account DM or `Canari Test Venue`
   precisely because production is shared. A post or a form alert has an AUDIENCE, so the same
   discipline needs an answer that does not exist yet: what does a test post look like that no real
   member is notified by? Until that is answered, no social check may run on prod.

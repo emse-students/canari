@@ -95,6 +95,20 @@ export class UserProfileFetchError extends Error {
   }
 }
 
+/**
+ * `true` when the refusal MEANS there is no such user, rather than that we could not go and ask.
+ *
+ * A 404 from this endpoint is an ANSWER - the account never existed, or was deleted, and neither
+ * is a condition that a retry can change. Everything else (a throw with no response at all, a 5xx,
+ * a 401 that the refresh path handles) is a failure to ASK, and only those are worth asking again.
+ *
+ * Classified HERE, at the throw, as a type - the two dispositions differ at three call sites, and a
+ * distinction carried in prose is one exactly one of them would make.
+ */
+export function isAbsentUserError(e: unknown): boolean {
+  return e instanceof UserProfileFetchError && e.status === 404;
+}
+
 /** Fetches the authenticated user's own profile from the core service. */
 export async function fetchMyProfile(): Promise<UserProfile> {
   const res = await apiFetch(`${coreUrl()}/api/users/me`);
@@ -121,10 +135,18 @@ export function fetchUserProfile(userId: string): Promise<UserProfile> {
   );
 
   // Cache the promise so concurrent callers share the in-flight request.
-  // On rejection, evict immediately so the next caller retries rather than
-  // receiving the same cached error.
+  //
+  // A REFUSAL THAT ANSWERS THE QUESTION STAYS CACHED FOR THE SAME TTL AS AN ANSWER THAT SUCCEEDED.
+  // This used to evict on every rejection, "so the next caller retries rather than receiving the
+  // same cached error" - true of a network drop, and meaningless for a 404: the user does not
+  // exist, and asking a second time within thirty seconds cannot make one. Measured on the local
+  // estate 2026-09-04: one channel message mentioning an absent account produced three identical
+  // `GET /api/users/<id> -> 404` in a single check, one per mount of the mention chip. Only a
+  // failure to ASK is evicted.
   profileCache.set(userId, { promise, expiresAt: now + 30_000 });
-  promise.catch(() => profileCache.delete(userId));
+  promise.catch((e) => {
+    if (!isAbsentUserError(e)) profileCache.delete(userId);
+  });
   return promise;
 }
 
@@ -138,15 +160,10 @@ export async function searchUsers(
   return (await res.json()) as Array<{ id: string; displayName: string | null }>;
 }
 
-/** Returns `true` if a user with the given ID exists on the platform. */
-export async function userExists(userId: string): Promise<boolean> {
-  try {
-    await fetchUserProfile(userId);
-    return true;
-  } catch {
-    return false;
-  }
-}
+// `userExists` stood here with no caller anywhere in the repository. It was the same conflation
+// this file has just been taught to avoid, in its purest form - `catch { return false }` reports
+// "there is no such user" for a network that was merely down - so it is deleted rather than
+// repaired: a predicate whose every consumer is imaginary cannot be measured against one.
 
 /** Updates the authenticated user's mutable profile fields (bio and/or avatar). */
 export async function updateMyProfile(data: {

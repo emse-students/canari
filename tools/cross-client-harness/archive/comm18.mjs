@@ -67,6 +67,7 @@ import {
   consoleLines,
   gate,
   ignoringExpectedLog,
+  ignoringExpectedRefusal,
   report,
   watch,
 } from '../watch.mjs';
@@ -75,6 +76,59 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const w1 = await client(PORTS.W1);
 const wa = await watch(w1, 'W1');
+
+/**
+ * THE SECOND ESTATE COPIED THE DATABASE AND NOT THE OBJECT STORE, and the social feed is where that
+ * shows.
+ *
+ * `dev-environment.md` describes the local estate as a copy of production, and the POST ROWS really
+ * are - the feed on this phone renders real associations and real posts. Their media is not:
+ * measured 2026-09-05, `canari-media` in the local Garage holds NINE objects totalling 2 kB, so
+ * every image a copied post references answers 404 and `[PostMedia]` says the download failed. Both
+ * are the correct behaviour for a blob that is genuinely absent.
+ *
+ * IT IS FORGIVEN HERE AND NOWHERE WIDER, because this is the only row that puts the FEED on screen:
+ * a cold start lands on `/posts` before the deep link moves it, so this check renders a page no
+ * other check does. The path is pinned to `/api/media/public/`, which is the public post-media proxy
+ * and not the encrypted chat media a MUT or FWD row would fetch - a 404 there is still dirt.
+ */
+const LOCAL_ESTATE_MEDIA_GAP = [{ path: /^\/api\/media\/public\//, status: [404] }];
+/** The client's own sentence about the same absence, which carries no url and so cannot be a path rule. */
+const LOCAL_ESTATE_MEDIA_NARRATION = [
+  /^\[PostMedia\] media download failed .*Media download failed: 404/,
+];
+
+/**
+ * THE DEEP-LINK CHAIN NARRATING ITSELF, which is this row's entire subject.
+ *
+ * Every one of these lines is the product saying it did the thing being measured - `onOpenUrl`
+ * fired, the URL parsed, the target resolved - and `[notifNav] deep link received` is literally the
+ * first assertion of the check. A row cannot both require a sentence and count it as dirt.
+ *
+ * THE REPLAY LINE IS HERE ON PURPOSE and is not a defect. `getCurrent()` keeps returning the launch
+ * URL for the life of the process, and the ladder in `hooks.client.ts` asks four times; the second
+ * and later reads are refused by the `sessionStorage` claim and SAY SO, which is the only thing that
+ * separates "the app ignored my link" from "the app already acted on it".
+ */
+const DEEP_LINK_NARRATION = [
+  /^\[hooks\] onOpenUrl called with \d+ URL\(s\)$/,
+  /^\[hooks\] Processing URL: /,
+  /^\[hooks\] Parsed URL protocol: /,
+  /^\[hooks\] launch URL read on attempt \d+, \d+ms after the bundle ran$/,
+  /^\[hooks\] launch URL already acted on by this start, ignoring the replay: /,
+  /\[notifNav\] deep link received: /,
+];
+
+/**
+ * THE SESSION THIS PROCESS NO LONGER HAS. `PUT /auth/sessions/current/device` binds the device id to
+ * the session once per app start, after unlock - and its own contract says a 404 means the session
+ * behind the cookie is gone, which the client reports and does not retry. This row FORCE-STOPS the
+ * app, so that is the state it creates: a stored refresh credential that still works and a session
+ * row that does not. The 404 is the documented answer, not a failed request.
+ */
+const STOPPED_APP_SESSION_REFUSAL = [
+  { path: /^\/api\/auth\/sessions\/current\/device$/, status: [404] },
+];
 
 const run = mark('COMM18');
 const community = `C18 ${run}`;
@@ -146,6 +200,13 @@ const link = target ? `fr.emse.canari://chat/${target}` : null;
 // older than the deployment, and a deep link the running code does not handle is not a defect in the
 // code that ships.
 const a1Before = await step('read the build the phone is running', async () => {
+  // FOREGROUNDED FIRST. `clientBuild` reads the app's own `/_app/version.json` with a `fetch` inside
+  // the page, and Android throttles a backgrounded WebView's network - the promise never settles and
+  // the CDP call times out. Every `+A1` row before this one leaves the app in the background (this
+  // one force-stops it, COMM-14 backgrounds it deliberately to get a tray notification), so arming
+  // against whatever the previous row left is exactly what happens in a full pass. It recorded
+  // `armed: false` on 2026-09-05 for that reason alone.
+  await phone.foreground({ port: PORTS.A1 });
   const cx = await client(PORTS.A1);
   try {
     return await clientBuild(cx);
@@ -181,7 +242,13 @@ const landing = armed
       // The process is new, so the devtools socket is new: `ensure` re-derives the forward from the
       // CURRENT pid. Without it every read below talks to a dead socket and reports the app as
       // unresponsive - which is indistinguishable from the deep link never arriving.
-      const up = await phone.ensure({ port: PORTS.A1, timeoutMs: 45_000 });
+      // `keepIntent` OR THIS ROW MEASURES NOTHING. `ensure` foregrounds the app with
+      // `am start -n <pkg>/.MainActivity` - a plain MAIN intent - and `MainActivity` is
+      // `singleTask`, so that intent lands on `onNewIntent`, which calls `setIntent(it)`. The
+      // deep-link plugin reads `activity.intent` in `load(webView)` to find the launch URL, and the
+      // WebView is still booting 1.5 s after the `am start` above: the plain intent wins, the URL is
+      // gone, and every symptom points at the product. See `phone.ensure` for the measurement.
+      const up = await phone.ensure({ port: PORTS.A1, timeoutMs: 45_000, keepIntent: true });
       if (!up.ok) throw new Error(`the phone never came back on devtools: ${JSON.stringify(up)}`);
 
       const a1 = await client(PORTS.A1);
@@ -279,7 +346,13 @@ const landing = armed
           // row's own gesture talking. Four needles, not a phase-wide amnesty - anything else a
           // resurrected app says is still dirt, and `COLD_START_NARRATION` keeps the injection
           // counts inside the shape so forgiving the line cannot forgive a wrong count.
-          report: ignoringExpectedLog(await report(wb), COLD_START_NARRATION),
+          report: [
+            (r) => ignoringExpectedLog(r, COLD_START_NARRATION),
+            (r) => ignoringExpectedLog(r, DEEP_LINK_NARRATION),
+            (r) => ignoringExpectedLog(r, LOCAL_ESTATE_MEDIA_NARRATION),
+            (r) => ignoringExpectedRefusal(r, LOCAL_ESTATE_MEDIA_GAP),
+            (r) => ignoringExpectedRefusal(r, STOPPED_APP_SESSION_REFUSAL),
+          ].reduce((r, f) => f(r), await report(wb)),
         };
       } finally {
         a1.close();
@@ -343,6 +416,11 @@ record('COMM-18', gated.verdict, {
   a1Build: a1Before?.commit ?? null,
   a1BuiltAt: a1Before?.builtAt ?? null,
   a1Gate: landing?.gate ?? null,
+  // WHAT THE UNLOCK ITSELF SAID, and it is recorded because a verdict of `LOCKED` has at least three
+  // causes that read alike: the PIN was refused, the modal never mounted, or the tool never reached
+  // the phone at all. `unlockClient` has always returned this sentence and this row dropped it, so
+  // two runs on 2026-09-05 recorded `a1Gate: LOCKED` with nothing to say which of the three it was.
+  a1GateSaid: landing?.said ?? null,
   openedChannel: landing?.open ?? null,
   landedOn: landing?.url ?? null,
   markerSeen: landing?.seen ?? null,

@@ -765,7 +765,7 @@ jobs:
   # `.github/scripts/` is the only code in this repository that MERGES things, and it does it with
   # nobody watching. Its staleness predicate decides whether a green-but-older check suite is still
   # evidence, and the half of it that matters - a truncated compare, an unreadable payload - never
-  # occurs on a good day, so nothing but a test will ever exercise it. Bash only, no dependencies.
+  # occurs on a good day, so nothing but a test will ever exercise it.
   test-ci-scripts:
     name: Test CI Scripts (self-tests)
     needs: [changes]
@@ -775,6 +775,18 @@ jobs:
       - uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
+
+      # THE RECIPE IS NOT BASH-ONLY AND HAS NOT BEEN SINCE THE .mjs TESTS JOINED IT - three of its
+      # eleven are JavaScript (`no-nul-in-source`, `wiki-links`, and the App Store submitter's own
+      # 64 assertions). The comment above still said "Bash only, no dependencies", so this job
+      # installed nothing and the target died on `make: bun: No such file or directory`, Error 127 -
+      # the same failure, with the same message naming nothing, that `test-harness` hit on
+      # 2026-09-04 and that its own Setup Bun step was added to fix. A job's dependencies are what
+      # its recipe RUNS, never what a comment beside it remembers.
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
 
       - name: Run CI script self-tests
         run: make test-ci-scripts

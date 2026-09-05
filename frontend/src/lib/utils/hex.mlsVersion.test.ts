@@ -141,6 +141,51 @@ describe('saveMlsStateEncrypted write-if-newer (IndexedDB)', () => {
     expect(store.get(MLS_STATE_VERSION_KEY)).toBe(mlsSnapshotVersion(newer));
   });
 
+  /**
+   * THE CASE TWO TABS PRODUCE, AND THE ONE THE GUARD USED TO CALL "STALE".
+   *
+   * `_snapshotSeq` is a PER-DOCUMENT counter seeded from the stored version on load, so within one
+   * document it only ever goes up and equality is impossible. Equality therefore means a SECOND
+   * writer - another tab - reached the same number from the same seed. Nothing is stale: the two
+   * counters are simply not comparable.
+   *
+   * TAB-4 drives two tabs of one client and makes this fire on an ordinary run (measured 2026-09-05,
+   * `v3294 <= stored v3294`), which is what turned the line into one a reader learns to skip.
+   */
+  it('drops a colliding write from a second writer, and does not call it stale', async () => {
+    const mine = tagMlsSnapshot(new Uint8Array([1]));
+    // The other tab's bytes, carrying the SAME version - what two seeds from one stored value give.
+    const theirs = propagateMlsSnapshotVersion(mine, new Uint8Array([9, 9]));
+    await saveMlsStateEncrypted('user-1', mine);
+
+    const said: string[] = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation((...a) => void said.push(a.join(' ')));
+    await saveMlsStateEncrypted('user-1', theirs);
+    spy.mockRestore();
+
+    // The write is dropped - that is the existing behaviour and this test does not change it.
+    expect(store.get(MLS_STATE_ENCRYPTED_KEY)).toEqual(new Uint8Array([1]));
+    expect(store.get(MLS_STATE_VERSION_KEY)).toBe(mlsSnapshotVersion(mine));
+    // What it must not do is describe a collision as staleness.
+    expect(said.join('\n')).toContain('collides');
+    expect(said.join('\n')).not.toContain('stale');
+  });
+
+  it('and a genuinely OLDER write still reads as stale, with the strict comparison', async () => {
+    const older = tagMlsSnapshot(new Uint8Array([1]));
+    const newer = tagMlsSnapshot(new Uint8Array([2]));
+    await saveMlsStateEncrypted('user-1', newer);
+
+    const said: string[] = [];
+    const spy = vi.spyOn(console, 'log').mockImplementation((...a) => void said.push(a.join(' ')));
+    await saveMlsStateEncrypted('user-1', older);
+    spy.mockRestore();
+
+    expect(said.join('\n')).toContain('stale');
+    expect(said.join('\n')).toContain('<');
+    expect(said.join('\n')).not.toContain('collides');
+  });
+
   it('always writes untagged bytes (restore / migration have no concurrency)', async () => {
     await saveMlsStateEncrypted('user-1', new Uint8Array([5, 5]));
     expect(store.get(MLS_STATE_ENCRYPTED_KEY)).toEqual(new Uint8Array([5, 5]));

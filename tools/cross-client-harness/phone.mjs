@@ -16,57 +16,18 @@ import { A1_WIFI, ACCOUNT_OF, PORTS } from './names.mjs';
 import * as NAMES from './names.mjs';
 import { classifyNativePaths } from './native-residue.mjs';
 
-/** Every device adb currently lists as `device`, in the order adb gives them. */
-function attached() {
-  const out = execFileSync('adb', ['devices'], { encoding: 'utf8' });
-  return out
-    .split('\n')
-    .slice(1)
-    .map((l) => l.trim().split(/\s+/))
-    .filter((p) => p[1] === 'device')
-    .map((p) => p[0]);
-}
-
 /**
- * WHICH PHONE, and it REFUSES TO GUESS between two of them.
- *
- * THIS PICKED THE WRONG PHONE THE MOMENT A SECOND ONE WAS PLUGGED IN. It took the first USB entry,
- * on the assumption - true for a year - that there was only ever one; on 2026-09-04 a Pixel 6a was
- * attached beside the Mi 9T and `serial()` answered the PIXEL, because adb happened to list it
- * first. Nothing would have failed: every atom would have woken, forwarded, logged into and
- * measured a phone the run was not about, and reported confidently about A1.
- *
- * So ambiguity is an ERROR rather than a choice, and there are exactly two ways to resolve it, both
- * explicit: `ANDROID_SERIAL` - adb's OWN convention, so it also reaches any adb this rig shells out
- * to - or `useDevice()` from a named device. A wireless entry is still preferred last, because the
- * LIFE phase cuts the radios.
- *
- * A serial is a DEVICE ID and this repository is PUBLIC, so the name -> serial map lives in the
- * out-of-tree `names.mjs` (`SERIAL_OF`), never here.
+ * WHICH PHONE, RE-EXPORTED FROM THE ONE RESOLVER. `a1apk.mjs` and `archive/fwd345.mjs` import
+ * `serial` from here, and this module is still the right place to ASK from - it is the phone's
+ * module. What moved to `serial.mjs` is the implementation, because `watch.mjs` needs the same
+ * answer and cannot import this file: `names.mjs` is gitignored and `watch.mjs` is reachable from
+ * two gated self-tests. The duplicate it used to keep silently drove the wrong phone; see
+ * `serial.mjs` for the measurement.
  */
-export function serial() {
-  const ids = attached();
-  if (!ids.length) throw new Error('no adb device');
+import { attached, serial } from './serial.mjs';
+import { requireScript } from './scriptpath.mjs';
 
-  const named = process.env.ANDROID_SERIAL;
-  if (named) {
-    if (!ids.includes(named)) {
-      throw new Error(`ANDROID_SERIAL=${named} is not attached - adb lists: ${ids.join(' ')}`);
-    }
-    return named;
-  }
-
-  const usb = ids.filter((id) => !id.includes(':'));
-  const pool = usb.length ? usb : ids;
-  if (pool.length > 1) {
-    throw new Error(
-      `${pool.length} phones are attached (${pool.join(' ')}) and nothing says which this is about. ` +
-        `Name one: ANDROID_SERIAL=<serial>, or pass --device to an atom so it can call useDevice(). ` +
-        `Choosing for you drives the wrong phone and still reports success.`,
-    );
-  }
-  return pool[0];
-}
+export { attached, serial };
 
 /**
  * Binds THIS PROCESS to one named phone, and returns the serial it bound.
@@ -317,7 +278,7 @@ export function forwardDevtools(port) {
  *
  * @returns `{ ok, how, pid, reason }` - `how` is 'usb' | 'wifi', `reason` is set only when `ok`.
  */
-export async function ensure({ port, wifi, timeoutMs = 20_000 } = {}) {
+export async function ensure({ port, wifi, timeoutMs = 20_000, keepIntent = false } = {}) {
   const target = port ?? PORTS.A1;
   const address = wifi ?? A1_WIFI;
 
@@ -337,15 +298,33 @@ export async function ensure({ port, wifi, timeoutMs = 20_000 } = {}) {
 
   try {
     wake();
-    if (!pid()) launch();
+    // `keepIntent` says the caller has JUST started the app with an intent of its own, so starting it
+    // again here would either be redundant or would replace that intent - see below.
+    if (!pid() && !keepIntent) launch();
     const until = Date.now() + timeoutMs;
     while (!pid() && Date.now() < until) await new Promise((r) => setTimeout(r, 500));
     if (!pid()) return { ok: false, how, reason: 'app would not start' };
 
-    // Foreground it unconditionally rather than testing first: `launch()` on an app already in front
-    // is a no-op, and `foregrounded()` reads a dumpsys line whose format has changed under us before.
-    launch();
-    await new Promise((r) => setTimeout(r, 1500));
+    // Foreground it unconditionally rather than testing first: raising an app already in front costs
+    // nothing here, and `foregrounded()` reads a dumpsys line whose format has changed under us
+    // before.
+    //
+    // `keepIntent` IS THE ONE CASE WHERE THAT IS WRONG, AND IT IS NOT A NO-OP. `launch()` is
+    // `am start -n <pkg>/.MainActivity`: a plain MAIN intent with no data. `MainActivity` is
+    // `launchMode="singleTask"`, so on a running app that intent arrives at `onNewIntent`, which
+    // calls `setIntent(it)` - and the deep-link plugin reads `activity.intent` in its `load(webView)`
+    // to find the URL the app was STARTED with. Fire this 1.5 s after an `am start -d <link>` and the
+    // WebView is still booting: the plugin loads, reads the plain intent, and the launch URL is gone.
+    //
+    // That is how COMM-18 failed for a whole session on 2026-09-05. The row cold-starts the app with
+    // a VIEW intent and then calls `ensure` to re-derive the devtools forward - and `ensure` deleted
+    // the intent the row exists to measure. Every symptom pointed at the product: the listener
+    // registered, `getCurrent()` returned nothing, the app sat on `/posts`. Driven by hand, with no
+    // `ensure` in between, the same build read the URL on attempt 1 in 38 ms, every time.
+    if (!keepIntent) {
+      launch();
+      await new Promise((r) => setTimeout(r, 1500));
+    }
 
     const p = forwardDevtools(target);
 
@@ -374,6 +353,40 @@ export const wake = () => {
 export const home = () => sh('input keyevent KEYCODE_HOME');
 export const forceStop = () => sh(`am force-stop ${PKG}`);
 export const launch = () => sh(`am start -n ${PKG}/.MainActivity`);
+
+/**
+ * THE PHONE AWAKE, THE APP IN FRONT, AND THE DEVTOOLS FORWARD DERIVED FROM THE PID THAT IS THERE NOW.
+ *
+ * ## The two failures this exists to stop, which look nothing alike
+ *
+ * **A BACKGROUNDED WEBVIEW NEVER ANSWERS.** Android throttles timers and network in a WebView that
+ * is not on screen, so `clientBuild()` - a `fetch` of the app's own `/_app/version.json` - never
+ * settles and the CDP call times out. Every `+A1` row leaves the app in the background: COMM-14
+ * deliberately (a foreground app posts no tray notification), COMM-18 by force-stopping it. So the
+ * NEXT row arms against that state, and on 2026-09-05 COMM-14, COMM-17 and COMM-18 each recorded a
+ * timed-out build read for exactly this reason - one of them as `armed: false`, a row that measured
+ * nothing and said so only in its failures list.
+ *
+ * **AND BRINGING IT FORWARD CAN INVALIDATE THE FORWARD.** The devtools socket is named after the
+ * PID (`webview_devtools_remote_<pid>`), so if `launch()` starts a process rather than raising an
+ * existing one, every later `client(PORTS.A1)` connects to a socket belonging to a process that no
+ * longer exists - `The socket connection was closed unexpectedly`. Waking WITHOUT re-deriving the
+ * forward therefore trades one failure for another, which is what the first version of this fix did.
+ *
+ * The two halves have to happen together and in this order, which is why this is one function and
+ * not two calls a caller is trusted to remember.
+ *
+ * @param {number} port the devtools port for this device, from `PORTS`
+ * @param {number} [timeoutMs] how long to wait for devtools to answer
+ * @returns {Promise<object>} `ensure`'s result - `{ok, how, pid}`
+ */
+export async function foreground({ port, timeoutMs = 45_000 } = {}) {
+  wake();
+  launch();
+  const up = await ensure({ port, timeoutMs });
+  if (!up.ok) throw new Error(`the phone is not measurable after being brought forward: ${up.reason}`);
+  return up;
+}
 
 /**
  * The app's current OOM state as Android names it (`CAC*` cached, `LAST` previous, `FGS`, ...), or
@@ -490,12 +503,22 @@ const HERE = new URL('.', import.meta.url).pathname.replace(/^\//, '');
  * so `openConversation` cannot find anything and the check refused a verdict. EVERY PHASE THAT
  * RELAUNCHES THE APP MUST UNLOCK BEFORE IT NAVIGATES - which is why this is here and not in the
  * three runners that each carried their own copy of it.
+ *
+ * A FAILURE CARRIES THE REASON IT FAILED FOR, and this used to carry the 200 first characters of
+ * STDOUT - the one stream that says nothing about why. `pin.mjs` has three distinct failures and
+ * writes all three to stderr: exit 1 = the product REFUSED the PIN (and names which refusal), a
+ * throw out of `assertLocalEstate` = the app is pointing at an estate that is not the local one,
+ * and anything else = the CDP context died mid-answer. DEL-7 recorded
+ * `pin.mjs failed: ...[pin] after:` on 2026-09-05 - a truncation ending on an EMPTY `after:`, which
+ * is the most interesting line in the run and the one thing the record could not explain. Exit code
+ * and stderr are what separate the three, so both are reported and the stdout TAIL keeps its place
+ * as context rather than as the message.
  */
 export function unlockPin(port = PORTS.A1) {
   try {
     return execFileSync(
       process.execPath,
-      ['pin.mjs', '--port', String(port), '--account', ACCOUNT_OF.A1, '--match', 'tauri.localhost'],
+      [requireScript('pin.mjs'), '--port', String(port), '--account', ACCOUNT_OF.A1, '--match', 'tauri.localhost'],
       { cwd: HERE, encoding: 'utf8', timeout: 120_000 }
     )
       .trim()
@@ -503,7 +526,14 @@ export function unlockPin(port = PORTS.A1) {
       .pop();
   } catch (e) {
     if (e.status === 2) return 'no modal';
-    return `pin.mjs failed: ${String(e.stdout || e.message).slice(0, 200)}`;
+    const why = String(e.stderr || e.message)
+      .trim()
+      .replace(/\s+/g, ' ');
+    const lastOut = String(e.stdout || '')
+      .trim()
+      .split('\n')
+      .pop();
+    return `pin.mjs failed (exit ${e.status ?? 'none'}): ${why.slice(0, 300)} [last stdout: ${lastOut}]`;
   }
 }
 

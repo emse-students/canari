@@ -31,13 +31,12 @@
  *   bun type.mjs --only 2        # one
  */
 import { spawn } from 'node:child_process';
-import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { client, evaluate, openDM, openChannel, realClick, until, COMPOSER } from '../chat.mjs';
 import { gate, ignoringOfflineCut, report, watch } from '../watch.mjs';
 import { armCut, cutHard } from './net.mjs';
 import { awaitOffline, awaitOnline, whoIs } from './presence.mjs';
-import { record } from '../results.mjs';
+import { errorDetail, record } from '../results.mjs';
 import { OWNER_NAME, PEER_NAME, PORTS, SITE } from '../names.mjs';
 
 const { W1, W2 } = PORTS;
@@ -187,6 +186,14 @@ async function type3() {
   // A destructive check owns its cleanup: it navigates the spare to an ABSOLUTE url and re-enters
   // the PIN, because a fresh tab always starts locked. Doing it here rather than leaving it to the
   // runner is what makes this file runnable on its own, which is the whole point of a check.
+  //
+  // AND `pin.mjs` IS AT THE HARNESS ROOT, NOT BESIDE THIS FILE. The spawn used this runner's OWN
+  // directory as its cwd - the harness root until the runners moved into `archive/`, and `archive/`
+  // ever since, where there is no `pin.mjs`. With `stdio: 'ignore'` the failure was
+  // invisible and its exit code went nowhere but `restored.unlocked`, so TYPE-3 kept reporting PASS
+  // while leaving W1 behind the PIN gate. TYPE-1, TYPE-4 and TYPE-5 then died in a row on
+  // `sidebarPanel: false` (measured 2026-09-04) - three rows reporting a missing conversation list
+  // about a client that was simply locked.
   const restored = { navigated: false, unlocked: false };
   try {
     const spare = await client(W1);
@@ -196,8 +203,9 @@ async function type3() {
     await new Promise((r) => setTimeout(r, 5000));
     restored.unlocked =
       (await new Promise((resolve) => {
-        const c = spawn(process.execPath, ['pin.mjs', '--device', 'W1'], {
-          cwd: dirname(fileURLToPath(import.meta.url)),
+        const PIN = fileURLToPath(new URL('../pin.mjs', import.meta.url));
+        const c = spawn(process.execPath, [PIN, '--device', 'W1'], {
+          cwd: fileURLToPath(new URL('../', import.meta.url)),
           stdio: 'ignore',
         });
         c.on('close', resolve);
@@ -206,9 +214,19 @@ async function type3() {
     restored.error = String(e).slice(0, 120);
   }
 
-  const gated = gate(ok ? 'PASS' : 'FAIL', { W2: await report(wB) });
+  // A TEARDOWN THAT DID NOT RESTORE IS NOT A PASS, AND THIS CHECK KNEW AND SAID NOTHING.
+  //
+  // `restored.unlocked` was already recorded and already `false`; nothing read it, so the row
+  // reported PASS on its own question while leaving the estate broken for every row after it. The
+  // assertion and the cleanup are different claims, so the detail keeps them apart - `ok` still
+  // says whether the indicator cleared - but the VERDICT may not claim a run that damaged what
+  // follows.
+  const teardown = restored.navigated && restored.unlocked;
+  const gated = gate(ok && teardown ? 'PASS' : 'FAIL', { W2: await report(wB) });
   record('TYPE-3', gated.verdict, {
     ...gated.detail,
+    assertionHeld: ok,
+    teardownRestored: teardown,
     shownMs,
     clearedMs,
     killedTab: page?.id ?? null,
@@ -324,7 +342,7 @@ async function type5() {
     await openChannel(b);
   } catch (e) {
     const gated = gate('ERROR', { W1: await report(wA), W2: await report(wB) });
-    record('TYPE-5', 'ERROR', { ...gated.detail, stage: 'setup', error: e.message });
+    record('TYPE-5', 'ERROR', { ...gated.detail, stage: 'setup', ...errorDetail(e) });
     [a, b].forEach((c) => c.close());
     // RETURNED, NOT RETHROWN: the file's top-level handler would record a SECOND `TYPE-5 ERROR`
     // carrying only the message, and the poorer of the two rows is the one a reader would find last.
@@ -364,7 +382,7 @@ for (const [n, fn] of Object.entries(CHECKS)) {
   try {
     results.push([n, await fn()]);
   } catch (e) {
-    record(`TYPE-${n}`, 'ERROR', { error: e.message });
+    record(`TYPE-${n}`, 'ERROR', { ...errorDetail(e) });
     results.push([n, false]);
   }
 }
