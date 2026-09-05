@@ -275,16 +275,23 @@ run as `bun del1.mjs` then `bun del.mjs` with no `--only` at all.
 
 ## 11 - TAB - tabs and windows
 
+**The rung is 10/10, and four of them were bought with product fixes on 2026-09-05.** Two rows
+were `FAIL` and one could not be run at all; the defects behind them are in `CHANGELOG.md` and the
+rules they left behind are in [durable-rules](durable-rules.md). TAB-3b is the only one still
+owed anything, and what it owes is written in [backlog](backlog.md) rather than here.
+
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| TAB-1 | Backgrounded tab receives; title/badge updates - RE-SCOPED 2026-08-24 onto the web `Notification`, the only out-of-page signal the product has, and the gap it cannot assert is P3 in [backlog](backlog.md) | `W1 W2` | `pending` |
-| TAB-2 | Tab closed, message arrives, tab reopened: present exactly once | `W1 W2` | `pending` |
-| TAB-3 | Whole browser killed and relaunched: all arrive, no re-login | `W1 W2` | `pending` |
-| TAB-3b | Cold-start timing, five runs | `W1 W2` | `pending` - one unexplained 77.7 s run |
-| TAB-4 | Two tabs of the SAME account: no double-send, no epoch fight | `W1 W2` | `pending` |
-| TAB-5 | Reload fired under 100 ms after submit: sent once or clearly queued, never lost | `W1 W2` | `pending` |
-| TAB-6 | Delete the refresh cookie, then act: clean re-login, not a silent empty list | `+user` | `pending` - the re-login costs the 2FA |
-| TAB-7 | Offline -> act -> online, tab never reloaded | `W1 W2` | `pending` - written 2026-08-24, never run |
+| TAB-1 | Backgrounded tab receives; the web `Notification` is raised - RE-SCOPED 2026-08-24 onto the only out-of-page signal the product has | `W1 W2` | `PASS` 2026-09-05 09:57 on `768a6c1b`, clean - **was `FAIL`, and the cause was a product defect.** Exactly 1 notification while hidden carrying the marker, titled with the sender, tagged per conversation; 0 while visible. The decision lived in `addMessageToChat` only, so a message arriving during a catch-up - which is the state a backgrounded tab produces - reached the user through `batchAddMessages`, which had no notification branch. Two instrument faults were found on the way: the check never reloaded, so it asserted a bundle older than the build it stamped, and its four downstream returns were all silent |
+| TAB-2 | Tab closed, message arrives, tab reopened: present exactly once | `W1 W2` | `PASS` 2026-09-05 09:56 on `768a6c1b`, clean |
+| TAB-3 | Whole browser killed and relaunched: all arrive, no re-login | `W1 W2` | `PASS` 2026-09-05 09:57 on `768a6c1b`, clean - browser down 5 ms, up 356 ms, one app tab on relaunch, no re-login |
+| TAB-3b | Cold-start timing, five runs | `W1 W2` | `PASS-DIRTY` 2026-09-05 09:10 on `768a6c1b` - **the 77.7 s is answered and a new question is open.** Five cold starts, catch-up 61 263 / 61 294 / 61 352 ms (fastest / median / slowest), every one of them *dominated by queue*: the phase is the queue drain and it is flat, not an outlier. The dirt is SEVERE and real - `[History] frame never read here and unreadable for good (secret-reuse)`, re-accusing the SAME row keys on each later cold start - and it is a P2 in [backlog](backlog.md), not expected noise |
+| TAB-4a | Two tabs of one account, the PEER sends: both tabs show it exactly once | `W1 W2` | `PASS` 2026-09-05 09:03 on `768a6c1b`, clean |
+| TAB-4b | Two tabs of one account, the SECOND (follower) tab sends | `W1 W2` | `PASS` 2026-09-05 09:03 on `768a6c1b`, clean - **was `FAIL`: the message was queued, acknowledged to the user and handed to nobody.** The Web Locks election recorded `leader` when it won and nothing when it lost, so a follower stayed `undecided` and `runFlush` awaited an election that had already happened. The leader now logs `[OUTBOX] Flush requested by a follower tab.` and drains it. `counts.tab1: 0` is recorded and not asserted: the leader does not RENDER a follower-sent message until it re-reads, which is the P2 in [backlog](backlog.md) |
+| TAB-4c | Two tabs of one account, the FIRST tab sends right after | `W1 W2` | `PASS` 2026-09-05 09:03 on `768a6c1b`, clean |
+| TAB-5 | Reload fired under 100 ms after submit: sent once or clearly queued, never lost | `W1 W2` | `PASS` 2026-09-05 09:31 on `768a6c1b`, clean - **was `FAIL` on 2 of 3 rounds, and it was silent message loss.** Gaps 16 / 17 / 15 ms. The echo was persisted and the outbox entry queued as two awaits; a teardown between them left a `pending` message on disk no queue knew about. Both rows are now one IndexedDB transaction |
+| TAB-6 | Delete the refresh cookie, then act: clean re-login, not a silent empty list | `+user` | `PASS` 2026-09-05 09:02 on `768a6c1b`, clean - the 401 on `/api/auth/refresh` is this row's STIMULUS and is dispositioned as one. Two instrument faults: a watch handle was passed where a report was required, so the row died before being recorded and left W1 signed out; and the refusal pattern was anchored `$` against a path that carries `?clientVersion=` |
+| TAB-7 | Offline -> act -> online, tab never reloaded | `W1 W2` | `PASS` 2026-09-05 08:34 on `768a6c1b`, clean - **first run ever**, written 2026-08-24. Severed in 1 ms, one socket closed, gateway back in 101 ms, never reloaded. It cuts the link itself, so its own client reads through `ignoringOfflineCut` - the disposition every other cutting check already used |
 
 ## 12 - MULTI - one user, two devices
 

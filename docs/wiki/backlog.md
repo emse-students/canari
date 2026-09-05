@@ -1330,6 +1330,51 @@ no check waits on wall-clock time at all. It belongs with the rendering pass, no
 
 ## Messaging convergence
 
+### P2 - a frame this device already read is re-accused as lost on every later cold start, and the reconciliation it triggers finds nothing (measured 2026-09-05)
+
+TAB-3b runs five cold starts. Each one printed `[History] frame never read here and unreadable for
+good (secret-reuse); will reconcile` - and the later runs re-printed **the same row keys** as the
+earlier ones (`row 1788591833954-0` appears in run 1 and again in run 2), alongside
+`Ciphertext generation out of bounds` and
+`MLS decryption failed at exactly its own epoch ... msg_epoch=12 group_epoch=12`.
+
+**Same-epoch `SecretReuseError` means the generation was already consumed, which means this device
+already decrypted that frame.** So the verdict is a false alarm, and it is the loudest line the
+history replay has: the harness's severity rule fires on it, and its reader is being taught to skip
+the one line that would name a real loss.
+
+The ledger that should prevent it is `seenCipherHashes` (`utils/chat/history.ts`), which IS durable -
+localStorage, capped at 5 000 - and the unreadable path does `seenCipherHashes.add(rowKey)` before
+warning. But the save is a THUNK returned to the caller and committed only "AFTER the encrypted
+checkpoint flush", deliberately, so the cursor never runs ahead of the persisted ratchet. **A session
+that ends before that flush keeps the accusation and loses the record of having made it**, which is
+exactly what five cold starts manufacture.
+
+Two things are owed before a fix: whether the thunk is reached at all on these runs, and where the
+duplicate delivery that reaches the decryptor comes from - `[QUEUE] delivery ... arrived twice`
+recognises one class of duplicate and acknowledges it without decrypting, so this one took a
+different path. **A race that heals cleanly is still a defect**, and this one heals by asking the
+peer for history it already has.
+
+### P2 - the leader tab does not render a message the follower tab sent, until it re-reads (measured 2026-09-05)
+
+TAB-4b: with two tabs of one account open, a message sent from the SECOND tab renders there, reaches
+the peer, and does NOT appear in the first tab - `counts.tab1: 0`, against `tab2: 1, peer: 1`. The
+reverse direction works (TAB-4c measured `tab2: 1` for a message sent from the first tab), and an
+inbound message reaches both (TAB-4a). It is not loss: a reload of the leader shows it, so the row IS
+persisted - measured directly, the message survives closing the follower and reloading.
+
+What is missing is a live fan-out. `tabMessageSync` carries three events - `outbox_flush_request`,
+`outbox_entry_sent`, `outbox_entry_cancelled` - and the second is a STATUS echo: the follower uses it
+to settle a row it already shows (`patchStatus` needs `findMessage` to succeed). There is no
+"a message was composed" event, so the sibling tab has nothing to render from. The symmetric fix is
+one more event carrying the optimistic row; the throttle question is whose copy wins if both tabs
+hold one.
+
+The row does not assert it - TAB-4b expects the sending tab and the peer - so this is recorded rather
+than failing a cell.
+
+
 ### P1 - twelve of sixteen messages were FETCHED AND DROPPED, and the commit log has a PERMANENT HOLE at epoch 121 (measured on prod 2026-09-02)
 
 **Reported by the user as an impression - *"j'ai l'impression de n'avoir qu'une petite partie des
@@ -2700,6 +2745,26 @@ VERIFIED without a phone - a native change is checked by compiling, which proves
 running.
 
 ## The harness itself
+
+### P3 - a check run BY HAND can measure a bundle older than the build it stamps, and nothing refuses it (measured 2026-09-05)
+
+`bundle.mjs` exists precisely for this and states it: a browser left open across a deploy keeps
+executing the old bundle and its console reads exactly like a reloaded one. `run.mjs` asks; a check
+invoked directly does not, and `record()` stamps `build` from the repository rather than from the
+client.
+
+Measured: TAB-1 was re-run three times against a fixed application and recorded `FAIL` each time
+against a build whose fix its tab had never loaded. Three probes were spent before the stale tab was
+the answer, and the ledger holds three rows naming a commit they did not measure. `tab1.mjs` now
+reloads (as `tab4.mjs` and `tab5.mjs` already did), but that is one file remembering, not a rule:
+`tab3b.mjs`, `tab7.mjs`, `notif.mjs`, `del1.mjs`, `msg4.mjs` and `mut.mjs` still do not.
+
+The fix belongs in `recordObserved`, which is the only place that knows BOTH the verdict and the
+clients it was observed on: compare each observed client's running bundle id against the deployed one
+and refuse the row rather than stamp it. That is the rig's own rule - never learn by failing what a
+fact could have told you - and the discriminator is already written and already exported. The care
+needed is that TAB-7 asserts `neverReloaded`, so the check must REFUSE, never silently reload.
+
 
 ### P2 - no row on the board can tell a healthy conversation from an epoch-forked one (measured 2026-08-29)
 

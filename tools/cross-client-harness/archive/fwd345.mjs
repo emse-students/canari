@@ -100,7 +100,11 @@ const results = [];
   const arrived = await awaitMessage(w2, m, 60000).then(() => Date.now() - at, () => null);
   const settled = await settledCount(w2, m);
   results.push({
-    check: 'FWD-3',
+    // The `check` field is NOT free to reuse: `results.mjs` stamps it with the RUNNER's
+    // filename, and a detail of the same name overwrites it. These three held the row id -
+    // which `id` already carries - so `rows.mjs` read "its runner no longer exists" for all
+    // three, a false alarm in the one tool that settles board-versus-ledger. Dropped, not
+    // renamed: nothing was being said that the row did not already say.
     marker: m,
     severed: info.severed,
     whileOffline,
@@ -140,7 +144,6 @@ const results = [];
   const onReceiver = await settledCount(w2, m);
   const onSender = await settledCount(a1, m);
   results.push({
-    check: 'FWD-4',
     marker: m,
     msToArrive: arrived,
     onReceiver: onReceiver.count,
@@ -173,7 +176,6 @@ const results = [];
   const arrived = await awaitMessage(w2, m, 60000).then(() => Date.now() - at, () => null);
   const settled = await settledCount(w2, m);
   results.push({
-    check: 'FWD-5',
     marker: m,
     countSettled: settled.settled,
     msToArrive: arrived,

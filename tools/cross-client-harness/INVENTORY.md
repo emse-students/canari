@@ -188,7 +188,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 
 They live under `archive/` but they are NOT questions - they take no verdict. Runners that drive other rows, probes, and vocabulary that never moved to the root. **Search here before writing a gesture**: this is the half that used to be filed as rows, where nobody looking for a gesture would ever have found it.
 
-39 scripts.
+40 scripts.
 
 | script | what it is |
 |---|---|
@@ -226,6 +226,7 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 | `archive/syncrows.mjs` | WHAT A DEVICE IS STILL WAITING FOR, AND HOW LONG IT HAS BEEN WAITING - the reader every HEAL row |
 | `archive/synopen.mjs` | One-shot: banner transitions DURING the openChannel sequence, beside the console. |
 | `archive/synwatch.mjs` | One-shot: does the "Synchronisation des messages..." banner appear when NOTHING is happening? |
+| `archive/tab1probe.mjs` | WHY DID A HIDDEN TAB RAISE NO NOTIFICATION - a probe, not a row. |
 | `archive/tabs.mjs` | Backgrounding a page, the ONLY way that works here. |
 | `archive/usability.mjs` | WHAT COUNTS AS THE APP ANSWERING A CLICK ON A CONVERSATION TILE. |
 | `archive/ws1.mjs` | WHAT closes W1's WebSocket in the middle of READ-1, and what does the page say while it happens? |
@@ -234,4 +235,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-173 scripts in total.
+174 scripts in total.

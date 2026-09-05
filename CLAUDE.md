@@ -231,10 +231,11 @@ noticing. Order = priority. Detail lives where the link says. Defect stories are
 rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
 [cross-client-testing](docs/wiki/cross-client-testing.md).
 
-1. **THE CAMPAIGN RUNS AGAIN: RUNG 1 IS 9/13 PASS**, rung 2 next, and **the four `+A1` rows are
-   UNBLOCKED since 2026-09-04** - the phone's transport predicate asked only whether its ENGINE keeps
-   a cookie, never whether the deployment can ISSUE one ([sessions](docs/wiki/sessions.md#the-credential-a-client-carries-itself)).
-   **TLS locally is NOT the answer and was measured out** ([docker](docs/wiki/infrastructure/docker.md)).
+1. **THREE RUNGS COMPLETE: MSG 13/13, DEL 10/10, TAB 10/10** - TAB-3b `PASS-DIRTY` on a SEVERE line
+   that is a real P2 ([backlog](docs/wiki/backlog.md)); the rung cost THREE product fixes
+   (`CHANGELOG.md`). **The four `+A1` rows are UNBLOCKED**: the phone's predicate asked whether its
+   ENGINE keeps a cookie, not whether the deployment can ISSUE one ([sessions](docs/wiki/sessions.md#the-credential-a-client-carries-itself)),
+   and **TLS locally was measured out** ([docker](docs/wiki/infrastructure/docker.md)).
 2. **P1 - a PLACEHOLDER held a member's seat**; whether a LEAF is left in the MLS tree only a
    member's CLIENT can say. [backlog](docs/wiki/backlog.md#p1---the-placeholder-is-gone-from-prod-what-it-may-have-left-in-the-mls-tree-is-not-answered).
 3. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - **ONE merge mechanism
