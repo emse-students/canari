@@ -379,11 +379,22 @@ async function handleWelcome({
       // delete any IndexedDB row here - that would erase accumulated messages before they are
       // migrated, causing visible loss until the history bundle arrives.
 
-      // Server-side registration (idempotent - safety net if the inviter has not yet
-      // called registerMember for this userId, e.g. race in inviteMembers).
-      // Results unused: fire-and-forget to avoid holding the MLS lock during
-      // two network round-trips (the group is already joined locally).
-      void mlsService.registerMember(joinedGroupId, userId).catch(() => {});
+      // A SAFETY NET THAT CANNOT CATCH THE CASE IT WAS WRITTEN FOR, so it is gone. It read
+      // "idempotent - safety net if the inviter has not yet called registerMember for this userId",
+      // and `assertCallerMayMutateMembership` on the delivery service refuses a caller who is not
+      // already a member of the group: the creation bootstrap only applies to an EMPTY group, and a
+      // group somebody is being welcomed into is not empty. So if the inviter had already
+      // registered this user the call was redundant, and if it had not - the one case this line
+      // existed for - the server answered 403. It could never do anything but fail or nothing.
+      //
+      // What it did do was speak: `registerMember refused: group=... user=... status=403` at ERROR
+      // level plus a `POST .../members -> 403`, on joins where the inviter's own registration had
+      // not yet landed. GRP-5 and GRP-8 recorded PASS-DIRTY on exactly that and nothing else
+      // (2026-09-05), on rows about renaming a group and about adding a member twice.
+      //
+      // THE RESIDUAL RISK IS NAMED RATHER THAN PAPERED OVER: an inviter that dies between sending
+      // the Welcome and registering the joiner leaves a member in the MLS tree with no server-side
+      // membership. This line did not protect against that and could not; it is in the backlog.
       void mlsService
         .updateInvitationStatus(mlsService.getDeviceId(), userId, joinedGroupId, 'active')
         .catch(() => {});

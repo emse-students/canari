@@ -13,6 +13,24 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A joiner asked the server to register itself into the group it was being welcomed into, which
+  the server refuses by construction - so the "safety net" was a no-op when it worked and a 403 when
+  it was needed.** Its own comment said what it was for: the case where the inviter has not yet
+  called `registerMember` for this user. But `assertCallerMayMutateMembership` only lets an existing
+  member of the group mutate membership, plus the creator of an EMPTY group - and a group somebody
+  is being welcomed into is not empty. So if the inviter had already registered them the call
+  changed nothing, and in the one case it existed for the answer was `403`, printed at ERROR level
+  beside a failed request, on ordinary joins. Deleted rather than repaired. The residual risk it
+  never actually covered - an inviter dying between sending the Welcome and registering the joiner -
+  is written down instead of papered over.
+
+- **The invitation link of a group pointed at a server that was not serving the app**, on any
+  estate built locally. `publicAppOrigin()` prefers `VITE_FRONTEND_URL` to the window's own origin,
+  which it must (a Tauri build would otherwise share `tauri.localhost`), and the local generator
+  writes the DEV SERVER's url there - correct for `bun run dev`, wrong for a build nginx serves on
+  another port. One variable, two consumers, two different right answers; the estate build now sets
+  its own.
+
 - **A delivery crossing that happens on nearly every send printed a line every time, and its own
   comment said the RATE was the reading that mattered.** Two channels carry the same row - the live
   socket and the pending pull - and an acknowledgement cannot land before a pull already in flight,

@@ -359,6 +359,7 @@ test-harness:
 	@bun tools/cross-client-harness/archive/instrument-selftest.mjs
 	@bun tools/cross-client-harness/archive/lucide-selftest.mjs
 	@bun tools/cross-client-harness/archive/ports-selftest.mjs
+	@bun tools/cross-client-harness/archive/origin-selftest.mjs
 	@bun tools/cross-client-harness/archive/ready-selftest.mjs
 	@bun tools/cross-client-harness/archive/servable-selftest.mjs
 	@bun tools/cross-client-harness/archive/residue-selftest.mjs
@@ -420,10 +421,18 @@ build-frontend:
 # Et rebâtir `frontend-ssr` seul ne suffit pas : nginx détient SA copie des assets, donc un client
 # rechargé prendrait l'ancien JS avec le nouveau shell. Les deux images, toujours.
 #
+# ET `VITE_FRONTEND_URL` EST CELLE DE LA PILE, PAS CELLE DU SERVEUR DE DEV. `frontend/.env` est
+# généré pour `bun run dev` et y met `http://localhost:1420`, ce qui est juste POUR LUI ; ce build-ci
+# est servi par nginx sur 8081. Or `publicAppOrigin()` préfère cette variable à l'origine de la
+# fenêtre (il le faut, sinon Tauri partagerait `tauri.localhost`), donc le build héritait de l'URL du
+# serveur de dev et TOUT LIEN PARTAGEABLE pointait vers une application qui n'est pas celle qu'on
+# utilise. Mesuré le 2026-09-05 par GRP-4 : le lien d'invitation d'un groupe sortait en
+# `http://localhost:1420/g/join/<token>`. Une variable, deux consommateurs, deux bonnes réponses -
+# celle du consommateur est posée ici.
 # La forme est ASSERTÉE, pas espérée : trois chemins, et un échec nomme la variable manquante.
 local-frontend:
 	@echo "${BLUE}🔄 Building SvelteKit pour la pile locale (BUILD_WEB=1, adapter-node)…${RESET}"
-	@cd frontend && BUILD_WEB=1 bun run build
+	@cd frontend && BUILD_WEB=1 VITE_FRONTEND_URL=http://localhost:$${CANARI_LOCAL_API_PORT:-8081} bun run build
 	@for f in frontend/build/index.js frontend/build/client frontend/build/prerendered; do 	  if [ ! -e "$$f" ]; then 	    echo "${RED}❌ $$f absent : le build n'a pas la forme web. BUILD_WEB=1 a-t-il été pris ?${RESET}"; 	    exit 1; 	  fi; 	done
 	@echo "${GREEN}✅ Forme web vérifiée (index.js + client/ + prerendered/)${RESET}"
 	@echo "${BLUE}🔄 Rebuild des DEUX images frontend (nginx sert les assets, ssr sert le HTML)…${RESET}"

@@ -726,6 +726,40 @@ that the DB copy at least keeps behind one deliberate decision. It is a change t
 tooling with its own blast radius, so it is a P2 here rather than something done inline during a
 harness tidy.
 
+### P3 - the remove control in a group panel announces a raw 64-hex user id, so a screen reader reads the id where everyone else reads a name (measured 2026-09-05)
+
+`Sidebar`'s member rows render display names correctly - GRP-9 measured zero of five rows showing a
+raw id, both names resolving - and the panel's per-member remove control carries
+`aria-label="Retirer <userId>"` with the full 64-hex id. So the one surface that exists to be read
+aloud is the one that says the id.
+
+It is also the ONLY per-member hook the panel offers, which is why the campaign addresses members
+through it (`grp.mjs`'s header says so). Giving it a name would need a second hook for the rig, or
+the rig switching to a `data-` attribute - the same one-attribute pattern `data-channel-row` and
+`data-conversation-tile` already use, which is the cleaner end state.
+
+Not fixed inline during rung 8 because the accessible name is load-bearing for the instrument and
+swapping both halves at once is a change that wants its own measurement.
+
+### P2 - an inviter that dies between sending a Welcome and registering the joiner leaves a member in the MLS tree with no server-side membership, and nothing repairs it (measured 2026-09-05)
+
+`groupCreation.ts` delivers Welcomes and THEN calls `registerMember` for each user whose Welcome was
+delivered. Between those two the joiner is cryptographically in the group and unknown to the
+delivery service, so nothing routes to it.
+
+A line in `setupMessageHandler.ts` claimed to cover this - the joiner registering ITSELF, described
+as a "safety net ... if the inviter has not yet called registerMember" - and it could not: the
+server's `assertCallerMayMutateMembership` refuses a caller who is not already a member, exempting
+only the creator of an empty group. It has been deleted (see `CHANGELOG.md`), which removes a 403
+on every join and changes nothing about the exposure.
+
+**What would actually close it** is registering before delivering rather than after, so the server
+knows the member before the Welcome can arrive - which is the order the delivery service's own
+docblock already assumes ("Freshly-invited joiners are registered as members BEFORE their Welcome").
+The reason it is not that way is visible in the code: only users whose Welcome was DELIVERED get
+registered, so inverting the order also changes which users end up registered when a delivery fails.
+That is a real design decision and wants measuring, not guessing.
+
 ### P3 - the @mention dropdown offers you yourself, and mentioning yourself can do nothing at all (measured 2026-09-05)
 
 Typing `@` in a channel composer lists the signed-in user among the suggestions. Picking it inserts

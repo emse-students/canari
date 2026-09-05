@@ -1810,6 +1810,30 @@ export const AUTH_TEARDOWN_NARRATION = [/^\[A\] clear$/, /^\[A\] ws-$/];
  */
 export const BLOCK_LIST_READ_NARRATION = [/^\[blocks\.listBlockedUsers\]$/];
 
+/**
+ * WHAT CREATING A GROUP SAYS ABOUT ITSELF, and both lines are load-bearing rather than chatter.
+ *
+ * `[blocks.isBlockedWith] <payload>` is the function-entry log this project's own standard requires
+ * (`CLAUDE.md`: a log at function entry, at decisions, at error branches), emitted because every
+ * creation path ASKS the server whether the target is blocked before opening a conversation nobody
+ * wanted. Its payload is the ANSWER, which is the useful half - so unlike
+ * {@link BLOCK_LIST_READ_NARRATION} this one cannot be pinned to a bare tag, and it is pinned to
+ * the tag at the START of the sentence instead.
+ *
+ * `[SYNC] bulk.addedDeviceIds: <ids>` names exactly which devices got into the staged commit,
+ * immediately before the Welcomes go out. That is the single most useful line in the phase this
+ * campaign spends the most time on, and a rule that counted it as dirt would be asking the code to
+ * stop saying the thing worth saying.
+ *
+ * IT IS NOT A WIDER CLASSIFIER. Every check that forgives these is a check that CREATED A GROUP, so
+ * it provoked them; a check that did not create one and sees them has found something, and gets no
+ * forgiveness from here.
+ */
+export const GROUP_CREATION_NARRATION = [
+  /^\[blocks\.isBlockedWith\]/,
+  /^\[SYNC\] bulk\.addedDeviceIds: /,
+];
+
 
 /**
  * THE REFUSAL A CLIENT THAT HAS JUST DELETED ITS OWN COOKIES GETS BACK, forgiven per row.

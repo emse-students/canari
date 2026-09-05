@@ -198,16 +198,16 @@ rung is believed.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| GRP-1 | Create a group, add a member, both sides see the roster and the Add commit merges | `W1 W2` | `pending` |
-| GRP-2 | The picker must not offer existing members or yourself, and a no-op submission must not report success | `W1 W2` | `pending` |
-| GRP-3 | Remove a member: the Remove commit, and what the removed device can still read | `W1 W2` | `pending` |
-| GRP-4 | The group invitation LINK: generate, open it on the other account | `W1 W2` | `pending` |
-| GRP-5 | Rename a group, seen on the other side | `W1 W2` | `pending` |
-| GRP-6 | Leave a group - which deliberately commits nothing | `W1 W2` | `pending` |
-| GRP-7 | Add a member who is offline; they join on their next connection | `W1 W2` | `pending` |
-| GRP-8 | Add and remove the same member twice in a row, fast | `W1 W2` | `pending` |
-| GRP-9 | A member row rendering a raw user id instead of a display name | `W1 W2` | `pending` |
-| GRP-10 | The invitation link of one group must not appear in another group's panel | `W1 W2` | `pending` |
+| GRP-1 | Create a group, add a member, both sides see the roster and the Add commit merges | `W1 W2` | `PASS` 2026-09-05 02:56 on 0.16.3, clean - the Add commit merges and the roster goes 1 -> 2 on the creator and 2 on the peer, a message crosses BOTH ways 1 ms later, and the stored id sets converge (the peer's one surplus row predates the commit, which is why the check dates it rather than counting it) |
+| GRP-2 | The picker must not offer existing members or yourself, and a no-op submission must not report success | `W1 W2` | `PASS` 2026-09-05 02:57 on 0.16.3, clean - the picker offers neither the existing member nor yourself, the submit button is present but DISABLED with nothing picked, and the roster is unchanged after trying |
+| GRP-3 | Remove a member: the Remove commit, and what the removed device can still read | `W1 W2` | `PASS` 2026-09-05 02:58 on 0.16.3, clean - both halves: the removed device KEEPS what it had already decrypted and receives nothing sent after the commit, over a 30 s negative window, and it learnt from the commit rather than from a notice. Asserting only the second half would pass against a client that simply wiped the conversation |
+| GRP-4 | The group invitation LINK: generate, open it on the other account | `W1 W2` | `PASS` 2026-09-05 02:59 on 0.16.3, clean - a 24-char token, the invitation page names the group, the join lands in 365 ms, the roster reads 2 on both sides, the SERVER holds 2 user members and 5 device routes, and a message then reaches the joiner. **It took three stacked defects to get here** - see the row's story below |
+| GRP-5 | Rename a group, seen on the other side | `W1 W2` | `PASS` 2026-09-05 03:00 on 0.16.3, clean - the creator shows the new name and the peer sees it 1 ms later. It was PASS-DIRTY on a `POST .../members -> 403` from the PEER, which turned out to be a product defect and is fixed |
+| GRP-6 | Leave a group - which deliberately commits nothing | `W1 W2` | `PASS` 2026-09-05 03:01 on 0.16.3, clean - the leaver stops listing the group and receives nothing sent after the departure over a 30 s window, and the remaining member's roster is 1. The guarantee here is SERVER-SIDE, so the row asserts the observable consequence and says nothing about a tree it cannot see |
+| GRP-7 | Add a member who is offline; they join on their next connection | `W1 W2` | `PASS` 2026-09-05 03:02 on 0.16.3, clean - added while the socket is cut, the group is NOT listed during the outage, and 63 ms after the gateway returns the join lands; the message sent before the join is then read 2.7 s later |
+| GRP-8 | Add and remove the same member twice in a row, fast | `W1 W2` | `PASS` 2026-09-05 03:03 on 0.16.3, clean - two rounds of add -> remove both go 2 then 1, the final roster is 1, and the removed account receives nothing over a 30 s window. The eviction and re-admission path narrates itself correctly throughout (Remove commit at epoch 3, `forget_group`, then a Welcome recognised as a re-admission rather than a redelivery) |
+| GRP-9 | A member row rendering a raw user id instead of a display name | `W1 W2` | `PASS` 2026-09-05 03:04 on 0.16.3, clean - zero of five rows render a raw id and both display names resolve. **But the remove control's accessible name IS a raw 64-hex id** (`Retirer <id>`), so a screen reader announces the id where sighted users read a name - a P3 in [backlog](backlog.md), not a failure of what this row asserts |
+| GRP-10 | The invitation link of one group must not appear in another group's panel | `W1 W2` | `PASS` 2026-09-05 03:05 on 0.16.3, clean - a link generated on group A leaves group B's panel offering `Generer un lien` with no link, no `Regenerer`, and no `Lien copie`: no leak of a capability between panels |
 
 ## 9 - COMM - communities, channels, roles
 

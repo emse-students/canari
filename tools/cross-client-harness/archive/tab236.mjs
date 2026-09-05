@@ -19,7 +19,7 @@ import { listTargets, connect, until } from '../cdp.mjs';
 import { watch } from '../watch.mjs';
 import { mark, recordObserved } from '../results.mjs';
 import { killBrowser, startBrowser, BROWSERS } from '../launch.mjs';
-import { ACCOUNT_OF, PORTS, peerNameFor } from '../names.mjs';
+import { ACCOUNT_OF, PORTS, SITE, peerNameFor } from '../names.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const which = String(process.argv[2] || '2');
@@ -87,7 +87,11 @@ if (which === '2') {
   const reopened = connect(blanks[0].webSocketDebuggerUrl);
   await reopened.ready;
   await reopened.send('Page.enable');
-  await reopened.send('Page.navigate', { url: 'https://canari-emse.fr/chat' });
+  // THE ESTATE, NOT PRODUCTION. This spelt `https://canari-emse.fr/chat`, so a row about reopening
+  // a tab would have driven a browser holding a campaign session to the REAL SITE - and on an
+  // estate that has been local since 2026-09-03 the row would measure production while reporting
+  // on localhost. `SITE` is the one place the target estate is named.
+  await reopened.send('Page.navigate', { url: `${SITE}/chat` });
   await sleep(12_000);
   const pinResult = unlock(PORTS.W1, ACCOUNT_OF.W1);
   await sleep(4_000);

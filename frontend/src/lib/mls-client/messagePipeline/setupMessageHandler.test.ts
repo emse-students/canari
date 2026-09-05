@@ -237,7 +237,13 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     const ok = await onMsg('peer-user', new Uint8Array([1, 2]), groupId, true, undefined, false);
     expect(ok).toBe(true);
     expect(mls.processWelcome).toHaveBeenCalled();
-    expect(mls.registerMember).toHaveBeenCalledWith(groupId, 'user-a');
+    // AND IT DOES NOT REGISTER ITSELF. This asserted the opposite until 2026-09-05, pinning a
+    // "safety net" that the delivery service refuses by construction: a joiner is not yet a member
+    // of the group it is being welcomed into, and `assertCallerMayMutateMembership` only exempts
+    // the creator of an EMPTY group. So the call was redundant when the inviter had already
+    // registered this user and a 403 when it had not - the sole case it existed for - and it spoke
+    // at ERROR level either way. GRP-5 and GRP-8 recorded PASS-DIRTY on nothing else.
+    expect(mls.registerMember).not.toHaveBeenCalled();
     expect(deps.conversations.get(groupId)?.lifecycle).toBe('active');
   });
 
