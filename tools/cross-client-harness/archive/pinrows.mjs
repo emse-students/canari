@@ -4,6 +4,7 @@
  *
  *   bun archive/pinrows.mjs --row 1         the correct PIN, and the store it was protecting
  *   bun archive/pinrows.mjs --row 2         a wrong PIN five times - records PIN-2 AND PIN-7
+ *   bun archive/pinrows.mjs --row 3         a PIN too short, in BOTH components that own the rule
  *   bun archive/pinrows.mjs --row 8         the gate with the server unreachable
  *   bun archive/pinrows.mjs --row 11        the gate cannot be walked away from
  *
@@ -31,12 +32,15 @@ import {
   awaitAppReady,
   client,
   evaluate,
+  goto,
   pollFact,
   pressKey,
   reloadAndWait,
+  requestsSince,
 } from '../chat.mjs';
 import { GATE_EXPR } from '../gate-probe.mjs';
 import {
+  BLOCK_LIST_READ_NARRATION,
   BROWSER_PASSWORD_FORM_HINT,
   dirtOf,
   gate,
@@ -65,6 +69,10 @@ const ROWS = {
     id: 'PIN-2',
     also: ['PIN-7'],
     what: 'a wrong PIN N times: refused every time, no lockout a correct PIN cannot clear, and the messaging state untouched',
+  },
+  3: {
+    id: 'PIN-3',
+    what: 'a PIN below the minimum is refused by the client, in both components that own the rule, and no request is sent',
   },
   8: {
     id: 'PIN-8',
@@ -244,6 +252,50 @@ const CONVERSATIONS = `document.querySelectorAll('[data-conversation-tile]').len
 
 /** Where the app thinks it is - a logout shows up here as `/login`, and nowhere else. */
 const WHERE = `location.pathname`;
+
+/**
+ * A PIN one character below the minimum, which is the only length worth sending.
+ *
+ * `MIN_PIN_LENGTH` is 4 and `pinValidation.ts` says why the rule may not differ between creating a
+ * PIN and entering one: the device key derives from the exact string typed, so anything a PIN could
+ * pass at creation and fail at unlock would lock its owner out of their own messages. Three
+ * characters is the boundary; a one-character value would pass a rule that had drifted to "at least
+ * two" and this row would never know.
+ */
+const TOO_SHORT = '123';
+
+/** Every endpoint a PIN flow can touch. The row asserts NONE of them was reached. */
+const PIN_ENDPOINTS = /\/api\/mls\/security\/pin-(salt|check|change)/;
+
+/**
+ * Fills the change-PIN modal with a NEW pin below the minimum, and submits it.
+ *
+ * The current-PIN field holds an obvious placeholder: `ChangePinModal.handleSubmit` runs the length
+ * check on the NEW value before it calls `onSubmit`, so nothing here ever leaves the client - and
+ * this file may not read the account's real PIN in any case, which is `pin.mjs`'s whole reason for
+ * existing.
+ *
+ * SUBMITTED THROUGH THE FORM, never by calling the handler: `requestSubmit` is what the button does,
+ * so the row exercises the same path a person does. `input` is dispatched because the fields are
+ * `bind:value` - a value written straight onto the element leaves Svelte's state holding the empty
+ * string it had, and the modal would refuse for "fill everything in" rather than for the length.
+ */
+const FILL_SHORT_CHANGE = `(function () {
+  var set = function (id, v) {
+    var el = document.querySelector(id);
+    if (!el) return false;
+    el.value = v;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  };
+  if (!set('#current-pin', 'placeholder-not-the-real-pin')) return 'no-current';
+  if (!set('#new-pin', '${TOO_SHORT}')) return 'no-new';
+  if (!set('#confirm-pin', '${TOO_SHORT}')) return 'no-confirm';
+  var form = document.querySelector('#new-pin').closest('form');
+  if (!form) return 'no-form';
+  form.requestSubmit();
+  return 'submitted';
+})()`;
 
 /**
  * The network, emulated, through ONE call so it cannot be half-applied.
@@ -718,7 +770,139 @@ async function row8() {
   });
 }
 
-const RUNNERS = { 1: row1, 2: row2, 8: row8, 11: row11 };
+/**
+ * PIN-3 - a PIN below the minimum, at every flow that can ask for one.
+ *
+ * THE ROW READS "SETUP, CHANGE, RECOVERY AND UNLOCK" AS TWO COMPONENTS, and that is a measurement
+ * rather than a shortcut: `PinModal.handleSubmit` serves setup AND unlock - `isFirstSetup` changes
+ * the labels and nothing else - and `ChangePinModal.handleSubmit` serves change AND recovery, whose
+ * own comment says why the rule cannot be stricter in either ("in 'recover' the new field is the PIN
+ * already chosen on another device"). Two `isValidPin` call sites, four flows, and driving both
+ * components is what covers all four. A row that drove only the gate would be measuring half a rule
+ * and reporting on a whole one.
+ *
+ * AND THE ASSERTION IS NOT ONLY "IT SAID NO". A length rule that refuses AFTER a round trip has told
+ * the server a PIN attempt happened, which is a rate-limit budget and a log line spent on a string
+ * the client could see was too short. So the row also proves the client sent NOTHING - the three
+ * endpoints a PIN flow can touch, counted over the window in which the refusal happened.
+ */
+async function row3() {
+  // ── 1. the gate: setup and unlock, one handler ────────────────────────────────────────────────
+  const raised = await raiseGate();
+  if (!raised.up) {
+    record(row.id, 'INCONCLUSIVE', {
+      scenario: row.what,
+      precondition: 'the PIN gate did not come up after the device key vault was emptied',
+      forgotten: raised.forgotten,
+      ...gate('INCONCLUSIVE', { W1: await report(observer) }).detail,
+    });
+    return;
+  }
+
+  const beforeGate = w1.events.length;
+  await unlockClient(w1, PORTS.W1, ACCOUNT_OF.W1, { match: APP_TAB, value: TOO_SHORT });
+  const gateRefusal = await evaluate(w1, REFUSAL);
+  const gateHeld = await gateUp();
+  const gateAsked = requestsSince(w1, PIN_ENDPOINTS, beforeGate);
+
+  // ── 2. the change modal: change and recovery, one handler ─────────────────────────────────────
+  //
+  // The client has to be UNLOCKED to reach settings at all, so the gate is answered first - and with
+  // the real PIN, which is the teardown's job anyway. Everything below is client-side: the length
+  // check runs before `onSubmit` is called, so the CURRENT pin field can hold anything at all and
+  // nothing is ever sent. It is filled with an obvious placeholder rather than the real PIN, which
+  // this file may not read.
+  //
+  // AND THE UNLOCK IS THIS ROW'S POSITIVE CONTROL. "No request was sent" is only evidence if the
+  // instrument could have seen one, and a `Network` domain that was never enabled answers `[]` to
+  // every question - the vacuous pass this campaign refuses everywhere. A real unlock DOES call
+  // `pin-salt` and `pin-check`, so counting them over that window proves the probe can see traffic
+  // before the row believes an empty list means silence.
+  const beforeControl = w1.events.length;
+  const unlocked = await unlockClient(w1, PORTS.W1, ACCOUNT_OF.W1, { match: APP_TAB });
+  const controlAsked = requestsSince(w1, PIN_ENDPOINTS, beforeControl);
+  let changeRefusal = null;
+  let changeStillOpen = null;
+  let changeAsked = [];
+  let opened = null;
+  let filled = null;
+  if (unlocked.verdict === 'unlocked') {
+    await goto(w1, '/settings');
+    await awaitAppReady(w1).catch(() => null);
+    opened = (await pollFact(() => evaluate(w1, `!!document.querySelector('[data-change-pin]')`), {
+      timeoutMs: 15000,
+      everyMs: 400,
+    })).ok;
+    if (opened) {
+      await activate(w1, '[data-change-pin]');
+      await pollFact(() => evaluate(w1, `!!document.querySelector('#new-pin')`), { timeoutMs: 10000 });
+      const beforeChange = w1.events.length;
+      filled = await evaluate(w1, FILL_SHORT_CHANGE);
+      changeRefusal = await evaluate(w1, REFUSAL);
+      changeStillOpen = await evaluate(w1, `!!document.querySelector('#new-pin')`);
+      changeAsked = requestsSince(w1, PIN_ENDPOINTS, beforeChange);
+    }
+  }
+
+  // THE SETTINGS PAGE IS A VIEW THIS ROW MOUNTS, and it reads the block list on the way in.
+  // `[blocks.listBlockedUsers]` is the bare function-entry tag `CLAUDE.md` requires of every
+  // exported function - content-free, no payload that could be a finding - and it appears here
+  // because PIN-3 is the only PIN row that leaves the app's root. Named at the call site that
+  // caused it; the payload-carrying spellings of the same store are forgiven by nothing.
+  const rep = ignoringExpectedLog(await report(observer), [
+    ...PAST_THE_GATE,
+    ...BLOCK_LIST_READ_NARRATION,
+  ]);
+  const gateRefused = gateHeld === true && gateRefusal !== null && gateAsked.length === 0;
+  const changeRefused =
+    filled === 'submitted' &&
+    changeStillOpen === true &&
+    changeRefusal !== null &&
+    changeAsked.length === 0;
+  const verdict = opened === false || unlocked.verdict !== 'unlocked' || controlAsked.length === 0
+    ? 'INCONCLUSIVE'
+    : gateRefused && changeRefused
+      ? 'PASS'
+      : 'FAIL';
+  const gated = gate(verdict, { W1: rep });
+
+  record(row.id, gated.verdict, {
+    ...gated.detail,
+    scenario: row.what,
+    // Both refusals are reported and neither is matched on - they are translations. What is judged
+    // is that one appeared, that the dialog stayed, and that nothing left the client.
+    gateRefusal,
+    gateHeld,
+    gateAsked,
+    // The positive control: a real unlock's own traffic, which is what makes the two empty lists
+    // above mean "nothing was sent" rather than "nothing was watched".
+    controlAsked,
+    filled,
+    changeRefusal,
+    changeStillOpen,
+    changeAsked,
+    dirt: dirtOf(rep),
+    why:
+      unlocked.verdict !== 'unlocked'
+        ? 'the client could not be brought past the gate, so the change modal was never reachable'
+        : opened === false
+          ? 'the settings page never showed the change-PIN control, so half the rule was unmeasured'
+          : controlAsked.length === 0
+            ? 'a REAL unlock sent no PIN request either, so this row cannot see traffic and its two empty lists mean nothing'
+            : undefined,
+    failedBecause: [
+      gateHeld === false ? 'a PIN below the minimum closed the gate' : null,
+      gateRefusal === null ? 'the gate refused a too-short PIN with nothing on screen' : null,
+      gateAsked.length ? `the gate asked the server about a PIN it could see was too short: ${gateAsked.join(' ')}` : null,
+      changeStillOpen === false ? 'the change modal closed on a new PIN below the minimum' : null,
+      changeRefusal === null ? 'the change modal refused a too-short PIN with nothing on screen' : null,
+      changeAsked.length ? `the change modal asked the server about a PIN it could see was too short: ${changeAsked.join(' ')}` : null,
+      filled !== null && filled !== 'submitted' ? `the change modal could not be filled: ${filled}` : null,
+    ].filter(Boolean),
+  });
+}
+
+const RUNNERS = { 1: row1, 2: row2, 3: row3, 8: row8, 11: row11 };
 await RUNNERS[opt('row', '')]();
 
 // ── the teardown, which is the next row's inherited state ────────────────────────────────────────
