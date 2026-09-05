@@ -16,7 +16,8 @@ import {
   type PinProgressCallback,
 } from '$lib/utils/chat/pinChange';
 import { deriveDeviceKeyB64, isValidDeviceKeyB64 } from '$lib/crypto/deviceKey';
-import { LoginFailure, loginErrorCode } from './loginErrors';
+import { fetchOrUnreachable } from '$lib/utils/fetchOrUnreachable';
+import { LoginFailure, isExpectedLoginOutcome, loginErrorCode } from './loginErrors';
 import { MLS_LOCAL_STATE_UNDECRYPTABLE } from '$lib/mls-client';
 import { getToken, clearAuth, SessionExpiredError } from '$lib/stores/auth';
 import { bindCurrentSessionDevice } from '$lib/services/authSessions';
@@ -504,9 +505,10 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       //  - a revoked device is matched on its real deviceId (not the 'pending' placeholder),
       //    so the one-shot reset fires instead of leaving it banned forever.
       // Fetch the per-user random salt from the server
-      const saltRes = await fetch(
+      const saltRes = await fetchOrUnreachable(
         `${ctx.getHistoryBaseUrl()}/api/mls/security/pin-salt/${encodeURIComponent(ctx.getUserId())}`,
-        { headers: { Authorization: `Bearer ${accessToken}` } }
+        { headers: { Authorization: `Bearer ${accessToken}` } },
+        m.auth_pin_salt_unreachable()
       );
       if (!saltRes.ok) {
         throw new Error(m.auth_pin_salt_unreachable());
@@ -519,11 +521,11 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       };
       const deviceId = await mlsService.resolveDeviceId(ctx.getUserId());
       const verifierPayload = JSON.stringify({ userId: ctx.getUserId(), verifier, deviceId });
-      const pinCheckRes = await fetch(`${ctx.getHistoryBaseUrl()}/api/mls/security/pin-check`, {
-        method: 'POST',
-        headers: verifierHeaders,
-        body: verifierPayload,
-      });
+      const pinCheckRes = await fetchOrUnreachable(
+        `${ctx.getHistoryBaseUrl()}/api/mls/security/pin-check`,
+        { method: 'POST', headers: verifierHeaders, body: verifierPayload },
+        m.auth_pin_check_unreachable()
+      );
       if (!pinCheckRes.ok) {
         throw new Error(m.auth_pin_check_unreachable());
       }
@@ -1307,9 +1309,20 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
   } catch (_e: unknown) {
     cancelStartupCatchupBench();
     const msg = _e instanceof Error ? _e.message : String(_e);
+    const code = loginErrorCode(_e);
     ctx.setLoginError(msg);
-    cb.log(`Error: ${msg}`);
-    console.error('[INIT] Login failed:', msg);
+    // AN ORDINARY OUTCOME IS NARRATED, A DEFECT IS ACCUSED - see `isExpectedLoginOutcome` for why
+    // one catch cannot say both with one level. The code is read here rather than below because the
+    // log is the first thing anybody looks at, and a mistyped PIN or a train tunnel filed under
+    // `[INIT] Login failed` beside a WASM that would not load is a line whose reader learns to skip
+    // it. The code is NAMED in the line so the two can still be told apart at a glance.
+    if (isExpectedLoginOutcome(code)) {
+      cb.log(`[INIT] Login did not complete (${code}): ${msg}`);
+      console.warn(`[INIT] Login did not complete (${code}):`, msg);
+    } else {
+      cb.log(`Error: ${msg}`);
+      console.error(`[INIT] Login failed (${code}):`, msg);
+    }
     ctx.resetMls();
     clearUserLocally();
     clearDeviceKey();
@@ -1320,7 +1333,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       if (cb.onSessionExpired) cb.onSessionExpired();
       else void goto('/login', { replaceState: true });
     } else if (cb.onLoginFailed) {
-      cb.onLoginFailed(msg, loginErrorCode(_e));
+      cb.onLoginFailed(msg, code);
     } else {
       const cur = window.location.pathname + window.location.search + window.location.hash;
       void goto(`/login?returnTo=${encodeURIComponent(cur)}`, { replaceState: true });
@@ -1443,9 +1456,10 @@ export async function biometricLoginImpl(
  * ({@link deriveDeviceKeyB64}), so every flow that touches the PIN needs it.
  */
 async function fetchPinSalt(ctx: SessionContext, userId: string, token: string): Promise<string> {
-  const res = await fetch(
+  const res = await fetchOrUnreachable(
     `${ctx.getHistoryBaseUrl()}/api/mls/security/pin-salt/${encodeURIComponent(userId)}`,
-    { headers: { Authorization: `Bearer ${token}` } }
+    { headers: { Authorization: `Bearer ${token}` } },
+    m.auth_pin_salt_unreachable()
   );
   if (!res.ok) throw new Error(m.auth_pin_salt_unreachable());
   const { salt } = (await res.json()) as { salt: string };

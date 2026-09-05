@@ -94,21 +94,34 @@ export async function settle(cx, deadlineMs = 30_000) {
  * @param {object} cx an attached CDP client for `port` - the thing the proof is read from
  * @param {number} port the client's CDP port
  * @param {string} account the account key as spelt in `test-accounts.json`
- * @param {{match?: string, timeoutMs?: number, deadlineMs?: number}} [opts]
+ * @param {{match?: string, value?: string, timeoutMs?: number, deadlineMs?: number}} [opts]
  *   `match` picks the target by url when a client holds several - `tauri.localhost` for the phone.
+ *   `value` sends that string INSTEAD of the account's PIN - see below.
  * @returns {Promise<{verdict: 'unlocked'|'LOCKED'|'UNDECIDED', said: string}>}
  */
 export async function unlockClient(cx, port, account, opts = {}) {
-  const { match = null, timeoutMs = 120_000, deadlineMs = 30_000 } = opts;
+  const { match = null, value = null, timeoutMs = 120_000, deadlineMs = 30_000 } = opts;
 
+  // A DELIBERATELY WRONG PIN IS STILL AN UNLOCK ATTEMPT, and it needs the same post-condition.
+  //
+  // `pin.mjs --value` exists for the rows that send one (PIN-2, PIN-3, PIN-7), and before this they
+  // had to spawn it themselves - which is the duplication this helper was written to end, and it
+  // would have been the copy WITHOUT the proof: a wrong PIN leaves the client at the gate, which is
+  // the state every caller of this function is careful to distinguish from a broken instrument.
+  //
+  // THE EARLY RETURN IS SKIPPED FOR ONE. An already-unlocked client is nothing to do when the point
+  // is to get in; when the point is to be REFUSED, answering "already unlocked" would be a check
+  // reporting on an attempt it never made. A caller passing `value` against an unlocked client has
+  // a precondition problem, and the verdict below says so rather than hiding it.
   const before = await settle(cx, deadlineMs);
-  if (before === 'unlocked') return { verdict: 'unlocked', said: 'already unlocked' };
+  if (before === 'unlocked' && !value) return { verdict: 'unlocked', said: 'already unlocked' };
   // UNDECIDED BEFORE THE PIN IS NOT A REASON TO SKIP IT. Neither proof landing means the page is not
   // rendering, and the gate is one of the two things that could be holding it - so it is still worth
   // trying, and the verdict below comes from the sample taken AFTER, never from this one.
 
   const args = [PIN_SCRIPT, '--port', String(port), '--account', account];
   if (match) args.push('--match', match);
+  if (value) args.push('--value', value);
 
   let said;
   try {

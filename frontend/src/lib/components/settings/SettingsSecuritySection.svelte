@@ -167,7 +167,16 @@
             </p>
           </div>
         </div>
+        <!--
+          `data-change-pin` IS THE ONLY HANDLE THIS CONTROL HAS. Its label is `hidden sm:inline`, so
+          on a narrow viewport the button is an ICON and there is no text to match; and the label is
+          a Paraglide message, so matching it anywhere would tie a check to a translation. PIN-3
+          drives this button to reach the second of the two components that own the PIN length rule
+          - `PinModal` serves setup and unlock, this one serves change and recovery - and a check
+          that could not open it would be measuring half the rule. Published rather than guessed.
+        -->
         <button
+          data-change-pin
           onclick={() => {
             changePinError = '';
             showChangePinModal = true;

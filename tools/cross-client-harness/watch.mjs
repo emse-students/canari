@@ -1819,10 +1819,23 @@ export const EVICTED_REJOIN_NARRATION = [
 export const BROWSER_PASSWORD_FORM_HINT =
   /^\[DOM\] Password forms should have \(optionally hidden\) username fields for accessibility/;
 
+/**
+ * THE CLIENT BUILDING ITS MLS STATE, which is what answering the encryption gate CAUSES.
+ *
+ * Benign in exactly one population: a check that has just brought a client through the PIN, or has
+ * deliberately emptied its device key vault so it must. Anywhere else this line is the finding - a
+ * client rebuilding a store nobody asked it to rebuild - which is why it is a needle a row names and
+ * not a rule in the classifier.
+ *
+ * Exported alongside `FRESH_CLIENT_NARRATION`, which includes it, so the PIN rows can name this one
+ * without also excusing an OIDC login and an outbox election they never provoked.
+ */
+export const MLS_CLIENT_INITIALISING = /^Initialising MLS\.\.\.$/;
+
 export const FRESH_CLIENT_NARRATION = [
   /^\[A\] login returnTo=\S+ uri=\S+ flow=\S+$/,
   BROWSER_PASSWORD_FORM_HINT,
-  /^Initialising MLS\.\.\.$/,
+  MLS_CLIENT_INITIALISING,
   /^\[OUTBOX\] Flush deferred - tab leadership undecided; waiting for the election\.$/,
   /^\[OUTBOX\] Leadership decided as (?:leader|follower) after \d+ ms\.$/,
   /^\[PIPELINE\] Recovery attempt finished for [0-9a-f]{8}.$/,
