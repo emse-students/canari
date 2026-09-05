@@ -161,8 +161,31 @@ export async function saveMlsStateEncrypted(userId: string, bytes: Uint8Array): 
       // A tagged write older than or equal to what is stored is a stale flush - skip it so a slow
       // encrypted checkpoint cannot clobber a fresher concurrent write. Untagged writes (restore,
       // migration) have no concurrency and always land.
-      if (version !== undefined && version <= stored) {
-        console.log(`[MLS] Skipping stale MLS state write (v${version} <= stored v${stored})`);
+      //
+      // TWO CASES, AND THEY ARE NOT THE SAME EVENT. `_snapshotSeq` is a PER-DOCUMENT counter seeded
+      // from the stored version on load, so:
+      //
+      //   version < stored   one of THIS document's own flushes finished out of order - exactly what
+      //                      the guard was written for, and worth a line.
+      //   version === stored two writers seeded from the same stored value both produced this
+      //                      number. Within one document that cannot happen (the counter only goes
+      //                      up), so it means a SECOND writer - another tab. Nothing is stale; the
+      //                      two are simply not comparable, and this write is dropped.
+      //
+      // One sentence covered both and called both "stale". TAB-4 (two tabs of one client) makes the
+      // equality case fire on an ordinary run - measured 2026-09-05, `v3294 <= stored v3294` - so the
+      // line was one a reader learns to skip, which is the one that hides the next defect. Whether
+      // dropping the second tab's write can lose state is a real question and is P2 in `backlog.md`;
+      // it is not answered by the wording, but it is no longer hidden by it.
+      if (version !== undefined && version < stored) {
+        console.log(`[MLS] Skipping stale MLS state write (v${version} < stored v${stored})`);
+        return;
+      }
+      if (version !== undefined && version === stored) {
+        console.log(
+          `[MLS] Snapshot v${version} collides with the stored one - another writer reached this ` +
+            `version from the same seed, so the two are not comparable; not writing`
+        );
         return;
       }
       store.put(bytes, MLS_STATE_ENCRYPTED_KEY);

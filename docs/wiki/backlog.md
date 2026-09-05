@@ -3391,6 +3391,37 @@ than three local patches.
 
 ## Storage and retention
 
+### P2 - the MLS snapshot version is a PER-DOCUMENT counter compared ACROSS documents, so a second tab's write is dropped on a collision (measured on TAB-4, 2026-09-05)
+
+`saveMlsStateEncrypted` refuses any tagged write whose version is not strictly newer than the stored
+one. The version comes from `tagMlsSnapshot`, which is `++_snapshotSeq` - a module-level counter,
+and therefore **one counter per DOCUMENT**, seeded from the persisted version by
+`seedMlsSnapshotSeq` when the tab loads.
+
+Within one tab this is exactly right and is what the guard was written for: a slow off-thread Argon2
+flush finishing after a fresher one must not clobber it, and there `version < stored` is a true
+statement about ordering.
+
+**Across two tabs it is comparing two unrelated sequences.** Both tabs load, both seed from stored
+version *N*, and both then produce *N+1* for their next snapshot - different bytes, same number. The
+guard sees `version <= stored` and drops the second one. Measured on TAB-4, which drives two tabs of
+one client: `Skipping stale MLS state write (v3294 <= stored v3294)` on an ordinary run.
+
+**What is not yet answered is whether anything is LOST.** The dropped snapshot may hold state the
+winner does not - the second tab may have processed a frame the first had not - and the counter
+cannot say, because it is not a clock over the pair. In practice a later flush from either tab
+carries a higher number and lands, so the state is expected to converge; that expectation is
+untested and the window is unmeasured. **A clock written by one writer is not evidence about
+another's ordering** - the same rule as a liveness column written by something other than the thing
+whose liveness it measures.
+
+The wording is already fixed (2026-09-05): the collision case says so instead of claiming staleness,
+and `hex.mlsVersion.test.ts` pins both branches. That makes the event visible; it does not decide
+it. Deciding it means either making the version a shared counter (a `BroadcastChannel` claim, or an
+IndexedDB read-modify-write inside the same transaction as the put - the transaction is already
+there) or establishing that convergence always happens and how long it takes.
+
+
 The server side has a page already - [storage-forecast](infrastructure/storage-forecast.md) - and it
 is where any measurement belongs.
 

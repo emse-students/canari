@@ -15,7 +15,7 @@ import { basename } from 'node:path';
 import { fixture } from '../fixtures.mjs';
 import { APP_TAB, attachFiles, awaitMessage, client, countMessage, ensureChat, evaluate, openConversation, pollFact, realClick, until } from '../chat.mjs';
 import { gate, report, watch } from '../watch.mjs';
-import { record, mark } from '../results.mjs';
+import { record, mark, exitOnRecorded } from '../results.mjs';
 import { peerNameFor } from '../names.mjs';
 
 
@@ -138,4 +138,9 @@ const gated = gate(imageOk && pdfOk ? 'PASS' : 'FAIL', {
 });
 record('MSG-4', gated.verdict, { ...gated.detail, image, pdf });
 console.log(JSON.stringify({ verdict: gated.verdict, imageOk, pdfOk, ...gated.detail, image, pdf }, null, 1));
-process.exit(0);
+// EXIT ON THE VERDICT, NOT ON HAVING REACHED THE END. `process.exit(0)` sat directly under a `record` that can be FAIL, so `run.mjs`
+// printed `msg4.mjs  done` beside a recorded failure - the two halves of one run contradicting
+// each other in the same table.
+// `exitOnRecorded` is the derivation `beforeExit` already runs, called rather than waited for -
+// this script holds CDP sockets, so the loop never idles and the hook can never fire.
+exitOnRecorded();

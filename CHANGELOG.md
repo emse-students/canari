@@ -13,6 +13,33 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A message sent and then interrupted a few milliseconds later was kept on the sender's screen for
+  ever and sent to nobody.** The echo and the outbox entry that delivers it were two awaits in that
+  order: persist the message, then queue it. A document torn down in between - a reload fired inside
+  the send's own async tail, a tab closed on the way out, an app killed - left a `pending` row on
+  disk that no queue knew about. It was never sent, never retried and never reported, and the only
+  thing its author ever saw was their own message sitting there. **The pair is now one write**:
+  `saveMessageWithOutboxEntry` puts both rows in a single IndexedDB transaction, so neither state
+  can exist without the other. SQLite cannot span two tables in one statement (the plugin pools
+  connections, so `BEGIN`/`COMMIT` can land on three of them - see `sqliteBatch.ts`), so there the
+  entry is written FIRST and the message second: of the two possible tears, only that one still
+  delivers the message. Measured by TAB-5, which reloads 15 ms after the click; the console showed
+  `sendChatMessage` with no `[OUTBOX] Queued` after it. **Reconciling the two afterwards was the
+  alternative and is refused: a ledger that repairs a race is a witness to it, never a fix.**
+
+- **A second tab queued every message it was given, told the user they had been accepted, and handed
+  none of them to the tab that could send them.** The Web Locks election - the branch every real
+  browser takes - recorded `leader` when it won and recorded NOTHING when it lost, so a follower
+  stayed `undecided` for the whole life of the document. Nothing looked wrong, because
+  `getIsTabLeader()` reads `undecided` as `false` and every follower behaviour was therefore
+  correct: read-only mode, no WebSocket, no `initializeConnection`. The one caller that asks the
+  question the third state actually answers - `runFlush`, awaiting `whenTabLeadershipDecided()` -
+  waited for an election that had already happened, and it memoises that wait, so the tab's outbox
+  was dead from then on. The localStorage fallback beside it decided on all four of its outcomes.
+  **A predicate is only evidence for the question it was written to answer** - and the module's own
+  docstring says exactly that, three lines above the branch that forgot it. Its tests missed it for
+  the same reason the code did: every assertion in the file read `getIsTabLeader()`.
+
 - **A typing indicator could be written under a key naming no channel, because the guard meant to
   stop it tested a string this client had already prefixed.** `channel.typing` builds its key as
   `` `channel_${data.channelId || ''}` `` and then checked THAT for emptiness - which is

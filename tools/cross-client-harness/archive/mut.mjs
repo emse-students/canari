@@ -88,7 +88,7 @@
 import { fixture } from '../fixtures.mjs';
 import { APP_TAB, armComposer, attachFiles, awaitMessage, clickAtPoint, client, COMPOSER, countMessage, evaluate, fireComposer, hoverBubble, IS_MOVING_FN, longPressBubble, openChannel, openDM, realClick, sameAccountAs, stablePoint, tapSheetIcon, until } from '../chat.mjs';
 import { watch, report, gate, ignoringOfflineCut, longestSilence } from '../watch.mjs';
-import { errorDetail, mark, record } from '../results.mjs';
+import { errorDetail, mark, record, exitOnRecorded } from '../results.mjs';
 import { OWNER_NAME, PEER_NAME, PORTS, VENUE } from '../names.mjs';
 import { fileURLToPath } from 'node:url';
 
@@ -2391,4 +2391,8 @@ for (const [n, fn] of Object.entries(CHECKS)) {
   }
 }
 console.log(`\nMUT: ${results.filter(([, ok]) => ok).length}/${results.length} checks reported ok`);
-process.exit(0);
+// EXIT ON THE VERDICT, NOT ON HAVING REACHED THE END. `process.exit(0)` sat under a summary line counting how many checks
+// reported ok, which is a COUNT and not a verdict: `2/9 checks reported ok` exited 0.
+// `exitOnRecorded` is the derivation `beforeExit` already runs, called rather than waited for -
+// this script holds CDP sockets, so the loop never idles and the hook can never fire.
+exitOnRecorded();

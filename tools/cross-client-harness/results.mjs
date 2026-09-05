@@ -454,13 +454,37 @@ export function record(id, verdict, detail) {
  * claimed one. A phase script that records nothing is a real fault, but a different one, and
  * `run.mjs` already shows it as a job with no row rather than as a pass.
  */
-process.on('beforeExit', () => {
-  if (!recorded.length || process.exitCode) return;
+function codeForRecorded() {
+  if (!recorded.length) return 0;
   const owed = recorded.filter((r) => r.verdict !== 'PASS');
-  if (!owed.length) return;
+  if (!owed.length) return 0;
   console.log(`\n  ${owed.length} verdict(s) other than PASS - exiting non-zero: ${owed.map((r) => `${r.id}=${r.verdict}`).join(', ')}`);
-  process.exitCode = 1;
+  return 1;
+}
+
+process.on('beforeExit', () => {
+  if (process.exitCode) return;
+  process.exitCode = codeForRecorded();
 });
+
+/**
+ * THE ENDING FOR A SCRIPT THAT CANNOT REACH `beforeExit` - it exits on the verdicts it recorded.
+ *
+ * The hook above is the right default and needs nothing added to any script, but it only fires
+ * when the loop IDLES. A check holding CDP sockets never idles: nothing closes them, so the
+ * process sits there after its last line has printed. Measured 2026-09-05 on `tab236.mjs` (still
+ * alive twenty-five minutes after `1/1 pass`, holding up every row queued behind it) and on
+ * `tab4.mjs` (three rows written at 07:54, the runner still blocked at 08:00).
+ *
+ * THE OBVIOUS REPAIR IS THE ONE TO REFUSE. A bare `process.exit(0)` ends the process and reports a
+ * pass in the same breath, so it turns a recorded `FAIL` into `done` - the exact defect
+ * `beforeExit` was written to end, reintroduced by the fix for the hang. `tab236.mjs` carried one
+ * for a day, under a comment saying the code was derived. Both halves have to be the same call, or
+ * the next script will get one of them right and the other wrong.
+ */
+export function exitOnRecorded() {
+  process.exit(process.exitCode || codeForRecorded());
+}
 
 /**
  * RECORD THE VERDICT AND EXIT ON IT - the whole contract, in the one place that cannot be half done.

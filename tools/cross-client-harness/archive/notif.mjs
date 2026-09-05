@@ -13,7 +13,7 @@
  */
 import { APP_TAB, awaitMessage, client, COMPOSER, countMessage, ensureChat, evaluate, openConversation, send } from '../chat.mjs';
 import { gate, logcatReport, logcatSince, report, watch } from '../watch.mjs';
-import { mark, record } from '../results.mjs';
+import { mark, record, exitOnRecorded } from '../results.mjs';
 import * as phone from '../phone.mjs';
 import { PORTS, peerNameFor } from '../names.mjs';
 
@@ -402,3 +402,10 @@ record(`NOTIF-${which}`, gated.verdict, {
   markers: out.markers ?? (out.marker ? [out.marker] : []),
 });
 console.log(JSON.stringify(out, null, 2));
+
+// THIS SCRIPT CANNOT REACH `beforeExit`: it holds CDP sockets and nothing closes them, so the loop
+// never idles and the hook that derives the exit code never fires. It ran off its end instead and
+// sat there with its verdict already on disk, blocking whatever was queued behind it.
+// `exitOnRecorded` is that same derivation called rather than waited for - never `process.exit(0)`,
+// which would report a pass over the FAIL just recorded.
+exitOnRecorded();

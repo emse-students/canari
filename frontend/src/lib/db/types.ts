@@ -319,6 +319,19 @@ export interface IStorage {
   /** Encrypt and persist a batch of messages in a single atomic write. */
   saveMessages(msgs: StoredMessage[], deviceKeyB64: string): Promise<void>;
   /**
+   * Persist a message AND the outbox entry that will send it, in ONE transaction.
+   *
+   * The pair is what the sender's view and the queue must agree on: a message on screen that no
+   * entry will send is silent loss, and an entry with no message would deliver to the peer a line
+   * the sender cannot see. Two awaits could be cut in half by a reload fired inside the send's own
+   * async tail (measured 2026-09-05, TAB-5), so the two writes are one.
+   */
+  saveMessageWithOutboxEntry(
+    msg: StoredMessage,
+    entry: OutboxEntry,
+    deviceKeyB64: string
+  ): Promise<void>;
+  /**
    * Merge `patch` into the stored message (read-modify-write; re-encrypts the payload).
    * No-op if the row is absent or undecryptable.
    *

@@ -30,6 +30,8 @@ interface SendMessageDeps {
       timestamp?: Date;
       status?: ChatMessage['status'];
       skipDbSave?: boolean;
+      /** Written in the same transaction as the message - see `AddMessageToChatOptions`. */
+      outboxEntry?: OutboxEntry;
     }
   ) => Promise<void>;
   log: (msg: string) => void;
@@ -120,15 +122,18 @@ export async function sendChatMessage(
     return { success: false, error: m.chat_conversation_deleted_message() };
   }
 
-  // Optimistic echo (status pending, persisted so it survives reload), then enqueue.
-  const envelope = serializeEnvelope(mkTextEnvelope(text, replyToData));
-  await addMessageToChat(userId, envelope, contactName, {
-    messageId,
-    status: 'pending',
-    timestamp: new Date(sentAt),
-    ...(replyToData ? { replyTo: replyToData } : {}),
-  });
-
+  // THE ECHO AND ITS QUEUE ENTRY ARE ONE WRITE, and the entry is therefore built first.
+  //
+  // It used to be two awaits in the other order - persist the echo, then queue it - and a document
+  // torn down between them left a `pending` message on disk that no queue knew about: never sent,
+  // never retried, never reported, and visible to its author for ever. TAB-5 reloads 15 ms after
+  // the click and reproduced it on 2026-09-05: the console showed `sendChatMessage` with no
+  // `[OUTBOX] Queued` after it, the peer had nothing, the sender had the message.
+  //
+  // `alreadyDurable` below is exact rather than optimistic: `addMessageToChat` writes the pair
+  // whenever it has a storage layer, and the outbox's own `enqueue` returns early on exactly the
+  // same condition - one `storage`, so the two cannot disagree. With no storage neither wrote
+  // before this change either.
   const entry: OutboxEntry = {
     id: messageId,
     conversationId: conversation.id,
@@ -148,7 +153,16 @@ export async function sendChatMessage(
     attempts: 0,
     createdAt: sentAt,
   };
-  await enqueueOutboxMessage(entry);
+  const envelope = serializeEnvelope(mkTextEnvelope(text, replyToData));
+  await addMessageToChat(userId, envelope, contactName, {
+    messageId,
+    status: 'pending',
+    timestamp: new Date(sentAt),
+    outboxEntry: entry,
+    ...(replyToData ? { replyTo: replyToData } : {}),
+  });
+  // The durable half is already done; this is the mirror and the flush.
+  await enqueueOutboxMessage(entry, { alreadyDurable: true });
   deps.log(`[SEND] ${messageId.slice(0, 8)}… queued (pending)`);
   return { success: true };
 }

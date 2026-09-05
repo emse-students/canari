@@ -17,8 +17,8 @@
  */
 import { APP_TAB, awaitAppReady, awaitMessage, client, COMPOSER, ensureConversation, evaluate, SEND_ENABLED, settledCount } from '../chat.mjs';
 import { activate, realClick, until } from '../cdp.mjs';
-import { dirtOf, gate, report, watch } from '../watch.mjs';
-import { mark, record } from '../results.mjs';
+import { dirtOf, gate, ignoringExpectedLog, report, watch } from '../watch.mjs';
+import { mark, record, exitOnRecorded } from '../results.mjs';
 import { PORTS, peerNameFor } from '../names.mjs';
 
 const ROUNDS = Number(process.argv[2] || 3);
@@ -91,7 +91,26 @@ const dirty = rows.filter((r) => !r.senderClean || !r.receiverClean);
 // `gate` rather than the third hand-written copy of it - see the same change in `tab4.mjs`. This one
 // spelt the outcome right and still produced no `clean` key, which is what `record` reads to tell an
 // observed verdict from an unobserved one.
-const gated = gate(failed.length ? 'FAIL' : unsettled.length ? 'INCONCLUSIVE' : 'PASS', reports);
+/**
+ * THE ONE LINE THIS ROW MANUFACTURES, on the sender and on no one else.
+ *
+ * Tearing the document down 15 ms after the click is how an acknowledgement ends up in flight when
+ * the next pull is answered: the server still holds the row it was told about, lists it again, and
+ * the client recognises its own ack rather than decrypting twice. The log says all of that and
+ * states that repeats are counted rather than printed, so it is expected AND necessary - it is the
+ * only evidence that the second delivery was recognised instead of processed.
+ *
+ * Named per row, on the sender's reports only. A needle list applied to the receiver would excuse
+ * the same sentence on a client that has no reason to produce it.
+ */
+const ACK_RACE = 'arrived twice - the pull listed a row this device had already acknowledged';
+const dispositioned = Object.fromEntries(
+  Object.entries(reports).map(([label, rep]) => [
+    label,
+    label.startsWith('W1') ? ignoringExpectedLog(rep, [ACK_RACE]) : rep,
+  ]),
+);
+const gated = gate(failed.length ? 'FAIL' : unsettled.length ? 'INCONCLUSIVE' : 'PASS', dispositioned);
 record(
   'TAB-5',
   gated.verdict,
@@ -107,3 +126,10 @@ record(
     rows,
   },
 );
+
+// THIS SCRIPT CANNOT REACH `beforeExit`: it holds CDP sockets and nothing closes them, so the loop
+// never idles and the hook that derives the exit code never fires. It ran off its end instead and
+// sat there with its verdict already on disk, blocking whatever was queued behind it.
+// `exitOnRecorded` is that same derivation called rather than waited for - never `process.exit(0)`,
+// which would report a pass over the FAIL just recorded.
+exitOnRecorded();

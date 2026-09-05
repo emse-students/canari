@@ -2600,6 +2600,32 @@ making `PASS-DIRTY` structurally unreachable for itself and mislabelling environ
 product defect. **An assertion answers the row's own question and nothing else. Cleanliness is the
 gate's job, once, for every row.**
 
+### The ending a check owes, and the repair for it that lies
+
+`results.mjs` derives the exit code from the verdicts a script recorded, through a `beforeExit`
+hook whose whole design is that there is nothing to add to a script and therefore nothing to omit.
+It fires when the event loop IDLES - and a check holding a CDP socket never idles, because nothing
+closes one. `client()` alone is enough: a two-line script that opens one and prints a line was
+measured on 2026-09-05 still running 25 s later, killed by its timeout.
+
+So such a script runs off its end and sits there with its verdict already on disk, blocking whatever
+was queued behind it. `tab236.mjs` was alive twenty-five minutes after printing `1/1 pass`;
+`tab5.mjs` and `notif.mjs` were in the same state; `tab4.mjs` cost six minutes a run.
+
+**THE OBVIOUS REPAIR IS THE DEFECT.** A bare `process.exit(0)` ends the process and claims a pass
+in the same breath, so a recorded `FAIL` is reported as `done` - which is exactly what `beforeExit`
+was written to stop. Six files in the tree carry a comment saying so, each written the day that file
+was caught, and `tab236.mjs` acquired a seventh on 2026-09-05 UNDER a comment stating the code was
+derived. Both halves have to be the same call: `exitOnRecorded()` is the derivation, invoked rather
+than waited for.
+
+**Five endings are honest and closing the socket is one of them** - it lets the loop idle, which is
+precisely what the hook waits for; thirty checks end `w1.close(); w2.close();` and are correct. A
+first draft of the gate condemned all thirty, and a gate that condemns the correct majority gets
+deleted rather than obeyed. `archive/exit-selftest.mjs` asserts both halves, and asserts its own
+predicate on fixtures first: an exit-0 downstream of a `record(` is flagged, an early opt-out before
+any verdict is not, and prose about `record(...)` is not an import.
+
 ### A spawned atom that never exits turns SUCCESS into a timeout, and only on the rows that need it
 
 DEL-7 came back `PASS-DIRTY` on 2026-09-05 carrying `pinOnWake: "pin.mjs failed: ...[pin] after:"`,

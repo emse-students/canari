@@ -114,8 +114,14 @@ export interface OutboxDeps {
 
 /** Public surface of the per-session outbox controller. */
 export interface OutboxController {
-  /** Persist a queued message and schedule a flush. */
-  enqueue: (entry: OutboxEntry) => Promise<void>;
+  /**
+   * Persist a queued message and schedule a flush.
+   *
+   * `alreadyDurable` says the row reached disk in the transaction that wrote the message it echoes
+   * ({@link IStorage.saveMessageWithOutboxEntry}), so only the live half - the mirror and the flush
+   * - is still owed.
+   */
+  enqueue: (entry: OutboxEntry, opts?: { alreadyDurable?: boolean }) => Promise<void>;
   /**
    * Withdraw a queued message that has not left this device yet.
    *
@@ -732,16 +738,22 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   }
 
   return {
-    async enqueue(entry: OutboxEntry): Promise<void> {
+    async enqueue(entry: OutboxEntry, opts: { alreadyDurable?: boolean } = {}): Promise<void> {
       if (!storage) return;
       // The first trace of a message on this device: without it there is no way to tell a send that
       // never reached the queue from one the queue accepted and lost.
       log(
         `[OUTBOX] Queued ${entry.id.slice(0, 8)}… (${entry.kind}) for ${entry.conversationId.slice(0, 8)}…`
       );
-      await storage
-        .saveOutboxEntry(entry, deviceKeyB64)
-        .catch((e) => log(`[OUTBOX] Enqueue failed: ${String(e)}`));
+      // Already on disk beside its message when the send path wrote the pair atomically. Repeating
+      // the put would be idempotent but not free: a second encryption on the hot path, and a second
+      // way to fail AFTER the fact is durable - which is the state this argument exists to make
+      // impossible to reach.
+      if (!opts.alreadyDurable) {
+        await storage
+          .saveOutboxEntry(entry, deviceKeyB64)
+          .catch((e) => log(`[OUTBOX] Enqueue failed: ${String(e)}`));
+      }
       await refreshMirror();
       runFlush();
     },
@@ -837,8 +849,11 @@ export function flushOutbox(): void {
 }
 
 /** Enqueue a message on the active controller (no-op when none). */
-export function enqueueOutboxMessage(entry: OutboxEntry): Promise<void> {
-  return active ? active.enqueue(entry) : Promise.resolve();
+export function enqueueOutboxMessage(
+  entry: OutboxEntry,
+  opts?: { alreadyDurable?: boolean }
+): Promise<void> {
+  return active ? active.enqueue(entry, opts) : Promise.resolve();
 }
 
 /**

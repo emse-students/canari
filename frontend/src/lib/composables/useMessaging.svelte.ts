@@ -506,18 +506,24 @@ export function useMessaging() {
     const skipDbSave = options.skipDbSave ?? isChannelConversationId(normalized);
     if (ctx.storage && !skipDbSave) {
       try {
-        await ctx.storage.saveMessage(
-          {
-            id: newMsg.id,
-            conversationId: normalized,
-            senderId: newMsg.senderId,
-            content,
-            timestamp: newMsg.timestamp.getTime(),
-            serverTimestamp: options.serverTimestamp,
-            ...(options.isFcmPreview ? { isFcmPreview: true } : {}),
-          },
-          ctx.deviceKeyB64
-        );
+        const row = {
+          id: newMsg.id,
+          conversationId: normalized,
+          senderId: newMsg.senderId,
+          content,
+          timestamp: newMsg.timestamp.getTime(),
+          serverTimestamp: options.serverTimestamp,
+          ...(options.isFcmPreview ? { isFcmPreview: true } : {}),
+        };
+        // AN OWN MESSAGE AND THE ENTRY THAT SENDS IT ARE ONE FACT, so they are one write. Persisting
+        // the echo and then queuing it was two awaits, and a document torn down between them left a
+        // message the sender could see and no queue would ever send (TAB-5, 2026-09-05). Every other
+        // caller - an inbound message, an FCM upgrade - has no entry and takes the single-store path.
+        if (options.outboxEntry) {
+          await ctx.storage.saveMessageWithOutboxEntry(row, options.outboxEntry, ctx.deviceKeyB64);
+        } else {
+          await ctx.storage.saveMessage(row, ctx.deviceKeyB64);
+        }
         await ctx.saveConversation(normalized);
       } catch (e) {
         console.error('[DB] Failed to persist message:', e);

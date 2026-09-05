@@ -20,8 +20,8 @@
  */
 import { APP_TAB, awaitAppReady, awaitMessage, client, ensureConversation, evaluate, send, settledCount } from '../chat.mjs';
 import { connect, listTargets, reloadAndWait } from '../cdp.mjs';
-import { gate, report, watch } from '../watch.mjs';
-import { mark, record } from '../results.mjs';
+import { gate, ignoringExpectedLog, report, watch } from '../watch.mjs';
+import { mark, record, exitOnRecorded } from '../results.mjs';
 import { PORTS, SITE, peerNameFor } from '../names.mjs';
 
 const w1 = await client(PORTS.W1, APP_TAB);
@@ -127,7 +127,7 @@ const WATCHED = [
  * alone, so a tab logging a ratchet collision recorded `PASS` with the collision in its own record.
  * That is the exact shape that let MSG-6 pass twice with `SecretReuseError` inside it.
  */
-function verdict(id, r, expected) {
+function verdict(id, r, expected, expectedLogs = {}) {
   const wrong = Object.entries(expected).filter(([k, v]) => r.counts[k] !== v);
   const asserted = wrong.length ? 'FAIL' : !r.allSettled ? 'INCONCLUSIVE' : 'PASS';
   // `gate`, not a hand-rolled copy of it. This function computed the same thing correctly and named
@@ -136,7 +136,16 @@ function verdict(id, r, expected) {
   // three TAB-4 rows, and `record`'s own refusal - which recognises an observation by that key -
   // would now demote them to UNOBSERVED. A private reimplementation of a shared rule stays right
   // exactly until the shared one moves.
-  const gated = gate(asserted, r.reports);
+  // Per row and per client, which is the only granularity a disposition may have: a needle list
+  // that lived beside the runner would excuse the same sentence on the ten rows that never expect
+  // it. Each entry below is a line this row MANUFACTURES, named where it is manufactured.
+  const reports = Object.fromEntries(
+    Object.entries(r.reports).map(([label, rep]) => [
+      label,
+      expectedLogs[label] ? ignoringExpectedLog(rep, expectedLogs[label]) : rep,
+    ]),
+  );
+  const gated = gate(asserted, reports);
   record(id, gated.verdict, {
     ...gated.detail,
     marker: r.marker,
@@ -146,18 +155,41 @@ function verdict(id, r, expected) {
   });
 }
 
+/**
+ * THE TWO LINES THIS ROW MANUFACTURES, AND WHY EACH IS EXPECTED RATHER THAN TOLERATED.
+ *
+ * HANDOVER is the visible end of the leader gate working: a follower may not encrypt, so it queues
+ * and asks the leader to drain. The line is one per follower send, and it is load-bearing - its
+ * ABSENCE is exactly how the follower's outbox was found dead on 2026-09-05 (the Web Locks branch
+ * never decided, so `runFlush` awaited an election that had already happened and never returned).
+ * A row that manufactures a second tab is the only row that can produce it.
+ *
+ * COLLISION is the snapshot-version guard refusing a second writer. `_snapshotSeq` is per document
+ * and seeded from the stored value, so two tabs seeded from one snapshot reach the same number and
+ * one write is dropped. Harmless HERE - a follower holds no WebSocket and never advances the
+ * ratchet, so its snapshot carries nothing the leader's does not - and open in general as the P2 in
+ * `docs/wiki/backlog.md` on the cross-document counter. This row is where two documents exist.
+ */
+const HANDOVER = '[OUTBOX] Flush requested by a follower tab.';
+const COLLISION = 'collides with the stored one';
+const TWO_TABS = { tab1: [HANDOVER, COLLISION], tab2: [HANDOVER, COLLISION] };
+
 // TAB-4a - the peer sends; both tabs of the same account must show it, exactly once each.
-verdict('TAB-4a', await round('TAB4A', w2, 'from the peer, two tabs open', WATCHED), { tab1: 1, tab2: 1 });
+verdict('TAB-4a', await round('TAB4A', w2, 'from the peer, two tabs open', WATCHED), { tab1: 1, tab2: 1 }, TWO_TABS);
 
 // TAB-4b - the SECOND tab sends. It is very likely the follower, which is the interesting half.
-verdict('TAB-4b', await round('TAB4B', w1b, 'sent from the second tab', WATCHED), { tab2: 1, peer: 1 });
+verdict('TAB-4b', await round('TAB4B', w1b, 'sent from the second tab', WATCHED), { tab2: 1, peer: 1 }, TWO_TABS);
 
 // TAB-4c - the FIRST tab sends straight after, the case where a rewind between tabs would show.
-verdict('TAB-4c', await round('TAB4C', w1, 'sent from the first tab right after', WATCHED), { tab1: 1, peer: 1 });
+verdict('TAB-4c', await round('TAB4C', w1, 'sent from the first tab right after', WATCHED), { tab1: 1, peer: 1 }, TWO_TABS);
 
 // The tab this script opened is this script's to close - it is the one piece of debris the runner's
 // between-job repair cannot clear, because a stray tab is not an overlay and looks like a client.
 await evaluate(w1, '(function () { if (window.__t2) { window.__t2.close(); window.__t2 = null; } return true; })()').catch(() => null);
 
-// No exit code here on purpose: `results.mjs` derives it from the verdicts recorded above, so this
-// script cannot report `done` beside a recorded FAIL the way it used to.
+// THE CODE IS STILL DERIVED, AND NOW THE SCRIPT ALSO ENDS. `beforeExit` only fires when the loop
+// idles, and this one holds three CDP sockets that nothing closes - so the three rows were written
+// at 07:54 on 2026-09-05 and the runner was still blocked at 08:00, with every verdict already on
+// disk and nothing to show for it. `exitOnRecorded` is that same derivation, called instead of
+// waited for; a bare `process.exit(0)` here would have reported `done` beside a recorded FAIL.
+exitOnRecorded();

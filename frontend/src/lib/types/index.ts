@@ -7,6 +7,8 @@
  *               stays until MANUAL DELETION (rules 2 & 4).
  * Predicates and transition logic: `$lib/utils/chat/groupLifecycle`.
  */
+import type { OutboxEntry } from '$lib/db/types';
+
 export type ConversationLifecycle = 'active' | 'pending' | 'removed';
 
 /**
@@ -54,6 +56,21 @@ export interface AddMessageToChatOptions {
   isFcmPreview?: boolean;
   /** When true, keep the message in memory only (e.g. server-authoritative community channels). */
   skipDbSave?: boolean;
+  /**
+   * The outbox entry to make durable IN THE SAME TRANSACTION as this message.
+   *
+   * A message the sender can see must be a message the queue will send, and the two used to be two
+   * awaits: the echo was persisted, then the entry was queued. A document torn down between them -
+   * a reload fired inside the send's own async tail - left a `pending` row on disk that no queue
+   * knew about, so it was never sent, never retried and never reported. Measured on 2026-09-05,
+   * TAB-5 round 0: the peer had nothing, the sender had the message, and the console showed
+   * `sendChatMessage` with no `[OUTBOX] Queued` after it.
+   *
+   * Passing the entry here writes both rows in one IndexedDB transaction, so the pair is atomic and
+   * neither state can exist alone. Reconciling them afterwards was the alternative and is refused:
+   * a ledger that repairs a race is a witness to it, not a fix.
+   */
+  outboxEntry?: OutboxEntry;
   /** Monotonic catch-up index (MLS queue / history replay order); used for in-session ordering only. */
   ingestSequence?: number;
   /**

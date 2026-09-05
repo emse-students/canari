@@ -13,11 +13,11 @@
  * that a session it cannot refresh is a session with nothing in it - a silent empty list, which
  * looks to a user exactly like every conversation having been deleted.
  */
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { APP_HOST, APP_TAB, awaitMessage, client, countMessage, ensureChat, evaluate, LOGIN_SHOWING, openConversation, send } from '../chat.mjs';
 import { listTargets, connect, until } from '../cdp.mjs';
-import { watch } from '../watch.mjs';
-import { mark, recordObserved } from '../results.mjs';
+import { ignoringExpectedLog, ignoringExpectedRefusal, watch } from '../watch.mjs';
+import { mark, recordObserved, exitOnRecorded } from '../results.mjs';
 import { killBrowser, startBrowser, BROWSERS } from '../launch.mjs';
 import { ACCOUNT_OF, PORTS, SITE, peerNameFor } from '../names.mjs';
 import { requireScript } from '../scriptpath.mjs';
@@ -232,6 +232,27 @@ if (which === '6') {
   // line that mattered. So this runs honestly first: whatever it reports lands in the record as dirt,
   // gets read, and only the lines that ARE the deliberate logout get named. A PASS-DIRTY on the first
   // run is the instrument working, not the app failing.
+  //
+  // THE FIRST RUN HAPPENED ON 2026-09-05, AND THIS IS WHAT IT REPORTED. Five lines, and every one of
+  // them is this row's own gesture arriving where it was aimed:
+  //
+  //   POST /api/auth/refresh -> 401       the stimulus - the cookie this row deleted, missing
+  //   [A] ws-                             the socket closing, because the session is gone
+  //   [A] clear                           the auth store emptying
+  //   [A] refresh latched                 the client REFUSING to ask again, having proven it dead
+  //   [platform] PIN prompt declined      and declining to raise a PIN over a dead credential
+  //
+  // The last two are the interesting half and are forgiven rather than celebrated: they are the app
+  // declining to loop on a credential it has proven dead, which is the behaviour this row wants and
+  // the opposite of the empty-list failure it looks for. The needles are anchored on their own
+  // wording and scoped to THIS row - never to a shared classifier, which would silence them in the
+  // twenty other rows where a latched refresh means something is badly wrong.
+  const DELIBERATE_LOGOUT = [
+    /^\[A\] ws-$/,
+    /^\[A\] clear$/,
+    /^\[A\] refresh.latched \(cookie already proven dead - not asking again\)$/,
+    /^\[platform\] PIN prompt declined - refresh credential already proven dead\.$/,
+  ];
   await row(
     'TAB-6',
     loginShowing && !emptyListInstead ? 'PASS' : 'FAIL',
@@ -245,13 +266,41 @@ if (which === '6') {
       emptyListInstead,
       excerpt: bodyText.replace(/\s+/g, ' ').slice(0, 200),
     },
-    { W1: o1 },
+    {
+      W1: ignoringExpectedLog(
+        ignoringExpectedRefusal(o1, [{ path: /^\/api\/auth\/refresh$/, status: [401] }]),
+        DELIBERATE_LOGOUT,
+      ),
+    },
   );
+
+  // THE TEARDOWN THIS ROW'S OWN HEADER ALREADY PROMISED, and did not have. The header said "it
+  // re-logs in at the end"; nothing did, and W1 was simply left on the login screen. It cost three
+  // rows on 2026-09-05 - TAB-4, TAB-5 and TAB-7 ran next and all three died inside `ensureChat` with
+  // `port 9224 is SIGNED OUT`, which is the precondition guard working and three measurements gone.
+  //
+  // AFTER THE VERDICT IS RECORDED, so a teardown that fails cannot cost the row its result - and it
+  // is REPORTED rather than thrown, because "the row passed and the fixture is broken" and "the row
+  // failed" are different sentences and the next runner needs to be able to tell them apart.
+  // Nothing after a destructive row is trusted until its teardown restored the invariant.
+  const relogin = spawnSync(process.execPath, [requireScript('login.mjs'), '--device', 'W1'], {
+    encoding: 'utf8',
+    timeout: 300_000,
+  });
+  if (relogin.status === 0) {
+    console.log(`[tab6] W1 logged back in; PIN: ${unlock(PORTS.W1, ACCOUNT_OF.W1)}`);
+  } else {
+    console.error(
+      `[tab6] W1 IS STILL LOGGED OUT - every row after this one will fail inside ensureChat for ` +
+        `that reason and not its own. Run \`bun login.mjs --device W1\` before the next row. ` +
+        `login.mjs exited ${relogin.status}: ${String(relogin.stderr || '').replace(/\s+/g, ' ').slice(0, 200)}`,
+    );
+  }
 }
 
 console.log(`\n${rows.filter((r) => r.verdict === 'PASS').length}/${rows.length} pass`);
-// No exit code and no second JSON dump: `record` printed each row as it was written, and
-// `results.mjs` derives the code from the verdicts it holds.
+// No second JSON dump: `record` printed each row as it was written. The code is still derived -
+// `exitOnRecorded` is the same derivation `beforeExit` runs, called rather than waited for.
 
 // AND IT HAS TO ACTUALLY END. This file opens CDP sockets - `client()` for each device, and its own
 // `connect()` on the reopened tab in TAB-2 - and closed none of them, so an open socket kept the
@@ -263,4 +312,4 @@ console.log(`\n${rows.filter((r) => r.verdict === 'PASS').length}/${rows.length}
 // of its own contract, and its caller is left inferring the outcome from a clock. `archive/spawn-
 // selftest.mjs` gates the sibling class (a spawn that cannot resolve its script); this one is gated
 // by the audit in `inventory.mjs` terms only, so the explicit exit stays here where it is read.
-process.exit(0);
+exitOnRecorded();

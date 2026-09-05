@@ -695,6 +695,40 @@ export class IndexedDbStorage implements IStorage {
     return out.sort((a, b) => a.sentAt - b.sentAt || a.id.localeCompare(b.id));
   }
 
+  /**
+   * The message and the entry that will send it, written together or not at all.
+   *
+   * BOTH PAYLOADS ARE ENCRYPTED BEFORE THE TRANSACTION OPENS. An IndexedDB transaction commits when
+   * it runs out of work, so an `await` inside one ends it - the second put would then land in a
+   * transaction of its own and the atomicity this method exists for would be gone while every test
+   * still passed.
+   */
+  async saveMessageWithOutboxEntry(
+    msg: StoredMessage,
+    entry: OutboxEntry,
+    deviceKeyB64: string
+  ): Promise<void> {
+    invalidateHistoryStateKey(msg.conversationId);
+    const db = this.ensureDb();
+    const [encryptedMessage, encryptedEntry] = await Promise.all([
+      encryptData(toMessagePayload(msg), deviceKeyB64),
+      encryptData(encodeOutboxSensitive(entry), deviceKeyB64),
+    ]);
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(['messages', 'outbox'], 'readwrite');
+      tx.objectStore('messages').put({
+        id: msg.id,
+        conversationId: msg.conversationId,
+        timestamp: msg.timestamp,
+        ...encryptedMessage,
+      });
+      tx.objectStore('outbox').put({ ...outboxClearColumns(entry), ...encryptedEntry });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  }
+
   /** Encrypt the sensitive payload and upsert a queued outbound message. */
   async saveOutboxEntry(entry: OutboxEntry, deviceKeyB64: string): Promise<void> {
     const db = this.ensureDb();
