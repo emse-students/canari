@@ -507,6 +507,25 @@ const BENIGN = [
   // The `sub` is truncated to eight characters where it is logged (`public.controller.ts:179`), so
   // the rule can be written tightly without the pattern itself naming anybody.
   /\[PublicController\] \[CERCLE\] cotisant-status assoSlug=\S+ sub=[0-9a-f]{8}/,
+  // THE TWO DEBUG LINES THE SOCIAL SERVICE WRITES WHEN IT ANSWERS A QUESTION, and they are the only
+  // reason `social-service` was NOT CLEAN on every run of NOTIF and LIFE - ten to thirteen lines in
+  // a window, on a service no chat check touches. Read on 2026-09-05 rather than demoted.
+  //
+  // Both are what CLAUDE.md's logging standard asks for and nothing more: a DEBUG line where a
+  // decision is taken, naming the answer. `mayActOnAny` resolves one permission flag across a feed
+  // page's associations and says how many granted it; `fetchProfile` reads the promo and formation
+  // a price depends on and says what came back. Neither has an alternative path, neither is a
+  // fallback, and neither can be produced by anything the campaign does - the feed and the pricing
+  // editor are the portal's surfaces. So this is the `internal formations listing` case above:
+  // somebody else's traffic, named rather than dropped, so a change in its shape is a line in the
+  // window instead of an absence.
+  //
+  // EVERY WAY EITHER CALL CAN GO WRONG IS A DIFFERENT LINE AND STAYS UNCLASSIFIED. `fetchProfile`
+  // has an ERROR on the fetch, a WARN on a 404 and an ERROR on any other status, each with its own
+  // prose; `mayActOnAny`'s super-admin exit is in NOTABLE below rather than here. A rule matching
+  // the happy path cannot swallow a failure that took a different one.
+  /\[AssociationsService\] \[PERM\] user=[0-9a-f]{8} holds flag=\d+ on \d+\/\d+ assocs/,
+  /\[PricingFactsService\] \[PRICING\] profile user=[0-9a-f]{8} promo=\S+ formation=\S+/,
 ];
 
 /**
@@ -525,6 +544,13 @@ const BENIGN = [
  */
 const NOTABLE = [
   /welcome_request|history_request|history_bundle|history_digest/i,
+  // THE PERMISSION BYPASS, WHICH IS THE OTHER EXIT OF THE CALL FILED AS BENIGN ABOVE. A super-admin
+  // is granted every association in the request without a membership row being consulted, so the
+  // answer this line reports was not derived from the data the benign line reports. Same function,
+  // opposite meaning: one says the permissions were read, this one says they were skipped, and a
+  // reader asking why somebody acted on an association they do not belong to needs to see it.
+  // Reported and not fatal - it is the platform working as designed - but never silent.
+  /\[AssociationsService\] \[PERM\] super-admin granted user=[0-9a-f]{8} /,
   // A USER'S PIN VERIFIER INVALIDATED, ON PURPOSE, ONCE. `legacy=true` says a row existed with a
   // null salt, so the verifier it held was derived from the old predictable one and could never
   // match a verifier derived from the new random salt - the row is replaced and that user re-registers

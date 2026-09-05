@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { classifyOutgoingSendError } from './mlsSendError';
-import { SenderNotActiveError } from './mlsDeliveryApi';
+import { GroupDeletedError, SenderNotActiveError } from './mlsDeliveryApi';
 
 describe('classifyOutgoingSendError', () => {
   it('reads the EVICTED token emitted by MlsError::Evicted', () => {
@@ -26,6 +26,18 @@ describe('classifyOutgoingSendError', () => {
     // And the prose alone is NOT the discriminator: a plain error carrying the same words is
     // transient, which is what keeps the classification on the type.
     expect(classifyOutgoingSendError(new Error('sender_not_active'))).toBe('unknown');
+  });
+
+  it('separates a group that ended from a device that is not in one', () => {
+    // The two are both permanent and want the same disposition, but not the same sentence: one says
+    // this device holds no leaf in a group that still exists, the other that there is no group. A
+    // single kind would make the outbox log the first one's repair path for the second.
+    expect(classifyOutgoingSendError(new GroupDeletedError('g1'))).toBe('group-deleted');
+    expect(classifyOutgoingSendError(new SenderNotActiveError('g1', 'pending'))).toBe(
+      'sender-not-active'
+    );
+    // On the type, not the prose - the same argument as the case above it.
+    expect(classifyOutgoingSendError(new Error('group_deleted'))).toBe('unknown');
   });
 
   it('leaves every other send failure transient', () => {

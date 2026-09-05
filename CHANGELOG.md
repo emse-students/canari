@@ -13,6 +13,27 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **A message sent at the instant its conversation was deleted was queued into a group that no
+  longer existed, and stayed there until the 90-day reaper.** `sendMessage` resolved its recipients
+  from the membership table and then saved; `deleteGroup` wrote the tombstone and swept everything
+  the group owns - its queue included - in one transaction. Nothing ordered the two, so a send that
+  read its recipients BEFORE the sweep and saved AFTER it wrote rows into a queue that had just been
+  emptied. Measured on the local estate 2026-09-05, three consecutive lines nine milliseconds apart:
+  `[SEND] START group=7e931024`, `[DELETE_GROUP] 7e931024 soft-deleted, 14 row(s) purged`,
+  `[SEND] QUEUED count=2`. Those two rows were permanent - no device can decrypt or ACK a frame for
+  a tombstoned group, so every device re-fetched and re-dropped them on every connection, twenty
+  `dropped 1 undeliverable message(s)` warnings in a thirty-minute window - and the sender was told
+  its message had gone out. **The liveness check and the write are now one transaction**, holding the
+  group row under `FOR SHARE`: a delete that got there first blocks the send until it can see the
+  tombstone and refuse; a send that got there first holds the delete until its rows are committed, so
+  the delete's own sweep takes them. All three queue writes take that seam - the send, the Welcome
+  and the activation redelivery. **The client already asked, and that is exactly why this was owed at
+  the writer**: the outbox reads `deletedAt` before it sends, and the trace above carries its
+  `[GET_GROUP] found=true` one line before the START. A fact checked over a round trip is a fact
+  that can go stale inside it. The refusal arrives as `GroupDeletedError`, classified at the throw
+  and retired by the outbox as the permanent failure it is, rather than climbing a backoff ladder
+  towards a group that ended.
+
 - **A backgrounded tab was told about nothing, because only one of the two inbound paths could
   speak.** The decision to raise an OS notification lived inside `addMessageToChat`. While a
   catch-up drains, that function files an INBOUND message into the bulk buffer and returns ABOVE

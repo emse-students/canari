@@ -33,7 +33,7 @@ vi.mock('$lib/mls-client/tabMessageSync', async (importOriginal) => ({
 }));
 
 import { createOutbox, buildOutboxProto, type OutboxDeps } from './outbox';
-import { SenderNotActiveError } from '$lib/mls-client/mlsDeliveryApi';
+import { GroupDeletedError, SenderNotActiveError } from '$lib/mls-client/mlsDeliveryApi';
 import { toMirrorEntry } from './outboxMirror';
 import { MediaKind } from '$lib/proto/codec';
 import { encodeOutboxSensitive, decodeOutboxEntry, outboxClearColumns } from '$lib/db/outboxCodec';
@@ -535,6 +535,57 @@ describe('outbox flusher', () => {
     expect(markDeletedRemotely).toHaveBeenCalledWith('g1');
     expect(storage._map.has('m1')).toBe(false);
     expect(conversations.get('g1')!.messages[0].status).toBe('error');
+  });
+
+  /**
+   * THE SAME DISPOSITION, REACHED FROM THE SERVER INSTEAD OF FROM A LOCAL READ.
+   *
+   * The pre-flight above reads `deletedAt` over a round trip, and a deletion can land inside it -
+   * measured on the local estate 2026-09-05, a delete's sweep running between a send's recipient
+   * resolution and its enqueue. The server refuses that send, and what arrives here is the SAME
+   * permanent failure the pre-flight would have produced. Only the seam differs, and the record
+   * must not be able to tell them apart: one `cause`, one entry kind, one line.
+   */
+  it('retires the entry when the group is deleted inside the send that was already in flight', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls({
+      // Alive by every local measure - which is the whole population this arm serves.
+      meta: (id) => ({ groupId: id, name: '', isGroup: true, deletedAt: null }),
+      send: async () => {
+        throw new GroupDeletedError('g1');
+      },
+    });
+    const markDeletedRemotely = vi.fn();
+    const recoverRosterDisagreement = vi.fn().mockResolvedValue(undefined);
+    const requestReAdd = vi.fn().mockResolvedValue(undefined);
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['m1'])]]);
+    const lines: string[] = [];
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService,
+        storage,
+        conversations,
+        markDeletedRemotely,
+        recoverRosterDisagreement,
+        requestReAdd,
+        log: (l: string) => lines.push(l),
+        isGroupHealthy: () => true,
+      })
+    );
+
+    await outbox.flush();
+
+    expect(markDeletedRemotely).toHaveBeenCalledWith('g1');
+    // Not retried: the entry is gone from the queue and the echo says so.
+    expect(storage._map.has('m1')).toBe(false);
+    expect(conversations.get('g1')!.messages[0].status).toBe('error');
+    // And NOT confused with the other permanent refusal, which wants a roster repair. There is no
+    // roster left to repair.
+    expect(recoverRosterDisagreement).not.toHaveBeenCalled();
+    expect(requestReAdd).not.toHaveBeenCalled();
+    expect(lines.find((l) => l.includes('permanent failure'))).toContain('group-deleted');
+    // The line has to say WHY the pre-flight let it through, or the two seams read as one bug.
+    expect(lines.some((l) => l.includes('while this frame was in flight'))).toBe(true);
   });
 
   // THE SAME EVENT, THE OPPOSITE SEVERITY, AND ONE LINE FOR BOTH. GRP-7 logged a permanent failure

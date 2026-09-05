@@ -13,7 +13,7 @@
  * `classifyIncomingDecryptError` is for the receive path. Each consumer keeps its own POLICY.
  */
 
-import { SenderNotActiveError } from './mlsDeliveryApi';
+import { GroupDeletedError, SenderNotActiveError } from './mlsDeliveryApi';
 
 /** Nature of an error raised while encrypting/sending an outgoing MLS application message. */
 export type MlsSendErrorKind =
@@ -38,6 +38,16 @@ export type MlsSendErrorKind =
    * rather than as a deferral.
    */
   | 'sender-not-active'
+  /**
+   * `GROUP_DELETED`: the SERVER refused the frame because the group is tombstoned or absent, so it
+   * is not a destination for anybody. PERMANENT, and permanent more broadly than `evicted`: there
+   * is no group left to be re-admitted to.
+   *
+   * It is the answer to a race the client cannot win on its own - the outbox reads `deletedAt`
+   * before it sends, and a deletion can land between that read and the enqueue. So reaching it is
+   * not a miss the way `evicted` is; it is the seam working.
+   */
+  | 'group-deleted'
   /** Everything else -> transient until proven otherwise; the caller keeps its backoff policy. */
   | 'unknown';
 
@@ -53,5 +63,6 @@ export type MlsSendErrorKind =
  */
 export function classifyOutgoingSendError(error: unknown): MlsSendErrorKind {
   if (error instanceof SenderNotActiveError) return 'sender-not-active';
+  if (error instanceof GroupDeletedError) return 'group-deleted';
   return String(error).includes('EVICTED:') ? 'evicted' : 'unknown';
 }

@@ -69,10 +69,35 @@ describe('MessagingService - visibility vs durability', () => {
   };
   const queuedMessageRepo = {
     create: jest.fn((e: Record<string, unknown>) => e),
-    save: jest.fn((e: Record<string, unknown>) => ({ id: 'q1', ...e })),
+    // TypeORM's contract, and the fake owes it: an array in is an array out. The activation
+    // redelivery saves a whole page at once and iterates what comes back, so a fake that answered
+    // one object for a list of them failed on the RETURN rather than on anything it was testing.
+    save: jest.fn((e: Record<string, unknown> | Record<string, unknown>[]) =>
+      Array.isArray(e) ? e.map((row, i) => ({ id: `q${i + 1}`, ...row })) : { id: 'q1', ...e }
+    ),
     find: jest.fn(),
     findOne: jest.fn(),
     delete: jest.fn(),
+    /**
+     * The send writes its rows inside a transaction that first reads the group under a shared lock,
+     * so that a deletion cannot land between the recipient resolution and the enqueue
+     * (`messaging.send-race.spec.ts` is where that ordering is asserted).
+     *
+     * Here the group is simply ALIVE - every test in this file is about what a send DURABLY writes,
+     * and none of them deletes anything. The queue repository handed to the callback is the same
+     * fake, so every existing assertion on `queuedMessageRepo.save` reads exactly what it did
+     * before the transaction existed.
+     */
+    manager: {
+      transaction: jest.fn(async (cb: (m: unknown) => Promise<unknown>) =>
+        cb({
+          getRepository: (entity: { name?: string }) =>
+            entity?.name === 'Group'
+              ? { find: async () => [{ id: 'g1', deletedAt: null }] }
+              : queuedMessageRepo,
+        })
+      ),
+    },
   };
 
   /**
@@ -127,6 +152,18 @@ describe('MessagingService - visibility vs durability', () => {
         ) => Promise<void>;
       }
     ).redeliverMissedDuringActivationWindow(userId, deviceId, groupId);
+
+  /**
+   * The `proto` of every row the redelivery actually queued, in order.
+   *
+   * WHAT THESE TESTS CLAIM IS WHICH FRAMES WENT OUT, and asserting `save` call counts only stood in
+   * for that while the page was written one row at a time. It is now written in one transaction
+   * (see `enqueueForLiveGroup`), so the count says nothing and the rows say everything.
+   */
+  const queuedProtos = (): string[] =>
+    queuedMessageRepo.save.mock.calls.flatMap(([arg]) =>
+      (Array.isArray(arg) ? arg : [arg]).map((r: Record<string, unknown>) => String(r.proto))
+    );
 
   /** One `history:<group>` entry, as ioredis returns it: `[id, [field, value, ...]]`. */
   const entry = (senderId: string, proto: string, silent?: '0' | '1'): [string, string[]] => [
@@ -540,10 +577,7 @@ describe('MessagingService - visibility vs durability', () => {
 
       await redeliver('u1', 'd1', 'g1');
 
-      expect(queuedMessageRepo.save).toHaveBeenCalledTimes(1);
-      expect(queuedMessageRepo.create).toHaveBeenCalledWith(
-        expect.objectContaining({ proto: 'visible' })
-      );
+      expect(queuedProtos()).toEqual(['visible']);
     });
 
     it('stays silent for a mutation, instead of ringing once per reaction', async () => {
@@ -566,7 +600,7 @@ describe('MessagingService - visibility vs durability', () => {
 
       await redeliver('u1', 'd1', 'g1');
 
-      expect(queuedMessageRepo.save).toHaveBeenCalledTimes(2);
+      expect(queuedProtos()).toEqual(['msg-a', 'msg-b']);
     });
 
     it('treats an entry written before the field existed as visible', async () => {
@@ -575,7 +609,7 @@ describe('MessagingService - visibility vs durability', () => {
 
       await redeliver('u1', 'd1', 'g1');
 
-      expect(queuedMessageRepo.save).toHaveBeenCalledTimes(1);
+      expect(queuedProtos()).toEqual(['older-message']);
     });
 
     it('never redelivers the device its own messages', async () => {

@@ -580,6 +580,17 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
             )
           );
       }
+      // THE GROUP ENDED WHILE THIS FRAME WAS IN FLIGHT, which the pre-flight `deletedAt` check
+      // above cannot catch: it reads that fact over a round trip and the deletion lands inside it.
+      // The same permanent disposition it would have taken, reached from the server's answer
+      // instead of from a local read - one `cause`, so a reader cannot tell the two apart and does
+      // not have to.
+      if (kind === 'group-deleted') {
+        log(
+          `[OUTBOX] ${entry.id.slice(0, 8)}… send REFUSED: ${terminalId.slice(0, 8)}… was deleted while this frame was in flight, after the pre-flight check read it as alive`
+        );
+        return failPermanently(entry, terminalId, 'group-deleted');
+      }
       if (kind === 'evicted') {
         log(
           `[OUTBOX] ${entry.id.slice(0, 8)}… send REFUSED as evicted, after isGroupActive answered that this device is still a member of ${terminalId.slice(0, 8)}… - the two disagree, and OpenMLS is the one that is right`
