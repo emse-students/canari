@@ -2,7 +2,15 @@
 /**
  * PIN - the encryption gate, one row per invocation.
  *
+ *   bun archive/pinrows.mjs --row 1         the correct PIN, and the store it was protecting
+ *   bun archive/pinrows.mjs --row 2         a wrong PIN five times - records PIN-2 AND PIN-7
+ *   bun archive/pinrows.mjs --row 8         the gate with the server unreachable
  *   bun archive/pinrows.mjs --row 11        the gate cannot be walked away from
+ *
+ * EVERY ROW LEAVES W1 UNLOCKED. The shared teardown at the bottom raises the gate one last time and
+ * answers it, on every path including the ones that gave up early - a row's teardown is the next
+ * row's inherited state, and a check that gave up is the one most likely to have left the client
+ * somewhere it should not be.
  *
  * WHY THE RUNNER IS NOT CALLED `pin.mjs`: that name is taken by the GESTURE at the harness root,
  * which enters a PIN into whatever client it is pointed at. A row and a gesture are different
@@ -33,6 +41,8 @@ import {
   dirtOf,
   gate,
   ignoringExpectedLog,
+  ignoringOfflineCut,
+  MLS_CLIENT_INITIALISING,
   report,
   watch,
 } from '../watch.mjs';
@@ -47,6 +57,19 @@ const opt = (name, fallback) => {
 };
 
 const ROWS = {
+  1: {
+    id: 'PIN-1',
+    what: 'the correct PIN, online: the gate closes AND the store it was protecting opens',
+  },
+  2: {
+    id: 'PIN-2',
+    also: ['PIN-7'],
+    what: 'a wrong PIN N times: refused every time, no lockout a correct PIN cannot clear, and the messaging state untouched',
+  },
+  8: {
+    id: 'PIN-8',
+    what: 'the gate while the server is unreachable: a transport failure must not end the session',
+  },
   11: {
     id: 'PIN-11',
     what: 'the gate cannot be dismissed, and it offers a way out that destroys nothing',
@@ -192,8 +215,109 @@ async function raiseGate() {
   return { forgotten, up: seen.ok, tookMs: seen.elapsedMs };
 }
 
+/**
+ * WHAT THE GATE SAYS WHEN IT REFUSES - the element, never the wording.
+ *
+ * `PinModal` renders exactly one error paragraph, and its PRESENCE is the fact "the unlock was
+ * refused" independently of which refusal it was. The text is reported so a reader can see which
+ * one happened; nothing branches on it. `pin.mjs` learnt this the hard way - its old predicate
+ * waited for the word "incorrect" and spent its whole budget while the product was explaining a
+ * different refusal in red on the screen.
+ */
+const REFUSAL = `(function () {
+  var p = document.querySelector('[role=dialog] p.text-red-500, form p.text-red-500');
+  return p ? p.innerText.replace(/\\s+/g, ' ').trim() : null;
+})()`;
+
+/**
+ * IS THE MESSAGING STATE STILL THERE - counted from the sidebar, which is what the PIN protects.
+ *
+ * The store is sealed while the gate is up, so this is only readable on an UNLOCKED client, and
+ * that is exactly what makes it the right instrument: a count taken before a wrong-PIN storm and
+ * again after the correct one answers "did anything get destroyed on the way" with one number.
+ *
+ * It is a COUNT and never a comparison of contents: this file has no business reading conversation
+ * titles, and a number is enough to catch the failure the row is about (a reset that wiped the
+ * local state while the user was only mistyping).
+ */
+const CONVERSATIONS = `document.querySelectorAll('[data-conversation-tile]').length`;
+
+/** Where the app thinks it is - a logout shows up here as `/login`, and nowhere else. */
+const WHERE = `location.pathname`;
+
+/**
+ * The network, emulated, through ONE call so it cannot be half-applied.
+ *
+ * The row holds this CDP session open across the whole cut: `pin.mjs` attaches a SECOND session to
+ * the same target and never touches the Network domain, so the emulation set here survives its
+ * visit. Restoring is not optional and not conditional - a row that threw between the cut and the
+ * restore would leave the browser offline for every check that follows it, which is why the callers
+ * below put the restore in a `finally`.
+ */
+const network = (offline) =>
+  w1.send('Network.emulateNetworkConditions', {
+    offline,
+    latency: 0,
+    downloadThroughput: offline ? 0 : -1,
+    uploadThroughput: offline ? 0 : -1,
+  });
+
+/**
+ * How many conversations this client can see, WAITED for rather than sampled.
+ *
+ * The list is rendered from a database read that follows the key being unwrapped, so a count taken
+ * the instant the gate closes is a count of a render that has not happened. Zero after the wait is
+ * returned as zero and is a legitimate answer - the callers decide what it means, and every one of
+ * them treats it as unaskable rather than as a failure.
+ */
+async function conversationCount() {
+  await pollFact(async () => ((await evaluate(w1, CONVERSATIONS)) ?? 0) > 0, {
+    timeoutMs: 10000,
+    everyMs: 400,
+  });
+  return (await evaluate(w1, CONVERSATIONS)) ?? 0;
+}
+
+/**
+ * WHAT A ROW THAT ACTUALLY OPENS THE GATE PROVOKES, and nothing else.
+ *
+ * Two lines, and each is named for a different reason. Chrome's password-form hint is the browser's
+ * and appears the moment a gate with a password field is on screen, so every row here meets it.
+ * `Initialising MLS...` is the APPLICATION's, and it appears only where a device key has just been
+ * unwrapped - which is precisely what PIN-1, PIN-2 and PIN-8 arrange and then assert.
+ *
+ * PIN-11 takes neither of the second kind: it never gets past the gate before it reports, so a line
+ * saying the MLS client was rebuilt would be a finding there. A disposition is per row because the
+ * same sentence is expected in one and evidence in another.
+ */
+const PAST_THE_GATE = [BROWSER_PASSWORD_FORM_HINT, MLS_CLIENT_INITIALISING];
+
+/**
+ * THE APPLICATION'S OWN ACCOUNT OF A LOGIN THAT DID NOT GO THROUGH, for the rows that arranged one.
+ *
+ * `sessionAuth`'s catch narrates an ordinary failed login - a wrong PIN, a server nobody could reach
+ * - into the in-app diary, which the observer files as `unexplained` because no classifier rule
+ * claims it. Correctly so: outside a row that deliberately caused one, this line is somebody's
+ * client refusing to open. It is named at the two call sites that cause it, exactly as
+ * `ignoringExpectedLog`'s own docstring requires.
+ *
+ * IT MATCHES THE ORDINARY SPELLING AND NOT THE ACCUSING ONE. `[INIT] Login failed (code)` is a
+ * different sentence for a different class - the server's 5xx, a WASM that would not load, the
+ * genuinely unexpected - and no row here has any business forgiving it. One of those appearing
+ * would mean the wrong PIN or the network cut cost something it should not have. The two spellings
+ * exist because the product now classifies its own failure, which is what `pinrows` found on
+ * 2026-09-05 by reading five console errors on a product doing exactly the right thing.
+ */
+const LOGIN_DID_NOT_COMPLETE = /^\[INIT\] Login did not complete \(\w+\):/;
+
 const observer = await watch(w1, 'W1');
 
+/**
+ * PIN-11 - the gate cannot be walked away from, and it offers an exit that destroys nothing.
+ *
+ * The story of what it found, and of the two instrument errors it cost, is in `backlog.md`.
+ */
+async function row11() {
 // ── the precondition, raised and then proved ────────────────────────────────────────────────────
 const first = await raiseGate();
 if (!first.up) {
@@ -285,12 +409,327 @@ record(row.id, gated.verdict, {
       : null,
   ].filter(Boolean),
 });
+}
+
+/**
+ * PIN-1 - the correct PIN, online.
+ *
+ * THE ROW IS NOT "THE MODAL CLOSED". A gate that closes has proved nothing about the thing it was
+ * guarding: the PIN unwraps the device key, and the device key is what opens the local MLS store,
+ * so the question is whether the CLIENT CAME BACK - conversations on screen, read from a store that
+ * was sealed one second earlier.
+ *
+ * AND A CLIENT WITH NO CONVERSATIONS CANNOT ANSWER IT. That is INCONCLUSIVE and not FAIL: an empty
+ * sidebar on an account that has never talked to anybody is a legitimate state, and reading it as a
+ * failed unlock would be blaming the product for the estate. It is the only reading this row cannot
+ * make, and it says which one it could not make rather than guessing.
+ */
+async function row1() {
+  const raised = await raiseGate();
+  if (!raised.up) {
+    record(row.id, 'INCONCLUSIVE', {
+      scenario: row.what,
+      precondition: 'the PIN gate did not come up after the device key vault was emptied',
+      forgotten: raised.forgotten,
+      raiseTookMs: raised.tookMs,
+      ...gate('INCONCLUSIVE', { W1: await report(observer) }).detail,
+    });
+    return;
+  }
+
+  const startedAt = Date.now();
+  const unlocked = await unlockClient(w1, PORTS.W1, ACCOUNT_OF.W1, { match: APP_TAB });
+  const unlockMs = Date.now() - startedAt;
+  await awaitAppReady(w1).catch(() => null);
+
+  const conversations = await conversationCount();
+  const stillGated = await gateUp();
+  const where = await evaluate(w1, WHERE);
+
+  const rep = ignoringExpectedLog(await report(observer), PAST_THE_GATE);
+  const verdict =
+    unlocked.verdict !== 'unlocked' || stillGated
+      ? 'FAIL'
+      : conversations === 0
+        ? 'INCONCLUSIVE'
+        : 'PASS';
+  const gated = gate(verdict, { W1: rep });
+
+  record(row.id, gated.verdict, {
+    ...gated.detail,
+    scenario: row.what,
+    raiseTookMs: raised.tookMs,
+    unlockMs,
+    unlocked: unlocked.verdict,
+    stillGated,
+    where,
+    conversations,
+    dirt: dirtOf(rep),
+    why:
+      conversations === 0
+        ? 'the gate closed, but this client lists no conversation - so whether the STORE opened cannot be read from the sidebar, and the row refuses to call that a pass'
+        : undefined,
+    failedBecause: [
+      unlocked.verdict !== 'unlocked' ? `the client did not come past the gate: ${unlocked.verdict}` : null,
+      stillGated ? 'the gate was still up after a correct PIN' : null,
+    ].filter(Boolean),
+  });
+}
+
+/**
+ * PIN-2, and PIN-7 out of the same evidence - a wrong PIN, several times over.
+ *
+ * TWO ROWS FROM ONE STORM, DELIBERATELY, because running the storm twice doubles the only real risk
+ * this row carries: if the product DOES lock an account out after N attempts, the second run would
+ * meet a client the first one had already locked, and neither row could then say which of them
+ * caused what. They ask different questions of the same five refusals:
+ *
+ *   PIN-2  - the STATE. Is the account still usable with the right PIN afterwards, and is the local
+ *            messaging state the same size it was before? A lockout a correct PIN cannot clear, or
+ *            a wipe triggered by mistyping, are the two failures.
+ *   PIN-7  - the REFUSAL ITSELF. Was the user TOLD, every time, by the product rather than by the
+ *            console - and did anything break while it happened? A refusal is an ANSWER: it may
+ *            cost a 401, and it may not cost a 500, an exception or a socket.
+ *
+ * THE WRONG VALUE IS FIXED AND THE ROW CHECKS ITS OWN PREMISE. Nothing here may read the account's
+ * real PIN - that is `pin.mjs`'s business and the reason it exists - so this cannot PROVE the value
+ * it sends is wrong. What it can do is notice: an attempt that UNLOCKS is reported as exactly that,
+ * and the row goes INCONCLUSIVE rather than recording five refusals it did not get.
+ */
+async function row2() {
+  const ATTEMPTS = 5;
+  const WRONG = '135790';
+
+  // The count BEFORE, read while the client is still open - the store is sealed once the gate is up.
+  await unlockClient(w1, PORTS.W1, ACCOUNT_OF.W1, { match: APP_TAB });
+  await awaitAppReady(w1).catch(() => null);
+  const before = await conversationCount();
+
+  const raised = await raiseGate();
+  if (!raised.up) {
+    record(row.id, 'INCONCLUSIVE', {
+      scenario: row.what,
+      precondition: 'the PIN gate did not come up after the device key vault was emptied',
+      forgotten: raised.forgotten,
+      ...gate('INCONCLUSIVE', { W1: await report(observer) }).detail,
+    });
+    return;
+  }
+
+  // ── the storm, one attempt per FRESHLY RAISED gate ─────────────────────────────────────────────
+  //
+  // THE RELOAD BETWEEN ATTEMPTS IS NOT TIDINESS, IT IS WHAT MAKES THE SECOND ATTEMPT MEAN ANYTHING.
+  // `pin.mjs` waits for "the gate closed, or an error element appeared", and after a first refusal
+  // that element is ALREADY on screen - so a second attempt against the same modal would return the
+  // instant it submitted, and `told: true` would be a reading of the PREVIOUS refusal. Every
+  // occurrence of a stale-fact-read-as-a-fresh-one in this rig has cost a wrong verdict; a reload
+  // gives each attempt a modal with nothing on it.
+  //
+  // The first gate is the one already raised above, so only the later attempts pay for a reload.
+  const tries = [];
+  for (let i = 1; i <= ATTEMPTS; i++) {
+    if (i > 1) {
+      const again = await raiseGate();
+      if (!again.up) break;
+    }
+    const said = await unlockClient(w1, PORTS.W1, ACCOUNT_OF.W1, {
+      match: APP_TAB,
+      value: WRONG,
+    });
+    const refusal = await evaluate(w1, REFUSAL);
+    const up = await gateUp();
+    tries.push({ n: i, gateStillUp: up, told: refusal !== null, where: await evaluate(w1, WHERE) });
+    // A wrong PIN that opened the client is not a refusal to count - stop rather than pile more
+    // attempts onto a premise that has already failed.
+    if (said.verdict === 'unlocked' || !up) break;
+  }
+
+  const accepted = tries.some((t) => !t.gateStillUp);
+
+  // ── and the correct one, which is what says whether anything is locked out ─────────────────────
+  const recovery = accepted
+    ? null
+    : await unlockClient(w1, PORTS.W1, ACCOUNT_OF.W1, { match: APP_TAB });
+  if (recovery) await awaitAppReady(w1).catch(() => null);
+  const after = recovery?.verdict === 'unlocked' ? await conversationCount() : null;
+
+  // The five refusals this row asked for, narrated by the application - see the needle's docstring.
+  const rep = ignoringExpectedLog(await report(observer), [
+    ...PAST_THE_GATE,
+    LOGIN_DID_NOT_COMPLETE,
+  ]);
+  const toldEveryTime = tries.length > 0 && tries.every((t) => t.told);
+  const stayedOnTheGate = tries.every((t) => t.where !== '/login');
+
+  // ── PIN-2: the state ───────────────────────────────────────────────────────────────────────────
+  const v2 = accepted
+    ? 'INCONCLUSIVE'
+    : recovery?.verdict === 'unlocked' && after === before
+      ? 'PASS'
+      : 'FAIL';
+  const g2 = gate(v2, { W1: rep });
+  record(row.id, g2.verdict, {
+    ...g2.detail,
+    scenario: row.what,
+    attempts: tries.length,
+    conversationsBefore: before,
+    conversationsAfter: after,
+    recovered: recovery?.verdict ?? null,
+    dirt: dirtOf(rep),
+    why: accepted
+      ? 'the value this row sends as WRONG was accepted, so no refusal was measured and the premise failed rather than the product'
+      : undefined,
+    failedBecause: [
+      !accepted && recovery?.verdict !== 'unlocked'
+        ? `the correct PIN did not get past the gate after ${tries.length} wrong ones: ${recovery?.verdict}`
+        : null,
+      after !== null && after !== before
+        ? `the messaging state changed size across the storm: ${before} -> ${after}`
+        : null,
+    ].filter(Boolean),
+  });
+
+  // ── PIN-7: the refusal ─────────────────────────────────────────────────────────────────────────
+  const v7 = accepted ? 'INCONCLUSIVE' : toldEveryTime && stayedOnTheGate ? 'PASS' : 'FAIL';
+  const g7 = gate(v7, { W1: rep });
+  record(ROWS[2].also[0], g7.verdict, {
+    ...g7.detail,
+    scenario: 'a wrong PIN, N times - a clean refusal is the expected result',
+    tries,
+    dirt: dirtOf(rep),
+    // The gate below is what makes this row more than "an error appeared": `report` counts a 500, an
+    // unhandled rejection and a dropped socket, and none of them is forgiven here.
+    note: 'the verdict also carries `clean`, so a refusal that cost a 5xx, an exception or a socket is a FAIL even though the user was told',
+    failedBecause: [
+      !toldEveryTime
+        ? 'at least one wrong PIN was refused with nothing on screen - the user was left with a gate that simply did not open'
+        : null,
+      !stayedOnTheGate ? 'a wrong PIN moved the client to /login, which is a logout rather than a refusal' : null,
+    ].filter(Boolean),
+  });
+}
+
+/**
+ * PIN-8 - the gate while the server is unreachable.
+ *
+ * **A STATUS CODE IS AN ANSWER, A TRANSPORT FAILURE IS NOT**, and this is the gate where that rule
+ * costs the most: the unlock has to ask the server for the PIN salt and the verifier, so a dead
+ * radio produces a rejection that looks exactly like a wrong PIN if nobody classified it. Reading
+ * it as an answer would log the user out - of a session that is perfectly valid - and take the
+ * device key with it.
+ *
+ * SO THE ROW MEASURES THE THREE THINGS THAT SEPARATE THE TWO. The gate must still be up; the client
+ * must still be on the app rather than on `/login`; and the correct PIN must work once the network
+ * comes back, WITHOUT anything else being done to the client - which is the whole difference between
+ * a refusal that was survived and one that was acted on.
+ *
+ * The cut is emulated on this row's own CDP session and restored in a `finally`: a row that threw
+ * in between would otherwise hand every later check an offline browser.
+ */
+async function row8() {
+  const raised = await raiseGate();
+  if (!raised.up) {
+    record(row.id, 'INCONCLUSIVE', {
+      scenario: row.what,
+      precondition: 'the PIN gate did not come up after the device key vault was emptied',
+      forgotten: raised.forgotten,
+      ...gate('INCONCLUSIVE', { W1: await report(observer) }).detail,
+    });
+    return;
+  }
+
+  let offlineAttempt = null;
+  let refusal = null;
+  let gateAfterCut = null;
+  let whereAfterCut = null;
+  try {
+    await w1.send('Network.enable');
+    await network(true);
+    offlineAttempt = await unlockClient(w1, PORTS.W1, ACCOUNT_OF.W1, { match: APP_TAB });
+    refusal = await evaluate(w1, REFUSAL);
+    gateAfterCut = await gateUp();
+    whereAfterCut = await evaluate(w1, WHERE);
+  } finally {
+    await network(false).catch(() => null);
+  }
+
+  // ── and back, with nothing else done to the client ─────────────────────────────────────────────
+  const recovery = await unlockClient(w1, PORTS.W1, ACCOUNT_OF.W1, { match: APP_TAB });
+  if (recovery.verdict === 'unlocked') await awaitAppReady(w1).catch(() => null);
+  const conversations = recovery.verdict === 'unlocked' ? await conversationCount() : null;
+
+  // THE CUT ITSELF IS EXPECTED NOISE AND ITS DISPOSITION IS `ignoringOfflineCut`, not a wider one:
+  // every request in flight when the radio died reports a transport failure, and those lines are the
+  // row working. Nothing about the REFUSAL is forgiven - a 5xx or an exception still breaks `clean`.
+  const rep = ignoringOfflineCut(
+    ignoringExpectedLog(await report(observer), [...PAST_THE_GATE, LOGIN_DID_NOT_COMPLETE]),
+  );
+  const survivedTheCut = gateAfterCut === true && whereAfterCut !== '/login';
+  // WHAT THE PERSON WAS TOLD IS PART OF THE ANSWER, and it is asserted as a NEGATIVE because that is
+  // the only stable thing to assert. The row may not name the product's own sentence - that is a
+  // translation, and a check keyed on one breaks the day it is reworded - but the ENGINE's strings
+  // are a fixed foreign vocabulary, and finding one on screen means a raw rejection was rendered
+  // instead of being classified. Measured 2026-09-05: `refusal: "Failed to fetch"`, in a modal whose
+  // every other word is French, on a screen where it reads exactly like "your PIN is wrong".
+  //
+  // A denylist rather than an allowlist, deliberately, and the campaign's rule about allowlists is
+  // about DESTRUCTIVE CONTROLS - what a gesture may touch. This is a DETECTOR: it names the small
+  // fixed set of strings the three engines produce, and a fourth one appearing would be a miss, not
+  // a mistaken action.
+  const ENGINE_STRINGS = ['Failed to fetch', 'NetworkError', 'Load failed', 'network error'];
+  const leakedEngineString = refusal !== null && ENGINE_STRINGS.some((s) => refusal.includes(s));
+  const verdict =
+    offlineAttempt?.verdict === 'unlocked'
+      ? 'INCONCLUSIVE'
+      : survivedTheCut && recovery.verdict === 'unlocked' && !leakedEngineString
+        ? 'PASS'
+        : 'FAIL';
+  const gated = gate(verdict, { W1: rep });
+
+  record(row.id, gated.verdict, {
+    ...gated.detail,
+    scenario: row.what,
+    offlineAttempt: offlineAttempt?.verdict ?? null,
+    // Reported in full so a reader can see WHICH refusal it was; judged only on whether it is one
+    // of the engine's own strings, which is a fact about vocabulary and not about wording.
+    refusal,
+    leakedEngineString,
+    gateAfterCut,
+    whereAfterCut,
+    recovered: recovery.verdict,
+    conversations,
+    dirt: dirtOf(rep),
+    why:
+      offlineAttempt?.verdict === 'unlocked'
+        ? 'the client came past the gate with the network cut, so the cut did not reach the unlock and the row measured nothing'
+        : undefined,
+    failedBecause: [
+      gateAfterCut === false ? 'the gate came down on a transport failure' : null,
+      whereAfterCut === '/login'
+        ? 'a transport failure logged the user out - a dead radio was read as an answer'
+        : null,
+      recovery.verdict !== 'unlocked'
+        ? `the correct PIN did not work once the network was back: ${recovery.verdict}`
+        : null,
+      leakedEngineString
+        ? `the person at the gate was shown the browser's own words rather than the product's: ${refusal}`
+        : null,
+    ].filter(Boolean),
+  });
+}
+
+const RUNNERS = { 1: row1, 2: row2, 8: row8, 11: row11 };
+await RUNNERS[opt('row', '')]();
 
 // ── the teardown, which is the next row's inherited state ────────────────────────────────────────
-// RAISE IT ONE LAST TIME BEFORE UNLOCKING, because the row may have left the client with the modal
-// DISMISSED - which is not the same as unlocked, and is exactly the state this row exists to
-// report. `pin.mjs` against a dismissed gate spends its whole deadline and reports "no unlock
-// modal", which is how the first run of this row left W1 walking the app with no device key.
+// RAISE IT ONE LAST TIME BEFORE UNLOCKING, because a row may have left the client with the modal
+// DISMISSED - which is not the same as unlocked, and is exactly the state PIN-11 exists to report.
+// `pin.mjs` against a dismissed gate spends its whole deadline and reports "no unlock modal", which
+// is how the first run of that row left W1 walking the app with no device key.
+//
+// IT RUNS FOR EVERY ROW AND ON EVERY PATH, including the ones that recorded INCONCLUSIVE: a row's
+// teardown is the next row's inherited state, and a check that gave up early is exactly the one
+// most likely to have left the client somewhere it should not be.
 await raiseGate();
 const back = await unlockClient(w1, PORTS.W1, ACCOUNT_OF.W1, { match: APP_TAB });
 console.log(`[pinrows] teardown: W1 ${back.verdict}`);

@@ -231,15 +231,16 @@ noticing. Order = priority. Detail lives where the link says. Defect stories are
 rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
 [cross-client-testing](docs/wiki/cross-client-testing.md).
 
-1. **ELEVEN RUNGS COMPLETE, 132 OF 245 ROWS ANSWERED** - the board is
+1. **ELEVEN RUNGS COMPLETE, 138 OF 246 ROWS ANSWERED** - the board is
    [cross-client-testing](docs/wiki/cross-client-testing.md) and `bun rows.mjs` settles it against
-   the ledger. Not `PASS`: TAB-3b, HEAL-NEW-0, HEAL-repair, and eight rows the phone blocks.
+   the ledger. Not `PASS`: TAB-3b, HEAL-NEW-0, HEAL-repair, and eight rows the phone blocks. **PIN
+   is 5/11, all `PASS`** since 2026-09-05, and every one of the five found something.
 2. **P1 - a PLACEHOLDER held a member's seat**; whether a LEAF is left in the MLS tree only a
    member's CLIENT can say. [backlog](docs/wiki/backlog.md#p1---the-placeholder-is-gone-from-prod-what-it-may-have-left-in-the-mls-tree-is-not-answered).
-3. **P1 - THE PIN MODAL CAN BE DISMISSED AND THERE IS NO WAY OUT** (user, 2026-09-05, seen on real
-   people): they close it on every page rather than reset, and the modal reopens each time.
-   `Modal.svelte` already carries `dismissible`; the sign-out button is what makes using it safe, and
-   PIN is 0/10 so nothing asserts either ([backlog](docs/wiki/backlog.md)).
+3. **FIXED, NOT SHIPPED - the PIN gate could be dismissed and offered no way out** (user,
+   2026-09-05, seen on real people). Merged as #383 with the back-gesture hole `dismissible` was
+   missing, and asserted by PIN-11 plus two component test files. **It goes from this list the day a
+   release carries it** ([backlog](docs/wiki/backlog.md)).
 4. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - **ONE merge mechanism
    and ONE arming point since 2026-09-04**, the same four workflows in all four GitHub repos, and
    `bun tools/ecosystem-shape/shape.mjs` is the only thing that asserts it

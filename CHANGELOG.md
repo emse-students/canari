@@ -13,6 +13,27 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **Someone unlocking their messages with no network was shown `Failed to fetch`.** The three calls
+  behind the encryption gate each handled `if (!res.ok)` with a proper French sentence and let a
+  REJECTED `fetch` walk past into the outer catch, whose message becomes the text in the modal - so
+  a browser string, in English, on a screen whose every other word is French, reading exactly like
+  "your PIN is wrong". **A status code is an answer, a transport failure is not**, and only the
+  first half was written. `fetchOrUnreachable` now turns a not-reached into the localized sentence
+  the product already had, and throws it as a TYPE rather than a sentence: the first draft threw a
+  bare `Error` carrying the translated text, which threw away the one fact worth keeping.
+  Measured by `pinrows.mjs --row 8` with the network cut under a live client.
+
+- **Every login failure accused the application, including the ones where nothing was wrong with
+  it.** One catch handles them all and logged them all with `console.error('[INIT] Login failed')`,
+  so a person mistyping their PIN - the most ordinary outcome that screen has - produced the same
+  line as a WASM build that would not load. Measured on the campaign's own client: five deliberate
+  wrong PINs, five console errors, on a product doing exactly the right thing. The discriminator
+  already existed one line below the log, unread. `isExpectedLoginOutcome` now decides the level: a
+  PIN that does not match, a state sealed under an older key, an empty keystore and a server nobody
+  could reach are narrated at `warn` with their code NAMED; a revoked device (whose local state is
+  wiped) and `other` (the server's 5xx, the unexpected) keep the accusing line. The union's codes
+  are pinned by an exhaustive test, so the next one added cannot arrive undecided.
+
 - **The PIN gate could be closed, so people who had forgotten their PIN walked the whole app closing
   it on every page - and it offered them nothing but a reset that erases their messages.** Reported
   from real use: *"elles naviguent de page en page en fermant le modal de PIN"*. `Modal.svelte` has
