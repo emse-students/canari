@@ -62,6 +62,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 
 | What | Kind | Where the substance is |
 | --- | --- | --- |
+| **UNLOCK THE CAMPAIGN PHONE** - it went behind its credential lock screen on 2026-09-05 and three LIFE rows plus every later phone row cannot run until it is cleared | 1 gesture on the device | [P2 - every silent push on the phone fails to decrypt](#p2---every-silent-push-on-the-phone-fails-to-decrypt-the-notification-loses-its-preview-and-the-fallback-it-falls-back-to-does-nothing-measured-2026-09-05-first-run-of-notif) |
 | choose how production says it is down - the probe must hit `/api/version`, which needs the database | decision, then ~1 click | [P2 - nothing tells anybody production is down](#p2---nothing-tells-anybody-production-is-down-and-both-outages-of-2026-09-01-were-reported-by-the-user-owed-to-the-user-a-decision-then-one-click) |
 | should a dev-ONLY trigger exist - today one push deploys both estates and a broken dev BLOCKS production, by design | decision | [dev.canari-emse.fr becomes a real second environment](#devcanari-emsefr-becomes-a-real-second-environment---decided-2026-08-17) |
 | a fine-grained PAT from an account WITH PUSH ACCESS - the App token was measured refused, ten times | decision | [P1 - no identity CI can mint may ask Dependabot to rebuild a branch](#p1---no-identity-ci-can-mint-may-ask-dependabot-to-rebuild-a-branch-so-a-moved-gate-parks-the-whole-queue---and-the-app-token-was-the-recommendation-this-row-itself-made-measured-2026-09-03) |
@@ -1349,12 +1350,25 @@ D/CanariWorker: doWork: background cleanup completed          <- 60 ms, and it d
 **What the user sees**: `Nouveau message de <name>` with no preview, and on NOTIF-10 that is the only
 notification there ever is - `notifiedInMs: null` for all five messages.
 
-**Why the generation is already consumed.** NOTIF-10 cuts the RADIOS; it does not kill the app. When
-they come back, the app's own WebSocket and the FCM push handler process the same messages, and
-whichever loses meets a ratchet generation the winner has already spent. Three consecutive
-generations (433, 434, 435) failed and NO push ever succeeded, so the consumer was the app. **Two
-consumers of one ratchet, on one device** - the WP-MULTITAB-1 shape, across the app process and its
-push handler rather than across two tabs.
+**Why the generation is already consumed, from the server's own log.** The push is not
+unconditional: `[PUSH_DEFERRED] queuedId=... still unACKed after 10 s -> FCM fallback`, then
+`[PUSH_SEND] FCM sent`. So the server pushes only what the device has not ACKNOWLEDGED.
+
+The phone had DECRYPTED the message - spending the generation - and had not ACKED it, because its
+network was failing in exactly that window: `[OUTBOX] a461056f... transient failure (attempt 1..3):
+error sending request for url (http://localhost:8081/api/mls/send)`. Ten seconds later the server
+pushed a message the device already held, and the push could not decrypt it, because a ratchet
+generation can be spent once.
+
+**The notification falls into the gap between DECRYPTED and ACKNOWLEDGED**, and the ACK is being
+asked a question it was not written to answer: it says whether the SERVER's copy was collected, and
+it is read as whether the DEVICE needs telling. On a phone whose uplink is degraded - the ordinary
+case for a backgrounded app - those two come apart on every message.
+
+**LIFE-2 is the same defect and it is worse there.** Backgrounded via HOME (not killed), the shade
+held nothing but the USB notice, `notification.afterMs: null`, and the message took 95 s to appear.
+LIFE-3, which KILLS the app, passes: a killed app has spent no generation, so its push decrypts and
+notifies. **A phone in a pocket is the failing case and a phone that was killed is the passing one.**
 
 **Three rules this sits on.** *A race that heals cleanly is still a defect* - and this one does not
 heal: the preview is gone for good. *A fallback is a signal, never a path* - this one is taken 100%
@@ -1368,11 +1382,24 @@ comment says it is for "an epoch gap (a commit arrived while the app was closed)
 refusal the catch-up cannot help by construction, and it costs a backend round trip and a worker
 enqueue per message.
 
-**What a fix owes.** The kind must reach Kotlin as a TYPE, not as a message - *never branch on an
-error message* - so the FFI has to carry it. Then: a same-epoch refusal means the message is already
-on this device, so the honest response is to build the notification from the copy the app holds, not
-to retry a decrypt that cannot succeed. Needs Rust + Kotlin + an APK rebuild, so it is not a
-same-session fix; NOTIF-10 stays `FAIL` until it is done.
+**What a fix owes, and why none was written on 2026-09-05.** Two candidate shapes, and the second
+is the cheap one:
+
+1. Carry the kind to Kotlin as a TYPE - *never branch on an error message* - so a same-epoch refusal
+   stops costing a backend round trip and a worker enqueue per message, and can be answered from the
+   copy the device already holds.
+2. **Let the JS layer notify when IT is the path that decrypted.** `notifyInbound` excludes native
+   mobile wholesale, on the ground that "the background push handler posts its own" - true only when
+   the push CAN decrypt, and by the ratchet argument exactly one of the two ever can. Both already
+   key their notification per conversation (`stableNotifId` / tag `canari-<id>`), so the app's would
+   REPLACE the contentless fallback rather than duplicate it.
+
+Neither was attempted, and the reason is a rule rather than a budget: **a green gate is not a working
+system, and three of three iOS defects were invisible to every gate here.** Both shapes change
+notification behaviour on a surface that only hardware can judge, and **the phone went behind its
+credential lock screen mid-phase** (`deviceLocked=1`, `wm dismiss-keyguard` refused, no credential in
+the rig), so LIFE-6/7/8 never ran and nothing could be re-measured. A notification fix verified only
+by unit tests is exactly the shape that has cost this project three times.
 
 
 ### P2 - a frame this device already read is re-accused as lost on every later cold start, and the reconciliation it triggers finds nothing (measured 2026-09-05)

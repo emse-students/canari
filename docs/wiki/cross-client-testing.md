@@ -319,14 +319,14 @@ Cross every LIFE state with: receive a DM, a channel message, a commit, a call.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| LIFE-1 | Foreground baseline | `+A1` | `pending` |
-| LIFE-2 | Background (`HOME`): the notification carries the real decrypted text | `+push` | `pending` |
-| LIFE-3 | Killed - **swipe from recents, not `am force-stop`** | `+push` | `pending` |
-| LIFE-4 | Doze (`dumpsys deviceidle force-idle`) | `+push` | `pending` |
+| LIFE-1 | Foreground baseline | `+A1` | `PASS` 2026-09-05 09:46 on `768a6c1b` + APK `93856118`, clean - **first run ever.** The phone reaches the estate and renders in the foreground, which is what makes LIFE-2 below a finding rather than a broken rig |
+| LIFE-2 | Background (`HOME`): the notification carries the real decrypted text | `+push` | **`FAIL`** 2026-09-05 09:49 on `768a6c1b` + APK `93856118` - **first run ever, and the sharpest form of the push defect.** No notification AT ALL (`afterMs: null`; the shade held only the USB notice) and the message took **95 s** to appear. The phone decrypted it over its WebSocket - spending the ratchet generation - while its uplink was failing (`[OUTBOX] transient failure (attempt 1..3): ... /api/mls/send`), so it never ACKed; the server pushed after its 10 s unACKed deadline, and the push could not decrypt what the device already held. P2 in [backlog](backlog.md) |
+| LIFE-3 | Killed - **swipe from recents, not `am force-stop`** | `+push` | `PASS-DIRTY` 2026-09-05 09:50 on `768a6c1b` + APK `93856118` - **first run ever, and it passes for the reason LIFE-2 fails**: a killed app has spent no generation, so its push decrypts and notifies. A phone in a pocket is the failing case and a phone that was killed is the passing one |
+| LIFE-4 | Doze (`dumpsys deviceidle force-idle`) | `+push` | `PASS-DIRTY` 2026-09-05 09:51 on `768a6c1b` + APK `93856118` - **first run ever**; same phone-side dirt as every other row, the P2 in [backlog](backlog.md) |
 | LIFE-5 | After a reboot, app never opened - exercises `CanariBootReceiver` | `+push` `+user` | `pending` - needs the unlock pattern |
-| LIFE-6 | Offline (both radios) | `+A1` | `pending` |
-| LIFE-7 | Notification permission revoked mid-life | `+push` | `pending` |
-| LIFE-8 | Process death (`am kill`), keeping WorkManager state | `+push` | `pending` |
+| LIFE-6 | Offline (both radios) | `+A1` | `pending` - **the phone went behind its CREDENTIAL lock screen mid-phase on 2026-09-05** (`deviceLocked=1`, `wm dismiss-keyguard` refused; no credential is in the rig by design). The runner refused it rather than measuring through it, which is right: every fetch inside the WebView hangs behind that screen. Owed a human unlock |
+| LIFE-7 | Notification permission revoked mid-life | `+push` | `pending` - **the phone went behind its CREDENTIAL lock screen mid-phase on 2026-09-05** (`deviceLocked=1`, `wm dismiss-keyguard` refused; no credential is in the rig by design). The runner refused it rather than measuring through it, which is right: every fetch inside the WebView hangs behind that screen. Owed a human unlock |
+| LIFE-8 | Process death (`am kill`), keeping WorkManager state | `+push` | `pending` - **the phone went behind its CREDENTIAL lock screen mid-phase on 2026-09-05** (`deviceLocked=1`, `wm dismiss-keyguard` refused; no credential is in the rig by design). The runner refused it rather than measuring through it, which is right: every fetch inside the WebView hangs behind that screen. Owed a human unlock |
 
 ## 14 - NOTIF - notifications
 
