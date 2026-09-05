@@ -77,7 +77,19 @@ export function resolveDevice(argv, { defaultPort = PORTS.W2 } = {}) {
   const forPort = Object.keys(PORTS).find((d) => PORTS[d] === port);
   const account = opt('account', device ? ACCOUNT_OF[device] : ACCOUNT_OF[forPort]);
 
-  return { device: device ?? forPort ?? null, port, account, isPhone: isPhoneName(device) };
+  // `isPhone` FOLLOWS THE RESOLVED NAME, NOT THE SPELT ONE. This line already resolves a port back
+  // to its device for `account` and for `device` itself, and then used to throw that away for
+  // `isPhone` - so `--port 9333` was A1 for every purpose except the one that ARMS it. `armIfPhone`
+  // no-opped, nothing re-established the adb forward, and the caller connected to a socket belonging
+  // to a process that no longer existed.
+  //
+  // It cost COMM-18 twice on 2026-09-05. `unlockClient` spawns `pin.mjs --port <n> --account <n>`,
+  // and that row FORCE-STOPS the app before following a deep link: the devtools socket is named
+  // after the pid (`webview_devtools_remote_<pid>`), so the relaunched app answers on a different
+  // one and `http://127.0.0.1:9333/json/list` returns ECONNRESET. The row recorded `a1Gate: LOCKED`
+  // - a phone that was never reached, reported as a phone that refused its PIN.
+  const resolved = device ?? forPort ?? null;
+  return { device: resolved, port, account, isPhone: isPhoneName(resolved) };
 }
 
 /**

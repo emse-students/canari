@@ -57,13 +57,7 @@ import {
 } from '../comm.mjs';
 import { channelIdOf, channelNotifLevelOf, userIdOf, workspaceIdOf } from '../grainedb.mjs';
 import { OWNER_NAME, PORTS, VENUE } from '../names.mjs';
-import {
-  home as phoneHome,
-  launch as phoneLaunch,
-  notifications,
-  pid as phonePid,
-  wake,
-} from '../phone.mjs';
+import { foreground, home as phoneHome, notifications, pid as phonePid, wake } from '../phone.mjs';
 import { clientBuild, mark, record } from '../results.mjs';
 import { srvLines } from '../estate.mjs';
 import { consoleLines, gate, report, watch } from '../watch.mjs';
@@ -200,8 +194,7 @@ const a1 = await step('read the build the phone is running', async () => {
   // the very next run of it arms against the state the previous one left, which is how it failed on
   // 2026-09-05 with `read the build the phone is running: The operation timed out` while the same
   // step had answered `2eb116c3` nine minutes earlier.
-  wake();
-  phoneLaunch();
+  await foreground({ port: PORTS.A1 });
   const cx = await client(PORTS.A1);
   try {
     return await clientBuild(cx);

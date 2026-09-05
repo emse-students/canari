@@ -1717,6 +1717,16 @@ export const COLD_START_NARRATION = [
   /\[FCM_CACHE\] \d+ message\(s\) to pre-inject from the FCM cache/,
   /\[FCM_CACHE\] . id=\S+ group=\S+ type=\S+/,
   /\[FCM_CACHE\] Injection done: \d+\/\d+ message\(s\) injected/,
+  // THE REST OF WHAT A KILLED APP SAYS ON ITS WAY BACK, added 2026-09-05 when COMM-18 finally
+  // reached its landing and could be read past. Each is a sentence only a process that did not exist
+  // a moment ago can produce, and each is TRUE: the push token is unchanged so nothing is
+  // re-registered; the refresh rides the stored credential because the access token died with the
+  // process; there is no device key in the vault because this account did not ask to stay signed in,
+  // which is why the row has to answer the PIN at all; and the MLS client is built from disk.
+  /\[Push\] Token and locale unchanged, skip backend registration/,
+  /^\[A\] refresh carries=stored credential$/,
+  /\[PIN\] No device key in vault - auto-login impossible/,
+  /^Initialising MLS\.\.\.$/,
 ];
 
 /**

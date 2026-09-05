@@ -128,16 +128,30 @@ function boardRowsFor(id) {
   const slash = id.indexOf('/');
   if (slash === -1) return [];
   const base = id.slice(0, slash);
-  if (known.has(base)) return [base];
+
   // A JOINT ID: `COMM-9/10` is one script answering two rows. The prefix is everything up to the
   // last `-`, and every `/`-separated tail is pasted back onto it. All of them must land, or this is
-  // not the shape and the id stays a divergence.
+  // not the shape.
+  //
+  // TRIED BEFORE THE SUFFIX READING, WHICH IS THE WHOLE FIX. Both shapes are `X/Y` with `X` a board
+  // row - `MUT-1/dm` is MUT-1 run in the venue, `COMM-9/10` is two rows - so an early
+  // `if (known.has(base)) return [base]` matched the joint form first and credited COMM-9 alone.
+  // COMM-10 then sat on the board as `PASS` that "the ledger cannot corroborate" FOR EVER: the
+  // report's most valuable line, printed about a row that had in fact been measured, in a file whose
+  // own docstring names `COMM-9/10` as the case it handles. The discriminator is data, not order -
+  // `prefix + tail` is a board row for the joint form (`COMM-10`) and is not for the suffixed one
+  // (`MUT-dm`) - so asking that question first costs nothing and cannot mistake one for the other.
   const dash = base.lastIndexOf('-');
-  if (dash === -1) return [];
-  const prefix = base.slice(0, dash + 1);
-  const parts = [base.slice(dash + 1), ...id.slice(slash + 1).split('/')];
-  const hits = parts.map((t) => prefix + t).filter((r) => known.has(r));
-  return hits.length === parts.length ? hits : [];
+  if (dash !== -1) {
+    const prefix = base.slice(0, dash + 1);
+    const parts = [base.slice(dash + 1), ...id.slice(slash + 1).split('/')];
+    const hits = parts.map((t) => prefix + t).filter((r) => known.has(r));
+    if (hits.length === parts.length && hits.length > 1) return hits;
+  }
+
+  // A VENUE SUFFIX: `MUT-1/dm` is MUT-1, measured in a DM. The tail names where, not what.
+  if (known.has(base)) return [base];
+  return [];
 }
 
 /**

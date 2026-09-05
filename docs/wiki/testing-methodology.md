@@ -2287,6 +2287,47 @@ Two rules come out of it, and the second is the one that generalises:
   was taken and selected nobody; an absence cannot tell that from a message that never arrived, and
   those want opposite repairs.
 
+## THE INSTRUMENT DESTROYED THE EVENT IT WAS MEASURING - COMM-18, THREE TIMES OVER
+
+COMM-18 asks one thing: force-stop the app, follow `fr.emse.canari://chat/channel_<uuid>`, and land
+in that salon. It recorded `FAIL` or `VACUOUS` all session on 2026-09-05, and **every symptom pointed
+at the product** - the deep-link listener registered, `getCurrent()` returned nothing, the app sat on
+`/posts`, the PIN gate read as refused. The build was correct throughout: driven by hand, the same
+APK read the launch URL on attempt 1, 38 ms after the bundle ran, every single time.
+
+Three separate rig defects, each of which alone produced a believable product story:
+
+- **`unlockClient` had never once been able to spawn `pin.mjs`.** It passed the bare name with
+  `archive/` as the cwd, and `pin.mjs` is in the harness root: the child answered
+  `error: Module not found "pin.mjs"` on every call since the helper was written. It looked like it
+  worked because its early return covers the common case - a client already past the gate - and
+  because the failure went into a `said` string most callers drop. **`requireScript` exists for
+  exactly this** and says why in its own docstring; the helper simply did not use it.
+- **`resolveDevice` computed `isPhone` from the SPELT device name.** It already resolves a port back
+  to its device for `account` and for `device`, then threw that away for the one field that ARMS the
+  phone - so `--port 9333` was A1 for every purpose except re-deriving the adb forward. After a
+  force-stop the devtools socket is named after the new pid, so the caller connected to a socket
+  belonging to a process that no longer existed.
+- **`phone.ensure` foregrounds the app with `am start -n <pkg>/.MainActivity`, and its comment
+  called that "a no-op on an app already in front".** It is not. That is a plain MAIN intent;
+  `MainActivity` is `launchMode="singleTask"`, so it arrives at `onNewIntent`, which calls
+  `setIntent(it)` - and the deep-link plugin reads `activity.intent` in `load(webView)` to find the
+  URL the app was started with. Fired 1.5 s after the row's own `am start -d <link>`, with the
+  WebView still booting, it **replaced the intent under test**.
+
+**THE RULE. An instrument that touches the subject must say what it touches.** Two of the three were
+gestures the rig makes on every phone row and had no visible cost anywhere else; they were only ever
+wrong on the ONE row whose subject is the launch intent. So the question to ask of any arming step is
+not "does this work" but "what does this CHANGE", and a step that changes the thing under test needs
+an opt-out the row can take - `ensure({ keepIntent: true })` - rather than a comment asserting it
+changes nothing.
+
+**AND THE CORROLLARY THAT COST THE MOST TIME.** All three failures were swallowed into strings: a
+`said` nobody recorded, a `verdict` with no reason beside it, an intent nobody logged. The row now
+records `a1GateSaid`, and `pingate` PRINTS a non-zero exit rather than only returning it, because
+`LOCKED` has three causes that read alike - the PIN was refused, the modal never mounted, or the tool
+never reached the phone.
+
 ## A STATUS WITH NO REQUEST IS EVIDENCE FOR NOTHING
 
 **Measured 2026-08-29, on HEAL-NEW-15's gate.** The row was demoted to `PASS-DIRTY` partly on

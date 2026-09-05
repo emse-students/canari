@@ -277,7 +277,7 @@ export function forwardDevtools(port) {
  *
  * @returns `{ ok, how, pid, reason }` - `how` is 'usb' | 'wifi', `reason` is set only when `ok`.
  */
-export async function ensure({ port, wifi, timeoutMs = 20_000 } = {}) {
+export async function ensure({ port, wifi, timeoutMs = 20_000, keepIntent = false } = {}) {
   const target = port ?? PORTS.A1;
   const address = wifi ?? A1_WIFI;
 
@@ -297,15 +297,33 @@ export async function ensure({ port, wifi, timeoutMs = 20_000 } = {}) {
 
   try {
     wake();
-    if (!pid()) launch();
+    // `keepIntent` says the caller has JUST started the app with an intent of its own, so starting it
+    // again here would either be redundant or would replace that intent - see below.
+    if (!pid() && !keepIntent) launch();
     const until = Date.now() + timeoutMs;
     while (!pid() && Date.now() < until) await new Promise((r) => setTimeout(r, 500));
     if (!pid()) return { ok: false, how, reason: 'app would not start' };
 
-    // Foreground it unconditionally rather than testing first: `launch()` on an app already in front
-    // is a no-op, and `foregrounded()` reads a dumpsys line whose format has changed under us before.
-    launch();
-    await new Promise((r) => setTimeout(r, 1500));
+    // Foreground it unconditionally rather than testing first: raising an app already in front costs
+    // nothing here, and `foregrounded()` reads a dumpsys line whose format has changed under us
+    // before.
+    //
+    // `keepIntent` IS THE ONE CASE WHERE THAT IS WRONG, AND IT IS NOT A NO-OP. `launch()` is
+    // `am start -n <pkg>/.MainActivity`: a plain MAIN intent with no data. `MainActivity` is
+    // `launchMode="singleTask"`, so on a running app that intent arrives at `onNewIntent`, which
+    // calls `setIntent(it)` - and the deep-link plugin reads `activity.intent` in its `load(webView)`
+    // to find the URL the app was STARTED with. Fire this 1.5 s after an `am start -d <link>` and the
+    // WebView is still booting: the plugin loads, reads the plain intent, and the launch URL is gone.
+    //
+    // That is how COMM-18 failed for a whole session on 2026-09-05. The row cold-starts the app with
+    // a VIEW intent and then calls `ensure` to re-derive the devtools forward - and `ensure` deleted
+    // the intent the row exists to measure. Every symptom pointed at the product: the listener
+    // registered, `getCurrent()` returned nothing, the app sat on `/posts`. Driven by hand, with no
+    // `ensure` in between, the same build read the URL on attempt 1 in 38 ms, every time.
+    if (!keepIntent) {
+      launch();
+      await new Promise((r) => setTimeout(r, 1500));
+    }
 
     const p = forwardDevtools(target);
 
@@ -334,6 +352,40 @@ export const wake = () => {
 export const home = () => sh('input keyevent KEYCODE_HOME');
 export const forceStop = () => sh(`am force-stop ${PKG}`);
 export const launch = () => sh(`am start -n ${PKG}/.MainActivity`);
+
+/**
+ * THE PHONE AWAKE, THE APP IN FRONT, AND THE DEVTOOLS FORWARD DERIVED FROM THE PID THAT IS THERE NOW.
+ *
+ * ## The two failures this exists to stop, which look nothing alike
+ *
+ * **A BACKGROUNDED WEBVIEW NEVER ANSWERS.** Android throttles timers and network in a WebView that
+ * is not on screen, so `clientBuild()` - a `fetch` of the app's own `/_app/version.json` - never
+ * settles and the CDP call times out. Every `+A1` row leaves the app in the background: COMM-14
+ * deliberately (a foreground app posts no tray notification), COMM-18 by force-stopping it. So the
+ * NEXT row arms against that state, and on 2026-09-05 COMM-14, COMM-17 and COMM-18 each recorded a
+ * timed-out build read for exactly this reason - one of them as `armed: false`, a row that measured
+ * nothing and said so only in its failures list.
+ *
+ * **AND BRINGING IT FORWARD CAN INVALIDATE THE FORWARD.** The devtools socket is named after the
+ * PID (`webview_devtools_remote_<pid>`), so if `launch()` starts a process rather than raising an
+ * existing one, every later `client(PORTS.A1)` connects to a socket belonging to a process that no
+ * longer exists - `The socket connection was closed unexpectedly`. Waking WITHOUT re-deriving the
+ * forward therefore trades one failure for another, which is what the first version of this fix did.
+ *
+ * The two halves have to happen together and in this order, which is why this is one function and
+ * not two calls a caller is trusted to remember.
+ *
+ * @param {number} port the devtools port for this device, from `PORTS`
+ * @param {number} [timeoutMs] how long to wait for devtools to answer
+ * @returns {Promise<object>} `ensure`'s result - `{ok, how, pid}`
+ */
+export async function foreground({ port, timeoutMs = 45_000 } = {}) {
+  wake();
+  launch();
+  const up = await ensure({ port, timeoutMs });
+  if (!up.ok) throw new Error(`the phone is not measurable after being brought forward: ${up.reason}`);
+  return up;
+}
 
 /**
  * The app's current OOM state as Android names it (`CAC*` cached, `LAST` previous, `FGS`, ...), or

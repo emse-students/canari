@@ -610,6 +610,8 @@ What must not be forgotten between the pages:
 
 ## Mobile and native -> [frontend/mobile](frontend/mobile.md)
 
+- **A `singleTask` ACTIVITY HAS EXACTLY ONE INTENT, AND ANY LATER `am start` REPLACES IT.** `MainActivity.onNewIntent` calls `setIntent(it)`, and the deep-link plugin reads `activity.intent` in `load(webView)` to find the URL the app was STARTED with - so a plain launch fired while the WebView is still booting silently deletes a pending deep link. It is not a native-only trap: anything that "just brings the app to the front" is delivering an intent. Measured on COMM-18, where the RIG was doing it ([story](../../CHANGELOG.md)).
+
 - **A TAURI APP HAS TWO HTTP STACKS AND ONLY ONE OF THEM IS THE WEBVIEW.** Page loads go through the WebView and honour Android's network security config; every `fetch` the app makes goes through the Tauri http plugin, which is Rust `reqwest` - and this build's `Cargo.lock` has `webpki-roots` with no platform verifier, so it trusts the bundled Mozilla roots and NOTHING the device was told to trust. A private CA installed for the WebView changes nothing there: TCP connects, then every request dies as `error sending request for url`. Anything that reasons about the app's network - a certificate, a proxy, a trust store, a scope - must say WHICH stack it is reasoning about ([story](../../CHANGELOG.md)).
 - **AND THE TAURI CAPABILITY SCOPE READS AN EMPTY PORT AS THE PROTOCOL'S DEFAULT PORT.** `https://**` matches 443 and nothing else, so an HTTPS estate on any other port is refused by the app's own scope with `url not allowed on the configured scope` - which reads as a server fault and is not one.
 

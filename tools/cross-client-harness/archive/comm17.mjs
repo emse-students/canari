@@ -57,6 +57,7 @@ import {
 } from '../comm.mjs';
 import { userIdOf, workspaceOrderOf } from '../grainedb.mjs';
 import { ACCOUNT_OF, OWNER_NAME, PORTS } from '../names.mjs';
+import { foreground } from '../phone.mjs';
 import { unlockClient } from './pingate.mjs';
 import { clientBuild, mark, record, unmet } from '../results.mjs';
 import { gate, report, watch } from '../watch.mjs';
@@ -105,6 +106,34 @@ async function railSettlingAt(cx, wanted, timeoutMs = 15_000) {
 function serverOrderOf(userId, railNames) {
   const known = new Set(railNames);
   return workspaceOrderOf(userId).filter((w) => known.has(w.name)).map((w) => w.name);
+}
+
+/**
+ * The server's copy, polled until it is the one expected - or until the window closes, holding what
+ * it is.
+ *
+ * THE RAIL SETTLING IS NOT THE WRITE LANDING, AND THIS ROW USED TO CONFUSE THEM. `Sidebar` applies
+ * the drop optimistically, so `railSettlingAt` returns on the first sample every time; the `PATCH`
+ * is issued afterwards and awaited by nobody (`void channels.reorderWorkspaces(...)`). Reading the
+ * column once, right after, reads it before the request has been sent - and reloading right after
+ * THAT re-fetches the pre-drag order and calls it "did not survive a reload".
+ *
+ * It recorded **FAIL** on a working product on 2026-09-05, on all four of its assertions at once.
+ * Measured the same hour with the page's own `fetch` hooked: `PATCH /api/channels/workspaces/reorder`
+ * answers **200 in 7 ms** and the column holds the new order when it does. There was nothing to fix
+ * in the product; the check was waiting on an ANIMATION where the post-condition is a WRITE.
+ *
+ * Returning what it settled at rather than throwing is deliberate, exactly as for the rail: the
+ * order it actually got is the interesting half of a real failure.
+ */
+async function serverSettlingAt(userId, railNames, wanted, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const seen = serverOrderOf(userId, railNames);
+    if (JSON.stringify(seen) === JSON.stringify(wanted)) return seen;
+    if (Date.now() > deadline) return seen;
+    await sleep(400);
+  }
 }
 
 /**
@@ -176,7 +205,12 @@ const dragUp = armed
     )
   : null;
 const railAfterUp = armed ? await step('read the rail after the drag', () => railSettlingAt(w1, wantedUp)) : null;
-const serverAfterUp = armed && ownerId ? await step('read the order after the drag', () => serverOrderOf(ownerId, railBefore)) : null;
+const serverAfterUp =
+  armed && ownerId
+    ? await step('read the order after the drag', () =>
+        serverSettlingAt(ownerId, railBefore, wantedUp)
+      )
+    : null;
 
 // -- It survives a reload of THIS client --------------------------------------------------------
 const railAfterReload = armed
@@ -193,6 +227,11 @@ const railAfterReload = armed
 // -- It reaches the account's OTHER device ------------------------------------------------------
 const phone = armed
   ? await step('read the rail on the phone', async () => {
+      // FOREGROUNDED FIRST. Android throttles a backgrounded WebView's timers and network, so a
+      // `fetch` inside the page never settles and the CDP call times out - which is what
+      // `read the rail on the phone: The operation timed out` was on 2026-09-05, after COMM-14 had
+      // left the app in the background. The rail is a live read; it needs a live client.
+      await foreground({ port: PORTS.A1 });
       const a1 = await client(PORTS.A1);
       try {
         // THE FAILURE IS RECORDED, NOT SWALLOWED. A `catch(() => null)` here reported `a1Build: null`

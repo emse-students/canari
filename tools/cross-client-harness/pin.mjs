@@ -126,11 +126,12 @@ if (!hasField && hasKeypad) {
  * finds `localhost:8081` zero times and `canari-emse.fr` twice, which is the CSP and not a caller.
  *
  * SO IT IS ASKED OF THE CLIENT, HERE, WHERE THE ANSWER CANNOT BE VACUOUS. This runs on both ways out
- * of the gate - answered, or already past it - and either way the app has booted and fetched, so the
- * resource timeline is non-empty. An EMPTY one is a failure rather than a pass: "contacted nothing"
- * is not "contacted the right thing", and a gate over an empty set is the vacuous pass this rig
- * refuses everywhere else. `tauri.localhost` and `ipc.localhost` are the engine's own two schemes,
- * not an estate, and are the only origins excused.
+ * of the gate - answered, or already past it. An EMPTY resource timeline is a failure rather than a
+ * pass ("contacted nothing" is not "contacted the right thing", and a gate over an empty set is the
+ * vacuous pass this rig refuses everywhere else) - but it is WAITED for first, up to ten seconds,
+ * because a cold-started client that has just answered the gate may legitimately not have reached
+ * the API yet. `tauri.localhost` and `ipc.localhost` are the engine's own two schemes, not an
+ * estate, and are the only origins excused.
  *
  * IT REFUSES AS WELL AS ACCEPTS, which is the half a gate usually lacks. Exercised 2026-09-05 on
  * five origin sets: local only ACCEPTED; production, `dev.`, engine-schemes-only, and local WITH a
@@ -142,21 +143,33 @@ if (!hasField && hasKeypad) {
  */
 async function assertLocalEstate(cx) {
   const ENGINE_ORIGINS = ['http://tauri.localhost', 'http://ipc.localhost'];
-  const contacted = JSON.parse(
-    await evaluate(
-      cx,
-      `JSON.stringify([...new Set(performance.getEntriesByType('resource').map(function (e) {
-         try { return new URL(e.name).origin; } catch (_) { return 'unparseable:' + e.name; }
-       }))])`,
-    ),
-  );
-  const estates = contacted.filter((o) => !ENGINE_ORIGINS.includes(o));
+  const read = async () => {
+    const contacted = JSON.parse(
+      await evaluate(
+        cx,
+        `JSON.stringify([...new Set(performance.getEntriesByType('resource').map(function (e) {
+           try { return new URL(e.name).origin; } catch (_) { return 'unparseable:' + e.name; }
+         }))])`,
+      ),
+    );
+    return contacted.filter((o) => !ENGINE_ORIGINS.includes(o));
+  };
+  // WAITED FOR, NOT SAMPLED ONCE. A client that has just answered the gate on a COLD START may not
+  // have reached the API yet, and the first version of this called that a failure - a vacuity guard
+  // firing on a legitimate state, which is its own kind of wrong answer. Ten seconds is the cap this
+  // campaign puts on every wait: enough to show it works, and long enough that a client still silent
+  // afterwards is not one whose estate can be established.
+  let estates = await read();
+  for (const deadline = Date.now() + 10_000; !estates.length && Date.now() < deadline; ) {
+    await new Promise((r) => setTimeout(r, 400));
+    estates = await read();
+  }
   const strangers = estates.filter((o) => o !== SITE);
   console.log(`[pin] estate origins contacted: ${estates.join(' ') || '(none)'}`);
   if (!strangers.length && estates.length > 0) return;
   console.error(
     estates.length === 0
-      ? `[pin] THIS CLIENT HAS CONTACTED NO ESTATE AT ALL, so which one it is built against is ` +
+      ? `[pin] THIS CLIENT CONTACTED NO ESTATE IN TEN SECONDS, so which one it is built against is ` +
           `unknown - and a row that ran now would record a verdict nothing corroborates`
       : `[pin] THIS CLIENT IS NOT ON THE LOCAL ESTATE: it called ${strangers.join(' ')} and the rig ` +
           `reports on ${SITE}. Rebuild and reinstall the APK (bun a1apk.mjs) - a --no-build install ` +
