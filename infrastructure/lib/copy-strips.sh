@@ -37,25 +37,14 @@
 # PASS-DIRTY on a row that had answered its question perfectly.
 #
 # **A LIST OF COLUMNS IS A CLAIM ABOUT A SCHEMA, AND IT GOES STALE IN SILENCE.** What settles it is
-# not reading harder, it is asking the database. This loop walks EVERY text and jsonb column and is
-# what found the gap; run it against a fresh copy after any schema change that adds a place a media
-# reference can hide, and add whatever it names to both the strip and the count above:
-#
-#   docker exec <postgres> psql -U <user> -d auth_db -tAc "
-#   do \$\$ declare r record; n bigint; begin
-#     for r in select c.table_name, c.column_name from information_schema.columns c
-#              join information_schema.tables t on t.table_name = c.table_name
-#                and t.table_schema = 'public' and t.table_type = 'BASE TABLE'
-#              where c.table_schema = 'public'
-#                and c.data_type in ('text','jsonb','character varying') loop
-#       execute format('select count(*) from %I where %I::text ~ %L',
-#                      r.table_name, r.column_name, 'mediaId|/api/media/') into n;
-#       if n > 0 then raise notice 'RESIDUE % . % rows=%', r.table_name, r.column_name, n; end if;
-#     end loop; end \$\$;"
-#
-# It answered nothing but `posts.comments` on the local estate of 2026-09-05, before the strip below
-# and after the ten that predate it - so the enumeration is complete AS OF that schema, and only as
-# of that schema.
+# not reading harder, it is asking the database: a loop over every text and jsonb column looking for
+# `mediaId` and `/api/media/`, which is what found this one and answered nothing else on the schema
+# of 2026-09-05. It is written out in
+# `docs/wiki/infrastructure/databases.md#finding-every-media-reference-a-copy-carries-but-cannot-serve`
+# rather than here, and it has to be: `dev-copy-guards.test.sh` fails the build if this file so much
+# as mentions a container or a client, because the allowlist of writable targets belongs in the
+# script that owns the target. Run it against a fresh copy after any schema change that adds a place
+# a media reference can hide, and add whatever it names to BOTH the strip and the count.
 # shellcheck disable=SC2034
 COPY_STRIPS_MEDIA_RESIDUE_SQL="SELECT
     (SELECT count(*) FROM associations WHERE \"logoMediaId\" IS NOT NULL OR \"logoMediaId2\" IS NOT NULL OR \"logoUrl\" IS NOT NULL)
