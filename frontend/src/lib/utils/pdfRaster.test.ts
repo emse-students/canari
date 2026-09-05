@@ -78,7 +78,17 @@ describe('rasterizeElementToCanvas', () => {
       String(tag).includes('pdfRaster:missingImages')
     );
     expect(reported).toHaveLength(1);
-    expect(reported[0][1]).toMatchObject({ count: 1, srcs: [kept.src] });
+    // THE PAYLOAD IS IN THE LINE, NOT BESIDE IT. `Log.d` used to hand the object to `console.debug`
+    // as a second argument, which is readable in a DevTools panel and nowhere else - every text
+    // consumer of the same stream got the four characters `Object`. This asserts what a reader
+    // actually receives, which is the stronger claim: the count and the src have to be legible in
+    // the sentence, and no second argument is passed at all.
+    const [line, ...rest] = reported[0];
+    expect(rest).toHaveLength(0);
+    expect(JSON.parse(String(line).slice(String(line).indexOf('{')))).toMatchObject({
+      count: 1,
+      srcs: [kept.src],
+    });
 
     debug.mockRestore();
     el.remove();

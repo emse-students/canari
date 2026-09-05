@@ -27,8 +27,16 @@ import { execFileSync } from 'node:child_process';
 import { SITE } from './names.mjs';
 import { ssh } from './ssh.mjs';
 
-/** Whether the campaign's target is on this machine. One read, at import, no flag. */
-const LOCAL = new URL(SITE).hostname === 'localhost' || new URL(SITE).hostname === '127.0.0.1';
+/**
+ * Whether the campaign's target is on this machine. One read, at import, no flag.
+ *
+ * EXPORTED because "which estate" decides more than which container to talk to. `results.mjs` needs
+ * it to know which git history contains the bundle a client is running: a deployment is built by CD
+ * from a commit on `origin/main`, and the local estate is built by `make local-frontend` from the
+ * WORKING TREE. Same question, same answer, one place.
+ */
+export const LOCAL =
+  new URL(SITE).hostname === 'localhost' || new URL(SITE).hostname === '127.0.0.1';
 
 /**
  * Runs a command in a container of whichever estate `SITE` names.

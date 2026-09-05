@@ -558,6 +558,47 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     expect(vi.mocked(requestReAdd)).toHaveBeenCalledWith(unknownGroupId, expect.anything());
   });
 
+  /**
+   * A FRAME FOR A GROUP THIS DEVICE KNOWS IS GONE IS ANSWERED, NOT RECOVERED.
+   *
+   * `requestReAdd` already returns immediately for a `removed` conversation, but `startRecovery`
+   * is `void`-ed - so before that seam had even read the map, the handler had buffered the frame,
+   * logged that a welcome_request was sent, and returned `false`, which keeps the frame in the
+   * SERVER queue with nothing that will ever take it out: the group is deleted, no Welcome is
+   * coming, and the row is redelivered on every reconnect for ever.
+   *
+   * Measured on DEL-6, 2026-09-05, on the peer that had just been told the group was deleted. The
+   * campaign's classifier holds `[PIPELINE] Recovery attempt finished` as a REGRESSION SENTINEL
+   * for GRP-3/GRP-8 - a device asking to rejoin what it is legitimately no longer in - and that
+   * is what surfaced it.
+   */
+  it('frame for a RETIRED group -> acknowledged and dropped, with no recovery at all', async () => {
+    const deadGroupId = 'cccccccc-0000-4000-8000-000000000001';
+    const deps = baseDeps();
+    const mls = deps.mlsService as any;
+    mls.getLocalGroups = vi.fn().mockReturnValue([]);
+    // The durable fact, in the map, exactly as a peer's deletion leaves it.
+    (deps.conversations as any).set(deadGroupId, {
+      ...emptyConversation(deadGroupId, { lifecycle: 'removed' }),
+    });
+    const { requestReAdd } = await import('$lib/utils/chat/recovery');
+    vi.mocked(requestReAdd).mockClear();
+    setupMessageHandler(deps as any);
+    const onMsg = mls.onMessage.mock.calls[0][0] as (
+      a: string,
+      b: Uint8Array,
+      c?: string,
+      d?: boolean,
+      e?: Uint8Array,
+      f?: boolean
+    ) => Promise<boolean>;
+
+    const result = await onMsg('peer', new Uint8Array([1]), deadGroupId, false, undefined, true);
+
+    // `true` = ACKed, so the row leaves the server queue instead of being redelivered for ever.
+    expect(result).toBe(true);
+    expect(vi.mocked(requestReAdd)).not.toHaveBeenCalled();
+  });
   it('second frame for the same unknown group → no duplicate recovery (buffer dedup)', async () => {
     const unknownGroupId = 'bbbbbbbb-0000-4000-8000-000000000001';
     const deps = baseDeps();

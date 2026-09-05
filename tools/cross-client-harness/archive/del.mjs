@@ -58,8 +58,12 @@ import { errorDetail, mark, record, recordObserved } from '../results.mjs';
 import {
   COLD_START_NARRATION,
   consoleLines,
+  DELIVERY_CROSSING_NARRATION,
+  GROUP_CREATION_NARRATION,
   ignoringExpectedLog,
+  ignoringExpectedRefusal,
   ignoringOfflineCut,
+  PEER_DELETED_NARRATION,
   report,
   watch,
 } from '../watch.mjs';
@@ -82,6 +86,26 @@ const only = argv.includes('--only') ? Number(argv[argv.indexOf('--only') + 1]) 
 const NEGATIVE_WINDOW_MS = 30_000;
 
 /**
+ * W1'S WINDOW WITH THE CREATION OF THIS ROW'S OWN GROUP FORGIVEN - and every row here creates one.
+ *
+ * `withSharedGroup` opens EVERY check in this file by creating a group on W1 and adding the peer to
+ * it, so W1 always emits the two lines `GROUP_CREATION_NARRATION` names: the block-status question
+ * every creation path asks before opening a conversation nobody wanted, and the list of devices that
+ * got into the staged commit. `grp.mjs` has forgiven them since the phase that provoked them first
+ * existed; this file never did, and on 2026-09-05 all TWELVE DEL rows came back `PASS-DIRTY` on that
+ * same pair - a whole rung reporting dirt for the setup it performs on itself.
+ *
+ * IT IS W1 ONLY, AND NOT A WIDER CLASSIFIER. W2 never creates a group here; if the peer's window
+ * carries these lines, something created a conversation nobody asked for, and that is a finding.
+ *
+ * @param {object} o an OBSERVER - a site that already built its own report folds the narration into
+ *   its own needle list instead, so no report is ever forgiven twice and no `unmatched` is lost.
+ * @param {Array<RegExp|string>} [extra] anything else that particular row provoked on W1
+ */
+const asCreator = async (o, extra = []) =>
+  ignoringExpectedLog(await report(o), [...GROUP_CREATION_NARRATION, ...extra]);
+
+/**
  * The line the outbox emits when a queued entry dies because its group was deleted.
  *
  * FORGIVEN AT THE CALL SITES THAT CAUSE IT, NEVER IN `BENIGN`. `watch.mjs` has no rule for a `text`
@@ -91,20 +115,6 @@ const NEGATIVE_WINDOW_MS = 30_000;
  */
 const OUTBOX_GROUP_DELETED =
   /^\[OUTBOX\] [0-9a-f]{8}… (text|reply|media) entry in [0-9a-f]{8}…, group-deleted - permanent failure$/;
-
-/**
- * The app narrating a deletion it LEARNT of - the peer-side half of this phase's whole subject.
- *
- * Forgiven here for `OUTBOX_GROUP_DELETED`'s reason and no other: in a phase whose every row deletes
- * a group on purpose, this line is the mechanism reporting success. In any other phase a group
- * disappearing underneath a check is a finding, so the sentence stays unclassified in `watch.mjs`.
- *
- * IT NAMES A REAL PERSON, so the needle matches the SHAPE and the display name never enters this
- * file: the accounts behind W1 and W2 are the campaign's own, and `idcheck.mjs` refuses a commit
- * that carries one. `[INFO]` is deliberately not in the pattern either - the level is not what makes
- * the line expected, and anchoring on it would let a re-levelled line reappear as dirt.
- */
-const PEER_DELETED_NARRATION = /Group deleted by .+ - conversation marked removed$/;
 
 /**
  * THE OWNER'S OTHER DEVICE LEARNING THAT THE OWNER DISMISSED THE GROUP - which is not a peer
@@ -357,7 +367,20 @@ async function del2() {
 
       // THE PREMISE, ASSERTED RATHER THAN ASSUMED. If the send did not queue, the deletion below
       // races nothing and a PASS would mean the check never ran.
-      const queued = await outboxRows(w1, gid);
+      //
+      // AND IT IS WAITED FOR, BECAUSE THE COMPOSER EMPTIES BEFORE THE ROW EXISTS. `send`'s
+      // post-condition is an empty box, and `MainChatPage.handleSendChat` clears it SYNCHRONOUSLY
+      // while `sendChatMessage` runs on, detached - so the write this reads is still in flight when
+      // `send` returns. A single read measured that race and called it a missing feature: DEL-2
+      // recorded INVALID on 2026-09-05 with `cutSevered: true` and the outbox database found and
+      // EMPTY, on a run where DEL-6 queued four frames offline minutes later. Ten seconds, the
+      // campaign's ceiling: an enqueue that needs longer than that is the finding.
+      let queued = await outboxRows(w1, gid);
+      const queuedBy = Date.now() + 10_000;
+      while (queued.rows.length === 0 && Date.now() < queuedBy) {
+        await sleep(250);
+        queued = await outboxRows(w1, gid);
+      }
       if (queued.rows.length === 0) {
         await severed.restore();
         await recordObserved(
@@ -365,11 +388,11 @@ async function del2() {
           'INVALID',
           {
             group: name,
-            why: 'the offline send left no outbox row, so no queued entry was in flight to delete under',
+            why: 'the offline send left no outbox row within 10s, so no queued entry was in flight to delete under',
             cutSevered: severed.severed,
             outboxDatabases: queued.dbs,
           },
-          { W1: o1, W2: o2 }
+          { W1: await asCreator(o1), W2: o2 }
         );
         return false;
       }
@@ -389,6 +412,7 @@ async function del2() {
       // over `badHttp` and `wsEvents` AS IT FINDS THEM, so the cut must already be forgiven or every
       // disconnected fetch this check performed still counts against the row. The cut goes first.
       const rep = ignoringExpectedLog(ignoringOfflineCut(await report(o1)), [
+        ...GROUP_CREATION_NARRATION,
         OUTBOX_GROUP_DELETED,
         PEER_DELETED_NARRATION,
       ]);
@@ -465,7 +489,9 @@ async function del3() {
         /^\[DELETE\] Group [0-9a-f]{8}\.\.\. not found on server \(already deleted\?\)$/,
         PEER_DELETED_NARRATION,
       ];
-      const rep1 = ignoringExpectedLog(await report(o1), forgive);
+      // W1 also created the group, which W2 did not - so the creation narration goes on this
+      // handle alone and never into `forgive`, which both sides share.
+      const rep1 = ignoringExpectedLog(await report(o1), [...forgive, ...GROUP_CREATION_NARRATION]);
       const rep2 = ignoringExpectedLog(await report(o2), forgive);
 
       // A CROSSING, OR NOTHING WAS TESTED. Both sides must really have asked the server, close
@@ -620,7 +646,7 @@ async function del4() {
               }
             : {}),
         },
-        { W1: o1, W2: peerRep }
+        { W1: await asCreator(o1), W2: peerRep }
       );
       return verdict === 'PASS';
     });
@@ -673,10 +699,29 @@ async function del5() {
       const ok = !arrivedOnW1 && listedOnW1 === false && decryptFailures.length === 0;
       // The peer's own queued entry dies once it is back: it wrote into a group that is gone. That is
       // the CORRECT outcome of this check, so it is forgiven on W2 and reported in the detail.
-      const rep2 = ignoringExpectedLog(ignoringOfflineCut(await report(o2)), [
-        OUTBOX_GROUP_DELETED,
-        PEER_DELETED_NARRATION,
-      ]);
+      // AND THE PEER ASKED ABOUT A GROUP IT COULD NOT YET KNOW WAS GONE, which is the one shape in
+      // this phase that is neither a defect nor forgivable anywhere else. W2 is CUT while W1
+      // deletes, so it comes back holding a live row for a group the server has soft-deleted and
+      // asks the two questions any reopened conversation asks - its roster and its history - and is
+      // refused both. `loadGroupMembers` and `loadHistoryForConversation` each guard on
+      // `lifecycle: 'removed'`, and neither guard can fire on a device that has not been told yet:
+      // the discriminator genuinely is not local here, which is exactly what separates this from
+      // DEL-2 and DEL-3, where the deleter asked about its OWN deletion eleven seconds later.
+      //
+      // Scoped to the two paths and to 403 alone, on the PEER's handle only. A 403 on the deleter
+      // is still a finding, and so is any other status here.
+      const rep2 = ignoringExpectedRefusal(
+        ignoringExpectedLog(ignoringOfflineCut(await report(o2)), [
+          OUTBOX_GROUP_DELETED,
+          PEER_DELETED_NARRATION,
+        ]),
+        [
+          {
+            path: /^\/api\/mls\/(?:groups\/[0-9a-f-]{36}\/members|history\/[0-9a-f-]{36})$/,
+            status: [403],
+          },
+        ]
+      );
       await recordObserved(
         'DEL-5',
         ok ? 'PASS' : 'FAIL',
@@ -689,7 +734,7 @@ async function del5() {
           peerOutboxDeathsForgiven: rep2.ignoredAsExpectedLog.unexplained,
           negativeWindowMs: NEGATIVE_WINDOW_MS,
         },
-        { W1: o1, W2: rep2 }
+        { W1: await asCreator(o1), W2: rep2 }
       );
       return ok;
     });
@@ -760,6 +805,11 @@ async function del6() {
       const rep2 = ignoringExpectedLog(ignoringOfflineCut(await report(o2)), [
         OUTBOX_GROUP_DELETED,
         PEER_DELETED_NARRATION,
+        // THE CROSSING THIS ROW BUILDS ON PURPOSE. It queues frames while the peer is deaf and
+        // then lets the whole batch drain at once, which is the exact shape that hands a device a
+        // row the live socket and the pending pull both offer - the app says so once per session
+        // and counts the rest. Measured here 2026-09-05.
+        ...DELIVERY_CROSSING_NARRATION,
       ]);
       await recordObserved(
         'DEL-6',
@@ -777,7 +827,7 @@ async function del6() {
             : { why: 'no drain ever started on the peer, so the deletion landed on an idle queue' }),
           peerOutboxDeathsForgiven: rep2.ignoredAsExpectedLog.unexplained,
         },
-        { W1: o1, W2: rep2 }
+        { W1: await asCreator(o1), W2: rep2 }
       );
       return ok;
     });
@@ -855,7 +905,7 @@ async function del7() {
               groupId: gid.slice(0, 8),
               why: 'the group never reached A1, so there was no row on the phone for a queued frame to resurrect',
             },
-            { W1: o1, W2: o2 }
+            { W1: await asCreator(o1), W2: o2 }
           );
           return false;
         }
@@ -961,7 +1011,7 @@ async function del7() {
             negativeWindowMs: NEGATIVE_WINDOW_MS,
             convergenceDeadlineMs: CONVERGENCE_DEADLINE_MS,
           },
-          { W1: o1, W2: peerRep, A1: a1Rep }
+          { W1: await asCreator(o1), W2: peerRep, A1: a1Rep }
         );
         return ok;
       } finally {
@@ -1048,7 +1098,7 @@ async function del8() {
           mlsDigestBeforeSnapshot: digestBefore.slice(0, 120),
           negativeWindowMs: NEGATIVE_WINDOW_MS,
         },
-        { W1: o1, W2: peerRep }
+        { W1: await asCreator(o1), W2: peerRep }
       );
       return ok;
     });
@@ -1089,7 +1139,7 @@ async function del9() {
       const holdsAfter = await evaluate(w1, PANE_HAS_CONVERSATION);
       const listedAfter = await lists(w1, name);
       const rowAfter = await rowOf(w1, name);
-      const rep = await report(o1);
+      const rep = ignoringExpectedLog(await report(o1), GROUP_CREATION_NARRATION);
 
       // CLEANLINESS IS NOT THIS ROW'S ASSERTION TO MAKE, and making it was the only row in DEL that
       // did. `recordObserved` gates every verdict through `gate`, which turns PASS + dirt into
@@ -1283,7 +1333,15 @@ async function del10() {
 
       // The deleter was taken offline twice by this check; the request counts above were taken from
       // `cx.events` before `report` cleared it, so only the noise of the cuts is being forgiven.
-      const rep = ignoringOfflineCut(await report(o1));
+      // AND THE REPLAY IS THIS ROW'S POST-CONDITION, NOT ITS NOISE. `[EXIT] replaying N exit(s)`
+      // and `[EXIT] <id> delete replayed` are the mechanism DEL-10 exists to watch: the row asserts
+      // on them through `firstReconnectSaid.exitLines` two statements below, and then used to report
+      // the same two lines as unexplained dirt. A check may not call its own evidence noise.
+      const rep = ignoringExpectedLog(ignoringOfflineCut(await report(o1)), [
+        ...GROUP_CREATION_NARRATION,
+        /^\[EXIT\] replaying \d+ exit\(s\) the server never answered$/,
+        /^\[EXIT\] [0-9a-f]{8}\.\.\. delete replayed - server (deleted it|had already deleted it)$/,
+      ]);
       // THE PEER LEARNT OF A DELETION THIS CHECK PERFORMED ON PURPOSE - see `PEER_DELETED_NARRATION`.
       const peerRep = ignoringExpectedLog(await report(o2), [PEER_DELETED_NARRATION]);
       await recordObserved(

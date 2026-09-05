@@ -13,6 +13,56 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ### Fixed
 
+- **The native app never carried its refresh credential on any session-scoped call, so the one
+  mechanism that closes the reinstall hole never ran there.** Four endpoints answer from
+  `currentSessionId(req)`, which reads the presented REFRESH credential and nothing else - the
+  access token names the user, never the login. On a shell whose engine will not keep a
+  third-party cookie that credential travels in `X-Canari-Refresh`; `auth.ts` sent it on `refresh`
+  and on `logout`, and `authSessions.ts` sent it nowhere. The server then fell back to whatever
+  cookie the WebView still held, which is BY CONSTRUCTION a value the client stopped maintaining,
+  because rotation goes through the header - so it named a session that no longer existed.
+  Measured on the phone by DEL-7 on 2026-09-05: `POST /api/auth/refresh` answered 200 at 04:02:40
+  and `PUT /api/auth/sessions/current/device` was answered 404 thirteen seconds later, naming a
+  sid absent from the database while the session the refresh had just rotated was alive. The cost
+  is not the 404: `bindCurrentSessionDevice` is the only writer of `auth_sessions."deviceId"`, and
+  its purge of unreachable sessions claiming a device is what ends a credential left behind by a
+  reinstall - so on iOS, Android, macOS and Linux that credential stayed valid for its full idle
+  lifetime. `revokeOtherAuthSessions` is worse: the server keeps the session that id names, so
+  with it unresolvable, "sign out everywhere else" had no reason to spare the caller. All four
+  now carry the credential through one helper, and the preflight the original note warned about is
+  one these requests already paid.
+
+- **A device asked to be re-added to a group that had just been deliberately deleted, and the
+  frame that provoked it stayed in the server queue for ever.** `requestReAdd` already declines a
+  conversation marked `removed` at its first step, but `startRecovery` is deliberately not awaited
+  - an await there stalls the whole inbound drain - so by the time that seam read the map,
+  `handleUnknownGroup` had buffered the frame, logged that a `welcome_request` had been sent (it
+  had not) and returned `false`, which keeps the row server-side. Nothing ever took it out again:
+  the group was gone, no Welcome was coming, and the row came back on every reconnect. The
+  discriminator was local, durable and already in the map, which is where the decision belongs.
+  Found by the campaign's own regression sentinel for GRP-3/GRP-8 on DEL-6.
+
+- **Opening a conversation whose group was deleted asked the server for its history and was
+  refused.** The row is kept at `lifecycle: 'removed'` on purpose so the UI can explain the
+  absence, which means a real user opens one - and every open fired `GET /api/mls/history/<id>` at
+  a soft-deleted group. `fetchHistory` swallowed any non-ok status into an empty page, so the
+  refusal was invisible in the app and showed only as a console error nobody could attribute.
+  Measured on DEL-2 and DEL-3: the request went out ELEVEN SECONDS after the client's own
+  deletion, so it was never one already in flight. The load now renders what is on disk, and a
+  refusal that does happen says so instead of reading as an empty conversation.
+
+- **A failed send cleared the composer and told nobody.** `MainChatPage` fired the send with
+  `void` and cleared the box synchronously, over a `sendChatMessage` that awaits
+  `enqueueOutboxMessage` with no `catch` of its own - so an aborted IndexedDB transaction left an
+  empty composer, a bubble stuck on `pending`, no error and nothing in the log. The one failure a
+  durable outbox cannot survive is the one it never hears about.
+
+- **Every structured debug line reached its readers as the word `Object`.** `Log.d(tag, payload)`
+  handed the payload to `console.debug` as a second argument, which a DevTools panel expands and
+  every other consumer of the same stream - the cross-client harness's CDP capture, a copied
+  console dump, the Android relay - receives as four characters. The payload is rendered into the
+  line now, with an Error additionally passed through because a stack is the one thing text cannot
+  carry.
 - **A mention arrived on a phone as a sixty-four character hex blob.** A mention is stored inside
   the ciphertext as `@[<64 hex>]`; the web splits it and renders a chip carrying the display name,
   and the Android push handler put the decrypted text straight into the notification body. So the

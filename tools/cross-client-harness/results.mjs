@@ -12,6 +12,7 @@ import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { request as requestOverHttp } from 'node:http';
 import { request as requestOverHttps } from 'node:https';
+import { LOCAL } from './estate.mjs';
 import { instrumentShaOf } from './instrument.mjs';
 import { SITE, STATE_DIR } from './names.mjs';
 import { gate, report } from './watch.mjs';
@@ -143,7 +144,25 @@ async function deployedBuild() {
   if (answer.status !== 200) {
     throw new Error(`${SITE}/_app/version.json answered ${answer.status}`);
   }
-  return resolveStamp(Number(JSON.parse(answer.body)?.version), `${SITE}/_app/version.json`, 'origin/main');
+  // THE HISTORY THAT CONTAINS THE BUNDLE IS A PROPERTY OF THE ESTATE, NOT A CONSTANT.
+  //
+  // `origin/main` is right for a deployment, which CD builds from a pushed commit by definition. It
+  // is WRONG for the local estate, which `make local-frontend` builds from the working tree - and it
+  // does not fail when it is wrong, it answers. From 2026-09-03, when the campaign moved local, every
+  // verdict was dated against `origin/main` and therefore named whatever was last PUSHED. It read
+  // correct for a day because the tree happened to match the remote; the moment a session started
+  // committing locally it went silently stale, and on 2026-09-05 twelve rows recorded `667d93fb`
+  // against an estate serving two commits' worth of fixes that commit does not contain - including
+  // the very fix one of those rows existed to confirm.
+  //
+  // This is `clientBuild`'s reasoning applied to the other client. That function has said `HEAD` and
+  // said why since it was written; the phone half followed the campaign onto a locally built bundle
+  // and the deployment half never did.
+  return resolveStamp(
+    Number(JSON.parse(answer.body)?.version),
+    `${SITE}/_app/version.json`,
+    LOCAL ? 'HEAD' : 'origin/main'
+  );
 }
 
 /**

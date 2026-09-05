@@ -238,6 +238,42 @@ export function useConversations() {
     await ctx.storage.saveConversation(toConversationMeta(id, convo, ctx.userId));
   }
 
+  /**
+   * Renders the newest STORED page of a conversation into the map, with nothing fetched.
+   *
+   * Three callers now, and two of them held this block copied out verbatim: the `limit=1` fast path
+   * when the server has nothing new, and the reload that follows a replay. The third is a
+   * conversation whose group is gone, for which there is no other option at all.
+   *
+   * `page` is passed by the caller that has already read it, so extracting this costs no second
+   * IndexedDB read on the path whose whole purpose is to be cheap.
+   */
+  async function renderStoredPage(
+    contactName: string,
+    id: string,
+    ctx: ConversationContext,
+    page?: Awaited<ReturnType<NonNullable<ConversationContext['storage']>['getMessagesPage']>>
+  ) {
+    if (!ctx.storage) return;
+    const stored =
+      page ?? (await ctx.storage.getMessagesPage(id, ctx.deviceKeyB64, INITIAL_MESSAGES_PAGE));
+    const msgs = await retroactivelyResolveHexIds(
+      mapStoredMessagesToChatMessages(stored, ctx.userId),
+      ctx.storage,
+      id,
+      ctx.deviceKeyB64
+    );
+    const current = conversations.get(contactName);
+    if (!current) return;
+    conversations.set(contactName, {
+      ...current,
+      messages: mergeMessagePage(current.messages, msgs),
+    });
+    for (const m of msgs) {
+      if (m.reactions && m.reactions.length > 0) ctx.messageReactions.set(m.id, m.reactions);
+    }
+  }
+
   /** Fetches and decrypts conversation history from the network, then reloads the latest page from IndexedDB. For channel conversations delegates to loadChannelHistory instead of MLS replay. */
   async function loadHistoryForConversation(
     contactName: string,
@@ -248,6 +284,23 @@ export function useConversations() {
     // Channel conversations: load via REST API instead of MLS replay
     if (isChannelConversationId(contactName)) {
       await loadChannelHistory(contactName, ctx, options?.force);
+      return;
+    }
+
+    // A CONVERSATION WHOSE GROUP IS GONE HAS NO SERVER HISTORY, AND ASKING FOR IT COSTS A 403.
+    //
+    // The row is kept at `lifecycle: 'removed'` on purpose, so the UI can explain the absence
+    // instead of a conversation silently vanishing - which means a real user really does open one,
+    // and every open fired `GET /api/mls/history/<id>` at a group the server has soft-deleted and
+    // refuses every read on. `fetchHistory` swallows any non-ok status into an empty page, so the
+    // refusal was invisible in the app and visible only as a console error nobody could attribute.
+    // Measured on DEL-2 and DEL-3, 2026-09-05: the request went out ELEVEN SECONDS after the
+    // deletion the client itself had performed, so it is not a request that was already in flight.
+    //
+    // This is the same predicate the send path already uses for the same reason
+    // (`sendChatMessage`'s "only hard block"): what is on disk is all there will ever be.
+    if (conversations.get(contactName)?.lifecycle === 'removed') {
+      await renderStoredPage(contactName, id, ctx);
       return;
     }
 
@@ -270,24 +323,7 @@ export function useConversations() {
             try {
               const probe = await ctx.ensureMls().fetchHistory(id, cursor, 1);
               if (probe.rows.length === 0) {
-                const msgs = await retroactivelyResolveHexIds(
-                  mapStoredMessagesToChatMessages(existingPage, ctx.userId),
-                  ctx.storage,
-                  id,
-                  ctx.deviceKeyB64
-                );
-                const current = conversations.get(contactName);
-                if (current) {
-                  conversations.set(contactName, {
-                    ...current,
-                    messages: mergeMessagePage(current.messages, msgs),
-                  });
-                  for (const m of msgs) {
-                    if (m.reactions && m.reactions.length > 0) {
-                      ctx.messageReactions.set(m.id, m.reactions);
-                    }
-                  }
-                }
+                await renderStoredPage(contactName, id, ctx, existingPage);
                 return;
               }
             } catch {
@@ -318,31 +354,7 @@ export function useConversations() {
         );
         commit?.();
         // Reload from DB so display reflects the latest saved state
-        if (ctx.storage) {
-          const refreshed = await ctx.storage.getMessagesPage(
-            id,
-            ctx.deviceKeyB64,
-            INITIAL_MESSAGES_PAGE
-          );
-          const msgs = await retroactivelyResolveHexIds(
-            mapStoredMessagesToChatMessages(refreshed, ctx.userId),
-            ctx.storage,
-            id,
-            ctx.deviceKeyB64
-          );
-          const current = conversations.get(contactName);
-          if (current) {
-            conversations.set(contactName, {
-              ...current,
-              messages: mergeMessagePage(current.messages, msgs),
-            });
-            for (const m of msgs) {
-              if (m.reactions && m.reactions.length > 0) {
-                ctx.messageReactions.set(m.id, m.reactions);
-              }
-            }
-          }
-        }
+        await renderStoredPage(contactName, id, ctx);
       } catch (e) {
         // Previously unhandled: this call is fired with `void` by every caller, so a throw here
         // (network hiccup, decrypt error, IndexedDB contention - all realistic during a

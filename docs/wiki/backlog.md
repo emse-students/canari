@@ -726,6 +726,32 @@ that the DB copy at least keeps behind one deliberate decision. It is a change t
 tooling with its own blast radius, so it is a P2 here rather than something done inline during a
 harness tidy.
 
+### P2 - a device reconciles history for a group it has not joined yet, and learns by 403 what its own store already knew (measured on DEL-1, 2026-09-05)
+
+**The line.** `[HISTORY_STATE] Send failed for b0b436ed...: SenderNotActiveError: This device holds
+no leaf in group b0b436ed... (membership pending)`, on W2, seconds after W1 added it to a group and
+before its Welcome had been processed.
+
+**Nothing is lost, and that is why this is a P2 and not a P1.** `sendHistoryStateKey` returns
+`false`, and its contract says what that means - *"the caller treats that as 'this group was not
+reconciled', never as 'we agree'"* - so the sweep simply has not happened yet and happens later. The
+server is also right to refuse: a device with no leaf encrypts frames no member can open, which is
+the defect `SenderNotActiveError` was typed for after production turned six messages into thirty
+unopenable rows on 2026-09-02.
+
+**What is wrong is the ASKING.** The reconciliation sweep audits every group the device has a row
+for, including one it has been given a roster seat in and has not yet joined - and the only thing
+that tells it so is a round trip that ends in 403. That is
+[durable-rules](durable-rules.md)' *"never learn by failing what a fact could have told you"*: whether
+this device holds a leaf in a group is answerable from the local MLS store, at the point the sweep
+picks its candidates, with no network at all. Carrying that discriminator into the sweep's predicate
+removes a frame, a refusal, and a line that reads like a delivery defect to anybody who meets it.
+
+**Where.** The candidate set is chosen by the `[HISTORY_RECONCILE]` sweep (`auditing N group(s) that
+never have been`); the refusal is thrown in `mlsDeliveryApi.ts` and reported by
+`sendHistoryStateKey` in `groupActions.ts`. The row that produced it keeps it ACCUSING on purpose -
+`del1.mjs` forgives its own group creation and its own cut, and deliberately not this.
+
 ### P3 - the remove control in a group panel announces a raw 64-hex user id, so a screen reader reads the id where everyone else reads a name (measured 2026-09-05)
 
 `Sidebar`'s member rows render display names correctly - GRP-9 measured zero of five rows showing a

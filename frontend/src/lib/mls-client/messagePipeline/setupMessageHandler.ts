@@ -1,4 +1,8 @@
-import { parseDirectPeerFromName, resolveDirectPeerId } from '$lib/utils/chat/conversations';
+import {
+  findConversationKeyByGroupId,
+  parseDirectPeerFromName,
+  resolveDirectPeerId,
+} from '$lib/utils/chat/conversations';
 import { decodeAppMessage } from '$lib/proto/codec';
 import { appMsgToEnvelope, normalizeMessageId } from '$lib/utils/chat/messageUtils';
 import { applyReaction } from '$lib/utils/chat/messageReactions';
@@ -22,7 +26,11 @@ import { createMlsStatePersister } from '../mlsStatePersister';
 import { installMlsStatePersisterLifecycle } from '../mlsStatePersisterLifecycle';
 import { registerMlsStatePersister } from '../mlsStatePersisterRegistry';
 import type { MessageHandlerDeps } from './deps';
-import { readLocalMembership, retireIfEvicted } from '$lib/utils/chat/eviction';
+import {
+  membershipIsDurablyLost,
+  readLocalMembership,
+  retireIfEvicted,
+} from '$lib/utils/chat/eviction';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 export type { MessageHandlerDeps } from './deps';
 
@@ -558,6 +566,32 @@ async function handleUnknownGroup({
   startRecovery,
 }: UnknownGroupArgs): Promise<boolean> {
   const { log } = deps;
+
+  // A FRAME FOR A GROUP THIS DEVICE KNOWS IS GONE IS ANSWERED, NOT RECOVERED.
+  //
+  // `requestReAdd` already declines this exact case - its step 1 returns immediately for a
+  // conversation at `lifecycle: 'removed'` - but it declines it ONE LAYER TOO LATE. `startRecovery`
+  // is `void`-ed on purpose (an await here stalls the whole inbound drain), so by the time that
+  // seam has even looked at the map, this function has already buffered the frame, logged that a
+  // welcome_request was SENT - it was not - and returned `false`, which keeps the frame in the
+  // SERVER queue. Nothing takes it out again: the group is deleted, no Welcome is ever coming, and
+  // the row is re-delivered on every reconnect for as long as the account exists.
+  //
+  // Measured on DEL-6, 2026-09-05, on the peer: `forget_group` for the deleted group, then
+  // `Out-of-sync ... requestReAdd` and `welcome_request sent for unknown group` inside the same
+  // second, seconds after that peer was told the group was deleted. The campaign's own classifier
+  // holds this line as a REGRESSION SENTINEL for GRP-3/GRP-8 - a device asking to rejoin something
+  // it is legitimately no longer in - which is how it was found.
+  //
+  // The discriminator is local, durable, and already in the map, which is exactly where the
+  // decision belongs rather than a round trip that can only be refused. `true` ACKs: the frame
+  // belongs to a conversation that ENDED, this device forgot the group state that could open it,
+  // and what it holds is recovered by history reconciliation if the group ever comes back.
+  const retiredKey = findConversationKeyByGroupId(deps.conversations, groupId);
+  if (retiredKey && membershipIsDurablyLost(deps.conversations.get(retiredKey))) {
+    log(`[BUFFER] ${groupId.slice(0, 8)}… is retired - frame acknowledged, no welcome_request`);
+    return true;
+  }
 
   let buf = pendingBuffer.get(groupId);
   if (!buf) {

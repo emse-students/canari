@@ -903,7 +903,23 @@ export class MlsDeliveryApi {
       const res = await this.f(url.toString(), {
         headers: await this.auth(),
       });
-      if (!res.ok) return { rows: [] };
+      // A REFUSAL AND AN EMPTY GROUP ARE THE SAME RETURN VALUE, so the refusal has to say so.
+      //
+      // This branch turned every non-ok status - 403 for a group the server has soft-deleted, 404,
+      // a 500, a gateway error - into `{ rows: [] }`, which is exactly what a group with no history
+      // returns. The caller then renders an empty conversation and there is nothing, anywhere, to
+      // say the server was asked and refused: the sibling branch three lines below already warns
+      // about a non-JSON body, and this one was the asymmetry. A status is an ANSWER; an answer
+      // nobody records is one the next reader has to reproduce on a live browser.
+      //
+      // `warn` rather than `error` because it is not, on its own, a defect - the caller may
+      // legitimately have raced a deletion. What makes it worth a line is that it is the ONLY
+      // trace: `[HISTORY] refused` next to an empty conversation is the difference between a
+      // diagnosis and a mystery.
+      if (!res.ok) {
+        console.warn(`[HISTORY] refused for group ${groupId}: ${res.status}`);
+        return { rows: [] };
+      }
       const contentType = res.headers.get('content-type') ?? '';
       if (!contentType.toLowerCase().includes('application/json')) {
         console.warn(

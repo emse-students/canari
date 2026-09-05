@@ -524,6 +524,29 @@ const CASES = [
     '[14:32:47] [MLS] No application payload for 4ad03375… - not a commit: stale commit already applied, or a frame older than the kept ratchet window',
     'unexplained',
   ],
+  // THE COVERAGE LEG OF THE HISTORY EXCHANGE, and the three failures wearing the same tag. The
+  // success spelling is the responder stating its own window - sent only when NARROWER, and the one
+  // thing that lets an asker tell a clipped answer from a conversation with no more past - so it
+  // belongs with the request and the bundle it answers. The other three are failures of that same
+  // mechanism and must keep breaking `clean`, which is why the rule is pinned to one spelling
+  // instead of the tag: a `^\[HISTORY_COVERAGE\]` prefix would forgive all four. Seen on DEL-1,
+  // 2026-09-05.
+  [
+    'log',
+    '[06:15:35] [HISTORY_COVERAGE] Told f7a9bb80…:tauri-f7a9bb80…-mtn445lg-25sy we are complete only from 2026-06-07T00:00:00.000Z in cb9f3a9a…',
+    'notable',
+  ],
+  ['log', '[06:15:35] [HISTORY_COVERAGE] Unusable coverage from f7a9bb80… for cb9f3a9a…', 'unexplained'],
+  [
+    'log',
+    '[06:15:35] [HISTORY_COVERAGE] Chase failed for cb9f3a9a…: TypeError: nope',
+    'unexplained',
+  ],
+  [
+    'log',
+    '[06:15:35] [HISTORY_COVERAGE] Could not state our coverage to f7a9bb80… for cb9f3a9a…: TypeError: nope',
+    'unexplained',
+  ],
   // AND THE TWO EVICTION LINES THAT MUST NOT BE CLASSIFIED. Both are the defects GRP-3 and GRP-8
   // found on 2026-08-23: a removed member's pipeline attempting recovery on a group it was
   // legitimately evicted from, and its outbox retrying an encrypt that can never succeed. Both are

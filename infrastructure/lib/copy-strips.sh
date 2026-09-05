@@ -1,6 +1,7 @@
 # shellcheck shell=bash
 #
-# The things a COPY of production's database must not carry, in ONE place.
+# The things a COPY of production's database must not carry, and the ones it CANNOT carry, in ONE
+# place.
 #
 # WHY THIS FILE EXISTS. There are now two copies of production: the weekly one into the
 # dev.canari-emse.fr estate (`infrastructure/dev/copy-prod-to-dev.sh`) and the on-demand one into a
@@ -19,6 +20,25 @@
 # Usage:
 #   . "$ROOT/infrastructure/lib/copy-strips.sh"
 #   apply_copy_strips dev_sql "$DATABASE" "[copy-prod-to-dev]"
+
+# The ONE question that says whether (d) actually happened, kept in the file that owns (d) so the
+# strip and its proof cannot drift apart. Both copies read it back in their step 5, and a copy that
+# reports anything but 0 has rows pointing at objects it never received.
+#
+# It counts ROWS that still reference something, not references: the number is only ever compared
+# against zero, and a per-column breakdown would be a second list to keep in step with the first.
+# shellcheck disable=SC2034
+COPY_STRIPS_MEDIA_RESIDUE_SQL="SELECT
+    (SELECT count(*) FROM associations WHERE \"logoMediaId\" IS NOT NULL OR \"logoMediaId2\" IS NOT NULL OR \"logoUrl\" IS NOT NULL)
+  + (SELECT count(*) FROM association_calendar_events WHERE \"imageMediaId\" IS NOT NULL OR \"imageUrl\" IS NOT NULL)
+  + (SELECT count(*) FROM association_products WHERE \"iconMediaId\" IS NOT NULL)
+  + (SELECT count(*) FROM partnership_cards WHERE \"iconMediaId\" IS NOT NULL)
+  + (SELECT count(*) FROM forms WHERE \"imageMediaId\" IS NOT NULL OR \"imageUrl\" IS NOT NULL)
+  + (SELECT count(*) FROM channel_workspaces WHERE \"imageMediaId\" IS NOT NULL)
+  + (SELECT count(*) FROM dm_groups WHERE \"imageMediaId\" IS NOT NULL)
+  + (SELECT count(*) FROM posts WHERE \"images\" <> '[]'::jsonb)
+  + (SELECT count(*) FROM channel_messages WHERE \"attachments\" <> '[]'::jsonb)
+  + (SELECT count(*) FROM association_documents);"
 
 # Applies every strip. $1 = name of the guarded sql function, $2 = database, $3 = log prefix.
 apply_copy_strips() {
@@ -62,4 +82,49 @@ apply_copy_strips() {
   # column. The consequence is that a copy presents Stripe as the live provider. That the platform
   # cannot declare payments disabled is a real gap, recorded in the backlog.
   printf '%s   platform_config.payment_provider left as-is (no "disabled" value exists - see backlog)\n' "$prefix"
+
+  # (d) EVERY REFERENCE TO AN OBJECT THE COPY DID NOT RECEIVE. Both copies fetch a Postgres dump and
+  # nothing else - neither touches Garage - so every media id in the restored rows names a blob that
+  # exists only in production's store. The rows are not merely incomplete, they are INCONSISTENT, and
+  # the product then does exactly the right thing with them: it asks for what its database says
+  # exists, and is answered 404.
+  #
+  # MEASURED, NOT SUPPOSED (2026-09-04, HEAL-NEW-0 on the local estate). Every assertion of that row
+  # held and the verdict was still PASS-DIRTY, with 100% of the dirt media: five
+  # `[associationLogoCache] fetch failed 404`, one `[PostMedia] media download failed`, and fourteen
+  # `GET /api/media/... -> 404`. The affected class is every check that lands on a social feed, which
+  # is four whole rungs of the campaign - so this was never one row's noise to disposition, and
+  # `ignoringExpectedLog` would have been the same excuse copied into four rungs, which is a wide
+  # classifier wearing a per-row costume.
+  #
+  # CLEARING RATHER THAN COPYING THE BLOBS. Carrying production's object store would drag the half of
+  # the estate that the database copy at least keeps behind one deliberate decision, and would buy
+  # nothing: an association with no logo and a post with no image are states the product renders
+  # correctly and a real user can be in. Self-consistent beats complete.
+  #
+  # THE URL COLUMNS GO WITH THE IDS, and they are the ones that actually bit. `logoUrl` holds
+  # `/api/media/public/<uuid>`, a denormalised mirror of `logoMediaId`, and it is what
+  # `associationLogoCache` fetches - so clearing the id alone would have left the 404s exactly where
+  # they were. 89 of 89 association logos carried both on the estate this was measured on.
+  "$sql" "UPDATE associations SET \"logoMediaId\" = NULL WHERE \"logoMediaId\" IS NOT NULL;" "$database"
+  "$sql" "UPDATE associations SET \"logoMediaId2\" = NULL WHERE \"logoMediaId2\" IS NOT NULL;" "$database"
+  "$sql" "UPDATE associations SET \"logoUrl\" = NULL WHERE \"logoUrl\" IS NOT NULL;" "$database"
+  "$sql" "UPDATE association_calendar_events SET \"imageMediaId\" = NULL WHERE \"imageMediaId\" IS NOT NULL;" "$database"
+  "$sql" "UPDATE association_calendar_events SET \"imageUrl\" = NULL WHERE \"imageUrl\" IS NOT NULL;" "$database"
+  "$sql" "UPDATE association_products SET \"iconMediaId\" = NULL WHERE \"iconMediaId\" IS NOT NULL;" "$database"
+  "$sql" "UPDATE partnership_cards SET \"iconMediaId\" = NULL WHERE \"iconMediaId\" IS NOT NULL;" "$database"
+  "$sql" "UPDATE forms SET \"imageMediaId\" = NULL WHERE \"imageMediaId\" IS NOT NULL;" "$database"
+  "$sql" "UPDATE forms SET \"imageUrl\" = NULL WHERE \"imageUrl\" IS NOT NULL;" "$database"
+  "$sql" "UPDATE channel_workspaces SET \"imageMediaId\" = NULL WHERE \"imageMediaId\" IS NOT NULL;" "$database"
+  "$sql" "UPDATE dm_groups SET \"imageMediaId\" = NULL WHERE \"imageMediaId\" IS NOT NULL;" "$database"
+  # The two jsonb collections are NOT NULL with a `[]` default, so they are emptied rather than
+  # nulled - and compared against that literal rather than measured with `jsonb_array_length`, which
+  # ERRORS on a jsonb value that is not an array instead of reporting one.
+  "$sql" "UPDATE posts SET \"images\" = '[]'::jsonb WHERE \"images\" <> '[]'::jsonb;" "$database"
+  "$sql" "UPDATE channel_messages SET \"attachments\" = '[]'::jsonb WHERE \"attachments\" <> '[]'::jsonb;" "$database"
+  # `association_documents` is DELETED rather than nulled, because its `mediaId` is NOT NULL: the row
+  # has no way to express "the file is gone", nothing holds a foreign key to it (checked), and a row
+  # whose entire content is a download that 404s is not a state a real user can be in.
+  "$sql" "DELETE FROM association_documents WHERE \"mediaId\" IS NOT NULL;" "$database"
+  printf '%s   media references cleared: a copy carries rows, never the objects behind them\n' "$prefix"
 }

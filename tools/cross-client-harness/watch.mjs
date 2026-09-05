@@ -697,6 +697,19 @@ const NOTABLE = [
   // carries a refusal, an abort on a missing KeyPackage, a kick-and-re-add, and `re-add suspended
   // (fix needed client-side)` - four failures a prefix rule would forgive in silence.
   /history_(request|bundle|digest|digest_request|pull)|\[HISTORY_RECONCILE\]/i,
+  // THE COVERAGE LEG OF THAT SAME EXCHANGE, which postdates the rule above and was therefore the one
+  // leg landing in `unexplained`. `sendHistoryCoverage` is sent LAST and ONLY when the responder's
+  // window is NARROWER than what was asked for, and its own docblock says why it is load-bearing:
+  // without it the asker sees an absence, and an absence cannot be told from "there is no more
+  // history", so it either believes itself complete or re-asks the same peer for ever. A device
+  // stating its own window is the mechanism working, and it belongs with the request and the bundle
+  // it answers rather than three buckets away from them.
+  //
+  // PINNED TO THE SUCCESS SPELLING ALONE, the way the `[WELCOME_REQ]` rule above is and for the same
+  // reason: this tag also carries `Unusable coverage from ...`, `Chase failed for ...` and `Could not
+  // state our coverage to ...`, three failures a `^\[HISTORY_COVERAGE\]` prefix would forgive in
+  // silence. Seen on DEL-1, 2026-09-05, on the owner's web client answering its own phone.
+  /^\[HISTORY_COVERAGE\] Told \S+ we are complete only from \S+ in \S+$/,
   // A reconciliation that actually DELIVERED something, which the line above does not cover: that one
   // says a device decided it was out of sync, this one says a peer answered and the gap closed. It
   // was landing in `unexplained`, and it is the opposite of unexplained - it is the repair reporting
@@ -1717,6 +1730,11 @@ export const COLD_START_NARRATION = [
   /\[FCM_CACHE\] \d+ message\(s\) to pre-inject from the FCM cache/,
   /\[FCM_CACHE\] . id=\S+ group=\S+ type=\S+/,
   /\[FCM_CACHE\] Injection done: \d+\/\d+ message\(s\) injected/,
+  // The fourth line of the same sequence, and the only one the list was missing: `sessionAuth`'s
+  // startup catch-up merges whatever the cache injected into the in-memory conversations, and it is
+  // logged ONLY when that count is non-zero - so it appears exactly on the cold start that had a
+  // push waiting, which is what DEL-7 arranges. Found on A1 there, 2026-09-05.
+  /\[FCM_CACHE\] \d+ message\(s\) merged in memory at login/,
   // THE REST OF WHAT A KILLED APP SAYS ON ITS WAY BACK, added 2026-09-05 when COMM-18 finally
   // reached its landing and could be read past. Each is a sentence only a process that did not exist
   // a moment ago can produce, and each is TRUE: the push token is unchanged so nothing is
@@ -1843,6 +1861,27 @@ export const GROUP_CREATION_NARRATION = [
   /^\[blocks\.isBlockedWith\]/,
   /^\[SYNC\] bulk\.addedDeviceIds: /,
 ];
+
+/**
+ * THE APP NARRATING A DELETION IT LEARNT OF - the peer-side half of the DEL phase's whole subject.
+ *
+ * In a phase whose every row deletes a group on purpose, this line is the mechanism reporting
+ * success. In any other phase a group disappearing underneath a check is a finding, so it is NAMED
+ * here and applied NOWHERE - which is what every list in this section is, and is not the same thing
+ * as classifying it: nothing in `BENIGN` claims it, so a runner that does not ask for it still sees
+ * it as dirt.
+ *
+ * IT MOVED HERE FROM `del.mjs` ON 2026-09-05, when the second file of the same phase needed it.
+ * `del1.mjs` owns DEL-1 alone, produces the identical sentence on the identical peer, and had no
+ * forgiveness of any kind - so DEL-1 recorded `PASS-DIRTY` on its own subject. A per-phase needle
+ * living inside ONE of a phase's two runners is a needle the other cannot use.
+ *
+ * IT NAMES A REAL PERSON, so the needle matches the SHAPE and no display name enters the repository:
+ * the accounts behind W1 and W2 are the campaign's own, and `idcheck.mjs` refuses a commit that
+ * carries one. `[INFO]` is deliberately not in the pattern either - the level is not what makes the
+ * line expected, and anchoring on it would let a re-levelled line reappear as dirt.
+ */
+export const PEER_DELETED_NARRATION = /Group deleted by .+ - conversation marked removed$/;
 
 /**
  * THE ONE SENTENCE A DELIVERY CROSSING IS ALLOWED TO SAY, and it says it once per session.

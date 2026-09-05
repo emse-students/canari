@@ -640,9 +640,32 @@
 
   // ─── Thin forwarding helpers (keep template free of logic) ────────────────
 
+  /**
+   * Sends `text`, and makes sure a failure on the way cannot vanish.
+   *
+   * `void promise` DISCARDS A REJECTION, and this is the send path. `sendChatMessage` writes the
+   * optimistic echo and then awaits `enqueueOutboxMessage` with no `catch` of its own, so an
+   * IndexedDB transaction that aborts rejects all the way up to here - where the promise was thrown
+   * away. The user then sees the composer empty (it is cleared synchronously below, without waiting
+   * for the enqueue), a bubble stuck on `pending`, no error, and NOTHING in the log: a message they
+   * wrote, believe sent, and that no durable queue ever received. That is the one failure the
+   * outbox cannot survive, because it is the one it never hears about.
+   *
+   * The catch does not restore the text - the echo is already on screen and pulling it back would
+   * be a second surprise. It says so, out loud, on both surfaces: the error banner the media path
+   * already uses, and the log, because a best-effort path that swallows leaves nothing else behind.
+   */
+  function sendText(text: string) {
+    void messaging.handleSendChat(msgCtx(), text).catch((e: unknown) => {
+      const reason = e instanceof Error ? e.message : String(e);
+      convs.sendError = m.chat_send_error({ reason });
+      log(`[SEND] handleSendChat threw - the message was NOT queued: ${reason}`);
+    });
+  }
+
   /** Sends the current messageText via MLS then clears the input. */
   function handleSendChat() {
-    void messaging.handleSendChat(msgCtx(), messageText);
+    sendText(messageText);
     messageText = '';
   }
 
@@ -803,7 +826,7 @@
 
   /** Sends a picked GIF as a message (its direct URL is rendered inline as a GIF). */
   function handleSendGif(url: string) {
-    void messaging.handleSendChat(msgCtx(), url);
+    sendText(url);
   }
 
   /** Encrypts and sends a community poll in the currently selected channel. */
