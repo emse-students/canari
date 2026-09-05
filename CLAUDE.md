@@ -231,43 +231,49 @@ noticing. Order = priority. Detail lives where the link says. Defect stories are
 rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
 [cross-client-testing](docs/wiki/cross-client-testing.md).
 
-1. **THREE RUNGS COMPLETE: MSG 13/13, DEL 10/10, TAB 10/10** - TAB-3b `PASS-DIRTY` on a SEVERE line
-   that is a real P2 ([backlog](docs/wiki/backlog.md)); the rung cost THREE product fixes
-   (`CHANGELOG.md`). **The four `+A1` rows are UNBLOCKED**: the phone's predicate asked whether its
-   ENGINE keeps a cookie, not whether the deployment can ISSUE one ([sessions](docs/wiki/sessions.md#the-credential-a-client-carries-itself)),
-   and **TLS locally was measured out** ([docker](docs/wiki/infrastructure/docker.md)).
+1. **ELEVEN RUNGS COMPLETE, 132 OF 245 ROWS ANSWERED** - the board is
+   [cross-client-testing](docs/wiki/cross-client-testing.md) and `bun rows.mjs` settles it against
+   the ledger. Not `PASS`: TAB-3b, HEAL-NEW-0, HEAL-repair, and eight rows the phone blocks.
 2. **P1 - a PLACEHOLDER held a member's seat**; whether a LEAF is left in the MLS tree only a
    member's CLIENT can say. [backlog](docs/wiki/backlog.md#p1---the-placeholder-is-gone-from-prod-what-it-may-have-left-in-the-mls-tree-is-not-answered).
-3. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - **ONE merge mechanism
+3. **P1 - THE PIN MODAL CAN BE DISMISSED AND THERE IS NO WAY OUT** (user, 2026-09-05, seen on real
+   people): they close it on every page rather than reset, and the modal reopens each time.
+   `Modal.svelte` already carries `dismissible`; the sign-out button is what makes using it safe, and
+   PIN is 0/10 so nothing asserts either ([backlog](docs/wiki/backlog.md)).
+4. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - **ONE merge mechanism
    and ONE arming point since 2026-09-04**, the same four workflows in all four GitHub repos, and
    `bun tools/ecosystem-shape/shape.mjs` is the only thing that asserts it
    ([rebuild](docs/wiki/ecosystem-convergence.md#12-the-cicd-rebuild-2026-09-04---the-same-four-workflows-in-every-repository),
    [cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them), the only
-   copies). Open: **[the suppression CONTROL CASE the NestJS batch destroyed - Monday 2026-09-07
-   answers it](docs/wiki/backlog.md#p2---the-nine-nestjs-pull-requests-were-closed-in-one-batch-so-the-suppression-question-was-never-measured-on-one-first-and-monday-2026-09-07-is-the-only-thing-that-can-answer-it-now-updated-2026-09-03)**,
-   and **nothing tells anybody prod is down**. Hosts:
+   copies). Open: **[the suppression CONTROL CASE the NestJS batch destroyed](docs/wiki/backlog.md#p2---the-nine-nestjs-pull-requests-were-closed-in-one-batch-so-the-suppression-question-was-never-measured-on-one-first-and-monday-2026-09-07-is-the-only-thing-that-can-answer-it-now-updated-2026-09-03)**
+   (Monday 2026-09-07 answers it), **nothing tells anybody prod is down**, and
    [host-updates](docs/wiki/infrastructure/host-updates.md).
-4. **NO CAMPAIGN ROW ASKS A QUESTION WHOSE ANSWER IS A POPULATION** - four rows written into rung
+5. **NO CAMPAIGN ROW ASKS A QUESTION WHOSE ANSWER IS A POPULATION** - four rows written into rung
    12 MULTI, needing only `W1 W2` ([campaign](docs/wiki/cross-client-campaign.md)).
-5. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
+6. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
    [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
-6. **SIX UX/RENDERING ITEMS + TWO DEV-LOG LINES**, substance in [backlog](docs/wiki/backlog.md) only; four want ONE
+7. **SIX UX/RENDERING ITEMS + TWO DEV-LOG LINES**, substance in [backlog](docs/wiki/backlog.md) only; four want ONE
    pass over `app.css`.
-7. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
+8. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
    commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
-8. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
+9. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
    and audit in [backlog](docs/wiki/backlog.md).
-9. **P1 - A DEVICE ASKS FOR A WELCOME FOR EVER AND THE MEMBER ANSWERING RESETS THE HEALING ROW** -
-   **FIVE HALVES FIXED 2026-09-04, the fifth made the others unreachable; ONE PROD MEASUREMENT OWED** ([backlog](docs/wiki/backlog.md#p1---a-device-asks-for-a-welcome-for-ever-and-the-member-that-answers-resets-the-row-that-would-have-let-it-heal-itself-measured-on-prod-2026-09-01)); read with its
-   [sibling P2](docs/wiki/backlog.md#p2---a-device-was-given-a-roster-seat-and-never-a-welcome-and-why-its-keypackage-was-skipped-is-unmeasured-measured-on-prod-2026-09-01) and with 10.
-10. **TWELVE MESSAGES DROPPED, PERMANENT COMMIT-LOG HOLE AT EPOCH 121** - the four defects are
+10. **P1 - A DEVICE ASKS FOR A WELCOME FOR EVER AND THE MEMBER ANSWERING RESETS THE HEALING ROW** -
+    **FIVE HALVES FIXED 2026-09-04, the fifth made the others unreachable; ONE PROD MEASUREMENT OWED** ([backlog](docs/wiki/backlog.md#p1---a-device-asks-for-a-welcome-for-ever-and-the-member-that-answers-resets-the-row-that-would-have-let-it-heal-itself-measured-on-prod-2026-09-01)); read with its
+    [sibling P2](docs/wiki/backlog.md#p2---a-device-was-given-a-roster-seat-and-never-a-welcome-and-why-its-keypackage-was-skipped-is-unmeasured-measured-on-prod-2026-09-01) and with 11.
+11. **TWELVE MESSAGES DROPPED, PERMANENT COMMIT-LOG HOLE AT EPOCH 121** - the four defects are
     FIXED AND DEPLOYED (ancestors of `v0.15.0`); only the RESIDUE is open, and the 13:10 failure
     arm is **NOT established** ([backlog](docs/wiki/backlog.md#p1---twelve-of-sixteen-messages-were-fetched-and-dropped-and-the-commit-log-has-a-permanent-hole-at-epoch-121-measured-on-prod-2026-09-02)).
-11. **`dev.canari-emse.fr` IS THE PRE-RELEASE TARGET**
+12. **`dev.canari-emse.fr` IS THE PRE-RELEASE TARGET**
     ([dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy). Two open: a
     dev deploy cannot tell a broken CHANGE from an unreachable REGISTRY
     ([backlog](docs/wiki/backlog.md#p2---a-dev-deploy-still-cannot-tell-a-broken-change-from-an-unreachable-registry-and-the-conflation-moved-rather-than-went-away-measured-2026-09-02-first-day-it-ran)); and prod's deploy job is still inlined shell while `deploy-dev`
     exercises `infrastructure/deploy/deploy-environment.sh`.
+13. **THREE MORE FROM THE USER, 2026-09-05** - a P2 (a COMMUNITY message is not decrypted in a
+    background notification, and the KILLED case is unmeasured for both kinds), a QUESTION (does a
+    community invitation notify somebody with no prior conversation?), and one post-campaign direction
+    (ICM/ISMIN: two schools, sharing only admin and messaging). All three in
+    [backlog](docs/wiki/backlog.md); the first two need the phone.
 
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
 
@@ -294,16 +300,14 @@ waiting on credentials Lydia owes; one MLS client in a SharedWorker; and the SEC
 
 ### CANARI - release, store submission, iOS
 
-**`0.16.0` IS THE SHIPPED VERSION** (2026-09-03): production serving it, Play `production`
-committed, TestFlight uploaded. **The App Store submission is the one half that did NOT land**; the
-cause is known and fixed rather than suspected - the script asked whether a version was NAMED
-`0.16.0` when Apple's rule is ONE non-terminal version slot - and **the key's role is SETTLED, not
-a blocker** (a 409 means the JWT was accepted). Whether the fix works is answered by the next
-stable.
-
-**Never infer a store or CI state from a line here, which has been stale twice.** Play is a
-MEASUREMENT (`bun tools/play-vitals/vitals.mjs`, [README](tools/play-vitals/README.md)); CI is
-`gh run list`. **No HEAL-REVOKE verdict about a clean device may be taken on a build older than
+**NEVER INFER A STORE, A VERSION OR A CI STATE FROM A LINE HERE - this paragraph has now been stale
+THREE times**, so it names no version at all. `gh release list` is the shipped version, Play is a
+MEASUREMENT (`bun tools/play-vitals/vitals.mjs`, [README](tools/play-vitals/README.md)), CI is
+`gh run list`, and the App Store half is read on
+[mobile](docs/wiki/frontend/mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on).
+Its one known cause is fixed rather than suspected - the script asked whether a version was NAMED
+`X.Y.Z` when Apple's rule is ONE non-terminal slot - and the key's role is SETTLED (a 409 means the
+JWT was accepted). **No HEAL-REVOKE verdict about a clean device may be taken on a build older than
 0.14.12.** **An APK is not reached by a deploy** - `frontendDist: "../build"` means the app EMBEDS
 the frontend, so `minClientVersion` and check S reason about a NAME unless a version identifies its
 content.

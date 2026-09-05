@@ -667,6 +667,47 @@ and `didBecomeActive`, which the FCM fix has just made load-bearing.
 entry here. **What must NOT happen is a fix written against a suspected iOS lifecycle bug that nobody
 has seen** - the repo has no way to tell whether it worked.
 
+### P1 - the PIN modal can be DISMISSED, so a user who forgot their PIN walks the app closing it on every page, and there is no way to sign out (user, 2026-09-05)
+
+**Observed on real people, not inferred.** Verbatim: *"Certaines personnes oublient leur PIN et
+plutot que de le reinitialiser, elles naviguent de page en page en fermant le modal de PIN (qui
+s'ouvre a chaque fois). Il faut trouver une solution, que ce ne soit pas possible de dismiss ce
+modal. Mais il faut aussi mettre un bouton pour se deconnecter pour ne pas etre softlock en cas de
+probleme."*
+
+**WHAT THE CODE DOES TODAY, so picking this up does not start with a rediscovery.**
+
+- `Modal.svelte` ALREADY carries the prop this needs: `dismissible?: boolean`, and when false it
+  disables the backdrop click, Escape AND the header close button, in one place. `PinModal.svelte`
+  simply does not pass it, so it defaults to `true`.
+- The call site's `onClose` (`ChatBackgroundService.svelte`) hides the modal and clears
+  `_loginInProgress` / `globalSession.isLoginInProgress` - so dismissing does not merely hide a
+  dialog, it ends the login attempt, and the next page re-opens it from scratch.
+- `PinModal` carries a SECOND way out that `dismissible={false}` would not touch: an
+  `<a href="/profile">` labelled with `auth_pin_delete_account_link` that calls `onClose` on its way.
+  Whatever is decided about the backdrop has to be decided about that link too, or the fix closes one
+  door and leaves the other open.
+- A reset EXISTS - `onForgotPinReset` -> `handlePinReset`, behind a `confirmReset` confirmation -
+  and it is destructive: it wipes the PIN-protected messaging state. It is the path the user says
+  people are avoiding, and avoiding it is rational.
+- **There is no sign-out control anywhere in the modal.**
+
+**THE TWO HALVES ARE ONE CHANGE, AND THE SECOND IS WHAT MAKES THE FIRST SAFE.** Making the modal
+undismissable without an exit turns a loop into a wall: the user who cannot remember their PIN would
+be left with a destructive reset or the account-deletion link, on a modal that no longer closes. So
+the sign-out button lands FIRST, or both land in the same commit - never the lock alone.
+**A destructive control needs an allowlist of what it may touch**, and "sign out" is the
+non-destructive exit this screen has never had.
+
+**WHAT THIS IS NOT.** Dismissing the modal exposes nothing: the PIN gates the local MLS store, so a
+user who closes it walks an application with nothing decrypted in it. This is P1 for the PATH being
+broken - people are stuck in it now - not for a disclosure.
+
+**AND THE ROW THAT WOULD HAVE CAUGHT IT DOES NOT EXIST.** PIN is 0/10 on the board and had no runner
+until 2026-09-05. Whatever is written here is asserted by a PIN row, not by a reading: the assertion
+is that the modal survives a backdrop click, an Escape, a navigation and a reload, and that exactly
+one control on it leads out without destroying anything.
+
 ### P2 - the PIN modal's error is a bare paragraph, so a refused unlock is never announced to a screen reader (measured 2026-09-04)
 
 `PinModal.svelte` renders its failure as `<p class="...text-red-500">{displayError}</p>` in BOTH
@@ -1189,6 +1230,29 @@ hypotheses differ, and the stall will already have been measured.
 
 ## Communities and permissions
 
+### Question - does an invitation into a community notify somebody the inviter has never spoken to? (user, 2026-09-05)
+
+Verbatim: *"Inviter dans communaute sans avoir discussion prealable : notification ?"*
+
+**A QUESTION, NOT A DEFECT REPORT - and its first task is to answer itself.** Nobody here has asked
+it, so the current behaviour is unknown rather than wrong, and an entry that guessed would be worse
+than one that does not.
+
+**WHY IT IS WORTH A ROW RATHER THAN A READ OF THE CODE.** "No prior conversation" is not a cosmetic
+variation on the invitation path - it is the state in which the two parties share the least. Reading
+the source can say which call is made; it cannot say whether a device with no prior anything is
+addressable at the moment the invitation is sent, which is a fact about the server's roster and the
+push token, not about the branch. The campaign has already found one defect of exactly that
+shape - a device given a roster seat and never a Welcome - and it was invisible to every reading.
+
+**WHAT WOULD ANSWER IT.** One row: a fresh peer with no conversation history with the inviter, the
+app backgrounded, invited into a community. Three outcomes to tell apart, and they want different
+fixes: no notification is raised at all (the push was never sent, or the device holds no token), one
+is raised but carries nothing readable (the decrypt failed - the
+[community notification P2](#p2---a-community-message-is-not-decrypted-in-a-background-notification-and-the-killed-case-is-unmeasured-for-both-kinds-user-2026-09-05)),
+or it works. The logcat is what separates the first from the second; the shade alone cannot.
+
+
 Six entries came out of ONE audit on 2026-08-17, prompted by a user question rather than by a
 failure. **All six are closed as of 2026-08-19** and are not repeated here - the last one, two communities
 sharing a name, the user closed by decision rather than by code (2026-08-19: it is not a defect).
@@ -1401,6 +1465,44 @@ credential lock screen mid-phase** (`deviceLocked=1`, `wm dismiss-keyguard` refu
 the rig), so LIFE-6/7/8 never ran and nothing could be re-measured. A notification fix verified only
 by unit tests is exactly the shape that has cost this project three times.
 
+
+### P2 - a COMMUNITY message is not decrypted in a background notification, and the KILLED case is unmeasured for both kinds (user, 2026-09-05)
+
+**Reported by the user, who has seen it**, and asked in the same breath for the question the campaign
+has so far half-answered: *"Notification non dechiffrees en background - Communaute"*, and *"Les
+messages sont ils bien dechiffres en notification quand l'app est tuee OU en background ?"*
+
+**FOUR CELLS, AND ONLY TWO HAVE EVER BEEN MEASURED.** The two axes are the conversation's encryption
+and the app's lifecycle state, and they are independent - so the answer to one cell says nothing
+about any other.
+
+| | app BACKGROUNDED | app KILLED |
+| --- | --- | --- |
+| DM or group (per-conversation MLS ratchet) | **FAIL** - LIFE-2, no notification at all and 95 s to arrival | **PASS-DIRTY** - LIFE-3 |
+| Community salon (the community's shared key) | **the user reports it is not decrypted** - nothing here has measured it | **UNMEASURED** |
+
+**THE DM ROW'S CAUSE IS ESTABLISHED AND IS NOT THIS ENTRY'S.** It is
+[the silent-push P2](#p2---every-silent-push-on-the-phone-fails-to-decrypt-the-notification-loses-its-preview-and-the-fallback-it-falls-back-to-does-nothing-measured-2026-09-05-first-run-of-notif):
+the phone decrypts over its WebSocket - spending the ratchet generation - but cannot ACK, so the
+server pushes after 10 s a message the device already holds, and a generation is spent once. That is
+also exactly why the KILLED cell passes where the BACKGROUNDED one fails: a killed app has spent no
+generation. **The phone in a pocket is the failing case and the phone that was killed is the passing
+one**, which is the opposite of what anyone would guess.
+
+**A COMMUNITY SALON CANNOT INHERIT THAT ANSWER, BECAUSE IT IS NOT THE SAME KEY PATH.** A salon is
+encrypted with the community's shared key
+([channel-encryption](protocols/channel-encryption.md)), not with a per-conversation MLS ratchet, so
+the spent-generation argument that explains the DM failure may not apply to it at all - and if it
+does not, the cause is a second, unrelated one wearing the same symptom. **Two causes that produce
+the same screen want opposite fixes**, so the two rows are measured apart before either is touched.
+
+**WHAT IS OWED, and it is measurement first.** Four NOTIF rows - salon x {backgrounded, killed} and
+the two DM cells re-taken on the same build so the comparison is from one afternoon rather than from
+two. All four need the phone, which is
+[owed a human unlock](#owed-to-the-user---decisions-rotations-and-one-off-clicks). Read the salon
+rows with the invitation question in
+[Communities and permissions](#communities-and-permissions): a notification that never arrives and a
+notification that arrives undecryptable are different failures, and only the logcat separates them.
 
 ### P2 - a frame this device already read is re-accused as lost on every later cold start, and the reconciliation it triggers finds nothing (measured 2026-09-05)
 
@@ -4087,6 +4189,42 @@ sits at P3 beside the two prod hosts above rather than being called fixed. **Ask
 deleting anything that is not a build cache.**
 
 ## Post-campaign projects - decided, not scheduled
+
+### Separating ICM and ISMIN - two schools on one deployment (user, 2026-09-05)
+
+**A direction, decided and not scheduled.** Verbatim: *"Dans la perspective d'avoir des ismin,
+separer associations et listes ICM/ISMIN (notamment la possibilite de faire apparaitre ou non une
+association sur la cartographie des associations, et pouvoir n'afficher que les associations ICM sur
+le portail ICM). Meme plus largement, tout doit pouvoir etre separe, comme si on avait deux instances
+de Canari. Seule la partie admin et la messagerie/communautes doivent etre en commun."*
+
+**THE SHAPE, IN THE USER'S OWN TERMS**: two instances that share exactly two things - administration,
+and messaging/communities. Everything else - associations, the association cartography, the lists -
+is per-school and must be able to be shown to one school and not the other.
+
+**IT IS TWO PIECES OF WORK WITH DIFFERENT MATURITY, AND CONFLATING THEM IS HOW THE NARROW ONE NEVER
+SHIPS.**
+
+- **The narrow half is already actionable and is a feature**: a per-association flag deciding whether
+  it appears on the cartography, and a school attribute the portal filters on. It is additive,
+  reversible, and does not commit the second half to any shape.
+- **The broad half - "as if we had two instances" - is a PARTITIONING DECISION and must be designed
+  before anything is built.** The question it has to answer first is not which tables gain a column;
+  it is what a shared object means when the two halves disagree. Messaging and communities are
+  explicitly COMMON, so a community can hold members of both schools while an association may be
+  visible to only one - which means the boundary does not fall between two databases, it falls
+  through the middle of the object graph. A migration that assumed otherwise would be very hard to
+  reverse.
+
+**WHAT MUST BE SETTLED BEFORE ANY SCHEMA CHANGES**, none of which the code can answer: whether a
+person belongs to exactly one school or can hold both; whether an administrator is global or
+per-school (the user says admin is COMMON, which suggests global, and that has to be confirmed
+because it decides every permission check); and whether a member of one school may see the other's
+associations at all, or merely does not by default. **These are the user's decisions, and the first
+task here is to obtain them - not to write code against a guess.**
+
+Not scheduled. It belongs after the campaign for the reason everything in this section does: it is
+large, it is not a defect, and it changes a schema the campaign is currently measuring.
 
 ### The MLS + Graine explanation, written FOR THE USER - audience settled 2026-08-20
 
