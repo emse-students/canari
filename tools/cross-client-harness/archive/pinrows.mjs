@@ -6,6 +6,7 @@
  *   bun archive/pinrows.mjs --row 2         a wrong PIN five times - records PIN-2 AND PIN-7
  *   bun archive/pinrows.mjs --row 3         a PIN too short, in BOTH components that own the rule
  *   bun archive/pinrows.mjs --row 8         the gate with the server unreachable
+ *   bun archive/pinrows.mjs --row 9         "stay signed in", the browser closed and reopened
  *   bun archive/pinrows.mjs --row 11        the gate cannot be walked away from
  *
  * EVERY ROW LEAVES W1 UNLOCKED. The shared teardown at the bottom raises the gate one last time and
@@ -33,6 +34,7 @@ import {
   client,
   evaluate,
   goto,
+  openSite,
   pollFact,
   pressKey,
   reloadAndWait,
@@ -53,6 +55,7 @@ import {
 import { exitOnRecorded, record } from '../results.mjs';
 import { ACCOUNT_OF, PORTS } from '../names.mjs';
 import { unlockClient } from './pingate.mjs';
+import { closeBrowser, startBrowser } from '../launch.mjs';
 
 const argv = process.argv.slice(2);
 const opt = (name, fallback) => {
@@ -78,6 +81,10 @@ const ROWS = {
     id: 'PIN-8',
     what: 'the gate while the server is unreachable: a transport failure must not end the session',
   },
+  9: {
+    id: 'PIN-9',
+    what: '"stay signed in", browser closed and reopened: the vault answers and no PIN request is sent',
+  },
   11: {
     id: 'PIN-11',
     what: 'the gate cannot be dismissed, and it offers a way out that destroys nothing',
@@ -89,7 +96,11 @@ if (!row) {
   process.exit(2);
 }
 
-const w1 = await client(PORTS.W1, APP_TAB);
+// `let`, NOT `const`: PIN-9 CLOSES THIS BROWSER and opens another one, so the connection every
+// helper below reads is not the same object for the whole run. `gateUp`, `raiseGate` and the shared
+// teardown all close over these two bindings rather than over one connection, which is what lets a
+// row replace the client underneath them and leave the rest of this file alone.
+let w1 = await client(PORTS.W1, APP_TAB);
 const gateUp = () => evaluate(w1, GATE_EXPR);
 
 /**
@@ -264,6 +275,34 @@ const WHERE = `location.pathname`;
  */
 const TOO_SHORT = '123';
 
+/**
+ * IS THE DEVICE KEY VAULT WRITTEN WHERE IT CAN SURVIVE A RESTART - both halves, named.
+ *
+ * `deviceKeyVault.ts` writes the wrap key and the sealed blob to `localStorage` when "stay signed
+ * in" is on and to `sessionStorage` otherwise, and only the first survives a browser that closed.
+ * PIN-9 reads BOTH the opt-in flag and the blob, because either alone is a half-written state that
+ * would make the row unfalsifiable: a flag with no vault answers nothing after a restart, and a
+ * vault with no flag is the state PIN-11 deliberately creates.
+ */
+const VAULT_PERSISTED = `JSON.stringify({
+  persist: localStorage.getItem('canari_device_key_persist'),
+  vault: localStorage.getItem('canari_device_key_vault') !== null,
+  key: localStorage.getItem('canari_device_key_vault_key') !== null,
+  session: sessionStorage.getItem('canari_device_key_vault') !== null
+})`;
+
+/**
+ * WHOSE FAULT A GATE AFTER A RESTART IS, read in the same breath as the gate itself.
+ *
+ * A gate is the same picture for three different failures and the row may not guess between them:
+ * the vault was never written, the vault was written and then EMPTIED on boot, or the vault is
+ * intact and the client did not use it. `VAULT_PERSISTED` read again after the restart separates
+ * the first two from the third, and `where` separates all three from a session that simply expired
+ * - a client sent to `/login` is not a client that failed to open its vault, and reporting one as
+ * the other would send the next reader to the wrong file.
+ */
+const WHERE_AFTER = `location.pathname`;
+
 /** Every endpoint a PIN flow can touch. The row asserts NONE of them was reached. */
 const PIN_ENDPOINTS = /\/api\/mls\/security\/pin-(salt|check|change)/;
 
@@ -362,7 +401,7 @@ const PAST_THE_GATE = [BROWSER_PASSWORD_FORM_HINT, MLS_CLIENT_INITIALISING];
  */
 const LOGIN_DID_NOT_COMPLETE = /^\[INIT\] Login did not complete \(\w+\):/;
 
-const observer = await watch(w1, 'W1');
+let observer = await watch(w1, 'W1');
 
 /**
  * PIN-11 - the gate cannot be walked away from, and it offers an exit that destroys nothing.
@@ -902,7 +941,133 @@ async function row3() {
   });
 }
 
-const RUNNERS = { 1: row1, 2: row2, 3: row3, 8: row8, 11: row11 };
+/**
+ * PIN-9 - "stay signed in", the browser closed and opened again.
+ *
+ * THE QUESTION IS THE VAULT PATH, AND IT IS ANSWERED BY WHAT IS NOT SENT. A client that comes back
+ * unlocked has proved nothing on its own - it could have asked the server to check a PIN it had
+ * cached somewhere, which is the one thing this feature must never do. So the row counts the three
+ * PIN endpoints across the whole boot and expects NONE, against the same positive control PIN-3
+ * uses: the unlock that set the opt-in DID call `pin-salt` and `pin-check` a moment earlier.
+ *
+ * THE BROWSER IS RESTARTED ON `about:blank`, WHICH IS THE ONLY DETERMINISTIC WAY TO SEE THE BOOT.
+ * `Network` events accumulate only once the domain is enabled on a connection, and connecting to a
+ * browser that is already loading the app is a RACE with the very requests this row exists to count
+ * - it would sometimes see them and sometimes not, and an empty list would then mean nothing. So the
+ * browser comes up on a blank page, the observer attaches, and only then does the app open. That is
+ * also what a person does: a browser starts, and then they go to the site.
+ *
+ * IT CLOSES THE BROWSER, IT DOES NOT KILL IT, AND THAT IS THE ROW. `killBrowser` force-stops the
+ * process, and Chrome commits `localStorage` asynchronously - so the vault this row exists to ask
+ * about was rolled back by the kill itself. Twice: `persist: "true"` with the blob and the wrap key
+ * both read back a moment earlier, the browser gone 1 ms later, and a client that came up with the
+ * flag at a value from a previous run and no vault at all. Two FAILs against a product that was
+ * right, and the row was measuring Chrome's flush interval. `closeBrowser` is Chrome's own shutdown
+ * path; on the identical sequence everything survives. The rule it leaves is in `launch.mjs`: a
+ * crash and a quit are different gestures, and only the second can be asked what SURVIVES.
+ *
+ * IT IS THE ONE ROW HERE THAT COSTS SOMETHING IF IT GOES WRONG. `closeBrowser` proves the port went
+ * quiet before it returns and `startBrowser` refuses to run against a live instance, so the failure
+ * mode is a browser that does not come back rather than a profile that is damaged - the profile
+ * directory is never touched. If it does not come back: `bun launch.mjs start w1`.
+ */
+async function row9() {
+  // -- the opt-in, ticked the way a person ticks it ---------------------------------------------
+  const raised = await raiseGate();
+  if (!raised.up) {
+    record(row.id, 'INCONCLUSIVE', {
+      scenario: row.what,
+      precondition: 'the PIN gate did not come up after the device key vault was emptied',
+      forgotten: raised.forgotten,
+      ...gate('INCONCLUSIVE', { W1: await report(observer) }).detail,
+    });
+    return;
+  }
+
+  const beforeControl = w1.events.length;
+  const stayed = await unlockClient(w1, PORTS.W1, ACCOUNT_OF.W1, { match: APP_TAB, stay: true });
+  const controlAsked = requestsSince(w1, PIN_ENDPOINTS, beforeControl);
+  const persisted = JSON.parse((await evaluate(w1, VAULT_PERSISTED)) ?? '{}');
+
+  if (stayed.verdict !== 'unlocked' || persisted.persist !== 'true' || !persisted.vault) {
+    record(row.id, 'INCONCLUSIVE', {
+      scenario: row.what,
+      precondition: 'the client did not come out of the gate with a PERSISTED device key vault',
+      unlocked: stayed.verdict,
+      persisted,
+      why: 'nothing can be asked about a restart when the thing that is supposed to survive it was never written',
+      ...gate('INCONCLUSIVE', { W1: await report(observer) }).detail,
+    });
+    return;
+  }
+
+  // -- closed, and opened again ------------------------------------------------------------------
+  const closedMs = await closeBrowser('w1');
+  const startedMs = await startBrowser('w1', 'about:blank');
+  w1 = await client(PORTS.W1, null);
+  observer = await watch(w1, 'W1');
+  const beforeBoot = w1.events.length;
+  // `openSite`, NOT `goto`: `goto` is relative to the origin the document already has, and this one
+  // has none - a browser that has just started is on `about:blank`, whose origin is the string
+  // `null`. `goto` refuses that outright now, which is how this was found before it could produce a
+  // row asserting an empty request list about a page it never opened.
+  await openSite(w1, '/chat');
+  await awaitAppReady(w1).catch(() => null);
+
+  // A GATE THAT HAS NOT MOUNTED YET IS NOT A GATE THAT IS NOT COMING, which is the whole reason
+  // `pin.mjs` grew a deadline: `readyState` reaches `complete` while the app is still deciding
+  // whether the device key is available. So the absence is WAITED OUT rather than sampled - the wait
+  // is expected to expire here, and an expiry that does not happen is the finding.
+  const gateCameBack = (await pollFact(() => gateUp(), { timeoutMs: 15000, everyMs: 400 })).ok;
+  const persistedAfter = JSON.parse((await evaluate(w1, VAULT_PERSISTED)) ?? '{}');
+  const whereAfter = await evaluate(w1, WHERE_AFTER);
+  const conversations = await conversationCount();
+  const askedOnBoot = requestsSince(w1, PIN_ENDPOINTS, beforeBoot);
+
+  const rep = ignoringExpectedLog(await report(observer), PAST_THE_GATE);
+  const verdict =
+    controlAsked.length === 0
+      ? 'INCONCLUSIVE'
+      : !gateCameBack && askedOnBoot.length === 0 && conversations > 0
+        ? 'PASS'
+        : 'FAIL';
+  const gated = gate(verdict, { W1: rep });
+
+  record(row.id, gated.verdict, {
+    ...gated.detail,
+    scenario: row.what,
+    persisted,
+    closedMs,
+    startedMs,
+    gateCameBack,
+    persistedAfter,
+    whereAfter,
+    askedOnBoot,
+    // The positive control, and the reason `askedOnBoot: []` is evidence rather than a blind probe.
+    controlAsked,
+    conversations,
+    dirt: dirtOf(rep),
+    why:
+      controlAsked.length === 0
+        ? 'the unlock that set the opt-in sent no PIN request either, so this row cannot see traffic and an empty boot list means nothing'
+        : undefined,
+    failedBecause: [
+      gateCameBack
+        ? `the gate came back after a restart the opt-in exists to survive, with the vault ${
+            !persistedAfter.vault
+              ? 'GONE from localStorage - something emptied it on the way'
+              : 'still in localStorage - it was there and was not used'
+          }`
+        : null,
+      askedOnBoot.length ? `the vault path asked the server anyway: ${askedOnBoot.join(' ')}` : null,
+      !gateCameBack && conversations === 0
+        ? 'no gate and no conversations either - the client came up unlocked over a store it could not open'
+        : null,
+    ].filter(Boolean),
+  });
+}
+
+const RUNNERS = { 1: row1, 2: row2, 3: row3, 8: row8, 9: row9, 11: row11 };
 await RUNNERS[opt('row', '')]();
 
 // ── the teardown, which is the next row's inherited state ────────────────────────────────────────

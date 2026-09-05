@@ -1153,3 +1153,28 @@ Environment and tooling traps that belong to no one subsystem. Each cost a run.
   ALWAYS backgrounded - which is what makes (2) reachable in the first place.
 - MiConnect 2FA remembers the device for 8 h; if the CAS page stalls after Esup Auth accepts, go BACK and reload rather than looping.
 - Portail: SPA (`ssr = false`); `data-export/` holds PII, never commit. Sky UI French keeps accents and straight apostrophes.
+
+- **A FORCED KILL IS NOT "CLOSING THE APPLICATION", AND EVERYTHING WRITTEN IN THE SECONDS BEFORE IT
+  IS ROLLED BACK.** Chrome commits `localStorage` and IndexedDB to their LevelDB stores
+  asynchronously, so `Stop-Process -Force` - which gives it no shutdown at all - loses whatever has
+  not reached disk, and the relaunched browser comes up on the last state that happened to be
+  flushed. PIN-9 recorded **FAIL twice against a product that was right**: the client was brought
+  through the encryption gate with "stay signed in" ticked, the vault was read back out of
+  `localStorage` a moment later (`persist: "true"`, blob and wrap key both present), and the browser
+  was killed **1 ms** after that - it came back with the flag at a value from a previous run and no
+  vault at all. On the identical sequence with Chrome's own `Browser.close`: everything present, no
+  gate, four conversations, `PASS`. **So a crash and a quit are different gestures and a check picks
+  by what it MEANS** - `killBrowser` is a crash (TAB-3's subject, and the right instrument there),
+  `closeBrowser` is a user quitting, and **anything asking what SURVIVES a restart must use the
+  second or it is measuring the flush interval.** The general form is older than this rig: a
+  measurement taken at time T is not evidence about a process that was not allowed to finish, and an
+  asynchronous commit is exactly such a process. [cross-client-testing](cross-client-testing.md),
+  `tools/cross-client-harness/launch.mjs`
+
+- **A NAVIGATION HELPER THAT IS RELATIVE TO THE CURRENT DOCUMENT MUST REFUSE A DOCUMENT THAT HAS
+  NONE.** The harness's `goto(cx, path)` built its URL from `location.origin`, which is the STRING
+  `null` on `about:blank` - so a browser that had just started navigated to `null/chat`, and
+  `document.readyState === 'complete'` was already true of the blank page, so every assertion after
+  it read a document the check never opened. A row asserting "no request was sent" would have passed
+  on it perfectly. It refuses now and names `openSite`, the one navigation that spells `SITE`
+  instead of reading an origin. Found while writing PIN-9, before it could produce a verdict.

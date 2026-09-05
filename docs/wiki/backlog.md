@@ -3872,6 +3872,40 @@ feature is therefore coherent with E2EE - it removes a password prompt, not a re
 
 ## Tooling
 
+### P3 - the one-shot history audit can never discharge a group that needed nothing, so it re-lists the same groups on every connection (observed 2026-09-05)
+
+Read out of PIN-9's report, which is clean and carries the two lines as `notable`:
+
+```
+[HISTORY_RECONCILE] no sweep - away 0 d, inside what the server keeps; auditing 7 group(s) that never have been
+[HISTORY_RECONCILE] reconciliation pass complete - 0/7 group(s) asked in 0 ms
+```
+
+`groupsOwingAudit` returns every local group not in the device's audit record, and
+`noteGroupsAudited` is called with *"the groups a probe actually LEFT for"* - `reconcileGroup`'s
+`true`. That is deliberate and its docstring says why: a group whose members were all offline was
+DEFERRED, not audited, and marking it would discharge an audit that never happened.
+
+**But `reconcileGroup` returns `false` for at least six different outcomes, and only some of them
+are deferrals.** `isDistributionGroup` (a group that can never be audited at all),
+`recentlyAsked` (the coalescing window - it was audited, moments ago), and *"every reachable member
+has stated its coverage - nothing more to ask"* are all COMPLETED work; *"no probe sender yet"* and
+*"could not reach the service"* are genuine deferrals. The boolean cannot tell them apart, so a
+group in the first set is never marked and is listed again on every connection for the life of the
+device. This is the file's own rule about durable state turned on itself: **a column is only
+evidence for the question it was written to answer**, and `askedGroups` was written to answer *"did
+a probe leave"*, not *"was this group audited"*.
+
+`0 ms` for seven groups says these seven exited at one of the two guards before the first `await`,
+so the likeliest population is distribution groups - which would make the line permanent and
+un-dischargeable rather than merely repetitive. **That is the measurement this item owes**, and it
+is one log line away: name the reason per group, then decide between excluding
+`isDistributionGroup` from `groupsOwingAudit` and returning an outcome instead of a boolean.
+
+**Why it is P3 and not P2:** nothing is left unrepaired - the groups that owe a real audit still get
+one, which is the direction that matters. What it costs is a pass and two log lines on every
+connection for ever, and **a line its reader learns to skip is the one that hides the next defect**.
+
 ### P3 - "unlock the PIN through the CLI" is written three times in the rig, and all three had to be fixed separately (measured 2026-09-05)
 
 `phone.mjs:unlockPin`, `archive/notif7.mjs:unlock` and `archive/tab236.mjs:unlock` are the same

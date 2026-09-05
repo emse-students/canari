@@ -94,13 +94,14 @@ export async function settle(cx, deadlineMs = 30_000) {
  * @param {object} cx an attached CDP client for `port` - the thing the proof is read from
  * @param {number} port the client's CDP port
  * @param {string} account the account key as spelt in `test-accounts.json`
- * @param {{match?: string, value?: string, timeoutMs?: number, deadlineMs?: number}} [opts]
+ * @param {{match?: string, value?: string, stay?: boolean, timeoutMs?: number, deadlineMs?: number}} [opts]
  *   `match` picks the target by url when a client holds several - `tauri.localhost` for the phone.
  *   `value` sends that string INSTEAD of the account's PIN - see below.
+ *   `stay` ticks "stay signed in", which is what PERSISTS the device key vault across a restart.
  * @returns {Promise<{verdict: 'unlocked'|'LOCKED'|'UNDECIDED', said: string}>}
  */
 export async function unlockClient(cx, port, account, opts = {}) {
-  const { match = null, value = null, timeoutMs = 120_000, deadlineMs = 30_000 } = opts;
+  const { match = null, value = null, stay = false, timeoutMs = 120_000, deadlineMs = 30_000 } = opts;
 
   // A DELIBERATELY WRONG PIN IS STILL AN UNLOCK ATTEMPT, and it needs the same post-condition.
   //
@@ -122,6 +123,11 @@ export async function unlockClient(cx, port, account, opts = {}) {
   const args = [PIN_SCRIPT, '--port', String(port), '--account', account];
   if (match) args.push('--match', match);
   if (value) args.push('--value', value);
+  // THE OPT-IN IS A GESTURE, NOT A STORAGE WRITE. PIN-9 asks whether a browser that was CLOSED comes
+  // back without a server round trip, and the vault it depends on is written by the app when the box
+  // is ticked - so the row ticks the box a person ticks, rather than seeding the key itself and
+  // measuring its own fixture.
+  if (stay) args.push('--stay');
 
   let said;
   try {

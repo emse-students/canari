@@ -242,11 +242,30 @@ if (hasField) {
 }
 
 
+// THE OPT-IN IS TICKED BY THE HANDLE THE COMPONENT CARRIES, AND A MISS IS FATAL.
+//
+// It used to read `input[type=checkbox]` over the whole document, which is a POSITION rather than an
+// identity, and it reported `null` and carried on when it found nothing - so a caller that asked for
+// the vault path would have got the session path and a log line nobody reads. `--stay` is a GESTURE
+// the caller requested: not performing it is a broken instrument, and it exits like one.
+//
+// `.click()`, never a write to `.checked`: the box is `bind:checked`, so a value set on the element
+// leaves Svelte's state holding what it had - the same trap `FILL_SHORT_CHANGE` documents. And it is
+// only clicked when it is OFF, because the component defaults it to on and a second click would turn
+// the opt-in off while reporting that it had been asked for.
 if (has('stay')) {
   const box = await evaluate(
     cx,
-    `(function(){var c=document.querySelector('input[type=checkbox]'); if(!c) return null; if(!c.checked) c.click(); return c.checked;})()`,
+    `(function(){var c=document.querySelector('input[data-stay-signed-in]'); if(!c) return null; if(!c.checked) c.click(); return c.checked;})()`,
   );
+  if (box !== true) {
+    console.error(
+      `[pin] --stay was asked for and the opt-in was not ticked (found: ${box}). ` +
+        'The gate on screen has no [data-stay-signed-in] box - a biometric device hides it, and so ' +
+        'does the keypad shape. This client cannot answer a question about the vault path.',
+    );
+    process.exit(3);
+  }
   console.log(`[pin] stay-signed-in = ${box}`);
 }
 
