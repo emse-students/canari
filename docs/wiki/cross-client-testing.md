@@ -309,16 +309,16 @@ this board could have caught it is on
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| MULTI-1 | Send from W1: appears on A1 as an OWN message | `+A1` | `pending` |
-| MULTI-2 | Read on A1: read state reflected on W1 | `+A1` | `pending` |
-| MULTI-3 | A1 enrolled AFTER W1 has history | `+A1` | `pending` |
-| MULTI-4 | Revoke A1 from W1, then A1 acts (= device check L) | `+A1` | `pending` |
-| MULTI-5 | W1 + A1 + a second W1 tab on one channel | `+A1` | `pending` |
-| MULTI-6 | A1 offline a long while, 20 messages, then returns | `+A1` | `pending` |
-| MULTI-7 | Every device of both users reaches `active` in `dm_device_group_memberships`, and **no row names a placeholder identity** | `W1 W2` | `pending` |
+| MULTI-1 | Send from W1: appears on A1 as an OWN message | `+A1` | `PASS` 2026-09-07 15:29, clean - **re-run owed**: `multi.mjs` changed after this verdict (MULTI-2 and MULTI-5 fixes), so `rows.mjs` will report the instrument moved |
+| MULTI-2 | Read on A1: read state reflected on W1 | `+A1` | `PASS` 2026-09-07 16:14, clean - **and this row measured nothing at all until that day.** It matched a conversation by DISPLAY NAME and read `r.unreadCount`; a stored conversation carries neither (a DM's `name` is the `<userA>::<userB>` pair id, and unread is DERIVED from `readWatermarks`), so it recorded `VACUOUS` citing the wrong one of its two reasons. Rewritten onto the watermark: unread accrued 2 in 1020 ms, cleared 2032 ms after the read on A1, watermark advanced, W1 never opened it. Its `w1NeverOpenedIt` guard was fault #29 backwards - it read `document.body`, where a parked client shows the message as its tile SUBTITLE - and now reads the pane |
+| MULTI-3 | A1 enrolled AFTER W1 has history | `+A1` | `SKIPPED` 2026-09-07 - a device enrolled after the fact does not exist, and a first login on a new device is SETUP-4 2FA, a one-off human action ([owed to the user](backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks)) |
+| MULTI-4 | Revoke A1 from W1, then A1 acts (= device check L) | `+A1` | `SKIPPED` 2026-09-07 - this IS device check L (WP-DEV-PANEL-1) in [device-verification](device-verification.md), owed on hardware, and the revoke costs A1 its enrolment |
+| MULTI-5 | W1 + A1 + a second W1 tab on one channel | `+A1` | `PASS-DIRTY` 2026-09-07 16:20 - **the product answer is right on all three clients** (one copy each) and the sibling was PROVEN a follower. Two dirt classes were removed at the source, not forgiven: the sibling tab boots at the PIN gate and this row clicked straight through it (`ERROR`, `dialogsOpen: ["PIN de chiffrement"]`, 15:30), and A1's `runCallback` exception came from `openChannel` reloading the phone - which it no longer does. The follower-tab and snapshot-collision lines ARE forgiven per row, and asserted. What remains is three `GET /api/users/<id> -> 404` on every client, which is `badHttp` and cannot be forgiven by design: [backlog](backlog.md) |
+| MULTI-6 | A1 offline a long while, 20 messages, then returns | `+A1` | `PASS-DIRTY` 2026-09-07 15:34 - **re-run owed** on the changed `multi.mjs` |
+| MULTI-7 | Every device of both users reaches `active` in `dm_device_group_memberships`, and **no row names a placeholder identity** | `W1 W2` | `PASS` 2026-09-07 15:39, server clean - **and it had never run once**: `roster.mjs` imported `psql` from `ssh.mjs`, which does not export it, so MULTI-7/8/9/10 all died at module load. `imports-selftest.mjs` now gates that whole class |
 | MULTI-8 | A second device enrolled while the peer is OFFLINE reaches `active` within the budget, **without a reinstall** | `W1 W2` `+W3` | `pending` |
 | MULTI-9 | With one device `pending`, the peer's messages are **still delivered once it activates** - and the sender is not told they were | `W1 W2` `+W3` | `pending` |
-| MULTI-10 | **Whole-population invariant**: no membership `pending` past the budget and none under a placeholder identity, ACROSS THE DATABASE | none | `pending` |
+| MULTI-10 | **Whole-population invariant**: no membership `pending` past the budget and none under a placeholder identity, ACROSS THE DATABASE | none | `FAIL` 2026-09-07 15:36 - 293 memberships (227 active / 66 pending), **0 placeholder identities**, 5 starved (group,user) pairs with no active device. The 66 pending-past-budget rows all sit on devices the gateway is not talking to, which the row excludes from the count against the product. Read with queue item 11 in `CLAUDE.md` |
 
 ## 13 - LIFE - Android lifecycle
 

@@ -1532,6 +1532,69 @@ hypotheses differ, and the stall will already have been measured.
 
 ## Communities and permissions
 
+### P2 - a channel's MLS tree names THREE identities the server has never heard of, and opening the channel asks for each of them by name (measured on the local estate 2026-09-07)
+
+**This is the instrument the placeholder question was waiting for.** `CLAUDE.md` queue item 3 says
+"whether a LEAF is left in the MLS tree only a member's CLIENT can say" - and a client now says it,
+on demand, in under a minute.
+
+**The reproduction, deterministic.** Open `Canari Test Venue/general` on a client whose profile cache
+is cold. Exactly three `GET /api/users/<64-hex> -> 404` follow, the same three ids on every client,
+including a client of a DIFFERENT ACCOUNT. Nothing else in the run produces them: entering
+`/communities` alone produces none, and a page load produces only the two REAL lookups (the account
+and its peer). `openChannel` is the trigger.
+
+**What was ruled out, and how.**
+
+| Hypothesis | Measurement | Verdict |
+| --- | --- | --- |
+| Stale membership rows on the server | `NOT EXISTS` against `users` on `channel_members`, `channel_messages`, `dm_group_members`, `dm_device_group_memberships`, `key_package`, `association_members`, `push_token`, `revoked_device` | **0 orphans in every one** |
+| The ids are group / channel / device ids | `groupId` is a UUID and refuses the cast; a device id is 82 chars and prefixed (`web-…`); a user id is 64 hex | **they are USER ids** |
+| The server hands them over on the wire | every response body finishing during `openChannel` scanned for the three literals | **no response contains one** |
+| They sit in plaintext client storage | every `localStorage` key and every row of every IndexedDB store on the client, scanned for the literals | **not present** |
+| They are read watermarks of departed members | every conversation's `readWatermarks` keys compared against them | **zero matches** |
+
+The first row was re-measured with `NOT EXISTS` on purpose: the original sweep used
+`NOT IN (SELECT id FROM users)`, which is silently never true if any `id` is NULL, and a zero from it
+would have been an artefact. `users` has no NULL id and both forms agree - **a predicate that could
+have been vacuous was checked for vacuity before its zero was believed.**
+
+**So the identities reach the client from something ENCRYPTED AT REST** - the only class left after
+the table above, and the only one a scan for a plaintext literal cannot see. Two things in that class
+name user ids: the MLS group state (a surviving leaf) and a message payload (a reaction, a read-by
+list). **The entry does not choose between them**, because the measurements so far cannot: what is
+established is that three correctly-shaped user identities are held locally, asked for by name on
+every cold channel open, and absent from the entire database. Read with the
+sibling P2 "an inviter that dies between sending a Welcome and registering the joiner leaves a member
+in the MLS tree with no server-side membership": that entry has the same shape and a different cause,
+and neither has a repair.
+
+**WHICH CALLER ASKS IS OPEN, AND THE ONE SUSPICION IS DELIBERATELY LEFT UNPROVEN.**
+`resolveUserDisplayName` logs `[DISPLAYNAME] no such user …` on a 404 and caches the label for the
+session, so the question is asked once. In MULTI-5's captured dirt that line is ABSENT - W1a's
+`unexplained` bucket held two lines and neither was it, `watch.mjs` has no rule that would claim it
+(`BENIGN_HTTP` forgives only `/avatar`), and `stores/user.ts` is the only builder of
+`GET /api/users/<id>` in the frontend. That points at a caller which takes a 404 and says nothing,
+which would break "every swallowed branch logs" in the exact place that would have named this defect
+earlier. **It is NOT established.** Two attempts to catch the line live failed for an INSTRUMENT
+reason, not an application one: after a `Page.reload` the channel row is not yet clickable, so
+`openChannel` threw `the row never became aria-current` before anything could be resolved, and a
+`Runtime.enable` issued after the reload captured no console at all. The next attempt owes
+`readyAfterReload` before the click, and `Runtime.enable` before the load.
+
+Candidates already read, none of them yet excluded by measurement: `MessageReactions.svelte` and
+`MessageInfoTooltip.svelte` both resolve raw user ids from DECRYPTED payload (a reaction and a
+read-by list), which would explain "not on the wire and not in plaintext storage" as well as an MLS
+leaf does - but both go through `resolveUserDisplayName`, so both SHOULD log. Whatever asks either
+logs and the capture is at fault, or does not and is the second defect; nothing here may assume
+which until one run says so.
+
+**What it costs the campaign meanwhile.** These three 404s are `badHttp`, which
+`ignoringExpectedLog` deliberately cannot forgive - a row may forgive a LINE, never a failed request
+- so every channel row on this estate is capped at `PASS-DIRTY` until this is closed. That is the
+correct behaviour and must not be softened to get a green board.
+
+
 ### Question - does an invitation into a community notify somebody the inviter has never spoken to? (user, 2026-09-05)
 
 Verbatim: *"Inviter dans communaute sans avoir discussion prealable : notification ?"*

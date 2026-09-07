@@ -2349,6 +2349,15 @@ export function logcatReport(lines, label = 'A1') {
     // The same six buckets `dirtOf` reads, so a phone report drops into `gate()` unchanged. The two
     // that cannot exist here are present and empty on purpose: an absent key would read as "this
     // instrument does not check that", which is a different claim from "it found none".
+    //
+    // `warnings` JOINED THEM ON 2026-09-07, AND ITS ABSENCE WAS NOT COSMETIC. This report already
+    // claimed empty-but-present as its rule and then omitted the one bucket `ignoringExpectedLog`
+    // reads unconditionally (`rep.warnings.filter`), so passing a phone report to it threw
+    // `Cannot read properties of undefined` - which means NO ROW HAS EVER BEEN ABLE TO FORGIVE AN
+    // EXPECTED NATIVE LINE. A row whose premise is a cold boot could only stay dirty. Nothing else
+    // reads it here (logcat has no warn level of its own that survives classification), so it is
+    // empty for the same reason the two above are.
+    warnings: [],
     errors,
     severe,
     exceptions: [],
@@ -2601,6 +2610,37 @@ export function ignoringExpectedRefusal(rep, expected) {
  *   renders and BOTH timestamp stamps the app writes are stripped first, so `^` anchors work here
  *   exactly as they do in the classifier's own lists
  */
+/**
+ * What a phone says when it comes back from the dead - NOT a classifier rule, and that is the point.
+ *
+ * Every one of these lines must keep breaking `clean` for a row that did not ask for a cold boot: a
+ * `Initialising MLS...` in the middle of a steady run is a client that restarted when nothing told
+ * it to, and an FCM pre-injection where no push was sent is the visible end of something else. So
+ * this is a CONSTANT a row passes to `ignoringExpectedLog` BY NAME, never a list the classifier
+ * applies on its own - the standing rule that a disposition for expected noise is per row, and that
+ * a list the runner never names is the same as no list.
+ *
+ * It exists because five rows (LIFE, HEAL, NOTIF, MULTI-6 and the killed half of NOTIF-7) provoke
+ * exactly the same eight sentences, and five private copies of them is how one drifts and stops
+ * matching without anybody noticing.
+ *
+ * THE FAILURE SPELLINGS ARE DELIBERATELY NOT HERE. `fcmCache.ts` writes four other lines -
+ * `Cache read failed`, `Entry skipped (missing fields)`, `Injection failed id=` and the
+ * `Injection done: n/m` summary - and each is a different answer from the success this forgives.
+ * The per-entry needle is anchored on the whole `id= group= type=` shape for that reason.
+ */
+export const PHONE_COLD_BOOT = [
+  'Initialising MLS...',
+  '[Push] FCM token registered successfully',
+  '[Push] Token and locale unchanged, skip backend registration',
+  'message(s) to pre-inject from the FCM cache',
+  new RegExp('^\\[FCM_CACHE\\] .* id=[0-9a-f]+ group=[0-9a-f]+ type='),
+  // The native half - the push handing its frame to a foreground that has taken the MLS state. It
+  // says "no fallback, no worker" in as many words, so it is a HANDOFF and not a repair.
+  'tryDecrypt: foreground took over while this push waited',
+  'push yielded to the foreground, which holds this frame',
+];
+
 export function ignoringExpectedLog(rep, needles) {
   // THE SAME TEXT EVERY LIST IS TESTED AGAINST - see the comment over `t` in `report`, written after
   // one list silently compared a different string from the others and every `^`-anchored rule in it

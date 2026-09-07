@@ -157,13 +157,24 @@ Decided with the user, not to be re-litigated.
   ladder accepting nothing short of `PASS` comes AFTER the ladder is finished (user, 2026-08-26) -
   so a dirty verdict is a row on the second pass, never a blocker on the first.
 - **The order the rungs are owed in, once a device exists**, is not the ladder's order: the `+A1`
-  rows first; then **HEAL-REVOKE-1 to -4, which have NO RUNNER and are what actually closes the open
-  P1**; then the ungated re-runs of HEAL-NEW-1 and -3; then every DEL and MULTI cell, because both
-  runners have CHANGED since their verdicts were taken; then LIFE and NOTIF. CALL, CORRUPT and PIN
-  have no runner at all.
-- **A defect is fixed and pushed the moment it is found.** Prod is the test server, so the fix is
-  verified RUNNING, which is the only thing this campaign is for. Consequence accepted: every deploy
-  invalidates the loaded bundle, so `reload.mjs` runs again after each one.
+  rows first; then HEAL-REVOKE, which is what actually closes the open P1; then the ungated re-runs
+  of HEAL-NEW-1 and -3; then every DEL and MULTI cell, because both runners have CHANGED since their
+  verdicts were taken; then LIFE and NOTIF. **CALL and CORRUPT are the only phases with no runner**,
+  and CALL is held off by `CALLS_ENABLED = false` rather than by missing work.
+  **NEVER STATE A COVERAGE COUNT HERE - ASK `bun archive/run.mjs --list`.** Every count this bullet
+  has ever carried went false without anyone noticing: it said HEAL-REVOKE had no runner while
+  `archive/healrevoke.mjs` was registered and answering seven rows, and it said PIN had none while
+  `archive/pinrows.mjs` implemented six - the latter true of the GAUGE, because the phase's
+  `scripts: []` in `checks.mjs` made `run.mjs` print "NO COVERAGE" for a phase whose runner existed
+  (registered 2026-09-07). A sentence that repeats an instrument's own output is not a second
+  witness to it.
+- **A defect is fixed the moment it is found, and it is verified RUNNING** - which is the only thing
+  this campaign is for. **What "running" means changed on 2026-09-03 and this bullet said the old
+  thing until 2026-09-07**: the target is the LOCAL estate (line 15 of this page), so a push deploys
+  NOTHING the rig can see and waiting for CD proves nothing about the build under test. What
+  invalidates the loaded bundle now is a rebuild or a `bun run dev` save, and `bundle.mjs` is what
+  measures which one the clients are holding; `reload.mjs` still follows it. Pushing is still owed -
+  a merged fix is not a shipped fix - but it is no longer the step that makes the fix measurable.
 - **Then EVERY check the fix could touch, however remotely, is re-run - err wide.** Verbatim: *"quand
   tu fixes quelque chose, il faut refaire tous les tests qui peuvent etre touches de pres ou de loin
   par ce que tu as fait, vois large"*. A narrow re-run is a guess about a blast radius nobody
@@ -189,10 +200,17 @@ Decided with the user, not to be re-litigated.
 - **NOTHING NAVIGATES THE PHONE ANY MORE, AND THE ONE EXCEPTION SAYS SO.** `goto` refuses A1 unless
   the caller passes `{ relaunch: 'why' }`, because replacing the document re-locks the PIN *and*
   breaks Tauri's in-flight IPC callbacks - which is what MUT-18's `runCallback` dirt was
-  (methodology rule 21). `openChannel` is the last holder of that opt-in: there is no click path to
-  `/communities` on the phone yet, so a phone verdict inside a CHANNEL check that goes dirty on a PIN
-  modal or a `runCallback` exception is the RIG, not the app. Writing that click path removes the
-  last A1 reload from the campaign.
+  (methodology rule 21). **THE CHANNEL CLICK PATH IS WRITTEN, 2026-09-07, and the sentence this
+  bullet used to carry was never true.** It said "there is no click path to `/communities` on the
+  phone yet", so every channel row paid a full page load, a PIN re-lock and the `runCallback`
+  exception - and A1 has TWO `a[href="/communities"]`: the collapsed rail at 0x0, FIRST in DOM
+  order, and the bottom nav at 109x64, plainly on screen. `RESOLVE`'s CSS branch was a bare
+  `querySelector` with no hit test, so the rig aimed at the rail and concluded the phone had no
+  navigation. Both halves are fixed: the branch now prefers a match clickable at its own centre, and
+  `reachCommunities` in `chat.mjs` is the ONE implementation both callers use. The bottom nav is not
+  mounted inside a conversation (`+layout.svelte`, `isMobileConvoOpen`), so parking first is a
+  PRECONDITION it asserts. **The surviving A1 relaunch is `notif7.mjs`'s**, whose reason is its own
+  subject; `comm1`, `comm4` and `comm5` pass BROWSERS, where this refusal never applied.
 - **The phone runs the assets bundled into its APK.** A wire-protocol change reaches the browsers the
   moment CD is green and reaches A1 only through a new build. Either state the fleet is mixed and say
   which branch each A1 row is reading, or rebuild before the device rungs - never report an A1 verdict
@@ -257,6 +275,13 @@ P2. It sits close to the stopping side - a socket that dies makes the client rec
 
 ### What the rest of the ladder costs, measured 2026-08-24
 
+> **`bun archive/run.mjs` WITH NO ARGUMENT IS THE AUTHORITY FOR THESE COUNTS, AND IT HAS CONTRADICTED
+> THIS TABLE.** On 2026-09-07 the MULTI row below still read *"zero coverage by declaration"* while
+> the phase had TEN scripts and ten unanswered rows - a fully armed phase nobody ran, because the
+> design page said there was nothing to run. The three phases that really carry no instrument are
+> **CALL, CORRUPT and PIN**, and the tool prints `<< NO COVERAGE` beside exactly those. Read it
+> before believing any cell here.
+
 The bullet above says the empty phases get their runners written as the ladder reaches them. This is
 what that bill actually is, counted from the board's rows against `checks.mjs`'s `PHASES` - so it is a
 measurement and not an estimate, and it is re-countable in two `grep`s. **Rungs 9 to 18 carry 129
@@ -270,7 +295,7 @@ Whoever plans a session on this should read the third column, not the first.
 | 9 COMM | 25 | 25 | 0 | fully armed, and armed for the first time only now the phone answers: 4 of the 25 need A1 (`PHONE_SCRIPTS`) |
 | 10 DEL | 10 | 10 | 0 | fully armed, and this row claimed one runner of ten until 2026-08-25 - a count left behind by its own phase. `del1.mjs` covers DEL-1 and `del.mjs --only N` covers the other nine, DEL-8 last because it rewinds a ratchet. Eight of the ten are already `PASS 1/1` on the board; what DEL owes is RE-RUNS (DEL-1 on its rewrite, DEL-10 on the deployed fix, DEL-8 never run), not runners |
 | 11 TAB | 8 | 8 | 0 | fully armed 2026-08-25. TAB-1 was RE-SCOPED to write it: half its stated subject (title/badge) does not exist in the product, and the signal that does exist is a web `Notification` no DOM probe can see. TAB-3b decomposes the cold start into launch/render/unlock/queue, because the 77.7 s the board records is unattributable as a single total - and has no row behind it in `results.ndjson` |
-| 12 MULTI | 6 | 0 | 6 | zero coverage by declaration |
+| 12 MULTI | 10 | 10 | 0 | **fully armed, and the 2026-08-24 count said the opposite** - `multi.mjs --only 1..6` plus `roster.mjs --row 10/7/8/9`, the four membership-table rows added 2026-08-28. Ten rows, ten scripts, and not one verdict until 2026-09-07: the phase was skipped on this page's own word |
 | 13 LIFE | 8 | 6 | 2 | LIFE-1, and LIFE-5 which is a HUMAN check by design - it needs the unlock pattern after a reboot, so it belongs on [device-verification](device-verification.md) and will never have a runner |
 | 14 NOTIF | 21 | 5 | 16 | `notif.mjs` answers 4/9/10 and `notif7.mjs` answers 7/7b; the other sixteen have nothing. **AND A ROW HERE MUST SAY WHICH BUILDER IT MEASURES** (2026-09-07): a KILLED app is notified by `CanariFirebaseMessagingService`, a BACKGROUNDED one by `tauri-plugin-notification` from the WebView, because a backgrounded app keeps its socket and ACKs the frame so no push is ever sent. They differ in style, quick actions and tap target, which makes NOTIF-6c unsatisfiable as written (no quick-reply button exists on the plugin's notification), NOTIF-7/-7c a FAIL, and NOTIF-11/-12 silent about the backgrounded path - the whole table is in [backlog](backlog.md) |
 | 15 CALL | 20 | 0 | 20 | the largest single hole on the ladder, and the only rung whose subject (WebRTC media) no existing runner touches at all |

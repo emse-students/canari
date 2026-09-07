@@ -241,14 +241,11 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    rows that watch a responder heal one have no window left and need a group the device cannot
    self-serve ([backlog](docs/wiki/backlog.md)).
 2. **P1 - A DEVICE REPLACES ITS WHOLE PREKEY BATCH ON EVERY CONNECTION, AND THAT CHURN GROWS
-   `mls.bin`** - P1 for the 48-second checkpoint it feeds, NOT because pools run dry. **Measured
-   2026-09-07, both estates: half the old headline is refuted** - the pool is FULL at rest (prod 437
-   of 614 devices at exactly 50, ZERO below 6), and one device's 50 all carry ONE timestamp to the
-   microsecond, which is the churn. `last_resort` is load-bearing for **32 devices**, not the normal
-   path. **CAUSE STILL OPEN**; #393's guard names it and nobody has seen which line it prints
-   ([backlog](docs/wiki/backlog.md)).
-3. **P1 - a PLACEHOLDER held a member's seat**; whether a LEAF is left in the MLS tree only a
-   member's CLIENT can say. [backlog](docs/wiki/backlog.md#p1---the-placeholder-is-gone-from-prod-what-it-may-have-left-in-the-mls-tree-is-not-answered).
+   `mls.bin`** - P1 for the checkpoint it feeds, not because pools run dry. Measured on both estates
+   2026-09-07; CAUSE STILL OPEN ([backlog](docs/wiki/backlog.md)).
+3. **P1 - a PLACEHOLDER held a member's seat**; only a member's CLIENT can say whether a LEAF is
+   left in the MLS tree - **and 2026-09-07 one did**: zero placeholders across the local database,
+   three identities the clients ask for that it has never held ([backlog](docs/wiki/backlog.md)).
 4. **FIXED, NOT SHIPPED - SIX defects that each cost a rejoining device its history**, one of them
    the instrument's. HEAL-REVOKE re-run 2026-09-06, every row `unmet: []`, four `PASS-DIRTY` on the
    SAME single line - the outbox hole, filed and not forgiven

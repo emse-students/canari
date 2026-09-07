@@ -151,6 +151,12 @@ export const PHASES = {
   NOTIF: {
     title: "notifications",
     scripts: [
+      // 1b FIRST, AND IT WAS MISSING FROM THIS LIST UNTIL 2026-09-07 - the exact fault the paragraph
+      // above describes, committed again one entry later. `notif.mjs` handles `1b`, the board names
+      // NOTIF-1b, and the phase ran six of seven rows while announcing the phase. It is the P1 case
+      // too: a BACKGROUNDED phone, the state a device is in most of the day, and the only row here
+      // whose notification comes from the WebView rather than from a push.
+      "notif.mjs 1b",
       "notif.mjs 4",
       // 4b IMMEDIATELY AFTER 4, because it is the same gesture with the one precondition that makes
       // an unread-driven dismissal look correct removed - reading the two verdicts side by side is
@@ -336,7 +342,27 @@ export const PHASES = {
     ],
     needs: ["W1", "W2", "A1"],
   },
-  PIN: { title: "the encryption PIN", scripts: [], needs: ["W1", "W2"] },
+  PIN: {
+    title: "the encryption PIN",
+    // REGISTERED 2026-09-07, AND IT WAS THE PHASE ITSELF THAT WAS INVISIBLE, NOT THE ROWS. This
+    // entry read `scripts: []` while `archive/pinrows.mjs` already implemented six invocations, so
+    // `run.mjs` printed "PIN 0 script(s) << NO COVERAGE" and the campaign page copied that gauge
+    // into prose as a statement about the campaign. A runner nobody registers is the same defect as
+    // a runner nobody wrote, except that it also lies about itself.
+    //
+    // ORDER IS THE COST ORDER, not the row order: 1, 3 and 11 leave the client exactly as they
+    // found it, 8 cuts the server underneath the gate, 2 spends the wrong-PIN budget and 9 CLOSES
+    // THE BROWSER and reopens it. `pinrows.mjs` leaves W1 unlocked whichever row ran.
+    scripts: [
+      "pinrows.mjs --row 1",
+      "pinrows.mjs --row 3",
+      "pinrows.mjs --row 11",
+      "pinrows.mjs --row 8",
+      "pinrows.mjs --row 2",
+      "pinrows.mjs --row 9",
+    ],
+    needs: ["W1", "W2"],
+  },
 };
 
 /**
