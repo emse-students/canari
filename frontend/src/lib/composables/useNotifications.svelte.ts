@@ -8,7 +8,7 @@ import { notifNav } from '$lib/stores/notifNav.svelte';
 import { setTabRinging } from '$lib/stores/tabIndicator';
 import { settings } from '$lib/stores/settingsStore.svelte';
 import { isTauriRuntime } from '$lib/utils/openExternal';
-import { systemNotificationsBlocked } from '$lib/utils/systemNotificationsBlocked';
+import { systemNotificationsBlockedAnnounceOnce } from '$lib/utils/systemNotificationsBlocked';
 import {
   isPermissionGranted,
   sendNotification,
@@ -541,16 +541,7 @@ export function useNotifications() {
     // burns the per-conversation window and prints a line about a decision that was never live.
     // Guarded on `isTauriRuntime` because on native the plugin's permission is the authority and
     // the web value says nothing - the Tauri branch below is left exactly as it was.
-    if (systemNotificationsBlocked()) {
-      if (announcedBrowserPermission !== 'denied') {
-        announcedBrowserPermission = 'denied';
-        console.log(
-          '[NOTIF] Not raised, and nothing will be this session - notification permission is "denied", ' +
-            'which only the user can change in site settings. Said once; later messages are silent.'
-        );
-      }
-      return;
-    }
+    if (systemNotificationsBlockedAnnounceOnce()) return;
 
     const now = Date.now();
     const lastAt = lastNotifAtByConv.get(convKey) ?? 0;

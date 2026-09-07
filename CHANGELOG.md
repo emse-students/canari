@@ -32,7 +32,16 @@ plugin's permission is the authority and the web value says nothing about it, so
 it would have silenced notifications on both mobile platforms.
 
 **The predicate is shared rather than copied** - two call sites needed the same answer and a copy in
-each is two statements of one fact with nothing comparing them. Its test pins the three cases that
+each is two statements of one fact with nothing comparing them.
+
+**AND ZERO LINES WAS ALSO WRONG, WHICH THE RE-RUN IS WHAT CAUGHT.** The first version of this fix
+returned early in `useMessaging` before `sendSystemNotification` could announce anything, so the row
+went from 33 `[NOTIF]` lines to NONE - and "notifications are refused" became indistinguishable from
+"this code never ran", which is the exact silence the decision line was added to remove. Asking and
+announcing are therefore ONE call (`systemNotificationsBlockedAnnounceOnce`): splitting them into a
+pure predicate plus a "remember to log it" companion is the same shape as the defect this whole seam
+is about, and it had already claimed a victim in the fix for it. One line per session, said by
+whichever guard arrives first. Its test pins the three cases that
 make it subtle: `default` is not blocked, Tauri is not blocked even when the web value says
 `denied`, and an engine with no Notification API at all keeps its own separate line.
 

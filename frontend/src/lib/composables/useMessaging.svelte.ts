@@ -12,7 +12,7 @@ import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { SvelteMap, SvelteDate } from 'svelte/reactivity';
 import { getToken } from '$lib/stores/auth';
 import { fromHex } from '$lib/utils/hex';
-import { systemNotificationsBlocked } from '$lib/utils/systemNotificationsBlocked';
+import { systemNotificationsBlockedAnnounceOnce } from '$lib/utils/systemNotificationsBlocked';
 import {
   sendChatMessage,
   addReaction,
@@ -390,7 +390,7 @@ export function useMessaging() {
     // could never happen - 12 messages, 33 `[NOTIF]` lines, measured on HEAL-REVOKE-9. The refusal is
     // said ONCE by `sendSystemNotification`, so silence here is now attributable to that one line
     // rather than to nothing. `default` is not blocked and still narrates: asking is real there.
-    if (systemNotificationsBlocked()) return;
+    if (systemNotificationsBlockedAnnounceOnce()) return;
     // THE DECISION LINE, and it fires only when a notification is actually expected - the reader
     // cannot see this message land. Everything downstream of here already speaks (`[NOTIF] Raised`,
     // `Throttled`, `permission is ...`), and everything upstream is the ordinary case of a message
