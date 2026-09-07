@@ -8,7 +8,7 @@
     "build": "nest build",
     "test": "node --experimental-vm-modules --disable-warning=ExperimentalWarning node_modules/jest/bin/jest.js --passWithNoTests",
     "test:boot": "node --experimental-vm-modules --disable-warning=ExperimentalWarning node_modules/jest/bin/jest.js --config ./jest-boot.json --runInBand",
-    "smoke": "node scripts/smoke-test.mjs",
+    "smoke": "bun scripts/smoke-test.mjs",
     "lint": "oxlint -c ../../.oxlintrc.nest.json .",
     "lint:fix": "oxlint -c ../../.oxlintrc.nest.json --fix .",
     "format": "oxfmt -c ../../oxfmt.json --write \"src/**/*.ts\"",

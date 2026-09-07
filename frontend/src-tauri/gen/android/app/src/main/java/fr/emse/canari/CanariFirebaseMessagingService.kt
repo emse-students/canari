@@ -28,6 +28,7 @@ import androidx.work.WorkRequest
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import org.json.JSONArray
@@ -118,6 +119,23 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * exists. Flip both in the same commit, and restore USE_FULL_SCREEN_INTENT in
          * AndroidManifest.xml with them - Play gates that permission on the app being a calling
          * app, exactly as App Review gates the iOS `voip` background mode.
+         *
+         * IT ALSO DECIDES WHETHER A SILENT PUSH IS DECRYPTED AT ALL, which is a much larger effect
+         * than the ring it was written for. A silent `type=message` frame can produce nothing: it
+         * shows no notification by definition, it writes no `mls.bin` - the read-only push path
+         * says in its own header that it never does, and `decryptProto` discards commits - and it
+         * writes no FCM cache, because the silent return happens first. **The one and only consumer
+         * of its plaintext is call signalling.**
+         *
+         * WHAT DECRYPTING ONE ANYWAY COST, on a Mi 9T with an 8 MB store, 2026-09-07: every message
+         * to this device arrives as TWO frames, the visible one and the other device's read
+         * watermark, and each is 10.7 seconds of Argon2 and an 8 MB read on the single push lane
+         * that every other message queues behind. NOTIF-11 sent three messages six seconds apart;
+         * the third notified 127 seconds after the first, seven seconds after the row's window had
+         * closed. Half that lane was frames that could not produce anything.
+         *
+         * So flipping this back on restores real work, not just a ring - and
+         * `pushSilentDecrypt.test.ts` fails if this and `features.ts` ever disagree.
          */
         private const val CALLS_ENABLED = false
 
@@ -213,6 +231,21 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * the concurrent Welcome push has joined the group (or while it holds MlsStateLock).
          * Avoids showing a generic "Nouveau message de X" fallback.
          */
+        /**
+         * The silent-skip explains itself ONCE PER PROCESS, and then stops.
+         *
+         * It fired per message first, and a campaign row recorded it three times as unexplained
+         * dirt within a minute. It states a COMPILE-TIME CONSTANT: a line that says the same thing
+         * on every message for the life of the build is one its reader learns to skip, and the one
+         * a real defect then hides behind. Once is what a reader needs to understand why a silent
+         * push produced nothing; the second is noise.
+         *
+         * In the companion object because the service object is recreated per delivery - an
+         * instance field would reset on every push and say it once PER PUSH, which is the thing
+         * being fixed. Same reason as [MLS_PUSH_LANE].
+         */
+        private val silentSkipExplained = AtomicBoolean(false)
+
         private const val WELCOME_RACE_RETRIES = 3
 
         /** Delay between two retries (the JNI process_welcome takes ~5s; give it time). */
@@ -1468,10 +1501,27 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 }
             }
 
-            var decrypted = tryDecrypt(queuedMessageId, groupId, inlineProto)
-            if (decrypted == null && !queuedMessageId.isNullOrEmpty()) {
+            // NOTHING A SILENT FRAME'S PLAINTEXT IS READ FOR IS ENABLED, SO IT IS NOT READ.
+            // The self-read dismissal above is the only thing a silent push does here, and it runs
+            // on the CLEARTEXT fields. See `CALLS_ENABLED` for the measurement and for what the
+            // calls revival has to flip.
+            if (silent && !CALLS_ENABLED) {
+                if (silentSkipExplained.compareAndSet(false, true)) {
+                    Log.d(TAG, "FCM silent -> its plaintext has no consumer while calls are off; not decrypting (said once per process)")
+                }
+                return@runSerializedWithWakeLock
+            }
+
+            var outcome = tryDecrypt(queuedMessageId, groupId, inlineProto)
+
+            // ONLY `Refused` CARRIES THE DIAGNOSIS THIS LADDER ANSWERS. It used to run on any empty
+            // result, and the comment on its LOCAL branch states the premise it was resting on -
+            // "the only plausible reason for a direct failure is an epoch gap". A frame that
+            // decrypted and had nothing to render has no epoch gap, and a frame the foreground took
+            // is not this thread's business at all. See `PushDecrypt` for what that cost.
+            if (outcome is PushDecrypt.Refused && !queuedMessageId.isNullOrEmpty()) {
                 val locality = groupLocality(groupId)
-                Log.d(TAG, "tryDecrypt failed group=${groupId.take(8)} locality=$locality")
+                Log.d(TAG, "tryDecrypt refused group=${groupId.take(8)} locality=$locality")
                 if (locality == GroupLocality.UNKNOWN) {
                     // NOTHING WAS ESTABLISHED, SO NOTHING IS RETRIED HERE. Both recoveries below
                     // are answers to a diagnosis, and there is none: the commit catch-up costs a
@@ -1483,7 +1533,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // The group exists locally: the only plausible reason for a direct failure is an
                     // epoch gap (a commit arrived while the app was closed). Catch-up FIRST, before
                     // any expensive Welcome-race loop that cannot help a group that is already joined.
-                    decrypted = tryDecryptWithCommitCatchup(queuedMessageId, groupId, inlineProto)
+                    tryDecryptWithCommitCatchup(queuedMessageId, groupId, inlineProto)?.let {
+                        outcome = PushDecrypt.Message(it)
+                    }
                 } else {
                     // GroupLocality.ABSENT - the epoch query ran and the group is genuinely not
                     // joined here. Welcome/message race: the concurrent Welcome push may be joining
@@ -1491,7 +1543,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // new conversation produces a real notification instead of a generic fallback,
                     // rather than showing then correcting the notification.
                     var raceAttempt = 0
-                    while (decrypted == null && raceAttempt < WELCOME_RACE_RETRIES) {
+                    while (outcome is PushDecrypt.Refused && raceAttempt < WELCOME_RACE_RETRIES) {
                         raceAttempt++
                         try {
                             Thread.sleep(WELCOME_RACE_RETRY_DELAY_MS)
@@ -1500,16 +1552,21 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                             break
                         }
                         Log.d(TAG, "tryDecrypt retry $raceAttempt/$WELCOME_RACE_RETRIES (group-join race) group=${groupId.take(8)}")
-                        decrypted = tryDecrypt(queuedMessageId, groupId, inlineProto)
+                        outcome = tryDecrypt(queuedMessageId, groupId, inlineProto)
                     }
                     // The group may have appeared during the race (a Welcome queued ahead of this
                     // one on the MLS lane). Last-resort catch-up before falling back to the worker.
-                    if (decrypted == null && groupLocality(groupId) == GroupLocality.LOCAL) {
+                    if (outcome is PushDecrypt.Refused && groupLocality(groupId) == GroupLocality.LOCAL) {
                         Log.d(TAG, "group appeared during welcome-race, attempting catch-up group=${groupId.take(8)}")
-                        decrypted = tryDecryptWithCommitCatchup(queuedMessageId, groupId, inlineProto)
+                        tryDecryptWithCommitCatchup(queuedMessageId, groupId, inlineProto)?.let {
+                            outcome = PushDecrypt.Message(it)
+                        }
                     }
                 }
             }
+
+            // Everything below asks for the MESSAGE, and there is exactly one outcome that has one.
+            val decrypted: DecryptedMessage? = (outcome as? PushDecrypt.Message)?.msg
 
             // Call signaling over MLS (WP-XP-5). Invite -> ring (fallback for pre-WP-XP-5 callers
             // that did not hit POST /api/calls/ring; deduped per callId with the cleartext ring).
@@ -1531,7 +1588,16 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             if (decrypted == null && silent) {
                 // Silent push: no notification must be shown. Do not log the misleading worker/fallback
                 // messages that are only meaningful for visible pushes.
-                Log.d(TAG, "Silent push decryption failed group=${groupId.take(8)} -> returning silently")
+                //
+                // AND IT SAYS WHICH OF THE THREE IT WAS. "decryption failed" was printed over a
+                // frame that had decrypted perfectly well, which is how the campaign carried this
+                // as unattributable dirt on five push rows for two days.
+                val why = when (outcome) {
+                    is PushDecrypt.NothingToRender -> "nothing to render in it"
+                    is PushDecrypt.Yielded -> "the foreground holds it"
+                    else -> "it could not be decrypted"
+                }
+                Log.d(TAG, "Silent push group=${groupId.take(8)} shows nothing - $why")
                 return@runSerializedWithWakeLock
             }
 
@@ -1552,7 +1618,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // row - `notifiedInMs: 6568`, `undecryptedInShade: []`, so the shade got the real text
             // and never the fallback. `showNotification` would have suppressed the fallback anyway;
             // returning here is what stops the work and the accusation, not just the display.
-            if (decrypted == null && MainActivity.isInForeground) {
+            // READ FROM THE OUTCOME, NOT RE-DERIVED. This asked `MainActivity.isInForeground` again,
+            // which answers a question about NOW over a decision the decrypt took up to ten seconds
+            // earlier - so an app that had gone back to the background in between would have been
+            // sent down the fallback path for a frame it had already handed over.
+            if (outcome is PushDecrypt.Yielded) {
                 Log.d(TAG, "push yielded to the foreground, which holds this frame - no fallback, no worker")
                 return@runSerializedWithWakeLock
             }
@@ -1566,7 +1636,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 ?: run {
                     // Insufficient catch-up (no commit, below the floor, or group not joined yet):
                     // enqueue the worker to retry on the next cycle.
-                    if (!queuedMessageId.isNullOrEmpty()) {
+                    //
+                    // ONLY FOR A REFUSAL. A visible push whose plaintext held nothing renderable
+                    // still owes the user the generic notification below - there IS a message - but
+                    // a retry cannot help it: the frame decrypted, and the worker would decrypt the
+                    // same bytes into the same unrenderable plaintext while reaching for `mls.bin`
+                    // as a third engine.
+                    if (outcome is PushDecrypt.Refused && !queuedMessageId.isNullOrEmpty()) {
                         val workRequest = OneTimeWorkRequestBuilder<MlsBackgroundWorker>()
                             .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, WorkRequest.MIN_BACKOFF_MILLIS, TimeUnit.MILLISECONDS)
@@ -1582,7 +1658,14 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // The self-read dismissal already happened above, on the cleartext fields, whether
                 // or not this frame decrypted. All that is left here is to state that a silent push
                 // shows nothing.
-                Log.d(TAG, "FCM silent -> MLS state updated, no notification shown")
+                //
+                // IT SAID "MLS state updated", WHICH IS NOT TRUE AND NEVER WAS: `background.rs`
+                // states in its own header that the read-only push paths never persist `mls.bin`,
+                // and `decryptProto` discards commits. A log line asserting a write that does not
+                // happen is worse than no line - it is the one somebody reads while looking for why
+                // the state is behind. Reachable only when calls are on, since the skip above
+                // returns first.
+                Log.d(TAG, "FCM silent -> nothing to show for a silent frame, and no state was written")
                 return@runSerializedWithWakeLock
             }
 
@@ -2036,21 +2119,78 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         return true
     }
 
+    /**
+     * WHAT A PUSH DECRYPT ACTUALLY ANSWERS - four outcomes that a nullable message collapsed into one.
+     *
+     * `tryDecrypt` returned `DecryptedMessage?`, so FIVE different answers arrived at the caller as
+     * the same `null`: the crypto refused, the frame decrypted and carries nothing to render, the
+     * foreground engine took the frame, the state was unreadable, the proto could not be fetched.
+     * The recovery ladder below reads that null and states its premise out loud - *"the group exists
+     * locally: the only plausible reason for a direct failure is an epoch gap"* - which is true of
+     * exactly one of them.
+     *
+     * MEASURED ON NOTIF-11, 2026-09-07, AND IT IS WHAT MAKES THAT ROW FAIL. Every message to this
+     * device arrives twice: a visible push and a silent companion frame. The silent one DECRYPTS
+     * (`reason=plaintext-not-renderable`, which `background.rs` returns only after
+     * `process_incoming_message` has succeeded), carries nothing to show, and was then run through
+     * the whole epoch-gap ladder: `groupLocality` loads the 8 MB `mls.bin` to read an epoch, the
+     * catch-up loads it AGAIN to ask the backend for commits, the backend answers **0 commits since
+     * epoch 139** - which `mls_group_info` had said all along - and the frame is finally dropped with
+     * `Silent push decryption failed`. **Thirty-two seconds of MLS work per message, on a frame that
+     * had nothing wrong with it**, all of it serialised on the one push lane. Message 1 notified at
+     * 09:14:26 and message 2 at 09:16:26; the row's window closed long before message 3.
+     *
+     * So the distinction is carried from where it is KNOWN. `background.rs` already names each
+     * refusal; this is the type that keeps the name until the decision is made.
+     */
+    private sealed interface PushDecrypt {
+        /** An application message, ready to notify with. */
+        class Message(val msg: DecryptedMessage) : PushDecrypt
+
+        /**
+         * The frame decrypted and there is nothing to render - a commit or proposal applied, or a
+         * plaintext with no renderable body.
+         *
+         * **NO CATCH-UP CAN HELP THIS AND NEITHER CAN THE WORKER.** The read-only push path never
+         * persists `mls.bin` (`background.rs` says so in its own header), so the on-disk state is
+         * untouched, there is no epoch gap to close, and retrying will produce the same
+         * unrenderable plaintext. A visible push still owes the user a generic notification; a
+         * silent one owes nothing at all.
+         */
+        object NothingToRender : PushDecrypt
+
+        /**
+         * The foreground engine holds this frame - see `foregroundTookOver`.
+         *
+         * Read from the FACT rather than re-derived: the caller used to re-read
+         * `MainActivity.isInForeground` after the fact, which answers a question about NOW over a
+         * decision taken up to ten seconds earlier.
+         */
+        object Yielded : PushDecrypt
+
+        /**
+         * Nothing could be decrypted - the crypto refused, the state was unreadable, the proto could
+         * not be fetched, or the lock was held. **The only outcome the recovery ladder can help**,
+         * and the only one that owes the worker a retry.
+         */
+        object Refused : PushDecrypt
+    }
+
     private fun tryDecrypt(
         queuedMessageId: String?,
         groupId: String,
         inlineProto: String?,
-    ): DecryptedMessage? {
+    ): PushDecrypt {
         if (queuedMessageId == null) {
             Log.w(TAG, "tryDecrypt: queuedMessageId absent -> abort")
-            return null
+            return PushDecrypt.Refused
         }
 
         // Load the push context (file read) before the lock - read-only, thread-safe.
         val ctx = MlsContextLoader.loadPushContext(this)
         if (ctx == null) {
             Log.e(TAG, "tryDecrypt: push_context.json absent or invalid -> abort")
-            return null
+            return PushDecrypt.Refused
         }
 
         // Fetch the proto BEFORE acquiring MlsStateLock: fetchProtoFromBackend can take
@@ -2059,7 +2199,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val protoB64: String = inlineProto
             ?: fetchProtoFromBackend(queuedMessageId, ctx)
                 .also { if (it == null) Log.e(TAG, "tryDecrypt: fetchProtoFromBackend failed") }
-            ?: return null
+            ?: return PushDecrypt.Refused
 
         // Acquire the lock only for mls.bin + Argon2/JNI (~3-5s max).
         // tryLock may throw InterruptedException if the thread is interrupted by Android
@@ -2069,18 +2209,18 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         } catch (e: InterruptedException) {
             Thread.currentThread().interrupt()
             Log.e(TAG, "tryDecrypt: thread interrupted during tryLock MlsStateLock: ${e.message}")
-            return null
+            return PushDecrypt.Refused
         }
         if (!lockAcquired) {
             Log.w(TAG, "tryDecrypt: MlsStateLock not acquired after 5s -> abort (another thread is decrypting)")
-            return null
+            return PushDecrypt.Refused
         }
         try {
-            if (foregroundTookOver("tryDecrypt")) return null
+            if (foregroundTookOver("tryDecrypt")) return PushDecrypt.Yielded
             val stateBytes = MlsContextLoader.loadMlsState(this)
             if (stateBytes == null) {
                 Log.e(TAG, "tryDecrypt: mls.bin absent -> abort")
-                return null
+                return PushDecrypt.Refused
             }
             Log.d(TAG, "tryDecrypt: MLS state loaded (${stateBytes.size} bytes), userId=${ctx.userId} deviceId=${ctx.deviceId}")
             return decryptProto(
@@ -2290,10 +2430,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         groupId: String,
         protoB64: String,
         deviceKeyB64: String? = null,
-    ): DecryptedMessage? {
+    ): PushDecrypt {
         return try {
             val cipherBytes = Base64.decode(protoB64, Base64.DEFAULT)
-            val keyB64 = deviceKeyB64?.takeIf { it.isNotEmpty() } ?: return null
+            val keyB64 = deviceKeyB64?.takeIf { it.isNotEmpty() } ?: return PushDecrypt.Refused
             val jsonStr = nativeDecryptMessageWithKey(stateBytes, keyB64, userId, deviceId, groupId, cipherBytes)
             val json = JSONObject(jsonStr)
             if (!json.optBoolean("ok", false)) {
@@ -2310,21 +2450,37 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 //
                 // Branching on a TOKEN the producer chose, never on prose - the distinction is made
                 // where it is known, and a sentence is a distinction exactly one call site makes.
-                when (val reason = json.optString("reason", "unspecified")) {
-                    "control-frame" ->
+                //
+                // AND THE TOKEN DECIDES THE OUTCOME, NOT JUST THE LOG LEVEL. `control-frame` and
+                // `plaintext-not-renderable` are both returned by `background.rs` only AFTER
+                // `process_incoming_message` succeeded, so neither is an epoch gap and neither can
+                // be helped by a commit catch-up or a worker retry - which is what they were both
+                // put through, at 32 seconds of MLS work each. See `PushDecrypt.NothingToRender`.
+                return when (val reason = json.optString("reason", "unspecified")) {
+                    "control-frame" -> {
                         Log.d(TAG, "decryptProto: control frame applied - state advanced, nothing to render")
-                    else ->
+                        PushDecrypt.NothingToRender
+                    }
+                    "plaintext-not-renderable" -> {
+                        Log.d(TAG, "decryptProto: decrypted, nothing renderable in it - no catch-up is owed")
+                        PushDecrypt.NothingToRender
+                    }
+                    else -> {
                         Log.w(TAG, "decryptProto: no message to show, reason=$reason")
+                        PushDecrypt.Refused
+                    }
                 }
-                return null
             }
             val type = json.optString("type", "text")
             // Call signaling (WP-XP-5) legitimately has an empty text ("call_control"); every
             // other type without text is unrenderable -> null (generic fallback path).
             val isCall = type == "call_invite" || type == "call_control"
-            val text = json.optString("text").takeIf { it.isNotEmpty() || isCall } ?: return null
+            // `ok` with no text is the same fact as `plaintext-not-renderable`: it decrypted and
+            // there is nothing to draw. It was a `null` too, and inherited the same wasted ladder.
+            val text = json.optString("text").takeIf { it.isNotEmpty() || isCall }
+                ?: return PushDecrypt.NothingToRender
             Log.d(TAG, "decryptProto: success type=$type -> \"${text.take(60)}\"")
-            DecryptedMessage(
+            PushDecrypt.Message(DecryptedMessage(
                 text      = text.take(200),
                 messageId = json.optString("messageId"),
                 sentAt    = json.optLong("sentAt", System.currentTimeMillis()),
@@ -2338,13 +2494,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 callId    = json.optString("callId").takeIf { it.isNotEmpty() },
                 callEnded = json.optBoolean("callEnded", false),
                 hasVideo  = json.optBoolean("hasVideo", false),
-            )
+            ))
         } catch (e: UnsatisfiedLinkError) {
             Log.e(TAG, "decryptProto: native library not loaded: ${e.message}")
-            null
+            PushDecrypt.Refused
         } catch (e: Exception) {
             Log.e(TAG, "decryptProto: exception: ${e.message}")
-            null
+            PushDecrypt.Refused
         }
     }
 

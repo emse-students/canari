@@ -2178,7 +2178,15 @@ export function logcatReport(lines, label = 'A1') {
     // notification must go (`CanariFirebaseMessagingService` 1214-1224, 1311-1316). NOTIF-4 asserts
     // exactly that dismissal - and then landed `PASS-DIRTY` on 2026-08-22 because its own success
     // path was unnamed here: the classifier knew the SHOWING half and not the CANCELLING half.
-    ['fcm-silent', /^FCM silent -> MLS state updated, no notification shown$/],
+    // BOTH SHAPES OF "a silent frame shows nothing". The first is the ordinary one now: a silent
+    // frame's plaintext has exactly one consumer, call signalling, and calls are held off - so it
+    // is not decrypted at all, which is 10.7 s of Argon2 and an 8 MB read NOT spent on the lane
+    // the next message is queued behind (NOTIF-11, 2026-09-07). It says so ONCE PER PROCESS,
+    // because it states a compile-time constant and a per-message copy of that is noise - this
+    // row recorded three of them before the one-shot was added. The second is the calls-enabled
+    // path, which decrypts and still shows nothing.
+    ['fcm-silent-skip', /^FCM silent -> its plaintext has no consumer while calls are off/],
+    ['fcm-silent', /^FCM silent -> nothing to show for a silent frame, and no state was written$/],
     ['fcm-cancel-self', /^FCM silent from self -> cancelling notification for group=/],
     // Both outcomes, because "no notif for" is the same decision reaching a shade that is already
     // clear - a cancel that finds nothing is not a different event, it is this one arriving second.

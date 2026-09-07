@@ -37,7 +37,26 @@ const CASES = [
   [line('D', 'CanariFCM', 'decryptProto: success type=text -> "MARKER"'), 'explained'],
   [line('D', 'CanariFCM', 'showNotification: notifId=1 messages=1 group=false'), 'explained'],
   [line('D', 'CanariFCM', 'fetchAvatar: from cache for 0000'), 'explained'],
-  [line('D', 'CanariFCM', 'FCM silent -> MLS state updated, no notification shown'), 'explained'],
+  // Both shapes of "a silent frame shows nothing": the skip, which is the ordinary path while
+  // calls are off and says so once per process, and the calls-enabled path that decrypts and
+  // still shows nothing. The old wording claimed a state write that the read-only push path
+  // never performs, which is why the line itself changed rather than only this fixture.
+  [
+    line(
+      'D',
+      'CanariFCM',
+      'FCM silent -> its plaintext has no consumer while calls are off; not decrypting (said once per process)'
+    ),
+    'explained',
+  ],
+  [
+    line(
+      'D',
+      'CanariFCM',
+      'FCM silent -> nothing to show for a silent frame, and no state was written'
+    ),
+    'explained',
+  ],
   [line('D', 'CanariFCM', 'FCM silent from self -> cancelling notification for group=00000000'), 'explained'],
   [line('D', 'CanariFCM', 'cancelConversationNotification: notif removed group=00000000 id=1000'), 'explained'],
   [line('D', 'CanariFCM', 'cancelConversationNotification: no notif for group=00000000'), 'explained'],
