@@ -28,7 +28,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
-import { APP_TAB, client, evaluate, goto, markers, openConversation, send } from '../chat.mjs';
+import { APP_TAB, TILE_BY_TITLE, client, evaluate, goto, markers, openConversation, send } from '../chat.mjs';
 import { openGroup as openGroupByName } from '../groupnav.mjs';
 import { watch, report, consoleLines, gate } from '../watch.mjs';
 import { mark, record } from '../results.mjs';
@@ -115,11 +115,36 @@ console.log(`[w2] W2 opened: ${await openGroup(w2, 'W2', { navigate: true })}`);
 // marker assertion scoped by the name would match nothing and silently assert nothing, which is
 // this campaign's most-repeated harness fault. Captured here rather than at verdict time: by then
 // the page may have navigated, and a missing id would be indistinguishable from a missing marker.
+// READ FROM THE APP'S OWN ATTRIBUTE, NOT FROM THE URL.
+//
+// This scraped `location.pathname` for a UUID until 2026-09-07, and **THERE IS NO SUCH ROUTE**:
+// `frontend/src/routes/chat` is one page, and a conversation is selected inside it. So the match
+// never succeeded, on any run, and `markerReason` has been the literal string `UNRESOLVED GROUP ID`
+// every time - the marker assertion this id exists for has never once executed. The comment above
+// calls a scoped assertion that silently matches nothing "this campaign's most-repeated harness
+// fault"; this was that fault, in the file that names it.
+//
+// `data-conversation-tile` IS the group id, put there by the app, and `TILE_BY_TITLE` already
+// resolves a row to it - the knowledge existed and was not reached.
 const groupId = await evaluate(
   w1,
-  `(location.pathname.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/) || [''])[0]`
+  `(function () { var r = (${TILE_BY_TITLE})(${JSON.stringify(GROUP)}); return r.ok ? String(r.id || '') : ''; })()`
 ).catch(() => '');
-console.log(`[w2] group id ${groupId ? 'resolved from the URL' : 'NOT RESOLVED - the marker assertion cannot run'}`);
+
+// AND IT REFUSES HERE RATHER THAN AT THE VERDICT. Without the id the marker assertion asserts
+// nothing, so every later branch reasons about a post-condition nobody read - which is how a run
+// with no id at all still produced a verdict about the break. SETUP-FAILED is not a failure of the
+// app, and saying so at the point of failure is what separates "the rig could not set this up"
+// from "the app did not recover".
+if (!groupId) {
+  console.log('[w2] group id NOT RESOLVED from the conversation tile - refusing to assert on a marker nobody can find');
+  record('HEAL-W2', 'SETUP-FAILED', {
+    group: GROUP,
+    why: `no data-conversation-tile id for ${GROUP} - the awaiting-history marker is keyed by group id, so the post-condition cannot be read`,
+  });
+  process.exit(2);
+}
+console.log(`[w2] group id resolved from the conversation tile`);
 
 const baseline = mark('HW2A');
 await send(w2, baseline);
@@ -258,9 +283,8 @@ const drainDone = lines.filter((l) => /\[QUEUE\] Drain complete/.test(l)).length
 // The awaiting-history marker for THIS group, read where it actually lives. Scoped to the group
 // under test: the profile carries markers for other conversations, and a document-wide count would
 // report someone else's pending state as this check's evidence.
-const markerReason = !groupId
-  ? 'UNRESOLVED GROUP ID'
-  : await evaluate(
+// `groupId` is non-empty by construction - the run refused above without it.
+const markerReason = await evaluate(
       w1,
       `(function () {
          var k = Object.keys(localStorage).filter(function (x) {
@@ -283,6 +307,17 @@ console.log('\n[w2] --- W1 recovery lines ---');
 const w1Noise = await report({ cx: w1, label: 'W1' });
 const brokeForReal = afterRestore === afterReload;
 const recovered = gotBroken.length > 0;
+/**
+ * HOW LONG THE RECOVERY TOOK, which `breakStart` was declared for and nothing ever read.
+ *
+ * A row that says a broken group repaired itself and not how long it took reports half the answer:
+ * the campaign's bar is a repair a USER would sit through, and 3 s and 170 s are the same `true`.
+ * `seen()` waits up to 180 s, so the ceiling was already the interesting number and it was thrown
+ * away. Null when nothing arrived - a duration for a recovery that did not happen would be the
+ * wait, dressed as a measurement.
+ */
+const recoveredInMs = recovered ? Date.now() - breakStart : null;
+console.log(`[w2] recovery ${recovered ? `took ${recoveredInMs} ms` : 'never happened within the 180 s window'}`);
 /**
  * THE ASSERTION AND THE OBSERVATION, SEPARATED - they were folded into one ternary.
  *
@@ -313,6 +348,7 @@ row = record('HEAL-W2', verdict, {
   group: GROUP,
   brokeForReal,
   recovered,
+  recoveredInMs,
   lostFrame: lostFrame.length,
   markerReason,
   unknownGroupFired: unknown.length,
