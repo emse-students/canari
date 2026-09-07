@@ -63,7 +63,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | What | Kind | Where the substance is |
 | --- | --- | --- |
 | ~~UNLOCK THE CAMPAIGN PHONE~~ **DONE 2026-09-05** (`deviceLocked=0`, measured). What remains is OPTIONAL and the user asked for it: removing the pattern needs the credential, so either they clear it in Settings or it joins `test-accounts.json` like every other one. Retiring the lock costs no key material - both keystore keys are explicitly `setUserAuthenticationRequired(false)`, measured before proposing it | 1 gesture on the device | [P2 - every silent push on the phone fails to decrypt](#p1---a-backgrounded-phone-is-never-told-about-a-message-it-has-already-received-because-the-js-layer-waits-for-a-push-the-server-never-sends-measured-on-device-2026-09-05) |
-| **UNLOCK THE CAMPAIGN PHONE, AGAIN - and this time RETIRE the lock** (2026-09-07). It re-locked mid-session (`deviceLocked=1`, `trustManaged=1`, `strongAuthRequired=0x0`, `mDreamingLockscreen=true`); `wm dismiss-keyguard` is refused on a secure keyguard and no credential is in the rig by design. It cost LIFE-3 and LIFE-4 their re-runs, which were owed only their re-measurement against a classifier that had just been widened for them, and it will cost every phone row the moment the screen times out again. **Retiring the lock costs no key material** - both keystore keys are explicitly `setUserAuthenticationRequired(false)`, measured before this was first proposed on 2026-09-05 - so either the pattern is cleared in Settings or it joins `test-accounts.json` like every other credential | 1 gesture on the device, then a decision | [cross-client-testing](cross-client-testing.md) LIFE-3, LIFE-4, LIFE-5 |
+| **UNLOCK THE CAMPAIGN PHONE - THIRD TIME, AND RETIRING THE LOCK IS NOW THE ACTUAL ASK** (2026-09-08). It re-locked mid-session AGAIN, minutes after LIFE-2/3/4 had all passed on hardware, and the phase re-run that would have STAMPED those three verdicts with their APK was refused outright: *"A1 is behind the DEVICE lock screen - every fetch inside the WebView hangs and the gateway drops it, whatever the probes below say. A human must unlock the phone; `wm dismiss-keyguard` will not."* **So the cost is no longer a lost run, it is measurements that are real but under-attributed** - three good verdicts the ledger cannot tie to a build. This will repeat on every phone row the moment the screen times out. Previously 2026-09-07: it re-locked mid-session (`deviceLocked=1`, `trustManaged=1`, `strongAuthRequired=0x0`, `mDreamingLockscreen=true`); `wm dismiss-keyguard` is refused on a secure keyguard and no credential is in the rig by design. It cost LIFE-3 and LIFE-4 their re-runs, which were owed only their re-measurement against a classifier that had just been widened for them, and it will cost every phone row the moment the screen times out again. **Retiring the lock costs no key material** - both keystore keys are explicitly `setUserAuthenticationRequired(false)`, measured before this was first proposed on 2026-09-05 - so either the pattern is cleared in Settings or it joins `test-accounts.json` like every other credential | 1 gesture on the device, then a decision | [cross-client-testing](cross-client-testing.md) LIFE-3, LIFE-4, LIFE-5 |
 | set up the external uptime probe that mails - **decided 2026-09-06, mail**; the probe must hit `/api/version` AND `/api/chat-delivery-health`, never the homepage, which answered 200 through both outages | ~1 click in Cloudflare or an uptime service | [P2 - NOTHING TELLS ANYBODY PRODUCTION IS DOWN](#p2---nothing-tells-anybody-production-is-down-and-both-outages-of-2026-09-01-were-reported-by-the-user-owed-to-the-user-a-decision-then-one-click) |
 | `DEPENDABOT_ALERTS_TOKEN` - a fine-grained token with **"Dependabot alerts: read"** on this repository. The nightly alerts job has NEVER passed: it declared `security-events: read`, which is code scanning, and Dependabot alerts have no `permissions:` key at all, so `GITHUB_TOKEN` cannot read them at any setting. The job now reads this secret when it exists and fails loudly when it does not - deliberately, because an alert list nobody reads looks exactly like an empty one | 1 token, 1 secret | `.github/scripts/dependabot-alerts-report.sh`, and the 403 it now names correctly |
 | should a dev-ONLY trigger exist - today one push deploys both estates and a broken dev BLOCKS production, by design | decision | [dev.canari-emse.fr becomes a real second environment](#devcanari-emsefr-becomes-a-real-second-environment---decided-2026-08-17) |
@@ -2186,8 +2186,34 @@ persisted ratchet. But the converse is unguarded: `flushEncryptedInternal` is NO
 checkpoint that makes the ratchet durable while the marks are still in memory. Kill the page there
 and the ratchet is ahead of the ledger, which is the one direction that manufactures a false loss.
 **The fix has to bind the two: the marks belong to whatever writes the checkpoint, so that they
-become durable together in both directions.** Not attempted here - it changes the durability
-ordering of the replay and wants its own measurement.
+become durable together in both directions.**
+
+**WRITTEN 2026-09-08.** `persistCheckpoint` is the single place this device's state becomes durable,
+so it is the single place that may DECLARE something durable - and it already did exactly this for
+the send ledger (`snapshotEmitted` / `commitPersisted`). The replay's marks now get the same
+declaration: the walk registers a group the moment it marks anything (`noteReplayMarksPending`, at
+the mark rather than at the top of the walk, so a checkpoint never rewrites a set nothing touched),
+and `commitPendingHistoryMarks` drains it right after the checkpoint write lands. The end-of-walk
+thunk is NOT replaced - it stays as the case where no checkpoint fired at all.
+
+**AFTER the write, never before, and the two orderings are not symmetric** - which is the part a
+later refactor would get wrong. A ledger ahead of a ratchet SKIPS a frame whose generation was never
+spent: a message lost for good. A ratchet ahead of a ledger re-accuses a frame that was in fact read:
+noise, and a pointless reconcile ask. Only the second is survivable, so shrinking the window is the
+fix and inverting it would not be. The window that remains - a kill between the write returning and
+the declaration - is now microseconds rather than a whole archive walk, and it is the same window
+`commitPersisted` has always accepted, for the same reason.
+
+**Ten tests, two files, and the decisive one was PROVED to fail without the change** rather than
+assumed to: disarming the single registration call makes
+`history.checkpointBoundMarks.test.ts::ARE made durable by a checkpoint, with no thunk run at all`
+fail and leaves the other five green. `BaseMlsService.checkpointLedgers.test.ts` pins the seam
+itself - that the declaration happens, that it FOLLOWS the write, and that a write which THREW
+declares nothing.
+
+**What is owed is the measurement**: TAB-3b re-run on a build carrying this, and the HEAL rung
+re-run beside it, since this changes the durability ordering of every replay and not just the one
+row's.
 
 **AND THE CATCH-UP IS A TIMER, WHICH IS A SECOND FINDING THE ROW WAS BUILT TO SURFACE.** Five cold
 starts took 61 863 / 61 865 / 61 889 / 61 930 / 62 019 ms to show a message sent while the browser

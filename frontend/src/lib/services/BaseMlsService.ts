@@ -72,7 +72,7 @@ import type {
   ExternalJoinOutcome,
 } from '$lib/mls-client/IMlsService';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
-import { noteFrameConsumed } from '$lib/utils/chat/history';
+import { commitPendingHistoryMarks, noteFrameConsumed } from '$lib/utils/chat/history';
 
 /**
  * How many times {@link BaseMlsService.externalJoin} may re-read the base and resubmit.
@@ -2272,6 +2272,19 @@ export abstract class BaseMlsService implements IMlsService {
     const emitted = snapshotEmitted(this.userId);
     await this.writeCheckpoint(this.currentDeviceKeyB64);
     commitPersisted(this.userId, emitted);
+    // TWO LEDGERS, ONE WRITE, AND THE SECOND ONE WAS BOUND TO THE WRONG EVENT UNTIL 2026-09-08.
+    //
+    // The send ledger above declares what this checkpoint made durable. The history replay's marks
+    // owed exactly the same declaration and did not get it: they became durable only in the thunk at
+    // the END of the archive walk, so a checkpoint landing mid-walk - and one lands on any structural
+    // mutation, because `flushEncryptedInternal` is not gated by the bulk-ingest depth - made the
+    // ratchet durable while the marks were still in memory. A page killed there re-accuses frames it
+    // had really read. Proved by insertion order on TAB-3b: six accused row keys all sat at the END
+    // of a 3 511-entry set, so two whole runs had written nothing durable at all.
+    //
+    // AFTER the write, never before, for the reason spelt out on `commitPendingHistoryMarks`: the two
+    // orderings are not symmetric, and only "ratchet ahead of ledger" is survivable.
+    commitPendingHistoryMarks(this.userId);
   }
 
   /**

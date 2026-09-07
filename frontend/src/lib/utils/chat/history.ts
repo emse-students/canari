@@ -290,10 +290,81 @@ export function hasHistoryFrameBeenConsumed(
   return loadSeenCipherHashes(userId, groupId).has(fingerprint);
 }
 
+/**
+ * Groups whose REPLAY has marked frames that no durable write has taken yet.
+ *
+ * Distinct from {@link pendingSeenFlush}, which drains on a microtask and belongs to live delivery.
+ * A replay's marks deliberately do NOT drain on their own: they may only become durable once the
+ * ratchet advance that justifies them has been checkpointed, so they wait for a checkpoint to say so.
+ */
+const pendingReplayMarks = new Map<string, { userId: string; groupId: string }>();
+
+/**
+ * Declares that the replay has marked something for this group that is not durable yet.
+ *
+ * Idempotent - it is a `Map.set`, so the walk may call it on every mark without cost, which is
+ * exactly why it is called there rather than once at the top: registering before anything is marked
+ * would make every checkpoint write a set it did not change.
+ */
+function noteReplayMarksPending(userId: string, groupId: string): void {
+  if (!userId || !groupId) return;
+  pendingReplayMarks.set(seenHistoryKey(userId, groupId), { userId, groupId });
+}
+
+/**
+ * Makes the replay's accumulated marks durable, because a checkpoint just made their ratchet durable.
+ *
+ * ## The defect this closes, and why the end of the walk was the wrong moment
+ *
+ * The replay returns a {@link MlsReplayCommit} the caller runs AFTER the encrypted checkpoint, so the
+ * ledger can never run ahead of the persisted ratchet. That guards one direction. **The converse was
+ * unguarded**: `flushEncryptedInternal` is not gated by the bulk-ingest depth (only `persistNow` is),
+ * so any structural mutation DURING the walk lands a checkpoint that makes the ratchet durable while
+ * the marks are still only in memory. A page killed there reloads with a ratchet ahead of its ledger,
+ * the replay re-walks frames whose generation is already spent, and MLS refuses them - which the
+ * client reports as `frame never read here and unreadable for good`, the loudest line it has, for
+ * messages it received perfectly.
+ *
+ * **Insertion order proved it rather than suggesting it** (TAB-3b, 2026-09-07). The set serialises as
+ * `[...set]`, so position IS insertion order, and all six accused row keys sat at the very END of a
+ * 3 511-entry set - written by the LAST run while accusing them. Had runs 3 and 4 committed their
+ * own, those would appear earlier. They do not: **runs 3 and 4 wrote nothing durable at all, while
+ * the generations they consumed stayed consumed.**
+ *
+ * ## What binds them now
+ *
+ * The marks belong to whatever writes the checkpoint. `BaseMlsService.persistCheckpoint` calls this
+ * after its write lands, so every checkpoint carries the marks accumulated up to it, and the final
+ * thunk stays as the case where no checkpoint fired at all.
+ *
+ * ## The window that REMAINS, stated rather than papered over
+ *
+ * A kill between the checkpoint returning and this call still leaves the ratchet one step ahead. That
+ * window is now microseconds instead of a whole archive walk, and it is the SAME window
+ * `commitPersisted` accepts for the send ledger, for the same reason: **the two orderings are not
+ * symmetric.** A ledger ahead of a ratchet SKIPS a frame whose generation was never spent - a message
+ * lost for good. A ratchet ahead of a ledger re-accuses a frame that was in fact read - noise and a
+ * pointless reconcile ask. Only the second is survivable, so the commit must follow the write and
+ * cannot precede it. Shrinking the window is the fix; inverting it would not be.
+ *
+ * @param userId this device's account - marks for other accounts are never touched
+ */
+export function commitPendingHistoryMarks(userId: string): void {
+  if (!userId || pendingReplayMarks.size === 0) return;
+  const due = [...pendingReplayMarks.values()].filter((e) => e.userId === userId);
+  for (const entry of due) {
+    const key = seenHistoryKey(entry.userId, entry.groupId);
+    const set = seenCache.get(key);
+    if (set) saveSeenCipherHashes(entry.userId, entry.groupId, set);
+    pendingReplayMarks.delete(key);
+  }
+}
+
 /** @internal Drops the shared sets between Vitest cases, so one case cannot answer another's question. */
 export function resetSeenCipherCacheForTests(): void {
   seenCache.clear();
   pendingSeenFlush.clear();
+  pendingReplayMarks.clear();
   seenFlushScheduled = false;
 }
 
@@ -475,6 +546,18 @@ export async function replayConversationHistory(params: {
 
     const seenCipherHashes = loadSeenCipherHashes(userId, id);
     let seenUpdated = false;
+    /**
+     * Mark the shared set as changed, and tell the checkpoint it owes these marks a write.
+     *
+     * ONE GESTURE RATHER THAN TWO AT EIGHT CALL SITES, because "remember to register it too" is
+     * precisely the obligation that produced the defect this whole seam is about - see
+     * {@link commitPendingHistoryMarks}. A site that sets the flag and forgets the registration is a
+     * site whose marks wait for the end of the walk again, which is the behaviour being replaced.
+     */
+    const markSeenUpdated = (): void => {
+      seenUpdated = true;
+      noteReplayMarksPending(userId, id);
+    };
 
     // Per-ciphertext retry ledger: how many prior replay runs left this frame un-seen because it
     // failed with a recoverable epoch-gap / wrong-epoch. Bounds the refetch storm from frames no
@@ -679,7 +762,7 @@ export async function replayConversationHistory(params: {
         if (msg.sender_device_id && msg.sender_device_id === myDeviceId) {
           ownFramesSkipped++;
           seenCipherHashes.add(rowKey);
-          seenUpdated = true;
+          markSeenUpdated();
           advancePast(msg.id);
           continue;
         }
@@ -691,7 +774,7 @@ export async function replayConversationHistory(params: {
         // moving past it without decoding anything.
         if (seenCipherHashes.has(frameFingerprint(bytes))) {
           seenCipherHashes.add(rowKey);
-          seenUpdated = true;
+          markSeenUpdated();
           advancePast(msg.id);
           continue;
         }
@@ -722,7 +805,7 @@ export async function replayConversationHistory(params: {
       for (let workIdx = 0; workIdx < pageDecryptWork.length; workIdx++) {
         if (!batchResults[workIdx]?.ok) continue;
         seenCipherHashes.add(frameFingerprint(pageDecryptWork[workIdx].bytes));
-        seenUpdated = true;
+        markSeenUpdated();
       }
 
       for (let workIdx = 0; workIdx < pageDecryptWork.length; workIdx++) {
@@ -807,7 +890,7 @@ export async function replayConversationHistory(params: {
             // after which the stream cannot hold one. See `docs/wiki/legacy-compatibility.md`.
             ownFramesSkipped++;
             seenCipherHashes.add(rowKey);
-            seenUpdated = true;
+            markSeenUpdated();
             continue;
           }
           if (kind === 'evicted') {
@@ -819,7 +902,7 @@ export async function replayConversationHistory(params: {
             // past one line: an evicted group's whole backlog reaches here, one frame at a time.
             evictedFramesSkipped++;
             seenCipherHashes.add(rowKey);
-            seenUpdated = true;
+            markSeenUpdated();
             continue;
           }
           if (
@@ -861,7 +944,7 @@ export async function replayConversationHistory(params: {
              */
             if (seenCipherHashes.has(frameKey)) {
               seenCipherHashes.add(rowKey);
-              seenUpdated = true;
+              markSeenUpdated();
               console.debug(
                 `[History] frame already read live while this page was decrypting - not a loss (group ${id}, frame ${frameKey})`
               );
@@ -872,7 +955,7 @@ export async function replayConversationHistory(params: {
             // reconciliation is the only thing that can recover it. A false positive costs exactly
             // one comparison, which is what makes reconciling on suspicion safe.
             seenCipherHashes.add(rowKey);
-            seenUpdated = true;
+            markSeenUpdated();
             sawUnreadableFrame = true;
             // The FRAME key, not the row key: the live path's `LOST frame` line names the ciphertext,
             // and a line naming the Redis stream id instead cannot be compared with it. That is not a
@@ -945,7 +1028,7 @@ export async function replayConversationHistory(params: {
         } finally {
           if (!skipSeenHash) {
             seenCipherHashes.add(rowKey);
-            seenUpdated = true;
+            markSeenUpdated();
             advanceStreamCursor = true;
             // Frame resolved (decrypted) or given up on: drop any retry counter so it can never
             // linger and re-trigger a give-up on a later, unrelated cursor position.
