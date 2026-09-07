@@ -87,9 +87,15 @@ else
   fail "a 403 must fail: nothing looked"
 fi
 
+# WHAT THIS ARM MUST NAME CHANGED ON 2026-09-07, BECAUSE THE OLD DEMAND WAS WRONG. It required
+# the string "security-events: read" - the permission the job ALREADY declared. GITHUB_TOKEN
+# cannot read Dependabot alerts at all, there is no "permissions:" key for them, and
+# "security-events" governs code scanning and secret scanning. So the old message sent its
+# reader to a setting that was already granted, and this job had never once passed. The remedy
+# is a token, so a token is what the message owes.
 case "$(text_of "$f")" in
-  *'security-events: read'*) pass "and it names the permission that would lift it" ;;
-  *) fail "the 403 arm must name the missing permission, or nobody can act on it" ;;
+  *DEPENDABOT_ALERTS_TOKEN*) pass "and it names the token that lifts it, not a permission already held" ;;
+  *) fail "the 403 arm must name the remedy - a scoped PAT - or nobody can act on it" ;;
 esac
 
 f="$(facts notfound not-found)"

@@ -82,6 +82,7 @@ workflows need an identity the branch ruleset on `main` accepts, which `GITHUB_T
 |---|---|---|
 | `AUTOMERGE_APP_CLIENT_ID` | the App's `Iv23li...` client id | what `actions/create-github-app-token@v3` asks for |
 | `AUTOMERGE_APP_PRIVATE_KEY` | the App's private key, PEM | the only one of the two that is genuinely secret |
+| `DEPENDABOT_ALERTS_TOKEN` | a fine-grained token with **"Dependabot alerts: read"** on this repository | **NOT SET, and the nightly alerts job has therefore never passed.** Dependabot alerts have no `permissions:` key at all, so `GITHUB_TOKEN` cannot read them at any setting - `security-events: read`, which the job used to declare, is code scanning. Only a PAT or a GitHub App holding that fine-grained permission can. The job reads this secret when it exists and FAILS LOUDLY when it does not, deliberately: an alert list nobody reads looks exactly like an empty one |
 
 **The client id is not confidential** - an App's ids are readable by anyone who can see the
 installation (`gh api orgs/<org>/installations`). It is stored as a secret for consistency with the
