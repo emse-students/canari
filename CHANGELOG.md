@@ -11,6 +11,40 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - two controls that spoke an id to the only reader who needs a name, and the loop that fixing one caused
+
+`PinModal` rendered a refused unlock as a bare `<p>` in both of its shapes, and `ChangePinModal` did
+the same. An element inserted after the submit with neither `role` nor `aria-live` is one assistive
+technology has no reason to read out: a user who cannot see the screen types a PIN, hears nothing,
+and cannot learn the attempt was refused - at a gate that, by design, cannot be walked away from.
+`role="alert"` on all three sites; the sweep the entry asked for found `LoginForm` already correct.
+The instrument stops keying on `text-red-500`, a Tailwind class a restyle would have turned into a
+silent pass on every refused unlock.
+
+The group panel's remove control announced `Retirer <64 hex>` while every other cell of the same row
+rendered a resolved name - and it stayed that way because the CAMPAIGN addressed members through
+that label. It carries `data-remove-member` for the rig now and a name for a person, so neither is
+the other's hostage.
+
+Giving it a name needed a fifth copy of the eight lines that turn an id into a display name, so
+those became one: `userDisplayName` / `userDisplayNames`, with the two rules the copies encoded -
+the sync read paints first, and a `null` resolve is ignored because not knowing a name is not
+knowing there is none.
+
+**And the list form shipped an infinite loop, which is the part worth writing down.** It seeded its
+next map from its previous one, so the `$effect` depended on its own output; Svelte answers
+`effect_update_depth_exceeded`, `MainChatPage`'s `svelte:boundary` catches it, and the app does not
+crash - it renders "Impossible d'afficher cette discussion" over EVERY conversation while the
+sidebar still lists them all. GRP-1 and GRP-2 failed as `would not open after 3 attempts`, and a
+screenshot said in one look what neither verdict could. The carry-over was redundant anyway
+(`getUserDisplayNameSync` reads the cache `resolveUserDisplayName` fills), so it is gone and the
+container is a `SvelteMap` mutated in place, which cannot be reassigned into a self-dependency at
+all. **The test counts effect runs rather than waiting for that throw**: put the self-read back under
+the new container and it does NOT loop - per-key sources, and a write of an unchanged value notifies
+nobody, so it converges after one extra run. `effect_update_depth_exceeded` was a property of the
+shape, not of the defect. *One change of the input runs the effect once* holds whatever the
+container is, and it is what breaks first - 4 sync reads where 2 are owed. Measured both ways.
+
 ### Fixed - three identities "the server has never heard of" were this campaign's own fixtures
 
 A P2 had five eliminated hypotheses and no cause: opening the venue channel on a cold client

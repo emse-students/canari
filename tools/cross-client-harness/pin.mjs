@@ -300,7 +300,13 @@ const gone = `!(${GATE_EXPR})`;
 // A FRENCH LABEL IS NOT AN API, so the new predicate is the ERROR ELEMENT rather than any wording:
 // the modal renders exactly one, and its presence is the fact "the unlock was refused" independently
 // of which refusal it was. The text is then REPORTED, never matched on.
-const ERROR_IN_GATE = `document.querySelector('[role=dialog] p.text-red-500, form p.text-red-500')`;
+// THE ROLE, NOT THE COLOUR. `text-red-500` is a Tailwind class, so this used to key on a STYLE:
+// a restyle would have made every refused unlock look like a silent success. `PinModal` and
+// `ChangePinModal` carry `role="alert"` since 2026-09-07 - added because a refused unlock was
+// never announced to a screen reader, which is the same missing fact seen from the other side.
+// The class is kept as a second alternative for a client running an older bundle, and it can go
+// once no estate serves one.
+const ERROR_IN_GATE = `document.querySelector('[role=dialog] p[role=alert], form p[role=alert], [role=dialog] p.text-red-500, form p.text-red-500')`;
 const ms = await until(cx, `(${gone}) || !!${ERROR_IN_GATE}`, 25000);
 const refusal = await evaluate(cx, `(${ERROR_IN_GATE} || {}).innerText || null`);
 console.log(`[pin] settled in ${ms}ms`);

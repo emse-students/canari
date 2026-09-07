@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { resolveUserDisplayName, getUserDisplayNameSync } from '$lib/utils/users/displayName';
+  import { userDisplayName } from '$lib/utils/users/displayNames.svelte';
 
   interface Props {
     /** User ID used to resolve the display name. */
@@ -14,19 +14,13 @@
 
   let { userId, fallback, class: className = '', link = true }: Props = $props();
 
-  let displayName = $state('');
-
-  $effect(() => {
-    // First show the sync version (from cache or initial)
-    displayName = getUserDisplayNameSync(userId, fallback);
-
-    // Then resolve async to update if needed
-    resolveUserDisplayName(userId).then((resolved) => {
-      if (resolved) {
-        displayName = resolved;
-      }
-    });
-  });
+  // ONE IMPLEMENTATION, shared with every other place that turns an id into a name - see
+  // `displayNames.svelte.ts` for why the sync read comes first and why a `null` resolve is ignored.
+  const resolved = userDisplayName(
+    () => userId,
+    () => fallback
+  );
+  const displayName = $derived(resolved.current);
 </script>
 
 {#if link}
