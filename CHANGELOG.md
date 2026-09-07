@@ -11,6 +11,73 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - every message was decrypted twice on Android, and the second decrypt could not produce anything
+
+Each message to an Android device arrives as two pushes: the visible one, and the other device of
+the same account sending its read watermark. **The silent one was decrypted too, and nothing could
+ever come of it.** A silent frame shows no notification by definition; it writes no `mls.bin`,
+because the read-only push path says in its own header that it never does and `decryptProto`
+discards commits; it writes no FCM cache, because the silent return happens first. The one and only
+consumer of its plaintext is call signalling, and the whole calling surface is held off.
+
+On a Mi 9T with an 8 MB store that dead decrypt is **10.7 seconds of Argon2 and an 8 MB read**, on
+the single push lane every other message queues behind. It is skipped now, gated on the same
+`CALLS_ENABLED` the ring is - and `pushSilentDecrypt.test.ts` fails if the Kotlin copy of that
+switch and the TypeScript one ever disagree, because the calls revival flipping only one would be a
+silent half-revival rather than a build error.
+
+### Fixed - a push that decrypted perfectly spent 32 seconds asking the server to fix it
+
+The same silent frame, when it was still being decrypted, was then treated as a **decryption
+failure** - and what followed was the epoch-gap recovery ladder, whose own comment states the
+premise it rests on: *"the group exists locally: the only plausible reason for a direct failure is
+an epoch gap."*
+
+So `groupLocality` loaded the 8 MB `mls.bin` to read an epoch, the catch-up loaded it **again** to
+ask the backend for commits, the backend answered **0 commits since epoch 139** - which its own
+`mls_group_info` row had said all along - and the frame was dropped with `Silent push decryption
+failed`. Thirty-two seconds of MLS work per message, on a frame that had nothing wrong with it.
+
+**The distinction existed and was thrown away at the door.** `background.rs` had already been made
+to name each refusal - `control-frame`, `plaintext-not-renderable`, `mls-refused`, six JNI faults -
+but `tryDecrypt` returned `DecryptedMessage?`, so five different answers reached the caller as the
+same `null`: the crypto refused, the frame had nothing to render, the foreground took the frame, the
+state was unreadable, the proto could not be fetched.
+
+It returns a `PushDecrypt` now and each outcome goes where it belongs. Only `Refused` enters the
+recovery ladder, and only `Refused` enqueues the worker - a frame that decrypted would decrypt into
+the same unrenderable plaintext on a retry, while reaching for `mls.bin` as a third engine. A
+visible push still gets its generic notification, because there IS a message; a silent one gets
+nothing, and the line says which of the three reasons it was instead of accusing the crypto.
+
+`Yielded` is read from the outcome rather than by re-reading `MainActivity.isInForeground` after the
+fact - that asked a question about NOW over a decision the decrypt had taken up to ten seconds
+earlier, so an app that went back to the background in between was sent down the fallback path for a
+frame it had already handed over.
+
+**Measured end to end.** Three messages six seconds apart to a killed app: before, the first
+notified in 12 s and the third 127 s later, past the campaign row's window. The dead work is gone
+from both halves; what remains is the store size itself, which is its own P1.
+
+### Fixed - a fresh Windows clone got no git hooks at all, and the install said it had succeeded
+
+`install-husky.js` looked for a file called exactly `husky` in `node_modules/.bin`. bun and npm
+write `husky.exe` / `husky.cmd` / `husky.bunx` there, so on every Windows install the probe failed,
+the script warned into a passing install and exited 0, and `core.hooksPath` was never set - no
+formatter, no gate, on commit. It happened to be armed on this workstation from some earlier
+install, which is exactly why nobody noticed.
+
+It probes the names the platform actually writes, and it **reads `core.hooksPath` back** rather than
+trusting husky's exit code: the whole purpose of the script is one git setting, and a hook that is
+not armed says nothing on its own.
+
+### Changed - four package scripts ran under `node` in a repository whose rule is bun everywhere
+
+`frontend`'s `build`, `prepare` and `proto:gen`, and `social-service`'s `smoke`, each shelled out to
+`node` for a plain `.mjs`/`.js` utility. They run under `bun` now, verified by running them. The
+`node` invocations that remain are the ones that mean it: Jest behind `--experimental-vm-modules`,
+and `node dist/main` as the NestJS container entrypoint.
+
 ### Fixed - a backgrounded phone kept two MLS engines on one file for minutes after the app opened
 
 Android runs two MLS engines over one `mls.bin`: the WebView one, in the app, and the JNI one behind
