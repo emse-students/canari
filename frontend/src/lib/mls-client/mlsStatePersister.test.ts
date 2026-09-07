@@ -19,7 +19,6 @@ describe('createMlsStatePersister', () => {
     const persistCheckpoint = vi.fn().mockResolvedValue(undefined);
     const persister = createMlsStatePersister({
       mlsService: { persistCheckpoint } as any,
-      deviceKeyB64: '1234',
     });
     return { persistCheckpoint, persister };
   }
@@ -38,7 +37,7 @@ describe('createMlsStatePersister', () => {
     persister.persistNow();
     await persister.flush();
     expect(persistCheckpoint).toHaveBeenCalledTimes(1);
-    expect(persistCheckpoint).toHaveBeenCalledWith('1234');
+    expect(persistCheckpoint).toHaveBeenCalledWith();
   });
 
   it('writes the state ONCE per checkpoint - the platform owns where it lands', async () => {
@@ -74,7 +73,6 @@ describe('createMlsStatePersister', () => {
       .mockImplementation(() => new Promise<void>((r) => (release = () => r())));
     const persister = createMlsStatePersister({
       mlsService: { persistCheckpoint } as any,
-      deviceKeyB64: '1234',
     });
 
     persister.onBulkIngestStart();
@@ -98,7 +96,6 @@ describe('createMlsStatePersister', () => {
     const persistCheckpoint = vi.fn().mockRejectedValue(new Error('disk gone'));
     const persister = createMlsStatePersister({
       mlsService: { persistCheckpoint } as any,
-      deviceKeyB64: '1234',
     });
 
     persister.onBulkIngestStart();
@@ -157,7 +154,6 @@ describe('persistMlsStructuralCheckpoint', () => {
     const persistCheckpoint = vi.fn().mockResolvedValue(undefined);
     const persister = createMlsStatePersister({
       mlsService: { persistCheckpoint } as any,
-      deviceKeyB64: '9999',
     });
     registerMlsStatePersister(persister);
 
@@ -166,14 +162,35 @@ describe('persistMlsStructuralCheckpoint', () => {
     expect(persistCheckpoint).toHaveBeenCalledTimes(1);
   });
 
+  /**
+   * THE PERSISTER MUST NOT KNOW THE DEVICE KEY, and this is the assertion that keeps it that way.
+   *
+   * It used to take one in its config, read from `ctx.getDeviceKey()` at the single moment
+   * `setupMessageHandler` ran. Nothing rebuilds it, so an in-session PIN change left it holding the
+   * key the account had stopped using: `performPinChange` re-sealed the MLS state under the new key
+   * and the very next checkpoint - any commit, any bulk-ingest end - overwrote that blob with one
+   * sealed under the old one. The next launch could not open its own state and the user was told
+   * their PIN had been changed on another device, on the device that changed it.
+   *
+   * Passing NO argument is the fix and the test: a call site that cannot pass a key cannot pass a
+   * stale one, and `BaseMlsService` - the object whose state is being sealed - is the one owner.
+   */
+  it('asks for a checkpoint without naming a key, so it cannot name a stale one', async () => {
+    const persistCheckpoint = vi.fn().mockResolvedValue(undefined);
+    const persister = createMlsStatePersister({ mlsService: { persistCheckpoint } as any });
+    persister.persistNow();
+    await persister.flush();
+    expect(persistCheckpoint).toHaveBeenCalledWith();
+    expect(persistCheckpoint.mock.calls[0]).toEqual([]);
+  });
+
   it('falls back to the platform checkpoint when no persister is registered', async () => {
     const persistCheckpoint = vi.fn().mockResolvedValue(undefined);
 
     await persistMlsStructuralCheckpoint({
       mlsService: { persistCheckpoint } as any,
-      deviceKeyB64: '1111',
     });
 
-    expect(persistCheckpoint).toHaveBeenCalledWith('1111');
+    expect(persistCheckpoint).toHaveBeenCalledWith();
   });
 });

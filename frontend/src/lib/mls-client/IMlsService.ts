@@ -302,7 +302,7 @@ export interface IMlsService {
    * of its send ratchet is now durable. That count is read before the write and committed after it,
    * and the ordering is what makes a restored snapshot repairable at all - see `sendRatchetLedger`.
    */
-  persistCheckpoint(deviceKeyB64: string): Promise<void>;
+  persistCheckpoint(): Promise<void>;
   /**
    * Reloads the persisted MLS state from disk into the in-memory engine (C2). Android-only:
    * while the app is backgrounded, a native JNI engine (Welcome/send/worker) may advance

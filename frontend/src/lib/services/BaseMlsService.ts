@@ -208,6 +208,25 @@ export abstract class BaseMlsService implements IMlsService {
   protected userId: string = UNRESOLVED_USER_ID;
   protected deviceId: string = UNRESOLVED_DEVICE_ID;
 
+  /**
+   * The key this device's state is sealed with RIGHT NOW - session state, not a call parameter.
+   *
+   * It used to be neither: every persistence call site carried its own copy, taken from whatever
+   * scope it was written in, and one of those copies outlives the value it copied. The state
+   * persister is the clearest case - `setupMessageHandler` builds it once per login, from
+   * `ctx.getDeviceKey()` read at that moment, and nothing rebuilds it. Change the PIN mid-session
+   * and `performPinChange` re-seals the state under the new key, updates the vault and the
+   * keystore, and leaves that persister holding the OLD one; the next checkpoint - any commit, any
+   * bulk-ingest end - overwrites the correctly sealed blob with one sealed under a key this device
+   * has stopped using. On the next launch the state will not open, and the account is told its PIN
+   * was changed on another device: on the very device that changed it.
+   *
+   * So there is ONE owner, and it is the object whose state is being sealed. {@link init} sets it,
+   * {@link changeDeviceKey} moves it, and {@link persistCheckpoint} takes no key at all - a caller
+   * cannot pass a stale one if it cannot pass one.
+   */
+  private currentDeviceKeyB64 = '';
+
   // ── Delivery REST client ──────────────────────────────────────────────────
   protected readonly delivery: MlsDeliveryApi;
 
@@ -372,6 +391,9 @@ export abstract class BaseMlsService implements IMlsService {
     opts?: MlsInitOptions
   ): Promise<void> {
     if (this.initPromise) return this.initPromise;
+    // BEFORE the impl, not after: `_initImpl` itself checkpoints on several of its recovery paths
+    // (fresh start, identity rotation), and those writes need the key too.
+    this.currentDeviceKeyB64 = deviceKeyB64;
     const p = this._initImpl(userId, deviceKeyB64, state, opts).then(() =>
       // BEFORE ANYTHING CAN SEND, and inside the promise every caller already awaits: a send racing
       // the repair would be encrypted at the very generation the repair exists to move past.
@@ -1852,7 +1874,7 @@ export abstract class BaseMlsService implements IMlsService {
     // sends that, from the peers' side, this device has never made.
     resetSendRatchetLedger(this.userId);
     await this.loadStateWithKey(deviceKeyB64, undefined);
-    await this.persistCheckpoint(deviceKeyB64);
+    await this.persistCheckpoint();
     // Deregister the abandoned device so other members stop generating Welcomes for a key package
     // our fresh state no longer holds (NoMatchingKeyPackage). Best-effort: a revoked id is already
     // gone server-side, and a mismatch must not block on the network.
@@ -2237,10 +2259,23 @@ export abstract class BaseMlsService implements IMlsService {
    * exists to close. Leaving the pairing to each call site would be the eighteen-call-sites lesson
    * of `sendMessage`, re-learnt on the seam that guards the ratchet instead of the one that moves it.
    */
-  async persistCheckpoint(deviceKeyB64: string): Promise<void> {
+  async persistCheckpoint(): Promise<void> {
     const emitted = snapshotEmitted(this.userId);
-    await this.writeCheckpoint(deviceKeyB64);
+    await this.writeCheckpoint(this.currentDeviceKeyB64);
     commitPersisted(this.userId, emitted);
+  }
+
+  /**
+   * Re-seals this device's state under a new key, and MOVES the key every later checkpoint uses.
+   *
+   * Concrete here for the same reason {@link generateKeyPackage} is: the platforms differ only in
+   * how they re-encrypt, and the bookkeeping either happens for both or is forgotten by one. The
+   * field moves only AFTER the impl resolves - a re-seal that threw leaves the durable blob under
+   * the old key, so the old key is what still describes it.
+   */
+  async changeDeviceKey(newDeviceKeyB64: string): Promise<void> {
+    await this.changeDeviceKeyImpl(newDeviceKeyB64);
+    this.currentDeviceKeyB64 = newDeviceKeyB64;
   }
 
   /**
@@ -2291,14 +2326,14 @@ export abstract class BaseMlsService implements IMlsService {
     // checkpoint is what closes the ledger: it commits `persisted = emitted` through the pairing
     // above. A failure leaves the deficit standing, which repairs itself on the next load.
     if (repaired > 0) {
-      await this.persistCheckpoint(deviceKeyB64).catch((e) =>
+      await this.persistCheckpoint().catch((e) =>
         console.warn('[MLS] Checkpoint after the ratchet burn failed:', String(e).slice(0, 160))
       );
     }
   }
 
   abstract saveState(deviceKeyB64: string): Promise<Uint8Array>;
-  abstract changeDeviceKey(newDeviceKeyB64: string): Promise<void>;
+  protected abstract changeDeviceKeyImpl(newDeviceKeyB64: string): Promise<void>;
   protected abstract generateKeyPackageImpl(deviceKeyB64: string): Promise<Uint8Array>;
   abstract publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void>;
   abstract createGroup(groupId: string): Promise<void>;

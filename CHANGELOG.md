@@ -11,6 +11,47 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - the state persister remembered a device key the account had stopped using, so a PIN change locked a device out of its own state
+
+`setupMessageHandler` built the MLS state persister once per login, from `ctx.getDeviceKey()` read
+at that instant, and nothing ever rebuilds it. Change the PIN in the same session and
+`performPinChange` re-seals the MLS state under the new key, rewrites every stored message, updates
+the vault and the keystore - and leaves that persister holding the OLD key. The next checkpoint,
+which is any commit or any bulk-ingest end, overwrites the correctly sealed blob with one sealed
+under a key this device no longer has. On the next launch the state does not open, is classified
+`sealed`, and the account is offered the "your PIN was changed on another device" recovery **on the
+very device that changed it** - recoverable only by re-entering the PIN the user just replaced, and
+otherwise a fresh start that leaves every group to be rejoined.
+
+**The device key was session state threaded by value through every call site that persists**, and a
+copy taken at login outlives the value it copied. So there is one owner now: `BaseMlsService` holds
+the key its own state is sealed with, `init` sets it, `changeDeviceKey` moves it - concrete on the
+base class, delegating to a per-platform `changeDeviceKeyImpl`, so the bookkeeping cannot happen on
+one platform and be forgotten on the other - and **`persistCheckpoint()` takes no key at all**. A
+caller that cannot pass a key cannot pass a stale one; the persister's config no longer has a field
+for one, and `mlsStatePersister.test.ts` asserts the call is made with an empty argument list.
+
+### Fixed - the last MLS writer that did not go through the persister, and the stale-write line four campaign rows carried as dirt
+
+Every path that persists MLS state routes through `MlsStatePersister`, which serialises its own
+flushes - except key-package publication, which did `save_state` followed by `saveMlsState`: its own
+capture, racing `persistNow` and `persistMlsStateAfterMutation`. Two captures in flight, one durable
+slot, and the write-if-newer guard drops the loser. That is
+`[MLS] Skipping stale MLS state write (vN < stored vN+1)`, and it is the guard WORKING - nothing is
+lost, one checkpoint is missed. Measured across five runs on 2026-09-06: **exactly one occurrence in
+four of them, off by exactly one, absent from the fifth** - two writers meeting once, which is once
+per connection because that is how often key packages are published.
+
+**The overlap is deleted rather than ordered.** Ordering the two would leave two captures able to
+interleave; routing through the persister leaves one, and `inFlightEncrypted` means it cannot race
+itself. The four pre-captured snapshots are gone with it: every branch - worker swap installed,
+worker snapshot refused, worker failed, main thread - leaves the private halves in the live client,
+so a capture taken at the checkpoint contains what a capture taken earlier did and cannot be staler.
+It also gains the bookkeeping this path never had, `persistCheckpoint` bracketing the write with
+`snapshotEmitted` / `commitPersisted`, so the generations it makes durable are credited instead of
+being burnt again on the next load.
+
+
 ### Fixed - two decrypt paths spent a ratchet generation and told no ledger, so the archive replay called a message it had already read a permanent loss
 
 `setupMessageHandler` has always recorded a consumed frame in both ledgers, in a private
@@ -37,6 +78,17 @@ claim about bytes this device really did read. **The obligation is asserted rath
 because "remember to call it" is what produced the defect:
 `historyFrameConsumptionSeam.test.ts` enumerates every `.processIncomingMessage(` call site in the
 tree and fails unless each records or is listed with the reason it must not.
+
+**AND IT IS NOT THE WHOLE CAUSE - the re-run says so and the entry is not rewritten to hide it.**
+TAB-3b on a build carrying this fix is still `PASS-DIRTY`, and the shape of what is left is precise:
+five cold starts, the accusations ACCUMULATE by exactly two per run (run 3 accuses two rows, run 4
+those two plus two more, run 5 those four plus two), which is exactly the pair of messages sent while
+the browser was down each time. Reading W1's durable set afterwards: all six accused ROW keys are
+present - written by the last run's own accusation - and **not one of the six frame fingerprints**.
+So the two paths closed here were real holes and something else still spends these generations
+without recording. The remaining suspect is the ordering, not another silent call site: the replay's
+marks become durable only in a commit thunk at the end of the walk, while a checkpoint written by
+anything else mid-walk makes the ratchet durable ahead of them.
 
 A swallowed replay failure is also `SEVERE` in the harness now. `replayConversationHistory` catches
 everything, logs one `[WARN]` line and returns `undefined`, so the caller's commit is a no-op while

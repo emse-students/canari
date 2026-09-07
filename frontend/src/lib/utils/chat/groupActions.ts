@@ -353,7 +353,7 @@ export async function persistMlsStateAfterMutation(
   log?: (msg: string) => void
 ): Promise<void> {
   try {
-    await persistMlsStructuralCheckpoint({ mlsService, deviceKeyB64 });
+    await persistMlsStructuralCheckpoint({ mlsService });
   } catch (e) {
     log?.(`[MLS] saveState failed after mutation: ${e instanceof Error ? e.message : String(e)}`);
   }
