@@ -11,6 +11,81 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - three identities "the server has never heard of" were this campaign's own fixtures
+
+A P2 had five eliminated hypotheses and no cause: opening the venue channel on a cold client
+produces exactly three `GET /api/users/<64-hex> -> 404`, the same ids on every client including one
+of a different account, and the ids are in no table, no response body, no `localStorage` key, no
+IndexedDB row and no read watermark. The entry concluded they must reach the client from something
+encrypted at rest and declined to choose between an MLS leaf and a message payload.
+
+`Network.requestWillBeSent` carries an `initiator`, and with `Debugger.setAsyncCallStackDepth(32)`
+that initiator carries the whole async chain. One capture named it end to end:
+`onSelectChannelConversation` -> `getGraineSession` -> a Svelte effect -> `resolveUserDisplayName` ->
+`fetchUserProfile`. So it is the message payload, and the channel renders five `Utilisateur inconnu`
+chips for them.
+
+Then the ids identified themselves. `9e2a5997...` is `ABSENT_MENTION_ID` - a user id this repository
+DERIVES FROM A PHRASE so that MENTION-5 can type an `@` belonging to nobody - and the other two are
+the randomised-era residues already listed out of tree in `STRANDED_ABSENT_MENTION_IDS`.
+`stranded.mjs` has forgiven exactly those three since it was written, and its docblock says so;
+`fwd.mjs`, `fwd345.mjs` and the MENTION rows call it. The MULTI rows never did, which is the whole
+of why MULTI-5 was `PASS-DIRTY`. Nothing was stale on the server, nothing was stranded in a tree,
+and the client was behaving as designed throughout.
+
+### Fixed - a row that cut the wrong wire twice, and a message count that could not be read
+
+LIFE-6 is "the phone is offline", and on this bench that state was never entered. The phone does not
+reach the LOCAL estate over its radios at all: it reaches it over `adb reverse` on the USB cable, so
+`svc wifi disable` cuts nothing that matters. Removing the forward is not enough either - measured
+2026-09-07, `adb reverse --remove` closes the LISTENER and leaves the socket the app already holds
+ESTABLISHED and carrying data, and `adb reconnect` does not close it; `adb kill-server` does. Two
+consecutive runs therefore reported `FAIL` about a message that crossed the cable to a phone declared
+offline, notification and all, 2.2 s after the send both times.
+
+Then the second half of that FAIL could not be read. `count: 0` from `countMessage` has THREE
+documented readings; it turned out to have a fourth. The check swallowed `openConversation`'s failure
+and measured whatever pane was already on screen - which was parked about ninety-nine messages above
+the bottom, and `ChatArea` renders a sliding window, so the transcript genuinely did not contain what
+the device had stored. A screenshot settled in one look what no field in the record could.
+
+Three fixes, each at its own seam. `phone.killAdbServer` tabulates the three gestures against what
+each leaves established. `openConversation` now establishes the precondition it always assumed - a
+narrow layout gives the whole screen to an open conversation, so the conversation list is not
+rendered and the search dies twenty seconds later reporting an empty list on a device that has
+thirteen rows; `parkConversation` recorded that exact sighting for READ-9 in August and the lesson
+was applied to its CALLERS, which means every caller has to remember, and LIFE did not. And `sample`
+carries `fromBottomPx`, so the fourth reading of zero is visible in every verdict that takes one.
+
+LIFE-6 now passes: nothing arrives while the radios and the cable are down, the message is there
+17 ms after the app comes back, exactly once, with the pane at the bottom.
+
+LIFE-7 and LIFE-8 then ran for the first time. LIFE-7 failed once on a fact about Android rather
+than about Canari - it declared that revoking `POST_NOTIFICATIONS` leaves the process alive, and
+`ActivityManager: Killing 20772:fr.emse.canari (adj 200): permissions revoked` says otherwise, 0.7 s
+after the `pm revoke`. Both pass now, and LIFE-8 is the only row in the phase where the PUSH path is
+what delivers: the process is gone, so nothing can be routed over a socket. LIFE-5 stays owed to a
+human and the reason was re-measured rather than inherited (`trustManaged=1`: this phone has a
+secure lock, and rebooting it unattended would park the bench behind a credential screen) - but the
+precondition it was missing is in place, since the `adb reverse` it needs does not survive a reboot
+either.
+
+That left LIFE-3 and LIFE-4 `PASS-DIRTY` on native lines nobody had classified, and both turned out
+to be the app narrating a path that worked. LIFE-3's four `CanariBoot` lines look impossible - a
+BOOT_COMPLETED on a phone that had been up for five days - until you reproduce it: **Android replays
+the boot broadcast to a package leaving the STOPPED state**, so `force-stop` plus a launch delivers
+`LOCKED_BOOT_COMPLETED` and then `BOOT_COMPLETED`, which is LIFE-3's state exactly and the receiver
+doing the one thing it exists for. LIFE-4's are the WorkManager job and the background decrypt's
+diagnostic ladder: refused, no commits since the epoch it holds, fallback to the worker, message
+delivered once - which is what a dozing phone is supposed to look like.
+
+Ten rules now name those SITES rather than the sampled lines, each pinned in
+`logcatclassify-selftest.mjs` (69 cases, every rule exercised). The failure branches beside them are
+deliberately left unexplained - a token fetch that failed, an absent `push_context.json`, a 500 from
+the call that keeps a push token addressable - and `refused`/`fallback` join the words that force a
+line into `notable`, so the ladder is reported on every capture without gating a row it does not
+break.
+
 ### Fixed - four campaign rows had never run, and one of them measured a field the product does not have
 
 A verdict is only worth what its instrument asked, and five instruments were asking the wrong thing.

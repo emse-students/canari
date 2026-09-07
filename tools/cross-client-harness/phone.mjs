@@ -113,6 +113,35 @@ export function sh(cmd, timeout = 30_000) {
 export const adb = (args, timeout = 60_000) => run(args, timeout);
 
 /**
+ * TEARS DOWN EVERY LIVE adb TUNNEL, WHICH IS THE ONLY WAY TO TAKE THIS PHONE OFF THE ESTATE.
+ *
+ * MEASURED, 2026-09-07, because two cheaper gestures were tried first and neither works:
+ *
+ * | gesture                  | listener | the socket the app already holds |
+ * | ------------------------ | -------- | -------------------------------- |
+ * | `adb reverse --remove`   | closed   | **still ESTABLISHED, still carrying data** |
+ * | `adb reconnect device`   | closed   | **still ESTABLISHED** |
+ * | `adb kill-server`        | closed   | gone - zero sockets to the port |
+ *
+ * The phone reaches the LOCAL estate over `adb reverse` on the USB cable (`a1apk.mjs`), so a
+ * check that wants an OFFLINE phone has to break that, and `--remove` only stops the NEXT
+ * connection. LIFE-6 is "offline (radios off)": its first two executions cut the radios, removed
+ * the reverse, and the message crossed the surviving tunnel anyway - 2.2 s after the send, both
+ * times, with `WifiService ... enable=false` in logcat either side of it. The row reported FAIL
+ * about a state the device was never in.
+ *
+ * The server comes straight back (`start-server` + `wait-for-device`) so the rest of the check can
+ * still drive the phone; what does NOT come back is the reverse, which is the point. Every `adb
+ * forward` dies with it too, so a caller that was attached to the WebView must re-forward - which
+ * `life.mjs`'s `restore()` already does.
+ */
+export function killAdbServer() {
+  execFileSync('adb', ['kill-server'], { encoding: 'utf8', timeout: 30_000 });
+  execFileSync('adb', ['start-server'], { encoding: 'utf8', timeout: 60_000 });
+  execFileSync('adb', ['wait-for-device'], { encoding: 'utf8', timeout: 60_000 });
+}
+
+/**
  * What the app still holds on DISK, which is the half no CDP connection can see.
  *
  * `footprint.mjs` measures the WebView's stores; on a phone those are only part of the answer,
@@ -395,14 +424,33 @@ export const launch = () => sh(`am start -n ${PKG}/.MainActivity`);
 export function tapNotification(needle) {
   sh('cmd statusbar expand-notifications');
   let xml = '';
-  try {
-    // The dump goes to a file and is read back: `uiautomator dump /dev/tty` is not available on
-    // every build, and a partial stdout dump parses into a shade that looks empty.
-    sh('uiautomator dump /sdcard/canari-shade.xml', 60_000);
-    xml = sh('cat /sdcard/canari-shade.xml', 30_000);
-  } catch (e) {
-    return { ok: false, dumped: false, why: `uiautomator dump failed: ${String(e.message || e).slice(0, 200)}` };
+  // THE DUMP NEEDS AN IDLE WINDOW, AND EXPANDING THE SHADE IS AN ANIMATION.
+  //
+  // `uiautomator dump` waits for the window to go idle and gives up with `ERROR: could not get idle
+  // state.` when it does not - which is what a shade that is still sliding open looks like. NOTIF-7
+  // died there on 2026-09-07 with everything else about the row correct (the notification had
+  // arrived in 12.8 s and carried its decrypted text), and the record could not even say why: the
+  // error was `execFileSync`'s own `Command failed: adb -s ... shell uiautomator dump`, with the
+  // interpreter's `stderr` thrown away.
+  //
+  // So the loop below ends on a FACT - a dump that produced nodes - rather than on a sleep, within
+  // the 10 s an animation cannot exceed, and it reports the LAST stderr rather than the wrapper's
+  // sentence. A dump that never succeeds is still `dumped: false`, an instrument fault that must not
+  // become a verdict.
+  const deadline = Date.now() + 10_000;
+  let lastWhy = 'no attempt was made';
+  for (let attempt = 1; !xml && Date.now() < deadline; attempt++) {
+    try {
+      // The dump goes to a file and is read back: `uiautomator dump /dev/tty` is not available on
+      // every build, and a partial stdout dump parses into a shade that looks empty.
+      sh('uiautomator dump /sdcard/canari-shade.xml', 60_000);
+      xml = sh('cat /sdcard/canari-shade.xml', 30_000);
+    } catch (e) {
+      lastWhy = `attempt ${attempt}: ${String(e.stderr || e.message || e).trim().slice(0, 200)}`;
+      xml = '';
+    }
   }
+  if (!xml) return { ok: false, dumped: false, why: `uiautomator dump failed - ${lastWhy}` };
   if (!/<node/.test(xml)) {
     return { ok: false, dumped: false, why: 'the dump carried no nodes at all', head: xml.slice(0, 200) };
   }

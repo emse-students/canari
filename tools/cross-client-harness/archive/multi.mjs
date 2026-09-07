@@ -61,6 +61,10 @@ import {
   report,
   watch,
 } from '../watch.mjs';
+// ANY ROW THAT OPENS THE VENUE CHANNEL RENDERS THE STRANDED MENTION CHIPS, which is what this
+// names - see `stranded.mjs`. MULTI-5 collected all three as `badHttp` and was capped at
+// `PASS-DIRTY` for months while `fwd.mjs`, `fwd345.mjs` and the MENTION rows already called this.
+import { ignoringStrandedMentions } from '../stranded.mjs';
 import { errorDetail, mark, record, recordObserved } from '../results.mjs';
 import { ACCOUNT_OF, OWNER_NAME, PEER_NAME, PORTS, SITE } from '../names.mjs';
 import { unlockClient } from './pingate.mjs';
@@ -220,7 +224,7 @@ async function multi1() {
 
     const verdict = !seen.hookPresent ? 'VACUOUS' : seen.own === 'true' && copies === 1 ? 'PASS' : 'FAIL';
     const gated = gate(verdict, {
-      W1: await report(o1),
+      W1: ignoringStrandedMentions(await report(o1)),
       A1: await report(oA1),
       'A1-native': logcatReport(await logcatSince(since), 'A1-native'),
     });
@@ -338,8 +342,8 @@ async function multi2() {
 
     const ok = accruedMs !== null && clearedMs !== null && w1StillParked === true;
     const gated = gate(ok ? 'PASS' : 'FAIL', {
-      W1: await report(o1),
-      W2: await report(o2),
+      W1: ignoringStrandedMentions(await report(o1)),
+      W2: ignoringStrandedMentions(await report(o2)),
       A1: await report(oA1),
       'A1-native': logcatReport(await logcatSince(since), 'A1-native'),
     });
@@ -451,16 +455,18 @@ async function multi5() {
       '[TAB] Follower tab - WebSocket active in another Canari tab',
       '[TAB] Follower tab - skipping initializeConnection',
     ];
-    const repW1b = ignoringExpectedLog(await report(o1b), [
+    const repW1b = ignoringStrandedMentions(ignoringExpectedLog(await report(o1b), [
       ...SIBLING_PREMISE,
       // A fresh document boots MLS; expected, but NOT required - a sibling that reused a warm
       // worker would not print it and would still be a sibling.
       'Initialising MLS...',
-    ]);
-    const repW1a = ignoringExpectedLog(await report(o1), [
-      '[OUTBOX] Flush requested by a follower tab',
-      'collides with the stored one - another writer reached this version from the same seed',
-    ]);
+    ]));
+    const repW1a = ignoringStrandedMentions(
+      ignoringExpectedLog(await report(o1), [
+        '[OUTBOX] Flush requested by a follower tab',
+        'collides with the stored one - another writer reached this version from the same seed',
+      ])
+    );
 
     // AND THE PREMISE IS ASSERTED, NOT MERELY FORGIVEN. `ignoringExpectedLog` reports the needles
     // that matched NOTHING, and its own docblock says why that has to be read: a dry needle for a
@@ -479,7 +485,7 @@ async function multi5() {
     const gated = gate(ok ? 'PASS' : 'FAIL', {
       W1a: repW1a,
       W1b: repW1b,
-      W2: await report(o2),
+      W2: ignoringStrandedMentions(await report(o2)),
       A1: await report(oA1),
       'A1-native': logcatReport(await logcatSince(since), 'A1-native'),
     });
@@ -586,7 +592,7 @@ async function multi6() {
     // The duplicate-ignored lines are `notable`, which never broke `clean` - and they are the fix
     // working: the WS catch-up and the FCM cache legitimately overlap, and the ingest says so.
     const gated = gate(ok ? 'PASS' : 'FAIL', {
-      W2: await report(o2),
+      W2: ignoringStrandedMentions(await report(o2)),
       A1: ignoringExpectedLog(await report(oA1), PHONE_COLD_BOOT),
       'A1-native': ignoringExpectedLog(
         logcatReport(await logcatSince(since), 'A1-native'),

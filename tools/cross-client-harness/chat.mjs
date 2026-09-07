@@ -1282,6 +1282,44 @@ export async function awaitListed(cx, predicate, timeoutMs, what, port) {
 }
 
 export async function openConversation(cx, name) {
+  // THE SIDEBAR HAS TO BE ON SCREEN BEFORE IT CAN BE SEARCHED, AND ON A PHONE IT IS NOT.
+  //
+  // A narrow layout gives the WHOLE screen to an open conversation: the conversation list is not
+  // rendered at all, so the search below finds `listedEntries: 0` and dies twenty seconds later
+  // reporting an empty list on a device that has thirteen rows. `parkConversation` records that
+  // exact sighting (READ-9, 2026-08-21) and the lesson was applied to its CALLERS - which means
+  // every caller has to remember, and LIFE did not: `life.mjs` swallowed the failure, measured the
+  // stale pane it was already looking at, and LIFE-6 reported FAIL twice about a message that had
+  // arrived (2026-09-07).
+  //
+  // THIS IS A PRECONDITION, NOT A FALLBACK. The gesture is "open the conversation named X", and it
+  // is defined on a client whose list is reachable; on this layout that has to be established
+  // first. It is asked as a question about the DOM rather than about a device kind - a narrow
+  // browser window behaves the same way - and on a desktop layout, where tiles are listed with a
+  // conversation open, it costs one `evaluate` and does nothing.
+  //
+  // THE SAME PREDICATE THE SEARCH ITSELF USES - same scope rule, same visibility filter - so "none
+  // listed" here means exactly "the search below will find nothing", rather than something close to
+  // it. A stricter query would park on a layout that was about to succeed.
+  const listed = await evaluate(
+    cx,
+    `(function () {
+      var scope = document.querySelector('.sidebar-panel') || document.body;
+      return [].slice.call(scope.querySelectorAll('[data-conversation-tile]')).filter(function (e) {
+        return e.getBoundingClientRect().width > 0;
+      }).length;
+    })()`
+  );
+  if (Number(listed) === 0 && (await evaluate(cx, PANE_STATE)) !== 'nothing') {
+    const parked = await parkConversation(cx);
+    if (parked !== 'left' && parked !== 'already outside a conversation') {
+      throw new Error(
+        `openConversation: the conversation list is not on screen on port ${cx.port} and the open ` +
+          `conversation could not be left, so the row can never be found - ${parked}`
+      );
+    }
+  }
+
   // SEARCH THE SIDEBAR, NEVER THE DOCUMENT.
   //
   // This used to look at every button/link on the page and take the shortest match. The peer's name
@@ -1526,12 +1564,22 @@ export function countMessage(cx, marker) {
 /**
  * ONE sample of the receiver: the marker's count PLUS the facts that say what a zero means.
  *
- * A bare count cannot be interpreted. Zero has three readings and they need different fixes:
- * the PANE is gone (composer unmounted, `PANE_TEXT` degrades to '' and every count reads 0), the
- * MESSAGE is gone, or the harness is looking at the wrong conversation. So every sample carries the
- * composer's presence, the pane's size, the WHOLE BODY's count and which conversation the header
- * names - a marker in the body but not in the pane is the sidebar preview of a conversation nobody
- * opened, a harness fault wearing the costume of a delivery loss (fault #29, 2026-08-12).
+ * A bare count cannot be interpreted. Zero has FOUR readings and they need different fixes: the
+ * PANE is gone (composer unmounted, `PANE_TEXT` degrades to '' and every count reads 0), the
+ * MESSAGE is gone, the harness is looking at the wrong conversation, or **the pane is SCROLLED UP
+ * and the app is rendering older messages** - so every sample carries the composer's presence, the
+ * pane's size, the WHOLE BODY's count, which conversation the header names, and how far from the
+ * bottom the transcript is parked. A marker in the body but not in the pane is the sidebar preview
+ * of a conversation nobody opened, a harness fault wearing the costume of a delivery loss (fault
+ * #29, 2026-08-12).
+ *
+ * `fromBottomPx` IS THE FOURTH READING AND IT WAS ADDED AFTER IT COST TWO RUNS. LIFE-6 reported
+ * `count: 0` twice on 2026-09-07 with the message provably delivered - the gateway routed the frame
+ * to the phone, the phone ACKed it, and the shade carried its DECRYPTED text. A screenshot settled
+ * it: the transcript was parked ~99 messages above the bottom, and `ChatArea` keeps a sliding
+ * render window, so `PANE_TEXT` genuinely did not contain what the device had stored. `paneState`
+ * has carried this discriminator since MUT-9; every caller of `sample` was blind to it, and the two
+ * FAILs were about to be filed as a lost-message P1.
  */
 export const SAMPLE = (marker) => `(function () {
   var c = document.querySelector('${COMPOSER}');
@@ -1546,7 +1594,19 @@ export const SAMPLE = (marker) => `(function () {
     draftChars: draft.length,
     count: net.split(${JSON.stringify(marker)}).length - 1,
     bodyCount: (document.body.innerText || '').split(${JSON.stringify(marker)}).length - 1,
-    header: ${HEADER_NAME}
+    header: ${HEADER_NAME},
+    // THE DEEPEST OVERFLOWING DESCENDANT, never a class name - the same rule paneState follows, so
+    // a styling change cannot silently turn this into null and hand every zero back its old
+    // ambiguity. A null means no scroller was found, which is itself worth seeing. NO BACKTICKS IN
+    // HERE: this comment lives inside a template literal, and one closes it.
+    fromBottomPx: (function () {
+      var sc = null;
+      [].slice.call((pane || document).querySelectorAll('*')).forEach(function (d) {
+        var over = d.scrollHeight - d.clientHeight;
+        if (over > 40 && (!sc || over > sc.scrollHeight - sc.clientHeight)) sc = d;
+      });
+      return sc ? Math.round(sc.scrollHeight - sc.clientHeight - sc.scrollTop) : null;
+    })()
   });
 })()`;
 
