@@ -130,7 +130,10 @@ gh release create v0.16.2 --generate-notes                        # -> productio
 
 **The five gates, and there is no bypass input** (`.github/scripts/release-preflight.sh`): the
 version parses; the commit is on `main` AND `main` still points at it; `CI passed` is green ON that
-commit; dev has already served it (stables); the notes name it (stables). *A skip flag is a fallback
+commit - **and main's OWN CI run takes ~8 min after a merge, so a release cut in the minute after
+one is REFUSED with `CI passed never ran on <sha>`; wait for `gh run list --branch main`, then
+`gh run rerun` the release, which needs no new tag** (2026-09-07); dev has already served it
+(stables); the notes name it (stables). *A skip flag is a fallback
 path, and reaching one means the primary path failed - so the fix belongs there.* The emergency path
 is a human with admin rights, written into `CHANGELOG.md` when taken.
 
