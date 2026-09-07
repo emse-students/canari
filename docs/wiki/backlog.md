@@ -216,6 +216,50 @@ one feature with a state variable, and they are two implementations:
 A row must state WHICH builder it is measuring, the way `notif.mjs` now states which transport
 carries its notification.
 
+### P2 - four tap rows have been unrunnable since OXYGEN, and their failure accused the product (measured 2026-09-07)
+
+`notif7.mjs` shelled out to `python a1.py notif` to read and tap the notification shade. **`a1.py`
+was never in git** - it belonged to the LITHIUM rig and was not carried into the OXYGEN
+reconstitution - so NOTIF-7, -7b, -7c and -7d had been failing on a missing interpreter script, and
+the sentence they produced was `no shade row contains <marker>`: a statement about the PRODUCT, for
+a fault in the rig. That is the failure class this repository forbids by name.
+
+**The seam is fixed and committed.** `phone.tapNotification` reads the shade, finds the row carrying
+the marker by its `text`/`content-desc`, takes the centre from that node's OWN `bounds` and taps it -
+resolved by element, on a surface no CDP can reach. It separates three outcomes where the old one
+had two: `dumped: false` is an instrument fault, `found: false` is the row's real answer, `ok` is a
+tap. `notif7.mjs` now records `SETUP-FAILED` on the first of those instead of throwing, so the board
+says the check could not be attempted rather than saying nothing.
+
+**AND IT STILL CANNOT TAP ON THIS HANDSET.** Both pixel-free rungs are measured dead on the Mi 9T
+(Android 16, SDK 36):
+
+- `uiautomator dump` is **SIGKILLed**: exit 137, with the shade open and shut, writing to `/sdcard`
+  and to `/data/local/tmp`.
+- **D-pad focus traversal never activates a shade row**: six `KEYCODE_DPAD_DOWN` then
+  `KEYCODE_DPAD_CENTER` left `mCurrentFocus` on the `NotificationShade` window and the launcher in
+  front. (`mCurrentFocus` names the window, not the view, so it cannot even witness focus moving
+  inside the shade.)
+
+So a tap needs **uiautomator2's instrumentation agent**, which is what `a1.py` used. On this
+workstation that agent exists only inside the `android-mcp` uv tool (its own Python 3.13; the system
+3.12.8 cannot install the package). The tap itself is proven to work through that route - it is how
+the tap defect above was measured at all.
+
+**WHAT IT NEEDS.** A committed driver for that agent, plus a declared dependency the rig ASSERTS at
+startup the way it asserts an NDK path - the loss was never the idea, it was that the file lived
+outside the tree. Until then the four rows are `SETUP-FAILED` rather than silently red, and the
+product answer for NOTIF-7 (bg) is already known and recorded here: the app comes forward and
+`PANE_STATE` is `nothing`.
+
+**AND THE SAME RUNNER WAS ANSWERING UNDER NAMES NO ROW CLAIMS.** It recorded `NOTIF-7-bg` and
+`NOTIF-7-killed`; the board names `NOTIF-7` and `NOTIF-7b`. So every verdict it had ever produced
+landed in the ledger as an orphan, and both rows read as unanswered while their runner existed -
+`bun rows.mjs` reports exactly this and nobody had run it against this phase. Fixed at the runner,
+with the two historical ids attributed through the retired-id map rather than discarded. **A runner
+whose id is not a board row is a runner that cannot answer anything**, and that is worth checking
+for the other phases before their verdicts are believed.
+
 ### P3 - an Android phone rotates where an iPhone cannot, and nothing decided that (measured 2026-09-07)
 
 `gen/apple/canari_iOS/Info.plist` conditions orientation exactly as one would want:
