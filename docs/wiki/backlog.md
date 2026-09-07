@@ -1910,8 +1910,30 @@ notification behaviour on a surface only hardware can judge, and **the phone wen
 credential lock screen mid-phase** (`deviceLocked=1`, `wm dismiss-keyguard` refused, no credential in
 the rig), so LIFE-6/7/8 never ran and nothing could be re-measured. A notification fix verified only
 by unit tests is exactly the shape that has cost this project three times. **The phone answered again
-later the same day**, so the blocking condition is lifted; what is left is the APK build and the
-hardware pass, and the four rows to re-take are the ones in the COMMUNITY entry below.
+later the same day**, so the blocking condition is lifted.
+
+**THE HARDWARE PASS IS DONE FOR THE CELL THIS ENTRY IS ABOUT, 2026-09-08.** An APK was built against
+the local estate and installed (`1600603`, source `edb9d7653`), and LIFE-2 - the exact premise, app
+alive and backgrounded with HOME - came back **`PASS`, `"clean": true`**:
+
+| | 2026-09-05, before the fix | 2026-09-08, on hardware |
+| --- | --- | --- |
+| `notification.afterMs` | `null` - shade empty | **6 359 ms, with the FULL decrypted text** |
+| the message in the conversation | present the whole time, unannounced | `count: 1` - the foreground path did not re-add what the notification stored |
+| the app's pid across the run | - | unchanged, so it really was alive and backgrounded |
+
+`fcmLinkMs: 4200`, so the push precondition was measured rather than assumed - the failure that cost
+four verdicts before. **The user-facing half of this P1 is therefore closed on the surface only
+hardware can judge**, which is the bar this class was given after three of three iOS defects went
+invisible to every gate here.
+
+**WHAT IS STILL OPEN IS THE WASTE AND THE OVERLAP, NEITHER OF WHICH LIFE-2 CAN SEE.** Half (1) above
+- carrying the same-epoch refusal to Kotlin as a TYPE - is untouched: a refusal that cannot be helped
+by a catch-up still costs a backend round trip and a worker enqueue per message. And the id
+unification (the table above) is still the follow-up: when a message is unACKed for 10 s AND the app
+is alive, both paths can notify and they cannot merge into one banner. The remaining rows are the
+salon cells in the COMMUNITY entry below, which LIFE-2 says nothing about - a salon is not the same
+key path.
 
 
 ### P2 - a COMMUNITY message is not decrypted in a background notification, and the KILLED case is unmeasured for both kinds (user, 2026-09-05)
@@ -4789,9 +4811,27 @@ days - and a Welcome does not take days. **That argument must be re-measured aga
 before the rule ships, not assumed from this line.** The guard is what makes it defensible at all; on
 a build without it the loop mints 200 in hours and the rule would eat live bundles.
 
-**The pile is very likely no longer growing.** It is debris from the purge loop, which #393 refuses.
-So this is a one-off reclaim of ~4.9 MB on affected handsets, not a leak - which is why it is P2 here
-and not filed with the P1 above.
+~~**The pile is very likely no longer growing.**~~ **MEASURED FALSE ON THE HANDSET, 2026-09-08.** The
+device said it itself, at load, on a build carrying the guard:
+
+```
+state composition - 9076074B total; KeyPackage 2467x5831295B, Tree 51x1627467B, MessageSecrets 51x1370542B
+```
+
+**2 467 key packages against 2 338 two days earlier - +129 - and the loop did not run in that
+window.** The server log proves the negative for its whole 5-hour life: the phone appears in it
+exactly once, `[REGISTER_PREKEYS] ... count=50`, and there is **not one `PRUNE_PREKEYS` for any
+device**; the phone's 46 surviving prekeys all carry one timestamp to the microsecond, so it
+published a batch and KEPT it. So the growth is not purge debris - **it is the ordinary path**, which
+this entry names three paragraphs above without connecting the two: a fresh last-resort package is
+published on EVERY connection, and each top-up mints into a store that sheds nothing under 84 days.
+
+**That changes the disposition, not the severity.** It is not "a one-off reclaim of ~4.9 MB on
+affected handsets"; it is a slow leak that is still live on a build where the loop is fixed, and any
+rule written for it has to bound the STEADY state rather than clean up after an incident. **The
+reclaim argument in the table above was sized against a pile that had stopped growing, and it had
+not.** *(`mls.bin` is 9.07 MB here against 20.8 MB on 2026-09-06 - the group sweep held, and it is
+what makes the key-package share so visible: 64% of what is left.)*
 
 **AND A REAL GROUP IS NOT THE GROUP THE SYNTHETIC TEST MEASURED.** ~490 kB apiece here, against
 5 330 bytes for a fresh group of one and a 17 kB plateau at 81 epochs. The weight is `Tree` (member
