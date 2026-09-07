@@ -152,10 +152,14 @@ const w = await watch(w2, 'W2');
 // and the board pattern that had been visible for hours, are in `fcmlink.mjs`. Before
 // `clearLogcat`, deliberately: the Wi-Fi toggle's own noise belongs outside this check's window
 // rather than in its report, where it would arrive as unexplained lines.
-const fcmLink = await requireFreshFcmLink(`NOTIF-7-${mode}`, stage);
+// `bg` NEVER USES A PUSH, so it is not gated on one. A backgrounded app keeps its WebSocket,
+// receives the frame and ACKs it, so `scheduleDeferredPush` never fires - gating that half on the
+// FCM link would abort it with `SETUP-FAILED` over a transport it does not touch, and the Wi-Fi
+// toggle the gate performs would disturb the socket that IS the transport.
+const fcmLink = mode === 'killed' ? await requireFreshFcmLink(`NOTIF-7-${mode}`, stage) : null;
 // RECORDED, not merely done: a phase whose rows all needed a transport repair is saying something
 // about this handset that no PASS would otherwise carry.
-out.fcmLinkMs = fcmLink.tookMs;
+out.fcmLinkMs = fcmLink?.tookMs ?? null;
 
 phone.clearLogcat();
 const phoneWindowFrom = Date.now();

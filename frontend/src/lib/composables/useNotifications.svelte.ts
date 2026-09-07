@@ -16,6 +16,21 @@ import {
   onAction,
 } from '@tauri-apps/plugin-notification';
 
+/**
+ * THE TWO CHANNELS THIS FILE MAY POST ON, AND WHY THE IDS ARE REPEATED HERE.
+ *
+ * `CanariApplication.ensureChannels` creates five channels in `Application.onCreate` - so before
+ * any component exists, the WebView included - and the ids are Kotlin constants
+ * (`CanariFirebaseMessagingService.CHANNEL_*`). Nothing carries them across the FFI, so a
+ * notification posted from the WebView has to name one, and naming it wrong is not a cosmetic
+ * mistake: `NotificationManagerCompat` DROPS a notification whose channel does not exist.
+ *
+ * `notificationChannels.test.ts` asserts these two strings against the Kotlin declarations, which
+ * is the only thing making this a copy rather than a fork.
+ */
+export const CHANNEL_MESSAGES = 'canari_messages';
+export const CHANNEL_CALLS = 'canari_calls';
+
 /** Returns a stable positive integer ID derived from a conversation ID string, used to replace existing Tauri notifications for the same conversation. */
 function stableNotifId(conversationId: string): number {
   let hash = 0;
@@ -238,9 +253,33 @@ export function useNotifications() {
    * ONE HELPER RATHER THAN TWO CALL SITES, because the two `sendNotification` calls in this file are
    * a message and an incoming call, and the next one to be added would have been a third chance to
    * post a notification nobody can read.
+   *
+   * `channelId` JOINED THE MANDATORY SET ON 2026-09-07, for the same reason and from the same kind
+   * of measurement. The user reported the small icon of a Canari notification on a Mi 9T as a
+   * default "info" glyph, and the live record named both halves of one under-specified call:
+   *
+   *     Notification(channel=default ... )
+   *     icon=Icon(typ=RESOURCE pkg=fr.emse.canari id=0x0108009b)
+   *
+   * `0x0108009b` is `17301659` is `android.R.drawable.ic_dialog_info` - the resource package byte
+   * is `0x01`, the framework, not `0x7f`, the app. So the icon was never ours to begin with:
+   * `TauriNotificationManager.getDefaultSmallIcon` falls back to `ic_dialog_info` when the plugin
+   * config names no drawable, and our `tauri.conf.json` named none. That half is fixed in the
+   * config (`plugins.notification.icon`), which is the plugin's own default and therefore the one
+   * place a future call site cannot forget.
+   *
+   * `channel=default` is the half that is NOT cosmetic. The plugin's own
+   * `DEFAULT_NOTIFICATION_CHANNEL_ID = "default"` had been creating a sixth channel beside the five
+   * `ensureChannels` designs, at IMPORTANCE_DEFAULT with no sound and no vibration - so a message
+   * that arrived while the app was running was quieter than the same message arriving by push, and
+   * NONE of the per-channel controls the user is offered (Messages, Mentions, Activite sociale)
+   * governed it. Naming the channel is what puts the two paths on one set of settings.
    */
-  function androidReadableBody(body: string): { body: string; largeBody: string } {
-    return { body, largeBody: body };
+  function androidNotificationOptions(
+    body: string,
+    channelId: string
+  ): { body: string; largeBody: string; channelId: string } {
+    return { body, largeBody: body, channelId };
   }
 
   /**
@@ -274,7 +313,11 @@ export function useNotifications() {
     if (isTauriRuntime()) {
       try {
         if (await isPermissionGranted()) {
-          await sendNotification({ title, ...androidReadableBody(body), id: notifId });
+          await sendNotification({
+            title,
+            ...androidNotificationOptions(body, CHANNEL_CALLS),
+            id: notifId,
+          });
           incomingCallNotifId = notifId;
           return;
         }
@@ -467,20 +510,52 @@ export function useNotifications() {
         if (await isPermissionGranted()) {
           await sendNotification({
             title,
-            ...androidReadableBody(body),
+            ...androidNotificationOptions(body, CHANNEL_MESSAGES),
             ...(conversationId ? { id: stableNotifId(conversationId) } : {}),
           });
-          // Best-effort: register a tap action so tapping the notification on
-          // Tauri desktop navigates to the conversation (parity with Web onclick).
-          // onAction is only available on some Tauri notification plugin versions.
+          // TAPPING THIS NOTIFICATION CANNOT REACH THE CONVERSATION ON ANDROID, AND THE PLUGIN IS
+          // WHY - measured on a Mi 9T on 2026-09-07 with a real message, which opened the app and
+          // landed on nothing.
+          //
+          // `tauri-plugin-notification` 2.3.3 puts THREE extras on the tap intent: the notification
+          // id, the action id, and `notification.sourceJson`. On the way back,
+          // `handleNotificationActionPerformed` reads the id, uses it to dismiss the notification,
+          // and then DISCARDS it - the payload it emits carries `inputValue`, `actionId` and
+          // `notification`, where `notification` is parsed from `sourceJson`. And `sourceJson` is
+          // declared `var sourceJson: String? = null` in the plugin's `Notification.kt` and assigned
+          // NOWHERE, so the extra is null, so the payload's `notification` is null.
+          //
+          // The listener below therefore received `null` and threw on `.id` inside an async
+          // callback - an unhandled rejection nothing logged, which is why a tap that did nothing
+          // looked like a tap that did nothing on purpose. The guard makes the platform say so.
+          //
+          // THE FIX IS NOT HERE. The Kotlin path carries identity properly - its tap is
+          // `ACTION_VIEW` on `fr.emse.canari://chat/<groupId>`, a deep link the app already handles
+          // - and the plugin hardcodes `ACTION_MAIN` on the launcher activity with no way to pass a
+          // link. So the durable answer is for ONE builder to post every notification, natively,
+          // and for this call site to ask it rather than post its own. That is a new native command
+          // and it is filed as such; see docs/wiki/backlog.md.
+          //
+          // Kept rather than deleted because desktop is a different implementation (`desktop.rs`,
+          // notify-rust) and this session measured Android only. Deleting it would trade a known
+          // broken path for an unmeasured claim about another one.
           if (conversationId) {
             try {
               if (typeof onAction === 'function') {
                 (
                   onAction as unknown as (
-                    cb: (action: { notification: { id?: number } }) => void
+                    cb: (action: { notification?: { id?: number } | null }) => void
                   ) => Promise<unknown>
                 )(async (action) => {
+                  if (!action?.notification) {
+                    console.warn(
+                      '[NOTIF] A notification tap arrived carrying no notification identity, so it ' +
+                        'cannot be routed to a conversation. This is tauri-plugin-notification ' +
+                        'never populating sourceJson; the notification must be posted natively ' +
+                        'instead. Opening nothing.'
+                    );
+                    return;
+                  }
                   if (action.notification.id === stableNotifId(conversationId)) {
                     notifNav.navigate(conversationId);
                     try {

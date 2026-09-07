@@ -11,6 +11,40 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - the small icon of a Canari notification was Android's generic "info" glyph
+
+Reported on a Mi 9T. The live record named both halves of one under-specified call:
+
+    Notification(channel=default ... )
+    icon=Icon(typ=RESOURCE pkg=fr.emse.canari id=0x0108009b)
+
+A resource id's first byte names its package - `0x7f` the app, `0x01` the framework. So
+`0x0108009b` is `17301659` is `android.R.drawable.ic_dialog_info`: the icon was never ours. The
+notification had not been built by `CanariFirebaseMessagingService` at all but by
+`tauri-plugin-notification`, from the WebView, on the path taken when the app is backgrounded and
+still connected - a message arriving over the WebSocket, for which no push is sent. Notifications
+that arrive by push were correct throughout, which is why every screenshot of a killed-app row
+looked right.
+
+`TauriNotificationManager.getDefaultSmallIcon` falls back to that framework glyph when the plugin
+config names no drawable, and `tauri.conf.json` named none. It does now, which is the plugin's own
+default and therefore the one place a future call site cannot forget.
+
+**The channel was the half that was not cosmetic.** The plugin's
+`DEFAULT_NOTIFICATION_CHANNEL_ID = "default"` had been creating and using a sixth channel beside the
+five `CanariApplication.ensureChannels` designs, at `IMPORTANCE_DEFAULT` with no sound and no
+vibration where `canari_messages` is `IMPORTANCE_HIGH` with both. A message that arrived while the
+app was running was therefore quieter than the same message arriving by push, and none of the
+per-channel controls the app offers - Messages, Mentions, Activite sociale - governed it. Naming the
+channel puts the two paths on one set of settings.
+
+No accent colour was added: nothing on the Kotlin side calls `setColor`, so introducing one here
+would have made the two paths differ in a second way while fixing the first.
+
+`notificationChannels.test.ts` pins both halves, including that a channel id the TypeScript sends is
+one the Kotlin actually creates - `NotificationManagerCompat` drops a notification whose channel
+does not exist, so a typo there would have traded a wrong icon for no notification at all.
+
 ### Fixed - every message was decrypted twice on Android, and the second decrypt could not produce anything
 
 Each message to an Android device arrives as two pushes: the visible one, and the other device of
