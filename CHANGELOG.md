@@ -11,6 +11,36 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - four campaign rows had never run, and one of them measured a field the product does not have
+
+A verdict is only worth what its instrument asked, and five instruments were asking the wrong thing.
+
+`roster.mjs` imported `psql` from `ssh.mjs`, which does not export it, so MULTI-7, -8, -9 and -10
+died at module load - four rows with no verdict and no complaint. A new `imports-selftest.mjs`
+resolves all 644 relative imports in the rig against their target's real exports and is in the gate;
+it is line-anchored so prose about `import` cannot match it, and it fails on an empty sweep so it
+cannot pass by matching nothing. On its first CI run it reported 112 failures on `names.mjs`, which
+this public repository deliberately does not contain - it now checks against the committed
+`names.example.mjs`, which is stricter: an export a runner needs must be declared there.
+
+MULTI-2 matched a conversation by DISPLAY NAME and read `unreadCount`. A stored conversation carries
+neither - a DM's name is the `<userA>::<userB>` pair id, and unread is derived from `readWatermarks`
+- so the row recorded VACUOUS citing the wrong one of its two reasons, which is worse than either: a
+check naming a cause it never measured. It reads the watermark now, and its "the reader never opened
+it" guard reads the PANE rather than the whole document, because a parked client shows the newest
+message as its tile subtitle.
+
+`parkConversation` cannot get a browser out of a conversation and says so; six callers dropped that
+answer. Five were right to - they want the conversation list on screen, which a desktop already has
+- and MULTI-2 was not. `lookAway` is the remedy that helper's own docblock prescribes.
+
+And the rig believed the phone had no navigation. `RESOLVE`'s CSS branch was a bare `querySelector`
+with no hit test, while its `text=` half had always required a match clickable at its own centre, so
+on a phone it returned the collapsed rail's 0x0 `a[href="/communities"]` instead of the bottom nav's
+109x64 one. Two modules carried the sentence "no click path to /communities on the phone yet" and
+paid a full page load per channel open - a PIN re-lock, and the `runCallback` exception that dirtied
+every phone channel row. The predicate is shared now, and one `reachCommunities` serves both callers.
+
 ### Fixed - a message in another conversation made a sound and showed nothing
 
 On a phone, inside conversation A, a message from B played the receive tone and produced no visible

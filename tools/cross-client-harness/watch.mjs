@@ -2634,9 +2634,24 @@ export const PHONE_COLD_BOOT = [
   '[Push] FCM token registered successfully',
   '[Push] Token and locale unchanged, skip backend registration',
   'message(s) to pre-inject from the FCM cache',
+  // ALL OF THEM INJECTED, AND ONLY THAT. The backreference is the whole point: `3/3` is the summary
+  // of a clean pre-injection, `2/3` is a loss wearing the same sentence, and a needle on the prose
+  // alone would forgive both.
+  new RegExp('Injection done: (\\d+)/\\1 message'),
   new RegExp('^\\[FCM_CACHE\\] .* id=[0-9a-f]+ group=[0-9a-f]+ type='),
   // The native half - the push handing its frame to a foreground that has taken the MLS state. It
   // says "no fallback, no worker" in as many words, so it is a HANDOFF and not a repair.
+  // THE ELECTION A COLD BOOT HAS TO HOLD, and the pair is the fix for the boot gap the classifier's
+  // `Flush skipped - follower tab` rule documents: a flush that arrives before leadership is decided
+  // now WAITS for the election instead of delegating to a leader that may not exist. Seeing both
+  // lines is seeing that fix work; seeing either in a steady run would be a client that restarted.
+  '[OUTBOX] Flush deferred - tab leadership undecided',
+  new RegExp('^' + '\\' + '[OUTBOX' + '\\' + '] Leadership decided as (leader|follower) after \\d+ ms'),
+  // A REPEAT THE APPLICATION ITSELF CALLS HARMLESS, in its own words. `BaseMlsService`'s
+  // `REPEAT_MEANS` carries four combinations of channel and prior state, two of which set
+  // `accuse: true`; this needle is the closing clause of the ONE that sets `accuse: false`, so the
+  // two accusing spellings are untouched by it and a device that was away still cannot hide them.
+  'the ordinary crossing, and nothing is wrong',
   'tryDecrypt: foreground took over while this push waited',
   'push yielded to the foreground, which holds this frame',
 ];

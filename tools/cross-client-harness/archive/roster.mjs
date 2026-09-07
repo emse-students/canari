@@ -36,10 +36,11 @@
  * through `userTag`, so a finding can be lined up with `identity.mjs` and is useless to anyone else.
  * This file reads a table that holds every real user of the product, so nothing is ever dumped whole.
  */
-import { ensureChat, client, countMessage, openDM, send } from "../chat.mjs";
+import { APP_TAB, ensureChat, client, countMessage, openDM, send } from "../chat.mjs";
 import { installTag, userTag } from "../devices.mjs";
 import { isUp, killBrowser, startBrowser } from "../launch.mjs";
-import { ORIGIN, PORTS, SITE, peerNameFor } from "../names.mjs";
+import { ACCOUNT_OF, ORIGIN, PORTS, SITE, peerNameFor } from "../names.mjs";
+import { unlockClient } from "./pingate.mjs";
 import { becomeANewDeviceAndConfirm } from "../newdevice.mjs";
 import { onlineDevicesOf } from "./presence.mjs";
 import { record, unmet } from "../results.mjs";
@@ -446,7 +447,12 @@ else note(`${PEER} was already down`);
 const restorePeer = async () => {
   if (!peerWasUp) return "the peer was already down when this row started";
   await startBrowser(PEER.toLowerCase(), `${SITE}/chat`);
-  return `${PEER} brought back`;
+  // IT COMES BACK LOCKED, and saying so is the point: a fresh browser mounts `#encryption-pin`, so
+  // this restores the ESTATE (a client the next preflight can find and repair) and not a usable
+  // client. Nothing in this row touches the peer afterwards; the row that does - MULTI-9 - unlocks
+  // it itself, because waiting for a gate to open on its own is thirty seconds spent proving it is
+  // shut.
+  return `${PEER} brought back, at its PIN gate`;
 };
 
 // MULTI-9 needs the peer to SEND while the new device is pending, which means the peer must be alive
@@ -565,6 +571,33 @@ note("bringing the peer back to SEND while the new device is still catching up")
 await startBrowser(PEER.toLowerCase(), `${SITE}/chat`);
 const peerCx = await client(PORTS[PEER], new URL(ORIGIN[PEER]).hostname);
 const peerWatch = await watch(peerCx, PEER);
+
+// A BROWSER THAT HAS JUST BEEN LAUNCHED IS AT THE PIN GATE, and this row proceeded as though it
+// were a working client. `goto` printed "no gateway connection line within 30 s - the client may
+// still be coming up" and carried on, so `openDM` hunted for the owner's row behind a modal:
+// `the peer's conversation row was never listed within 20000ms ... listedEntries: 14` (2026-09-07),
+// which reads as a missing conversation and is a locked browser.
+//
+// AND WAITING WAS NOT THE ANSWER, WHICH IS WHY THE FIRST FIX FAILED TOO. `awaitAppReady` is false
+// for exactly as long as `#encryption-pin` is mounted, so polling it just spent thirty seconds
+// proving the gate was up. A relaunched browser does not become ready on its own - somebody has to
+// let it in - and `unlockClient` both does that and PROVES the client came out the other side,
+// which a client that renders and reports on an empty store otherwise hides.
+const gate = await unlockClient(peerCx, PORTS[PEER], ACCOUNT_OF[PEER], { match: APP_TAB });
+if (gate.verdict !== "unlocked") {
+  record(row.id, "INVALID", {
+    unobservable: "the peer browser was restarted and never got past its PIN gate, so it could not send",
+    gate: gate.verdict,
+    said: gate.said,
+    what: row.what,
+    timeline,
+  });
+  peerCx.close();
+  minted.cx.close();
+  ownerCx.close();
+  process.exit(1);
+}
+note(`the peer is up again and unlocked (${gate.said})`);
 await ensureChat(peerCx);
 await openDM(peerCx, peerNameFor(PEER));
 
@@ -609,7 +642,45 @@ const reports = {
   peer: await report(peerWatch),
   newDevice: await report(minted.observer),
 };
-record(row.id, missing.length === 0 ? "PASS" : "FAIL", {
+
+/**
+ * A WINDOW THAT NO LONGER EXISTS IS NOT A FAILURE OF THE THING THAT CLOSED IT.
+ *
+ * This row was written after a device sat `pending` for 134 MINUTES while messages were accepted,
+ * fanned out and lost. On 2026-09-07 the same device reached `active` in 105 ms - so the peer,
+ * restarted and unlocked in the seconds it took to get there, could only ever send into an ACTIVE
+ * membership, and `thereWasAWindowToTest` was false. Every other expectation held and 5 of 5
+ * arrived.
+ *
+ * Recording FAIL for that would be the board accusing the product of the fix. `VACUOUS` is the
+ * verdict this rig already reserves for a check that could not create its own precondition - the
+ * same distinction `idb.mjs` draws between "no rows" and "no such store" - and it is NOT a softer
+ * PASS: the row still says, in the same record, how fast the activation was, which is the number
+ * that made the window vanish.
+ *
+ * THE SAME SHAPE THE HEAL-NEW RUNG ALREADY HIT, and it is not a coincidence. A device now reaches
+ * every group it belongs to with nothing of its own online, because some OTHER member commits the
+ * add within milliseconds - the owner held five devices in this group when this ran. So every row
+ * whose subject is what happens DURING a catch-up needs a group the device cannot self-serve, which
+ * is an open item in `backlog.md` for HEAL-NEW and is now this row's too. Holding the window open
+ * here would mean taking every other member's device off the air, which is a fixture, not a tweak.
+ *
+ * AND IT CANNOT HIDE A REGRESSION, because the two failures it must never absorb are separate
+ * expectations that are checked FIRST: a device that never activates fails
+ * `theDeviceEventuallyActivated`, and a message lost in a window that DID exist fails
+ * `nothingSentWhilePendingWasLost`. Only the case where the sole unmet expectation is the window
+ * itself is vacuous.
+ */
+const onlyTheWindowIsMissing = missing.length === 1 && missing[0].startsWith("thereWasAWindowToTest");
+const verdict = missing.length === 0 ? "PASS" : onlyTheWindowIsMissing ? "VACUOUS" : "FAIL";
+record(row.id, verdict, {
+  ...(onlyTheWindowIsMissing
+    ? {
+        why:
+          `the new device reached active in ${activation.elapsedMs} ms, so there was no pending ` +
+          "window to send into - the row's premise cannot be created on a healthy estate",
+      }
+    : {}),
   what: row.what,
   group: groupId.slice(0, 8),
   marker,
