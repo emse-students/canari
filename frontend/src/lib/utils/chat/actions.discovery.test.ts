@@ -121,7 +121,7 @@ describe('purgeOrphanGroup', () => {
     expect(mlsService.forgetGroup).toHaveBeenCalledWith('g1');
     // The forget has to reach disk, whatever "disk" means on this platform - which is exactly why
     // the assertion is on the checkpoint and not on `saveState`, whose result web still has to store.
-    expect(mlsService.persistCheckpoint).toHaveBeenCalledWith('1234');
+    expect(mlsService.persistCheckpoint).toHaveBeenCalledWith();
     expect(conversations.has('g1')).toBe(false);
   });
 });
@@ -382,7 +382,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
     expect(mlsService.forgetGroup).toHaveBeenCalledWith('phantom-mls');
     // The forget has to reach disk, whatever "disk" means on this platform - which is exactly why
     // the assertion is on the checkpoint and not on `saveState`, whose result web still has to store.
-    expect(mlsService.persistCheckpoint).toHaveBeenCalledWith('1234');
+    expect(mlsService.persistCheckpoint).toHaveBeenCalledWith();
   });
 
   it('does not purge when server fetch failed', async () => {

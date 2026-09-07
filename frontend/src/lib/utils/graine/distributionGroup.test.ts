@@ -558,7 +558,7 @@ describe('ensureCommunityDistributionGroup - a tree that moved is written to dis
     // caller is told the join failed, so the next load finds no group held and asks again.
     expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith('g-1');
     expect(mls.persistCheckpoint).toHaveBeenCalledTimes(1);
-    expect(mls.persistCheckpoint).toHaveBeenCalledWith('device-key');
+    expect(mls.persistCheckpoint).toHaveBeenCalledWith();
   });
 
   it('says what the checkpoint bought, so the give-up line is not the last word on a dead salon', async () => {

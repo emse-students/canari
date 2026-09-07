@@ -82,7 +82,7 @@ describe('BaseMlsService.reconcileSendRatchets', () => {
 
     await reconcile(ctx);
 
-    expect(ctx.persistCheckpoint).toHaveBeenCalledWith('key-b64');
+    expect(ctx.persistCheckpoint).toHaveBeenCalledWith();
     expect(pendingSendGenerations('u')).toEqual([]);
   });
 

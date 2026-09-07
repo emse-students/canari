@@ -54,7 +54,7 @@ describe('BaseMlsService.generateKeyPackage on a revoked device', () => {
     // Persisted before anything else may fail: a new id in localStorage next to the old state is
     // what made the identity churn self-sustaining.
     expect(localStorage.getItem('mls_device_id_u')).toBe('d-fresh');
-    expect(ctx.persistCheckpoint).toHaveBeenCalledWith('key-b64');
+    expect(ctx.persistCheckpoint).toHaveBeenCalledWith();
     expect(ctx.deleteDevice).toHaveBeenCalledWith('u', 'd-revoked');
     expect(impl).toHaveBeenCalledTimes(2);
   });

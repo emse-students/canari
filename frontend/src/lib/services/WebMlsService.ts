@@ -11,6 +11,7 @@ import {
   type MlsInitOptions,
 } from '$lib/mls-client';
 import { mintKeyPackages } from '$lib/mls-client/keyPackages';
+import { persistMlsStructuralCheckpoint } from '$lib/mls-client/mlsStatePersisterRegistry';
 import type { MlsKeyPackageRequest } from '$lib/mls-client/mlsWorkerProtocol';
 import { isChannelEventFrame, isHeartbeatFrame } from '$lib/mls-client/channelEventTypes';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
@@ -755,7 +756,7 @@ export class WebMlsService extends BaseMlsService {
    * Re-encrypts the in-memory MLS state with the new device key and writes it to storage.
    * The in-memory client state is unchanged; only the persisted blob is re-encrypted.
    */
-  async changeDeviceKey(newDeviceKeyB64: string): Promise<void> {
+  protected async changeDeviceKeyImpl(newDeviceKeyB64: string): Promise<void> {
     const newState = await this.saveState(newDeviceKeyB64);
     await saveMlsState(this.userId, newState);
     console.log('[MLS] Device key changed - state re-encrypted and persisted.');
@@ -790,7 +791,6 @@ export class WebMlsService extends BaseMlsService {
 
     let fallback: Uint8Array;
     let poolPackages: Uint8Array[] = [];
-    let stateBytesToPersist: Uint8Array | undefined;
 
     if (this.useKeyPackageWorker && typeof Worker !== 'undefined') {
       // The worker generates KeyPackages off-thread, but its result contains private keys
@@ -810,14 +810,12 @@ export class WebMlsService extends BaseMlsService {
         try {
           console.log('[MLS] generateKeyPackage via worker (under mlsLock)');
           const mutationsAtSnapshot = this.liveMutations;
-          // TAGGED AT THE CAPTURE, NOT AT THE WRITE. The worker keeps these bytes for up to 30 s
-          // and returns a state DERIVED from them; numbering that result when it comes back would
-          // date a thirty-second-old capture to now and invert its order against every checkpoint
-          // taken in between. `propagateMlsSnapshotVersion` below is how a version crosses an await.
-          const snapshot = tagMlsSnapshot(
-            (this.client.save_state(deviceKeyB64) as Uint8Array).slice(),
-            'key packages (worker snapshot)'
-          );
+          // NOT TAGGED, BECAUSE NOTHING DERIVED FROM IT IS EVER WRITTEN. These bytes exist to give
+          // the worker something to generate against; the state that comes back is installed into
+          // the live client and the checkpoint below captures THAT. A version number here would
+          // number a snapshot no writer will ever present, and advancing the monotonic counter
+          // without a write dates the next real checkpoint against a write that never happened.
+          const snapshot = (this.client.save_state(deviceKeyB64) as Uint8Array).slice();
           const workerResult = await this.runWorkerKeyPackageGeneration(
             deviceKeyB64,
             needed,
@@ -834,58 +832,49 @@ export class WebMlsService extends BaseMlsService {
             // not in the live client. Regenerate on the authoritative live client rather than
             // publish orphaned prekeys (which would later cause NoMatchingKeyPackage).
             console.warn('[MLS] key package worker snapshot stale - regenerating on live client');
-            const minted = mintKeyPackages(this.client, needed);
-            return {
-              ...minted,
-              stateBytesToPersist: tagMlsSnapshot(
-                this.client.save_state(deviceKeyB64) as Uint8Array,
-                'key packages (live client, worker snapshot refused)'
-              ),
-            };
+            return mintKeyPackages(this.client, needed);
           }
-          return {
-            fallback: workerResult.fallback,
-            poolPackages: workerResult.poolPackages,
-            // Derived from `snapshot`, so it carries `snapshot`'s number and describes the state as
-            // of that capture - which is exactly what the swap above just proved is still current.
-            stateBytesToPersist: propagateMlsSnapshotVersion(snapshot, workerResult.state),
-          };
+          return { fallback: workerResult.fallback, poolPackages: workerResult.poolPackages };
         } catch (e) {
           console.warn('[MLS] key package worker failed, fallback to main thread path:', e);
-          const minted = mintKeyPackages(this.client, needed);
-          return {
-            ...minted,
-            stateBytesToPersist: tagMlsSnapshot(
-              this.client.save_state(deviceKeyB64) as Uint8Array,
-              'key packages (live client, worker failed)'
-            ),
-          };
+          return mintKeyPackages(this.client, needed);
         }
       });
       fallback = workerGenResult.fallback;
       poolPackages = workerGenResult.poolPackages;
-      stateBytesToPersist = workerGenResult.stateBytesToPersist;
     } else {
       // Always generate a fresh static fallback KP for this device.
       ({ fallback, poolPackages } = mintKeyPackages(this.client, needed));
-      stateBytesToPersist = tagMlsSnapshot(
-        this.client.save_state(deviceKeyB64) as Uint8Array,
-        'key packages (main thread)'
-      );
     }
 
-    if (stateBytesToPersist) {
-      try {
-        // ALREADY TAGGED, at the capture, by whichever of the four branches above produced these
-        // bytes. It was tagged HERE instead until 2026-09-07, under a comment claiming the turn had
-        // "no interleaving await" - true of the main-thread branch and false of the worker one,
-        // whose bytes come back from a round trip. So a stale capture was numbered as the newest
-        // write in the document, and a genuinely fresher checkpoint was then refused against it.
-        // That is the `Skipping stale MLS state write` line the campaign carried as dirt.
-        await saveMlsState(this.userId, stateBytesToPersist);
-      } catch (e) {
-        console.warn('[MLS] Auto-save failed in WASM mode:', e);
-      }
+    // THE OVERLAP IS DELETED, NOT ORDERED - this was the last writer of the MLS document that did
+    // not go through the persister.
+    //
+    // Until here it did `save_state` + `saveMlsState`, its own capture racing `persistNow` and
+    // `persistMlsStateAfterMutation`; the loser was dropped by the write-if-newer guard, which is
+    // the `[MLS] Skipping stale MLS state write (vN < stored vN+1)` line four HEAL-REVOKE rows
+    // carried as dirt. Measured 2026-09-06 across five runs: exactly one occurrence in four of
+    // them, off by exactly one, absent from the fifth - the signature of two writers meeting once,
+    // which is once per connection because that is how often key packages are published. Ordering
+    // the two would have left two captures able to interleave; routing through the persister leaves
+    // ONE, and `inFlightEncrypted` means it cannot race itself.
+    //
+    // CAPTURING FRESH IS ALSO CORRECT, which is why the four pre-captured snapshots above are gone
+    // rather than threaded down here. Every one of the four branches leaves the private halves in
+    // `this.client`: the worker's state is installed by `reloadClientFromState` when the swap holds,
+    // and all three other branches mint on the live client. A capture taken now therefore contains
+    // what a capture taken there did, and cannot be staler than the state it describes.
+    //
+    // And it gains the ratchet bookkeeping this path never did: `persistCheckpoint` brackets the
+    // write with `snapshotEmitted` / `commitPersisted`, so the generations this checkpoint makes
+    // durable are credited instead of being re-burnt on the next load.
+    //
+    // AWAITED BEFORE THE PUBLISH BELOW, as the previous write was: a key package whose private half
+    // is not on disk is a `NoMatchingKeyPackage` waiting for the first peer that consumes it.
+    try {
+      await persistMlsStructuralCheckpoint({ mlsService: this });
+    } catch (e) {
+      console.warn('[MLS] key package checkpoint failed:', e);
     }
 
     // Publish the static fallback KP (always refreshed on connection).

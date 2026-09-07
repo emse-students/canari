@@ -2414,9 +2414,37 @@ produced it - the durable rule about a precondition applied to a helper's caller
 ConsumptionSeam.test.ts` enumerates every `.processIncomingMessage(` call site in the tree and fails
 unless each records or is listed with the reason it must not. Measured in both directions.
 
-**OWED: a TAB-3b re-run on a build carrying this.** The row was `PASS-DIRTY` on two severe lines at
-19:28 on `be30b3ab`, both naming rows created by the run before it - which is the shape this fix
-addresses and the only thing that can confirm it.
+**THE RE-RUN IS DONE (2026-09-07, `__sveltekit_19q322l`, source `6001eadefa09b125`) AND THE ROW IS
+STILL `PASS-DIRTY`.** The fix was necessary and is not sufficient, and the re-run narrows what is
+left far better than the first run did:
+
+- **The accusations ACCUMULATE by exactly two per run.** Run 3 accuses two rows, run 4 accuses those
+  two plus two more, run 5 accuses those four plus two more - exactly the pair of messages W2 sends
+  while W1 is down each time. Nothing forgets an accusation; every run re-makes all the earlier ones
+  and adds its own.
+- **The generations are consecutive and they are W2's**: `Ciphertext generation out of bounds` 11 and
+  12 (run 3), 13 and 14 (run 4), 15 and 16 (run 5), all at `msg_epoch=145 group_epoch=145`.
+- **W1's durable set holds all six accused ROW keys and NOT ONE of the six frame fingerprints.**
+  Read directly out of `localStorage` after the run: 3 511 entries, 1 696 of them fingerprints, the
+  six row keys sitting at the very end - written by the LAST run's own accusation, since a run that
+  is killed straight afterwards never commits its thunk.
+
+**So the suspect is the ORDERING, not another silent call site.** The replay's marks become durable
+only in the commit thunk at the end of the walk, on purpose, so the ledger never runs ahead of the
+persisted ratchet. But the converse is unguarded: `flushEncryptedInternal` is NOT gated by
+`bulkIngestDepth` - only `persistNow` is - so any structural mutation during the walk lands a
+checkpoint that makes the ratchet durable while the marks are still in memory. Kill the page there
+and the ratchet is ahead of the ledger, which is the one direction that manufactures a false loss.
+**The fix has to bind the two: the marks belong to whatever writes the checkpoint, so that they
+become durable together in both directions.** Not attempted here - it changes the durability
+ordering of the replay and wants its own measurement.
+
+**AND THE CATCH-UP IS A TIMER, WHICH IS A SECOND FINDING THE ROW WAS BUILT TO SURFACE.** Five cold
+starts took 61 863 / 61 865 / 61 889 / 61 930 / 62 019 ms to show a message sent while the browser
+was down - a **156 ms spread over five runs**. A duration that stable is not work, and the board's
+unexplained 77.7 s outlier did not reproduce. Something waits about sixty seconds before an offline
+device is given a message the server already holds; `PHASE_STUCK_MS` is 60 s but only REPORTS, so it
+is not that. Worth a row of its own: on a phone this is a minute of an empty conversation.
 
 The ledger that should prevent it is `seenCipherHashes` (`utils/chat/history.ts`), which IS durable -
 localStorage, capped at 5 000 - and the unreadable path does `seenCipherHashes.add(rowKey)` before
@@ -2558,82 +2586,41 @@ worth knowing and is no longer evidence for anything.
 **OWED**: HEAL-REVOKE-5, -8, -2, -3 and -9 on a build carrying both fixes - all `PASS-DIRTY` on the
 `arrived twice` line alone, which is fixed. Until a release carries them this is FIXED, NOT SHIPPED.
 
-### P3 - the LAST unserialised writer of the MLS snapshot is the key-package path, and it is the one that makes the guard log (read 2026-09-06, NOT reproduced)
+### RETIRED 2026-09-07 - the key-package writer now goes through the persister, and the two entries that stood here are one fix
 
-**FILED FIRST AS A P2 ABOUT A STALE CAPTURE CARRYING A FRESH VERSION, AND THAT READING WAS TOO
-STRONG - the guard I had not seen is `installUnlessOvertaken`.** The key-package WORKER takes a
-SNAPSHOT of the client state, generates off-thread, and its result is installed only if the live
-client has not moved under it (`mutationsAtSnapshot`, plus `swapClientMonotonic`'s per-group epoch
-check); a refused swap falls into the branch that regenerates on the LIVE client. So the worst case
-I described - an old capture persisted as if fresh - is not reachable through the path I claimed it
-was. **Recorded rather than quietly deleted: the entry was written from the tag site alone, without
-following what happens to the bytes, which is the mistake and not the conclusion.**
+**Both entries are gone because one change closed them.** They described the same thing from two
+ends: the key-package publication seam did `save_state` + `saveMlsState`, its own capture racing
+`persistNow` and `persistMlsStateAfterMutation`, and the write-if-newer guard dropping the loser was
+the `[MLS] Skipping stale MLS state write (vN < stored vN+1)` line four HEAL-REVOKE rows carried as
+dirt. It is now `persistMlsStructuralCheckpoint`, like every other writer; the story and the
+reasoning are in `CHANGELOG.md`, the rule in [durable-rules](durable-rules.md).
 
-**WHAT IS REAL AND IS THE POINT: this is the one writer that does not go through the persister.**
-Every other path does. `persistMlsStructuralCheckpoint` routes to the registered
-`MlsStatePersister`, which serialises its own flushes (`inFlightEncrypted` plus a re-run flag), so
-the persister cannot race itself and `persistMlsStateAfterMutation` inherits that. The key-package
-publication seam instead does `save_state` followed by `saveMlsState(userId, tagMlsSnapshot(...))` -
-**the exact two-call shape whose removal is already documented next door**, in `runSaveEncrypted`:
-*"ONE CALL, BECAUSE THE PLATFORM OWNS WHAT DURABLE MEANS ... this used to be `saveState` followed by
-`saveMlsStateEncrypted`, which is right on web and writes `mls.bin` TWICE on native"*. That call site
-kept its own copy of an answer that was corrected everywhere else.
+**OWED: a HEAL-REVOKE re-run on a build carrying it.** The measurement that named the defect was
+five runs with one occurrence in four of them, so a single clean run proves nothing and four do -
+and the four rows it should turn from `PASS-DIRTY` to `PASS` are HEAL-REVOKE-2, -5, -8 and -9. Until
+that run exists this is FIXED, NOT VERIFIED.
 
-**AND IT EXPLAINS THE MEASUREMENT EXACTLY.** Key-package publication happens ONCE per connection,
-which is why the drop is once per mint and off by exactly one rather than a storm: two writers, one
-of them serialised, meeting once. The entry below is the noise; this is its second call site.
+### P2 - the MESSAGE store has the same stale device key the MLS persister just lost, and nothing has measured it (found 2026-09-07, NOT reproduced)
 
-**THE FIX IS TO DELETE THE OVERLAP, NOT TO ORDER IT**: route this write through
-`persistMlsStructuralCheckpoint()` like everything else, which also gives it the durability the
-publication actually needs (the private halves of the key packages must be on disk BEFORE they are
-published). It is not done here because it touches the client's persistence path and the only thing
-that can say it is safe is a run of the HEAL rung, which is what this session spent its measurements
-on. **Nothing observed a loss, and the guard's every line is about the safe direction.**
+**The MLS half is fixed and this half is the same shape, untouched.** `setupMessageHandler`
+destructures `deviceKeyB64` from its deps once, at login, and hands that value to everything that
+seals a message: `storage.updateMessage(..., deviceKeyB64)`, `storage.saveMessages(..., deps.device
+KeyB64)`, and `republishKeyMaterial(deps.deviceKeyB64)`. `performPinChange` re-encrypts every stored
+message under the new key and calls `setDeviceKey`, but it cannot reach that closure - so a message
+arriving AFTER the PIN change is sealed with the key the store has just been migrated off.
 
-### P3 - three writers persist one MLS document and the guard between them logs on every mass join (measured 2026-09-06)
+**WHY IT IS FILED AND NOT FIXED HERE.** The MLS fix had one owner to move the key to - the service
+whose state is being sealed. The message store has no equivalent: the key is threaded to the storage
+API from every call site that writes, and picking the owner is a design decision rather than a
+mechanical change. Doing it badly would be worse than the defect, which is recoverable.
 
-**The line is `[MLS] Skipping stale MLS state write (v110 < stored v111)`, and it is the guard
-WORKING.** Snapshots are tagged with a monotonic version at the SYNCHRONOUS capture moment, on
-purpose - *"the version travels with the bytes via a WeakMap, so the async Argon2 step cannot
-reorder it"* - and the MLS client is epoch-monotonic, so a snapshot captured later never reflects a
-staler state than one captured earlier. An earlier capture whose write lands after a later one's is
-therefore correctly dropped, and the fresher state is what stays. **Nothing is lost**, and a failed
-write of the newer one costs one missed checkpoint rather than a regression.
+**WHAT WOULD SETTLE IT, and it needs no phone:** change the PIN in W1 with the conversation open,
+have W2 send one message, then reload W1 and see whether that message renders. If it does not, the
+entry is a P1 and the message is unreadable rather than merely mis-sealed. The rung already exists -
+the PIN rows are the four the board keeps last precisely because they change a PIN.
 
-**WHAT IT IS THE VISIBLE END OF IS THREE WRITERS ON ONE DOCUMENT.** `persistNow` (the state
-persister), `persistMlsStateAfterMutation`, and the key-package publication path all capture and
-write; a device performing a mass join runs all three within seconds of each other, and two captures
-in flight at once is what the version compares.
-
-**IT IS OFF BY EXACTLY ONE, AND IT MISSES SOME RUNS.** Measured across five runs on 2026-09-06:
-`v110 < v111` (HEAL-REVOKE-5), `v133 < v134` (-8), `v134 < v135` (-2), `v199 < v200` (-9), and
-**nothing at all on -3**, which is `PASS` with all four observers clean. So it is a race and not a
-fixed sequence: four runs in five, always exactly ONE occurrence.
-
-**IT IS NOT TIED TO MINTING, WHICH A FIRST READING OF THREE RUNS SAID IT WAS.** On -5, -8 and -2 it
-fell on an observer that mints a device; on -9 it is the VICTIM, a device coming back from a deferred
-wipe. What those have in common is a client ENUMERATING a large number of groups at once, which is
-the situation that puts a key-package publication beside a persister flush - and it is the observers
-doing nothing of the kind (the actor, every time) that never carry it. **Off by one means exactly
-TWO captures in flight and adjacent**, not a storm, which is why the pair of call sites can be named
-rather than hunted: the persister serialises itself, so the other one is the writer that does not go
-through it (the entry above).
-
-**SERIALISING THE WRITES WOULD BE WRONG, and that is why this is filed rather than fixed.** Chaining
-them makes the OLDER capture land first and be overwritten - two writes where one is needed, and a
-window in which the persisted state is the staler one. Assigning the version inside the chain
-instead would change what the tag means: it is a capture order, and the guard's whole correctness
-rests on that. The fix that would remove the line is to have ONE seam capture and persist, which is
-a change to the most safety-critical path in the client and wants its own session.
-
-**IT IS NOT FORGIVEN ON THE ROW.** The only expected-noise list that covers a freshly minted device
-is `FRESH_CLIENT_NARRATION`, shared by every runner, so adding the needle there is a CLASSIFIER
-rather than a per-row disposition - which is precisely what the HEAL rung's own note warns against.
-HEAL-REVOKE-5 therefore reports `PASS-DIRTY` honestly.
-
-**Read with the P2 next to it in `hex.ts`**: the `version === stored` case is a DIFFERENT event - two
-tabs seeding from the same stored value - and whether dropping the second tab's write can lose state
-is still open. This entry is about `version < stored` only.
+**Its sibling is fixed**: the persister no longer holds a key at all, `CHANGELOG.md` carries the
+account, and [durable-rules](durable-rules.md) carries the rule both halves are instances of.
 
 ### P3 - HEAL-W2's break cannot take, because the live client writes its MLS state back over the restore (measured 2026-09-06)
 

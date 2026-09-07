@@ -685,7 +685,7 @@ export class TauriMlsService extends BaseMlsService {
     });
   }
 
-  async changeDeviceKey(newDeviceKeyB64: string): Promise<void> {
+  protected async changeDeviceKeyImpl(newDeviceKeyB64: string): Promise<void> {
     this._deviceKeyB64 = newDeviceKeyB64;
     await this.saveState(newDeviceKeyB64);
 

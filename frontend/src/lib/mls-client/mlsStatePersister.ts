@@ -5,7 +5,6 @@ import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 /** Configuration for coalesced MLS state persistence. */
 export interface MlsStatePersisterConfig {
   mlsService: IMlsService;
-  deviceKeyB64: string;
   log?: (msg: string) => void;
 }
 
@@ -34,7 +33,7 @@ export interface MlsStatePersister {
  * flush() write a checkpoint to IndexedDB, sealed with the device key.
  */
 export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsStatePersister {
-  const { mlsService, deviceKeyB64, log } = config;
+  const { mlsService, log } = config;
 
   let dirtyEncrypted = false;
   let immediateFlushQueued = false;
@@ -51,7 +50,7 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
     // halves on the phone is what showed it: 3.7 s per checkpoint, 1.7 s of real save and 2.0 s of
     // duplicate. The fact was already in the codebase, on `persistCheckpoint`; this call site had
     // its own copy of the answer and the copy was wrong.
-    await mlsService.persistCheckpoint(deviceKeyB64);
+    await mlsService.persistCheckpoint();
     const saveMs = saveStarted === null ? null : performance.now() - saveStarted;
     if (saveMs !== null) recordMlsSaveStateMs(saveMs);
     log?.(

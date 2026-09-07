@@ -54,7 +54,6 @@ export async function flushActiveMlsStateEncrypted(): Promise<void> {
 /** Fallback when the registry persister is not registered (tests / pre-pipeline). */
 export interface MlsStructuralCheckpointFallback {
   mlsService: Pick<IMlsService, 'persistCheckpoint'>;
-  deviceKeyB64: string;
 }
 
 /**
@@ -76,6 +75,6 @@ export async function persistMlsStructuralCheckpoint(
     return true;
   }
   if (!fallback) return false;
-  await fallback.mlsService.persistCheckpoint(fallback.deviceKeyB64);
+  await fallback.mlsService.persistCheckpoint();
   return true;
 }
