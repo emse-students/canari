@@ -1,9 +1,14 @@
-const noteFrameConsumed = vi.fn();
+import { attemptCommitReplay } from './commitReplay';
+
+// `vi.hoisted`, NOT a bare `const` plus a dynamic import. `vi.mock` is hoisted above every
+// statement in the file, so a factory closing over an ordinary `const` reads it in its temporal
+// dead zone; the dynamic-import workaround dodges that but leaves a file with no import and no
+// export, which TypeScript then reads as a SCRIPT - and a top-level `await` in a script is an
+// error. Local `svelte-check` passed on a warm build and CI, on a fresh checkout, did not.
+const noteFrameConsumed = vi.hoisted(() => vi.fn());
 vi.mock('$lib/utils/chat/history', () => ({
   noteFrameConsumed: (u: string, g: string, b: Uint8Array) => noteFrameConsumed(u, g, b),
 }));
-
-const { attemptCommitReplay } = await import('./commitReplay');
 
 function makeMls(overrides: Record<string, unknown>) {
   return {
