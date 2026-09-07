@@ -594,6 +594,20 @@ const SEVERE = [
   // of the session (`bulkIngestActive` raised, every later message buffered then discarded).
   // `- ignored` is the disposition that makes it silent; this rule is what makes it audible.
   /^\[QUEUE\] endBulkIngest without a matching beginBulkIngest - ignored$/,
+  // A REPLAY THAT GAVE UP LOSES DURABLE PROGRESS AND SAID SO AT `[WARN]`, WHICH NOTHING READS.
+  //
+  // `replayConversationHistory` catches everything, logs one line and returns `undefined`, so the
+  // caller's `commit?.()` - the stream cursor, the seen-ciphertext set and the retry counters, the
+  // whole record of what the walk consumed - is a no-op. The ratchet advances it made are flushed
+  // anyway: the bulk-ingest window closes in a `finally`. So the generations are durably spent and
+  // the ledger saying they were is not, and the NEXT replay meets those frames, is refused by MLS
+  // and reports real loss. That is the shape of TAB-3b's re-accused rows.
+  //
+  // The line carries no `epoch`, `refused`, `welcome` or any other word `NOTABLE` looks for, and
+  // `[WARN]` is not a console error, so a run could contain it and no bucket would show it. This is
+  // the rule that makes a swallowed failure audible, and it is SEVERE rather than notable because
+  // what it costs is not visible until a later run blames the product for it.
+  /\[WARN\] History replay failed for/i,
 ];
 
 /** The raw, lower-layer decrypt failure - evidence for a finding, never a finding by itself. */
@@ -653,6 +667,10 @@ const SEVERE_BUT_EXPECTED = /CannotDecryptOwnMessage/i;
 /** Console text that must be reported even though it is not an error - it means something happened. */
 const NOTABLE = [
   /SecretReuse|out of bounds|Duplicate|silent ACK|ACK silencieux/i,
+  // ALSO `SEVERE`, and here so it is EXPLAINED as well as accused. A replay that gave up is a named
+  // cause with a known cost - see the `SEVERE` entry - and a line that is severe and unexplained at
+  // once reads as "nobody has classified this", which is the one thing it is not.
+  /\[WARN\] History replay failed for/i,
   // A FRAME NOBODY HANDLED, on a group whose whole point is that its frames are handled. The app
   // logs this to announce VERSION SKEW, and on 2026-08-20 it was printing it between two clients
   // running the same bundle - because the history reconciliation was probing distribution groups as

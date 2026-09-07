@@ -1,5 +1,6 @@
 import { fromBase64 } from '$lib/utils/hex';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
+import { noteFrameConsumed } from '$lib/utils/chat/history';
 
 /** Outcome of a rung-1 commit replay attempt. */
 export interface CommitReplayResult {
@@ -27,10 +28,17 @@ export interface CommitReplayResult {
  *
  * The server commit-log stores only ciphertext, so replaying it is a pure crypto catch-up with no
  * privacy change - the client still cryptographically verifies each commit as it applies it.
+ *
+ * `userId` IS HERE FOR THE LEDGER, AND THAT IS THE WHOLE OF WHY IT IS A PARAMETER. Every commit
+ * applied below spends a generation the shared archive also holds, and until 2026-09-07 nothing
+ * recorded it - so the archive replay walked the same row later, MLS refused it as a spent
+ * generation, and the client reported a real message permanently lost and asked a peer to reconcile.
+ * See {@link noteFrameConsumed}.
  */
 export async function attemptCommitReplay(
   mlsService: IMlsService,
   groupId: string,
+  userId: string,
   log: (msg: string) => void
 ): Promise<CommitReplayResult> {
   const startEpoch = mlsService.getEpoch(groupId);
@@ -64,7 +72,11 @@ export async function attemptCommitReplay(
     // Skip commits already applied (baseEpoch behind our current epoch).
     if (c.baseEpoch < mlsService.getEpoch(groupId)) continue;
     try {
-      await mlsService.processIncomingMessage(groupId, fromBase64(c.proto));
+      const bytes = fromBase64(c.proto);
+      await mlsService.processIncomingMessage(groupId, bytes);
+      // AFTER the await, so only a commit that really applied is claimed: a throw consumes nothing,
+      // and claiming it would tell every later reader "already read" about a frame nobody has read.
+      noteFrameConsumed(userId, groupId, bytes);
       applied++;
     } catch (e) {
       log(`[GAP] replay stopped at epoch ${c.baseEpoch}: ${String(e).slice(0, 80)}`);

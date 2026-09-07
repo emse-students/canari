@@ -2375,7 +2375,7 @@ keep their current behaviour exactly. What is NOT settled is which sites should 
 that is merely wasteful on mobile is not the same as one that loses state, and they want different
 urgency.
 
-### P2 - a frame this device already read is re-accused as lost on every later cold start, and the reconciliation it triggers finds nothing (measured 2026-09-05)
+### ~~P2 - a frame this device already read is re-accused as lost on every later cold start~~ - CAUSE FOUND AND FIXED, NOT SHIPPED (2026-09-07)
 
 TAB-3b runs five cold starts. Each one printed `[History] frame never read here and unreadable for
 good (secret-reuse); will reconcile` - and the later runs re-printed **the same row keys** as the
@@ -2387,6 +2387,36 @@ earlier ones (`row 1788591833954-0` appears in run 1 and again in run 2), alongs
 already decrypted that frame.** So the verdict is a false alarm, and it is the loudest line the
 history replay has: the harness's severity rule fires on it, and its reader is being taught to skip
 the one line that would name a real loss.
+
+**THE CAUSE IS TWO DECRYPT PATHS THAT SPEND A GENERATION AND RECORD NOTHING, and the ledger the
+entry suspected is innocent.** Measured on W1's own localStorage, 2026-09-07: the seen-ciphertext set
+for that group holds **3 491 entries - 1 800 row keys and 1 691 frame fingerprints** - and its stream
+cursor is past every accused row. The ledger persists, the thunk is reached, and
+`[WARN] History replay failed` appears nowhere (it is now `SEVERE` in `watch.mjs`, so a run cannot
+contain it invisibly again). What is missing is exact: **not one of the accused frames' fingerprints
+is in a set holding 1 691 of them.**
+
+`setupMessageHandler` records consumption in a private `noteConsumed`, under a docblock stating
+"both call sites below reach here" - both call sites of ITSELF. **Four other places hand bytes to
+`processIncomingMessage`**, and two spend generations silently:
+
+- the **buffered-message replay** that runs when a Welcome lands (frames held from before the join);
+- **`attemptCommitReplay`**, which re-applies missed commits - and whose own comment says a commit
+  consumes its generation exactly like a message does.
+
+Both are frames the shared archive also holds, so the replay walks the row later, MLS refuses the
+spent generation, and the client reports a permanent loss and asks a peer to reconcile history it
+already has. `noteFrameConsumed` in `history.ts` is now the one gesture; the distribution-frame path
+records too (cheap insurance, and the direction it can be wrong in is the safe one).
+
+**THE OBLIGATION IS ASSERTED RATHER THAN REMEMBERED**, because "call this too" is exactly what
+produced it - the durable rule about a precondition applied to a helper's callers. `historyFrame
+ConsumptionSeam.test.ts` enumerates every `.processIncomingMessage(` call site in the tree and fails
+unless each records or is listed with the reason it must not. Measured in both directions.
+
+**OWED: a TAB-3b re-run on a build carrying this.** The row was `PASS-DIRTY` on two severe lines at
+19:28 on `be30b3ab`, both naming rows created by the run before it - which is the shape this fix
+addresses and the only thing that can confirm it.
 
 The ledger that should prevent it is `seenCipherHashes` (`utils/chat/history.ts`), which IS durable -
 localStorage, capped at 5 000 - and the unreadable path does `seenCipherHashes.add(rowKey)` before

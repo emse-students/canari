@@ -1074,6 +1074,41 @@ into the cursor would carry it over an earlier frame the queue had already expir
 and never writes `mls.bin` back (`src-tauri/src/mobile/background.rs`), so the foreground genuinely
 does read that frame again from its queue; marking it there would skip a message nobody has read.
 
+### The same generator came back through two paths nobody had counted (2026-09-07)
+
+**The fix above was applied at ONE point and the docblock said so - "both call sites below reach
+here", counting the two paths through `handleKnownGroup`.** Four other places in the tree hand bytes
+to `processIncomingMessage`, and two of them spend a generation and record nothing:
+
+- the **buffered-message replay** that runs when a Welcome lands (`setupMessageHandler`), applying
+  frames held from before the join;
+- **`attemptCommitReplay`**, re-applying the commits a device missed - and its own comment states
+  that a commit consumes its generation exactly like a message does, which is why the live path
+  marks commits too.
+
+Both handle frames the shared archive also holds, so the generator this section describes was still
+running, one class of frame smaller.
+
+**THE MEASUREMENT IS WHAT ELIMINATED THE LEDGER AS THE SUSPECT**, and the suspicion was reasonable:
+the durable write is a thunk the caller may skip, so "the session ended before the flush" explains
+the symptom exactly. Read off W1's own `localStorage` on 2026-09-07, for the group TAB-3b uses:
+**3 491 entries - 1 800 row keys and 1 691 frame fingerprints** - with the stream cursor PAST every
+accused row, and `[WARN] History replay failed` nowhere in the run (it is `SEVERE` in the harness
+now, so a run cannot hold it invisibly). A ledger that plainly works, missing exactly the frames
+those two paths consumed: **not one accused fingerprint among 1 691.**
+
+`noteFrameConsumed` in `history.ts` is the single gesture now - the durable mark and the in-memory
+ring together, since every consumer needs both and a consumer that must remember two calls will make
+one. `routeDistributionFrame` records as well: those frames are not what a conversation replay walks,
+so it is insurance rather than a known fix, and the direction it can be wrong in is the safe one -
+a recorded consumption can only ever prevent a false claim about bytes this device really did read.
+
+**And the obligation is ASSERTED**, because "call this too" is what produced it twice.
+`historyFrameConsumptionSeam.test.ts` enumerates every `.processIncomingMessage(` call site in
+`src/lib` and fails unless each records or is named in an exemption list carrying the reason it must
+not. The one exemption is the archive replay's own page decrypt, which records the whole page in one
+pass and defers the write on purpose.
+
 #### Verified on prod, 2026-08-13 - and the first measurement proved nothing
 
 The fix is **prospective**: it marks frames as they are consumed, so it can say nothing about frames

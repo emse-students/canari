@@ -335,6 +335,17 @@ const CASES = [
     '[01:40:12] [QUEUE] endBulkIngest without a matching beginBulkIngest - ignored',
     'severe',
   ],
+  // A REPLAY THAT GAVE UP. It logs once at `[WARN]` and returns `undefined`, so the caller's commit -
+  // the stream cursor, the seen-ciphertext set, the retry counters - never runs, while the ratchet
+  // advances it made are flushed anyway by a `finally`. The generations are durably spent and the
+  // record of spending them is not, so the NEXT replay meets those frames and reports real loss.
+  // Carries no word `NOTABLE` looks for and is not a console error: without this rule a run could
+  // contain it and no bucket would show it.
+  [
+    'log',
+    '[01:40:12] [WARN] History replay failed for Canari Test Beta: Failed to fetch',
+    'severe',
+  ],
   // A Welcome sent in answer to a welcome_request - the invitation-link join and every re-add.
   // `notable`: the mechanism working, and also somebody asking to be let into a group.
   ['log', '[14:26:09] [WELCOME_REQ] Welcome -> b78568a3…:web-b78568a3…-msglwqh6-vegy for 1bf6fefe…', 'notable'],

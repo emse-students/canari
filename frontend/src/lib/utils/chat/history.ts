@@ -19,7 +19,7 @@ import {
   resolveMessageTimestamp,
 } from '$lib/utils/chat/messageUtils';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
-import { frameFingerprint } from '$lib/mls-client/inboundFrameLedger';
+import { frameFingerprint, noteFrameProcessed } from '$lib/mls-client/inboundFrameLedger';
 import { classifyIncomingDecryptError } from '$lib/mls-client/mlsDecryptError';
 import { markEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { escalateReconciliation } from '$lib/utils/chat/historyReconcile';
@@ -230,6 +230,39 @@ export function markHistoryFrameConsumed(
   if (seen.has(fingerprint)) return;
   seen.add(fingerprint);
   scheduleSeenFlush(userId, groupId);
+}
+
+/**
+ * THE ONE GESTURE EVERY SUCCESSFUL DECRYPT OWES, both ledgers at once.
+ *
+ * `markHistoryFrameConsumed` is the durable half and `noteFrameProcessed` the in-memory ring; they
+ * answer different questions over different lifetimes and every consumer needs both, so a consumer
+ * that has to remember two calls is a consumer that will make one. `setupMessageHandler` had a
+ * private `noteConsumed` doing exactly this and its docblock enumerated "both call sites" - of
+ * ITSELF. **There were four other places that hand bytes to `processIncomingMessage`**, and two of
+ * them spend a generation with no trace: the buffered-message replay that runs when a Welcome lands,
+ * and `attemptCommitReplay`, which re-applies missed commits and whose own comment says a commit
+ * consumes its generation exactly like a message does.
+ *
+ * WHAT THAT COSTS IS A FALSE ACCUSATION OF LOSS, and it is the loudest line the app has. The archive
+ * replay later walks the same row, MLS refuses it (`SecretReuseError` - the generation is spent),
+ * and the client reports `frame never read here and unreadable for good` and asks a peer to
+ * reconcile history it already holds. Measured on TAB-3b, 2026-09-07: the seen set for that group
+ * held 1 691 frame fingerprints and 1 800 row keys, and NOT ONE of the accused frames' fingerprints
+ * - a set that works, missing exactly the frames these two paths consumed.
+ *
+ * `historyFrameConsumptionSeam.test.ts` asserts that every caller of `processIncomingMessage` in the
+ * tree either reaches this or is listed there with its reason, because "remember to call it" is the
+ * obligation that produced the defect.
+ *
+ * @param userId this device's account
+ * @param groupId the MLS group whose ratchet advanced
+ * @param frame the exact bytes handed to MLS - the only thing the live and archive paths share
+ */
+export function noteFrameConsumed(userId: string, groupId: string, frame: Uint8Array): void {
+  const fingerprint = frameFingerprint(frame);
+  noteFrameProcessed(groupId, fingerprint);
+  markHistoryFrameConsumed(userId, groupId, fingerprint);
 }
 
 /**

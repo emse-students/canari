@@ -19,7 +19,11 @@ import { handleChannelEvent } from './channelEventHandler';
 import { noteUnackedFrame } from './unackedFrames';
 import { frameFingerprint, hasFrameBeenProcessed, noteFrameProcessed } from '../inboundFrameLedger';
 import { reconcileGroup } from '$lib/utils/chat/historyReconcile';
-import { hasHistoryFrameBeenConsumed, markHistoryFrameConsumed } from '$lib/utils/chat/history';
+import {
+  hasHistoryFrameBeenConsumed,
+  markHistoryFrameConsumed,
+  noteFrameConsumed,
+} from '$lib/utils/chat/history';
 import type { IncomingDeliveryMeta } from '../incomingDelivery';
 import { classifyIncomingDecryptError } from '../mlsDecryptError';
 import { createMlsStatePersister } from '../mlsStatePersister';
@@ -419,6 +423,12 @@ async function handleWelcome({
         for (const msg of buf.msgs) {
           try {
             const decBytes = await mlsService.processIncomingMessage(joinedGroupId, msg.content);
+            // THE BUFFER SPENDS A GENERATION LIKE EVERY OTHER PATH, and recorded nothing until
+            // 2026-09-07. These are frames that arrived BEFORE the Welcome and were held; the shared
+            // archive holds the same rows, so a replay walked them later, MLS refused the spent
+            // generation and the client called a message it had already displayed a permanent loss.
+            // After the await: a throw consumes nothing.
+            noteFrameConsumed(userId, joinedGroupId, msg.content);
             if (decBytes) {
               const appMsg = decodeAppMessage(decBytes);
               if (appMsg) {
@@ -929,7 +939,7 @@ async function handleKnownGroup({
       // Either way no later attempt can succeed, so the wait below is pure delay.
       let rungOneIsExhausted = false;
       try {
-        const replay = await attemptCommitReplay(mlsService, groupId, log);
+        const replay = await attemptCommitReplay(mlsService, groupId, userId, log);
         if (replay.healed) {
           clearEpochGap(groupId);
           statePersister.persistNow();

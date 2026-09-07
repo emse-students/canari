@@ -11,6 +11,39 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - two decrypt paths spent a ratchet generation and told no ledger, so the archive replay called a message it had already read a permanent loss
+
+`setupMessageHandler` has always recorded a consumed frame in both ledgers, in a private
+`noteConsumed`, under a docblock saying "both call sites below reach here" - both call sites of
+ITSELF. Four other places hand bytes to `processIncomingMessage`, and two spend generations
+silently: the **buffered-message replay** that runs when a Welcome lands, and **`attemptCommitReplay`**,
+which re-applies missed commits and whose own comment says a commit consumes its generation exactly
+like a message does.
+
+Both handle frames the shared archive also holds. So the replay walks the same row minutes or days
+later, MLS refuses it because the generation is spent, and the client prints
+`frame never read here and unreadable for good`, counts a permanent loss and asks a peer to
+reconcile history it already holds - the loudest line the app has, spent on nothing.
+
+**The ledger the investigation suspected is innocent, and the measurement is what says so.** W1's
+seen-ciphertext set for the group TAB-3b uses holds 3 491 entries (1 800 row keys, 1 691 frame
+fingerprints) and its stream cursor is past every accused row; the commit thunk is reached and the
+replay does not throw. What is missing is exact: not one of the accused frames' fingerprints is in a
+set holding 1 691 of them.
+
+`noteFrameConsumed` is the one gesture now, and the distribution-frame path records too - cheap, and
+the direction it can be wrong in is the safe one: a recorded consumption can only prevent a false
+claim about bytes this device really did read. **The obligation is asserted rather than remembered**,
+because "remember to call it" is what produced the defect:
+`historyFrameConsumptionSeam.test.ts` enumerates every `.processIncomingMessage(` call site in the
+tree and fails unless each records or is listed with the reason it must not.
+
+A swallowed replay failure is also `SEVERE` in the harness now. `replayConversationHistory` catches
+everything, logs one `[WARN]` line and returns `undefined`, so the caller's commit is a no-op while
+the ratchet advances it made are flushed anyway - and that line carries no word the classifier looked
+for, so a run could contain it and no bucket would show it. That is how this cause was eliminated
+rather than assumed.
+
 ### Added - the 158 scripts that produce every campaign verdict are linted, and were linted by nothing
 
 `bun run lint` is scoped to `frontend/`; `make test-harness` ran the self-tests and the inventory,
