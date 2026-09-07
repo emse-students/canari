@@ -2192,6 +2192,39 @@ export function logcatReport(lines, label = 'A1') {
     // clear - a cancel that finds nothing is not a different event, it is this one arriving second.
     ['fcm-cancel', /^cancelConversationNotification: (notif removed|no notif for) group=/],
     ['fcm-cache', /^(writeFcmCache|fetchAvatar): /],
+    // ── the boot receiver, and the reason it fires without a boot ────────────────────────────────
+    // ANDROID REPLAYS THE BOOT BROADCAST TO A PACKAGE LEAVING THE STOPPED STATE, so `force-stop`
+    // followed by a launch delivers `LOCKED_BOOT_COMPLETED` then `BOOT_COMPLETED` on a device that
+    // has been up for five days - reproduced 2026-09-07 with `BroadcastQueue ...
+    // BOOT_COMPLETED_BROADCAST_COMPLETION_LATENCY_REPORTED ... receiversSize:2` in the same capture.
+    // That is LIFE-3's state exactly, and its four `CanariBoot` lines are the receiver doing the one
+    // thing it exists for. The `W` and `E` sites of the same file are deliberately NOT here: a token
+    // fetch that failed, an empty token, an unwritable `fcm_token.txt` and an absent
+    // `push_context.json` each name a real loss and must keep surfacing.
+    ['boot-receiver', /^onReceive: android\.intent\.action\.[A-Z_]+ -> push token re-registration/],
+    ['boot-token', /^reRegisterToken: (token (unchanged|ROTATED)|context\/secret absent -> backend refresh deferred)/],
+    ['boot-outbox', /^drainPendingOutbox: (outbox empty|done, \d+ message\(s\) still queued)/],
+    // 2xx ONLY. The site logs whatever the backend answered, so a rule over `HTTP \d+` would explain
+    // away a 500 as readily as a 201 - and this is the call that keeps the push token addressable.
+    ['fcm-token-refresh', /^refreshTokenOnBackend: HTTP 2\d\d$/],
+    // ── the WorkManager job, both ends, on three tags ───────────────────────────────────────────
+    // `MlsBackgroundWorker` is where a push with no deadline lands; LIFE-4 (doze) is the row that
+    // sees it, because a dozing phone is exactly what defers work to it. The failure branches of
+    // the same file - max retries, missing `push_context.json`, absent `mls.bin`, a lock never
+    // acquired - are `W`/`E` and stay unexplained.
+    ['worker-run', /^doWork: (starting \(attempt \d+\)|app in foreground -> MLS handled by the foreground|MLS state=\d+ bytes|background cleanup completed)/],
+    ['worker-wrapper', /^(Starting work for fr\.emse\.canari\.|Worker result SUCCESS for Work \[)/],
+    ['worker-done', /^\[mines_app_lib\] Background Worker completed successfully$/],
+    // ── the background decrypt's DIAGNOSTIC LADDER, named so it is reported rather than silent ───
+    // `tryDecrypt refused` is not a failure of the row: it is the push path saying it could not
+    // decrypt in the background and is about to find out why, and both answers below it are
+    // ordinary. It reaches `notable` on every capture (see the notable test), so a reader always
+    // sees it - what it must not do is break `clean` on a row whose message then arrives, which is
+    // what LIFE-4 measured on 2026-09-07: refused, 0 commits since epoch 144, fallback to the
+    // worker, message delivered exactly once.
+    ['fcm-decrypt-refused', /^tryDecrypt refused group=[0-9a-f]+ locality=[A-Z]+$/],
+    ['fcm-locality', /^groupLocality: epoch=-?\d+ group=[0-9a-f]+$/],
+    ['fcm-catchup', /^(fetchCommitsFromBackend: \d+ commit\(s\) since epoch=-?\d+|catchup: no commit to catch up \(epoch=-?\d+\) -> fallback)$/],
     ['outbox-drain', /^(drainOutboxBackground|sendQueuedMessagePush): /],
     ['worker-flag', /^resetFailureFlag: flag reset/],
     ['paths', /^\[mines_app_lib\] \[Path\] /],
@@ -2312,7 +2345,11 @@ export function logcatReport(lines, label = 'A1') {
       explainedBy[hit[0]] = (explainedBy[hit[0]] || 0) + 1;
       // Explained AND worth seeing: an epoch gap or a re-enrolment is normal traffic and still the
       // first thing a reader wants beside a delivery verdict.
-      if (/epoch|GAP|welcome|revoke|forget|out-of-sync/i.test(l.msg)) notable.push(text);
+      // `refused` and `fallback` join the list for the ladder above: a background decrypt that was
+      // refused, and a catch-up that found nothing and handed the work to the worker, are both
+      // ordinary AND the first thing a reader wants beside a phone verdict. Explained, reported,
+      // and not gating - which is the only honest place for a line that is normal but load-bearing.
+      if (/epoch|GAP|welcome|revoke|forget|out-of-sync|refused|fallback/i.test(l.msg)) notable.push(text);
       continue;
     }
     // An UNCLASSIFIED line carrying a marker still escalates: the rules above are what is known to be

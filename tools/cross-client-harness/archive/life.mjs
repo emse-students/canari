@@ -12,7 +12,8 @@
  *
  * Usage: bun life.mjs 1|2|3|4|5|6|7|8
  */
-import { APP_TAB, awaitMessage, client, countMessage, ensureChat, openConversation, send } from '../chat.mjs';
+import { APP_TAB, awaitMessage, client, ensureChat, openConversation, sample, send } from '../chat.mjs';
+import { estateReverse } from '../a1apk.mjs';
 import { logcatReport, logcatSince, watch } from '../watch.mjs';
 import { finishObserved, mark } from '../results.mjs';
 import { requireFreshFcmLink } from '../fcmlink.mjs';
@@ -43,9 +44,19 @@ async function restore() {
   const pinResult = unlock();
   await sleep(3_000);
   const a1 = await client(PORTS.A1, 'tauri.localhost');
-  await ensureChat(a1).catch(() => null);
-  await openConversation(a1, peerNameFor('A1')).catch(() => null);
-  return { a1, pinResult };
+  // REPORTED, NOT SWALLOWED. These two `.catch(() => null)` are why LIFE-6's first execution could
+  // not be read: a restore that never reached the conversation produces `count: 0` from a pane that
+  // is not the peer's, which is indistinguishable from a message that never arrived - one of the
+  // four readings of zero that `SAMPLE` exists to separate (`chat.mjs`). Tolerating the failure
+  // is right (the app may be mid-catch-up), hiding it is not.
+  const reopened = { chat: 'ok', conversation: 'ok' };
+  await ensureChat(a1).catch((e) => {
+    reopened.chat = String(e.message || e).slice(0, 200);
+  });
+  await openConversation(a1, peerNameFor('A1')).catch((e) => {
+    reopened.conversation = String(e.message || e).slice(0, 200);
+  });
+  return { a1, pinResult, reopened };
 }
 
 const STATES = {
@@ -112,6 +123,12 @@ const STATES = {
         }
         await sleep(2_000);
       }
+      // THE ROUTE TO THE ESTATE DOES NOT SURVIVE A REBOOT, and nothing else here would re-create it.
+      // The phone reaches the local estate over `adb reverse` on the cable (`a1apk.mjs`), a forward
+      // that lives in the adb server's view of a transport - so after a reboot the app is talking to
+      // nothing, and every field this row records would describe an offline phone while calling it
+      // "rebooted". Asserted rather than assumed: `estateReverse` reads the list back.
+      estateReverse(true, 'A1');
       // FCM re-registers on its own schedule after a boot; a send that beats it measures Google's
       // reconnect, not Canari's.
       await sleep(30_000);
@@ -123,12 +140,23 @@ const STATES = {
     // MUST run over USB: the wireless transport rides the wifi this check switches off, so a
     // wireless serial disconnects at `enter()` and the run dies before it measures anything.
     name: 'LIFE-6 offline (radios off)',
+    // OFFLINE IS THREE CUTS ON THIS BENCH, NOT TWO, and the third is the one that matters: the phone
+    // reaches the LOCAL estate over `adb reverse` on the USB cable (`a1apk.mjs`), which no radio
+    // switch touches. The first execution of this row, 2026-09-07, sent its message through that
+    // cable to a phone declared offline, got a notification 2.2 s later, and reported FAIL - a
+    // verdict about a state the device was never in. `estateReverse` is asserted in both
+    // directions, so a cut that did not take is an error here rather than a finding downstream.
     enter: () => {
       phone.home();
       phone.sh('svc wifi disable');
       phone.sh('svc data disable');
+      estateReverse(false, 'A1');
+      // AND THE ONE ALREADY OPEN, which `--remove` does not touch: see `phone.killAdbServer`, where
+      // the three gestures are tabulated against what each leaves ESTABLISHED.
+      phone.killAdbServer();
     },
     leave: () => {
+      estateReverse(true, 'A1');
       phone.sh('svc wifi enable');
       phone.sh('svc data enable');
     },
@@ -146,7 +174,13 @@ const STATES = {
     leave: () => phone.sh(`pm grant ${phone.PKG} android.permission.POST_NOTIFICATIONS`),
     // The shade must stay EMPTY here - that is the check, not a failure.
     expectNotification: false,
-    processDies: false,
+    // AND THE PROCESS DIES, BECAUSE ANDROID KILLS IT - which this row declared `false` and therefore
+    // failed on, first execution, 2026-09-07, with every other field exactly right (empty shade, one
+    // copy, pane at the bottom, clean). Revoking a RUNTIME permission restarts the app: measured in
+    // logcat as `ActivityManager: Killing 20772:fr.emse.canari (adj 200): permissions revoked`,
+    // 0.7 s after the `pm revoke`. Declaring otherwise was asserting against the OS, the same
+    // mistake LIFE-3 records for the notification half of this phase.
+    processDies: true,
   },
   8: {
     name: 'LIFE-8 process reclaimed (am kill)',
@@ -224,7 +258,7 @@ const shade = phone.notifications().map((n) => `${n.title} | ${n.body}`.slice(0,
 
 // ── back to life ─────────────────────────────────────────────────────────────
 if (state.leave) await state.leave();
-const { a1, pinResult } = await restore();
+const { a1, pinResult, reopened } = await restore();
 // TWO numbers, because they answer different questions: time since the send includes however long
 // this check spent waiting on the shade and unlocking, which is a property of the harness; time
 // since the app came back is the app's own catch-up.
@@ -232,7 +266,12 @@ const restoredAt = Date.now();
 const arrivedInMs = await awaitMessage(a1, m, 90_000).then(() => Date.now() - sentAt, () => null);
 const afterRestoreMs = arrivedInMs === null ? null : arrivedInMs - (restoredAt - sentAt);
 await sleep(3_000);
-const count = await countMessage(a1, m);
+// ONE SAMPLE, NOT A BARE COUNT. `countMessage` reads the OPEN PANE, and its zero has three
+// readings - no pane, no message, or the wrong conversation - which is exactly the ambiguity
+// LIFE-6 landed in. `sample` carries the composer's presence, the pane size, the WHOLE BODY's
+// count and the conversation the header names, so the verdict below can be believed either way.
+const seen = await sample(a1, m);
+const count = seen.count;
 
 const phoneConsole = phone.console_();
 const notable = phoneConsole.filter((l) =>
@@ -295,7 +334,7 @@ await finishObserved(`LIFE-${which}`, asserted, {
     afterMs: notifiedInMs,
     shade,
   },
-  conversation: { arrivedInMs, afterRestoreMs, count },
+  conversation: { arrivedInMs, afterRestoreMs, count, sample: seen, reopened },
   pin: pinResult,
   phoneWebviewNotable: notable.slice(-12),
 }, { W2: oW, A1: phoneReport });

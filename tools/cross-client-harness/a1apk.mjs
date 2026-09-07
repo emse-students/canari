@@ -103,6 +103,44 @@ function authentikEnv() {
 }
 
 /**
+ * THE PHONE'S ONLY ROUTE TO THE ESTATE, RAISED OR CUT - and asserted in BOTH directions.
+ *
+ * On this bench the phone does not reach the estate over its radios at all: `SITE` is
+ * `http://localhost:<port>` on the workstation, and `adb reverse` makes that same string true on
+ * the device, over the USB cable. Two consequences, and the second is why this is exported.
+ *
+ * 1. **`adb reverse` answers 0 for a forward that is not there** once the device has gone between
+ *    the two calls, so the LIST is read back rather than the exit code believed - a check that
+ *    believes it measures a phone talking to nothing, which reads exactly like a server fault.
+ * 2. **`svc wifi disable` DOES NOT TAKE THIS PHONE OFFLINE.** LIFE-6 is "offline (radios off)" and
+ *    its premise - "nothing can arrive while the radios are down" - stopped being true the day the
+ *    rig moved to the LOCAL estate (2026-09-03): on its first execution the message crossed the
+ *    cable, the app raised a notification 2.2s later, and the row reported FAIL about a phone that
+ *    had never been offline. Cutting the radios is HALF of that state; cutting this is the other.
+ *
+ * `--remove` on a forward that is already gone exits non-zero, so it is tolerated and the list is
+ * what decides - the same rule as the raise, in the same place.
+ */
+export function estateReverse(up, tag = 'A1', port = sitePort()) {
+  const dev = serial();
+  try {
+    adb(up ? ['reverse', `tcp:${port}`, `tcp:${port}`] : ['reverse', '--remove', `tcp:${port}`]);
+  } catch (e) {
+    if (up) throw e; // a raise that failed is fatal; a remove of nothing is already the state asked for
+  }
+  const listed = adb(['reverse', '--list']);
+  const isUp = listed.includes(`tcp:${port}`);
+  console.log(`[${tag}] reverse tcp:${port} on ${dev}: ${isUp ? 'up' : 'down'}`);
+  if (isUp !== up) {
+    throw new Error(
+      `adb reverse tcp:${port} should be ${up ? 'up' : 'down'} and the list says otherwise:
+${listed}`
+    );
+  }
+  return { dev, up: isUp, port };
+}
+
+/**
  * The gesture, as a function, so importing this file does NOT build an APK.
  *
  * IT DID, and that is why the guard is here: the first `await import('./a1apk.mjs')` written to
@@ -130,19 +168,9 @@ export async function armA1({ build = true, reverseOnly = false, device = 'A1' }
   useDevice(device);
   const TAG = device;
 
-  // ── the reverse, which is the whole of what a replug costs ──────────────────────────────────────
-  function reverse(port) {
-    const dev = serial();
-    adb(['reverse', `tcp:${port}`, `tcp:${port}`]);
-    // ASSERTED, because `adb reverse` answers 0 for a forward that is not there afterwards when the
-    // device has gone between the two calls - and a check that believes it then measures a phone
-    // talking to nothing, which reads exactly like a server fault.
-    const listed = adb(['reverse', '--list']);
-    const ok = listed.includes(`tcp:${port}`);
-    console.log(`[${TAG}] reverse tcp:${port} on ${dev}: ${ok ? 'up' : 'NOT LISTED'}`);
-    if (!ok) throw new Error(`adb reverse --list does not show tcp:${port}:\n${listed}`);
-    return dev;
-  }
+  // ── the reverse, which is the whole of what a replug costs ────────────────────────────────
+  // ONE IMPLEMENTATION, at module level above, because LIFE-6 needs the other direction too.
+  const reverse = (port) => estateReverse(true, TAG, port).dev;
 
   const PORT = sitePort();
 

@@ -62,6 +62,34 @@ const CASES = [
   [line('D', 'CanariFCM', 'cancelConversationNotification: no notif for group=00000000'), 'explained'],
   [line('D', 'CanariFCM', 'drainOutboxBackground: 1 sent, 0 remaining'), 'explained'],
   [line('D', 'CanariWorker', 'resetFailureFlag: flag reset'), 'explained'],
+
+  // ── the boot receiver, which fires on a device that has not booted ────────────────────────────
+  // Android replays the boot broadcast to a package leaving the STOPPED state, so LIFE-3's
+  // `force-stop` + launch produces all four of these. The `W`/`E` sites of the same file name real
+  // losses and are pinned below as things that must NOT be explained.
+  [line('I', 'CanariBoot', 'onReceive: android.intent.action.BOOT_COMPLETED -> push token re-registration + outbox drain'), 'explained'],
+  [line('I', 'CanariBoot', 'reRegisterToken: token unchanged'), 'explained'],
+  [line('I', 'CanariBoot', 'reRegisterToken: token ROTATED'), 'explained'],
+  [line('D', 'CanariBoot', 'drainPendingOutbox: outbox empty'), 'explained'],
+  [line('I', 'CanariBoot', 'drainPendingOutbox: done, 2 message(s) still queued'), 'explained'],
+  [line('W', 'CanariBoot', 'drainPendingOutbox: push_context.json absent -> abort'), 'notable'],
+  [line('D', 'CanariFCM', 'refreshTokenOnBackend: HTTP 201'), 'explained'],
+  // THE STATUS IS THE POINT: a rule over `HTTP \d+` would green a 500 on the call that keeps this
+  // device's push token addressable.
+  [line('D', 'CanariFCM', 'refreshTokenOnBackend: HTTP 500'), 'unexplained'],
+
+  // ── the WorkManager job, on the three tags it speaks through ──────────────────────────────────
+  [line('D', 'CanariWorker', 'doWork: starting (attempt 0)'), 'explained'],
+  [line('D', 'CanariWorker', 'doWork: MLS state=8462644 bytes, filesDir=/data/user/0/fr.emse.canari'), 'explained'],
+  [line('D', 'CanariWorker', 'doWork: background cleanup completed'), 'explained'],
+  [line('D', 'WM-WorkerWrapper', 'Starting work for fr.emse.canari.MlsBackgroundWorker'), 'explained'],
+  [line('I', 'mines_app_lib', '[mines_app_lib] Background Worker completed successfully'), 'explained'],
+
+  // ── the background decrypt's ladder: explained, and REPORTED because it is load-bearing ───────
+  [line('D', 'CanariFCM', 'tryDecrypt refused group=2bd5add9 locality=LOCAL'), 'notable'],
+  [line('D', 'CanariFCM', 'groupLocality: epoch=144 group=2bd5add9'), 'notable'],
+  [line('D', 'CanariFCM', 'fetchCommitsFromBackend: 0 commit(s) since epoch=144'), 'notable'],
+  [line('D', 'CanariFCM', 'catchup: no commit to catch up (epoch=144) -> fallback'), 'notable'],
   [line('I', 'mines_app_lib', '[mines_app_lib] [Path] app_data_dir = /data/user/0/fr.emse.canari'), 'explained'],
   // The byte count is deliberately not a round four-digit number: `idcheck.mjs` reads the staged
   // index for every identity string in `test-accounts.json`, and the first draft of this line

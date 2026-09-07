@@ -63,6 +63,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | What | Kind | Where the substance is |
 | --- | --- | --- |
 | ~~UNLOCK THE CAMPAIGN PHONE~~ **DONE 2026-09-05** (`deviceLocked=0`, measured). What remains is OPTIONAL and the user asked for it: removing the pattern needs the credential, so either they clear it in Settings or it joins `test-accounts.json` like every other one. Retiring the lock costs no key material - both keystore keys are explicitly `setUserAuthenticationRequired(false)`, measured before proposing it | 1 gesture on the device | [P2 - every silent push on the phone fails to decrypt](#p1---a-backgrounded-phone-is-never-told-about-a-message-it-has-already-received-because-the-js-layer-waits-for-a-push-the-server-never-sends-measured-on-device-2026-09-05) |
+| **UNLOCK THE CAMPAIGN PHONE, AGAIN - and this time RETIRE the lock** (2026-09-07). It re-locked mid-session (`deviceLocked=1`, `trustManaged=1`, `strongAuthRequired=0x0`, `mDreamingLockscreen=true`); `wm dismiss-keyguard` is refused on a secure keyguard and no credential is in the rig by design. It cost LIFE-3 and LIFE-4 their re-runs, which were owed only their re-measurement against a classifier that had just been widened for them, and it will cost every phone row the moment the screen times out again. **Retiring the lock costs no key material** - both keystore keys are explicitly `setUserAuthenticationRequired(false)`, measured before this was first proposed on 2026-09-05 - so either the pattern is cleared in Settings or it joins `test-accounts.json` like every other credential | 1 gesture on the device, then a decision | [cross-client-testing](cross-client-testing.md) LIFE-3, LIFE-4, LIFE-5 |
 | set up the external uptime probe that mails - **decided 2026-09-06, mail**; the probe must hit `/api/version` AND `/api/chat-delivery-health`, never the homepage, which answered 200 through both outages | ~1 click in Cloudflare or an uptime service | [P2 - NOTHING TELLS ANYBODY PRODUCTION IS DOWN](#p2---nothing-tells-anybody-production-is-down-and-both-outages-of-2026-09-01-were-reported-by-the-user-owed-to-the-user-a-decision-then-one-click) |
 | `DEPENDABOT_ALERTS_TOKEN` - a fine-grained token with **"Dependabot alerts: read"** on this repository. The nightly alerts job has NEVER passed: it declared `security-events: read`, which is code scanning, and Dependabot alerts have no `permissions:` key at all, so `GITHUB_TOKEN` cannot read them at any setting. The job now reads this secret when it exists and fails loudly when it does not - deliberately, because an alert list nobody reads looks exactly like an empty one | 1 token, 1 secret | `.github/scripts/dependabot-alerts-report.sh`, and the 403 it now names correctly |
 | should a dev-ONLY trigger exist - today one push deploys both estates and a broken dev BLOCKS production, by design | decision | [dev.canari-emse.fr becomes a real second environment](#devcanari-emsefr-becomes-a-real-second-environment---decided-2026-08-17) |
@@ -322,25 +323,27 @@ that report reaching hosts other than production, which is the row above this on
 together or not at all, and neither needs a new mechanism, only the existing one pointed at one
 more fact and one more box.
 
-### P3 - vitest cannot start a worker on this workstation, so half of `make run-ci` is not available where development now happens (measured 2026-09-03)
+### ~~P3 - vitest cannot start a worker on this workstation~~ - RETIRED 2026-09-07, the whole suite runs here
 
-`bunx vitest run src/lib/utils/appVersion.test.ts` ends in
-`[vitest-pool-runner]: Timeout waiting for worker to respond` after 60 seconds, reporting
-`Test Files  no tests`. Measured with the default pool and with `--pool=forks`, and with a single
-test file, so it is not one suite being slow - **no worker starts at all.**
+**Re-measured before believing the entry, and the symptom is gone.** `bun run test` in `frontend/` -
+the same command `make run-ci` calls, paraglide compile included - reports **280 test files, 2632
+tests, all passing, in 81 seconds**. Nothing was changed to make that happen.
 
-**Why it is not cosmetic.** WP-5 moved development and the whole test campaign LOCAL, and
-`CLAUDE.md` names `make run-ci` as the full local pipeline. A local gate that cannot be executed on
-the machine doing the work is not a gate: the frontend half of that pipeline is currently CI-only,
-so a frontend defect is found after a push rather than before one. It also means a session cannot
-verify a frontend change it just wrote - on 2026-09-03 a `compareSemver` fix had to be checked by
-extracting the function into a standalone script (13 cases, all passing) because its real test file
-could not be run, and only CI exercised the file itself.
+**Three of the four candidates the entry named are ruled out by the same measurement.** It is not
+the POOL: the single file that used to time out passes on `--pool=forks` in 873 ms and on
+`--pool=threads` in 6 s, and `vitest.config.ts` pins neither, so the run above used the default. It
+is not `paraglide:compile`: that step ran, said `Successfully compiled inlang project`, and the
+suite followed it. It is not the vitest VERSION: `git log -S vitest -- frontend/bun.lock` shows the
+lock's vitest lines have not moved since 2026-09-02, before the failure was recorded.
 
-**What retires it:** naming the cause. Candidates not yet separated - Windows plus the forks pool,
-the `paraglide:compile` step the `test` script runs first, or a `node_modules` state specific to
-this box. `bun test` as a runner is NOT the answer to reach for: the suites are written for vitest,
-and swapping the runner to dodge a broken worker would change what is being asserted.
+**What is left is the fourth candidate, and it is the honest answer: a `node_modules` state
+specific to this box.** Two Dependabot merges landed in `frontend/bun.lock` since (#311, #313), and
+each brought an install with it. That is a repair nobody performed deliberately, so this retires as
+"no longer reproducible" rather than "diagnosed" - the distinction matters if it ever returns, and
+the first thing to try then is a clean install rather than a pool flag.
+
+**What it was blocking is available again**: a session can verify a frontend change it just wrote,
+and the frontend half of the local pipeline is no longer CI-only.
 
 ### ~~P1 - a release-asset upload was refused with the permission it was granted~~ - RETIRED 2026-09-04, the call that was refused is deleted
 
@@ -1049,7 +1052,24 @@ worth a sweep for the same pattern elsewhere: `ChangePinModal.svelte` and `Login
 **Not fixed inline, deliberately** (user, 2026-09-04): P2s go here rather than into the session that
 found them.
 
-### P2 - the local estate's DATABASE references media its OBJECT STORE never received, so any row that renders the feed is PASS-DIRTY on 404s that are the estate's (measured 2026-09-04, first row run after the tidy)
+### ~~P2 - the local estate's DATABASE references media its OBJECT STORE never received~~ - CLOSED 2026-09-07, the strip is in the restore and the estate measures zero
+
+**Verified with the project's own predicate, not a new one.** `COPY_STRIPS_MEDIA_RESIDUE_SQL` in
+`infrastructure/lib/copy-strips.sh` counts every place a media reference can hide - eleven of them,
+including the two that once made this count lie (`posts.comments`, a jsonb array of objects whose
+media sits one level down, and `channel_messages.attachments`). Run against the local estate on
+2026-09-07 it answers **0**, over 90 associations and 119 posts.
+
+**And the mechanism is named, which is what makes the zero mean something.** `restore-into-local.sh`
+applies the strips and then ASSERTS the count, refusing the restore outright when it is not zero
+(`ERROR %s row(s) still reference media objects this copy never received`). So this cannot silently
+come back on the next copy - the entry's own prescription, "the fix belongs in the restore, which
+already does this kind of work", is what was done.
+
+The paragraph below is kept as written because its REASONING is the durable part: why
+`ignoringExpectedLog` was the wrong disposition for a class spanning four rungs, and why clearing
+the dangling ids is preferable to copying production's blobs.
+
 
 **Measured on HEAL-NEW-0.** Every assertion of the row passed - `wipe`, `loggedOut`, `noHumanStep`,
 `freshId`, `neverSeen`, `sameAccount`, `registered`, `addressable` - and the re-minted device
@@ -1129,6 +1149,25 @@ predicate of a rung that has not run yet in this campaign: `heal-w2.mjs` require
 fired, `classify-selftest.mjs` pins its bucket, and `chat-delivery.md` quotes it. Renaming it to
 what it can honestly claim - a recovery STARTED - moves the instrument and the subject in the same
 commit, before HEAL has produced a single verdict. It belongs in the same pass as the HEAL rung.
+### P3 - a device with no key package is refused with 400, and the endpoint's own docblock says 404 (found on HEAL-NEW-12's dirt, 2026-09-07)
+
+`GET /api/mls/devices/:userId/:deviceId/key-package` documents itself as "only revoked / missing
+devices 404" and then throws `BadRequestException` when `resolveKeyPackagePayloadForDevice` returns
+nothing (`devices.controller.ts`). A 400 accuses the CALLER of sending something malformed; the
+request was well formed and the answer is that the row is not there.
+
+**The code carries meaning in this file and that is why the mismatch matters.** Sixty lines above,
+the device-cap refusal is deliberately a 400 with `code: DEVICE_LIMIT_REACHED`, and its comment
+states the contract: *"a 400 here is TERMINAL (the account must lose a device first) while other
+400s and every 5xx are retryable, and a client must not tell those apart by reading prose"*. A bare
+400 for "no key package" sits on the retryable side of a line drawn by code alone.
+
+**It is not what makes HEAL-NEW-12 dirty, and swapping the status would not clean it.** The client
+returns `null` on any `!res.ok` (`mlsDeliveryApi.fetchDeviceKeyPackage`), so 400 and 404 are the
+same to it; the repeated GETs in that row's `badHttp` are a pending invitation naming a device that
+can never be served, which is the P1 above about a device asking for a Welcome for ever. This entry
+is the honesty of the answer, not the loop.
+
 ### P3 - the remove control in a group panel announces a raw 64-hex user id, so a screen reader reads the id where everyone else reads a name (measured 2026-09-05)
 
 `Sidebar`'s member rows render display names correctly - GRP-9 measured zero of five rows showing a
@@ -1586,68 +1625,41 @@ written to prevent. It blocks no row verdict today - a row is judged on its clie
 logcat half - so it is P3, and the cost of leaving it is that the next genuinely new server line
 arrives among five a reader has learnt to skip.
 
-### P2 - a channel's MLS tree names THREE identities the server has never heard of, and opening the channel asks for each of them by name (measured on the local estate 2026-09-07)
+### ~~P2 - a channel's MLS tree names THREE identities the server has never heard of~~ - ANSWERED 2026-09-07, and the tree has nothing to do with it
 
-**This is the instrument the placeholder question was waiting for.** `CLAUDE.md` queue item 3 says
-"whether a LEAF is left in the MLS tree only a member's CLIENT can say" - and a client now says it,
-on demand, in under a minute.
+**The three ids are the campaign's OWN mention fixtures, and this rig had already named all three.**
+`9e2a5997...` is `ABSENT_MENTION_ID` in `tools/cross-client-harness/stranded.mjs` - a user id
+DERIVED FROM A PHRASE by this campaign so that MENTION-5 can type an `@` that belongs to nobody -
+and `ae1ea19c...` and `022a0a9c...` are the two randomised-era residues already sitting in the
+out-of-tree `STRANDED_ABSENT_MENTION_IDS`. `ABSENT_MENTION_404` names exactly those three, and
+`stranded.mjs`'s own docblock says so in as many words: *"the forgiveness, which names three ids"*.
 
-**The reproduction, deterministic.** Open `Canari Test Venue/general` on a client whose profile cache
-is cold. Exactly three `GET /api/users/<64-hex> -> 404` follow, the same three ids on every client,
-including a client of a DIFFERENT ACCOUNT. Nothing else in the run produces them: entering
-`/communities` alone produces none, and a page load produces only the two REAL lookups (the account
-and its peer). `openChannel` is the trigger.
+**How it was settled, after five hypotheses had been eliminated without naming a cause.** The entry
+said the next attempt owed `Runtime.enable` before the load. It owed something better:
+`Network.requestWillBeSent` carries `initiator`, and with `Debugger.setAsyncCallStackDepth(32)` that
+initiator carries the whole async chain. One capture, and the chain reads bottom-up:
 
-**What was ruled out, and how.**
+```
+onSelectChannelConversation  -> await -> getGraineSession (IndexedDB) -> a Svelte effect
+  -> resolveUserDisplayName -> fetchUserProfile -> GET /api/users/<id> -> 404
+```
 
-| Hypothesis | Measurement | Verdict |
-| --- | --- | --- |
-| Stale membership rows on the server | `NOT EXISTS` against `users` on `channel_members`, `channel_messages`, `dm_group_members`, `dm_device_group_memberships`, `key_package`, `association_members`, `push_token`, `revoked_device` | **0 orphans in every one** |
-| The ids are group / channel / device ids | `groupId` is a UUID and refuses the cast; a device id is 82 chars and prefixed (`web-…`); a user id is 64 hex | **they are USER ids** |
-| The server hands them over on the wire | every response body finishing during `openChannel` scanned for the three literals | **no response contains one** |
-| They sit in plaintext client storage | every `localStorage` key and every row of every IndexedDB store on the client, scanned for the literals | **not present** |
-| They are read watermarks of departed members | every conversation's `readWatermarks` keys compared against them | **zero matches** |
+**Which answers the question the entry could not choose between.** It is the MESSAGE PAYLOAD, not an
+MLS leaf: the ids come out of channel content decrypted at channel-open time, and the channel renders
+**five `Utilisateur inconnu` chips** for them (measured on W1, same session). Nothing is stale on the
+server, nothing is stranded in a tree, and the client is behaving exactly as designed - it asks once
+per session, caches the refusal, and labels the chip.
 
-The first row was re-measured with `NOT EXISTS` on purpose: the original sweep used
-`NOT IN (SELECT id FROM users)`, which is silently never true if any `id` is NULL, and a zero from it
-would have been an artefact. `users` has no NULL id and both forms agree - **a predicate that could
-have been vacuous was checked for vacuity before its zero was believed.**
+**What was actually broken is smaller and is a HARNESS fault.** `ignoringStrandedMentions` exists for
+precisely this and is called by `fwd.mjs`, `fwd345.mjs` and the MENTION rows; the COMM and MULTI
+channel rows never call it, so they collect three `badHttp` entries the rig had already declared
+expected. That is why MULTI-5 is `PASS-DIRTY`. **It is not a softening**: the pairs are `path` AND
+`status`, they name three specific ids, and one of them is a value this repository computes itself.
 
-**So the identities reach the client from something ENCRYPTED AT REST** - the only class left after
-the table above, and the only one a scan for a plaintext literal cannot see. Two things in that class
-name user ids: the MLS group state (a surviving leaf) and a message payload (a reaction, a read-by
-list). **The entry does not choose between them**, because the measurements so far cannot: what is
-established is that three correctly-shaped user identities are held locally, asked for by name on
-every cold channel open, and absent from the entire database. Read with the
-sibling P2 "an inviter that dies between sending a Welcome and registering the joiner leaves a member
-in the MLS tree with no server-side membership": that entry has the same shape and a different cause,
-and neither has a repair.
-
-**WHICH CALLER ASKS IS OPEN, AND THE ONE SUSPICION IS DELIBERATELY LEFT UNPROVEN.**
-`resolveUserDisplayName` logs `[DISPLAYNAME] no such user …` on a 404 and caches the label for the
-session, so the question is asked once. In MULTI-5's captured dirt that line is ABSENT - W1a's
-`unexplained` bucket held two lines and neither was it, `watch.mjs` has no rule that would claim it
-(`BENIGN_HTTP` forgives only `/avatar`), and `stores/user.ts` is the only builder of
-`GET /api/users/<id>` in the frontend. That points at a caller which takes a 404 and says nothing,
-which would break "every swallowed branch logs" in the exact place that would have named this defect
-earlier. **It is NOT established.** Two attempts to catch the line live failed for an INSTRUMENT
-reason, not an application one: after a `Page.reload` the channel row is not yet clickable, so
-`openChannel` threw `the row never became aria-current` before anything could be resolved, and a
-`Runtime.enable` issued after the reload captured no console at all. The next attempt owes
-`readyAfterReload` before the click, and `Runtime.enable` before the load.
-
-Candidates already read, none of them yet excluded by measurement: `MessageReactions.svelte` and
-`MessageInfoTooltip.svelte` both resolve raw user ids from DECRYPTED payload (a reaction and a
-read-by list), which would explain "not on the wire and not in plaintext storage" as well as an MLS
-leaf does - but both go through `resolveUserDisplayName`, so both SHOULD log. Whatever asks either
-logs and the capture is at fault, or does not and is the second defect; nothing here may assume
-which until one run says so.
-
-**What it costs the campaign meanwhile.** These three 404s are `badHttp`, which
-`ignoringExpectedLog` deliberately cannot forgive - a row may forgive a LINE, never a failed request
-- so every channel row on this estate is capped at `PASS-DIRTY` until this is closed. That is the
-correct behaviour and must not be softened to get a green board.
-
+**One correction to make elsewhere, because this entry was cited as evidence.** `CLAUDE.md` queue
+item 3 called this "the instrument the placeholder question was waiting for" - whether a LEAF is left
+in the MLS tree. It is not that instrument and never was: these ids never entered a tree. That
+question is still open and still needs a member's client to answer it.
 
 ### Question - does an invitation into a community notify somebody the inviter has never spoken to? (user, 2026-09-05)
 

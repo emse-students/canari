@@ -244,8 +244,8 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    `mls.bin`** - P1 for the checkpoint it feeds, not because pools run dry. Measured on both estates
    2026-09-07; CAUSE STILL OPEN ([backlog](docs/wiki/backlog.md)).
 3. **P1 - a PLACEHOLDER held a member's seat**; only a member's CLIENT can say whether a LEAF is
-   left in the MLS tree - **and 2026-09-07 one did**: zero placeholders across the local database,
-   three identities the clients ask for that it has never held ([backlog](docs/wiki/backlog.md)).
+   left in the MLS tree and **NOTHING HAS** - the three identities cited here as that evidence were
+   this campaign's OWN mention fixtures, named 2026-09-07 ([backlog](docs/wiki/backlog.md)).
 4. **FIXED, NOT SHIPPED - SIX defects that each cost a rejoining device its history**, one of them
    the instrument's. HEAL-REVOKE re-run 2026-09-06, every row `unmet: []`, four `PASS-DIRTY` on the
    SAME single line - the outbox hole, filed and not forgiven
