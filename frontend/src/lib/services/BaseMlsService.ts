@@ -72,6 +72,7 @@ import type {
   ExternalJoinOutcome,
 } from '$lib/mls-client/IMlsService';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
+import { noteFrameConsumed } from '$lib/utils/chat/history';
 
 /**
  * How many times {@link BaseMlsService.externalJoin} may re-read the base and resubmit.
@@ -2458,7 +2459,7 @@ export abstract class BaseMlsService implements IMlsService {
     markEpochGap(groupId);
     let exhausted: string | undefined;
     try {
-      const replay = await attemptCommitReplay(this, groupId, log);
+      const replay = await attemptCommitReplay(this, groupId, this.userId, log);
       if (replay.healed) {
         clearEpochGap(groupId);
         scheduleOutboundMlsPersist();
@@ -2634,6 +2635,13 @@ export abstract class BaseMlsService implements IMlsService {
     let plaintext: Uint8Array | null;
     try {
       plaintext = await this.processIncomingMessage(groupId, ciphertext);
+      // A DISTRIBUTION FRAME SPENDS A GENERATION LIKE ANY OTHER, so it is recorded like any other.
+      // This group's frames are not what a conversation replay walks, so the mark is cheap
+      // insurance rather than a known fix - and the direction it can be wrong in is the safe one: a
+      // recorded consumption can only ever prevent a false claim of loss about bytes this device
+      // really did read. Not recording is what cost TAB-3b its accusations. See
+      // {@link noteFrameConsumed}.
+      noteFrameConsumed(this.userId, groupId, ciphertext);
     } catch (e) {
       // WHY THIS ASKS WHICH FAILURE IT WAS. Refusing to acknowledge is right for a frame that may
       // still become readable - the join has not landed, a commit is missing - and it is an
