@@ -227,37 +227,46 @@ export async function closeOverlays(cx) {
  * @param label who is asking, for the error message
  */
 export async function createGroup(cx, name, { label = 'createGroup' } = {}) {
-  // A modal left open by an earlier step HIDES the trigger, and presents as "no stable element" for
-  // a control that is plainly in the DOM. Always start from a clear screen.
-  await closeOverlays(cx);
-  if ((await evaluate(cx, 'location.pathname')) !== '/chat') await goto(cx, '/chat');
+  try {
+    // A modal left open by an earlier step HIDES the trigger, and presents as "no stable element" for
+    // a control that is plainly in the DOM. Always start from a clear screen.
+    await closeOverlays(cx);
+    if ((await evaluate(cx, 'location.pathname')) !== '/chat') await goto(cx, '/chat');
 
-  await realClick(cx, '[aria-label="Nouvelle discussion"]');
-  // THE MODAL, not the group input: the modal opens on the "Contact" tab and the group input does
-  // not exist yet. This is the ordering READ-10 had inverted.
-  await until(cx, `/Nouvelle discussion/.test(document.body.innerText)`, 10000);
-  await realClick(cx, 'text=Groupe');
-  await until(cx, `!!document.querySelector('#new-group-name')`, 10000);
+    await realClick(cx, '[aria-label="Nouvelle discussion"]');
+    // THE MODAL, not the group input: the modal opens on the "Contact" tab and the group input does
+    // not exist yet. This is the ordering READ-10 had inverted.
+    await until(cx, `/Nouvelle discussion/.test(document.body.innerText)`, 10000);
+    await realClick(cx, 'text=Groupe');
+    await until(cx, `!!document.querySelector('#new-group-name')`, 10000);
 
-  await realClick(cx, '#new-group-name');
-  await cx.send('Input.insertText', { text: name });
+    await realClick(cx, '#new-group-name');
+    await cx.send('Input.insertText', { text: name });
 
-  // POST-CONDITION BEFORE THE CLICK, not a sleep: the submit is disabled until the name lands.
-  await until(
-    cx,
-    `(function () {
-       var b = [].slice.call(document.querySelectorAll('button')).filter(function (x) {
-         return /Créer le groupe/.test(x.innerText || '');
-       })[0];
-       return !!b && !b.disabled;
-     })()`,
-    8000
-  );
-  await realClick(cx, 'text=Créer le groupe');
+    // POST-CONDITION BEFORE THE CLICK, not a sleep: the submit is disabled until the name lands.
+    await until(
+      cx,
+      `(function () {
+         var b = [].slice.call(document.querySelectorAll('button')).filter(function (x) {
+           return /Créer le groupe/.test(x.innerText || '');
+         })[0];
+         return !!b && !b.disabled;
+       })()`,
+      8000
+    );
+    await realClick(cx, 'text=Créer le groupe');
 
-  await until(cx, `document.body.innerText.indexOf(${JSON.stringify(name)}) !== -1`, 25000);
-  await sleep(2500);
-  return name;
+    await until(cx, `document.body.innerText.indexOf(${JSON.stringify(name)}) !== -1`, 25000);
+    await sleep(2500);
+    return name;
+  } catch (e) {
+    // THE LABEL EXISTS FOR THIS SENTENCE AND NOTHING WAS SAYING IT. Nine call sites pass one - `grp5`,
+    // `read10`, `healrevoke` - and the docblock has promised "who is asking, for the error message"
+    // since the day it was written, while every failure here surfaced as a bare `until` timeout
+    // naming a selector. A runner that mints three groups in one row could not tell which of them
+    // died. Found by pointing a linter at this tree for the first time (2026-09-07).
+    throw new Error(`${label}: createGroup(${name}) failed - ${e instanceof Error ? e.message : String(e)}`);
+  }
 }
 
 /**

@@ -20,7 +20,6 @@ import {
   countMessage,
   ensureChat,
   ensureConversation,
-  evaluate,
   openChannel,
   openConversation,
   realClick,

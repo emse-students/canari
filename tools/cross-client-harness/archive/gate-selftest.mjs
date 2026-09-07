@@ -50,15 +50,23 @@ function gatedScripts() {
   ].map((m) => m[1]);
 }
 
-/** Everything git will put on a fresh checkout, as paths RELATIVE TO THE HARNESS DIR. */
+/**
+ * Everything git will put on a fresh checkout, as paths RELATIVE TO THE REPOSITORY ROOT.
+ *
+ * IT WAS SCOPED TO THE HARNESS DIRECTORY UNTIL 2026-09-07, and that made it a check about a LOCATION
+ * rather than about the property it claims. A self-test importing `../../frontend/scripts/...` -
+ * committed, on every checkout, perfectly runnable in CI - was reported missing, because the only
+ * files this could recognise were the ones under `tools/cross-client-harness`. The claim is "every
+ * file this reaches is in git", so the set it is checked against is what git tracks, all of it; a
+ * path escaping the repository is then reported for the right reason rather than by accident.
+ */
 const tracked = new Set(
-  execFileSync('git', ['ls-files', REL], { cwd: ROOT, encoding: 'utf8' })
+  execFileSync('git', ['ls-files'], { cwd: ROOT, encoding: 'utf8' })
     .split('\n')
-    .filter((l) => l.startsWith(`${REL}/`))
-    .map((l) => l.slice(REL.length + 1))
+    .map((l) => l.trim())
+    .filter(Boolean)
 );
 
-const HARNESS = join(HERE, '..');
 
 /**
  * The source with its COMMENTS removed, so a sentence about an import is not read as one.
@@ -83,7 +91,8 @@ const withoutComments = (src) =>
   src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
 
 /**
- * Transitive closure of relative imports, as harness-relative paths.
+ * Transitive closure of relative imports, as REPO-relative paths - the namespace `git ls-files`
+ * speaks, so a file outside the harness is judged by whether git has it rather than by where it sits.
  *
  * IT FOLLOWS `../` AS WELL AS `./`, which it did not have to before the rows moved into `archive/`:
  * every archived script now reaches its libraries by `../`, and a closure blind to that would report
@@ -95,7 +104,7 @@ function imports(rel, seen = new Set()) {
   seen.add(rel);
   let src;
   try {
-    src = readFileSync(join(HARNESS, rel), 'utf8');
+    src = readFileSync(join(ROOT, rel), 'utf8');
   } catch {
     return seen; // Absent here too - `tracked` is what decides, and it will say so.
   }
@@ -114,7 +123,7 @@ if (scripts.length === 0) {
 
 const problems = [];
 for (const s of scripts) {
-  const missing = [...imports(s)].filter((f) => !tracked.has(f));
+  const missing = [...imports(`${REL}/${s}`)].filter((f) => !tracked.has(f));
   if (missing.length) problems.push(`${s} needs ${missing.join(', ')} - not in git, so CI has none of it`);
 }
 

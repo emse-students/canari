@@ -59,7 +59,7 @@ function relativeImports(source) {
   // `gate-selftest.mjs` explaining this very trap, `instrument.mjs` listing the import forms it
   // recognises, and one more comment. `gate-selftest.mjs` had already documented the pit and I
   // fell into it one file away - which is what a gate that accuses the wrong thing costs.
-  const re = /^[ 	]*import\s+([^;'\"]*?)\s*from\s*['\"](\.[^'\"]+)['\"]/gm;
+  const re = /^[ 	]*import\s+([^;'"]*?)\s*from\s*['"](\.[^'"]+)['"]/gm;
   for (const m of source.matchAll(re)) {
     const clause = m[1].trim();
     const spec = m[2];

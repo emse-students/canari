@@ -14,8 +14,7 @@
  *
  *   bun ws1.mjs
  */
-import { client, evaluate, goto, openDM, send, until } from '../chat.mjs';
-import { consoleLines } from '../watch.mjs';
+import { client, goto, openDM, send, until } from '../chat.mjs';
 import { mark } from '../results.mjs';
 import { OWNER_NAME, PEER_NAME, PORTS } from '../names.mjs';
 

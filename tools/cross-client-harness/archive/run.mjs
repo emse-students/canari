@@ -44,7 +44,7 @@ import { closeExtraAppTabs } from './tabs.mjs';
 import { PORTS, VENUE } from '../names.mjs';
 import { channelIdOf, communityMemberIds, workspaceIdOf } from '../grainedb.mjs';
 import { all, clientBuild } from '../results.mjs';
-import { deployedBundleId, isOnTheDeployment, reloadOntoBundle } from '../bundle.mjs';
+import { deployedBundleId, isOnTheDeployment, reloadOntoBundle, sourceIsDeployed } from '../bundle.mjs';
 import { stateOf } from './ready-probe.mjs';
 import { bringToReady } from './ready-repair.mjs';
 import { requireScript } from '../scriptpath.mjs';
@@ -328,6 +328,14 @@ async function preflight(devices, { quiet = false } = {}) {
       // NOT A SHRUG, for the same reason A1's build is not. Losing the comparison means every
       // browser reads as current for ever, which is worse than having never had the check.
       problems.push(`the deployed bundle id could not be read, so no web client can be told from a stale one: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    // AND WHETHER THAT BUNDLE IS THIS SOURCE. Reloading every client onto the deployment is worth
+    // nothing when the deployment is not the tree the verdicts will name - `sourceIsDeployed` says
+    // what that cost. A refusal, not a repair: the fix is a two-minute build and a container
+    // recreate, which is not a thing a preflight may do to an estate behind the operator's back.
+    if (deployedBundle) {
+      const stale = await sourceIsDeployed(deployedBundle).catch((e) => `the source stamp could not be read, so no verdict can name the source it ran on: ${e instanceof Error ? e.message : String(e)}`);
+      if (stale) problems.push(stale);
     }
   }
 

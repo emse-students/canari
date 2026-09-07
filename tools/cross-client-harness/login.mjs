@@ -34,7 +34,7 @@ const opt = (name, fallback) => {
 // THE ACCOUNT IS DERIVED FROM THE DEVICE, never defaulted to a spelt key: a spelt key is an identity
 // in a public repository, and the wrong answer the moment this is pointed at the other browser.
 const target = resolveDevice(argv, { defaultPort: PORTS.W2 });
-const { device, port, account, isPhone } = target;
+const { port, account, isPhone } = target;
 if (!account) throw new Error(`no account known for port ${port} - pass --device or --account`);
 
 const creds = accountFor(account);

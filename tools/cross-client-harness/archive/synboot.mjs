@@ -54,7 +54,7 @@ const PROBE = `(function () {
 })()`;
 
 const cx = await client(port);
-const w = await watch(cx, 'boot');
+await watch(cx, 'boot');
 const t0 = Date.now();
 const marks = [];
 let stop = false;

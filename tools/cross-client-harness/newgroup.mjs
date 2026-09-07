@@ -15,9 +15,8 @@
  *
  *   bun newgroup.mjs --port 9223 --name HEALW2-xxxx [--add "<the other party's display name>"]
  */
-import { APP_TAB, client, evaluate, realClick, until } from './chat.mjs';
+import { APP_TAB, client, evaluate } from './chat.mjs';
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const arg = (n, d) => (process.argv.includes(`--${n}`) ? process.argv[process.argv.indexOf(`--${n}`) + 1] : d);
 
 const cx = await client(Number(arg('port', 9223)), APP_TAB, { focus: false });

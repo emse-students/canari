@@ -90,11 +90,9 @@ import { APP_TAB, armComposer, attachFiles, awaitMessage, clickAtPoint, client, 
 import { watch, report, gate, ignoringOfflineCut, longestSilence } from '../watch.mjs';
 import { errorDetail, mark, record, exitOnRecorded } from '../results.mjs';
 import { OWNER_NAME, PEER_NAME, PORTS, VENUE } from '../names.mjs';
-import { fileURLToPath } from 'node:url';
 
 const { W1, W2 } = PORTS;
 const MATCH = APP_TAB;
-const abs = (rel) => fileURLToPath(new URL(rel, import.meta.url));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const argv = process.argv.slice(2);

@@ -14,7 +14,7 @@
  *
  * Usage: bun fwd.mjs [iterations]
  */
-import { APP_TAB, awaitMessage, clickBubbleAction, client, countMessage, ensureChat, evaluate, openChannel, openConversation, realClick, send, settledCount, until } from '../chat.mjs';
+import { APP_TAB, awaitMessage, clickBubbleAction, client, ensureChat, openChannel, openConversation, realClick, send, settledCount, until } from '../chat.mjs';
 import { watch, report, dirtOf, gate } from '../watch.mjs';
 import { ignoringStrandedMentions } from '../stranded.mjs';
 import { finish, mark } from '../results.mjs';

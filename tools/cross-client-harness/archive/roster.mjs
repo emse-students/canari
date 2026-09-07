@@ -135,17 +135,42 @@ const placeholderRows = () =>
 /**
  * (group, user) pairs holding memberships of which NONE is active.
  *
- * This is the state that breaks delivery in both directions, and it is the one invariant here that
- * needs no budget: a user in a group with no active device cannot be sent to, now or later.
+ * This is the state that breaks delivery in both directions: a user in a group with no active device
+ * cannot be sent to, now or later.
+ *
+ * IT CARRIES THE SAME TWO DISCRIMINATORS AS THE PENDING COUNT BELOW, and until 2026-09-07 it carried
+ * neither - which made one row apply a policy to half its own population and not to the other half.
+ * A pair whose newest membership is three minutes old is not starved, it is mid-handshake, and the
+ * budget is exactly the line that says so. A pair all of whose devices the gateway has never heard of
+ * is a closed laptop: the same exclusion the pending count states out loud, for the same reason.
+ * Neither is charity - both sets are REPORTED, with their oldest age, so nobody can read a clean
+ * verdict as an empty table.
+ *
+ * `newestAge` is the age of the pair's MOST RECENT membership row, because that is the one the
+ * budget is about: an old row beside a fresh one is a device that re-enrolled, not a stuck member.
  */
 const usersWithNoActiveDevice = () =>
   rows(
     psql(
-      `SELECT left("groupId"::text,8), "userId", count(*)::text ` +
+      `SELECT left("groupId"::text,8), "userId", count(*)::text, ` +
+        `date_trunc('minute', now()-max("createdAt"))::text, ` +
+        // A WORD, NOT A BOOLEAN CAST. `boolean::text` is `true`/`false` in psql and `t`/`f` in half
+        // the documentation; the first version of this compared against 't', read every aged pair as
+        // fresh and reported five five-day-old pairs as inside a fifteen-minute budget.
+        `(CASE WHEN now()-max("createdAt") > interval '${BUDGET_MINUTES} minutes' THEN 'past' ELSE 'inside' END), ` +
+        `string_agg("deviceId", ',') ` +
         `FROM dm_device_group_memberships GROUP BY "groupId", "userId" ` +
         `HAVING count(*) FILTER (WHERE status='active') = 0 ORDER BY 1`,
     ),
-  ).map(([grp, usr, n]) => ({ group: grp, user: userTag(usr), devices: Number(n) }));
+  ).map(([grp, usr, n, newestAge, pastBudget, devs]) => ({
+    group: grp,
+    user: userTag(usr),
+    userFull: usr,
+    devices: Number(n),
+    deviceIds: devs.split(','),
+    newestAge,
+    pastBudget: pastBudget === 'past',
+  }));
 
 /** Pending rows older than the budget, with the full device id so presence can be joined on it. */
 const pendingPastBudget = () =>
@@ -226,9 +251,40 @@ if (row.id === "MULTI-10") {
   note(`placeholder identities: ${placeholders.length}`);
   for (const p of placeholders) note(`  placeholder ${JSON.stringify(p)}`);
 
-  const starved = usersWithNoActiveDevice();
-  note(`(group, user) pairs with no active device: ${starved.length}`);
+  // THE THREE-WAY SPLIT, because "no active device" has three causes and only one of them is this
+  // product failing. Mid-handshake (inside the budget) is the system working; every device silent
+  // for days is a closed laptop, the same exclusion the pending count states out loud; a pair whose
+  // device the gateway is TALKING TO and which still holds no active membership is the defect.
+  const starvedAll = usersWithNoActiveDevice();
+  const starvedFresh = starvedAll.filter((s) => !s.pastBudget);
+  const aged = starvedAll.filter((s) => s.pastBudget);
+  const liveDevices = new Map();
+  const starved = [];
+  const starvedOnSilentDevices = [];
+  for (const s of aged) {
+    if (!liveDevices.has(s.userFull)) {
+      try {
+        liveDevices.set(s.userFull, new Set(onlineDevicesOf(s.userFull)));
+      } catch (e) {
+        liveDevices.set(s.userFull, null);
+        note(`the gateway could not be asked about ${s.user}: ${firstLine(e)}`);
+      }
+    }
+    const live = liveDevices.get(s.userFull);
+    const shown = { group: s.group, user: s.user, devices: s.devices, newestAge: s.newestAge };
+    // `null` is UNREADABLE, and it counts against the product: a presence this cannot read is not a
+    // presence it may assume absent, or an unreachable gateway would silence the whole invariant.
+    if (live === null) shown.presence = 'unreadable';
+    if (live === null || s.deviceIds.some((d) => live.has(d))) starved.push(shown);
+    else starvedOnSilentDevices.push(shown);
+  }
+  note(
+    `(group, user) pairs with no active device: ${starvedAll.length} - ${starvedFresh.length} inside the ` +
+      `${BUDGET_MINUTES} min budget, ${starvedOnSilentDevices.length} on devices the gateway is not talking to, ` +
+      `${starved.length} counted against the product`,
+  );
   for (const s of starved) note(`  starved ${JSON.stringify(s)}`);
+  for (const s of starvedOnSilentDevices) note(`  starved-but-silent ${JSON.stringify(s)}`);
 
   const past = pendingPastBudget();
   const { stale, offline } = splitByPresence(past);
@@ -248,10 +304,23 @@ if (row.id === "MULTI-10") {
   const missing = unmet(expectations);
   record(row.id, missing.length === 0 ? "PASS" : "FAIL", {
     what: row.what,
+    // A DECISION, NOT AN OMISSION - and it only became visible once this row could pass at all. It
+    // drives no client and sends no traffic: there is no console for `gate()` to read, so a PASS
+    // here would be demoted to `UNOBSERVED` for ever by a rule written about rows that HAVE one. The
+    // evidence is the table, and it is in this record in full: three sets, each with the exclusion
+    // that produced it named beside it.
+    unobservable:
+      "reads the membership table across the whole estate and drives no client - the evidence is the " +
+      "three sets below, not a console",
     budgetMinutes: BUDGET_MINUTES,
     population: { total, active, pending },
     placeholders,
     starved,
+    // REPORTED, NEVER FORGIVEN SILENTLY. A clean verdict on this row must not be readable as an
+    // empty table: these two sets are the ones the predicate deliberately does not count, with the
+    // oldest age each, so the next reader can see the shape of what was excluded.
+    starvedInsideTheBudget: starvedFresh.map((s) => ({ group: s.group, user: s.user, newestAge: s.newestAge })),
+    starvedOnSilentDevices,
     pendingPastBudget: { total: past.length, staleWhileOnline: stale, offlineDevices: offline },
     // Said out loud because the verdict turns on it: a pending row for an offline device is NOT
     // counted against the product, and a reader must be able to see that decision rather than infer

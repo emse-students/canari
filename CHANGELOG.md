@@ -11,6 +11,56 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Added - the 158 scripts that produce every campaign verdict are linted, and were linted by nothing
+
+`bun run lint` is scoped to `frontend/`; `make test-harness` ran the self-tests and the inventory,
+and neither had an opinion about the code. The backlog recorded 29 warnings on 2026-09-04 and
+predicted that the value was the gate rather than the 29 - by 2026-09-07 there were **38**, nine
+having arrived while nothing counted. All 38 are gone and the recipe now carries
+`oxlint --deny-warnings` over the tree, measured in both directions.
+
+One was a finding rather than tidying: `createGroup`'s `label` option has promised "who is asking,
+for the error message" since it was written, nine call sites pass one, and no failure ever carried
+it - a row minting three groups could not say which died. It is in the throw now.
+
+### Fixed - a row applied its own exclusion policy to half its population, and could never pass
+
+MULTI-10 reads the membership table across the estate. Its pending count excludes devices the
+gateway is not talking to and says so out loud; `everyMemberHasAnActiveDevice` excluded nothing - no
+budget, no presence - so five (group, user) pairs whose every device has been silent for 4 to 10
+days were counted against the product by a predicate no estate with any history can satisfy. It
+carries both discriminators now and REPORTS what each excluded, with the oldest age of each, so a
+clean verdict cannot be read as an empty table.
+
+Two instrument defects surfaced doing it: `boolean::text` is `true`/`false` in psql, and the first
+cut compared it against `'t'`, reading every aged pair as fresh; and a PASS here was demoted to
+`UNOBSERVED` for ever by the rule that a pass must have looked at something - this row drives no
+client, so it states `unobservable` and names the table as its evidence.
+
+### Fixed - the campaign could prove which bundle it measured and not which SOURCE that bundle was
+
+Two rows failed on a defect that was not in the product. GRP-3 and GRP-8 address a group member
+through `data-remove-member`; the estate served an artefact where that attribute appears in no chunk,
+because a `vite build` launched in the background overlapped a `git switch` and read the tree at the
+moment the branch change had reverted the component. **Every check the rig had passed**:
+`check-bundle-consistency.mjs` found one build id everywhere, the deploy succeeded, `bundle.mjs`
+reloaded both browsers onto the deployment and proved they moved. The two verdicts then accused the
+product of the rig's mistake, and `cleanup.mjs` could not delete three groups for the same reason.
+
+**The missing question was the third one.** A client matches the deployment, a deployment matches
+itself - and nothing asked whether that build was made from the source the verdicts would name.
+`frontend/scripts/source-stamp.mjs` answers it: `check-bundle-consistency.mjs`, which already runs on
+every build and already knows the build's id, now writes `{id, sha}` beside the artefact, and the
+preflight refuses to measure when either half disagrees. A CONTENT hash, not an mtime - a checkout
+changes mtimes without changing a byte, which is the very thing that produced this - and LOCAL only,
+since a production deployment legitimately lags the tree.
+
+`gate-selftest.mjs` had to widen to accept it, and doing so fixed a second gate written about a
+location rather than a property: it asserted "every file a gated self-test imports is in git" by
+checking membership of `git ls-files tools/cross-client-harness`, so a committed file one directory
+up read as absent. It now checks what git tracks, all of it, and still catches the class it was
+written for - measured, by pointing a gated self-test at `names.mjs`.
+
 ### Fixed - two controls that spoke an id to the only reader who needs a name, and the loop that fixing one caused
 
 `PinModal` rendered a refused unlock as a bare `<p>` in both of its shapes, and `ChangePinModal` did

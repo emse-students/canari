@@ -1,0 +1,19 @@
+{
+  "$schema": "../../node_modules/oxlint/configuration_schema.json",
+  "extends": ["../../.oxlintrc.json"],
+  "plugins": ["import", "unicorn"],
+  "env": {
+    "browser": false,
+    "node": true
+  },
+  "ignorePatterns": ["logs/**", "node_modules/**"],
+  "rules": {
+    "eslint/no-unused-vars": [
+      "warn",
+      {
+        "argsIgnorePattern": "^_",
+        "varsIgnorePattern": "^_"
+      }
+    ]
+  }
+}

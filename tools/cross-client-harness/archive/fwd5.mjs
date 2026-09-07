@@ -16,7 +16,6 @@ import {
   awaitMessage,
   clickBubbleAction,
   client,
-  countMessage,
   ensureChat,
   openChannel,
   openConversation,

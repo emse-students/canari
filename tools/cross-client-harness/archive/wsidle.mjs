@@ -42,7 +42,7 @@ for (const label of ['W1', 'W2']) {
 console.log(`idling ${MINUTES} min on W1 and W2, touching neither...`);
 await new Promise((r) => setTimeout(r, MINUTES * 60000));
 
-for (const { label, cx, t0 } of subjects) {
+for (const { label, cx } of subjects) {
   const closes = [];
   const opens = [];
   for (const e of cx.events) {
