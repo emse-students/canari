@@ -32,9 +32,9 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
 const reconcile = (ctx: unknown): Promise<void> =>
   (
     BaseMlsService.prototype as unknown as {
-      reconcileSendRatchets(k: string): Promise<void>;
+      reconcileSendRatchets(): Promise<void>;
     }
-  ).reconcileSendRatchets.call(ctx, 'key-b64');
+  ).reconcileSendRatchets.call(ctx);
 
 describe('BaseMlsService.reconcileSendRatchets', () => {
   beforeEach(() => {

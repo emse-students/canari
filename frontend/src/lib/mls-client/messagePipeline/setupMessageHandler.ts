@@ -86,7 +86,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   // No `userId` here any more: its only consumer at this scope was the state persister's config, and
   // the platform now owns where a checkpoint lands (`IMlsService.persistCheckpoint`). The handlers
   // further down re-destructure their own from `deps`.
-  const { mlsService, deviceKeyB64, log } = deps;
+  const { mlsService, log } = deps;
 
   // Start from a clean epoch-gap registry: it is module-global (shared with the outbox) and must
   // not carry a stale entry over from a previous session.

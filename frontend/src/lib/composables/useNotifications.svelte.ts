@@ -8,6 +8,7 @@ import { notifNav } from '$lib/stores/notifNav.svelte';
 import { setTabRinging } from '$lib/stores/tabIndicator';
 import { settings } from '$lib/stores/settingsStore.svelte';
 import { isTauriRuntime } from '$lib/utils/openExternal';
+import { systemNotificationsBlocked } from '$lib/utils/systemNotificationsBlocked';
 import {
   isPermissionGranted,
   sendNotification,
@@ -73,6 +74,16 @@ export function useNotifications() {
   // Prevents notification spam on burst but lets different conversations notify independently.
   const lastNotifAtByConv = new SvelteMap<string, number>();
   let browserPermissionRetryAbort: AbortController | null = null;
+
+  /**
+   * The last browser permission state this session has ANNOUNCED, so a terminal refusal is said once.
+   *
+   * A permission of `denied` cannot change without a user gesture in site settings, so it is a fact
+   * about the session rather than about the message being delivered - and it was being re-derived,
+   * re-logged and re-"asked" on every single inbound frame. Remembering the announced VALUE rather
+   * than a boolean is what keeps a later granted -> denied transition audible.
+   */
+  let announcedBrowserPermission: string | null = null;
   let incomingCallRingTimer: ReturnType<typeof setInterval> | null = null;
   /** Active incoming-call OS notification, kept so it can be dismissed on answer/hangup. */
   let incomingCallNotification: Notification | null = null;
@@ -516,6 +527,31 @@ export function useNotifications() {
   async function sendSystemNotification(title: string, body: string, conversationId?: string) {
     if (typeof window === 'undefined') return;
     const convKey = conversationId ?? '__default__';
+
+    // A TERMINAL REFUSAL IS KNOWN BEFORE ANY OF THIS, AND ASKING IT PER MESSAGE COSTS THREE LINES A
+    // MESSAGE FOR THE LIFE OF THE SESSION. Measured on HEAL-REVOKE-9 (2026-09-07): 12 inbound
+    // messages produced 33 `[NOTIF]` lines - "while the window is open ... asking", "permission is
+    // \"denied\"; asking", and the throttle firing for notifications that could never be raised.
+    //
+    // The line that claimed to be asking was also FALSE: `requestSystemNotificationPermission` has
+    // no `denied` branch, because a browser will not re-prompt once denied - only the user can
+    // change it in site settings. So the work was a guaranteed no-op narrated as an action.
+    //
+    // Checked BEFORE the throttle on purpose: throttling a notification that cannot be raised
+    // burns the per-conversation window and prints a line about a decision that was never live.
+    // Guarded on `isTauriRuntime` because on native the plugin's permission is the authority and
+    // the web value says nothing - the Tauri branch below is left exactly as it was.
+    if (systemNotificationsBlocked()) {
+      if (announcedBrowserPermission !== 'denied') {
+        announcedBrowserPermission = 'denied';
+        console.log(
+          '[NOTIF] Not raised, and nothing will be this session - notification permission is "denied", ' +
+            'which only the user can change in site settings. Said once; later messages are silent.'
+        );
+      }
+      return;
+    }
+
     const now = Date.now();
     const lastAt = lastNotifAtByConv.get(convKey) ?? 0;
     if (now - lastAt < 800) {
@@ -606,12 +642,26 @@ export function useNotifications() {
     }
     {
       if (Notification.permission !== 'granted') {
-        console.log(
-          `[NOTIF] Not raised for ${convKey} - permission is "${Notification.permission}"; asking.`
-        );
+        // `default` by the time we get here on web - the terminal `denied` returned at the top - so
+        // this line now describes something that really is about to happen. A Tauri run whose
+        // plugin path fell through can still arrive here with `denied`, and saying so once is right
+        // for the same reason it is right above.
+        if (Notification.permission === 'denied') {
+          if (announcedBrowserPermission !== 'denied') {
+            announcedBrowserPermission = 'denied';
+            console.log(
+              `[NOTIF] Not raised for ${convKey} - permission is "denied" and only the user can change it.`
+            );
+          }
+          return;
+        }
+        console.log(`[NOTIF] Not raised for ${convKey} - permission is "default"; asking.`);
         void requestSystemNotificationPermission();
         return;
       }
+      // Reset the announcement so a later revocation is audible rather than swallowed by a flag set
+      // in a state the session has since left.
+      announcedBrowserPermission = 'granted';
 
       try {
         const n = new Notification(title, {
