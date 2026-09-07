@@ -165,13 +165,22 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
-      security-events: read
+      # NO `permissions:` KEY GRANTS THIS, WHICH IS WHY THE JOB HAD NEVER PASSED. It declared
+      # `security-events: read` and failed 403 on every nightly run since it was written: that
+      # permission covers code scanning and secret scanning, and Dependabot alerts are a separate
+      # resource GITHUB_TOKEN cannot read at any setting. Only a PAT or a GitHub App holding the
+      # fine-grained "Dependabot alerts: read" repository permission can, so the permission is
+      # dropped rather than kept as a claim the API refuses.
     steps:
       - uses: actions/checkout@v7
 
       - name: Read GitHub's alert list and judge it
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # THE SECRET IS THE FIX AND `GITHUB_TOKEN` IS THE PROOF IT IS MISSING. With the secret set
+          # the job answers unattended; without it the run fails and the script says which
+          # credential to mint. It is deliberately NOT a silent skip - an alert list nobody reads
+          # looks exactly like an empty one, which is the defect this report exists to end.
+          GH_TOKEN: ${{ secrets.DEPENDABOT_ALERTS_TOKEN || secrets.GITHUB_TOKEN }}
         run: bash .github/scripts/dependabot-alerts-report.sh
 
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
