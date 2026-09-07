@@ -70,7 +70,7 @@ const ok = (what, cond) => {
 // for the local one. `classify-selftest.mjs` carries three such fixtures on purpose.
 const files = walk(HARNESS_ROOT).filter(
   (f) =>
-    f !== SELF && !/[\\/]names\.(example\.)?mjs$/.test(f) && !/-selftest\.mjs$/.test(f)
+    f !== SELF && !/[\\/]names\.(example\.)?mjs$/.test(f) && !f.endsWith('-selftest.mjs')
 );
 
 /** The app's own host, in any spelling, but never one of the identity providers. */

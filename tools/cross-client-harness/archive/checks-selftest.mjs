@@ -30,12 +30,9 @@
  */
 
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { PHASES, PHONE_SCRIPTS, SCRATCH_SCRIPTS, devicesFor, scriptPath } from "../checks.mjs";
 import { codeOnly } from "../srcscan.mjs";
 
-const HERE = dirname(fileURLToPath(import.meta.url));
 
 /**
  * Every spelling by which a runner reaches A1.

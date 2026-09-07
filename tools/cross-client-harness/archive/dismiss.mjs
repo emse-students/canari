@@ -189,7 +189,7 @@ export async function sweepDismissed(
   const targets = eligible.slice(0, Number.isFinite(limit) ? limit : eligible.length);
   let dismissed = 0;
   const failed = [];
-  for (const [i, r] of targets.entries()) {
+  for (const r of targets) {
     try {
       await openGroup(cx, r.name, { navigate: false, label: 'dismiss' });
       await dismissLocally(cx, r.name);

@@ -31,7 +31,7 @@ await client(port, SITE).then(
 const { webSocketDebuggerUrl } = await (await fetch(`http://127.0.0.1:${port}/json/version`)).json();
 const browser = connect(webSocketDebuggerUrl);
 await browser.ready;
-const { targetId } = await browser.send('Target.createTarget', { url: `${SITE}/chat`, newWindow: false });
+await browser.send('Target.createTarget', { url: `${SITE}/chat`, newWindow: false });
 await sleep(2500);
 
 const refuses = async (label, args) =>

@@ -90,7 +90,7 @@ async function inItsOwnCommunity(label, body) {
     await openCommunity(w1, community);
     await deleteCommunity(w1, community);
   });
-  return { community, workspaceId, ...(outcome || {}) };
+  return { community, workspaceId, ...outcome };
 }
 
 // -- expired ---------------------------------------------------------------------

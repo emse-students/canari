@@ -22,7 +22,7 @@ const port = argv.includes('--port') ? Number(argv[argv.indexOf('--port') + 1]) 
 const ms = argv.includes('--ms') ? Number(argv[argv.indexOf('--ms') + 1]) : 30000;
 
 const cx = await client(port);
-const w = await watch(cx, 'banner');
+await watch(cx, 'banner');
 const t0 = Date.now();
 
 /** Presence and height of the banner, plus the sidebar's own top edge, in one read. */

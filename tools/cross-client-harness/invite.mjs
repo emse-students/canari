@@ -15,7 +15,7 @@
  *   bun invite.mjs --port 9223               (invites the OTHER party, whoever this port is)
  *   bun invite.mjs --port 9223 --probe       (report the panel, change nothing)
  */
-import { APP_TAB, clickAtPoint, client, evaluate, goto, realClick, until } from './chat.mjs';
+import { APP_TAB, clickAtPoint, client, evaluate, realClick, until } from './chat.mjs';
 import { PORTS, peerNameFor } from './names.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

@@ -41,7 +41,7 @@ const sampler = (async () => {
 })();
 
 const step = (n) => marks.push(`${String(Date.now() - t0).padStart(6)}  --- ${n} ---`);
-const w = await watch(cx, 'open');
+await watch(cx, 'open');
 await evaluate(cx, `location.href = '/communities'`);
 await until(cx, `location.pathname === '/communities'`, 15000);
 step('loaded /communities');

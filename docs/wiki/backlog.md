@@ -1223,29 +1223,31 @@ excluding self is one argument. **Whether it SHOULD be excluded is a judgement, 
 chat apps allow a self-mention as a way to bookmark a message - which is why this is a P3 and not a
 fix applied inline: it is the user's call.
 
-### P3 - NOTHING LINTS THE HARNESS, and the 158 scripts that drive every campaign verdict carry 29 warnings nobody has ever been shown (measured 2026-09-04)
+### ~~P3 - NOTHING LINTS THE HARNESS~~ - FIXED 2026-09-07, and the drift it predicted had already happened
 
-`bun run lint` is scoped to `frontend/`; `make test-harness` runs the self-tests and
-`inventory.mjs --check`, and neither lints. So the rig that produces every campaign verdict - 158
-scripts, the instruments the board is believed on - is the one directory in this repository no
-linter has an opinion about.
+`bun run lint` is scoped to `frontend/`; `make test-harness` ran the self-tests and
+`inventory.mjs --check`, and neither had an opinion about the code. So the rig that produces every
+campaign verdict was the one directory in this repository no linter looked at.
 
-**Measured**: `bunx oxlint -c frontend/.oxlintrc.json tools/cross-client-harness` reports **29
-warnings** - 26 `no-unused-vars` (dead imports in archived rows: `fwd.mjs`, `fwd5.mjs`, `ws1.mjs`
-and others), plus `no-useless-spread`, `no-useless-fallback-in-spread` and
-`prefer-string-starts-ends-with`. None is a defect today. **That is the point** - the value is not
-the 29, it is that a 158-script tree has no gate, so the 30th will be a real one and will arrive
-silently.
+**The entry predicted the drift and the drift is the measurement**: 29 warnings on 2026-09-04, **38
+on 2026-09-07**, nine more arrived while nothing was counting. All 38 are gone, and the gate is one
+line in `test-harness`: `oxlint -c tools/cross-client-harness/.oxlintrc.json --deny-warnings`, so the
+39th cannot arrive silently. `--deny-warnings` deliberately - a gate that only warns is one its
+reader learns to scroll past. Measured in both directions: a file with one unused variable fails the
+recipe.
 
-**The fix is the GATE, not the 29.** Add the harness to a lint recipe and make `make test-harness`
-run it, so the count can only go down. Hand-clearing the warnings first buys one clean session and
-guarantees the next drift is invisible again - the same trade `inventory.mjs` was written to end for
-the index.
+**The config extends the root `.oxlintrc.json` and adds `import` + `unicorn`**, which is what the
+frontend's does, so the harness is held to the same rules rather than to a private set. It is NOT
+the frontend's own config: that one carries `env.svelte` and paths relative to `frontend/`, and
+coupling the rig's gate to it would move the rig every time a component rule changes.
 
-**Not fixed inline, deliberately.** It surfaced during work item A3 (the atom/row reclassification),
-and clearing 29 warnings across archived rows that cannot be re-run right now is a different change
-with a different risk: a dead import removed from a row is safe, a `no-useless-spread` rewrite
-inside one is not, and the two must not ride together. P3 per the standing rule.
+**One of the 38 was a real finding rather than tidying.** `createGroup(cx, name, { label })` has
+promised "who is asking, for the error message" since it was written, nine call sites pass one
+(`grp5`, `read10`, `healrevoke`), and no failure has ever carried it - every one surfaced as a bare
+`until` timeout naming a selector, so a row minting three groups could not say which died. The label
+is now in the throw. The rest were dead imports and dead locals across archived rows, plus one
+`no-control-regex` on the ANSI matcher in `estate.mjs`, which is disabled inline with its reason:
+ESC is the character it exists to match.
 
 ### P3 - the gateway logs a client that merely went away at ERROR, and a clean goodbye at INFO, so the level says nothing about whether anything is wrong (measured 2026-09-04)
 
@@ -2674,16 +2676,18 @@ state deliberately. That is the piece of work, and it is a rung redesign rather 
 question, and never a second probe invented to rescue it`, and clicking a healed sidebar to report a
 number would be exactly that.
 
-**A SEPARATE AND SMALLER RIG DEFECT SITS UNDER `HEAL-NEW-2`**, which is `INVALID` on `W2 shares no
-group with this device's 0 row(s)`. The subset is `splitBySubset(before.tiles, ids)` with
-`before = await sidebar(cx)` read moments after the mint hands over - `rows: 0, tiles: []` - so the
-question *which of my rows can this responder serve* is asked of a device that has none yet and can
-only answer "none". **HEAL-NEW-12 is the control that proves it is an ordering fault and not the
-account's membership**: same computation, same peer, **4 of 36 rows in the subset**, because a LATE
-responder is measured after the device has enumerated. The subset must be taken against what the
-device is OWED - the server's active list, which the runner already reads as `server.active` - never
-against tiles rendered at an instant. That one IS a row edit, and it is owed before HEAL-NEW-2 can
-have a verdict at all.
+**~~A SEPARATE AND SMALLER RIG DEFECT SAT UNDER `HEAL-NEW-2`~~ - FIXED, AND THE ROW PASSES
+(2026-09-07 19:14, `unmet: []`, 4 of 4 rows in the subset, all ready).** It was `INVALID` on `W2
+shares no group with this device's 0 row(s)`: the subset was `splitBySubset(before.tiles, ids)` with
+`before = await sidebar(cx)` read moments after the mint handed over - `rows: 0, tiles: []` - so the
+question *which of my rows can this responder serve* was asked of a device that had none yet and
+could only answer "none". **HEAL-NEW-12 was the control that proved it an ordering fault and not the
+account's membership**: same computation, same peer, 4 of 36 rows in the subset, because a LATE
+responder is measured after the device has enumerated. The subset is taken against what the device is
+OWED (`activeGroupIds`, the server's list), which answers the same before the first tile is painted
+as after the last. **The verdict was three days older than the fix, which is the reusable lesson: a
+row whose instrument changed is not a row that has been re-measured, and `rows.mjs` says which those
+are.** The four rows above are untouched by it - their premise is still gone.
 
 ### P2 - the leader tab does not render a message the follower tab sent, until it re-reads (measured 2026-09-05)
 

@@ -56,7 +56,7 @@ export const RESOLVE = `(function (sel) {
   // A HIT MUST BE CLICKABLE AT ITS OWN CENTRE - one implementation, used by BOTH branches.
   //
   // It lived only inside the text= branch, and the CSS branch's bare querySelector is what made the
-  // phone look like a device with no navigation. On A1 there are TWO 'a[href=\"/communities\"]': the
+  // phone look like a device with no navigation. On A1 there are TWO 'a[href="/communities"]': the
   // collapsed sidebar rail, 0x0, first in DOM order, and the BOTTOM NAV, 109x64 and plainly on
   // screen. querySelector returns the rail, so every click aimed at the void - and the rig concluded
   // there was "no click path to /communities on the phone yet", wrote that sentence into two

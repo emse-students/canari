@@ -78,6 +78,7 @@ export const psql = (sql, opts) =>
   );
 
 /** Chrome and Nest colour their output; a rule matching a bare word must not meet an escape. */
+// oxlint-disable-next-line no-control-regex -- ESC is the character this must match; that IS the rule.
 const ANSI = /\u001b\[[0-9;]*m/g;
 
 /**

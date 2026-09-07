@@ -34,7 +34,7 @@
  * store; an uninstall costs a new DEVICE with no history, and a HEAL row reasons about exactly that
  * history. If the signature ever mismatches, the fix is to build debug - not to uninstall.
  */
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';

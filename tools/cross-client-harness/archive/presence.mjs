@@ -127,7 +127,7 @@ export async function awaitOnline(user, device, timeoutMs = 60000) {
 }
 
 // Everything below is the command line; importing this file runs none of it.
-if (/presence\.mjs$/.test(process.argv[1] || '')) {
+if ((process.argv[1] || '').endsWith('presence.mjs')) {
   const cut = (s) => (s ? s.slice(0, 8) : '?');
   let bad = 0;
   /** Full device ids this rig is driving, per full user id - the other half of the fleet diff. */

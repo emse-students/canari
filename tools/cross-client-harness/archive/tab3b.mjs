@@ -169,7 +169,7 @@ const row = await recordObserved(
   {
     requestedRuns: RUNS,
     catchupWindowMs: CATCHUP_MS,
-    coldStarts: runs.map(({ observed, ...rest }) => rest),
+    coldStarts: runs.map(({ observed: _dropped, ...rest }) => rest),
     spread,
     // The claim this row was written to settle, answered against a named build by the record itself.
     boardClaimedOutlierMs: 77_700,

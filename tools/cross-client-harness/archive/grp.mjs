@@ -64,6 +64,7 @@ import {
   awaitLine,
   consoleLines,
   ignoringExpectedLog,
+  ignoringExpectedRefusal,
   ignoringOfflineCut,
   report,
   watch,
@@ -107,6 +108,29 @@ const CROSS_MS = 60_000;
  */
 const asCreator = async (o) => ignoringExpectedLog(await report(o), GROUP_CREATION_NARRATION);
 
+/**
+ * The 403 a device that is being re-admitted and removed AGAIN cannot avoid asking for.
+ *
+ * GRP-8's whole subject is add-and-remove twice IN A ROW, FAST. A re-admission makes the device
+ * forget the group and rejoin, which clears its history cursor, so its next act is a replay from
+ * scratch - `GET /api/mls/history/<group>?limit=1000`, no `after`. Measured 2026-09-07: the Welcome
+ * landed at 21:06:36 and round 2's Remove commit at 21:06:39, so the request left a device that was
+ * a member and arrived at a server where it no longer was.
+ *
+ * **THIS IS NOT A RACE WITH AN OVERLAP TO DELETE.** Membership can change while any request is in
+ * flight; the answer 403 is the server being right, and the client already treats a status as an
+ * ANSWER - `fetchHistory` warns `[HISTORY] refused ... 403` and renders what is on disk. Nothing
+ * the client knows at issue time could have told it not to ask, which is the exact line between a
+ * refusal worth forgiving and one that means a fact was not carried to the decision.
+ *
+ * A PAIR AND ONE ROW. The path alone would swallow a 500 from the same endpoint; the status alone
+ * would swallow a 403 from anywhere on the page. And it is applied to GRP-8 only - GRP-3 removes a
+ * member once and is clean, so a wider forgiveness would hide a regression there.
+ */
+const READMISSION_RACE_403 = [
+  { path: /^\/api\/mls\/history\/[0-9a-f-]{36}(\?|$)/, status: [403] },
+];
+
 async function observed(port, label) {
   const cx = await client(port);
   return [cx, await watch(cx, label)];
@@ -133,10 +157,20 @@ const PANEL = String.raw`(function () {
   // and every other cell of the row renders a resolved NAME. data-remove-member carries the id
   // for this, the label carries the name for a person, and neither is now the other's hostage.
   // (No backticks in here: this comment lives inside a template literal, and one would close it.)
-  var removes = [].slice.call(document.querySelectorAll('[data-remove-member]'))
+  var controls = [].slice.call(document.querySelectorAll('[data-remove-member]'));
+  var removes = controls
     .map(function (b) { return b.getAttribute('data-remove-member') || ''; })
     .filter(Boolean);
-  return JSON.stringify({ count: m ? Number(m[1]) : null, rows: rows, removableIds: removes });
+  // AND THE ACCESSIBLE NAME, SEPARATELY, because the two answers diverged the moment they stopped
+  // being the same string: reading the id off the attribute and calling that "the accessible name"
+  // reported an id-shaped label for ever, whatever the label said. GRP-9 asserts on THIS.
+  var labels = controls.map(function (b) { return b.getAttribute('aria-label') || ''; });
+  return JSON.stringify({
+    count: m ? Number(m[1]) : null,
+    rows: rows,
+    removableIds: removes,
+    removeControlNames: labels
+  });
 })()`;
 
 /** The panel's invite-link state - the value, and which of the two buttons it is offering. */
@@ -748,7 +782,12 @@ async function grp3() {
           removedDeviceAskedToComeBack: cameBack.slice(0, 4),
           negativeWindowMs: NEGATIVE_WINDOW_MS,
         },
-        { W1: await asCreator(o1), W2: await asCreator(o2) }
+        // W2 ALONE, and only this row: `READMISSION_RACE_403` says why the removed device cannot
+        // avoid asking, and why forgiving it anywhere else would hide a regression.
+        {
+          W1: await asCreator(o1),
+          W2: ignoringExpectedRefusal(await asCreator(o2), READMISSION_RACE_403),
+        }
       );
       return ok;
     });
@@ -1083,7 +1122,12 @@ async function grp6() {
           recoveryOnLeaver, // EVIDENCE: which seam, if any, reached for the group after the leave
           negativeWindowMs: NEGATIVE_WINDOW_MS,
         },
-        { W1: await asCreator(o1), W2: await asCreator(o2) }
+        // W2 ALONE, and only this row: `READMISSION_RACE_403` says why the removed device cannot
+        // avoid asking, and why forgiving it anywhere else would hide a regression.
+        {
+          W1: await asCreator(o1),
+          W2: ignoringExpectedRefusal(await asCreator(o2), READMISSION_RACE_403),
+        }
       );
       return ok;
     });
@@ -1236,7 +1280,12 @@ async function grp8() {
           removedAccountReceivedFinalMessage: peerGot,
           negativeWindowMs: NEGATIVE_WINDOW_MS,
         },
-        { W1: await asCreator(o1), W2: await asCreator(o2) }
+        // W2 ALONE, and only this row: `READMISSION_RACE_403` says why the removed device cannot
+        // avoid asking, and why forgiving it anywhere else would hide a regression.
+        {
+          W1: await asCreator(o1),
+          W2: ignoringExpectedRefusal(await asCreator(o2), READMISSION_RACE_403),
+        }
       );
       return ok;
     });
@@ -1253,11 +1302,18 @@ async function grp8() {
  * rather than a memory. A raw id in a member row means the profile lookup failed and the component
  * fell back to the key it had - the same shape as a mention rendering `@[uuid]`.
  *
- * THE REMOVE CONTROL WAS A SEPARATE FINDING AND IS FIXED (2026-09-07). Its accessible name was
+ * THE REMOVE CONTROL IS PART OF THIS ROW NOW (2026-09-07). Its accessible name was
  * `Retirer <64 hex characters>` - a screen reader announcing an OIDC subject id where a person's
  * name belongs - and it stayed that way because the RIG addressed members through it. The control
- * now carries `data-remove-member` for the rig and a resolved name for a person, so neither is the
- * other's hostage. Still recorded rather than asserted here: it is not what this row asks.
+ * carries `data-remove-member` for the rig and a resolved name for a person, so neither is the
+ * other's hostage, and the reason to record rather than assert went with it: this row's whole
+ * subject is a surface rendering an id where a name belongs, and that label is the one surface
+ * guaranteed to be read ALOUD.
+ *
+ * IT IS READ FROM `aria-label`, NEVER FROM THE ATTRIBUTE. The first version of this asserted on
+ * `removableIds`, which is the attribute - so it reported an id-shaped accessible name for ever,
+ * whatever the label said, and would have called the fix a failure and a regression a pass. Two
+ * questions that used to share one string need two reads the moment they stop.
  */
 async function grp9() {
   const [w1, o1] = await observed(W1, 'GRP-W1');
@@ -1275,7 +1331,15 @@ async function grp9() {
         p.rows.some((r) => r.includes(OWNER_NAME.split(' ')[0])) &&
         p.rows.some((r) => r.includes(PEER_NAME.split(' ')[0]));
 
-      const ok = p.count === 2 && rowsThatAreIds.length === 0 && namesPresent;
+      // THE CONTROL'S ACCESSIBLE NAME IS A ROW OF THIS ROSTER TOO, and it was the one surface still
+      // spelling a 64-hex id out loud while every cell beside it rendered a name. It was a FINDING
+      // while the rig itself was the reason for it - the campaign addressed members through that
+      // label - and `data-remove-member` ended that, so it is an assertion now: nothing else here
+      // watches the one label a screen reader is guaranteed to read.
+      const labelsThatAreIds = p.removeControlNames.filter((l) => /[0-9a-f]{64}/.test(l));
+
+      const ok =
+        p.count === 2 && rowsThatAreIds.length === 0 && namesPresent && labelsThatAreIds.length === 0;
       await recordObserved(
         'GRP-9',
         ok ? 'PASS' : 'FAIL',
@@ -1285,8 +1349,8 @@ async function grp9() {
           rowCount: p.rows.length,
           rowsRenderingARawId: rowsThatAreIds.length,
           bothDisplayNamesPresent: namesPresent,
-          // FINDING, not an assertion - see the note above.
-          removeControlAccessibleNameIsARawId: p.removableIds.every((id) => /^[0-9a-f]{64}$/.test(id)),
+          removeControlNamesRenderingARawId: labelsThatAreIds.length,
+          removeControlNames: p.removeControlNames.length,
           removeControlIdLength: p.removableIds[0]?.length ?? null,
         },
         { W1: await asCreator(o1) }

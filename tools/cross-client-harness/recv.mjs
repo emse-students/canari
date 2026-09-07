@@ -52,7 +52,6 @@ if (absent) {
   // whole budget is the correct outcome rather than a failure. It is a separate flag rather than a
   // second script because it is the SAME question with the answer inverted, and two scripts would
   // drift on what "arrived" means.
-  const t0 = Date.now();
   try {
     await awaitMessage(cx, expect, timeoutMs);
   } catch {

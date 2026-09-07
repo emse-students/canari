@@ -90,4 +90,4 @@ console.log(`NATIVE (mode=tauri): ${stat(native)}`);
 if (native.length) console.log(`  ${native.join(', ')} ms`);
 console.log(`WEB                : ${stat(web)}`);
 console.log(`\nstreams carrying a checkpoint line:`);
-for (const s of [...new Set(rows.map((r) => `${r.f}  ${r.path}${r.tauri ? '  [TAURI]' : ''}`))]) console.log(`  ${s}`);
+for (const s of new Set(rows.map((r) => `${r.f}  ${r.path}${r.tauri ? '  [TAURI]' : ''}`))) console.log(`  ${s}`);

@@ -346,8 +346,15 @@ test-ci-scripts: lint-ci-scripts
 	@bun tools/app-store/submit.test.mjs
 	@bun tools/store-divergence/divergence.test.mjs
 
+# THE 158 SCRIPTS THAT PRODUCE EVERY CAMPAIGN VERDICT ARE LINTED HERE, and were linted by nothing at
+# all until 2026-09-07. `bun run lint` is scoped to `frontend/`; this recipe ran the self-tests and
+# the inventory, and neither has an opinion about the code. Measured that day: 38 warnings, up from
+# the 29 the backlog recorded on 2026-09-04 - the drift the entry predicted, invisible because
+# nothing was counting. All 38 are gone and this line is why the 39th cannot arrive silently.
+# `--deny-warnings` on purpose: a gate that only warns is a gate its reader learns to scroll past.
 test-harness:
 	@echo "${BLUE}🧪 Harness self-tests…${RESET}"
+	@bunx oxlint -c tools/cross-client-harness/.oxlintrc.json --deny-warnings tools/cross-client-harness
 	@bun tools/cross-client-harness/inventory.mjs --check
 	@bun tools/cross-client-harness/archive/rawcheck.mjs
 	@bun tools/cross-client-harness/archive/classify-selftest.mjs
@@ -371,6 +378,7 @@ test-harness:
 	@bun tools/cross-client-harness/archive/residue-selftest.mjs
 	@bun tools/cross-client-harness/archive/gate-probe-selftest.mjs
 	@bun tools/cross-client-harness/archive/usability-selftest.mjs
+	@bun tools/cross-client-harness/archive/sourcestamp-selftest.mjs
 	@echo "${GREEN}✅ Harness self-tests OK${RESET}"
 
 # THE SELF-TESTS THAT NEED THE RIG UP, and therefore not the CI gate. `test-harness` runs on a fresh

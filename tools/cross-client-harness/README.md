@@ -490,6 +490,15 @@ Four properties worth keeping:
   the web/phone split from `ORIGIN[device] === SITE` instead of a device-name list of its own. The
   phone is never on the deployment, so its build is read from its own APK asset; a browser's has to be
   compared against what the origin serves, because pointing at production is not running it.
+- **`sourceIsDeployed` (in `bundle.mjs`) asks the third question, and it is the one that was
+  missing**: a client matching the deployment and a deployment matching itself say nothing about the
+  SOURCE that build was made from. On 2026-09-07 a background `vite build` overlapped a `git switch`,
+  the artefact came out without `data-remove-member`, and GRP-3 and GRP-8 failed accusing the product
+  of it while every existing check passed. The build now writes `{id, sha}` into
+  `frontend/build/source-stamp.json` (`frontend/scripts/source-stamp.mjs`, called by
+  `check-bundle-consistency.mjs`), the preflight compares both halves, and a disagreement is a
+  refusal naming `make local-frontend` - LOCAL only, since production legitimately lags the tree.
+  **The operational half has no code: nothing may move the working tree while a build is running.**
 - **`unlock.mjs`** resolves which account owns which port from `test-accounts.json`, navigates to a
   route where the gate actually MOUNTS, and spawns `pin.mjs` - so the recurring "you forgot the PIN"
   costs one idempotent command, and no real first name is typed into a shell line.

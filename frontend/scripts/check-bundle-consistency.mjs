@@ -35,6 +35,8 @@ import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { writeSourceStamp } from './source-stamp.mjs';
+
 const BUILD_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'build');
 const SERVER_DIR = join(BUILD_DIR, 'server');
 /** The global's name, as written literally by the shell and by every client chunk. */
@@ -148,4 +150,11 @@ if (existsSync(SERVER_DIR)) {
   serverNote = ', server agrees';
 }
 
-console.log(`[bundle-check] build/ is consistent (${id}, ${files.length} files${serverNote})`);
+// WHAT THIS ARTEFACT WAS MADE FROM, recorded here because this is the one place that already knows
+// the build's id and runs on every build. `source-stamp.mjs` says why a hash and not an mtime, and
+// what it costs to be without one.
+const { sha, files: sourceFiles } = writeSourceStamp(id);
+
+console.log(
+  `[bundle-check] build/ is consistent (${id}, ${files.length} files${serverNote}) from ${sourceFiles} source file(s), sha ${sha}`
+);

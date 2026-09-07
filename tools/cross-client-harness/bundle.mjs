@@ -27,7 +27,10 @@
  * asked by hand at 15:31, having healed itself in between. A run that heals halfway produces a
  * mixture of two builds under one stamp, and nothing in the row says which check got which.
  */
+import { readSourceStamp, sourceStamp, staleReason } from '../../frontend/scripts/source-stamp.mjs';
+
 import { evaluate } from './chat.mjs';
+import { LOCAL } from './estate.mjs';
 import { ORIGIN, SITE } from './names.mjs';
 
 const ID = /__sveltekit_[a-z0-9]+/;
@@ -66,6 +69,35 @@ export async function deployedBundleId() {
 
 /** The build id a connected client is executing. `'none'` when the page has no SvelteKit shell. */
 export const runningBundleId = (cx) => evaluate(cx, RUNNING_ID);
+
+/**
+ * WHETHER THE ESTATE IS SERVING THE SOURCE IN THIS TREE - the third question, and the one that was
+ * missing.
+ *
+ * The two above prove a client runs what the origin serves, and `check-bundle-consistency.mjs`
+ * proves an artefact can boot. NONE of them looks at the source. On 2026-09-07 a `vite build` running
+ * in the background overlapped a `git switch`, so it read the tree at the moment the branch change
+ * had reverted one component; the artefact was internally consistent, the deploy succeeded, both
+ * browsers reloaded onto it, and GRP-3 and GRP-8 came back `FAIL` on a `data-remove-member` attribute
+ * that was in the source and in no chunk. Every check the rig had passed, and the two verdicts
+ * accused the product of the rig's own mistake.
+ *
+ * A CONTENT HASH, WRITTEN BY THE BUILD ITSELF (`frontend/scripts/source-stamp.mjs`), which is why
+ * this asks two questions rather than one: `id` proves the deployment is that build, `sha` proves
+ * that build is this source. Either half alone passes the case that cost the two rows.
+ *
+ * LOCAL ONLY, and that is not a limitation. Production legitimately lags the tree - a release is
+ * older than `main` by construction - so the claim "deployed == source" is only meaningful on the
+ * estate the campaign builds itself. `LOCAL` already encodes the distinction.
+ *
+ * @param {string} deployed - the id the origin is serving, from {@link deployedBundleId}
+ * @returns {Promise<string|null>} the reason to refuse to measure, or `null` when the estate is
+ *   serving this tree (or the question does not apply here)
+ */
+export async function sourceIsDeployed(deployed) {
+  if (!LOCAL) return null;
+  return staleReason(deployed, readSourceStamp(), sourceStamp());
+}
 
 /**
  * Puts a client onto `deployed`, and PROVES it took.
