@@ -219,7 +219,7 @@ services:
   garage:
     # `v2.3.0` is an exact version rather than a floating tag, which is why it is not digest-pinned
     # the way redis and postgres are - and it matches production exactly, deliberately.
-    image: dxflrs/garage:v2.3.0
+    image: dxflrs/garage:v2.4.0
     restart: always
     command: ["/garage", "server", "--single-node", "--default-bucket"]
     ports:
