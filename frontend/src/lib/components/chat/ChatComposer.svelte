@@ -22,6 +22,7 @@
   import { isTauriRuntime } from '$lib/utils/openExternal';
   import { downloadDecryptedFile } from '$lib/utils/fileDownload';
   import { m } from '$lib/paraglide/messages';
+  import { isNarrowChatLayout, NARROW_CHAT_QUERY, onViewportChange } from '$lib/utils/viewport';
 
   interface ReplyTo {
     id: string;
@@ -320,18 +321,10 @@
   });
 
   $effect(() => {
-    if (typeof window === 'undefined') return;
-
-    const query = window.matchMedia('(max-width: 768px), (pointer: coarse)');
-    const apply = () => {
-      isMobileViewport = query.matches;
-    };
-
-    apply();
-    query.addEventListener('change', apply);
-    return () => {
-      query.removeEventListener('change', apply);
-    };
+    isMobileViewport = isNarrowChatLayout();
+    return onViewportChange(NARROW_CHAT_QUERY, (narrow) => {
+      isMobileViewport = narrow;
+    });
   });
 
   $effect(() => {

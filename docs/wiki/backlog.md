@@ -154,6 +154,81 @@ and its test are on [dev-environment](infrastructure/dev-environment.md).
 
 ---
 
+## Notifications - the two builders, and the rung of the campaign that reads them as one
+
+### P2 - the app has TWO notification builders and only one of them can be tapped (measured on device 2026-09-07)
+
+A notification for the same inbound message is built by one of two entirely different pieces of code
+depending on how the message arrived, and until 2026-09-07 nobody had noticed because the split is
+invisible unless the two are compared side by side.
+
+**WHY BOTH EXIST, WHICH IS THE PART THAT IS NOT A DEFECT.** The server pushes a message only when
+the device has not ACKed it after ten seconds (`scheduleDeferredPush`). A backgrounded Android app
+keeps its WebSocket, receives the frame and ACKs it, so **no push is ever sent** and
+`CanariFirebaseMessagingService` never runs. The WebView is the only thing that can notify a phone
+in a pocket - measured 2026-09-05, `[SEND] PUBLISHED` with no `[PUSH_DEFERRED]` after it, an empty
+shade and the app holding the message. Removing the WebView notification would restore that silence.
+
+**WHAT DIFFERS.** Measured on a Mi 9T, both directions, one message each:
+
+| | app KILLED (push -> Kotlin) | app BACKGROUNDED (WS -> plugin) |
+| --- | --- | --- |
+| small icon | `ic_notification` | `ic_dialog_info`, the framework glyph - FIXED 2026-09-07 |
+| channel | `canari_messages`, IMPORTANCE_HIGH, sound + vibration | `default`, IMPORTANCE_DEFAULT, silent - FIXED 2026-09-07 |
+| style | `MessagingStyle`, stacked and attributed | `BigTextStyle` |
+| quick actions | six (`addAction`) | **none** - our `sendNotification` declares no `actionTypeId` |
+| tap | `ACTION_VIEW` on `fr.emse.canari://chat/<groupId>` | `ACTION_MAIN` on the launcher, lands nowhere |
+
+The first two are fixed. **The last three cannot be fixed at this call site**, and the tap is the
+expensive one: `tauri-plugin-notification` 2.3.3 puts the notification id on the tap intent, reads it
+back in `handleNotificationActionPerformed`, uses it to dismiss the notification and then DISCARDS
+it. The identity it does emit comes from `notification.sourceJson`, which its own `Notification.kt`
+declares as `var sourceJson: String? = null` and assigns nowhere - so the payload's `notification` is
+always `null`. Measured: the app came forward, `PANE_STATE` was `nothing`, and the listener had
+thrown on `.id` of `null` inside an async callback, an unhandled rejection nothing logged. It
+accuses now instead.
+
+**THE DIRECTION, and why it is one change rather than three.** The WebView must keep the DECISION -
+it is the only layer that knows the app state, the route and which conversation is open, which is
+exactly what `arrivalVisibility.ts` reasons over. What it must stop doing is the RENDERING. One
+native builder posts every notification, and the three remaining differences close at once: the
+`MessagingStyle`, the six actions and the deep-linked tap are already written and already correct on
+the Kotlin side.
+
+**WHAT IT COSTS.** A new Tauri command - `src/commands/` has none for notifications - carrying
+title, body, conversation id and kind to Kotlin, plus the Rust-to-Kotlin hop. Held for the USER's
+word rather than done silently, because it deletes a call path rather than repairing one.
+
+**AND IT CHANGES WHAT FIVE CAMPAIGN ROWS MEASURE.** The board treats "backgrounded" and "killed" as
+one feature with a state variable, and they are two implementations:
+
+- **NOTIF-6c** ("quick reply from the shade, app BACKGROUNDED") is **unsatisfiable as written** -
+  there is no quick-reply button on a plugin-posted notification. Unanswered, so no false verdict
+  was recorded.
+- **NOTIF-7** (tap -> conversation, backgrounded) is a **FAIL**, measured by hand 2026-09-07 and
+  owed a recorded run.
+- **NOTIF-7c** (the same into a CHANNEL, backgrounded) inherits it.
+- **NOTIF-16** (a mention lands on `canari_mentions`) would have failed in the backgrounded state
+  before the channel fix, everything having gone to `default`.
+- **NOTIF-11/-12** (stacking and attribution) are `MessagingStyle` questions, so they say nothing
+  about the backgrounded path.
+
+A row must state WHICH builder it is measuring, the way `notif.mjs` now states which transport
+carries its notification.
+
+### P3 - an Android phone rotates where an iPhone cannot, and nothing decided that (measured 2026-09-07)
+
+`gen/apple/canari_iOS/Info.plist` conditions orientation exactly as one would want:
+`UISupportedInterfaceOrientations` is `Portrait` alone, and `UISupportedInterfaceOrientations~ipad`
+carries all four. `AndroidManifest.xml` declares **no `android:screenOrientation` at all** - only
+`configChanges`, which is about surviving a rotation rather than allowing one. So an Android phone
+turns landscape and an iPhone of the same size does not, and no file records that as a decision.
+
+The user also reports an iPad "not changing the screen rotation when switching from a horizontal
+app into Canari". That cannot be diagnosed here - the iPad already declares all four orientations,
+so the plist is not the cause, and no iPad is attached to this workstation. It belongs with the
+hardware-blocked items rather than with this one.
+
 ## CI and the chain that runs unattended
 
 ### P2 - the Android unit tests are never run by anything, so one suite has been decorative since it was written (measured 2026-09-07)

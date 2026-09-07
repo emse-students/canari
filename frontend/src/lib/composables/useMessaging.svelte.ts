@@ -35,6 +35,8 @@ import {
 } from '$lib/utils/chat/messageOrder';
 import { isOwnMessage } from '$lib/utils/chat/messageUtils';
 import { isUnreadForUser, watermarkFor } from '$lib/utils/chat/readState';
+import { readerCanSeeArrival } from '$lib/utils/chat/arrivalVisibility';
+import { isNarrowChatLayout } from '$lib/utils/viewport';
 import {
   MAX_DISTINCT_MESSAGE_REACTIONS,
   activeReactions,
@@ -312,6 +314,35 @@ export function useMessaging() {
    * Per-conversation throttling belongs to `sendSystemNotification` (800 ms) and is not repeated
    * here, so a batch that ends in several messages for one conversation still raises one.
    */
+  /**
+   * WHETHER THE READER IS LOOKING AT THE PLACE THIS MESSAGE JUST APPEARED.
+   *
+   * Gathers the four runtime facts `readerCanSeeArrival` reasons over and nothing else - the rule
+   * itself is pure and lives in `arrivalVisibility.ts`, with the whole matrix asserted beside it.
+   *
+   * TWO CONSUMERS, AND THEY ARE MUTUALLY EXCLUSIVE: the tone fires when this is true, the OS
+   * notification when it is false. They used to be decided separately - the tone always, the
+   * notification on app-foreground alone - and the gap between them was audible on a phone sitting
+   * inside conversation A while B wrote: a sound, and an unread badge in a list the narrow layout
+   * does not render.
+   *
+   * `isAppInForeground` rather than the document, for the reason spelt out in `notifyInbound`: a
+   * backgrounded Tauri app reports `visible`/`hasFocus` exactly as a foregrounded one does.
+   */
+  function canSeeArrival(ctx: MessagingContext, conversationKey: string): boolean {
+    if (typeof document === 'undefined') return false;
+    const mobile = isMobileTauriRuntime();
+    return readerCanSeeArrival({
+      conversationKey,
+      selectedConversationKey: ctx.selectedContact,
+      pathname: window.location.pathname,
+      appOnScreen: mobile
+        ? isAppInForeground()
+        : document.visibilityState === 'visible' && document.hasFocus(),
+      narrowLayout: isNarrowChatLayout(),
+    });
+  }
+
   function notifyInbound(
     ctx: MessagingContext,
     conversationKey: string,
@@ -347,20 +378,29 @@ export function useMessaging() {
     // `hasFocus: true` - byte for byte its foreground answer - so BOTH halves of the check below
     // would return early and this fix would have been inert. `isAppInForeground` reads the fact the
     // Android activity states for itself; see `appForeground.ts` for the measurement.
-    const mobile = isMobileTauriRuntime();
-    if (mobile) {
-      if (isAppInForeground()) return;
-    } else if (document.visibilityState === 'visible' && document.hasFocus()) return;
-    // THE DECISION LINE, and it fires only when a notification is actually expected - the tab is
-    // not in front of the user. Everything downstream of here already speaks (`[NOTIF] Raised`,
-    // `Throttled`, `permission is ...`), and everything upstream is the ordinary case of a visible
-    // tab. Without it "no notification" and "never asked for one" are the same silence, which is
-    // what left TAB-1 unattributable across three probes.
-    console.log(
-      `[NOTIF] Inbound in ${conversationKey} while ` +
-        `${mobile ? 'the app is backgrounded (no push is sent for a frame this client ACKed)' : document.visibilityState}` +
-        ' - asking.'
-    );
+    // ONE PREDICATE FOR BOTH SIGNALS - see `canSeeArrival`. This used to ask only whether the app
+    // was in front of the reader, which answered the wrong question: on a narrow screen an app in
+    // the foreground still shows exactly one conversation, so a message for any OTHER conversation
+    // was visible nowhere and notified nobody.
+    if (canSeeArrival(ctx, conversationKey)) return;
+    // THE DECISION LINE, and it fires only when a notification is actually expected - the reader
+    // cannot see this message land. Everything downstream of here already speaks (`[NOTIF] Raised`,
+    // `Throttled`, `permission is ...`), and everything upstream is the ordinary case of a message
+    // arriving in plain sight. Without it "no notification" and "never asked for one" are the same
+    // silence, which is what left TAB-1 unattributable across three probes.
+    //
+    // AND IT NAMES WHICH OF THE THREE REASONS APPLIES, because they are no longer one. Until
+    // 2026-09-07 this branch meant "the app is backgrounded" and said so; it now also covers a
+    // foregrounded app whose narrow layout is showing a DIFFERENT conversation, and one sitting on
+    // another route entirely. A line that asserts the old reason would misattribute the new ones.
+    const away = isMobileTauriRuntime()
+      ? !isAppInForeground()
+        ? 'the app is backgrounded (no push is sent for a frame this client ACKed)'
+        : `the app is open on ${window.location.pathname} showing ${ctx.selectedContact || 'the list'}`
+      : document.visibilityState !== 'visible' || !document.hasFocus()
+        ? `the tab is ${document.visibilityState}${document.hasFocus() ? '' : ' and unfocused'}`
+        : `the window is open on ${window.location.pathname} showing ${ctx.selectedContact || 'the list'}`;
+    console.log(`[NOTIF] Inbound in ${conversationKey} while ${away} - asking.`);
     const preview = getPreviewText(parseEnvelope(content));
     void ctx.sendSystemNotification(
       getUserDisplayNameSync(senderId, conversationName),
@@ -554,7 +594,16 @@ export function useMessaging() {
       ctx.signalChannelRead?.(normalized);
     }
 
-    if (!isOwn && !options.isSystem && !isStaleInboundMessage(resolvedTimestamp)) {
+    // A TONE ONLY WHERE THE MESSAGE CAN BE SEEN LANDING. Unconditional, it was a ghost: a sound on
+    // a phone whose screen shows another conversation, or none, tells the reader something happened
+    // and gives them nothing to look at. Where this is false the OS notification is raised instead
+    // and carries its channel's own sound, so exactly one audible signal is produced either way.
+    if (
+      !isOwn &&
+      !options.isSystem &&
+      !isStaleInboundMessage(resolvedTimestamp) &&
+      canSeeArrival(ctx, normalized)
+    ) {
       (ctx.playReceiveTone ?? ctx.playNotificationTone)();
     }
 

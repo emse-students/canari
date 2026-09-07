@@ -50,19 +50,22 @@ describe('every Tauri notification carries a body Android will actually draw', (
     for (const options of calls) {
       // Either spread from the helper, or spelled out - what must never happen is `body` alone,
       // which is the shape that renders a title and nothing else.
-      expect(options).toMatch(/androidReadableBody\(|largeBody/);
+      expect(options).toMatch(/androidNotificationOptions\(|largeBody/);
     }
   });
 
   it('keeps the helper honest: largeBody must carry the body, not a label or a truncation', () => {
-    const helper = /function androidReadableBody\([\s\S]*?\n {2}\}/.exec(source)?.[0] ?? '';
+    // RENAMED FROM `androidReadableBody` on 2026-09-07, when the channel and the small icon
+    // joined the mandatory set: the old name described one third of what the helper guarantees,
+    // and a name that under-describes its job is how a call site comes to bypass it.
+    const helper = /function androidNotificationOptions\([\s\S]*?\n {2}\}/.exec(source)?.[0] ?? '';
     expect(helper).toBeTruthy();
-    expect(helper).toMatch(/return \{ body, largeBody: body \};/);
+    expect(helper).toMatch(/largeBody: body/);
   });
 
   it('never posts a bare `body,` shorthand, the exact shape that lost the message', () => {
     for (const options of calls) {
-      // `body,` on its own line is the pre-fix call. `...androidReadableBody(body),` does not match.
+      // `body,` on its own line is the pre-fix call. `...androidNotificationOptions(body),` does not match.
       expect(options).not.toMatch(/(^|[\s{])body,\s*$/m);
     }
   });

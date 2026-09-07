@@ -1,5 +1,6 @@
 import { APP_PLACES } from '$lib/navigation/places';
 import { historyOverlayStackDepth } from '$lib/utils/historyOverlayStack';
+import { isSwipeNavViewport as isSwipeViewportQuery } from './viewport';
 
 /** Routes where horizontal tab swipe must not change the main app section. */
 const SWIPE_NAV_EXCLUDED_PREFIXES = [
@@ -31,10 +32,15 @@ export type SwipeNavGestureState = {
   dragPx: number;
 };
 
-/** True on phone / coarse-pointer layouts where swipe-between-tabs is enabled. */
+/**
+ * True on phone / coarse-pointer layouts where swipe-between-tabs is enabled.
+ *
+ * Width OR pointer, and the pointer half is the point: swiping between tabs needs a finger, so a
+ * touch laptop gets it at any width while a narrow mouse window does not. `viewport.ts` keeps that
+ * distinct from the overlay question for exactly this reason.
+ */
 export function isSwipeNavViewport(): boolean {
-  if (typeof window === 'undefined') return false;
-  return window.matchMedia('(max-width: 1279px), (pointer: coarse)').matches;
+  return isSwipeViewportQuery();
 }
 
 /** True when the pathname is a main mobile tab (not association edit, profile, etc.). */

@@ -11,6 +11,103 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a message in another conversation made a sound and showed nothing
+
+On a phone, inside conversation A, a message from B played the receive tone and produced no visible
+sign of itself. `unreadCount` did go up, but that badge lives in the conversation list, and below
+Tailwind `md` the list is not on screen at all: `Sidebar.svelte` renders it `hidden md:flex`, so the
+open conversation has the whole width. A sound with nothing to look at is a ghost, and it was
+reported as one.
+
+The cause was that the two signals a message can raise were decided by two unrelated conditions:
+the tone fired for EVERY inbound message whatever was on screen, and the notification fired only
+when the app was not in front of the reader. Nothing connected them, so the gap between them was
+audible.
+
+**The rule is now that the signal follows what is actually on screen**, and the two signals are
+mutually exclusive consequences of ONE predicate: a tone where the reader can watch the message
+arrive, an OS notification where they cannot. Exactly one audible signal either way - the tone, or
+the notification channel's own sound - and it is always attached to something visible. That closes
+the case the old condition could not express: an app in the foreground still shows exactly one
+conversation on a narrow screen, so "the app is on screen" was never the same question as "the
+reader can see this".
+
+`arrivalVisibility.ts` holds the rule and takes every input as an argument, so the whole matrix is
+asserted directly rather than staged through a layout, a runtime and a router. The `[NOTIF] Inbound`
+line now names which of the three reasons applies, because it used to assert "the app is
+backgrounded" and that is no longer the only way to reach it.
+
+### Changed - one source of truth for what a narrow screen is
+
+Four hand-written media queries decided it, and no two agreed: `(max-width: 768px), (pointer:
+coarse)` in ChatArea and ChatComposer, `(max-width: 767px)` in TabFollowerBanner, `(max-width:
+1279px)` in historyOverlayStack, `(max-width: 1279px), (pointer: coarse)` in swipeNavigation. Two
+of those divergences were bugs and two were not, which is why one predicate would have been the
+wrong repair:
+
+- **The 768 was off by one against the markup.** Tailwind's `md:` starts AT 768px, so a viewport
+  exactly 768px wide got the two-pane layout from the CSS while the script believed it was on a
+  phone. The 767 was the same bug spelt as a workaround for it. Both now derive from Tailwind's own
+  boundary, so a query and a `md:` class can no longer disagree at their shared edge.
+- **The two 1279s are a real distinction and stay two.** Full-screen overlays are about how much
+  room there is, so they ask about width alone and a narrow mouse window still gets them; swiping
+  between tabs needs a finger, so it asks about width OR pointer. Collapsing them would have given
+  a touch laptop gestures it cannot mean.
+
+So `viewport.ts` names the QUESTIONS rather than exporting one boolean, and `viewport.test.ts` fails
+if `app.css` ever overrides a `--breakpoint-*`, which would silently make every number in it wrong
+at once. Two components were also re-writing `(pointer: coarse)` by hand next to the
+`pointerDevice.ts` that already owned it. No hand-written breakpoint is left outside the three
+modules that own one.
+
+### Fixed - the small icon of a Canari notification was Android's generic "info" glyph
+
+Reported on a Mi 9T. The live record named both halves of one under-specified call:
+
+    Notification(channel=default ... )
+    icon=Icon(typ=RESOURCE pkg=fr.emse.canari id=0x0108009b)
+
+A resource id's first byte names its package - `0x7f` the app, `0x01` the framework. So
+`0x0108009b` is `17301659` is `android.R.drawable.ic_dialog_info`: the icon was never ours. The
+notification had not been built by `CanariFirebaseMessagingService` at all but by
+`tauri-plugin-notification`, from the WebView, on the path taken when the app is backgrounded and
+still connected - a message arriving over the WebSocket, for which no push is sent. Notifications
+that arrive by push were correct throughout, which is why every screenshot of a killed-app row
+looked right.
+
+`TauriNotificationManager.getDefaultSmallIcon` falls back to that framework glyph unless something
+names a drawable, so every notification this app posts now names one.
+
+**AND NOT THROUGH `tauri.conf.json`, WHICH LOOKED LIKE THE RIGHT PLACE AND BRICKS THE APP.** The
+plugin reads its own default from `plugins.notification.icon`, so that is where the fix went first.
+It compiled, built, installed - and then the app died with `SIGABRT` on every single launch:
+
+    PluginInitialization("notification", "Error deserializing 'plugins.notification' within your
+    Tauri configuration: invalid type: map, expected unit")
+
+`tauri-plugin-notification` 2.3.3 declares `pub fn init<R: Runtime>()` with no config generic, so
+Tauri infers the config type as `()` and ANY object under that key aborts plugin initialisation. The
+plugin's own Android `Config` class carrying `icon`/`sound`/`iconColor` is unreachable in that
+version. So the per-notification `icon` option is not a second choice here, it is the only one that
+exists, and it sits in the mandatory-options helper where a future call site inherits it. Four gates
+passed that change and only the phone caught it, which is what "a green gate is not a working
+system" means in practice; `notificationChannels.test.ts` now fails if the key ever comes back.
+
+**The channel was the half that was not cosmetic.** The plugin's
+`DEFAULT_NOTIFICATION_CHANNEL_ID = "default"` had been creating and using a sixth channel beside the
+five `CanariApplication.ensureChannels` designs, at `IMPORTANCE_DEFAULT` with no sound and no
+vibration where `canari_messages` is `IMPORTANCE_HIGH` with both. A message that arrived while the
+app was running was therefore quieter than the same message arriving by push, and none of the
+per-channel controls the app offers - Messages, Mentions, Activite sociale - governed it. Naming the
+channel puts the two paths on one set of settings.
+
+No accent colour was added: nothing on the Kotlin side calls `setColor`, so introducing one here
+would have made the two paths differ in a second way while fixing the first.
+
+`notificationChannels.test.ts` pins both halves, including that a channel id the TypeScript sends is
+one the Kotlin actually creates - `NotificationManagerCompat` drops a notification whose channel
+does not exist, so a typo there would have traded a wrong icon for no notification at all.
+
 ### Fixed - every message was decrypted twice on Android, and the second decrypt could not produce anything
 
 Each message to an Android device arrives as two pushes: the visible one, and the other device of

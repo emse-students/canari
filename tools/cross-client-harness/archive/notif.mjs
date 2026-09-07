@@ -112,11 +112,21 @@ if (which === '4b') {
   await sleep(2_500);
 }
 
-// The push transport is a precondition of every row below and it fails ESTABLISHED - the whole
-// measurement, and the board pattern that had been visible for hours, are in `fcmlink.mjs`.
-// Before `clearLogcat`, deliberately: the Wi-Fi toggle's own noise belongs outside this check's
-// window rather than in its report, where it would arrive as unexplained lines.
-const fcmLink = await requireFreshFcmLink(`NOTIF-${which}`, stage);
+// THE PUSH TRANSPORT IS A PRECONDITION OF MOST ROWS HERE AND IRRELEVANT TO ONE - and the whole
+// measurement behind the gate, plus the board pattern that had been visible for hours, is in
+// `fcmlink.mjs`. Before `clearLogcat`, deliberately: the Wi-Fi toggle's own noise belongs outside
+// this check's window rather than in its report, where it would arrive as unexplained lines.
+//
+// 1b IS THE EXCEPTION AND ASKING FOR A FRESH LINK THERE IS WORSE THAN WASTE. That row backgrounds
+// the app, whose WebSocket then carries the frame and ACKs it, so `scheduleDeferredPush` never
+// fires and no push is ever sent - the row's own anti-fake clause is built on exactly that. A gate
+// on a transport the row does not use would abort it with `SETUP-FAILED` over an unrelated fault,
+// and the toggle the gate performs disturbs the very socket under test. A row declares which
+// transport carries its notification rather than inheriting a precondition from its neighbours.
+const WS_DELIVERED = new Set(['1b']);
+const fcmLink = WS_DELIVERED.has(which)
+  ? null
+  : await requireFreshFcmLink(`NOTIF-${which}`, stage);
 
 phone.clearLogcat();
 // The instant the phone's window opens, so `logcatSince` can be asked for exactly this check's
@@ -549,7 +559,8 @@ record(`NOTIF-${which}`, gated.verdict, {
   // THE RIG FACT THAT REATTRIBUTES EVERY OTHER FIELD. A reader comparing two runs of this row needs
   // to know the transport was renewed for both, and the time it took is the cheap tell when a
   // handset starts needing longer to get a link back.
-  fcmLinkMs: fcmLink.tookMs,
+  // `null` for a WS-delivered row, which is a fact about the row rather than a missing measurement.
+  fcmLinkMs: fcmLink?.tookMs ?? null,
   undecryptedInShade: out.undecrypted,
   notifiedInMs: out.notifiedInMs ?? null,
   markers: out.markers ?? (out.marker ? [out.marker] : []),

@@ -34,6 +34,7 @@
   import { pinnedMessageIds } from '$lib/stores/pinStore.svelte';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import { m } from '$lib/paraglide/messages';
+  import { isNarrowChatLayout, NARROW_CHAT_QUERY, onViewportChange } from '$lib/utils/viewport';
 
   interface Props {
     /** The active conversation to display, or null when nothing is selected. */
@@ -749,15 +750,13 @@
     });
   });
 
+  // The query lives in `viewport.ts`: this file and ChatComposer had the same hand-written one, and
+  // it was a pixel wider than the `md:` classes it was meant to mirror.
   $effect(() => {
-    if (typeof window === 'undefined') return;
-    const mq = window.matchMedia('(max-width: 768px), (pointer: coarse)');
-    const apply = () => {
-      _isMobile = mq.matches;
-    };
-    apply();
-    mq.addEventListener('change', apply);
-    return () => mq.removeEventListener('change', apply);
+    _isMobile = isNarrowChatLayout();
+    return onViewportChange(NARROW_CHAT_QUERY, (narrow) => {
+      _isMobile = narrow;
+    });
   });
 
   $effect(() => {

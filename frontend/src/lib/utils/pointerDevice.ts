@@ -10,7 +10,7 @@
  * `fine` and keeps the feature, while a phone, a tablet and a Tauri mobile WebView all report
  * `coarse`. That makes it one predicate instead of a runtime check plus a screen-size guess.
  */
-const COARSE_POINTER_QUERY = '(pointer: coarse)';
+export const COARSE_POINTER_QUERY = '(pointer: coarse)';
 
 /** Whether `matchMedia` can be asked at all - it cannot under SSR, nor in a bare test environment. */
 function canQuery(): boolean {
