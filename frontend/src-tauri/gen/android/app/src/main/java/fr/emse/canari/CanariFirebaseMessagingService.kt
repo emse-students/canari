@@ -1535,6 +1535,28 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 return@runSerializedWithWakeLock
             }
 
+            // A YIELD IS NOT A FAILURE, AND EVERYTHING BELOW TREATS `decrypted == null` AS ONE.
+            //
+            // `tryDecrypt` returns null both when the crypto refused and when it stepped aside for a
+            // foreground engine that has this frame already. The fallback path below cannot tell
+            // them apart, so a yield produced `W/CanariFCM: Decryption failed -> MlsBackgroundWorker
+            // enqueued` and `Fallback notification: Nouveau message de ...` - measured on NOTIF-10,
+            // 2026-09-07 03:11.
+            //
+            // TWO THINGS ARE WRONG WITH THAT, AND THE SECOND IS THE SERIOUS ONE. The line accuses
+            // correct work. And the Worker it enqueues is a THIRD MLS engine reaching for the same
+            // `mls.bin` - re-creating, one step later, exactly the overlap the yield just avoided.
+            //
+            // The notification is not owed either: the premise of yielding is that the foreground
+            // holds the frame, and it notifies for what it received. That is measured on the same
+            // row - `notifiedInMs: 6568`, `undecryptedInShade: []`, so the shade got the real text
+            // and never the fallback. `showNotification` would have suppressed the fallback anyway;
+            // returning here is what stops the work and the accusation, not just the display.
+            if (decrypted == null && MainActivity.isInForeground) {
+                Log.d(TAG, "push yielded to the foreground, which holds this frame - no fallback, no worker")
+                return@runSerializedWithWakeLock
+            }
+
             // Read once and used twice below: to render the mention tokens the decrypted body
             // carries, and to decide whether one of them names ME (which chooses the channel).
             val myUserId = MlsContextLoader.loadPushContext(this)?.userId
@@ -2275,7 +2297,25 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             val jsonStr = nativeDecryptMessageWithKey(stateBytes, keyB64, userId, deviceId, groupId, cipherBytes)
             val json = JSONObject(jsonStr)
             if (!json.optBoolean("ok", false)) {
-                Log.w(TAG, "decryptProto: ok=false -> decryption failed")
+                // THE REASON IS THE POINT. `{"ok": false}` came back from ELEVEN distinct places -
+                // six JNI marshalling faults, an unreadable state, a control frame, an MLS refusal,
+                // an unrenderable plaintext - and all eleven printed this one sentence. It sat in
+                // the cross-client campaign's dirt on NOTIF-4 and NOTIF-10 as an unattributable
+                // line for days. `refused()` in `mobile/background.rs` now names each.
+                //
+                // A CONTROL FRAME IS NOT A FAILURE. A commit or a proposal is applied and yields no
+                // application message: the MLS state ADVANCED and there is simply nothing to show.
+                // Calling that `decryption failed` at warn level is a line that accuses correct
+                // work, and teaches its reader to skip the ones that do not.
+                //
+                // Branching on a TOKEN the producer chose, never on prose - the distinction is made
+                // where it is known, and a sentence is a distinction exactly one call site makes.
+                when (val reason = json.optString("reason", "unspecified")) {
+                    "control-frame" ->
+                        Log.d(TAG, "decryptProto: control frame applied - state advanced, nothing to render")
+                    else ->
+                        Log.w(TAG, "decryptProto: no message to show, reason=$reason")
+                }
                 return null
             }
             val type = json.optString("type", "text")

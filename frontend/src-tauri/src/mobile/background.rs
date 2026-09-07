@@ -33,6 +33,21 @@ fn load_manager_with_key_b64(
 
 /// `Option`-returning wrapper over [`load_manager_with_key_b64`] for the push-decrypt paths,
 /// which degrade to a generic notification rather than surfacing an error.
+/// A refusal that NAMES ITSELF, for the push-decrypt contract shared by the JNI and the iOS FFI.
+///
+/// `{"ok": false}` was returned from eleven distinct places - six JNI marshalling faults, an
+/// unreadable state, a control frame, an MLS refusal, and an unrenderable plaintext - and every one
+/// of them reached the phone's log as the single sentence `decryptProto: ok=false -> decryption
+/// failed`. A line that cannot say which of eleven things happened sends its reader nowhere, and it
+/// sat in the cross-client campaign's dirt on NOTIF-4 and NOTIF-10 for exactly that reason.
+///
+/// The reason is a STABLE TOKEN, never prose: the caller decides what to do with it - a control
+/// frame is expected and a refused ratchet is not - and a distinction carried in a sentence is a
+/// distinction exactly one call site will make.
+fn refused(reason: &str) -> serde_json::Value {
+    serde_json::json!({ "ok": false, "reason": reason })
+}
+
 fn load_manager_for_push(
     state_bytes: &[u8],
     key_b64: &str,
@@ -433,26 +448,34 @@ pub fn decrypt_push_message_with_key(
     device_id: &str,
     group_id: &str,
     ciphertext: &[u8],
-) -> Option<serde_json::Value> {
-    let (mut manager, _key) = load_manager_for_push(state_bytes, key_b64, user_id, device_id)?;
+) -> serde_json::Value {
+    let Some((mut manager, _key)) = load_manager_for_push(state_bytes, key_b64, user_id, device_id)
+    else {
+        return refused("state-unreadable");
+    };
 
     let plaintext = match manager.process_incoming_message(group_id, ciphertext) {
         Ok(Some(p)) => p,
         Ok(None) => {
-            log::warn!("[PushBG] key-based: process_incoming_message Ok(None) - control message");
-            return None;
+            // NOT A FAILURE, AND THE CALLERS USED TO BE TOLD IT WAS. A commit or a proposal is
+            // applied and yields no application message: the state ADVANCED, there is simply
+            // nothing to render. It came back as the same bare `{"ok": false}` as a corrupt key,
+            // so the Android log said `decryption failed` for work that succeeded - measured on
+            // NOTIF-4 and NOTIF-10, 2026-09-07, where it was the whole of the remaining dirt.
+            log::debug!("[PushBG] key-based: control frame applied, nothing to render");
+            return refused("control-frame");
         }
         Err(e) => {
             log::error!("[PushBG] key-based: process_incoming_message Err({e})");
-            return None;
+            return refused("mls-refused");
         }
     };
 
     let info = extract_full_message_info(&plaintext);
     if info["ok"].as_bool().unwrap_or(false) {
-        Some(info)
+        info
     } else {
-        None
+        refused("plaintext-not-renderable")
     }
 }
 
