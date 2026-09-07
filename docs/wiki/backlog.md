@@ -5260,6 +5260,52 @@ so easy to reproduce before it.
 `keyPackageHasPrivate` is answering `false` about this device's own fresh mints: a broken seam
 between minting and asking, real and reproducible on a clean estate.
 
+**A CANDIDATE CAUSE, FOUND BY READING ON 2026-09-06, AND IT IS AN ORDERING DEFECT RATHER THAN A KEY
+DEFECT.** Three MLS engines share one `mls.bin` on Android - foreground Tauri, FCM JNI, Worker JNI -
+and each does *load, modify, write*. **Only the WRITE is protected.** `background_write_mls_bin`
+takes `mls_bin_write_lock` and tests `foreground_is_active()`; the load-modify-write cycle around it
+is not a unit, so nothing detects that the file changed between an engine's load and its write.
+
+And that test is a CLOCK. `FOREGROUND_GRACE_MS` is 30 s, refreshed by a 10 s JS heartbeat which -
+by its own comment - "auto-pauses on hidden". Meanwhile `sauvegarder_mls_et_persister`
+(`commands/mls.rs`) runs in this order:
+
+1. lock the manager;
+2. `save_encrypted_with_key(...)` - **the expensive half, measured at 48 s on the Mi 9T**;
+3. `write_mls_state_blob(...)` - which is the first thing that refreshes the guard.
+
+So on backgrounding the heartbeat stops, the guard lapses 30 s later, and step 2 keeps running for
+another ~18 s. **In that window a background engine reads `foreground_is_active() == false` and
+writes a blob it loaded before the mint.** The window is a function of the checkpoint's cost, which
+is why the defect tracks the slow checkpoint (48 s) and never appeared on the fast one (6.9 s) - at
+6.9 s it does not open at all.
+
+The sequence that produces the observed numbers exactly:
+
+| | |
+| --- | --- |
+| 1 | foreground mints 50 prekeys and publishes them |
+| 2 | app backgrounded; heartbeat paused, guard lapses at 30 s |
+| 3 | FCM arrives: the background engine loads the PRE-MINT `mls.bin`, works, writes it back - the 50 are gone from disk |
+| 4 | app foregrounded: `reloadStateFromDisk()` replaces the warm engine with that state |
+| 5 | reconciliation asks "do I hold the private key?" - **false, fifty times** - and purges all 50 |
+
+That is `count=50 / deleted=50`, and it explains why the device cannot back packages it demonstrably
+minted: the SESSION minted them, the STORAGE no longer has them.
+
+**THE FIX IS NOT A LONGER GRACE.** A deadline that must outlast an operation whose cost is unbounded
+is the clock this repository's own rule forbids as load-bearing. The durable-state form is a
+**compare-and-swap on the file**: an engine remembers the fingerprint of the blob it loaded and,
+under the write lock, refuses to write when the on-disk blob is no longer that one. A lost update
+becomes a detected conflict, the losing engine's work is retried against the current state, and the
+30 s stop being load-bearing - they may stay as an optimisation that avoids wasted work, which is
+what a clock is allowed to be.
+
+**THIS IS READ, NOT MEASURED.** The window is provable from the source and the ordering is wrong on
+its face, so the CAS is worth doing whether or not it is the whole cause. What would settle it is
+one capture pairing the `state composition` line at `load_or_create` with the guard's own refusals
+across a background/foreground cycle - if the KeyPackage count falls across step 3, the chain holds.
+
 **What each round costs.** ~50 bundles x 1 936 bytes = ~97 kB written into a state that nothing
 prunes below 84 days. Measured across one day on this handset:
 

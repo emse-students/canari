@@ -725,6 +725,34 @@ told their correct PIN was wrong, account-wide.
   rate. A real group came to ~490 kB, carried in `Tree` (accumulated member leaves) and
   `MessageSecrets` (per-sender ratchet history) - not in epochs, which a companion measurement shows
   plateau at 17 kB after 81 of them.
+- **A background engine could delete fifty private keys the foreground had just minted, because the
+  guard meant to stop it is a clock and the operation it guards outlives it.** Three MLS engines
+  share one `mls.bin` on Android and each does *load, modify, write*; only the WRITE is protected,
+  by `foreground_is_active()`, a 30-second deadline refreshed by a 10-second JS heartbeat that - by
+  its own comment - pauses on `hidden`.
+
+  `sauvegarder_mls_et_persister` locks the manager, spends `save_encrypted_with_key` serialising and
+  encrypting the state, and only then calls `write_mls_state_blob`, which is the first thing to
+  refresh that deadline. **The serialise cost 48 s on a Mi 9T with an 8 MB blob.** Background the app
+  during one and the guard lapses 30 s in, leaving ~18 s in which a background engine sees no
+  foreground, and writes back the blob it loaded before the mint. The window is a function of the
+  checkpoint's cost, which is why the symptom tracked the slow checkpoint and was absent on a 6.9 s
+  one.
+
+  `ForegroundCritical` is an RAII marker held across the WHOLE of a checkpoint - and, on the mint
+  path, from before `generate_key_packages` rather than from before the write, because the bundles
+  exist in that engine's storage from the mint onwards and are durable only after the write.
+  `foreground_is_active()` is now *an operation is in flight* OR *the deadline holds*: a proof
+  first, a prediction second. It does not reintroduce the stuck-true the deadline was chosen to
+  avoid - `Drop` runs on return, on `?` and on unwind, and the only residue is a checkpoint that
+  never finishes, which holds the manager mutex and has already killed the foreground.
+
+  Four tests in `concurrency.rs`, and the load-bearing three FAIL with the in-flight term removed.
+  This is read from the source rather than caught in the act: the ordering is wrong on its face and
+  the window is provable, but whether it is the whole of the fifty-prekey purge is not yet measured
+  ([backlog](docs/wiki/backlog.md)). The architectural end of it - a compare-and-swap so no writer
+  can overwrite a blob that changed since it loaded, retiring the deadline as load-bearing - is
+  written up there and not done.
 
 ## [0.16.4] - 2026-09-06
 
