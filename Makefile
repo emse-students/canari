@@ -363,6 +363,7 @@ test-harness:
 	@bun tools/cross-client-harness/archive/exit-selftest.mjs
 	@bun tools/cross-client-harness/archive/lucide-selftest.mjs
 	@bun tools/cross-client-harness/archive/ports-selftest.mjs
+	@bun tools/cross-client-harness/archive/transport-selftest.mjs
 	@bun tools/cross-client-harness/archive/origin-selftest.mjs
 	@bun tools/cross-client-harness/archive/ready-selftest.mjs
 	@bun tools/cross-client-harness/archive/servable-selftest.mjs

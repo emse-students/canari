@@ -79,10 +79,11 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 
 A gesture other rows REST ON, measured by a row of its own so a failure in it is attributed to it rather than to everything built on top. It writes a verdict, so it is not an atom by the strict reading - and that is deliberate, not an accident of filing.
 
-1 script.
+2 scripts.
 
 | script | what it is |
 |---|---|
+| `fcmlink.mjs` | THE PUSH TRANSPORT IS A PRECONDITION OF EVERY ROW THAT WAITS ON A NOTIFICATION. |
 | `newdevice.mjs` | TURNS A BROWSER PROFILE INTO A DEVICE THE SERVER HAS NEVER SEEN, and measures that it did. |
 
 ## Rows - `archive/`
@@ -162,7 +163,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-20 scripts.
+21 scripts.
 
 | script | what it is |
 |---|---|
@@ -185,6 +186,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/spawn-selftest.mjs` | A SPAWN GIVEN A NAME IT CANNOT RESOLVE FAILS SILENTLY, AND THIS RIG HAS PAID FOR IT NINE TIMES. |
 | `archive/srvclassify-selftest.mjs` | THE SERVER CLASSIFIER AND ITS NORMALISER, RUN OVER LINES WHOSE RIGHT BUCKET IS KNOWN. |
 | `archive/tabguard-selftest.mjs` | DOES THE REFUSAL FIRE? A guard that has never been seen to trigger is a guard nobody has tested. |
+| `archive/transport-selftest.mjs` | A RUNNER THAT WAITS ON A NOTIFICATION MUST HAVE RENEWED THE PUSH TRANSPORT FIRST. |
 | `archive/usability-selftest.mjs` | WHAT COUNTS AS THE APP ANSWERING A CLICK - the two predicates and the two targets that decide |
 
 ## Gestures, libraries and runners in `archive/`
@@ -238,4 +240,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-177 scripts in total.
+179 scripts in total.
