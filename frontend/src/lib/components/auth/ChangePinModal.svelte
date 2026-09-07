@@ -189,7 +189,7 @@
     </div>
 
     {#if displayError}
-      <p class="flex items-center gap-2 px-1 text-sm font-medium text-red-500">
+      <p role="alert" class="flex items-center gap-2 px-1 text-sm font-medium text-red-500">
         <TriangleAlert size={16} class="shrink-0" />
         {displayError}
       </p>

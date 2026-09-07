@@ -152,3 +152,54 @@ describe('PinModal - the gate', () => {
     expect(buttons().some((b) => b.text.includes(m.auth_pin_forgot()))).toBe(true);
   });
 });
+
+/**
+ * A REFUSED UNLOCK THAT IS NEVER ANNOUNCED IS A SILENT ONE, AND SILENCE IS THE FAILURE MODE HERE.
+ *
+ * The error was a bare `<p>` inserted after the submit. An insertion carrying neither `role` nor
+ * `aria-live` is one assistive technology has no reason to read out: a user who cannot see the
+ * screen types a PIN, hears nothing, and has no way to learn the attempt was refused or why. The
+ * gate above cannot be walked away from - so a person in that state is stuck at a modal that has
+ * already told them the answer, in a way they cannot receive.
+ *
+ * IT WAS FOUND BECAUSE AN INSTRUMENT HIT THE SAME WALL. `pin.mjs` had no handle but a Tailwind
+ * colour class, so it keyed on `text-red-500` - a test against a STYLE, which a restyle turns into
+ * a silent pass. `role="alert"` is now both the announcement and the handle, which is why this is
+ * asserted on the ROLE and never on the class.
+ */
+describe('PinModal - the refusal is announced', () => {
+  const alerts = () => [...document.querySelectorAll('[role="dialog"] p[role="alert"]')];
+
+  it('announces the reason a PIN was refused', () => {
+    raiseGate({ externalError: 'Votre PIN a ete change sur un autre appareil' });
+
+    const spoken = alerts();
+    expect(spoken).toHaveLength(1);
+    expect(spoken[0].textContent).toContain('Votre PIN a ete change sur un autre appareil');
+  });
+
+  it('announces it in the KEYPAD shape too, which is the one a phone gets', () => {
+    // TWO SHAPES, TWO SITES, AND THE TEST HAD TO BE MADE TO FAIL BEFORE IT COULD BE BELIEVED.
+    // `useNumpad` is set from `isCoarsePointerDevice()` on mount, which is false under happy-dom -
+    // so the assertion above only ever exercised the manual-input branch, and removing the role
+    // from the keypad's `<p>` left it green. The component offers the switch as a button, so this
+    // reaches the other shape the way a person does.
+    raiseGate({ externalError: 'PIN incorrect' });
+    const toKeypad = buttons().find((b) => b.text.includes(m.auth_pin_numeric_keypad()));
+    expect(toKeypad, 'the manual shape must offer a way back to the keypad').toBeTruthy();
+    toKeypad!.el.click();
+    flushSync();
+
+    const spoken = alerts();
+    expect(spoken).toHaveLength(1);
+    expect(spoken[0].textContent).toContain('PIN incorrect');
+  });
+
+  it('says nothing when nothing was refused', () => {
+    // The counterpart matters as much: a live region that is always present announces on every
+    // render, and a gate that speaks when nothing happened teaches its listener to ignore it.
+    raiseGate();
+
+    expect(alerts()).toHaveLength(0);
+  });
+});

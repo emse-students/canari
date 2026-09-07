@@ -1029,28 +1029,24 @@ the last incident is not the predicate that names the next one**, and this one h
 on the population it would run on. Cheap and worth doing before deciding anything: count 404s and
 410s on `/api/media/:id` over a week.
 
-### P2 - the PIN modal's error is a bare paragraph, so a refused unlock is never announced to a screen reader (measured 2026-09-04)
+### ~~P2 - the PIN modal's error is a bare paragraph, so a refused unlock is never announced~~ - FIXED 2026-09-07
 
-`PinModal.svelte` renders its failure as `<p class="...text-red-500">{displayError}</p>` in BOTH
-shapes - line 156 (the keypad) and line 229 (the manual input). No `role="alert"`, no `aria-live`.
-The element is inserted after the submit, and an insertion that carries neither is one assistive
-technology has no reason to read out: a user who cannot see the screen submits a PIN, hears nothing,
-and has no way to learn that the attempt was refused or why.
+`role="alert"` on both shapes of `PinModal.svelte` and on `ChangePinModal.svelte`. **The sweep this
+entry asked for found `LoginForm.svelte` already correct** - it carries `role="alert"` and
+`aria-live="assertive"` - so the suspicion was right about two of the three files it named.
 
-**Found because an instrument hit the same wall.** `pin.mjs` waited for the gate to close or for the
-body to contain "incorrect", and the product refused with something else entirely - *"Votre PIN a ete
-change sur un autre appareil"* - so the atom spent 25 s and threw `until() timed out` about a message
-plainly on screen. The atom was fixed the same day to key on the error ELEMENT rather than on any
-wording, which is why the missing role was noticed at all: **the only handle the modal offers is a
-Tailwind colour class**, and a test keying on `text-red-500` is a test that breaks on a restyle.
+**The test had to be made to fail before it could be believed, and the first version could not.**
+`PinModal` has TWO error sites because it has two shapes, and `useNumpad` is set from
+`isCoarsePointerDevice()` on mount - false under happy-dom. So an assertion that simply looked for a
+`p[role="alert"]` inside the dialog exercised the manual-input branch only, and stripping the role
+off the KEYPAD's paragraph left it green. `PinModal.gate.svelte.test.ts` now reaches the second
+shape the way a person does, by pressing the button that offers it, and both directions were
+measured: the keypad case fails without the attribute and passes with it.
 
-**The fix is one attribute per site** (`role="alert"`, which implies `aria-live="assertive"`), and it
-makes the accessible name the handle - so the harness can stop keying on a colour. Both shapes, and
-worth a sweep for the same pattern elsewhere: `ChangePinModal.svelte` and `LoginForm.svelte` carry
-`text-red-500` too and were not checked.
-
-**Not fixed inline, deliberately** (user, 2026-09-04): P2s go here rather than into the session that
-found them.
+**And the instrument stops keying on a colour.** `pin.mjs`'s `ERROR_IN_GATE` was
+`p.text-red-500` - a test against a Tailwind class, which a restyle turns into a silent pass on
+every refused unlock. It prefers `p[role=alert]` now, keeping the class as a second alternative for
+a client running an older bundle.
 
 ### ~~P2 - the local estate's DATABASE references media its OBJECT STORE never received~~ - CLOSED 2026-09-07, the strip is in the restore and the estate measures zero
 
@@ -1168,20 +1164,26 @@ same to it; the repeated GETs in that row's `badHttp` are a pending invitation n
 can never be served, which is the P1 above about a device asking for a Welcome for ever. This entry
 is the honesty of the answer, not the loop.
 
-### P3 - the remove control in a group panel announces a raw 64-hex user id, so a screen reader reads the id where everyone else reads a name (measured 2026-09-05)
+### ~~P3 - the remove control in a group panel announces a raw 64-hex user id~~ - FIXED 2026-09-07
 
-`Sidebar`'s member rows render display names correctly - GRP-9 measured zero of five rows showing a
-raw id, both names resolving - and the panel's per-member remove control carries
-`aria-label="Retirer <userId>"` with the full 64-hex id. So the one surface that exists to be read
-aloud is the one that says the id.
+`data-remove-member` carries the id for the campaign, the accessible name carries a resolved name
+for a person. `grp.mjs` builds `removableIds` from the attribute and clicks it, so the rig is no
+longer the reason that label spelt an OIDC subject id out loud - which is what this entry said had
+to be untangled before either half could move.
 
-It is also the ONLY per-member hook the panel offers, which is why the campaign addresses members
-through it (`grp.mjs`'s header says so). Giving it a name would need a second hook for the rig, or
-the rig switching to a `data-` attribute - the same one-attribute pattern `data-channel-row` and
-`data-conversation-tile` already use, which is the cleaner end state.
+**It cost a fifth copy of the display-name resolution, so the copies became one** (`userDisplayName`
+/ `userDisplayNames` in `utils/users/displayNames.svelte.ts`), which is the P3 below about four
+components carrying the same eight lines. `UserName` is converted; `MessageReactions`,
+`MessageInfoTooltip` and `ChatMessageGroups` are not, and that is what is left of it.
 
-Not fixed inline during rung 8 because the accessible name is load-bearing for the instrument and
-swapping both halves at once is a change that wants its own measurement.
+**AND THE LIST FORM SHIPPED AN INFINITE LOOP, which is the lesson.** It seeded its next map from its
+previous one, so the effect depended on its own output; the `svelte:boundary` in `MainChatPage`
+turned `effect_update_depth_exceeded` into "Impossible d'afficher cette discussion" over every
+conversation, with the sidebar still listing them all. GRP-1 and GRP-2 failed as `would not open
+after 3 attempts` and no verdict could say why - a screenshot could. The rule is in
+[durable-rules](durable-rules.md); the test is `displayNames.svelte.test.ts`, it counts effect runs
+rather than waiting for the throw (the throw belonged to the old container, not to the defect), and
+it was measured in both directions.
 
 ### P2 - an inviter that dies between sending a Welcome and registering the joiner leaves a member in the MLS tree with no server-side membership, and nothing repairs it (measured 2026-09-05)
 

@@ -22,6 +22,7 @@
   import { m } from '$lib/paraglide/messages';
   import { MediaService } from '$lib/media';
   import { getToken } from '$lib/stores/auth';
+  import { userDisplayNames } from '$lib/utils/users/displayNames.svelte';
 
   /**
    * Props for the ChatGroupPanel component.
@@ -89,6 +90,10 @@
   let renameInput = $state('');
 
   // Optimistic rows: invitees still in flight and not yet in the authoritative member list.
+  // THE NAMES THE REMOVE CONTROL ANNOUNCES. Every other cell of a member row renders a resolved
+  // name; the control announced the raw id, which is the one surface that exists to be read out.
+  const memberNames = userDisplayNames(() => groupMembers);
+
   const pendingDisplay = $derived(
     pendingInvites.filter((id) => !groupMembers.some((mem) => mem.toLowerCase() === id))
   );
@@ -442,9 +447,20 @@
                       </div>
 
                       {#if onRemoveMember}
+                        <!--
+                          THE ACCESSIBLE NAME IS THE ONE SURFACE THAT EXISTS TO BE READ ALOUD, and it
+                          was the only one saying the id: every other cell of this row renders a
+                          resolved name (`UserName` right above), while the control announced
+                          "Retirer <64 hex>". `data-remove-member` carries the id for the campaign,
+                          which used to address members through the label - the same one-attribute
+                          pattern `data-conversation-tile` and `data-channel-row` already use.
+                        -->
                         <button
+                          data-remove-member={member}
                           onclick={() => onRemoveMember?.(member)}
-                          aria-label={m.chat_group_remove_member_label({ member })}
+                          aria-label={m.chat_group_remove_member_label({
+                            member: memberNames.get(member) ?? member,
+                          })}
                           title={m.chat_group_remove_member_title()}
                           class="text-text-muted flex-shrink-0 rounded-xl bg-black/5 p-2 transition-all outline-none hover:bg-red-500/10 hover:text-red-500 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95 dark:bg-white/5"
                         >

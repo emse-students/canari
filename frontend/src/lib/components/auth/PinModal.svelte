@@ -205,7 +205,9 @@
       </div>
 
       {#if displayError}
-        <p class="-mt-1 text-center text-sm font-medium text-red-500">{displayError}</p>
+        <p role="alert" class="-mt-1 text-center text-sm font-medium text-red-500">
+          {displayError}
+        </p>
       {/if}
 
       <!-- Numeric keypad -->
@@ -278,7 +280,7 @@
           >
         </p>
         {#if displayError}
-          <p class="text-center text-sm font-medium text-red-500">{displayError}</p>
+          <p role="alert" class="text-center text-sm font-medium text-red-500">{displayError}</p>
         {/if}
       </div>
     {/if}

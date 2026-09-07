@@ -32,8 +32,9 @@
  * THE PANEL'S SURFACES ARE ADDRESSED BY THEIR OWN HOOKS, all read off the running build before a
  * line of this was written:
  *   - the roster count is the panel's `MEMBRES (N)` heading (`chat_group_members_count_label`);
- *   - each member's remove control is `[aria-label="Retirer <userId>"]`, the only per-member hook
- *     the panel offers - see GRP-9, where being the only hook is also the finding;
+ *   - each member's remove control is `[data-remove-member="<userId>"]`, the only per-member hook
+ *     the panel offers - see GRP-9, where being the only hook was also the finding: it used to be the
+ *     ACCESSIBLE NAME, so the rig was the reason that label spelt a 64-hex id out loud;
  *   - the rename field is `#group-rename-input` with a `Valider` submit;
  *   - leaving is TWO steps (`Quitter le groupe` -> `Quitter ce groupe ?` -> `Quitter`) and so is
  *     deleting. A check that clicks once and waits is a 30-second timeout blaming the product.
@@ -127,10 +128,14 @@ const PANEL = String.raw`(function () {
   var rows = seg.split('\n').map(function (s) { return s.trim(); }).filter(function (s) {
     return s && !/^MEMBRES/i.test(s) && s !== 'Ajouter';
   });
-  var removes = [].slice.call(document.querySelectorAll('button, [role=button]'))
-    .map(function (b) { return (b.getAttribute('aria-label') || b.innerText || '').trim(); })
-    .filter(function (s) { return s.indexOf('Retirer ') === 0; })
-    .map(function (s) { return s.slice(8); });
+  // THE ATTRIBUTE, NOT THE ACCESSIBLE NAME. This read the label - Retirer <64-hex> - which made
+  // the rig the reason that label spelt an id: it is the one surface that exists to be read aloud,
+  // and every other cell of the row renders a resolved NAME. data-remove-member carries the id
+  // for this, the label carries the name for a person, and neither is now the other's hostage.
+  // (No backticks in here: this comment lives inside a template literal, and one would close it.)
+  var removes = [].slice.call(document.querySelectorAll('[data-remove-member]'))
+    .map(function (b) { return b.getAttribute('data-remove-member') || ''; })
+    .filter(Boolean);
   return JSON.stringify({ count: m ? Number(m[1]) : null, rows: rows, removableIds: removes });
 })()`;
 
@@ -188,7 +193,7 @@ async function panelReaches(cx, want, timeoutMs = 60000) {
  */
 async function removeMember(cx, userId) {
   const before = (await panelOf(cx)).count;
-  await realClick(cx, `[aria-label="Retirer ${userId}"]`);
+  await realClick(cx, `[data-remove-member="${userId}"]`);
   await until(cx, `/MEMBRES\\s*\\(${before - 1}\\)/i.test(document.body.innerText)`, 25000);
   await sleep(2000);
 }
@@ -289,7 +294,7 @@ async function addPeer(cx) {
  * THE PEER'S ID AS THE PANEL ACTUALLY SHOWS IT - and, when there is none, WHY, on the record.
  *
  * TWO CALL SITES USED TO THROW HERE and a throw was the wrong verdict for what this cannot find.
- * `removableIds` is built from the `Retirer <id>` controls, so an id exists only once the peer is a
+ * `removableIds` is built from the `data-remove-member` controls, so an id exists only once the peer is a
  * MEMBER: an invitation still in flight renders `Invitation en cours...` and no control at all. "No
  * id outside the owner's" therefore means one of exactly two things, and BOTH are findings about the
  * product - the add did not land, or it landed and the roster has not rendered it.
@@ -1248,10 +1253,11 @@ async function grp8() {
  * rather than a memory. A raw id in a member row means the profile lookup failed and the component
  * fell back to the key it had - the same shape as a mention rendering `@[uuid]`.
  *
- * THE REMOVE CONTROL IS A SEPARATE FINDING and is recorded, not asserted. Its accessible name is
- * `Retirer <64 hex characters>`, so a screen reader announces an OIDC subject id where a person's
- * name belongs. That is a real defect in the same panel, but it is not what this row asks, and
- * folding it in would make a check fail for a reason its own title does not name.
+ * THE REMOVE CONTROL WAS A SEPARATE FINDING AND IS FIXED (2026-09-07). Its accessible name was
+ * `Retirer <64 hex characters>` - a screen reader announcing an OIDC subject id where a person's
+ * name belongs - and it stayed that way because the RIG addressed members through it. The control
+ * now carries `data-remove-member` for the rig and a resolved name for a person, so neither is the
+ * other's hostage. Still recorded rather than asserted here: it is not what this row asks.
  */
 async function grp9() {
   const [w1, o1] = await observed(W1, 'GRP-W1');
