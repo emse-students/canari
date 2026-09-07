@@ -232,7 +232,7 @@ services:
   # was repointed here. See docs/wiki/infrastructure/docker.md.
   # ─────────────────────────────────────────────────────
   garage:
-    image: dxflrs/garage:v2.3.0
+    image: dxflrs/garage:v2.4.0
     restart: always
     command: ["/garage", "server", "--single-node", "--default-bucket"]
     ports:
