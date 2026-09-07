@@ -691,6 +691,13 @@ with their examples, in [testing-methodology](../../docs/wiki/testing-methodolog
 page before writing a check or believing one. The ones that decide whether a run is worth reading at
 all:
 
+- **A PUSH ROW MEASURES CANARI ONLY IF THE PHONE'S LINK TO GOOGLE IS ALIVE, AND THAT LINK FAILS
+  `ESTABLISHED`.** Four verdicts on 2026-09-07 named the app over a transport that had silently
+  stopped carrying anything while every readable fact - standby bucket, Doze whitelist, `ping`, the
+  token in the database, the server's own `FCM sent` - said it was fine. So every runner that calls
+  `phone.awaitNotification` renews the link first through `requireFreshFcmLink` and REFUSES when it
+  cannot get a new one; `archive/transport-selftest.mjs` refuses a runner that forgets. The story is
+  in `fcmlink.mjs` and in [testing-methodology](../../docs/wiki/testing-methodology.md).
 - **Observation is part of every check, not a debugging step.** A verdict is `PASS` only if the
   assertions hold *and* the run is clean. A line that turns out to be routine is added to the benign
   list - never ignored in place. Two shipped bugs came out of the logs of *passing* checks.

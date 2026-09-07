@@ -81,17 +81,17 @@ pub unsafe extern "C" fn canari_native_decrypt_message(
     let device_id_str = str_from_c_str(device_id);
     let group_id_str = str_from_c_str(group_id);
 
-    match decrypt_push_message_with_key(
+    // ALWAYS A VALUE NOW, AND IT CARRIES ITS OWN `reason` - see `refused` in `background.rs`. The
+    // `None` arm this replaces collapsed every distinct refusal into one indistinguishable object,
+    // so the iOS half had exactly the fault the Android half was measured on.
+    json_to_c_string(decrypt_push_message_with_key(
         state_bytes,
         &device_key_str,
         &user_id_str,
         &device_id_str,
         &group_id_str,
         ciphertext,
-    ) {
-        Some(v) => json_to_c_string(v),
-        None => json_to_c_string(serde_json::json!({ "ok": false })),
-    }
+    ))
 }
 
 /// Returns the group's current MLS epoch from the persisted state, or -1 if unknown / unreadable.

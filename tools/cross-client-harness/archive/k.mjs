@@ -56,6 +56,7 @@
 import { APP_TAB, client, ensureChat, openConversation, send } from '../chat.mjs';
 import { gate, logcatReport, logcatSince, report, watch } from '../watch.mjs';
 import { mark, record, exitOnRecorded } from '../results.mjs';
+import { requireFreshFcmLink } from '../fcmlink.mjs';
 import * as phone from '../phone.mjs';
 import { PORTS, peerNameFor } from '../names.mjs';
 
@@ -116,6 +117,12 @@ stage('attaching W2');
 const w2 = await withDeadline(client(PORTS.W2, APP_TAB), 60_000, 'W2 attach');
 await withDeadline(ensureChat(w2), 60_000, 'W2 ensureChat');
 await withDeadline(openConversation(w2, peerNameFor('W2')), 90_000, 'W2 openConversation');
+
+// The push transport is a precondition of this row and it fails ESTABLISHED - the measurement,
+// and the board pattern that had been visible for hours, are in `fcmlink.mjs`. Before
+// `clearLogcat`, deliberately: the Wi-Fi toggle's own noise belongs outside this check's window
+// rather than in its report, where it would arrive as unexplained lines.
+const fcmLink = await requireFreshFcmLink('NOTIF-6c', stage);
 
 phone.clearLogcat();
 const phoneWindowFrom = Date.now();
@@ -205,6 +212,7 @@ const rW2 = await report(oW2);
 const gated = gate(out.verdict, { W2: rW2, A1: phoneReport });
 out.verdict = gated.verdict;
 record('NOTIF-6c', gated.verdict, {
+  fcmLinkMs: fcmLink.tookMs,
   ...gated.detail,
   unmet,
   theShadeWasAnswered: out.theShadeWasAnswered,

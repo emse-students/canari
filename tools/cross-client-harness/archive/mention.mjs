@@ -75,6 +75,7 @@ import {
 } from '../chat.mjs';
 import { inPanel, openChannelSettings, setChannelNotifLevel } from '../comm.mjs';
 import { errorDetail, mark, record, recordObserved } from '../results.mjs';
+import { requireFreshFcmLink } from '../fcmlink.mjs';
 import { BLOCK_LIST_READ_NARRATION, ignoringExpectedLog, report, watch } from '../watch.mjs';
 import { ABSENT_MENTION_ID, ignoringStrandedMentions } from '../stranded.mjs';
 import { srvLines } from '../estate.mjs';
@@ -343,7 +344,12 @@ async function mention1() {
  * a force-stopped package sits in Android's STOPPED state and the framework cancels every FCM
  * broadcast to it, so the check would be measuring Android's own suppression.
  */
-async function armOwnerPhone() {
+async function armOwnerPhone(rowId) {
+  // THE PUSH TRANSPORT IS A PRECONDITION OF BOTH HALVES OF MENTION-3, AND IT FAILS ESTABLISHED.
+  // A dead link fails the control - the case this file already records as the one it cannot
+  // explain from the shade - and PASSES the claim, whose whole assertion is silence. So the two
+  // halves would disagree for a reason that is neither of theirs. See `fcmlink.mjs`.
+  await requireFreshFcmLink(rowId);
   await phone.ensure({ port: A1 });
   const pin = phone.unlockPin(A1);
   const cx = await client(A1, 'tauri.localhost');
@@ -475,7 +481,7 @@ async function mention2() {
   // see `w2MentionsOwner` for the run this cost.
   const ownerId = (await whoIs(cx))?.user;
   const levelSet = await setOwnerLevelAndLeave(cx, 'mentions');
-  const killed = await armOwnerPhone();
+  const killed = await armOwnerPhone('MENTION-2');
 
   const [w2cx, w2obs] = await observed(W2, 'MENTION-2/W2');
   await openChannel(w2cx, VENUE.community, VENUE.channel);
@@ -535,7 +541,7 @@ async function mention3() {
 
   // -- the control: same shape, level "mentions", and it must be HEARD --
   const controlLevelSet = await setOwnerLevelAndLeave(cx, 'mentions');
-  await armOwnerPhone();
+  await armOwnerPhone('MENTION-3');
   const control = await w2MentionsOwner(w2cx, 'MENTION3C', ownerId);
   const controlMs = await phone.awaitNotification(control.term, 90_000);
   // THE CONTROL CARRIES ITS OWN EVIDENCE, because a control that is not heard is the one case this
@@ -546,7 +552,7 @@ async function mention3() {
 
   // -- the claim: level "none", and it must be SILENT --
   const levelSet = await setOwnerLevelAndLeave(cx, 'none');
-  const killed = await armOwnerPhone();
+  const killed = await armOwnerPhone('MENTION-3');
   const sent = await w2MentionsOwner(w2cx, 'MENTION3', ownerId);
   // FOUR TIMES WHAT THE CONTROL TOOK, floored at 45 s. Derived, not chosen: the window has to be
   // long enough that a notification which was going to arrive already has, and the only honest

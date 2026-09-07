@@ -353,6 +353,73 @@ export const wake = () => {
 export const home = () => sh('input keyevent KEYCODE_HOME');
 export const forceStop = () => sh(`am force-stop ${PKG}`);
 export const launch = () => sh(`am start -n ${PKG}/.MainActivity`);
+/**
+ * The device's connection to Google's FCM front end (TCP 5228), as `local->remote`, or null.
+ *
+ * ## WHY A PUSH ROW READS A SOCKET
+ *
+ * A push row cannot tell "the app did not notify" from "the message never arrived", and on
+ * 2026-09-07 the second was true for three consecutive NOTIF-11 runs. Everything a check can
+ * reach said the phone was ready: the app on the Doze whitelist and in standby bucket 5
+ * (EXEMPTED), `deviceidle` ACTIVE rather than dozing, `ping` at 24 ms, the token in `push_token`
+ * written by the app ITSELF thirty minutes earlier, and the delivery service logging `FCM sent`
+ * with no exception - so Google's API had ACCEPTED all six messages. This socket was ESTABLISHED
+ * throughout and carried none of them. Forcing Play services onto a NEW one delivered the whole
+ * backlog (the sends carry `ttl: 24h`) within five seconds.
+ *
+ * So the transport fails ESTABLISHED, and a check that asks "is there a connection" is answered
+ * "yes" by the exact state it is trying to catch. Its IDENTITY is the fact that separates the two
+ * causes, which is why this returns the endpoints and not a boolean. `refreshFcmLink` acts on it.
+ */
+export function fcmSocket() {
+  const line = sh('netstat -tn')
+    .split('\n')
+    .find((l) => /:5228\b/.test(l) && /ESTABLISHED/.test(l));
+  if (!line) return null;
+  const f = line.trim().split(/\s+/);
+  return `${f[3]}->${f[4]}`;
+}
+
+/**
+ * Puts Play services on a NEW FCM connection, and PROVES it is a new one.
+ *
+ * Toggling Wi-Fi is what forces it: the socket dies with the interface and GMS dials again. The
+ * proof is that the connection's identity CHANGED - a link that survives the toggle unchanged is
+ * the dead one, and leaving that behind is the whole point.
+ *
+ * ## THIS REPAIRS THE BENCH, NEVER THE PRODUCT, AND THE DIFFERENCE IS NOT COSMETIC
+ *
+ * Canari does not own this transport. A row that measures a dead one measures Google, and records
+ * a product verdict for it - which is what happened: NOTIF-9 and NOTIF-11 recorded FAIL four times
+ * on 2026-09-07 with `notifiedInMs: null` while the app was innocent. The board pattern was already
+ * there to be read and nobody had a name for it: NOTIF-10 cuts the radios and restores them, so
+ * NOTIF-10 REPAIRED THE LINK as a side effect, the row after it passed, and the rows after THAT
+ * failed. Two full cycles of that shape sit in the ledger for that night.
+ *
+ * So the link is established BEFORE a push row rather than diagnosed after it - the fact was
+ * available, and learning it by failing is what cost four verdicts. It returns what it did so the
+ * row can RECORD it: a phase whose every row needed a repair is saying something about this handset
+ * that no PASS would otherwise carry.
+ *
+ * `failed: true` means the socket never changed. The caller must REFUSE rather than measure - a
+ * push row run over this is not a weaker measurement, it is a measurement of something else.
+ */
+export async function refreshFcmLink(timeoutMs = 30_000) {
+  const before = fcmSocket();
+  sh('svc wifi disable');
+  sh('svc wifi enable');
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeoutMs) {
+    await new Promise((r) => setTimeout(r, 1_000));
+    const after = fcmSocket();
+    // A NEW socket, not merely A socket: `before` was ESTABLISHED and dead, so its presence proves
+    // nothing. `null -> something` counts too, which is the honest reading when the phone had no
+    // link at all before the toggle.
+    if (after && after !== before) return { before, after, tookMs: Date.now() - t0 };
+  }
+  return { before, after: fcmSocket(), tookMs: Date.now() - t0, failed: true };
+}
+
 
 /**
  * THE PHONE AWAKE, THE APP IN FRONT, AND THE DEVTOOLS FORWARD DERIVED FROM THE PID THAT IS THERE NOW.

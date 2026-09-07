@@ -2100,6 +2100,45 @@ rate has found something.
 These are not faults of judgement - they are platform behaviours that will be mistaken for defects
 by anyone who has not met them.
 
+- **THE PHONE'S LINK TO GOOGLE FAILS `ESTABLISHED`, AND A PUSH ROW CANNOT TELL THAT FROM A SILENT
+  APP.** On 2026-09-07 NOTIF-9 and NOTIF-11 recorded `FAIL` twice each with `notifiedInMs: null`
+  over an app that had done nothing wrong. Every fact a check can reach said the phone was ready:
+  the app on the Doze whitelist and in standby bucket 5 (EXEMPTED), `deviceidle` ACTIVE rather than
+  dozing, `ping` at 24 ms, the FCM token in `push_token` written by the app ITSELF half an hour
+  earlier, and `chat-delivery-service` logging `FCM sent` with no exception - so Google's API had
+  ACCEPTED all six messages, `priority: high`, `ttl: 24h`. The device's TCP connection to
+  `:5228` was ESTABLISHED throughout and carried none of them. Forcing Play services onto a NEW
+  connection delivered the entire backlog within five seconds.
+
+  **The board had been saying it for hours and nobody had a name for it.** NOTIF-10 is the only row
+  that cuts the radios, so NOTIF-10 REPAIRED the link as a side effect of its own scenario:
+
+  ```
+  00:34 NOTIF-10 (cuts the radios) -> 00:51 NOTIF-4 PASS, 00:53 NOTIF-4b PASS,
+                                       00:56 NOTIF-9 FAIL, 01:00 NOTIF-11 FAIL
+  01:11 NOTIF-10 (cuts them again) -> 01:20 NOTIF-9 PASS,
+                                       01:24 NOTIF-11 FAIL, 01:32 NOTIF-11 FAIL
+  ```
+
+  The row after it passed; the rows after THAT failed. Two full cycles of that shape, read as a
+  product regression both times.
+
+  **So the transport is a PRECONDITION, established before a row rather than diagnosed after it** -
+  the fact was available, and learning it by failing is what cost four verdicts.
+  `phone.refreshFcmLink()` forces a new connection and proves it new; `fcmlink.mjs` wraps it in a
+  refusal, because a push row over a dead transport is not a weaker measurement of Canari, it is a
+  measurement of Google. Every runner that calls `phone.awaitNotification` now renews first, and
+  `archive/transport-selftest.mjs` refuses a runner that forgets. **The renewal is RECORDED
+  (`fcmLinkMs`)**: a phase whose every row needed one is saying something about the handset that no
+  `PASS` would otherwise carry.
+
+  **Note which fact is load-bearing.** "Is there a connection" is answered *yes* by the exact state
+  this exists to catch, so `fcmSocket()` returns the endpoints and never a boolean - a link that
+  survives a Wi-Fi toggle UNCHANGED is the dead one. And note the worst case is not a red row:
+  MENTION-3's claim half asserts SILENCE, so a dead transport makes it **pass**. Its own comment
+  already said *"a control that is not heard is the one case this check cannot explain from the
+  shade alone - and it is the case that actually happened."*
+
 - **A DUMP IS NOT A SCREEN, AND EVERY NOTIFICATION CHECK HERE READ THE DUMP.** They match on `full`,
   the whole `NotificationRecord` block, so `android.text` holding the right string satisfies all of
   them. On 2026-09-06 a Mi 9T drew a Canari notification as a sender's name with nothing under it

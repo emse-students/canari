@@ -253,35 +253,32 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    the instrument's. HEAL-REVOKE re-run 2026-09-06, every row `unmet: []`, four `PASS-DIRTY` on the
    SAME single line - the outbox hole, filed and not forgiven
    ([backlog](docs/wiki/backlog.md), `CHANGELOG.md`).
-5. **FIXED, NOT SHIPPED - the PIN gate could be dismissed and offered no way out** (user,
-   2026-09-05, on real people). #383, asserted by PIN-11 + two component files. **Goes from this
-   list the day a release carries it** ([backlog](docs/wiki/backlog.md)).
-6. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - ONE merge mechanism
+5. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - ONE merge mechanism
    and ONE arming point, asserted only by `bun tools/ecosystem-shape/shape.mjs`
    ([rebuild](docs/wiki/ecosystem-convergence.md#12-the-cicd-rebuild-2026-09-04---the-same-four-workflows-in-every-repository),
    [cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them), the only copies).
    Three open: the suppression CONTROL CASE the NestJS batch destroyed (Monday 2026-09-07 answers
    it), **nothing tells anybody prod is down**, and
    [host-updates](docs/wiki/infrastructure/host-updates.md) ([backlog](docs/wiki/backlog.md)).
-7. **NO CAMPAIGN ROW ASKS A QUESTION WHOSE ANSWER IS A POPULATION** - four rows written into rung
+6. **NO CAMPAIGN ROW ASKS A QUESTION WHOSE ANSWER IS A POPULATION** - four rows written into rung
    12 MULTI, needing only `W1 W2` ([campaign](docs/wiki/cross-client-campaign.md)).
-8. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
+7. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
    [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
-9. **SIX UX/RENDERING ITEMS + TWO DEV-LOG LINES** ([backlog](docs/wiki/backlog.md)); four want ONE pass over `app.css`.
-10. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
+8. **SIX UX/RENDERING ITEMS + TWO DEV-LOG LINES** ([backlog](docs/wiki/backlog.md)); four want ONE pass over `app.css`.
+9. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
    commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
-11. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
+10. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
    and audit in [backlog](docs/wiki/backlog.md).
-12. **P1 - A DEVICE ASKS FOR A WELCOME FOR EVER AND THE MEMBER ANSWERING RESETS THE HEALING ROW** -
+11. **P1 - A DEVICE ASKS FOR A WELCOME FOR EVER AND THE MEMBER ANSWERING RESETS THE HEALING ROW** -
     five halves fixed 2026-09-04, **ONE PROD MEASUREMENT OWED**; read with its sibling P2
     ([backlog](docs/wiki/backlog.md)).
-13. **TWELVE MESSAGES DROPPED, PERMANENT COMMIT-LOG HOLE AT EPOCH 121** - the four defects shipped
+12. **TWELVE MESSAGES DROPPED, PERMANENT COMMIT-LOG HOLE AT EPOCH 121** - the four defects shipped
     in `v0.15.0`'s ancestors; the RESIDUE and the 13:10 arm are open ([backlog](docs/wiki/backlog.md)).
-14. **`dev.canari-emse.fr` IS THE PRE-RELEASE TARGET**
+13. **`dev.canari-emse.fr` IS THE PRE-RELEASE TARGET**
     ([dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy). Two open: a dev
     deploy cannot tell a broken CHANGE from an unreachable REGISTRY, and prod's deploy job is still
     inlined shell where `deploy-dev` exercises the script ([backlog](docs/wiki/backlog.md)).
-15. **THREE MORE FROM THE USER, 2026-09-05** - a P2 (a COMMUNITY message is not decrypted in a
+14. **THREE MORE FROM THE USER, 2026-09-05** - a P2 (a COMMUNITY message is not decrypted in a
     background notification), a QUESTION (does a community invitation notify somebody with no prior
     conversation?), and one post-campaign direction (ICM/ISMIN). All in
     [backlog](docs/wiki/backlog.md); the first two need the phone.
@@ -342,10 +339,12 @@ replaces it is a rebuild or a `bun run dev` SAVE, which `bundle.mjs` measures. *
 to zero**, archived at [archive](docs/wiki/cross-client-testing-archive.md). **A killed run can
 destroy a measurement seconds from being recorded, and losing a `chrome-w1`/`chrome-w2` profile costs
 a DEVICE.** **THE USER ASKED FOR THE LOGS TO BE READ ON EVERY PASS** (2026-08-28) - a heal that works
-is not a heal that was observed, and reading them has since found two P1s no row asks about. Two
+is not a heal that was observed, and reading them has since found two P1s no row asks about. Three
 instrument facts: the disposition for expected noise is `ignoringExpectedLog` **per row**, never a
 wider classifier - and a list the runner never NAMES is the same as no list - and the device cap is
-**re-measured around every run** rather than quoted.
+**re-measured around every run** rather than quoted - and **A PUSH ROW MEASURES GOOGLE UNTIL THE
+PHONE'S FCM LINK IS RENEWED**, that link failing `ESTABLISHED` having cost four verdicts
+(`fcmlink.mjs`).
 
 **Standing architectural directives from the user, verbatim:** *"le probleme doit etre
 architecturalement regle, pas mettre des pansements avec des timeouts ou autre, je veux que tout

@@ -15,6 +15,7 @@
 import { APP_TAB, awaitMessage, client, COMPOSER, countMessage, ensureChat, evaluate, openConversation, send } from '../chat.mjs';
 import { gate, logcatReport, logcatSince, report, watch } from '../watch.mjs';
 import { mark, record, exitOnRecorded } from '../results.mjs';
+import { requireFreshFcmLink } from '../fcmlink.mjs';
 import * as phone from '../phone.mjs';
 import { PORTS, SITE, peerNameFor } from '../names.mjs';
 
@@ -110,6 +111,12 @@ if (which === '4b') {
   await evaluate(w1, `history.pushState({}, '', '/chat'); dispatchEvent(new PopStateEvent('popstate'))`).catch(() => null);
   await sleep(2_500);
 }
+
+// The push transport is a precondition of every row below and it fails ESTABLISHED - the whole
+// measurement, and the board pattern that had been visible for hours, are in `fcmlink.mjs`.
+// Before `clearLogcat`, deliberately: the Wi-Fi toggle's own noise belongs outside this check's
+// window rather than in its report, where it would arrive as unexplained lines.
+const fcmLink = await requireFreshFcmLink(`NOTIF-${which}`, stage);
 
 phone.clearLogcat();
 // The instant the phone's window opens, so `logcatSince` can be asked for exactly this check's
@@ -539,6 +546,10 @@ const gated = gate(out.verdict, { W1: rW1, W2: rW2, A1: phoneReport });
 out.verdict = gated.verdict;
 record(`NOTIF-${which}`, gated.verdict, {
   ...gated.detail,
+  // THE RIG FACT THAT REATTRIBUTES EVERY OTHER FIELD. A reader comparing two runs of this row needs
+  // to know the transport was renewed for both, and the time it took is the cheap tell when a
+  // handset starts needing longer to get a link back.
+  fcmLinkMs: fcmLink.tookMs,
   undecryptedInShade: out.undecrypted,
   notifiedInMs: out.notifiedInMs ?? null,
   markers: out.markers ?? (out.marker ? [out.marker] : []),

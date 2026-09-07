@@ -15,6 +15,7 @@
 import { APP_TAB, awaitMessage, client, countMessage, ensureChat, openConversation, send } from '../chat.mjs';
 import { logcatReport, logcatSince, watch } from '../watch.mjs';
 import { finishObserved, mark } from '../results.mjs';
+import { requireFreshFcmLink } from '../fcmlink.mjs';
 import * as phone from '../phone.mjs';
 import { PORTS, peerNameFor } from '../names.mjs';
 
@@ -192,6 +193,12 @@ await ensureChat(w2);
 await openConversation(w2, peerNameFor('W2'));
 await sleep(1_000);
 
+// The push transport is a precondition of this row and it fails ESTABLISHED - the measurement,
+// and the board pattern that had been visible for hours, are in `fcmlink.mjs`. Before
+// `clearLogcat`, deliberately: the Wi-Fi toggle's own noise belongs outside this check's window
+// rather than in its report, where it would arrive as unexplained lines.
+const fcmLink = await requireFreshFcmLink(`LIFE-${which}`);
+
 phone.clearLogcat();
 // The instant the phone's own window opens, so the native half can be classified rather than
 // grepped - see the note at the verdict.
@@ -274,6 +281,7 @@ const asserted =
 // `notifiedInMs !== null` already proves the background decrypt produced real text. That is the
 // property NOTIF had to be taught explicitly; LIFE had it by construction.
 await finishObserved(`LIFE-${which}`, asserted, {
+  fcmLinkMs: fcmLink.tookMs,
   // NOT `check`: the ledger writes its OWN `check` - the runner file and its sha - and `record`
   // spreads the detail over it, so this line would have replaced LIFE's provenance with a state
   // name on every row it ever wrote. It wrote none until today, which is the only reason the

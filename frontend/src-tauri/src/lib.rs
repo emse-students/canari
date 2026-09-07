@@ -164,29 +164,34 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
     let result = (|| -> serde_json::Value {
         let state_vec = match env.convert_byte_array(&state_bytes) {
             Ok(v) => v,
-            Err(_) => return serde_json::json!({ "ok": false }),
+            Err(_) => return serde_json::json!({ "ok": false, "reason": "jni-state-bytes" }),
         };
         let key_b64_str: String = match env.get_string(&key_b64) {
             Ok(s) => s.into(),
-            Err(_) => return serde_json::json!({ "ok": false }),
+            Err(_) => return serde_json::json!({ "ok": false, "reason": "jni-key" }),
         };
         let user_id_str: String = match env.get_string(&user_id) {
             Ok(s) => s.into(),
-            Err(_) => return serde_json::json!({ "ok": false }),
+            Err(_) => return serde_json::json!({ "ok": false, "reason": "jni-user-id" }),
         };
         let device_id_str: String = match env.get_string(&device_id) {
             Ok(s) => s.into(),
-            Err(_) => return serde_json::json!({ "ok": false }),
+            Err(_) => return serde_json::json!({ "ok": false, "reason": "jni-device-id" }),
         };
         let group_id_str: String = match env.get_string(&group_id) {
             Ok(s) => s.into(),
-            Err(_) => return serde_json::json!({ "ok": false }),
+            Err(_) => return serde_json::json!({ "ok": false, "reason": "jni-group-id" }),
         };
         let cipher_vec = match env.convert_byte_array(&ciphertext) {
             Ok(v) => v,
-            Err(_) => return serde_json::json!({ "ok": false }),
+            Err(_) => return serde_json::json!({ "ok": false, "reason": "jni-ciphertext" }),
         };
 
+        // EVERY REFUSAL NAMES ITSELF NOW - the six marshalling faults above by their argument,
+        // and the crypto path through `refused` in `mobile/background.rs`. Eleven distinct causes
+        // reached the phone's log as one sentence, `decryptProto: ok=false -> decryption failed`,
+        // including a CONTROL FRAME - which is work that SUCCEEDED. Measured as the whole of
+        // NOTIF-4's and NOTIF-10's remaining dirt on 2026-09-07.
         mobile::background::decrypt_push_message_with_key(
             &state_vec,
             &key_b64_str,
@@ -195,12 +200,13 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
             &group_id_str,
             &cipher_vec,
         )
-        .unwrap_or_else(|| serde_json::json!({ "ok": false }))
     })();
 
     let json_str = result.to_string();
-    env.new_string(&json_str)
-        .unwrap_or_else(|_| env.new_string("{\"ok\":false}").unwrap())
+    env.new_string(&json_str).unwrap_or_else(|_| {
+        env.new_string("{\"ok\":false,\"reason\":\"jni-string-alloc\"}")
+            .unwrap()
+    })
 }
 
 #[cfg(target_os = "android")]

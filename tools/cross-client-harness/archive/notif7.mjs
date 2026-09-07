@@ -21,6 +21,7 @@
 import { APP_TAB, client, COMPOSER, countMessage, ensureChat, evaluate, goto, openConversation, send } from '../chat.mjs';
 import { logcatReport, logcatSince, watch } from '../watch.mjs';
 import { finishObserved, mark } from '../results.mjs';
+import { requireFreshFcmLink } from '../fcmlink.mjs';
 import * as phone from '../phone.mjs';
 import { execFileSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
@@ -147,6 +148,15 @@ const w = await watch(w2, 'W2');
 // The phone's window opens with the peer's, and it is the one that matters here: everything under
 // test from this line on happens with no WebView attached - the app is about to be backgrounded or
 // killed - so `CanariFCM`, the Rust core and the keystores are the only witnesses there are.
+// The push transport is a precondition of this row and it fails ESTABLISHED - the measurement,
+// and the board pattern that had been visible for hours, are in `fcmlink.mjs`. Before
+// `clearLogcat`, deliberately: the Wi-Fi toggle's own noise belongs outside this check's window
+// rather than in its report, where it would arrive as unexplained lines.
+const fcmLink = await requireFreshFcmLink(`NOTIF-7-${mode}`, stage);
+// RECORDED, not merely done: a phase whose rows all needed a transport repair is saying something
+// about this handset that no PASS would otherwise carry.
+out.fcmLinkMs = fcmLink.tookMs;
+
 phone.clearLogcat();
 const phoneWindowFrom = Date.now();
 
