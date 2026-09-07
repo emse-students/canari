@@ -371,6 +371,66 @@ export const launch = () => sh(`am start -n ${PKG}/.MainActivity`);
  * "yes" by the exact state it is trying to catch. Its IDENTITY is the fact that separates the two
  * causes, which is why this returns the endpoints and not a boolean. `refreshFcmLink` acts on it.
  */
+/**
+ * TAPS THE NOTIFICATION CARRYING `needle`, RESOLVED BY ELEMENT.
+ *
+ * REPLACES `archive/a1.py`, WHICH WAS NEVER IN GIT. That script was machine-local to the LITHIUM
+ * rig and was not carried into OXYGEN, so `notif7.mjs` had been shelling out to a file that does not
+ * exist - which made NOTIF-7, -7b, -7c and -7d unrunnable since the reconstitution. Worse, the
+ * failure it produced read `no shade row contains <marker>`, which accuses the PRODUCT for a missing
+ * interpreter script. A campaign row must never be able to fail that way, so this lives in the
+ * repository, in the runtime the rest of the rig uses.
+ *
+ * THREE OUTCOMES, AND THEY GO TO THREE DIFFERENT PLACES. `dumped: false` is an instrument fault and
+ * must not become a verdict; `found: false` is the row's real answer when a notification is absent;
+ * `ok: true` carries the coordinates it used. Collapsing the first two is exactly the conflation
+ * that cost this row a session.
+ *
+ * COORDINATES ARE READ OUT OF THE ELEMENT'S OWN `bounds`, never guessed - which is what "resolve by
+ * element" means on a surface no CDP can reach. The shade is a system window: there is no DOM, and
+ * uiautomator2's own `.click()` dies with `RemoteDisconnected` the moment the shade is expanded
+ * (twice out of two, after its dump had already succeeded). So the dump supplies the centre and
+ * `input tap` dispatches it, which involves no on-device agent at all.
+ */
+export function tapNotification(needle) {
+  sh('cmd statusbar expand-notifications');
+  let xml = '';
+  try {
+    // The dump goes to a file and is read back: `uiautomator dump /dev/tty` is not available on
+    // every build, and a partial stdout dump parses into a shade that looks empty.
+    sh('uiautomator dump /sdcard/canari-shade.xml', 60_000);
+    xml = sh('cat /sdcard/canari-shade.xml', 30_000);
+  } catch (e) {
+    return { ok: false, dumped: false, why: `uiautomator dump failed: ${String(e.message || e).slice(0, 200)}` };
+  }
+  if (!/<node/.test(xml)) {
+    return { ok: false, dumped: false, why: 'the dump carried no nodes at all', head: xml.slice(0, 200) };
+  }
+
+  const nodes = [...xml.matchAll(/<node\b[^>]*>/g)].map((m) => m[0]);
+  const hit = nodes.find((n) => {
+    const text = /\btext="([^"]*)"/.exec(n)?.[1] ?? '';
+    const desc = /\bcontent-desc="([^"]*)"/.exec(n)?.[1] ?? '';
+    return text.includes(needle) || desc.includes(needle);
+  });
+  if (!hit) {
+    const texts = nodes
+      .map((n) => /\btext="([^"]*)"/.exec(n)?.[1] ?? '')
+      .filter((t) => t.trim() !== '');
+    return { ok: false, dumped: true, found: false, why: `no shade row contains ${needle}`, texts: texts.slice(0, 25) };
+  }
+
+  const bounds = /\bbounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/.exec(hit);
+  if (!bounds) {
+    return { ok: false, dumped: true, found: true, why: 'the matching node carries no bounds', node: hit.slice(0, 200) };
+  }
+  const [, x1, y1, x2, y2] = bounds.map(Number);
+  const x = Math.round((x1 + x2) / 2);
+  const y = Math.round((y1 + y2) / 2);
+  sh(`input tap ${x} ${y}`);
+  return { ok: true, dumped: true, found: true, x, y, bounds: [x1, y1, x2, y2] };
+}
+
 export function fcmSocket() {
   const line = sh('netstat -tn')
     .split('\n')

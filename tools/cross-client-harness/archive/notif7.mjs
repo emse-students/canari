@@ -14,13 +14,13 @@
  * conversation must be on screen AND must contain this run's marker, which no default route can
  * produce.
  *
- * The tap itself goes through the notification shade via `a1.py` (uiautomator2), because the tap is
+ * The tap itself goes through the notification shade via `phone.tapNotification`, because the tap is
  * the thing under test - `am start` with a deep link would bypass the PendingIntent entirely and
  * measure nothing.
  */
 import { APP_TAB, client, COMPOSER, countMessage, ensureChat, evaluate, goto, openConversation, send } from '../chat.mjs';
 import { logcatReport, logcatSince, watch } from '../watch.mjs';
-import { finishObserved, mark } from '../results.mjs';
+import { exitOnRecorded, finishObserved, mark, record } from '../results.mjs';
 import { requireFreshFcmLink } from '../fcmlink.mjs';
 import * as phone from '../phone.mjs';
 import { execFileSync } from 'node:child_process';
@@ -40,42 +40,51 @@ const HERE = new URL('.', import.meta.url).pathname.replace(/^\//, '');
 const mode = String(process.argv[2] || 'bg');
 if (!['bg', 'killed'].includes(mode)) throw new Error(`usage: bun notif7.mjs bg|killed`);
 
+/**
+ * THE BOARD'S NAME FOR EACH MODE, AND THIS RUNNER HAD NEITHER OF THEM.
+ *
+ * It recorded `NOTIF-7-bg` and `NOTIF-7-killed`; the board names `NOTIF-7` ("Tap -> deep link into
+ * the conversation, backgrounded") and `NOTIF-7b` ("The same with the app KILLED"). So every verdict
+ * it has ever produced landed in the ledger under an id no row claims, which `bun rows.mjs` reports
+ * as an orphan - and both rows stayed "unanswered" while a runner for them existed. The retired-id
+ * map in `rows.mjs` attributes the historical records rather than discarding them.
+ */
+const ROW_OF = { bg: 'NOTIF-7', killed: 'NOTIF-7b' };
+const ROW = ROW_OF[mode];
+
 const T0 = Date.now();
 const stage = (m) => process.stderr.write(`[${((Date.now() - T0) / 1000).toFixed(3)}s] ${m}\n`);
 
-const py = (...args) => {
-  try {
-    return execFileSync('python', ['a1.py', ...args], {
-      cwd: HERE,
-      encoding: 'utf8',
-      timeout: 120_000,
-      // The SAME transport `phone.mjs` drives - see the comment on `phone.SERIAL`.
-      env: { ...process.env, PYTHONIOENCODING: 'utf-8', ANDROID_SERIAL: phone.SERIAL },
-    });
-  } catch (e) {
-    return `[a1.py failed] ${String(e.stdout || e.message).slice(0, 400)}`;
-  }
-};
-
 /**
- * Taps the notification carrying `needle`, by COORDINATES read out of the shade dump.
+ * The tap goes through `phone.tapNotification`, which lives in the repository.
  *
- * uiautomator2's own `.click()` cannot be used here: its on-device agent dies with
- * `RemoteDisconnected` as soon as the shade is expanded, twice out of two, after the dump has
- * already succeeded. So the dump - which works - supplies the centre, and the tap goes through plain
- * `input tap`, which involves no agent at all.
+ * IT USED TO SHELL OUT TO `a1.py`, A FILE THAT WAS NEVER IN GIT. That script belonged to the LITHIUM
+ * rig and was not carried into OXYGEN, so this row had been failing on a missing interpreter script
+ * since the reconstitution - and reporting it as `no shade row contains <marker>`, which accuses the
+ * PRODUCT. Four rows (7, 7b, 7c, 7d) were unrunnable and none of them said so.
  *
- * It taps the TEXT node rather than hunting for its clickable ancestor: a tap at those coordinates
- * is dispatched to whatever is on top there, which is the notification row. Returns the coordinates
- * it used, or null - a tap that cannot prove it had a target must not produce a verdict.
+ * The replacement separates an instrument fault (`dumped: false`) from the row's real answer
+ * (`found: false`), because a dump that did not happen must never become a verdict about a
+ * notification that was never looked for.
  */
 function tapNotification(needle) {
-  const dump = py('notif');
-  const row = dump.split('\n').find((l) => l.includes(needle) && /@\d+,\d+\s*$/.test(l.trim()));
-  if (!row) return { ok: false, dump: dump.split('\n').slice(0, 25), why: `no shade row contains ${needle}` };
-  const [, x, y] = row.trim().match(/@(\d+),(\d+)\s*$/);
-  phone.sh(`input tap ${x} ${y}`);
-  return { ok: true, x: Number(x), y: Number(y), row: row.trim() };
+  const tap = phone.tapNotification(needle);
+  if (!tap.dumped) {
+    // AN INSTRUMENT FAULT IS RECORDED AS ONE, NOT THROWN. A `SETUP-FAILED` row says on the board
+    // that this check could not be attempted; an exception says nothing at all, and the last thing
+    // this line did before 2026-09-07 was report a missing python script as `no shade row contains
+    // <marker>` - a sentence about the PRODUCT.
+    //
+    // MEASURED ON THIS HANDSET, and neither rung of the ladder is available: `uiautomator dump` is
+    // SIGKILLed on the Mi 9T (Android 16, SDK 36) - exit 137, shade open and shut, to /sdcard and to
+    // /data/local/tmp - and D-pad focus traversal never activates a shade row (six DPAD_DOWN then
+    // CENTER left the launcher in front). So a tap here needs uiautomator2's instrumentation agent,
+    // which is exactly what the retired `a1.py` used and what was never committed. See
+    // docs/wiki/backlog.md.
+    record(ROW, 'SETUP-FAILED', { ...out, tap });
+    exitOnRecorded();
+  }
+  return tap;
 }
 
 function unlock(port = PORTS.A1) {
@@ -156,7 +165,7 @@ const w = await watch(w2, 'W2');
 // receives the frame and ACKs it, so `scheduleDeferredPush` never fires - gating that half on the
 // FCM link would abort it with `SETUP-FAILED` over a transport it does not touch, and the Wi-Fi
 // toggle the gate performs would disturb the socket that IS the transport.
-const fcmLink = mode === 'killed' ? await requireFreshFcmLink(`NOTIF-7-${mode}`, stage) : null;
+const fcmLink = mode === 'killed' ? await requireFreshFcmLink(ROW, stage) : null;
 // RECORDED, not merely done: a phase whose rows all needed a transport repair is saying something
 // about this handset that no PASS would otherwise carry.
 out.fcmLinkMs = fcmLink?.tookMs ?? null;
@@ -218,7 +227,7 @@ if (out.shadeInMs === null) {
   // THE FAILING PATH RECORDS TOO, and this is the one where the phone's log is the whole diagnosis:
   // "nothing reached the shade" has several causes - no push delivered, a decrypt that threw, a
   // notification posted and cancelled - and they are indistinguishable from the shade's silence.
-  await finishObserved(`NOTIF-7-${mode}`, 'FAIL', out, { W2: w, A1: phoneReport });
+  await finishObserved(ROW, 'FAIL', out, { W2: w, A1: phoneReport });
 }
 
 // ── the tap ──────────────────────────────────────────────────────────────────
@@ -306,4 +315,4 @@ const phoneReport = logcatReport(await logcatSince(phoneWindowFrom), 'A1');
 writeFileSync(new URL(`./notif7-${mode}.log`, import.meta.url), JSON.stringify({ ...out, a1: phoneReport }, null, 2));
 // One id per MODE: `bg` and `killed` are two checks on the dashboard, and a shared id would let the
 // second overwrite the first's row in every reading of the ledger.
-await finishObserved(`NOTIF-7-${mode}`, out.verdict, out, { W2: w, A1: phoneReport });
+await finishObserved(ROW, out.verdict, out, { W2: w, A1: phoneReport });

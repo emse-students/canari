@@ -214,7 +214,13 @@ const DIAGNOSTIC = new Set(['PROBE', 'LOSSHUNT', 'A1-NAMES', 'CHECK-M', 'FREEZE-
  * is a `FAIL` from a run nobody answered, recorded before `theShadeWasAnswered` existed to tell
  * "the app refused" from "the room was silent".
  */
-const RETIRED = new Map([['K', 'NOTIF-6c']]);
+const RETIRED = new Map([
+  ['K', 'NOTIF-6c'],
+  // `notif7.mjs` answered under its own mode names until 2026-09-07 - ids no board row ever
+  // claimed, which is why NOTIF-7 and -7b read as unanswered while their runner existed.
+  ['NOTIF-7-bg', 'NOTIF-7'],
+  ['NOTIF-7-killed', 'NOTIF-7b'],
+]);
 
 if (!existsSync(LEDGER)) {
   console.log('[rows] no ledger at ' + LEDGER + ' - nothing has been recorded on this machine');
