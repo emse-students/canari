@@ -26,9 +26,23 @@ still connected - a message arriving over the WebSocket, for which no push is se
 that arrive by push were correct throughout, which is why every screenshot of a killed-app row
 looked right.
 
-`TauriNotificationManager.getDefaultSmallIcon` falls back to that framework glyph when the plugin
-config names no drawable, and `tauri.conf.json` named none. It does now, which is the plugin's own
-default and therefore the one place a future call site cannot forget.
+`TauriNotificationManager.getDefaultSmallIcon` falls back to that framework glyph unless something
+names a drawable, so every notification this app posts now names one.
+
+**AND NOT THROUGH `tauri.conf.json`, WHICH LOOKED LIKE THE RIGHT PLACE AND BRICKS THE APP.** The
+plugin reads its own default from `plugins.notification.icon`, so that is where the fix went first.
+It compiled, built, installed - and then the app died with `SIGABRT` on every single launch:
+
+    PluginInitialization("notification", "Error deserializing 'plugins.notification' within your
+    Tauri configuration: invalid type: map, expected unit")
+
+`tauri-plugin-notification` 2.3.3 declares `pub fn init<R: Runtime>()` with no config generic, so
+Tauri infers the config type as `()` and ANY object under that key aborts plugin initialisation. The
+plugin's own Android `Config` class carrying `icon`/`sound`/`iconColor` is unreachable in that
+version. So the per-notification `icon` option is not a second choice here, it is the only one that
+exists, and it sits in the mandatory-options helper where a future call site inherits it. Four gates
+passed that change and only the phone caught it, which is what "a green gate is not a working
+system" means in practice; `notificationChannels.test.ts` now fails if the key ever comes back.
 
 **The channel was the half that was not cosmetic.** The plugin's
 `DEFAULT_NOTIFICATION_CHANNEL_ID = "default"` had been creating and using a sixth channel beside the

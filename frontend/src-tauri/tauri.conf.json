@@ -26,9 +26,6 @@
     }
   },
   "plugins": {
-    "notification": {
-      "icon": "ic_notification"
-    },
     "deep-link": {
       "mobile": [
         {

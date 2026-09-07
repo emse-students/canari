@@ -2,7 +2,11 @@ import { readFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { CHANNEL_CALLS, CHANNEL_MESSAGES } from '$lib/composables/useNotifications.svelte';
+import {
+  CHANNEL_CALLS,
+  CHANNEL_MESSAGES,
+  NOTIFICATION_ICON,
+} from '$lib/composables/useNotifications.svelte';
 
 /**
  * THE WEBVIEW HALF OF THE NOTIFICATION PATH, WHICH NO ANDROID TEST RUNS HERE.
@@ -31,7 +35,7 @@ const TAURI = resolve(here, '../../../src-tauri');
 const ANDROID_MAIN = resolve(TAURI, 'gen/android/app/src/main');
 
 const tauriConf = JSON.parse(readFileSync(resolve(TAURI, 'tauri.conf.json'), 'utf8')) as {
-  plugins?: { notification?: { icon?: string } };
+  plugins?: Record<string, unknown>;
 };
 const fcmServiceKt = readFileSync(
   resolve(ANDROID_MAIN, 'java/fr/emse/canari/CanariFirebaseMessagingService.kt'),
@@ -46,22 +50,41 @@ const applicationKt = readFileSync(
 const DENSITIES = ['mdpi', 'hdpi', 'xhdpi', 'xxhdpi', 'xxxhdpi'];
 
 describe('notifications posted from the WebView (anti-régression)', () => {
-  it('tauri.conf.json nomme le petit icone, sinon le plugin retombe sur ic_dialog_info', () => {
+  it("tauri.conf.json ne declare AUCUNE config notification, sinon l'app abandonne au demarrage", () => {
+    // NOT A STYLE RULE - A CRASH. tauri-plugin-notification 2.3.3 declares `init` with no config
+    // generic, so Tauri infers `()` and any object here aborts plugin initialisation:
+    // PluginInitialization("notification", "... invalid type: map, expected unit"). Measured on a
+    // Mi 9T: the app built, installed, and then died with SIGABRT on every single launch.
+    expect(tauriConf.plugins, 'plugins absent: tauri.conf.json a change de forme').toBeDefined();
     expect(
-      tauriConf.plugins?.notification?.icon,
-      'plugins.notification.icon absent: le plugin posterait android.R.drawable.ic_dialog_info'
-    ).toBe('ic_notification');
+      'notification' in (tauriConf.plugins ?? {}),
+      "plugins.notification present: cette cle fait planter l'app au demarrage - l'icone passe par NOTIFICATION_ICON"
+    ).toBe(false);
   });
 
-  it('le drawable que la config nomme existe à toutes les densités', () => {
-    // Reading the name back from the config rather than repeating it is what makes this catch a
-    // config pointing at a drawable nobody shipped - which resolves to 0 and falls back the same way.
-    const icon = tauriConf.plugins?.notification?.icon;
-    expect(icon, 'pas de nom à vérifier').toBeTruthy();
-    const missing = DENSITIES.filter(
-      (d) => !existsSync(resolve(ANDROID_MAIN, `res/drawable-${d}/${icon}.png`))
+  it('le helper obligatoire porte bien cet icone, pas seulement la constante', () => {
+    // The constant existing proves nothing: what matters is that every notification carries it.
+    const composable = readFileSync(
+      resolve(here, '../composables/useNotifications.svelte.ts'),
+      'utf8'
     );
-    expect(missing, `${icon}.png manquant en ${missing.join(', ')}`).toEqual([]);
+    expect(NOTIFICATION_ICON, 'aucun nom de drawable exporte').toBeTruthy();
+    const helper = composable.match(/function androidNotificationOptions\([\s\S]*?\n {2}\}/)?.[0];
+    expect(
+      helper,
+      'androidNotificationOptions introuvable: le helper a change de nom'
+    ).toBeDefined();
+    expect(helper).toContain('icon: NOTIFICATION_ICON');
+  });
+
+  it('le drawable que le code nomme existe à toutes les densités', () => {
+    // Reading the name back from the exported constant rather than repeating it is what makes this
+    // catch a name pointing at a drawable nobody shipped - `getIdentifier` resolves that to 0 and
+    // the plugin falls back to the framework glyph exactly as if no name had been given.
+    const missing = DENSITIES.filter(
+      (d) => !existsSync(resolve(ANDROID_MAIN, `res/drawable-${d}/${NOTIFICATION_ICON}.png`))
+    );
+    expect(missing, `${NOTIFICATION_ICON}.png manquant en ${missing.join(', ')}`).toEqual([]);
   });
 
   it('les canaux envoyés par le TypeScript sont ceux que le Kotlin crée', () => {

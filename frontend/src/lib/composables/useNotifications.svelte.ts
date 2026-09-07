@@ -28,6 +28,30 @@ import {
  * `notificationChannels.test.ts` asserts these two strings against the Kotlin declarations, which
  * is the only thing making this a copy rather than a fork.
  */
+/**
+ * THE SMALL ICON EVERY NOTIFICATION POSTED FROM HERE MUST NAME, AND WHY IT IS NOT IN `tauri.conf.json`.
+ *
+ * `TauriNotificationManager.getDefaultSmallIcon` falls back to `android.R.drawable.ic_dialog_info`
+ * unless something names a drawable, which is the generic "info" glyph a user reported seeing in
+ * place of the Canari bird. The plugin reads a default from its own config (`plugins.notification.icon`)
+ * and THAT ROUTE IS CLOSED: `tauri-plugin-notification` 2.3.3 declares `pub fn init<R: Runtime>()`
+ * with no config generic, so Tauri infers the config type as `()` and ANY object under
+ * `plugins.notification` aborts plugin initialisation. Putting the icon there built, installed, and
+ * then crashed the app on every launch with
+ *
+ *     PluginInitialization("notification", "Error deserializing 'plugins.notification' within your
+ *     Tauri configuration: invalid type: map, expected unit")
+ *
+ * measured on a Mi 9T. The plugin's Android `Config` class carrying `icon`/`sound`/`iconColor` is
+ * unreachable in that version. So the per-notification `icon` option is not a second-best here - it
+ * is the only one that exists, and it belongs in the mandatory-options helper where a future call
+ * site inherits it.
+ *
+ * `res/drawable-<density>/ic_notification.png` is white-on-transparent at all five densities, which is what
+ * Android needs: it draws a small icon from the alpha channel alone.
+ */
+export const NOTIFICATION_ICON = 'ic_notification';
+
 export const CHANNEL_MESSAGES = 'canari_messages';
 export const CHANNEL_CALLS = 'canari_calls';
 
@@ -263,10 +287,8 @@ export function useNotifications() {
    *
    * `0x0108009b` is `17301659` is `android.R.drawable.ic_dialog_info` - the resource package byte
    * is `0x01`, the framework, not `0x7f`, the app. So the icon was never ours to begin with:
-   * `TauriNotificationManager.getDefaultSmallIcon` falls back to `ic_dialog_info` when the plugin
-   * config names no drawable, and our `tauri.conf.json` named none. That half is fixed in the
-   * config (`plugins.notification.icon`), which is the plugin's own default and therefore the one
-   * place a future call site cannot forget.
+   * That half is fixed by naming the drawable on every notification this file posts - see
+   * `NOTIFICATION_ICON`, which records why the plugin's own config route aborts the app.
    *
    * `channel=default` is the half that is NOT cosmetic. The plugin's own
    * `DEFAULT_NOTIFICATION_CHANNEL_ID = "default"` had been creating a sixth channel beside the five
@@ -278,8 +300,8 @@ export function useNotifications() {
   function androidNotificationOptions(
     body: string,
     channelId: string
-  ): { body: string; largeBody: string; channelId: string } {
-    return { body, largeBody: body, channelId };
+  ): { body: string; largeBody: string; channelId: string; icon: string } {
+    return { body, largeBody: body, channelId, icon: NOTIFICATION_ICON };
   }
 
   /**
