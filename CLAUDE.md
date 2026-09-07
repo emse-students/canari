@@ -246,9 +246,9 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
 3. **P1 - a PLACEHOLDER held a member's seat**; only a member's CLIENT can say whether a LEAF is
    left in the MLS tree and **NOTHING HAS** - the three identities cited here as that evidence were
    this campaign's OWN mention fixtures, named 2026-09-07 ([backlog](docs/wiki/backlog.md)).
-4. **FIXED, NOT SHIPPED - SIX defects that each cost a rejoining device its history**, one of them
-   the instrument's. HEAL-REVOKE re-run 2026-09-06, every row `unmet: []`, four `PASS-DIRTY` on the
-   SAME single line - the outbox hole, filed and not forgiven
+4. **HEAL-REVOKE IS FOUR CLEAN `PASS` ROWS SINCE 2026-09-07** - their one shared dirty line was the
+   key-package path writing outside the persister; routing it through measures 0 where it was 4-in-5.
+   Removing it exposed the notification noise underneath, which cost a second fix
    ([backlog](docs/wiki/backlog.md), `CHANGELOG.md`).
 5. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - ONE merge mechanism
    and ONE arming point, asserted only by `bun tools/ecosystem-shape/shape.mjs`

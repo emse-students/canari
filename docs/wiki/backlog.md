@@ -2429,7 +2429,17 @@ left far better than the first run did:
   six row keys sitting at the very end - written by the LAST run's own accusation, since a run that
   is killed straight afterwards never commits its thunk.
 
-**So the suspect is the ORDERING, not another silent call site.** The replay's marks become durable
+**AND INSERTION ORDER PROVES IT RATHER THAN SUGGESTING IT.** The set is serialised `[...set]`, so
+position IS insertion order, and all six accused rows sit at the very END - after entries from
+earlier in the same group's history. Had run 3 committed its two, they would appear earlier in the
+array, not beside run 5's. They do not. **So runs 3 and 4 wrote nothing durable at all**, while the
+generations they consumed stayed consumed - which is the whole claim: the ratchet advanced durably
+and the ledger did not. It also explains the missing fingerprints exactly. The six frames were
+decrypted SUCCESSFULLY by an earlier run's replay - that is where the generation went - and that
+run's marks died with it, so the only durable trace any run ever leaves for them is the row key its
+successor writes while accusing them.
+
+**So the cause is the ORDERING, not another silent call site.** The replay's marks become durable
 only in the commit thunk at the end of the walk, on purpose, so the ledger never runs ahead of the
 persisted ratchet. But the converse is unguarded: `flushEncryptedInternal` is NOT gated by
 `bulkIngestDepth` - only `persistNow` is - so any structural mutation during the walk lands a

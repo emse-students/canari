@@ -11,6 +11,43 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a device whose notification permission is denied narrated three log lines per message, and one of them was false
+
+Measured on HEAL-REVOKE-9 (2026-09-07): **12 inbound messages produced 33 `[NOTIF]` lines** on a
+device whose browser permission is `denied` - `Inbound in <group> while the window is open ... -
+asking.`, `Not raised - permission is "denied"; asking.`, and the 800 ms throttle firing for
+notifications that could never be raised.
+
+**The "asking" was not true.** `requestSystemNotificationPermission` has no `denied` branch, because
+a browser will not re-prompt once refused - only the user can reverse it in site settings. So the
+call was a guaranteed no-op narrated as an action, on every frame, for the life of the session.
+
+`denied` is a fact about the SESSION, not about the message being delivered, and it is known before
+any of that work: `systemNotificationsBlocked()` is now asked first, once, by both the sender and
+the caller that announces the send. The refusal is stated a single time and later messages are
+silent. `default` is deliberately NOT blocked - asking is a real action there with a real chance of
+succeeding, and collapsing the two would have silenced the permission prompt entirely, which is a
+worse defect than the noise. Native is excluded for the same kind of reason: under Tauri the
+plugin's permission is the authority and the web value says nothing about it, so short-circuiting on
+it would have silenced notifications on both mobile platforms.
+
+**The predicate is shared rather than copied** - two call sites needed the same answer and a copy in
+each is two statements of one fact with nothing comparing them.
+
+**AND ZERO LINES WAS ALSO WRONG, WHICH THE RE-RUN IS WHAT CAUGHT.** The first version of this fix
+returned early in `useMessaging` before `sendSystemNotification` could announce anything, so the row
+went from 33 `[NOTIF]` lines to NONE - and "notifications are refused" became indistinguishable from
+"this code never ran", which is the exact silence the decision line was added to remove. Asking and
+announcing are therefore ONE call (`systemNotificationsBlockedAnnounceOnce`): splitting them into a
+pure predicate plus a "remember to log it" companion is the same shape as the defect this whole seam
+is about, and it had already claimed a victim in the fix for it. One line per session, said by
+whichever guard arrives first. Its test pins the three cases that
+make it subtle: `default` is not blocked, Tauri is not blocked even when the web value says
+`denied`, and an engine with no Notification API at all keeps its own separate line.
+
+This was found only because the defect above it was fixed: the stale-write line was the dirt this
+row reported, and removing it is what let the next thing be seen.
+
 ### Fixed - the state persister remembered a device key the account had stopped using, so a PIN change locked a device out of its own state
 
 `setupMessageHandler` built the MLS state persister once per login, from `ctx.getDeviceKey()` read

@@ -12,6 +12,7 @@ import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { SvelteMap, SvelteDate } from 'svelte/reactivity';
 import { getToken } from '$lib/stores/auth';
 import { fromHex } from '$lib/utils/hex';
+import { systemNotificationsBlockedAnnounceOnce } from '$lib/utils/systemNotificationsBlocked';
 import {
   sendChatMessage,
   addReaction,
@@ -383,6 +384,13 @@ export function useMessaging() {
     // the foreground still shows exactly one conversation, so a message for any OTHER conversation
     // was visible nowhere and notified nobody.
     if (canSeeArrival(ctx, conversationKey)) return;
+    // A NOTIFICATION IS ONLY "EXPECTED" IF ONE CAN BE RAISED AT ALL. The line below exists to make
+    // "no notification" distinguishable from "never asked for one", and on a session the browser has
+    // permanently refused it did the opposite: it announced an ask, per message, for something that
+    // could never happen - 12 messages, 33 `[NOTIF]` lines, measured on HEAL-REVOKE-9. The refusal is
+    // said ONCE by `sendSystemNotification`, so silence here is now attributable to that one line
+    // rather than to nothing. `default` is not blocked and still narrates: asking is real there.
+    if (systemNotificationsBlockedAnnounceOnce()) return;
     // THE DECISION LINE, and it fires only when a notification is actually expected - the reader
     // cannot see this message land. Everything downstream of here already speaks (`[NOTIF] Raised`,
     // `Throttled`, `permission is ...`), and everything upstream is the ordinary case of a message

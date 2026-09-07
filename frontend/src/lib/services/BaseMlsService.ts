@@ -223,7 +223,16 @@ export abstract class BaseMlsService implements IMlsService {
    *
    * So there is ONE owner, and it is the object whose state is being sealed. {@link init} sets it,
    * {@link changeDeviceKey} moves it, and {@link persistCheckpoint} takes no key at all - a caller
-   * cannot pass a stale one if it cannot pass one.
+   * cannot pass a stale one if it cannot pass one. {@link recoverAndRekey} is covered by the same
+   * two: it re-seals through `changeDeviceKey` BEFORE short-circuiting `initPromise`, so the login
+   * that follows finds the field already right and its early return costs nothing.
+   *
+   * **AN EMPTY STRING IS A VALUE HERE, NOT A MISSING ONE - do not add a guard that refuses it.**
+   * The Tauri biometric path calls {@link init} with an empty key on purpose and lets the native
+   * side resolve the real one from the platform keystore (see `resolveSessionDeviceKey`), so
+   * refusing to checkpoint without a key would break unlock-by-biometrics on both mobile platforms.
+   * Every caller passed that same empty string before this field existed; carrying it changes
+   * nothing, and rejecting it would.
    */
   private currentDeviceKeyB64 = '';
 
@@ -397,7 +406,7 @@ export abstract class BaseMlsService implements IMlsService {
     const p = this._initImpl(userId, deviceKeyB64, state, opts).then(() =>
       // BEFORE ANYTHING CAN SEND, and inside the promise every caller already awaits: a send racing
       // the repair would be encrypted at the very generation the repair exists to move past.
-      this.reconcileSendRatchets(deviceKeyB64)
+      this.reconcileSendRatchets()
     );
     this.initPromise = p;
     try {
@@ -2289,7 +2298,7 @@ export abstract class BaseMlsService implements IMlsService {
    * or forgotten, and `skipSendGenerations` answers `GroupNotFound` for it. One unrepairable group
    * must not cost the repair of the others.
    */
-  protected async reconcileSendRatchets(deviceKeyB64: string): Promise<void> {
+  protected async reconcileSendRatchets(): Promise<void> {
     if (this.freshStart) {
       resetSendRatchetLedger(this.userId);
       return;
