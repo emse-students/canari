@@ -262,6 +262,18 @@ export async function client(port, match = null, { focus = true, allowMany = fal
  * Use `ensureChat` instead - which is also the more faithful path, since a real user clicks. Where a
  * relaunch IS the subject, say so: `goto(cx, path, { relaunch: 'why' })` keeps it, and makes every
  * surviving A1 reload greppable by that word.
+ *
+ * THE "NO CLICK PATH" HOLDERS ARE GONE, since 2026-09-07, and they were the only ones whose reason
+ * was FALSE. `openChannel` and `comm.mjs`'s `enterCommunities` both carried the same sentence - "no
+ * click path to /communities on the phone yet" - and the phone's bottom nav has held that anchor all
+ * along; `RESOLVE` was returning the collapsed rail's 0x0 copy, its CSS branch having taken the
+ * first match with no hit test. See `reachCommunities`.
+ *
+ * ONE A1 RELAUNCH SURVIVES AND IT IS A REAL SUBJECT: `notif7.mjs` parks the phone off `/chat`
+ * before opening its window. The other three call sites (`comm1`, `comm4`, `comm5`) pass BROWSERS,
+ * where this refusal never applied - there the word is documentation of a deliberate cold boot, not
+ * an opt-in past a guard. Counting them together is what made an earlier draft of this paragraph
+ * claim the campaign had no A1 reload left.
  */
 export async function goto(cx, path, { relaunch = null } = {}) {
   if (cx.port === PORTS.A1 && !relaunch)
@@ -899,6 +911,58 @@ export async function awaitAppSettled(cx, timeoutMs = 20000) {
 }
 
 /**
+ * Puts a client on `/communities` BY CLICKING, on EVERY device - one implementation, two callers.
+ *
+ * THERE WAS NEVER NO CLICK PATH ON THE PHONE; THE RIG WAS AIMING AT THE WRONG ELEMENT. Two modules
+ * carried the sentence "no click path to /communities on the phone yet" and paid a full page load
+ * per channel open for it - which costs a PIN re-lock and, with a command in flight, the
+ * `runCallback` exception that dirtied every phone channel row (MULTI-5, 2026-09-07). Measured the
+ * same day: A1 has TWO `a[href="/communities"]` - the collapsed sidebar rail at 0x0, FIRST in DOM
+ * order, and the bottom nav at 109x64, plainly on screen. `RESOLVE`'s CSS branch was a bare
+ * `querySelector`, so it returned the rail and every click went into the void; the branch now
+ * prefers a match that is clickable at its own centre, which is the rule its `text=` half always
+ * had. One selector, one meaning, both devices.
+ *
+ * THE BOTTOM NAV IS NOT MOUNTED INSIDE A CONVERSATION, and that is a fact of the app rather than a
+ * guess: `+layout.svelte` renders it under `!isKeyboardOpen && !isLoginPage && !isMobileConvoOpen`.
+ * So leaving the conversation is a PRECONDITION of the click, asserted here - not the repair of a
+ * click that failed.
+ *
+ * WHY CLICKING AT ALL, on the browsers where `goto` worked. A `goto` is a FULL PAGE LOAD: measured
+ * 2026-09-05, three `openChannel` calls produced three `Page.loadEventFired` and wiped a page-level
+ * stamp each time, so every row that opened a channel was measuring a COLD BOOT and a loop of them
+ * was a loop of cold boots. FWD-2 asks for "the same forward 25 times in a loop" and was reloading
+ * the application between every one, which is a different question with a different answer.
+ *
+ * @returns what it did, so a caller can record it - never a boolean, because "already there" and
+ *   "clicked" are different states of the client and only one of them moved anything.
+ */
+export async function reachCommunities(cx) {
+  /** The page is already the one we are trying to reach - a fact, asked of the document. */
+  const there = `!!document.querySelector('[data-route-mode="communities"]')`;
+
+  // NOT IF WE ARE ALREADY THERE. Clicking the rail to reach the page it is already showing is not
+  // merely wasted - it is the whole hover hazard for nothing: the click moves the pointer onto the
+  // rail, and on a busy freshly-loaded page the four CDP round-trips of one click can outlast the
+  // 150 ms hover-intent timer, so the drawer opens and its backdrop covers the list.
+  if (JSON.parse(await evaluate(cx, `JSON.stringify(${there})`))) return 'already there';
+
+  const parked = isPhone(cx) ? await parkConversation(cx) : null;
+  if (parked !== null && parked !== 'left' && parked !== 'already outside a conversation') {
+    throw new Error(
+      `the phone would not leave its conversation, so the bottom nav never mounted: ${parked}`
+    );
+  }
+
+  await realClick(cx, 'a[href="/communities"]');
+  // THE DOCUMENT, NOT THE ADDRESS. `location.pathname` changes when the navigation STARTS and the
+  // page component swaps after it, so a question asked on the URL alone gets answered by the page
+  // being left - and the click that followed then raced the swap.
+  await until(cx, there, 10000);
+  return parked === null ? 'clicked' : `clicked, after parking the phone (${parked})`;
+}
+
+/**
  * Opens the campaign's channel - the one `VENUE` names, never a literal.
  *
  * **THE DEFAULT USED TO BE THE STRING `'Campagne de test'`, AND ON A PROD-COPY ESTATE THAT IS
@@ -940,39 +1004,7 @@ export async function openChannel(cx, community = VENUE.community, channel = VEN
       )
     );
 
-  /** The page is already the one we are trying to reach - a fact, asked of the document. */
-  const alreadyOnCommunities = `!!document.querySelector('[data-route-mode="communities"]')`;
-
-  // THE PHONE'S CONSTRAINT WAS BEING PAID BY THE BROWSERS TOO, AND IT CHANGED WHAT ROWS MEASURED.
-  // This was an unconditional `goto`, which is a FULL PAGE LOAD - justified on A1, where there is
-  // no click path to `/communities` the way `ensureChat` gives one to `/chat`. On W1/W2 there is
-  // one: the nav rail's own anchor, present in the DOM whether the rail is collapsed or expanded,
-  // and clicking it is a SvelteKit client-side navigation. Measured 2026-09-05: three `openChannel`
-  // calls produced THREE `Page.loadEventFired` and wiped a page-level stamp each time; the click
-  // path produces none and lands on `/communities` just the same.
-  //
-  // WHAT THAT COST WAS NOT ONLY TIME. Every row that opens a channel was measuring a COLD BOOT, and
-  // a loop of them was a loop of cold boots - FWD-2 asks for "the same forward 25 times in a loop"
-  // and was reloading the application between every one, which is a different question with a
-  // different answer. It is also why anything the app counts per session reset on every round.
-  if (isPhone(cx)) {
-    // Still declared rather than accidental here, and it costs what `goto` documents: a PIN re-lock
-    // and, if a command is in flight, a `runCallback` exception into the fresh document. A phone
-    // verdict that goes dirty on either of those inside a channel check is the RIG, not the app.
-    await goto(cx, '/communities', { relaunch: 'no click path to /communities on the phone yet' });
-  } else {
-    // NOT IF WE ARE ALREADY THERE. Clicking the rail to reach the page it is already showing is
-    // not merely wasted - it is the whole hover hazard for nothing: the click moves the pointer
-    // onto the rail, and on a busy freshly-loaded page the four CDP round-trips of one click can
-    // outlast the 150 ms hover-intent timer, so the drawer opens and its backdrop covers the list.
-    if (!JSON.parse(await evaluate(cx, `JSON.stringify(${alreadyOnCommunities})`))) {
-      await realClick(cx, 'a[href="/communities"]');
-      // THE DOCUMENT, NOT THE ADDRESS. `location.pathname` changes when the navigation STARTS and
-      // the page component swaps after it, so a question asked on the URL alone gets answered by
-      // the page being left - and the click that followed then raced the swap.
-      await until(cx, `!!document.querySelector('[data-route-mode="communities"]')`, 10000);
-    }
-  }
+  await reachCommunities(cx);
   // WHETHER THE COMMUNITY STILL NEEDS SELECTING IS A FACT, NOT SOMETHING TO LEARN BY FAILING.
   // A reload always arrived with nothing selected, so clicking the community was unconditional and
   // safe. A client-side navigation does not: the app restores the community that was open, and the

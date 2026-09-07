@@ -20,7 +20,16 @@
  * only thing that knows what it was asking. See `docs/wiki/testing-methodology.md` rule 19.
  */
 import { readFileSync } from 'node:fs';
-import { awaitAppSettled, awaitListed, clearOverlays, evaluate, goto, realClick, until } from './chat.mjs';
+import {
+  awaitAppSettled,
+  awaitListed,
+  clearOverlays,
+  evaluate,
+  goto,
+  reachCommunities,
+  realClick,
+  until,
+} from './chat.mjs';
 import { answeringDialogs, RESOLVE } from './cdp.mjs';
 
 const LOCALE = process.argv.includes('--locale')
@@ -188,7 +197,10 @@ export async function enterCommunities(cx) {
   // decoration. On a reload the app selects a community BY ITSELF - the first in the rail - so a
   // client that lands on /communities always has one open and never the one the last check named.
   provenCommunity.delete(cx.port);
-  await goto(cx, '/communities', { relaunch: 'no click path to /communities on the phone yet' });
+  // CLICKED, ON EVERY DEVICE - see `reachCommunities`. This was a `goto` carrying the sentence "no
+  // click path to /communities on the phone yet", which was never true: the phone's bottom nav holds
+  // the anchor, and the rig was resolving the collapsed rail's 0x0 copy instead.
+  await reachCommunities(cx);
   const debris = await clearOverlays(cx);
   await awaitAppSettled(cx);
   return debris;

@@ -43,7 +43,12 @@ import { ORIGIN, PORTS, SITE, peerNameFor } from "../names.mjs";
 import { becomeANewDeviceAndConfirm } from "../newdevice.mjs";
 import { onlineDevicesOf } from "./presence.mjs";
 import { record, unmet } from "../results.mjs";
-import { psql } from "../ssh.mjs";
+// `estate.mjs`, WHICH IS WHERE `psql` HAS ALWAYS LIVED. This file alone imported it from
+// `ssh.mjs` - a leftover from when the rig reached PRODUCTION over SSH, before it moved to the
+// local estate on 2026-09-03 - and `ssh.mjs` exports only `SSH` and `ssh`. So all four
+// membership-table rows (MULTI-7, -8, -9, -10) died at module load with
+// `Export named 'psql' not found`, recorded nothing, and had never once run.
+import { psql } from "../estate.mjs";
 import { readAll, watch as watchRows, whoAmI } from "./syncrows.mjs";
 import { report, watch } from "../watch.mjs";
 

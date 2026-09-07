@@ -53,6 +53,26 @@ const cmd = IS_CLI ? argv.shift() : null;
 
 /** Page-side selector resolver. `text=` matches visible text, anything else is a CSS selector. */
 export const RESOLVE = `(function (sel) {
+  // A HIT MUST BE CLICKABLE AT ITS OWN CENTRE - one implementation, used by BOTH branches.
+  //
+  // It lived only inside the text= branch, and the CSS branch's bare querySelector is what made the
+  // phone look like a device with no navigation. On A1 there are TWO 'a[href=\"/communities\"]': the
+  // collapsed sidebar rail, 0x0, first in DOM order, and the BOTTOM NAV, 109x64 and plainly on
+  // screen. querySelector returns the rail, so every click aimed at the void - and the rig concluded
+  // there was "no click path to /communities on the phone yet", wrote that sentence into two
+  // modules, and paid for it with a full page load per channel open, a PIN re-lock and the
+  // runCallback exception that dirtied every phone channel row. Measured 2026-09-07: 2 anchors, the
+  // second visible at y=857 on a 436x945 viewport.
+  var clickableAtOwnCentre = function (e) {
+    var r = e.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) return false;
+    if (r.bottom < 0 || r.top > innerHeight || r.right < 0 || r.left > innerWidth) {
+      e.scrollIntoView({ block: 'center', inline: 'center' });
+      r = e.getBoundingClientRect();
+    }
+    var at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return !!at && (at === e || e.contains(at));
+  };
   if (sel.startsWith('text=')) {
     var needle = sel.slice(5).trim().toLowerCase();
     var all = Array.prototype.slice.call(document.querySelectorAll('button, a, [role="button"], [role="link"], [role="menuitem"], input[type="submit"], label, li, summary, span, div, p, h1, h2, h3'));
@@ -84,23 +104,24 @@ export const RESOLVE = `(function (sel) {
     var pool = textual.length ? textual : innermost;
     pool.sort(function (a, b) { return (a.innerText || '').length - (b.innerText || '').length; });
 
-    // A HIT MUST BE CLICKABLE AT ITS OWN CENTRE. The avatar above resolved to a rect whose centre
-    // hit-tested to the "Communautes" nav link, so the click navigated away and the check failed
-    // somewhere else entirely, blaming the app. Anything whose centre belongs to another subtree
-    // is unusable: reject it here rather than let a caller click into the void. Returning null
-    // makes the caller fail loudly, which is the point - a wrong click is worse than no click.
-    var clickable = pool.filter(function (e) {
-      var r = e.getBoundingClientRect();
-      if (r.bottom < 0 || r.top > innerHeight || r.right < 0 || r.left > innerWidth) {
-        e.scrollIntoView({ block: 'center', inline: 'center' });
-        r = e.getBoundingClientRect();
-      }
-      var at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-      return !!at && (at === e || e.contains(at));
-    });
-    return clickable[0] || null;
+    // The avatar above resolved to a rect whose centre hit-tested to the "Communautes" nav link, so
+    // the click navigated away and the check failed somewhere else entirely, blaming the app.
+    // Anything whose centre belongs to another subtree is unusable: reject it here rather than let a
+    // caller click into the void. Returning null makes the caller fail loudly, which is the point -
+    // a wrong click is worse than no click.
+    return pool.filter(clickableAtOwnCentre)[0] || null;
   }
-  return document.querySelector(sel);
+
+  // ONE MATCH IS UNAMBIGUOUS AND STAYS UNTOUCHED - this must not start hiding a selector that
+  // resolves to exactly one unclickable element, because that is a finding the caller has to see
+  // (whyNotStable names it - NO BACKTICKS IN HERE, this comment is inside a template literal and a
+  // quoted identifier would close it). It was AMBIGUITY that DOM order decided: with several
+  // matches, the one a person could actually press is the one the caller meant, and preferring it
+  // is the same rule the text= branch has always applied. Still falls back to the first when none
+  // qualifies, so an all-hidden selector fails exactly where and how it did before.
+  var hits = Array.prototype.slice.call(document.querySelectorAll(sel));
+  if (hits.length < 2) return hits[0] || null;
+  return hits.filter(clickableAtOwnCentre)[0] || hits[0];
 })`;
 
 /**

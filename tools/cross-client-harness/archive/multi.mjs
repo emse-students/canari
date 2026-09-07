@@ -46,15 +46,17 @@ import {
   ensureConversation,
   evaluate,
   openChannel,
+  PANE_STATE,
   parkConversation,
   send,
 } from '../chat.mjs';
 import { closeExtraAppTabs } from './tabs.mjs';
 import { connect } from '../cdp.mjs';
-import { fromStore } from './idb.mjs';
-import { gate, logcatReport, logcatSince, report, watch } from '../watch.mjs';
+import { gate, ignoringExpectedLog, logcatReport, logcatSince, report, watch } from '../watch.mjs';
 import { errorDetail, mark, record, recordObserved } from '../results.mjs';
-import { OWNER_NAME, PEER_NAME, PORTS, SITE } from '../names.mjs';
+import { ACCOUNT_OF, OWNER_NAME, PEER_NAME, PORTS, SITE } from '../names.mjs';
+import { unlockClient } from './pingate.mjs';
+import { whoIs } from './presence.mjs';
 import * as phone from '../phone.mjs';
 
 // THE PHONE THIS RUNNER DRIVES, DECLARED. Every row below is written for A1 - `PORTS.A1`,
@@ -109,20 +111,63 @@ const OWNERSHIP = (marker) => `(function () {
  * user has read everything", the other is "this check is reading a field the product stopped
  * writing". Reported as `null` plus the key list, exactly as `fromStore` reports a missing store.
  */
-async function unreadOf(cx, name) {
-  const { rows, dbs } = await fromStore(
+/**
+ * W1's own read state for the DM with `peerId`, taken from the mechanism the PRODUCT uses.
+ *
+ * `unreadCount` IS NOT A FIELD, AND THIS ROW ASKED FOR IT FOR ITS WHOLE LIFE. The reader that stood
+ * here matched a conversation by DISPLAY NAME against `r.name` and then read `r.unreadCount`. A
+ * stored conversation carries neither: measured on W1's own store 2026-09-07, every row holds
+ * exactly `id, name, lifecycle, updatedAt, readWatermarks, historyFloor`, and a DM's `name` is the
+ * `<userA>::<userB>` PAIR ID, not a person's name. Both halves of the match were wrong - so the row
+ * recorded `VACUOUS` citing the FIRST of its two reasons ("no stored conversation row named the
+ * peer") when the true one was the second, which is worse than either: a check naming a cause it
+ * never measured. `unreadCount` exists only as a PROP on `ConversationTile`, computed per render.
+ *
+ * WHAT IS ACTUALLY THERE, and why it is the better subject. Unread is DERIVED from `readWatermarks`
+ * (`readState.ts`: `isUnreadForUser(msg, watermarkFor(convo.readWatermarks, me))`), and the
+ * watermark map is precisely the thing the account's devices SYNCHRONISE - which is this row's whole
+ * question. So the assertion moves onto it: a read performed on A1 must advance the watermark W1
+ * holds for the account's own user id.
+ *
+ * AND IT NEEDS NO KEY. A message at rest is `id, conversationId, timestamp, iv, cipherText` - there
+ * is no `senderId`, no `isOwn`, no `isSystem` to count with, so `isUnreadForUser` cannot be
+ * reproduced here and this does not pretend to. `timestamp` IS plaintext, which is enough for the
+ * two facts the row needs: messages exist past the watermark (unread accrued), and none does after
+ * the sibling's read (it cleared).
+ */
+async function dmReadState(cx, meId, peerId) {
+  const me = meId.toLowerCase();
+  const peer = peerId.toLowerCase();
+  const raw = await evaluate(
     cx,
-    'conversations',
-    `(function () {
-      var n = String(r.name != null ? r.name : (r.title != null ? r.title : (r.displayName != null ? r.displayName : '')));
-      if (n !== ${JSON.stringify(name)}) return null;
-      return {
-        unread: r.unreadCount === undefined ? null : r.unreadCount,
-        keys: Object.keys(r).join(',')
-      };
+    `(async () => {
+      const has = (s, needle) => String(s || '').toLowerCase().indexOf(needle) !== -1;
+      const names = (await indexedDB.databases()).map((d) => d.name).filter(Boolean);
+      const dbName = names.find((n) => n.indexOf('CanariDB_') === 0 && has(n, ${JSON.stringify(me)}));
+      if (!dbName) return JSON.stringify({ found: false, why: 'no CanariDB for this account', dbs: names });
+      const db = await new Promise((res) => { const q = indexedDB.open(dbName); q.onsuccess = () => res(q.result); q.onerror = () => res(null); });
+      if (!db || !db.objectStoreNames.contains('conversations')) return JSON.stringify({ found: false, why: 'no conversations store', dbs: names });
+      const all = await new Promise((res) => { const q = db.transaction('conversations', 'readonly').objectStore('conversations').getAll(); q.onsuccess = () => res(q.result); q.onerror = () => res([]); });
+      // THE PAIR ID NAMES BOTH SIDES, so the DM is identified by identity rather than by position.
+      const hits = all.filter((c) => has(c.name, ${JSON.stringify(me)}) && has(c.name, ${JSON.stringify(peer)}));
+      if (hits.length !== 1) return JSON.stringify({ found: false, why: hits.length + ' conversation(s) name both users', stored: all.length, dbs: names });
+      const convo = hits[0];
+      const wm = typeof convo.readWatermarks === 'string' ? JSON.parse(convo.readWatermarks) : (convo.readWatermarks || {});
+      const msgs = await new Promise((res) => { const q = db.transaction('messages', 'readonly').objectStore('messages').index('byConversation').getAll(convo.id); q.onsuccess = () => res(q.result); q.onerror = () => res([]); });
+      const at = (m) => Number(m.timestamp);
+      const mine = Number(wm[${JSON.stringify(me)}] || 0);
+      return JSON.stringify({
+        found: true,
+        convoId: convo.id,
+        watermark: mine,
+        peerWatermark: Number(wm[${JSON.stringify(peer)}] || 0),
+        messages: msgs.length,
+        newest: msgs.length ? Math.max.apply(null, msgs.map(at)) : 0,
+        pastWatermark: msgs.filter((m) => at(m) > mine).length,
+      });
     })()`
   );
-  return { row: rows[0] ?? null, dbs };
+  return JSON.parse(raw);
 }
 
 /** Polls `fn` until it returns true, and answers with how long that took - or null. */
@@ -209,47 +254,81 @@ async function multi2() {
     await ensureChat(a1);
 
     // BOTH OF THE ACCOUNT'S DEVICES LOOK AWAY FIRST, or the unread never accrues to be cleared.
+    //
+    // AND EACH PARK ANSWERS FOR ITSELF. `parkConversation` returns four distinguishable strings, two
+    // of which mean it did NOT get the client out ("offers no back control", "back clicked but the
+    // pane stayed"), and this row used to drop that answer on the floor - which is how a device that
+    // never looked away would have been reported as a product that never cleared an unread.
     await ensureConversation(w2, OWNER_NAME);
-    await parkConversation(w1);
-    await parkConversation(a1);
+    const parkedW1 = await parkConversation(w1);
+    const parkedA1 = await parkConversation(a1);
+    for (const [label, said] of [['W1', parkedW1], ['A1', parkedA1]]) {
+      if (said !== 'left' && said !== 'already outside a conversation') {
+        throw new Error(`${label} would not leave its conversation: ${said}`);
+      }
+    }
     await sleep(2000);
 
-    const m = mark('MULTI2');
-    await send(w2, `${m} one`);
-    await send(w2, `${m} two`);
-
-    const accruedMs = await reaches(async () => ((await unreadOf(w1, PEER_NAME)).row?.unread ?? 0) > 0);
-    const armed = await unreadOf(w1, PEER_NAME);
-
-    // A FIELD THAT IS NOT THERE IS NOT A ZERO. Both halves of this row read `unreadCount`, so if the
-    // product has stopped writing it there is nothing here to measure and the row must say so.
-    if (armed.row === null || armed.row.unread === null) {
+    // WHO EACH CLIENT IS, FROM ITS OWN STORAGE - the DM is addressed by the two user ids, and a row
+    // that guessed at a display name is what made this check unmeasurable. `whoIs` reads the same
+    // `mls_device_id_<user>` key the app writes, so no name, login or fixture is involved.
+    const meWho = await whoIs(w1);
+    const peerWho = await whoIs(w2);
+    if (!meWho || !peerWho) {
       await recordObserved(
         'MULTI-2',
-        'VACUOUS',
-        {
-          marker: m,
-          why: armed.row === null
-            ? `no stored conversation row named the peer - stores carrying 'conversations': ${armed.dbs.join(',') || 'none'}`
-            : `the row carries no unreadCount - keys: ${armed.row.keys}`,
-        },
+        'ERROR',
+        { why: `a client holds no identity - W1=${!!meWho} W2=${!!peerWho}` },
         { W1: o1, W2: o2, A1: oA1 }
       );
       return false;
     }
 
+    const before = await dmReadState(w1, meWho.user, peerWho.user);
+    if (!before.found) {
+      await recordObserved(
+        'MULTI-2',
+        'VACUOUS',
+        { why: `W1 holds no single DM naming both users: ${before.why}`, seen: before },
+        { W1: o1, W2: o2, A1: oA1 }
+      );
+      return false;
+    }
+
+    const m = mark('MULTI2');
+    await send(w2, `${m} one`);
+    await send(w2, `${m} two`);
+
+    // UNREAD ACCRUES AS MESSAGES PAST W1'S OWN WATERMARK, which is what the product derives the
+    // badge from. Two were sent, so two is the floor; a third from anything else in flight would not
+    // make this reading wrong.
+    const accruedMs = await reaches(async () => (await dmReadState(w1, meWho.user, peerWho.user)).pastWatermark >= 2);
+    const armed = await dmReadState(w1, meWho.user, peerWho.user);
+
     // THE READ, ON THE OTHER DEVICE.
     await ensureConversation(a1, PEER_NAME);
     await awaitMessage(a1, m, CROSS_DEVICE_MS);
-    const clearedMs = await reaches(async () => ((await unreadOf(w1, PEER_NAME)).row?.unread ?? -1) === 0);
-    const after = await unreadOf(w1, PEER_NAME);
+    const clearedMs = await reaches(async () => (await dmReadState(w1, meWho.user, peerWho.user)).pastWatermark === 0);
+    const after = await dmReadState(w1, meWho.user, peerWho.user);
 
     // W1 MUST STILL BE LOOKING AWAY. If something navigated it into the conversation, the clearing
     // proves nothing and the run has to say so rather than bank the pass.
-    const w1StillParked = await evaluate(
-      w1,
-      `document.body.innerText.indexOf(${JSON.stringify(m)}) === -1`
-    );
+    //
+    // READ FROM THE PANE, NEVER FROM THE BODY - this guard was fault #29 running backwards. It asked
+    // `document.body.innerText.indexOf(marker) === -1`, and `SAMPLE`'s own docblock in `chat.mjs`
+    // says what that reads: "a marker in the body but not in the pane is the sidebar preview of a
+    // conversation nobody opened". A parked client shows the newest message as its tile's SUBTITLE,
+    // so the body contained the marker exactly BECAUSE W1 had stayed outside - and the row recorded
+    // FAIL on 2026-09-07 with all three of its real measurements holding (accrued 2 in 1020 ms,
+    // cleared in 2032 ms, watermark advanced). The same text in two places means two opposite things
+    // and only the pane distinguishes them.
+    //
+    // BOTH HALVES, because they refute different accidents: `PANE_STATE` says no conversation is
+    // open at all, which is the state `parkConversation` established, and the pane count says the
+    // marker is not being rendered as a message even if something re-opened something.
+    const paneState = await evaluate(w1, PANE_STATE);
+    const inPane = await countMessage(w1, m);
+    const w1StillParked = paneState === 'nothing' && inPane === 0;
 
     const ok = accruedMs !== null && clearedMs !== null && w1StillParked === true;
     const gated = gate(ok ? 'PASS' : 'FAIL', {
@@ -262,10 +341,16 @@ async function multi2() {
       ...gated.detail,
       marker: m,
       unreadAccruedInMs: accruedMs,
-      unreadWhenArmed: armed.row.unread,
+      unreadWhenArmed: armed.pastWatermark,
+      watermarkWhenArmed: armed.watermark,
       readOnSiblingClearedInMs: clearedMs,
-      unreadAfter: after.row?.unread ?? null,
+      unreadAfter: after.pastWatermark,
+      watermarkAfter: after.watermark,
+      watermarkAdvanced: after.watermark > armed.watermark,
       w1NeverOpenedIt: w1StillParked,
+      w1PaneState: paneState,
+      w1MarkerInPane: inPane,
+      parked: { W1: parkedW1, A1: parkedA1 },
     });
     return gated.verdict === 'PASS';
   } finally {
@@ -306,6 +391,23 @@ async function multi5() {
     await sleep(4000);
     [w1b, o1b] = await observed(PORTS.W1, 'MULTI-W1b', { match: '/chat?tab=2', allowMany: true, focus: false });
 
+    // THE SIBLING IS A NEW DOCUMENT, SO IT COMES UP AT THE PIN GATE, and until 2026-09-07 this row
+    // clicked straight through it. `Target.createTarget` boots the SPA from nothing - the unlocked
+    // key lives in the ORIGINAL document, not on the profile - so the gate is up and every selector
+    // below is aimed at a page a modal is covering. That is exactly what MULTI-5's `ERROR` was:
+    // `realClick` on `a[href="/communities"]` with `dialogsOpen: ["PIN de chiffrement"]` and
+    // `onTopAtOwnCentre: false`, which is the RIG's unarmed precondition wearing the shape of a
+    // navigation defect.
+    //
+    // AND IT IS ASSERTED, NOT ATTEMPTED. A client left at the gate renders, answers every probe and
+    // reports on an EMPTY store, so `countMessage(w1b)` would return 0 and the row would charge the
+    // application for a copy the sibling was never in a position to receive - the failure mode
+    // `pingate` was extracted to end.
+    const gateW1b = await unlockClient(w1b, PORTS.W1, ACCOUNT_OF.W1, { match: '/chat?tab=2' });
+    if (gateW1b.verdict !== 'unlocked') {
+      throw new Error(`the sibling tab did not come back from the PIN gate: ${gateW1b.verdict} (${gateW1b.said})`);
+    }
+
     await openChannel(w1);
     await openChannel(w1b);
     await openChannel(a1);
@@ -325,15 +427,63 @@ async function multi5() {
       copies[label] = await countMessage(cx, m);
     }
 
-    const ok = copies.w1a === 1 && copies.w1b === 1 && copies.a1 === 1;
+    // THE SECOND TAB'S OWN CONSEQUENCES, FORGIVEN ON THIS ROW AND NOWHERE ELSE.
+    //
+    // The classifier leaves `[TAB] Another tab is active` UNCLASSIFIED on purpose: a tab that
+    // genuinely LOST an election emits it too, and its absence beside a skipped flush is exactly
+    // what identified the boot gap it documents. So it must keep breaking `clean` everywhere - and
+    // this row is the one place where a follower tab is the PREMISE rather than a finding, which is
+    // what `ignoringExpectedLog` is for: per row, named, never a wider classifier.
+    //
+    // THE SNAPSHOT COLLISION IS THE SAME CASE, and the product says so in `hex.ts`: two writers
+    // seeded from one stored version reach the same number, the write is dropped, and "TAB-4 (two
+    // tabs of one client) makes the equality case fire on an ordinary run". Whether dropping the
+    // second tab's write can lose state is a real question and is ALREADY P2 in `backlog.md`; it is
+    // forgiven here as expected FOR A TWO-TAB ROW, not answered.
+    const SIBLING_PREMISE = [
+      '[TAB] Another tab is active - read-only mode',
+      '[TAB] Follower tab - WebSocket active in another Canari tab',
+      '[TAB] Follower tab - skipping initializeConnection',
+    ];
+    const repW1b = ignoringExpectedLog(await report(o1b), [
+      ...SIBLING_PREMISE,
+      // A fresh document boots MLS; expected, but NOT required - a sibling that reused a warm
+      // worker would not print it and would still be a sibling.
+      'Initialising MLS...',
+    ]);
+    const repW1a = ignoringExpectedLog(await report(o1), [
+      '[OUTBOX] Flush requested by a follower tab',
+      'collides with the stored one - another writer reached this version from the same seed',
+    ]);
+
+    // AND THE PREMISE IS ASSERTED, NOT MERELY FORGIVEN. `ignoringExpectedLog` reports the needles
+    // that matched NOTHING, and its own docblock says why that has to be read: a dry needle for a
+    // line the check's premise requires is a check measuring nothing at all. If the sibling never
+    // announced itself a follower, this row is three clients of one account only on paper - the two
+    // tabs would be two leaders, which is a different test with a different meaning.
+    const premiseMissing = SIBLING_PREMISE.filter((n) =>
+      repW1b.ignoredAsExpectedLog.unmatched.includes(String(n))
+    );
+
+    const ok =
+      copies.w1a === 1 &&
+      copies.w1b === 1 &&
+      copies.a1 === 1 &&
+      premiseMissing.length === 0;
     const gated = gate(ok ? 'PASS' : 'FAIL', {
-      W1a: await report(o1),
-      W1b: await report(o1b),
+      W1a: repW1a,
+      W1b: repW1b,
       W2: await report(o2),
       A1: await report(oA1),
       'A1-native': logcatReport(await logcatSince(since), 'A1-native'),
     });
-    await record('MULTI-5', gated.verdict, { ...gated.detail, marker: m, copies });
+    await record('MULTI-5', gated.verdict, {
+      ...gated.detail,
+      marker: m,
+      copies,
+      siblingWasAFollower: premiseMissing.length === 0,
+      premiseMissing,
+    });
     return gated.verdict === 'PASS';
   } finally {
     // THE SIBLING GOES, WHATEVER HAPPENED. Everything above can throw, and a throw between the
