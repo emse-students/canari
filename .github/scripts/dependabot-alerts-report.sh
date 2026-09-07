@@ -128,7 +128,7 @@ judge() {
       # `permissions:` key at all, so GITHUB_TOKEN cannot read them at any setting. Only a PAT or
       # a GitHub App holding the fine-grained "Dependabot alerts: read" repository permission can,
       # which is a credential a human mints once - so the message names that, not the symptom.
-      printf '::error::GitHub refused to list this repository Dependabot alerts (403), and NO workflow permission can lift it: GITHUB_TOKEN cannot read Dependabot alerts at all - there is no `permissions:` key for them, and `security-events` is code scanning. This job reads `secrets.DEPENDABOT_ALERTS_TOKEN` when it exists; mint one with the fine-grained "Dependabot alerts: read" permission on this repository and the job runs unattended. NOTHING has looked - this is not a clean report. %s\n' "${detail:-}"
+      printf '::error::GitHub refused to list this repository Dependabot alerts (403), and NO workflow permission can lift it: GITHUB_TOKEN cannot read Dependabot alerts at all - there is no "permissions:" key for them, and "security-events" is code scanning. This job reads secrets.DEPENDABOT_ALERTS_TOKEN when it exists; mint one with the fine-grained "Dependabot alerts: read" permission on this repository and the job runs unattended. NOTHING has looked - this is not a clean report. %s\n' "${detail:-}"
       return 1
       ;;
     not-found)
