@@ -865,6 +865,37 @@ dependency**, because `cargo audit` reads the lockfile while `cargo tree -i` rea
 compiled - is in [durable-rules](durable-rules.md). That alert is dismissed (user, 2026-08-31) and
 no Dependabot alert is open.
 
+### P2 - no iOS build reaches a test device without shipping a pre-release, and the one artifact that exists refuses to install (measured 2026-09-07)
+
+**The `ios-release` artifact cannot be installed on any iPhone.** `.github/workflows/ios.yml` writes
+one `ExportOptions.plist`, `method: app-store-connect`, `signingCertificate: Apple Distribution`,
+resolving the two named distribution profiles. That signing carries no device UDID and no
+`get-task-allow`, so `installd` refuses the `.ipa` - App Store Connect is the only endpoint that
+accepts it. [device-verification](device-verification.md) told a reader to install that artifact
+until this was measured; the instruction was impossible on the day it was written.
+
+**So an iOS pass costs a PRE-RELEASE.** A `workflow_dispatch` uploads nothing, which is deliberate,
+but it means a dispatch puts an iOS build on no hardware at all. Android has no equivalent problem:
+`tools/cross-client-harness/a1apk.mjs` builds a debug APK against the LOCAL estate and `adb install
+-r` puts it on the phone in one gesture.
+
+**The second consequence is the one that blocks the campaign, not the pass.** Without
+`get-task-allow` the WKWebView is not inspectable, so `ios-webkit-debug-proxy` has nothing to attach
+to and no iOS row can read the webview the way `cdp.mjs` reads a browser. The app's console does
+survive - `+layout.svelte` calls `attachConsole()` gated on `isTauriRuntime()` rather than on
+Android, so webview logs reach `tauri-plugin-log` and the device syslog - but reading logs is not
+driving a client.
+
+**What closes it: a second export from the SAME archive**, `method: development`, against a profile
+naming the test device's UDID, published as its own artifact. It is one job step and two one-off
+gestures owed to the USER - register the device UDID in the Apple Developer portal, and store the
+resulting development profile as a repository secret beside the two distribution ones. The same
+profile is what would let WebDriverAgent be signed for UI automation, so one gesture unlocks both.
+
+**The rule this leaves:** *an artifact that cannot be installed is not a delivery path.* A build
+step that produces a file nobody can run has not delivered anything, and a green job is what hides
+it.
+
 ### The rest of what an iPhone will find, named by the user before it was looked for (2026-08-27)
 
 **Not a defect and not scheduled - a standing expectation, recorded so it is not re-discovered as a
@@ -1531,6 +1562,29 @@ hypotheses differ, and the stall will already have been measured.
 ---
 
 ## Communities and permissions
+
+### P3 - three server line families are the routine consequence of enrolling a device, and nothing has ever classified them (measured twice, 2026-09-07)
+
+Every `roster.mjs` row that enrols a second web device ends `SERVER NOT CLEAN`, and the same three
+sentences are why. All three were read and none is a defect:
+
+| Line | What it is |
+| --- | --- |
+| `[DEVICE_MEMBERSHIPS] user=… count=5 stranded=4 → 3 → 2` | the convergence the row exists to watch, printed as it happens - and going the RIGHT way |
+| `[PubSub] …:… not connected to this gateway - message stays in DB queue, will be fetched on reconnect` | the designed queueing path for a device that is offline |
+| `Refresh refused: no canari_refresh cookie. cookies=[] x-canari-refresh=absent` (DEBUG) | a browser seconds old, before it has one |
+
+**`notable` is the right home for all three and `BENIGN` is not.** A notable line is printed and does
+not break `clean`; a benign one is dropped, and dropping `Refresh refused` would silence on the
+LOCAL estate a sentence that is a real signal on production - it is what named the iOS session
+defect. Surfaced rather than judged is exactly the distinction that bucket exists for.
+
+**Not done inline**: `srvlog.mjs`'s four rule lists are shared by every phase, and
+`srvclassify-selftest.mjs` exists precisely so a rule is proven to fire on the line it claims and on
+nothing else. Adding three rules without their three cases would be the drift that selftest was
+written to prevent. It blocks no row verdict today - a row is judged on its client reports and its
+logcat half - so it is P3, and the cost of leaving it is that the next genuinely new server line
+arrives among five a reader has learnt to skip.
 
 ### P2 - a channel's MLS tree names THREE identities the server has never heard of, and opening the channel asks for each of them by name (measured on the local estate 2026-09-07)
 
@@ -2558,7 +2612,21 @@ constraints, and whether IndexedDB is scriptable from one is the thing to measur
 could not map the group NAME to its uuid, so the awaiting-history marker could not be read for the
 group under test even if the break had taken. Two fixes, not one, and neither is the app.
 
-### P2 - four HEAL-NEW rows watch a responder heal a device that no longer needs one, and the rung has to be redesigned around a group the device cannot self-serve (measured 2026-09-06)
+### P2 - FIVE rows watch a responder heal a device that no longer needs one, and the rung has to be redesigned around a group the device cannot self-serve (four HEAL-NEW 2026-09-06, MULTI-9 2026-09-07)
+
+**MULTI-9 IS THE FIFTH, AND IT IS THE SAME MECHANISM SEEN FROM THE MEMBERSHIP TABLE.** The row asks
+what a message sent to a `pending` device is worth once that device activates - written after a
+device sat `pending` for 134 minutes while messages were accepted, fanned out and lost. Measured
+2026-09-07, on its FIRST EVER EXECUTION (`roster.mjs` had died at module load since it was written):
+the new device reached `active` in **105 ms**, with the peer deliberately killed, because the owner
+held FIVE devices in that group and one of them committed the add immediately. There is no window to
+send into, so all 5 of 5 messages arrived at an ACTIVE membership and the row proved nothing about
+its own question.
+
+It records `VACUOUS` for exactly that case - the sole unmet expectation being the window itself -
+and never for the two failures it must not absorb: a device that never activates, and a message
+lost in a window that DID exist, are separate expectations checked first. Recording `FAIL` would
+have been the board accusing the product of the fix that closed the window.
 
 `HEAL-NEW-11`, `-12` and `-15` were written for a product where a fresh device sat AMBER until some
 member served it. They wait up to 90 s for an "amber alone" state, then start the responder, then

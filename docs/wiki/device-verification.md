@@ -75,9 +75,19 @@ WP-XP-7 removal at once, which means H, I, K and the dev-panel check all ride a 
 | R | The shrunk release APK still having what it needs | owed | n/a |
 | S | An iPhone obtaining a push token AT ALL (the P1 of 2026-08-27) | n/a (49 rows, healthy) | **RUN 2026-08-28 on 0.14.8: report PASSES, token FAILS.** Cause found and fixed the same day - **RE-RUN OWED on the build carrying it** |
 
-For the iOS pass, install the `ios-release` artifact of the run above rather than waiting for
-TestFlight: a dispatch does not upload there, so TestFlight is still on the previous build and check
-K would be meaningless on it.
+**The `ios-release` artifact CANNOT be installed on a device, and this paragraph said to install it
+until 2026-09-07.** The export is `method: app-store-connect` signed *Apple Distribution*
+(`.github/workflows/ios.yml`, the `ExportOptions.plist` heredoc): that profile names no device UDID
+and carries no `get-task-allow`, so `installd` refuses the `.ipa` outright - App Store Connect is the
+only thing that accepts it. A dispatch does not upload to TestFlight either, so TestFlight stays on
+the previous build and check K would be meaningless on it. **A `workflow_dispatch` therefore puts an
+iOS build on no hardware at all** - an iOS pass costs a PRE-RELEASE, whose TestFlight upload is the
+only thing that reaches a phone.
+
+**What lifts it is a second export from the same archive**, `method: development` against a profile
+naming the test device's UDID. It also buys `get-task-allow`, which is what makes the WKWebView
+inspectable - so the one change that makes an artifact installable is the same change that makes the
+webview readable. Owed, not done.
 
 ## Before you start
 
