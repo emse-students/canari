@@ -493,6 +493,53 @@ export const LOGIN_SHOWING = `(function () {
 })()`;
 
 /**
+ * Makes a client STOP LOOKING at whatever conversation it holds - on either layout.
+ *
+ * `parkConversation` CANNOT DO THIS ON A BROWSER, and says so: the desktop layout keeps the list
+ * beside the pane and carries no back control, so it returns "a conversation is open and this layout
+ * offers no back control" and changes nothing. Its own docblock prescribes the remedy - "a browser is
+ * left as it is and its callers open a different route instead" - and until 2026-09-07 no caller did.
+ *
+ * SIX CALL SITES IGNORED THAT ANSWER, and only one of them was wrong to. Four want the conversation
+ * LIST on screen before clicking a row (`ensureConversation`, `read.mjs`'s cleanup, `del.mjs`,
+ * `deadrows.mjs`); on a desktop the list is already there, so "no back control" is the correct
+ * no-op for them. MULTI-2 is the exception: its premise is that W1 accrues an unread it never reads,
+ * and a W1 still sitting IN the conversation reads everything as it arrives. The row asserted the
+ * park's answer, the assertion fired, and that is how a latent hole became visible instead of
+ * becoming a verdict about the product.
+ *
+ * WHY ANOTHER SECTION RATHER THAN A DESELECTION. The app offers no "close this conversation" on
+ * desktop - the pane always holds the last selection - so the only state where `PANE_STATE` is
+ * `'nothing'` is a route that has no pane. It is reached BY CLICKING the nav rail, like everything
+ * else here, and the client stays a live SPA: `ChatBackgroundService` sits in the root layout, so it
+ * keeps its socket and keeps writing the store, which is where a row like MULTI-2 reads.
+ *
+ * @returns what it did - never a boolean, because "already away", "left by the back control" and
+ *   "left by changing section" are three different states of the client.
+ */
+export async function lookAway(cx) {
+  if ((await evaluate(cx, PANE_STATE)) === 'nothing') return 'already looking away';
+
+  const parked = await parkConversation(cx);
+  if (parked === 'left' || parked === 'already outside a conversation') {
+    const after = await evaluate(cx, PANE_STATE);
+    if (after !== 'nothing') throw new Error(`the back control returned "${parked}" and the pane still holds ${after}`);
+    return 'left by the back control';
+  }
+
+  // THE LAYOUT WITH NO BACK CONTROL - the only other answer this function can act on. Anything else
+  // is a park that TRIED and failed ("back clicked but the pane stayed"), which is a broken client
+  // rather than a layout fact, and must not be papered over by navigating away from it.
+  if (parked !== 'a conversation is open and this layout offers no back control') {
+    throw new Error(`could not leave the conversation: ${parked}`);
+  }
+  await realClick(cx, 'a[href="/posts"]');
+  const gone = await until(cx, `${PANE_STATE} === 'nothing'`, 10000).catch(() => null);
+  if (gone === null) throw new Error('changed section and the pane still holds a conversation');
+  return 'left by changing section';
+}
+
+/**
  * Waits for a reloaded or relaunched client to be usable, and FAILS on the deadline.
  *
  * Every caller of this used to be `await sleep(6000)` - or 10 000, or 12 000, each number a guess

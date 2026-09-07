@@ -45,14 +45,22 @@ import {
   ensureChat,
   ensureConversation,
   evaluate,
+  lookAway,
   openChannel,
   PANE_STATE,
-  parkConversation,
   send,
 } from '../chat.mjs';
 import { closeExtraAppTabs } from './tabs.mjs';
 import { connect } from '../cdp.mjs';
-import { gate, ignoringExpectedLog, logcatReport, logcatSince, report, watch } from '../watch.mjs';
+import {
+  gate,
+  ignoringExpectedLog,
+  logcatReport,
+  logcatSince,
+  PHONE_COLD_BOOT,
+  report,
+  watch,
+} from '../watch.mjs';
 import { errorDetail, mark, record, recordObserved } from '../results.mjs';
 import { ACCOUNT_OF, OWNER_NAME, PEER_NAME, PORTS, SITE } from '../names.mjs';
 import { unlockClient } from './pingate.mjs';
@@ -235,7 +243,7 @@ async function multi1() {
 /**
  * MULTI-2 - a read performed on A1 clears the unread the same account holds on W1.
  *
- * W1 NEVER OPENS THE CONVERSATION, and that is the whole check. `parkConversation` puts it on a pane
+ * W1 NEVER OPENS THE CONVERSATION, and that is the whole check. `lookAway` puts it on a pane
  * holding nothing, so any clearing W1 does is something it LEARNT, never something it did: a check
  * that left the DM open on W1 would watch W1 mark its own messages read and call that a cross-device
  * sync.
@@ -255,18 +263,16 @@ async function multi2() {
 
     // BOTH OF THE ACCOUNT'S DEVICES LOOK AWAY FIRST, or the unread never accrues to be cleared.
     //
-    // AND EACH PARK ANSWERS FOR ITSELF. `parkConversation` returns four distinguishable strings, two
-    // of which mean it did NOT get the client out ("offers no back control", "back clicked but the
-    // pane stayed"), and this row used to drop that answer on the floor - which is how a device that
-    // never looked away would have been reported as a product that never cleared an unread.
+    // AND THE ANSWER IS THE POINT, WHICH IS WHY THIS IS `lookAway` AND NOT `parkConversation`.
+    // This row used to call the latter on both devices and drop what it said. On the PHONE that is
+    // enough - mobile carries a back control - but on W1 the desktop layout has none, so the park
+    // returned "this layout offers no back control", changed nothing, and left W1 sitting IN the
+    // conversation it is supposed to be accruing an unread for. Asserting the answer turned that
+    // into a visible ERROR on 2026-09-07 instead of a verdict about the product; `lookAway` is the
+    // remedy `parkConversation`'s own docblock prescribes, for both layouts.
     await ensureConversation(w2, OWNER_NAME);
-    const parkedW1 = await parkConversation(w1);
-    const parkedA1 = await parkConversation(a1);
-    for (const [label, said] of [['W1', parkedW1], ['A1', parkedA1]]) {
-      if (said !== 'left' && said !== 'already outside a conversation') {
-        throw new Error(`${label} would not leave its conversation: ${said}`);
-      }
-    }
+    const awayW1 = await lookAway(w1);
+    const awayA1 = await lookAway(a1);
     await sleep(2000);
 
     // WHO EACH CLIENT IS, FROM ITS OWN STORAGE - the DM is addressed by the two user ids, and a row
@@ -324,7 +330,7 @@ async function multi2() {
     // and only the pane distinguishes them.
     //
     // BOTH HALVES, because they refute different accidents: `PANE_STATE` says no conversation is
-    // open at all, which is the state `parkConversation` established, and the pane count says the
+    // open at all, which is the state `lookAway` established, and the pane count says the
     // marker is not being rendered as a message even if something re-opened something.
     const paneState = await evaluate(w1, PANE_STATE);
     const inPane = await countMessage(w1, m);
@@ -350,7 +356,7 @@ async function multi2() {
       w1NeverOpenedIt: w1StillParked,
       w1PaneState: paneState,
       w1MarkerInPane: inPane,
-      parked: { W1: parkedW1, A1: parkedA1 },
+      lookedAway: { W1: awayW1, A1: awayA1 },
     });
     return gated.verdict === 'PASS';
   } finally {
@@ -571,10 +577,21 @@ async function multi6() {
     const ordered = positions.every((p, i) => p !== -1 && (i === 0 || p > positions[i - 1]));
 
     const ok = missing.length === 0 && duplicated.length === 0 && ordered;
+    // THE PHONE DIED AND CAME BACK, WHICH IS THIS ROW'S PREMISE AND NOT A FINDING. A device woken
+    // after 60 s dead boots MLS, re-registers with FCM and pre-injects what the push cache held; the
+    // native half then hands each waiting push to the foreground that has taken the MLS state. Every
+    // one of those lines must keep breaking `clean` for a row that did NOT ask for a cold boot,
+    // which is why `PHONE_COLD_BOOT` is a constant this row NAMES rather than a classifier rule.
+    //
+    // The duplicate-ignored lines are `notable`, which never broke `clean` - and they are the fix
+    // working: the WS catch-up and the FCM cache legitimately overlap, and the ingest says so.
     const gated = gate(ok ? 'PASS' : 'FAIL', {
       W2: await report(o2),
-      A1: await report(oA1),
-      'A1-native': logcatReport(await logcatSince(since), 'A1-native'),
+      A1: ignoringExpectedLog(await report(oA1), PHONE_COLD_BOOT),
+      'A1-native': ignoringExpectedLog(
+        logcatReport(await logcatSince(since), 'A1-native'),
+        PHONE_COLD_BOOT
+      ),
     });
     await record('MULTI-6', gated.verdict, {
       ...gated.detail,

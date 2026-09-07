@@ -92,14 +92,34 @@ function exportsOf(source) {
   return { names, wildcard };
 }
 
+/**
+ * The file an import actually has to be checked against - which is NOT always the file it names.
+ *
+ * `names.mjs` IS DELIBERATELY ABSENT FROM THE REPOSITORY. It carries the test accounts' logins, PINs
+ * and device ids, this repository is PUBLIC, and `.gitignore` keeps it out of the tree; what IS
+ * committed is `names.example.mjs`, which declares the same exports. Nearly every runner imports it,
+ * so a checker that only asked `existsSync` passed on a developer workstation and reported **112
+ * failures in CI** - the first run of this gate, on the very commit that added it (2026-09-07).
+ *
+ * THE EXAMPLE IS THE CONTRACT, and checking against it is stricter rather than weaker: an export a
+ * runner needs must be DECLARED there, so a name added to a local `names.mjs` and never written into
+ * the example is now a failure - which is the drift that would otherwise reach a fresh clone as a
+ * runtime crash. If neither file exists, that is still a failure, and it says so.
+ */
+function resolveTarget(target) {
+  if (existsSync(target)) return target;
+  const example = target.replace(/names\.mjs$/, 'names.example.mjs');
+  return example !== target && existsSync(example) ? example : null;
+}
+
 console.log('every runner can be loaded at all:');
 for (const file of harnessFiles()) {
   const source = readFileSync(file, 'utf8');
   const rel = file.replace(ROOT + '\\', '').replace(ROOT + '/', '').split('\\').join('/');
   for (const { spec, names } of relativeImports(source)) {
-    const target = resolve(dirname(file), spec);
+    const target = resolveTarget(resolve(dirname(file), spec));
     checked++;
-    if (!existsSync(target)) {
+    if (target === null) {
       bad(`${rel} imports ${spec}, which does not exist`);
       continue;
     }

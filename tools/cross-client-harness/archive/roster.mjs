@@ -429,6 +429,26 @@ const peerWasUp = await isUp(PEER.toLowerCase());
 if (peerWasUp) note(`${PEER} killed in ${await killBrowser(PEER.toLowerCase())}ms`);
 else note(`${PEER} was already down`);
 
+/**
+ * Puts the peer back on its feet, whatever this row decided.
+ *
+ * MULTI-8 KILLED IT AND EXITED, so the estate was left one browser short and the NEXT row refused to
+ * start: on 2026-09-07 `roster.mjs --row 9` never ran at all, its preflight reporting "W2:
+ * unreachable on 9223 - browser closed?". The row was right to refuse - an unknown client state is
+ * exactly what it must not measure through - but the state was the previous row's litter. MULTI-9
+ * always restored the peer because it NEEDS it to send; MULTI-8 has no such need and therefore had
+ * no such line, which is the whole shape of the defect: a teardown that exists only where the row
+ * happens to want it is not a teardown.
+ *
+ * Called on every exit path of MULTI-8, including the INVALID one - an enrolment that failed leaves
+ * the estate just as broken as one that succeeded.
+ */
+const restorePeer = async () => {
+  if (!peerWasUp) return "the peer was already down when this row started";
+  await startBrowser(PEER.toLowerCase(), `${SITE}/chat`);
+  return `${PEER} brought back`;
+};
+
 // MULTI-9 needs the peer to SEND while the new device is pending, which means the peer must be alive
 // for that step. It is taken away first all the same: the enrolment must happen with the peer absent,
 // which is the condition the row names.
@@ -448,6 +468,7 @@ if (!newDeviceId || !minted.enrolled) {
     pinOk: minted.pinOk,
     what: row.what,
     timeline,
+    peerRestored: await restorePeer(),
   });
   minted.cx.close();
   ownerCx.close();
@@ -527,6 +548,7 @@ if (row.id === "MULTI-8") {
     unmet: missing,
     clean: reports.owner.clean && reports.newDevice.clean,
     observers: reports,
+    peerRestored: await restorePeer(),
   });
   minted.cx.close();
   ownerCx.close();
