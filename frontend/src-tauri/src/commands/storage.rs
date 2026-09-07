@@ -68,6 +68,37 @@ pub(crate) async fn recharger_mls_au_resume(
                 );
                 return Ok(false);
             }
+            // THE GUARD ABOVE GRADES ON GROUP EPOCHS, AND KEY MATERIAL IS NOT A GROUP EPOCH.
+            //
+            // A snapshot written before a prekey mint holds every group at the same epoch, so it
+            // passes `reload_is_monotonic` unchanged and installs a keystore missing the fifty
+            // bundles this device published seconds earlier. `key_package_a_clef_privee` then
+            // answers `false` about the device's own fresh mints, and that is precisely the
+            // observation `reconcilePublishedKeyPackages` reads as "the server holds an orphan"
+            // before purging the pool - the loop in `docs/wiki/backlog.md` whose cause is open.
+            //
+            // IT ACCUSES AND DOES NOT REFUSE, AND THE REASON IS THE WHOLE POINT. Refusing would
+            // keep the live manager, and this reload exists to pick up what a background JNI engine
+            // advanced while the app was away. That advance is often a RATCHET GENERATION rather
+            // than an epoch - a decrypted application message moves no epoch at all - so a refusal
+            // grading on key packages would silently drop exactly the background work the reload
+            // was written to rescue, trading a known defect for an unmeasured one.
+            //
+            // So the loss is NAMED rather than prevented: a correct mechanism with no report is
+            // found by hand, a day late, and this line is what turns the open cause into a reading
+            // instead of an inference. Nobody has yet seen a device print it.
+            match (current.key_package_count(), candidate.key_package_count()) {
+                (Ok(live), Ok(cand)) if cand < live => log::error!(
+                    "[RESUME] reload DROPS KEY MATERIAL - live keystore holds {} key package(s), the                      mls.bin being loaded holds {}. Every group is at or ahead of its live epoch, so                      the epoch guard cannot see this. The {} lost bundle(s) are packages this device                      may have PUBLISHED, and the reconciliation will read them back as server orphans                      and purge the pool (see backlog: the prekey purge loop). Accepted anyway - see                      the comment above for why refusing would be worse.",
+                    live,
+                    cand,
+                    live - cand
+                ),
+                (Err(e), _) | (_, Err(e)) => log::warn!(
+                    "[RESUME] key material could not be counted across this reload ({e}) - the epoch                      guard still held, but nothing checked whether key packages were dropped."
+                ),
+                _ => {}
+            }
         }
         *lock = Some(candidate);
         log::debug!("[RESUME] foreground manager reloaded from mls.bin (C2)");

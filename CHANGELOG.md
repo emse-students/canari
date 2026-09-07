@@ -11,6 +11,38 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a reload could drop the fifty key packages a device had just published, and nothing anywhere said so
+
+The native foreground resume replaces the live MLS manager with one rebuilt from `mls.bin`, gated by
+`reload_is_monotonic` - which compares GROUP EPOCHS and nothing else. **Key material is not a group
+epoch.** A snapshot written before a connection's prekey mint therefore holds every group at exactly
+its live epoch, passes the guard unchanged, and installs a keystore missing all fifty bundles the
+device published seconds earlier. `key_package_has_private` then answers `false` about its own fresh
+mints, and that answer is precisely what `reconcilePublishedKeyPackages` reads as "the server holds
+an orphan" before purging the pool - the churn that grew one phone's `mls.bin` by 1.26 MB in a day
+and took a checkpoint from 17 s to 48 s.
+
+**The web side had already written the argument down and predicted this miss.**
+`installUnlessOvertaken` carries both guards there, and its docblock says an epoch is *"evidence for
+'is this snapshot from an older epoch' and for nothing else"*, then warns that *"a rule that lives at
+one call site is a rule the next off-thread worker will not inherit"*. The next caller was in Rust,
+across a boundary no compiler spans, and it inherited only the epoch half.
+
+**It accuses rather than refuses, and that is a decision rather than a shortcut.** On web the two
+candidates are ordered - the worker's output is older and the live client wins - so refusing is free.
+At a resume BOTH sides have moved: the background engine advanced the blob, the foreground minted
+into the live manager, and that advance is often a ratchet generation rather than an epoch, which no
+epoch comparison can see. Refusing would silently drop the background work the reload exists to
+rescue. So the loss is named at the boundary where it happens, and the merge that would prevent it is
+recorded as unwritten.
+
+Pinned without a phone: `reload_monotonic.rs` now asserts that a snapshot predating a mint is
+ACCEPTED by the epoch guard, that the key-package count drops by fifty across it, and that **50 of 50
+published packages are unrecognisable to the reloaded manager** - the `purged 50/50` line reproduced
+on a desktop. The byte-identity candidate for the same defect is refuted in the same pass: the
+delivery service stores and returns the published base64 verbatim, so the round trip cannot change a
+byte.
+
 ### Fixed - a device whose notification permission is denied narrated three log lines per message, and one of them was false
 
 Measured on HEAL-REVOKE-9 (2026-09-07): **12 inbound messages produced 33 `[NOTIF]` lines** on a

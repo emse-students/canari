@@ -244,14 +244,14 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    rows that watch a responder heal one have no window left and need a group the device cannot
    self-serve ([backlog](docs/wiki/backlog.md)).
 2. **P1 - A DEVICE REPLACES ITS WHOLE PREKEY BATCH ON EVERY CONNECTION, AND THAT CHURN GROWS
-   `mls.bin`** - P1 for the checkpoint it feeds, not because pools run dry. Measured on both estates
-   2026-09-07; CAUSE STILL OPEN ([backlog](docs/wiki/backlog.md)).
+   `mls.bin`** - P1 for the checkpoint it feeds, not because pools run dry. **Cause narrowed to ONE
+   candidate 2026-09-08 and reproduced with no phone**; an accusation now names it at the reload
+   boundary and **one device line is owed** ([backlog](docs/wiki/backlog.md)).
 3. **P1 - a PLACEHOLDER held a member's seat**; only a member's CLIENT can say whether a LEAF is
    left in the MLS tree and **NOTHING HAS** - the three identities cited here as that evidence were
    this campaign's OWN mention fixtures, named 2026-09-07 ([backlog](docs/wiki/backlog.md)).
-4. **HEAL-REVOKE IS FOUR CLEAN `PASS` ROWS SINCE 2026-09-07** - their shared dirty line was the
-   key-package path writing outside the persister; it now measures 0 where it was 4-in-5, and
-   removing it exposed the notification noise underneath ([backlog](docs/wiki/backlog.md), `CHANGELOG.md`).
+4. **HEAL-REVOKE IS FOUR CLEAN `PASS` ROWS, RE-CONFIRMED 2026-09-08** on a rebuilt estate; the P1
+   they were owed a measurement for is closed and deleted (`CHANGELOG.md`).
 5. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - ONE merge mechanism
    and ONE arming point, asserted only by `bun tools/ecosystem-shape/shape.mjs`
    ([rebuild](docs/wiki/ecosystem-convergence.md#12-the-cicd-rebuild-2026-09-04---the-same-four-workflows-in-every-repository),

@@ -1971,198 +1971,6 @@ rows with the invitation question in
 [Communities and permissions](#communities-and-permissions): a notification that never arrives and a
 notification that arrives undecryptable are different failures, and only the logcat separates them.
 
-### P1 - a device that joins a group ends up permanently short of the messages sent just before it arrived: the responder gives up seven seconds before the answer comes, and the one retry that would have saved it is swallowed by a coalescing window (measured on the local estate 2026-09-05, eight reproductions and ONE CONTROL THAT PASSED)
-
-**HEAL-REVOKE-5 found it on the first run that ever sent a message.** The runner's own docstring had
-claimed for a week that the world it moves while the device is away is made of *"a group created, a
-group deleted, and messages sent"*; the code moved MEMBERSHIP only. Adding the message half took one
-run to fail.
-
-**THE MEASUREMENT, IDENTICAL IN SEVEN RUNS AND ON TWO DIFFERENT ROWS** - HEAL-REVOKE-5 six times and HEAL-REVOKE-8 once, the latter with every one of its own assertions green. W1 creates a group while the victim is revoked, says
-three marked things in it, and the victim then comes back:
-
-| | messages seen | time |
-| --- | --- | --- |
-| the returned device | **0 of 3** | after waiting **60 s** |
-| a reference device minted ~90 s later, same profile, same group | **3 of 3** | already there, **2 ms** |
-
-**IT IS NOT THE INSTRUMENT, AND THREE SEPARATE THINGS SAY SO.** Both devices are given the same
-budget and the wait ends the instant the target is reached, so the reference's 2 ms and the returned
-device's 60 s are the same question asked with the same patience. A RELOAD on the returned device -
-which rebuilds the view from the store - still shows 0, so this is not a conversation failing to
-re-render something it holds. And the first version of the probe DID manufacture a false asymmetry
-by reading the two devices half a minute apart; that was found and removed before any of this was
-believed, which is why the budget is equal now.
-
-**IT IS NOT FORWARD SECRECY EITHER, WHICH IS THE FIRST THING TO RULE OUT.** A device that joins at
-epoch N cannot read epoch N-1, and that would blind BOTH devices equally - the assertion is an
-EQUALITY for exactly that reason. Both joined after the messages were sent. One got them.
-
-**BOTH DEVICES TAKE THE SAME PATH, VERBATIM.** Neither is added by a member; both let themselves in:
-
-    [READD] 968a2339... roster seat with NO queued Welcome and NO add in flight - nobody owes us
-            anything; serving ourselves
-    [READD] 968a2339... externalJoin -> joined
-    [HISTORY_STATE] Sent for 968a2339... - 00000000..., from 2026-06-07T00:00:00.000Z
-    [HISTORY_RECONCILE] asked 968a2339... whether we hold the same history
-
-Same path, same state key, same window. `recovery.ts` calls `reconcileGroup` right after an external
-join precisely because *"an external join lands at the current epoch WITHOUT the pre-join history,
-which only a member can re-encrypt"* - so the mechanism is there and both devices used it.
-
-**THE DIFFERENCE IS ENTIRELY ON THE ANSWERING SIDE, AND IT IS A SILENCE.** W1's console:
-
-| when (local) | what W1 did |
-| --- | --- |
-| 21:49:50 | said the three things - they are in its own store |
-| 21:49:56 | `[HISTORY_STATE] From ... for 968a2339...` - **received the returning device's key, and nothing more** |
-| 21:51:21 | received the reference's key, `Keys differ`, asked it to describe itself |
-| 21:51:25 | `[HISTORY_BUNDLE] Chunk 1/1 - 3 msg`, `Diff sent: 3 of 3 requested` |
-
-**Six seconds after storing three messages of its own, W1 answered nothing at all.** Not
-`same state as ... - nothing to do`, not `no probe from ... - nothing to answer`, not `store
-unreadable - staying silent`: `handleHistoryRequest` writes a line on every branch it can take, and
-none of them is in the window. **The comparison never ran.** Ninety seconds later the identical ask
-from an identical device ran it and worked.
-
-**THE CAUSE, AND IT IS A RACE BETWEEN TWO CLOCKS ON TWO DIFFERENT DEVICES.** The sixth run caught
-the whole exchange, second by second, with the phone deliberately taken off the socket so only W1
-could be elected:
-
-| when | who | what |
-| --- | --- | --- |
-| 21:59:14 | returning device | external join, then `[HISTORY_STATE] Sent`, `asked ... whether we hold the same history` |
-| 21:59:14 | **W1** | `Keys differ for b88db381... - asked <returning device> to describe` |
-| ... | returning device | **silence for 67 seconds**, while it externally joins the other nineteen groups |
-| **22:00:14** | **W1** | **`asked ... to describe itself, no digest came`** - it gives up |
-| 22:00:21 | returning device | `holds something different - describing our store` |
-| 22:00:22 | returning device | `[HISTORY_DIGEST] Sent` - **seven seconds too late** |
-| 22:00:38 | reference device | the same exchange, digest in the SAME SECOND, `3 of 3 requested message(s)` sent |
-
-**Both halves are individually reasonable and their assumptions do not meet.** The responder waits
-`HISTORY_PROBE_WAIT_MS`, which is `DIGEST_TTL_MS` = **60 s**. The asker answers a digest request only
-`answerAfterMailboxDrained`, deliberately - *"a digest computed while this device is still applying
-its own queue describes a store it is in the middle of completing"*. **A device that has just come
-back is applying twenty external joins**, so its queue takes longer to drain than the responder is
-willing to wait. The reference wins because it happens to ask when its own queue is already quiet.
-
-**AND NOTHING RETRIES - BUT NOT FOR THE REASON FIRST WRITTEN HERE.** The first version of this
-entry said a late joiner holds no unreadable frame and so never raises the reconciler's other
-trigger. **That is false, and HEAL-REVOKE-7 measured it false.** The server hands a joining device
-the group's queued frames, it cannot read any of them, and it says so out loud six seconds after the
-join:
-
-    [22:11:09] [HISTORY_RECONCILE] asked fc1cb0bc... whether we hold the same history
-    [22:11:15] [HISTORY] fc1cb0bc... holds 4 frame(s) it can never read - reconciling
-    [22:12:09] [HISTORY_REQ] fc1cb0bc... asked <the returning device> to describe itself, no digest came
-
-**The trigger fires. The ask never leaves.** `reconcileGroup` returns at `if (recentlyAsked(groupId,
-now)) return false` - `PROBE_COALESCE_MS` is 30 s and the join's own ask was 6 s ago - and it returns
-there SILENTLY, after the caller has already printed the word *reconciling*. So the one line a reader
-would trust is the one that is not true.
-
-**THE COALESCING WINDOW IS SOUND ONLY UNDER AN ASSUMPTION THAT IS FALSE HERE**, and the code states
-the assumption itself: being wrong about it costs *"one repair deferred to the next edge, and the
-next connection re-asks unconditionally either way"*. The next connection edge is the next time this
-device reconnects - which for a session that simply stays up is never. The trigger's evidence is
-spent by then (the frame is acked and gone), so the deferral is permanent. The conversation settles,
-shows READY, shows `amber: []`, and is short three messages for ever, with nothing anywhere saying
-so.
-
-**THE ORDER PAIR IS THE CONTROLLED EXPERIMENT, AND IT ISOLATES THE VARIABLE TO ONE NUMBER.**
-HEAL-REVOKE-7 runs the same runner twice with one difference - whether anybody is online at the
-moment the device returns - and the two runs disagree on the final state, which is why the pair is a
-`FAIL`:
-
-| | first ask | the frame trigger | gap between them | second ask | messages |
-| --- | --- | --- | --- | --- | --- |
-| `--order last` (world online) | 22:11:09, at the join | 22:11:15 | **6 s - inside the 30 s window** | never | **0 of 3, for ever** |
-| `--order first` (world offline, lifted later) | 22:14:18, at the join, answered by nobody | 22:15:00 | **42 s - outside it** | 22:15:00, answered | **3 of 3 in 3.5 s** |
-
-**The run that had NOBODY to answer its first ask is the run that ends up complete.** Its first ask
-was wasted, so its retry fell outside the coalescing window; by the time the retry went out its own
-mailbox had drained, the digest went out in two seconds, `history_bundle` landed, and the device is
-whole. The run that had a responder available immediately is the one that loses the messages
-permanently. **The failure needs the two clocks AND the swallowed retry: fix either and this
-measurement passes.**
-
-**THIS IS ALSO WHAT HEAL-repair IS BLOCKED ON.** That row is `PARTIAL` - 7 of 14 reached the peer -
-and the open question written beside it is the string `no digest came`. It is the same line, from
-the same branch, for the same reason. **One cause, two rows**, and the second one has been open since
-2026-09-05 morning with no mechanism proposed.
-
-**TWO HYPOTHESES WERE MEASURED AND KILLED FIRST**, which is why the one above is stated plainly.
-*The server elected a device that was not there*: the election reads `user:online:<user>:<device>`
-before forwarding and skips anything else, so it cannot. *The elected member was the phone, online
-but frozen*: the phone IS a member of that group and WAS online, and the Android was measured
-`Awake`, `mState=ACTIVE`, Canari the top resumed activity - not frozen - and the failure reproduced
-identically with the phone force-stopped and off the socket entirely.
-
-**IT IS THE USER'S OWN REPORTED SYMPTOM CLASS**, and it is worth reading beside the P1 about twelve
-dropped messages: *"j'ai l'impression de n'avoir qu'une petite partie des messages qu'il m'envoie"*.
-A conversation that is READY and incomplete is indistinguishable, to its owner, from one that is
-complete.
-
-**WHAT THE FIX HAS TO SATISFY, and a deadline is not it** ([durable-rules](durable-rules.md):
-*termination comes from a proof, never from a clock*). Raising the 60 s buys the next slower boot
-nothing, and neither does shortening the coalescing window - both are the same mistake twice.
-
-**The responder's half is the one that can be made event-driven, and the shape is already in this
-file.** `history_pull` is answered on ARRIVAL, addressed, with no rendezvous and no TTL, and it
-terminates because a bundle asks for nothing. The second leg of the state exchange is the only one
-that needs a live waiter, and it needs it for nothing: the digest carries the manifest and the
-window, our own store carries the rest, so **a digest that arrives for a solicitation we issued is
-answerable whenever it arrives**. The 60 s then bounds MEMORY, which is what a TTL is for, instead
-of bounding CORRECTNESS, which is what it is doing now.
-
-**The asker's half is the retry, and it must not be a timer either.** A trigger that is coalesced is
-being told *an ask already in flight will cover you* - so the honest form is to REMEMBER it and let
-the in-flight ask's window close into a real second ask, rather than to drop it and hope a
-reconnection comes. And the silent `return false` has to say something: a line reading *reconciling*
-followed by nothing is worse than no line at all.
-
-**AND THE RE-RUN FOUND A SECOND CAUSE WITH THE SAME SYMPTOM, WHICH IS WHY THE FIRST FIX DID NOT
-CLOSE THE ROW.** On the build carrying it, HEAL-REVOKE-7 `--order last` failed identically - and the
-SERVER's log named the difference:
-
-    22:41:50  FORWARDED target=<the phone>  requester=<the returning device>   - silence
-    22:41:56  the returning device holds 4 frames it cannot read - swallowed, 6 s into 30
-    22:43:15  FORWARDED target=<the phone>  requester=<a reference device>     - silence
-    22:43:20  FORWARDED target=<W1>         requester=<a reference device>     - 3 of 3 sent
-
-**The election is RANDOM by design**, and `notifyHistoryRequest` says why: a backgrounded Android
-holds its socket open, so `user:online` is true while the app cannot process the frame, and
-randomising *"lets those retries rotate past a frozen peer to a genuinely reachable one"*. **There
-were no retries.** The reference device is whole because it asked twice - a fresh enrolment joins
-each group, which clears the coalescing note - while the returning device re-joined a group it
-already held (`already in WASM - skip`), kept the note, and asked once. Two defects, one symptom:
-the responder that answers TOO LATE, and the responder that answers NOTHING.
-
-**Both are fixed.** The second by `escalateReconciliation`: a trigger that can prove incompleteness -
-a frame this device holds and cannot read - excludes the member the in-flight ask reached and elects
-another, terminating on the server's own `no_peer_online` + `excludedOnline` proof, one member per
-step, bounded by membership.
-
-**WHAT REMAINS OPEN IS THE REASON THE ESCALATION HAS TO BE GATED ON EVIDENCE: silence means both
-*we agree* and *nobody answered*.** They are the same observation, so a device with no local proof of
-a gap cannot tell a healthy responder from a frozen one. Making the agreeing responder ack would cost
-one frame per group per ask, which is the whole saving the state key exists for - so it is a design
-question rather than an oversight, and it is written here rather than improvised.
-
-**FIXED THE SAME DAY, AND THE ROW IT WAS FOUND ON IS WHAT VERIFIES IT.** Both halves shipped
-together: `answerHistoryDigest` is a function rather than a continuation inside the wait, and
-`systemMessageHandler` calls it when a digest arrives for a solicitation this device issued and no
-waiter took - addressed by `takeDigestSolicitation`, so the leg stays two-party and the election
-still elects exactly one responder. The 60 s now bounds MEMORY. The coalesced swallow is logged
-instead of silent, so `history.ts`'s *reconciling* line can no longer stand for something that did
-not happen. Nine tests, three files. **What is left is the measurement**: HEAL-REVOKE-7 `--order
-last` and HEAL-REVOKE-5 re-run on a build carrying it, and HEAL-repair, which was `PARTIAL` on the
-same string.
-
-**The instrument is in and the next measurement is a re-run, not an investigation.** The runner
-records the `[READD]`/`[HISTORY*]` trail of all three clients on every run, filtered to the group by
-its id.
-
 ### P2 - FIXED THE SAME NIGHT - the history repair took THREE MINUTES because a digest waited for the asking device's WHOLE mailbox rather than the group it describes (measured on the local estate 2026-09-05)
 
 **The loss is fixed and what is left is a duration.** HEAL-REVOKE-7 `--order last`, on the build
@@ -3743,8 +3551,10 @@ Three separate things, in the order they have to be answered:
    can be read: a re-enrolment writes `CanariDB_<userId>` back under the same name within seconds, so
    no later sample separates a store that survived from one that was rebuilt. It does NOT settle
    points 2 and 3, and it does not settle the RETURN - whether a device that comes back ends where a
-   fresh one ends is HEAL-REVOKE-2 and -3, and those rows have no runner yet. **The entry stays open
-   on them**, not on this half.
+   fresh one ends is HEAL-REVOKE-2 and -3. ~~those rows have no runner yet~~ - **they have one, and
+   this sentence contradicted its own entry four paragraphs later**: the runner is
+   `archive/healrevoke.mjs --row 2 / --row 3` and both rows are `PASS` on the board. **The entry
+   stays open on points 2 and 3**, not on this half and not on a missing instrument.
 
    **AND THE FIRST ATTEMPT AT THIS ROW WAS `INVALID` FOR A REASON THAT WAS NOT THE PRODUCT'S**, which
    is worth recording because the sentence it wrote read exactly like one: *"the victim could not be
@@ -4870,10 +4680,18 @@ whose pool peers had fully consumed. Both produce the identical signature, and *
 history that separates them**. What the population settles is the severity claim; what it cannot
 settle is the mechanism.
 
-**SO THE ONE OBSERVATION STILL OWED IS THE GUARD'S LINE**, from a device that reconnects while
-holding a published batch: `REFUSED to purge N/M` means the round-tripped bytes matched what the
-session minted, which kills candidate 1 and leaves the manager identity and the race; `purged N/M`
-means they did not, which is candidate 1. One line, and nobody has seen it yet.
+**THE OBSERVATION STILL OWED IS NOW TWO LINES, AND THIS PARAGRAPH SAID SOMETHING ELSE UNTIL
+2026-09-08.** It read `purged N/M` as proof of candidate 1, and candidate 1 has since been refuted
+from the code - the round trip cannot change a byte - so that reading is gone and the lines mean
+something narrower:
+
+| line, from a device reconnecting while holding a published batch | what it settles |
+| --- | --- |
+| `REFUSED to purge N/M` | this session's own fingerprints matched, so the pool is protected and the seam held for those bytes |
+| `purged N/M` | the fingerprints did NOT match. Since the bytes cannot have changed, the packages were minted by a process this `publishedThisSession` set does not describe - the manager/process identity, which is candidate 2's family |
+| `[RESUME] reload DROPS KEY MATERIAL - live keystore holds N ... holds M` | **candidate 2 outright**, and it is the line to look for first: it names the loss at the boundary where it happens rather than one layer later |
+
+Nobody has seen any of the three on a device yet.
 
 **THE 32 ARE THEIR OWN QUESTION**, and none of them is revoked. Whether they are dormant devices that
 never reconnected, or devices genuinely stuck with an empty pool, is unanswered - `MAX(createdAt)`
@@ -5046,11 +4864,70 @@ last-resort fallback recognised, and another device's package correctly refused.
 right and the defect is above it** - in the seam between publishing and asking. That narrows it to a
 short list, and each is checkable without a phone:
 
-1. the bytes `listOwnPrekeys` returns are not byte-identical to what `publishKeyPackages` sent
-   (base64 framing, `number[]` marshalling across the Tauri IPC);
-2. the manager answering `key_package_a_clef_privee` is not the one that minted - a state reload
-   inside the 48-second checkpoint window would do it, and that window is now enormous;
-3. the reconciliation races the publish and reads a list the mint has not landed in.
+1. ~~the bytes `listOwnPrekeys` returns are not byte-identical to what `publishKeyPackages` sent
+   (base64 framing, `number[]` marshalling across the Tauri IPC)~~ - **REFUTED FROM THE CODE,
+   2026-09-08**, and by construction rather than by a run. `publishKeyPackages` sends
+   `toBase64(bytes)`; the server VALIDATES the string and stores it verbatim
+   (`devices.controller.ts`, `registerDevicePrekeys` - `create({ keyPackage: kp })`, no decode, no
+   re-encode); `listDevicePrekeys` returns `r.keyPackage` straight off the column; the client reads
+   it back with `fromBase64`. There is no transformation anywhere on the path, so the round trip
+   cannot change a byte - which also means the guard's fingerprint and `keyPackageHasPrivate`
+   cannot both be failing for THIS reason;
+2. **the manager answering `key_package_a_clef_privee` is not the one that minted - NAMED PRECISELY
+   2026-09-08, AND REPRODUCED WITHOUT A PHONE.** The mechanism is the reload boundary:
+   `recharger_mls_au_resume` replaces the live manager with one rebuilt from `mls.bin`, gated ONLY
+   by `reload_is_monotonic`, which compares GROUP EPOCHS and nothing else. **Key material is not a
+   group epoch.** A snapshot predating a mint therefore holds every group at exactly its live epoch,
+   passes the guard, and installs a keystore missing all fifty bundles the device published seconds
+   earlier - after which `key_package_has_private` answers `false` about the device's own mints,
+   which is exactly what the reconciliation reads as a server orphan.
+   `reload_monotonic.rs::a_snapshot_predating_a_mint_passes_the_epoch_guard_while_losing_every_minted_key_package`
+   pins all three steps: the guard accepts, the count drops by 50, and **50 of 50 published packages
+   are unrecognisable to the reloaded manager** - the `purged 50/50` line, reproduced on a desktop.
+   *This makes the checkpoint-duration correlation the entry below wrote as a bare hypothesis into a
+   consequence: a 48 s checkpoint is a 48 s window in which the blob on disk is the PRE-MINT one,
+   seven times wider than at 6.9 s.* **What it does NOT prove is that a resume actually fires inside
+   that window on the handset** - that is the observation still owed, and the instrument below is
+   what answers it;
+3. the reconciliation races the publish and reads a list the mint has not landed in. **Partly
+   answered**: `generateKeyPackage` is AWAITED before the reconciliation is started, and
+   `generer_key_packages_et_persister` mints AND writes `mls.bin` under the same lock, so the mint is
+   durable before the list is asked for. What remains true is that the reconciliation is started with
+   `void` (`initializeConnection.ts`) and therefore runs CONCURRENTLY with the rest of connection
+   sync - which is what makes candidate 2's window reachable at all.
+
+**AND CANDIDATE 2 IS NOT A NEW HYPOTHESIS - IT IS A KNOWN DEFECT CLASS WHOSE NATIVE INSTANCE WAS
+MISSED, AND THE WEB SIDE HAD ALREADY WRITTEN THE ARGUMENT DOWN.** `WebMlsService.installUnlessOvertaken`
+exists for precisely this, and its docblock states the finding above in its own words:
+
+> `swapClientMonotonic` cannot answer this. It refuses a regression and measures one with the EPOCH,
+> which is evidence for "is this snapshot from an older epoch" and for nothing else - a generation
+> that moved inside one epoch is just as stale and completely invisible to it.
+
+It then predicts the miss: *"a rule that lives at one call site is a rule the next off-thread worker
+will not inherit"*. **`recharger_mls_au_resume` is that next caller** - it snapshots (`mls.bin`),
+works on a copy (loads a candidate), and installs it - and it inherited only the epoch half, across
+a language boundary where nothing could compare the two. **The web guard is not theoretical either:
+it FIRED during the HEAL-REVOKE-5 run of 2026-09-08**, on the key-package path itself -
+`[MLS] key package worker state DISCARDED: the live client was mutated 1 time(s) since the snapshot`
+- so the hazard is observed, on the same operation, on the platform that guards it.
+
+**WHAT THIS DOES NOT LICENCE IS COPYING THE WEB FIX**, and the asymmetry is the reason the native
+side gets an accusation instead. On web the two candidates are ORDERED: the worker's output derives
+from an older snapshot and the live client is authoritative, so refusing is free. At the native
+resume BOTH sides have moved - the background engine advanced the blob, the foreground minted into
+the live manager - and neither is a superset of the other. That is a merge, not a precedence, and
+nobody has written it.
+
+**THE INSTRUMENT FOR CANDIDATE 2 SHIPPED 2026-09-08, AND IT ACCUSES RATHER THAN REFUSES.**
+`recharger_mls_au_resume` now compares `key_package_count()` across the reload and logs
+`[RESUME] reload DROPS KEY MATERIAL - live keystore holds N ... the mls.bin being loaded holds M` at
+`error` level. **Refusing was considered and rejected on a mechanism, not a budget**: this reload
+exists to pick up what a background JNI engine advanced while the app was away, and that advance is
+often a RATCHET GENERATION rather than an epoch - a decrypted application message moves no epoch at
+all - so a refusal grading on key packages would silently drop the background work the reload was
+written to rescue, trading a known defect for an unmeasured one. **A later session must not "finish"
+this by turning the accusation into a refusal without answering that first.**
 
 **WHY THE EXISTING SAFETY NETS DO NOT CATCH IT.** `reconcilePublishedKeyPackages` is documented as
 *"conservative: only purges PROVEN orphans"* and treats a validation error as "leave it alone" - so a

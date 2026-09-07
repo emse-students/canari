@@ -236,6 +236,28 @@ impl MlsManager {
         }
     }
 
+    /// How many key package bundles this keystore holds - THE AXIS THE RELOAD GUARD CANNOT SEE.
+    ///
+    /// [`Self::reload_is_monotonic`] compares GROUP EPOCHS and nothing else, and the native foreground
+    /// resume replaces the live manager on that evidence alone. Key material is not a group epoch, so
+    /// a snapshot predating a mint passes that guard unchanged and installs a keystore missing the
+    /// bundles the device published seconds earlier. `key_package_has_private` then answers `false`
+    /// about this device's own fresh mints, which is exactly the observation
+    /// `reconcilePublishedKeyPackages` reads as "the server holds an orphan" before purging the pool.
+    ///
+    /// A COLUMN IS ONLY EVIDENCE FOR THE QUESTION IT WAS WRITTEN TO ANSWER. This one exists so the
+    /// second axis can be STATED at that boundary rather than assumed, and it deliberately reuses
+    /// [`Self::state_composition`]'s scan rather than carrying a second copy of the label rule.
+    ///
+    /// @returns the number of `KeyPackage` entries, or the storage error that prevented counting
+    pub fn key_package_count(&self) -> Result<usize, MlsError> {
+        Ok(self
+            .state_composition()?
+            .into_iter()
+            .find(|r| r.label == "KeyPackage")
+            .map_or(0, |r| r.entries))
+    }
+
     /// Marks the CBOR snapshot stale after any MLS state mutation.
     ///
     /// INVARIANT: every method that mutates `self.provider` storage, `self.groups`,

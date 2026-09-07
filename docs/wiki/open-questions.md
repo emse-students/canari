@@ -107,6 +107,32 @@ Two shapes, and the choice is the user's:
 started - it is a real work package, and NOTIF-12 records the current behaviour rather than failing
 on it, so nothing here blocks the campaign.
 
+### QUESTION - a reconciler's SILENCE means both "we agree" and "nobody answered", and only one of them is safe to escalate on
+
+Split out of the responder P1 on 2026-09-08, when that entry closed on its measurement. **The defect
+is fixed and measured; what is left is a design choice nobody has made**, which is why it belongs
+here rather than in [backlog](backlog.md).
+
+`escalateReconciliation` rotates to another member when a device can PROVE it is incomplete - it
+holds a frame it can never read. That proof is what gates the escalation, and the gate exists
+because the observation it would otherwise act on is ambiguous: a responder that stays quiet because
+it holds the same history and a responder that is frozen produce **the identical silence**. A device
+with no local proof of a gap cannot tell them apart, so it cannot escalate on silence alone.
+
+**The obvious answer costs the saving the mechanism was built for.** Making the agreeing responder
+ACK would disambiguate it immediately - one frame per group per ask - and that is exactly the traffic
+the state-key comparison exists to avoid. So the question is a trade, not an oversight:
+
+- is one ack per group per ask affordable at the population's real ask rate, measured rather than
+  assumed?
+- or is there a cheaper discriminator - the server already knows whether it forwarded to anybody
+  (`no_peer_online`, `excludedOnline`), and that is a fact about REACHABILITY the asker currently
+  never sees?
+
+**Nothing should be written until one of those is measured.** The second looks cheaper and needs no
+new frame, but it answers a different question - "was anyone reachable" is not "did the reachable one
+agree" - and conflating them is the shape this repository keeps paying for.
+
 ### Is a Remove meant to be durable against a later re-add?
 
 **Raised 2026-08-26 by GRP-8**, and it is a decision rather than a defect - which is why the P2 it sits
