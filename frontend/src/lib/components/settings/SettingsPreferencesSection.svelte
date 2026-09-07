@@ -15,12 +15,13 @@
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { changeLocale, getLocale, locales, LOCALE_LABELS } from '$lib/i18n';
+  import { isCoarsePointerDevice } from '$lib/utils/pointerDevice';
 
   // The vibration toggle is only meaningful on touch-capable hardware; detect it here so the
   // section needs no props and stays drop-in.
   let isTouchDevice = $state(false);
   onMount(() => {
-    isTouchDevice = window.matchMedia('(pointer: coarse)').matches;
+    isTouchDevice = isCoarsePointerDevice();
   });
 </script>
 

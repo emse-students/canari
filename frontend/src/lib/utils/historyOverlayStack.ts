@@ -1,3 +1,4 @@
+import { isOverlayLayout } from './viewport';
 /**
  * History-based overlay stack - Android Back button support.
  *
@@ -56,10 +57,16 @@ let initialized = false;
  */
 let skipPops = 0;
 
-/** Viewports where chat/drawers use full-screen overlays (matches Tailwind `xl`). */
+/**
+ * Viewports where chat/drawers use full-screen overlays.
+ *
+ * The query itself lives in `viewport.ts` - four hand-written breakpoints had drifted apart, two of
+ * them by a pixel. This one asks about WIDTH ALONE and deliberately not about the pointer: a narrow
+ * mouse-driven window needs the full-screen drawers just as much as a phone does.
+ */
 export function isMobileOverlayLayout(): boolean {
   if (!isBrowser) return false;
-  return window.matchMedia('(max-width: 1279px)').matches;
+  return isOverlayLayout();
 }
 
 /**

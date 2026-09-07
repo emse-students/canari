@@ -4,6 +4,7 @@
   import { LoaderCircle, FingerprintPattern, LogOut, TriangleAlert } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { isValidPin } from '$lib/utils/chat/pinValidation';
+  import { isCoarsePointerDevice } from '$lib/utils/pointerDevice';
 
   interface Props {
     /** Whether the modal is visible. */
@@ -84,7 +85,9 @@
   // Default to numpad on touch devices, keyboard input on desktop.
   let useNumpad = $state(true);
   onMount(() => {
-    useNumpad = window.matchMedia('(pointer: coarse)').matches;
+    // `pointerDevice.ts` already owned this question; writing the query out again was a second copy
+    // of it, and a copy is what lets one of them drift.
+    useNumpad = isCoarsePointerDevice();
   });
 
   $effect(() => {

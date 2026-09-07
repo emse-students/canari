@@ -39,7 +39,13 @@ const PEER = 'peer-user-id';
 const CONVO = 'conversation-key';
 const LIVE_DRAIN = { bufferUi: true, showOverlay: false };
 
-function makeContext() {
+/**
+ * `lookingAt` IS A FIXTURE PARAMETER SINCE 2026-09-07: "the tab is visible and focused" stopped
+ * being the whole question. A visible window sitting on another route, or on a narrow layout
+ * showing a different conversation, can see nothing of this arrival - `arrivalVisibility.ts` owns
+ * the rule and asserts every cell. The default stays `something-else`.
+ */
+function makeContext(lookingAt = 'something-else') {
   const sendSystemNotification = vi.fn().mockResolvedValue(undefined);
   const conversations = new SvelteMap<string, Conversation>([
     [CONVO, { id: CONVO, name: CONVO, messages: [], unreadCount: 0, lastMessageAt: 0 } as never],
@@ -50,7 +56,7 @@ function makeContext() {
     deviceKeyB64: 'device-key',
     authToken: 'token',
     // Not the open conversation: a hidden tab showing this very thread is a different question.
-    selectedContact: 'something-else',
+    selectedContact: lookingAt,
     // BOTH writers, because the two inbound paths use different ones: the live path saves one
     // message and the bulk flush saves the batch. A fixture with only the first made
     // `batchAddMessages` log a real TypeError into every drain case - harmless to the assertion,
@@ -128,9 +134,11 @@ describe('a hidden tab is notified on both inbound paths', () => {
     expect(sendSystemNotification).toHaveBeenCalledTimes(1);
   });
 
-  it('a VISIBLE, focused tab is told nothing on either path - the user is looking at it', async () => {
+  it('a VISIBLE, focused tab READING THAT CONVERSATION is told nothing on either path', async () => {
     const messaging = useMessaging();
-    const { ctx, sendSystemNotification } = makeContext();
+    // "The user is looking at it" now has to be stated rather than inferred from the tab being in
+    // front: a focused window on another route sees this arrival nowhere and IS notified.
+    const { ctx, sendSystemNotification } = makeContext(CONVO);
     hideTheTab(false);
 
     await messaging.addMessageToChat(PEER, 'live message', CONVO, ctx, { messageId: 'live-2' });

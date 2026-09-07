@@ -48,7 +48,13 @@ const PEER = 'peer-user-id';
 const CONVO = 'conversation-key';
 const LIVE_DRAIN = { bufferUi: true, showOverlay: false };
 
-function makeContext() {
+/**
+ * `lookingAt` IS A FIXTURE PARAMETER SINCE 2026-09-07, because "the app is on screen" stopped being
+ * the whole question. A phone in the foreground still shows exactly ONE conversation, so a message
+ * for any other one is visible nowhere - see `arrivalVisibility.ts`, which owns the rule and asserts
+ * every cell of it. The default stays `something-else`, the state most of these cases are about.
+ */
+function makeContext(lookingAt = 'something-else') {
   const sendSystemNotification = vi.fn().mockResolvedValue(undefined);
   const conversations = new SvelteMap<string, Conversation>([
     [CONVO, { id: CONVO, name: CONVO, messages: [], unreadCount: 0, lastMessageAt: 0 } as never],
@@ -58,7 +64,7 @@ function makeContext() {
     userId: ME,
     deviceKeyB64: 'device-key',
     authToken: 'token',
-    selectedContact: 'something-else',
+    selectedContact: lookingAt,
     // BOTH writers, because the two inbound paths use different ones: the live path saves one
     // message and the bulk flush saves the batch. A fixture with only the first made
     // `batchAddMessages` log a real TypeError into every drain case - harmless to the assertion,
@@ -137,14 +143,30 @@ describe('native mobile notifies for the message no push will ever carry', () =>
     expect(sendSystemNotification).toHaveBeenCalledTimes(1);
   });
 
-  it('THE OTHER DIRECTION: an activity ON SCREEN is not interrupted', async () => {
+  it('THE OTHER DIRECTION: an activity showing THAT conversation is not interrupted', async () => {
     const messaging = useMessaging();
-    const { ctx, sendSystemNotification } = makeContext();
+    // ON SCREEN IS NOT ENOUGH, AND SAYING SO WAS THE DEFECT. This case is quiet because the reader
+    // is inside the conversation the message landed in and watched it arrive.
+    const { ctx, sendSystemNotification } = makeContext(CONVO);
     screen('visible', true, true);
 
     await messaging.addMessageToChat(PEER, 'their message', CONVO, ctx, { messageId: 'm-3' });
 
     expect(sendSystemNotification).not.toHaveBeenCalled();
+  });
+
+  it('THE DEFECT THE USER REPORTED: on screen, but looking somewhere else, and told', async () => {
+    const messaging = useMessaging();
+    const { ctx, sendSystemNotification } = makeContext('another-conversation');
+    screen('visible', true, true);
+
+    await messaging.addMessageToChat(PEER, 'their message', CONVO, ctx, { messageId: 'm-3b' });
+
+    // "Si je discute avec A et que B m'envoie un message, la notif de B devrait apparaitre." Until
+    // this, a foregrounded app returned before ever asking, so the only signal was a tone and an
+    // unread badge in a conversation list a narrow layout does not render.
+    expect(sendSystemNotification).toHaveBeenCalledTimes(1);
+    expect(sendSystemNotification.mock.calls[0][2]).toBe(CONVO);
   });
 
   it('which is NOT what the web client does with the same two facts', async () => {
@@ -162,7 +184,9 @@ describe('native mobile notifies for the message no push will ever carry', () =>
 
   it('a runtime that never states the fact is treated as on screen, and stays quiet', async () => {
     const messaging = useMessaging();
-    const { ctx, sendSystemNotification } = makeContext();
+    // Reading the conversation the message lands in, so the assertion is about the missing flag
+    // rather than about where the reader is looking.
+    const { ctx, sendSystemNotification } = makeContext(CONVO);
     screen('visible', true, undefined);
 
     await messaging.addMessageToChat(PEER, 'their message', CONVO, ctx, { messageId: 'm-6' });

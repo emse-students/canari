@@ -11,6 +11,55 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a message in another conversation made a sound and showed nothing
+
+On a phone, inside conversation A, a message from B played the receive tone and produced no visible
+sign of itself. `unreadCount` did go up, but that badge lives in the conversation list, and below
+Tailwind `md` the list is not on screen at all: `Sidebar.svelte` renders it `hidden md:flex`, so the
+open conversation has the whole width. A sound with nothing to look at is a ghost, and it was
+reported as one.
+
+The cause was that the two signals a message can raise were decided by two unrelated conditions:
+the tone fired for EVERY inbound message whatever was on screen, and the notification fired only
+when the app was not in front of the reader. Nothing connected them, so the gap between them was
+audible.
+
+**The rule is now that the signal follows what is actually on screen**, and the two signals are
+mutually exclusive consequences of ONE predicate: a tone where the reader can watch the message
+arrive, an OS notification where they cannot. Exactly one audible signal either way - the tone, or
+the notification channel's own sound - and it is always attached to something visible. That closes
+the case the old condition could not express: an app in the foreground still shows exactly one
+conversation on a narrow screen, so "the app is on screen" was never the same question as "the
+reader can see this".
+
+`arrivalVisibility.ts` holds the rule and takes every input as an argument, so the whole matrix is
+asserted directly rather than staged through a layout, a runtime and a router. The `[NOTIF] Inbound`
+line now names which of the three reasons applies, because it used to assert "the app is
+backgrounded" and that is no longer the only way to reach it.
+
+### Changed - one source of truth for what a narrow screen is
+
+Four hand-written media queries decided it, and no two agreed: `(max-width: 768px), (pointer:
+coarse)` in ChatArea and ChatComposer, `(max-width: 767px)` in TabFollowerBanner, `(max-width:
+1279px)` in historyOverlayStack, `(max-width: 1279px), (pointer: coarse)` in swipeNavigation. Two
+of those divergences were bugs and two were not, which is why one predicate would have been the
+wrong repair:
+
+- **The 768 was off by one against the markup.** Tailwind's `md:` starts AT 768px, so a viewport
+  exactly 768px wide got the two-pane layout from the CSS while the script believed it was on a
+  phone. The 767 was the same bug spelt as a workaround for it. Both now derive from Tailwind's own
+  boundary, so a query and a `md:` class can no longer disagree at their shared edge.
+- **The two 1279s are a real distinction and stay two.** Full-screen overlays are about how much
+  room there is, so they ask about width alone and a narrow mouse window still gets them; swiping
+  between tabs needs a finger, so it asks about width OR pointer. Collapsing them would have given
+  a touch laptop gestures it cannot mean.
+
+So `viewport.ts` names the QUESTIONS rather than exporting one boolean, and `viewport.test.ts` fails
+if `app.css` ever overrides a `--breakpoint-*`, which would silently make every number in it wrong
+at once. Two components were also re-writing `(pointer: coarse)` by hand next to the
+`pointerDevice.ts` that already owned it. No hand-written breakpoint is left outside the three
+modules that own one.
+
 ### Fixed - the small icon of a Canari notification was Android's generic "info" glyph
 
 Reported on a Mi 9T. The live record named both halves of one under-specified call:

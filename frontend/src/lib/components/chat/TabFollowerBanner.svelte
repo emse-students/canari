@@ -3,6 +3,7 @@
   import Banner from '../shared/Banner.svelte';
   import { globalSession as session } from '$lib/stores/globalChatSingleton.svelte';
   import { m } from '$lib/paraglide/messages';
+  import { isNarrowChatLayout, NARROW_CHAT_QUERY, onViewportChange } from '$lib/utils/viewport';
 
   /** Delay before showing the banner, to avoid flicker during the startup leader election. */
   const SHOW_DELAY_MS = 2500;
@@ -14,13 +15,14 @@
    * (Tauri native apps are always tab leader, so they never reach the banner anyway.)
    */
   let isMobile = $state(false);
+  // WAS `(max-width: 767px)`, which is the same intent as ChatArea's `768px` spelt one pixel apart
+  // - two guesses at where the layout actually splits. Both now ask `viewport.ts`, which derives the
+  // boundary from Tailwind's own `md` so it cannot disagree with the `md:` classes in the markup.
   $effect(() => {
-    if (typeof window === 'undefined') return;
-    const mq = window.matchMedia('(max-width: 767px)');
-    const update = () => (isMobile = mq.matches);
-    update();
-    mq.addEventListener('change', update);
-    return () => mq.removeEventListener('change', update);
+    isMobile = isNarrowChatLayout();
+    return onViewportChange(NARROW_CHAT_QUERY, (narrow) => {
+      isMobile = narrow;
+    });
   });
 
   $effect(() => {
