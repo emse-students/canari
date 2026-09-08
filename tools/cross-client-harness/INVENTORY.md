@@ -90,7 +90,7 @@ A gesture other rows REST ON, measured by a row of its own so a failure in it is
 
 One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`. See [`archive/README.md`](archive/README.md).
 
-67 scripts.
+68 scripts.
 
 | script | what it is |
 |---|---|
@@ -118,6 +118,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 | `archive/comm8.mjs` | COMM-8: a private salon is invisible to a non-member, unfetchable by them, and NEVER SENT ITS SEED. |
 | `archive/comm910.mjs` | COMM-9 and COMM-10: what losing access to a private salon takes away, and what it deliberately does not. |
 | `archive/corrupt.mjs` | CORRUPT - deliberate store damage, and whether the app SAYS SO rather than failing quietly. |
+| `archive/corrupt1.mjs` | CORRUPT-1 - a SHORTENED MLS store: explicit failure and RECOVERY, never a silent empty history. |
 | `archive/corrupt2.mjs` | CORRUPT-2 - ONE byte flipped INSIDE the ciphertext: the AEAD tag must fail, and the app must say so. |
 | `archive/corrupt4.mjs` | CORRUPT-4 - a ZERO-LENGTH MLS state must read as ABSENT, and the device must re-enrol cleanly. |
 | `archive/del.mjs` | DEL-2..10 - deleting a conversation while something else is still happening to it. |
@@ -245,4 +246,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-184 scripts in total.
+185 scripts in total.

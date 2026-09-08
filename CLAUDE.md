@@ -237,16 +237,15 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
 [cross-client-testing](docs/wiki/cross-client-testing.md).
 
 1. **THE BOARD IS [cross-client-testing](docs/wiki/cross-client-testing.md) AND `bun rows.mjs`
-   SETTLES IT** - what is answered, what is not `PASS`, a COMPARISON row on ALL its halves, and
-   since 2026-09-08 which rows answered TWO things on ONE build: **18 of those decide a cell the
-   board shows today**, so a green cell is not yet a measurement. **No count is written here**: the
-   two that were went stale within a day. PIN's four rows CHANGE a PIN or restart a browser, hence
-   last. **HEAL-NEW-11/-12/-15 passed clean 2026-09-08 and their rung redesign is STILL OPEN** - the
-   amber window returned unexplained, and one record is one draw ([backlog](docs/wiki/backlog.md)).
+   SETTLES IT** - what is answered, what is not `PASS`, a COMPARISON row on all its halves, and which
+   rows answered TWO things on ONE build, so a green cell is not yet a measurement. **NO COUNT IS
+   WRITTEN HERE; run it.** PIN's four rows change a PIN or restart a browser, hence last. HEAL-NEW's
+   rung redesign is open on a clean pass - one record is one draw ([backlog](docs/wiki/backlog.md)).
 2. **P1 - A DEVICE REPLACES ITS WHOLE PREKEY BATCH ON EVERY CONNECTION, AND THAT CHURN GROWS
-   `mls.bin`** - P1 for the checkpoint it feeds, not because pools run dry. **Cause narrowed to ONE
-   candidate 2026-09-08 and reproduced with no phone**; an accusation now names it at the reload
-   boundary and **one device line is owed** ([backlog](docs/wiki/backlog.md)).
+   `mls.bin`** - P1 for the checkpoint it feeds, not because pools run dry. **CONFIRMED ON HARDWARE
+   2026-09-08**: the resume reload accused itself (`2625 -> 2624`, epoch unmoved) and put the RECEIVE
+   ratchet back in the same run - one mechanism, two ledgers, a key-package count seeing one. **One
+   bundle, not forty-nine**, so it is A source, not shown to be the whole ([backlog](docs/wiki/backlog.md)).
 3. **P1 - a PLACEHOLDER held a member's seat**; only a member's CLIENT can say whether a LEAF is
    left in the MLS tree and **NOTHING HAS** - the three identities cited here as that evidence were
    this campaign's OWN mention fixtures, named 2026-09-07 ([backlog](docs/wiki/backlog.md)).
@@ -256,11 +255,9 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    the classifier branches on an error MESSAGE (CORRUPT-2 + CORRUPT-1, [backlog](docs/wiki/backlog.md)).
 6. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - ONE merge mechanism
    and ONE arming point, asserted only by `bun tools/ecosystem-shape/shape.mjs`
-   ([rebuild](docs/wiki/ecosystem-convergence.md#12-the-cicd-rebuild-2026-09-04---the-same-four-workflows-in-every-repository),
-   [cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them), the only copies).
-   Three open: the suppression CONTROL CASE the NestJS batch destroyed (Monday 2026-09-07 answers
-   it), **nothing tells anybody prod is down**, and
-   [host-updates](docs/wiki/infrastructure/host-updates.md) ([backlog](docs/wiki/backlog.md)).
+   ([cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them), the only copy).
+   Three open, all in [backlog](docs/wiki/backlog.md): the suppression control case, **nothing tells
+   anybody prod is down**, and [host-updates](docs/wiki/infrastructure/host-updates.md).
 7. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
    [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
 8. **SIX UX/RENDERING ITEMS + TWO DEV-LOG LINES** ([backlog](docs/wiki/backlog.md)); four want ONE pass over `app.css`.

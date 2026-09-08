@@ -11,6 +11,34 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - the mailbox barrier named the sessions it was waiting out and waited 0 ms
+
+`waitForMessageQueueIdle` printed `mailbox barrier for "archive replay" is waiting behind 1 catch-up
+session(s)` and then awaited `settleBarrier()` - the pull, and the scheduler's buckets. Neither is
+evidence about a catch-up session: a session hands `decryptPage` straight to the engine, so while
+its batch is in flight the pull is finished and every bucket is empty. The barrier resolved
+immediately and the second line duly reported `waited 0ms`.
+
+Measured on the Mi 9T on 2026-09-08, twice in a row and identically. A catch-up decrypted two frames
+of group `2bd5add9` at generations 43 and 44 of epoch 196; the archive replay behind the barrier
+handed the engine the same two frames 83 ms later; openmls refused both at `error` level with
+`SecretReuseError`, and the client paid a history reconciliation to discover it already agreed. The
+epoch never moved, so nothing that compares epochs could have seen it.
+
+**The gate it needed already existed.** Every send has awaited `waitForCatchUpIdle()` since
+2026-08-14, for the same reason - a catch-up must not be raced - and the barrier simply never called
+it. It does now, before settling the mailbox rather than after, because a catch-up can queue work
+and settling first would settle a queue it had not finished filling. The wait is bounded by
+construction: `createDecryptSession` is the only opener and closes from a `catch` and from
+`finish()`'s `finally` on both platforms, and its only caller finishes from a `finally` of its own.
+
+**The test named after this behaviour asserted the log wording instead of the ordering, and passed
+on the defect.** `waits out a catch-up it is not inside` opened a session, never closed it, awaited
+the barrier, and then checked that the pull ran and that both `debug` lines carried the right words
+- every one of which is true of a barrier that waits for nothing. It now asserts what its name
+claims: nothing past the barrier happens, not even the pull, while the session is open. Its
+neighbour was written the same way and is fixed the same way.
+
 ### Fixed - the backlog said NOTHING FIXED BELONGS IN THIS FILE, and held fourteen closed entries
 
 The rule has been in the file's own header in bold since 2026-08-30, on the user's instruction, and

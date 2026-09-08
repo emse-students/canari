@@ -253,10 +253,38 @@ if (which === '1b') {
   if (out.warmUpInMs === null) unmet.push('theAppWasRoutingBeforeItWasHidden');
   if (out.notifiedInMs === null) unmet.push('aNotificationArrived');
   if (!carriesTheText) unmet.push('itCarriedTheMessageAndNotJustASenderName');
-  if (out.notifiedInMs !== null && out.notifiedInMs >= 10_000) unmet.push('itBeatTheDeferredPushWindow');
+  // THE 10 s CLAUSE IS A DISCRIMINATOR AND IT ONLY DISCRIMINATES WHEN THE BASELINE IS BELOW IT.
+  //
+  // `scheduleDeferredPush` fires after ten seconds, so a notification INSIDE that window can only
+  // have come from the JS layer - that is the whole reasoning above, and it silently assumes this
+  // handset can deliver a message in under ten seconds at all. The warm-up already measures exactly
+  // that, in the FOREGROUND, which is the fastest path there is: this row's own comment records
+  // 2190 ms on a warm app.
+  //
+  // Measured 2026-09-08: the warm-up took 19455 ms and the hidden delivery 14728 ms, so the row
+  // recorded a product FAIL on a run whose BEST case was already slower than the discriminator. The
+  // two numbers cannot be told apart there - a silent JS layer and a uniformly slow estate produce
+  // the same reading - and the row's own history says which way that error goes: on 2026-09-06 it
+  // "accused a notification path that had simply not been asked yet. The difference was the rig's,
+  // not the product's."
+  //
+  // So a warm-up at or above the window makes this clause UNGRADEABLE rather than unmet, and it is
+  // its own precondition exactly like `theOsLetTheHiddenAppKeepItsNetwork` above: "the estate is
+  // slow" and "the product stayed silent" are different findings and must not share a verdict.
+  const baselineTooSlow = out.warmUpInMs !== null && out.warmUpInMs >= 10_000;
+  if (baselineTooSlow) {
+    out.discriminatorUngradeable =
+      `the warm-up took ${out.warmUpInMs} ms in the FOREGROUND, at or past the ${10_000} ms deferred-push ` +
+      'window this row uses to tell the JS layer from the backstop - so the timing clause proves nothing here';
+  } else if (out.notifiedInMs !== null && out.notifiedInMs >= 10_000) {
+    unmet.push('itBeatTheDeferredPushWindow');
+  }
   if (!out.heldOnA1) unmet.push('theAppActuallyHeldTheMessage');
   out.unmet = unmet;
-  out.verdict = unmet.length === 0 ? 'PASS' : 'FAIL';
+  // A row that could not grade its own discriminator has not measured the product. `SETUP-FAILED`
+  // is the campaign's word for that, and it is only reached when nothing ELSE was unmet - a genuine
+  // failure of another clause is still a failure whatever the baseline was.
+  out.verdict = unmet.length > 0 ? 'FAIL' : out.discriminatorUngradeable ? 'SETUP-FAILED' : 'PASS';
   stage(`NOTIF-1b -> ${out.verdict} (notified in ${out.notifiedInMs}ms, unmet ${JSON.stringify(unmet)})`);
 } else if (which === '4') {
   // Cross-device dismissal: the phone notifies, the OTHER device of the same user reads, the
@@ -564,6 +592,15 @@ record(`NOTIF-${which}`, gated.verdict, {
   undecryptedInShade: out.undecrypted,
   notifiedInMs: out.notifiedInMs ?? null,
   markers: out.markers ?? (out.marker ? [out.marker] : []),
+  // WHY THIS ROW FAILED, IN THE LEDGER RATHER THAN IN A LOG THAT ROTATES. Measured 2026-09-08:
+  // NOTIF-1b recorded `FAIL` with `clean: true`, a marker found and a 14.7 s delivery, and NOTHING
+  // in the record said which clause was unmet - the four extras kept here did not include the list
+  // the verdict is computed FROM. Reading it took the run's own log file, which the ledger outlives.
+  // A verdict whose reason is not beside it is a verdict a later session re-runs to understand.
+  ...(out.unmet ? { unmet: out.unmet } : {}),
+  ...(out.discriminatorUngradeable ? { discriminatorUngradeable: out.discriminatorUngradeable } : {}),
+  // AND THE BASELINE THE 10 s DISCRIMINATOR IS ONLY MEANINGFUL AGAINST - see the warm-up clause.
+  ...(out.warmUpInMs === undefined ? {} : { warmUpInMs: out.warmUpInMs }),
 });
 console.log(JSON.stringify(out, null, 2));
 

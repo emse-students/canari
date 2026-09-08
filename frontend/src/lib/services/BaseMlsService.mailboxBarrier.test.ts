@@ -247,7 +247,35 @@ describe('waitForMessageQueueIdle', () => {
     const note = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
     catchUp.beginCatchUp('g-other');
 
-    await expect(svc.waitForMessageQueueIdle('outbox flush', null)).resolves.toBeUndefined();
+    /**
+     * THE ORDERING, WHICH THIS TEST IS NAMED AFTER AND DID NOT ASSERT UNTIL 2026-09-08.
+     *
+     * It used to `await` the barrier and then check that the pull ran, that `waitUntilIdle` ran,
+     * and that both `debug` lines carried the right words - every one of which is true of a barrier
+     * that waits for NOTHING. It opened a session, never closed it, and the barrier resolved: the
+     * test passed on the defect, and its name is what made that invisible. The cost was measured on
+     * the Mi 9T on 2026-09-08 (`docs/wiki/backlog.md`, "one frame is decrypted by three engines
+     * against one receive ratchet"): the barrier announced two sessions and returned in 0 ms, and
+     * the archive replay behind it fed the engine two frames a catch-up had already spent.
+     *
+     * A LOG LINE IS NOT THE BEHAVIOUR IT DESCRIBES. What makes this a wait is that nothing past it
+     * happens while the session is open, so that is what is asserted - the file's own idiom, two
+     * microtasks and a flag, exactly as `waitForCatchUpIdle` is tested above.
+     */
+    let settled = false;
+    const barrier = svc.waitForMessageQueueIdle('outbox flush', null).then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    // NOT EVEN THE PULL. The barrier fetches into the queue the session's own drain will compete
+    // for, so a pull issued while the session is open is the overlap, not the wait.
+    expect(pullPendingMessagesJson).not.toHaveBeenCalled();
+
+    catchUp.endCatchUp('g-other');
+    await barrier;
+    expect(settled).toBe(true);
 
     // THE WHOLE BARRIER RAN, which is the difference: a skip returns before both of these.
     expect(pullPendingMessagesJson).toHaveBeenCalledTimes(1);
@@ -272,7 +300,6 @@ describe('waitForMessageQueueIdle', () => {
     expect(accounted).toContain('g-other');
     expect(accounted).toContain('waited out rather than refused');
 
-    catchUp.endCatchUp('g-other');
     complaint.mockRestore();
     note.mockRestore();
   });
@@ -290,12 +317,25 @@ describe('waitForMessageQueueIdle', () => {
     const complaint = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     catchUp.beginCatchUp('g-other');
 
-    await expect(svc.waitForMessageQueueIdle('history ask', 'g-mine')).resolves.toBeUndefined();
-
-    expect(pullPendingMessagesJson).toHaveBeenCalledTimes(1);
+    // SERVED, WHICH MEANS WAITED OUT - not refused, and not served AHEAD of the session either.
+    // Naming a group buys an exemption from the deadlock arm above, never from the ordering: the
+    // other group's session still holds the MLS mutex, and a barrier that returned while it did
+    // would hand this caller the same spent generations the archive replay was handed on the Mi 9T
+    // (`docs/wiki/backlog.md`, 2026-09-08). The distinction this test exists for is the ERROR.
+    let settled = false;
+    const barrier = svc.waitForMessageQueueIdle('history ask', 'g-mine').then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(settled).toBe(false);
     expect(complaint).not.toHaveBeenCalled();
 
     catchUp.endCatchUp('g-other');
+    await barrier;
+
+    expect(pullPendingMessagesJson).toHaveBeenCalledTimes(1);
+    expect(complaint).not.toHaveBeenCalled();
     complaint.mockRestore();
   });
 

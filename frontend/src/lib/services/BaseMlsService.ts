@@ -1002,6 +1002,34 @@ export abstract class BaseMlsService implements IMlsService {
           ' those sessions and must pass its group id rather than null.'
       );
       const waitedFrom = Date.now();
+      /**
+       * THE WAIT THE THREE COMMENTS ABOVE ALREADY PROMISE, AND IT WAS NEVER TAKEN.
+       *
+       * `settleBarrier` waits for the pull and for the scheduler's buckets. Neither is evidence
+       * about a catch-up session: a session dispatches `decryptPage` straight at the engine, so
+       * while its batch is in flight the pull is done and every bucket is empty. The barrier
+       * therefore printed the sessions it was "waiting out" and returned in **0 ms** - measured on
+       * the Mi 9T, 2026-09-08, twice in a row, with the numbers in `docs/wiki/backlog.md` under
+       * "one frame is decrypted by three engines against one receive ratchet". The archive replay
+       * went on to hand the engine two frames the catch-up had spent 83 ms earlier, and openmls
+       * refused both at `error` level (`SecretReuseError`, generations 43 and 44 of epoch 196).
+       *
+       * A COLUMN IS ONLY EVIDENCE FOR THE QUESTION IT WAS WRITTEN TO ANSWER: `isIdle` answers "is
+       * my queue empty", and it was being read as "is the group quiet". The gate below is the one
+       * that answers the second, and it already exists - every send has waited on it since
+       * 2026-08-14 for the same reason, that a catch-up must not be raced.
+       *
+       * BOUNDED BY CONSTRUCTION, not by a clock: `createDecryptSession` is the only opener, and it
+       * closes the session from a `catch` and from `finish()`'s `finally` on both platforms, while
+       * its only caller finishes from a `finally` of its own. A caller that reaches this from
+       * INSIDE a session and passes `null` still hangs - exactly as it did before this line, on
+       * `settleBarrier`, since the drain it waits for needs the mutex that session holds - and the
+       * `debug` above is still the line that names it.
+       *
+       * ORDER IS LOAD-BEARING: the sessions first, the mailbox second. A catch-up can queue work,
+       * so settling before it closed would settle a queue it had not finished filling.
+       */
+      await this.waitForCatchUpIdle();
       await this.settleBarrier();
       console.debug(
         `[QUEUE] mailbox barrier for "${caller}" waited ${Date.now() - waitedFrom}ms behind` +

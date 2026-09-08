@@ -4546,7 +4546,7 @@ than three local patches.
 
 ## Storage and retention
 
-### P1 - the phone's own send ratchet rewound and BOTH peers refused the frame - the "outbox hole" section 8 says is still owed, measured in the field for the first time (Mi 9T, 2026-09-06)
+### P1 - one frame is decrypted by three engines against one receive ratchet, and the resume reload puts that ratchet BACK - measured on the Mi 9T 2026-09-08; plus an unexplained SEND-side rewind from 2026-09-06
 
 Read off W1 and W2 simultaneously, as `severe`, during an otherwise clean NOTIF-1b:
 
@@ -4611,12 +4611,107 @@ logs were not read for a `[BG_SEND]` line beside the rewind, and that single lin
 settle it. What is NOT a hypothesis is that the ledger exists and that the native drain does not
 consult it.
 
-**THE MEASUREMENT THAT SETTLES IT**, and it needs no new instrument: re-run NOTIF-1b with logcat
-kept, and look for `[BG_SEND] batch encrypted` or a background `mls.bin` write in the window around
-the `SecretReuseError`. If one is there, the diagnosis above is confirmed and the fix is an
-architectural one - one engine may advance the ratchet at a time, decided by a fact rather than by a
-visibility heuristic on a 30-second clock. If none is there, the foreground rewound on its own and
-the ledger's own coverage is what needs re-reading.
+**THE MEASUREMENT WAS TAKEN, 2026-09-08, AND IT REFUTES THE HYPOTHESIS ABOVE.** The window was
+captured in full (`adb logcat -v time` to a file, kept for the whole run) around two consecutive
+NOTIF-7 `bg` runs that both reproduced the error - same group `2bd5add9...`, same epoch 196,
+generations 35/36 then 43/44, so the fault is deterministic rather than a flake. **There is no
+`[BG_SEND]` line and no background `mls.bin` write anywhere in either capture.** By the branch this
+entry set itself, that closes the send-ratchet reading: the native outbox drain was not running, and
+nothing this entry blamed was involved.
+
+**WHAT IS THERE INSTEAD IS A RECEIVE-SIDE DOUBLE-CONSUME, AND IT IS TWO DEFECTS, NOT ONE.** The four
+decryptions of the same two frames, one epoch, one sender leaf:
+
+| # | time | driver | generations | result |
+| --- | --- | --- | --- | --- |
+| 1 | 09:33:24.66 | FCM JNI push (`load_or_create`, then `decryptProto`) | 43 | OK, `writeFcmCache` |
+| 2 | 09:33:30.564 | `recevoir_messages_batch group=2bd5add9... count=2` | 43, 44 | OK |
+| 3 | 09:33:30.647 | `recevoir_messages_batch group=2bd5add9... count=2` **again, 83 ms later** | 43, 44 | **`SecretReuseError`** |
+| 4 | 09:33:36.098 | `[PENDING] Fetched 2 pending` -> `[QUEUE] Drain` | 43, 44 | **OK AGAIN** |
+
+**DEFECT A IS FOUND, FIXED AND NOT YET SHIPPED - THE BARRIER WAITED 0 ms ON PURPOSE.** The archive
+replay does take a barrier before it reads, and the barrier printed the session it was about to
+overrun: `[QUEUE] mailbox barrier for "archive replay" is waiting behind 1 catch-up session(s) on
+[2bd5add9...]`, then `waited 0ms`. `settleBarrier()` waits for the pull and for the scheduler's
+buckets, and a catch-up hands `decryptPage` straight to the engine - so while its batch is in flight
+the pull is done and every bucket is empty. **`isIdle` answers "is my queue empty" and was being read
+as "is the group quiet".** The gate that answers the second already existed and every send has
+awaited it since 2026-08-14; the barrier now calls `waitForCatchUpIdle()` before settling. The test
+named after this behaviour asserted the two `debug` lines' WORDING and passed on the defect - both it
+and its neighbour now assert the ordering. `CHANGELOG.md` carries the account. **Owed: the field
+re-measurement on a rebuilt APK** - the unit test proves the ordering, not the disappearance of the
+`E/` pair on the handset.
+
+**DEFECT A, AS IT WAS MEASURED - TWO CONCURRENT READERS OF ONE PENDING QUEUE (rows 2 and 3).** Two `recevoir_messages_batch`
+calls 83 ms apart carry the SAME two frames; the loser burns an `E/` pair through openmls per frame
+and pays a history reconciliation to discover it agrees. The product already knows: at 09:33:30.677
+it prints `[History] frame already read live while this page was decrypting - not a loss` once per
+frame. **That line is the reconciling ledger this repository's own rule forbids as a fix** - *a race
+that heals cleanly is still a defect... a ledger that reconciles them afterwards is a witness, never
+a fix*. The overlap is named in the message itself (*while this page was decrypting*), so what is
+owed is the deletion of the overlap: one owner drains a group's pending queue, decided by a fact.
+
+**DEFECT B - THE RESUME RELOAD REWINDS THE RECEIVE RATCHET, AND THIS IS THE FIRST MEASUREMENT OF THE
+PREKEY ENTRY'S CANDIDATE 2.** Row 4 is the same two generations, already consumed twice, decrypting
+successfully a third time - which can only mean the secret tree went backwards. Between rows 3 and 4
+sits exactly one event: `[MLS][Tauri] mls.bin reloaded on resume (C2) - group cache refreshed`,
+after `[09:33:31] [MLS] Bulk ingest done`. **The epoch never moved** - 196 on every line of the
+capture - so `swapClientMonotonic`'s epoch comparison could not see it, which is precisely what the
+prekey entry predicted in as many words: *"a generation that moved inside one epoch is just as stale
+and completely invisible to it"*. It is now observed rather than predicted, and on the RECEIVE
+ratchet, where the `[RESUME] reload DROPS KEY MATERIAL` accusation - which counts key packages -
+could never have fired.
+
+**DEFECT B, ISOLATED TO THE MILLISECOND ON A BUILD THAT NO LONGER HAS DEFECT A (2026-09-08 09:53).**
+With the barrier fixed the group is decrypted by ONE batch and openmls raises nothing - and the
+rewind is still there, now with no other explanation in the window:
+
+```
+09:53:03.355  gen 45
+09:53:11.397  gen 45      09:53:11.438  gen 46
+09:53:16.801  [MLS][Tauri] mls.bin reloaded on resume (C2) - group cache refreshed
+09:53:16.913  gen 45      09:53:16.973  gen 46      <- both derived again, both succeed
+```
+
+The reload is the ONLY event between the two pairs. Generations already spent are re-derived 112 ms
+after it and the engine accepts them, which it can only do if the secret tree went back. No epoch
+moved. **So B does not depend on A, is not a consequence of the duplicate batch, and survives its
+fix** - which is worth stating because the two were found in one capture and the cheap conclusion
+would have been that one caused the other.
+
+**AND THE KEY-PACKAGE ACCUSATION FIRED IN THE SAME RUN, WHICH IS THE OBSERVATION THE PREKEY ENTRY
+WAS OWED.** At 09:51:43.207, `error` level, before the reload installed 13 ms later:
+
+```
+[RESUME] reload DROPS KEY MATERIAL - live keystore holds 2625 key package(s), the mls.bin being
+loaded holds 2624. Every group is at or ahead of its live epoch, so the epoch guard cannot see
+this. The 1 lost bundle(s) are packages this device may have PUBLISHED, and the reconciliation
+will read them back as server orphans and purge the pool (see backlog: the prekey purge loop).
+Accepted anyway - see the comment above for why refusing would be worse.
+```
+
+A `KeyPackage published` follows at 09:51:45.222. **Two ledgers, one mechanism**: the reload puts
+back both the receive ratchet and the keystore, and the instrument shipped that morning can see only
+the second. It did NOT fire on a resume driven by hand at 09:28 with no mint in the window, which is
+the discriminator the entry predicted: the accusation needs a mint between the last checkpoint and
+the resume, and a checkpoint here costs 8.8-23 s.
+
+**WHY B IS THE SERIOUS HALF.** A rewound receive ratchet re-opens generations the secret tree had
+retired, which is the replay window `SecretTree` exists to close; and it discards whatever the
+foreground advanced while the blob was being read, which on a device where the checkpoint costs
+8.8-23 s is a wide window. The two defects also explain each other's visibility: A is what makes the
+same frames arrive three times, and B is what lets the third arrival succeed.
+
+**WHAT THIS DOES NOT SAY.** Nothing here was lost to the USER on these runs - the FCM cache
+pre-injected the message (`[FCM_CACHE] Injection done: 1/1`), the row landed with its marker, and
+NOTIF-7's own verdict is `PASS`. This is a correctness and noise defect measured through the logs,
+which is the reason the logs are read on every pass.
+
+**AND THE 2026-09-06 OBSERVATION IS A DIFFERENT DEFECT FROM THIS ONE**, sharing only the error
+string. That one was read off W1 and W2 as the phone's SEND of a read receipt at epoch 139; this one
+is read off the phone as its own RECEIVE at epoch 196. Two ratchets, two directions, one message.
+The send-side one is still unexplained and still owed a measurement - and it now needs one taken
+from the phone, because the branch this entry offered has been spent on the wrong ratchet.
 
 **AND THE 19.5 MB `mls.bin` IS WHAT MAKES IT LIKELY RATHER THAN THEORETICAL** - the two entries above
 are one defect seen from two ends. `checkpointAfterSend` deliberately does not await, which was the
@@ -5015,6 +5110,24 @@ from an older snapshot and the live client is authoritative, so refusing is free
 resume BOTH sides have moved - the background engine advanced the blob, the foreground minted into
 the live manager - and neither is a superset of the other. That is a merge, not a precedence, and
 nobody has written it.
+
+**CANDIDATE 2 IS NO LONGER A CANDIDATE, AND THE DEVICE LINE THIS ENTRY WAS OWED IS TAKEN.** At
+09:51:43.207 on 2026-09-08 the shipped instrument accused, on hardware, for the first time:
+`[RESUME] reload DROPS KEY MATERIAL - live keystore holds 2625 key package(s), the mls.bin being
+loaded holds 2624`, with `Every group is at or ahead of its live epoch, so the epoch guard cannot
+see this` in its own text and a `KeyPackage published` two seconds later. **One bundle, not
+forty-nine** - so the reload is A source of the churn this entry measures and not, on this evidence,
+the whole of it. The same run also showed the reload putting back the RECEIVE ratchet, which no
+key-package count can see; both readings and the ordering are in **"one frame is decrypted by three
+engines against one receive ratchet"** under Storage and retention.
+
+**AND IT WAS MEASURED ON THE RECEIVE RATCHET TOO.**
+`mls.bin reloaded on resume (C2)` was observed putting a secret tree back far enough that two
+generations already consumed by the foreground decrypted a second time, with the epoch unmoved at
+196 throughout - the exact blind spot this section predicts for `swapClientMonotonic`. The table and
+the timings are in **"one frame is decrypted by three engines against one receive ratchet"** under
+Storage and retention; read the two together, because the reload is one mechanism and the key
+packages counted below are only the half an accusation can see.
 
 **THE INSTRUMENT FOR CANDIDATE 2 SHIPPED 2026-09-08, AND IT ACCUSES RATHER THAN REFUSES.**
 `recharger_mls_au_resume` now compares `key_package_count()` across the reload and logs
