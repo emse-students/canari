@@ -236,21 +236,19 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    rows answered TWO things on ONE build, so a green cell is not yet a measurement. **NO COUNT IS
    WRITTEN HERE; run it.** PIN's four rows change a PIN or restart a browser, hence last. HEAL-NEW's
    rung redesign is open on a clean pass - one record is one draw ([backlog](docs/wiki/backlog.md)).
-2. **P1 - A DEVICE REPLACES ITS WHOLE PREKEY BATCH ON EVERY CONNECTION, AND THAT CHURN GROWS
-   `mls.bin`** - P1 for the checkpoint it feeds, not because pools run dry. **CONFIRMED ON HARDWARE
-   2026-09-08**: the resume reload accused itself (`2625 -> 2624`, epoch unmoved) and put the RECEIVE
-   ratchet back in the same run - one mechanism, two ledgers, a key-package count seeing one. **One
-   bundle, not forty-nine**, so it is A source, not shown to be the whole. **THE LOOP IS CONTAINED AND
-   THE CAUSE IS NOT** - the guard's two lines were finally seen on hardware 2026-09-08, and the
-   10.4 MB blob is now the ONLY thing between NOTIF-1b and a verdict ([backlog](docs/wiki/backlog.md)).
+2. **P1 - THE PREKEY CHURN WAS A LOCK ORDER, REPRODUCED AND REPAIRED ON HARDWARE 2026-09-08, AND
+   NOT SHIPPED** - a merged fix is not a shipped fix. What is left is the weight it already wrote:
+   `KeyPackage 3002x` against a pool of 50, ~6.9 MB of a 10.5 MB blob, which no prekey fix touches
+   and which is the ONLY thing between NOTIF-1b and a verdict ([backlog](docs/wiki/backlog.md)).
 3. **P1 - a PLACEHOLDER held a member's seat**; only a member's CLIENT can say whether a LEAF is
    left in the MLS tree and **NOTHING HAS** - the three identities cited here as that evidence were
    this campaign's OWN mention fixtures, named 2026-09-07 ([backlog](docs/wiki/backlog.md)).
 4. **P1 - HEAL-repair HEALS 3 TIMES IN 10, SAME ASK CADENCE EITHER WAY**; two causes REFUTED by
    A/B, not to be re-opened ([backlog](docs/wiki/backlog.md)). HEAL-REVOKE stays four clean `PASS`.
-5. **P1 - A DAMAGED MLS STATE IS CALLED A PIN ROTATION** (CORRUPT-2 + CORRUPT-1). **STEP 1 IS ON
-   THE BRANCH 2026-09-08 and does NOT separate the two causes** - that needs an envelope header,
-   hence a second release ([backlog](docs/wiki/backlog.md)).
+5. **P1 - A DAMAGED MLS STATE IS CALLED A PIN ROTATION** (CORRUPT-2 + CORRUPT-1). The typed errors
+   and the blob-header READER are done 2026-09-08 and unshipped; the WRITER cannot follow until that
+   reader is the floor (`minClientVersion`), so the two causes are still not separated in the field
+   ([backlog](docs/wiki/backlog.md)).
 6. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - ONE merge mechanism
    and ONE arming point, asserted only by `bun tools/ecosystem-shape/shape.mjs`
    ([cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them), the only copy).
@@ -277,14 +275,11 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
     **OWES ONE HARDWARE RUN, blocked on a THIRD account.** Still open beside it: the two-builder P2
     (no TypeScript can route that tap), the community-invitation sibling, a P2 from 2026-09-05, and
     the ICM/ISMIN direction. All in [backlog](docs/wiki/backlog.md).
-15. **21% OF CAS RETURNS CARRY NO `code`, AND THE LOOP THAT MADE OF IT IS FIXED - THE FAILURES ARE
-    NOT.** The livelock (a source failure re-entering the source) is closed 2026-09-08, story in
-    `CHANGELOG.md`, rules in [durable-rules](docs/wiki/durable-rules.md), mechanism and the
-    reproduction probe on [authentik](docs/wiki/infrastructure/authentik.md#cas-returns-nothing-on-21-of-logins-and-our-login-page-turned-that-into-a-livelock---2026-09-08).
-    **Two things stay open and neither is code**: the MAIL TO THE DSI, written and unsent, and
-    **~121 failed logins a week that nothing reports** - and the fix removed the only symptom anybody
-    could see ([P2](docs/wiki/backlog.md#p2---about-121-logins-a-week-fail-at-cas-and-nothing-reports-it-measured-2026-09-08)).
-    Everything on that box is a HAND MUTATION owed to the restore path.
+15. **~121 LOGINS A WEEK FAIL AT CAS AND NOTHING REPORTS IT** - and the livelock fixed 2026-09-08
+    removed the only symptom anybody could see
+    ([P2](docs/wiki/backlog.md#p2---about-121-logins-a-week-fail-at-cas-and-nothing-reports-it-measured-2026-09-08)).
+    The MAIL TO THE DSI is written and unsent. Everything on that box is a HAND MUTATION owed to the
+    restore path ([authentik](docs/wiki/infrastructure/authentik.md)).
 
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
 
