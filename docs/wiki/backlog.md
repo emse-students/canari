@@ -3919,6 +3919,36 @@ second visible at all.
 
 ## Mentions
 
+### P3 - a mention of a deleted account writes a browser-level console error no client code can suppress, and the row that meets it cannot declare it expected (measured 2026-09-08)
+
+TYPE-5 came back `PASS-DIRTY` on a run whose own subject was green, with three
+`GET /api/users/<64-hex> -> 404` on BOTH clients, the same three ids. They are absent from every
+server table asked - `users` (368 rows), `dm_group_members`, `dm_device_group_memberships`,
+`channel_members`, `key_package`, `push_token`, all zero - so nothing on the server names them. The
+reference is client-local: a stored message mentioning an account that has since been deleted, which
+on this estate is the campaign's own mention fixtures.
+
+**Everything the app can do about it is already done.** `fetchUserProfile` caches a 404 for the full
+30 s TTL rather than evicting it, with a docblock naming the measurement that earned the change - one
+mention of an absent account used to produce three identical 404s in one check, one per mount of the
+chip. So the request is made once per client per window, which is the floor for a client that must
+ASK to find out.
+
+**The line is written by the browser's network stack, not by the app**, so it cannot be caught,
+downgraded or silenced from JavaScript. Two designs remove it, and both are product decisions rather
+than fixes:
+
+- the server answers **200 with a tombstone** (`deleted: true`, no name) instead of 404 - the client
+  then renders "deleted account" from a real answer, and nothing logs;
+- the mention carries a **name snapshot** taken when it was written, so a deleted account needs no
+  fetch at all. This is also the only one of the two that survives the server forgetting the user
+  entirely, and it is what makes an old message readable years later.
+
+**Deliberately NOT declared `ignoringExpectedLog` on the row.** The shape `GET /api/users/<id> -> 404`
+is indistinguishable from a client asking for a user it *should* know - a roster that named an
+identity nobody minted, which is a P1 this campaign already carries. A per-row allowlist here would
+silence the next one of those.
+
 ### P2 - a mention notification shows a 64-character hex id where the name should be
 
 Found by the user on the phone, 2026-08-22, while the MENTION rung was running.

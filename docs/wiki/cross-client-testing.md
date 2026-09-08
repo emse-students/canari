@@ -112,7 +112,7 @@ rows is `PASS`** - the campaign ends green or it does not end.
 | TYPE-2 | It expires on its own after 6 s if the stop is never sent | `W1 W2` | `PASS` 2026-09-04 23:39 on 0.16.3, clean |
 | TYPE-3 | Killing the tab mid-typing leaves no stuck indicator on the peer | `W1 W2` | `PASS` 2026-09-04 23:39 on 0.16.3, clean |
 | TYPE-4 | An offline peer gets nothing, and nothing is replayed when it returns | `W1 W2` | `PASS` 2026-09-04 23:39 on 0.16.3, clean |
-| TYPE-5 | Channel typing, a different transport entirely (REST, not WS) | `W1 W2` | `PASS` 2026-09-04 23:39 on 0.16.3, clean |
+| TYPE-5 | Channel typing, a different transport entirely (REST, not WS) | `W1 W2` | **`PASS-DIRTY`** 2026-09-08 02:17 on `05f2098f` - the row's own subject is green; the dirt is three `GET /api/users/<64-hex> -> 404` on BOTH clients, the same three ids. **They are absent from every server table** - `users`, `dm_group_members`, `dm_device_group_memberships`, `channel_members`, `key_package`, `push_token` all return 0 - so the reference is client-local: a stored message mentioning an account that has since been deleted. The 404 is the correct answer and `fetchUserProfile` already caches it for the full TTL so it is asked once per 30 s rather than once per chip mount. **The line is the BROWSER's, not the app's, and no client code can suppress it** - the only ways out are a tombstone response or a name snapshot in the mention ([backlog](backlog.md)). Not declared expected: the shape `GET /api/users/... 404` is also what a client asking for a user it should know looks like. TYPE-1 to TYPE-4 are clean `PASS` on the same run, settling the `PASS`/`ERROR` draw the ledger held for all four on `667d93fb` |
 
 ## 3 - READ - receipts and unread counts
 
