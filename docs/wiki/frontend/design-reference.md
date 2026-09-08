@@ -384,3 +384,54 @@ toolbar; the captured PNG had nothing at those coordinates, uniform `#121212`. T
 capture disagree because the capture loses the synthetic hover state. **A hover affordance cannot be
 photographed through `Input.dispatchMouseEvent` alone** - drive it into a state the component holds
 in `$state` (open the popover) and photograph that, or trust the computed-style read and say so.
+
+## 11. The notification list
+
+### The reference, measured 2026-09-08
+
+Row **664 x 72-74**, radius **8px**, transparent fill. The avatar is **56x56 and it is the ACTOR'S
+photo**, carrying a small coloured disc (~28px) in its lower-right corner with the type glyph -
+not a type icon standing in for a face. Body text **15px / 20px**, names at weight 600, and the
+whole sentence in ONE colour. The timestamp is a second line at **13px**, and it is what carries the
+read state: `rgb(90,167,255)` at weight 600 while unread, `rgb(176,179,184)` at weight 400 once read,
+with the row's body text muting to the same grey. There is also a dot at the right edge. Rows are
+banded under bold headings - new / today / earlier - and two pills above the list filter all vs
+unread.
+
+Content was deliberately not recorded: these are the user's real notifications, and every number
+above is a geometry or a colour.
+
+### What Canari had
+
+A **40px circle carrying the type icon** and no avatar at all, so the row answered "what" and never
+"who". The actor's name was painted dark and the rest muted, which reads as two pieces of
+information where the reference has one. The timestamp was 12px muted in both states, and the only
+unread signal was a blue dot - blue, in an app whose entire accent is the yellow. No bands, no
+filter, and the list was 40px rows on the bare page ground where every other region of the shell is
+a card.
+
+The badge colours survive the move; only their size and place change. The unread accent is the brand
+amber rather than the reference's blue, for the same reason the palette went neutral: the yellow is
+the identity and nothing else in the app is blue.
+
+### Two defects the rework surfaced, neither of them cosmetic
+
+**`[].every(...)` is `true`, so an emptiness guard on a list that has not loaded yet reads as
+"nothing to do".** `/notifications` fired `load(50)` and `markAllRead()` side by side without
+awaiting. `markAllRead` guards on `notifications.every((n) => n.read)`; on a cold load the store is
+still `[]` when that runs, the guard passes, and **the read receipt was never sent - opening the
+page did not clear the badge**. The bell hid it for as long as it has existed: a dropdown only opens
+after the store is populated, so that path always worked. Sequencing the two is the fix.
+
+**A row drawn from `notif.read` cannot show what the reader came to see**, because both surfaces
+mark everything read as they open. The flag is `true` for the whole list within a frame. Both now
+snapshot the unread ids BEFORE the receipt goes out and style from the snapshot for the life of the
+view; the server still gets the receipt, so the badge clears.
+
+### One row, two surfaces
+
+The page and the bell dropdown each carried their own copy of the row - icon switch, text switch,
+timestamp, dot - and had already diverged: the page resolved `@[id]` mention tokens to display
+names and the dropdown printed the raw token. `NotificationRow.svelte` is the single implementation,
+with `compact` for the 320px dropdown.
+

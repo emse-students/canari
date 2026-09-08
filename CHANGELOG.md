@@ -96,6 +96,34 @@ A second pass took the per-message hover, the scrollbars and the two conversatio
   genuinely need it; the drawers went back to the ordinary surface.
 
 
+### Fixed - opening the notifications page did not clear the badge, and the list never showed which ones were new
+
+Three things on the same surface, found while aligning it with the reference's notification design.
+
+**`[].every(...)` is `true`.** `/notifications` fired `load(50)` and `markAllRead()` side by side
+without awaiting. `markAllRead` returns early when everything is already read; on a cold load the
+store is still empty when that guard runs, so it passed and **the receipt was never sent**. The bell
+dropdown hid this for as long as both have existed - a dropdown only opens once the store is
+populated, so that path always worked. The two calls are sequenced now.
+
+**A view that marks its content read as it opens cannot also style from the read flag** - it is true
+for the whole list within a frame, so the reader never sees what they opened the page for. Both
+surfaces snapshot the unread ids before the receipt goes out and render from the snapshot for the
+life of the view. The server still gets the receipt, so the badge clears.
+
+**One row instead of two.** The page and the bell each carried a copy - icon switch, text switch,
+timestamp, dot - and had already diverged: the page resolved `@[id]` mention tokens to display names
+and the dropdown printed the raw token. `NotificationRow.svelte` is the single implementation.
+
+The design follows the measurement, which is in
+[`design-reference`](docs/wiki/frontend/design-reference.md) section 11: the **actor's 56px avatar
+carrying a small type badge**, rather than a 40px type icon standing in for a face, so the row
+answers "who" before "what"; one text colour for the whole sentence with names at weight 600, the
+read state being what changes it; the timestamp carrying the unread accent - the brand amber, not the
+reference's blue, in an app that has no other blue; date bands and an all/unread filter; and the list
+in a card on desktop like every other region of the shell. Two raw French literals went through
+Paraglide on the way (`aria-label="Fermer"` on a toast, `"Notifications"` on the bell).
+
 ### Added - the MLS state blob can carry a key fingerprint, and every reader now knows how to see one
 
 A ChaCha20-Poly1305 tag that does not verify has two causes the ciphertext alone cannot separate: the
