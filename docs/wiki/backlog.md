@@ -5036,15 +5036,41 @@ believed.
 
 **WHAT IS OWED, IN ORDER.**
 
-1. **A floor and a loud refusal in `reconcilePublishedKeyPackages`.** If the orphan share exceeds a
-   sane fraction of the published set, that is not a device with lost key material - it is this bug,
-   and the function must refuse the purge and log an accusation rather than execute it. This is the
-   guard that would have surfaced the loop months ago and it does not depend on finding the cause.
-2. **Then the cause**, from the three-item list above. Item 1 is settled by logging both byte
-   lengths and a hash at publish and at list; item 2 by logging the manager's identity; item 3 by
-   awaiting the reconciliation instead of `void`-ing it.
+1. ~~**A floor and a loud refusal in `reconcilePublishedKeyPackages`**~~ - **SHIPPED, AND THE FLOOR
+   WAS DELIBERATELY NOT BUILT** (`e5aba1f76`, #393, four tests). Re-read 2026-09-08: this item asked
+   for the wrong mechanism and the fix says why in the code. A share-based floor cannot work, because
+   a device restored from an older backup HAS genuinely lost every private key and purging 50 of 50
+   is exactly what the function is for - so "too many" is not the discriminator. **Provenance is**:
+   `publishedThisSession` holds the fingerprint of every package this process minted, and a `false`
+   from `keyPackageHasPrivate` about one of those is never evidence about the server. It is refused,
+   counted, and accused at `console.error`.
+
+   **The residue, and it is not nothing.** That set is per-process and deliberately not durable -
+   the claim it supports is "this process minted these bytes". So packages minted in an EARLIER
+   session are still purgeable, and a device whose keystore is emptied by the reload of candidate 2
+   and then RESTARTED would run the loop again with nothing to refuse it. The guard closes the
+   observed case, not the class.
+2. **Then the cause**, from the three-item list above - and this is now the FIRST open item. Item 1
+   is refuted from the code; item 2 is named, reproduced on a desktop, and instrumented; item 3 is
+   partly answered. **What is left is one observation on the handset**, and see the note below it for
+   what was tried on 2026-09-08.
 3. **The per-connection fallback reuse** already filed against the blob entry, which is the same
    family of waste.
+
+**FIRST ATTEMPT AT THE OWED OBSERVATION, 2026-09-08, AND IT DID NOT REACH THE PATH.** The phone runs
+`f2748d75` - the very commit that carries the instrument, built forty seconds after it - so the
+handset CAN print the accusation. A full NOTIF phase was driven across it (backgrounded sends, pushes,
+a notification tap that foregrounds the app), and logcat over that window holds **no** `[RESUME]` line
+from Canari at all: not the `error` accusation, not the `debug` line a successful reload leaves, and
+not the `warn` the counting branch emits. The only `RESUME` lines in the buffer are the Android
+launcher's.
+
+**That is not yet evidence that the reload never ran**, and saying so is the point: the successful
+path logs at `debug`, which a release build may filter, and the JS half of the sequence
+(`[MLS][Tauri] mls.bin reloaded on resume (C2)`, `Resume reload SKIPPED`) does not reach logcat at
+all - the WebView's console is read over CDP, and logcat carries only the native side. **So the next
+attempt reads the phone's CDP console across a background/resume, not its logcat**, and that is the
+one line still owed.
 
 **The 2026-09-06 prune (`prune_expired_key_packages`) does NOT fix this** and was never going to:
 these bundles are hours old, not 84 days. The prune bounds the ceiling; this loop is what fills it.
