@@ -238,6 +238,20 @@ const latest = new Map();
 // row, on 2026-09-05, and both were right about their own half. Rows with a single order are
 // untouched by this - the map has one entry and the worst of one is itself.
 const perOrder = new Map();
+/**
+ * row -> "build|order" -> verdict -> count. The one thing the newest-verdict model cannot express.
+ *
+ * A row is graded on its newest word, which is right when a row's answer is a fact about the build:
+ * it passed yesterday and fails today, so it is failing. It is WRONG when the row's answer is a
+ * DRAW - HEAL-repair healed 3 times in 10 across three builds on 2026-09-08, and the board carried
+ * `PASS` because the last run of a rung happened to be one of the three. Nothing here noticed, for
+ * six days, because every individual record was true.
+ *
+ * Keyed by build AND order so the two legitimate reasons for disagreement are not reported: a row
+ * re-run after a fix answers differently on two builds, and a COMPARISON row's halves answer
+ * differently by construction (that is its question, and `perOrder` above adjudicates it).
+ */
+const perBuild = new Map();
 const divergent = new Map();
 const diagnostics = new Map();
 const retired = new Map();
@@ -293,6 +307,16 @@ for (const line of readFileSync(LEDGER, 'utf8').split('\n')) {
         instrumentSha: r.instrumentSha,
       });
     }
+    // build AND checkSha AND instrumentSha: a runner EDITED between two runs is the ordinary way a
+    // row goes FAIL then PASS on one build, and reporting that as flakiness buries the real thing.
+    // Same build, same runner, same instrument, two answers - that is the product or the estate.
+    const buildKey = [r.build || '?', r.checkSha || '?', r.instrumentSha || '?', r.order || ''].join('|');
+    if (!perBuild.has(row)) perBuild.set(row, new Map());
+    const perKey = perBuild.get(row);
+    if (!perKey.has(buildKey)) perKey.set(buildKey, new Map());
+    const tallyForKey = perKey.get(buildKey);
+    tallyForKey.set(r.verdict, (tallyForKey.get(r.verdict) || 0) + 1);
+
     if (r.order) {
       if (!perOrder.has(row)) perOrder.set(row, new Map());
       const byOrder = perOrder.get(row);
@@ -430,6 +454,40 @@ if (notGreen.length) {
     const e = latest.get(r);
     console.log('  ' + r.padEnd(14) + String(e.verdict).padEnd(12) + String(e.build).slice(0, 8) + '  ' + e.at);
   }
+}
+
+// FLAKY: one build, one question, two answers. See `perBuild` for why this is not the same report as
+// the two above, and for the six days it went unnoticed on HEAL-repair.
+const flaky = [];
+for (const [row, perKey] of perBuild) {
+  for (const [key, tally] of perKey) {
+    if (tally.size < 2) continue;
+    const [build, , , order] = key.split('|');
+    flaky.push({ row, build, order, tally });
+  }
+}
+if (flaky.length) {
+  console.log(
+    '\n[rows] ' +
+      flaky.length +
+      ' row/build pair(s) that answered DIFFERENTLY on the SAME build - a verdict here is a DRAW, not a measurement:'
+  );
+  for (const f of flaky.sort((a, b) => a.row.localeCompare(b.row))) {
+    const spread = [...f.tally.entries()].map(([v, n]) => n + ' ' + v).join(', ');
+    // THE ONES THAT DECIDE A CELL RIGHT NOW. The rest are history and are kept as evidence: a row
+    // that was a draw on an older build and is settled on this one has been fixed, and deleting the
+    // record would erase the only proof of that.
+    const grading = latest.get(f.row) && String(latest.get(f.row).build).startsWith(String(f.build));
+    console.log(
+      '  ' +
+        f.row.padEnd(14) +
+        String(f.build).slice(0, 8).padEnd(10) +
+        spread +
+        (f.order ? '  order=' + f.order : '') +
+        (grading ? '   <- THE BOARD GRADES THIS ROW ON THIS BUILD' : '')
+    );
+  }
+  console.log('  (grade these on the SPREAD - the newest word is one draw of it)');
 }
 
 // A VERDICT FROM A RUNNER THAT NO LONGER EXISTS IS NOT A VERDICT, and this is the trap that cost the

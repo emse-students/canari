@@ -2612,6 +2612,23 @@ taken by a runner that has since changed. **Run it before believing a cell, and 
 phase's summary line.** It had been reporting these fourteen divergences for a day before anyone
 ran it - a check that exists and is not run is worth exactly what no check is worth.
 
+**AND SINCE 2026-09-08 IT DETECTS THE INTERMITTENCE ITSELF, which the paragraph above described and
+nothing checked for eleven days.** `rows.mjs` now groups every ledger record by row AND build AND
+`checkSha` AND `instrumentSha` AND order, and reports each group that holds more than one distinct
+verdict. All four keys are load-bearing: a row re-run after a fix answers differently on two BUILDS,
+a runner EDITED between two runs answers differently on one build - which is the ordinary way a row
+goes `FAIL` then `PASS` and accounted for 49 of the first 77 hits - and a COMPARISON row's halves
+answer differently by construction, which is its question rather than a fault. What is left is same
+build, same runner, same instrument, two answers: the product or the estate.
+
+**It found 28, of which 18 decide a cell the board is showing right now**, and it names them so.
+HEAL-repair is the row that made it necessary: `2 PARTIAL, 1 PASS` on one build and `2 PASS, 2
+PARTIAL` on another, a cell that read `PASS` for two days because the last run of a rung happened to
+be a good draw, and a P1 whose cause is arithmetic ([backlog](backlog.md)). **A verdict from a row
+listed there is one draw of a distribution, not a measurement**, and grading it on the newest word is
+the same selection-from-evidence this section was written about - one level down, where the selection
+is made by the dice instead of by a person.
+
 ### Dirt repeated across rows is ONE defect, and a per-row report cannot show that
 
 The same `d6f61539` sweep is the other half of the lesson. Ten consecutive COMM rows came back

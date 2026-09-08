@@ -11,6 +11,25 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Added - the campaign tool now detects an intermittent row, which it had described and never checked for eleven days
+
+```rows.mjs``` graded every row on its newest verdict. That is right when a row's answer is a fact about
+the build - it passed yesterday and fails today, so it is failing - and wrong when the answer is a
+DRAW. HEAL-repair healed three times in ten across three builds and the board read `PASS`, because
+the last run of a rung happened to be one of the three; every individual record was true.
+
+It now groups records by row AND build AND `checkSha` AND `instrumentSha` AND order, and reports each
+group holding more than one distinct verdict. Every key earns its place: a row re-run after a fix
+answers differently on two builds, a runner edited between two runs answers differently on one build
+(49 of the first 77 hits), and a comparison row's halves answer differently by construction. What
+survives all four is same build, same runner, same instrument, two answers.
+
+Twenty-eight groups, eighteen of them deciding a cell the board shows today, and the report says
+which. The principle was written into `docs/wiki/testing-methodology.md` on 2026-08-26, naming
+COMM-18 as the example - an older PASS is not evidence against a newer FAIL, it is evidence the
+defect is intermittent - and nothing had ever asserted it.
+
+
 ### Fixed - a campaign check reported "the repair never fired" on every run, healed or not, because it matched three strings the app had stopped printing
 
 `heal-web.mjs` computes `escalated` over the clients' whole console, and until 2026-09-08 it looked
