@@ -45,13 +45,17 @@ describe('landingRecovery', () => {
   it('refreshes the communities for a channel it has never looked up', () => {
     // A just-accepted invitation is never in the loaded sidebar.
     expect(
-      landingRecovery({ isChannel: true, alreadyRefreshed: false, conversationsRestored: true })
+      landingRecovery({
+        isChannel: true,
+        alreadyRefreshed: false,
+        conversationSourcesSettled: true,
+      })
     ).toBe('refresh');
   });
 
   it('waits instead of refreshing the same channel twice', () => {
     expect(
-      landingRecovery({ isChannel: true, alreadyRefreshed: true, conversationsRestored: true })
+      landingRecovery({ isChannel: true, alreadyRefreshed: true, conversationSourcesSettled: true })
     ).toBe('wait');
   });
 
@@ -59,14 +63,37 @@ describe('landingRecovery', () => {
     // Clearing the target here is what left a tapped message notification on an empty /chat:
     // the map is emptied and rebuilt wholesale by the IndexedDB restore.
     expect(
-      landingRecovery({ isChannel: false, alreadyRefreshed: false, conversationsRestored: false })
+      landingRecovery({
+        isChannel: false,
+        alreadyRefreshed: false,
+        conversationSourcesSettled: false,
+      })
     ).toBe('wait');
   });
 
   it('abandons a DM absent from a settled map', () => {
     expect(
-      landingRecovery({ isChannel: false, alreadyRefreshed: false, conversationsRestored: true })
+      landingRecovery({
+        isChannel: false,
+        alreadyRefreshed: false,
+        conversationSourcesSettled: true,
+      })
     ).toBe('abandon');
+  });
+
+  it('waits for a DM while a source that can still create it is running', () => {
+    // THE FIRST-CONTACT TAP, and the reason this input is not called `conversationsRestored` any
+    // more. The IndexedDB restore finishes first and `consumeFcmCache` runs after it; the
+    // placeholder for a group joined in the background is written by the SECOND of those. Reading
+    // the restore alone, the landing abandoned a target that appeared milliseconds later, and the
+    // notification opened the app on nothing - reported from production on 2026-09-08.
+    expect(
+      landingRecovery({
+        isChannel: false,
+        alreadyRefreshed: false,
+        conversationSourcesSettled: false,
+      })
+    ).toBe('wait');
   });
 });
 

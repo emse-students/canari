@@ -129,6 +129,23 @@ export function useConversations() {
   // /posts mini-panel) can treat the live map as authoritative and reflect deletions
   // instead of resurrecting stale rows from their own snapshot.
   let conversationsRestored = $state(false);
+  /**
+   * How many startup/resume passes that can still ADD a conversation are running.
+   *
+   * `conversationsRestored` answers "has IndexedDB been read into the map", and a deep-link landing
+   * used it to answer a DIFFERENT question - "is the set of this device's conversations complete".
+   * Those differ by exactly the FCM cache, which runs AFTER the restore and is the only way a first
+   * message from a new correspondent reaches the map at all. So the landing saw a settled map
+   * without the target, concluded the conversation was not on this device, and abandoned - a few
+   * milliseconds before `consumeFcmCache` wrote the placeholder that would have satisfied it. The
+   * tap opened the app on nothing, which is precisely what was reported from production.
+   *
+   * Counted rather than flagged because the same span runs at login and again on every resume, and
+   * because the next source to be added must be able to say so without teaching the landing about
+   * itself. Zero means nothing is running, NOT that anything has run - which is why the settled
+   * predicate still requires the restore.
+   */
+  let pendingConversationSources = $state(0);
   let sendError = $state('');
 
   // ── Input state ───────────────────────────────────────────────────────────
@@ -1324,6 +1341,22 @@ export function useConversations() {
     /** True once the initial IndexedDB restore finished; the map is then authoritative. */
     get conversationsRestored() {
       return conversationsRestored;
+    },
+    /**
+     * True once every pass that can add a conversation has finished - the restore AND the FCM
+     * cache injections that follow it. What a deep-link landing must consult before deciding a
+     * target is not on this device; see {@link pendingConversationSources}.
+     */
+    get conversationSourcesSettled() {
+      return conversationsRestored && pendingConversationSources === 0;
+    },
+    /** Opens a span during which a conversation may still appear. Always paired in a `finally`. */
+    beginConversationSource() {
+      pendingConversationSources += 1;
+    },
+    /** Closes one such span. Floored at zero so an unbalanced call cannot wedge the landing shut. */
+    endConversationSource() {
+      pendingConversationSources = Math.max(0, pendingConversationSources - 1);
     },
 
     // UI state

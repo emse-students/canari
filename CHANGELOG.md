@@ -11,6 +11,49 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a notification tap opened the app on nothing, because the landing gave up 174 ms too early
+
+Reported from production: a first message from someone you have no conversation with notifies and
+decrypts, but the tap lands nowhere and the conversation only appears after a restart. The second
+half was fixed earlier the same day - the FCM cache wrote the conversation to the database and never
+told the in-memory list. This is the first half, and it turns out to be the same mechanism seen from
+the other end.
+
+A deep-link target is deliberately HELD until it is displayed, so a conversation that arrives late
+can still be landed on. It would have worked. The landing never got the chance, because it had
+already thrown the target away:
+
+```ts
+return input.conversationsRestored ? 'abandon' : 'wait';
+```
+
+`conversationsRestored` answers *has IndexedDB been read into the map*. The landing was asking a
+different question - *is the set of this device's conversations complete* - and the two differ by
+exactly the FCM cache, which runs after the restore and is the only route by which a first message
+from a new correspondent becomes a conversation at all. The restore raises the flag in its own
+`finally`; the cache injection is two awaits later at login and a whole resume sequence later on
+resume; the session has been logged in since long before either. So for that entire window the
+landing saw a complete-looking map without its target, concluded the conversation was not on this
+device, and cleared it. The placeholder arrived milliseconds afterwards to a landing that no longer
+existed, and the app sat on the conversation list.
+
+The fix answers the question actually being asked. `useConversations` counts the passes that can
+still add a conversation; the login sequence and the resume flush each bracket themselves in a
+`finally`; the predicate now takes `conversationSourcesSettled` - the restore AND that counter at
+zero. The input was renamed rather than merely re-pointed, so the old premise cannot be re-encoded
+by the next reader of the call site. Counted rather than flagged because the same span runs at login
+and again on every resume, and because the next source has to be able to declare itself without
+teaching the landing about its existence.
+
+The tests assert INSIDE the window: checking the end state passes on the broken code too, since the
+conversation does arrive in the end and the restore flag is true either way. Two of the four fail
+when the counter is taken back out of the predicate.
+
+The other builder is untouched and still broken in its own way: a notification posted by
+`tauri-plugin-notification` carries no conversation identity through the tap at all - `sourceJson`
+is declared and never assigned, and the id, though present on the intent, is read only to dismiss.
+No TypeScript can repair that, and it is filed as the native single-builder work package it needs.
+
 ### Fixed - a push line accused a population it could never accuse, on every single welcome
 
 `[PUSH_SEND] proto not inlined` fires when the ciphertext is too big to ride inside the FCM data

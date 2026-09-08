@@ -271,12 +271,14 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
     REGISTRY, and prod's deploy job is inlined shell where `deploy-dev` exercises the script.
 14. **FROM THE USER, AND FIRST CONTACT IS THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** P1
     2026-09-08 on PROD: a first message from someone you have no conversation with is invisible
-    until a restart and the tap lands nowhere - the invisible half is FIXED and unshipped, the tap
-    half open on two candidates, one an ORDERING the fix exposes. Its sibling question (does a
+    until a restart and the tap lands nowhere. **BOTH HALVES ARE FIXED AND UNSHIPPED, and they were
+    one mechanism from two ends** - the cache told the database and not the in-memory list, and the
+    landing abandoned its target before the list could be told. **ONE HARDWARE RUN IS OWED and it
+    needs a THIRD account.** What is NOT fixed is the separate two-builder P2: the plugin builder's
+    tap carries no identity of any kind, so no TypeScript can route it. Its sibling question (does a
     community invitation notify somebody with no prior conversation?) is the same seam. Plus a P2
     from 2026-09-05 (a COMMUNITY message is not decrypted in a background notification) and one
-    post-campaign direction (ICM/ISMIN). All in [backlog](docs/wiki/backlog.md); the owed row needs
-    a THIRD account, the others the phone.
+    post-campaign direction (ICM/ISMIN). All in [backlog](docs/wiki/backlog.md).
 
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
 

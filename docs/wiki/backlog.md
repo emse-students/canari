@@ -409,16 +409,28 @@ name - and when it has no placeholder it WARNS instead of skipping silently, bec
 what hid this. **Neither file had a test**; `fcmMemoryMerge.test.ts` covers the three arrival states
 and its two new cases were proven to fail against the old line.
 
-**HALF ONE IS NOT FIXED AND NOW HAS TWO CANDIDATES, NOT ONE.**
+**HALF ONE HAD TWO CANDIDATES. CANDIDATE 2 WAS THE ONE, AND THE REPORT ITSELF SAYS SO.** *"apres un
+redemarrage de l'app oui a priori"* - a restart is what made the conversation appear. An app alive on
+its WebSocket would have added the conversation to the map the moment the frame arrived, and no
+restart would have been needed; the message reached this device through the FCM cache, which is the
+killed-or-socketless path, which is the one that posts a Kotlin notification with a real deep link.
+So the tap was well-formed and the LANDING discarded it. Candidate 1 below remains a genuine defect
+in its own right, and is not this one.
 
 1. The known P2 below - the WebSocket path's builder posts `ACTION_MAIN` on the launcher, so no tap
-   on it can deep-link. **But it may not be the one the user met**: in the harness's own backgrounded
-   run the notification came from `CanariFCM`, the Kotlin builder, which DOES post
-   `ACTION_VIEW fr.emse.canari://chat/<groupId>` - a backgrounded phone whose socket has dropped gets
-   a push like a killed one. Which builder fired is a property of the socket at that instant, and the
-   report cannot say which.
-2. **AN ORDERING, MEASURED IN THE NOTIF-7 CAPTURE OF 2026-09-08 AND NOT PREVIOUSLY NOTICED.** The
-   deep link is resolved 174 ms BEFORE the cache is injected:
+   on it can deep-link. **Read upstream on 2026-09-08, and it is worse than "no deep link": the tap
+   carries no identity of any kind.** `handleNotificationActionPerformed` emits exactly
+   `{inputValue, actionId, notification}`; `notification` is parsed from `sourceJson`, which
+   `Notification.kt` declares and the plugin assigns NOWHERE; the notification id IS on the intent
+   (`TauriNotificationManager.kt:300`) but is read only to dismiss and is never put into the payload.
+   `extra` never reaches the intent at all. **So the listener in `useNotifications` cannot be
+   repaired in TypeScript** - there is no field to read - and the only routes are a vendored patch to
+   the plugin or the native builder this repo should have anyway. **The two builders also cannot
+   replace one another**: Kotlin's `getStableNotifId` hands out a SharedPreferences counter from
+   1000, TypeScript's `stableNotifId` returns a 31-hash, so when both fire the user gets two
+   notifications for one message, one of which is inert.
+2. **AN ORDERING - AND IT WAS THE ANSWER. FIXED 2026-09-08, NOT YET SHIPPED.** The deep link is
+   resolved 174 ms BEFORE the cache is injected:
 
    ```
    09:33:28.647  [hooks] Processing URL: fr.emse.canari://chat/2bd5add9...
@@ -427,11 +439,46 @@ and its two new cases were proven to fail against the old line.
 
    `flushFcmCache` is the LAST step of the resume sequence, behind `reloadStateFromDisk`,
    `reconcileOutboxSent`, `drainNativePendingCallAccept` and `resumeConnection`. For a conversation
-   that already exists this costs nothing and nobody would see it. For a first contact the navigation
-   targets a conversation that does not exist yet, and whether the page recovers when it appears
-   afterwards is unmeasured. **The fix above makes the conversation arrive; it does not make it
-   arrive FIRST**, and a deep link that resolves against a list still being assembled is a race
-   whatever it does today.
+   that already exists this costs nothing and nobody would see it. **What the entry above left
+   unmeasured - whether the page recovers when the conversation appears afterwards - has an answer,
+   and it is no.** `notifNav` holds a target until it is DISPLAYED precisely so a late arrival can
+   still be landed, and it would have worked. It never got the chance, because the landing had
+   already thrown the target away:
+
+   ```ts
+   // landingRecovery, before
+   return input.conversationsRestored ? 'abandon' : 'wait';
+   ```
+
+   `conversationsRestored` answers "has IndexedDB been read into the map". The landing asked it a
+   DIFFERENT question - "is the set of this device's conversations complete" - and the two differ by
+   exactly the FCM cache, which runs after the restore and is the only route by which a first
+   message from a new correspondent becomes a conversation at all. `loadAndRestoreConversations`
+   raises the flag in its own `finally`; `consumeFcmCache` is two awaits further down at login and a
+   whole resume sequence away on resume; `setIsLoggedIn(true)` happened hundreds of lines earlier, so
+   the landing effect is live for the whole of that window. It saw a settled map without its target,
+   concluded the conversation was not on this device, logged `not on this device - abandoning`, and
+   cleared it. The placeholder arrived milliseconds later to a landing that no longer existed.
+
+   **This is [a column being read as evidence for a question it was not written to answer](durable-rules.md), and the fix is to answer the real one.** `useConversations` now counts the
+   passes that can still ADD a conversation (`pendingConversationSources`), the login sequence and
+   `flushFcmCache` each bracket themselves in a `finally`, and the predicate takes
+   `conversationSourcesSettled` - the restore AND a quiet counter - instead of the restore alone. The
+   input was RENAMED rather than merely re-pointed, so the old premise cannot be re-encoded by
+   someone reading the call site. Counted rather than flagged because the same span runs at login and
+   again on every resume, and because the next source must be able to declare itself without
+   teaching the landing about itself.
+
+   **Both halves of the report are now one mechanism seen from two ends**: half two was the merge
+   never telling the in-memory list, half one was the landing giving up before it could be told. The
+   first fix is what makes the second one reachable at all - with the placeholder still dropped,
+   waiting longer would only have abandoned later.
+
+   Four tests in `useConversations.landingSources.svelte.test.ts` assert INSIDE the window (the end
+   state passes on the broken code, since the conversation does arrive in the end); two of them fail
+   when the counter is removed from the predicate. `notificationRouting.test.ts` gains the
+   first-contact case. **Owed: the hardware run.** A green test is not a working system, and this one
+   still wants the third account the row below asks for.
 
 **WHAT IS OWED.** The row named above, run against a genuine first contact - which needs a THIRD
 account, because the rig's two have a long shared history the HEAL rows depend on and staging this by
