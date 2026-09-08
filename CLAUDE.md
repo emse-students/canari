@@ -281,6 +281,14 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
     background notification), a QUESTION (does a community invitation notify somebody with no prior
     conversation?), and one post-campaign direction (ICM/ISMIN). All in
     [backlog](docs/wiki/backlog.md); the first two need the phone.
+15. **21% OF CAS RETURNS CARRY NO `code`, AND THE LOOP THAT MADE OF IT IS FIXED - THE FAILURES ARE
+    NOT.** The livelock (a source failure re-entering the source) is closed 2026-09-08, story in
+    `CHANGELOG.md`, rules in [durable-rules](docs/wiki/durable-rules.md), mechanism and the
+    reproduction probe on [authentik](docs/wiki/infrastructure/authentik.md#cas-returns-nothing-on-21-of-logins-and-our-login-page-turned-that-into-a-livelock---2026-09-08).
+    **Two things stay open and neither is code**: the MAIL TO THE DSI, written and unsent, and
+    **~121 failed logins a week that nothing reports** - and the fix removed the only symptom anybody
+    could see ([P2](docs/wiki/backlog.md#p2---about-121-logins-a-week-fail-at-cas-and-nothing-reports-it-measured-2026-09-08)).
+    Everything on that box is a HAND MUTATION owed to the restore path.
 
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
 

@@ -217,6 +217,195 @@ device, and it distinguishes all three failure shapes: a `400` with `DisallowedR
 (mobile scheme, some other fault), a `302 ...?error=<code>` (the fault, readable) and a `302
 /if/flow/...` (the provider is willing, and what is left is the user's own credentials).
 
+### And a THIRD field on pk 10 differed - it had no `authentication_flow`, fixed 2026-09-08
+
+The rule above ("compare every field, not the one the symptom names") held a third time.
+`Canari Dev` was the only one of the seven providers on this box with
+`authentication_flow_id IS NULL`, so a dev login did not enter `miconnect-auth` and met a
+username/password form instead of CAS - which is what the `login_failed` events against that
+provider are. All seven now pin it explicitly, copied from pk 1.
+
+**That pin is load-bearing since the section below**, and it is one query:
+
+```sql
+select p.name from authentik_core_provider p where p.authentication_flow_id is null;
+-- must return zero rows
+```
+
+An unpinned provider falls through `PolicyAccessView.handle_no_permission` to
+`ToDefaultFlow.get_flow` (`authentik/policies/views.py:101`), which returns **the BRAND's**
+authentication flow first - and the brand's flow is now the failure page, not a login page.
+
+## CAS returns nothing on 21% of logins, and our login page turned that into a livelock - 2026-09-08
+
+Measured on `docker logs miconnect-server-1` over the 96 h to 2026-09-08: of **337** returns from
+`cas.emse.fr` to `/source/oauth/callback/cas-emse/`, **71 (21%)** arrived with **no query string at
+all** - no `code`, no `state`, no `error`, which RFC 6749 4.1.2.1 forbids. 26 distinct client IPs,
+mobile-dominated, zero failures from Windows/Firefox/macOS in the window; a retry usually succeeds.
+Authentik always sends `state` (its own `redirect args` lines carry it, and
+`sources/oauth/clients/oauth2.py` shows the check reading it back out of the session), CAS preserves
+it on the first hop, and every successful return carries `code` and `state`. So the parameter is
+lost at `cas.emse.fr/cas/oauth2.0/callbackAuthorize`, where pac4j looks up its
+`DISSESSIONOauthOidcServerSupport` cookie. **Nothing on this side can make CAS send a `code`** - what
+the DSI has to be told is at the end of this section.
+
+### The chain that turned one failed login into a livelock
+
+```
+CAS returns with no code  ->  OAuthCallback.dispatch: token is None
+  ->  handle_login_failure()  ->  redirect(settings.LOGIN_URL)
+  ->  LOGIN_URL is the literal "authentik_flows:default-authentication" (root/settings.py:34)
+  ->  ToDefaultFlow.get_flow() returns brand.flow_authentication FIRST (flows/views/executor.py:524)
+  ->  that was miconnect-auth, the app's own login flow
+  ->  whose identification stage auto-redirects into CAS  ->  back to line 1, every ~5 s
+```
+
+The last step is **client-side**, in the shipped bundle (`web/dist/chunks/FQAXXECP.js`), and fires
+on exactly one condition:
+
+```js
+let n = i.length === 1, s = (e || []).length === 0;
+n && s && !r && this.host.dispatchEvent(new he(i[0].challenge))
+// 1 source AND 0 user_fields AND no passwordless_url  ->  enter that source immediately
+```
+
+**The error message was never missing.** It is injected server-side into the flow page as
+`<script data-id="authentik-messages">[{"level":"error","message":"Authentication failed: State
+check failed."}]</script>` and rendered by `<ak-message-container>` as a red toast. But **a page
+that auto-redirects cannot show anyone an error** - it left before the toast could be read, which is
+why the user saw a silent five-second loop and not a failure. The account (`robin.berthod`,
+2026-09-08) never reached Canari once: zero `/auth/callback` in production's nginx log.
+
+### What holds it apart now, and the three ways it comes back
+
+| Flow | Reached by | Contains | Behaviour |
+|---|---|---|---|
+| `miconnect-auth` | every provider, pinned | `miconnect-identification` (1 source), `miconnect-login` | auto-redirects into CAS - one tap, unchanged |
+| `miconnect-auth-fallback` | `brand.flow_authentication` - so a source failure, and any direct visit to the domain | `miconnect-auth-failed` (Deny stage) | renders and STOPS |
+
+A failure now lands on a branded French page: `La requête a été refusée.` plus *"La connexion n'a
+pas abouti. Ce n'est pas ton compte : le service d'authentification de l'école (CAS) est revenu sans
+réponse valide. Retourne dans l'application et relance la connexion, elle aboutit généralement à la
+deuxième tentative."*, with the technical toast underneath. Sending the user back through the app is
+the better retry anyway: a fresh authorization gets a fresh session state, where a retry from the
+dead flow plan meets the same broken session.
+
+**Three ways this regresses silently:**
+
+- **A provider that stops pinning `authentication_flow`** lands its own logins on that Deny page.
+  The query above is the check.
+- **Anything that gives the fallback flow an identification stage with one source** re-creates the
+  exact condition above. That is how this was first built, on 2026-09-08, with `alumni` as a second
+  source to break the condition - **wrong, because the Alumni provider is not wired up yet**
+  (user, same day), so it offered a button that leads nowhere. The passwordless link is not an
+  option either: its label is the hardcoded string `Use a security key`
+  (`renderPasswordlessUrl`), which a password or CAS login would make a lie.
+- **NEVER add a `user_field` to `miconnect-auth`.** It is `identification -> user_login` with no
+  password stage: the only thing keeping it safe is that nobody can identify anyone, and a username
+  box would let anyone log in as anyone. It reads like the one-line fix for the auto-redirect. It is
+  an authentication bypass.
+
+The `Alumni Only` identification stage (uuid `19b10365`) is bound to **no flow at all**, which is
+deliberate until that provider is connected.
+
+**And one thing waiting for the day it is.** The `Validate promo year` expression policy reads
+`context['prompt_data']['attributes']['promo']` and returns
+`promo <= datetime.now().year and promo >= 1816` with no check that the value is there. In Python
+`None <= 2026` raises `TypeError`, and authentik turns a policy exception into a REFUSAL
+(`default-match-policy-exception`), so a prompt that omits the field - or sends it as a string -
+refuses the enrolment with a message naming nothing. Every execution in the 30 days to 2026-09-08
+passed, because nothing reaches it yet.
+
+**`is-student` refuses nobody, and reading it as an enrolment gate was wrong.** It is bound to a
+**flow-STAGE** binding (`#20`), so `passing: false` SKIPS that stage rather than rejecting the
+person: 7 `false` results in 30 days, and the two accounts that looked refused on 2026-09-06 -
+`jean-hugues.chen` and `maxime.leost` - are both active, both linked to `cas-emse`, and both have
+logged in since (2026-09-08 and 2026-09-07). **A policy result is only a refusal if what it is bound
+to is the FLOW**; on a stage binding it is a router.
+
+**Owed to the restore path, like the providers above.** The flow, the Deny stage and the brand's
+`flow_authentication` live only in Authentik's Postgres: a restore from a backup predating
+**2026-09-08** brings the brand back pointing at `miconnect-auth` and the loop with it, with no
+symptom until CAS next drops a `code`.
+
+### Reproducing the whole failure on demand - no phone, no CAS account, no waiting for the 21%
+
+A callback with no query string is byte-for-byte what CAS sends, so the chain is testable from a
+workstation in two seconds. This is the before/after that proved the fix:
+
+```powershell
+$curl = "C:\Windows\System32\curl.exe"   # PATH here lacks System32 - call it absolutely
+& $curl -sS -L -D - -o NUL -b $jar -c $jar "https://auth.canari-emse.fr/source/oauth/callback/cas-emse/"
+# before: 302 /flows/-/default/authentication/ -> 302 /if/flow/miconnect-auth/         (the loop)
+# after : 302 /flows/-/default/authentication/ -> 302 /if/flow/miconnect-auth-fallback/ (stops)
+```
+
+And the auto-redirect is a **measurement**, never a reading of the admin UI: the flow executor hands
+over the three fields that decide it.
+
+```powershell
+& $curl -sS -b $jar -c $jar -H "Accept: application/json" `
+  "https://auth.canari-emse.fr/api/v3/flows/executor/<slug>/?query="
+# component / user_fields / sources / passwordless_url  ->  apply the condition above
+# miconnect-auth          -> ak-stage-identification, 1 source, 0 fields  = auto-redirect (correct)
+# miconnect-auth-fallback -> ak-stage-access-denied                        = terminal
+```
+
+**A stale flow plan survives in a browser session and outlives the stage it names.** Deleting a
+stage that a live session has already planned makes the executor raise
+`DoesNotExist: IdentificationStage matching query does not exist.` and the user gets the generic
+*"Une erreur s'est produite"* card with a request ID - which is what a mid-change reload looked
+like here, and is NOT a fault in the new flow. Test a flow change in a FRESH browser context, or the
+first thing measured is the transition.
+
+### Three levers for a login page that moves too fast to watch
+
+- **`?inspector`** on any `/if/flow/<slug>/` URL makes `xak-flow-redirect` wait for Enter instead of
+  calling `window.location.assign`, which single-steps a loop.
+- **`ak create_recovery_key <MINUTES> <username>`** prints a `/recovery/use-token/...` path that logs
+  an admin in with no flow at all. **The argument is MINUTES, not days** - `7` gives 7 minutes - so
+  regenerate one when needed rather than storing it anywhere.
+- **`/if/flow/password-login/`** is a real identification + password + login flow, so it is a way in
+  that no CAS or brand change can affect. `/if/flow/miconnect-auth/` is the other.
+
+### What the DSI has to be told - STILL OWED
+
+The 21% is theirs and nothing here can fix it. French, to send as-is:
+
+> Bonjour,
+>
+> Nous observons un defaut de redirection sur `cas.emse.fr` qui empeche une partie des connexions a
+> MiConnect (auth.canari-emse.fr, client OIDC declare `canari`).
+>
+> **Symptome mesure** : sur 337 retours de `cas.emse.fr` vers notre URL de callback
+> `https://auth.canari-emse.fr/source/oauth/callback/cas-emse/` en 96 h (du 04/09 au 08/09/2026),
+> **71 (21%) arrivent sans aucun parametre de requete** : ni `code`, ni `state`, ni `error`. La
+> requete est un `GET` sur l'URL nue. Le protocole (RFC 6749, section 4.1.2.1) impose que la reponse
+> porte soit `code` + `state`, soit `error`.
+>
+> **Ce que nous avons verifie de notre cote** : notre serveur envoie toujours `state` a
+> `/cas/oidc/oidcAuthorize` (verifie dans nos logs, requete par requete), et `cas.emse.fr` le
+> conserve bien sur le premier saut (verifie par sonde directe). Les retours qui aboutissent portent
+> toujours `code` et `state`. La perte se produit donc apres l'authentification, au niveau de
+> `/cas/oauth2.0/callbackAuthorize`.
+>
+> **Piste** : ce point de sortie pac4j retrouve son contexte via le cookie de session distribuee
+> `DISSESSIONOauthOidcServerSupport`. Un echec de lecture de cette session (replication entre
+> instances, affinite de session derriere le repartiteur, ou ecrasement du cookie quand deux
+> autorisations sont en cours dans le meme navigateur) produirait exactement cette reponse vide.
+> Les journaux CAS de `callbackAuthorize` sur la periode devraient le confirmer.
+>
+> **Population touchee** : 26 adresses IP distinctes sur 96 h, tres majoritairement des navigateurs
+> mobiles ; aucun echec depuis Windows/Firefox ou macOS sur la fenetre mesuree. Un utilisateur qui
+> reessaie finit generalement par passer, ce qui va dans le sens d'une course plutot que d'un compte
+> mal configure. Exemple documente : le compte `robin.berthod` n'a pas pu se connecter du tout le
+> 08/09/2026 au matin.
+>
+> Nous pouvons fournir les horodatages precis des 71 requetes vides, avec les IP et les user agents,
+> pour recoupement avec vos journaux.
+>
+> Merci d'avance,
+
 ## Login page branding
 
 `infrastructure/authentik/custom-login.css` is the versioned source of truth for the login flow's
