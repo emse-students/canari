@@ -97,7 +97,32 @@ export async function loadDeviceKey(): Promise<string | null> {
   if (!blob) return null;
 
   const colonIdx = blob.indexOf(':');
-  if (colonIdx === -1) return null;
+  if (colonIdx === -1) {
+    // NOT "absent": a blob with no separator can never decrypt, so returning null in silence left
+    // it in place to fail the same way on every later load, for ever, with nothing said once.
+    console.warn(
+      '[VAULT] the stored device key is malformed (no iv separator) - clearing it; this device will ask for its PIN'
+    );
+    clearDeviceKey();
+    return null;
+  }
+
+  // READ THE WRAP KEY, NEVER MINT ONE, and this is the line that makes the two failures below
+  // tellable apart. `getOrCreateWrapKey` GENERATES and STORES a fresh key when none is present,
+  // which is right for a save and wrong here twice: it is a write on a read path, and the new key
+  // destroys the one fact that separates "the wrap key is gone" from "the blob was altered" -
+  // afterwards both arrive at the same failed decrypt. That is why the old `catch` could NAME two
+  // causes (`tampered blob, key rotated`) and distinguish neither, on the one path in this file
+  // where the difference is a security signal rather than a detail.
+  const wrapped = vaultStore().getItem(VAULT_KEY_KEY);
+  if (!wrapped) {
+    console.warn(
+      '[VAULT] a device key blob is stored but its wrap key is gone - clearing it; this device will ask for its PIN. ' +
+        'Ordinary after a storage clear or a persistence-mode switch, and NOT evidence of tampering'
+    );
+    clearDeviceKey();
+    return null;
+  }
 
   const ivB64 = blob.slice(0, colonIdx);
   const cipherB64 = blob.slice(colonIdx + 1);
@@ -105,11 +130,19 @@ export async function loadDeviceKey(): Promise<string | null> {
   try {
     const iv = Uint8Array.from(atob(ivB64), (c) => c.charCodeAt(0));
     const cipher = Uint8Array.from(atob(cipherB64), (c) => c.charCodeAt(0));
-    const key = await getOrCreateWrapKey();
+    const raw = Uint8Array.from(atob(wrapped), (c) => c.charCodeAt(0));
+    const key = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['decrypt']);
     const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, cipher);
     return new TextDecoder().decode(plain);
-  } catch {
-    // Decryption failure (tampered blob, key rotated, etc.) - treat as absent.
+  } catch (e) {
+    // THE WRAP KEY WAS THERE AND THE BLOB STILL DID NOT OPEN. Everything ordinary was excluded
+    // above, so this line accuses: an AEAD tag that does not verify under a key that IS present
+    // means the ciphertext, the iv or the key was altered after it was written.
+    console.warn(
+      `[VAULT] the stored device key did not decrypt under a wrap key that IS present - clearing it; ` +
+        `this device will ask for its PIN. The blob, its iv or the key has been altered since it was written: ` +
+        `${e instanceof Error ? e.message : String(e)}`
+    );
     clearDeviceKey();
     return null;
   }

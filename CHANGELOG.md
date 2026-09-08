@@ -11,6 +11,29 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - the device-key vault reported an altered blob and an ordinary storage clear with the same silence, and left a malformed one to fail again on every load
+
+`loadDeviceKey` had two silent branches. A blob with no `iv:` separator returned null without
+clearing anything, so the unusable blob stayed and failed identically on every later load, for ever,
+having said nothing once. Everything else went through one `catch` whose comment named two causes -
+*tampered blob, key rotated* - and separated neither.
+
+**They are opposite in kind.** One is ordinary: a storage clear, a switch between session- and
+local-scoped persistence, a new profile. The other means the ciphertext, its iv or its key was
+ALTERED after it was written, which is the only security signal this file can emit. Both were
+reported by the same nothing.
+
+**The discriminator is whether a wrap key was stored at all, and it had to be read before anything
+minted one.** `getOrCreateWrapKey` generates AND STORES a fresh key when none is present - correct
+for a save, wrong on this path twice over: it is a write on a read path, and the key it writes
+destroys the evidence, after which both causes arrive at the same failed decrypt. The read now
+imports the stored key and never creates one, so the three outcomes are distinct and each says so:
+malformed, wrap key gone (explicitly *NOT evidence of tampering*), and a blob that would not open
+under a wrap key that IS present - which accuses, with everything ordinary already excluded.
+
+Five tests, none of which existed: this module had no test file at all.
+
+
 ### Fixed - a web device whose MLS state had been written short could not log in at all, where the same damage on the phone re-enrols cleanly
 
 `loadMlsState` answers one question - is there a stored state - and it was answering it twice, with
