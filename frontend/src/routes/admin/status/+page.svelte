@@ -1,4 +1,6 @@
 <script lang="ts">
+  import PageContainer from '$lib/components/layout/PageContainer.svelte';
+  import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
   import { isGlobalAdmin } from '$lib/stores/user';
@@ -171,16 +173,12 @@
   {/if}
 {/snippet}
 
-<div class="mx-auto max-w-5xl p-6">
-  <!-- En-tête -->
-  <div class="mb-6 flex flex-wrap items-start justify-between gap-3">
-    <div>
-      <h1 class="text-text-main text-2xl font-bold">{m.admin_status_title()}</h1>
-      <p class="text-text-muted mt-0.5">
-        {m.admin_status_subtitle({ count: total, sec: REFRESH_MS / 1000 })}
-      </p>
-    </div>
-    <div class="flex items-center gap-2">
+<PageContainer wide>
+  <PageHeader
+    title={m.admin_status_title()}
+    subtitle={m.admin_status_subtitle({ count: total, sec: REFRESH_MS / 1000 })}
+  >
+    {#snippet actions()}
       {#if lastUpdated}
         <span class="text-text-muted text-xs"
           >{m.admin_status_last_updated_label({
@@ -202,8 +200,8 @@
         <RefreshCw size={14} />
         {m.common_refresh_button()}
       </button>
-    </div>
-  </div>
+    {/snippet}
+  </PageHeader>
 
   <!-- Légende -->
   {#if showLegend}
@@ -289,4 +287,4 @@
       {@render deviceTable(devices)}
     </section>
   {/if}
-</div>
+</PageContainer>

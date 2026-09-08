@@ -4,6 +4,8 @@
   import { BellOff } from '@lucide/svelte';
   import { postNotifStore } from '$lib/stores/postNotifStore.svelte';
   import NotificationRow from '$lib/components/notifications/NotificationRow.svelte';
+  import PageContainer from '$lib/components/layout/PageContainer.svelte';
+  import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { groupNotifications, type NotificationBucket } from '$lib/utils/notifications/grouping';
   import type { PostNotification } from '$lib/posts/api';
   import { m } from '$lib/paraglide/messages';
@@ -75,17 +77,18 @@
 </svelte:head>
 
 <!--
-  ON DESKTOP THE LIST IS A CARD, like every other region of the shell and like the reference, which
-  draws its notification column as a panel on the page ground rather than as text floating on it.
-  Below 768px it stays full-bleed: the shell does not float anything there either, because a phone
-  has no width to spend on a gutter.
--->
-<main class="mx-auto max-w-xl px-4 py-6 pb-24 md:px-0 md:pb-8">
-  <div class="md:bg-cn-surface md:rounded-xl md:px-4 md:py-5">
-    <h1 class="text-text-main text-xl font-bold">{m.nav_notifications_label()}</h1>
+  THE LIST SITS ON THE PAGE GROUND, NOT ON A CARD.
 
+  It was a `md:bg-cn-surface` panel for one day. Two things were wrong with that, both reported by
+  the user: the card was a white slab no other page draws, and the column under it was `max-w-xl` -
+  576px against the feed's 680px - so the app's narrowest page was the one made of the widest rows.
+  The reference draws its notifications as a panel because there it IS a dropdown floating over a
+  page; here it is the page.
+-->
+<PageContainer>
+  <PageHeader title={m.nav_notifications_label()}>
     <!-- The two pills, which the reference puts directly under the title. -->
-    <div class="mt-3 mb-4 flex items-center gap-2">
+    <div class="flex items-center gap-2">
       {#each [{ key: 'all', label: m.notif_filter_all() }, { key: 'unread', label: m.notif_filter_unread() }] as tab (tab.key)}
         <button
           type="button"
@@ -100,43 +103,43 @@
         </button>
       {/each}
     </div>
+  </PageHeader>
 
-    {#if postNotifStore.loading && postNotifStore.notifications.length === 0}
-      <div class="flex flex-col gap-3">
-        {#each { length: 6 } as _, i (i)}
-          <div class="flex animate-pulse items-start gap-3 px-2 py-2.5">
-            <div class="bg-cn-surface h-14 w-14 shrink-0 rounded-full"></div>
-            <div class="flex-1 space-y-2 py-1">
-              <div class="bg-cn-surface h-3 w-3/4 rounded"></div>
-              <div class="bg-cn-surface h-2.5 w-1/3 rounded"></div>
-            </div>
+  {#if postNotifStore.loading && postNotifStore.notifications.length === 0}
+    <div class="flex flex-col gap-3">
+      {#each { length: 6 } as _, i (i)}
+        <div class="flex animate-pulse items-start gap-3 px-2 py-2.5">
+          <div class="bg-cn-surface h-14 w-14 shrink-0 rounded-full"></div>
+          <div class="flex-1 space-y-2 py-1">
+            <div class="bg-cn-surface h-3 w-3/4 rounded"></div>
+            <div class="bg-cn-surface h-2.5 w-1/3 rounded"></div>
           </div>
-        {/each}
-      </div>
-    {:else if groups.length === 0}
-      <div class="text-text-muted flex flex-col items-center gap-3 py-16">
-        <BellOff size={40} strokeWidth={1.5} class="opacity-40" />
-        <p class="text-sm">
-          {filter === 'unread' ? m.notif_empty_unread() : m.notif_empty_message()}
-        </p>
-      </div>
-    {:else}
-      {#each groups as group (group.bucket)}
-        <h2 class="text-text-main mt-4 mb-1 px-2 text-base font-bold first:mt-0">
-          {BUCKET_LABEL[group.bucket]()}
-        </h2>
-        <ul class="flex flex-col">
-          {#each group.items as notif (notif.id)}
-            <li>
-              <NotificationRow
-                {notif}
-                unread={unreadAtOpen.has(notif.id)}
-                onOpen={() => openNotification(notif)}
-              />
-            </li>
-          {/each}
-        </ul>
+        </div>
       {/each}
-    {/if}
-  </div>
-</main>
+    </div>
+  {:else if groups.length === 0}
+    <div class="text-text-muted flex flex-col items-center gap-3 py-16">
+      <BellOff size={40} strokeWidth={1.5} class="opacity-40" />
+      <p class="text-sm">
+        {filter === 'unread' ? m.notif_empty_unread() : m.notif_empty_message()}
+      </p>
+    </div>
+  {:else}
+    {#each groups as group (group.bucket)}
+      <h2 class="text-text-main mt-4 mb-1 px-2 text-base font-bold first:mt-0">
+        {BUCKET_LABEL[group.bucket]()}
+      </h2>
+      <ul class="flex flex-col">
+        {#each group.items as notif (notif.id)}
+          <li>
+            <NotificationRow
+              {notif}
+              unread={unreadAtOpen.has(notif.id)}
+              onOpen={() => openNotification(notif)}
+            />
+          </li>
+        {/each}
+      </ul>
+    {/each}
+  {/if}
+</PageContainer>

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import PageContainer from '$lib/components/layout/PageContainer.svelte';
+  import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
@@ -12,7 +14,7 @@
   } from '$lib/associations/api';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
-  import { ArrowLeft, Building2, Users, TriangleAlert } from '@lucide/svelte';
+  import { Building2, Users, TriangleAlert } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import EditProfileTab from '$lib/components/associations/edit/EditProfileTab.svelte';
   import EditMembersTab from '$lib/components/associations/edit/EditMembersTab.svelte';
@@ -74,101 +76,97 @@
   }
 </script>
 
-<div class="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:px-6">
-  <a
-    href="/lists/{encodeURIComponent(slug)}"
-    class="text-text-muted hover:text-text-main inline-flex items-center gap-2 text-sm transition-colors"
-  >
-    <ArrowLeft size={16} />
-    {m.list_edit_back_to_public()}
-  </a>
+<PageContainer>
+  <PageHeader
+    title={m.list_edit_page_title()}
+    subtitle={list
+      ? `@${list.slug}${list.promo ? ` · ${m.list_campaigns_heading({ year: list.promo })}` : ''}`
+      : undefined}
+    backHref="/lists/{encodeURIComponent(slug)}"
+    backLabel={m.list_edit_back_to_public()}
+  />
 
-  {#if loading}
-    <div class="flex items-center justify-center py-20">
-      <div
-        class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
-      ></div>
-    </div>
-  {:else if error && !list}
-    <div class="bg-red-err/10 border-red-err/30 text-red-err rounded-xl border p-4 text-sm">
-      {error}
-    </div>
-  {:else if list}
-    <header class="space-y-1">
-      <h1 class="text-text-main text-2xl font-bold tracking-tight">Gestion de la liste</h1>
-      <p class="text-text-muted text-sm">
-        @{list.slug}{list.promo ? ` · ${m.list_campaigns_heading({ year: list.promo })}` : ''}
-      </p>
-    </header>
-
-    {#if error}
+  <div class="space-y-6">
+    {#if loading}
+      <div class="flex items-center justify-center py-20">
+        <div
+          class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
+        ></div>
+      </div>
+    {:else if error && !list}
       <div class="bg-red-err/10 border-red-err/30 text-red-err rounded-xl border p-4 text-sm">
         {error}
       </div>
-    {/if}
+    {:else if list}
+      {#if error}
+        <div class="bg-red-err/10 border-red-err/30 text-red-err rounded-xl border p-4 text-sm">
+          {error}
+        </div>
+      {/if}
 
-    <!-- Section tabs -->
-    <nav
-      data-swipe-nav-ignore
-      class="border-cn-border/80 bg-cn-bg sticky top-0 z-30 -mx-4 border-y px-4 py-3 sm:mx-0 sm:rounded-2xl sm:border"
-      aria-label={m.list_edit_sections_aria()}
-    >
-      <div class="flex flex-wrap gap-2">
-        <button
-          type="button"
-          onclick={() => (editSection = 'profile')}
-          class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
- {editSection === 'profile'
-            ? 'bg-cn-yellow text-cn-ink shadow-sm'
-            : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
-        >
-          <Building2 size={17} />
-          Profil
-        </button>
-        {#if canManageMembers}
+      <!-- Section tabs -->
+      <nav
+        data-swipe-nav-ignore
+        class="border-cn-border/80 bg-cn-bg sticky top-0 z-30 -mx-4 border-y px-4 py-3 sm:mx-0 sm:rounded-2xl sm:border"
+        aria-label={m.list_edit_sections_aria()}
+      >
+        <div class="flex flex-wrap gap-2">
           <button
             type="button"
-            onclick={() => (editSection = 'members')}
+            onclick={() => (editSection = 'profile')}
             class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
- {editSection === 'members'
+ {editSection === 'profile'
               ? 'bg-cn-yellow text-cn-ink shadow-sm'
               : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
           >
-            <Users size={17} />
-            Membres
+            <Building2 size={17} />
+            Profil
           </button>
-        {/if}
-        {#if isGlobalAdminUser}
-          <button
-            type="button"
-            onclick={() => (editSection = 'danger')}
-            class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+          {#if canManageMembers}
+            <button
+              type="button"
+              onclick={() => (editSection = 'members')}
+              class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+ {editSection === 'members'
+                ? 'bg-cn-yellow text-cn-ink shadow-sm'
+                : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
+            >
+              <Users size={17} />
+              Membres
+            </button>
+          {/if}
+          {#if isGlobalAdminUser}
+            <button
+              type="button"
+              onclick={() => (editSection = 'danger')}
+              class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
  {editSection === 'danger'
-              ? 'bg-red-err/20 text-red-err border-red-err/30 border'
-              : 'border-cn-border text-text-muted hover:text-red-err border bg-(--cn-surface)'}"
-          >
-            <TriangleAlert size={17} />
-            Danger
-          </button>
-        {/if}
-      </div>
-    </nav>
+                ? 'bg-red-err/20 text-red-err border-red-err/30 border'
+                : 'border-cn-border text-text-muted hover:text-red-err border bg-(--cn-surface)'}"
+            >
+              <TriangleAlert size={17} />
+              Danger
+            </button>
+          {/if}
+        </div>
+      </nav>
 
-    {#if editSection === 'profile'}
-      <EditProfileTab asso={list} canEdit={canManageMembers} onUpdated={(a) => (list = a)} />
-    {/if}
+      {#if editSection === 'profile'}
+        <EditProfileTab asso={list} canEdit={canManageMembers} onUpdated={(a) => (list = a)} />
+      {/if}
 
-    {#if editSection === 'members' && canManageMembers}
-      <EditMembersTab asso={list} bind:members bind:resolvedMemberNames />
-    {/if}
+      {#if editSection === 'members' && canManageMembers}
+        <EditMembersTab asso={list} bind:members bind:resolvedMemberNames />
+      {/if}
 
-    {#if editSection === 'danger' && isGlobalAdminUser}
-      <EditDangerTab
-        asso={list}
-        kind="list"
-        onUpdated={(a) => (list = a)}
-        onDeleted={() => goto('/lists')}
-      />
+      {#if editSection === 'danger' && isGlobalAdminUser}
+        <EditDangerTab
+          asso={list}
+          kind="list"
+          onUpdated={(a) => (list = a)}
+          onDeleted={() => goto('/lists')}
+        />
+      {/if}
     {/if}
-  {/if}
-</div>
+  </div>
+</PageContainer>

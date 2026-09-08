@@ -454,3 +454,81 @@ timestamp, dot - and had already diverged: the page resolved `@[id]` mention tok
 names and the dropdown printed the raw token. `NotificationRow.svelte` is the single implementation,
 with `compact` for the 320px dropdown.
 
+
+## 12. The page shell - one column, one heading, no logos
+
+**The user's brief, 2026-09-09:** *"il faudrait homogeneiser les pages du site"*, with Feed,
+Communautes and Discussions named as the reference pages, and four specific complaints - Notifs is
+much narrower than Feed and carries a white zone, Agenda has a link to "Associations" and a logo to
+remove, Boutique has a logo to remove, Tableau de bord has a logo to remove. Then the general form:
+*"toutes les pages devraient garder la meme UI (largeur du contenu principal, logo ou non, tailles
+de polices pour les titres et sous-titres, emplacements), et c'est l'occasion de factoriser des
+choses"*.
+
+**Two of the three named reference pages are the same component.** `/communities` and `/chat` both
+render `MainChatPage`, a full-height three-column shell with no reading column at all. So the only
+reference for a *document* page was Feed, and its numbers are what the shared component now carries.
+
+### What was measured, before any change
+
+Every `+page.svelte` in the repo, for the container width and the `h1`:
+
+| page | column | `h1` | logo in the heading |
+| --- | --- | --- | --- |
+| Feed (`/posts`) | `max-w-[42.5rem]` = **680px** | `text-2xl` + `font-brand` | no |
+| Notifs | `max-w-xl` = **576px** | `text-xl` | no |
+| Agenda | `max-w-3xl` = **768px** | `text-2xl` | `CalendarDays`, 28px |
+| Boutique | `max-w-4xl` = **896px** | `text-2xl` | `ShoppingBag`, 28px |
+| Tableau de bord | `max-w-4xl` = **896px**, `p-6` | `text-2xl` | `LayoutDashboard`, 28px |
+| Annuaire, Documents, Formulaires, Parametres, Profil, admin | 3 more distinct widths | `text-xl` .. `text-3xl` | 4 more logos |
+
+**Eight distinct content widths across 34 routes, and nothing chose any of them** - each was whatever
+the page that came first happened to carry. The visible consequence is the one the user reported:
+moving between two tabs of the same app moves the text under the reader.
+
+Two findings the sweep produced that the eye could not:
+
+- **`font-brand` on the Feed's title is a no-op.** `app.css:319` already gives `h1..h6` the Fredoka
+  face, so the class made one page look deliberate and the other 33 look accidental while changing
+  nothing. It is not set in the shared heading.
+- **Three routes nested a `<main>` inside the shell's own `<main id="main-content">`** - a landmark
+  inside itself, so a screen reader had two "main" regions to choose between. The shared container is
+  a `div` for that reason, and the count is now 1 everywhere.
+
+### What the shared components are
+
+`PageContainer.svelte` and `PageHeader.svelte`, in `src/lib/components/layout/`.
+
+- **The column is the Feed's**, 680px, with the Feed's rhythm (`px-4 py-6 md:px-8 md:py-8`) and its
+  `animate-rise-in`. `wide` is a SECOND declared value (`max-w-5xl`) for the four surfaces that are
+  editors rather than documents - the form builder, form creation, the export table and the service
+  status board - where 680px cannot hold the controls. Two named widths, not eight ad-hoc ones.
+- **No bottom padding for the mobile tab bar.** The shell's scroll wrapper already reserves
+  `4rem + safe-area`; Notifs was adding `pb-24` on top of it and padding twice.
+- **The heading is `text-2xl` bold over `text-sm` muted**, which is the majority convention the
+  measurement found - 21 of 34 routes already used exactly that. The two outliers were Notifs at
+  `text-xl` and the legal pages at `text-3xl`.
+- **NO ICON, on any page.** A glyph beside a word that already names the page costs vertical space and
+  makes three pages look like three products. The navigation carries the icons and is where the reader
+  looks for them.
+- **`backHref` / `backLabel`** is the one place a back link may be drawn, so its placement is the same
+  on the five pages that are genuinely sub-pages. The Agenda's was DELETED rather than moved: the
+  agenda is a top-level navigation destination, so following its link to `/associations` sent the
+  reader somewhere they had never been.
+- **`aside`** carries the Feed's `ConversationsMiniPanel`, the one column that lives outside the
+  reading width.
+
+### What it covers, and what it deliberately does not
+
+**26 of 34 routes** are on the shared column. The eight that are not, and why:
+
+| left alone | why |
+| --- | --- |
+| `legal/cgu`, `legal/privacy`, `legal/child-safety` | public legal documents, not app pages |
+| `c/join/[token]`, `g/join/[token]` | invite landing cards, outside the shell |
+| `forms/[id]` | the public form view, whose coloured hero IS its heading |
+| `profile`, `profile/[id]` | on the shared COLUMN, but with no `PageHeader`: a profile's title is the person, drawn inside the identity card, and a name above it would say it twice |
+
+Three raw French literals were found in the pages being converted and localized in the same pass -
+`Retour aux publications`, `Publication introuvable` and `Gestion de la liste`. Nothing types a string
+as user-visible, which is why they survived; the sweep is what surfaced them.
