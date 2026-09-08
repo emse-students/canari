@@ -2737,6 +2737,71 @@ though a reader could resolve it, and say how to get it back -
 same thing a day later. The pair with the dirty-tree check is the whole picture: one says the commit
 does not describe the code, the other says the commit cannot be found.
 
+## A PRECONDITION CANNOT PRODUCE A PRODUCT VERDICT, AND FOUR OF THEM DID
+
+NOTIF-1b recorded `FAIL` twice on 2026-09-08 while the thing it exists to measure answered perfectly:
+notified in 2206 ms and 2203 ms, inside the 10 s discriminator, with the body drawn. What failed was
+`warmUpInMs: null` - a clause the row's own comment labels *"A RIG CLAUSE, NOT A PRODUCT ONE"*, sitting
+in the same array as the product clauses, where `unmet.length > 0` made it a product verdict.
+
+The file already knew better in three places and could not act on any of them. Its docblock promises
+that a failed warm-up makes the run *"say so and STOP rather than measuring a booting app and blaming
+the notification layer"*. Its `theOsLetTheHiddenAppKeepItsNetwork` comment says *"the OS cut the
+network" and "the product stayed silent" are different findings and must not share a verdict*. And
+its `baselineTooSlow` branch does the right thing for the WEAKER form of the same problem - a warm-up
+that is merely slow makes the discriminator ungradeable rather than unmet. A warm-up that never
+arrives at all was graded `FAIL`.
+
+**The rule.** A clause is a PRECONDITION when its failure relocates the run onto a different subject.
+A dead process measures the KILLED path; an app HOME never hid measures the FOREGROUND path; an OS
+that cut the network measures no path; a warm-up that never arrives measures a booting app. In every
+one of those the clauses downstream were never validly asked, so grading their answers is reading a
+measurement that was not taken. Preconditions yield `SETUP-FAILED` with a `notMeasured` field naming
+them; only product clauses may yield `FAIL`.
+
+**And it does not generalise to the ungradeable discriminator, deliberately.** `baselineTooSlow`
+still lets a product failure win, because a slow-but-arriving warm-up proves the app IS routing: the
+other clauses were validly asked and a failure among them is real. The distinction is whether the
+run reached the subject, not whether it was comfortable.
+
+**The same conflation was in `k.mjs` (NOTIF-6c)**, whose `thePreconditionWasArmed` is labelled *"NOT
+a product clause"* on the line above where it is pushed, and which was graded `FAIL` anyway. That row
+had already invented the pattern for a fourth clause - `theShadeWasAnswered` returns `SKIPPED`,
+because *"a zero that could mean 'refused' or 'never asked' is a defect in the instrument"* - and
+simply had not applied it to the other three.
+
+## AND THE PRECONDITION UNDER THAT ONE FAILED IN SILENCE
+
+The same row opened the phone's conversation with `.catch(() => null)`. Twice:
+
+```js
+await withDeadline(ensureChat(a1Setup), 60_000, 'A1 ensureChat').catch(() => null);
+await withDeadline(openConversation(a1Setup, peerNameFor('A1')), 90_000, 'A1 openConversation').catch(() => null);
+```
+
+W2's and W1's equivalents are allowed to throw; only the phone's were swallowed. So "the DM never
+opened" and "the DM was open and the message never came" produced the same run - no console line, no
+field, `clean: true` - and those are the exact two findings the warm-up exists to separate. **A
+swallowed setup failure does not make a run fail; it makes a run mean something else without saying
+so.** Recorded in `a1SetupFaults`, announced, and asserted as `theDmWasOpenOnThePhone`.
+
+## READ THE SERVER'S LOGS BEFORE FILING A CLIENT DEFECT
+
+The P1 CANDIDATE filed from NOTIF-1b's console said *"a zombie socket in a FOREGROUNDED app"*, and
+named a rig alternative it could not rule out. Three logs were sitting on the same machine and none
+had been opened. Each one took under a minute and each refuted a load-bearing claim:
+
+| the claim | the log | what it said |
+| --- | --- | --- |
+| the socket was a zombie | `docker logs canari-local-chat-gateway-1` | `[Gateway] Message directly routed to ...tauri-...` at 13:50:32.372 |
+| nothing was delivered | `docker logs canari-local-chat-delivery-service-1` | `QUEUED count=6`, `online=false`, `FCM sent ... bytes=659`, then the phone's ACK |
+| `make local-frontend` killed it | `docker inspect --format '{{.State.StartedAt}}'` | nginx up 13:28:36Z against runs at 13:41 and 13:52; the gateway up since 2026-09-04 |
+| the app was ready | the delivery log again | `REGISTER_DEVICE`, `REGISTER_PREKEYS`, `USER_GROUPS groups=7` at 13:50:45 - **13 s after the warm-up** |
+
+`docker logs --since/--until` with a bare timestamp misparses and returns nothing here; strip the ANSI
+codes and grep the embedded ISO timestamps instead. A client console describes what the client
+believes. It is evidence about the client, and it is never evidence about the peer.
+
 ## Where a result goes
 
 - **PASS** -> one row in the [dashboard](cross-client-testing.md), with the build it ran against.

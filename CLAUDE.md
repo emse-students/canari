@@ -334,7 +334,10 @@ re-deriving anything here, and keep no second copy.**
 caught the board wrong FIVE times. **`bun cleanup.mjs` BEFORE believing a measurement**: 42 leftover
 groups made a run misread twice on 2026-09-06, and sweeping them turned a `FAIL` into the row's
 first clean `PASS` and PROVED a P1 - debris does not just slow a run, it reattributes what the run
-measures. **The rig targets the LOCAL estate since 2026-09-03**, so a push deploys nothing and the
+measures (it does NOT sweep `queued_message`: 13 275 rows since 2026-08-05). **BEFORE FILING A
+CLIENT DEFECT, READ THE OTHER END** - a "zombie socket" P1 died to three `docker logs` here, under a
+minute each, every load-bearing claim wrong ([methodology](docs/wiki/testing-methodology.md)).
+**The rig targets the LOCAL estate since 2026-09-03**, so a push deploys nothing and the
 mutual-exclusion rule died with that move ([methodology](docs/wiki/testing-methodology.md)); what
 replaces it is a rebuild or a `bun run dev` SAVE, which `bundle.mjs` measures. **The board is reset
 to zero**, archived at [archive](docs/wiki/cross-client-testing-archive.md). **A killed run can
