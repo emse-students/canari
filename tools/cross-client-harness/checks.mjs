@@ -168,10 +168,11 @@ export const PHASES = {
       'notif.mjs 10',
       'notif7.mjs bg',
       'notif7.mjs killed',
-      // LAST, because it is the only NOTIF row that opens the VENUE channel: doing so re-renders the
-      // dead-mention chips MENTION-5 leaves behind, and a row that runs after it inherits nothing
-      // while a row that runs before it is unaffected either way. It forgives those 404s itself.
+      // LAST, because these are the only NOTIF rows that open the VENUE channel: doing so re-renders
+      // the dead-mention chips MENTION-5 leaves behind, and a row that runs after them inherits
+      // nothing while a row that runs before is unaffected either way. Both forgive those 404s.
       'notif14.mjs',
+      'notif16.mjs',
     ],
     needs: ['W1', 'W2', 'A1'],
   },

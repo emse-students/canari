@@ -400,6 +400,7 @@ shade and the app holding the message. Removing the WebView notification would r
 | --- | --- | --- |
 | small icon | `ic_notification` | `ic_dialog_info`, the framework glyph - FIXED 2026-09-07 |
 | channel | `canari_messages`, IMPORTANCE_HIGH, sound + vibration | `default`, IMPORTANCE_DEFAULT, silent - FIXED 2026-09-07 |
+| channel for a MENTION | `canari_mentions` - its own mute switch, DND override requested | `canari_messages`: the 2026-09-07 fix taught the plugin ONE channel and it had no mentions branch at all - FIXED 2026-09-08, measured by NOTIF-16 |
 | style | `MessagingStyle`, stacked and attributed | `BigTextStyle` |
 | quick actions | six (`addAction`) | **none** - our `sendNotification` declares no `actionTypeId` |
 | tap | `ACTION_VIEW` on `fr.emse.canari://chat/<groupId>` | `ACTION_MAIN` on the launcher, lands nowhere |

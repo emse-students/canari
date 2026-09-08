@@ -13,6 +13,7 @@ import { SvelteMap, SvelteDate } from 'svelte/reactivity';
 import { getToken } from '$lib/stores/auth';
 import { fromHex } from '$lib/utils/hex';
 import { systemNotificationsBlockedAnnounceOnce } from '$lib/utils/systemNotificationsBlocked';
+import { extractMentionUserIds, normalizeMentionUserId } from '$lib/utils/mentions';
 import {
   sendChatMessage,
   addReaction,
@@ -92,7 +93,12 @@ export interface MessagingContext {
   playSendTone?: () => void;
   playReceiveTone?: () => void;
   playReadTone?: () => void;
-  sendSystemNotification: (title: string, body: string, conversationId?: string) => Promise<void>;
+  sendSystemNotification: (
+    title: string,
+    body: string,
+    conversationId?: string,
+    mentionsMe?: boolean
+  ) => Promise<void>;
   /**
    * Tells this user's OTHER devices that a salon has been read, so any of them still showing its
    * notification drops it. Optional: only the layer holding a channel client can provide it, and
@@ -410,10 +416,19 @@ export function useMessaging() {
         : `the window is open on ${window.location.pathname} showing ${ctx.selectedContact || 'the list'}`;
     console.log(`[NOTIF] Inbound in ${conversationKey} while ${away} - asking.`);
     const preview = getPreviewText(parseEnvelope(content));
+    // WHETHER THIS MESSAGE NAMES THE READER IS DECIDED HERE, WHERE BOTH HALVES ARE ALREADY KNOWN -
+    // the raw text and `ctx.userId` - rather than left to the layer that only sees a title and a
+    // body. It picks the notification channel, which is the reader's own mute, sound and DND
+    // switch. `CanariFirebaseMessagingService` makes the same decision from the same token for
+    // messages that arrive as a push; this is the WebSocket half of one rule, and until 2026-09-08
+    // it did not exist, so which switches applied to a mention depended on which transport
+    // happened to carry it (NOTIF-16).
+    const mentionsMe = extractMentionUserIds(content).includes(normalizeMentionUserId(ctx.userId));
     void ctx.sendSystemNotification(
       getUserDisplayNameSync(senderId, conversationName),
       preview || m.notif_new_message(),
-      conversationKey
+      conversationKey,
+      mentionsMe
     );
   }
 

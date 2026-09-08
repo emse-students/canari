@@ -11,6 +11,44 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - whether a mention reached you through your own Do-Not-Disturb depended on which transport carried it
+
+Android files every notification on a channel, and a channel is not a label: it carries its own
+importance, sound, vibration and Do-Not-Disturb standing, and the user gets a switch per channel.
+`canari_mentions` exists so that someone who mutes the chatter still hears their own name, and it is
+the only channel besides calls for which the app requests DND override.
+
+Two things build Canari's notifications and only one of them knew that. The Kotlin push service
+reads the decrypted text for `@[myUserId]` and picks `canari_mentions` or `canari_messages` from it.
+The web half exported exactly two channel constants - `canari_messages` and `canari_calls` - and
+passed `canari_messages` unconditionally, having no mentions branch at all.
+
+That is not "mentions are never special", which would at least be predictable. **The builder follows
+the message's ROUTE, not the app's state** (measured as NOTIF-14, 2026-09-08: on one backgrounded
+phone a DM was built by `tauri-plugin-notification` over the WebSocket and a salon message by
+`CanariFirebaseMessagingService` four seconds later). So the same mention was filed under the
+reader's mute settings or above them depending on a transport nobody can see and nothing makes
+stable. NOTIF-16 measured all four cells on one backgrounded handset the same day:
+
+| | route | filed on |
+| --- | --- | --- |
+| plain direct message | websocket | `canari_messages` |
+| **mention in a direct message** | **websocket** | **`canari_messages`** |
+| plain salon message | push | `canari_messages` |
+| mention in a salon | push | `canari_mentions` |
+
+The discriminator is now computed where both halves are already known - the raw text and
+`ctx.userId`, in `useMessaging`'s inbound path - and travels to `sendSystemNotification`, rather
+than being re-derived by a layer that only sees a title and a body. The tests pin it in both
+directions: always-true is the same defect wearing the other mask, since it would put every message
+above a mute the user set deliberately.
+
+The row's own premise was also wrong and is corrected on the board. It was written as "the
+importance split that bypass-DND rests on"; there is no importance split - both channels are
+`IMPORTANCE_HIGH` - and the device reports `mBypassDnd=false` on both, which is `setBypassDnd(true)`
+being a request the system honours only once the user grants the channel DND access. Code and device
+agree there, so NOTIF-16 records the policy fields and asserts only the routing.
+
 ### Fixed - a first message from someone you have no conversation with was invisible until the app was restarted
 
 Reported from production by the user on 2026-09-08: someone messages you for the first time, the

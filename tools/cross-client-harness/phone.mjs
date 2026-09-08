@@ -778,6 +778,11 @@ export function notifications() {
       text: b.replace(/\s+/g, ' ').slice(0, 900),
       title: (b.match(/android\.title=(?:String \()?([^\n)]*)/) || [])[1]?.trim() ?? '',
       body: (b.match(/android\.text=(?:String \()?([^\n)]*)/) || [])[1]?.trim() ?? '',
+      // WHICH CHANNEL THE OS FILED IT UNDER, and it is a POLICY and not a label: the app
+      // declares five, and they differ in importance, sound, vibration and whether they may
+      // cross Do Not Disturb. A notification that ARRIVED is a different fact from one filed
+      // where the user's own mute and DND choices will find it - which is NOTIF-16's question.
+      channel: (b.match(/channel=([A-Za-z0-9_.]+)/) || [])[1] ?? '',
       // The two fields that decide whether that body reaches a SCREEN - see `bodyIsDrawn`.
       template: (b.match(/android\.template=(?:String \()?([^\n)]*)/) || [])[1]?.trim() ?? '',
       inboxLines: Number((b.match(/android\.textLines=CharSequence\[\] \((\d+)\)/) || [])[1] ?? -1),

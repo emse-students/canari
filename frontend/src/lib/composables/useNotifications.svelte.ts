@@ -55,6 +55,22 @@ export const NOTIFICATION_ICON = 'ic_notification';
 
 export const CHANNEL_MESSAGES = 'canari_messages';
 export const CHANNEL_CALLS = 'canari_calls';
+/**
+ * The channel a message that NAMES the reader is filed on - `CanariApplication.ensureChannels`.
+ *
+ * IT IS THE USER'S OWN SWITCH, WHICH IS WHY IT CANNOT BE LEFT TO ONE TRANSPORT. Android gives every
+ * channel its own importance, sound, vibration and Do-Not-Disturb standing, and it gives the user a
+ * toggle per channel: `canari_mentions` exists so that someone who mutes the chatter still hears
+ * their own name, and it is the only channel besides calls for which the app requests DND override.
+ *
+ * Until this constant existed the web half had no mentions branch at all and passed
+ * {@link CHANNEL_MESSAGES} for everything, while `CanariFirebaseMessagingService` read the decrypted
+ * text for `@[myUserId]` and filed it correctly. Since the builder follows the message's ROUTE and
+ * not the app's state, one mention was filed under the reader's mute settings and the next was not,
+ * decided by nothing the reader can see. Measured as NOTIF-16 on 2026-09-08: a mention over the
+ * WebSocket landed on `canari_messages`, the same mention pushed landed on `canari_mentions`.
+ */
+export const CHANNEL_MENTIONS = 'canari_mentions';
 
 /** Returns a stable positive integer ID derived from a conversation ID string, used to replace existing Tauri notifications for the same conversation. */
 function stableNotifId(conversationId: string): number {
@@ -524,7 +540,12 @@ export function useNotifications() {
   }
 
   /** Shows an OS-level notification (via Tauri plugin or Web Notification API). Rate-limited per conversation to 800 ms to absorb bursts while allowing different conversations to notify independently. Uses a stable ID/tag per conversation so successive messages replace rather than stack. */
-  async function sendSystemNotification(title: string, body: string, conversationId?: string) {
+  async function sendSystemNotification(
+    title: string,
+    body: string,
+    conversationId?: string,
+    mentionsMe = false
+  ) {
     if (typeof window === 'undefined') return;
     const convKey = conversationId ?? '__default__';
 
@@ -559,9 +580,13 @@ export function useNotifications() {
         if (await isPermissionGranted()) {
           await sendNotification({
             title,
-            ...androidNotificationOptions(body, CHANNEL_MESSAGES),
+            ...androidNotificationOptions(body, mentionsMe ? CHANNEL_MENTIONS : CHANNEL_MESSAGES),
             ...(conversationId ? { id: stableNotifId(conversationId) } : {}),
           });
+          // THE CHOICE IS LOGGED BECAUSE IT IS INVISIBLE OTHERWISE. A channel does not appear on
+          // the notification; it decides which of the reader's own switches apply to it, and the
+          // only place it can be read back is `dumpsys notification`, with the phone in hand.
+          if (mentionsMe) console.log(`[NOTIF] Filed on ${CHANNEL_MENTIONS} - it names this user.`);
           // TAPPING THIS NOTIFICATION CANNOT REACH THE CONVERSATION ON ANDROID, AND THE PLUGIN IS
           // WHY - measured on a Mi 9T on 2026-09-07 with a real message, which opened the app and
           // landed on nothing.

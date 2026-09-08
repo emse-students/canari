@@ -81,6 +81,31 @@ would be a threshold nobody has measured against the population it would run on.
 ---
 
 
+### QUESTION - iOS has the mention elevation on ONE path too, and the plugin cannot express it
+
+NOTIF-16 fixed the Android half on 2026-09-08: a message naming the reader is filed on
+`canari_mentions`, and it is now chosen by BOTH builders rather than only the push one
+([story](../../CHANGELOG.md), [rule](durable-rules.md)). The obvious follow-up - "does iOS need the
+same?" - is ANSWERED in the source, and the answer is half of one and half of the other.
+
+**iOS has no notification channels, and it does not need them: it has the elevation already, on the
+push path.** `canari_NSE/NotificationService.swift` scans the decrypted text for `@[uuid]` exactly as
+the Kotlin service does and sets `content.interruptionLevel = .timeSensitive` for a mention, which is
+what breaks through Focus. That half is done and is not owed anything.
+
+**The other half cannot be fixed the way Android's was.** The WebSocket path on iOS is the same
+`tauri-plugin-notification` call, and its `Options` type declares `channelId` and NO
+`interruptionLevel` - so there is no argument to pass. The Android fix worked because the plugin
+happened to expose the field that mattered there; here the field does not exist. Closing it means
+patching the plugin, adding a native command beside it, or accepting that a mention delivered over
+the socket on iOS arrives at the default level.
+
+**So the QUESTION is which of those three, and it is a judgement, not a measurement.** What each path
+requests is readable in the source, above; what a locked iPhone does with it is not, and that part
+waits on hardware like everything else iOS. Do not "fix" this by marking every message
+`.timeSensitive` - that is the always-true mutation the Android tests exist to forbid, wearing an
+Apple badge, and Apple reviews it.
+
 ### DECISION OWED - naming the author of each line inside a salon's stacked notification
 
 Asked for by the user on 2026-08-20: salon notifications should read like a DM's - successive
