@@ -1,6 +1,8 @@
 <script lang="ts">
+  import PageContainer from '$lib/components/layout/PageContainer.svelte';
+  import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
-  import { Shield, RefreshCw, Users } from '@lucide/svelte';
+  import { Shield, RefreshCw } from '@lucide/svelte';
   import { apiFetch } from '$lib/utils/apiFetch';
   import { coreUrl } from '$lib/utils/apiUrl';
   import { isGlobalAdmin } from '$lib/stores/user';
@@ -85,98 +87,95 @@
   });
 </script>
 
-<div class="mx-auto max-w-3xl space-y-6 px-4 py-8">
-  <div class="flex items-center justify-between gap-4">
-    <div class="flex items-center gap-3">
-      <div class="text-amber-warn rounded-xl bg-amber-500/10 p-2.5">
-        <Users size={22} strokeWidth={2.5} />
+<PageContainer>
+  <PageHeader title={m.admin_card_manage_admins_label()} subtitle={m.admin_users_subtitle()}>
+    {#snippet actions()}
+      <button
+        type="button"
+        onclick={load}
+        disabled={loading}
+        class="text-text-muted rounded-xl p-2 transition-colors hover:bg-black/5 disabled:opacity-50 dark:hover:bg-white/5"
+        title={m.moderation_refresh()}
+      >
+        <RefreshCw size={18} class={loading ? 'animate-spin' : ''} />
+      </button>
+    {/snippet}
+  </PageHeader>
+
+  <div class="space-y-6">
+    {#if error}
+      <div class="bg-red-err/10 text-red-err border-red-err/30 rounded-xl border p-4 text-sm">
+        {error}
       </div>
-      <div>
-        <h1 class="text-text-main text-2xl font-bold">{m.admin_card_manage_admins_label()}</h1>
-        <p class="text-text-muted text-sm">
-          {m.admin_users_subtitle()}
-        </p>
-      </div>
-    </div>
-    <button
-      type="button"
-      onclick={load}
-      disabled={loading}
-      class="text-text-muted rounded-xl p-2 transition-colors hover:bg-black/5 disabled:opacity-50 dark:hover:bg-white/5"
-      title={m.moderation_refresh()}
-    >
-      <RefreshCw size={18} class={loading ? 'animate-spin' : ''} />
-    </button>
-  </div>
+    {/if}
 
-  {#if error}
-    <div class="bg-red-err/10 text-red-err border-red-err/30 rounded-xl border p-4 text-sm">
-      {error}
-    </div>
-  {/if}
+    <input
+      type="search"
+      bind:value={searchQuery}
+      placeholder={m.admin_users_search_placeholder()}
+      class="bg-cn-surface w-full rounded-xl border border-black/10 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-amber-500/50 dark:border-white/10"
+    />
 
-  <input
-    type="search"
-    bind:value={searchQuery}
-    placeholder={m.admin_users_search_placeholder()}
-    class="bg-cn-surface w-full rounded-xl border border-black/10 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-amber-500/50 dark:border-white/10"
-  />
-
-  {#if loading}
-    <div class="text-text-muted text-sm">{m.common_loading_label()}</div>
-  {:else if filtered.length === 0}
-    <div class="text-text-muted text-sm">{m.admin_users_empty()}</div>
-  {:else}
-    <ul class="space-y-2">
-      {#each filtered as user (user.id)}
-        <li
-          class="bg-cn-surface flex items-center justify-between gap-3 rounded-2xl border border-black/5 px-4 py-3 shadow-sm dark:border-white/10"
-        >
-          <div class="flex min-w-0 items-center gap-3">
-            {#if user.admin}
-              <Shield size={16} class="flex-shrink-0 text-amber-500" strokeWidth={2.5} />
-            {:else}
-              <Shield size={16} class="text-text-muted flex-shrink-0 opacity-30" strokeWidth={2} />
-            {/if}
-            <div class="min-w-0">
-              <p class="text-text-main truncate text-sm font-semibold">
-                {user.displayName ?? user.id}
-              </p>
-              <p class="text-text-muted truncate font-mono text-xs">{user.id}</p>
+    {#if loading}
+      <div class="text-text-muted text-sm">{m.common_loading_label()}</div>
+    {:else if filtered.length === 0}
+      <div class="text-text-muted text-sm">{m.admin_users_empty()}</div>
+    {:else}
+      <ul class="space-y-2">
+        {#each filtered as user (user.id)}
+          <li
+            class="bg-cn-surface flex items-center justify-between gap-3 rounded-2xl border border-black/5 px-4 py-3 shadow-sm dark:border-white/10"
+          >
+            <div class="flex min-w-0 items-center gap-3">
+              {#if user.admin}
+                <Shield size={16} class="flex-shrink-0 text-amber-500" strokeWidth={2.5} />
+              {:else}
+                <Shield
+                  size={16}
+                  class="text-text-muted flex-shrink-0 opacity-30"
+                  strokeWidth={2}
+                />
+              {/if}
+              <div class="min-w-0">
+                <p class="text-text-main truncate text-sm font-semibold">
+                  {user.displayName ?? user.id}
+                </p>
+                <p class="text-text-muted truncate font-mono text-xs">{user.id}</p>
+              </div>
             </div>
-          </div>
 
-          <div class="flex flex-shrink-0 items-center gap-3">
-            {#if feedback[user.id]}
-              <span class="text-green-ok text-xs font-medium">{feedback[user.id]}</span>
-            {/if}
-            <button
-              type="button"
-              onclick={() => toggleAdmin(user)}
-              disabled={saving[user.id]}
-              class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 {user.admin
-                ? 'bg-amber-500'
-                : 'bg-black/10 dark:bg-white/20'}"
-              role="switch"
-              aria-checked={user.admin ?? false}
-              title={user.admin
-                ? m.admin_users_revoke_action_label()
-                : m.admin_users_grant_action_label()}
-            >
-              <span class="sr-only"
-                >{user.admin
+            <div class="flex flex-shrink-0 items-center gap-3">
+              {#if feedback[user.id]}
+                <span class="text-green-ok text-xs font-medium">{feedback[user.id]}</span>
+              {/if}
+              <button
+                type="button"
+                onclick={() => toggleAdmin(user)}
+                disabled={saving[user.id]}
+                class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors disabled:opacity-50 {user.admin
+                  ? 'bg-amber-500'
+                  : 'bg-black/10 dark:bg-white/20'}"
+                role="switch"
+                aria-checked={user.admin ?? false}
+                title={user.admin
                   ? m.admin_users_revoke_action_label()
-                  : m.admin_users_grant_action_label()}</span
+                  : m.admin_users_grant_action_label()}
               >
-              <span
-                class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform {user.admin
-                  ? 'translate-x-6'
-                  : 'translate-x-1'}"
-              ></span>
-            </button>
-          </div>
-        </li>
-      {/each}
-    </ul>
-  {/if}
-</div>
+                <span class="sr-only"
+                  >{user.admin
+                    ? m.admin_users_revoke_action_label()
+                    : m.admin_users_grant_action_label()}</span
+                >
+                <span
+                  class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform {user.admin
+                    ? 'translate-x-6'
+                    : 'translate-x-1'}"
+                ></span>
+              </button>
+            </div>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+  </div>
+</PageContainer>

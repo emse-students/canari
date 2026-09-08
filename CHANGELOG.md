@@ -96,6 +96,39 @@ A second pass took the per-message hover, the scrollbars and the two conversatio
   genuinely need it; the drawers went back to the ordinary surface.
 
 
+### Changed - eight content widths across 34 pages became one, and four pages stopped drawing their own logo
+
+The report was that the site's pages did not look like the same site: *"Notifs est tres peu large par
+rapport a Feed"*, the Agenda carried a link to `/associations` and a calendar logo, the Boutique and
+the Tableau de bord each carried theirs. Measuring every route turned that impression into a number.
+
+**There were EIGHT distinct content widths, and nothing had chosen any of them** - Feed at 680px,
+Notifs at 576px, the Agenda at 768px, the Boutique and the Tableau de bord at 896px, and three more
+besides; each was whatever the page that came first happened to carry. Title sizes ran from `text-xl`
+to `text-3xl` for the same kind of heading, seven pages drew a 28px logo beside a word that already
+named the page, and there was no shared page-header component at all - every route reinvented its
+title. That is the actual cause; the logos were the visible end of it.
+
+- **`PageContainer` and `PageHeader`** now carry the shape, and **26 of 34 routes are on them.** The
+  column is the Feed's 680px, because the user named Feed as the reference page - the other two they
+  named, Communautes and Discussions, turn out to be the same full-bleed component and have no reading
+  column at all. A second declared width (`wide`) exists for the four surfaces that are editors rather
+  than documents, so the variance is two named values instead of eight accidental ones.
+- **No logo in any page heading**, and the Agenda's back link deleted rather than moved: the agenda is
+  a top-level navigation destination, so following it sent the reader to a page they had never been on.
+  Where a back link IS legitimate - five genuine sub-pages - it now has one placement.
+- **Notifs lost the white card** it had been given the day before, which no other page draws, and
+  gained the 104px of column it was missing. It was also padding twice for the mobile tab bar: the
+  shell's scroll wrapper already reserves that space.
+
+Three things the sweep found that looking could not. **`font-brand` on the Feed's title was a no-op** -
+`app.css` already gives every `h1..h6` the brand face, so the class made one page look deliberate and
+the rest accidental while changing nothing. **Three routes nested a `<main>` inside the shell's own
+`<main id="main-content">`**, giving a screen reader two "main" landmarks to choose between; the shared
+container is a `div` and the count is now 1 everywhere. And **three raw French literals** were sitting
+in the converted pages - `Retour aux publications`, `Publication introuvable`, `Gestion de la liste` -
+now localized. Nothing types a string as user-visible, which is exactly why they had survived.
+
 ### Fixed - scrolling up to read history unloaded the newest messages, and nothing loaded them back
 
 Reported by a user: scrolling up to see older messages made the most recent ones disappear, and

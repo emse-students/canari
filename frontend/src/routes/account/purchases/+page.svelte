@@ -1,9 +1,11 @@
 <script lang="ts">
+  import PageContainer from '$lib/components/layout/PageContainer.svelte';
+  import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
   import { apiFetch } from '$lib/utils/apiFetch';
   import { socialUrl } from '$lib/utils/apiUrl';
   import { currentUserId } from '$lib/stores/user';
-  import { ShoppingBag, Tag, ArrowLeft } from '@lucide/svelte';
+  import { ShoppingBag, Tag } from '@lucide/svelte';
   import type { UserTag } from '$lib/associations/api';
   import CotisationTagRow from '$lib/components/shared/CotisationTagRow.svelte';
   import { m } from '$lib/paraglide/messages';
@@ -81,128 +83,117 @@
   }
 </script>
 
-<div class="mx-auto max-w-3xl space-y-8 px-4 py-6 sm:px-6">
-  <div class="flex items-center gap-3">
-    <a
-      href="/profile"
-      class="text-text-muted hover:text-text-main inline-flex items-center gap-1 text-sm transition-colors"
-    >
-      <ArrowLeft size={16} />
-      {m.purchases_back_profile()}
-    </a>
-  </div>
+<PageContainer>
+  <PageHeader
+    title={m.purchases_heading()}
+    subtitle={m.purchases_subtitle()}
+    backHref="/profile"
+    backLabel={m.purchases_back_profile()}
+  />
 
-  <div class="flex items-center gap-3">
-    <ShoppingBag class="text-cn-accent h-7 w-7 shrink-0" />
-    <div>
-      <h1 class="text-text-main text-2xl font-bold tracking-tight">{m.purchases_heading()}</h1>
-      <p class="text-text-muted mt-0.5 text-sm">
-        {m.purchases_subtitle()}
-      </p>
-    </div>
-  </div>
+  <div class="space-y-8">
+    {#if !isLoggedIn}
+      <div class="border-cn-border rounded-2xl border bg-(--cn-surface) p-8 text-center">
+        <p class="text-text-muted text-sm">{m.purchases_login_required()}</p>
+      </div>
+    {:else if loading}
+      <div class="flex justify-center py-16">
+        <div
+          class="border-cn-border border-t-cn-accent h-8 w-8 animate-spin rounded-full border-4"
+        ></div>
+      </div>
+    {:else if error}
+      <p class="text-sm text-red-500">{error}</p>
+    {:else if data}
+      <!-- Active cotisation tags -->
+      {#if data.activeTags.length > 0}
+        <section class="space-y-3">
+          <h2 class="text-text-main flex items-center gap-2 text-base font-bold">
+            <Tag size={18} class="text-cn-accent" />
+            {m.purchases_active_tags_heading()}
+          </h2>
+          <ul class="space-y-2">
+            {#each data.activeTags as tag (tag.id)}
+              <li
+                class="border-cn-border flex items-center gap-3 rounded-2xl border bg-(--cn-surface) px-5 py-3"
+              >
+                <CotisationTagRow {tag}>
+                  {#snippet trailing()}
+                    <span
+                      class="bg-green-ok/15 text-green-ok shrink-0 rounded-full px-3 py-1 text-xs font-bold"
+                    >
+                      {m.purchases_tag_active_badge()}
+                    </span>
+                  {/snippet}
+                </CotisationTagRow>
+              </li>
+            {/each}
+          </ul>
+        </section>
+      {/if}
 
-  {#if !isLoggedIn}
-    <div class="border-cn-border rounded-2xl border bg-(--cn-surface) p-8 text-center">
-      <p class="text-text-muted text-sm">{m.purchases_login_required()}</p>
-    </div>
-  {:else if loading}
-    <div class="flex justify-center py-16">
-      <div
-        class="border-cn-border border-t-cn-accent h-8 w-8 animate-spin rounded-full border-4"
-      ></div>
-    </div>
-  {:else if error}
-    <p class="text-sm text-red-500">{error}</p>
-  {:else if data}
-    <!-- Active cotisation tags -->
-    {#if data.activeTags.length > 0}
+      <!-- Purchase history -->
       <section class="space-y-3">
         <h2 class="text-text-main flex items-center gap-2 text-base font-bold">
-          <Tag size={18} class="text-cn-accent" />
-          {m.purchases_active_tags_heading()}
+          <ShoppingBag size={18} class="text-cn-accent" />
+          {m.purchases_history_heading({ count: data.purchases.length })}
         </h2>
-        <ul class="space-y-2">
-          {#each data.activeTags as tag (tag.id)}
-            <li
-              class="border-cn-border flex items-center gap-3 rounded-2xl border bg-(--cn-surface) px-5 py-3"
+
+        {#if data.purchases.length === 0}
+          <div class="border-cn-border rounded-2xl border bg-(--cn-surface) p-10 text-center">
+            <p class="text-text-muted text-sm">{m.purchases_empty_title()}</p>
+            <a
+              href="/shop"
+              class="text-cn-accent mt-3 inline-flex items-center gap-2 text-sm font-semibold hover:underline"
             >
-              <CotisationTagRow {tag}>
-                {#snippet trailing()}
-                  <span
-                    class="bg-green-ok/15 text-green-ok shrink-0 rounded-full px-3 py-1 text-xs font-bold"
-                  >
-                    {m.purchases_tag_active_badge()}
-                  </span>
-                {/snippet}
-              </CotisationTagRow>
-            </li>
-          {/each}
-        </ul>
+              {m.purchases_explore_shop()}
+            </a>
+          </div>
+        {:else}
+          <ul class="space-y-2">
+            {#each data.purchases as purchase (purchase.id)}
+              <li
+                class="border-cn-border flex items-center gap-3 rounded-2xl border bg-(--cn-surface) px-5 py-4"
+              >
+                <div class="min-w-0 flex-1">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <p class="text-text-main text-sm font-semibold">{purchase.productName}</p>
+                    <span
+                      class="rounded-full px-2 py-0.5 text-xs font-semibold {statusClass(
+                        purchase.status
+                      )}"
+                    >
+                      {statusLabel(purchase.status)}
+                    </span>
+                    <span
+                      class="bg-cn-surface-alt text-text-muted rounded-full px-2 py-0.5 text-xs font-semibold"
+                    >
+                      {sourceLabel(purchase.source)}
+                    </span>
+                  </div>
+                  <p class="text-text-muted mt-1 text-xs">
+                    {new Date(purchase.paidAt).toLocaleDateString(
+                      getLocale() === 'en' ? 'en-US' : 'fr-FR',
+                      {
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric',
+                      }
+                    )}
+                    ·
+                    {purchase.paymentMethod === 'cash'
+                      ? m.purchases_payment_cash()
+                      : m.purchases_payment_card()}
+                  </p>
+                </div>
+                <span class="text-text-main shrink-0 text-sm font-bold">
+                  {formatAmount(purchase.amountCents)}
+                </span>
+              </li>
+            {/each}
+          </ul>
+        {/if}
       </section>
     {/if}
-
-    <!-- Purchase history -->
-    <section class="space-y-3">
-      <h2 class="text-text-main flex items-center gap-2 text-base font-bold">
-        <ShoppingBag size={18} class="text-cn-accent" />
-        {m.purchases_history_heading({ count: data.purchases.length })}
-      </h2>
-
-      {#if data.purchases.length === 0}
-        <div class="border-cn-border rounded-2xl border bg-(--cn-surface) p-10 text-center">
-          <p class="text-text-muted text-sm">{m.purchases_empty_title()}</p>
-          <a
-            href="/shop"
-            class="text-cn-accent mt-3 inline-flex items-center gap-2 text-sm font-semibold hover:underline"
-          >
-            {m.purchases_explore_shop()}
-          </a>
-        </div>
-      {:else}
-        <ul class="space-y-2">
-          {#each data.purchases as purchase (purchase.id)}
-            <li
-              class="border-cn-border flex items-center gap-3 rounded-2xl border bg-(--cn-surface) px-5 py-4"
-            >
-              <div class="min-w-0 flex-1">
-                <div class="flex flex-wrap items-center gap-2">
-                  <p class="text-text-main text-sm font-semibold">{purchase.productName}</p>
-                  <span
-                    class="rounded-full px-2 py-0.5 text-xs font-semibold {statusClass(
-                      purchase.status
-                    )}"
-                  >
-                    {statusLabel(purchase.status)}
-                  </span>
-                  <span
-                    class="bg-cn-surface-alt text-text-muted rounded-full px-2 py-0.5 text-xs font-semibold"
-                  >
-                    {sourceLabel(purchase.source)}
-                  </span>
-                </div>
-                <p class="text-text-muted mt-1 text-xs">
-                  {new Date(purchase.paidAt).toLocaleDateString(
-                    getLocale() === 'en' ? 'en-US' : 'fr-FR',
-                    {
-                      year: 'numeric',
-                      month: 'long',
-                      day: 'numeric',
-                    }
-                  )}
-                  ·
-                  {purchase.paymentMethod === 'cash'
-                    ? m.purchases_payment_cash()
-                    : m.purchases_payment_card()}
-                </p>
-              </div>
-              <span class="text-text-main shrink-0 text-sm font-bold">
-                {formatAmount(purchase.amountCents)}
-              </span>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-    </section>
-  {/if}
-</div>
+  </div>
+</PageContainer>

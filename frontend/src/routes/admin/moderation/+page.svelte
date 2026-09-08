@@ -1,7 +1,8 @@
 <script lang="ts">
+  import PageContainer from '$lib/components/layout/PageContainer.svelte';
+  import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
   import {
-    ShieldAlert,
     Flag,
     UserX,
     RefreshCw,
@@ -333,33 +334,26 @@
   const resolvedReports = $derived(reports.filter((r) => r.status !== 'pending'));
 </script>
 
-<div class="mx-auto max-w-3xl px-4 py-8">
-  <header class="mb-6 flex items-center justify-between gap-3">
-    <div class="flex items-center gap-3">
-      <ShieldAlert size={28} class="text-red-500" />
-      <div>
-        <h1 class="text-text-main text-2xl font-bold">{m.moderation_title()}</h1>
-        <p class="text-text-muted text-sm">
-          {m.moderation_subtitle()}
-        </p>
-      </div>
-    </div>
-    <button
-      onclick={() => {
-        if (tab === 'reports') void loadReports();
-        else if (tab === 'hidden') void loadHidden();
-        else void loadMuted();
-      }}
-      disabled={loadingReports || loadingHidden || loadingMuted}
-      class="border-cn-border text-text-muted hover:text-text-main rounded-xl border p-2 transition-colors disabled:opacity-40"
-      aria-label={m.moderation_refresh()}
-    >
-      <RefreshCw
-        size={18}
-        class={loadingReports || loadingHidden || loadingMuted ? 'animate-spin' : ''}
-      />
-    </button>
-  </header>
+<PageContainer>
+  <PageHeader title={m.moderation_title()} subtitle={m.moderation_subtitle()}>
+    {#snippet actions()}
+      <button
+        onclick={() => {
+          if (tab === 'reports') void loadReports();
+          else if (tab === 'hidden') void loadHidden();
+          else void loadMuted();
+        }}
+        disabled={loadingReports || loadingHidden || loadingMuted}
+        class="border-cn-border text-text-muted hover:text-text-main rounded-xl border p-2 transition-colors disabled:opacity-40"
+        aria-label={m.moderation_refresh()}
+      >
+        <RefreshCw
+          size={18}
+          class={loadingReports || loadingHidden || loadingMuted ? 'animate-spin' : ''}
+        />
+      </button>
+    {/snippet}
+  </PageHeader>
 
   <!-- Tabs -->
   <div class="mb-6 flex gap-1 rounded-xl bg-black/5 p-1">
@@ -914,7 +908,7 @@
       </div>
     {/if}
   {/if}
-</div>
+</PageContainer>
 
 <ModerationPostPreviewModal open={previewOpen} postId={previewPostId} onClose={closePostPreview} />
 
