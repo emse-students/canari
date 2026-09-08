@@ -377,6 +377,25 @@ back 10px and square-ended, wearing our colour with no hover state, and `bun run
 throughout. Firefox is the only engine that fails that selector query, which is exactly the set that
 needs the fallback.
 
+### And it cost five pixels on every phone before anyone looked
+
+The rule above shipped applied to every element unconditionally, and the first Android build after it
+showed why that is wrong. **Styling `::-webkit-scrollbar` converts a platform's OVERLAY scrollbar
+into a classic one that reserves layout width, permanently, whether or not anything is scrolling.**
+Measured on the Mi 9T: `page-scroll-wrap`, the app's main scroller on a phone, went from a **0px
+gutter to 5px** - five pixels off the content width of every scrolling pane in the app, plus a grey
+track sitting there for a user with no pointer to aim at it.
+
+`@media (hover: hover) and (pointer: fine)` is the guard, and it is about the INPUT DEVICE rather
+than the width: a desktop window narrowed to 390px keeps the styled bar (verified), an Android
+WebView at any size does not. A scrollbar is a control for a mouse; on touch the platform's own
+transient bar is already the right answer.
+
+Nothing here was catchable from the workstation. `bun run check` was green, `bun run lint` was green,
+the desktop measurement was correct, and the light/dark thumb colours were correct - the defect only
+exists on a device with a coarse pointer, which is the class
+[device-verification](../device-verification.md) exists for.
+
 ### An instrument fact: `Page.captureScreenshot` drops CSS `:hover`
 
 A probe read `opacity: 1`, `display: flex`, `visibility: visible` and a real rect off the hover

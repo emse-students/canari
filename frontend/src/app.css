@@ -559,7 +559,7 @@ h6,
   }
 }
 
-/* ONE SCROLLBAR FOR THE WHOLE APPLICATION, AND IT IS NOT OPT-IN.
+/* ONE SCROLLBAR FOR THE WHOLE APPLICATION, ON POINTER DEVICES ONLY.
 
    There were SEVEN copies of this - `.chat-scrollbar` here plus `.custom-scrollbar` redefined inside
    six components - agreeing on the shape and disagreeing on the details: 4px in three of them and
@@ -569,42 +569,53 @@ h6,
 
    Applied to every element instead of a class, because "which panes scroll" is not a decision any
    component should be making twice. The opt-OUT is `.no-scrollbar`, and it still wins: a class
-   selector outranks the universal one. `scrollbar-width`/`scrollbar-color` cover Firefox, which no
-   copy did. */
-*::-webkit-scrollbar {
-  width: 0.375rem;
-  height: 0.375rem;
-}
+   selector outranks the universal one.
 
-*::-webkit-scrollbar-track {
-  background: transparent;
-}
+   THE POINTER QUERY IS NOT DECORATION - IT IS THE WHOLE RULE'S LICENCE TO EXIST. Styling
+   `::-webkit-scrollbar` turns a platform's OVERLAY scrollbar into a classic one that reserves
+   layout width, permanently, whether or not anything is scrolling. Measured on the Mi 9T after this
+   shipped: `page-scroll-wrap`, the app's main scroller on a phone, went from a 0px gutter to 5px -
+   five pixels off the content width of every scrolling pane in the app, and a grey track sitting
+   there for a user who has no pointer to aim at it. A scrollbar is a control for a mouse; on touch
+   the platform's own transient bar is the right answer and this must not touch it. `hover: hover`
+   plus `pointer: fine` is the test, and it is what separates a desktop Tauri window from an
+   Android one. */
+@media (hover: hover) and (pointer: fine) {
+  *::-webkit-scrollbar {
+    width: 0.375rem;
+    height: 0.375rem;
+  }
 
-*::-webkit-scrollbar-thumb {
-  background: var(--scrollbar-thumb);
-  border-radius: 999px;
-}
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
 
-*::-webkit-scrollbar-thumb:hover {
-  background: var(--scrollbar-thumb-hover);
-}
+  *::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 999px;
+  }
 
-/* Webkit draws the little square where the two bars meet; without this it is an opaque grey block
-   sitting on whatever the pane's own fill is. */
-*::-webkit-scrollbar-corner {
-  background: transparent;
-}
+  *::-webkit-scrollbar-thumb:hover {
+    background: var(--scrollbar-thumb-hover);
+  }
 
-/* FIREFOX ONLY, AND THE FEATURE QUERY IS LOAD-BEARING. Setting the standard pair unconditionally is
-   the obvious way to cover Firefox and it silently destroys the rule above it: Chrome ignores EVERY
-   `::-webkit-scrollbar` pseudo-element on an element that declares `scrollbar-width`. Measured here
-   2026-09-08 - the thread's bar came back 10px wide and square-ended, i.e. the browser default
-   wearing our colour, with no hover state. Firefox is the only engine that does not match
-   `selector(::-webkit-scrollbar)`, so this is exactly the set that needs the fallback. */
-@supports not selector(::-webkit-scrollbar) {
-  * {
-    scrollbar-width: thin;
-    scrollbar-color: var(--scrollbar-thumb) transparent;
+  /* Webkit draws the little square where the two bars meet; without this it is an opaque grey block
+     sitting on whatever the pane's own fill is. */
+  *::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
+  /* FIREFOX ONLY, AND THE FEATURE QUERY IS LOAD-BEARING. Setting the standard pair unconditionally is
+     the obvious way to cover Firefox and it silently destroys the rule above it: Chrome ignores EVERY
+     `::-webkit-scrollbar` pseudo-element on an element that declares `scrollbar-width`. Measured here
+     2026-09-08 - the thread's bar came back 10px wide and square-ended, i.e. the browser default
+     wearing our colour, with no hover state. Firefox is the only engine that does not match
+     `selector(::-webkit-scrollbar)`, so this is exactly the set that needs the fallback. */
+  @supports not selector(::-webkit-scrollbar) {
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: var(--scrollbar-thumb) transparent;
+    }
   }
 }
 
