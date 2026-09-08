@@ -11,6 +11,26 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Documented - the damaged-state P1 is a closed loop, and the only door out is the destructive one
+
+The sign-out half that CORRUPT-1 left owed is answered by reading rather than by a run, deliberately:
+measuring it means signing W1 out, and if the device key is not reproducible from the PIN alone the
+restored snapshot becomes undecryptable - the check investigating the destruction of a fixture's
+history would be the thing that destroyed it.
+
+`handlePinSignOut` says what it does in its own first line: *"ending the session, keeping the local
+state"*. So signing out and back in re-reads the same damaged bytes, re-arms `noFreshStart`, and
+returns to the same wall. Every exit the blocking modal offers is now accounted for: the message's
+own advice cannot work (no old PIN sealed that blob), the CORRECT PIN is measured locked, sign-out
+keeps the state by design, and the only thing that unblocks the device is `onForgotPinReset` - a
+server-side reset that DESTROYS the messaging state, behind a two-step confirmation, labelled for a
+PIN the user has not forgotten.
+
+The product already knows how to recover this device without destroying anything: CORRUPT-4 measured
+a client with no usable state re-joining all four of its groups by external commit, self-service, in
+under a second. The entire defect is that nothing tells `noFreshStart` this state is damaged rather
+than foreign.
+
 ### Added - CORRUPT-1, a clean FAIL, and the measurement that turns a wrong message into a locked door
 
 `mlsdb.mjs truncate` takes `--to N`, so the same primitive answers two different questions: `--to 0`

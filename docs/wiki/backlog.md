@@ -186,7 +186,7 @@ work either. **What is NOT measured**: the modal carries a sign-out button (`onS
 prop precisely because the modal blocks the app), and whether that clears the unreadable state and
 lets the device re-enrol has not been tested - it is destructive to the fixture. If it does work, the
 defect is that the one remedy is never named and is presented as the destructive last resort; if it
-does not, the device is simply lost. **That measurement is the next thing this P1 owes.**
+does not, the device is simply lost. **That measurement is answered below by reading, and the run is still worth having.**
 
 **Why that is wrong.** No PIN was changed. `sessionAuth` verifies the PIN SERVER-SIDE and only then
 decrypts the local state, so at the moment this message is chosen the product already KNOWS the
@@ -194,6 +194,37 @@ credential in the user's hands is the right one. The message sends them after an
 not exist, never names the real cause, and never offers the one recovery that works - the clean
 re-enrolment CORRUPT-4 measured on the same estate the same day, where a device with no usable state
 re-joined all four of its groups self-service.
+
+**THE LOOP IS CLOSED, AND THE LAST DOOR IS THE DESTRUCTIVE ONE.** The sign-out question this entry
+owed is answered by READING rather than by a run - deliberately, because measuring it means signing
+W1 out, and if the device key is not reproducible from the PIN alone the restored snapshot becomes
+undecryptable and the fixture's history is destroyed by the very check investigating its destruction.
+`ChatBackgroundService.handlePinSignOut` says what it does in its own first line:
+
+```
+[AUTH] Sign-out from the PIN gate - ending the session, keeping the local state.
+```
+
+So signing out and back in re-reads the same damaged bytes, re-arms `noFreshStart: !!bytes`, and
+returns to the same wall. Every exit the blocking modal offers is therefore accounted for:
+
+| what the user is offered | what it does about a DAMAGED state |
+| --- | --- |
+| the message's own advice - "recover with your old PIN" (`onRecoverPin`) | nothing: no old PIN sealed this blob, so the recovery cannot succeed |
+| entering the CORRECT PIN | **measured `LOCKED+overlay`, five passes** (CORRUPT-1) |
+| signing out (`onSignOut`, a REQUIRED prop because the modal blocks the app) | keeps the local state by design - the next sign-in hits the same failure |
+| `onForgotPinReset` -> `POST /api/mls/security/pin-reset` | **works, and is the only thing that does** - a server-side reset that DESTROYS the messaging state, behind a disclosure and a two-step confirmation, and labelled for a PIN the user has not forgotten |
+
+**That is the severity.** The user is told the wrong cause, pointed at a remedy that cannot work,
+refused by the credential they actually hold, and the one action that unblocks them is presented as
+the destructive last resort for a different problem entirely. Meanwhile the product ALREADY knows how
+to recover this device without destroying anything: CORRUPT-4 measured a client with no usable state
+re-joining all four of its groups by external commit, self-service, in under a second. The whole
+defect is that nothing tells `noFreshStart` that this state is damaged rather than foreign.
+
+**Measured**: the misdiagnosis (CORRUPT-2, CORRUPT-1) and the locked gate (CORRUPT-1). **Read, not
+run**: the sign-out and reset behaviour above. A run for the sign-out half is still worth having once
+there is a device whose history is expendable - it is the one line in that table taken on trust.
 
 **It is the vault defect one layer down.** `init` reports `MLS_LOCAL_STATE_UNDECRYPTABLE`, and an
 AEAD tag that does not verify has two causes that the blob alone cannot separate: the state was
