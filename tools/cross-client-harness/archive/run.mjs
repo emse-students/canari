@@ -47,7 +47,7 @@ import { all, clientBuild } from '../results.mjs';
 import { deployedBundleId, isOnTheDeployment, reloadOntoBundle, sourceIsDeployed } from '../bundle.mjs';
 import { stateOf } from './ready-probe.mjs';
 import { bringToReady } from './ready-repair.mjs';
-import { requireScript } from '../scriptpath.mjs';
+import { findScript, requireScript } from '../scriptpath.mjs';
 
 // THE PHONE THIS RUNNER DRIVES, DECLARED. Every row below is written for A1 - `PORTS.A1`,
 // `peerNameFor('A1')` - and with a second phone on the bench `serial()` refuses to choose rather
@@ -963,8 +963,29 @@ for (const job of jobs) {
   // `grp-traffic.mjs` - computed a verdict, printed it as JSON, and recorded nothing at all. Every
   // one of them exited 0 and every one of them printed `done` here.
   const rowsBefore = all().length;
+  /**
+   * THE FIFTH SIGHTING OF THE BARE-NAME SPAWN, AND IT WAS IN THE RUNNER THAT OWNS EVERY OTHER ONE.
+   *
+   * `scriptpath.mjs` exists because this defect had already been found four times, and its header
+   * says why fixing it where it is found is how it gets found again. This file IMPORTED
+   * `requireScript` for one call and passed the bare name here - so with `cwd` set to `archive/`,
+   * a script that still lives at the harness root died with `Module not found` and the phase
+   * carried on. Measured 2026-09-08: `newdevice.mjs` exited 1 and recorded nothing, inside a HEAL
+   * rung being used as a REGRESSION CHECK - the one job where a silently absent row is worst.
+   *
+   * Resolved rather than spelled, and a name that resolves NOWHERE is this job's failure rather
+   * than the rung's: the remaining scripts still run, and the manifest is what gets corrected.
+   */
+  if (!findScript(file)) {
+    job.exit = 1;
+    job.blocked = `${file} is in neither the harness root nor archive/ - the manifest names a script that does not exist`;
+    console.log(`UNRESOLVED - ${job.blocked}`);
+    continue;
+  }
   const code = await new Promise((resolve) => {
-    const child = spawn(process.execPath, [file, ...args], {
+    // INLINE, NOT VIA A LOCAL, because `spawn-selftest.mjs` rejects a variable head whatever it
+    // holds - nothing can be shown absolute by reading it, and that is the whole rule.
+    const child = spawn(process.execPath, [requireScript(file), ...args], {
       cwd: HERE,
       stdio: ['ignore', 'pipe', 'pipe'],
     });

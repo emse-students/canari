@@ -2211,9 +2211,40 @@ fail and leaves the other five green. `BaseMlsService.checkpointLedgers.test.ts`
 itself - that the declaration happens, that it FOLLOWS the write, and that a write which THREW
 declares nothing.
 
-**What is owed is the measurement**: TAB-3b re-run on a build carrying this, and the HEAL rung
-re-run beside it, since this changes the durability ordering of every replay and not just the one
-row's.
+**AND THE MEASUREMENT IS IN: IT DID NOT CLOSE THE ROW.** TAB-3b re-run 2026-09-08 01:52 on
+`__sveltekit_1bh2y1p` (source `c74d156d347d`, the estate verified to be serving it), five cold starts
+on a swept estate: **`PASS-DIRTY`, and the accumulation is UNCHANGED** - run 2 accuses two rows, run 3
+those two plus two more, run 4 six, run 5 eight, generations 7 through 14 all at
+`msg_epoch=165 group_epoch=165`. The catch-up is 61 648 / 61 680 / 61 756 ms, a 108 ms spread, so the
+60-second timer is unchanged too and the board's 77.7 s outlier still does not reproduce
+(`reproducedTheOutlier: false`).
+
+**So the fix is NECESSARY AND NOT SUFFICIENT, and it must not be recorded as more than that.** What it
+closes is a real window - a checkpoint mid-walk no longer leaves the marks behind - and that window is
+evidently not the one this row falls into.
+
+**WHAT THE RE-RUN NARROWS, and it is a contradiction worth stating plainly.** A row already in the
+seen set is SKIPPED at the top of the walk (`if (seenCipherHashes.has(rowKey)) { advancePast; continue }`),
+and the accusation path adds exactly that row key before it warns. So run 5 re-accusing run 1's rows
+proves those marks are not durable when run 5's replay hydrates - **while the 2026-09-07 reading found
+all six accused row keys present in the durable set.** Both cannot hold, and only one of them was taken
+from a build carrying this change.
+
+**THE NEXT MEASUREMENT IS THAT SET, READ BETWEEN TWO COLD STARTS**, and it is the whole question: does
+the accusation's mark reach `localStorage` at all in this scenario? Two candidates, and they want
+opposite fixes:
+
+1. **no checkpoint fires between the accusation and the kill.** The page is idle for the whole 62 s
+   wait, and the checkpoint the arriving message triggers races the runner's kill two seconds later.
+   If so the mark needs a durability path that does not depend on a checkpoint at all - which is SAFE
+   for this mark specifically, because a row key on an UNREADABLE frame asserts *"I walked this row"*
+   and not *"I consumed its generation"*, so unlike a fingerprint it has no ratchet to run ahead of;
+2. **the write happens and the next start does not read it back.** Then the fault is in hydration or
+   in the 5 000-entry cap, and nothing about checkpoints would help.
+
+**A CDP probe of W1's `localStorage` HUNG twice while trying to settle this** - the same hang the
+harness has met before - so the read needs a route that is not `evaluate` on a live client. That is the
+next step, and no further code should be written for this row until it answers.
 
 **AND THE CATCH-UP IS A TIMER, WHICH IS A SECOND FINDING THE ROW WAS BUILT TO SURFACE.** Five cold
 starts took 61 863 / 61 865 / 61 889 / 61 930 / 62 019 ms to show a message sent while the browser
