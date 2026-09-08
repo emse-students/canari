@@ -106,6 +106,33 @@ waits on hardware like everything else iOS. Do not "fix" this by marking every m
 `.timeSensitive` - that is the always-true mutation the Android tests exist to forbid, wearing an
 Apple badge, and Apple reviews it.
 
+### DECISION OWED - should a reaction to YOUR OWN message notify, when every other reaction must not?
+
+Today none of them does. `frontend/src/lib/mls-client/frameDelivery.ts` classifies every frame the
+app sends into one of four kinds, and a reaction is a `mutation`: `{ silent: true, durable: true }`,
+carrying its own reason - *"It must not notify, and it must survive"*. The server states the same
+rule from its side: *"every control frame is silent by construction"*, and notifying from that
+stream *"would otherwise ring for every reaction"*. Both are right about the case they name: a busy
+salon where people react to each other constantly would be unusable.
+
+**The case they do not distinguish is a reaction to something YOU wrote**, which most chat products
+do notify, and which is the only reaction a person is plausibly waiting for.
+
+**IT IS NOT BLOCKED ON THE SERVER HOLDING CIPHERTEXT, WHICH IS THE OBVIOUS WRONG ANSWER.** The
+server cannot classify a frame and does not need to: the class is DECLARED BY THE SENDER, exactly as
+`durable` is, and the reacting client already knows whose message it reacted to. The discriminator
+is available where the decision is made, which is the standing rule. A fifth `DELIVERY` class -
+silent for everyone except the author of the target - is expressible with no plaintext leaving the
+device.
+
+**WHAT MAKES IT A DECISION AND NOT A TASK.** A reaction that notifies is a notification the reader
+cannot mute separately unless it also gets a channel, and `canari_social` already exists for
+reactions and comments on POSTS at `IMPORTANCE_DEFAULT`, silent - which is probably where it should
+land rather than `canari_messages`. So the answer decides three things at once: whether to notify,
+which channel it is filed on, and whether NOTIF-15 asserts a notification or asserts silence.
+**NOTIF-15 cannot be run until this is answered**, because today it would fail against a design that
+is doing what it says.
+
 ### DECISION OWED - naming the author of each line inside a salon's stacked notification
 
 Asked for by the user on 2026-08-20: salon notifications should read like a DM's - successive
