@@ -268,16 +268,20 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
 11. **P1 - A DEVICE ASKS FOR A WELCOME FOR EVER AND THE MEMBER ANSWERING RESETS THE HEALING ROW** -
     five halves fixed 2026-09-04, **ONE PROD MEASUREMENT OWED**; read with its sibling P2
     ([backlog](docs/wiki/backlog.md)).
-12. **TWELVE MESSAGES DROPPED, PERMANENT COMMIT-LOG HOLE AT EPOCH 121** - the four defects shipped
-    in `v0.15.0`'s ancestors; the RESIDUE and the 13:10 arm are open ([backlog](docs/wiki/backlog.md)).
+12. **TWELVE MESSAGES DROPPED, PERMANENT COMMIT-LOG HOLE AT EPOCH 121** - four defects shipped in
+    `v0.15.0`'s ancestors; RESIDUE and the 13:10 arm open ([backlog](docs/wiki/backlog.md)).
 13. **`dev.canari-emse.fr` IS THE PRE-RELEASE TARGET**
-    ([dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy). Two open: a dev
-    deploy cannot tell a broken CHANGE from an unreachable REGISTRY, and prod's deploy job is still
-    inlined shell where `deploy-dev` exercises the script ([backlog](docs/wiki/backlog.md)).
-14. **THREE MORE FROM THE USER, 2026-09-05** - a P2 (a COMMUNITY message is not decrypted in a
-    background notification), a QUESTION (does a community invitation notify somebody with no prior
-    conversation?), and one post-campaign direction (ICM/ISMIN). All in
-    [backlog](docs/wiki/backlog.md); the first two need the phone.
+    ([dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy). Two open, both
+    in [backlog](docs/wiki/backlog.md): a dev deploy cannot tell a broken CHANGE from an unreachable
+    REGISTRY, and prod's deploy job is inlined shell where `deploy-dev` exercises the script.
+14. **FROM THE USER, AND FIRST CONTACT IS THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** P1
+    2026-09-08 on PROD: a first message from someone you have no conversation with is invisible
+    until a restart and the tap lands nowhere - the invisible half is FIXED and unshipped, the tap
+    half open on two candidates, one an ORDERING the fix exposes. Its sibling question (does a
+    community invitation notify somebody with no prior conversation?) is the same seam. Plus a P2
+    from 2026-09-05 (a COMMUNITY message is not decrypted in a background notification) and one
+    post-campaign direction (ICM/ISMIN). All in [backlog](docs/wiki/backlog.md); the owed row needs
+    a THIRD account, the others the phone.
 
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
 

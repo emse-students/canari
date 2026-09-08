@@ -1000,11 +1000,19 @@
    */
   async function flushFcmCache(deviceKeyB64: string, storage: IStorage) {
     if (globalMessaging.isMessageCatchupActive) return;
-    const injected = await consumeFcmCache(deviceKeyB64, storage).catch(
-      () => [] as StoredMessage[]
+    const injected = await consumeFcmCache(deviceKeyB64, storage).catch(() => ({
+      messages: [] as StoredMessage[],
+      placeholders: new Map<string, { name: string; updatedAt: number }>(),
+    }));
+    if (injected.messages.length === 0 || !globalSession.userId) return;
+    // The placeholders are what let a FIRST message from a new correspondent appear without a
+    // restart - see `mergeFcmMessagesIntoConversations`.
+    mergeFcmMessagesIntoConversations(
+      injected.messages,
+      globalConvs.conversations,
+      globalSession.userId,
+      injected.placeholders
     );
-    if (injected.length === 0 || !globalSession.userId) return;
-    mergeFcmMessagesIntoConversations(injected, globalConvs.conversations, globalSession.userId);
   }
 
   /** Applies leader-tab message broadcasts to follower tab UI state. */

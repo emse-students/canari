@@ -35,16 +35,37 @@ interface FcmCacheEntry {
 }
 
 /**
+ * What {@link consumeFcmCache} wrote, for BOTH stores it has to leave consistent.
+ *
+ * The messages alone were not enough, and the gap was a user-visible P1: a first message from
+ * someone you have no conversation with is decrypted by the FCM service, and this function writes
+ * the message AND a placeholder conversation row for it - but the caller then merged only the
+ * MESSAGES into the in-memory list, found no conversation to merge them into, and dropped them.
+ * The app showed nothing until a restart re-read the placeholder from storage, which is exactly
+ * what the user reported on 2026-09-08. **The placeholder is known HERE and nowhere else**, so it
+ * is returned rather than re-derived: a `StoredMessage` carries no sender NAME, so a caller trying
+ * to build the same row would have to invent one and the two stores would disagree on the label.
+ */
+export interface FcmCacheInjection {
+  /** Messages written to the DB, so a caller can update in-memory state without a history reload. */
+  messages: StoredMessage[];
+  /** The placeholder conversation written for each group seen, keyed by group id. */
+  placeholders: Map<string, { name: string; updatedAt: number }>;
+}
+
+/** Nothing read, nothing written - the shape every early return owes. */
+const NOTHING: FcmCacheInjection = { messages: [], placeholders: new Map() };
+
+/**
  * Reads the native FCM cache (Tauri only) and injects the messages into local storage.
- * Returns the messages actually written to the DB so the caller can update in-memory state
- * without waiting for the next history reload.
- * No-op on web/desktop (no native cache available) -> returns [].
+ * Returns what was written - see {@link FcmCacheInjection} for why the placeholders travel too.
+ * No-op on web/desktop (no native cache available).
  */
 export async function consumeFcmCache(
   deviceKeyB64: string,
   storage: IStorage
-): Promise<StoredMessage[]> {
-  if (!isTauriRuntime()) return [];
+): Promise<FcmCacheInjection> {
+  if (!isTauriRuntime()) return NOTHING;
 
   // Declared without initializer: catch always returns, so entries is definitely
   // assigned before use - TypeScript flow analysis confirms this.
@@ -54,14 +75,15 @@ export async function consumeFcmCache(
     entries = await invoke<FcmCacheEntry[]>('read_and_clear_fcm_cache');
   } catch (e) {
     appendLog(`[FCM_CACHE] Cache read failed: ${e instanceof Error ? e.message : String(e)}`);
-    return [];
+    return NOTHING;
   }
 
-  if (!entries.length) return [];
+  if (!entries.length) return NOTHING;
 
   appendLog(`[FCM_CACHE] ${entries.length} message(s) to pre-inject from the FCM cache`);
 
   const injected: StoredMessage[] = [];
+  const placeholders = new Map<string, { name: string; updatedAt: number }>();
   for (const entry of entries) {
     if (!entry.messageId || !entry.groupId || !entry.senderId) {
       appendLog(
@@ -84,12 +106,14 @@ export async function consumeFcmCache(
       // non-destructive placeholder (INSERT OR IGNORE): the real sync (Welcome) then overwrites
       // name/lifecycle via saveConversation (INSERT OR REPLACE). The sender name serves as a
       // transient label; lifecycle 'pending' because the group is not synced yet.
-      await storage.mergeConversation({
-        id: entry.groupId,
+      const placeholder = {
         name: entry.senderName || entry.groupId,
-        lifecycle: 'pending',
         updatedAt: entry.timestamp,
-      });
+      };
+      await storage.mergeConversation({ id: entry.groupId, lifecycle: 'pending', ...placeholder });
+      // RECORDED ONLY ON THE PATH THAT WROTE IT, so the caller cannot be handed a label for a row
+      // that does not exist: a throw below leaves neither store carrying this group.
+      placeholders.set(entry.groupId, placeholder);
       // .saveMessage() uses .put() - the MLS pipeline can overwrite with the full data
       await storage.saveMessage(msg, deviceKeyB64);
       injected.push(msg);
@@ -104,5 +128,5 @@ export async function consumeFcmCache(
   }
 
   appendLog(`[FCM_CACHE] Injection done: ${injected.length}/${entries.length} message(s) injected`);
-  return injected;
+  return { messages: injected, placeholders };
 }

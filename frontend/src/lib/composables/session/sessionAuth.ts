@@ -935,19 +935,25 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     await applyOutboxPendingStatuses();
 
     beginStartupCatchupPhase('fcm_cache');
-    const fcmInjected = await consumeFcmCache(ctx.getDeviceKey(), ctx.getStorage()!).catch(
-      () => [] as []
-    );
-    if (Array.isArray(fcmInjected) && fcmInjected.length > 0) {
+    // THE PLACEHOLDERS TRAVEL WITH THE MESSAGES, and at login as much as on resume: the
+    // conversations were loaded from storage a few lines above, which is BEFORE this call writes
+    // the placeholder for a group joined in the background - so a first message from a new
+    // correspondent has no conversation in the map here either.
+    const fcmInjected = await consumeFcmCache(ctx.getDeviceKey(), ctx.getStorage()!).catch(() => ({
+      messages: [],
+      placeholders: new Map<string, { name: string; updatedAt: number }>(),
+    }));
+    if (fcmInjected.messages.length > 0) {
       const mergedCount = mergeFcmMessagesIntoConversations(
-        fcmInjected,
+        fcmInjected.messages,
         cb.conversations,
-        ctx.getUserId()
+        ctx.getUserId(),
+        fcmInjected.placeholders
       );
       cb.log(`[FCM_CACHE] ${mergedCount} message(s) merged in memory at login`);
     }
     endStartupCatchupPhase({
-      messageCount: Array.isArray(fcmInjected) ? fcmInjected.length : 0,
+      messageCount: fcmInjected.messages.length,
     });
 
     // What the notification shade acknowledged while the app was not running. AFTER the FCM cache:

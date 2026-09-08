@@ -11,6 +11,35 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a first message from someone you have no conversation with was invisible until the app was restarted
+
+Reported from production by the user on 2026-09-08: someone messages you for the first time, the
+notification arrives with the text decrypted - and then the conversation is simply not there. A
+restart shows it.
+
+`consumeFcmCache` handles the new-group case correctly and always has: it writes the message AND a
+placeholder conversation row for the group the FCM service joined in the background, then logs
+`[FCM_CACHE] Injection done: 1/1 message(s) injected`. **What it did not do is tell the in-memory
+list.** `mergeFcmMessagesIntoConversations` looked the conversation up, found nothing, and
+`continue`d - silently. So the database had both halves, the list the UI renders and that a deep link
+resolves against had neither, and a restart read the placeholder back. The same drop happened at
+login, where conversations are loaded from storage just before the cache is consumed.
+
+The merge now creates the conversation from what the writer committed. The label travels with the
+messages rather than being re-derived, because a `StoredMessage` carries a sender id and no name and
+a guess here would disagree with the row already in the database. When there is no placeholder the
+drop is logged instead of silent - that silence is what hid this, since the only line in the area
+said the injection had succeeded, and it had, into the store nobody was looking at.
+
+**Neither file had a test.** `fcmMemoryMerge.test.ts` now covers the three states a cached message
+can arrive in, and its two new cases were proven to fail against the old line before being kept.
+
+**The tap half of the same report is NOT fixed** and is in `docs/wiki/backlog.md` with two candidate
+causes: the known two-builder P2, and an ordering this fix makes visible rather than removes - the
+deep link is resolved 174 ms before the cache is injected, measured in the NOTIF-7 capture of the
+same day, because `flushFcmCache` is the last step of the resume sequence. Confirming either needs a
+genuine first contact, which needs a third test account.
+
 ### Fixed - the mailbox barrier named the sessions it was waiting out and waited 0 ms
 
 `waitForMessageQueueIdle` printed `mailbox barrier for "archive replay" is waiting behind 1 catch-up

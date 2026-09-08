@@ -281,6 +281,105 @@ and its five tests in `frontend/src/lib/utils/deviceKeyVault.ts` and its test fi
 
 ## Notifications - the two builders, and the rung of the campaign that reads them as one
 
+### P1 - a FIRST message from someone you have no conversation with notifies, decrypts, and then goes nowhere: the tap does not land and the conversation is invisible until the app is restarted (user, 2026-09-08, on PRODUCTION)
+
+Reported verbatim: *"Quelqu'un m'envoie un message alors que nous n'avons pas encore de discussion. Je
+recois bien la notif, et le message est bien dechiffre. Mais quand je clique sur la notif 1) Je
+n'arrive [pas] dans la conversation 2) la conversation n'apparait pas directement (apres un
+redemarrage de l'app oui a priori, mais pas suite a reception de la notif)."*
+
+**THE CAMPAIGN HAS NEVER ASKED THIS, AND THAT IS THE FIRST FINDING.** All sixteen NOTIF rows are
+written against a conversation that already exists - the harness's fixtures pair two accounts that
+have talked. First contact is a different path in every layer: the sender creates a group and sends a
+WELCOME, the receiver must process it before the message decrypts at all, and a conversation record
+has to be MATERIALISED rather than found. A row is owed for it
+([cross-client-testing](cross-client-testing.md)).
+
+**HALF ONE IS ALREADY OPEN AND IS NOT SPECIFIC TO FIRST CONTACT.** *"Je n'arrive pas dans la
+conversation"* is the P2 two entries down: the app has two notification builders, and the one the
+WebSocket path uses posts `ACTION_MAIN` on the launcher, so it lands on whatever the app shows at
+startup. A backgrounded-but-alive phone keeps its socket, ACKs the frame, and therefore never gets a
+push - so it is the plugin builder that notified, and no tap on it can deep-link. **What first
+contact adds is that the landing place is a conversation list that does not contain the
+conversation**, so the same defect reads as a much worse one.
+
+**HALF TWO IS THE NEW ONE, AND THE HYPOTHESIS IS PRECISE.** The message was decrypted, which for a
+group this device has just joined means the WELCOME was processed - by the native engine, into
+`mls.bin`, while the foreground was away. `reloadStateFromDisk` exists and runs on resume; its own
+line says `mls.bin reloaded on resume (C2) - group CACHE refreshed`. **A refreshed MLS group cache is
+not a conversation.** The conversation list is a separate store, and nothing observed so far says a
+group that first appeared in `mls.bin` while the app was backgrounded gets a record in it before the
+next full load. That fits the report exactly: present after a restart, absent after a resume.
+
+**WHY THIS IS P1 AND NOT P2.** It is the first thing a new correspondent ever does, it is silent - no
+error, no empty state, the conversation simply is not there - and the workaround is a restart the
+user has to guess at. Everything else in the queue is about conversations that already work.
+
+**HOW TO MEASURE IT, AND THE PRECONDITION THAT MAKES IT HONEST.** Two accounts with NO shared
+conversation and no shared group; the harness's own pair have talked, so a run that reuses them
+measures nothing. The sequence is: park A1 backgrounded and alive (the state that guarantees the
+plugin builder, not the push one), have the peer start a NEW conversation and send one message, then
+read three things separately - the shade, whether the tap lands on the conversation, and whether the
+conversation exists in A1's list WITHOUT a restart. The third is the one the report is about and the
+one no existing row reads.
+
+**HALF TWO IS FIXED, AND THE CAUSE WAS ONE LINE (2026-09-08, not yet shipped).** The hypothesis
+above was right in shape and wrong about which store: `consumeFcmCache` DOES handle a group joined in
+the background - it writes the message AND a placeholder conversation row (`lifecycle: 'pending'`,
+the sender's name as the label), and its own comment says why. What it did not do is tell the
+IN-MEMORY list. `mergeFcmMessagesIntoConversations` was:
+
+```ts
+const convo = conversations.get(convoId);
+if (!convo) continue;
+```
+
+So the row went to the database, the message went to the database, the log said
+`[FCM_CACHE] Injection done: 1/1 message(s) injected` - and the list the UI renders, and that a deep
+link resolves against, learned nothing. A restart read the placeholder back and both appeared, which
+is precisely the shape of the report. **The same drop happened at LOGIN**, where the conversations
+are loaded from storage a few lines BEFORE `consumeFcmCache` writes the placeholder.
+
+The merge now creates the conversation from what the writer committed - `consumeFcmCache` returns its
+placeholders so the label cannot be re-invented here, a `StoredMessage` carrying a sender id and no
+name - and when it has no placeholder it WARNS instead of skipping silently, because the silence is
+what hid this. **Neither file had a test**; `fcmMemoryMerge.test.ts` covers the three arrival states
+and its two new cases were proven to fail against the old line.
+
+**HALF ONE IS NOT FIXED AND NOW HAS TWO CANDIDATES, NOT ONE.**
+
+1. The known P2 below - the WebSocket path's builder posts `ACTION_MAIN` on the launcher, so no tap
+   on it can deep-link. **But it may not be the one the user met**: in the harness's own backgrounded
+   run the notification came from `CanariFCM`, the Kotlin builder, which DOES post
+   `ACTION_VIEW fr.emse.canari://chat/<groupId>` - a backgrounded phone whose socket has dropped gets
+   a push like a killed one. Which builder fired is a property of the socket at that instant, and the
+   report cannot say which.
+2. **AN ORDERING, MEASURED IN THE NOTIF-7 CAPTURE OF 2026-09-08 AND NOT PREVIOUSLY NOTICED.** The
+   deep link is resolved 174 ms BEFORE the cache is injected:
+
+   ```
+   09:33:28.647  [hooks] Processing URL: fr.emse.canari://chat/2bd5add9...
+   09:33:28.821  [FCM_CACHE] Injection done: 1/1 message(s) injected
+   ```
+
+   `flushFcmCache` is the LAST step of the resume sequence, behind `reloadStateFromDisk`,
+   `reconcileOutboxSent`, `drainNativePendingCallAccept` and `resumeConnection`. For a conversation
+   that already exists this costs nothing and nobody would see it. For a first contact the navigation
+   targets a conversation that does not exist yet, and whether the page recovers when it appears
+   afterwards is unmeasured. **The fix above makes the conversation arrive; it does not make it
+   arrive FIRST**, and a deep link that resolves against a list still being assembled is a race
+   whatever it does today.
+
+**WHAT IS OWED.** The row named above, run against a genuine first contact - which needs a THIRD
+account, because the rig's two have a long shared history the HEAL rows depend on and staging this by
+deleting it would cost more than it answers. That is the blocking condition, and it is a one-off the
+user can lift ([owed to the user](#owed-to-the-user---decisions-rotations-and-one-off-clicks)).
+
+**READ IT WITH THE RESUME RELOAD.** If half two is confirmed, it is the same seam as the receive
+ratchet and the key packages: the reload installs a `mls.bin` the background engine advanced, and
+what the foreground derives FROM that blob is not everything the blob now contains. Three ledgers,
+one mechanism.
+
 ### P2 - the app has TWO notification builders and only one of them can be tapped (measured on device 2026-09-07)
 
 A notification for the same inbound message is built by one of two entirely different pieces of code
