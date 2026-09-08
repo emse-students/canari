@@ -935,7 +935,7 @@
             <button
               type="button"
               onclick={reset}
-              class="rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold text-white"
+              class="text-cn-ink rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold"
             >
               {m.common_retry_button()}
             </button>

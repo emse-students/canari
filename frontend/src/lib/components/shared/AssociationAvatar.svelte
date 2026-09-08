@@ -84,7 +84,7 @@
   />
 {:else}
   <div
-    class="{shapeClasses} flex-shrink-0 shadow-sm select-none {sizeClasses} bg-cn-dark text-cn-yellow flex items-center justify-center font-bold"
+    class="{shapeClasses} flex-shrink-0 shadow-sm select-none {sizeClasses} bg-cn-ink text-cn-yellow flex items-center justify-center font-bold"
     title={name}
     aria-label={`Logo de ${name}`}
   >

@@ -297,9 +297,7 @@
     </div>
   {/if}
 
-  <div
-    class="border-cn-border/70 bg-cn-bg/40 text-text-muted space-y-3 rounded-xl border p-3 text-xs"
-  >
+  <div class="border-cn-border/70 bg-cn-bg text-text-muted space-y-3 rounded-xl border p-3 text-xs">
     <p class="text-text-main font-semibold">{m.asso_edit_preview_label()}</p>
     {#if editDescription.trim()}
       <div>

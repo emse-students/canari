@@ -83,7 +83,7 @@
         <li>
           <button
             type="button"
-            class="hover:bg-cn-surface/60 -mx-2 flex w-full items-start gap-3 rounded-xl px-2 py-3.5 text-left transition-colors"
+            class="hover:bg-cn-surface -mx-2 flex w-full items-start gap-3 rounded-xl px-2 py-3.5 text-left transition-colors"
             onclick={() => openNotification(notif)}
           >
             <!-- Notification type icon -->

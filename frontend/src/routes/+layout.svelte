@@ -333,7 +333,7 @@
     <AppSidebar />
   {/if}
 
-  <div class="relative z-10 flex flex-1 flex-col overflow-hidden md:pl-18">
+  <div class="relative z-10 flex flex-1 flex-col overflow-hidden md:pl-[6rem]">
     <!-- Bandeau multi-onglets : pleine largeur, en haut du contenu (jamais dans la rangée sidebar). -->
     <TabFollowerBanner />
     <OfflineBanner />
@@ -357,7 +357,7 @@
               <button
                 type="button"
                 onclick={reset}
-                class="rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold text-white"
+                class="text-cn-ink rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold"
               >
                 {m.common_retry_button()}
               </button>

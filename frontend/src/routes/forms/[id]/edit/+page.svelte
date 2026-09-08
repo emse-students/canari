@@ -363,7 +363,7 @@
           </div>
         {:else}
           <label
-            class="border-cn-border bg-cn-bg/40 text-text-muted hover:border-cn-yellow/50 flex cursor-pointer items-center gap-2 rounded-xl border-2 border-dashed px-4 py-4 text-sm transition-colors {uploadingImage
+            class="border-cn-border bg-cn-bg text-text-muted hover:border-cn-yellow/50 flex cursor-pointer items-center gap-2 rounded-xl border-2 border-dashed px-4 py-4 text-sm transition-colors {uploadingImage
               ? 'pointer-events-none opacity-50'
               : ''}"
           >

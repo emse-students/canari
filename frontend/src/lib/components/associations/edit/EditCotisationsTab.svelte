@@ -753,7 +753,7 @@
           {:else}
             <ul class="space-y-3">
               {#each tierProducts as product (product.id)}
-                <li class="border-cn-border/70 bg-cn-bg/40 overflow-hidden rounded-xl border">
+                <li class="border-cn-border/70 bg-cn-bg overflow-hidden rounded-xl border">
                   <div class="flex items-center gap-3 px-4 py-3">
                     <div class="min-w-0 flex-1">
                       <div class="flex flex-wrap items-center gap-2">
@@ -984,7 +984,7 @@
                         <button
                           type="submit"
                           disabled={savingTierId === product.id || gridProblem !== null}
-                          class="bg-cn-yellow text-cn-dark w-fit rounded-lg px-4 py-2 text-xs font-bold disabled:opacity-50 sm:col-span-2"
+                          class="bg-cn-yellow text-cn-ink w-fit rounded-lg px-4 py-2 text-xs font-bold disabled:opacity-50 sm:col-span-2"
                         >
                           {savingTierId === product.id
                             ? m.common_saving_label()
@@ -1000,7 +1000,7 @@
 
           {#if showAddTierForm}
             <form
-              class="border-cn-border bg-cn-bg/40 space-y-3 rounded-xl border p-4"
+              class="border-cn-border bg-cn-bg space-y-3 rounded-xl border p-4"
               onsubmit={(e) => {
                 e.preventDefault();
                 void handleCreateTier();
@@ -1172,7 +1172,7 @@
               <ul class="space-y-2">
                 {#each group.items as item (item.tagId)}
                   <li
-                    class="border-cn-border bg-cn-bg/40 flex items-center gap-3 rounded-xl border px-4 py-3"
+                    class="border-cn-border bg-cn-bg flex items-center gap-3 rounded-xl border px-4 py-3"
                   >
                     <div class="min-w-0 flex-1">
                       <div class="flex flex-wrap items-center gap-2">

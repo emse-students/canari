@@ -539,7 +539,7 @@
               <button
                 type="button"
                 onclick={() => (showNewChatModal = true)}
-                class="rounded-xl bg-amber-500 px-4 py-2 text-xs font-semibold text-white transition-all active:scale-95"
+                class="text-cn-ink rounded-xl bg-amber-500 px-4 py-2 text-xs font-semibold transition-all active:scale-95"
               >
                 {m.chat_new_discussion_label()}
               </button>
@@ -617,7 +617,7 @@
                 {#if channel.unreadCount}
                   <span
                     aria-hidden="true"
-                    class="bg-cn-dark text-cn-yellow text-2xs inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 font-bold"
+                    class="bg-cn-ink text-cn-yellow text-2xs inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 font-bold"
                   >
                     {channel.unreadCount}
                   </span>

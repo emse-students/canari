@@ -28,7 +28,7 @@
 </script>
 
 <div
-  class="border-cn-border/60 bg-cn-surface/70 rounded-2xl border p-5 shadow-sm ring-1 ring-black/[0.02] dark:ring-white/[0.04]"
+  class="border-cn-border/60 bg-cn-surface rounded-2xl border p-5 shadow-sm ring-1 ring-black/[0.02] dark:ring-white/[0.04]"
 >
   <!-- Header row -->
   <div class="mb-4 flex items-center justify-between gap-2">
@@ -56,7 +56,7 @@
 
     <!-- Multiple-choice toggle -->
     <label
-      class="bg-cn-surface/80 hover:bg-cn-border/30 flex cursor-pointer items-center justify-between rounded-xl px-4 py-3 transition-colors select-none dark:hover:bg-white/10"
+      class="bg-cn-surface hover:bg-cn-border/30 flex cursor-pointer items-center justify-between rounded-xl px-4 py-3 transition-colors select-none dark:hover:bg-white/10"
     >
       <span class="text-text-main text-sm font-semibold">{m.post_poll_allow_multiple_label()}</span>
       <div class="relative flex items-center">

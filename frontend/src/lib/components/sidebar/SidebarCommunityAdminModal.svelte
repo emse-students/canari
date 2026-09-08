@@ -807,7 +807,7 @@
               >
             </div>
             {#if canManage}
-              <div class="border-cn-border bg-cn-bg/60 space-y-2.5 border-b px-4 py-3">
+              <div class="border-cn-border bg-cn-bg space-y-2.5 border-b px-4 py-3">
                 <div class="grid grid-cols-1 gap-2.5 md:grid-cols-[1fr_auto_auto]">
                   <!-- Members of this community are already here; inviting them again is not an action. -->
                   <UserAutocomplete

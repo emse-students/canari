@@ -614,7 +614,7 @@
       onclick={() => selectTab('play')}
       class="flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-semibold transition-colors {activeTab ===
       'play'
-        ? 'bg-cn-yellow text-cn-dark shadow-sm'
+        ? 'bg-cn-yellow text-cn-ink shadow-sm'
         : 'text-text-muted hover:bg-black/5 dark:hover:bg-white/10'}"
     >
       {m.minesweeper_tab_play()}
@@ -626,7 +626,7 @@
       onclick={() => selectTab('leaderboard')}
       class="flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-semibold transition-colors {activeTab ===
       'leaderboard'
-        ? 'bg-cn-yellow text-cn-dark shadow-sm'
+        ? 'bg-cn-yellow text-cn-ink shadow-sm'
         : 'text-text-muted hover:bg-black/5 dark:hover:bg-white/10'}"
     >
       <Trophy size={14} />
@@ -688,7 +688,7 @@
       <div
         bind:this={viewportEl}
         role="presentation"
-        class="border-cn-border bg-cn-bg/40 relative min-h-0 flex-1 overflow-hidden rounded-xl border"
+        class="border-cn-border bg-cn-bg relative min-h-0 flex-1 overflow-hidden rounded-xl border"
         style="touch-action: none;"
         onwheel={handleWheel}
         onpointerdown={handleViewportPointerDown}
@@ -725,8 +725,8 @@
                     : cell.mine
                       ? 'border-transparent bg-red-500/80'
                       : cell.adjacent === 0
-                        ? 'bg-cn-bg/60 border-transparent'
-                        : 'bg-cn-bg/80 border-transparent'} {cell.state === 'revealed' &&
+                        ? 'bg-cn-bg border-transparent'
+                        : 'bg-cn-bg border-transparent'} {cell.state === 'revealed' &&
                 !cell.mine &&
                 cell.adjacent > 0
                   ? NUMBER_COLORS[cell.adjacent]
@@ -749,7 +749,7 @@
             type="button"
             onclick={zoomIn}
             aria-label={m.minesweeper_zoom_in()}
-            class="bg-cn-surface/90 border-cn-border text-text-main hover:bg-cn-bg flex size-8 items-center justify-center rounded-lg border shadow-sm transition-colors"
+            class="bg-cn-surface border-cn-border text-text-main hover:bg-cn-bg flex size-8 items-center justify-center rounded-lg border shadow-sm transition-colors"
           >
             <ZoomIn size={15} />
           </button>
@@ -757,7 +757,7 @@
             type="button"
             onclick={zoomOut}
             aria-label={m.minesweeper_zoom_out()}
-            class="bg-cn-surface/90 border-cn-border text-text-main hover:bg-cn-bg flex size-8 items-center justify-center rounded-lg border shadow-sm transition-colors"
+            class="bg-cn-surface border-cn-border text-text-main hover:bg-cn-bg flex size-8 items-center justify-center rounded-lg border shadow-sm transition-colors"
           >
             <ZoomOut size={15} />
           </button>
@@ -765,7 +765,7 @@
             type="button"
             onclick={handleResetView}
             aria-label={m.minesweeper_zoom_reset()}
-            class="bg-cn-surface/90 border-cn-border text-text-main hover:bg-cn-bg flex size-8 items-center justify-center rounded-lg border shadow-sm transition-colors"
+            class="bg-cn-surface border-cn-border text-text-main hover:bg-cn-bg flex size-8 items-center justify-center rounded-lg border shadow-sm transition-colors"
           >
             <Maximize2 size={15} />
           </button>
@@ -780,7 +780,7 @@
             transition:fade={{ duration: 200 }}
           >
             <div
-              class="bg-cn-surface/95 pointer-events-auto flex flex-col items-center gap-3 rounded-2xl border px-6 py-6 text-center shadow-2xl {isWin
+              class="bg-cn-surface pointer-events-auto flex flex-col items-center gap-3 rounded-2xl border px-6 py-6 text-center shadow-2xl {isWin
                 ? 'border-cn-yellow/50 shadow-[0_0_40px_-12px_rgba(246,194,50,0.45)]'
                 : 'border-red-500/40 shadow-[0_0_40px_-12px_rgba(239,68,68,0.35)]'}"
               transition:scaleTransition={{ duration: 280, start: 0.9, easing: backOut }}
@@ -831,7 +831,7 @@
               <button
                 type="button"
                 onclick={newGame}
-                class="bg-cn-yellow text-cn-dark hover:bg-cn-yellow-hover mt-1 flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-bold transition-colors"
+                class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover mt-1 flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-bold transition-colors"
               >
                 <RotateCcw size={15} strokeWidth={2.5} />
                 {m.minesweeper_new_game()}
@@ -881,7 +881,7 @@
         <ol class="space-y-1.5">
           {#each leaderboard as entry (entry.userId)}
             <li
-              class="border-cn-border bg-cn-bg/60 flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5"
+              class="border-cn-border bg-cn-bg flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5"
             >
               <span class="flex items-center gap-2.5 truncate">
                 <span class="text-text-muted w-7 shrink-0 font-mono text-sm font-bold">

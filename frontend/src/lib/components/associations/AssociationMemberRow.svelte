@@ -94,7 +94,7 @@
 </script>
 
 <div
-  class="border-cn-border/70 bg-cn-bg/40 hover:bg-cn-bg/60 flex flex-col gap-3 rounded-2xl border px-4 py-3 transition-colors"
+  class="border-cn-border/70 bg-cn-bg flex flex-col gap-3 rounded-2xl border px-4 py-3 transition-colors hover:bg-black/5 dark:hover:bg-white/10"
 >
   <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
     <div class="flex min-w-0 flex-1 items-center gap-3">

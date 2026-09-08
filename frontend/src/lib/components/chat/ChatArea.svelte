@@ -815,7 +815,7 @@
 </script>
 
 <section
-  class="relative flex min-h-0 min-w-0 flex-1 flex-col bg-transparent {isHidden
+  class="chat-thread-panel relative flex min-h-0 min-w-0 flex-1 flex-col bg-transparent {isHidden
     ? 'hidden md:flex'
     : ''}"
   use:swipeBack={{ onBack: onBack ?? (() => {}), enabled: _isMobile && !!onBack }}
@@ -1155,7 +1155,7 @@
         </span>
         {#if hiddenBelowCount > 0}
           <span
-            class="text-cn-dark text-2xs pointer-events-none absolute -top-1.5 -right-1.5 inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-amber-500 px-1 font-bold shadow-sm shadow-amber-500/30"
+            class="text-cn-ink text-2xs pointer-events-none absolute -top-1.5 -right-1.5 inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-amber-500 px-1 font-bold shadow-sm shadow-amber-500/30"
             aria-hidden="true"
           >
             {hiddenBelowCount > 99 ? '99+' : hiddenBelowCount}

@@ -109,7 +109,7 @@
 
 {#if imageFailed || display?.kind === 'none'}
   <div
-    class="{shapeClasses} shrink-0 shadow-sm select-none {sizeClasses} bg-cn-dark text-cn-yellow flex items-center justify-center overflow-hidden font-bold"
+    class="{shapeClasses} shrink-0 shadow-sm select-none {sizeClasses} bg-cn-ink text-cn-yellow flex items-center justify-center overflow-hidden font-bold"
     title={displayLabel}
     aria-label={`Avatar de ${displayLabel}`}
   >
@@ -125,7 +125,7 @@
       <!-- Placeholder a initiales affiche immediatement (displayLabel est resolu de facon
            synchrone) : evite l'attente d'un round-trip reseau avant de voir quelque chose. -->
       <div
-        class="bg-cn-dark text-cn-yellow absolute inset-0 flex items-center justify-center font-bold select-none"
+        class="bg-cn-ink text-cn-yellow absolute inset-0 flex items-center justify-center font-bold select-none"
       >
         {initials}
       </div>

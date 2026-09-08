@@ -27,6 +27,9 @@
      of `surface-elevated`. Six components already used `bg-cn-surface-alt` before this entry
      existed, so Tailwind generated nothing and those badges rendered with no background at all. */
   --color-cn-surface-alt: var(--cn-surface-alt);
+  /* Fill for an inset control - a text field, a search box. Always a STEP AWAY from the
+     panel it sits on, which is lighter in dark and darker in light. */
+  --color-control-fill: var(--control-fill);
   --color-cn-border: var(--cn-border);
   --color-text-main: var(--text-main);
   --color-text-muted: var(--text-muted);
@@ -168,7 +171,8 @@
   /* FLAT. The reference has no background gradient at all - it is one solid colour behind
      everything. The three stacked gradients that were here (amber and blue radials over a vertical
      ramp) put a moving tint under every screen, which is exactly the "AI-generated" tell. */
-  --app-bg-gradient: var(--cn-bg);
+  --app-bg-gradient:
+    radial-gradient(130% 55% at 50% 0%, rgba(246, 194, 50, 0.07) 0%, transparent 55%), var(--cn-bg);
   --surface-elevated: #ffffff;
   --cn-surface-alt: #f2f4f7; /* measured, the bubble and input fill in light mode */
   /* The INCOMING bubble. WHAT TRANSFERS FROM THE MEASUREMENT IS THE STEP, NOT THE VALUE. The
@@ -178,6 +182,7 @@
      against the background Canari actually has, and mirrors the dark theme, where #1f1f1f carries
      a #3a3a3a bubble. */
   --bubble-in: #e4e6eb;
+  --control-fill: #f2f4f7; /* measured: the reference's field fill on a light thread */
   --banner-bg: color-mix(in srgb, var(--cn-surface) 92%, var(--cn-dark) 8%);
   --banner-warn-bg: color-mix(in srgb, var(--cn-surface) 84%, var(--amber-warn) 16%);
   --app-viewport-height: 100dvh;
@@ -202,8 +207,14 @@
   --cn-dark: #e4e6eb;
   --cn-yellow: #ffd45d;
   --cn-yellow-hover: #ffe082;
-  --cn-bg: #1f1f1f; /* measured */
-  --cn-surface: #2e2e2e; /* measured */
+  /* DARKER THAN THE REFERENCE, ON PURPOSE (user, 2026-09-08: OLED). Messenger measures #1f1f1f /
+     #2e2e2e / #3e4042, and on an OLED panel every one of those keeps the whole screen lit. True
+     black switches the pixels OFF, which is both the power saving and the reason blacks look
+     infinite next to a lit panel. What is COPIED from the reference is not the values but the STEPS
+     between them - roughly 15 and 16 points of lightness - so the surfaces stay as distinguishable
+     from each other as they are there. */
+  --cn-bg: #000000;
+  --cn-surface: #121212;
   /* Same reasoning as the light hairline above - see there. */
   --cn-border: rgba(255, 255, 255, 0.1);
   --text-main: #e4e6eb; /* measured */
@@ -211,15 +222,23 @@
   --green-ok: #2dd089;
   --red-err: #f07474;
   --amber-warn: #fbbf24;
-  --app-bg-gradient: var(--cn-bg);
-  --surface-elevated: #3e4042; /* measured - the reference's control and input fill */
+  /* NOT FLAT, AND NOT GLASS EITHER (user, 2026-09-08: *"pour faire un peu moins plat, sans repartir
+     sur du glassmorphism de fou, on peut imaginer des vignettes"*). ONE soft warm vignette hanging
+     from the top, in the brand yellow at 5%, gone by 55% of the way down - not the five 1080px
+     amber radials plus a fractal-noise layer that were deleted with `BackgroundBlobs.svelte`.
+     It is deliberately weak and top-anchored so most of an OLED screen stays at true black; raising
+     the alpha here is the one knob, and it costs black pixels. */
+  --app-bg-gradient:
+    radial-gradient(130% 55% at 50% 0%, rgba(255, 212, 93, 0.05) 0%, transparent 55%), var(--cn-bg);
+  --surface-elevated: #242424; /* control and input fill, the reference's step above the panel */
   /* One step BELOW the panel, because on a dark theme "away from the reader" is darker, where on
      a light one it is darker too - the direction is the same, the arithmetic is not. */
-  --cn-surface-alt: #262626;
+  --cn-surface-alt: #0a0a0a;
   /* Measured incoming fill: 12% white over the app background, resolved to an opaque value
      because the reference builds no surface out of translucency. Distinct from both the panel
-     (#2e2e2e) and the background (#1f1f1f), which is what lets a bubble read as a bubble. */
-  --bubble-in: #3a3a3a;
+     (#121212) and the background (#000000), which is what lets a bubble read as a bubble. */
+  --bubble-in: #2a2a2a;
+  --control-fill: #242424; /* the reference measures #3a3b3c on its lighter panel; one step above ours */
   /* Mixed towards WHITE here, not towards `cn-dark`: that token is inverted in this theme (it holds
      a near-white), so reusing the light recipe would have produced a pale strip in dark mode. */
   --banner-bg: color-mix(in srgb, var(--cn-surface) 88%, #ffffff 12%);
@@ -740,15 +759,25 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   background: transparent;
 }
 
+/* THE COMPOSER BAND. Measured on the reference: its icon buttons sit as bare 36px circles and the
+   only thing carrying a fill is the text field - a 36px pill at radius 20px on the control surface,
+   with no container border, fill or shadow around the row at all. Canari had that row wrapped in a
+   BORDERED, filled, shadowed box, which read as a heavy slab rather than a place to type.
+   What is kept from the reference is the bare icons and the pill; what deliberately diverges is the
+   container, which stays filled and is generously rounded (user, 2026-09-08) so it matches Canari's
+   own floating panels instead of sitting among them as a square-cornered strip. */
 .chat-composer-panel {
   position: relative;
   display: flex;
   max-width: 100%;
   align-items: flex-end;
-  gap: 0.375rem;
-  padding: 0.5rem;
-  border: 1px solid var(--cn-border);
-  border-radius: 1.25rem;
+  gap: 0.5rem;
+  padding: 0;
+  border: none;
+  /* ROUNDED, LIKE THE REST (user, 2026-09-08). The reference gives its composer row no container at
+     all, but a bare row inside Canari's own floating panels read as a square-cornered slab against
+     everything else; a rounded card holding the pill is the shape that matches the shell. */
+  border-radius: 1.5rem;
   background: var(--cn-surface);
   transition:
     box-shadow 180ms ease,
@@ -757,9 +786,10 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
     transform 180ms ease;
 }
 
+/* The one shadow kept anywhere: it is what makes the band read as FLOATING over the thread rather
+   than as a strip cut out of it, which is the whole point of rounding it. `border-color` used to be
+   set here too, on a rule whose border is `none` - dead the moment the border went. */
 [data-theme='dark'] .chat-composer-panel {
-  background: var(--cn-surface);
-  border-color: color-mix(in srgb, white 12%, transparent);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
 }
 
@@ -851,13 +881,18 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   background: rgba(255, 255, 255, 0.05);
 }
 
+.chat-composer-panel .mention-composer {
+  border-radius: 1.25rem; /* 20px, measured on the reference's composer pill */
+  background: var(--control-fill);
+}
+
 .chat-composer-textarea,
 .mention-composer-editor.chat-composer-textarea {
   flex: 1 1 auto;
   min-width: 0;
   max-width: 100%;
   max-height: 10rem;
-  padding: 0.5rem 0.25rem 0.5rem 0.25rem;
+  padding: 0.5rem 0.75rem;
   border: none;
   outline: none;
   resize: none;
@@ -1099,5 +1134,44 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   .chat-scroll-bottom-button {
     right: 2rem;
     bottom: 8rem;
+  }
+}
+
+/* ================== THE FLOATING SHELL (desktop only) ==================
+   Measured on the reference at 1920: the three columns are ROUNDED CARDS at 12px, each inset from
+   the window edge, with the app background showing in the gutters between them - the rail sits at
+   x=16, the list at x=76 (w=445), the thread at x=537 (w=891). Canari drew the same three regions as
+   full-bleed rectangles butted together with 1px dividers, which is what reads as "tous nos angles"
+   (user, 2026-09-08) next to Messenger.
+
+   DESKTOP ONLY, and deliberately so: on a phone a floating card wastes the two things in shortest
+   supply, width and height, and the reference does not float them there either. Everything below
+   768px keeps the full-bleed layout it already had. */
+@media (min-width: 768px) {
+  .app-nav-rail {
+    top: calc(env(safe-area-inset-top) + 0.75rem);
+    left: 0.75rem;
+    height: calc(var(--app-viewport-height, 100dvh) - env(safe-area-inset-top) - 1.5rem);
+    border: none;
+    border-radius: 0.75rem;
+    box-shadow: none;
+  }
+
+  /* The dividing borders BECOME the gutters. A gap and a line do the same job, and the reference
+     uses the gap - which is also why the panels can be opaque with no outline at all. */
+  .sidebar-panel {
+    margin: 0.75rem 0.375rem 0.75rem 0;
+    border: none;
+    border-radius: 0.75rem;
+    overflow: hidden;
+  }
+
+  /* The third card. It carries `bg-transparent` in its own class list so that the thread can show
+     the app background through it; the fill has to come from here, after that utility. */
+  .chat-thread-panel {
+    margin: 0.75rem 0.75rem 0.75rem 0.375rem;
+    border-radius: 0.75rem;
+    overflow: hidden;
+    background: var(--cn-surface);
   }
 }

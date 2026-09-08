@@ -174,7 +174,7 @@
   {:else}
     <ul class="space-y-4">
       {#each forms as form (form.id)}
-        <li class="border-cn-border/70 bg-cn-bg/40 space-y-3 rounded-xl border px-4 py-4">
+        <li class="border-cn-border/70 bg-cn-bg space-y-3 rounded-xl border px-4 py-4">
           <div class="flex flex-wrap items-start justify-between gap-2">
             <div>
               <p class="text-text-main text-sm font-semibold">{form.title}</p>

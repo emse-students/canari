@@ -555,7 +555,7 @@
                 {m.asso_payments_connected_desc()}
               </p>
               {#if connectAccountStatus?.balance}
-                <div class="border-cn-border bg-cn-bg/50 space-y-3 rounded-xl border p-4">
+                <div class="border-cn-border bg-cn-bg space-y-3 rounded-xl border p-4">
                   <p class="text-text-main flex items-center gap-2 text-sm font-bold">
                     <Wallet size={18} class="text-cn-dark" />
                     {m.asso_payments_balance_title()}

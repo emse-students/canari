@@ -209,7 +209,7 @@
       </div>
 
       {#if isParent}
-        <p class="border-cn-border bg-cn-bg/40 text-text-muted rounded-xl border px-4 py-3 text-sm">
+        <p class="border-cn-border bg-cn-bg text-text-muted rounded-xl border px-4 py-3 text-sm">
           {m.asso_deleg_is_parent_note()}
         </p>
       {:else if delegation?.status === 'pending'}
@@ -389,7 +389,7 @@
                   <div class="border-cn-border/70 overflow-x-auto rounded-lg border">
                     <table class="w-full text-sm">
                       <thead
-                        class="bg-cn-bg/60 text-text-muted text-left text-xs font-bold tracking-wide uppercase"
+                        class="bg-cn-bg text-text-muted text-left text-xs font-bold tracking-wide uppercase"
                       >
                         <tr>
                           <th class="px-3 py-2">{m.asso_achats_col_date()}</th>

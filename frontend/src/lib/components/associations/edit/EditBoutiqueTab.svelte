@@ -323,7 +323,7 @@
   <!-- New product form -->
   {#if showProductForm}
     <form
-      class="border-cn-border bg-cn-bg/40 space-y-4 rounded-xl border p-5"
+      class="border-cn-border bg-cn-bg space-y-4 rounded-xl border p-5"
       onsubmit={(e) => {
         e.preventDefault();
         void handleCreateProduct();
@@ -752,7 +752,7 @@
                   <button
                     type="submit"
                     disabled={savingProductSettings === product.id || gridProblem !== null}
-                    class="bg-cn-yellow text-cn-dark w-fit rounded-lg px-4 py-2 text-xs font-bold disabled:opacity-50 sm:col-span-2"
+                    class="bg-cn-yellow text-cn-ink w-fit rounded-lg px-4 py-2 text-xs font-bold disabled:opacity-50 sm:col-span-2"
                   >
                     {savingProductSettings === product.id
                       ? m.asso_boutique_saving_limits_label()

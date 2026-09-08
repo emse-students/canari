@@ -172,7 +172,7 @@
               type="button"
               onclick={() => toggle(group.associationId)}
               aria-expanded={isOpen}
-              class="hover:bg-cn-bg/40 flex w-full items-center gap-3 px-4 py-3 text-left transition-colors"
+              class="hover:bg-cn-bg flex w-full items-center gap-3 px-4 py-3 text-left transition-colors"
             >
               {#if logo}
                 <img

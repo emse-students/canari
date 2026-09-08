@@ -232,7 +232,7 @@
 
   {#if showForm}
     <form
-      class="border-cn-border bg-cn-bg/40 space-y-4 rounded-xl border p-5"
+      class="border-cn-border bg-cn-bg space-y-4 rounded-xl border p-5"
       onsubmit={(e) => {
         e.preventDefault();
         void handleCreate();

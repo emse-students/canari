@@ -150,7 +150,7 @@
         {#if cell.day === null}
           <div
             class="border-cn-border/40 min-h-18 border-r border-b sm:min-h-25 {isWeekend(i)
-              ? 'bg-cn-bg/40'
+              ? 'bg-cn-bg'
               : 'bg-cn-surface'}"
             role="gridcell"
             aria-hidden="true"
@@ -176,7 +176,7 @@
             class="border-cn-border/40 relative min-h-18 overflow-hidden border-r border-b text-left transition-all sm:min-h-25 {isWeekend(
               i
             )
-              ? 'bg-cn-bg/40'
+              ? 'bg-cn-bg'
               : 'bg-cn-surface'} {selected ? '' : 'hover:brightness-95'}"
           >
             <!-- Break (vacation / no-course) background tint - behind everything so a period reads
@@ -303,7 +303,7 @@
 
                 {#if overflowCount > 0}
                   <div
-                    class="text-text-muted bg-cn-bg/80 text-2xs flex flex-1 items-center justify-center font-bold"
+                    class="text-text-muted bg-cn-bg text-2xs flex flex-1 items-center justify-center font-bold"
                   >
                     +{overflowCount} autre{overflowCount > 1 ? 's' : ''}
                   </div>

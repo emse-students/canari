@@ -474,7 +474,7 @@
                       />
                       <button
                         onclick={() => void saveName()}
-                        class="rounded-lg bg-amber-500 px-2.5 py-1.5 text-xs font-bold text-white transition-all hover:bg-amber-600 active:scale-95"
+                        class="text-cn-ink rounded-lg bg-amber-500 px-2.5 py-1.5 text-xs font-bold transition-all hover:bg-amber-600 active:scale-95"
                       >
                         {m.common_ok_button()}
                       </button>

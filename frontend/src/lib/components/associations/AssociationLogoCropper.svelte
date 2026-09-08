@@ -194,7 +194,7 @@
       type="file"
       accept="image/jpeg,image/png,image/webp"
       onchange={onPickFile}
-      class="text-text-main file:bg-cn-yellow file:text-cn-dark text-sm file:mr-2 file:rounded-lg file:border-0 file:px-3 file:py-1.5 file:text-sm file:font-bold"
+      class="text-text-main file:bg-cn-yellow file:text-cn-ink text-sm file:mr-2 file:rounded-lg file:border-0 file:px-3 file:py-1.5 file:text-sm file:font-bold"
     />
     {#if pickedName}
       <span class="text-text-muted max-w-[200px] truncate text-xs">{pickedName}</span>

@@ -422,7 +422,7 @@
       <div class="space-y-3">
         {#each { length: 3 } as _, i (i)}
           <div
-            class="border-cn-border bg-cn-surface/60 animate-pulse space-y-2 rounded-2xl border p-5"
+            class="border-cn-border bg-cn-surface animate-pulse space-y-2 rounded-2xl border p-5"
           >
             <div class="bg-cn-border/60 h-3 w-2/3 rounded"></div>
             <div class="bg-cn-border/40 h-3 w-full rounded"></div>
@@ -442,7 +442,7 @@
         </h2>
         <div class="mb-8 space-y-3">
           {#each pendingReports as report (report.id)}
-            <div class="border-cn-border bg-cn-surface/70 rounded-2xl border p-4 shadow-sm">
+            <div class="border-cn-border bg-cn-surface rounded-2xl border p-4 shadow-sm">
               <!-- Header row -->
               <div class="mb-3 flex flex-wrap items-center gap-2">
                 <span
@@ -665,7 +665,7 @@
         <div class="space-y-2">
           {#each resolvedReports as report (report.id)}
             <div
-              class="border-cn-border bg-cn-surface/40 flex items-center gap-3 rounded-xl border p-3"
+              class="border-cn-border bg-cn-surface flex items-center gap-3 rounded-xl border p-3"
             >
               <span
                 class="text-2xs shrink-0 rounded-full px-2 py-0.5 font-bold {statusClass[
@@ -735,7 +735,7 @@
       <div class="space-y-3">
         {#each { length: 3 } as _, i (i)}
           <div
-            class="border-cn-border bg-cn-surface/60 animate-pulse space-y-2 rounded-2xl border p-5"
+            class="border-cn-border bg-cn-surface animate-pulse space-y-2 rounded-2xl border p-5"
           >
             <div class="bg-cn-border/60 h-3 w-1/2 rounded"></div>
             <div class="bg-cn-border/40 h-3 w-full rounded"></div>
@@ -864,7 +864,7 @@
       <div class="space-y-3">
         {#each { length: 3 } as _, i (i)}
           <div
-            class="border-cn-border bg-cn-surface/60 animate-pulse space-y-2 rounded-2xl border p-5"
+            class="border-cn-border bg-cn-surface animate-pulse space-y-2 rounded-2xl border p-5"
           >
             <div class="bg-cn-border/60 h-3 w-2/3 rounded"></div>
           </div>
@@ -879,7 +879,7 @@
       <div class="space-y-3">
         {#each mutedUsers as user (user.userId)}
           <div
-            class="border-cn-border bg-cn-surface/70 flex items-start gap-3 rounded-2xl border p-4 shadow-sm"
+            class="border-cn-border bg-cn-surface flex items-start gap-3 rounded-2xl border p-4 shadow-sm"
           >
             <div class="mt-0.5 shrink-0"><Avatar userId={user.userId} size="sm" /></div>
             <div class="min-w-0 flex-1">

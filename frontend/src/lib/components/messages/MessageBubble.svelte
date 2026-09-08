@@ -712,8 +712,6 @@
           isReadReceiptAnchor={false}
           {status}
           {readBy}
-          {timestamp}
-          {groupPosition}
         />
       </div>
 
@@ -757,8 +755,6 @@
       {isReadReceiptAnchor}
       {status}
       {readBy}
-      {timestamp}
-      {groupPosition}
       outsideBubble
     />
 
@@ -772,7 +768,7 @@
 
     {#if showQuickReactions && onReact}
       <div
-        class="bg-cn-surface/95 absolute z-30 flex items-center gap-1 rounded-2xl border border-black/8 px-2 py-1.5 shadow-lg dark:border-white/10 {isOwn
+        class="bg-cn-surface absolute z-30 flex items-center gap-1 rounded-2xl border border-black/8 px-2 py-1.5 shadow-lg dark:border-white/10 {isOwn
           ? 'right-0 bottom-full mb-2'
           : 'bottom-full left-0 mb-2'}"
         use:clickOutside={() => (showQuickReactions = false)}
