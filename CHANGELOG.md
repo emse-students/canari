@@ -11,6 +11,60 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Added - the CORRUPT phase has a runner, and its first row is answered end to end
+
+The phase sat on the board with ten rows and `scripts: []`: designed on 2026-08-19, never runnable,
+so every one of its cells read `pending` for three weeks while the defects they describe went
+unmeasured. `archive/corrupt.mjs` answers ONE of them, deliberately - the damage each row needs is
+different, and a file claiming a phase it half implements is how a rung reads green while nothing
+ran it.
+
+**CORRUPT-3, and why the damage is shaped rather than random.** The blob is replaced with
+`iv:cipher`, both halves valid base64, so it survives the separator check and the base64 decode and
+dies at the AEAD tag - which is the case the row names. Random bytes would die earlier and measure
+the parser. Four things are asserted: the app reaches a DETERMINATE state, a `[VAULT]` line names
+what was found, the damaged blob is CLEARED, and the wrap key is not collateral.
+
+**It is proven by an A/B, not by a single green run.** Same estate, same check, only
+`deviceKeyVault.ts` differing: the pre-fix build answers `FAIL` with `vaultLines: []`, the fixed one
+`PASS` on the *accusing* variant - wrap key present, so everything ordinary is excluded and what is
+left is alteration. A row that only ever passed would not have shown that it can fail.
+
+**Two defects were in the CHECK, and both are the expensive kind.** It first asserted `APP_READY`
+and would have recorded `theAppNeverReachedAReadableState` against an app sitting correctly on its
+own PIN gate - a device that has lost its device key is ENTITLED to ask for it, and accusing the
+product of a hang for a state the check had not anticipated is a check that does not fail but lies.
+Then `consoleLines` returns STRINGS and the check mapped `.text` over them, so every line became
+`undefined`, the `[VAULT]` filter matched nothing, and the row reported `nothingSurfacedOnTheConsole`
+about a client that had said exactly what was asked of it. Both lied in the direction of a finding,
+which is the direction that closes a question. The line is now waited for within a bounded window
+(`awaitLine`, nine seconds) rather than read once, because it is written during the boot that FOLLOWS
+the reload.
+
+Chrome's password-form hint is the one line the damage is guaranteed to provoke, and it is named per
+row as `BROWSER_PASSWORD_FORM_HINT` rather than fixed: the documented remedy is a username field
+beside the password one, which on THIS gate would invite a password manager to store an end-to-end
+encryption secret the product promises is never transmitted anywhere.
+
+### Fixed - a verdict named the commit it ran on, never the source the estate was serving
+
+`build` in the results ledger is a COMMIT, and a commit describes the tree git holds - not the tree
+`make local-frontend` last compiled. The two part company the moment a file is reverted, stashed or
+edited without being committed, which is exactly what an honest A/B does. Measured on 2026-09-08:
+CORRUPT-3 was run at one commit against `deviceKeyVault.ts` at its pre-fix and then its post-fix
+contents, and the ledger recorded `FAIL` then `PASS` as though one build had answered one question
+two ways. `rows.mjs` read that as intermittence.
+
+That is the one thing this campaign must never invent. A DRAW says a measurement cannot be believed;
+here both could, because they measured different code - and the report that exists to stop a false
+verdict was manufacturing one.
+
+Nothing new had to be built. `source-stamp.mjs` already hashes the bytes an artefact was made from,
+and its own doc names this harness as the consumer; the ledger was dropping the field. Every verdict
+now carries `sourceSha`, and `rows.mjs` treats it as part of a build's identity. Rows recorded before
+the field existed carry no stamp and keep their old grouping, so no historical draw is dissolved by
+this.
+
 ### Fixed - a log announced "persisted" for a write it had just swallowed the failure of
 
 Two message writes ended in `.catch(() => {})`, and one of them then printed a success line

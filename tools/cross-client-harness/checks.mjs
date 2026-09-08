@@ -320,7 +320,14 @@ export const PHASES = {
     needs: ["W1", "W2", "A1", "W3"],
   },
   CALL: { title: "audio and video", scripts: [], needs: ["W1", "W2", "A1"] },
-  CORRUPT: { title: "deliberate store damage", scripts: [], needs: ["W1", "W2"] },
+  // ONE OF TEN, AND THE COUNT IS HERE SO THE OTHER NINE STAY VISIBLE. `scripts: []` until
+  // 2026-09-08: ten rows designed and nothing able to run one of them, which is the shape rule 22
+  // exists to catch - a phase that reads as covered because its rows are written down.
+  // `corrupt.mjs` answers CORRUPT-3 alone; the damage each remaining row needs is different, and a
+  // file claiming a phase it half implements is how a rung reads green while nothing ran it.
+  // CORRUPT-1/-4/-5/-7 want a damage primitive in `mlsdb.mjs`, which has snapshot/restore/digest
+  // and nothing that writes bad bytes; -9 and -10 need A1.
+  CORRUPT: { title: "deliberate store damage", scripts: ["corrupt.mjs"], needs: ["W1", "W2"] },
   // ONE OF TEN, AND IT WAS WRITTEN BEFORE THIS MANIFEST EXISTED. `del1.mjs` covers DEL-1
   // (WP-HISTGHOST-1's regression check) and was reachable from nothing: the phase read as ZERO
   // coverage, the board read `pending`, and the script's verdict lived in a console line. Rule 22.

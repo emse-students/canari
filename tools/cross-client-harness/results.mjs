@@ -15,6 +15,7 @@ import { request as requestOverHttps } from 'node:https';
 import { LOCAL } from './estate.mjs';
 import { instrumentShaOf } from './instrument.mjs';
 import { SITE, STATE_DIR } from './names.mjs';
+import { readSourceStamp } from '../../frontend/scripts/source-stamp.mjs';
 import { gate, report } from './watch.mjs';
 
 /**
@@ -22,6 +23,9 @@ import { gate, report } from './watch.mjs';
  * condensed dirt of the run, which quotes captured console lines, and those name real conversations.
  */
 const FILE = join(STATE_DIR, 'results.ndjson');
+
+/** The served frontend's own content hash, read once: a rebuild mid-run is not a case this models. */
+const SOURCE_STAMP = readSourceStamp()?.sha ?? null;
 
 /**
  * THE BUILD EVERY ROW OF THIS PROCESS RAN AGAINST - read from the DEPLOYMENT, never from git alone.
@@ -451,6 +455,21 @@ export function record(id, verdict, detail) {
     at: new Date().toISOString(),
     build: BUILD.commit,
     builtAt: BUILD.builtAt,
+    // WHICH SOURCE THE ESTATE WAS ACTUALLY SERVING, and why the commit alone cannot say it.
+    // `build` is a COMMIT, and a commit describes the tree GIT holds - never the tree
+    // `make local-frontend` last compiled. The two part company the moment a file is reverted,
+    // stashed or edited without being committed, which is exactly what a deliberate A/B does.
+    // Measured on 2026-09-08: CORRUPT-3 was run at ONE commit against `deviceKeyVault.ts` at its
+    // pre-fix and then its post-fix contents - the honest way to show a fix does what its row
+    // claims - and the ledger recorded FAIL then PASS as though one build had answered one
+    // question two ways. `rows.mjs` read that as intermittence, which is the one thing this
+    // campaign must never invent: a DRAW says a measurement cannot be believed, and here both
+    // could, because they measured different code.
+    //
+    // Nothing new had to be built to fix it. `source-stamp.mjs` already hashes the bytes the
+    // artefact was made from, and its own doc names THIS harness as the consumer - the ledger was
+    // simply dropping the field on the floor.
+    ...(SOURCE_STAMP ? { sourceSha: SOURCE_STAMP } : {}),
     check: CHECK.file,
     checkSha: CHECK.sha,
     instrumentSha: CHECK.instrumentSha,

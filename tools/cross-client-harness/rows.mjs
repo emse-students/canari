@@ -335,7 +335,12 @@ for (const line of readFileSync(LEDGER, 'utf8').split('\n')) {
     // A SKIP IS NOT ONE OF THE TWO ANSWERS EITHER - a row that skipped twice and failed once gave
     // ONE answer, not three, and counting the skips would report it as intermittent for having been
     // asked on an incomplete fleet. Same rule as `latestReal` above, same reason.
-    const buildKey = [r.build || '?', r.checkSha || '?', r.instrumentSha || '?', r.order || ''].join('|');
+    // `sourceSha` IS PART OF THE IDENTITY OF A BUILD, and the commit is not enough on its own -
+    // see the field's own note in `results.mjs` for the run that proved it. Two verdicts taken at
+    // one commit against two different served trees are a BEFORE and an AFTER, never a draw. Rows
+    // recorded before the field existed carry no stamp and keep their old grouping, so no historical
+    // draw is silently dissolved by this.
+    const buildKey = [r.build || '?', r.sourceSha || '?', r.checkSha || '?', r.instrumentSha || '?', r.order || ''].join('|');
     if (r.verdict === 'SKIPPED') continue;
     if (!perBuild.has(row)) perBuild.set(row, new Map());
     const perKey = perBuild.get(row);
@@ -518,7 +523,7 @@ const flaky = [];
 for (const [row, perKey] of perBuild) {
   for (const [key, tally] of perKey) {
     if (tally.size < 2) continue;
-    const [build, , , order] = key.split('|');
+    const [build, , , , order] = key.split('|');
     flaky.push({ row, build, order, tally });
   }
 }
