@@ -2163,11 +2163,24 @@ from it. Both make the second hand-in stop existing; neither is a ledger reconci
 What must NOT happen is a retry or a suppression of the log line - *a fallback is a signal, never a
 path*, and this line is the visible end of exactly the thing that needs deleting.
 
-**Not attempted in this session, deliberately.** Getting it wrong loses a message permanently rather
-than logging about one, and the change is in the Kotlin service rather than in anything this campaign's
-runners can A/B in a minute. What it needs first is the measurement this entry cannot take by reading:
-whether `consumeFcmCache` drains EVERY cached message on the next foreground, on a cold start as well
-as a warm one. If it does, acknowledging at the cache write is safe and is the smaller change.
+**THE MEASUREMENT THIS PARAGRAPH OWED IS ANSWERED BY READING, AND IT ANSWERS YES.** `consumeFcmCache`
+(`utils/chat/fcmCache.ts`) invokes `read_and_clear_fcm_cache` and injects EVERY entry returned - no
+bound, no filter beyond a missing-field skip - and `sessionAuth` calls it inside the startup span *"at
+login as much as on resume"*. So the cache does drain completely on both paths.
+
+**AND READING IT TURNED UP THE ARGUMENT THAT SETTLES THE TRADE-OFF.** `read_and_clear_fcm_cache`
+CLEARS BEFORE THE JS HAS PERSISTED ANYTHING - the name says so - and the writes that follow are per
+entry, inside a `try`. So a crash between that clear and `saveMessage` already loses the message
+**irrecoverably today**: the cache is gone, the ratchet generation is spent, and the still-pending
+server row can only come back as `SecretReuseError`. The unacknowledged row is not protecting against
+that loss; it cannot. Acknowledging at the cache write therefore moves an existing window rather than
+opening a new class of one, which is the objection that made this look like a trade-off.
+
+**Still not attempted in this session, and now for a smaller reason.** The change is in the Kotlin
+service, nothing this campaign's runners can A/B in a minute, and the honest next step is the narrower
+one the reading exposes: make the clear and the persist one operation (read, persist, THEN clear)
+before or alongside moving the acknowledgement. Two durable effects that must stand or fall together
+are currently three that can fall apart in two places.
 
 **What is seen.** One line on W3, on every HEAL-NEW run that has a fresh device pulling while a
 socket is already live:
