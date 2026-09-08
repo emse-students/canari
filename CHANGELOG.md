@@ -11,6 +11,55 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - the backlog said NOTHING FIXED BELONGS IN THIS FILE, and held fourteen closed entries
+
+The rule has been in the file's own header in bold since 2026-08-30, on the user's instruction, and
+it is stated twice more: an entry is deleted outright when it ships, its rule to `durable-rules`, its
+story here, its mechanism to the wiki page it points at. On 2026-09-08 the file held **fourteen**
+closed entries and **462 lines** of them, some ten days old, and their severity words were still
+being counted alongside open work.
+
+That is this campaign's own lesson turned on the repository's memory: a correct rule with nothing to
+report it is followed until somebody is busy. Restating it more firmly would not have helped - what
+was missing is the thing that notices. `backlog-closed.test.mjs` is that thing, in
+`make test-ci-scripts` beside the wiki-link checker, and it names the file, the line and the heading.
+Proven in both directions.
+
+**An entry with a closed HALF is not a closed entry**, and keeping that distinction is what makes the
+gate honest rather than merely tidy: three entries were kept and RETITLED to name what is LEFT - three
+hosts nobody reports on, a repair that still costs three minutes, a fix that is merged and unshipped -
+because the header's own words are that the shipped half is a pointer, never a retelling. So the test
+reads HEADINGS only; a body may say a half is fixed, and forbidding that would push the reasoning out
+of the file rather than the closed work.
+
+Two rows in the "owed to the USER" table went with them - the campaign phone's lock, retired by the
+user the same day, and a token whose target entry no longer exists - and the hardware row now names
+only the half still missing, an iPhone. Deleting entries broke two cross-file anchors into them; both
+are repaired and `wiki-links.test.mjs` confirms all 106 files resolve.
+
+### Added - the harness is linted, and the drift it was predicted to accumulate had already arrived
+
+Recorded here on 2026-09-08 because it was the one closed backlog entry whose story lived nowhere
+else, and the backlog is not a place closed work is allowed to stay.
+
+`bun run lint` is scoped to `frontend/`, and `make test-harness` ran the self-tests and
+`inventory.mjs --check` - neither had an opinion about the code. So the rig producing every campaign
+verdict was the one directory in this repository no linter looked at. The entry predicted drift and
+the drift is the measurement: 29 warnings on 2026-09-04, **38 on 2026-09-07**, nine more arrived
+while nothing was counting. All 38 are gone and the gate is one line in `test-harness` -
+`oxlint -c tools/cross-client-harness/.oxlintrc.json --deny-warnings` - so the 39th cannot arrive
+silently. `--deny-warnings` deliberately: a gate that only warns is one its reader learns to scroll
+past. Measured in both directions, a file with one unused variable fails the recipe.
+
+The config extends the ROOT `.oxlintrc.json` and adds `import` + `unicorn`, which is what the
+frontend's does, so the rig is held to the same rules rather than to a private set - and NOT to the
+frontend's own config, which carries `env.svelte` and paths relative to `frontend/`.
+
+**One of the 38 was a real finding rather than tidying.** `createGroup(cx, name, { label })` had
+promised "who is asking, for the error message" since it was written, nine call sites passed one, and
+no failure had ever carried it: every one surfaced as a bare `until` timeout naming a selector, so a
+row minting three groups could not say which of them died. The label is in the throw now.
+
 ### Documented - the damaged-state P1 is a closed loop, and the only door out is the destructive one
 
 The sign-out half that CORRUPT-1 left owed is answered by reading rather than by a run, deliberately:

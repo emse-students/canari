@@ -63,19 +63,16 @@ else holds, a console owned by the user, or hardware that does not exist.
 
 | What | Kind | Where the substance is |
 | --- | --- | --- |
-| ~~UNLOCK THE CAMPAIGN PHONE~~ **DONE 2026-09-05** (`deviceLocked=0`, measured). What remains is OPTIONAL and the user asked for it: removing the pattern needs the credential, so either they clear it in Settings or it joins `test-accounts.json` like every other one. Retiring the lock costs no key material - both keystore keys are explicitly `setUserAuthenticationRequired(false)`, measured before proposing it | 1 gesture on the device | [P2 - every silent push on the phone fails to decrypt](#p1---a-backgrounded-phone-is-never-told-about-a-message-it-has-already-received-because-the-js-layer-waits-for-a-push-the-server-never-sends-measured-on-device-2026-09-05) |
-| **UNLOCK THE CAMPAIGN PHONE - THIRD TIME, AND RETIRING THE LOCK IS NOW THE ACTUAL ASK** (2026-09-08). It re-locked mid-session AGAIN, minutes after LIFE-2/3/4 had all passed on hardware, and the phase re-run that would have STAMPED those three verdicts with their APK was refused outright: *"A1 is behind the DEVICE lock screen - every fetch inside the WebView hangs and the gateway drops it, whatever the probes below say. A human must unlock the phone; `wm dismiss-keyguard` will not."* **So the cost is no longer a lost run, it is measurements that are real but under-attributed** - three good verdicts the ledger cannot tie to a build. This will repeat on every phone row the moment the screen times out. Previously 2026-09-07: it re-locked mid-session (`deviceLocked=1`, `trustManaged=1`, `strongAuthRequired=0x0`, `mDreamingLockscreen=true`); `wm dismiss-keyguard` is refused on a secure keyguard and no credential is in the rig by design. It cost LIFE-3 and LIFE-4 their re-runs, which were owed only their re-measurement against a classifier that had just been widened for them, and it will cost every phone row the moment the screen times out again. **Retiring the lock costs no key material** - both keystore keys are explicitly `setUserAuthenticationRequired(false)`, measured before this was first proposed on 2026-09-05 - so either the pattern is cleared in Settings or it joins `test-accounts.json` like every other credential | 1 gesture on the device, then a decision | [cross-client-testing](cross-client-testing.md) LIFE-3, LIFE-4, LIFE-5 |
 | set up the external uptime probe that mails - **decided 2026-09-06, mail**; the probe must hit `/api/version` AND `/api/chat-delivery-health`, never the homepage, which answered 200 through both outages | ~1 click in Cloudflare or an uptime service | [P2 - NOTHING TELLS ANYBODY PRODUCTION IS DOWN](#p2---nothing-tells-anybody-production-is-down-and-both-outages-of-2026-09-01-were-reported-by-the-user-owed-to-the-user-a-decision-then-one-click) |
 | `DEPENDABOT_ALERTS_TOKEN` - a fine-grained token with **"Dependabot alerts: read"** on this repository. The nightly alerts job has NEVER passed: it declared `security-events: read`, which is code scanning, and Dependabot alerts have no `permissions:` key at all, so `GITHUB_TOKEN` cannot read them at any setting. The job now reads this secret when it exists and fails loudly when it does not - deliberately, because an alert list nobody reads looks exactly like an empty one | 1 token, 1 secret | `.github/scripts/dependabot-alerts-report.sh`, and the 403 it now names correctly |
 | should a dev-ONLY trigger exist - today one push deploys both estates and a broken dev BLOCKS production, by design | decision | [dev.canari-emse.fr becomes a real second environment](#devcanari-emsefr-becomes-a-real-second-environment---decided-2026-08-17) |
-| a fine-grained PAT from an account WITH PUSH ACCESS - the App token was measured refused, ten times | decision | [P1 - no identity CI can mint may ask Dependabot to rebuild a branch](#p1---no-identity-ci-can-mint-may-ask-dependabot-to-rebuild-a-branch-so-a-moved-gate-parks-the-whole-queue---and-the-app-token-was-the-recommendation-this-row-itself-made-measured-2026-09-03) |
 | PostgreSQL 15 -> 18, parked by the user (*"on verra ca plus tard"*); its test also releases `redis` and `garage` | decision | [P2 - PostgreSQL is held at 15](#p2---postgresql-is-held-at-15-because-18-needs-a-migration-nobody-has-performed-after-the-outage-of-2026-09-01) |
 | is a MiGallery application worth building | decision | [post-campaign projects](#post-campaign-projects---decided-not-scheduled) |
 | rotate `CF_DNS_TOKEN` **and** the cloudflared tunnel run token - both reached a transcript on 2026-09-01 | rotation | agent memory names both; neither may enter this repo |
 | put the BDE 170 EUR tier on sale - an allowlist correctly withholds it and no event will ever fire | 1 click | the verification table above |
 | App Store Connect: the 2.3.6 radio button | 1 click | [mobile](frontend/mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on) |
 | Lydia's credentials, which Lydia owes | blocked upstream | WP-LYDIA-1 |
-| an Android phone and an iPhone - unblocks the whole verification table above and the campaign | hardware | [device-verification](device-verification.md) |
+| **an iPhone** - the Android half arrived and its lock was retired 2026-09-08, so every A1 row is runnable; what is still hardware-blocked is iOS alone | hardware | [device-verification](device-verification.md) |
 | copy `canari-harness/` to the second machine to resume the campaign; **SETUP-4's 2FA is no longer owed**, the test accounts carry no MFA | 1 copy | [cross-client-campaign-resume](cross-client-campaign-resume.md) |
 
 ## FOUR DECISIONS TAKEN BY THE USER, 2026-09-06
@@ -451,79 +448,6 @@ that report reaching hosts other than production, which is the row above this on
 together or not at all, and neither needs a new mechanism, only the existing one pointed at one
 more fact and one more box.
 
-### ~~P3 - vitest cannot start a worker on this workstation~~ - RETIRED 2026-09-07, the whole suite runs here
-
-**Re-measured before believing the entry, and the symptom is gone.** `bun run test` in `frontend/` -
-the same command `make run-ci` calls, paraglide compile included - reports **280 test files, 2632
-tests, all passing, in 81 seconds**. Nothing was changed to make that happen.
-
-**Three of the four candidates the entry named are ruled out by the same measurement.** It is not
-the POOL: the single file that used to time out passes on `--pool=forks` in 873 ms and on
-`--pool=threads` in 6 s, and `vitest.config.ts` pins neither, so the run above used the default. It
-is not `paraglide:compile`: that step ran, said `Successfully compiled inlang project`, and the
-suite followed it. It is not the vitest VERSION: `git log -S vitest -- frontend/bun.lock` shows the
-lock's vitest lines have not moved since 2026-09-02, before the failure was recorded.
-
-**What is left is the fourth candidate, and it is the honest answer: a `node_modules` state
-specific to this box.** Two Dependabot merges landed in `frontend/bun.lock` since (#311, #313), and
-each brought an install with it. That is a repair nobody performed deliberately, so this retires as
-"no longer reproducible" rather than "diagnosed" - the distinction matters if it ever returns, and
-the first thing to try then is a clean install rather than a pool flag.
-
-**What it was blocking is available again**: a session can verify a frontend change it just wrote,
-and the frontend half of the local pipeline is no longer CI-only.
-
-### ~~P1 - a release-asset upload was refused with the permission it was granted~~ - RETIRED 2026-09-04, the call that was refused is deleted
-
-**Not fixed: withdrawn, because the step no longer makes the call.** On the stable `v0.16.0` the iOS
-arm's `softprops/action-gh-release@v3` step found the release and was then refused:
-
-```
-Found release v0.16.0 (with id=382122297)
-Unexpected error fetching GitHub release for tag refs/tags/v0.16.0: HttpError: Resource not accessible by integration
-  https://docs.github.com/rest/releases/releases#update-a-release
-```
-
-**THE FULL POPULATION, MEASURED 2026-09-04** across every release since the gated chain began -
-five stables and five pre-releases:
-
-| arm | pre-release | stable |
-|---|---|---|
-| iOS (`Canari.ipa`) | attached, 5/5 | **refused on 0.16.0**; SKIPPED on 0.16.1, 0.16.2, 0.16.3 |
-| Android (`.aab` + `.apk`) | attached | attached, 5/5 |
-
-Four things that measurement settles, each of which was open:
-
-- **It is not transient.** The re-run this entry called "open, and cheap" was attempt 2 of run
-  `33771324318`, and it **reproduced the 403 identically**.
-- **It is not `prerelease: false`.** The Android arm's identical step - same action, same token, same
-  run, same release - SUCCEEDED on that very stable 24 minutes earlier (15:24:34 against the iOS
-  failure at 15:48:21), and on all three stables since.
-- **It is not the asset upload.** The error names `update-a-release`, and the action's own message
-  says *"fetching ... for tag refs/tags/v0.16.0"* - it FINDS the release by `tag_name`, then makes a
-  second, `github.ref`-shaped call. **That hostile second lookup was already documented in
-  [cicd](cicd.md#notable-ci-gotchas) before 0.16.0**, with the same error string, for the
-  `refs/heads/main` variant under `workflow_dispatch`. The tag variant under a `release` event is
-  new; the class is not.
-- **The missing `Canari.ipa` on the other four stables is not this defect at all.** Since the
-  ordering fix the step runs AFTER the App Store submission, and that submission failed on 0.16.1,
-  0.16.2 and 0.16.3 - so `Upload to Release` was `skipped`, not refused. The 403 has had no
-  opportunity to recur.
-
-**WHY THE ROW IS WITHDRAWN RATHER THAN CARRIED.** Attaching a file to a release needs no release
-UPDATE, so the capability that was refused is one neither arm ever wanted. Both now use
-`gh release upload "$TAG" ... --clobber`, which performs exactly one call - POST to the release's
-assets - and creates nothing when the release is absent, which is strictly better than the action it
-replaces (that one would have CREATED a release, publishing a release, restarting `release.yml`;
-hence the `github.event_name == 'release'` guard, which stays). `release-chain.test.sh` refuses an
-`uses:` in either step and requires `gh release upload`, validated in negative.
-
-**What is NOT explained, and now has no consumer:** why that second lookup was refused for a
-stable's tag and not a pre-release's. The org-ruleset candidate still needs `admin:org`, which this
-token lacks. Nothing calls that endpoint any more, so nothing can answer it and nothing depends on
-the answer - which is why the mechanism note in [cicd](cicd.md#notable-ci-gotchas) is where the
-lesson lives instead of here.
-
 ### P2 - the nine NestJS pull requests were closed IN ONE BATCH, so the suppression question was never measured on one first, and Monday 2026-09-07 is the only thing that can answer it now (updated 2026-09-03)
 
 **THIS ROW WAS WRONG UNTIL 2026-09-03 AND SAID THE OPPOSITE.** It claimed nine of the ten backend
@@ -773,31 +697,6 @@ major-version subdirectory, so the compose changes with the image, and the ceili
 `.github/scripts/lib/ceiling.sh` is what holds the bump back until both are done. Re-measure the size
 before the window rather than quoting this line - it is a number that only grows.
 
-### ~~P1 - no identity CI can mint may ask Dependabot to rebuild a branch~~ - RETIRED 2026-09-04, the mechanism that needed it is deleted
-
-**Not fixed: withdrawn, because the thing it blocked no longer exists.** The row said that a moved
-gate parks the whole Dependabot queue, since the only exit is a rebuild and `@dependabot rebase`
-authorises by PUSH ACCESS - which no identity a workflow can mint has. That measurement stands, and
-it is worth keeping: ten refusals out of ten asks, on eight pull requests, with `github-actions[bot]`
-and with the `canari-auto-merge` App, three seconds after each ask. **An App installation is not an
-account.** `Contents: write` is not push access, and this repository recommended the App token in
-three places before measuring it.
-
-What is gone is the mechanism that needed the rebuild. `dependabot-auto-merge.yml` refused to arm a
-pull request whose check suite described gates `main` no longer carried, and the only way to lift
-that refusal was a rebuild nobody could perform. The sweep was deleted on 2026-09-04 together with
-the staleness predicate, so nothing refuses on staleness any more and there is nothing to unblock.
-
-**The underlying question is answered elsewhere, and better.** "Can a pull request that was green
-against an older set of gates still merge, and would we know" - yes it can, and yes we would:
-`ci.yml` runs on `push: main` as well as on `pull_request`, so the merged trunk is tested,
-and a red `CI passed` ON `main` makes `release-preflight.sh` gate 3 refuse every release cut from
-that commit. The protection sits at the release rather than at the merge, which is the only place it
-changes what a user sees.
-
-The durable rule this produced is on
-[durable-rules](durable-rules.md) and stays there.
-
 ### P3 - one merge out of three did NOT delete its remote branch, and nothing here refused it (observed 2026-09-03)
 
 **One occurrence, recorded because it is a measurement and not a theory.** The repository has
@@ -827,24 +726,6 @@ merges - or it recurs and the pattern says what it depends on. Do not write a wo
 observation: a sweep that deletes leftover branches would be a destructive control built on an
 unmeasured cause, and it would need an allowlist of what it may touch.
 
-### ~~P2 - the vulnerability audit cannot block a merge~~ - CLOSED 2026-09-04
-
-**The three security jobs now feed `CI passed`.** `code-analysis.yml` lost its own `pull_request`
-and `schedule` triggers and became a `workflow_call` library; `ci.yml` calls it as the
-`security` job and lists it in `ci-passed`'s `needs`, which is the one check the branch ruleset
-requires. So CodeQL, the TruffleHog secret scan and the vulnerability audit can now stop a merge,
-which is what the row asked for.
-
-**What it was.** They ran on every pull request and could not block one, because the ruleset names
-exactly one check and this was not it. A live secret in a PUBLIC repository, or a HIGH advisory,
-produced a red tick beside a mergeable pull request - *a red tick nothing enforces is worse than no
-tick, because it looks enforced.* It spent a day failing on every pull request while they merged
-anyway.
-
-**And the nightly pass survived the change**, which was the other half: `scheduled.yml` calls the
-same file on `0 2 * * *`. A new advisory lands against code nobody touched, and no pull-request
-gate can ever see that.
-
 ### P3 - TWO audit advisories are suppressed because they cannot be reached, and both should stop being
 
 `GHSA-vcc3-ghjq-m6fr` (moderate, denial of service) covers every `decode-uri-component` at or below
@@ -863,7 +744,7 @@ parses a query string, or if the `stringify` call site the measurement was taken
 
 ---
 
-### P2 - MOSTLY CLOSED 2026-09-03: the hosts take their security updates and a daily run reports it. What is left is three hosts nobody reports on, and a library nothing restarts
+### P2 - THREE hosts take security updates that nothing reports on, and a library nothing restarts (the rest closed 2026-09-03)
 
 **The mechanism and the report both exist since 2026-09-03**, installed on the user's decision
 (*"unattended-upgrades securite + rapport"*) across all four hosts: security origins only, nothing
@@ -893,53 +774,6 @@ this scope does NOT incur and the evidence for that, and the two defects the rep
 
 The original row, kept because it carries the measurement and the trade-off that were priced before
 the decision:
-
-### P2 - nothing upgrades the production box's OS packages, and nothing reports that they are stale (measured 2026-09-02, ANSWERED 2026-09-03)
-
-The chain that keeps *dependencies* current stops at the repository. **The host carrying every
-service has no equivalent, and it had drifted 113 packages behind - 50 of them from
-`stable-security`** - on Debian 13, before an upgrade was run by hand on 2026-09-02. Measured on the
-box, not inferred:
-
-| Question | Answer |
-|---|---|
-| `unattended-upgrades` installed | **no** |
-| `/etc/apt/apt.conf.d/20auto-upgrades` | **absent** |
-| `/etc/apt/apt.conf.d/50unattended-upgrades` | **absent** |
-| `apt-daily-upgrade.timer` | `enabled` - and with nothing installed to do the upgrading, it does nothing |
-
-That last row is the trap: **an enabled timer looks like a mechanism.** Anyone auditing this box by
-listing timers would have concluded packages were being kept current. The one timer that *was*
-specific to keeping software current, `cloudflared-update.timer`, is `disabled`, `inactive` and has
-**never run** - and enabling it would be wrong for a separate reason, given on
-[cloudflare-edge](infrastructure/cloudflare-edge.md#nothing-keeps-the-daemon-current-and-a-dormant-timer-says-otherwise).
-
-**The upgrade of 2026-09-02 does not retire this row.** It moved the count to 0 once; it installed no
-mechanism, so the count starts climbing again the same day, and nothing will say so. This is the
-repository's own rule about a correct mechanism with no report, applied to the host instead of the
-code: found by hand, months late.
-
-**What retired it, 2026-09-03:** `unattended-upgrades` with the security origin enabled, plus a
-REPORT that names the count - because unattended upgrades that silently stop are the same defect one
-layer down. **The decision was the user's and the cost they were asked to accept did not
-materialise.** The concern was that an apt upgrade on this box restarts the Docker daemon (12
-`docker`/`containerd` packages were in the manual set), which restarts all 23 containers at once and
-gave a ~30-second window of `502` on the public site - so an unattended upgrade would bring that
-window unannounced, at night, on both estates at once. **Security-only scope excludes Docker
-entirely**, and that was verified rather than argued: the Docker CE origin is pinned `-32768`,
-*"Marking not allowed"*, in `unattended-upgrade --dry-run --debug` on a host with Docker updates
-actually pending. Docker moves when a human decides. The evidence is on
-[host-updates](infrastructure/host-updates.md).
-
-Two facts to carry into that decision, both measured during the manual run:
-
-- **`apt-get upgrade` and `full-upgrade` agreed** - 113 upgraded, 0 removed, 0 newly installed, 0 held
-  back - and no `linux-image` was in the set, the kernel coming from the Proxmox host. So no reboot
-  was required. A future set containing a kernel would be a different decision.
-- **There is no snapshot to fall back on.** No Proxmox credential exists on the workstation, so the
-  only pre-flight is the dry run and the only recovery route is the LAN hop from another tunnel host.
-
----
 
 ### P3 - the release's commit is resolved three times by three chains, and two of them record nothing (measured 2026-09-03)
 
@@ -1067,79 +901,6 @@ the last incident is not the predicate that names the next one**, and this one h
 on the population it would run on. Cheap and worth doing before deciding anything: count 404s and
 410s on `/api/media/:id` over a week.
 
-### ~~P2 - the PIN modal's error is a bare paragraph, so a refused unlock is never announced~~ - FIXED 2026-09-07
-
-`role="alert"` on both shapes of `PinModal.svelte` and on `ChangePinModal.svelte`. **The sweep this
-entry asked for found `LoginForm.svelte` already correct** - it carries `role="alert"` and
-`aria-live="assertive"` - so the suspicion was right about two of the three files it named.
-
-**The test had to be made to fail before it could be believed, and the first version could not.**
-`PinModal` has TWO error sites because it has two shapes, and `useNumpad` is set from
-`isCoarsePointerDevice()` on mount - false under happy-dom. So an assertion that simply looked for a
-`p[role="alert"]` inside the dialog exercised the manual-input branch only, and stripping the role
-off the KEYPAD's paragraph left it green. `PinModal.gate.svelte.test.ts` now reaches the second
-shape the way a person does, by pressing the button that offers it, and both directions were
-measured: the keypad case fails without the attribute and passes with it.
-
-**And the instrument stops keying on a colour.** `pin.mjs`'s `ERROR_IN_GATE` was
-`p.text-red-500` - a test against a Tailwind class, which a restyle turns into a silent pass on
-every refused unlock. It prefers `p[role=alert]` now, keeping the class as a second alternative for
-a client running an older bundle.
-
-### ~~P2 - the local estate's DATABASE references media its OBJECT STORE never received~~ - CLOSED 2026-09-07, the strip is in the restore and the estate measures zero
-
-**Verified with the project's own predicate, not a new one.** `COPY_STRIPS_MEDIA_RESIDUE_SQL` in
-`infrastructure/lib/copy-strips.sh` counts every place a media reference can hide - eleven of them,
-including the two that once made this count lie (`posts.comments`, a jsonb array of objects whose
-media sits one level down, and `channel_messages.attachments`). Run against the local estate on
-2026-09-07 it answers **0**, over 90 associations and 119 posts.
-
-**And the mechanism is named, which is what makes the zero mean something.** `restore-into-local.sh`
-applies the strips and then ASSERTS the count, refusing the restore outright when it is not zero
-(`ERROR %s row(s) still reference media objects this copy never received`). So this cannot silently
-come back on the next copy - the entry's own prescription, "the fix belongs in the restore, which
-already does this kind of work", is what was done.
-
-The paragraph below is kept as written because its REASONING is the durable part: why
-`ignoringExpectedLog` was the wrong disposition for a class spanning four rungs, and why clearing
-the dangling ids is preferable to copying production's blobs.
-
-
-**Measured on HEAL-NEW-0.** Every assertion of the row passed - `wipe`, `loggedOut`, `noHumanStep`,
-`freshId`, `neverSeen`, `sameAccount`, `registered`, `addressable` - and the re-minted device
-rejoined FOUR groups by external commit inside one second. The verdict was still `PASS-DIRTY`, and
-**100% of the dirt was media**: five `[associationLogoCache] fetch failed 404`, one
-`[PostMedia] media download failed`, and fourteen `GET /api/media/... -> 404` in `badHttp`.
-
-**The cause is a restore that copies one half of a pair.** `pull-prod-dump.sh` fetches a Postgres
-dump and nothing else; `restore-into-local.sh` writes those ROWS. Neither touches Garage, and
-`restore-into-local.sh` says so in its own header - *"WHAT A COPY DOES NOT BUY"*. What that header
-does NOT say is the consequence: the copied rows still name media ids, the objects behind them live
-only in production's store, and the product then does exactly the right thing - it asks for what its
-database says exists, and is answered 404 fourteen times.
-
-**Scope, measured rather than assumed.** It is NOT every row. A client sitting on `/chat` is clean -
-`logs.mjs --device W1 --for 8000` and the same on W3 both reported clean minutes after the run. The
-404s fire ONCE, on the first render of the social feed after a login. So the affected class is
-**rows that log in fresh or wipe a profile and land on `/posts`** - the HEAL-NEW, HEAL-REVOKE, LIFE
-and SETUP families - plus anything touching a community feed. That is a large systematic class, and
-it is why this is written down rather than dispositioned.
-
-**Do NOT close it with `ignoringExpectedLog`.** Per-row disposition is the sanctioned mechanism for
-expected noise, but it is per ROW on purpose, and this would be the same excuse copied into every
-member of four rungs - which is a wider classifier wearing a per-row costume, and the thing the
-methodology forbids. The noise is also not *necessary*: it is the visible end of an estate that
-disagrees with itself, and the rule is to explain it or FIX it.
-
-**The fix belongs in the restore, which already does this kind of work.** `restore-into-local.sh`
-exists to strip *"the things a copy must never carry"*; stripping references to objects the copy did
-not carry is the same step. Clearing the dangling media ids on the association and post rows leaves
-the estate SELF-CONSISTENT - a post with no image is a state the product renders correctly and a
-real user can be in - whereas copying production's media blobs would drag the PII half of the estate
-that the DB copy at least keeps behind one deliberate decision. It is a change to infrastructure
-tooling with its own blast radius, so it is a P2 here rather than something done inline during a
-harness tidy.
-
 ### P2 - a device reconciles history for a group it has not joined yet, and learns by 403 what its own store already knew (measured on DEL-1, 2026-09-05)
 
 **The line.** `[HISTORY_STATE] Send failed for b0b436ed...: SenderNotActiveError: This device holds
@@ -1202,27 +963,6 @@ same to it; the repeated GETs in that row's `badHttp` are a pending invitation n
 can never be served, which is the P1 above about a device asking for a Welcome for ever. This entry
 is the honesty of the answer, not the loop.
 
-### ~~P3 - the remove control in a group panel announces a raw 64-hex user id~~ - FIXED 2026-09-07
-
-`data-remove-member` carries the id for the campaign, the accessible name carries a resolved name
-for a person. `grp.mjs` builds `removableIds` from the attribute and clicks it, so the rig is no
-longer the reason that label spelt an OIDC subject id out loud - which is what this entry said had
-to be untangled before either half could move.
-
-**It cost a fifth copy of the display-name resolution, so the copies became one** (`userDisplayName`
-/ `userDisplayNames` in `utils/users/displayNames.svelte.ts`), which is the P3 below about four
-components carrying the same eight lines. `UserName` is converted; `MessageReactions`,
-`MessageInfoTooltip` and `ChatMessageGroups` are not, and that is what is left of it.
-
-**AND THE LIST FORM SHIPPED AN INFINITE LOOP, which is the lesson.** It seeded its next map from its
-previous one, so the effect depended on its own output; the `svelte:boundary` in `MainChatPage`
-turned `effect_update_depth_exceeded` into "Impossible d'afficher cette discussion" over every
-conversation, with the sidebar still listing them all. GRP-1 and GRP-2 failed as `would not open
-after 3 attempts` and no verdict could say why - a screenshot could. The rule is in
-[durable-rules](durable-rules.md); the test is `displayNames.svelte.test.ts`, it counts effect runs
-rather than waiting for the throw (the throw belonged to the old container, not to the defect), and
-it was measured in both directions.
-
 ### P2 - an inviter that dies between sending a Welcome and registering the joiner leaves a member in the MLS tree with no server-side membership, and nothing repairs it (measured 2026-09-05)
 
 `groupCreation.ts` delivers Welcomes and THEN calls `registerMember` for each user whose Welcome was
@@ -1260,32 +1000,6 @@ display name, and an ambiguous list is a refusal). What is left is the product q
 excluding self is one argument. **Whether it SHOULD be excluded is a judgement, not a bug** - some
 chat apps allow a self-mention as a way to bookmark a message - which is why this is a P3 and not a
 fix applied inline: it is the user's call.
-
-### ~~P3 - NOTHING LINTS THE HARNESS~~ - FIXED 2026-09-07, and the drift it predicted had already happened
-
-`bun run lint` is scoped to `frontend/`; `make test-harness` ran the self-tests and
-`inventory.mjs --check`, and neither had an opinion about the code. So the rig that produces every
-campaign verdict was the one directory in this repository no linter looked at.
-
-**The entry predicted the drift and the drift is the measurement**: 29 warnings on 2026-09-04, **38
-on 2026-09-07**, nine more arrived while nothing was counting. All 38 are gone, and the gate is one
-line in `test-harness`: `oxlint -c tools/cross-client-harness/.oxlintrc.json --deny-warnings`, so the
-39th cannot arrive silently. `--deny-warnings` deliberately - a gate that only warns is one its
-reader learns to scroll past. Measured in both directions: a file with one unused variable fails the
-recipe.
-
-**The config extends the root `.oxlintrc.json` and adds `import` + `unicorn`**, which is what the
-frontend's does, so the harness is held to the same rules rather than to a private set. It is NOT
-the frontend's own config: that one carries `env.svelte` and paths relative to `frontend/`, and
-coupling the rig's gate to it would move the rig every time a component rule changes.
-
-**One of the 38 was a real finding rather than tidying.** `createGroup(cx, name, { label })` has
-promised "who is asking, for the error message" since it was written, nine call sites pass one
-(`grp5`, `read10`, `healrevoke`), and no failure has ever carried it - every one surfaced as a bare
-`until` timeout naming a selector, so a row minting three groups could not say which died. The label
-is now in the throw. The rest were dead imports and dead locals across archived rows, plus one
-`no-control-regex` on the ANSI matcher in `estate.mjs`, which is disabled inline with its reason:
-ESC is the character it exists to match.
 
 ### P3 - the gateway logs a client that merely went away at ERROR, and a clean goodbye at INFO, so the level says nothing about whether anything is wrong (measured 2026-09-04)
 
@@ -1554,37 +1268,6 @@ audio and video, with TURN as production configures it - prod HAS it configured
 the manifest permission, `kCanariCallsEnabled` and Kotlin's `CALLS_ENABLED` all move together, and
 `CallService.callsEnabled.test.ts` is the test that already asserts the on state.
 
-### ~~P3 - the SFU's TURN acquisition fails in silence, twice (2026-09-01)~~ - FIXED 2026-09-06, and it was THREE times
-
-`fetch_cloudflare_ice_servers` ends both its network call and its JSON decode with `.ok()?`
-(`apps/call-service/src/main.rs`), so a Cloudflare outage, an expired API token and a response shape
-change all produce the same thing: `None`, no line, and a silent slide into `ice_servers_from_env`
-and then STUN-only - on which a relay-only client cannot connect at all. The failure branches BELOW
-these two already log (`[ICE] Cloudflare TURN API failed status=`), which is what makes the omission
-visible as an inconsistency rather than a style. Every swallowed branch logs; these two do not.
-
-Noticed while establishing that the SFU has never had a peer connection opened against it: the
-success line `[ICE] SFU using N Cloudflare TURN server(s)` was absent from the whole container log,
-and it took reading the call site to know that meant "no call" rather than "acquisition failed".
-That ambiguity is the defect. Note also that `docs/wiki/services/call-service.md` claimed the fetch
-happens **on startup**; it happens per peer connection (`resolve_ice_servers()` at the API builder),
-and the page has been corrected.
-
-**FIXED 2026-09-06, and the third silence was in the same function.** Both `.ok()?` now log and say
-what they fell back to - `Cloudflare TURN API unreachable` for the transport failure, and a distinct
-line for a 2xx whose body this service cannot read, which is the response-shape change that would
-otherwise be indistinguishable from an outage. The third: `CLOUDFLARE_TURN_TTL_SECONDS` was read as
-`.ok().and_then(|s| s.parse().ok()).unwrap_or(3600)`, so `7200s` - a plausible thing for a human to
-write - silently became 3600, and the only way to find out was to time a credential expiring. It
-warns and names the offending value now.
-
-**The two env-var reads above them stay silent DELIBERATELY**: an absent `CLOUDFLARE_CALLS_API_TOKEN`
-is a configuration statement, not a failure, and a line on every start of a dev estate is the noise
-this entry exists to remove. The difference is now visible - if TURN is configured and broken, three
-lines say so.
-
-`cargo clippy --all-features --all-targets` clean.
-
 ### P2 - what made the profile fetches fail on that device at that moment
 
 **The MECHANISM is closed** (2026-08-16): the swallowed `catch` now accuses, a reconnection clears
@@ -1666,42 +1349,6 @@ nothing else. Adding three rules without their three cases would be the drift th
 written to prevent. It blocks no row verdict today - a row is judged on its client reports and its
 logcat half - so it is P3, and the cost of leaving it is that the next genuinely new server line
 arrives among five a reader has learnt to skip.
-
-### ~~P2 - a channel's MLS tree names THREE identities the server has never heard of~~ - ANSWERED 2026-09-07, and the tree has nothing to do with it
-
-**The three ids are the campaign's OWN mention fixtures, and this rig had already named all three.**
-`9e2a5997...` is `ABSENT_MENTION_ID` in `tools/cross-client-harness/stranded.mjs` - a user id
-DERIVED FROM A PHRASE by this campaign so that MENTION-5 can type an `@` that belongs to nobody -
-and `ae1ea19c...` and `022a0a9c...` are the two randomised-era residues already sitting in the
-out-of-tree `STRANDED_ABSENT_MENTION_IDS`. `ABSENT_MENTION_404` names exactly those three, and
-`stranded.mjs`'s own docblock says so in as many words: *"the forgiveness, which names three ids"*.
-
-**How it was settled, after five hypotheses had been eliminated without naming a cause.** The entry
-said the next attempt owed `Runtime.enable` before the load. It owed something better:
-`Network.requestWillBeSent` carries `initiator`, and with `Debugger.setAsyncCallStackDepth(32)` that
-initiator carries the whole async chain. One capture, and the chain reads bottom-up:
-
-```
-onSelectChannelConversation  -> await -> getGraineSession (IndexedDB) -> a Svelte effect
-  -> resolveUserDisplayName -> fetchUserProfile -> GET /api/users/<id> -> 404
-```
-
-**Which answers the question the entry could not choose between.** It is the MESSAGE PAYLOAD, not an
-MLS leaf: the ids come out of channel content decrypted at channel-open time, and the channel renders
-**five `Utilisateur inconnu` chips** for them (measured on W1, same session). Nothing is stale on the
-server, nothing is stranded in a tree, and the client is behaving exactly as designed - it asks once
-per session, caches the refusal, and labels the chip.
-
-**What was actually broken is smaller and is a HARNESS fault.** `ignoringStrandedMentions` exists for
-precisely this and is called by `fwd.mjs`, `fwd345.mjs` and the MENTION rows; the COMM and MULTI
-channel rows never call it, so they collect three `badHttp` entries the rig had already declared
-expected. That is why MULTI-5 is `PASS-DIRTY`. **It is not a softening**: the pairs are `path` AND
-`status`, they name three specific ids, and one of them is a value this repository computes itself.
-
-**One correction to make elsewhere, because this entry was cited as evidence.** `CLAUDE.md` queue
-item 3 called this "the instrument the placeholder question was waiting for" - whether a LEAF is left
-in the MLS tree. It is not that instrument and never was: these ids never entered a tree. That
-question is still open and still needs a member's client to answer it.
 
 ### Question - does an invitation into a community notify somebody the inviter has never spoken to? (user, 2026-09-05)
 
@@ -2256,7 +1903,7 @@ rows with the invitation question in
 [Communities and permissions](#communities-and-permissions): a notification that never arrives and a
 notification that arrives undecryptable are different failures, and only the logcat separates them.
 
-### P2 - FIXED THE SAME NIGHT - the history repair took THREE MINUTES because a digest waited for the asking device's WHOLE mailbox rather than the group it describes (measured on the local estate 2026-09-05)
+### P2 - a history repair still costs THREE MINUTES on a large mailbox; only the LOSS half of it was fixed (measured on the local estate 2026-09-05)
 
 **The loss is fixed and what is left is a duration.** HEAL-REVOKE-7 `--order last`, on the build
 carrying all three fixes:
@@ -2378,7 +2025,13 @@ keep their current behaviour exactly. What is NOT settled is which sites should 
 that is merely wasteful on mobile is not the same as one that loses state, and they want different
 urgency.
 
-### ~~P2 - a frame this device already read is re-accused as lost on every later cold start~~ - CAUSE FOUND AND FIXED, NOT SHIPPED (2026-09-07)
+### P2 - the false LOST-frame accusation is fixed but UNSHIPPED, and the duplicate delivery inside this entry is still open (2026-09-07)
+
+**WHAT IS STILL OPEN HERE, SO THIS ENTRY IS NOT A CLOSED ONE.** The false accusation has a cause
+and a fix, and a merged fix is not a shipped fix. The OTHER half - `[QUEUE] delivery ... arrived
+twice`, which alone holds three cells at `PASS-DIRTY` and is forgiven on none of them - was refiled
+on 2026-09-08 with its own measurement as *the pull and the socket hand the SAME row in*. Read that
+one for the current account; what follows is the evidence trail that produced both.
 
 TAB-3b runs five cold starts. Each one printed `[History] frame never read here and unreadable for
 good (secret-reuse); will reconcile` - and the later runs re-printed **the same row keys** as the
@@ -2555,20 +2208,6 @@ honestly, and a defect costing three cells is easier to justify fixing than one 
 recognises one class of duplicate and acknowledges it without decrypting, so this one took a
 different path. **A race that heals cleanly is still a defect**, and this one heals by asking the
 peer for history it already has.
-
-### RETIRED 2026-09-07 - the key-package writer now goes through the persister, and the two entries that stood here are one fix
-
-**Both entries are gone because one change closed them.** They described the same thing from two
-ends: the key-package publication seam did `save_state` + `saveMlsState`, its own capture racing
-`persistNow` and `persistMlsStateAfterMutation`, and the write-if-newer guard dropping the loser was
-the `[MLS] Skipping stale MLS state write (vN < stored vN+1)` line four HEAL-REVOKE rows carried as
-dirt. It is now `persistMlsStructuralCheckpoint`, like every other writer; the story and the
-reasoning are in `CHANGELOG.md`, the rule in [durable-rules](durable-rules.md).
-
-**OWED: a HEAL-REVOKE re-run on a build carrying it.** The measurement that named the defect was
-five runs with one occurrence in four of them, so a single clean run proves nothing and four do -
-and the four rows it should turn from `PASS-DIRTY` to `PASS` are HEAL-REVOKE-2, -5, -8 and -9. Until
-that run exists this is FIXED, NOT VERIFIED.
 
 ### P2 - the MESSAGE store has the same stale device key the MLS persister just lost, and nothing has measured it (found 2026-09-07, NOT reproduced)
 
@@ -5767,61 +5406,6 @@ underlying close is: a log line whose reader must guess is one they learn to ski
 closing the socket deliberately on `beforeunload` and seeing whether 1006 stops; if it does, the
 remaining 1006s are real and mean something.
 
-### DONE 2026-08-31 - all four repos carry the ceiling, the sweep and the dispatch
-
-**Canari's `dependabot-auto-merge.yml` merged any green Dependabot PR with no ceiling at all, its
-merges reached CD not once, and it could only ever act on an event it happened to catch.** The
-workflow was the same file in all four repositories - it had been copied - so all four had all
-three defects. All four are fixed. What is NOT yet proven is in the row below the table.
-
-| Repo | Its ceiling | Does an auto-merge deploy? | Can it drain a queue it did not watch open? |
-| --- | --- | --- | --- |
-| **Canari** | the at-rest trio, the protocol crates, `aes-gcm`, the SFU stack | yes, an explicit `workflow_dispatch` on `deploy.yml` | a full sweep on every CD completion, plus an hourly cron at :17 |
-| **Sky** | EMPTY, measured - all three candidates closed by writing the test | yes, `deploy.yml` dispatched, its `verify` job re-running CI on the merged tree | a full sweep on every `CI (Bun)` completion, plus a cron at :17 |
-| **MiGallery** | `jspdf`/`jspdf-autotable`, `form-data`; `sharp` closed by `tests/face-crop.test.ts` | yes, `deploy.yml` dispatched; its `run-ci` job already gated `build-image` | a full sweep on every CD completion, plus a cron at :23 |
-| **Portail-etu** | EMPTY, measured - both candidates closed by writing the gate | yes, `deploy.yml` dispatched, with a new `verify` job so the dispatch is no longer ungated | a full sweep on every `Run Tests` completion, plus a cron at :41 |
-
-**THE CONVERGENT HALF WAS A CLOCK, AND THE CLOCK DOES NOT FIRE.** Measured 2026-08-31 17:00 UTC:
-`event=schedule` had produced **zero** runs of `dependabot-auto-merge.yml` in ANY of the four
-repositories, and Canari's `17 * * * *` had been on `main` since 14:32 UTC, so two slots passed with
-nothing. None of the four is a fork, none is archived, every workflow reads `state=active`, and
-schedules plainly work in these repositories - Canari alone has 183 scheduled runs of other
-workflows. **The cause is delivery, not configuration:** `code-analysis.yml` asks for `0 2 * * *`
-and actually ran at 03:01, 03:09, 08:05, 08:24, 08:47, 12:37 and **14:10** UTC on seven consecutive
-days. GitHub does not queue the slots an hourly cron misses; it drops them.
-
-**So the convergent trigger is no longer the clock.** All four sweeps now also run on the completion
-of the workflow their repository executes on a push to `main` - full sweep, not one pull request -
-which is an event tied to somebody actually working rather than to a schedule the platform honours
-when it feels like it. The cron keeps its slot as a bonus for stretches where nothing is pushed, at
-whatever reliability GitHub offers. **What this closes is the objection that stood here for three
-hours: an unproven recovery path is exactly the mechanism this repository has twice been caught
-believing in.** What it does NOT close is the long quiet stretch - if nobody pushes for a week and
-the cron never fires, only a Dependabot pull request's own CI wakes anything, and that path handles
-its own branch only.
-
-**Two things the sweep still does not do**, neither of which the ceiling is about: nothing REPAIRS a
-pull request that is red, and nothing reports whether a pass ran at all. The second is what makes
-the paragraph above possible.
-
-**Le Cercle is on GitLab and has no GitHub workflow**, so it is out of scope for this one.
-
-**The fix is a copy of what landed here** - `.github/scripts/dependabot-auto-merge.sh` plus the
-workflow that calls it twice - **but the ceiling itself does NOT copy across, and that is the whole
-point.** A first draft here refused by SEMVER, every major and every `0.x` minor, and it was
-measured wrong the same day: 28 of 33 open pull requests refused, a queue nobody would ever drain.
-**Semver is not the question.** A `base64` 0.22 -> 0.23 break stops the tree compiling and the suite
-sees it; what a green suite cannot see is a dependency whose failure mode NOTHING here tests, and
-that has no relation to the version number. So each repo's list is its OWN: the entries are the
-dependencies whose failure would be invisible THERE, and each names the test that would retire it.
-Sky and Portail-etu may well have an empty list, and an empty list is a correct answer - it says
-their suites are evidence about everything they depend on. Read the reasoning on
-[ecosystem-convergence](ecosystem-convergence.md) and the rules in [durable-rules](durable-rules.md).
-
-**Do NOT re-enable an auto-merge anywhere before its ceiling is in**, and do not enable one whose
-only trigger is `workflow_run`: it cannot touch a pull request that was already green when it was
-installed.
-
 ### P2 - a cargo bump in `mls-core` leaves two committed lockfiles Dependabot will never fix
 
 `frontend/mls-core` is a library: its `Cargo.lock` is gitignored. `frontend/mls-wasm` and
@@ -5923,49 +5507,6 @@ which is worse than the orphan. The shapes worth weighing are a tombstoned form 
 title survives, the join keeps working) or a denormalised `formTitle` on the submission at write
 time. The first keeps one truth; the second survives a hard delete. Neither is obviously right,
 which is why this is written down rather than done.
-
-### P2 - NestJS 12 is HALF DONE, and the other half is one upstream package
-
-**Taken 2026-08-31.** `media-service` and `core-service` run `@nestjs/common`, `@nestjs/core` and
-`@nestjs/platform-express` at **12**. `chat-delivery-service` and `social-service` are held at 11.
-The whole state, the ESM consequences and the mechanism that ends the hold are on
-[nestjs-framework](services/nestjs-framework.md), which is the only copy - do not re-derive it here.
-
-**WHAT IS OPEN IS NOT WORK IN THIS REPOSITORY.** `@nestjs/throttler` has published no release
-declaring NestJS 12; its latest, `6.5.0`, stops at `^11.0.0`. The two held services both rate-limit
-a route with it. With 12 installed, 307 of chat-delivery's 308 tests passed and the only failure was
-`framework-boot.spec.ts` reading throttler's own manifest.
-
-**It needs nothing done to it, and that is the point.** There is no `dependabot.yml` ignore and no
-ceiling entry: the pull requests raising the framework on those two services stay open and red, and
-the hourly sweep updates their branches once throttler moves, at which point the assertion goes
-green and they merge unattended. A hold expressed as an assertion about the resolved tree expires
-when its reason does; a hold expressed as an ignore outlives it.
-
-**Four satellites moved anyway** - `@nestjs/config` 4 -> 12, `@nestjs/schedule` 6 -> 12,
-`@nestjs/axios` 4 -> 12, `@nestjs/typeorm` 11 -> 12. The renumbering onto the framework's major is a
-LABEL: every one of them declares `^11.0.0 || ^12.0.0` or wider, so reading the peer range rather
-than the version number is what let them merge with the framework major still blocked.
-
-**Nothing else from the original table is owed.** `ioredis` is on **6** in both services and
-`@types/uuid` is DELETED rather than bumped - `uuid` 14 ships its own types, so the package had been
-dead for as long as it had been declared. `@nestjs/microservices` is gone the same way: an orphan on
-disk and in the lockfile, declared by nothing, removed by a clean install along with `kafkajs`.
-
-**Why `protocol: 2` was NOT set when taking ioredis 6,** since its one breaking change is "RESP3 by
-default": ioredis 6 also ships `replyMapping`, which defaults to `"legacy"` - map replies arrive as
-flat `[key, value, ...]` arrays and doubles as strings, so **the JavaScript values are identical
-across both protocols**. That is read from the library's own `RedisOptions.d.ts`, not inferred. The
-wire half is answered by the box: production runs **Redis 8.8.0**, and RESP3 has existed since 6.0.
-Neither service subscribes - both are command-and-publish clients - so RESP3's subscriber-mode
-change does not reach them either. Setting `protocol: 2` would have been a dressing on a wound
-nobody has.
-
-**What made this a P2 and still governs any attempt here:** these four services hold the whole
-server side of the product, and the suites that would catch a regression run under **node, never
-bun** - `admin-storage.controller.mls.spec.ts` fails under the bun runtime and is the reason
-`ci.yml` installs with bun and tests with node. Any attempt re-runs all four suites under node
-(14 + 202 + 308 + 588 = 1112 tests) and is proven on prod, not on a green build.
 
 ### P2 - NOTHING DECLARES THE REDIS VERSION, AND THE TWO PLACES THAT NAME IT DISAGREED
 
