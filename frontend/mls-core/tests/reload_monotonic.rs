@@ -131,3 +131,85 @@ fn a_snapshot_predating_a_mint_passes_the_epoch_guard_while_losing_every_minted_
         "all fifty published packages must be unrecognisable to the reloaded manager - this is the          `purged 50/50` line measured on the Mi 9T, reproduced without a phone"
     );
 }
+
+/// A SUBSTITUTION LEAVES THE COUNT UNCHANGED, AND THE DETECTOR COMPARED COUNTS.
+///
+/// The test above drops fifty bundles and adds none, so a cardinality check catches it. The shape
+/// measured on the Mi 9T on 2026-09-08 was not that one: `reconcilePublishedKeyPackages` printed
+/// `REFUSED to purge 6/50 prekey(s) this session published itself` on two consecutive reconnections
+/// (six of the device's own mints unbacked by the installed keystore) while
+/// `[RESUME] reload DROPS KEY MATERIAL` did not print once. A keystore that has since dropped six
+/// bundles and minted six more holds exactly as many as the snapshot did, and `cand < live` is FALSE
+/// on it. The downstream symptom was visible and the detector written for its cause was silent.
+///
+/// So this builds that state rather than the easy one: expire the first batch out of the live
+/// keystore and mint a second of the same size, giving two keystores of EQUAL size with DISJOINT
+/// contents. A count says they agree. The set difference names all six, and
+/// `key_package_has_private` - the question the reconciliation actually asks - agrees with the set.
+#[test]
+fn a_same_count_substitution_is_invisible_to_a_count_and_named_by_the_key_set() {
+    const NINETY_DAYS: u64 = 90 * 24 * 60 * 60;
+
+    let mut alice = make("rel-alice-sub", "dev1");
+    alice
+        .create_group("g-reload-sub".to_string())
+        .expect("create");
+
+    // Six bundles, then the snapshot the resume path would find on disk.
+    let first_batch = alice.generate_key_packages(6).expect("first six");
+    let before_swap = alice.save_state().expect("snapshot holding the first six");
+    let candidate = restore("rel-alice-sub", "dev1", before_swap);
+
+    // The live keystore moves on: the first six age out and six fresh ones replace them. Pruning
+    // BEFORE the second mint is what keeps the sizes equal - the whole point of this test.
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock after the epoch")
+        .as_secs();
+    let pruned = alice
+        .prune_key_packages_expired_at(now + NINETY_DAYS * 4)
+        .expect("prune the first batch");
+    assert_eq!(
+        pruned, 6,
+        "the first six must age out, or there is no substitution to measure"
+    );
+    let second_batch = alice.generate_key_packages(6).expect("second six");
+
+    let live_keys = alice.key_package_keys().expect("live keys");
+    let cand_keys = candidate.key_package_keys().expect("candidate keys");
+
+    // THE COUNT CANNOT SEE IT, AND THIS IS THE DEFECT STATED AS AN ASSERTION. The old guard's
+    // condition was `cand < live`; here the two are EQUAL, so it logged nothing on exactly this
+    // shape while the reconciliation downstream was refusing to purge six unbacked bundles.
+    assert_eq!(
+        cand_keys.len(),
+        live_keys.len(),
+        "the substitution must leave the cardinalities equal - otherwise a count would have caught          it and this test is measuring the easy case again"
+    );
+
+    // THE SET DOES. All six the live manager holds are absent from the reloaded one.
+    let lost = live_keys.difference(&cand_keys).count();
+    assert_eq!(
+        lost, 6,
+        "the set difference must name the six bundles the reload would drop, where the count said          the two keystores agreed"
+    );
+
+    // And it agrees with the question the reconciliation actually asks, which is the whole point:
+    // the reloaded manager cannot back what was minted after the snapshot, and can back what it kept.
+    let unrecognised_new = second_batch
+        .iter()
+        .filter(|kp| !candidate.key_package_has_private(kp).unwrap_or(false))
+        .count();
+    assert_eq!(
+        unrecognised_new, 6,
+        "every bundle minted after the snapshot must be unrecognisable to the reloaded manager -          this is the `REFUSED to purge 6/50` line, reproduced without a phone"
+    );
+    let unrecognised_old = first_batch
+        .iter()
+        .filter(|kp| !candidate.key_package_has_private(kp).unwrap_or(false))
+        .count();
+    assert_eq!(
+        unrecognised_old, 0,
+        "the bundles the snapshot DID capture must still be backed - otherwise this is measuring a          restore that lost everything, not a substitution"
+    );
+}

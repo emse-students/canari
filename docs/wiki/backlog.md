@@ -5378,9 +5378,17 @@ six packages this process minted minutes earlier? The guard makes it harmless an
 explain it. Candidate 1 was refuted from the code on the grounds that the round trip cannot change a
 byte - and this measurement is that refutation's problem, not its confirmation: the bytes did not
 change and the answer was still false, so what differs is the KEYSTORE the question is asked against,
-which is candidate 2's family. **The next observation is the one that names it**: the same run with
-the keystore counted on both sides of the resume, which is the `[RESUME] reload DROPS KEY MATERIAL`
-line nobody has seen yet.
+which is candidate 2's family. **AND THE LINE THAT WOULD HAVE NAMED IT COULD NOT FIRE - FIXED
+2026-09-08.** The resume guard compared CARDINALITIES (`candidate_count < live_count`), and a reload
+that drops six bundles while a mint adds six leaves the cardinality identical. That is exactly the
+shape above - six unbacked out of fifty - and `[RESUME] reload DROPS KEY MATERIAL` was silent on both
+reconnections. The downstream symptom was loud and its cause was mute, which is why this entry called
+candidate 2 unobserved for two days. `MlsManager::key_package_keys()` now exposes WHICH bundles a
+keystore holds, the guard reports the SET DIFFERENCE, and the line carries both cardinalities beside
+it: `lost=6 live=50 loading=50` is a substitution and `lost=6 live=50 loading=44` is a shrink, and
+they are different accidents. Proved by a test that expires one batch and mints another of the same
+size, so the counts agree and the set names all six (`reload_monotonic.rs`). **The next device
+reconnection can now answer this entry's last question**, where before today it could not have.
 
 #### THE POPULATION WAS MEASURED ON 2026-09-07, AND IT REFUTES HALF OF THE HEADLINE ABOVE
 
