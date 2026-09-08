@@ -2104,12 +2104,70 @@ openmls, which reports at ERROR - so the same defect costs a `PASS-DIRTY` on the
 LINES on a handset, in a log a user's crash reporter would carry. It is one more reason the overlap
 has to stop existing rather than be reconciled afterwards.
 
-**NOT ESTABLISHED, and naming it is part of the record**: that these two particular frames came from
-the pull/socket overlap rather than from something else. What would settle it is the pair of
-timestamps - the socket delivery and the catch-up pull for those two rows - which the phone does not
-currently log with enough precision to compare. The window is right (a backgrounded client
-foregrounded by a tap is exactly when a catch-up pull races a live socket), and no other mechanism in
-this campaign is known to hand the same generation in twice.
+**THAT HYPOTHESIS IS NOW REFUTED FOR THE PHONE, 2026-09-08, AND THE REAL MECHANISM IS NOT A RACE AT
+ALL.** This entry said the pull/socket overlap was *"not established"* and that what would settle it
+was a pair of timestamps *"which the phone does not currently log with enough precision to compare"*.
+It does log them - as `queuedMessageId` in `CanariFCM` and `qId` in `[QUEUE]` - and they are the SAME
+two ids, so the frames can be followed end to end:
+
+```
+18:44:36.353  CanariFCM  onMessageReceived   queuedMessageId=98a3aef2  (c3586791 at :37.998)
+18:44:54.867  CanariFCM  tryDecrypt          generation 117 CONSUMED (state loaded, 10 580 182 B)
+18:44:55.115  CanariFCM  showNotification    the user sees the message
+18:45:05.467  [PENDING]  Fetched 2 pending   THE SAME TWO ROWS - so neither was ever ACKed
+18:45:05.476  [QUEUE]    Processing qId=98a3aef2   (c3586791 at :06.516)
+18:45:06.496             SecretReuseError on generation 117
+18:45:06.501  [MLS]      LOST frame ... "the sender's ratchet rewound"
+```
+
+**The background handler decrypts the frame and does not acknowledge it.** Decrypting consumes the
+ratchet generation, durably - the FCM service writes the advanced state back, and `recharger_mls_au_resume`
+(C2) then loads it on foreground **exactly as designed**, because a background engine advancing
+`mls.bin` is the whole reason that reload exists. The row, meanwhile, is still pending server-side, so
+the catch-up pull offers it again, and the second attempt CANNOT succeed. Nothing races: this is the
+deterministic consequence of one path consuming a generation and another path being told to consume it
+again.
+
+**SO THE DEDUP LEDGER IN THIS ENTRY CAN NEVER FIX THE PHONE CASE.** `BaseMlsService.deliveries` keys on
+the queue id and catches two JS callers handing in one row. The two consumers here are the KOTLIN
+service and the JS client - different layers, and on a cold push different processes - so no map inside
+the JS client can see what the background already spent. *Carry the discriminator to where the decision
+is made, from where it is already KNOWN*: `writeFcmCache` already records `messageId` and `groupId` per
+handled push, so the foreground drain has a durable record it could consult before handing a row to
+MLS, and take the plaintext from that cache instead. The pull/socket overlap on the WEB is a separate,
+genuine thing and the rest of this entry still describes it.
+
+**AND THE LOUDNESS IS NEW, WHICH IS A GAIN AND MUST NOT BE READ AS A REGRESSION.** Before the resume
+reload took the manager lock across its whole operation (2026-09-08), a reload could install a snapshot
+predating the background decrypt and **put the receive ratchet back** - this entry's sibling recorded
+exactly that, `2625 -> 2624` with the epoch unmoved. A rewound ratchet lets the re-delivered frame
+decrypt a SECOND time and the duplicate disappears silently. With the ordering fixed the reload always
+installs what the background advanced, so the re-delivery is now correctly refused and says so. NOTIF-7
+went `PASS` -> `PASS-DIRTY` on that day for this reason: a silent double-spend of a ratchet generation
+became a loud, correct refusal of a row that should never have been offered twice.
+
+**AND THE REASON THE ROW IS NOT ACKED IS A SAFETY THAT DOES NOT EXIST.** Leaving it pending is the
+conservative choice on its face: if the background handler died between decrypting and persisting, the
+server would still hold the message and the foreground would get it. **But the foreground CANNOT get
+it** - decrypting is what consumed the generation, and that consumption is durable the moment the FCM
+service writes the state back. So the re-delivery this design preserves is one that can only ever end
+in `SecretReuseError`. The pending row buys nothing and costs two ERROR lines on a real user's device
+for every backgrounded message, deterministically.
+
+That is what makes the fix tractable rather than a trade-off. **The hand-off has to be made atomic at
+the point that already happens**: the background handler writes the plaintext to the FCM cache
+(`writeFcmCache`, durable, keyed by `messageId` + `groupId`) and it consumes the ratchet - two
+durable effects that must stand or fall together. Either it acknowledges the row once that cache write
+has landed, or the foreground consults that cache before handing a row to MLS and takes the plaintext
+from it. Both make the second hand-in stop existing; neither is a ledger reconciling it afterwards.
+What must NOT happen is a retry or a suppression of the log line - *a fallback is a signal, never a
+path*, and this line is the visible end of exactly the thing that needs deleting.
+
+**Not attempted in this session, deliberately.** Getting it wrong loses a message permanently rather
+than logging about one, and the change is in the Kotlin service rather than in anything this campaign's
+runners can A/B in a minute. What it needs first is the measurement this entry cannot take by reading:
+whether `consumeFcmCache` drains EVERY cached message on the next foreground, on a cold start as well
+as a warm one. If it does, acknowledging at the cache write is safe and is the smaller change.
 
 **What is seen.** One line on W3, on every HEAL-NEW run that has a fresh device pulling while a
 socket is already live:
