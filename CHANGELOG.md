@@ -11,6 +11,32 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - the sweep's allowlist named six runners and the rig had seven, so a check's groups were permanent
+
+`debris.mjs` is the one allowlist deciding what `cleanup.mjs` may delete on the server and what
+`dismiss.mjs` may purge on every client. Its rule is that it is widened *"by ENUMERATING what the
+runners mint, never by relaxing a shape"* - and `debris-selftest.mjs` had already written down what
+that rule cannot do on its own:
+
+> **WHAT IT CANNOT SEE.** It knows the call sites that existed when it was written [...] A NEW runner
+> minting a new shape passes here and leaves debris on the rig, exactly as GRP-5's rename did. That
+> is the residual risk.
+
+It came true. The enumeration was "seven sites across four runners"; by 2026-09-08 it was eleven
+sites across **seven**. `healrevoke.mjs` was covered by luck, reusing `HGRP<tail>`. `notif17b.mjs`
+mints `N17B-${mark('G').split('-')[1]}` and was covered by nothing - **three of its groups were
+alive on the local estate**, spared by both sweeps, each one a group every member's client re-enters
+on every load. The phone under test carried seven groups where it should have carried four, and
+`cleanup.mjs` reported "nothing to sweep" over all three.
+
+An instruction nothing enforces is one a hurried session skips, so the self-test now refuses when a
+file calls `createGroup(` and is not enumerated in it, naming the file and what to do - it cannot
+know what a new runner mints, and does not guess. Detection is per line and ignores comments and
+JSDoc: a whole-file `includes` accused `atoms.mjs`, which only re-exports the symbol, and
+`debris.mjs`, whose new comment names it, and a destructive gate that cries wolf gets switched off.
+Proved by mutation - a file calling `createGroup(` makes the gate fail, removing it makes it pass.
+The three groups are swept.
+
 ### Fixed - a test row measured a booting app, blamed the notification layer, and filed a P1 against a socket that was working
 
 NOTIF-1b recorded `FAIL` twice on 2026-09-08 with `warmUpInMs: null`, and a P1 CANDIDATE was filed

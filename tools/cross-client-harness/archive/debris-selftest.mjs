@@ -23,6 +23,7 @@
  * residual risk, and it is why the allowlist's own header says it is widened by ENUMERATING what the
  * runners mint, never by relaxing a shape.
  */
+import { readdirSync, readFileSync } from 'node:fs';
 import { isGroupDebris } from '../debris.mjs';
 import { mark } from '../marker.mjs';
 
@@ -53,6 +54,63 @@ swept(`HEALW2-${Date.now().toString(36)}`, 'newgroup.mjs:24 default');
 // value is not reachable on demand, which is exactly why it is asserted here rather than trusted.
 for (const tail of ['i', 'ab', 'k7p', 'ktp5w', '0zzzz1'])
   swept(`HGRP${tail}`, `heal-w2.mjs:38 with a ${tail.length}-char random tail`);
+// notif17b.mjs:137 `N17B-${mark('G').split('-')[1]}` - the prefix is the row's, the tail is the
+// mark's. Built the same way here so a change to `mark` moves both together.
+swept(`N17B-${mark('G').split('-')[1]}`, 'notif17b.mjs:137');
+
+// ------------------------------------------------- and the blind spot that let N17B in, closed
+//
+// THE HEADER ABOVE CALLED THIS THE RESIDUAL RISK AND IT CAME TRUE. The enumeration was "seven sites
+// across four runners", written by hand; by 2026-09-08 it was eleven sites across SEVEN, and the two
+// that arrived in between - `healrevoke.mjs` and `notif17b.mjs` - were never checked against the
+// allowlist. `healrevoke` happened to reuse `HGRP`, so it was covered by luck. `notif17b` was not,
+// and three of its groups were alive on the estate, spared by both sweeps.
+//
+// A LIST OF FILES CANNOT SAY WHAT A NEW RUNNER MINTS, so this does not try. It asserts only that the
+// set of files calling `createGroup(` is the set someone has looked at - and REFUSES when it is not,
+// naming the file and what to do. That is the gate the allowlist's own rule needs: "widened by
+// ENUMERATING what the runners mint, never by relaxing a shape" is an instruction to a person, and
+// an instruction nothing enforces is one a hurried session skips.
+const MINTERS = new Set([
+  'archive/del.mjs', // mark(`DEL${n}`)          -> /^DEL\d*-.../
+  'archive/del1.mjs', // mark('DEL1')             -> /^DEL\d*-.../
+  'archive/grp.mjs', // mark(`GRP${n}`), + `-R`  -> /^GRP\d+-...(-R)?$/
+  'archive/healrevoke.mjs', // debrisName() = HGRP<tail>  -> /^HGRP.../
+  'archive/notif17b.mjs', // N17B-<mark tail>         -> /^N17B-.../
+  'archive/read.mjs', // READ10-<base36>          -> /^READ10-.../
+  'newgroup.mjs', // HEALW2-<base36>, or --name (a person's, deliberately unswept)
+]);
+// `groupnav.mjs` DEFINES it and `atoms.mjs` re-exports it; neither names a group. This file quotes
+// the call in its own message.
+const SKIP = new Set(['groupnav.mjs', 'atoms.mjs', 'archive/debris-selftest.mjs']);
+const HERE = new URL('../', import.meta.url);
+const found = new Set();
+const walk = (dir, prefix = '') => {
+  for (const e of readdirSync(new URL(dir, HERE), { withFileTypes: true })) {
+    if (e.name === 'node_modules' || e.name === 'fixtures') continue;
+    const rel = prefix + e.name;
+    if (e.isDirectory()) walk(`${dir}${e.name}/`, `${rel}/`);
+    else if (e.name.endsWith('.mjs') && !SKIP.has(rel)) {
+      // PER LINE, AND COMMENTS DO NOT COUNT. A whole-file `includes` accused `atoms.mjs`, which only
+      // re-exports the symbol, and `debris.mjs`, whose new comment names it - two files that mint
+      // nothing. A destructive gate that cries wolf gets switched off, so it reads what a call looks
+      // like: the token followed by `(`, on a line that is not a comment or a JSDoc continuation.
+      const lines = readFileSync(new URL(`${dir}${e.name}`, HERE), 'utf8').split('\n');
+      if (lines.some((l) => /createGroup\(/.test(l) && !/^\s*(\/\/|\*|\/\*)/.test(l))) found.add(rel);
+    }
+  }
+};
+walk('');
+for (const f of found)
+  if (!MINTERS.has(f))
+    problems.push(
+      `${f} calls createGroup( and is not enumerated in debris-selftest.mjs - read the name it ` +
+        'mints, add a `swept(...)` case built from that expression, and widen GROUP_DEBRIS if the ' +
+        'shape is new. Do NOT relax an existing pattern to cover it.'
+    );
+for (const f of MINTERS)
+  if (!found.has(f))
+    problems.push(`${f} is enumerated as a group minter but no longer calls createGroup( - drop it`);
 
 // ---------------------------------------------------------------- what must survive a sweep
 

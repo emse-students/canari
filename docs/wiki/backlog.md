@@ -491,6 +491,12 @@ answers a narrower question than its name suggests. Either it grows a clause for
 report says which stores it does not look at - a sweep that is silent about what it cannot see reads
 as an all-clear.
 
+**The GROUP half of this is fixed** (2026-09-08): `debris.mjs` named six runners while seven mint
+groups, so three `N17B-*` groups from NOTIF-17b were permanent - the phone under test carried seven
+groups where it should have carried four. The allowlist is widened, `debris-selftest.mjs` now
+refuses when an unenumerated file calls `createGroup(`, and the three are swept (`CHANGELOG.md`).
+What is left is the QUEUE half above, which no sweep looks at.
+
 **Blocked on nothing.** Local estate, test accounts, destroyable.
 
 ---
