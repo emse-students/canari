@@ -72,6 +72,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | App Store Connect: the 2.3.6 radio button | 1 click | [mobile](frontend/mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on) |
 | Lydia's credentials, which Lydia owes | blocked upstream | WP-LYDIA-1 |
 | **an iPhone** - the Android half arrived and its lock was retired 2026-09-08, so every A1 row is runnable; what is still hardware-blocked is iOS alone | hardware | [device-verification](device-verification.md) |
+| **two more test accounts** (a THIRD, and a FOURTH for one row) - Authentik users like the two the rig has, written into `canari-harness/test-accounts.json`. **One action unblocks four rows that are otherwise permanently stuck**, and one of them is a P1 the user reported: NOTIF-17 (first contact - a message from someone you have NO conversation with, which the rig's two accounts cannot stage because they have talked for weeks and deleting that history would cost the HEAL rows more than the row answers), READ-5 (the `+N` reader overflow renders only past THREE readers, so it needs a fourth), MULTI-3 (a device enrolled after the fact), and the community-invitation question that is the same seam as NOTIF-17 | 2 accounts | [first contact](#p1---a-first-message-from-someone-you-have-no-conversation-with-notifies-decrypts-and-then-goes-nowhere-the-tap-does-not-land-and-the-conversation-is-invisible-until-the-app-is-restarted-user-2026-09-08-on-production) |
 | copy `canari-harness/` to the second machine to resume the campaign; **SETUP-4's 2FA is no longer owed**, the test accounts carry no MFA | 1 copy | [cross-client-campaign-resume](cross-client-campaign-resume.md) |
 
 ## FOUR DECISIONS TAKEN BY THE USER, 2026-09-06
@@ -2306,6 +2307,51 @@ read back. **The three accused fingerprints were never written at all.** That le
 mark does not reach `localStorage` in this scenario, and the fix has to be a durability path that does
 not wait on a checkpoint. It does not say WHICH path spent the generations without recording them,
 and that is the next question rather than a settled one.
+
+**AND TAB-3b IS THE SAME DEFECT, MEASURED WITH A COUNTER THAT MAKES THE MECHANISM UNAMBIGUOUS
+(2026-09-08).** TAB-3b takes W1's window DOWN and UP - `down 2ms, up 316ms` in its own per-run line -
+so its five "reloads" are five COLD STARTS, which is this entry's scenario and not a page reload.
+Read across the five, the accusation set grows by exactly three generations per start and re-accuses
+every earlier one:
+
+```
+r2:  47,48        19
+r3:  47,48,49,50  19,20
+r4:  ...,51,52     ...,21
+r5:  ...,53,54     ...,22
+```
+
+Two sender leaves, two frames from one and one from the other per cycle - the shape of a peer's
+message plus its read receipt plus a third device's read watermark. **The accusations therefore grow
+QUADRATICALLY in cold starts**, and each pass fires `[HISTORY_RECONCILE] asked 2bd5add9... whether we
+hold the same history` - the loudest thing the app does, once per start, for frames it already holds.
+
+**THE INCONSISTENCY, STATED EXACTLY, BECAUSE IT IS NOT THE ONE THIS ENTRY ASSUMED.** If neither the
+mark nor the ratchet advance survived, the next cold start would restore a state where the generation
+is UNSPENT and the frame would decrypt. It does not decrypt - `SecretReuseError`, at its own epoch.
+**So the advance IS durable and the mark is NOT**, and that is the whole defect: the two are supposed
+to be tied to one checkpoint, and the mark's commit is a thunk the caller invokes AFTER the flush.
+Everything that dies in the window between them keeps a durable advance and loses the record of it.
+
+**WHY THE OBVIOUS FIX IS THE OPPOSITE DEFECT.** Writing the mark eagerly - which is right for a ROW
+key, as this entry already argues, because *"I walked this row"* has no ratchet to run ahead of -
+is wrong for a FINGERPRINT: a fingerprint asserts *"I consumed this generation"*, and one written
+before the advance is durable tells the next replay to SKIP a frame nobody has read. That trades a
+false accusation for a silent real loss, which is strictly worse.
+
+**SO THE ANSWER IS ARCHITECTURAL AND IT IS ATOMICITY, NOT ORDERING.** The mark and the advance are one
+fact and must be one write - the mark belongs INSIDE the checkpoint, or the question *"have I already
+consumed this ciphertext"* should be answered FROM the MLS state instead of from a parallel ledger
+that can disagree with it. A ledger beside the ratchet duplicates what the ratchet already knows, and
+every defect on this entry is the two copies drifting. **No smaller fix should be attempted**: this
+was measured with the cap and hydration both exonerated (`seenset.mjs`), so there is nothing cheaper
+left to try.
+
+**WHAT IS STILL UNMEASURED** is which path spends the three generations - live delivery, the queue
+drain, or the archive replay's own successful pages. A persistent console tailer CANNOT answer it: the
+row destroys the CDP target it would be attached to, which is how the cold-start reading above was
+found in the first place. It needs a purpose-built reproduction that brings W1 down between a known
+send and a known decrypt, not a tail of TAB-3b.
 
 **TWO GROWTH HAZARDS THE SAME READ SURFACED, NEITHER PREVIOUSLY MEASURED.**
 
