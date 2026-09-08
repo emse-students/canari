@@ -246,8 +246,11 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    this campaign's OWN mention fixtures, named 2026-09-07 ([backlog](docs/wiki/backlog.md)).
 4. **P1 - HEAL-repair HEALS 3 TIMES IN 10, SAME ASK CADENCE EITHER WAY**; two causes REFUTED by
    A/B, not to be re-opened ([backlog](docs/wiki/backlog.md)). HEAL-REVOKE stays four clean `PASS`.
-5. **P1 - A DAMAGED MLS STATE IS CALLED A PIN ROTATION, AND THE PIN THE USER HOLDS DOES NOT WORK** -
-   the classifier branches on an error MESSAGE (CORRUPT-2 + CORRUPT-1, [backlog](docs/wiki/backlog.md)).
+5. **P1 - A DAMAGED MLS STATE IS CALLED A PIN ROTATION** (CORRUPT-2 + CORRUPT-1). **STEP 1 SHIPPED
+   TO THE BRANCH 2026-09-08**: the throw is typed, the classifier reads a code and answers `unknown`
+   loudly, and three names that asserted a cause now name the observation. **The two causes are
+   still NOT separated** - that needs a key fingerprint in the envelope, a WRITE-format change, so
+   step 2 is a second release gated on `minClientVersion` ([backlog](docs/wiki/backlog.md)).
 6. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - ONE merge mechanism
    and ONE arming point, asserted only by `bun tools/ecosystem-shape/shape.mjs`
    ([cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them), the only copy).
