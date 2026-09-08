@@ -115,7 +115,6 @@ const fcmLink = await requireFreshFcmLink('NOTIF-14', stage);
 
 const oW2 = await watch(w2, 'notif14-w2');
 const out = {
-  check: 'NOTIF-14',
   fcmLinkMs: fcmLink?.tookMs ?? null,
   venue: { community: VENUE.community, channel: VENUE.channel },
 };

@@ -141,7 +141,7 @@ const verdict = !delivered ? 'FAIL' : drained !== null && drained <= BUDGET_MS ?
 
 console.log(
   JSON.stringify(
-    { check: 'MSG-10', marker: m, msToSever: info.msToSever, offlineState, afterReconnect, obs },
+    { marker: m, msToSever: info.msToSever, offlineState, afterReconnect, obs },
     null,
     1
   )

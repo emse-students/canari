@@ -116,7 +116,7 @@ function unlock(port = PORTS.A1) {
 const PEER = PEER_NAME;
 const awaitShade = (timeoutMs) => phone.awaitNotification(PEER, timeoutMs);
 
-const out = { check: `NOTIF-7 (${mode})`, mode };
+const out = { mode };
 
 // ── phone: unlock, park on the FEED ──────────────────────────────────────────
 stage('waking and launching the phone');

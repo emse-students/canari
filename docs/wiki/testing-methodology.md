@@ -2435,6 +2435,33 @@ records `a1GateSaid`, and `pingate` PRINTS a non-zero exit rather than only retu
 `LOCKED` has three causes that read alike - the PIN was refused, the modal never mounted, or the tool
 never reached the phone.
 
+## A RUNNER OVERWROTE THE FIELD THAT SAYS WHICH RUNNER TOOK THE VERDICT
+
+`rows.mjs` can say whether a recorded verdict was taken on the code it claims, and it does it with
+three fields the ledger writes for itself: `check` (the runner FILE), `checkSha` and
+`instrumentSha`. Change a runner after a verdict and the row is reported as `runner is now
+<newsha>` - which is how a stale `PASS` is told from a current one.
+
+**Four live rows had silently left that chain** - NOTIF-7, NOTIF-7b, NOTIF-14 and NOTIF-16. `record()` wrote `check: CHECK.file` and then
+spread the caller's `detail` over it, and six runners set `out.check = '<the row id>'` as a
+self-label inside their own JSON dump - `'NOTIF-14'`, `'NOTIF-7 (bg)'`, `'NOTIF-6c'`, `'MSG-10'`,
+`'MSG-8b'`. So the ledger recorded a row id where a filename belonged, `rows.mjs` looked for a file
+called `NOTIF-7 (bg)`, found none, and printed **"its runner no longer exists"** for runners that
+exist and had just run. It prints the same sentence for FWD-3, FWD-4 and FWD-5, where it is simply
+TRUE - which is exactly why the false ones were never noticed. Nothing failed. The rows kept their verdicts and lost only the ability to
+say those verdicts were current, which is the property the whole ledger is for.
+
+**The fix is an ordering, not a rule for runners to remember.** The three provenance fields now sit
+AFTER `...detail`, so a runner cannot overwrite them; `a1Build` deliberately stays BEFORE it,
+because that one IS an observation and a runner that read the phone at its own arming moment has
+the better one. The self-labels were removed from the runners as well, but that is tidying - the
+ordering is what makes the next runner unable to reintroduce it.
+
+**The general shape, and it is the second time this campaign has met it.** A field the LEDGER owns
+and a field a RUNNER contributes are different kinds of value, and merging them with a spread makes
+the distinction depend on declaration order. Ask of every field in a record which of the two it is;
+where the answer is "the ledger's", the runner must not be able to name it at all.
+
 ## A STATUS WITH NO REQUEST IS EVIDENCE FOR NOTHING
 
 **Measured 2026-08-29, on HEAL-NEW-15's gate.** The row was demoted to `PASS-DIRTY` partly on

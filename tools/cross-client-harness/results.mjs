@@ -470,9 +470,9 @@ export function record(id, verdict, detail) {
     // artefact was made from, and its own doc names THIS harness as the consumer - the ledger was
     // simply dropping the field on the floor.
     ...(SOURCE_STAMP ? { sourceSha: SOURCE_STAMP } : {}),
-    check: CHECK.file,
-    checkSha: CHECK.sha,
-    instrumentSha: CHECK.instrumentSha,
+    // NOT HERE ANY MORE - see the block after `...detail`. Left as this comment rather than
+    // deleted, because "why is the provenance written out of order" is the question a reader of
+    // the next merge conflict will have, and the answer is that a runner was able to overwrite it.
     // BEFORE `detail`, so a runner that read the phone at its OWN arming moment overrides this one.
     // Four COMM checks do, and theirs is the more precise of the two.
     ...(A1_BUILD ? { a1Build: A1_BUILD.commit, a1BuiltAt: A1_BUILD.builtAt } : {}),
@@ -481,6 +481,25 @@ export function record(id, verdict, detail) {
     ...(owedObservation
       ? { claimedVerdict: verdict, unobserved: 'no report was gated into this verdict - see gate() in watch.mjs' }
       : {}),
+    // PROVENANCE IS THE LEDGER'S, AND A RUNNER MAY NOT OVERWRITE IT - which is why these three sit
+    // AFTER `detail` while `a1Build` deliberately sits before it. `a1Build` is an observation, and a
+    // runner that read the phone at its own arming moment has the better one. `check` is not an
+    // observation: it is the FILE this verdict came out of, and it is what `rows.mjs` uses to ask
+    // whether the runner has changed since - the question that tells a stale verdict from a current
+    // one.
+    //
+    // Six runners set `out.check = '<the row id>'` as a self-label in their own JSON dump, and the
+    // spread carried it straight over this field. `rows.mjs` then looked for a file called
+    // `NOTIF-14` or `NOTIF-7 (bg)`, found none, and reported "its runner no longer exists" for FOUR
+    // rows whose runner had in one case just passed - NOTIF-7, NOTIF-7b, NOTIF-14, NOTIF-16. (The
+    // three FWD rows it names alongside them are a DIFFERENT and honest case: their runners really
+    // were retired.) Those four silently left the checkSha/instrumentSha chain, which is the whole
+    // reason this campaign can say a verdict was taken on the code it claims. The self-labels are
+    // gone from the runners too, but a value the ledger owns must not depend on every future runner
+    // remembering not to name it.
+    check: CHECK.file,
+    checkSha: CHECK.sha,
+    instrumentSha: CHECK.instrumentSha,
   };
   appendFileSync(FILE, `${JSON.stringify(row)}\n`);
   console.log(`[${stated}] ${id} ${JSON.stringify(detail)}`);
