@@ -2435,6 +2435,43 @@ records `a1GateSaid`, and `pingate` PRINTS a non-zero exit rather than only retu
 `LOCKED` has three causes that read alike - the PIN was refused, the modal never mounted, or the tool
 never reached the phone.
 
+## AND THE BUILD STAMP NAMED A COMMIT THAT DOES NOT CONTAIN THE CODE THAT WAS MEASURED
+
+The sibling of the section below, found the same day and worse, because it is silent in the one
+situation that produces it most: a fix being measured.
+
+`a1Build` is DERIVED. `resolveStamp` takes the SvelteKit build timestamp the packaged bundle carries
+and names the newest commit at or before it, on a stated history. That is exact for a build made
+from a clean tree. `a1apk.mjs` builds from the WORKING tree - which is the point of it, and the
+shape of every fix loop: write a fix, build, install, measure, commit. In that loop the newest
+commit at build time is the one BEFORE the change.
+
+So the ledger says NOTIF-16 passed on `1fd7cecd7`, and `1fd7cecd7` is the commit before the fix that
+makes it pass. The measurement is sound - the phone really did file a mention on `canari_mentions`.
+The attribution is false, and it is false in the direction that matters: a reader checking out that
+commit and re-running would get a `FAIL` and conclude the row is flaky.
+
+**IT RECORDS, IT DOES NOT REFUSE.** A gate against a dirty build would forbid the only way a fix can
+be measured before it is committed. What must not survive is a verdict that CLAIMS a commit it was
+not built from. So `apkbuild.mjs` writes the tree state down at build time - HEAD, dirty, and a hash
+of `git diff HEAD` plus the untracked list - and `run.mjs`'s preflight joins it back.
+
+**THE JOIN KEY IS `builtAt`, AND THAT IS NOT AN IMPLEMENTATION DETAIL.** It is the only value both
+ends know for a fact: the preflight reads it off the running app, the recorder reads it out of the
+bundle it just packaged. The commit is a derivation on both sides, so joining on the commit would be
+joining two guesses and would agree exactly when it was least entitled to.
+
+**ABSENCE IS "NOT RECORDED", NEVER "CLEAN".** Every row taken before this existed carries nothing,
+and so does an APK built by CI or by hand. `rows.mjs` prints the rows it KNOWS were measured on a
+dirty tree and says nothing about the rest, which is honest rather than reassuring.
+
+**The general shape: a derived value inherits every assumption of its derivation, and the assumption
+here was never written down.** `resolveStamp`'s own doc reasons carefully about WHICH history to
+resolve against - it was extended once already, when a locally built APK was resolved against
+`origin/main` and named two different commits for one bundle. It reasons not at all about whether
+the tree was committed, because at the time both callers built from a commit. A derivation is only
+as true as the sentence nobody thought to write.
+
 ## A RUNNER OVERWROTE THE FIELD THAT SAYS WHICH RUNNER TOOK THE VERDICT
 
 `rows.mjs` can say whether a recorded verdict was taken on the code it claims, and it does it with

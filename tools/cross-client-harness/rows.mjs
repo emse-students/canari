@@ -677,6 +677,32 @@ if (unstamped.length) {
   }
 }
 
+// A ROW WHOSE `a1Build` NAMES A COMMIT THAT DOES NOT CONTAIN THE CODE IT MEASURED.
+//
+// `a1apk.mjs` builds from the WORKING tree - that is the point of it, and the shape of every fix
+// loop: write a fix, build, measure, commit. `resolveStamp` then dates the APK to the newest commit
+// at or before its timestamp, which for a dirty build is the commit BEFORE the change. The verdict
+// is sound and the attribution is false, and only the second half is detectable from the ledger -
+// so it is printed rather than left for a reader to disbelieve later. `apkbuild.mjs` records it.
+//
+// SILENCE HERE IS NOT A CLEAN BILL. Rows taken before that module existed carry nothing, and
+// nothing is what an APK built by CI or by hand carries too.
+const dirtyBuild = rows.filter((r) => latest.has(r) && latest.get(r).a1BuildDirty);
+if (dirtyBuild.length) {
+  console.log(
+    `
+[rows] ${dirtyBuild.length} verdict(s) were measured on an APK built from a DIRTY tree - ` +
+      `the commit beside them does NOT contain the code they ran on:`
+  );
+  for (const r of dirtyBuild) {
+    const e = latest.get(r);
+    console.log(
+      '  ' + r.padEnd(14) + String(e.verdict).padEnd(12) + String(e.a1Build ?? '?').padEnd(12) +
+        'diff ' + String(e.a1BuildDiffSha ?? '?')
+    );
+  }
+}
+
 if (sinceBuild) {
   const stale = rows.filter((r) => latest.has(r) && !String(latest.get(r).build).startsWith(sinceBuild));
   console.log('\n[rows] ' + stale.length + ' row(s) whose newest verdict was NOT taken on ' + sinceBuild);

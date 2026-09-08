@@ -476,6 +476,11 @@ export function record(id, verdict, detail) {
     // BEFORE `detail`, so a runner that read the phone at its OWN arming moment overrides this one.
     // Four COMM checks do, and theirs is the more precise of the two.
     ...(A1_BUILD ? { a1Build: A1_BUILD.commit, a1BuiltAt: A1_BUILD.builtAt } : {}),
+    // ONLY WHEN IT IS KNOWN AND TRUE. An APK built from a dirty tree is dated to a commit that does
+    // not contain the code measured, so the row has to say so or it states a falsehood a later
+    // reader cannot detect. Absent means "not recorded" - see `apkbuild.mjs` - and absent is what
+    // every row taken before that module existed carries, which is honest and not reassuring.
+    ...(A1_BUILD?.dirty ? { a1BuildDirty: true, a1BuildDiffSha: A1_BUILD.diffSha } : {}),
     ...(unstamped ? { a1BuildUnstamped: 'bound a phone, no preflight stamp' } : {}),
     ...detail,
     ...(owedObservation

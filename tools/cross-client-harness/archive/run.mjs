@@ -47,6 +47,7 @@ import { all, clientBuild } from '../results.mjs';
 import { deployedBundleId, isOnTheDeployment, reloadOntoBundle, sourceIsDeployed } from '../bundle.mjs';
 import { stateOf } from './ready-probe.mjs';
 import { bringToReady } from './ready-repair.mjs';
+import { apkBuildProvenance } from '../apkbuild.mjs';
 import { startBrowser } from '../launch.mjs';
 import { findScript, requireScript } from '../scriptpath.mjs';
 
@@ -551,8 +552,26 @@ async function preflight(devices, { quiet = false } = {}) {
       const cx = await client(PORTS.A1, null, { focus: false });
       try {
         const b = await clientBuild(cx);
+        // WHETHER THAT COMMIT DESCRIBES THE APK, joined on `builtAt` - the only value both ends
+        // know, the commit being a derivation on each side. `null` is "not recorded", never
+        // "clean": an APK from before `apkbuild.mjs`, or one built by CI, answers null and the
+        // stamp then says exactly what it always said. See `apkbuild.mjs`.
+        const prov = apkBuildProvenance(b.builtAt);
+        if (prov) {
+          b.dirty = prov.dirty;
+          b.diffSha = prov.diffSha;
+        }
         process.env.CANARI_A1_BUILD = JSON.stringify(b);
-        if (!quiet) console.log(`  ok   A1 runs ${b.commit.slice(0, 8)} built ${b.builtAt}`);
+        if (!quiet) {
+          console.log(
+            `  ok   A1 runs ${b.commit.slice(0, 8)} built ${b.builtAt}` +
+              (prov?.dirty
+                ? `  ** plus UNCOMMITTED changes (diff ${prov.diffSha}) - rows this run are NOT verdicts on ${b.commit.slice(0, 8)} **`
+                : prov
+                  ? ''
+                  : '  (tree state not recorded for this build)')
+          );
+        }
       } finally {
         cx.close();
       }
