@@ -179,3 +179,24 @@ the server can answer - not a client-side change, because a client asking polite
 must not be, the P2 behind this shrinks to what it already claims: stop calling the exclusion window a
 loss, and stop reconciling for it.
 
+## Which account a SECOND phone would carry, the day one is attached again
+
+**Parked because the hardware is gone, not because the question is hard.** A Pixel 6a was plugged in
+temporarily on 2026-09-04; `adb devices` has listed only the Mi 9T (A1) since, which is what
+`state.mjs` reports as `A2 (9335) UNREACHABLE` - **that line is explained and is not a defect, so no
+session should spend time chasing the forward.**
+
+The question it leaves: A2 is bound and addressable on port 9335, and **no account is assigned**. The
+peer's, or a third one? One line in the out-of-tree `names.mjs` decides it, and guessing is an
+identity invented by a tool rather than chosen by the person who owns the accounts.
+
+**It is worth answering BEFORE the hardware returns**, because it now overlaps something concrete:
+the third test account owed for first contact (NOTIF-17) would also be the obvious occupant of A2, so
+the two asks are one decision rather than two. See the table of what is owed to the user in
+[backlog](backlog.md).
+
+**Where it came from.** Item C1 of the harness tidy, which is otherwise complete and was deleted on
+2026-09-08 - its A and B sections shipped, its D items are the campaign order that
+[cross-client-campaign-resume](cross-client-campaign-resume.md) carries, and its E items are the
+standing bar now in `CLAUDE.md`. This was the only thing on the page that was neither done nor a
+duplicate.

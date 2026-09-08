@@ -34,6 +34,12 @@ said the injection had succeeded, and it had, into the store nobody was looking 
 **Neither file had a test.** `fcmMemoryMerge.test.ts` now covers the three states a cached message
 can arrive in, and its two new cases were proven to fail against the old line before being kept.
 
+**Verified on the handset, not only in tests.** `consumeFcmCache`'s contract changed and both its
+callers with it - including the login path - so NOTIF-7 was re-run on an APK rebuilt from this tree:
+`PASS`, clean, with the cache path running end to end (`1 entry/entries read` -> `Injection done:
+1/1 message(s) injected`) and the new warning correctly silent, because that run had a conversation
+to merge into. The first-contact branch itself cannot be exercised without a third test account.
+
 **The tap half of the same report is NOT fixed** and is in `docs/wiki/backlog.md` with two candidate
 causes: the known two-builder P2, and an ordering this fix makes visible rather than removes - the
 deep link is resolved 174 ms before the cache is injected, measured in the NOTIF-7 capture of the

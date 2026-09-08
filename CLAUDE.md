@@ -224,11 +224,6 @@ workflow.**
 
 ### CANARI - THE QUEUE, IN ORDER
 
-**0. THE HARNESS TIDY IS IN FLIGHT AND ITS WORK LIST IS [harness-tidy](docs/wiki/harness-tidy.md)** -
-delete the file and this line together when it is empty. The bar it carries: **every row must be
-`PASS`, never `PASS-DIRTY`**, a P1 found on the way is fixed in the same session, and P2/P3 go to
-[backlog](docs/wiki/backlog.md) rather than inline.
-
 **A HEADLINE AND A LINK EACH, AND THAT IS ALL THIS SECTION IS FOR.** It was 152 lines for 11 items
 on 2026-09-03 - restating the substance the linked pages carry, in violation of both this file's
 line cap and its own "not restated" rule, and TWO of the items had gone FALSE without anyone
@@ -338,7 +333,9 @@ mutual-exclusion rule died with that move ([methodology](docs/wiki/testing-metho
 replaces it is a rebuild or a `bun run dev` SAVE, which `bundle.mjs` measures. **The board is reset
 to zero**, archived at [archive](docs/wiki/cross-client-testing-archive.md). **A killed run can
 destroy a measurement seconds from being recorded, and losing a `chrome-w1`/`chrome-w2` profile costs
-a DEVICE.** **THE USER ASKED FOR THE LOGS TO BE READ ON EVERY PASS** (2026-08-28) - a heal that works
+a DEVICE.** **THE BAR IS `PASS`, NEVER `PASS-DIRTY`** (user: *"Tout doit etre PASS. Pas PASS-DIRTY, PASS"*) -
+a P1 met on the way is fixed in the SAME session, P2/P3 go to [backlog](docs/wiki/backlog.md) rather
+than inline. **THE USER ASKED FOR THE LOGS TO BE READ ON EVERY PASS** (2026-08-28) - a heal that works
 is not a heal that was observed, and reading them has since found two P1s no row asks about. Three
 instrument facts: the disposition for expected noise is `ignoringExpectedLog` **per row**, never a
 wider classifier - and a list the runner never NAMES is the same as no list - and the device cap is
