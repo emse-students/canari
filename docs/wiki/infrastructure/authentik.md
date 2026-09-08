@@ -308,6 +308,21 @@ dead flow plan meets the same broken session.
 The `Alumni Only` identification stage (uuid `19b10365`) is bound to **no flow at all**, which is
 deliberate until that provider is connected.
 
+**And one thing waiting for the day it is.** The `Validate promo year` expression policy reads
+`context['prompt_data']['attributes']['promo']` and returns
+`promo <= datetime.now().year and promo >= 1816` with no check that the value is there. In Python
+`None <= 2026` raises `TypeError`, and authentik turns a policy exception into a REFUSAL
+(`default-match-policy-exception`), so a prompt that omits the field - or sends it as a string -
+refuses the enrolment with a message naming nothing. Every execution in the 30 days to 2026-09-08
+passed, because nothing reaches it yet.
+
+**`is-student` refuses nobody, and reading it as an enrolment gate was wrong.** It is bound to a
+**flow-STAGE** binding (`#20`), so `passing: false` SKIPS that stage rather than rejecting the
+person: 7 `false` results in 30 days, and the two accounts that looked refused on 2026-09-06 -
+`jean-hugues.chen` and `maxime.leost` - are both active, both linked to `cas-emse`, and both have
+logged in since (2026-09-08 and 2026-09-07). **A policy result is only a refusal if what it is bound
+to is the FLOW**; on a stage binding it is a router.
+
 **Owed to the restore path, like the providers above.** The flow, the Deny stage and the brand's
 `flow_authentication` live only in Authentik's Postgres: a restore from a backup predating
 **2026-09-08** brings the brand back pointing at `miconnect-auth` and the loop with it, with no
