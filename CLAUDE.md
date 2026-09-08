@@ -246,11 +246,9 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    this campaign's OWN mention fixtures, named 2026-09-07 ([backlog](docs/wiki/backlog.md)).
 4. **P1 - HEAL-repair HEALS 3 TIMES IN 10, SAME ASK CADENCE EITHER WAY**; two causes REFUTED by
    A/B, not to be re-opened ([backlog](docs/wiki/backlog.md)). HEAL-REVOKE stays four clean `PASS`.
-5. **P1 - A DAMAGED MLS STATE IS CALLED A PIN ROTATION** (CORRUPT-2 + CORRUPT-1). **STEP 1 SHIPPED
-   TO THE BRANCH 2026-09-08**: the throw is typed, the classifier reads a code and answers `unknown`
-   loudly, and three names that asserted a cause now name the observation. **The two causes are
-   still NOT separated** - that needs a key fingerprint in the envelope, a WRITE-format change, so
-   step 2 is a second release gated on `minClientVersion` ([backlog](docs/wiki/backlog.md)).
+5. **P1 - A DAMAGED MLS STATE IS CALLED A PIN ROTATION** (CORRUPT-2 + CORRUPT-1). **STEP 1 IS ON
+   THE BRANCH 2026-09-08 and does NOT separate the two causes** - that needs an envelope header,
+   hence a second release ([backlog](docs/wiki/backlog.md)).
 6. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - ONE merge mechanism
    and ONE arming point, asserted only by `bun tools/ecosystem-shape/shape.mjs`
    ([cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them), the only copy).
@@ -269,19 +267,22 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
 12. **TWELVE MESSAGES DROPPED, PERMANENT COMMIT-LOG HOLE AT EPOCH 121** - four defects shipped in
     `v0.15.0`'s ancestors; RESIDUE and the 13:10 arm open ([backlog](docs/wiki/backlog.md)).
 13. **`dev.canari-emse.fr` IS THE PRE-RELEASE TARGET**
-    ([dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy). Two open, both
-    in [backlog](docs/wiki/backlog.md): a dev deploy cannot tell a broken CHANGE from an unreachable
-    REGISTRY, and prod's deploy job is inlined shell where `deploy-dev` exercises the script.
-14. **FROM THE USER, AND FIRST CONTACT IS THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** P1
-    2026-09-08 on PROD: a first message from someone you have no conversation with is invisible
-    until a restart and the tap lands nowhere. **BOTH HALVES ARE FIXED AND UNSHIPPED, and they were
-    one mechanism from two ends** - the cache told the database and not the in-memory list, and the
-    landing abandoned its target before the list could be told. **ONE HARDWARE RUN IS OWED and it
-    needs a THIRD account.** What is NOT fixed is the separate two-builder P2: the plugin builder's
-    tap carries no identity of any kind, so no TypeScript can route it. Its sibling question (does a
-    community invitation notify somebody with no prior conversation?) is the same seam. Plus a P2
-    from 2026-09-05 (a COMMUNITY message is not decrypted in a background notification) and one
-    post-campaign direction (ICM/ISMIN). All in [backlog](docs/wiki/backlog.md).
+    ([dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy). Two open: a dev
+    deploy cannot tell a broken CHANGE from an unreachable REGISTRY, and prod's deploy job is still
+    inlined shell where `deploy-dev` exercises the script ([backlog](docs/wiki/backlog.md)).
+14. **FROM THE USER, AND FIRST CONTACT IS THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** The
+    2026-09-08 PROD P1 has **BOTH HALVES FIXED AND UNSHIPPED - one mechanism from two ends** - and
+    **OWES ONE HARDWARE RUN, blocked on a THIRD account.** Still open beside it: the two-builder P2
+    (no TypeScript can route that tap), the community-invitation sibling, a P2 from 2026-09-05, and
+    the ICM/ISMIN direction. All in [backlog](docs/wiki/backlog.md).
+15. **21% OF CAS RETURNS CARRY NO `code`, AND THE LOOP THAT MADE OF IT IS FIXED - THE FAILURES ARE
+    NOT.** The livelock (a source failure re-entering the source) is closed 2026-09-08, story in
+    `CHANGELOG.md`, rules in [durable-rules](docs/wiki/durable-rules.md), mechanism and the
+    reproduction probe on [authentik](docs/wiki/infrastructure/authentik.md#cas-returns-nothing-on-21-of-logins-and-our-login-page-turned-that-into-a-livelock---2026-09-08).
+    **Two things stay open and neither is code**: the MAIL TO THE DSI, written and unsent, and
+    **~121 failed logins a week that nothing reports** - and the fix removed the only symptom anybody
+    could see ([P2](docs/wiki/backlog.md#p2---about-121-logins-a-week-fail-at-cas-and-nothing-reports-it-measured-2026-09-08)).
+    Everything on that box is a HAND MUTATION owed to the restore path.
 
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
 

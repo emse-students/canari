@@ -1,6 +1,6 @@
 //! MLS Tauri commands: initialisation, groups, encryption, decryption.
 
-use crate::concurrency::write_mls_state_blob;
+use crate::concurrency::{write_mls_state_blob, ForegroundCritical};
 use crate::keystore_bridge::PluginDeviceKeyStore;
 use crate::state::{
     decrypt_messages_batch, AppState, BatchDecryptItem, KeyPackageBatchResult, PendingDb,
@@ -210,6 +210,11 @@ pub(crate) async fn sauvegarder_mls_et_persister(
         let manager = lock
             .as_ref()
             .ok_or_else(|| "MLS Manager not initialized".to_string())?;
+        // HELD ACROSS THE SERIALISE, NOT JUST THE WRITE. `save_encrypted_with_key` cost 48 s on a
+        // Mi 9T; `write_mls_state_blob` is the first thing that refreshes the heartbeat deadline,
+        // so without this the guard lapses mid-checkpoint on a backgrounded app and a background
+        // engine writes back the state it loaded BEFORE this one started (see `concurrency.rs`).
+        let _checkpoint = ForegroundCritical::enter();
         let key = session_at_rest_key(&device_key_b64, &device_key_state)?;
         let encrypted = manager
             .save_encrypted_with_key(&key)
@@ -275,6 +280,13 @@ pub(crate) async fn generer_key_packages_et_persister(
             "generer_key_packages_et_persister start count={} (batch native path)",
             count
         );
+
+        // ENTERED BEFORE THE MINT, NOT BEFORE THE WRITE. The bundles exist in this engine's storage
+        // from `generate_key_packages` onwards and are only durable after the write below; a
+        // background engine writing back its older blob anywhere in between deletes fifty private
+        // keys whose public halves this device has just published. That is the loop
+        // `reconcilePublishedKeyPackages` then reads as fifty server orphans (see `concurrency.rs`).
+        let _checkpoint = ForegroundCritical::enter();
         // The STATIC fallback, and it is last-resort because the delivery service serves this one
         // package to every peer that finds the pool empty (`resolveKeyPackagePayloadForDevice`).
         // An ordinary KeyPackage's private bundle dies with the first Welcome built on it, so the

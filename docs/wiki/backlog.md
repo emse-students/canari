@@ -62,6 +62,10 @@ else holds, a console owned by the user, or hardware that does not exist.
 
 | What | Kind | Where the substance is |
 | --- | --- | --- |
+| ~~UNLOCK THE CAMPAIGN PHONE~~ **DONE 2026-09-05** (`deviceLocked=0`, measured). What remains is OPTIONAL and the user asked for it: removing the pattern needs the credential, so either they clear it in Settings or it joins `test-accounts.json` like every other one. Retiring the lock costs no key material - both keystore keys are explicitly `setUserAuthenticationRequired(false)`, measured before proposing it | 1 gesture on the device | [P2 - every silent push on the phone fails to decrypt](#p1---a-backgrounded-phone-is-never-told-about-a-message-it-has-already-received-because-the-js-layer-waits-for-a-push-the-server-never-sends-measured-on-device-2026-09-05) |
+| **UNLOCK THE CAMPAIGN PHONE, AGAIN - and this time RETIRE the lock** (2026-09-07). It re-locked mid-session (`deviceLocked=1`, `trustManaged=1`, `strongAuthRequired=0x0`, `mDreamingLockscreen=true`); `wm dismiss-keyguard` is refused on a secure keyguard and no credential is in the rig by design. It cost LIFE-3 and LIFE-4 their re-runs, which were owed only their re-measurement against a classifier that had just been widened for them, and it will cost every phone row the moment the screen times out again. **Retiring the lock costs no key material** - both keystore keys are explicitly `setUserAuthenticationRequired(false)`, measured before this was first proposed on 2026-09-05 - so either the pattern is cleared in Settings or it joins `test-accounts.json` like every other credential | 1 gesture on the device, then a decision | [cross-client-testing](cross-client-testing.md) LIFE-3, LIFE-4, LIFE-5 |
+| **SEND THE MAIL TO THE DSI** - 21% of CAS returns carry no `code`, and no change on our side can make `cas.emse.fr` send one. The loop it caused is fixed; the failures are not. The text is written and needs no editing | 1 mail | [authentik](infrastructure/authentik.md#what-the-dsi-has-to-be-told---still-owed) |
+| **PKCE on the `cas-emse` source: `none` -> `S256`, DELIBERATELY NOT DONE.** It is unrelated to the loop, it cannot be verified without completing a real CAS login, and its blast radius is every login of all seven clients. Flip it, then log in once immediately, and roll back to `none` if that login fails - not the other way round | decision, then 1 login | [authentik](infrastructure/authentik.md#cas-returns-nothing-on-21-of-logins-and-our-login-page-turned-that-into-a-livelock---2026-09-08) |
 | set up the external uptime probe that mails - **decided 2026-09-06, mail**; the probe must hit `/api/version` AND `/api/chat-delivery-health`, never the homepage, which answered 200 through both outages | ~1 click in Cloudflare or an uptime service | [P2 - NOTHING TELLS ANYBODY PRODUCTION IS DOWN](#p2---nothing-tells-anybody-production-is-down-and-both-outages-of-2026-09-01-were-reported-by-the-user-owed-to-the-user-a-decision-then-one-click) |
 | `DEPENDABOT_ALERTS_TOKEN` - a fine-grained token with **"Dependabot alerts: read"** on this repository. The nightly alerts job has NEVER passed: it declared `security-events: read`, which is code scanning, and Dependabot alerts have no `permissions:` key at all, so `GITHUB_TOKEN` cannot read them at any setting. The job now reads this secret when it exists and fails loudly when it does not - deliberately, because an alert list nobody reads looks exactly like an empty one | 1 token, 1 secret | `.github/scripts/dependabot-alerts-report.sh`, and the 403 it now names correctly |
 | should a reaction to YOUR OWN message notify, when every other reaction must not - and on which channel; **NOTIF-15 cannot be run until this is answered**, because today it would fail against a design doing exactly what it says | decision | [open-questions](open-questions.md#decision-owed---should-a-reaction-to-your-own-message-notify-when-every-other-reaction-must-not) |
@@ -356,6 +360,34 @@ all. Step 2 below is unchanged and still owed.
 **Where the evidence is.** Board cell CORRUPT-2 on [cross-client-testing](cross-client-testing.md);
 the runner and its reasoning in `tools/cross-client-harness/archive/corrupt2.mjs`; the parallel fix
 and its five tests in `frontend/src/lib/utils/deviceKeyVault.ts` and its test file.
+
+---
+
+## P2 - about 121 logins a week fail at CAS and NOTHING reports it, measured 2026-09-08
+
+**Substance, and the only copy.** 71 empty returns in 96 h is **~18 a day, ~121 a week**, every one
+of them a student who could not log in. The whole population was found by hand, in
+`docker logs miconnect-server-1`, because a user brought a phone that looped
+([authentik](infrastructure/authentik.md#cas-returns-nothing-on-21-of-logins-and-our-login-page-turned-that-into-a-livelock---2026-09-08)).
+**A correct mechanism with no report is found by hand, a day late** - and the fix of 2026-09-08 makes
+this *worse* in one specific way: the loop was the only symptom anybody could see. A failure now
+stops quietly on a page, so nothing at all points at the 121.
+
+**And an Authentik Notification Rule cannot see them.** `handle_login_failure` writes a Django
+message and a log line; it creates **no Authentik Event**, so there is no `event_matcher` to bind a
+rule to. The counter has to come from outside, over the container log, which means it belongs with
+whatever ends up watching production - the uptime probe row in the table above is the natural place,
+since both are "something outside the box has to look".
+
+**What it must count, and what it must NOT.** The population is a `GET` on
+`/source/oauth/callback/cas-emse/` with an EMPTY query string; a return carrying
+`?error=access_denied` is a user cancelling and is not this. The rate is the number worth alerting
+on (21% now), never the absolute count, because the denominator is a live population and moves with
+the hour of the day. A single empty return proves nothing and must not page anybody.
+
+**Blocked on nothing.** It needs a decision about where the counter lives, not hardware.
+
+---
 
 ## Notifications - the two builders, and the rung of the campaign that reads them as one
 
@@ -5388,6 +5420,52 @@ so easy to reproduce before it.
 **And a device cannot fail to hold the private key of a package it minted seconds earlier**, so
 `keyPackageHasPrivate` is answering `false` about this device's own fresh mints: a broken seam
 between minting and asking, real and reproducible on a clean estate.
+
+**A CANDIDATE CAUSE, FOUND BY READING ON 2026-09-06, AND IT IS AN ORDERING DEFECT RATHER THAN A KEY
+DEFECT.** Three MLS engines share one `mls.bin` on Android - foreground Tauri, FCM JNI, Worker JNI -
+and each does *load, modify, write*. **Only the WRITE is protected.** `background_write_mls_bin`
+takes `mls_bin_write_lock` and tests `foreground_is_active()`; the load-modify-write cycle around it
+is not a unit, so nothing detects that the file changed between an engine's load and its write.
+
+And that test is a CLOCK. `FOREGROUND_GRACE_MS` is 30 s, refreshed by a 10 s JS heartbeat which -
+by its own comment - "auto-pauses on hidden". Meanwhile `sauvegarder_mls_et_persister`
+(`commands/mls.rs`) runs in this order:
+
+1. lock the manager;
+2. `save_encrypted_with_key(...)` - **the expensive half, measured at 48 s on the Mi 9T**;
+3. `write_mls_state_blob(...)` - which is the first thing that refreshes the guard.
+
+So on backgrounding the heartbeat stops, the guard lapses 30 s later, and step 2 keeps running for
+another ~18 s. **In that window a background engine reads `foreground_is_active() == false` and
+writes a blob it loaded before the mint.** The window is a function of the checkpoint's cost, which
+is why the defect tracks the slow checkpoint (48 s) and never appeared on the fast one (6.9 s) - at
+6.9 s it does not open at all.
+
+The sequence that produces the observed numbers exactly:
+
+| | |
+| --- | --- |
+| 1 | foreground mints 50 prekeys and publishes them |
+| 2 | app backgrounded; heartbeat paused, guard lapses at 30 s |
+| 3 | FCM arrives: the background engine loads the PRE-MINT `mls.bin`, works, writes it back - the 50 are gone from disk |
+| 4 | app foregrounded: `reloadStateFromDisk()` replaces the warm engine with that state |
+| 5 | reconciliation asks "do I hold the private key?" - **false, fifty times** - and purges all 50 |
+
+That is `count=50 / deleted=50`, and it explains why the device cannot back packages it demonstrably
+minted: the SESSION minted them, the STORAGE no longer has them.
+
+**THE FIX IS NOT A LONGER GRACE.** A deadline that must outlast an operation whose cost is unbounded
+is the clock this repository's own rule forbids as load-bearing. The durable-state form is a
+**compare-and-swap on the file**: an engine remembers the fingerprint of the blob it loaded and,
+under the write lock, refuses to write when the on-disk blob is no longer that one. A lost update
+becomes a detected conflict, the losing engine's work is retried against the current state, and the
+30 s stop being load-bearing - they may stay as an optimisation that avoids wasted work, which is
+what a clock is allowed to be.
+
+**THIS IS READ, NOT MEASURED.** The window is provable from the source and the ordering is wrong on
+its face, so the CAS is worth doing whether or not it is the whole cause. What would settle it is
+one capture pairing the `state composition` line at `load_or_create` with the guard's own refusals
+across a background/foreground cycle - if the KeyPackage count falls across step 3, the chain holds.
 
 **What each round costs.** ~50 bundles x 1 936 bytes = ~97 kB written into a state that nothing
 prunes below 84 days. Measured across one day on this handset:

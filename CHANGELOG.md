@@ -616,6 +616,49 @@ published packages are unrecognisable to the reloaded manager** - the `purged 50
 on a desktop. The byte-identity candidate for the same defect is refuted in the same pass: the
 delivery service stores and returns the published base64 verbatim, so the round trip cannot change a
 byte.
+### Fixed
+
+- **Red triangles flashed between login screens on miconnect.** Confirmed by decoding a Firefox
+  profiler capture's screenshot markers: navigating from one flow to the next
+  (`default-invalidation-flow` -> `miconnect-auth`) reloads the document while its JS chunks are
+  still loading, and for one frame up to four `pf-c-alert__icon` exclamation-triangle icons
+  (Authentik's danger alert) rendered at their unstyled intrinsic size - each roughly a third of
+  the card's height - before the stylesheet that normally sizes them applied. `custom-login.css`
+  now bounds that icon to a normal size unconditionally, removing the race rather than hiding it:
+  a genuine, persisting alert still renders, at its correct size.
+### Fixed - a failed login re-entered the source that had just failed, so 21% of CAS returns became an infinite loop with the error never readable
+
+Reported from a phone that could not log in at all - *"ca boucle sur authentik"* - and the account
+(`robin.berthod`, 2026-09-08) never reached Canari once: zero `/auth/callback` in production's nginx
+log.
+
+**The cause is upstream, at `cas.emse.fr`.** Over the 96 h to 2026-09-08, **71 of 337** returns to
+`/source/oauth/callback/cas-emse/` carried **no query string at all** - no `code`, no `state`, no
+`error`, which RFC 6749 4.1.2.1 forbids. Authentik always sends `state`, CAS preserves it on the
+first hop, every successful return carries both, and 26 distinct IPs are affected, mobile-dominated,
+with a retry usually succeeding. **That is the DSI's to fix and the message is written**
+([authentik](docs/wiki/infrastructure/authentik.md#what-the-dsi-has-to-be-told---still-owed)).
+
+**What was ours is the loop it became.** Authentik's `handle_login_failure` redirects to the literal
+`settings.LOGIN_URL`, which resolves to the **BRAND's** authentication flow - not the provider's -
+and that was `miconnect-auth`, the app's own flow, whose identification stage carries one source and
+no user fields: the exact condition on which the shipped bundle enters that source immediately. Each
+failure therefore re-created its own precondition. **A livelock, and the second one this month.**
+
+**The error message was never missing.** It is injected into the flow page as `Authentication
+failed: State check failed.` and rendered as a red toast - but **a page that auto-redirects cannot
+show anyone an error**, so it left before the toast could be read, every five seconds. That is why
+the user saw a silent loop rather than a failure.
+
+The fix gives the failure somewhere else to land: the brand now points at `miconnect-auth-fallback`,
+one Deny stage that renders and stops, in French, with the toast underneath. Every provider pins
+`miconnect-auth` explicitly, so the app's one-tap path is byte-identical - proved before and after
+with the same deterministic probe, a callback with no query string being exactly what CAS sends, so
+the whole chain reproduces from a workstation with no phone and no CAS account. **A first attempt
+used a second source to break the auto-redirect condition instead, and was wrong**: the Alumni
+provider is not wired up yet, so it offered a button leading nowhere. `Canari Dev` was also the one
+provider of seven pinning no flow at all - a third field differing on that provider after the two
+fixed on 2026-09-07 - which is why dev logins met a username/password form instead of CAS.
 
 ### Fixed - a device whose notification permission is denied narrated three log lines per message, and one of them was false
 
@@ -1331,6 +1374,34 @@ told their correct PIN was wrong, account-wide.
   rate. A real group came to ~490 kB, carried in `Tree` (accumulated member leaves) and
   `MessageSecrets` (per-sender ratchet history) - not in epochs, which a companion measurement shows
   plateau at 17 kB after 81 of them.
+- **A background engine could delete fifty private keys the foreground had just minted, because the
+  guard meant to stop it is a clock and the operation it guards outlives it.** Three MLS engines
+  share one `mls.bin` on Android and each does *load, modify, write*; only the WRITE is protected,
+  by `foreground_is_active()`, a 30-second deadline refreshed by a 10-second JS heartbeat that - by
+  its own comment - pauses on `hidden`.
+
+  `sauvegarder_mls_et_persister` locks the manager, spends `save_encrypted_with_key` serialising and
+  encrypting the state, and only then calls `write_mls_state_blob`, which is the first thing to
+  refresh that deadline. **The serialise cost 48 s on a Mi 9T with an 8 MB blob.** Background the app
+  during one and the guard lapses 30 s in, leaving ~18 s in which a background engine sees no
+  foreground, and writes back the blob it loaded before the mint. The window is a function of the
+  checkpoint's cost, which is why the symptom tracked the slow checkpoint and was absent on a 6.9 s
+  one.
+
+  `ForegroundCritical` is an RAII marker held across the WHOLE of a checkpoint - and, on the mint
+  path, from before `generate_key_packages` rather than from before the write, because the bundles
+  exist in that engine's storage from the mint onwards and are durable only after the write.
+  `foreground_is_active()` is now *an operation is in flight* OR *the deadline holds*: a proof
+  first, a prediction second. It does not reintroduce the stuck-true the deadline was chosen to
+  avoid - `Drop` runs on return, on `?` and on unwind, and the only residue is a checkpoint that
+  never finishes, which holds the manager mutex and has already killed the foreground.
+
+  Four tests in `concurrency.rs`, and the load-bearing three FAIL with the in-flight term removed.
+  This is read from the source rather than caught in the act: the ordering is wrong on its face and
+  the window is provable, but whether it is the whole of the fifty-prekey purge is not yet measured
+  ([backlog](docs/wiki/backlog.md)). The architectural end of it - a compare-and-swap so no writer
+  can overwrite a blob that changed since it loaded, retiring the deadline as load-bearing - is
+  written up there and not done.
 
 ## [0.16.4] - 2026-09-06
 

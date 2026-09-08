@@ -6,7 +6,7 @@
 //! participate and never reloaded `mls.bin`. Result: a background advance
 //! (Welcome/send/worker) was overwritten on foreground return (lost-update -> SecretReuse).
 
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use tauri::Manager;
 
@@ -49,11 +49,58 @@ pub(crate) fn mark_foreground_inactive() {
     foreground_active_until().store(0, Ordering::SeqCst);
 }
 
-/// True while the foreground guard has not expired (the background must then refrain from writing).
+/// Number of foreground operations currently holding state a background write would clobber.
+///
+/// THE DEADLINE ABOVE CANNOT ANSWER THIS AND IT WAS ASKED TO. `sauvegarder_mls_et_persister` locks
+/// the manager, spends `save_encrypted_with_key` serialising and encrypting the whole state, and
+/// only THEN calls `write_mls_state_blob`, which is the first thing that refreshes the deadline.
+/// That middle step cost **48 s** on a Mi 9T with an 8 MB blob. The JS heartbeat that keeps the
+/// deadline fresh auto-pauses on `hidden`, so backgrounding the app during a checkpoint lets the
+/// guard lapse 30 s in while the checkpoint still has ~18 s to run - and a background engine that
+/// loaded `mls.bin` before the checkpoint began is then free to write it back, losing everything
+/// the foreground had just done. The window is a function of the checkpoint's cost, which is why
+/// the symptom followed the slow checkpoint and never appeared on a 6.9 s one.
+///
+/// So this is a PROOF rather than a prediction: non-zero exactly while such an operation runs,
+/// whatever it costs, and no margin to choose. See `docs/wiki/backlog.md` for the measurement and
+/// for the compare-and-swap that would let the deadline stop being load-bearing altogether.
+fn foreground_critical_depth() -> &'static AtomicUsize {
+    static DEPTH: AtomicUsize = AtomicUsize::new(0);
+    &DEPTH
+}
+
+/// RAII marker for a foreground operation that must not be clobbered - see
+/// [`foreground_critical_depth`]. Held across the WHOLE of a checkpoint, not just its write.
+///
+/// **WHY THIS DOES NOT REINTRODUCE THE STUCK-TRUE THE DEADLINE WAS CHOSEN TO AVOID.** The original
+/// comment is right that a guard which can latch permanently kills background delivery
+/// (FCM1/FCM2). `Drop` releases on every exit an unwinding runtime has: normal return, `?`, and
+/// panic. What remains is a checkpoint that never finishes at all - and that one also holds the
+/// manager mutex, so the foreground engine is already dead and no background write could be
+/// reconciled with it anyway.
+pub(crate) struct ForegroundCritical;
+
+impl ForegroundCritical {
+    /// Enters the critical section. Nests: several foreground writers may hold one at once.
+    pub(crate) fn enter() -> Self {
+        foreground_critical_depth().fetch_add(1, Ordering::SeqCst);
+        Self
+    }
+}
+
+impl Drop for ForegroundCritical {
+    fn drop(&mut self) {
+        foreground_critical_depth().fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// True while the foreground guard holds (the background must then refrain from writing): either a
+/// foreground operation is IN FLIGHT, or the heartbeat deadline has not expired.
 /// Mobile only: that is where the background writers (`background_write_mls_bin`) live.
 #[cfg(any(target_os = "android", target_os = "ios", test))]
 pub(crate) fn foreground_is_active() -> bool {
-    now_ms() < foreground_active_until().load(Ordering::SeqCst)
+    foreground_critical_depth().load(Ordering::SeqCst) > 0
+        || now_ms() < foreground_active_until().load(Ordering::SeqCst)
 }
 
 /// Writes `mls.bin` from the background under the global lock, UNLESS the foreground is active (in
@@ -92,4 +139,100 @@ pub(crate) fn write_mls_state_blob(app: &tauri::AppHandle, data: &[u8]) -> Resul
         .lock()
         .map_err(|_| "mls_bin write lock poisoned".to_string())?;
     write_mls_bin_atomically(&data_dir.join("mls.bin"), data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The guards under test are PROCESS-global, so these tests cannot run beside each other or
+    /// beside anything else touching them - `cargo test` threads one process.
+    fn serialise() -> std::sync::MutexGuard<'static, ()> {
+        static M: Mutex<()> = Mutex::new(());
+        M.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The defect this file was changed for: the deadline has lapsed (the app is backgrounded and
+    /// the heartbeat stopped) while the checkpoint it was supposed to cover is still running.
+    #[test]
+    fn a_lapsed_deadline_does_not_free_the_background_while_a_checkpoint_runs() {
+        let _s = serialise();
+        mark_foreground_inactive();
+        assert!(
+            !foreground_is_active(),
+            "precondition: the deadline has lapsed"
+        );
+
+        let checkpoint = ForegroundCritical::enter();
+        assert!(
+            foreground_is_active(),
+            "a checkpoint in flight must hold the guard even with no deadline left - this is the \
+             48 s window that lost fifty freshly minted key packages"
+        );
+
+        drop(checkpoint);
+        assert!(
+            !foreground_is_active(),
+            "and it must release, or background delivery dies"
+        );
+    }
+
+    /// Several foreground writers may checkpoint at once; the last one out releases.
+    #[test]
+    fn the_guard_nests() {
+        let _s = serialise();
+        mark_foreground_inactive();
+
+        let outer = ForegroundCritical::enter();
+        let inner = ForegroundCritical::enter();
+        drop(inner);
+        assert!(
+            foreground_is_active(),
+            "the outer checkpoint is still running"
+        );
+        drop(outer);
+        assert!(!foreground_is_active());
+    }
+
+    /// The stuck-true the deadline was chosen to avoid: a checkpoint that dies must not latch the
+    /// guard on for ever.
+    #[test]
+    fn a_panicking_checkpoint_still_releases_the_guard() {
+        let _s = serialise();
+        mark_foreground_inactive();
+
+        let panicked = std::panic::catch_unwind(|| {
+            let _c = ForegroundCritical::enter();
+            panic!("checkpoint exploded");
+        });
+        assert!(panicked.is_err());
+        assert!(
+            !foreground_is_active(),
+            "Drop runs while unwinding, so a dead checkpoint cannot strand background delivery"
+        );
+    }
+
+    /// The end the guard exists for, asserted through the writer rather than the predicate.
+    #[test]
+    fn a_background_write_is_refused_while_a_checkpoint_runs() {
+        let _s = serialise();
+        mark_foreground_inactive();
+
+        let path = std::env::temp_dir().join(format!("canari-cas-{}.bin", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+
+        let checkpoint = ForegroundCritical::enter();
+        let refused = background_write_mls_bin(&path, b"background state");
+        assert!(
+            refused.is_err(),
+            "the background must give up, not overwrite"
+        );
+        assert!(!path.exists(), "and it must not have written anything");
+
+        drop(checkpoint);
+        background_write_mls_bin(&path, b"background state")
+            .expect("allowed once the checkpoint ends");
+        assert_eq!(std::fs::read(&path).unwrap(), b"background state");
+        let _ = std::fs::remove_file(&path);
+    }
 }
