@@ -114,7 +114,7 @@ function unlock(port = PORTS.A1) {
 // right conversation was sitting in it. So: wait on the sender's name, then RECORD whether the
 // marker is in it.
 const PEER = PEER_NAME;
-const awaitShade = (timeoutMs) => phone.awaitNotification(PEER, timeoutMs);
+const awaitShade = (timeoutMs, sinceMs) => phone.awaitNotification(PEER, timeoutMs, sinceMs);
 
 const out = { mode };
 
@@ -210,11 +210,25 @@ if (out.foregroundedBefore) throw new Error('the app is still in the foreground;
 
 // ── send, and wait for the shade ─────────────────────────────────────────────
 const marker = mark('NOTIF7');
-stage(`sending ${marker}`);
+// THE FLOOR, TAKEN ON THE PHONE'S OWN CLOCK AND AFTER THE LINK RENEWAL. `requireFreshFcmLink`
+// forces Play services onto a new connection, and doing so DELIVERS THE BACKLOG - the sends carry
+// `ttl: 24h`, and that is the documented reason the renewal repairs a dead link at all. So the
+// renewal drops old pushes into the shade seconds before this row reads it. On 2026-09-08 that made
+// NOTIF-7b tap NOTIF-17b's group-add notification 132 ms after sending - a push cannot arrive in
+// 132 ms - and record a FAIL about a conversation it had never sent to. Waiting for "a notification
+// mentioning the peer" cannot tell the two apart; waiting for one UPDATED after this instant can.
+const sentFrom = phone.deviceNowMs();
+stage(`sending ${marker} (shade floor ${sentFrom})`);
 await send(w2, `${marker} deep link (${mode})`);
-out.shadeInMs = await awaitShade(120_000);
+out.shadeInMs = await awaitShade(120_000, sentFrom);
 const ours = phone.notifications().filter((n) => n.full.includes(PEER));
 out.shade = ours.map((n) => `${n.title} | ${n.body}`.slice(0, 160));
+// What the tap will be aiming at, kept apart from what merely EXISTS: a backlog item for this same
+// peer can sit in the shade beside ours, and the tap matches on TEXT in a UI dump, where a floor
+// cannot follow it.
+const fresh = ours.filter((n) => n.updatedAt >= sentFrom);
+out.freshInShade = fresh.length;
+out.staleInShade = ours.length - fresh.length;
 // The SECOND observation, recorded next to the verdict rather than gating it: did the background
 // path decrypt, or did it post the generic fallback? NOTIF-1's expectation is real content.
 out.decrypted = ours.some((n) => n.full.includes(marker));
@@ -231,6 +245,17 @@ if (out.shadeInMs === null) {
 }
 
 // ── the tap ──────────────────────────────────────────────────────────────────
+// AN AMBIGUOUS TAP IS AN INSTRUMENT FAULT, NOT A VERDICT. With the marker in the body the needle
+// names exactly one row. Without it the needle is the peer's name, which a stale backlog item
+// carries just as well - so if one is present the row REFUSES rather than tapping a coin-flip and
+// reporting whatever it lands on as the product's answer.
+if (!out.decrypted && out.staleInShade > 0) {
+  out.why =
+    `the shade holds ${out.staleInShade} notification(s) for this peer from before this send and ` +
+    'this one is not decrypted, so no text needle names ours - the tap would be a coin flip';
+  stage(`SETUP-FAILED: ${out.why}`);
+  await finishObserved(ROW, 'SETUP-FAILED', out, { W2: w });
+}
 stage('expanding the shade and tapping the notification');
 out.tap = tapNotification(out.decrypted ? marker : PEER);
 stage(`tap -> ${JSON.stringify(out.tap)}`);

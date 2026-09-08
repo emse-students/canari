@@ -2633,6 +2633,62 @@ That is the measurement the row can actually support. **A rate, an interval or a
 HEAL-NEW log is a statement about ONE document or it is a statement about the harness** - the runner
 navigates the client by design, and every in-memory guard in the app is reset each time it does.
 
+## THE PRECONDITION THAT REPAIRS THE LINK ALSO REFILLS THE SHADE, AND A ROW READ IT AS ITS OWN
+
+**NOTIF-7b recorded `FAIL` on 2026-09-08 against a notification it had never sent** - the tell was
+in its own stage line and nobody had a reason to look at it:
+
+```
+[76.910s] FCM link renewed in 4316ms
+[106.856s] sending NOTIF7-mtsk277r5z2
+[107.306s] shade in 132 ms, decrypted=false; ["N17B-mtshovlkrcc | Canari Test Beta a ajoute ..."]
+```
+
+**132 ms is not a push.** What was in the shade was NOTIF-17b's group-add notification, from a row
+that had finished hours earlier, and the row tapped it, followed it nowhere, and wrote `FAIL` about
+the deep link.
+
+**AND THE CAUSE IS A PRECONDITION DOING EXACTLY WHAT IT IS FOR.** `requireFreshFcmLink` forces Play
+services onto a new connection because that is what revives a dead link - and the reason it revives
+it is that the backlog is then DELIVERED, the sends carrying `ttl: 24h`. That is written down in
+`fcmlink.mjs` as the finding that justified the whole file. So every push row now begins by dropping
+up to a day of old pushes into the shade, seconds before it reads it. The gate that made four
+verdicts believable is the gate that made this one false.
+
+**A ROW MUST WAIT FOR ITS OWN NOTIFICATION, AND THE INSTANT IT SENT IS A FACT IT ALREADY HAS.**
+`awaitNotification` takes a `sinceMs` floor read from `phone.deviceNowMs()` - the DEVICE's clock,
+because the two are minutes apart on this bench and a floor on the wrong one accepts everything or
+nothing. The record's `mUpdateTimeMs` is what it is compared against, not `when`: a stable-id repost
+UPDATES the record in place, so `when` can still name the first message of a conversation while the
+shade is showing the newest.
+
+**AND WHERE THE FLOOR CANNOT FOLLOW, THE ROW REFUSES.** The tap matches TEXT in a UI dump, so it
+cannot be given a timestamp. With the marker in the body the needle names exactly one row; without
+it the needle is the peer's name, which a backlog item carries just as well - so a row that finds a
+stale notification for its own peer and no decrypted body records `SETUP-FAILED` naming the
+ambiguity instead of tapping a coin flip and reporting where it landed.
+
+## THE LAST NOTIFICATION IN THE DUMP WAS THE REST OF THE DUMP
+
+Found while fixing the above, and it had been true of every notification row ever taken here.
+`phone.notifications()` split `dumpsys notification` on `NotificationRecord(` - and `dumpsys` prints
+the live list first, then ~900 lines of unrelated state: every package's preferences, every channel
+the phone has ever been told about, listener stats, Zen rules. The final block therefore contained
+all of it. Measured on 2026-09-08: two records, the last one **905 lines long, naming
+`fr.emse.canari` twice with nothing of ours in the shade at all.**
+
+Every row here matches on `full`, so a needle occurring anywhere in that tail read as a notification
+that was posted. `undecryptedInShade` could count a phantom; a channel assertion could read a
+`channel=` belonging to another app's record. The list is now bounded by INDENT, which is what the
+dump encodes - `  Notification List:` introduces it, records sit at four spaces, and the section
+ends at the next two-space key - and a dump without that header THROWS, because silently parsing
+the whole file is the defect wearing a fallback's clothes.
+
+**The general shape, and it is the second time this campaign has met it**: a parser given a
+delimiter and no TERMINATOR does not fail, it over-reads. What it returns is a superset that
+satisfies every `includes` a caller can write, so it produces PASSES, which is the direction nobody
+audits.
+
 ## Where a result goes
 
 - **PASS** -> one row in the [dashboard](cross-client-testing.md), with the build it ran against.
