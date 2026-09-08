@@ -11,6 +11,19 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a commit pushed onto an armed pull request was dropped, and every signal said it had landed
+
+PR #438 was opened with two commits; a third was committed and pushed while CI was still running. The
+squash took two. `git push` exited 0, `gh pr view` said `MERGED`, and nothing anywhere said a commit
+had gone missing - it surfaced only because the merged file was grepped on `main` afterwards. The
+branch is deleted by the merge, so the commit was then reachable only from `refs/pull/438/head` or
+from a local object store that had not been gc'd; `git cherry-pick` recovered it.
+
+This is the orphaning `rows.mjs` already reports for device verdicts, arriving from the other
+direction: there a verdict names a commit the squash unreached, here the commit itself never arrives.
+Work that is not in a pull request when it is opened belongs in the NEXT one, and a push onto an
+armed PR is verified by reading the merged file, never by the push's exit code.
+
 ### Fixed - the first `SETUP-FAILED` this row ever recorded could not say which precondition failed
 
 `record()` in `notif.mjs` takes an EXPLICIT projection, and its own comment already carries the scar:
