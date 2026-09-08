@@ -496,7 +496,7 @@ question unaskable and the row records `INCONCLUSIVE` naming that precondition, 
 | CORRUPT-1 | Truncate the MLS store - explicit failure and recovery, never a silent empty history | `+snapshot` | `pending` |
 | CORRUPT-2 | Flip one byte inside the ciphertext | `+snapshot` | `pending` - the AEAD tag must fail |
 | CORRUPT-3 | Web vault blob replaced with valid base64 of garbage | `+snapshot` | `pending` - must surface, not hang |
-| CORRUPT-4 | Zero-length MLS state | `+snapshot` | `pending` - treated as absent, clean re-enrolment |
+| CORRUPT-4 | Zero-length MLS state | `+snapshot` | `pending` - treated as absent, clean re-enrolment. **The defect this row was written to find was found on 2026-09-08 by reading, and fixed**: `loadMlsState` guarded `length > 0` on the native path and tested truthiness on the web one, where an empty `Uint8Array` is truthy - so zero bytes meant *absent* on the phone and *present and empty* on the web, which armed `noFreshStart` against itself and left the login with no path back (`CHANGELOG.md`). Pinned by a unit test written FAILING first. **The row stays `pending`**: a unit test measures the unit, and what this row claims is that a damaged device re-enrols end to end. It has no runner - the CORRUPT phase is `scripts: []` - and `mlsdb.mjs` has snapshot/restore/digest but no damage primitive, which is the piece of work |
 | CORRUPT-5 | A store written by an older format version - keep a copy from before every format change | `+snapshot` | `pending` |
 | CORRUPT-6 | A key vault entry damaged - recover or fail loudly, never a decrypt loop | `+push` `+snapshot` | `pending` |
 | CORRUPT-7 | Drop an object store from the web message store mid-session | `+snapshot` | `pending` |

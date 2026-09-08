@@ -11,6 +11,32 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a web device whose MLS state had been written short could not log in at all, where the same damage on the phone re-enrols cleanly
+
+`loadMlsState` answers one question - is there a stored state - and it was answering it twice, with
+two different rules. The native branch guarded `res.length > 0` and returned `null` for nothing; the
+IndexedDB branch resolved `req.result ?? null` and then tested the result for truthiness, and an
+empty `Uint8Array` is truthy. So zero stored bytes meant *absent* on the phone and *a state that
+exists and is empty* on the web.
+
+**What made it more than an inconsistency is the guard on the other side.** `sessionAuth` passes
+`noFreshStart: !!bytes`, whose entire purpose is to stop a device that HAS history from silently
+starting over - the case where a PIN was rotated elsewhere and the local state is still sealed under
+the old one. An empty state armed that guard against itself: `init` is handed zero bytes and
+forbidden to start fresh, the rejection is not `MLS_LOCAL_STATE_UNDECRYPTABLE`, so it is rethrown
+raw and the login ends with no path back. A state can be written short by an interrupted flush, a
+full disk or a quota refusal - which is CORRUPT-10's subject on the campaign board.
+
+One predicate now decides it, applied at all three returns including the localStorage migration, so
+the next backend inherits the rule instead of restating it. This is the same shape as the reload
+guard fixed earlier in this release: *a rule that lives at one call site is a rule the next caller
+will not inherit*.
+
+It also answers CORRUPT-4 - *zero-length MLS state, treated as absent, clean re-enrolment* - which
+has been `pending` on the board since the phase was designed, and which has no runner. The unit is
+pinned by a test that was written failing first; the end-to-end row is still owed.
+
+
 ### Added - the campaign tool now detects an intermittent row, which it had described and never checked for eleven days
 
 ```rows.mjs``` graded every row on its newest verdict. That is right when a row's answer is a fact about
