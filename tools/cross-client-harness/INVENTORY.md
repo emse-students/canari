@@ -91,7 +91,7 @@ A gesture other rows REST ON, measured by a row of its own so a failure in it is
 
 One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`. See [`archive/README.md`](archive/README.md).
 
-68 scripts.
+69 scripts.
 
 | script | what it is |
 |---|---|
@@ -122,6 +122,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 | `archive/corrupt1.mjs` | CORRUPT-1 - a SHORTENED MLS store: explicit failure and RECOVERY, never a silent empty history. |
 | `archive/corrupt2.mjs` | CORRUPT-2 - ONE byte flipped INSIDE the ciphertext: the AEAD tag must fail, and the app must say so. |
 | `archive/corrupt4.mjs` | CORRUPT-4 - a ZERO-LENGTH MLS state must read as ABSENT, and the device must re-enrol cleanly. |
+| `archive/corrupt6.mjs` | CORRUPT-6 - a DAMAGED device-key vault: recover or fail loudly, never a decrypt loop. |
 | `archive/del.mjs` | DEL-2..10 - deleting a conversation while something else is still happening to it. |
 | `archive/del1.mjs` | DEL-1 - the peer deletes a group while the other side is awaiting its history. |
 | `archive/fwd.mjs` | FWD-1 / FWD-2 - the WP-FWD-1 reproduction attempt, channel -> DM. |
@@ -247,4 +248,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-186 scripts in total.
+187 scripts in total.

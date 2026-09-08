@@ -331,7 +331,7 @@ export const PHASES = {
   // `--to N` are two different questions), and -2 has `flip`; -9 and -10 need A1.
   CORRUPT: {
     title: "deliberate store damage",
-    scripts: ["corrupt.mjs", "corrupt1.mjs", "corrupt2.mjs", "corrupt4.mjs"],
+    scripts: ["corrupt.mjs", "corrupt1.mjs", "corrupt2.mjs", "corrupt4.mjs", "corrupt6.mjs"],
     needs: ["W1", "W2"],
   },
   // ONE OF TEN, AND IT WAS WRITTEN BEFORE THIS MANIFEST EXISTED. `del1.mjs` covers DEL-1
