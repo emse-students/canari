@@ -2689,6 +2689,54 @@ delimiter and no TERMINATOR does not fail, it over-reads. What it returns is a s
 satisfies every `includes` a caller can write, so it produces PASSES, which is the direction nobody
 audits.
 
+## THREE PROVENANCE REPORTS COULD NOT FIRE, AND THEIR SILENCE READ AS A CLEAN BILL
+
+`rows.mjs` reduces the ledger to one entry per row, and that reduction is an EXPLICIT PROJECTION -
+it names the fields it copies. Its own comment, written when `instrumentSha` was forgotten, says
+what happens when a field is left out: *"the report said 'predates instrumentSha' about verdicts
+recorded minutes earlier. A projection that names its fields is right; one that names all but the
+newest is a silent zero."*
+
+The warning was right and nobody applied it to the next three. `a1Build`, `a1BuildDirty` and
+`a1BuildUnstamped` were never in the projection, so all three reports that read them printed
+nothing - on a ledger holding **54 stamped verdicts**, several dirty ones, and thirty taken with no
+stamp at all. One of the three had been added that same morning and was believed to be working
+because it was silent.
+
+With the fields copied:
+
+| report | what it had been saying | what it says |
+| --- | --- | --- |
+| measured a phone, no `a1Build` | nothing | **30 verdicts** |
+| built from a DIRTY tree | nothing | 0 among the newest - correctly silent, and now provably so |
+| names an unreachable commit | did not exist | **38 verdicts** |
+
+**A REPORT THAT CANNOT FIRE IS WORSE THAN NO REPORT**, because a missing report is a known gap and
+a silent one is read as an all-clear. The general shape: a projection is a place where a field goes
+missing WITHOUT a compiler noticing, and every consumer downstream then reads `undefined` as
+"false" - which for a provenance flag is the reassuring answer.
+
+## AND THE SQUASH MERGE ORPHANS EVERY DEVICE VERDICT IT EVER TAKES
+
+`a1Build` is a BRANCH commit by construction. The fix loop is write, build, measure, commit - the
+measuring happens before the pull request exists, let alone merges. GitHub then SQUASHES that pull
+request and deletes the branch, so the commit a verdict names stops being reachable from `main`. It
+survives in the clone that made it, and in `refs/pull/<n>/head` on the remote. **It exists nowhere a
+fresh clone can see.**
+
+Measured 2026-09-08: **9 of 13 distinct `a1Build` values, covering 38 verdicts, were already
+orphaned** - including the two taken that morning, whose whole point had been that their commit
+described their APK exactly. It did, for about ninety minutes.
+
+`rows.mjs` reports it and cannot repair it: the durable name for that code is the PULL REQUEST, and
+the harness does not know the number at build time. What it can do is refuse to print a commit as
+though a reader could resolve it, and say how to get it back -
+`gh api repos/:owner/:repo/commits/<sha>/pulls`, then `git fetch origin refs/pull/<n>/head`.
+
+**This does not weaken a verdict**; it weakens a READER's ability to reproduce one, which is the
+same thing a day later. The pair with the dirty-tree check is the whole picture: one says the commit
+does not describe the code, the other says the commit cannot be found.
+
 ## Where a result goes
 
 - **PASS** -> one row in the [dashboard](cross-client-testing.md), with the build it ran against.

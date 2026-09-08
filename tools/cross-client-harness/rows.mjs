@@ -34,6 +34,7 @@
  * name first, then by the part before a `/`, then - for a joint id - by each `/`-separated tail
  * pasted back onto the prefix. Anything still unmatched is a real divergence and is named as one.
  */
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -44,6 +45,8 @@ import { findScript } from './scriptpath.mjs';
 import { STATE_DIR } from './names.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+/** The repository, for the one `git` question this file asks: is a build stamp still reachable. */
+const REPO = join(HERE, '..', '..');
 const BOARD = resolve(HERE, '..', '..', 'docs', 'wiki', 'cross-client-testing.md');
 const LEDGER = join(STATE_DIR, 'results.ndjson');
 const argv = process.argv.slice(2);
@@ -338,6 +341,15 @@ for (const line of readFileSync(LEDGER, 'utf8').split('\n')) {
         // recorded minutes earlier. A projection that names its fields is right; one that names all
         // but the newest is a silent zero.
         instrumentSha: r.instrumentSha,
+        // AND THE PROVENANCE TRIO, WHICH THE WARNING ABOVE PREDICTED AND NOBODY APPLIED. Three
+        // reports below read `a1Build`, `a1BuildDirty` and `a1BuildUnstamped` off this projection,
+        // which has never carried any of them - so all three printed NOTHING, on a ledger holding
+        // 54 stamped verdicts and several dirty ones. A report that cannot fire is worse than no
+        // report: its silence is read as a clean bill. Found 2026-09-08 while adding the third.
+        a1Build: r.a1Build,
+        a1BuildDirty: r.a1BuildDirty,
+        a1BuildDiffSha: r.a1BuildDiffSha,
+        a1BuildUnstamped: r.a1BuildUnstamped,
       });
     }
     // build AND checkSha AND instrumentSha: a runner EDITED between two runs is the ordinary way a
@@ -700,6 +712,55 @@ if (dirtyBuild.length) {
       '  ' + r.padEnd(14) + String(e.verdict).padEnd(12) + String(e.a1Build ?? '?').padEnd(12) +
         'diff ' + String(e.a1BuildDiffSha ?? '?')
     );
+  }
+}
+
+// A ROW WHOSE `a1Build` NAMES A COMMIT NOBODY ELSE CAN RESOLVE.
+//
+// **THE SQUASH MERGE ORPHANS EVERY DEVICE VERDICT, AND NOTHING SAID SO.** `a1Build` is a BRANCH
+// commit by construction - the fix loop is write, build, measure, commit, and the measuring happens
+// before the pull request exists. When that pull request merges, GitHub SQUASHES it and deletes the
+// branch, so the commit the verdict names stops being reachable from `main`. It survives in this
+// clone because this clone created it, and in `refs/pull/<n>/head` on the remote. It exists nowhere
+// a fresh clone can see.
+//
+// Measured 2026-09-08: **9 of the ledger's 13 distinct `a1Build` values were already orphaned**,
+// including the two taken that morning. A reader who checks one out gets `unknown revision` and has
+// no way to tell that from a stamp this rig invented.
+//
+// This REPORTS and cannot repair: the durable name for that code is the pull request, and the
+// harness does not know the number at build time. `gh api repos/:owner/:repo/commits/<sha>/pulls`
+// answers it from the sha, which is why the sha is still worth recording - and why the branch name
+// is recorded beside it now.
+//
+// It is deliberately silent when a commit IS reachable, and it says nothing at all when `git` is
+// unavailable: a provenance check that guesses is worse than one that abstains.
+const stamped = [...new Set(rows.filter((r) => latest.has(r)).map((r) => latest.get(r).a1Build).filter(Boolean))];
+const orphanedBuilds = new Set();
+for (const sha of stamped) {
+  try {
+    execFileSync('git', ['merge-base', '--is-ancestor', sha, 'origin/main'], {
+      cwd: REPO,
+      stdio: 'ignore',
+    });
+  } catch {
+    // Unreachable, or not an object at all - both mean a reader cannot get to it from `main`.
+    orphanedBuilds.add(sha);
+  }
+}
+const orphanRows = rows.filter(
+  (r) => latest.has(r) && orphanedBuilds.has(latest.get(r).a1Build)
+);
+if (orphanRows.length) {
+  console.log(
+    `
+[rows] ${orphanRows.length} verdict(s) name a commit NOT reachable from origin/main - a squash ` +
+      `merge orphaned it. Recover the code with \`gh api repos/:owner/:repo/commits/<sha>/pulls\` ` +
+      `then \`git fetch origin refs/pull/<n>/head\`:`
+  );
+  for (const r of orphanRows) {
+    const e = latest.get(r);
+    console.log('  ' + r.padEnd(14) + String(e.verdict).padEnd(12) + String(e.a1Build));
   }
 }
 
