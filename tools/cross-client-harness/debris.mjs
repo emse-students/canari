@@ -36,6 +36,14 @@ export const GROUP_DEBRIS = [
   // would equally have spared a LIVE `GRP5-*-R` from a run that died between the rename and the
   // teardown. Enumerated from the runner; `grep -n renameGroup *.mjs` says it is the only one.
   /^GRP\d+-[0-9a-z]+(-R)?$/,
+  // `N17B-${mark('G').split('-')[1]}` (notif17b.mjs:137) - the mark's TAIL only, so the prefix here
+  // is the row's and the tail is `results.mjs`'s base-36 stamp. THE RESIDUAL RISK THE SELF-TEST
+  // NAMED, MATERIALISED: that file's header says "a NEW runner minting a new shape passes here and
+  // leaves debris on the rig", and NOTIF-17b was written after this list. Three `N17B-*` groups were
+  // alive on the local estate on 2026-09-08, spared by both sweeps, each one a group every member's
+  // client re-enters on every load. `debris-selftest.mjs` now refuses when a file calls
+  // `createGroup(` and is not enumerated there, so the next one fails a gate instead of a sweep.
+  /^N17B-[0-9a-z]+$/,
 ];
 
 /** True when `name` is a group a runner minted, and therefore a group a sweep may delete. */

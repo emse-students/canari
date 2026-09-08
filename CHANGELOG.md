@@ -11,6 +11,74 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - the sweep's allowlist named six runners and the rig had seven, so a check's groups were permanent
+
+`debris.mjs` is the one allowlist deciding what `cleanup.mjs` may delete on the server and what
+`dismiss.mjs` may purge on every client. Its rule is that it is widened *"by ENUMERATING what the
+runners mint, never by relaxing a shape"* - and `debris-selftest.mjs` had already written down what
+that rule cannot do on its own:
+
+> **WHAT IT CANNOT SEE.** It knows the call sites that existed when it was written [...] A NEW runner
+> minting a new shape passes here and leaves debris on the rig, exactly as GRP-5's rename did. That
+> is the residual risk.
+
+It came true. The enumeration was "seven sites across four runners"; by 2026-09-08 it was eleven
+sites across **seven**. `healrevoke.mjs` was covered by luck, reusing `HGRP<tail>`. `notif17b.mjs`
+mints `N17B-${mark('G').split('-')[1]}` and was covered by nothing - **three of its groups were
+alive on the local estate**, spared by both sweeps, each one a group every member's client re-enters
+on every load. The phone under test carried seven groups where it should have carried four, and
+`cleanup.mjs` reported "nothing to sweep" over all three.
+
+An instruction nothing enforces is one a hurried session skips, so the self-test now refuses when a
+file calls `createGroup(` and is not enumerated in it, naming the file and what to do - it cannot
+know what a new runner mints, and does not guess. Detection is per line and ignores comments and
+JSDoc: a whole-file `includes` accused `atoms.mjs`, which only re-exports the symbol, and
+`debris.mjs`, whose new comment names it, and a destructive gate that cries wolf gets switched off.
+Proved by mutation - a file calling `createGroup(` makes the gate fail, removing it makes it pass.
+The three groups are swept.
+
+### Fixed - a test row measured a booting app, blamed the notification layer, and filed a P1 against a socket that was working
+
+NOTIF-1b recorded `FAIL` twice on 2026-09-08 with `warmUpInMs: null`, and a P1 CANDIDATE was filed
+from its console output: *"a zombie socket in a FOREGROUNDED app"*. Three server logs existed the
+whole time and none had been opened. All of them contradict it.
+
+The gateway held the connection and wrote to it (`[Gateway] Message directly routed to
+...tauri-...`, 13:50:32.372). The delivery service queued the message for **all six** recipients
+rather than only the reachable ones, and pushed to the phone because presence said offline
+(`QUEUED count=6`, `FCM sent ... bytes=659`). The phone drained its backlog and acknowledged it -
+and this client acknowledges only rows it successfully handled. The `4 pings without server
+response` line arrives *after* the row backgrounds the app, describing a socket the client had just
+paused. The entry's own alternative was false too: it blamed `make local-frontend` for killing the
+socket "immediately before" the runs, when nginx had started thirteen minutes earlier and the
+chat-gateway - which terminates the WebSocket - had been up for four days.
+
+What the logs do show is the app still registering its device, its prekeys, its seven groups and its
+pending invitations at 13:50:45, **thirteen seconds after the warm-up was sent**. The row measured a
+booting app and blamed the notification layer, which is the exact sentence its own docblock forbids:
+*"the run says so and STOPS rather than measuring a booting app and blaming the notification
+layer."* It did not stop. Four clauses the comments individually call preconditions - "a RIG CLAUSE,
+NOT A PRODUCT ONE", "the OS is cutting it", "different findings and must not share a verdict" - went
+into the same array as the product clauses, where `unmet.length > 0` turned each into a product
+`FAIL`. Meanwhile the row's actual subject passed everything it asks: notified in 2206 ms and
+2203 ms, inside the 10 s discriminator, with the body drawn.
+
+A failed precondition now yields `SETUP-FAILED` with `notMeasured` naming it. This is deliberately
+not the existing `baselineTooSlow` rule, which still lets a genuine product failure win: a
+slow-but-arriving warm-up proves the app IS routing, so the other clauses were validly asked, while
+a warm-up that never arrives proves nothing downstream was asked at all. The same conflation was in
+`k.mjs` (NOTIF-6c), where the clause labelled "NOT a product clause" where it is pushed was graded
+`FAIL` anyway; fixed identically. And the precondition underneath it was silent - A1's `ensureChat`
+and `openConversation` were `.catch(() => null)`, so "the DM never opened" and "the DM was open and
+nothing came" produced identical runs with `clean: true`. Both are now recorded in `a1SetupFaults`,
+announced, and asserted as `theDmWasOpenOnThePhone`.
+
+One question survives and the next run answers it by construction: for the 77 seconds between the
+end of bootstrap and the deadline, the app was up and a message it had acknowledged never appeared.
+If `theDmWasOpenOnThePhone` is unmet it was the rig; if it is met with `warmUpInMs: null` it is a
+product defect with a reproduction, and the same shape as the first-contact P1 the user reported on
+production.
+
 ### Fixed - one flipped byte told the user their PIN had been changed, and then refused the PIN they had
 
 `sessionAuth` verifies the PIN SERVER-SIDE and only then opens the local MLS state, so at the moment

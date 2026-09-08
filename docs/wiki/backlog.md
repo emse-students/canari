@@ -389,68 +389,115 @@ the hour of the day. A single empty return proves nothing and must not page anyb
 
 ---
 
-### P1 CANDIDATE - a FOREGROUNDED app received nothing for 90 s while its console said the socket was up (measured twice, 2026-09-08)
+### RESOLVED 2026-09-08 - the "zombie socket" was the row grading its own precondition, and one question survives it
 
-**NOT YET A CONFIRMED PRODUCT DEFECT, AND THE ALTERNATIVE IS NAMED BELOW.** It is filed because the
-evidence is reproducible, the failure mode is silent, and the row that found it refuses rather than
-grading - so nothing else in the campaign is going to trip over it.
+**FILED AS A P1 CANDIDATE THE SAME AFTERNOON, AND EVERY LOAD-BEARING CLAIM IN IT WAS WRONG.** It is
+kept rather than deleted because the way it was wrong is the finding: three logs existed the whole
+time that would have settled it in minutes, and none of them had been opened. What follows is what
+each one said.
 
-**What NOTIF-1b measures, and why it could not.** The row proves the socket is routing BEFORE it
-hides the app, by sending a warm-up message and waiting for it in the foreground - *"a warm-up
-message, received in the FOREGROUND, is the app demonstrating that its socket is up and routing to
-this conversation"*. That warm-up is also the baseline its 10 s discriminator is only meaningful
-against. Its own comment records **2190 ms on a warm app**. Since then:
-
-| run | `warmUpInMs` | verdict |
-| --- | --- | --- |
-| the row's own comment, historical | **2 190** | the baseline it was designed around |
-| 2026-09-08 07:26, `a1Build f2748d75e` | **19 363** | `SETUP-FAILED` - discriminator ungradeable |
-| 2026-09-08 13:41, `a1Build fff05fe14` | **null (>90 000)** | `FAIL` |
-| 2026-09-08 14:0x, same build, app already warm | **null (>90 000)** | `FAIL` |
-
-Monotone, and the last two are on an APK built from a CLEAN tree at a commit that is on `main`. Both
-logs are `clean`: no `severe`, no errors, nothing unexplained. The app was attached, unlocked and
-sitting on the DM.
-
-**THE CONSOLE IS WHERE IT GETS INTERESTING.** During the 90 s window the app believed it was
-connected, and the truth surfaced only once the row backgrounded it:
+**THE SOCKET WAS NEVER A ZOMBIE. The gateway held it and wrote to it.**
 
 ```
-[15:50:31] [WS] Connected to Chat Gateway - device=tauri-f7a9bb80...
-   ... warm-up sent, 90 s, nothing arrives, log clean ...
-[15:52:07] [LIFECYCLE] App in background - connection paused.
-           [WS] 4 pings without server response - closing zombie connection
-[15:52:31] Connection lost. Retrying in 1s... (attempt 1)
+13:50:30.807  New WebSocket connection ... Device=tauri-...-mtn445lg-25sy (conn_id=2703, 1 active)
+13:50:32.372  [PubSub] route kind=mls target=...:tauri-...-mtn445lg-25sy queuedId=875958e0-...
+13:50:32.372  [Gateway] Message directly routed to ...:tauri-...-mtn445lg-25sy
 ```
 
-**A ZOMBIE SOCKET IS EXACTLY WHAT THAT DESCRIBES**: connected in the client's view, carrying nothing,
-and discovered only by a ping timeout. Four seconds after the reconnect the row's hidden message
-notified in **2 203 ms**, inside the 10 s window that can only be the JS layer - so the machinery
-was healthy the moment the socket was real.
+The delivery service agrees and goes further - it queued the message for every recipient, not only
+the reachable ones, and pushed to the one that was not:
 
-**WHY IT WOULD BE A P1 IF CONFIRMED.** A foregrounded app silently receiving nothing is the worst
-shape a messaging defect has: no error, no spinner, no empty state, and the conversation simply
-stops moving. Nothing tells the user, and the client's own recovery takes four missed pings. It is
-also the state a phone is in whenever somebody is actually reading.
+```
+[SEND][send-1f7491f4] QUEUED count=6
+[SEND][send-1f7491f4] recipient=...:tauri-...-mtn445lg-25sy online=false queuedId=9110ed23-...
+[PUSH_SEND][send-1f7491f4] FCM sent ... platform=android inlineProto=true bytes=659
+```
 
-**THE ALTERNATIVE, AND IT IS SERIOUS.** `make local-frontend` restarts the estate's containers,
-which kills every open WebSocket - and it ran immediately before the first of these two runs. A
-socket killed underneath a client is a zombie by construction, and the client noticing it late is
-then a rig artefact wearing a product's clothes. The second run did not rebuild, but it inherited
-whatever the first left behind.
+and the phone drained its backlog and acknowledged it (`[ACK] requested=2 -> deleted=2`, then
+`deleted=1`), which this client does **only for rows it successfully handled** - `BaseMlsService.ts`
+refuses to acknowledge what it could not deliver. Transport, queue, push and acknowledgement all
+worked. The `4 pings without server response` line arrives AFTER the row backgrounds the app and
+describes a socket the client itself had just paused.
 
-**THE ONE EXPERIMENT THAT SETTLES IT**, and it is cheap: one NOTIF-1b on an estate that has not been
-rebuilt for at least five minutes, with the app freshly foregrounded, reading the **gateway's own
-connection log** beside the client's - `docker logs` on the chat-gateway names the device on connect
-and on drop. If the gateway holds no connection for `tauri-f7a9bb80...` while the client prints
-`Connected to Chat Gateway`, the two disagree and the product owes a liveness check that does not
-take four pings. If the gateway holds one and delivers nothing, the defect is downstream of the
-socket. Either way it stops being a guess.
+**`make local-frontend` DID NOT RUN BEFORE THESE RUNS.** The entry asserted it "ran immediately
+before the first of these two". Measured: `canari-local-nginx-1` started `13:28:36Z`, the runs
+recorded at `13:41:17Z` and `13:52:06Z` - thirteen and twenty-three minutes later - and
+`canari-local-chat-gateway-1`, which terminates the WebSocket, had been up since **2026-09-04**. The
+alternative that made this a CANDIDATE rather than a P1 was false, and so was the P1 it was hedging.
 
-**READ IT WITH `mls.bin`, WHICH IS NOW 9.8 MB ON THIS HANDSET** (`10 237 105` bytes, measured the
-same afternoon). That is the blob a checkpoint re-encrypts and rewrites, and the prekey-churn P1
-above is what grows it. A delivery path that got monotonically slower across three runs is at least
-consistent with that, and nothing here has separated the two.
+**WHAT ACTUALLY HAPPENED: the row measured a booting app and blamed the notification layer.** Its
+own docblock forbids exactly that sentence, and the delivery service dates the boot - thirteen
+seconds AFTER the warm-up was sent, the phone was still registering:
+
+```
+13:50:32  warm-up routed to the phone, acked
+13:50:45  [REGISTER_DEVICE] isNew=false pendingGroups=7
+13:50:45  [REGISTER_PREKEYS] count=6
+13:50:45  [USER_GROUPS] groups=7
+13:50:45  [INVITATIONS PENDING] START
+```
+
+Meanwhile the row's actual subject passed every clause it has: `notifiedInMs` **2206** and **2203**,
+inside the 10 s discriminator, with the body drawn - `itCarriedTheMessageAndNotJustASenderName` was
+never unmet. Both runs were recorded `FAIL`.
+
+**THE GRADING DEFECT, FIXED.** `notif.mjs` put four preconditions into the same array as its product
+clauses, where `unmet.length > 0` made every one of them a product verdict - while the comment on
+each said the opposite ("a RIG CLAUSE, not a product one", "the OS is cutting it", "different
+findings and must not share a verdict"). A failed precondition now yields `SETUP-FAILED` with
+`notMeasured` naming it. This is deliberately NOT the `baselineTooSlow` rule, which still lets a
+product failure win: a slow-but-arriving warm-up proves the app IS routing, so the other clauses
+were validly asked; a warm-up that never arrives proves nothing downstream was asked at all. The
+same conflation was in `k.mjs` (NOTIF-6c), whose `thePreconditionWasArmed` clause is labelled "NOT a
+product clause" where it is pushed and was graded `FAIL` anyway. Fixed identically.
+
+**AND THE ROW SWALLOWED THE PRECONDITION UNDER THAT ONE.** A1's `ensureChat` and `openConversation`
+were `.catch(() => null)` - no line, no field, `clean: true` - so "the DM never opened" and "the DM
+was open and nothing came" produced identical runs. They are now recorded in `a1SetupFaults`,
+announced on the console, and asserted as `theDmWasOpenOnThePhone`.
+
+**THE ONE QUESTION THAT SURVIVES, AND IT IS NOT ANSWERED.** Bootstrap finished around `13:50:45`;
+the warm-up deadline ran to `~13:52:02`. For those **77 seconds** the app was up, and a message it
+had received and acknowledged at `13:50:32-40` never appeared. Either the DM was not open (the rig,
+now instrumented) or a message delivered during bootstrap is acked and never lands in the
+conversation (the product) - which is the shape of the PROD P1 in the next entry: *the conversation
+does not appear until the app is restarted*. **The next NOTIF-1b answers it by construction**: if
+`theDmWasOpenOnThePhone` is unmet it was the rig, and if it is met with `warmUpInMs: null` it is a
+product defect with a reproduction.
+
+**Recorded beside it, unchanged and unseparated**: `mls.bin` is **10 237 105 bytes** on this
+handset, the blob a checkpoint re-encrypts per message and the prekey-churn P1 above is what grows
+it. And `queued_message` holds **13 275 undrained rows** (12 051 web, 1 224 tauri) for dead test
+devices going back to 2026-08-05, which `cleanup.mjs` does not sweep.
+---
+
+### P3 - `cleanup.mjs` sweeps groups but not the delivery queue, and 13 275 rows have accumulated (measured 2026-09-08)
+
+```
+SELECT split_part("deviceId",'-',1) AS kind, count(*) FROM queued_message GROUP BY 1;
+ web   | 12051
+ tauri |  1224
+```
+
+Oldest row **2026-08-05**, spread over dead throwaway devices - the top six tauri device ids hold
+326, 299, 275, 126, 94 and 59 rows each. Retention is 90 days, so this expires on its own; it is
+filed because of what debris has already cost this campaign. Forty-two leftover groups made a run
+misread twice on 2026-09-06, and sweeping them turned a `FAIL` into that row's first clean `PASS`
+and PROVED a P1 - **debris does not just slow a run, it reattributes what the run measures**. A
+device re-entering a long queue on every reconnect is the same shape of cost.
+
+`cleanup.mjs` reports "nothing to sweep" against this state, which is the more precise finding: it
+answers a narrower question than its name suggests. Either it grows a clause for the queue, or its
+report says which stores it does not look at - a sweep that is silent about what it cannot see reads
+as an all-clear.
+
+**The GROUP half of this is fixed** (2026-09-08): `debris.mjs` named six runners while seven mint
+groups, so three `N17B-*` groups from NOTIF-17b were permanent - the phone under test carried seven
+groups where it should have carried four. The allowlist is widened, `debris-selftest.mjs` now
+refuses when an unenumerated file calls `createGroup(`, and the three are swept (`CHANGELOG.md`).
+What is left is the QUEUE half above, which no sweep looks at.
+
+**Blocked on nothing.** Local estate, test accounts, destroyable.
 
 ---
 
