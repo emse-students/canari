@@ -237,12 +237,12 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
 [cross-client-testing](docs/wiki/cross-client-testing.md).
 
 1. **THE BOARD IS [cross-client-testing](docs/wiki/cross-client-testing.md) AND `bun rows.mjs`
-   SETTLES IT** - what is answered, what is not `PASS`, and a COMPARISON row adjudicated on ALL its
-   halves. **No count is written here**: the two that were went stale within a day. PIN's four
-   remaining rows CHANGE a PIN or restart a browser, which is why they are last. **The HEAL-NEW rung
-   now refuses rather than passes**: a fresh device reaches every group with NOTHING online, so the
-   rows that watch a responder heal one have no window left and need a group the device cannot
-   self-serve ([backlog](docs/wiki/backlog.md)).
+   SETTLES IT** - what is answered, what is not `PASS`, a COMPARISON row on ALL its halves, and
+   since 2026-09-08 which rows answered TWO things on ONE build: **18 of those decide a cell the
+   board shows today**, so a green cell is not yet a measurement. **No count is written here**: the
+   two that were went stale within a day. PIN's four rows CHANGE a PIN or restart a browser, hence
+   last. **HEAL-NEW-11/-12/-15 passed clean 2026-09-08 and their rung redesign is STILL OPEN** - the
+   amber window returned unexplained, and one record is one draw ([backlog](docs/wiki/backlog.md)).
 2. **P1 - A DEVICE REPLACES ITS WHOLE PREKEY BATCH ON EVERY CONNECTION, AND THAT CHURN GROWS
    `mls.bin`** - P1 for the checkpoint it feeds, not because pools run dry. **Cause narrowed to ONE
    candidate 2026-09-08 and reproduced with no phone**; an accusation now names it at the reload

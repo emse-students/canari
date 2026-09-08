@@ -2535,6 +2535,17 @@ state deliberately. That is the piece of work, and it is a rung redesign rather 
 question, and never a second probe invented to rescue it`, and clicking a healed sidebar to report a
 number would be exactly that.
 
+**THE WINDOW CAME BACK ON 2026-09-08, ONCE, AND NOTHING HERE EXPLAINS WHY - so this entry stands.**
+All three rows passed clean on `9cf5191cc` with `healed: true` and `watchOpenedAfterLiveMs` of
+**24.2 s** against the 122-166 s above, which is the signature of the amber-alone state arriving
+promptly instead of never: the row is no longer paying the 90 s poll it used to lose. The board cells
+are updated because a verdict is a verdict and the runs were clean and unchanged. But **one record
+is one draw** - the tool that would say otherwise now exists (`rows.mjs` reports a row that answered
+twice on one build) and it has ONE record for each of these - and a premise that returns without an
+explanation is not a premise that has been restored. Two things are owed before this closes: WHY the
+device sat amber here when it self-serves in 8 s on HEAL-NEW-1, and a re-run that shows the window is
+reliable rather than lucky. Until then the fixture described above is still the piece of work.
+
 **~~A SEPARATE AND SMALLER RIG DEFECT SAT UNDER `HEAL-NEW-2`~~ - FIXED, AND THE ROW PASSES
 (2026-09-07 19:14, `unmet: []`, 4 of 4 rows in the subset, all ready).** It was `INVALID` on `W2
 shares no group with this device's 0 row(s)`: the subset was `splitBySubset(before.tiles, ids)` with
