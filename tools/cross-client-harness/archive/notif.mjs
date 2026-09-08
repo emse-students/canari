@@ -669,6 +669,14 @@ record(`NOTIF-${which}`, gated.verdict, {
   // A verdict whose reason is not beside it is a verdict a later session re-runs to understand.
   ...(out.unmet ? { unmet: out.unmet } : {}),
   ...(out.discriminatorUngradeable ? { discriminatorUngradeable: out.discriminatorUngradeable } : {}),
+  // AND THE SAME LESSON ONE RUN LATER, WHICH IS WHY THE COMMENT ABOVE IS NOT ENOUGH. The clause list
+  // arrived here in September and these two - added the same day, on the same reasoning - did not,
+  // so the first `SETUP-FAILED` this row ever recorded carried `notMeasured: undefined` and could
+  // not say WHICH precondition had failed without the run's log. An explicit projection is a list
+  // that has to be revisited every time the record grows a field, and it will be missed again: what
+  // the verdict is computed FROM belongs here, always, and adding a clause means adding it twice.
+  ...(out.notMeasured ? { notMeasured: out.notMeasured } : {}),
+  ...(out.a1SetupFaults?.length ? { a1SetupFaults: out.a1SetupFaults } : {}),
   // AND THE BASELINE THE 10 s DISCRIMINATOR IS ONLY MEANINGFUL AGAINST - see the warm-up clause.
   ...(out.warmUpInMs === undefined ? {} : { warmUpInMs: out.warmUpInMs }),
 });

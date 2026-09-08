@@ -456,14 +456,7 @@ were `.catch(() => null)` - no line, no field, `clean: true` - so "the DM never 
 was open and nothing came" produced identical runs. They are now recorded in `a1SetupFaults`,
 announced on the console, and asserted as `theDmWasOpenOnThePhone`.
 
-**THE ONE QUESTION THAT SURVIVES, AND IT IS NOT ANSWERED.** Bootstrap finished around `13:50:45`;
-the warm-up deadline ran to `~13:52:02`. For those **77 seconds** the app was up, and a message it
-had received and acknowledged at `13:50:32-40` never appeared. Either the DM was not open (the rig,
-now instrumented) or a message delivered during bootstrap is acked and never lands in the
-conversation (the product) - which is the shape of the PROD P1 in the next entry: *the conversation
-does not appear until the app is restarted*. **The next NOTIF-1b answers it by construction**: if
-`theDmWasOpenOnThePhone` is unmet it was the rig, and if it is met with `warmUpInMs: null` it is a
-product defect with a reproduction.
+**THAT QUESTION IS ANSWERED, AND IT WAS THE RIG.** The next run said so by construction, exactly as designed: `theDmWasOpenOnThePhone` unmet, and the sentence `.catch(() => null)` had been discarding all along - *"openConversation: 2 of 5 conversation tiles match the requested name on port 9333, so the row is AMBIGUOUS and none was opened."* A group deleted seven hours earlier was still in the phone's sidebar under the PEER's name, colliding with the DM. Cleared by hand (P2 below), the row was re-run and **every product clause passed**: `unmet []`, notified in 4 231 ms with the body drawn, the app alive, hidden, networked, and holding the message. So the 77-second silence was a conversation nobody had opened, not a message that vanished - and no product defect was ever in this. **What is left is the slow baseline**: the warm-up took 19 992 ms in the FOREGROUND, past the 10 s discriminator, so the row honestly records `SETUP-FAILED` rather than inventing a verdict. That is the blob P1 above, and it is the only thing now standing between NOTIF-1b and a measurement.
 
 **Recorded beside it, unchanged and unseparated**: `mls.bin` is **10 237 105 bytes** on this
 handset, the blob a checkpoint re-encrypts per message and the prekey-churn P1 above is what grows
@@ -471,6 +464,43 @@ it. And `queued_message` holds **13 275 undrained rows** (12 051 web, 1 224 taur
 devices going back to 2026-08-05, which `cleanup.mjs` does not sweep.
 ---
 
+
+### P2 - a DELETED two-person group keeps the peer's name in the sidebar, so it is indistinguishable from the DM (measured 2026-09-08)
+
+`e615e00a-2c4d-443a-a940-2ac33303647a` is `N17B-mtsi0qrfu86`, `isGroup=t`, `deletedAt
+2026-09-08 10:02:22`. Seven hours later it was still the second row of the phone's sidebar, titled
+**"Canari Test Beta"** - the other member's name - directly above the real DM with that same person,
+titled identically:
+
+```
+2bd5add9-...  | Canari Test Beta | (the DM)
+e615e00a-...  | Canari Test Beta | N17B-mtsi1ldyydy the first thing ever sa...
+```
+
+**The row keeping its place is by design; the row losing its NAME is not.** A tombstone's local copy
+belongs to the client until it is dismissed - that split is deliberate and `dismiss.mjs` owns it. But
+the group HAS a name server-side, and the client renders the peer-name fallback instead. For a user,
+deleting a two-person group leaves two identical rows with that person's name and no way to tell
+which is the conversation.
+
+**It also disabled two instruments at once.** `openConversation` resolves a peer by TITLE and
+correctly refused - *"2 of 5 conversation tiles match the requested name on port 9333, so the row is
+AMBIGUOUS and none was opened"* - which is how NOTIF-1b lost three verdicts. And `isGroupDebris`
+matches on the group's name, so the sweep cannot recognise the row either: enumerating from the DOM
+would read "Canari Test Beta" and spare it.
+
+**Not to be confused with the sweep gap beside it.** The phone keeps no `CanariDB_<user>` in
+IndexedDB at all (origin `http://tauri.localhost` holds only `emoji-picker-element-fr`), so
+`dismiss.mjs` cannot enumerate it from any client. That is a second, independent hole, now reported
+honestly instead of as a chooser refusing.
+
+**Cleared by hand on 2026-09-08** through the product's own control - open the tile by its
+`data-conversation-tile` id rather than its title, then "Supprimer localement" - which is also the
+proof the fallback is only in the rendering: the row was reachable and deletable the whole time.
+
+**Blocked on nothing.** Local estate, test accounts, and a reproduction that takes one group.
+
+---
 ### P3 - `cleanup.mjs` sweeps groups but not the delivery queue, and 13 275 rows have accumulated (measured 2026-09-08)
 
 ```
