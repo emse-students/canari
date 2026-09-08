@@ -11,6 +11,25 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a log announced "persisted" for a write it had just swallowed the failure of
+
+Two message writes ended in `.catch(() => {})`, and one of them then printed a success line
+regardless: the Welcome re-key path awaited `saveMessages`, discarded the rejection, and announced
+`N message(s) persisted`. A store that refuses writes therefore produced a log CLAIMING a durable
+write that did not happen - worse than silence, because it answers wrongly the exact question
+somebody chasing a conversation gone empty after a reload would come there to ask. The line is now
+conditional on the write, and a failure says so, naming the count and that the messages are on
+screen and will not survive a reload.
+
+The second, in the replay's retroactive hex-id resolution, was silent both ways. Failing there means
+the names are resolved again on every later load of that conversation - a cost nobody can see and
+nobody can attribute while the branch says nothing.
+
+Both are what CORRUPT-7 is written to find - *drop an object store from the web message store
+mid-session* - and neither needed the row to be found: every swallowed branch logs, because in a
+best-effort path that is all a loss leaves.
+
+
 ### Fixed - the device-key vault reported an altered blob and an ordinary storage clear with the same silence, and left a malformed one to fail again on every load
 
 `loadDeviceKey` had two silent branches. A blob with no `iv:` separator returned null without

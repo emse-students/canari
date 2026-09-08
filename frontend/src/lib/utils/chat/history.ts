@@ -1306,7 +1306,18 @@ export async function retroactivelyResolveHexIds(
         ...(m.isDeleted ? { isDeleted: true } : {}),
         ...(m.isEdited ? { isEdited: true } : {}),
       }));
-    if (toSave.length > 0) storage.saveMessages(toSave, deviceKeyB64).catch(() => {});
+    if (toSave.length > 0) {
+      // A best-effort write, and a log is all a loss leaves here: failing means these names are
+      // re-resolved on every later load of this conversation, which is a cost nobody can see and
+      // nobody can attribute while the branch is silent.
+      storage.saveMessages(toSave, deviceKeyB64).catch((e: unknown) => {
+        console.warn(
+          `[History] could not persist ${toSave.length} message(s) whose hex ids were resolved ` +
+            `(group ${conversationId.slice(0, 8)}…): ${e instanceof Error ? e.message : String(e)} - ` +
+            `they will be resolved again on the next load`
+        );
+      });
+    }
   }
 
   return updated;
