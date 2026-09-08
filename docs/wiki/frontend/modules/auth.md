@@ -803,7 +803,7 @@ Revocation is still enforced on reconnect by the refresh answering 401 and by th
 ### Login failure codes
 
 `session/loginErrors.ts` defines `LoginFailure` with a machine-readable `LoginErrorCode`
-(`pin_mismatch`, `state_sealed_with_old_key`, `keystore_empty`, `device_revoked`, `other`), passed
+(`pin_mismatch`, `local_state_unopenable`, `keystore_empty`, `device_revoked`, `other`), passed
 to `onLoginFailed(message, code)`. **Branch on the code, never on the message**: the message is
 localized, so a regex over it silently stops matching in another locale - that is exactly how the
 cross-device recovery link once became unreachable in French.

@@ -284,9 +284,9 @@ fixtures proves *today's code reads what v0.14.14 wrote*, and *"says nothing abo
 code writes something v0.14.14 could read, which is the other direction and matters when a fleet is
 mixed"*. That other direction is exactly what a header would break: an older build handed
 `[magic][keyId][nonce][ciphertext]` reads the first twelve bytes as a nonce, fails the AEAD, and
-reports **`state_sealed_with_old_key`** - this very defect, newly caused by a downgrade. Downgrades
-are not hypothetical here: the APK is reinstalled by hand all through a campaign session, and a
-store rollback does the same thing to a real user.
+reports the state unopenable - this very defect, newly caused by a downgrade. Downgrades are not
+hypothetical here: the APK is reinstalled by hand all through a campaign session, and a store
+rollback does the same thing to a real user.
 
 **So the sequence is READ-FIRST, WRITE-LATER, and it spans two releases:**
 
@@ -308,10 +308,50 @@ and `mls-wasm/src/lib.rs::decrypt_mls_state_blob_with_key` (same bare check). Th
 `src-tauri/src/commands/mls.rs` already writes through `encrypt_state_blob_with_key`, so it inherits
 whatever that does.
 
-**AND THE TYPED ERROR IS WORTH LANDING ON ITS OWN.** `MlsError::OpenMls(String)` is prose all the
-way to the TS classifier, which is why `classifyStateLoadFailure` matches on needles and defaults to
-`sealed`. Distinct variants for "sealed under a different key", "altered" and "legacy, no key id"
-fix the rule violation whether or not the header ever lands, and they are what step 1 delivers.
+**STEP 1 IS DONE (2026-09-08, not yet shipped), MINUS THE HEADER - AND IT WENT FURTHER THAN THE
+TYPED ERROR, BECAUSE THE NAMES WERE THE DEFECT TOO.**
+
+`MlsError` gained `StateUndecryptable` and `StateIdentityMismatch`, whose `Display` forms lead with
+`STATE_UNDECRYPTABLE:` / `IDENTITY_MISMATCH:` - the same shape as `EVICTED:` and `NO_SUCH_MEMBER:`,
+which this enum already uses for exactly this reason. Both throws were `mls-core`'s own, so there
+was never a dependency's prose to match; what there was was a DEFAULT ARM, and it is gone:
+
+```ts
+if (errStr.includes('IDENTITY_MISMATCH')) return 'mismatch';
+if (errStr.includes('STATE_UNDECRYPTABLE')) return 'undecryptable';
+return 'unknown';                      // and it WARNS, because it used to be silent
+```
+
+Three renames carry the point, and each one was a claim the product could not support:
+
+| was | is | why the old name was wrong |
+| --- | --- | --- |
+| `'sealed'` | `'undecryptable'` | "sealed" names a CAUSE; a failed AEAD tag is an OBSERVATION with two |
+| `state_sealed_with_old_key` | `local_state_unopenable` | the login code the UI routes on, asserting the same thing |
+| `auth_state_sealed_old_pin` | `auth_local_state_unopenable` | the sentence the user reads |
+
+The new message states both possibilities and **names the reset**, which is the one remedy that
+works on a damaged state and was previously offered only as the destructive last resort for a
+problem the user did not have. The old-PIN path is still offered: it costs nothing, destroys
+nothing, and is genuinely one of the two cases.
+
+**The blocking test was also rewritten from `=== 'sealed'` to `!== 'mismatch'`.** Written the first
+way it excluded `unknown` by accident - an unrecognised failure would have been rotated away instead
+of paused on, which is the classifier's old default arm seen from the other side.
+
+**`InvalidData` for a blob under twelve bytes went too.** That is what an interrupted flush, a full
+disk or a killed tab leave behind - the most realistic corruption there is - and it answered a name
+shared with unrelated parse failures, so it collected the default diagnosis like everything else.
+
+Tests: four in `mls-core/tests/state_load_failure_is_typed.rs` (wrong key, flipped byte, three short
+lengths, and the no-state control), six on the classifier including one that asserts the OLD PROSE
+no longer classifies - if it ever does again, someone has put the distinction back in a sentence.
+The previous test file asserted the defect: its last case was named *"defaults to sealed for an
+unrecognised failure"*.
+
+**WHAT STEP 1 DID NOT DO, DELIBERATELY: the header.** Nothing writes a key fingerprint yet, so the
+two causes are still not SEPARATED - the product has stopped claiming to know which it is, that is
+all. Step 2 below is unchanged and still owed.
 
 **Where the evidence is.** Board cell CORRUPT-2 on [cross-client-testing](cross-client-testing.md);
 the runner and its reasoning in `tools/cross-client-harness/archive/corrupt2.mjs`; the parallel fix

@@ -14,9 +14,14 @@ vi.mock('$lib/utils/hex', async (importOriginal) => ({
 
 import { WebMlsService } from './WebMlsService';
 
-const SEALED = new Error('Decryption: aead::Error');
+// THE CODES `mls-core` THROWS, not the sentences it used to. Both are this crate's own throws and
+// both are typed since 2026-09-08, because the classifier that routes on them had a default arm
+// that gave every unrecognised failure the diagnosis "your PIN was changed on another device".
+// A fixture carrying the old prose now classifies as `unknown` - which is the point of the change,
+// and is what these two lines being wrong looked like.
+const UNOPENABLE = new Error('STATE_UNDECRYPTABLE: aead::Error');
 const MISMATCH = new Error(
-  'Credential identity mismatch: expected u:web-u-new but state contains u:web-u-old'
+  'IDENTITY_MISMATCH: expected u:web-u-new but state contains u:web-u-old'
 );
 
 /**
@@ -71,7 +76,7 @@ describe('WebMlsService._initImpl legacy migration', () => {
 
   it('re-seals a legacy snapshot, loads it and persists it', async () => {
     const ctx = makeCtx({
-      loadStateWithKey: vi.fn().mockRejectedValueOnce(SEALED).mockResolvedValueOnce(undefined),
+      loadStateWithKey: vi.fn().mockRejectedValueOnce(UNOPENABLE).mockResolvedValueOnce(undefined),
     });
     migrateLegacyMlsStateBlob.mockResolvedValue(resealed);
 
@@ -91,7 +96,7 @@ describe('WebMlsService._initImpl legacy migration', () => {
     const ctx = makeCtx({
       loadStateWithKey: vi
         .fn()
-        .mockRejectedValueOnce(SEALED)
+        .mockRejectedValueOnce(UNOPENABLE)
         .mockRejectedValueOnce(MISMATCH)
         .mockResolvedValueOnce(undefined),
     });
@@ -108,7 +113,7 @@ describe('WebMlsService._initImpl legacy migration', () => {
   });
 
   it('still offers old-PIN recovery when the blob is not a legacy envelope', async () => {
-    const ctx = makeCtx({ loadStateWithKey: vi.fn().mockRejectedValue(SEALED) });
+    const ctx = makeCtx({ loadStateWithKey: vi.fn().mockRejectedValue(UNOPENABLE) });
     migrateLegacyMlsStateBlob.mockResolvedValue(null);
 
     await expect(initImpl(ctx, stored, { noFreshStart: true, legacyPin: '1234' })).rejects.toThrow(
@@ -118,7 +123,7 @@ describe('WebMlsService._initImpl legacy migration', () => {
   });
 
   it('does not attempt a migration without a PIN (biometric and vault paths)', async () => {
-    const ctx = makeCtx({ loadStateWithKey: vi.fn().mockRejectedValue(SEALED) });
+    const ctx = makeCtx({ loadStateWithKey: vi.fn().mockRejectedValue(UNOPENABLE) });
 
     await expect(initImpl(ctx, stored, { noFreshStart: true })).rejects.toThrow(
       'MLS_LOCAL_STATE_UNDECRYPTABLE'

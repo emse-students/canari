@@ -11,6 +11,57 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - one flipped byte told the user their PIN had been changed, and then refused the PIN they had
+
+`sessionAuth` verifies the PIN SERVER-SIDE and only then opens the local MLS state, so at the moment
+this message is chosen the product already knows the credential in the user's hands is the right
+one. It said anyway: *"Votre PIN a ete change sur un autre appareil. Recuperez vos messages avec
+votre ancien PIN."* Measured on 2026-09-08 by XORing one byte at the midpoint of an 18.4 MB state
+(CORRUPT-2), and again with the state cut to half its length (CORRUPT-1) - which is what an
+interrupted flush, a full disk or a killed tab leave behind. In the second case the product's own
+recovery, answering the gate with the correct PIN exactly as a user would, was refused five times
+running.
+
+The mechanism was a default arm:
+
+```ts
+return errStr.includes('identity mismatch') || errStr.includes('Credential identity')
+  ? 'mismatch'
+  : 'sealed';
+```
+
+Both of those throws are `mls-core`'s own, so there was never a dependency's prose to match - and
+every failure the two needles did not recognise, corruption included, acquired the diagnosis
+"sealed under an older key" together with a recovery that cannot work. The doc-comment above it
+already recorded that an earlier version of this same confusion *"surfaced a false 'your PIN was
+changed on another device' to users who had never changed their PIN"*; the case had been fixed for
+`mismatch` and left standing for everything else.
+
+`MlsError` now carries `StateUndecryptable` and `StateIdentityMismatch`, whose Display forms lead
+with `STATE_UNDECRYPTABLE:` and `IDENTITY_MISMATCH:` - the shape this enum already uses for
+`EVICTED:` and `NO_SUCH_MEMBER:`, and the form that survives both FFI boundaries unchanged. The
+classifier reads the code; anything it does not recognise is `unknown`, and `unknown` WARNS instead
+of borrowing a diagnosis.
+
+Three names were claims, and all three moved: `'sealed'` to `'undecryptable'`,
+`state_sealed_with_old_key` to `local_state_unopenable`, `auth_state_sealed_old_pin` to
+`auth_local_state_unopenable`. An AEAD tag that does not verify has two explanations - sealed under
+a different device key, or altered - and nothing stored beside the blob says which
+(`mls_autosave_ver` orders concurrent flushes; it is not a key id). The new message says both, and
+names the reset, which is the only thing that works on a damaged state and had until now been
+offered solely as the destructive last resort for a problem the user did not have. The old-PIN path
+is still there: it costs nothing and it is genuinely one of the two cases.
+
+The blocking test moved from `=== 'sealed'` to `!== 'mismatch'` in the same pass. Written the first
+way it excluded `unknown` by accident, and would have rotated away an identity rather than pausing
+on a failure nobody had classified - the same defect as the default arm, seen from the other side.
+
+**The two causes are still not told apart, and nothing here pretends otherwise.** That needs a key
+fingerprint inside the envelope's own framing, which changes the WRITE format: an older build handed
+a header reads it as a nonce and reports this very failure, newly caused by a downgrade. So it is
+read-first, write-later, across two releases, and this is the first of them.
+
+
 ### Fixed - a notification tap opened the app on nothing, because the landing gave up 174 ms too early
 
 Reported from production: a first message from someone you have no conversation with notifies and

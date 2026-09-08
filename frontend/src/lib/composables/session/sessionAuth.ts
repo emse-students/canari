@@ -597,7 +597,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       const reasonStr = reason instanceof Error ? reason.message : String(reason);
       const isUndecryptable = reasonStr === MLS_LOCAL_STATE_UNDECRYPTABLE;
       if (isUndecryptable) {
-        throw new LoginFailure('state_sealed_with_old_key', m.auth_state_sealed_old_pin());
+        throw new LoginFailure('local_state_unopenable', m.auth_local_state_unopenable());
       }
       // Empty keystore on biometric path: no key stored yet (first launch or
       // keystore was wiped). Surface a clean message and let the caller recover.

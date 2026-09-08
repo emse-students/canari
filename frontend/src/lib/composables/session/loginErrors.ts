@@ -16,8 +16,22 @@ import { isServerUnreachable } from '$lib/utils/fetchOrUnreachable';
 export type LoginErrorCode =
   /** The PIN does not match the account-wide verifier. */
   | 'pin_mismatch'
-  /** PIN accepted, but this device's local MLS state is sealed under an older key. */
-  | 'state_sealed_with_old_key'
+  /**
+   * PIN accepted, and this device's local MLS state would not OPEN.
+   *
+   * IT NAMES THE OBSERVATION BECAUSE THE OBSERVATION IS ALL THERE IS. It was called
+   * `state_sealed_with_old_key`, which asserts a cause the product cannot know: an AEAD tag that
+   * does not verify means either "sealed under a different device key" (a PIN rotated elsewhere -
+   * the old one recovers it) or "the bytes were altered" (corruption - no PIN is relevant), and
+   * nothing stored beside the blob says which. Measured 2026-09-08 on CORRUPT-1 and CORRUPT-2: one
+   * flipped byte in an 18.4 MB state produced this code, the user was told their PIN had changed on
+   * another device, and the PIN they actually held was then refused five times over.
+   *
+   * The old-PIN recovery is still offered for it - it costs nothing, it is not destructive, and it
+   * is one of the two real possibilities. What changed is that the name, and the message beside it,
+   * no longer claim to know which one this is.
+   */
+  | 'local_state_unopenable'
   /** Biometric mode with nothing in the platform keystore yet. */
   | 'keystore_empty'
   /** This device was revoked; local state has been wiped and it must re-register. */
@@ -53,7 +67,7 @@ export function loginErrorCode(error: unknown): LoginErrorCode {
 
 /** True when the "PIN changed on another device" recovery flow can resolve this failure. */
 export function isRecoverableWithOldPin(code: LoginErrorCode): boolean {
-  return code === 'pin_mismatch' || code === 'state_sealed_with_old_key';
+  return code === 'pin_mismatch' || code === 'local_state_unopenable';
 }
 
 /**
@@ -83,7 +97,7 @@ export function isRecoverableWithOldPin(code: LoginErrorCode): boolean {
 export function isExpectedLoginOutcome(code: LoginErrorCode): boolean {
   return (
     code === 'pin_mismatch' ||
-    code === 'state_sealed_with_old_key' ||
+    code === 'local_state_unopenable' ||
     code === 'keystore_empty' ||
     code === 'server_unreachable'
   );

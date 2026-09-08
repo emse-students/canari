@@ -423,18 +423,44 @@ export abstract class BaseMlsService implements IMlsService {
    * Classifies why {@link loadStateWithKey} rejected, so `_initImpl` can pick a recovery that
    * actually addresses the cause.
    *
-   * The distinction is not cosmetic. `sealed` means the blob would not decrypt: the account key
-   * changed on another device, and re-entering the OLD PIN recovers it - so the caller must stop
-   * and offer that path rather than destroy anything. `mismatch` means the blob DID decrypt and
-   * only carries another device's identity; no PIN can fix that, so pausing for a recovery the
-   * user cannot complete just strands them. Treating the two alike is what surfaced a false
-   * "your PIN was changed on another device" to users who had never changed their PIN.
+   * The distinction is not cosmetic. `undecryptable` means the blob would not OPEN; `mismatch`
+   * means it opened and carries another device's identity, which no PIN can repair - so pausing
+   * for a recovery the user cannot complete just strands them. Treating the two alike is what
+   * surfaced a false "your PIN was changed on another device" to users who had never changed it.
+   *
+   * **IT READS A CODE, NOT A SENTENCE - AND UNTIL 2026-09-08 IT READ THE SENTENCE.** Both throws
+   * are `mls-core`'s own, so there was never a dependency's prose to match; what there was, was a
+   * default arm. `errStr.includes('identity mismatch') ? 'mismatch' : 'sealed'` gave every failure
+   * the two needles did not recognise - a flipped byte, a truncated write, an error from a layer
+   * nobody had thought about - the diagnosis "your PIN was changed on another device", together
+   * with a recovery that cannot possibly work. Measured on CORRUPT-1 and CORRUPT-2: one byte XORed
+   * in an 18.4 MB state, and the correct PIN was then refused five times over.
+   *
+   * **AND `sealed` WAS RENAMED, BECAUSE THE NAME WAS THE CLAIM.** An AEAD tag that does not verify
+   * has two explanations the blob alone cannot separate - sealed under a different device key, or
+   * altered - and nothing stored beside it says which (`mls_autosave_ver` orders concurrent
+   * flushes; it is not a key id). `undecryptable` is what is actually known. Separating the two
+   * needs a key fingerprint in the envelope's own framing, which is a write-format change and
+   * therefore a two-release sequence; see `docs/wiki/backlog.md`.
+   *
+   * `unknown` is the third answer and it is deliberately not folded into either: it means the
+   * failure came from somewhere this classifier has never been taught about. The caller treats it
+   * as conservatively as `undecryptable` - nothing is destroyed - but it is LOGGED as unrecognised
+   * rather than silently wearing a diagnosis, which is the whole of what went wrong here.
    */
-  protected classifyStateLoadFailure(error: unknown): 'mismatch' | 'sealed' {
+  protected classifyStateLoadFailure(error: unknown): 'mismatch' | 'undecryptable' | 'unknown' {
     const errStr = String(error);
-    return errStr.includes('identity mismatch') || errStr.includes('Credential identity')
-      ? 'mismatch'
-      : 'sealed';
+    if (errStr.includes('IDENTITY_MISMATCH')) return 'mismatch';
+    if (errStr.includes('STATE_UNDECRYPTABLE')) return 'undecryptable';
+    // ACCUSING, AND HERE RATHER THAN AT THE CALL SITES so that no future caller can forget it.
+    // Reaching this arm means the state load failed for a reason `mls-core` does not type, and
+    // the whole defect this classifier was rewritten for is an unrecognised failure passing
+    // quietly as a diagnosis. It stays silent for the two known answers.
+    console.warn(
+      `[MLS] Unrecognised state-load failure - not typed by mls-core, so its cause is unknown ` +
+        `and nothing will be destroyed on account of it: ${errStr.slice(0, 200)}`
+    );
+    return 'unknown';
   }
 
   /** Platform-specific init body (WASM load vs Tauri invoke). */

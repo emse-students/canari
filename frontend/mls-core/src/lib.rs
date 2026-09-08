@@ -75,6 +75,42 @@ pub enum MlsError {
     /// tells "already gone" from "still there".
     #[error("NO_SUCH_MEMBER: {0}")]
     NoSuchMember(String),
+    /// The saved MLS state could not be OPENED: its AEAD tag did not verify, or it is too short to
+    /// be an envelope at all.
+    ///
+    /// **IT NAMES AN OBSERVATION, NOT A CAUSE, AND THAT IS THE WHOLE POINT.** A tag that does not
+    /// verify has two explanations the blob alone cannot separate: it was sealed under a DIFFERENT
+    /// device key (a PIN rotated on another device - ordinary, and recoverable with the old PIN),
+    /// or the ciphertext was ALTERED (corruption - the old PIN is irrelevant and asking for it
+    /// sends the user after a credential that never existed). Nothing stored beside the blob says
+    /// which; `mls_autosave_ver` is a per-write sequence counter that orders concurrent flushes,
+    /// not a key id.
+    ///
+    /// Until a key fingerprint is written into the envelope's own framing, the honest thing is a
+    /// variant that says "this did not open" and lets the caller present both possibilities.
+    ///
+    /// **WHY IT IS A VARIANT AND NOT A MESSAGE.** It used to be
+    /// `OpenMls(format!("Decryption: {..}"))`, and the TypeScript classifier that has to act on it
+    /// matched two prose needles for the OTHER case and defaulted everything else - this included -
+    /// to "your PIN was changed on another device". Measured on 2026-09-08 (CORRUPT-1, CORRUPT-2):
+    /// one flipped byte in an 18.4 MB state, and the user is told the wrong cause, offered a
+    /// recovery that cannot work, and refused by the PIN they actually hold. A distinction carried
+    /// in prose is a distinction exactly one call site will make, and the default arm of a prose
+    /// match is where every unrecognised failure silently acquires someone else's diagnosis.
+    #[error("STATE_UNDECRYPTABLE: {0}")]
+    StateUndecryptable(String),
+    /// The saved MLS state OPENED cleanly and carries a credential for a different user or device.
+    ///
+    /// The opposite situation from {@link MlsError::StateUndecryptable} and it must never share a
+    /// recovery with it: this blob decrypted, so the key was right, so **no PIN can repair it** -
+    /// pausing to ask for an old one strands the user with nothing to try. What it needs is an
+    /// identity rotation, which the caller performs without destroying anything reachable.
+    ///
+    /// Typed for the same reason as its sibling: it was `OpenMls("Credential identity mismatch:
+    /// ..")`, and the two were told apart in TypeScript by matching that prose. Both throws are
+    /// this crate's own - neither is an OpenMLS message - so there was never anything to match.
+    #[error("IDENTITY_MISMATCH: {0}")]
+    StateIdentityMismatch(String),
 }
 
 /// Classification of an incoming decryption error. THE single source of native string-matching on

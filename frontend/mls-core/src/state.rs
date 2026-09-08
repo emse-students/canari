@@ -311,8 +311,8 @@ impl MlsManager {
                     expected_identity,
                     loaded_identity
                 );
-                return Err(MlsError::OpenMls(format!(
-                    "Credential identity mismatch: expected {} but state contains {}",
+                return Err(MlsError::StateIdentityMismatch(format!(
+                    "expected {} but state contains {}",
                     expected_identity, loaded_identity
                 )));
             }

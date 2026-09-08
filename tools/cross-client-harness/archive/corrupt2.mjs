@@ -9,11 +9,22 @@
  * looking at the blob.
  *
  * **AND THAT IS THE QUESTION THIS ROW ACTUALLY ASKS.** `sessionAuth` verifies the PIN SERVER-SIDE and
- * only then decrypts the local MLS state; when `init` reports the state undecryptable it raises
- * `state_sealed_with_old_key`, whose message tells the user their history is sealed under a PIN
- * rotated on another device. For a rotation that is exactly right. For a flipped byte it is a
- * MISDIAGNOSIS of the same shape the device-key vault carried until 2026-09-08 - one catch naming
- * two causes and separating neither - and it points the user at a credential that would not help.
+ * only then decrypts the local MLS state; when `init` reports the state undecryptable it raises a
+ * `LoginFailure` whose code and message the user then acts on.
+ *
+ * **WHAT THIS ROW MEASURED, AND WHAT CHANGED BECAUSE OF IT (2026-09-08).** The code was
+ * `state_sealed_with_old_key` and the message told the user their history was sealed under a PIN
+ * rotated on another device. For a rotation that is exactly right. For a flipped byte it was a
+ * MISDIAGNOSIS of the same shape the device-key vault carried until the same day - one catch naming
+ * two causes and separating neither - and it pointed the user at a credential that would not help,
+ * while CORRUPT-1 then measured the credential they DO hold being refused five times over.
+ *
+ * The code is now `local_state_unopenable` and the message states both possibilities and names the
+ * reset, because the reset is the only thing that works on a damaged state. The cause is still not
+ * SEPARATED - it cannot be until a key fingerprint travels in the envelope's own framing, which is
+ * a write-format change and therefore two releases - but the product no longer claims to know it.
+ * `mls-core` types the throw (`STATE_UNDECRYPTABLE` / `IDENTITY_MISMATCH`) so the classifier reads
+ * a code instead of prose and its default arm stops handing out somebody else's diagnosis.
  *
  * `mls_autosave_ver` cannot settle it either: it is a per-write SEQUENCE COUNTER for ordering
  * concurrent flushes, not a key id, so nothing beside the blob says which key sealed it.
@@ -105,7 +116,7 @@ try {
       await awaitLine(w1, 'MLS', 9_000);
       const said = consoleLines(w1);
       const explicit = said.filter((t) =>
-        /undecryptable|state_sealed|sealed|could not|failed to (load|decrypt|deserialize)|corrupt|fresh state|not-ready/i.test(
+        /unopenable|undecryptable|state_sealed|sealed|could not|n'ont pas pu|failed to (load|decrypt|deserialize)|corrupt|fresh state|not-ready/i.test(
           t
         )
       );

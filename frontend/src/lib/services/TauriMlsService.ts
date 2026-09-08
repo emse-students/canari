@@ -453,16 +453,16 @@ export class TauriMlsService extends BaseMlsService {
       // Retry once letting Rust try that envelope: on success it re-seals and persists mls.bin.
       // Must not `return` on success - the push-context write below this block still has to run.
       let migrated = false;
-      if (cause === 'sealed' && state && opts?.legacyPin && !isKeystoreEmpty) {
+      if (cause === 'undecryptable' && state && opts?.legacyPin && !isKeystoreEmpty) {
         try {
           await this.invokeInit(deviceKeyB64, state, opts.legacyPin);
           migrated = true;
           console.log('[MLS] Pre-v0.11.0 mls.bin re-sealed under the device key.');
         } catch (migrationError) {
           // Two very different failures land here: the blob was not a legacy envelope at all
-          // (still `sealed` -> recovery), or it opened and names another device (`mismatch` ->
-          // fresh start). Keeping the original verdict would offer an old-PIN recovery for an
-          // identity no PIN can repair.
+          // (still `undecryptable` -> recovery), or it opened and names another device
+          // (`mismatch` -> fresh start). Keeping the original verdict would offer an old-PIN
+          // recovery for an identity no PIN can repair.
           cause = this.classifyStateLoadFailure(migrationError);
           console.warn(
             `[MLS] Legacy migration did not yield a usable state (${cause}):`,
@@ -475,10 +475,14 @@ export class TauriMlsService extends BaseMlsService {
         // State recovered in place: keep the device identity and fall through to the normal
         // post-init steps.
       } else if ((cause === 'mismatch' || state != null) && !isKeystoreEmpty) {
-        // Only a `sealed` state is worth pausing for: the caller can offer the old PIN and
-        // recover the history intact. A `mismatch` decrypted fine and no PIN can repair it,
-        // so honouring noFreshStart there would strand the user with nothing to try.
-        if (opts?.noFreshStart && cause === 'sealed') {
+        // ANYTHING BUT A MISMATCH IS WORTH PAUSING FOR, and the test is written that way round
+        // deliberately. A `mismatch` decrypted fine and no PIN can repair it, so honouring
+        // noFreshStart there would strand the user with nothing to try. Everything else - a state
+        // that would not open, or a failure this classifier has never been taught about - is a
+        // reason to STOP rather than to rotate an identity and lose what the blob still holds.
+        // Written as `=== 'sealed'` it excluded `unknown` by accident, which is the same defect as
+        // the classifier's old default arm seen from the other side.
+        if (opts?.noFreshStart && cause !== 'mismatch') {
           throw new Error(MLS_LOCAL_STATE_UNDECRYPTABLE, { cause: e });
         }
         await this.rotateDeviceIdentity(

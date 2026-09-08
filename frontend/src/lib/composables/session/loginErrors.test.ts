@@ -24,7 +24,7 @@ import { ServerUnreachableError } from '$lib/utils/fetchOrUnreachable';
 /** Every code the union declares. Adding one here is how the exhaustive test below stays honest. */
 const EVERY_CODE: LoginErrorCode[] = [
   'pin_mismatch',
-  'state_sealed_with_old_key',
+  'local_state_unopenable',
   'keystore_empty',
   'device_revoked',
   'server_unreachable',
@@ -58,8 +58,8 @@ describe('isExpectedLoginOutcome', () => {
   });
 
   it('so is a local state sealed under an older key, which has its own recovery flow', () => {
-    expect(isExpectedLoginOutcome('state_sealed_with_old_key')).toBe(true);
-    expect(isRecoverableWithOldPin('state_sealed_with_old_key')).toBe(true);
+    expect(isExpectedLoginOutcome('local_state_unopenable')).toBe(true);
+    expect(isRecoverableWithOldPin('local_state_unopenable')).toBe(true);
   });
 
   it('and an empty keystore, which is a device that has enrolled nothing yet', () => {
@@ -83,7 +83,7 @@ describe('isExpectedLoginOutcome', () => {
     for (const code of EVERY_CODE) expect(typeof isExpectedLoginOutcome(code)).toBe('boolean');
     expect(EVERY_CODE.filter(isExpectedLoginOutcome)).toEqual([
       'pin_mismatch',
-      'state_sealed_with_old_key',
+      'local_state_unopenable',
       'keystore_empty',
       'server_unreachable',
     ]);
