@@ -389,6 +389,71 @@ the hour of the day. A single empty return proves nothing and must not page anyb
 
 ---
 
+### P1 CANDIDATE - a FOREGROUNDED app received nothing for 90 s while its console said the socket was up (measured twice, 2026-09-08)
+
+**NOT YET A CONFIRMED PRODUCT DEFECT, AND THE ALTERNATIVE IS NAMED BELOW.** It is filed because the
+evidence is reproducible, the failure mode is silent, and the row that found it refuses rather than
+grading - so nothing else in the campaign is going to trip over it.
+
+**What NOTIF-1b measures, and why it could not.** The row proves the socket is routing BEFORE it
+hides the app, by sending a warm-up message and waiting for it in the foreground - *"a warm-up
+message, received in the FOREGROUND, is the app demonstrating that its socket is up and routing to
+this conversation"*. That warm-up is also the baseline its 10 s discriminator is only meaningful
+against. Its own comment records **2190 ms on a warm app**. Since then:
+
+| run | `warmUpInMs` | verdict |
+| --- | --- | --- |
+| the row's own comment, historical | **2 190** | the baseline it was designed around |
+| 2026-09-08 07:26, `a1Build f2748d75e` | **19 363** | `SETUP-FAILED` - discriminator ungradeable |
+| 2026-09-08 13:41, `a1Build fff05fe14` | **null (>90 000)** | `FAIL` |
+| 2026-09-08 14:0x, same build, app already warm | **null (>90 000)** | `FAIL` |
+
+Monotone, and the last two are on an APK built from a CLEAN tree at a commit that is on `main`. Both
+logs are `clean`: no `severe`, no errors, nothing unexplained. The app was attached, unlocked and
+sitting on the DM.
+
+**THE CONSOLE IS WHERE IT GETS INTERESTING.** During the 90 s window the app believed it was
+connected, and the truth surfaced only once the row backgrounded it:
+
+```
+[15:50:31] [WS] Connected to Chat Gateway - device=tauri-f7a9bb80...
+   ... warm-up sent, 90 s, nothing arrives, log clean ...
+[15:52:07] [LIFECYCLE] App in background - connection paused.
+           [WS] 4 pings without server response - closing zombie connection
+[15:52:31] Connection lost. Retrying in 1s... (attempt 1)
+```
+
+**A ZOMBIE SOCKET IS EXACTLY WHAT THAT DESCRIBES**: connected in the client's view, carrying nothing,
+and discovered only by a ping timeout. Four seconds after the reconnect the row's hidden message
+notified in **2 203 ms**, inside the 10 s window that can only be the JS layer - so the machinery
+was healthy the moment the socket was real.
+
+**WHY IT WOULD BE A P1 IF CONFIRMED.** A foregrounded app silently receiving nothing is the worst
+shape a messaging defect has: no error, no spinner, no empty state, and the conversation simply
+stops moving. Nothing tells the user, and the client's own recovery takes four missed pings. It is
+also the state a phone is in whenever somebody is actually reading.
+
+**THE ALTERNATIVE, AND IT IS SERIOUS.** `make local-frontend` restarts the estate's containers,
+which kills every open WebSocket - and it ran immediately before the first of these two runs. A
+socket killed underneath a client is a zombie by construction, and the client noticing it late is
+then a rig artefact wearing a product's clothes. The second run did not rebuild, but it inherited
+whatever the first left behind.
+
+**THE ONE EXPERIMENT THAT SETTLES IT**, and it is cheap: one NOTIF-1b on an estate that has not been
+rebuilt for at least five minutes, with the app freshly foregrounded, reading the **gateway's own
+connection log** beside the client's - `docker logs` on the chat-gateway names the device on connect
+and on drop. If the gateway holds no connection for `tauri-f7a9bb80...` while the client prints
+`Connected to Chat Gateway`, the two disagree and the product owes a liveness check that does not
+take four pings. If the gateway holds one and delivers nothing, the defect is downstream of the
+socket. Either way it stops being a guess.
+
+**READ IT WITH `mls.bin`, WHICH IS NOW 9.8 MB ON THIS HANDSET** (`10 237 105` bytes, measured the
+same afternoon). That is the blob a checkpoint re-encrypts and rewrites, and the prekey-churn P1
+above is what grows it. A delivery path that got monotonically slower across three runs is at least
+consistent with that, and nothing here has separated the two.
+
+---
+
 ## Notifications - the two builders, and the rung of the campaign that reads them as one
 
 ### P1 - a FIRST message from someone you have no conversation with notifies, decrypts, and then goes nowhere: the tap does not land and the conversation is invisible until the app is restarted (user, 2026-09-08, on PRODUCTION)
