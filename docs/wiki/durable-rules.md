@@ -334,7 +334,23 @@ reference device that happened to ask twice drew a live member and was whole. **
 comment names the behaviour it depends on from its counterpart, that is an assertion nobody is
 checking.** The escalation that closes it is gated on LOCAL EVIDENCE - a frame this device holds and
 cannot read - because silence from a responder means both *we agree* and *nobody answered*, and
-those cannot be told apart from an absence. [backlog](backlog.md)
+those cannot be told apart from an absence. [backlog](backlog.md) **AND THE ESCALATION'S OWN PRECONDITION IS AN ABSENCE TOO, which is why wiring it to the LIVE
+path made the row WORSE rather than better.** Measured 2026-09-08, both shapes, same runner: the
+live `LOST frame` path calls the coalescing entry point, so fourteen lost frames produced ONE ask
+and thirteen `was asked 30s ago at most` lines, and the next ask was a timer expiring rather than
+anything the device had learnt. Swapping it for the escalating entry point removed that clock
+exactly as designed - swallowed 13 -> 0, asks 3 -> 11, re-elections 0 -> 10 - and healed nothing:
+HEALED / PARTIAL 9 of 14 / PARTIAL 8 of 14, against HEALED / PARTIAL 7 / PARTIAL 7 / HEALED before
+it. The console says why in one line: `still holds frames it cannot read while <W1> answers nothing
+- electing somebody else`, fired **200 ms** after W1 was elected. The walk excluded the only device
+that held the messages and spent the rest of the burst asking stale ones, and the healed runs are
+the ones where a real diff ran (`5 to send`, `21 to send`) while every PARTIAL shows zero bundles
+and only `same state - nothing to do`. **A PER-FRAME TRIGGER CANNOT CONCLUDE SILENCE: it re-fires
+faster than any answer can arrive, so what it reads as a silent member is a latency it created.**
+An escalation is safe only where its trigger is paced by the work it reports on - the END of a
+replay, once - or where silence is established by an EVENT the responder owes, never by its
+absence. The change was reverted the same session; what survives it is the instrument, whose
+`escalated` field had been a constant false and hid all of this.
 
 The largest area here, and the one that has cost the most. `chat` = [chat](frontend/modules/chat.md),
 `hr` = [history-reconciliation](protocols/history-reconciliation.md),

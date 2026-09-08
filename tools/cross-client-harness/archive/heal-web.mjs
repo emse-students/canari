@@ -37,7 +37,13 @@ const BREAK_SENDS = Number(process.env.BREAK_SENDS || 14);
 const BREAK_SPACING_MS = Number(process.env.BREAK_SPACING_MS || 11_000);
 
 /** Console lines that decide this verdict, in the order they were emitted. */
-const REPAIR = /\[HISTORY_REQ\]|\[HISTORY_DIGEST\]|\[HISTORY_PULL\]|\[HISTORY_BUNDLE\]|LOST frame|retransmitting|escalating|SecretReuse|out of bounds|silent ACK|cannot be recovered|Desync|Asked .* to retransmit|forget|re-?add|welcome/i;
+// `[HISTORY_RECONCILE]` and the two solicitation lines are here for a reason worth keeping: the
+// excerpt is what a human reads when a row comes back PARTIAL, and without them it shows the loss
+// and the answer while hiding the one thing that separates "nobody asked" from "the ask was
+// answered badly". On 2026-09-08 that gap cost a whole diagnosis - the printed excerpt of a healed
+// run contained no solicitation at all, which was indistinguishable from the trigger never firing.
+const REPAIR =
+  /\[HISTORY_REQ\]|\[HISTORY_DIGEST\]|\[HISTORY_PULL\]|\[HISTORY_BUNDLE\]|\[HISTORY_RECONCILE\]|\[HISTORY_STATE\]|\[HISTORY_RANGE\]|\[HISTORY_COVERAGE\]|Frames are being lost|can never read|LOST frame|retransmitting|escalating|SecretReuse|out of bounds|silent ACK|cannot be recovered|Desync|Asked .* to retransmit|forget|re-?add|welcome/i;
 
 /**
  * Reads the markers with the list scrolled to the BOTTOM.
@@ -252,12 +258,30 @@ w1Repair.forEach((l) => console.log('  ' + l));
 const all = [...allLines(w1, breakStart), ...allLines(w2, breakStart)].join('\n');
 const sawLoss = /LOST frame|SecretReuse|out of bounds/i.test(all);
 const narrow = /retransmitting \d+ payload/i.test(all);
-// Since the escalation fix the diff is solicited at the FIRST detection, so the old "escalating to
-// a history diff" line is no longer the signal - matching only it reported `escalated=false` on a
-// run whose diff demonstrably ran. `already has an attempt outstanding` counts too: it is the
-// trigger firing and correctly finding one in flight, which is the mechanism working, not skipping.
+/**
+ * Did THIS device ask for the repair - as opposed to receiving one somebody else asked for.
+ *
+ * Harness fault #33, and the second time this exact field has been wired to prose that no longer
+ * exists. All three strings it matched until 2026-09-08 - `escalating to a history diff`,
+ * `soliciting a history diff`, `already has an attempt outstanding` - were deleted from the app with
+ * the mechanism they served (`inboundFrameLedger.ts`: *"every one of those decisions was a clock.
+ * They are gone with the mechanism they served"*). Nothing printed them any more, so `escalated`
+ * was not a weak signal, it was a CONSTANT FALSE, and a reader taking it at face value would read
+ * "the repair never fired" off every single run, healed or not.
+ *
+ * The lines that exist are the ones the two live triggers actually print, and both are matched:
+ * `[MLS] Frames are being lost in <g> - reconciling this conversation` (setupMessageHandler, the
+ * live path) and `[HISTORY] <g> holds N frame(s) it can never read - reconciling` (history.ts, the
+ * replay path), plus `[HISTORY_RECONCILE]` for every outcome of the election walk.
+ *
+ * **Not `[HISTORY_REQ]`, deliberately**: that family is printed by the ANSWERER, so it says a diff
+ * happened NEARBY, never that this device solicited one - which is exactly the distinction the
+ * 2026-09-08 run turned on, where W2 lost fourteen frames and the repair was initiated by W1.
+ */
 const escalated =
-  /escalating to a history diff|soliciting a history diff|already has an attempt outstanding/i.test(all);
+  /Frames are being lost in .*reconciling|frame\(s\) it can never read - reconciling|\[HISTORY_RECONCILE\]/i.test(
+    all
+  );
 const diffRan = /\[HISTORY_REQ\]/.test(all);
 const fellBack = /no digest from .* sending the whole store/i.test(all);
 

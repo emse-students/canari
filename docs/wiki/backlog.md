@@ -1740,6 +1740,102 @@ no check waits on wall-clock time at all. It belongs with the rendering pass, no
 
 ## Messaging convergence
 
+### P1 - the repair of a rewound sender lands on a coin flip, the ask cadence is identical either way, and a peer 21 messages behind was told "same state - nothing to do" (measured 2026-09-08, ten runs across three builds)
+
+**THE ROW IS HEAL-repair, AND ITS `PASS` OF 2026-09-06 WAS ONE DRAW OF A THREE-SIDED COIN.** Ten
+runs, three builds, one runner, one estate swept before each:
+
+| build | outcome, in order | asks | swallowed | re-elections |
+| --- | --- | --- | --- | --- |
+| `9cf5191cc`, as shipped | HEALED, PARTIAL 7/14, PARTIAL 7/14, HEALED | 3 | 13 | 0 |
+| + the live path escalating instead of coalescing | HEALED, PARTIAL 9/14, PARTIAL 8/14 | 11 | 0 | 10 |
+| `9cf5191cc` with the checkpoint-bound marks DISARMED | HEALED, PARTIAL 7/14, PARTIAL 7/14 | 3 | 13 | 0 |
+
+**TWO CANDIDATE CAUSES ARE REFUTED BY THAT TABLE, and neither is to be re-opened without new
+evidence.** Disarming the checkpoint-bound history marks reproduces the shipped build's distribution
+*exactly* - same verdicts, same counts - so that change is not the cause and stays. And the 30 s
+coalescing window is not the cause either: removing it entirely (row two) changed every mechanism
+counter and healed nothing.
+
+**WHAT ACTUALLY SEPARATES A HEALED RUN FROM A PARTIAL ONE, and it is not the asking.** The cadence is
+identical in both: three asks, about 33 s apart, `escalated: true` every time. The difference is
+whether any one of them is ANSWERED.
+
+    healed    01:44:32  asked ... whether we hold the same history     <- nothing comes back
+              01:45:06  asked ...                                     <- nothing comes back
+              01:45:39  asked ...
+              01:45:40  [HISTORY_BUNDLE] 18 messages received         <- 172 ms later
+
+    partial   01:48:53  asked ...
+              01:49:27  asked ...
+              01:50:00  [HISTORY_REQ] same state as <W1> - nothing to do
+              01:50:00  asked ...                                     <- no bundle, ever
+
+Every PARTIAL run contains ZERO `[HISTORY_BUNDLE]` lines. Every HEALED run contains exactly one, and
+it answers the LAST ask rather than the first.
+
+**AND THE FIRST LEG HAS BEEN WRONG AT LEAST ONCE, WHICH IS THE HARDEST FACT HERE.** On the healed run
+of 01:07:
+
+    01:07:46.524  [HISTORY_REQ] 2bd5add9... same state as <W1> (287cc8e5...) - nothing to do
+    01:07:46.689  [HISTORY_DIGEST] Sent for 2bd5add9... - ids mode, 837 id(s), asking from 2026-06-10
+    01:07:46.791  [HISTORY_BUNDLE] 21 messages received for 2bd5add9... from f7a9bb80
+
+The state-key leg answered *we hold the same history* and a digest found **21 missing messages 267 ms
+later**. Both keys are computed over the ASKER'S window (`historyStateKeyFor(groupId, probe.since)`),
+so this is not two devices measuring different spans. The stale-cache explanation is already
+excluded: `invalidateHistoryStateKey` is called on every write path of BOTH backends
+(`indexeddb.ts`, `sqlite.ts`). What is NOT excluded, and is where to look first, is the window -
+`historyRangeStartFor` - and whether an empty or clipped span makes two different stores hash alike.
+
+**THE SAME DEFECT IS WHY TAB-3b IS `PASS-DIRTY`, and that is how long it has been standing.** W1
+reports the *same two frames* on reload after reload - r2, r3, r4, r5 of one run - as `[History]
+frame never read here and unreadable for good (secret-reuse); will reconcile`, group `2bd5add9`,
+frames `7e:4yhgc8` and `5p:1s1iuic`. The reconciliation is promised four times and never happens. A
+row that stays dirty across reloads is not noise: it is this P1, seen from a check that was not
+looking for it.
+
+**WHAT THE INSTRUMENT COULD NOT SHOW UNTIL THIS SESSION.** None of the above was visible.
+`escalated` matched three strings the app had deleted, so it read FALSE on every run including the
+healed ones; and the printed excerpt filtered out `[HISTORY_RECONCILE]`, `[HISTORY_STATE]` and both
+solicitation lines, so a human reading a PARTIAL row saw the loss and the silence with the entire
+repair conversation removed. All three are fixed (`CHANGELOG.md`); the tables above are the first
+measurements taken with an instrument that can see the mechanism.
+
+**THE DIRECTION, AND IT IS ALREADY WRITTEN DOWN.** [durable-rules](durable-rules.md) says of this
+exact handshake that *a deadline is not a termination proof* and *a leg that needs no remembered
+state to answer must not require a live waiter to answer it*. An answer that arrives only when the
+responder happens to be idle is the live waiter, and three asks 33 s apart is the deadline. Neither
+half is fixed by asking more often, which row two of the table proves by trying.
+
+
+### P3 - the pull and the socket hand the SAME row in, and the queue notices afterwards instead of the overlap not existing (measured 2026-09-08)
+
+**What is seen.** One line on W3, on every HEAL-NEW run that has a fresh device pulling while a
+socket is already live:
+
+    [QUEUE] delivery 32db7fea... arrived twice - the pull listed a row the socket had already
+    handed in and this device has not drained yet - the ordinary crossing, and nothing is wrong;
+    not decrypting it again. Further ones of this shape are counted, not printed.
+
+**Why it is filed rather than declared expected.** Nothing is lost and nothing is decrypted twice -
+the line is the app correctly recognising its own duplicate. But it is the visible end of two
+delivery paths overlapping BY CONSTRUCTION, and *a race that heals cleanly is still a defect*: the
+reconciliation after the fact is a witness, not a fix. Declaring it `ignoringExpectedLog` on the
+rows that meet it would demote a real overlap to keep a cell green, which is the one disposition
+[durable-rules](durable-rules.md) refuses. So HEAL-NEW-2 stays `PASS-DIRTY` until the overlap goes.
+
+**The direction, and it is small.** The duplicate is caught at the DRAIN, by a queue that already
+holds the row the socket handed in. The pull that lists it again could ask that same question one
+step earlier - a row already queued for this device is not a row to queue - which deletes the
+crossing rather than absorbing it. Both halves are in-memory and in the same module, so this is a
+membership test, not a new ledger.
+
+**What is owed before the change.** The RATE, against the population: this is currently known from
+one row on one client shape. `notableCount` on the same record was 91, so the counted-not-printed
+tail is where the real number is. Measure it before believing the shape is as narrow as it looks.
+
+
 ### P1 - a backgrounded phone is never told about a message it has already received, because the JS layer waits for a push the server never sends (measured on device 2026-09-05)
 
 **THIS ENTRY SAID SOMETHING ELSE UNTIL 2026-09-05 EVENING, AND THE MECHANISM IT NAMED WAS THE

@@ -11,6 +11,28 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a campaign check reported "the repair never fired" on every run, healed or not, because it matched three strings the app had stopped printing
+
+`heal-web.mjs` computes `escalated` over the clients' whole console, and until 2026-09-08 it looked
+for `escalating to a history diff`, `soliciting a history diff` and `already has an attempt
+outstanding`. All three were deleted from the app with the mechanism they served - `inboundFrameLedger`
+says so in as many words, *"every one of those decisions was a clock. They are gone with the mechanism
+they served"*. So the field was not a weak signal, it was a CONSTANT FALSE, and a reader taking it at
+face value concluded that a receiver losing frames never asked for help. It does ask; the lines are
+`[MLS] Frames are being lost in <g> - reconciling this conversation`, `[HISTORY] <g> holds N frame(s)
+it can never read - reconciling` and the `[HISTORY_RECONCILE]` family, and those are what it reads now.
+
+Not `[HISTORY_REQ]`, deliberately: that family is printed by the ANSWERER, so it says a diff happened
+NEARBY and never that this device solicited one - the exact distinction the row turns on, since its
+sender and its receiver both reconcile and only one of them is the subject.
+
+The excerpt printed for a human had the same hole from the other end: its filter passed the loss and
+the answer while dropping every `[HISTORY_RECONCILE]` line, so a `PARTIAL` row could not be read to
+tell *nobody asked* from *the ask was answered badly*. It is the second time a verdict here has been
+computed over one projection of the evidence and displayed over another; the first cost a whole
+diagnosis in August and is recorded in the same file as harness fault #31.
+
+
 ### Fixed - a reload could drop the fifty key packages a device had just published, and nothing anywhere said so
 
 The native foreground resume replaces the live MLS manager with one rebuilt from `mls.bin`, gated by
