@@ -2,6 +2,7 @@
   import { fade, fly } from 'svelte/transition';
   import { X, TriangleAlert, Info, CircleX } from '@lucide/svelte';
   import { toastStore, dismissToast } from '$lib/stores/toast.svelte';
+  import { m } from '$lib/paraglide/messages';
 
   const toasts = $derived(toastStore.toasts);
 </script>
@@ -37,7 +38,7 @@
         <button
           onclick={() => dismissToast(toast.id)}
           class="mt-0.5 shrink-0 opacity-60 transition-opacity hover:opacity-100"
-          aria-label="Fermer"
+          aria-label={m.common_close_label()}
         >
           <X size={14} />
         </button>

@@ -1,50 +1,67 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { AtSign, CornerDownLeft, MessageCircle, Clock, BellOff } from '@lucide/svelte';
+  import { BellOff } from '@lucide/svelte';
   import { postNotifStore } from '$lib/stores/postNotifStore.svelte';
-  import { reactionTypeToEmoji } from '$lib/posts/reactions';
-  import { formatRelative } from '$lib/utils/time';
-  import { formatMentionsForPreview } from '$lib/utils/mentions.parse';
-  import { MENTION_USER_ID_PATTERN, normalizeMentionUserId } from '$lib/utils/mentions';
-  import { resolveUserDisplayName } from '$lib/utils/users/displayName';
+  import NotificationRow from '$lib/components/notifications/NotificationRow.svelte';
+  import { groupNotifications, type NotificationBucket } from '$lib/utils/notifications/grouping';
   import type { PostNotification } from '$lib/posts/api';
   import { m } from '$lib/paraglide/messages';
 
+  /**
+   * WHAT WAS UNREAD WHEN THIS VIEW OPENED, captured before the read receipt goes out.
+   *
+   * Opening this page marks everything read, so `notif.read` is `true` for the whole list within a
+   * frame and there is nothing left to tell the reader what they came to see. The server still gets
+   * the receipt - the bell has to clear - but the band and the accent are drawn from this snapshot,
+   * which lives as long as the view does.
+   */
+  let unreadAtOpen = $state<ReadonlySet<string>>(new Set());
+
+  /** `all` or `unread`, mirroring the reference's two pills. */
+  let filter = $state<'all' | 'unread'>('all');
+
+  /**
+   * The reference instant for the date bands, taken once at open.
+   *
+   * Reading the clock inside the grouping would re-bucket rows under the user while they read - at
+   * midnight, silently - and would make the derivation impure.
+   */
+  let openedAt = $state(new Date());
+
   onMount(() => {
-    void postNotifStore.load(50);
-    void postNotifStore.markAllRead();
+    /*
+     * SEQUENCED, AND THAT IS THE FIX RATHER THAN THE STYLE.
+     *
+     * These two were fired side by side without awaiting. `markAllRead` guards on
+     * `notifications.every((n) => n.read)`, and `[].every(...)` is TRUE - so on a cold load, where
+     * the store is empty until `load` resolves, the guard returned immediately and the receipt was
+     * never sent. Opening this page did not clear the badge. The bell hid it: by the time a
+     * dropdown opens the store is populated, so that path always worked.
+     */
+    void (async () => {
+      await postNotifStore.load(50);
+      openedAt = new Date();
+      unreadAtOpen = new Set(postNotifStore.notifications.filter((n) => !n.read).map((n) => n.id));
+      await postNotifStore.markAllRead();
+    })();
   });
 
-  /** Bumped once async name resolution completes, to re-render resolved mentions. */
-  let resolveVersion = $state(0);
+  const visible = $derived(
+    filter === 'unread'
+      ? postNotifStore.notifications.filter((n) => unreadAtOpen.has(n.id))
+      : postNotifStore.notifications
+  );
 
-  /** Replaces `@[id]` tokens in a notification body with `@DisplayName`. */
-  function renderNotifText(text: string): string {
-    void resolveVersion; // reactive dependency: re-run after names resolve
-    return formatMentionsForPreview(text);
-  }
+  const groups = $derived(groupNotifications(visible, unreadAtOpen, openedAt));
 
-  // Warm the display-name cache for any user mentioned in a notification body,
-  // then trigger a re-render so the resolved names appear (instead of @[id]).
-  $effect(() => {
-    const re = new RegExp(`@\\[(${MENTION_USER_ID_PATTERN})\\]`, 'gi');
-    const idMap: Record<string, true> = {};
-    for (const n of postNotifStore.notifications) {
-      if (!n.text) continue;
-      let match: RegExpExecArray | null;
-      while ((match = re.exec(n.text)) !== null) idMap[normalizeMentionUserId(match[1])] = true;
-    }
-    const ids = Object.keys(idMap);
-    if (ids.length === 0) return;
-    let cancelled = false;
-    void Promise.all(ids.map((id) => resolveUserDisplayName(id))).then(() => {
-      if (!cancelled) resolveVersion++;
-    });
-    return () => {
-      cancelled = true;
-    };
-  });
+  /** The heading for a band. A map rather than a chain: the buckets are a closed set. */
+  const BUCKET_LABEL: Record<NotificationBucket, () => string> = {
+    new: () => m.notif_group_new(),
+    today: () => m.notif_group_today(),
+    week: () => m.notif_group_week(),
+    earlier: () => m.notif_group_earlier(),
+  };
 
   function openNotification(notif: PostNotification) {
     const url =
@@ -57,88 +74,69 @@
   <title>{m.nav_notifications_label()} - Canari</title>
 </svelte:head>
 
-<main class="mx-auto max-w-xl px-4 py-6 pb-24 md:pb-8">
-  <h1 class="text-text-main mb-5 text-xl font-bold">{m.nav_notifications_label()}</h1>
+<!--
+  ON DESKTOP THE LIST IS A CARD, like every other region of the shell and like the reference, which
+  draws its notification column as a panel on the page ground rather than as text floating on it.
+  Below 768px it stays full-bleed: the shell does not float anything there either, because a phone
+  has no width to spend on a gutter.
+-->
+<main class="mx-auto max-w-xl px-4 py-6 pb-24 md:px-0 md:pb-8">
+  <div class="md:bg-cn-surface md:rounded-xl md:px-4 md:py-5">
+    <h1 class="text-text-main text-xl font-bold">{m.nav_notifications_label()}</h1>
 
-  {#if postNotifStore.loading && postNotifStore.notifications.length === 0}
-    <div class="flex flex-col gap-3">
-      {#each { length: 6 } as _, i (i)}
-        <div class="flex animate-pulse items-start gap-3">
-          <div class="bg-cn-surface h-10 w-10 shrink-0 rounded-full"></div>
-          <div class="flex-1 space-y-2 py-1">
-            <div class="bg-cn-surface h-3 w-3/4 rounded"></div>
-            <div class="bg-cn-surface h-2.5 w-1/3 rounded"></div>
-          </div>
-        </div>
+    <!-- The two pills, which the reference puts directly under the title. -->
+    <div class="mt-3 mb-4 flex items-center gap-2">
+      {#each [{ key: 'all', label: m.notif_filter_all() }, { key: 'unread', label: m.notif_filter_unread() }] as tab (tab.key)}
+        <button
+          type="button"
+          onclick={() => (filter = tab.key as 'all' | 'unread')}
+          aria-pressed={filter === tab.key}
+          class="rounded-full px-3 py-1.5 text-sm font-semibold transition-colors {filter ===
+          tab.key
+            ? 'bg-cn-yellow text-cn-ink'
+            : 'text-text-muted hover:bg-black/5 dark:hover:bg-white/10'}"
+        >
+          {tab.label}
+        </button>
       {/each}
     </div>
-  {:else if postNotifStore.notifications.length === 0}
-    <div class="text-text-muted flex flex-col items-center gap-3 py-16">
-      <BellOff size={40} strokeWidth={1.5} class="opacity-40" />
-      <p class="text-sm">{m.notif_empty_message()}</p>
-    </div>
-  {:else}
-    <ul class="divide-cn-border flex flex-col divide-y">
-      {#each postNotifStore.notifications as notif (notif.id)}
-        <li>
-          <button
-            type="button"
-            class="hover:bg-cn-surface -mx-2 flex w-full items-start gap-3 rounded-xl px-2 py-3.5 text-left transition-colors"
-            onclick={() => openNotification(notif)}
-          >
-            <!-- Notification type icon -->
-            <span
-              class="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full
- {notif.type === 'reaction' ? 'bg-pink-500/10 text-pink-500' : ''}
- {notif.type === 'mention' ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400' : ''}
- {notif.type === 'reply' ? 'bg-blue-500/10 text-blue-500' : ''}
- {notif.type === 'comment' ? 'bg-green-500/10 text-green-600' : ''}
- {notif.type === 'form_reminder' ? 'bg-purple-500/10 text-purple-500' : ''}"
-            >
-              {#if notif.type === 'reaction'}
-                <span class="text-lg leading-none">{reactionTypeToEmoji(notif.text)}</span>
-              {:else if notif.type === 'mention'}
-                <AtSign size={18} strokeWidth={2.5} />
-              {:else if notif.type === 'reply'}
-                <CornerDownLeft size={18} strokeWidth={2.5} />
-              {:else if notif.type === 'form_reminder'}
-                <Clock size={18} strokeWidth={2.5} />
-              {:else}
-                <MessageCircle size={18} strokeWidth={2.5} />
-              {/if}
-            </span>
 
-            <!-- Content -->
-            <div class="min-w-0 flex-1">
-              <p class="text-sm leading-snug">
-                <span class="text-text-main font-semibold"
-                  >{notif.actorName || m.notif_actor_unknown()}</span
-                >
-                {#if notif.type === 'reaction'}
-                  <span class="text-text-muted"> {m.notif_reaction_text()}</span>
-                {:else if notif.type === 'mention'}
-                  <span class="text-text-muted"> {m.notif_mention_text()}</span>
-                {:else if notif.type === 'reply'}
-                  <span class="text-text-muted"> {m.notif_reply_text()}</span>
-                {:else if notif.type === 'form_reminder'}
-                  <span class="text-text-muted"> {notif.text}</span>
-                {:else}
-                  <span class="text-text-muted">
-                    {m.notif_comment_text()}
-                    <span class="italic">{renderNotifText(notif.text)}</span></span
-                  >
-                {/if}
-              </p>
-              <p class="text-text-muted mt-1 text-xs">{formatRelative(notif.createdAt)}</p>
+    {#if postNotifStore.loading && postNotifStore.notifications.length === 0}
+      <div class="flex flex-col gap-3">
+        {#each { length: 6 } as _, i (i)}
+          <div class="flex animate-pulse items-start gap-3 px-2 py-2.5">
+            <div class="bg-cn-surface h-14 w-14 shrink-0 rounded-full"></div>
+            <div class="flex-1 space-y-2 py-1">
+              <div class="bg-cn-surface h-3 w-3/4 rounded"></div>
+              <div class="bg-cn-surface h-2.5 w-1/3 rounded"></div>
             </div>
-
-            <!-- Unread indicator -->
-            {#if !notif.read}
-              <span class="mt-2 h-2.5 w-2.5 shrink-0 rounded-full bg-blue-500 shadow-sm"></span>
-            {/if}
-          </button>
-        </li>
+          </div>
+        {/each}
+      </div>
+    {:else if groups.length === 0}
+      <div class="text-text-muted flex flex-col items-center gap-3 py-16">
+        <BellOff size={40} strokeWidth={1.5} class="opacity-40" />
+        <p class="text-sm">
+          {filter === 'unread' ? m.notif_empty_unread() : m.notif_empty_message()}
+        </p>
+      </div>
+    {:else}
+      {#each groups as group (group.bucket)}
+        <h2 class="text-text-main mt-4 mb-1 px-2 text-base font-bold first:mt-0">
+          {BUCKET_LABEL[group.bucket]()}
+        </h2>
+        <ul class="flex flex-col">
+          {#each group.items as notif (notif.id)}
+            <li>
+              <NotificationRow
+                {notif}
+                unread={unreadAtOpen.has(notif.id)}
+                onOpen={() => openNotification(notif)}
+              />
+            </li>
+          {/each}
+        </ul>
       {/each}
-    </ul>
-  {/if}
+    {/if}
+  </div>
 </main>
