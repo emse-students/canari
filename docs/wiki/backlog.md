@@ -37,7 +37,6 @@ the rule in [durable-rules](durable-rules.md). Delete the line once the measurem
 | `/forms/success` no longer asks for a form called `success` | after the deploy, social-service logs no `invalid input syntax for type uuid: "success"` across a completed payment - the symptom fired once per payment, so ONE payment settles it. The unit test pins the derived set; only prod pins the silence |
 | the `apiFetch` fallback now names its cause | the next run's logs separate "a container is restarting", which needs nothing, from "refresh is broken", which needs everything - they were the identical line. If one cause dominates, its RATE wants measuring against the population before the name "transient" is believed |
 | the `[PENDING]` line that called a routine race "Non-recoverable" | the next run reports it in `notable` from an ANCHORED rule, not from the generic `epoch` rule matching words an error string happened to carry. **The two old spellings stay pinned** until A1 runs a build emitting the new line - an APK embeds its frontend and is not reached by a deploy |
-| READ-10 left a throwaway group on the PHONE, 2026-09-08 | the row creates a group, dismisses it on both owners and FAILS if it cannot reach one. A1 was behind its lock screen, so `cleaned: {W1: true, A1: unreachable}` and the group is still there. Unlock the phone, re-run `bun archive/read.mjs --only 10 --destructive`, and the same teardown clears it - the debris and the verdict close together |
 | a push carries its ciphertext once, not twice | HARDWARE, both platforms, iOS the riskier half - no iPhone has yet received a push built without the redundant `data` map ([chat-delivery](services/chat-delivery.md#transport--single-gateway-fcm)) |
 | a device with no push token now says so | after the next release, a tokenless device either acquires one or prints `[PUSH_UNAVAILABLE]` naming a cause; continued silence with a tokenless device still in `key_package` means a FIFTH cause, not a fixed one |
 | the notification quick reply's 403 | HARDWARE: check K steps 1-5 and **K2**, on A1 which already carries the build - **and the window must be ARMED, a run made without arming proves nothing** ([check K](device-verification.md#the-backgrounded-run-that-failed-and-the-defect-it-found)). The iOS twin is corrected identically and equally unproven |
@@ -3807,6 +3806,32 @@ and refuse the row rather than stamp it. That is the rig's own rule - never lear
 fact could have told you - and the discriminator is already written and already exported. The care
 needed is that TAB-7 asserts `neverReloaded`, so the check must REFUSE, never silently reload.
 
+
+### P3 - the debris sweeper looks for a WEB-shaped store on the PHONE, so on A1 it can neither clean nor tell whether there is anything to clean (measured 2026-09-08)
+
+`dismiss.mjs` chooses what to sweep by enumerating `CanariDB_<user>` IndexedDB databases. That is the
+WEB client's shape. The phone is a Tauri app whose conversations do not live in an IndexedDB of that
+name, so on A1 the sweeper reports:
+
+```
+A1 debris NOT swept: [dismiss] 0 CanariDB_<user> database(s), so none can be chosen
+```
+
+**The line is honest and it is not enough.** "None can be chosen" is indistinguishable from "there
+was nothing to sweep", and those are different facts: the first leaves debris behind for the next
+row to trip over, the second is a clean exit. A teardown that cannot tell them apart cannot be relied
+on by any row that creates something on a device the phone can see - and every row driving A1 is such
+a row, because A1 shares an account with W1.
+
+**It cost a verdict already, in the opposite direction.** READ-10's `FAIL` of 2026-09-08 02:25 was
+its teardown, not its subject. When the phone came back the row passed and the sweep still did not
+run - so the `FAIL` had named the lock screen, and this gap was underneath it the whole time.
+
+**What closes it**: either the sweeper reaches the phone's own store, or it dismisses through the
+app's UI on A1 the way a user would, or it says out loud that A1 cannot be swept and the ROW fails
+when it created something there. Any of the three is better than a line that reads like success.
+Measured directly on 2026-09-08 that nothing was in fact left behind - no `READ10-` row on A1, W1 or
+W2 - so this is a gap in the instrument, not an open debris field.
 
 ### P2 - no row on the board can tell a healthy conversation from an epoch-forked one (measured 2026-08-29)
 
