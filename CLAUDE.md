@@ -240,7 +240,9 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    `mls.bin`** - P1 for the checkpoint it feeds, not because pools run dry. **CONFIRMED ON HARDWARE
    2026-09-08**: the resume reload accused itself (`2625 -> 2624`, epoch unmoved) and put the RECEIVE
    ratchet back in the same run - one mechanism, two ledgers, a key-package count seeing one. **One
-   bundle, not forty-nine**, so it is A source, not shown to be the whole ([backlog](docs/wiki/backlog.md)).
+   bundle, not forty-nine**, so it is A source, not shown to be the whole. **THE LOOP IS CONTAINED AND
+   THE CAUSE IS NOT** - the guard's two lines were finally seen on hardware 2026-09-08, and the
+   10.4 MB blob is now the ONLY thing between NOTIF-1b and a verdict ([backlog](docs/wiki/backlog.md)).
 3. **P1 - a PLACEHOLDER held a member's seat**; only a member's CLIENT can say whether a LEAF is
    left in the MLS tree and **NOTHING HAS** - the three identities cited here as that evidence were
    this campaign's OWN mention fixtures, named 2026-09-07 ([backlog](docs/wiki/backlog.md)).
@@ -256,7 +258,7 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    anybody prod is down**, and [host-updates](docs/wiki/infrastructure/host-updates.md).
 7. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
    [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
-8. **SIX UX/RENDERING ITEMS + TWO DEV-LOG LINES** ([backlog](docs/wiki/backlog.md)); four want ONE pass over `app.css`.
+8. **SEVEN UX/RENDERING ITEMS + TWO DEV-LOG LINES** ([backlog](docs/wiki/backlog.md)); four want ONE pass over `app.css`. The newest is a DELETED two-person group keeping the peer's name, so it is indistinguishable from the DM.
 9. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
    commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
 10. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract

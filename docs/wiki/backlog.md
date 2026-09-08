@@ -5331,6 +5331,57 @@ the map meanwhile so the board reconciles today.
 
 ### P1 - THE DEVICE PURGES 49 OF THE 50 PREKEYS IT HAS JUST PUBLISHED, SO THE POOL NEVER FILLS AND IT MINTS FIFTY MORE ON EVERY CONNECTION (measured on the Mi 9T, 2026-09-06 evening)
 
+#### THE OBSERVATION THIS ENTRY HAS BEEN OWED IS TAKEN - Mi 9T, 2026-09-08 17:08-17:10, `a1Build fff05fe14`
+
+*"Nobody has seen any of the three on a device yet."* Two of them are now on the record, from two
+ordinary NOTIF-1b reconnections on a SWEPT estate:
+
+```
+17:08:37.734  [MLS][Tauri] generateKeyPackage native batch path needed=0
+17:09:14.547  [MLS] reconcilePublishedKeyPackages: REFUSED to purge 6/50 prekey(s) this session
+              published itself - the device cannot back a package it just minted
+17:09:34.586  [MLS][Tauri] generateKeyPackage native batch path needed=0
+17:09:59.928  [MLS] reconcilePublishedKeyPackages: REFUSED to purge 6/50 prekey(s) ...
+```
+
+**`REFUSED` DOES NOT MEAN THE SEAM HELD, AND THE TABLE ABOVE SAID IT DID.** It means the seam BROKE
+and #393 caught it: `keyPackageHasPrivate()` returned **false for six packages this session had just
+minted**, which is impossible if the round trip cannot change a byte - the device holds those private
+keys by construction. The guard recognised them by fingerprint and refused. That row is corrected in
+place: `REFUSED to purge N/M` is the ACCUSATION, not the all-clear.
+
+**AND NOTHING WAS PURGED AT ALL.** The `purged N/M` line is absent from both reconnections, so
+`orphanIds.length` was zero. No `[RESUME] reload DROPS KEY MATERIAL` either, though a logcat buffer is
+bounded and that is weaker evidence than the two lines that did appear.
+
+**THE POOL IS NOW THE HEALTHY SIGNATURE THIS ENTRY DEFINED.** On 2026-09-06 all fifty carried a single
+timestamp to the microsecond - one batch, nothing older beside it. Today, same device:
+
+| | 2026-09-06 | 2026-09-08 |
+| --- | --- | --- |
+| mint timestamps behind the 50 | **1** | **6** (18 + 8 + 6 + 6 + 6 + 6) |
+| `generateKeyPackage ... needed=` | 49, 49, 49, 50 | **0, 0** |
+| reconciliation | `purged 49/50` | `REFUSED to purge 6/50`, nothing purged |
+
+Six mint timestamps summing to 50 is *"topped up incrementally (several mint timestamps) - the design
+working"*, which this entry's own population table counted on 39 production devices. The catastrophic
+loop is CONTAINED.
+
+**THE GROWTH IT FED IS SLOWED, NOT STOPPED.** `mls.bin` went 10 237 105 -> **10 376 276** bytes across
+the afternoon and four or five runs - about 139 kB - against the **~389 kB in ONE run** recorded above
+when the loop was live. Call it an order of magnitude, measured rather than modelled. The blob does
+not shrink, so **10.4 MB is still what a checkpoint re-encrypts per message**, and that is what makes
+NOTIF-1b's warm-up 19 992 ms and the row ungradeable.
+
+**WHAT IS STILL OPEN, NARROWED TO ONE SENTENCE.** Why does `keyPackageHasPrivate()` answer false for
+six packages this process minted minutes earlier? The guard makes it harmless and says so; it does not
+explain it. Candidate 1 was refuted from the code on the grounds that the round trip cannot change a
+byte - and this measurement is that refutation's problem, not its confirmation: the bytes did not
+change and the answer was still false, so what differs is the KEYSTORE the question is asked against,
+which is candidate 2's family. **The next observation is the one that names it**: the same run with
+the keystore counted on both sides of the resume, which is the `[RESUME] reload DROPS KEY MATERIAL`
+line nobody has seen yet.
+
 #### THE POPULATION WAS MEASURED ON 2026-09-07, AND IT REFUTES HALF OF THE HEADLINE ABOVE
 
 *A predicate that named the last incident is not the predicate that names the next one.* The claim
@@ -5397,11 +5448,12 @@ something narrower:
 
 | line, from a device reconnecting while holding a published batch | what it settles |
 | --- | --- |
-| `REFUSED to purge N/M` | this session's own fingerprints matched, so the pool is protected and the seam held for those bytes |
+| `REFUSED to purge N/M` | **SEEN 2026-09-08, and it is the ACCUSATION rather than the all-clear**: the ownership check answered false for packages this session minted, and only the guard stopped them being purged. The pool is protected; the seam is BROKEN |
 | `purged N/M` | the fingerprints did NOT match. Since the bytes cannot have changed, the packages were minted by a process this `publishedThisSession` set does not describe - the manager/process identity, which is candidate 2's family |
 | `[RESUME] reload DROPS KEY MATERIAL - live keystore holds N ... holds M` | **candidate 2 outright**, and it is the line to look for first: it names the loss at the boundary where it happens rather than one layer later |
 
-Nobody has seen any of the three on a device yet.
+**TWO OF THE THREE WERE SEEN ON 2026-09-08** - the measurement is at the top of this entry. The third,
+`[RESUME] reload DROPS KEY MATERIAL`, is the one still owed, and it is now the line that names the cause.
 
 **THE 32 ARE THEIR OWN QUESTION**, and none of them is revoked. Whether they are dormant devices that
 never reconnected, or devices genuinely stuck with an empty pool, is unanswered - `MAX(createdAt)`
