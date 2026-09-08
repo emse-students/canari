@@ -11,6 +11,45 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a commit pushed onto an armed pull request was dropped, and every signal said it had landed
+
+PR #438 was opened with two commits; a third was committed and pushed while CI was still running. The
+squash took two. `git push` exited 0, `gh pr view` said `MERGED`, and nothing anywhere said a commit
+had gone missing - it surfaced only because the merged file was grepped on `main` afterwards. The
+branch is deleted by the merge, so the commit was then reachable only from `refs/pull/438/head` or
+from a local object store that had not been gc'd; `git cherry-pick` recovered it.
+
+This is the orphaning `rows.mjs` already reports for device verdicts, arriving from the other
+direction: there a verdict names a commit the squash unreached, here the commit itself never arrives.
+Work that is not in a pull request when it is opened belongs in the NEXT one, and a push onto an
+armed PR is verified by reading the merged file, never by the push's exit code.
+
+### Fixed - the first `SETUP-FAILED` this row ever recorded could not say which precondition failed
+
+`record()` in `notif.mjs` takes an EXPLICIT projection, and its own comment already carries the scar:
+*"the four extras kept here did not include the list the verdict is computed FROM [...] A verdict
+whose reason is not beside it is a verdict a later session re-runs to understand."* The clause list
+was added then. `notMeasured` and `a1SetupFaults` - added the same day, on the same reasoning - were
+not, so the ledger's first `SETUP-FAILED` carried `notMeasured: undefined` and the reason lived only
+in a run log that rotates. An explicit projection has to be revisited every time the record grows a
+field, and it will be missed again; what the verdict is computed from now goes in beside it.
+
+### Fixed - a sweep looking in the wrong place reported it as a chooser declining
+
+`dismiss.mjs` reads conversations out of IndexedDB and refuses a profile holding two accounts, which
+is right. It printed the same sentence for ZERO as for two - *"0 CanariDB_<user> database(s), so none
+can be chosen"* - and on the phone that is not a chooser problem at all: the Tauri client keeps no
+conversation store there. Measured on A1, origin `http://tauri.localhost`, `indexedDB.databases()`
+supported and answering, and the only database present is `emoji-picker-element-fr`.
+
+So every run printed *"A1 debris NOT swept"*, it read as a chooser refusing, and nobody asked why -
+while a group deleted seven hours earlier sat in that phone's sidebar under the peer's name, made
+`openConversation` ambiguous, and cost NOTIF-1b three verdicts. A zero that could mean "declined" or
+"wrong estate" is a defect in the instrument, not a finding. The empty case now names the origin,
+lists what IS there, and says the Tauri clients are not sweepable by this tool. The gap itself is
+filed, with the note that a DOM-based enumeration would not close it either: the phone renders the
+peer's name for such a row, and `isGroupDebris` matches on the group's.
+
 ### Fixed - the sweep's allowlist named six runners and the rig had seven, so a check's groups were permanent
 
 `debris.mjs` is the one allowlist deciding what `cleanup.mjs` may delete on the server and what
