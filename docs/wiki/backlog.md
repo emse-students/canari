@@ -5446,7 +5446,7 @@ Two threads, one manager. 15669 read the file 0.6 s before 15666 wrote it and in
 0.03 s after - erasing ten bundles whose public halves were already on the server. The detector named
 the loss the instant it happened, which is what #441 bought.
 
-#### THE CAUSE IS A LOCK ORDER, AND IT IS FIXED BY INVERTING ONE OF THEM - 2026-09-08
+#### THE CAUSE IS A LOCK ORDER: THE RESUME READ OUTSIDE THE MANAGER LOCK AND INSTALLED INSIDE IT - 2026-09-08
 
 `recharger_mls_au_resume` read `mls.bin` under `mls_bin_write_lock`, RELEASED it, decrypted, and only
 then took the manager lock to install. The comment above that release said the foreground guard closed
