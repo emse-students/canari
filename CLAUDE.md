@@ -252,15 +252,15 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    this campaign's OWN mention fixtures, named 2026-09-07 ([backlog](docs/wiki/backlog.md)).
 4. **P1 - HEAL-repair HEALS 3 TIMES IN 10, SAME ASK CADENCE EITHER WAY**; two causes REFUTED by
    A/B, not to be re-opened ([backlog](docs/wiki/backlog.md)). HEAL-REVOKE stays four clean `PASS`.
-5. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - ONE merge mechanism
+5. **P1 - A CORRUPTED LOCAL MLS STATE IS REPORTED AS A PIN ROTATION** - the classifier branches on an
+   error MESSAGE and defaults to `sealed` (CORRUPT-2, 2026-09-08, [backlog](docs/wiki/backlog.md)).
+6. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - ONE merge mechanism
    and ONE arming point, asserted only by `bun tools/ecosystem-shape/shape.mjs`
    ([rebuild](docs/wiki/ecosystem-convergence.md#12-the-cicd-rebuild-2026-09-04---the-same-four-workflows-in-every-repository),
    [cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them), the only copies).
    Three open: the suppression CONTROL CASE the NestJS batch destroyed (Monday 2026-09-07 answers
    it), **nothing tells anybody prod is down**, and
    [host-updates](docs/wiki/infrastructure/host-updates.md) ([backlog](docs/wiki/backlog.md)).
-6. **THE POPULATION RUNG IS ANSWERED** - MULTI-7/-8/-10 clean `PASS`, MULTI-9 `VACUOUS` because a
-   healthy estate activates in 104 ms and leaves it no pending window ([board](docs/wiki/cross-client-testing.md)).
 7. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
    [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
 8. **SIX UX/RENDERING ITEMS + TWO DEV-LOG LINES** ([backlog](docs/wiki/backlog.md)); four want ONE pass over `app.css`.

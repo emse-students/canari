@@ -156,6 +156,81 @@ and its test are on [dev-environment](infrastructure/dev-environment.md).
 
 ---
 
+### P1 - a corrupted local MLS state is reported as a PIN rotation, and the user is sent after a credential that does not exist (measured 2026-09-08)
+
+**The measurement.** CORRUPT-2 (`corrupt2.mjs`) XORs ONE byte at the midpoint of the 18.4 MB
+`mls_autosave` ciphertext, leaving length and shape intact, and reloads. The client reaches its PIN
+gate - it does not hang, and it does not come up quietly showing an empty history - and it says:
+
+```
+[INIT] Login did not complete (state_sealed_with_old_key):
+Votre PIN a ete change sur un autre appareil. Recuperez vos messages avec votre ancien PIN.
+```
+
+**Why that is wrong.** No PIN was changed. `sessionAuth` verifies the PIN SERVER-SIDE and only then
+decrypts the local state, so at the moment this message is chosen the product already KNOWS the
+credential in the user's hands is the right one. The message sends them after an old PIN that does
+not exist, never names the real cause, and never offers the one recovery that works - the clean
+re-enrolment CORRUPT-4 measured on the same estate the same day, where a device with no usable state
+re-joined all four of its groups self-service.
+
+**It is the vault defect one layer down.** `init` reports `MLS_LOCAL_STATE_UNDECRYPTABLE`, and an
+AEAD tag that does not verify has two causes that the blob alone cannot separate: the state was
+sealed under a DIFFERENT device key (a PIN rotated on another device - ordinary, recoverable with the
+old PIN) or the ciphertext was ALTERED (corruption - the old PIN is irrelevant). One code path names
+both and distinguishes neither, which is exactly what `loadDeviceKey` did until 2026-09-08.
+
+**`mls_autosave_ver` cannot settle it**: it is a per-write SEQUENCE COUNTER that orders concurrent
+flushes, not a key id. Nothing stored beside the blob says which key sealed it.
+
+**The fix has the same shape as the vault's, and the discriminator is already known at the decision
+point.** Two candidates, and the second is cheaper:
+
+1. Store a short fingerprint of the device key beside the state at save time (a MAC of a constant
+   under that key). On a failed decrypt, a fingerprint that MATCHES the current device key excludes
+   rotation, so what is left is alteration; a mismatch is the rotation the message describes.
+2. The server already knows when the account PIN was last rotated - it verified the PIN. If the
+   stored state was written AFTER the last rotation, a rotation cannot be the cause. This carries the
+   discriminator to where the decision is made from where it is already KNOWN, which is the rule, but
+   it needs a server field the client does not have today.
+
+**What it must NOT become.** A fallback that re-enrols whenever a decrypt fails would destroy the
+history of every user whose PIN really was rotated - the case `noFreshStart` exists to protect. The
+two causes have to be TOLD APART, not merged; the point of the fingerprint is that it makes the
+distinction a fact rather than a guess.
+
+**THE MECHANISM, AND IT IS ONE THE REPOSITORY'S OWN RULES FORBID.**
+`BaseMlsService.classifyStateLoadFailure` decides between `mismatch` and `sealed` like this:
+
+```ts
+return errStr.includes('identity mismatch') || errStr.includes('Credential identity')
+  ? 'mismatch'
+  : 'sealed';
+```
+
+It BRANCHES ON AN ERROR MESSAGE - *"a distinction carried in prose is a distinction exactly ONE call
+site will make"* - and its default arm is `sealed`. So every failure the two needles do not recognise
+becomes "your PIN was changed on another device", corruption included. Its own doc-comment records
+that an earlier version of this same confusion *"surfaced a false 'your PIN was changed on another
+device' to users who had never changed their PIN"*; the case was fixed for `mismatch` and left
+standing for everything else.
+
+**WHY THIS IS A WORK PACKAGE AND NOT A SESSION-TAIL FIX.** The right home for the discriminator is
+`BaseMlsService` - one place, both platforms, the same shape as the `stateOrAbsent` predicate that
+fixed CORRUPT-4 - and that is what makes it bigger than it looks: the fingerprint has to be STORED
+somewhere both platforms can read. `mls_autosave_ver` is not a precedent, because it lives in the web
+IndexedDB branch only; the phone keeps its state in `mls.bin` through Rust and has no matching
+side-channel today. Writing one is a Rust change plus a TS change plus a migration for every device
+that has no fingerprint yet.
+
+**Doing it on the web alone would be the defect this row already found, one layer up**: CORRUPT-4
+existed because one predicate was decided twice and the two branches disagreed. A fingerprint that
+exists on the web and not on the phone recreates exactly that asymmetry, in the login path.
+
+**Where the evidence is.** Board cell CORRUPT-2 on [cross-client-testing](cross-client-testing.md);
+the runner and its reasoning in `tools/cross-client-harness/archive/corrupt2.mjs`; the parallel fix
+and its five tests in `frontend/src/lib/utils/deviceKeyVault.ts` and its test file.
+
 ## Notifications - the two builders, and the rung of the campaign that reads them as one
 
 ### P2 - the app has TWO notification builders and only one of them can be tapped (measured on device 2026-09-07)

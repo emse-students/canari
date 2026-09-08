@@ -16,6 +16,7 @@
  *   bun mlsdb.mjs --port 9224 restore     - put it back
  *   bun mlsdb.mjs --port 9224 digest      - what is there right now
  *   bun mlsdb.mjs --port 9224 truncate    - damage one entry to ZERO LENGTH, on purpose
+ *   bun mlsdb.mjs --port 9224 flip        - flip ONE byte inside an entry, on purpose
  *
  * **`truncate` IS THE DAMAGE PRIMITIVE THE CORRUPT PHASE WAS MISSING**, and the reason it lives
  * here rather than in a check is that the recovery lives here: a runner that damages a store it
@@ -210,6 +211,47 @@ if (cmd === 'list') {
         done.push({ target: keys[i], rows: rows.length });
       }
       return JSON.stringify({ restored: done, from: takenAt }, null, 1);`)
+  );
+} else if (cmd === 'flip') {
+  // ONE BYTE, IN THE MIDDLE, AND SAID OUT LOUD. CORRUPT-2 asks what an ALTERED ciphertext does, which
+  // is a different question from an absent one (-4) and from a short one (-1): the blob keeps its
+  // length and its shape and fails at the AEAD tag. The offset is the midpoint rather than a random
+  // draw so two runs damage the same place and can be compared - a row whose stimulus moves cannot
+  // tell a flaky product from a flaky stimulus.
+  const keyArg = arg('--key', 'mls_autosave');
+  console.log(
+    await run(`
+      var durable = await loadDurable();
+      if (!window.__mlsSnapshot && !durable.snap) {
+        return JSON.stringify({ refused: 'no snapshot in this tab or in durable storage - take one first, this is not recoverable without it' });
+      }
+      var list = (await indexedDB.databases()).filter(function (d) { return /^CanariDBMls/.test(d.name); });
+      var flipped = [];
+      for (var i = 0; i < list.length; i++) {
+        var db = await openDb(list[i].name);
+        var stores = [].slice.call(db.objectStoreNames);
+        for (var s = 0; s < stores.length; s++) {
+          var rows = await readAll(db, stores[s]);
+          var hit = rows.filter(function (r) { return String(r.key) === ${JSON.stringify(keyArg)}; })[0];
+          if (!hit) continue;
+          var bytes = hit.value instanceof Uint8Array ? new Uint8Array(hit.value) : null;
+          if (!bytes || bytes.length < 2) continue;
+          var was = digest(bytes);
+          var at = Math.floor(bytes.length / 2);
+          bytes[at] = bytes[at] ^ 0xff;
+          await new Promise(function (res, rej) {
+            var tx = db.transaction(stores[s], 'readwrite');
+            tx.objectStore(stores[s]).put(bytes, ${JSON.stringify(keyArg)});
+            tx.oncomplete = function () { res(); };
+            tx.onerror = function () { rej(tx.error); };
+          });
+          // A LENGTH, AN OFFSET AND TWO HASHES - never a byte of the material itself.
+          flipped.push({ db: list[i].name, store: stores[s], key: ${JSON.stringify(keyArg)},
+                         len: was.len, atOffset: at, wasHash: was.hash, nowHash: digest(bytes).hash });
+        }
+        db.close();
+      }
+      return JSON.stringify({ flipped: flipped }, null, 1);`)
   );
 } else if (cmd === 'truncate') {
   // THE KEY IS NAMED, NEVER SCANNED FOR. A primitive that damaged "whatever looked like state"

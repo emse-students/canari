@@ -11,6 +11,41 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Added - CORRUPT-2, and the finding it exists to have made
+
+`mlsdb.mjs flip` XORs ONE byte at the midpoint of an entry, leaving its length and shape untouched so
+every structural check passes and the failure lands on the AEAD tag. The offset is the midpoint
+rather than a random draw: a row whose stimulus moves cannot tell a flaky product from a flaky
+stimulus. Like `truncate` it REFUSES without a snapshot.
+
+`corrupt2.mjs` runs it against W1's 18.4 MB MLS state, and the row's literal claim holds - the client
+reaches its PIN gate, does not hang, and does not come up quietly showing an empty history. **What it
+SAYS is the finding**, and the check was deliberately written to record that rather than assert it,
+because writing an assertion for the diagnosis before measuring what the diagnosis IS would be a
+check pre-judging its own row:
+
+```
+[INIT] Login did not complete (state_sealed_with_old_key):
+Votre PIN a ete change sur un autre appareil. Recuperez vos messages avec votre ancien PIN.
+```
+
+No PIN was changed. `sessionAuth` verifies the PIN SERVER-SIDE and only then decrypts the local
+state, so at the moment that message is chosen the product already knows the credential in the
+user's hands is the right one. It sends them after an old PIN that does not exist, never names the
+real cause, and never offers the one recovery that works - the clean re-enrolment CORRUPT-4 measured
+on the same estate the same day.
+
+The mechanism is `BaseMlsService.classifyStateLoadFailure`, which branches on an error MESSAGE -
+`errStr.includes('identity mismatch')` - with `sealed` as its default arm, so every failure those two
+needles do not recognise becomes a PIN rotation. Its own doc records that an earlier version of this
+confusion "surfaced a false 'your PIN was changed on another device' to users who had never changed
+their PIN": the case was fixed for `mismatch` and left standing for everything else.
+
+Filed as a P1 with the measurement, the two candidate discriminators and the reason it is a Work
+Package rather than a session-tail fix - the fingerprint has to live where BOTH platforms can read
+it, and putting it on the web alone would recreate, in the login path, exactly the asymmetry that
+CORRUPT-4 was written to find.
+
 ### Added - CORRUPT-4 is answered end to end, and the phase has the damage primitive it was missing
 
 `mlsdb.mjs` had snapshot, restore and digest and nothing that writes bad bytes, so four CORRUPT rows
