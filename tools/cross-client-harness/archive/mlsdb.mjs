@@ -15,6 +15,22 @@
  *   bun mlsdb.mjs --port 9224 snapshot    - take one (in-page)
  *   bun mlsdb.mjs --port 9224 restore     - put it back
  *   bun mlsdb.mjs --port 9224 digest      - what is there right now
+ *   bun mlsdb.mjs --port 9224 truncate    - damage one entry to ZERO LENGTH, on purpose
+ *
+ * **`truncate` IS THE DAMAGE PRIMITIVE THE CORRUPT PHASE WAS MISSING**, and the reason it lives
+ * here rather than in a check is that the recovery lives here: a runner that damages a store it
+ * cannot put back has not measured a defect, it has caused one. So it REFUSES without a snapshot,
+ * in-tab or durable, and that refusal is the whole design - a destructive control is gated on the
+ * state it can restore, never on the caller's promise to have taken one.
+ *
+ * It is an ALLOWLIST twice over: only databases matching `CanariDBMls`, and only the ONE key named
+ * by `--key` (default `mls_autosave`, the encrypted MLS state). Everything else in the store is
+ * left exactly as it was, so a row can attribute what it sees to the entry it damaged.
+ *
+ * ZERO LENGTH RATHER THAN GARBAGE, deliberately: `CORRUPT-4` asks whether an empty state reads as
+ * ABSENT, and until 2026-09-08 it did on the phone and did NOT on the web, where an empty
+ * `Uint8Array` is truthy - so zero bytes meant *absent* on one client and *present and empty* on
+ * the other (`CHANGELOG.md`). Garbage would measure the decrypt path instead, which is CORRUPT-2.
  */
 import { APP_TAB, client, evaluate } from '../chat.mjs';
 
@@ -194,6 +210,42 @@ if (cmd === 'list') {
         done.push({ target: keys[i], rows: rows.length });
       }
       return JSON.stringify({ restored: done, from: takenAt }, null, 1);`)
+  );
+} else if (cmd === 'truncate') {
+  // THE KEY IS NAMED, NEVER SCANNED FOR. A primitive that damaged "whatever looked like state"
+  // would damage a different thing after any schema change, and the row would still be graded.
+  const keyArg = arg('--key', 'mls_autosave');
+  console.log(
+    await run(`
+      // GATED ON THE RESTORE, not on the caller's word. Without a snapshot this tab is one command
+      // away from an account that has to be re-enrolled by hand, and the campaign's own rule is that
+      // a destructive control is gated on knowing the state can be put back.
+      var durable = await loadDurable();
+      if (!window.__mlsSnapshot && !durable.snap) {
+        return JSON.stringify({ refused: 'no snapshot in this tab or in durable storage - take one first, this is not recoverable without it' });
+      }
+      var list = (await indexedDB.databases()).filter(function (d) { return /^CanariDBMls/.test(d.name); });
+      var damaged = [];
+      for (var i = 0; i < list.length; i++) {
+        var db = await openDb(list[i].name);
+        var stores = [].slice.call(db.objectStoreNames);
+        for (var s = 0; s < stores.length; s++) {
+          var rows = await readAll(db, stores[s]);
+          var hit = rows.filter(function (r) { return String(r.key) === ${JSON.stringify(keyArg)}; })[0];
+          if (!hit) continue;
+          var was = digest(hit.value);
+          await new Promise(function (res, rej) {
+            var tx = db.transaction(stores[s], 'readwrite');
+            tx.objectStore(stores[s]).put(new Uint8Array(0), ${JSON.stringify(keyArg)});
+            tx.oncomplete = function () { res(); };
+            tx.onerror = function () { rej(tx.error); };
+          });
+          // A LENGTH AND A HASH, never the bytes - the same rule the whole file is built on.
+          damaged.push({ db: list[i].name, store: stores[s], key: ${JSON.stringify(keyArg)}, wasLen: was.len, wasHash: was.hash, nowLen: 0 });
+        }
+        db.close();
+      }
+      return JSON.stringify({ truncated: damaged }, null, 1);`)
   );
 } else {
   console.log(`unknown command: ${cmd}`);

@@ -323,11 +323,17 @@ export const PHASES = {
   // ONE OF TEN, AND THE COUNT IS HERE SO THE OTHER NINE STAY VISIBLE. `scripts: []` until
   // 2026-09-08: ten rows designed and nothing able to run one of them, which is the shape rule 22
   // exists to catch - a phase that reads as covered because its rows are written down.
-  // `corrupt.mjs` answers CORRUPT-3 alone; the damage each remaining row needs is different, and a
-  // file claiming a phase it half implements is how a rung reads green while nothing ran it.
-  // CORRUPT-1/-4/-5/-7 want a damage primitive in `mlsdb.mjs`, which has snapshot/restore/digest
-  // and nothing that writes bad bytes; -9 and -10 need A1.
-  CORRUPT: { title: "deliberate store damage", scripts: ["corrupt.mjs"], needs: ["W1", "W2"] },
+  // ONE FILE PER ROW, and not because the rows are big. `corrupt.mjs` answers CORRUPT-3 and
+  // `corrupt4.mjs` CORRUPT-4; a single script would take the second row down with the first on any
+  // throw, and the phase would report one answer where two were owed - a rung reading green while
+  // nothing ran half of it. The damage each remaining row needs is different again.
+  // CORRUPT-1/-5/-7 can now use `mlsdb.mjs truncate`, which -4 is the reason for writing; -2 wants
+  // a byte flipped INSIDE the ciphertext; -9 and -10 need A1.
+  CORRUPT: {
+    title: "deliberate store damage",
+    scripts: ["corrupt.mjs", "corrupt4.mjs"],
+    needs: ["W1", "W2"],
+  },
   // ONE OF TEN, AND IT WAS WRITTEN BEFORE THIS MANIFEST EXISTED. `del1.mjs` covers DEL-1
   // (WP-HISTGHOST-1's regression check) and was reachable from nothing: the phase read as ZERO
   // coverage, the board read `pending`, and the script's verdict lived in a console line. Rule 22.

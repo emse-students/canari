@@ -252,6 +252,17 @@ const perOrder = new Map();
  * differently by construction (that is its question, and `perOrder` above adjudicates it).
  */
 const perBuild = new Map();
+
+/**
+ * WHAT MAKES TWO VERDICTS COMPARABLE - the same question, asked of the same code, the same way.
+ *
+ * `sourceSha` IS PART OF A BUILD'S IDENTITY and the commit is not enough on its own: see the field's
+ * note in `results.mjs` for the run that proved it. Two verdicts taken at one commit against two
+ * different served trees are a BEFORE and an AFTER, never a draw. Rows recorded before the field
+ * existed carry no stamp and keep their old grouping, so no historical draw is dissolved by this.
+ */
+const keyOf = (r) =>
+  [r.build || '?', r.sourceSha || '?', r.checkSha || '?', r.instrumentSha || '?', r.order || ''].join('|');
 /** row -> every SKIPPED record, so a skip is reported without being allowed to grade the row. */
 const skipped = new Map();
 /** row -> the newest record that is NOT a skip, used to restore a verdict a later skip displaced. */
@@ -340,7 +351,7 @@ for (const line of readFileSync(LEDGER, 'utf8').split('\n')) {
     // one commit against two different served trees are a BEFORE and an AFTER, never a draw. Rows
     // recorded before the field existed carry no stamp and keep their old grouping, so no historical
     // draw is silently dissolved by this.
-    const buildKey = [r.build || '?', r.sourceSha || '?', r.checkSha || '?', r.instrumentSha || '?', r.order || ''].join('|');
+    const buildKey = keyOf(r);
     if (r.verdict === 'SKIPPED') continue;
     if (!perBuild.has(row)) perBuild.set(row, new Map());
     const perKey = perBuild.get(row);
@@ -524,7 +535,7 @@ for (const [row, perKey] of perBuild) {
   for (const [key, tally] of perKey) {
     if (tally.size < 2) continue;
     const [build, , , , order] = key.split('|');
-    flaky.push({ row, build, order, tally });
+    flaky.push({ row, build, order, tally, key });
   }
 }
 if (flaky.length) {
@@ -538,7 +549,11 @@ if (flaky.length) {
     // THE ONES THAT DECIDE A CELL RIGHT NOW. The rest are history and are kept as evidence: a row
     // that was a draw on an older build and is settled on this one has been fixed, and deleting the
     // record would erase the only proof of that.
-    const grading = latest.get(f.row) && String(latest.get(f.row).build).startsWith(String(f.build));
+    // ON THE WHOLE KEY, NEVER ON THE BUILD ALONE. A draw from an EARLIER key that happens to
+    // share a commit would otherwise claim to be what grades the row - which is the same confusion
+    // `sourceSha` was added to end, one level up: CORRUPT-3 carried a real historical draw at
+    // `3a622e3f` from a deliberate A/B while the three runs actually grading it were unanimous.
+    const grading = latest.get(f.row) && keyOf(latest.get(f.row)) === f.key;
     console.log(
       '  ' +
         f.row.padEnd(14) +

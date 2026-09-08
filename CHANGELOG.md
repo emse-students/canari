@@ -11,6 +11,58 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Added - CORRUPT-4 is answered end to end, and the phase has the damage primitive it was missing
+
+`mlsdb.mjs` had snapshot, restore and digest and nothing that writes bad bytes, so four CORRUPT rows
+were unrunnable by design. `truncate` is that primitive, and the reason it lives beside the recovery
+rather than in a check is that a runner which damages a store it cannot put back has not measured a
+defect - it has caused one. **It REFUSES without a snapshot**, in-tab or durable: a destructive
+control is gated on the state it can restore, never on the caller's promise to have taken one. It is
+an allowlist twice over - only `CanariDBMls*` databases, only the one key named by `--key`.
+
+`corrupt4.mjs` uses it for CORRUPT-4, and the row's assertion is **the login itself**, which is
+precisely what the unit test pinning the predicate cannot make. After 18 MB of MLS state was
+truncated to zero, W1 signed in, logged `device_key_b64 provided but no encrypted state - creating
+fresh state`, marked its four conversations not-ready and re-joined every one by external commit,
+self-service. The state was then restored and the restore ASSERTED rather than assumed: 18110755
+bytes / `e75c191a` before and after, identical.
+
+Both narration lines are named per row, and the first is one `watch.mjs` explicitly calls a FINDING
+wherever it appears. That is right, and it is why it is named here and nowhere wider: the warning
+fires when a device key arrives with no encrypted state beside it and a state was genuinely expected,
+which is exactly the condition this row arranges on purpose. Its ABSENCE here would be the defect.
+
+### Fixed - a server line nothing classified, and a classifier rule that could never match
+
+`[DEVICE_MEMBERSHIPS]` was matched by no rule and landed in `unexplained` every time a device
+enumerated its memberships - routine traffic, and the first thing any client does after a
+re-enrolment. Four of them put a whole server window in `NOT CLEAN` for the most expected lines the
+run could produce. It is matched on `stranded=0`, never on the tag: `stranded` counts the memberships
+the server holds that the DEVICE cannot serve itself out of, so a non-zero value is the finding the
+line exists to carry, and forgiving the tag would have hidden it along with the noise.
+
+**The first version of that rule contained a literal BACKSPACE** where a word boundary was intended,
+so it looked right in the diff, in review and in `grep`, and matched nothing at all. The window
+stayed `NOT CLEAN` and said only that the four lines were still unexplained; the rule's own failure
+was silent. `srvclassify-selftest.mjs` now asserts that `srvlog.mjs` and `watch.mjs` carry no control
+character, naming file, line and content when one appears.
+
+**And the first version of THAT guard did not work either**, which is the more useful half. It tested
+`regex.source`, which is specified to return text that parses back to the same regex - so a raw 0x08
+comes out as the escape `` and no control character is ever there to find. It was proven by
+re-introducing the defect and watching the guard pass. A guard that cannot see the thing it was
+written for is worse than none: it turns an open question into a settled one. The bytes on disk are
+the only place this is visible, so that is what is read.
+
+### Fixed - an intermittence report named the commit, so an old draw claimed to grade a current row
+
+`rows.mjs` decided which draw grades a cell by comparing the BUILD alone, while grouping verdicts on
+the full identity of a measurement. So a draw from an earlier `checkSha` that happened to share a
+commit carried the `THE BOARD GRADES THIS ROW ON THIS BUILD` marker while the runs actually deciding
+the cell were unanimous - which is what CORRUPT-3 showed on 2026-09-08, a real historical draw from a
+deliberate A/B pointing at three later runs that agreed. Grading is now keyed on the whole identity,
+the same one the grouping uses.
+
 ### Added - the CORRUPT phase has a runner, and its first row is answered end to end
 
 The phase sat on the board with ten rows and `scripts: []`: designed on 2026-08-19, never runnable,

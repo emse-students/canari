@@ -635,6 +635,20 @@ const NOTABLE = [
   // notable and not benign on purpose: it names the deepest devices on the fleet, and a number that
   // climbs there is the whole point of having written it.
   /\[CRON\] reportQueueDepth:/,
+  // A DEVICE ASKING WHICH GROUPS IT STILL BELONGS TO, AND THE NUMBER THAT DECIDES WHETHER IT IS NEWS.
+  //
+  // `[DEVICE_MEMBERSHIPS]` was matched by NOTHING and landed in `unexplained` every time a device
+  // enumerated its memberships - which is routine, and is exactly what a client does after any
+  // re-enrolment. Found on 2026-09-08 by CORRUPT-4, whose whole stimulus is to make a device rebuild
+  // its MLS state: four such lines put the server window in `NOT CLEAN` for the most expected
+  // traffic the row could possibly produce.
+  //
+  // MATCHED ON `stranded=0`, NOT ON THE TAG, and that is the entire design. `stranded` is the count
+  // of memberships the server holds that the DEVICE cannot serve itself out of, so a non-zero value
+  // is the finding this line exists to carry - a device the estate believes is in a group it can no
+  // longer read. Matching the tag would have forgiven that number along with the noise, which is the
+  // way a classifier earns the right to be ignored.
+  /\[DEVICE_MEMBERSHIPS\] .*stranded=0(?![0-9])/,
   // THE RECONCILIATION PROTOCOL, SERVER SIDE. The pattern above matches `history_request` with an
   // underscore; the service logs `[HISTORY_REQ]`, so every forwarded and unanswerable history ask
   // was landing in `unexplained` instead of the bucket a reader looks at. `NO_PEER_ONLINE` is the
