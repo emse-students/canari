@@ -2283,6 +2283,46 @@ opposite fixes:
 harness has met before - so the read needs a route that is not `evaluate` on a live client. That is the
 next step, and no further code should be written for this row until it answers.
 
+**THE PROBE IS NO LONGER BLOCKED - THE READ WORKS AND IS AN ATOM (`seenset.mjs`, 2026-09-08).** The
+hang was in HOW it was asked, not in the client. `Runtime.evaluate` hands back a remote object handle
+for anything structured, and paging a 4 800-entry array through one is where the wait came from;
+returning `JSON.stringify(...)` from inside the page makes the answer a primitive that arrives whole
+in the first reply. Attaching with `focus: false` is the other half, so the read is safe to take while
+something else is being measured - which is the only time its answer is interesting. Three reads, no
+hang.
+
+**AND IT REFUTES THE CAP AS THE EXPLANATION, WHICH WAS CANDIDATE 2.** W1, group `2bd5add9`, read
+immediately after a TAB-3b run that had just accused three frames:
+
+```
+2bd5add9   4835 entries (2073 frames + 2762 rows) = 96.7% of the 5000 cap
+needle 7e:1kk0lis: ABSENT from every ledger on this client
+needle 5p:1xc4y4j: ABSENT from every ledger on this client
+needle 5p:1jxfhal: ABSENT from every ledger on this client
+```
+
+The set is BELOW the cap, so nothing was evicted, and hydration plainly works - 4 835 entries were
+read back. **The three accused fingerprints were never written at all.** That leaves candidate 1: the
+mark does not reach `localStorage` in this scenario, and the fix has to be a durability path that does
+not wait on a checkpoint. It does not say WHICH path spent the generations without recording them,
+and that is the next question rather than a settled one.
+
+**TWO GROWTH HAZARDS THE SAME READ SURFACED, NEITHER PREVIOUSLY MEASURED.**
+
+1. **The cap is shared by two namespaces and the wrong one is winning.** `frames` are ciphertext
+   fingerprints and mean *"I consumed this generation"*; the rest are message ids and mean *"I walked
+   this row"*. Both go into one array capped at 5 000 and `saveSeenCipherHashes` keeps the LAST 5 000
+   - so on the busiest conversation **2 762 message ids are crowding out 2 073 fingerprints**, and the
+   first thing evicted will be the marks whose loss produces exactly the accusation above. The other
+   168 groups on the same client hold 3 to 7 rows each, so this is a property of a long conversation,
+   not of the design being wrong everywhere.
+2. **The cap is PER GROUP and nothing bounds the number of groups.** 169 ledgers on W1, 247 kB. That
+   is comfortably inside the origin quota today and the arithmetic is the point: 169 groups at the cap
+   would be several megabytes, against a quota of 5-10 MB. **The failure is silent by design** -
+   `saveSeenCipherHashes` catches the write error and warns that *"this replay is repeated in full
+   next time"*, which is a permanent regression to re-walking history on every boot, reported once per
+   failed write at `warn`.
+
 **AND THE CATCH-UP IS A TIMER, WHICH IS A SECOND FINDING THE ROW WAS BUILT TO SURFACE.** Five cold
 starts took 61 863 / 61 865 / 61 889 / 61 930 / 62 019 ms to show a message sent while the browser
 was down - a **156 ms spread over five runs**. A duration that stable is not work, and the board's
