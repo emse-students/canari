@@ -583,7 +583,10 @@ if (which === '1b') {
   // the encryption PIN - so the chat is behind the modal and nothing below it can be navigated to.
   out.unlock = unlock();
   stage(`unlock -> ${out.unlock}`);
-  await ensureChat(a1).catch(() => null);
+  // The pair announce together. `openConversation` already did; `ensureChat` did not, and a failure
+  // there is the reason the one below fails - reading the second without the first sends a reader
+  // looking for an ambiguous tile when the client never reached the chat surface at all.
+  await ensureChat(a1).catch((e) => stage(`A1 ensureChat FAILED - ${e?.message || e}`));
   await openConversation(a1, peerNameFor('A1')).catch((e) => stage(`openConversation: ${e.message}`));
 
   // POST-CONDITION, and the reason the first run of this check was worthless: both navigation calls

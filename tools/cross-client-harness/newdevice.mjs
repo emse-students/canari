@@ -309,9 +309,20 @@ export async function becomeANewDevice({ report = stage } = {}) {
   // 2026-08-28 as `pinGate: "none shown"` and judged by rung 17, which is where it belongs. And if a
   // gate ever IS shown, a reader placed between the halves sees it immediately - the first sidebar
   // sample reads `panel: false` - which is a better answer than twenty blind seconds.
-  await ensureChat(cx).catch(() => null);
+  // THE LINE BELOW ASSERTS THE THING THIS CATCH WAS DISCARDING. `report("the client is LIVE on
+  // /chat")` is printed unconditionally, so a swallowed failure here does not merely lose a reason -
+  // it publishes its opposite, and every later reading is attributed to a client the run has just
+  // been told is ready. A report contradicted by a discarded error is worse than no report.
+  let notOnChat = null;
+  await ensureChat(cx).catch((e) => {
+    notOnChat = String(e?.message || e).slice(0, 200);
+  });
   const liveAt = Date.now();
-  report("the client is LIVE on /chat - the mint hands over here");
+  report(
+    notOnChat
+      ? `the client did NOT reach /chat - ${notOnChat} - everything after this measures a client that never got there`
+      : 'the client is LIVE on /chat - the mint hands over here'
+  );
 
   return {
     cx,

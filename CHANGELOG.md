@@ -11,6 +11,30 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - nine harness setup failures were discarded, and one of them printed the opposite
+
+`openConversation` refuses precisely and says why. On 2026-09-08 it said `2 of 5 conversation tiles
+match the requested name on port 9333, so the row is AMBIGUOUS and none was opened` - a group deleted
+seven hours earlier, still listed in the sidebar under the peer's name - and `.catch(() => null)`
+threw that sentence away. Three NOTIF-1b verdicts were spent and a P1 was filed against a working
+socket before anybody read it. `notif.mjs` was fixed when that was found; this sweeps the rest.
+
+Every remaining `ensureChat` / `openConversation` whose failure was discarded now announces it:
+`heal.mjs`, `life.mjs` - whose own `reopenAfterKill` already recorded both reasons, so the pattern
+existed in the same file - `k.mjs`, `notif.mjs`'s second site, `notif7.mjs`, `notif14.mjs`,
+`notif16.mjs` and `healrevoke.mjs`. `k.mjs` gets the full treatment because it has somewhere to put
+it: the reasons go into `out.a1SetupFaults` and are asserted as `theDmWasOpenOnThePhone`, a
+PRECONDITION, so a run that never opened the DM records `SETUP-FAILED` instead of grading the reply
+path it never reached.
+
+And `newdevice.mjs` published the contrary. It swallowed the failure and then printed,
+unconditionally, `the client is LIVE on /chat - the mint hands over here`. A discarded error there
+does not merely lose a reason: it asserts the opposite, and every later reading is attributed to a
+client the run has just declared ready. That line now says which of the two actually happened.
+
+W2's and W1's equivalents were always allowed to throw. Only the phone's were silent - on every file
+that drives one.
+
 ### Fixed - the detector for a lost keystore compared how MANY bundles there were, not which ones
 
 `recharger_mls_au_resume` accepts a reload on an epoch guard, and key material is not a group epoch -

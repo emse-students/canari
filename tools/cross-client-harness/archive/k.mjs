@@ -102,9 +102,23 @@ await phone.ensure({ port: PORTS.A1 });
 out.unlock = phone.unlockPin();
 stage(`unlock -> ${out.unlock}`);
 const a1 = await withDeadline(client(PORTS.A1, 'tauri.localhost'), 60_000, 'A1 attach');
-await withDeadline(ensureChat(a1), 60_000, 'A1 ensureChat').catch(() => null);
+// A SWALLOWED SETUP FAILURE MAKES THE RUN MEAN SOMETHING ELSE WITHOUT SAYING SO. `openConversation`
+// refuses precisely and says why - on 2026-09-08 it was *"2 of 5 conversation tiles match the
+// requested name on port 9333, so the row is AMBIGUOUS and none was opened"*, a deleted group still
+// listed under the peer's name - and `.catch(() => null)` threw that sentence away. Three NOTIF-1b
+// verdicts were spent before anyone read it. This row asks what the app does with a reply typed into
+// a notification, and every clause after this one assumes the DM is open, so the failure is recorded,
+// announced, and asserted below rather than discarded.
+out.a1SetupFaults = [];
+await withDeadline(ensureChat(a1), 60_000, 'A1 ensureChat').catch((e) => {
+  out.a1SetupFaults.push(`ensureChat: ${e?.message || e}`);
+  stage(`A1 ensureChat FAILED - ${e?.message || e}`);
+});
 await withDeadline(openConversation(a1, peerNameFor('A1')), 90_000, 'A1 openConversation').catch(
-  () => null
+  (e) => {
+    out.a1SetupFaults.push(`openConversation: ${e?.message || e}`);
+    stage(`A1 openConversation FAILED - ${e?.message || e}`);
+  }
 );
 
 // ── 3. THE PRECONDITION, ASSERTED ────────────────────────────────────────────────────────────────
@@ -192,6 +206,9 @@ if (!out.atSend.pid) unmet.push('theAppWasStillAlive');
 if (out.atSend.foregrounded) unmet.push('theAppWasHidden');
 // NOT a product clause: with no armed file the run exercises the Keystore path, which never broke.
 if (out.pendingSecretBytes !== 32) unmet.push('thePreconditionWasArmed');
+// Its sibling: every clause below assumes the phone is sitting in the DM, and until 2026-09-08 a
+// refusal to open it was discarded. Recorded above, asserted here.
+if (out.a1SetupFaults.length > 0) unmet.push('theDmWasOpenOnThePhone');
 if (out.notifiedInMs === null) unmet.push('aNotificationArrived');
 for (const [name, re] of WANTED) if (!re.test(log)) unmet.push(name);
 out.unmet = unmet;
@@ -213,6 +230,7 @@ if (!out.theShadeWasAnswered) {
     'theAppWasStillAlive',
     'theAppWasHidden',
     'thePreconditionWasArmed',
+    'theDmWasOpenOnThePhone',
   ]);
   const failedPreconditions = unmet.filter((u) => PRECONDITIONS.has(u));
   if (failedPreconditions.length > 0) {
