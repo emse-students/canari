@@ -31,7 +31,7 @@
   </div>
 
   <!-- Conteneur du texte -->
-  <div class="flex flex-col justify-center leading-tight {compact ? 'hidden sm:flex' : 'flex'}">
+  <div class="flex flex-col justify-center gap-0.5 {compact ? 'hidden sm:flex' : 'flex'}">
     <p
       class="font-brand text-text-main text-xl font-bold tracking-wide capitalize transition-colors duration-300 group-hover:text-amber-500 dark:group-hover:text-amber-400"
     >

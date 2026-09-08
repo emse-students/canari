@@ -271,7 +271,7 @@
 
 <main class="flex gap-6 px-4 py-6 md:px-8 md:py-8">
   <div class="min-w-0 flex-1">
-    <div class="animate-rise-in mx-auto max-w-xl">
+    <div class="animate-rise-in mx-auto max-w-[42.5rem]">
       <header class="mb-6 flex items-center justify-between gap-3">
         <div>
           <h1 class="font-brand text-text-main text-2xl font-bold tracking-tight">
@@ -353,7 +353,7 @@
       <Modal
         open={showCreateModal}
         title={m.posts_new_post_title()}
-        maxWidth="max-w-xl"
+        maxWidth="max-w-[42.5rem]"
         onClose={() => (showCreateModal = false)}
       >
         <div class="p-1">

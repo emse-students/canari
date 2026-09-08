@@ -169,7 +169,7 @@
 </script>
 
 <aside
-  class="bg-cn-surface hidden h-full w-72 flex-col overflow-hidden rounded-[1.5rem] border border-black/5 shadow-sm transition-all duration-300 xl:flex dark:border-white/10"
+  class="bg-cn-surface sticky top-4 hidden max-h-[calc(100vh-8rem)] w-[22rem] shrink-0 flex-col self-start overflow-hidden rounded-2xl shadow-sm transition-all duration-300 xl:flex"
 >
   <!-- Header. -->
   <div

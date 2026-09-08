@@ -15,9 +15,9 @@
 </script>
 
 <header
-  class="border-cn-border sticky top-0 z-20 hidden flex-shrink-0 border-b bg-(--surface-elevated) md:block"
+  class="app-top-bar border-cn-border sticky top-0 z-20 hidden flex-shrink-0 border-b bg-(--surface-elevated) md:block"
 >
-  <div class="flex h-14 items-center justify-between gap-3 px-4 md:px-6">
+  <div class="flex h-14 items-center justify-between gap-3 px-4 py-1 md:px-6">
     <!-- Left: Brand -->
     <div class="flex flex-shrink-0 items-center gap-2">
       <CanariBrand compact={true} />
