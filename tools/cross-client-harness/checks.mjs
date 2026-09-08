@@ -173,6 +173,10 @@ export const PHASES = {
       // nothing while a row that runs before is unaffected either way. Both forgive those 404s.
       'notif14.mjs',
       'notif16.mjs',
+      // LAST OF ALL: it MINTS a group, so it leaves the estate with one more conversation than
+      // it found. `cleanup.mjs` sweeps it, but a row that runs after it would see a sidebar it
+      // did not expect - and two NOTIF rows already count sidebar entries.
+      'notif17b.mjs',
     ],
     needs: ['W1', 'W2', 'A1'],
   },

@@ -18,12 +18,13 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-53 scripts.
+54 scripts.
 
 | script | what it is |
 |---|---|
 | `a1apk.mjs` | BUILD THE A1 APK AGAINST THE LOCAL ESTATE, INSTALL IT, AND PROVE THE PHONE IS RUNNING IT. |
 | `accounts.mjs` | The ONE reader of `test-accounts.json`. |
+| `apkbuild.mjs` | WHETHER THE APK ON THE PHONE IS ANY COMMIT AT ALL - the provenance a build stamp cannot carry. |
 | `arm.mjs` | The one module in this harness that WRITES to production, and the distinction it turns on. |
 | `atoms.mjs` | THE ATOMS - every gesture this rig can make, in one place, each with its contract. |
 | `bundle.mjs` | WHICH BUNDLE A WEB CLIENT IS RUNNING, and the repair when it is not the deployed one. |
@@ -91,7 +92,7 @@ A gesture other rows REST ON, measured by a row of its own so a failure in it is
 
 One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`. See [`archive/README.md`](archive/README.md).
 
-71 scripts.
+72 scripts.
 
 | script | what it is |
 |---|---|
@@ -154,6 +155,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 | `archive/notif.mjs` | NOTIF-1b / NOTIF-4 / NOTIF-4b / NOTIF-9 / NOTIF-10 / NOTIF-11 - the notification surface, one |
 | `archive/notif14.mjs` | NOTIF-14 - the TITLE names its conversation: a DM says WHO, a salon says WHERE. |
 | `archive/notif16.mjs` | NOTIF-16 - a mention is filed on `canari_mentions` and a plain message on `canari_messages`. |
+| `archive/notif17b.mjs` | NOTIF-17b - a first message into a conversation this device has NO RECORD OF, arriving as a PUSH. |
 | `archive/notif7.mjs` | NOTIF-7 - tapping a notification deep-links into the RIGHT conversation. Run TWICE. |
 | `archive/pinrows.mjs` | PIN - the encryption gate, one row per invocation. |
 | `archive/read.mjs` | READ-1..10 - MLS read receipts: the sidebar unread badge, and the sender's own |
@@ -250,4 +252,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-189 scripts in total.
+191 scripts in total.

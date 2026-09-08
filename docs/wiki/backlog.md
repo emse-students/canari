@@ -332,6 +332,31 @@ WELCOME, the receiver must process it before the message decrypts at all, and a 
 has to be MATERIALISED rather than found. A row is owed for it
 ([cross-client-testing](cross-client-testing.md)).
 
+**A DEVICE THAT IS OFFLINE WHEN IT IS ADDED IS NOT A RECIPIENT OF THE NEXT MESSAGE, AND NOTHING HERE
+KNEW THAT** (measured 2026-09-08 building NOTIF-17b). W2 minted a group, added the owner and spoke
+into it ten seconds later, with A1 proven dead throughout. The server:
+
+```
+10:04:51 [WELCOME][welcome-send-4964245c] ... FCM sent user=f7a9bb80...
+10:05:01 [SEND][send-0d4e3672] QUEUED count=2
+10:05:01 [SEND][send-0d4e3672] PUBLISHED recipient=f7a9bb80...:web-f7a9bb80...   (x2)
+10:05:01 [SEND][send-0d4e3672] DONE queued=2 realtime=2
+```
+
+**Two recipients, both WEB. `tauri-f7a9bb80...` is not among them.** The Welcome reached FCM; the
+message was never routed to the phone at all, so no push was owed and none arrived - `inMs: null`
+after 90 s, and the row correctly recorded `SETUP-FAILED` rather than a product verdict. A device
+added while it is dead joins through its queued Welcome on next launch and collects the message from
+HISTORY, which is a different path from the one that carries an ordinary inbound message.
+
+**WHY IT MATTERS BEYOND THE ROW.** It means the FCM cache is NOT how a first message reaches a cold
+device, so the fixed `mergeFcmMessagesIntoConversations` path is not what a killed phone exercises on
+first contact - the history path is. The fix is still right and still needed (it is what a LIVE app
+consuming a cached push does), but the cold case has its own route and nothing has measured it.
+**Also noted in the same window**: `[PUSH_SEND][welcome-send-4964245c] proto not inlined: 4608B over
+a 3716B budget`, so a first-contact Welcome exceeds the FCM data budget and travels without its
+payload inlined - unexamined, and the obvious next question for whoever takes this row further.
+
 **HALF ONE IS ALREADY OPEN AND IS NOT SPECIFIC TO FIRST CONTACT.** *"Je n'arrive pas dans la
 conversation"* is the P2 two entries down: the app has two notification builders, and the one the
 WebSocket path uses posts `ACTION_MAIN` on the launcher, so it lands on whatever the app shows at
