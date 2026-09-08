@@ -35,97 +35,156 @@ pub(crate) async fn recharger_mls_au_resume(
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     tauri::async_runtime::spawn_blocking(move || {
         let path = data_dir.join("mls.bin");
-        // Read the file UNDER the lock (never read while a JNI engine writes). Released before the
-        // decrypt (direct ChaCha20 via device key): the foreground guard now blocks any new write.
-        let bytes = {
-            let _guard = mls_bin_write_lock()
-                .lock()
-                .map_err(|_| "mls_bin write lock poisoned".to_string())?;
-            match std::fs::read(&path) {
-                Ok(b) => Some(b),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-                Err(e) => return Err(format!("read mls.bin: {e}")),
-            }
-        };
-        let Some(bytes) = bytes else {
-            log::debug!("[RESUME] mls.bin absent - nothing to reload (C2)");
-            return Ok(false);
-        };
-        let key = mls_core::crypto::decode_base64_to_32_bytes(&device_key_b64)
-            .map_err(|e| format!("invalid device_key_b64: {e}"))?;
-        let candidate = MlsManager::load_with_key(&user_id, &device_id, Some(bytes), &key)
-            .map_err(|e| format!("reload mls.bin: {e}"))?;
-        let mut lock = manager_state
+        // THE MANAGER LOCK IS TAKEN FIRST AND HELD ACROSS THE READ, THE DECRYPT AND THE INSTALL,
+        // BECAUSE READ-THEN-INSTALL IS ONE OPERATION AND WAS WRITTEN AS TWO.
+        //
+        // Until 2026-09-08 the file was read under `mls_bin_write_lock`, that lock was dropped, and
+        // the manager lock was taken only to install. `mark_foreground_active()` above was what
+        // guarded the gap - and it guards against BACKGROUND JNI engines, which is not who races
+        // here. `generer_key_packages_et_persister` is a FOREGROUND command: it holds the manager
+        // lock while it mints, and writes `mls.bin` at the end of that same critical section. So a
+        // mint that begins after the read and ends before the install is invisible to every guard
+        // on this path, and the snapshot installed over it is missing exactly the bundles the mint
+        // produced - which the server already holds, because publishing follows the mint.
+        //
+        // MEASURED ON THE Mi 9T, 2026-09-08 18:02:04-18:02:14, deliberately provoked by resuming
+        // during a ten-package mint:
+        //
+        //   18:02:04.730  thread 15666  generer_key_packages_et_persister start count=10
+        //   18:02:08.926  thread 15669  load_or_create ... KeyPackage 2928x   <- read, mid-mint
+        //   18:02:09.571  thread 15666  generer ... done state_bytes=10423737 <- mint persists
+        //   18:02:09.592  thread 15669  [RESUME] reload DROPS KEY MATERIAL - 11 ... live=2939, loading=2928
+        //   18:02:09.599  thread 15669  [RESUME] foreground manager reloaded  <- stale snapshot wins
+        //   18:02:14.429                REFUSED to purge 10/50 prekey(s) this session published itself
+        //
+        // AND THE TWO PATHS TOOK THE TWO LOCKS IN OPPOSITE ORDERS, which is the same defect seen
+        // from the other side. The mint is `mls_manager` then `mls_bin_write_lock` (the latter
+        // inside `write_mls_state_blob`); this function was `mls_bin_write_lock` then `mls_manager`.
+        // It escaped deadlock only by releasing the first before taking the second - and that
+        // release IS the window. Taking them in the mint's order removes the inversion and the
+        // window in one move: a mint in flight makes this wait and then read the file it wrote, and
+        // a reload in flight makes the mint wait and then mint into the manager just installed.
+        // There is no interleaving left to reconcile afterwards, which is why this is an ordering
+        // change and not a retry.
+        //
+        // THE COST IS THE DECRYPT, AND IT IS THE POINT. The manager is now unavailable for the
+        // ~600 ms a 10 MB `mls.bin` takes to load, where before it was unavailable only for the
+        // install. That is not a regression to be minimised: an MLS mutation running against a
+        // manager that is about to be replaced is the defect, so excluding it is the fix.
+        let mut live = manager_state
             .lock()
             .map_err(|_| "Failed to lock state".to_string())?;
-        // Epoch-monotonic reload guard (C2): a snapshot must never regress a live group's epoch.
-        // If the live manager already holds a group at a higher epoch than the reloaded candidate
-        // (e.g. a stale mls.bin), keep the live state rather than clobber it. [[C2]]
-        if let Some(current) = lock.as_ref() {
-            if !current.reload_is_monotonic(&candidate) {
-                log::warn!(
-                    "[RESUME] reload refused - mls.bin would regress a live group epoch, keeping live state (C2)"
-                );
-                return Ok(false);
-            }
-            // THE GUARD ABOVE GRADES ON GROUP EPOCHS, AND KEY MATERIAL IS NOT A GROUP EPOCH.
-            //
-            // A snapshot written before a prekey mint holds every group at the same epoch, so it
-            // passes `reload_is_monotonic` unchanged and installs a keystore missing the fifty
-            // bundles this device published seconds earlier. `key_package_a_clef_privee` then
-            // answers `false` about the device's own fresh mints, and that is precisely the
-            // observation `reconcilePublishedKeyPackages` reads as "the server holds an orphan"
-            // before purging the pool - the loop in `docs/wiki/backlog.md` whose cause is open.
-            //
-            // IT ACCUSES AND DOES NOT REFUSE, AND THE REASON IS THE WHOLE POINT. Refusing would
-            // keep the live manager, and this reload exists to pick up what a background JNI engine
-            // advanced while the app was away. That advance is often a RATCHET GENERATION rather
-            // than an epoch - a decrypted application message moves no epoch at all - so a refusal
-            // grading on key packages would silently drop exactly the background work the reload
-            // was written to rescue, trading a known defect for an unmeasured one.
-            //
-            // So the loss is NAMED rather than prevented: a correct mechanism with no report is
-            // found by hand, a day late, and this line is what turns the open cause into a reading
-            // instead of an inference.
-            //
-            // AND IT COMPARED CARDINALITIES UNTIL 2026-09-08, WHICH IS NOT THE QUESTION. `cand <
-            // live` accuses a candidate holding FEWER bundles and waves through one holding the same
-            // number - so a reload that drops six and a mint that adds six is invisible to the very
-            // detector written for it. That is not hypothetical: measured on the Mi 9T that day,
-            // `reconcilePublishedKeyPackages` printed `REFUSED to purge 6/50 prekey(s) this session
-            // published itself` on two consecutive reconnections - six of the device's own mints
-            // unbacked by the installed keystore - and this line did not print once. The downstream
-            // symptom was visible and its cause was silent, which is exactly the shape that had the
-            // backlog entry calling candidate 2 unobserved for two days.
-            //
-            // A COLUMN IS ONLY EVIDENCE FOR THE QUESTION IT WAS WRITTEN TO ANSWER: "how many" cannot
-            // answer "which ones". The comparison is now a SET DIFFERENCE over the storage keys, so
-            // what is reported is the bundles the live manager holds and the candidate does not -
-            // a substitution included - and the two cardinalities go in the line beside it, because
-            // `lost=6 live=50 loading=50` and `lost=6 live=50 loading=44` are different accidents.
-            match (current.key_package_keys(), candidate.key_package_keys()) {
-                (Ok(live), Ok(cand)) => {
-                    let lost = live.difference(&cand).count();
-                    if lost > 0 {
-                        log::error!(
-                            "[RESUME] reload DROPS KEY MATERIAL - {} key package bundle(s) the live                              keystore holds are ABSENT from the mls.bin being loaded (live={},                              loading={}; equal totals mean a SUBSTITUTION, not a shrink). Every group is                              at or ahead of its live epoch, so the epoch guard cannot see this. The lost                              bundles are packages this device may have PUBLISHED, and the reconciliation                              will read them back as server orphans and purge the pool (see backlog: the                              prekey purge loop). Accepted anyway - see the comment above for why refusing                              would be worse.",
-                            lost,
-                            live.len(),
-                            cand.len()
-                        );
-                    }
-                }
-                (Err(e), _) | (_, Err(e)) => log::warn!(
-                    "[RESUME] key material could not be enumerated across this reload ({e}) - the                      epoch guard still held, but nothing checked whether key packages were dropped."
-                ),
-            }
-        }
-        *lock = Some(candidate);
-        log::debug!("[RESUME] foreground manager reloaded from mls.bin (C2)");
-        Ok(true)
+        reload_into(&mut live, &path, &user_id, &device_id, &device_key_b64)
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Reads `mls.bin`, grades it against the live manager and installs it - all while the caller holds
+/// the manager lock, WHICH IS WHAT THE FIRST ARGUMENT IS FOR.
+///
+/// **THE ORDERING IS IN THE SIGNATURE BECAUSE A COMMENT IS NOT A GUARANTEE.** The defect this
+/// function was extracted to close was a read taken outside the manager lock and an install taken
+/// inside it, with a foreground mint fitting between the two. Fixing the sequence in place would
+/// leave the next caller free to make the same mistake, and the mistake is invisible at the call
+/// site: both orders compile and both work whenever nothing interleaves. Taking `&mut Option<MlsManager>`
+/// makes the lock a PRECONDITION OF CALLING - the only way to obtain one is to hold the guard - so
+/// the read cannot be hoisted out of the critical section without the borrow checker objecting.
+///
+/// It also makes the logic testable without Tauri: an `Option<MlsManager>` and a path are the whole
+/// input, where the command needs an `AppHandle`, a `State` and a runtime.
+fn reload_into(
+    live: &mut Option<MlsManager>,
+    path: &std::path::Path,
+    user_id: &str,
+    device_id: &str,
+    device_key_b64: &str,
+) -> Result<bool, String> {
+    // Read the file UNDER the write lock too (never read while a JNI engine writes). Released
+    // before the decrypt; the manager lock above is what now spans the whole operation.
+    let bytes = {
+        let _guard = mls_bin_write_lock()
+            .lock()
+            .map_err(|_| "mls_bin write lock poisoned".to_string())?;
+        match std::fs::read(path) {
+            Ok(b) => Some(b),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(format!("read mls.bin: {e}")),
+        }
+    };
+    let Some(bytes) = bytes else {
+        log::debug!("[RESUME] mls.bin absent - nothing to reload (C2)");
+        return Ok(false);
+    };
+    let key = mls_core::crypto::decode_base64_to_32_bytes(device_key_b64)
+        .map_err(|e| format!("invalid device_key_b64: {e}"))?;
+    let candidate = MlsManager::load_with_key(user_id, device_id, Some(bytes), &key)
+        .map_err(|e| format!("reload mls.bin: {e}"))?;
+    // Epoch-monotonic reload guard (C2): a snapshot must never regress a live group's epoch.
+    // If the live manager already holds a group at a higher epoch than the reloaded candidate
+    // (e.g. a stale mls.bin), keep the live state rather than clobber it. [[C2]]
+    if let Some(current) = live.as_ref() {
+        if !current.reload_is_monotonic(&candidate) {
+            log::warn!(
+                "[RESUME] reload refused - mls.bin would regress a live group epoch, keeping live state (C2)"
+            );
+            return Ok(false);
+        }
+        // THE GUARD ABOVE GRADES ON GROUP EPOCHS, AND KEY MATERIAL IS NOT A GROUP EPOCH.
+        //
+        // A snapshot written before a prekey mint holds every group at the same epoch, so it
+        // passes `reload_is_monotonic` unchanged and installs a keystore missing the fifty
+        // bundles this device published seconds earlier. `key_package_a_clef_privee` then
+        // answers `false` about the device's own fresh mints, and that is precisely the
+        // observation `reconcilePublishedKeyPackages` reads as "the server holds an orphan"
+        // before purging the pool - the loop in `docs/wiki/backlog.md` whose cause is open.
+        //
+        // IT ACCUSES AND DOES NOT REFUSE, AND THE REASON IS THE WHOLE POINT. Refusing would
+        // keep the live manager, and this reload exists to pick up what a background JNI engine
+        // advanced while the app was away. That advance is often a RATCHET GENERATION rather
+        // than an epoch - a decrypted application message moves no epoch at all - so a refusal
+        // grading on key packages would silently drop exactly the background work the reload
+        // was written to rescue, trading a known defect for an unmeasured one.
+        //
+        // So the loss is NAMED rather than prevented: a correct mechanism with no report is
+        // found by hand, a day late, and this line is what turns the open cause into a reading
+        // instead of an inference.
+        //
+        // AND IT COMPARED CARDINALITIES UNTIL 2026-09-08, WHICH IS NOT THE QUESTION. `cand <
+        // live` accuses a candidate holding FEWER bundles and waves through one holding the same
+        // number - so a reload that drops six and a mint that adds six is invisible to the very
+        // detector written for it. That is not hypothetical: measured on the Mi 9T that day,
+        // `reconcilePublishedKeyPackages` printed `REFUSED to purge 6/50 prekey(s) this session
+        // published itself` on two consecutive reconnections - six of the device's own mints
+        // unbacked by the installed keystore - and this line did not print once. The downstream
+        // symptom was visible and its cause was silent, which is exactly the shape that had the
+        // backlog entry calling candidate 2 unobserved for two days.
+        //
+        // A COLUMN IS ONLY EVIDENCE FOR THE QUESTION IT WAS WRITTEN TO ANSWER: "how many" cannot
+        // answer "which ones". The comparison is now a SET DIFFERENCE over the storage keys, so
+        // what is reported is the bundles the live manager holds and the candidate does not -
+        // a substitution included - and the two cardinalities go in the line beside it, because
+        // `lost=6 live=50 loading=50` and `lost=6 live=50 loading=44` are different accidents.
+        match (current.key_package_keys(), candidate.key_package_keys()) {
+            (Ok(live), Ok(cand)) => {
+                let lost = live.difference(&cand).count();
+                if lost > 0 {
+                    log::error!(
+                        "[RESUME] reload DROPS KEY MATERIAL - {} key package bundle(s) the live                              keystore holds are ABSENT from the mls.bin being loaded (live={},                              loading={}; equal totals mean a SUBSTITUTION, not a shrink). Every group is                              at or ahead of its live epoch, so the epoch guard cannot see this. The lost                              bundles are packages this device may have PUBLISHED, and the reconciliation                              will read them back as server orphans and purge the pool (see backlog: the                              prekey purge loop). Accepted anyway - see the comment above for why refusing                              would be worse.",
+                        lost,
+                        live.len(),
+                        cand.len()
+                    );
+                }
+            }
+            (Err(e), _) | (_, Err(e)) => log::warn!(
+                "[RESUME] key material could not be enumerated across this reload ({e}) - the                      epoch guard still held, but nothing checked whether key packages were dropped."
+            ),
+        }
+    }
+    *live = Some(candidate);
+    log::debug!("[RESUME] foreground manager reloaded from mls.bin (C2)");
+    Ok(true)
 }
 
 /// Foreground heartbeat: refreshes the guard while the WebView is visible. As long as it stays
@@ -508,6 +567,72 @@ pub(crate) fn get_native_flags(app: tauri::AppHandle) -> serde_json::Value {
 mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
+
+    /// A device key that is 32 bytes, base64, and constant - the reload takes it as text.
+    const DEV_KEY_B64: &str = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=";
+
+    /// Writes `manager`'s encrypted state to `path`, the way a mint's final step does.
+    fn persist(manager: &MlsManager, path: &Path) {
+        let key = mls_core::crypto::decode_base64_to_32_bytes(DEV_KEY_B64).unwrap();
+        std::fs::write(path, manager.save_encrypted_with_key(&key).unwrap()).unwrap();
+    }
+
+    /// THE RACE OF 2026-09-08, AS THE ONE PROPERTY THAT WOULD HAVE PREVENTED IT.
+    ///
+    /// The defect was not that the reload installed a stale snapshot - given a stale snapshot it is
+    /// still correct to install it and accuse, and that is tested in `mls-core`. The defect was that
+    /// the snapshot was READ before the manager lock was taken, so a mint holding that lock could
+    /// finish, persist, and still be overwritten by bytes read before it began. Ten bundles the
+    /// server already held were erased from the keystore that way, on the Mi 9T, at 18:02:09.
+    ///
+    /// **WHAT THIS TEST DOES AND DOES NOT GUARD, STATED PLAINLY.** It would NOT have caught the
+    /// original defect, and claiming otherwise would be worth less than saying so: the mistake lived
+    /// in the CALLER's sequencing, and a unit test cannot observe which of two locks a caller takes
+    /// first. That half is now a compile-time property instead - `reload_into` is unreachable
+    /// without a `&mut Option<MlsManager>`, and the only source of one is the held guard.
+    ///
+    /// What this pins is the half that makes the compile-time property worth anything: the bytes are
+    /// fetched INSIDE the guarded call, so whatever `mls.bin` holds at the moment of the call is what
+    /// wins. Move the read back into the command - reading first and passing bytes in, which is
+    /// exactly how the defect was written - and the signature changes, this test stops compiling, and
+    /// the regression is refused at the door rather than measured on a phone six weeks later.
+    #[test]
+    fn the_snapshot_is_read_when_the_call_is_made_so_a_completed_mint_cannot_be_overwritten() {
+        let dir = temp_dir("resume-read");
+        let path = dir.join("mls.bin");
+
+        // The state as it stood before the mint, persisted first - the bytes the old code read.
+        let before = MlsManager::load_or_create("u-resume", "d1", None).unwrap();
+        persist(&before, &path);
+        let stale_keys = before.key_package_keys().unwrap();
+
+        // The mint, completing while the reload would have been in flight: same device, twelve new
+        // bundles, persisted over the same file.
+        let key = mls_core::crypto::decode_base64_to_32_bytes(DEV_KEY_B64).unwrap();
+        let minted =
+            MlsManager::load_with_key("u-resume", "d1", Some(std::fs::read(&path).unwrap()), &key)
+                .unwrap();
+        minted.generate_key_packages(12).unwrap();
+        persist(&minted, &path);
+        let minted_keys = minted.key_package_keys().unwrap();
+        assert!(
+            minted_keys.len() > stale_keys.len(),
+            "the fixture must actually add key material"
+        );
+
+        let mut live: Option<MlsManager> = Some(before);
+        let reloaded = reload_into(&mut live, &path, "u-resume", "d1", DEV_KEY_B64).unwrap();
+        assert!(reloaded, "a present mls.bin must reload");
+
+        let installed = live.as_ref().unwrap().key_package_keys().unwrap();
+        let lost: Vec<_> = minted_keys.difference(&installed).collect();
+        assert!(
+            lost.is_empty(),
+            "{} bundle(s) the completed mint persisted are absent from the installed keystore -              the snapshot was read before the call rather than during it",
+            lost.len()
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("canari-wipe-{name}-{}", std::process::id()));

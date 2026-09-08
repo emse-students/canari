@@ -48,6 +48,43 @@ is tested now so that flip is one line rather than a design revisited later.
 `MlsError::StateSealedUnderAnotherKey` is checked before the cipher rather than inferred from a failed
 tag, and the classifier learns it as `rotated` in the same release - routed through `unknown` it would
 have printed "not typed by mls-core" about an error mls-core types.
+### Fixed - a resume read the MLS keystore before it took the lock, so a mint that finished in between was erased
+
+Ten prekeys a phone had just minted and published were deleted from its own keystore by the resume
+that followed, leaving the server holding ten packages no peer could ever use. Reproduced on the
+Mi 9T on 2026-09-08 by resuming the app across a ten-package mint:
+
+```
+18:02:04.730  thread 15666  generer_key_packages_et_persister start count=10      mint begins
+18:02:08.926  thread 15669  load_or_create ... KeyPackage 2928x                   snapshot read mid-mint
+18:02:09.571  thread 15666  generer ... done state_bytes=10423737                 mint persists
+18:02:09.592  thread 15669  [RESUME] reload DROPS KEY MATERIAL - 11 ... live=2939, loading=2928
+18:02:09.599  thread 15669  [RESUME] foreground manager reloaded                  stale snapshot wins
+18:02:14.429                REFUSED to purge 10/50 prekey(s) this session published itself
+```
+
+`recharger_mls_au_resume` read `mls.bin` under `mls_bin_write_lock`, released it, decrypted, and took
+the manager lock only to install. The comment on that release claimed the foreground guard covered the
+gap; it does not. `mark_foreground_active()` holds off **background** JNI engines, and the writer that
+races here is `generer_key_packages_et_persister` - a foreground command that holds the manager lock
+while it mints and writes the file at the end of the same critical section.
+
+The two paths also took the same two locks in opposite orders - the mint `mls_manager` then
+`mls_bin_write_lock`, the reload the reverse - which is the identical defect seen from the other side.
+It escaped deadlock only by releasing the first before taking the second, and that release IS the
+window. So the reload now takes the manager lock first and holds it across the read, the decrypt and
+the install: a mint in flight makes the reload wait and read the file it wrote, and a reload in flight
+makes the mint wait and mint into the manager just installed. No interleaving is left for a ledger to
+reconcile afterwards, and the lock-order inversion goes with it. The manager is unavailable for the
+~600 ms a 10 MB `mls.bin` takes to decrypt, which is the point and not a regression.
+
+The rule is now enforced by the compiler rather than by a comment: the read, the grading and the
+install live in `reload_into(live: &mut Option<MlsManager>, ...)`, and the only source of that `&mut`
+is the held guard, so the read cannot be hoisted back out without a type error.
+
+Verified on the same handset by emptying the pool to make the mint long (50 packages, 6.2 s) and
+resuming 2.2 s into it: the reload's file read lands 6.5 s AFTER the mint persisted rather than 0.6 s
+before it, `KeyPackage` goes 2951 -> 3002, the server's pool reads 50, and neither accusation prints.
 
 ### Fixed - nine harness setup failures were discarded, and one of them printed the opposite
 
