@@ -126,7 +126,10 @@ await sleep(4_000);
 phone.forwardDevtools(PORTS.A1);
 let a1 = await client(PORTS.A1, 'tauri.localhost', { focus: false });
 stage(`unlock -> ${unlock()}`);
-await ensureChat(a1).catch(() => null);
+// ANNOUNCED, NOT SWALLOWED: this row parks A1 on the FEED next, and parking presumes the client got
+// to the chat surface at all. A discarded failure here turns "parked deliberately" into "never
+// arrived", and the two produce the same screen.
+await ensureChat(a1).catch((e) => stage(`A1 ensureChat FAILED - ${e?.message || e}`));
 await sleep(3_000);
 
 stage('parking A1 on the FEED, so a default route cannot fake the verdict');

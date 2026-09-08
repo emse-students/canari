@@ -123,7 +123,11 @@ async function fileAt(sendIt, marker, expected) {
 }
 
 const a1 = await withDeadline(client(PORTS.A1, 'tauri.localhost'), 60_000, 'A1 attach');
-await withDeadline(ensureChat(a1), 60_000, 'A1 ensureChat').catch(() => null);
+// ANNOUNCED, NOT SWALLOWED. W2's equivalent on the next line is allowed to throw; A1's was silent,
+// so a phone that never reached the chat surface produced a run indistinguishable from one that did.
+await withDeadline(ensureChat(a1), 60_000, 'A1 ensureChat').catch((e) =>
+  stage(`A1 ensureChat FAILED - ${e?.message || e}`)
+);
 const w2 = await withDeadline(client(PORTS.W2, APP_TAB), 60_000, 'W2 attach');
 await withDeadline(ensureChat(w2), 60_000, 'W2 ensureChat');
 

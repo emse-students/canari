@@ -21,8 +21,17 @@ phone.launch();
 await new Promise((r) => setTimeout(r, 5000));
 phone.forwardDevtools(PORTS.A1);
 const a1 = await client(PORTS.A1, 'tauri.localhost');
-await ensureChat(a1).catch(() => null);
-await openConversation(a1, peerNameFor('A1')).catch(() => null);
+// A SWALLOWED SETUP FAILURE MAKES THE RUN MEAN SOMETHING ELSE WITHOUT SAYING SO. `openConversation`
+// refuses precisely and says why - on 2026-09-08 it was "2 of 5 conversation tiles match the
+// requested name [...] so the row is AMBIGUOUS and none was opened", a deleted group still listed
+// under the peer's name - and `.catch(() => null)` threw that sentence away, costing three NOTIF-1b
+// verdicts before anyone read it. Everything below assumes the phone is sitting in the DM, so a
+// refusal is ANNOUNCED. Not fatal here: this file has no verdict record to assert it into, and a
+// loud line a reader can attribute beats a run that quietly measures a different screen.
+await ensureChat(a1).catch((e) => console.error(`[setup] A1 ensureChat FAILED - ${e?.message || e}`));
+await openConversation(a1, peerNameFor('A1')).catch((e) =>
+  console.error(`[setup] A1 openConversation FAILED - ${e?.message || e}`)
+);
 
 const w2 = await client(PORTS.W2, APP_TAB);
 await ensureChat(w2);
