@@ -184,7 +184,7 @@ html, body, .pf-c-login, .pf-c-login * {
  * the button consistently across every other stage of the flow (MFA, etc.),
  * which is correct for brand-wide CSS anyway.
  */
-.pf-c-button.pf-m-primary, button[type='submit'] {
+button[type='submit'].pf-c-button.pf-m-primary {
     background: linear-gradient(135deg, var(--rootz-blue), var(--rootz-cyan)) !important;
     border: none !important;
     font-size: 14px;
@@ -195,7 +195,7 @@ html, body, .pf-c-login, .pf-c-login * {
     transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
-.pf-c-button.pf-m-primary:hover, button[type='submit']:hover {
+button[type='submit'].pf-c-button.pf-m-primary:hover {
     box-shadow: 0 8px 24px rgba(0, 229, 255, 0.35);
     transform: translateY(-1px);
 }
@@ -224,4 +224,29 @@ html, body, .pf-c-login, .pf-c-login * {
 
 ak-brand-links {
     display: none;
+}
+
+/* --- The red triangles flashing between login screens ---
+ * Captured live with the Firefox/Zen profiler's screenshot markers on
+ * auth.canari-emse.fr, 2026-09-08: navigating from one flow to the next
+ * (default-invalidation-flow -> miconnect-auth) reloads the document
+ * while the flow's JS chunks are still being fetched and executed. For
+ * exactly one frame during that reload, up to four solid triangles
+ * painted across most of the card, each roughly a third of its height -
+ * `pf-c-alert__icon > i.fas.fa-exclamation-triangle` (Authentik's danger
+ * alert icon, confirmed against its source) rendered at its unstyled
+ * intrinsic size, before whatever stylesheet constrains a normal icon to
+ * a normal size had taken effect. It resolves itself one frame later once
+ * that stylesheet applies.
+ *
+ * The fix is to size the icon UNCONDITIONALLY rather than race the load
+ * that normally sizes it: nothing in this login flow legitimately needs
+ * this icon bigger than a line of text, so bounding it costs nothing and
+ * removes the race entirely - a genuine, persisting alert still renders,
+ * at its correct size, never silenced.
+ */
+.pf-c-alert__icon svg, .pf-c-alert__icon i[class*='fa-'] {
+    max-width: 24px !important;
+    max-height: 24px !important;
+    font-size: 24px !important;
 }

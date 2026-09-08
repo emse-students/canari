@@ -11,6 +11,17 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Red triangles flashed between login screens on miconnect.** Confirmed by decoding a Firefox
+  profiler capture's screenshot markers: navigating from one flow to the next
+  (`default-invalidation-flow` -> `miconnect-auth`) reloads the document while its JS chunks are
+  still loading, and for one frame up to four `pf-c-alert__icon` exclamation-triangle icons
+  (Authentik's danger alert) rendered at their unstyled intrinsic size - each roughly a third of
+  the card's height - before the stylesheet that normally sizes them applied. `custom-login.css`
+  now bounds that icon to a normal size unconditionally, removing the race rather than hiding it:
+  a genuine, persisting alert still renders, at its correct size.
+
 ### Fixed - a device whose notification permission is denied narrated three log lines per message, and one of them was false
 
 Measured on HEAL-REVOKE-9 (2026-09-07): **12 inbound messages produced 33 `[NOTIF]` lines** on a
