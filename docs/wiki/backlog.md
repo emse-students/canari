@@ -264,17 +264,53 @@ that an earlier version of this same confusion *"surfaced a false 'your PIN was 
 device' to users who had never changed their PIN"*; the case was fixed for `mismatch` and left
 standing for everything else.
 
-**WHY THIS IS A WORK PACKAGE AND NOT A SESSION-TAIL FIX.** The right home for the discriminator is
-`BaseMlsService` - one place, both platforms, the same shape as the `stateOrAbsent` predicate that
-fixed CORRUPT-4 - and that is what makes it bigger than it looks: the fingerprint has to be STORED
-somewhere both platforms can read. `mls_autosave_ver` is not a precedent, because it lives in the web
-IndexedDB branch only; the phone keeps its state in `mls.bin` through Rust and has no matching
-side-channel today. Writing one is a Rust change plus a TS change plus a migration for every device
-that has no fingerprint yet.
+**WHY THIS IS A WORK PACKAGE AND NOT A SESSION-TAIL FIX - RE-SCOPED 2026-09-08 BY READING THE
+CRATES, AND THE ORIGINAL REASON WAS WRONG.**
 
-**Doing it on the web alone would be the defect this row already found, one layer up**: CORRUPT-4
-existed because one predicate was decided twice and the two branches disagreed. A fingerprint that
-exists on the web and not on the phone recreates exactly that asymmetry, in the login path.
+This entry used to say the blocker was storage: *"the fingerprint has to be STORED somewhere both
+platforms can read... the phone keeps its state in `mls.bin` through Rust and has no matching
+side-channel today"*, and that doing it on the web alone would recreate CORRUPT-4's asymmetry. **The
+premise does not hold.** `frontend/mls-core` is a dependency of BOTH `frontend/mls-wasm`
+(`Cargo.toml:10`) and `frontend/src-tauri` (`Cargo.toml:28`), and `MlsManager::save_encrypted_with_key`
+/ `load_with_key` in `mls-core/src/crypto.rs` are the one place the state is sealed and opened for
+either platform. There is no side channel to invent and no asymmetry available to create: the
+fingerprint belongs in the blob's OWN framing, written once, read by both. The TS side treats the
+blob as opaque and delegates to WASM, so it needs no format knowledge at all.
+
+**BUT IT IS STILL A WORK PACKAGE, FOR A DIFFERENT AND HARDER REASON: THE WRITE PATH CANNOT MOVE
+FIRST.** `tests/cross_version_state.rs` states its own scope in its header - one generation of
+fixtures proves *today's code reads what v0.14.14 wrote*, and *"says nothing about whether today's
+code writes something v0.14.14 could read, which is the other direction and matters when a fleet is
+mixed"*. That other direction is exactly what a header would break: an older build handed
+`[magic][keyId][nonce][ciphertext]` reads the first twelve bytes as a nonce, fails the AEAD, and
+reports **`state_sealed_with_old_key`** - this very defect, newly caused by a downgrade. Downgrades
+are not hypothetical here: the APK is reinstalled by hand all through a campaign session, and a
+store rollback does the same thing to a real user.
+
+**So the sequence is READ-FIRST, WRITE-LATER, and it spans two releases:**
+
+1. Teach the reader the versioned header (and keep reading headerless blobs, which is the LEGACY
+   FORMAT and not a fallback), and type the failure at the throw. Behaviourally inert - nothing
+   writes a header yet - which is the point: it can ship without a downgrade hazard.
+2. Once that reader is the floor everywhere (`minClientVersion` is the lever), flip the writer. The
+   classification becomes real at that moment and not before.
+
+**THE HEADER GOES AT THE STATE LAYER, NEVER IN `security::encrypt_blob`.** That function is shared
+with `mls-wasm/src/pin_crypto.rs`, which seals the PIN-protected BACKUP files, and with the
+pre-v0.11.0 legacy reader in `src-tauri/src/commands/mls.rs`. Changing it would silently change the
+backup format too - a second, wider migration nobody asked for, on files users keep off-device.
+
+**The touch points, enumerated rather than estimated** - writes: `encrypt_state_blob_with_key`,
+`save_encrypted_with_key`. Reads that must accept both shapes: `load_with_key`, the keystore probe
+in `resolve_at_rest_key` (it calls `decrypt_blob` on the raw blob after a bare `len() >= 12` check),
+and `mls-wasm/src/lib.rs::decrypt_mls_state_blob_with_key` (same bare check). The legacy re-seal in
+`src-tauri/src/commands/mls.rs` already writes through `encrypt_state_blob_with_key`, so it inherits
+whatever that does.
+
+**AND THE TYPED ERROR IS WORTH LANDING ON ITS OWN.** `MlsError::OpenMls(String)` is prose all the
+way to the TS classifier, which is why `classifyStateLoadFailure` matches on needles and defaults to
+`sealed`. Distinct variants for "sealed under a different key", "altered" and "legacy, no key id"
+fix the rule violation whether or not the header ever lands, and they are what step 1 delivers.
 
 **Where the evidence is.** Board cell CORRUPT-2 on [cross-client-testing](cross-client-testing.md);
 the runner and its reasoning in `tools/cross-client-harness/archive/corrupt2.mjs`; the parallel fix
