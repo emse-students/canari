@@ -129,7 +129,7 @@
               e.stopPropagation();
               downloadBlob(blobUrl!, mediaRef.fileName ?? 'image');
             }}
-            class="absolute right-2.5 bottom-2.5 inline-flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white shadow-lg backdrop-blur-md transition-all duration-300 outline-none hover:scale-110 hover:bg-black/70 focus:opacity-100 md:opacity-0 md:group-hover/media:opacity-100"
+            class="absolute right-2.5 bottom-2.5 inline-flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white shadow-lg transition-all duration-300 outline-none hover:scale-110 hover:bg-black/70 focus:opacity-100 md:opacity-0 md:group-hover/media:opacity-100"
             aria-label={m.msg_download_image_label()}
             title={m.common_download_label()}
           >
@@ -174,7 +174,7 @@
           <button
             type="button"
             onclick={openLightbox}
-            class="absolute bottom-2.5 left-2.5 inline-flex h-8 items-center justify-center rounded-full bg-black/50 px-2.5 text-white shadow-lg backdrop-blur-md transition-all duration-300 hover:bg-black/70"
+            class="absolute bottom-2.5 left-2.5 inline-flex h-8 items-center justify-center rounded-full bg-black/50 px-2.5 text-white shadow-lg transition-all duration-300 hover:bg-black/70"
             aria-label={m.msg_open_video_fullscreen_label()}
             title={m.msg_fullscreen_label()}
           >
@@ -187,7 +187,7 @@
               e.stopPropagation();
               downloadBlob(blobUrl!, mediaRef.fileName ?? 'video.mp4');
             }}
-            class="absolute top-2.5 right-2.5 z-10 inline-flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white shadow-lg backdrop-blur-md transition-all duration-300 outline-none hover:scale-110 hover:bg-black/70 focus:opacity-100 md:opacity-0 md:group-hover/media:opacity-100"
+            class="absolute top-2.5 right-2.5 z-10 inline-flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white shadow-lg transition-all duration-300 outline-none hover:scale-110 hover:bg-black/70 focus:opacity-100 md:opacity-0 md:group-hover/media:opacity-100"
             aria-label={m.msg_download_video_label()}
             title={m.common_download_label()}
           >
@@ -227,7 +227,7 @@
         <div
           class="h-14 w-full rounded-xl border border-dashed sm:w-56 {glassBoxClass} flex items-center justify-center px-4 text-center"
         >
-          <span class="text-[0.7rem] leading-snug font-medium {textMutedClass}">
+          <span class="text-2xs leading-snug font-medium {textMutedClass}">
             {mediaPurgedByRetention ? m.msg_audio_expired_label() : m.msg_audio_load_error()}
           </span>
         </div>
@@ -247,7 +247,7 @@
     {:else}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
-        class="flex w-full max-w-full items-center gap-3.5 rounded-[1rem] border px-3.5 py-3 {glassBoxClass} group/file backdrop-blur-md transition-colors"
+        class="flex w-full max-w-full items-center gap-3.5 rounded-[1rem] border px-3.5 py-3 {glassBoxClass} group/file transition-colors"
         ontouchstart={(e) => e.stopPropagation()}
         ontouchend={(e) => e.stopPropagation()}
       >
@@ -273,12 +273,12 @@
 
           <!-- File metadata. -->
           <div class="min-w-0 flex-1 overflow-hidden text-left">
-            <p class="mb-0.5 truncate text-[0.85rem] leading-tight font-bold">
+            <p class="mb-0.5 truncate text-xs leading-tight font-bold">
               {mediaRef!.fileName ?? m.msg_attached_file_label()}
             </p>
             {#if !mediaPurgedByRetention}
               <!-- No `uppercase`: it would render the "Ko" unit as "KO". -->
-              <p class="text-[0.65rem] font-semibold tracking-wider opacity-60">
+              <p class="text-2xs font-semibold tracking-wider opacity-60">
                 {formatFileSize(mediaRef!.size)}
               </p>
             {/if}
@@ -320,7 +320,7 @@
           </button>
         {:else if mediaPurgedByRetention}
           <span
-            class="shrink-0 rounded-md bg-red-500/10 px-2 py-1 text-[0.65rem] font-bold text-red-600 dark:text-red-400"
+            class="text-2xs shrink-0 rounded-md bg-red-500/10 px-2 py-1 font-bold text-red-600 dark:text-red-400"
           >
             {m.msg_expired_label()}
           </span>
@@ -337,7 +337,7 @@
 
   <!-- Caption text below the media. -->
   {#if textContent}
-    <p class="mt-2 text-[0.95rem] leading-relaxed break-words whitespace-pre-wrap select-text">
+    <p class="mt-2 text-sm leading-relaxed break-words whitespace-pre-wrap select-text">
       {#each textSegments as segment, index (`${segment.type}-${segment.value}-${index}`)}
         {#if segment.type === 'link'}
           <AppLink href={segment.value} />

@@ -95,7 +95,7 @@
   >
     <button
       type="button"
-      class="absolute inset-0 bg-black/45 backdrop-blur-sm"
+      class="absolute inset-0 bg-black/45"
       aria-label="Fermer"
       onclick={close}
       transition:fade={{ duration: 150 }}
@@ -106,7 +106,7 @@
     >
       <div class="border-cn-border flex items-center gap-2 border-b p-4">
         <ChartColumn size={18} strokeWidth={2.5} class="text-cn-yellow shrink-0" />
-        <h2 class="text-text-main flex-1 text-base font-extrabold">{m.channel_poll_title()}</h2>
+        <h2 class="text-text-main flex-1 text-base font-bold">{m.channel_poll_title()}</h2>
         <button
           type="button"
           onclick={close}
@@ -205,7 +205,7 @@
           type="button"
           onclick={submit}
           disabled={!canSubmit || submitting}
-          class="bg-cn-yellow text-cn-ink rounded-xl px-5 py-2 text-sm font-extrabold transition-all hover:brightness-105 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
+          class="bg-cn-yellow text-cn-ink rounded-xl px-5 py-2 text-sm font-bold transition-all hover:brightness-105 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {submitting ? m.common_sending_label() : m.channel_poll_submit_button()}
         </button>

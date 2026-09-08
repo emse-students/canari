@@ -87,13 +87,13 @@
 {#if popupReactionType && popupPos}
   <div
     use:portal
-    class="bg-cn-tooltip pointer-events-auto fixed z-[9999] max-w-[14rem] min-w-[10rem] rounded-xl px-3 py-2.5 text-[0.75rem] font-medium text-white shadow-xl"
+    class="bg-cn-tooltip text-2xs pointer-events-auto fixed z-[9999] max-w-[14rem] min-w-[10rem] rounded-xl px-3 py-2.5 font-medium text-white shadow-xl"
     style="top: {popupPos.top}px; left: {popupPos.left}px;"
     role="tooltip"
     onmouseenter={cancelHide}
     onmouseleave={scheduleHide}
   >
-    <p class="mb-1.5 text-[0.6rem] font-bold tracking-wide text-white/60 uppercase">
+    <p class="text-2xs mb-1.5 font-bold tracking-wide text-white/60 uppercase">
       {reactionList.find((r) => r.type === popupReactionType)?.emoji ?? '😊'}
       {popupReactionType}
     </p>

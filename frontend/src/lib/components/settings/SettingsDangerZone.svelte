@@ -39,7 +39,7 @@
       <Trash2 size={22} strokeWidth={2.5} />
     </div>
     <div class="min-w-0 flex-1">
-      <h2 class="mb-1 text-lg font-extrabold text-red-500">{m.profile_delete_heading()}</h2>
+      <h2 class="mb-1 text-lg font-bold text-red-500">{m.profile_delete_heading()}</h2>
       <p class="text-text-muted mb-4 text-sm leading-relaxed">
         {m.profile_delete_desc()}
       </p>

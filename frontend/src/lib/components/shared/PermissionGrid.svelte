@@ -96,13 +96,13 @@
       <thead>
         <tr>
           <th
-            class="text-text-muted sticky left-0 min-w-52 border-b border-black/5 bg-white/80 px-3 py-2.5 text-left text-[0.65rem] font-bold tracking-wider uppercase backdrop-blur-sm dark:border-white/10 dark:bg-zinc-900/80"
+            class="text-text-muted bg-cn-surface text-2xs sticky left-0 min-w-52 border-b border-black/5 px-3 py-2.5 text-left font-bold tracking-wider uppercase dark:border-white/10"
           >
             {m.chat_permission_grid_column_header()}
           </th>
           {#each sortedRoles as role (role.id)}
             <th
-              class="text-text-muted min-w-24 border-b border-black/5 px-3 py-2.5 text-center text-[0.65rem] font-bold tracking-wider uppercase dark:border-white/10"
+              class="text-text-muted text-2xs min-w-24 border-b border-black/5 px-3 py-2.5 text-center font-bold tracking-wider uppercase dark:border-white/10"
             >
               <span
                 class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 {role.priority >=
@@ -122,12 +122,11 @@
         {#each permissions as perm (perm.key)}
           <tr class="group transition-colors hover:bg-black/2 dark:hover:bg-white/2">
             <td
-              class="sticky left-0 border-b border-black/5 bg-white/80 px-3 py-2.5 backdrop-blur-sm dark:border-white/10 dark:bg-zinc-900/80"
+              class="bg-cn-surface sticky left-0 border-b border-black/5 px-3 py-2.5 dark:border-white/10"
               title={perm.tooltip}
             >
               <div class="flex flex-col">
-                <span class="text-text-main text-[0.7rem] leading-tight font-semibold"
-                  >{perm.label}</span
+                <span class="text-text-main text-2xs leading-tight font-semibold">{perm.label}</span
                 >
               </div>
             </td>
@@ -172,7 +171,7 @@
   </div>
 
   <!-- Légende -->
-  <div class="text-text-muted flex flex-wrap items-center gap-4 pt-3 text-[0.65rem] font-medium">
+  <div class="text-text-muted text-2xs flex flex-wrap items-center gap-4 pt-3 font-medium">
     <span class="inline-flex items-center gap-1.5">
       <Check size={12} strokeWidth={3} class="text-emerald-500" />
       {disableDeny ? m.chat_permission_state_yes() : m.chat_permission_state_allowed()}

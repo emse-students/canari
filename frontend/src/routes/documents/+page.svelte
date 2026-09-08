@@ -128,7 +128,7 @@
         <FolderOpen size={22} />
       </span>
       <div>
-        <h1 class="text-text-main text-xl font-extrabold tracking-tight">
+        <h1 class="text-text-main text-xl font-bold tracking-tight">
           {m.reviewer_docs_title()}
         </h1>
         <p class="text-text-muted mt-0.5 text-sm">{m.reviewer_docs_subtitle()}</p>

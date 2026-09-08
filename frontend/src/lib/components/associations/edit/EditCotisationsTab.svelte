@@ -591,7 +591,7 @@
 </script>
 
 <div class="space-y-6">
-  <div class="border-cn-border space-y-1 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm">
+  <div class="border-cn-border bg-cn-surface space-y-1 rounded-2xl border p-6 shadow-sm">
     <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
       <HandCoins size={20} />
       {m.asso_cotisations_title()}
@@ -601,7 +601,7 @@
 
   {#if !asso.cotisationEnabled}
     {#if canManageProducts}
-      <div class="border-cn-border space-y-4 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm">
+      <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
         <div>
           <h3 class="text-text-main text-sm font-bold">{m.asso_cotisations_activate_title()}</h3>
           <p class="text-text-muted mt-1 text-xs">{m.asso_cotisations_activate_desc()}</p>
@@ -639,7 +639,7 @@
         </button>
       </div>
     {:else}
-      <div class="border-cn-border rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm">
+      <div class="border-cn-border bg-cn-surface rounded-2xl border p-6 shadow-sm">
         <p class="text-text-main text-sm font-semibold">
           {m.asso_cotisations_disabled_no_perm_title()}
         </p>
@@ -648,7 +648,7 @@
     {/if}
   {:else}
     <!-- Config summary -->
-    <div class="border-cn-border space-y-4 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm">
+    <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
       <div class="flex flex-wrap items-start justify-between gap-3">
         <h3 class="text-text-main text-sm font-bold">{m.asso_cotisations_config_title()}</h3>
         {#if canManageProducts && !editingConfig}
@@ -1113,7 +1113,7 @@
     </div>
 
     <!-- Roster -->
-    <div class="border-cn-border space-y-4 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm">
+    <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
       <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h3 class="text-text-main text-sm font-bold">{m.asso_cotisations_roster_title()}</h3>
         {#if canManageMembers}

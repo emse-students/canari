@@ -157,7 +157,7 @@
   <div class="flex items-center gap-3">
     <ShoppingBag class="text-cn-accent h-7 w-7 shrink-0" />
     <div>
-      <h1 class="text-text-main text-2xl font-extrabold tracking-tight">{m.shop_heading()}</h1>
+      <h1 class="text-text-main text-2xl font-bold tracking-tight">{m.shop_heading()}</h1>
       <p class="text-text-muted mt-0.5 text-sm">
         {m.shop_subtitle()}
       </p>
@@ -189,7 +189,7 @@
         type="button"
         onclick={() => (shopTab = 'products')}
         class="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-        {shopTab === 'products'
+ {shopTab === 'products'
           ? 'bg-cn-yellow text-cn-ink shadow-sm'
           : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
       >
@@ -200,7 +200,7 @@
         type="button"
         onclick={() => (shopTab = 'partnerships')}
         class="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-        {shopTab === 'partnerships'
+ {shopTab === 'partnerships'
           ? 'bg-cn-yellow text-cn-ink shadow-sm'
           : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
       >

@@ -428,14 +428,14 @@
 <div class="relative mb-6">
   {#if localPost.pinned}
     <span
-      class="text-cn-ink pointer-events-none absolute -top-2 left-4 z-10 inline-flex items-center gap-1 rounded-full bg-amber-500 px-2 py-0.5 text-[0.6rem] font-extrabold tracking-widest uppercase shadow-md shadow-amber-500/30"
+      class="text-cn-ink text-2xs pointer-events-none absolute -top-2 left-4 z-10 inline-flex items-center gap-1 rounded-full bg-amber-500 px-2 py-0.5 font-bold tracking-widest uppercase shadow-md shadow-amber-500/30"
     >
       <Pin size={10} strokeWidth={3} />
       {m.post_pinned()}
     </span>
   {/if}
   <Card
-    class="group/card dark:bg-cn-ink/70 border border-black/5 bg-white/70 !p-0 backdrop-blur-xl transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl dark:border-white/10"
+    class="group/card bg-cn-surface border border-black/5 !p-0 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl dark:border-white/10"
   >
     <div class="relative">
       <PostHeader post={localPost} />

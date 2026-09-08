@@ -57,7 +57,7 @@
     <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
       <Info size={22} strokeWidth={2.5} />
     </div>
-    <h2 class="text-text-main text-lg font-extrabold">{m.settings_about_heading()}</h2>
+    <h2 class="text-text-main text-lg font-bold">{m.settings_about_heading()}</h2>
   </div>
   <p class="text-text-muted mb-6 text-xs leading-relaxed font-medium sm:pl-[3.75rem]">
     {m.settings_about_desc()}

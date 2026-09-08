@@ -421,7 +421,7 @@
     {:else if project && model}
       <header class="flex flex-wrap items-center justify-between gap-3">
         {#if !canEdit}
-          <h2 class="text-text-main text-lg font-extrabold">{project.name}</h2>
+          <h2 class="text-text-main text-lg font-bold">{project.name}</h2>
         {:else if editingName}
           <input
             bind:this={nameInputEl}
@@ -432,13 +432,13 @@
               if (e.key === 'Escape') cancelRename();
             }}
             maxlength={120}
-            class="text-text-main border-cn-yellow border-b-2 bg-transparent px-0 py-0 text-lg font-extrabold outline-none"
+            class="text-text-main border-cn-yellow border-b-2 bg-transparent px-0 py-0 text-lg font-bold outline-none"
             style="min-width:120px;max-width:400px;width:{Math.max(120, editedName.length * 10)}px;"
           />
         {:else}
           <button
             type="button"
-            class="group text-text-main hover:text-cn-yellow flex items-center gap-2 text-lg font-extrabold transition-colors"
+            class="group text-text-main hover:text-cn-yellow flex items-center gap-2 text-lg font-bold transition-colors"
             onclick={startRenamingName}
             title="Renommer le projet"
           >
@@ -724,7 +724,7 @@
                             align: opt.v as 'left' | 'center' | 'right',
                           })}
                         class="inline-flex items-center justify-center rounded-lg border px-2 py-1 transition-colors
-                      {selectedTextDeco.align === opt.v
+ {selectedTextDeco.align === opt.v
                           ? 'border-cn-yellow bg-cn-yellow/15 text-cn-dark'
                           : 'border-cn-border text-text-muted hover:text-text-main'}"
                       >
@@ -769,7 +769,7 @@
                 {m.carte_panel_heading()}
               </h3>
               {#if selectedBubble && selectedContent}
-                <p class="text-text-main text-sm font-extrabold">
+                <p class="text-text-main text-sm font-bold">
                   {selectedContent.name}
                 </p>
 

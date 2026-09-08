@@ -165,7 +165,7 @@ exceeds a 5-minute foreground timeout.
 - Language: code, comments, docs and dev-facing strings MUST be English. User-visible strings use Paraglide (`messages/fr.json`, `en.json`) - no inline literals, ALWAYS, even in a plain `.ts` util, and even when a nearby call site already has raw strings.
 - Punctuation: ASCII (`'`, `"`, `-`) everywhere; escape quotes in code. Keep French accents ONLY in localized strings and French comments.
 - Tests: changing logic requires changing the associated test.
-- UI: single source of truth is `src/app.css` (tokens, `--radius-*`). `.btn-glass` with modifiers. Dark-first glassmorphism. No raw hex/px. `@lucide/svelte` only (NOT `lucide-svelte`, the old package name - both resolve).
+- UI: `src/app.css` holds the tokens - **COLOUR ONLY today: there is no type scale and `--radius-*` DOES NOT EXIST**, which is why 36 font sizes and 14 corner radii are in use. The measured target, and the Messenger/Facebook numbers it copies, are in [design-reference](docs/wiki/frontend/design-reference.md), the only copy. No raw hex/px. `@lucide/svelte` only (NOT `lucide-svelte`, the old name - both resolve).
 
 ## **KEY COMMANDS**
 

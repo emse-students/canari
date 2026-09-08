@@ -376,7 +376,7 @@
 
   <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
     <div>
-      <h1 class="text-text-main flex items-center gap-2 text-2xl font-extrabold tracking-tight">
+      <h1 class="text-text-main flex items-center gap-2 text-2xl font-bold tracking-tight">
         <CalendarDays size={28} class="text-cn-dark shrink-0" />
         {m.calendar_heading()}
       </h1>
@@ -407,7 +407,7 @@
         <ShieldAlert size={18} />
         {m.calendar_moderate_label()}
         {#if pendingCount > 0}
-          <span class="rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-bold text-white">
+          <span class="text-2xs rounded-full bg-amber-500 px-2 py-0.5 font-bold text-white">
             {pendingCount}
           </span>
         {/if}
@@ -518,7 +518,7 @@
   <div use:portal>
     <div
       data-keyboard-aware-overlay
-      class="z-[280] flex items-end justify-center bg-black/40 backdrop-blur-sm sm:items-center"
+      class="z-[280] flex items-end justify-center bg-black/40 sm:items-center"
       role="presentation"
       onclick={(e) => e.target === e.currentTarget && (depositModalOpen = false)}
     >

@@ -298,7 +298,7 @@
           value={searchQuery}
           oninput={onSearchInput}
           placeholder={m.posts_search_placeholder()}
-          class="border-cn-border text-text-main placeholder:text-text-muted/70 w-full rounded-2xl border bg-(--cn-surface)/60 py-2.5 pr-10 pl-10 text-sm font-medium transition-all outline-none focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/20"
+          class="border-cn-border text-text-main placeholder:text-text-muted/70 bg-cn-surface w-full rounded-2xl border py-2.5 pr-10 pl-10 text-sm font-medium transition-all outline-none focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/20"
         />
         {#if searchQuery}
           <button
@@ -364,7 +364,7 @@
       {#snippet skeletonCards()}
         {#each { length: 4 } as _, i (i)}
           <div
-            class="border-cn-border animate-pulse space-y-3 rounded-3xl border bg-(--cn-surface)/60 p-5"
+            class="border-cn-border bg-cn-surface animate-pulse space-y-3 rounded-3xl border p-5"
           >
             <div class="flex items-center gap-3">
               <div class="bg-cn-border/60 h-9 w-9 shrink-0 rounded-full"></div>
@@ -441,7 +441,7 @@
                   {@render skeletonCards()}
                 {:else}
                   <div
-                    class="border-cn-border rounded-3xl border border-dashed bg-(--cn-surface)/50 px-6 py-16 text-center backdrop-blur-xl"
+                    class="border-cn-border bg-cn-surface rounded-3xl border border-dashed px-6 py-16 text-center"
                   >
                     <Inbox size={48} class="text-text-muted mx-auto mb-3 opacity-40" />
                     <h3 class="text-text-main mb-1 text-lg font-bold">
@@ -461,7 +461,7 @@
               {@render skeletonCards()}
             {:else if resolvedPosts.length === 0}
               <div
-                class="border-cn-border rounded-3xl border border-dashed bg-(--cn-surface)/50 px-6 py-16 text-center backdrop-blur-xl"
+                class="border-cn-border bg-cn-surface rounded-3xl border border-dashed px-6 py-16 text-center"
               >
                 <Inbox size={48} class="text-text-muted mx-auto mb-3 opacity-40" />
                 <h3 class="text-text-main mb-1 text-lg font-bold">{m.posts_empty_title()}</h3>
@@ -489,7 +489,7 @@
                 <div class="relative" use:markPostSeen={post}>
                   {#if isNew(post)}
                     <span
-                      class="text-cn-ink absolute -top-2 left-4 z-10 rounded-full bg-amber-500 px-2 py-0.5 text-[0.6rem] font-extrabold tracking-widest uppercase shadow-md shadow-amber-500/30"
+                      class="text-cn-ink text-2xs absolute -top-2 left-4 z-10 rounded-full bg-amber-500 px-2 py-0.5 font-bold tracking-widest uppercase shadow-md shadow-amber-500/30"
                     >
                       {m.posts_badge_new()}
                     </span>
@@ -514,7 +514,7 @@
                   <RefreshCw size={20} class="text-text-muted animate-spin opacity-50" />
                 </div>
               {:else if !hasMore && resolvedPosts.length >= PAGE_SIZE}
-                <p class="text-text-muted py-4 text-center text-[0.75rem] opacity-50">
+                <p class="text-text-muted text-2xs py-4 text-center opacity-50">
                   {m.posts_all_loaded()}
                 </p>
               {/if}

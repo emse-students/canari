@@ -157,7 +157,7 @@
       <div
         class="border-cn-border absolute right-0 bottom-full left-0 z-50 mb-2 rounded-2xl border-2 bg-(--cn-surface) p-3 shadow-xl"
       >
-        <p class="text-text-muted mb-2.5 ml-1 text-[0.65rem] font-bold tracking-wider uppercase">
+        <p class="text-text-muted text-2xs mb-2.5 ml-1 font-bold tracking-wider uppercase">
           {m.form_question_type_picker_label()}
         </p>
         <div class="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
@@ -170,7 +170,7 @@
             >
               <Icon size={18} class="text-text-muted group-hover:text-cn-dark transition-colors" />
               <span
-                class="text-text-muted group-hover:text-text-main text-[0.65rem] leading-tight font-semibold"
+                class="text-text-muted group-hover:text-text-main text-2xs leading-tight font-semibold"
                 >{qtype.label()}</span
               >
             </button>

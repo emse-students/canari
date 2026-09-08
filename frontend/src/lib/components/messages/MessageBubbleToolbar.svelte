@@ -93,7 +93,7 @@
     ? 'right-0 bottom-full mb-1'
     : 'bottom-full left-0 mb-1'} whitespace-nowrap opacity-0 {showEmojiPicker
     ? 'opacity-100'
-    : 'group-hover:opacity-100'} text-text-muted z-10 hidden flex-row items-center gap-0.5 rounded-full border border-black/5 bg-white/90 px-2 py-1.5 shadow-lg backdrop-blur-xl transition-opacity duration-200 md:flex dark:border-white/10 dark:bg-black/70"
+    : 'group-hover:opacity-100'} text-text-muted bg-cn-surface z-10 hidden flex-row items-center gap-0.5 rounded-full border border-black/5 px-2 py-1.5 shadow-lg transition-opacity duration-200 md:flex dark:border-white/10"
 >
   <!-- Quick reactions (web): the same set as mobile, hidden in mobile long-press mode where
        MessageMobileActions already shows its own reaction strip. -->

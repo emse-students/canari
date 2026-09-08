@@ -203,19 +203,19 @@
     bind:this={panelEl}
     data-swipe-nav-ignore
     transition:scale={{ duration: 250, start: 0.95, opacity: 0, easing: (t) => t * (2 - t) }}
-    class="fixed z-[200] flex w-[min(92vw,22rem)] origin-(--popover-origin) flex-col overflow-hidden rounded-[1.5rem] border border-black/5 bg-white/85 shadow-2xl shadow-black/10 backdrop-blur-2xl dark:border-white/10 dark:bg-black/60 dark:shadow-black/40"
+    class="bg-cn-surface fixed z-[200] flex w-[min(92vw,22rem)] origin-(--popover-origin) flex-col overflow-hidden rounded-[1.5rem] border border-black/5 shadow-2xl shadow-black/10 dark:border-white/10 dark:shadow-black/40"
     style:--popover-origin={isOwn ? 'top right' : 'top left'}
   >
     <!-- En-tête -->
     <div
-      class="text-text-muted flex items-center gap-2 border-b border-black/5 bg-white/40 px-4 py-3 text-xs font-semibold dark:border-white/10 dark:bg-black/20"
+      class="text-text-muted bg-cn-surface flex items-center gap-2 border-b border-black/5 px-4 py-3 text-xs font-semibold dark:border-white/10"
     >
       <FaceSlightlySmiling size={14} class="text-amber-500" />
       {m.msg_react_to_message_label()}
     </div>
     {#if reactionsAtLimit}
       <p
-        class="border-b border-amber-500/20 bg-amber-500/10 px-4 py-2 text-[0.7rem] text-amber-700 dark:text-amber-400"
+        class="text-2xs border-b border-amber-500/20 bg-amber-500/10 px-4 py-2 text-amber-700 dark:text-amber-400"
       >
         {m.msg_max_reactions_label({ max: MAX_DISTINCT_MESSAGE_REACTIONS })}
       </p>
@@ -226,7 +226,7 @@
       <div
         class="flex flex-wrap items-center gap-1.5 border-b border-black/5 bg-white/20 px-3 py-2 dark:border-white/10 dark:bg-black/10"
       >
-        <span class="text-text-muted/80 mr-2 text-[0.65rem] font-bold tracking-widest uppercase">
+        <span class="text-text-muted/80 text-2xs mr-2 font-bold tracking-widest uppercase">
           {m.msg_recent_reactions_label()}
         </span>
         {#each recentEmojis as emoji (emoji)}

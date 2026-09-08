@@ -258,20 +258,35 @@ export function splitWithHighlight(
   return parts.length > 0 ? parts : [{ text, hit: false }];
 }
 
-/** Returns Tailwind border-radius classes for a bubble based on its position in a message group. */
+/**
+ * Returns Tailwind border-radius classes for a bubble based on its position in a message group.
+ *
+ * THE CORNER IS THE GROUPING, AND IT IS THE WHOLE OF IT. The measured reference says "same speaker,
+ * still talking" by tightening the one corner that faces the neighbouring bubble to 4px and leaving
+ * the other three at 18px - no separator, no repeated avatar, no repeated name. That is why the
+ * tail is a named token rather than a number: `rounded-bubble` and `rounded-bubble-tail` say what
+ * they mean, and the two cannot drift apart.
+ *
+ * The tightened corner is always on the side the bubbles are stacked against - the right for one's
+ * own messages, the left for everyone else's - so a column of bubbles reads as one utterance.
+ */
 export function getBubbleShapeClass(
   position: 'single' | 'start' | 'middle' | 'end',
   isOwn: boolean
 ): string {
-  if (position === 'single') return 'rounded-[1.25rem]';
+  if (position === 'single') return 'rounded-bubble';
 
   if (isOwn) {
-    if (position === 'start') return 'rounded-[1.25rem] rounded-br-md';
-    if (position === 'middle') return 'rounded-[1.25rem] rounded-tr-md rounded-br-md';
-    return 'rounded-[1.25rem] rounded-tr-md';
+    if (position === 'start') return 'rounded-bubble rounded-br-bubble-tail';
+    if (position === 'middle') {
+      return 'rounded-bubble rounded-tr-bubble-tail rounded-br-bubble-tail';
+    }
+    return 'rounded-bubble rounded-tr-bubble-tail';
   }
 
-  if (position === 'start') return 'rounded-[1.25rem] rounded-bl-md';
-  if (position === 'middle') return 'rounded-[1.25rem] rounded-tl-md rounded-bl-md';
-  return 'rounded-[1.25rem] rounded-tl-md';
+  if (position === 'start') return 'rounded-bubble rounded-bl-bubble-tail';
+  if (position === 'middle') {
+    return 'rounded-bubble rounded-tl-bubble-tail rounded-bl-bubble-tail';
+  }
+  return 'rounded-bubble rounded-tl-bubble-tail';
 }

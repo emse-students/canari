@@ -3,7 +3,6 @@
   import { beforeNavigate, goto } from '$app/navigation';
   import { onMount, tick } from 'svelte';
   import { themeStore } from '$lib/stores/themeStore.svelte';
-  import BackgroundBlobs from '$lib/components/shared/BackgroundBlobs.svelte';
   import ChatBackgroundService from '$lib/components/layout/ChatBackgroundService.svelte';
   import TabFollowerBanner from '$lib/components/chat/TabFollowerBanner.svelte';
   import Navbar from '$lib/components/navigation/Navbar.svelte';
@@ -346,7 +345,6 @@
     {/if}
 
     <main id="main-content" class="relative flex-1 overflow-hidden">
-      <BackgroundBlobs />
       <div
         bind:this={pageScrollWrap}
         class="page-scroll-wrap absolute inset-0 overflow-y-auto pb-[calc(4rem+var(--safe-area-inset-bottom,0px))] md:pb-0"

@@ -25,7 +25,7 @@
 </script>
 
 <div
-  class="border-cn-border/60 dark:bg-cn-ink/85 mt-5 flex flex-col items-center justify-center gap-3 rounded-2xl border bg-(--cn-surface)/85 px-4 py-3.5 text-center shadow-lg backdrop-blur-xl sm:flex-row sm:justify-between sm:px-5 sm:text-left"
+  class="border-cn-border/60 bg-cn-surface mt-5 flex flex-col items-center justify-center gap-3 rounded-2xl border px-4 py-3.5 text-center shadow-lg sm:flex-row sm:justify-between sm:px-5 sm:text-left"
 >
   <p class="text-text-muted min-h-5 text-sm">
     {#if titleMissing}

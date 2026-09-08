@@ -124,7 +124,7 @@
           {#each rows as d (d.userId + ':' + d.deviceId)}
             <tr
               class="border-cn-border border-b transition-colors last:border-0
-                {isAnomaly(d)
+ {isAnomaly(d)
                 ? 'bg-[color-mix(in_srgb,var(--cn-yellow)_6%,var(--cn-surface))]'
                 : 'bg-(--cn-surface) hover:bg-(--surface-elevated)'}"
             >

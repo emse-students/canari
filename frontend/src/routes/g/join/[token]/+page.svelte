@@ -91,7 +91,7 @@
       </div>
       <div>
         <p class="text-text-muted text-sm">{m.group_join_invited_text()}</p>
-        <h1 class="text-text-main mt-1 text-xl font-extrabold">
+        <h1 class="text-text-main mt-1 text-xl font-bold">
           {preview.groupName ?? m.group_join_group_fallback()}
         </h1>
       </div>

@@ -115,16 +115,14 @@
         <div class="mt-1 flex flex-wrap items-center gap-2">
           <span
             class="rounded-full px-2.5 py-0.5 text-xs font-semibold
-            {member.isAdmin
+ {member.isAdmin
               ? 'bg-cn-yellow/25 text-cn-dark dark:text-cn-yellow'
               : 'bg-cn-border/50 text-text-muted'}"
           >
             {member.role}
           </span>
           {#if member.isAdmin}
-            <span class="text-text-muted text-[11px] font-medium tracking-wide uppercase"
-              >Admin</span
-            >
+            <span class="text-text-muted text-2xs font-medium tracking-wide uppercase">Admin</span>
           {/if}
         </div>
       </div>

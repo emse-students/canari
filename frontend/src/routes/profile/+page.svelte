@@ -156,7 +156,7 @@
     </div>
   {:else if error}
     <div
-      class="flex items-start gap-3 rounded-2xl border border-red-500/20 bg-red-500/10 p-5 text-red-600 shadow-sm backdrop-blur-md dark:text-red-400"
+      class="flex items-start gap-3 rounded-2xl border border-red-500/20 bg-red-500/10 p-5 text-red-600 shadow-sm dark:text-red-400"
       in:slide
     >
       <CircleAlert size={20} class="mt-0.5 shrink-0" />
@@ -182,15 +182,15 @@
           title={m.profile_photo_change_label()}
           aria-label={m.profile_photo_change_label()}
           class="bg-cn-yellow hover:bg-cn-yellow-hover text-cn-ink shadow-cn-yellow/30 absolute right-0 bottom-0 flex h-8
-                 w-8 items-center justify-center
-                 rounded-full shadow-md ring-2 ring-white transition-all
-                 active:scale-95 dark:ring-(--cn-bg)"
+ w-8 items-center justify-center
+ rounded-full shadow-md ring-2 ring-white transition-all
+ active:scale-95 dark:ring-(--cn-bg)"
         >
           <Camera size={15} strokeWidth={2.5} />
         </button>
       </div>
       <div class="min-w-0 flex-1">
-        <h1 class="text-text-main mb-1 truncate text-2xl font-extrabold tracking-tight sm:text-3xl">
+        <h1 class="text-text-main mb-1 truncate text-2xl font-bold tracking-tight sm:text-3xl">
           {displayFallbackName}
         </h1>
         <ProfileMinesweeperBadge userId={profile.id} />
@@ -223,7 +223,7 @@
           <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
             <UserRound size={22} strokeWidth={2.5} />
           </div>
-          <h2 class="text-text-main text-lg font-extrabold">{m.profile_bio_heading()}</h2>
+          <h2 class="text-text-main text-lg font-bold">{m.profile_bio_heading()}</h2>
         </div>
         {#if !editingBio}
           <button
@@ -242,8 +242,8 @@
             bind:value={bioInput}
             maxlength={500}
             minHeight="100px"
-            class="focus-within:border-cn-yellow/50 focus-within:ring-cn-yellow/30 w-full min-w-0 overflow-hidden rounded-[1.25rem] border border-black/10 bg-white/80 shadow-inner transition-all focus-within:ring-2 dark:border-white/10 dark:bg-black/40"
-            editorClass="min-h-[100px] w-full max-w-full px-4 py-3 text-[0.95rem] text-text-main leading-relaxed"
+            class="focus-within:border-cn-yellow/50 focus-within:ring-cn-yellow/30 bg-cn-surface w-full min-w-0 overflow-hidden rounded-[1.25rem] border border-black/10 shadow-inner transition-all focus-within:ring-2 dark:border-white/10"
+            editorClass="min-h-[100px] w-full max-w-full px-4 py-3 text-sm text-text-main leading-relaxed"
             placeholder={m.profile_bio_placeholder()}
           />
           <div class="flex items-center justify-between">
@@ -281,7 +281,7 @@
           {#if profile.bio?.trim()}
             <ProfileBioMarkdown source={profile.bio} />
           {:else}
-            <p class="text-text-main text-[0.95rem] leading-relaxed opacity-90">
+            <p class="text-text-main text-sm leading-relaxed opacity-90">
               {m.profile_bio_empty()}
             </p>
           {/if}
@@ -298,7 +298,7 @@
         <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
           <Building2 size={22} strokeWidth={2.5} />
         </div>
-        <h2 class="text-text-main text-lg font-extrabold">{m.profile_assoc_heading()}</h2>
+        <h2 class="text-text-main text-lg font-bold">{m.profile_assoc_heading()}</h2>
       </div>
       <ProfileAssociationsSection {memberships} loading={membershipsLoading} />
     </div>
@@ -312,7 +312,7 @@
         <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
           <RotateCcwClock size={22} strokeWidth={2.5} />
         </div>
-        <h2 class="text-text-main text-lg font-extrabold">{m.profile_career_heading()}</h2>
+        <h2 class="text-text-main text-lg font-bold">{m.profile_career_heading()}</h2>
         {#if roleHistoryLoading}
           <LoaderCircle size={16} class="text-cn-yellow animate-spin" />
         {/if}
@@ -334,7 +334,7 @@
           <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
             <Users size={22} strokeWidth={2.5} />
           </div>
-          <h2 class="text-text-main text-lg font-extrabold">
+          <h2 class="text-text-main text-lg font-bold">
             {m.profile_public_sponsorship_heading()}
           </h2>
           {#if parrainageLoading}
@@ -358,18 +358,18 @@
         <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
           <Info size={22} strokeWidth={2.5} />
         </div>
-        <h2 class="text-text-main text-lg font-extrabold">{m.profile_info_heading()}</h2>
+        <h2 class="text-text-main text-lg font-bold">{m.profile_info_heading()}</h2>
       </div>
 
       <div class="grid grid-cols-1 gap-5 md:grid-cols-2">
         <div
-          class="flex items-center gap-3.5 rounded-2xl border border-black/5 bg-white/50 p-4 shadow-sm dark:border-white/5 dark:bg-white/5"
+          class="bg-cn-surface flex items-center gap-3.5 rounded-2xl border border-black/5 p-4 shadow-sm dark:border-white/5"
         >
           <div class="text-text-muted rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
             <GraduationCap size={20} strokeWidth={2.5} />
           </div>
           <div class="min-w-0">
-            <p class="text-text-muted mb-0.5 text-[0.65rem] font-bold tracking-wider uppercase">
+            <p class="text-text-muted text-2xs mb-0.5 font-bold tracking-wider uppercase">
               {m.profile_promo_label()}
             </p>
             <p class="text-text-main truncate text-sm font-bold">{formatYear(profile.promo)}</p>
@@ -377,13 +377,13 @@
         </div>
 
         <div
-          class="flex items-center gap-3.5 rounded-2xl border border-black/5 bg-white/50 p-4 shadow-sm dark:border-white/5 dark:bg-white/5"
+          class="bg-cn-surface flex items-center gap-3.5 rounded-2xl border border-black/5 p-4 shadow-sm dark:border-white/5"
         >
           <div class="text-text-muted rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
             <CalendarDays size={20} strokeWidth={2.5} />
           </div>
           <div class="min-w-0">
-            <p class="text-text-muted mb-0.5 text-[0.65rem] font-bold tracking-wider uppercase">
+            <p class="text-text-muted text-2xs mb-0.5 font-bold tracking-wider uppercase">
               {m.profile_member_since_label()}
             </p>
             <p class="text-text-main text-sm font-bold capitalize">

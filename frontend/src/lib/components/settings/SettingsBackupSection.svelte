@@ -52,7 +52,7 @@
     <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
       <RefreshCw size={22} strokeWidth={2.5} />
     </div>
-    <h2 class="text-text-main text-lg font-extrabold">{m.profile_backup_heading()}</h2>
+    <h2 class="text-text-main text-lg font-bold">{m.profile_backup_heading()}</h2>
   </div>
   <p class="text-text-muted mb-6 text-xs leading-relaxed font-medium sm:pl-[3.75rem]">
     {m.profile_backup_desc()}
@@ -64,22 +64,22 @@
         type="button"
         onclick={triggerImport}
         disabled={session.isImporting}
-        class="border-cn-border hover:border-cn-yellow/40 flex flex-col items-center gap-2 rounded-2xl border bg-white/50 p-4 text-center transition-all active:scale-95 disabled:opacity-50 dark:bg-white/5"
+        class="border-cn-border hover:border-cn-yellow/40 bg-cn-surface flex flex-col items-center gap-2 rounded-2xl border p-4 text-center transition-all active:scale-95 disabled:opacity-50"
       >
         <Upload size={22} class="text-text-muted" />
         <span class="text-text-main text-sm font-bold">{m.profile_backup_import_label()}</span>
-        <span class="text-text-muted text-[0.7rem]">{m.profile_backup_import_sub()}</span>
+        <span class="text-text-muted text-2xs">{m.profile_backup_import_sub()}</span>
       </button>
 
       <button
         type="button"
         onclick={handleExport}
         disabled={session.isExporting}
-        class="border-cn-border hover:border-cn-yellow/40 flex flex-col items-center gap-2 rounded-2xl border bg-white/50 p-4 text-center transition-all active:scale-95 disabled:opacity-50 dark:bg-white/5"
+        class="border-cn-border hover:border-cn-yellow/40 bg-cn-surface flex flex-col items-center gap-2 rounded-2xl border p-4 text-center transition-all active:scale-95 disabled:opacity-50"
       >
         <Download size={22} class="text-text-muted" />
         <span class="text-text-main text-sm font-bold">{m.profile_backup_export_label()}</span>
-        <span class="text-text-muted text-[0.7rem]">{m.profile_backup_export_sub()}</span>
+        <span class="text-text-muted text-2xs">{m.profile_backup_export_sub()}</span>
       </button>
     </div>
 

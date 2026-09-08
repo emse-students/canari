@@ -55,7 +55,7 @@
   <!-- Header -->
   <div class="flex flex-wrap items-center justify-between gap-3">
     <div>
-      <h1 class="text-text-main text-2xl font-extrabold tracking-tight">
+      <h1 class="text-text-main text-2xl font-bold tracking-tight">
         {m.assoc_list_heading()}
       </h1>
       <p class="text-text-muted mt-1 text-sm">{m.assoc_list_subtitle()}</p>
@@ -137,7 +137,7 @@
       <h2 class="text-text-main mb-3 text-base font-bold">{m.assoc_list_all_heading()}</h2>
       {#if activeAssociations.length === 0}
         <div
-          class="border-cn-border rounded-2xl border-2 border-dashed bg-(--cn-surface)/60 py-16 text-center"
+          class="border-cn-border bg-cn-surface rounded-2xl border-2 border-dashed py-16 text-center"
         >
           <div class="mb-3 text-5xl">🏠</div>
           <h3 class="text-text-main mb-1 text-lg font-bold">{m.assoc_list_empty_title()}</h3>
@@ -196,7 +196,7 @@
             {#each archivedAssociations as asso (asso.id)}
               <a
                 href="/associations/{asso.slug}"
-                class="border-cn-border block rounded-2xl border bg-(--cn-surface)/60 p-5 opacity-75 transition-all hover:opacity-100 hover:shadow-md"
+                class="border-cn-border bg-cn-surface block rounded-2xl border p-5 opacity-75 transition-all hover:opacity-100 hover:shadow-md"
               >
                 <div class="flex items-start gap-3">
                   <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="lg" />

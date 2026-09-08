@@ -166,7 +166,7 @@
   <div use:portal class="fixed inset-0 z-[260] flex justify-end">
     <button
       type="button"
-      class="absolute inset-0 bg-black/40 backdrop-blur-sm"
+      class="absolute inset-0 bg-black/40"
       aria-label={m.chat_panel_close_label()}
       onclick={onClose}
       transition:fade={{ duration: 180 }}
@@ -269,7 +269,7 @@
                     >{hostOf(link.url)}</span
                   >
                   <span class="text-text-muted w-full truncate text-xs">{link.url}</span>
-                  <span class="text-text-muted/80 text-[0.7rem]"
+                  <span class="text-text-muted/80 text-2xs"
                     >{senderName(link.senderId)} · {dateFmt.format(link.timestamp)}</span
                   >
                 </button>

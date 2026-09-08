@@ -345,7 +345,7 @@
     </div>
   {:else if asso}
     <header class="space-y-1">
-      <h1 class="text-text-main text-2xl font-extrabold tracking-tight">
+      <h1 class="text-text-main text-2xl font-bold tracking-tight">
         {m.asso_edit_page_title()}
       </h1>
       <p class="text-text-muted text-sm">@{asso.slug}</p>
@@ -360,7 +360,7 @@
     <!-- Section tabs -->
     <nav
       data-swipe-nav-ignore
-      class="border-cn-border/80 sticky top-0 z-30 -mx-4 border-y bg-(--cn-bg)/95 px-4 py-3 backdrop-blur-md sm:mx-0 sm:rounded-2xl sm:border"
+      class="border-cn-border/80 bg-cn-bg sticky top-0 z-30 -mx-4 border-y px-4 py-3 sm:mx-0 sm:rounded-2xl sm:border"
       aria-label="Edit sections"
     >
       <div class="flex flex-wrap gap-2">
@@ -368,7 +368,7 @@
           type="button"
           onclick={() => (editSection = 'profile')}
           class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-          {editSection === 'profile'
+ {editSection === 'profile'
             ? 'bg-cn-yellow text-cn-ink shadow-sm'
             : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
         >
@@ -380,7 +380,7 @@
             type="button"
             onclick={() => (editSection = 'members')}
             class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-            {editSection === 'members'
+ {editSection === 'members'
               ? 'bg-cn-yellow text-cn-ink shadow-sm'
               : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
           >
@@ -397,7 +397,7 @@
               if (canManageStripeConnect) void refreshConnectAccountStatus();
             }}
             class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-            {editSection === 'payments'
+ {editSection === 'payments'
               ? 'bg-cn-yellow text-cn-ink shadow-sm'
               : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
           >
@@ -410,7 +410,7 @@
             type="button"
             onclick={() => (editSection = 'documents')}
             class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-            {editSection === 'documents'
+ {editSection === 'documents'
               ? 'bg-cn-yellow text-cn-ink shadow-sm'
               : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
           >
@@ -423,7 +423,7 @@
             type="button"
             onclick={() => (editSection = 'achats')}
             class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-            {editSection === 'achats'
+ {editSection === 'achats'
               ? 'bg-cn-yellow text-cn-ink shadow-sm'
               : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
           >
@@ -436,7 +436,7 @@
             type="button"
             onclick={() => (editSection = 'cotisations')}
             class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-            {editSection === 'cotisations'
+ {editSection === 'cotisations'
               ? 'bg-cn-yellow text-cn-ink shadow-sm'
               : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
           >
@@ -449,7 +449,7 @@
             type="button"
             onclick={() => (editSection = 'delegation')}
             class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-            {editSection === 'delegation'
+ {editSection === 'delegation'
               ? 'bg-cn-yellow text-cn-ink shadow-sm'
               : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
           >
@@ -462,7 +462,7 @@
             type="button"
             onclick={() => (editSection = 'formulaires')}
             class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-            {editSection === 'formulaires'
+ {editSection === 'formulaires'
               ? 'bg-cn-yellow text-cn-ink shadow-sm'
               : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
           >
@@ -475,7 +475,7 @@
             type="button"
             onclick={() => (editSection = 'partnerships')}
             class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-            {editSection === 'partnerships'
+ {editSection === 'partnerships'
               ? 'bg-cn-yellow text-cn-ink shadow-sm'
               : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
           >
@@ -488,7 +488,7 @@
             type="button"
             onclick={() => (editSection = 'danger')}
             class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-            {editSection === 'danger'
+ {editSection === 'danger'
               ? 'bg-red-err/20 text-red-err border-red-err/30 border'
               : 'border-cn-border text-text-muted hover:text-red-err border bg-(--cn-surface)'}"
           >
@@ -516,9 +516,7 @@
             }}
           />
         {:else if canManageStripeConnect}
-          <div
-            class="border-cn-border space-y-4 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm"
-          >
+          <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
             <div class="flex flex-wrap items-start justify-between gap-3">
               <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
                 <CreditCard size={20} />
@@ -565,7 +563,7 @@
                   <div class="grid grid-cols-2 gap-3">
                     <div>
                       <p class="text-text-muted text-xs">{m.asso_payments_balance_available()}</p>
-                      <p class="text-text-main text-lg font-extrabold tabular-nums">
+                      <p class="text-text-main text-lg font-bold tabular-nums">
                         {formatConnectAccountAmount(
                           connectAccountStatus.balance.availableCents,
                           connectAccountStatus.balance.currency
@@ -574,7 +572,7 @@
                     </div>
                     <div>
                       <p class="text-text-muted text-xs">{m.asso_payments_balance_pending()}</p>
-                      <p class="text-text-muted text-lg font-extrabold tabular-nums">
+                      <p class="text-text-muted text-lg font-bold tabular-nums">
                         {formatConnectAccountAmount(
                           connectAccountStatus.balance.pendingCents,
                           connectAccountStatus.balance.currency
@@ -680,7 +678,7 @@
     {/if}
 
     {#if editSection === 'documents' && canManageDocuments && asso}
-      <div class="border-cn-border space-y-5 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm">
+      <div class="border-cn-border bg-cn-surface space-y-5 rounded-2xl border p-6 shadow-sm">
         <div>
           <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
             <FolderLock size={20} />

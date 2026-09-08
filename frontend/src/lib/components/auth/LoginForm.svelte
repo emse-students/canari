@@ -40,7 +40,7 @@
   <!--
     Effet Glassmorphism accentué :
     - Fond très transparent (bg-white/20 ou bg-black/40)
-    - Flou arrière très fort (backdrop-blur-2xl)
+    - Flou arrière très fort ()
     - Bordure blanche semi-transparente pour l'éclat du verre
     - Ombre diffuse (shadow-2xl)
   -->
@@ -69,7 +69,7 @@
       {#if maintenanceNotice}
         <div
           role="status"
-          class="rounded-xl border border-amber-500/25 bg-amber-500/15 px-4 py-3 text-sm font-medium text-amber-700 backdrop-blur-md dark:text-amber-300"
+          class="rounded-xl border border-amber-500/25 bg-amber-500/15 px-4 py-3 text-sm font-medium text-amber-700 dark:text-amber-300"
         >
           {maintenanceNotice}
         </div>
@@ -78,7 +78,7 @@
       <button
         onclick={onLogin}
         disabled={isLoggingIn || loginDisabled}
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover shadow-cn-yellow/20 w-full rounded-2xl py-4 text-lg font-extrabold shadow-lg transition-all hover:-translate-y-0.5 active:translate-y-0 disabled:cursor-wait disabled:opacity-70"
+        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover shadow-cn-yellow/20 w-full rounded-2xl py-4 text-lg font-bold shadow-lg transition-all hover:-translate-y-0.5 active:translate-y-0 disabled:cursor-wait disabled:opacity-70"
       >
         {#if isLoggingIn}
           <span class="inline-flex items-center gap-2">
@@ -98,7 +98,7 @@
         <div
           role="alert"
           aria-live="assertive"
-          class="mt-6 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm font-medium text-red-500 backdrop-blur-md dark:text-red-400"
+          class="mt-6 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm font-medium text-red-500 dark:text-red-400"
           transition:slide
         >
           {loginError}

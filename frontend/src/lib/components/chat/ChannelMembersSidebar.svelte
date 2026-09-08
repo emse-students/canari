@@ -75,13 +75,13 @@
     ? isOpen
       ? 'hidden w-64 border-l border-black/5 lg:w-72 xl:flex dark:border-white/10'
       : 'hidden'
-    : 'flex h-full w-full'} dark:bg-cn-ink/90 custom-scrollbar flex-col overflow-y-auto bg-white/70 backdrop-blur-2xl transition-all duration-300"
+    : 'flex h-full w-full'} custom-scrollbar bg-cn-surface flex-col overflow-y-auto transition-all duration-300"
 >
   {#if mode === 'mobile'}
     <div
-      class="sticky top-0 z-10 flex items-center justify-between border-b border-black/5 bg-white/40 p-4 shadow-sm backdrop-blur-md md:p-5 dark:border-white/10 dark:bg-black/20"
+      class="bg-cn-surface sticky top-0 z-10 flex items-center justify-between border-b border-black/5 p-4 shadow-sm md:p-5 dark:border-white/10"
     >
-      <h2 class="text-text-main flex items-center gap-2.5 text-[0.95rem] font-bold">
+      <h2 class="text-text-main flex items-center gap-2.5 text-sm font-bold">
         <div class="rounded-lg bg-amber-500/10 p-1.5 text-amber-600 dark:text-amber-400">
           <Users size={16} strokeWidth={2.5} />
         </div>
@@ -103,7 +103,7 @@
     {#if admins.length > 0}
       <div class="animate-in fade-in slide-in-from-bottom-2 duration-300">
         <h3
-          class="text-text-muted mb-3 flex items-center gap-2 px-2 text-[0.7rem] font-extrabold tracking-widest uppercase"
+          class="text-text-muted text-2xs mb-3 flex items-center gap-2 px-2 font-bold tracking-widest uppercase"
         >
           <ShieldAlert size={14} class="text-amber-500" strokeWidth={2.5} />
           {m.chat_admins_count_label({ admins: admins.length })}
@@ -111,7 +111,7 @@
         <div class="space-y-1.5">
           {#each admins as member (member.id)}
             <div
-              class="group flex cursor-pointer items-center gap-3 rounded-2xl border border-transparent px-3 py-2.5 transition-all duration-200 hover:translate-x-1 hover:border-black/5 hover:bg-white/80 hover:shadow-sm dark:hover:border-white/5 dark:hover:bg-white/5"
+              class="group hover:bg-cn-surface flex cursor-pointer items-center gap-3 rounded-2xl border border-transparent px-3 py-2.5 transition-all duration-200 hover:translate-x-1 hover:border-black/5 hover:shadow-sm dark:hover:border-white/5 dark:hover:bg-white/5"
             >
               <div class="relative shrink-0">
                 <Avatar userId={member.userId} size="sm" />
@@ -123,7 +123,7 @@
               </div>
               <UserName
                 userId={member.userId}
-                class="text-text-main truncate text-[0.9rem] font-bold transition-colors group-hover:text-amber-600 dark:group-hover:text-amber-400"
+                class="text-text-main truncate text-sm font-bold transition-colors group-hover:text-amber-600 dark:group-hover:text-amber-400"
               />
             </div>
           {/each}
@@ -138,7 +138,7 @@
         style="animation-fill-mode: backwards;"
       >
         <h3
-          class="text-text-muted mb-3 flex items-center gap-2 px-2 text-[0.7rem] font-extrabold tracking-widest uppercase"
+          class="text-text-muted text-2xs mb-3 flex items-center gap-2 px-2 font-bold tracking-widest uppercase"
         >
           <User size={14} class="text-text-muted/70" strokeWidth={2.5} />
           {m.chat_members_count_label({ regulars: regulars.length })}
@@ -146,7 +146,7 @@
         <div class="space-y-1.5">
           {#each regulars as member (member.id)}
             <div
-              class="group flex cursor-pointer items-center gap-3 rounded-2xl border border-transparent px-3 py-2.5 opacity-90 transition-all duration-200 hover:translate-x-1 hover:border-black/5 hover:bg-white/80 hover:opacity-100 hover:shadow-sm dark:hover:border-white/5 dark:hover:bg-white/5"
+              class="group hover:bg-cn-surface flex cursor-pointer items-center gap-3 rounded-2xl border border-transparent px-3 py-2.5 opacity-90 transition-all duration-200 hover:translate-x-1 hover:border-black/5 hover:opacity-100 hover:shadow-sm dark:hover:border-white/5 dark:hover:bg-white/5"
             >
               <div class="relative shrink-0">
                 <Avatar userId={member.userId} size="sm" />
@@ -158,7 +158,7 @@
               </div>
               <UserName
                 userId={member.userId}
-                class="text-text-main truncate text-[0.9rem] font-medium transition-colors group-hover:text-amber-600 dark:group-hover:text-amber-400"
+                class="text-text-main truncate text-sm font-medium transition-colors group-hover:text-amber-600 dark:group-hover:text-amber-400"
               />
             </div>
           {/each}

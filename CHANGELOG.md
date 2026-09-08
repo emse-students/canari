@@ -11,6 +11,58 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - the interface was measured against Messenger and rebuilt on a scale it did not have
+
+The brief was that Canari "fait trop IA" and was "pas assez ergonomique". That is an impression, so it
+was turned into numbers first: a live Messenger thread and a live Facebook group page were censused
+with `getComputedStyle`, and Canari beside them. The measurement, both sides, is in
+[`docs/wiki/frontend/design-reference.md`](docs/wiki/frontend/design-reference.md), the only copy.
+
+**The finding, in one line: Canari used 36 distinct font sizes; the reference uses five, and it is the
+same five on both surfaces.** Five of Canari's were fractional (`0.95rem` -> 15.2px, whose line box
+resolved to 22.8px), and 157 occurrences sat BELOW 12px - a floor the reference never crosses - down to
+9px. There were no type tokens at all, and `--radius-*` did not exist despite `CLAUDE.md` naming it as
+part of the single source of truth; what existed was 14 distinct `rounded-*` classes with `rounded-xl`
+(12px) as the default corner on 659 elements, so a card and a message bubble were the same shape.
+
+What changed:
+
+- **The scale is now Tailwind's own theme variables**, redefined once in `@theme`: 12/13/15/17/20/24/28/32
+  with absolute line-heights that are all multiples of 4. `text-sm` alone is written at 926 call sites
+  and `text-xs` at 633, so **1765 components moved with the tokens and none were edited**. The stock
+  theme stores its line-height as a RATIO (`calc(1.25 / 0.875)`), which is precisely how `13.75px`
+  reached the screen; an absolute length cannot.
+- **249 arbitrary `text-[...]` values swept onto the scale**, and a `text-2xs` floor added so "this must
+  be small" has an answer that is not `text-[0.65rem]`. Nine `em`-relative sizes were deliberately left:
+  a mention chip, inline code and a markdown heading scale must track the text around them.
+- **Four radii with four meanings** replacing fourteen with none: 8px card and control, 18px bubble with
+  a 4px grouping tail, 999px pill, 50% avatar. A person's avatar is now a circle, as the reference draws
+  it 80 times a page; a group's and an association's stay square-cornered, which is what Facebook itself
+  uses for a page.
+- **The glass is gone.** 111 `backdrop-blur` classes and two `backdrop-filter` declarations removed, 111
+  `bg-white/>=40` structural panels made opaque, 98 `dark:bg-*` overrides deleted from elements whose
+  base token already flips. The reference sets `backdrop-filter` nowhere; its only translucency is a
+  hover overlay at 5-18% white, which Canari already used correctly and which stays.
+- **The neutral palette**, measured: `#1f1f1f` / `#2e2e2e` / `#3e4042` dark, `#e4e6eb` / `#b0b3b8` text.
+  Every surface and text colour had been tinted navy; the yellow now carries the identity alone, and
+  reads louder for it. `BackgroundBlobs.svelte` - five amber radial gradients up to 1080x1080 under a
+  fractal-noise SVG overlay, mounted behind every screen - was deleted.
+- **Borders became hairlines.** The reference draws six visible borders on a whole page, at 1px and 5%
+  white; every other border it sets is the colour of the surface behind it. Canari outlined 566 elements
+  in saturated navy.
+- **The chat surface**: bubble padding 16/10 -> 12/8, the outgoing bubble's two-stop gradient and
+  coloured glow replaced by one flat fill, the incoming bubble's border and shadow removed, and the
+  timestamp moved OUT of the bubble - it rendered as its own flex row inside it, so a one-line message
+  measured 66px where the reference measures 35px. The desktop composer went from 70px to 58px.
+
+Two defects were introduced and caught by measuring rather than by looking. `--color-bubble-out-text:
+var(--cn-ink)` named a variable that does not exist (the token is `--color-cn-ink`); an invalid custom
+property fails SILENTLY and inherits, so the bubble text became near-white on yellow at about 1.7:1
+while still looking like a deliberate colour. And the light incoming bubble copied the measured
+`#f2f4f7` verbatim onto a `#f0f2f5` thread - the handset pairs that fill with a WHITE thread, so what
+transfers from a measurement is the STEP, not the value.
+
+
 ### Added - the MLS state blob can carry a key fingerprint, and every reader now knows how to see one
 
 A ChaCha20-Poly1305 tag that does not verify has two causes the ciphertext alone cannot separate: the

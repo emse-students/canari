@@ -57,7 +57,7 @@
       <Ban size={22} strokeWidth={2.5} />
     </div>
     <div>
-      <h2 class="text-text-main text-lg font-extrabold">{m.settings_blocked_heading()}</h2>
+      <h2 class="text-text-main text-lg font-bold">{m.settings_blocked_heading()}</h2>
       <p class="text-text-muted mt-0.5 text-xs font-medium">
         {m.settings_blocked_subtitle()}
       </p>

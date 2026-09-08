@@ -75,7 +75,7 @@
         <ArrowLeft size={15} />
         {m.assoc_list_heading()}
       </a>
-      <h1 class="text-text-main mt-1 text-2xl font-extrabold tracking-tight">{m.list_heading()}</h1>
+      <h1 class="text-text-main mt-1 text-2xl font-bold tracking-tight">{m.list_heading()}</h1>
       <p class="text-text-muted mt-1 text-sm">{m.list_subtitle()}</p>
     </div>
     {#if canCreate}
@@ -101,7 +101,7 @@
   {:else}
     {#if activeLists.length === 0}
       <div
-        class="border-cn-border rounded-2xl border-2 border-dashed bg-(--cn-surface)/60 py-16 text-center"
+        class="border-cn-border bg-cn-surface rounded-2xl border-2 border-dashed py-16 text-center"
       >
         <div class="mb-3 text-5xl">📋</div>
         <h3 class="text-text-main mb-1 text-lg font-bold">{m.list_empty_title()}</h3>
@@ -111,7 +111,7 @@
       {#each shelves as shelf (shelf.year)}
         <section class="space-y-3">
           <h2
-            class="text-text-muted flex items-center gap-3 text-sm font-extrabold tracking-wide uppercase"
+            class="text-text-muted flex items-center gap-3 text-sm font-bold tracking-wide uppercase"
           >
             <span class="whitespace-nowrap">
               {shelf.year === 0
@@ -130,7 +130,7 @@
                   <AssociationAvatar name={list.name} logoUrl={list.logoUrl} size="lg" />
                   <div class="min-w-0 flex-1">
                     {#if list.parentName}
-                      <div class="text-cn-dark text-[0.7rem] font-bold tracking-wide uppercase">
+                      <div class="text-cn-dark text-2xs font-bold tracking-wide uppercase">
                         {list.parentName}
                       </div>
                     {/if}
@@ -173,13 +173,13 @@
             {#each archivedLists as list (list.id)}
               <a
                 href="/lists/{list.slug}"
-                class="border-cn-border block rounded-2xl border bg-(--cn-surface)/60 p-5 opacity-75 transition-all hover:opacity-100 hover:shadow-md"
+                class="border-cn-border bg-cn-surface block rounded-2xl border p-5 opacity-75 transition-all hover:opacity-100 hover:shadow-md"
               >
                 <div class="flex items-start gap-3">
                   <AssociationAvatar name={list.name} logoUrl={list.logoUrl} size="lg" />
                   <div class="min-w-0 flex-1">
                     {#if list.parentName}
-                      <div class="text-text-muted text-[0.7rem] font-bold tracking-wide uppercase">
+                      <div class="text-text-muted text-2xs font-bold tracking-wide uppercase">
                         {list.parentName}
                       </div>
                     {/if}

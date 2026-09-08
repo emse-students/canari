@@ -109,7 +109,7 @@
       {/if}
     </div>
 
-    <p class="text-text-muted text-center font-mono text-[11px] break-all">{url}</p>
+    <p class="text-text-muted text-2xs text-center font-mono break-all">{url}</p>
 
     <Button
       class="w-full"

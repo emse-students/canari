@@ -90,7 +90,7 @@
   <div class="fixed inset-0 z-[110] md:hidden">
     <button
       type="button"
-      class="absolute inset-0 cursor-default bg-black/45 backdrop-blur-sm outline-none"
+      class="absolute inset-0 cursor-default bg-black/45 outline-none"
       aria-label={m.msg_close_actions_label()}
       onclick={onClose}
       transition:fade={{ duration: 180 }}
@@ -104,7 +104,7 @@
       {#if !isDeleted && canReact}
         <!-- Quick emoji reaction strip (WhatsApp/Messenger style) -->
         <div
-          class="flex items-center gap-1 rounded-full border border-black/10 bg-white/95 px-3 py-2 shadow-2xl dark:border-white/10 dark:bg-(--cn-surface)"
+          class="bg-cn-surface flex items-center gap-1 rounded-full border border-black/10 px-3 py-2 shadow-2xl dark:border-white/10"
         >
           {#each QUICK_EMOJIS as emoji (emoji)}
             {@const isActive = userReactions.includes(emoji)}
@@ -141,7 +141,7 @@
            (edit), which is enough to overflow a narrow phone screen at full width - wraps to a
            second line instead, rather than spilling off both edges. -->
       <div
-        class="flex max-w-[calc(100vw-2rem)] flex-wrap items-center justify-center gap-3 rounded-2xl border border-black/10 bg-white/90 px-4 py-3 shadow-xl dark:border-white/10 dark:bg-(--cn-surface)/95"
+        class="bg-cn-surface flex max-w-[calc(100vw-2rem)] flex-wrap items-center justify-center gap-3 rounded-2xl border border-black/10 px-4 py-3 shadow-xl dark:border-white/10"
       >
         {#if !isDeleted && canReply}
           <button
@@ -153,7 +153,7 @@
             aria-label={m.msg_reply_label()}
           >
             <Reply size={20} />
-            <span class="text-text-muted text-[10px] font-medium">{m.msg_reply_label()}</span>
+            <span class="text-text-muted text-2xs font-medium">{m.msg_reply_label()}</span>
           </button>
         {/if}
 
@@ -167,7 +167,7 @@
             aria-label={m.msg_forward_label()}
           >
             <Forward size={20} />
-            <span class="text-text-muted text-[10px] font-medium">{m.msg_forward_label()}</span>
+            <span class="text-text-muted text-2xs font-medium">{m.msg_forward_label()}</span>
           </button>
         {/if}
 
@@ -181,7 +181,7 @@
             aria-label={m.msg_copy_label()}
           >
             <Copy size={20} />
-            <span class="text-text-muted text-[10px] font-medium">{m.msg_copy_label()}</span>
+            <span class="text-text-muted text-2xs font-medium">{m.msg_copy_label()}</span>
           </button>
         {/if}
 
@@ -195,7 +195,7 @@
             aria-label={pinned ? m.msg_unpin_label() : m.msg_pin_label()}
           >
             {#if pinned}<PinOff size={20} />{:else}<Pin size={20} />{/if}
-            <span class="text-[10px] font-medium"
+            <span class="text-2xs font-medium"
               >{pinned ? m.msg_unpin_label() : m.msg_pin_label()}</span
             >
           </button>
@@ -211,7 +211,7 @@
             aria-label={m.common_edit_label()}
           >
             <Pencil size={20} />
-            <span class="text-[10px] font-medium">{m.common_edit_label()}</span>
+            <span class="text-2xs font-medium">{m.common_edit_label()}</span>
           </button>
         {/if}
 
@@ -225,7 +225,7 @@
             aria-label={m.common_delete_button()}
           >
             <Trash2 size={20} />
-            <span class="text-[10px] font-medium">{m.common_delete_button()}</span>
+            <span class="text-2xs font-medium">{m.common_delete_button()}</span>
           </button>
         {/if}
       </div>

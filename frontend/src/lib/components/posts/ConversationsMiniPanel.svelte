@@ -169,23 +169,23 @@
 </script>
 
 <aside
-  class="hidden h-full w-72 flex-col overflow-hidden rounded-[1.5rem] border border-black/5 bg-white/60 shadow-sm backdrop-blur-2xl transition-all duration-300 xl:flex dark:border-white/10 dark:bg-black/20"
+  class="bg-cn-surface hidden h-full w-72 flex-col overflow-hidden rounded-[1.5rem] border border-black/5 shadow-sm transition-all duration-300 xl:flex dark:border-white/10"
 >
   <!-- Header. -->
   <div
-    class="flex flex-shrink-0 items-center justify-between border-b border-black/5 bg-white/40 px-5 py-4 dark:border-white/10 dark:bg-black/10"
+    class="bg-cn-surface flex flex-shrink-0 items-center justify-between border-b border-black/5 px-5 py-4 dark:border-white/10"
   >
     <div class="flex items-center gap-2.5">
       <div class="rounded-lg bg-amber-500/10 p-1.5 text-amber-600 dark:text-amber-400">
         <MessageCircle size={16} strokeWidth={2.5} />
       </div>
-      <span class="text-text-main text-[0.95rem] font-extrabold tracking-wide"
+      <span class="text-text-main text-sm font-bold tracking-wide"
         >{m.post_conversations_panel_title()}</span
       >
     </div>
     <a
       href="/chat"
-      class="flex items-center gap-0.5 rounded text-[0.7rem] font-bold tracking-wider text-amber-600 uppercase transition-colors outline-none hover:text-amber-500 focus-visible:ring-2 focus-visible:ring-amber-500 dark:text-amber-500 dark:hover:text-amber-400"
+      class="text-2xs flex items-center gap-0.5 rounded font-bold tracking-wider text-amber-600 uppercase transition-colors outline-none hover:text-amber-500 focus-visible:ring-2 focus-visible:ring-amber-500 dark:text-amber-500 dark:hover:text-amber-400"
     >
       {m.post_conversations_see_all_label()}
       <ChevronRight size={14} strokeWidth={2.5} />
@@ -239,12 +239,10 @@
   </div>
 
   <!-- Footer -->
-  <div
-    class="flex-shrink-0 border-t border-black/5 bg-white/40 px-4 py-4 backdrop-blur-md dark:border-white/10 dark:bg-black/10"
-  >
+  <div class="bg-cn-surface flex-shrink-0 border-t border-black/5 px-4 py-4 dark:border-white/10">
     <a
       href="/chat"
-      class="text-cn-ink flex w-full items-center justify-center gap-2 rounded-xl bg-amber-500 py-3 text-[0.85rem] font-extrabold shadow-md shadow-amber-500/20 transition-all outline-none hover:bg-amber-400 hover:shadow-lg hover:shadow-amber-500/30 focus-visible:ring-4 focus-visible:ring-amber-500/50 active:scale-[0.98]"
+      class="text-cn-ink flex w-full items-center justify-center gap-2 rounded-xl bg-amber-500 py-3 text-xs font-bold shadow-md shadow-amber-500/20 transition-all outline-none hover:bg-amber-400 hover:shadow-lg hover:shadow-amber-500/30 focus-visible:ring-4 focus-visible:ring-amber-500/50 active:scale-[0.98]"
     >
       <MessageCircle size={18} strokeWidth={2.5} class="mt-0.5 ml-0.5" />
       {m.post_conversations_open_messaging_label()}

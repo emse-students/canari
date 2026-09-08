@@ -270,7 +270,7 @@
         <button
           type="button"
           onclick={handleClick}
-          class="absolute bottom-2.5 left-2.5 inline-flex h-8 items-center justify-center rounded-full bg-black/50 px-2.5 text-xs font-bold text-white shadow-lg backdrop-blur-md transition-all duration-300 hover:bg-black/70"
+          class="absolute bottom-2.5 left-2.5 inline-flex h-8 items-center justify-center rounded-full bg-black/50 px-2.5 text-xs font-bold text-white shadow-lg transition-all duration-300 hover:bg-black/70"
           aria-label={m.post_fullscreen_label()}
         >
           {m.post_fullscreen_label()}
@@ -281,7 +281,7 @@
             e.stopPropagation();
             downloadBlob(blobUrl!, media.fileName ?? 'video.mp4');
           }}
-          class="absolute top-2.5 right-2.5 z-10 inline-flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white shadow-lg backdrop-blur-md transition-all duration-300 outline-none hover:scale-110 hover:bg-black/70 focus:opacity-100 md:opacity-0 md:group-hover/media:opacity-100"
+          class="absolute top-2.5 right-2.5 z-10 inline-flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white shadow-lg transition-all duration-300 outline-none hover:scale-110 hover:bg-black/70 focus:opacity-100 md:opacity-0 md:group-hover/media:opacity-100"
           aria-label={m.post_download_label()}
         >
           <Download size={16} strokeWidth={2.5} />
@@ -302,18 +302,18 @@
           <FileText size={22} strokeWidth={2} class="text-text-muted" />
         </div>
         <div class="min-w-0 flex-1 overflow-hidden text-left">
-          <p class="mb-0.5 truncate text-[0.85rem] leading-tight font-bold">
+          <p class="mb-0.5 truncate text-xs leading-tight font-bold">
             {media.fileName ?? m.post_media_file_label()}
           </p>
           <!-- No `uppercase` here: it would render the "Ko" unit as "KO". -->
-          <p class="text-text-muted text-[0.65rem] font-semibold tracking-wider">
+          <p class="text-text-muted text-2xs font-semibold tracking-wider">
             {formatFileSize(media.size)}
           </p>
         </div>
       {/snippet}
 
       <div
-        class="group/file w-full max-w-full overflow-hidden rounded-2xl border border-black/5 bg-black/5 backdrop-blur-md transition-colors dark:border-white/10 dark:bg-white/10"
+        class="group/file w-full max-w-full overflow-hidden rounded-2xl border border-black/5 bg-black/5 transition-colors dark:border-white/10 dark:bg-white/10"
       >
         <div class="flex items-center gap-3.5 px-3.5 py-3">
           {#if isPdf}

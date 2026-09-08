@@ -33,7 +33,7 @@
     <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
       <Settings size={22} strokeWidth={2.5} />
     </div>
-    <h2 class="text-text-main text-lg font-extrabold">{m.profile_preferences_title()}</h2>
+    <h2 class="text-text-main text-lg font-bold">{m.profile_preferences_title()}</h2>
   </div>
 
   <div class="space-y-5">
@@ -60,11 +60,11 @@
         aria-label={m.profile_pref_sounds_aria()}
         onclick={() => settings.setSoundsEnabled(!settings.soundsEnabled)}
         class="focus-visible:ring-cn-yellow relative h-6 w-12 shrink-0 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-offset-2
-          {settings.soundsEnabled ? 'bg-cn-yellow' : 'bg-black/20 dark:bg-white/15'}"
+ {settings.soundsEnabled ? 'bg-cn-yellow' : 'bg-black/20 dark:bg-white/15'}"
       >
         <span
           class="absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-transform duration-200
-            {settings.soundsEnabled ? 'translate-x-6' : 'translate-x-0'}"
+ {settings.soundsEnabled ? 'translate-x-6' : 'translate-x-0'}"
         ></span>
       </button>
     </div>
@@ -93,11 +93,11 @@
           aria-label={m.profile_pref_vibrations_aria()}
           onclick={() => settings.setVibrationsEnabled(!settings.vibrationsEnabled)}
           class="focus-visible:ring-cn-yellow relative h-6 w-12 shrink-0 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-offset-2
-            {settings.vibrationsEnabled ? 'bg-cn-yellow' : 'bg-black/20 dark:bg-white/15'}"
+ {settings.vibrationsEnabled ? 'bg-cn-yellow' : 'bg-black/20 dark:bg-white/15'}"
         >
           <span
             class="absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-transform duration-200
-              {settings.vibrationsEnabled ? 'translate-x-6' : 'translate-x-0'}"
+ {settings.vibrationsEnabled ? 'translate-x-6' : 'translate-x-0'}"
           ></span>
         </button>
       </div>
@@ -135,7 +135,7 @@
             title={opt.label}
             onclick={() => themeStore.setPreference(opt.value as 'system' | 'light' | 'dark')}
             class="focus-visible:ring-cn-yellow flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors outline-none focus-visible:ring-2
-              {themeStore.preference === opt.value
+ {themeStore.preference === opt.value
               ? 'bg-cn-yellow text-cn-ink shadow'
               : 'text-text-muted hover:text-text-main'}"
           >
@@ -171,7 +171,7 @@
             title={LOCALE_LABELS[locale]}
             onclick={() => void changeLocale(locale)}
             class="focus-visible:ring-cn-yellow rounded-lg px-3 py-1.5 text-xs font-semibold uppercase transition-colors outline-none focus-visible:ring-2
-              {getLocale() === locale
+ {getLocale() === locale
               ? 'bg-cn-yellow text-cn-ink shadow'
               : 'text-text-muted hover:text-text-main'}"
           >

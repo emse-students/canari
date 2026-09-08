@@ -388,7 +388,7 @@
   >
     <FileText size={20} strokeWidth={1.5} />
     <span
-      class="line-clamp-2 px-1 text-center text-[0.6rem] leading-tight font-medium break-all sm:text-[0.65rem]"
+      class="text-2xs sm:text-2xs line-clamp-2 px-1 text-center leading-tight font-medium break-all"
     >
       {name}
     </span>
@@ -431,7 +431,7 @@
   {#if replyingTo}
     <div transition:slide={{ duration: 200, axis: 'y' }} class="pointer-events-auto">
       <div
-        class="dark:bg-cn-ink/85 relative mx-3 mb-3 flex items-center justify-between overflow-hidden rounded-2xl border border-black/5 bg-white/85 p-3 shadow-lg backdrop-blur-2xl sm:mx-4 md:mx-6 md:p-4 dark:border-white/10"
+        class="bg-cn-surface relative mx-3 mb-3 flex items-center justify-between overflow-hidden rounded-2xl border border-black/5 p-3 shadow-lg sm:mx-4 md:mx-6 md:p-4 dark:border-white/10"
       >
         <div
           class="absolute top-0 bottom-0 left-0 w-1.5 bg-amber-500 shadow-[0_0_12px_rgba(245,158,11,0.6)]"
@@ -446,7 +446,7 @@
               })}</span
             >
           </div>
-          <div class="text-text-muted truncate text-[0.85rem] leading-snug font-medium">
+          <div class="text-text-muted truncate text-xs leading-snug font-medium">
             {replyPreviewText}
           </div>
         </div>
@@ -467,7 +467,7 @@
     <!-- Pending file attachments. -->
     {#if pendingFiles.length > 0}
       <div transition:slide={{ duration: 200, axis: 'y' }} class="w-full">
-        <div class="text-text-muted mb-2 px-1 text-[0.7rem] font-bold tracking-wider uppercase">
+        <div class="text-text-muted text-2xs mb-2 px-1 font-bold tracking-wider uppercase">
           {m.chat_pending_files_count({ pendingFiles: pendingFiles.length })}
         </div>
         <div class="flex flex-wrap gap-3">
@@ -480,7 +480,7 @@
                 : 'aspect-ratio: 1'}
             <div
               transition:scale={{ duration: 200, start: 0.9 }}
-              class="dark:bg-cn-ink/90 group/file relative w-20 overflow-hidden rounded-[1rem] border border-black/5 bg-white/90 shadow-md backdrop-blur-xl sm:w-24 dark:border-white/10"
+              class="group/file bg-cn-surface relative w-20 overflow-hidden rounded-[1rem] border border-black/5 shadow-md sm:w-24 dark:border-white/10"
               style="{thumbAspect}; max-height: 6rem;"
             >
               {#if isImageFile(file) && previewUrls[key]}
@@ -522,7 +522,7 @@
                 class="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-2 pt-4 pb-1.5"
               >
                 <div
-                  class="truncate text-[0.55rem] font-medium text-white drop-shadow-md sm:text-[0.6rem]"
+                  class="text-2xs sm:text-2xs truncate font-medium text-white drop-shadow-md"
                   title={file.name}
                 >
                   {file.name}
@@ -533,7 +533,7 @@
               {#if onRemovePendingFile}
                 <button
                   type="button"
-                  class="absolute top-1.5 right-1.5 inline-flex h-6 w-6 scale-90 items-center justify-center rounded-full bg-black/50 text-white opacity-100 shadow-sm backdrop-blur-md transition-all duration-200 outline-none hover:scale-105 hover:bg-red-500 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95 sm:opacity-0 sm:group-hover/file:opacity-100"
+                  class="absolute top-1.5 right-1.5 inline-flex h-6 w-6 scale-90 items-center justify-center rounded-full bg-black/50 text-white opacity-100 shadow-sm transition-all duration-200 outline-none hover:scale-105 hover:bg-red-500 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95 sm:opacity-0 sm:group-hover/file:opacity-100"
                   onclick={() => onRemovePendingFile(index)}
                   aria-label={m.chat_remove_file_label()}
                   title={m.common_remove_label()}
@@ -563,7 +563,7 @@
           class="pointer-events-none absolute left-1/2 z-10 -translate-x-1/2 -translate-y-16"
         >
           <span
-            class="text-cn-ink flex items-center gap-2 rounded-full bg-amber-500 px-4 py-2.5 text-sm font-extrabold whitespace-nowrap shadow-xl shadow-amber-500/20"
+            class="text-cn-ink flex items-center gap-2 rounded-full bg-amber-500 px-4 py-2.5 text-sm font-bold whitespace-nowrap shadow-xl shadow-amber-500/20"
           >
             <CloudUpload size={18} strokeWidth={2.5} />
             {m.chat_drag_files_badge()}
@@ -611,7 +611,7 @@
             onclick={() => (showGifPicker = true)}
             title={m.chat_send_gif_title()}
             aria-label={m.chat_send_gif_label()}
-            class="chat-composer-icon-button text-[0.7rem] font-extrabold tracking-tight"
+            class="chat-composer-icon-button text-2xs font-bold tracking-tight"
           >
             GIF
           </button>

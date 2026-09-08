@@ -157,12 +157,12 @@
     {m.calendar_export_back()}
   </a>
 
-  <h1 class="text-text-main text-2xl font-extrabold tracking-tight">{m.calendar_export_title()}</h1>
+  <h1 class="text-text-main text-2xl font-bold tracking-tight">{m.calendar_export_title()}</h1>
 
   <div class="grid grid-cols-1 items-start gap-6 lg:grid-cols-[360px_1fr]">
     <!-- ── Settings panel ── -->
     <div
-      class="border-cn-border space-y-5 rounded-2xl border bg-(--cn-surface)/90 p-5 shadow-sm lg:sticky lg:top-4"
+      class="border-cn-border bg-cn-surface space-y-5 rounded-2xl border p-5 shadow-sm lg:sticky lg:top-4"
     >
       <!-- Month navigation -->
       <div>
@@ -213,7 +213,7 @@
                 style="background:linear-gradient(135deg, {theme.options.pageBg} 55%, {theme.options
                   .weekendLabelColor} 55%);"
               ></span>
-              <span class="text-text-main block text-center text-[11px] font-semibold"
+              <span class="text-text-main text-2xs block text-center font-semibold"
                 >{theme.name()}</span
               >
               {#if selectedThemeId === theme.id}
@@ -529,7 +529,7 @@
     </div>
 
     <!-- ── Preview panel ── -->
-    <div class="border-cn-border rounded-2xl border bg-(--cn-surface)/90 p-4 shadow-sm">
+    <div class="border-cn-border bg-cn-surface rounded-2xl border p-4 shadow-sm">
       <p class="text-text-muted mb-3 text-xs font-bold tracking-wider uppercase">
         {m.calendar_export_preview_label()}
       </p>

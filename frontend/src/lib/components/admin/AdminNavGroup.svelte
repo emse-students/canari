@@ -76,7 +76,7 @@
     aria-expanded={open}
     aria-controls={panelId}
     class="inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-bold transition-colors
-    {active
+ {active
       ? 'bg-cn-yellow text-cn-ink shadow-sm'
       : 'border-cn-border text-text-muted hover:text-text-main border'}"
   >
@@ -99,7 +99,7 @@
       bind:this={panelEl}
       id={panelId}
       use:portal
-      class="bg-cn-surface/95 fixed z-200 min-w-52 space-y-0.5 rounded-2xl border border-black/8 p-1.5 shadow-lg backdrop-blur-xl dark:border-white/10"
+      class="bg-cn-surface/95 fixed z-200 min-w-52 space-y-0.5 rounded-2xl border border-black/8 p-1.5 shadow-lg dark:border-white/10"
     >
       {#each items as item (item.href)}
         <a

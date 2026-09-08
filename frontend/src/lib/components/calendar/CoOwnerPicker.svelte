@@ -91,7 +91,7 @@
     />
     {#if dropdownOpen && candidates.length > 0}
       <ul
-        class="border-cn-border absolute z-20 mt-1 max-h-48 w-full overflow-y-auto rounded-xl border bg-white/95 shadow-lg backdrop-blur-xl dark:bg-black/90"
+        class="border-cn-border bg-cn-surface absolute z-20 mt-1 max-h-48 w-full overflow-y-auto rounded-xl border shadow-lg"
       >
         {#each candidates.slice(0, 12) as asso (asso.id)}
           <li>

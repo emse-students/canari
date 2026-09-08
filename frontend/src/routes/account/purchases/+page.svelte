@@ -95,7 +95,7 @@
   <div class="flex items-center gap-3">
     <ShoppingBag class="text-cn-accent h-7 w-7 shrink-0" />
     <div>
-      <h1 class="text-text-main text-2xl font-extrabold tracking-tight">{m.purchases_heading()}</h1>
+      <h1 class="text-text-main text-2xl font-bold tracking-tight">{m.purchases_heading()}</h1>
       <p class="text-text-muted mt-0.5 text-sm">
         {m.purchases_subtitle()}
       </p>

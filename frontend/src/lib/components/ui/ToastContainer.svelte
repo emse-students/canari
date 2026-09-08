@@ -17,12 +17,12 @@
         role="alert"
         in:fly={{ y: 16, duration: 200 }}
         out:fade={{ duration: 150 }}
-        class="pointer-events-auto flex items-start gap-3 rounded-2xl border px-4 py-3 shadow-lg backdrop-blur-xl
-          {toast.type === 'error'
+        class="pointer-events-auto flex items-start gap-3 rounded-2xl border px-4 py-3 shadow-lg {toast.type ===
+        'error'
           ? 'text-red-err border-red-500/20 bg-red-500/10 dark:text-red-400'
           : toast.type === 'warning'
             ? 'border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-400'
-            : 'border-cn-border text-text-main bg-white/80 dark:bg-black/60'}"
+            : 'border-cn-border text-text-main bg-cn-surface '}"
       >
         <span class="mt-0.5 shrink-0">
           {#if toast.type === 'error'}

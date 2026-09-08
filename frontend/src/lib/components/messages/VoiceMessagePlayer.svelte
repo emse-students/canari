@@ -96,7 +96,7 @@
 </script>
 
 <div
-  class="relative flex w-full min-w-[200px] items-center gap-3.5 rounded-[1.25rem] border border-black/5 bg-black/5 px-3.5 py-3 backdrop-blur-md transition-colors sm:min-w-[240px] dark:border-white/10 dark:bg-white/10"
+  class="relative flex w-full min-w-[200px] items-center gap-3.5 rounded-[1.25rem] border border-black/5 bg-black/5 px-3.5 py-3 transition-colors sm:min-w-[240px] dark:border-white/10 dark:bg-white/10"
 >
   <audio
     bind:this={audioEl}
@@ -174,7 +174,7 @@
         class="h-1.5 w-full cursor-pointer rounded-full bg-black/10 accent-amber-500 outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50 dark:bg-white/20"
         aria-label={m.msg_playback_position_label()}
       />
-      <div class="flex items-center justify-between text-[0.65rem] font-bold opacity-70">
+      <div class="text-2xs flex items-center justify-between font-bold opacity-70">
         <span>{formatTime(currentTime)}</span>
         <span>{formatTime(duration)}</span>
       </div>
@@ -189,7 +189,7 @@
         e.stopPropagation();
         cycleSpeed();
       }}
-      class="inline-flex h-9 w-9 items-center justify-center rounded-full text-[0.7rem] font-bold opacity-70 transition-all outline-none hover:bg-black/10 hover:opacity-100 focus-visible:ring-2 focus-visible:ring-current dark:hover:bg-white/10"
+      class="text-2xs inline-flex h-9 w-9 items-center justify-center rounded-full font-bold opacity-70 transition-all outline-none hover:bg-black/10 hover:opacity-100 focus-visible:ring-2 focus-visible:ring-current dark:hover:bg-white/10"
       aria-label={m.msg_playback_speed_label({ speed: String(speed) })}
       title={m.msg_change_speed_title()}
     >

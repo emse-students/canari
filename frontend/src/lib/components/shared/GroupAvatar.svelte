@@ -106,11 +106,11 @@
   <img
     src={blobUrl}
     alt={name || m.group_avatar_fallback_alt()}
-    class="{shapeClasses} flex-shrink-0 object-cover shadow-sm ring-1 ring-white/20 select-none {sizeClasses}"
+    class="{shapeClasses} flex-shrink-0 object-cover shadow-sm select-none {sizeClasses}"
   />
 {:else}
   <div
-    class="{shapeClasses} flex flex-shrink-0 items-center justify-center font-bold shadow-sm ring-1 ring-white/20 select-none {sizeClasses} {fallbackClasses}"
+    class="{shapeClasses} flex flex-shrink-0 items-center justify-center font-bold shadow-sm select-none {sizeClasses} {fallbackClasses}"
     title={name}
   >
     {#if initials}

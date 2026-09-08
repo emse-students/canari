@@ -901,7 +901,7 @@
                       </div>
                     {:else}
                       <span
-                        class={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ${roleBadgeClass(member.role)}`}
+                        class={`text-2xs inline-flex items-center rounded-full px-2.5 py-1 font-semibold ${roleBadgeClass(member.role)}`}
                       >
                         {roleLabel(member.role)}
                       </span>

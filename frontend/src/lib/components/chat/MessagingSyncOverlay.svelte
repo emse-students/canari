@@ -11,7 +11,7 @@
 </script>
 
 <div
-  class="absolute inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-[color-mix(in_srgb,var(--cn-surface)_92%,white)]/95 px-6 text-center backdrop-blur-md dark:bg-[color-mix(in_srgb,var(--cn-surface)_88%,black)]/95"
+  class="absolute inset-0 z-50 flex flex-col items-center justify-center gap-3 bg-[color-mix(in_srgb,var(--cn-surface)_92%,white)]/95 px-6 text-center dark:bg-[color-mix(in_srgb,var(--cn-surface)_88%,black)]/95"
   role="status"
   aria-live="polite"
   aria-busy="true"

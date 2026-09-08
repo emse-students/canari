@@ -544,7 +544,7 @@
             <p class="text-text-main flex flex-wrap items-center gap-2 font-bold">
               {ev.title}
               <span
-                class="text-amber-warn bg-amber-warn/20 rounded-full px-2 py-0.5 text-[10px] font-bold tracking-wide uppercase"
+                class="text-amber-warn bg-amber-warn/20 text-2xs rounded-full px-2 py-0.5 font-bold tracking-wide uppercase"
               >
                 {m.asso_calendar_pending_badge()}
               </span>
@@ -596,7 +596,7 @@
             <p class="text-text-main flex flex-wrap items-center gap-2 font-bold">
               {ev.title}
               <span
-                class="text-red-err bg-red-err/20 rounded-full px-2 py-0.5 text-[10px] font-bold tracking-wide uppercase"
+                class="text-red-err bg-red-err/20 text-2xs rounded-full px-2 py-0.5 font-bold tracking-wide uppercase"
               >
                 {m.asso_calendar_rejected_badge()}
               </span>
@@ -628,7 +628,7 @@
   <div use:portal>
     <div
       data-keyboard-aware-overlay
-      class="z-[280] flex items-end justify-center bg-black/40 backdrop-blur-sm sm:items-center"
+      class="z-[280] flex items-end justify-center bg-black/40 sm:items-center"
       role="presentation"
       onclick={(e) => e.target === e.currentTarget && closeModal()}
     >
