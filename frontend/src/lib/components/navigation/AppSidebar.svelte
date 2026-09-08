@@ -92,12 +92,24 @@
   technology offered the user two identical, indistinguishable regions. The name is also what lets a
   harness address one of them without resorting to pixel widths.
 -->
+<!--
+  THE EXPANDED WIDTH IS MEASURED, NOT CHOSEN. The rail was `w-64` (256px), which leaves
+  256 - 24 (px-3) - 28 (the icon) - 16 (gap-4) = 188px for the text, and every description in the
+  list is wider than that - so the second line of every single row was truncated. `w-[21rem]`
+  (336px) leaves 288px, and the widest description now measures 219px, which still fits once the
+  unread badge takes its ~30px on the two rows that have one.
+
+  This only became a reachable number after the settings row stopped borrowing
+  `settings_page_subtitle` - a 47-character PAGE subtitle at 282px, where every other row uses a
+  purpose-written `nav_*_desc` of 131-219px. Fitting that one string would have cost a 384px
+  overlay; the outlier was the string, not the width.
+-->
 <aside
   aria-label={m.nav_main_landmark()}
   onmouseenter={handleMouseEnter}
   onmouseleave={handleMouseLeave}
   class="app-nav-rail bg-cn-surface fixed top-[env(safe-area-inset-top)] left-0 hidden h-[calc(var(--app-viewport-height,100dvh)-env(safe-area-inset-top))] flex-col overflow-hidden border-r border-black/5 shadow-[4px_0_24px_rgba(0,0,0,0.02)] transition-all duration-300 ease-out md:flex dark:border-white/10 dark:shadow-[4px_0_24px_rgba(0,0,0,0.2)] {isExpanded
-    ? 'z-30 w-64'
+    ? 'z-30 w-[21rem]'
     : 'z-20 w-[4.5rem]'}"
 >
   <nav class="flex flex-1 flex-col gap-1.5 p-3">
@@ -206,7 +218,7 @@
           <span
             class="mt-0.5 block truncate text-xs leading-snug font-medium whitespace-nowrap opacity-70"
           >
-            {m.settings_page_subtitle()}
+            {m.nav_settings_desc()}
           </span>
         </span>
       </a>

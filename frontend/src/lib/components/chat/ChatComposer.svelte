@@ -2,6 +2,7 @@
   import {
     Send,
     Paperclip,
+    ChevronRight,
     X,
     FileText,
     CloudUpload,
@@ -86,14 +87,19 @@
    * than typed as a number: the line box, plus `.chat-composer-textarea`'s 0.5rem of padding top and
    * bottom.
    *
-   * It used to be the literal `44px`, which matched that field's ORIGINAL 0.75rem padding
-   * (12 + 20 + 12). When the padding came down to the measured reference's 8px the natural height
-   * became 36px, but the hard floor still held the box at 44 - and because the placeholder is
-   * `absolute inset-0` and positions itself with the same padding, the placeholder text sat 8px below
-   * the top of a box 8px too tall instead of on its centre line. The floor and the padding are
-   * declared in two different files, so the only safe form is one that cannot disagree with the other.
+   * IT IS A VARIABLE AND NOT A `calc`, BECAUSE THE ANSWER DIFFERS BY VIEWPORT AND AN INLINE STYLE
+   * CANNOT. Measured 2026-09-09 at 390x844: the icon buttons are 44px on a phone (a touch target)
+   * and 36px from 768px up, while the field was 36px everywhere - so with the row's `flex-end` the
+   * text sat exactly 4px below the icons' centre line ON A PHONE ONLY, which is the vertical
+   * centring the user has now reported twice. `--composer-field-height` is declared beside the
+   * padding that produces it, so the floor and the padding cannot disagree.
+   *
+   * The height comes from the PADDING, never from a floor above the natural height: the placeholder
+   * is `absolute inset-0` and positions its text with the same padding, so a floor taller than the
+   * content leaves the placeholder off the line the real text sits on. That was the previous defect
+   * here and it is the reason this is not simply `min-height: 2.75rem`.
    */
-  const COMPOSER_MIN_HEIGHT = 'calc(var(--text-sm--line-height) + 1rem)';
+  const COMPOSER_MIN_HEIGHT = 'var(--composer-field-height)';
   /** Ceiling before the field scrolls instead of growing. Mirrors `.chat-composer-textarea`'s `max-height: 10rem`. */
   const COMPOSER_MAX_HEIGHT_PX = 160;
 
@@ -136,12 +142,41 @@
   /** True as soon as the user has typed something: used to free up composer width. */
   const isComposing = $derived(messageText.trim().length > 0);
 
+  /**
+   * The user asked for the controls back WHILE a message is being written.
+   *
+   * Kept separate from `isComposing` rather than folded into it, because the two answer different
+   * questions - "is there text" and "did someone ask to see the buttons" - and one flag doing both
+   * would forget the request on every keystroke.
+   */
+  let controlsForcedOpen = $state(false);
+
+  /**
+   * THE EDGE CONTROLS FOLD AWAY ONCE TYPING STARTS (user, 2026-09-08, citing the reference:
+   * *"les icones sur les bords disparaissent quand tu commences a taper pour laisser toute la
+   * place"*).
+   *
+   * Three of the four already did this and the paperclip did not, which is the shape that reads as
+   * an oversight rather than a rule. In a community channel the group is paperclip + poll + GIF +
+   * voice - 4 x 52px of a ~358px row on a phone - so folding it is most of the width back.
+   *
+   * It is a FOLD and not a removal: a chevron takes the group's place, and pressing it brings every
+   * button back for as long as this message lasts. Hiding a control with no way to reach it would
+   * mean clearing a half-written message to attach a file.
+   */
+  const controlsCollapsed = $derived(isComposing && !controlsForcedOpen);
+
+  // The request lives as long as the message does. Sending clears `messageText`, which lands here.
+  $effect(() => {
+    if (!isComposing && controlsForcedOpen) controlsForcedOpen = false;
+  });
+
   const isVoiceRecordingSupported = $derived(
     // Show on mobile/coarse-pointer devices AND on Tauri desktop where MediaRecorder is available.
     // Hidden on regular desktop Web browsers to keep the composer uncluttered.
     // Also hidden once the user starts typing so the text area gets the extra width
     // (fewer line wraps → the field grows vertically far less aggressively).
-    hasMediaRecorder && (isMobileViewport || isTauriRuntime()) && !isComposing
+    hasMediaRecorder && (isMobileViewport || isTauriRuntime()) && !controlsCollapsed
   );
 
   const isSendDisabled = $derived(
@@ -601,25 +636,43 @@
         </div>
       {/if}
 
+      <!-- The chevron that brings the folded group back. Takes the group's place, never adds to it. -->
+      {#if controlsCollapsed}
+        <div class="shrink-0">
+          <button
+            type="button"
+            onclick={() => (controlsForcedOpen = true)}
+            title={m.chat_show_composer_actions_title()}
+            aria-label={m.chat_show_composer_actions_title()}
+            aria-expanded="false"
+            class="chat-composer-icon-button chat-composer-chevron"
+          >
+            <ChevronRight size={20} strokeWidth={2.5} />
+          </button>
+        </div>
+      {/if}
+
       <!-- Attachment button. -->
-      <div class="shrink-0">
-        <button
-          onclick={() => fileInput?.click()}
-          disabled={isUploading}
-          title={m.chat_attach_file_title()}
-          aria-label={m.chat_attach_file_label()}
-          class="chat-composer-icon-button"
-        >
-          {#if isUploading}
-            <LoaderCircle class="h-5 w-5 animate-spin text-amber-500" strokeWidth={2.5} />
-          {:else}
-            <Paperclip size={20} strokeWidth={2} />
-          {/if}
-        </button>
-      </div>
+      {#if !controlsCollapsed}
+        <div class="shrink-0">
+          <button
+            onclick={() => fileInput?.click()}
+            disabled={isUploading}
+            title={m.chat_attach_file_title()}
+            aria-label={m.chat_attach_file_label()}
+            class="chat-composer-icon-button"
+          >
+            {#if isUploading}
+              <LoaderCircle class="h-5 w-5 animate-spin text-amber-500" strokeWidth={2.5} />
+            {:else}
+              <Paperclip size={20} strokeWidth={2} />
+            {/if}
+          </button>
+        </div>
+      {/if}
 
       <!-- Poll button (communities only: parent provides onCreatePoll). -->
-      {#if onCreatePoll && !isComposing}
+      {#if onCreatePoll && !controlsCollapsed}
         <div class="shrink-0">
           <button
             type="button"
@@ -634,7 +687,7 @@
       {/if}
 
       <!-- GIF button (shown when KLIPY is configured). -->
-      {#if hasGifPicker && onSendGif && !isComposing}
+      {#if hasGifPicker && onSendGif && !controlsCollapsed}
         <div class="shrink-0">
           <button
             type="button"

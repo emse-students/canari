@@ -11,6 +11,40 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - the composer text sat 4px low on a phone and nowhere else, and the expanded rail clipped all eighteen of its texts
+
+Two reports, both measured before anything was changed, and both turning out to have a cause that is
+not the one the symptom suggests.
+
+**The composer, "encore cette histoire de centrage en hauteur".** Measured at 390x844: the icon
+buttons are **44px** on a phone - a touch target - and **36px** from 768px up, while the field was
+36px everywhere. The row is `align-items: flex-end`, which is right once the field has grown, so a
+field shorter than the controls beside it puts its text below their centre line: exactly **4px**, on a
+phone only, which is why it survived every look at a desktop browser. The fix is that the field's one
+line is now as tall as one control, and the height comes from the PADDING rather than from a floor -
+the placeholder is `absolute inset-0` and positions itself with the same padding, so a floor above the
+natural height leaves it off the line the real text sits on, which was the previous defect here.
+`--composer-field-height` is declared beside the padding that produces it, in the same block, so the
+two cannot disagree. Measured after: `midDelta 4 -> 0` on the phone, `0 -> 0` on the desktop.
+
+**The composer's edge controls now fold when you start typing**, which the user asked for and which
+three of the four already did - the paperclip did not, and that reads as an oversight rather than a
+rule. It is a fold and not a removal: a chevron takes the group's place and brings every button back
+for as long as the message lasts, because hiding a control with no way to reach it would mean clearing
+a half-written message to attach a file. Measured on a phone: the field goes from **206px to 274px**
+while typing, a third more room.
+
+**The expanded navigation rail clipped every one of its 18 texts.** `w-64` is 256px, which leaves
+256 - 24 - 28 - 16 = **188px** for the label, and every description in the list is wider than that.
+The rail is now 336px - but that number only became reachable once the settings row stopped borrowing
+`settings_page_subtitle`, a 47-character PAGE subtitle measuring **282px** where every other row uses
+a purpose-written `nav_*_desc` of 131-219px. Fitting that one string would have cost a 384px overlay:
+**the outlier was the string, not the width.** Measured after: 18 texts checked, 0 clipped.
+
+One of my own changes was caught by the same method. The chevron is styled narrower than the buttons
+it stands for, but it also carries `.chat-composer-icon-button`, whose desktop rule sets `2.25rem`
+LATER in the file and therefore won the specificity tie - so folding the controls freed exactly 0px on
+desktop. Two classes fix it, and the measurement is what said so.
 ### Security - three HIGH denial-of-service advisories against `multer`, in all four NestJS services
 
 `bun audit` refused every one of the four service trees: `multer@2.2.0`, reached through
