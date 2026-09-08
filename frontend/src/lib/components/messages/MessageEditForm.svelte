@@ -37,7 +37,7 @@
       value={editText}
       oninput={(e) => onEditChange?.(e.currentTarget.value)}
       rows="3"
-      class="text-cn-ink focus:ring-cn-ink/30 placeholder:text-cn-ink/50 w-full max-w-full resize-none rounded-xl border border-black/10 bg-white/40 px-3 py-2.5 text-sm [overflow-wrap:anywhere] break-words whitespace-pre-wrap shadow-inner backdrop-blur-sm transition-all focus:ring-2 focus:outline-none"
+      class="text-cn-ink focus:ring-cn-ink/30 placeholder:text-cn-ink/50 bg-cn-surface w-full max-w-full resize-none rounded-xl border border-black/10 px-3 py-2.5 text-sm [overflow-wrap:anywhere] break-words whitespace-pre-wrap shadow-inner transition-all focus:ring-2 focus:outline-none"
       placeholder={m.msg_edit_placeholder()}
       onkeydown={(e) => {
         if (e.key === 'Escape') {
@@ -52,7 +52,7 @@
 
     <div class="flex items-center justify-between">
       <!-- Keyboard shortcut hint (hidden on mobile) -->
-      <span class="text-cn-ink hidden text-[0.65rem] font-medium opacity-60 sm:block">
+      <span class="text-cn-ink text-2xs hidden font-medium opacity-60 sm:block">
         {m.msg_edit_keyboard_hint()}
       </span>
       <span class="sm:hidden"></span>

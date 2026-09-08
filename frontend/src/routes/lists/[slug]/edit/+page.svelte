@@ -95,7 +95,7 @@
     </div>
   {:else if list}
     <header class="space-y-1">
-      <h1 class="text-text-main text-2xl font-extrabold tracking-tight">Gestion de la liste</h1>
+      <h1 class="text-text-main text-2xl font-bold tracking-tight">Gestion de la liste</h1>
       <p class="text-text-muted text-sm">
         @{list.slug}{list.promo ? ` · ${m.list_campaigns_heading({ year: list.promo })}` : ''}
       </p>
@@ -110,7 +110,7 @@
     <!-- Section tabs -->
     <nav
       data-swipe-nav-ignore
-      class="border-cn-border/80 sticky top-0 z-30 -mx-4 border-y bg-(--cn-bg)/95 px-4 py-3 backdrop-blur-md sm:mx-0 sm:rounded-2xl sm:border"
+      class="border-cn-border/80 bg-cn-bg sticky top-0 z-30 -mx-4 border-y px-4 py-3 sm:mx-0 sm:rounded-2xl sm:border"
       aria-label={m.list_edit_sections_aria()}
     >
       <div class="flex flex-wrap gap-2">
@@ -118,7 +118,7 @@
           type="button"
           onclick={() => (editSection = 'profile')}
           class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-          {editSection === 'profile'
+ {editSection === 'profile'
             ? 'bg-cn-yellow text-cn-ink shadow-sm'
             : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
         >
@@ -130,7 +130,7 @@
             type="button"
             onclick={() => (editSection = 'members')}
             class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-            {editSection === 'members'
+ {editSection === 'members'
               ? 'bg-cn-yellow text-cn-ink shadow-sm'
               : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
           >
@@ -143,7 +143,7 @@
             type="button"
             onclick={() => (editSection = 'danger')}
             class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-            {editSection === 'danger'
+ {editSection === 'danger'
               ? 'bg-red-err/20 text-red-err border-red-err/30 border'
               : 'border-cn-border text-text-muted hover:text-red-err border bg-(--cn-surface)'}"
           >

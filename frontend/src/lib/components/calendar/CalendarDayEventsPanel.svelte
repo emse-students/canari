@@ -74,7 +74,7 @@
   </div>
 {:else if dayEvents.length === 0}
   <div
-    class="border-cn-border text-text-muted rounded-2xl border bg-(--cn-surface)/90 px-4 py-5 text-center text-sm"
+    class="border-cn-border text-text-muted bg-cn-surface rounded-2xl border px-4 py-5 text-center text-sm"
   >
     {m.calendar_day_no_events()}
     {#if onClearSelection}
@@ -88,7 +88,7 @@
     {/if}
   </div>
 {:else}
-  <div class="border-cn-border overflow-hidden rounded-2xl border bg-(--cn-surface)/90 shadow-sm">
+  <div class="border-cn-border bg-cn-surface overflow-hidden rounded-2xl border shadow-sm">
     <div
       class="border-cn-border/60 bg-cn-bg/30 flex items-center justify-between gap-2 border-b px-4 py-3"
     >

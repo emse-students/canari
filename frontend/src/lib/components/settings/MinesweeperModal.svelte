@@ -605,7 +605,7 @@
   <!-- Compact segmented tab control: Play (game) vs Leaderboard (ranked scores). -->
   <div
     role="tablist"
-    class="mb-2 flex shrink-0 gap-1 rounded-xl border border-white/50 bg-white/45 p-1 dark:border-white/10 dark:bg-black/25"
+    class="bg-cn-surface mb-2 flex shrink-0 gap-1 rounded-xl border border-white/50 p-1 dark:border-white/10"
   >
     <button
       type="button"
@@ -667,7 +667,7 @@
               onclick={toggleFlagPrimary}
               aria-pressed={flagPrimary}
               title={m.minesweeper_flag_primary_hint()}
-              class="flex items-center gap-1 rounded-lg px-1.5 py-0.5 text-[0.65rem] font-bold tracking-wide uppercase transition-colors {flagPrimary
+              class="text-2xs flex items-center gap-1 rounded-lg px-1.5 py-0.5 font-bold tracking-wide uppercase transition-colors {flagPrimary
                 ? 'bg-cn-yellow/20 text-cn-dark'
                 : 'text-text-muted hover:bg-cn-bg'}"
             >
@@ -675,7 +675,7 @@
               {m.minesweeper_flag_primary()}
             </button>
             <span
-              class="text-[0.65rem] font-bold tracking-wide uppercase {rankedMode
+              class="text-2xs font-bold tracking-wide uppercase {rankedMode
                 ? 'text-cn-yellow'
                 : 'text-text-muted'}"
             >
@@ -717,8 +717,8 @@
                 onpointerup={handlePointerRelease}
                 onpointerleave={handlePointerRelease}
                 onpointercancel={handlePointerRelease}
-                class="box-border flex h-[length:var(--ms-cell)] w-[length:var(--ms-cell)] shrink-0 touch-manipulation items-center justify-center rounded-sm border font-mono text-xs font-bold select-none sm:text-sm
-              {cell.state === 'hidden'
+                class="box-border flex h-[length:var(--ms-cell)] w-[length:var(--ms-cell)] shrink-0 touch-manipulation items-center justify-center rounded-sm border font-mono text-xs font-bold select-none sm:text-sm {cell.state ===
+                'hidden'
                   ? 'bg-cn-yellow/25 hover:bg-cn-yellow/40 border-cn-border'
                   : cell.state === 'flagged'
                     ? 'bg-cn-yellow/25 hover:bg-cn-yellow/40 border-cn-border'
@@ -726,8 +726,9 @@
                       ? 'border-transparent bg-red-500/80'
                       : cell.adjacent === 0
                         ? 'bg-cn-bg/60 border-transparent'
-                        : 'bg-cn-bg/80 border-transparent'}
-              {cell.state === 'revealed' && !cell.mine && cell.adjacent > 0
+                        : 'bg-cn-bg/80 border-transparent'} {cell.state === 'revealed' &&
+                !cell.mine &&
+                cell.adjacent > 0
                   ? NUMBER_COLORS[cell.adjacent]
                   : ''}"
               >
@@ -775,7 +776,7 @@
           <!-- Game-over overlay: sits above the zoom controls, scoped to the viewport only so
            the Modal header/close button above it stays reachable at all times. -->
           <div
-            class="absolute inset-0 z-10 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+            class="absolute inset-0 z-10 flex items-center justify-center bg-black/50 p-4"
             transition:fade={{ duration: 200 }}
           >
             <div
@@ -790,7 +791,7 @@
                 <Bomb size={28} class="text-red-500" />
               {/if}
               <p
-                class="text-2xl font-extrabold sm:text-3xl {isWin
+                class="text-2xl font-bold sm:text-3xl {isWin
                   ? 'ms-win-pulse text-cn-yellow'
                   : 'text-red-500'}"
               >
@@ -798,7 +799,7 @@
               </p>
               {#if isWin}
                 <p
-                  class="border-cn-yellow/40 bg-cn-yellow/15 text-text-main flex items-center gap-2 rounded-xl border px-4 py-2 font-mono text-xl font-extrabold tabular-nums sm:text-2xl"
+                  class="border-cn-yellow/40 bg-cn-yellow/15 text-text-main flex items-center gap-2 rounded-xl border px-4 py-2 font-mono text-xl font-bold tabular-nums sm:text-2xl"
                 >
                   <Timer size={20} class="text-cn-yellow shrink-0" strokeWidth={2.5} />
                   {m.minesweeper_time({
@@ -842,7 +843,7 @@
 
       <!-- Compact one-line control/zoom hints + score feedback, kept on the play tab. -->
       <div class="border-cn-border mt-2 shrink-0 border-t pt-1.5">
-        <p class="text-text-muted truncate text-center text-[11px]">
+        <p class="text-text-muted text-2xs truncate text-center">
           <span class="hidden sm:inline">
             {flagPrimary ? m.minesweeper_hint_desktop_flag_primary() : m.minesweeper_hint_desktop()}
           </span>

@@ -5,7 +5,6 @@ export { default as StatusPill } from './shared/StatusPill.svelte';
 export { default as EmptyState } from './shared/EmptyState.svelte';
 export { default as Modal } from './shared/Modal.svelte';
 export { default as Avatar } from './shared/Avatar.svelte';
-export { default as BackgroundBlobs } from './shared/BackgroundBlobs.svelte';
 export { default as MultiUserSelector } from './shared/MultiUserSelector.svelte';
 export { default as Sidebar } from './sidebar/Sidebar.svelte';
 export { default as ConversationTile } from './chat/ConversationTile.svelte';

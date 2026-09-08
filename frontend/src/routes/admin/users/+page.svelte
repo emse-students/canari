@@ -92,7 +92,7 @@
         <Users size={22} strokeWidth={2.5} />
       </div>
       <div>
-        <h1 class="text-text-main text-2xl font-extrabold">{m.admin_card_manage_admins_label()}</h1>
+        <h1 class="text-text-main text-2xl font-bold">{m.admin_card_manage_admins_label()}</h1>
         <p class="text-text-muted text-sm">
           {m.admin_users_subtitle()}
         </p>
@@ -119,7 +119,7 @@
     type="search"
     bind:value={searchQuery}
     placeholder={m.admin_users_search_placeholder()}
-    class="w-full rounded-xl border border-black/10 bg-white/80 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-amber-500/50 dark:border-white/10 dark:bg-black/40"
+    class="bg-cn-surface w-full rounded-xl border border-black/10 px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-amber-500/50 dark:border-white/10"
   />
 
   {#if loading}
@@ -130,7 +130,7 @@
     <ul class="space-y-2">
       {#each filtered as user (user.id)}
         <li
-          class="flex items-center justify-between gap-3 rounded-2xl border border-black/5 bg-white/60 px-4 py-3 shadow-sm dark:border-white/10 dark:bg-black/20"
+          class="bg-cn-surface flex items-center justify-between gap-3 rounded-2xl border border-black/5 px-4 py-3 shadow-sm dark:border-white/10"
         >
           <div class="flex min-w-0 items-center gap-3">
             {#if user.admin}

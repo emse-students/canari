@@ -119,7 +119,7 @@
       </div>
       <div>
         <p class="text-text-muted text-sm">{m.community_join_invited_text()}</p>
-        <h1 class="text-text-main mt-1 text-xl font-extrabold">{preview.workspaceName}</h1>
+        <h1 class="text-text-main mt-1 text-xl font-bold">{preview.workspaceName}</h1>
       </div>
       <button
         type="button"

@@ -372,7 +372,7 @@
       {#if showPrev && onPrev}
         <button
           type="button"
-          class="pointer-events-auto absolute left-2 z-20 rounded-full bg-black/40 p-2.5 backdrop-blur-sm transition-colors hover:bg-black/60"
+          class="pointer-events-auto absolute left-2 z-20 rounded-full bg-black/40 p-2.5 transition-colors hover:bg-black/60"
           onclick={(e) => {
             e.stopPropagation();
             handlePrev();
@@ -410,7 +410,7 @@
       {#if showNext && onNext}
         <button
           type="button"
-          class="pointer-events-auto absolute right-2 z-20 rounded-full bg-black/40 p-2.5 backdrop-blur-sm transition-colors hover:bg-black/60"
+          class="pointer-events-auto absolute right-2 z-20 rounded-full bg-black/40 p-2.5 transition-colors hover:bg-black/60"
           onclick={(e) => {
             e.stopPropagation();
             handleNext();
@@ -425,7 +425,7 @@
       {#if showZoomIndicator}
         <div
           transition:fade={{ duration: 200 }}
-          class="pointer-events-none absolute bottom-4 left-1/2 z-30 -translate-x-1/2 rounded-full bg-black/60 px-3 py-1 text-xs font-semibold text-white/90 tabular-nums backdrop-blur-sm"
+          class="pointer-events-none absolute bottom-4 left-1/2 z-30 -translate-x-1/2 rounded-full bg-black/60 px-3 py-1 text-xs font-semibold text-white/90 tabular-nums"
         >
           {scaleLabel}
         </div>
@@ -445,7 +445,7 @@
               }}
               class="h-2 w-2 rounded-full transition-all {i === dotIndex
                 ? 'bg-white'
-                : 'bg-white/40'}"
+                : 'bg-cn-surface'}"
               aria-label={m.media_lightbox_dot_aria({ index: i + 1 })}
             ></button>
           {/each}

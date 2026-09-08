@@ -188,7 +188,7 @@
   }
 </script>
 
-<div class="border-cn-border space-y-4 rounded-2xl border bg-(--cn-surface)/60 p-4">
+<div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-4">
   <div class="flex flex-wrap items-center gap-3">
     <input
       type="file"

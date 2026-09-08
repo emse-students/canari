@@ -271,11 +271,11 @@
 </script>
 
 <article
-  class="dark:bg-cn-ink/70 relative overflow-hidden rounded-[2rem] border border-black/5 bg-white/70 shadow-sm backdrop-blur-2xl transition-all duration-300 focus-within:border-amber-500/30 focus-within:shadow-lg dark:border-white/10"
+  class="bg-cn-surface relative overflow-hidden rounded-[2rem] border border-black/5 shadow-sm transition-all duration-300 focus-within:border-amber-500/30 focus-within:shadow-lg dark:border-white/10"
 >
   <!-- En-tête -->
-  <div class="border-b border-black/5 bg-white/40 px-5 py-4 dark:border-white/10 dark:bg-black/20">
-    <p class="mb-0.5 text-[0.65rem] font-extrabold tracking-widest text-amber-500 uppercase">
+  <div class="bg-cn-surface border-b border-black/5 px-5 py-4 dark:border-white/10">
+    <p class="text-2xs mb-0.5 font-bold tracking-widest text-amber-500 uppercase">
       Modifier la publication
     </p>
     <p class="text-text-main text-sm font-semibold opacity-90">
@@ -296,7 +296,7 @@
         <div class="sm:col-span-2">
           <label
             for="edit-post-linked-calendar-event"
-            class="text-text-muted mb-1.5 ml-1 flex items-center gap-1.5 text-[0.65rem] font-extrabold tracking-wider uppercase"
+            class="text-text-muted text-2xs mb-1.5 ml-1 flex items-center gap-1.5 font-bold tracking-wider uppercase"
           >
             <CalendarCheck size={14} strokeWidth={2.5} class="text-amber-500" />
             Lier à un événement validé (optionnel)
@@ -316,7 +316,7 @@
               </option>
             {/each}
           </select>
-          <p class="text-text-muted mt-1.5 ml-1 text-[0.7rem]">
+          <p class="text-text-muted text-2xs mt-1.5 ml-1">
             Seuls les événements validés de l'agenda apparaissent ici.
           </p>
         </div>
@@ -325,14 +325,14 @@
 
     <!-- Text area + image preview. -->
     <div
-      class="relative mb-2 rounded-[1.5rem] border border-black/5 bg-black/5 p-2 shadow-inner transition-colors focus-within:bg-white/50 dark:border-white/10 dark:bg-black/40 dark:focus-within:bg-black/60"
+      class="focus-within:bg-cn-surface relative mb-2 rounded-[1.5rem] border border-black/5 bg-black/5 p-2 shadow-inner transition-colors dark:border-white/10 dark:bg-black/40 dark:focus-within:bg-black/60"
     >
       <MarkdownComposerField
         bind:value={markdown}
         placeholder="Écrivez votre message ici…"
         minHeight="120px"
         toolbarClass="mb-1"
-        editorClass="custom-scrollbar min-h-[120px] w-full max-w-full rounded-xl bg-transparent px-4 py-3.5 text-[0.95rem] sm:text-[1rem] font-medium leading-relaxed text-text-main"
+        editorClass="custom-scrollbar min-h-[120px] w-full max-w-full rounded-xl bg-transparent px-4 py-3.5 text-sm sm:text-sm font-medium leading-relaxed text-text-main"
       />
 
       <!-- Existing media + newly added media. -->
@@ -355,7 +355,7 @@
                 <button
                   type="button"
                   onclick={() => removeExistingMedia(i)}
-                  class="absolute top-1.5 right-1.5 rounded-full bg-black/60 p-1.5 text-white opacity-0 shadow-sm backdrop-blur-md transition-all outline-none group-hover:opacity-100 hover:scale-110 hover:bg-red-500 focus:opacity-100 focus-visible:ring-2 focus-visible:ring-red-400 active:scale-95"
+                  class="absolute top-1.5 right-1.5 rounded-full bg-black/60 p-1.5 text-white opacity-0 shadow-sm transition-all outline-none group-hover:opacity-100 hover:scale-110 hover:bg-red-500 focus:opacity-100 focus-visible:ring-2 focus-visible:ring-red-400 active:scale-95"
                   aria-label={m.post_edit_remove_image_aria()}
                   title="Supprimer"
                 >
@@ -364,7 +364,7 @@
               </div>
               {#if mediaItem.caption}
                 <p
-                  class="text-text-muted w-full truncate rounded-lg px-2.5 py-1.5 text-[0.7rem] font-semibold"
+                  class="text-text-muted text-2xs w-full truncate rounded-lg px-2.5 py-1.5 font-semibold"
                   title={mediaItem.caption}
                 >
                   {mediaItem.caption}
@@ -389,7 +389,7 @@
                   >
                     <Icon size={28} strokeWidth={1.5} />
                     <span
-                      class="w-full truncate px-2 text-center text-[0.55rem] font-bold tracking-wider uppercase"
+                      class="text-2xs w-full truncate px-2 text-center font-bold tracking-wider uppercase"
                     >
                       {file.type.split('/')[1] ?? 'file'}
                     </span>
@@ -404,7 +404,7 @@
                 <button
                   type="button"
                   onclick={() => removeNewFile(i)}
-                  class="absolute top-1.5 right-1.5 rounded-full bg-black/60 p-1.5 text-white opacity-0 shadow-sm backdrop-blur-md transition-all outline-none group-hover:opacity-100 hover:scale-110 hover:bg-red-500 focus:opacity-100 focus-visible:ring-2 focus-visible:ring-red-400 active:scale-95"
+                  class="absolute top-1.5 right-1.5 rounded-full bg-black/60 p-1.5 text-white opacity-0 shadow-sm transition-all outline-none group-hover:opacity-100 hover:scale-110 hover:bg-red-500 focus:opacity-100 focus-visible:ring-2 focus-visible:ring-red-400 active:scale-95"
                   aria-label={m.post_edit_remove_image_aria()}
                   title="Supprimer"
                 >
@@ -416,7 +416,7 @@
                 bind:value={newMediaCaptions[i]}
                 placeholder={m.post_edit_caption_placeholder()}
                 maxlength="120"
-                class="text-text-main placeholder:text-text-muted/60 w-full rounded-lg border border-black/10 bg-white/70 px-2.5 py-1.5 text-[0.7rem] font-semibold shadow-inner transition-all outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30 dark:border-white/10 dark:bg-black/40"
+                class="text-text-main placeholder:text-text-muted/60 bg-cn-surface text-2xs w-full rounded-lg border border-black/10 px-2.5 py-1.5 font-semibold shadow-inner transition-all outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/30 dark:border-white/10"
               />
             </div>
           {/each}
@@ -470,14 +470,14 @@
     <div class="flex flex-col-reverse gap-4 pt-1 sm:flex-row sm:items-center sm:justify-between">
       <!-- Toolbar -->
       <div
-        class="custom-scrollbar flex w-full flex-wrap items-center gap-2 overflow-x-auto rounded-[1.25rem] border border-black/5 bg-white/50 p-1.5 shadow-inner sm:w-auto dark:border-white/5 dark:bg-black/20"
+        class="custom-scrollbar bg-cn-surface flex w-full flex-wrap items-center gap-2 overflow-x-auto rounded-[1.25rem] border border-black/5 p-1.5 shadow-inner sm:w-auto dark:border-white/5"
       >
         <!-- Add media. -->
         <label
           for={mediaInputId}
           title="Médias"
           class="text-text-muted flex shrink-0 cursor-pointer items-center gap-2 rounded-xl px-3 py-2 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95
-          {newFiles.length > 0
+ {newFiles.length > 0
             ? 'bg-amber-500/15 font-bold text-amber-600 shadow-sm dark:text-amber-400'
             : 'hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
         >
@@ -507,7 +507,7 @@
           title="Sondage"
           onclick={() => (includePoll = !includePoll)}
           class="text-text-muted flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95
-          {includePoll
+ {includePoll
             ? 'bg-amber-500/15 font-bold text-amber-600 shadow-sm dark:text-amber-400'
             : 'hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
         >
@@ -521,7 +521,7 @@
           title="Formulaire"
           onclick={() => (includeForm = !includeForm)}
           class="text-text-muted flex shrink-0 items-center gap-2 rounded-xl px-3 py-2 transition-all outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95
-          {includeForm
+ {includeForm
             ? 'bg-amber-500/15 font-bold text-amber-600 shadow-sm dark:text-amber-400'
             : 'hover:text-text-main hover:bg-black/5 dark:hover:bg-white/10'}"
         >
@@ -548,7 +548,7 @@
             bind:value={scheduledAt}
             min={new Date(Date.now() + 60000).toISOString().slice(0, 16)}
             title={m.post_edit_schedule_title()}
-            class="text-text-main cursor-pointer bg-transparent pr-1 pl-2 text-[0.7rem] font-bold outline-none {scheduledAt
+            class="text-text-main text-2xs cursor-pointer bg-transparent pr-1 pl-2 font-bold outline-none {scheduledAt
               ? 'w-36 text-amber-700 dark:text-amber-400'
               : 'sm:text-text-main w-5 text-transparent sm:w-28'} transition-all"
           />
@@ -576,7 +576,7 @@
         </button>
         <Button
           type="button"
-          class="min-w-[9rem] px-7 py-3 text-sm !font-extrabold shadow-md shadow-amber-500/20 active:translate-y-0"
+          class="min-w-[9rem] px-7 py-3 text-sm !font-bold shadow-md shadow-amber-500/20 active:translate-y-0"
           disabled={saving ||
             (!markdown.trim() && existingMedia.length === 0 && newFiles.length === 0)}
           loading={saving}

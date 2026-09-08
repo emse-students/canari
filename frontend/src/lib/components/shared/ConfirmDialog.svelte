@@ -39,7 +39,7 @@
   <div use:portal>
     <div
       role="presentation"
-      class="fixed inset-0 z-[300] flex items-end justify-center bg-black/40 px-4 pb-[var(--safe-area-inset-bottom,0px)] backdrop-blur-sm sm:items-center"
+      class="fixed inset-0 z-[300] flex items-end justify-center bg-black/40 px-4 pb-[var(--safe-area-inset-bottom,0px)] sm:items-center"
       onclick={() => resolveConfirm(false)}
       in:fly={{ duration: 150, opacity: 0 }}
     >
@@ -93,8 +93,8 @@
             onclick={() => resolveConfirm(true)}
             disabled={!canConfirm}
             class="rounded-xl px-4 py-2 text-sm font-bold transition-colors
-              disabled:cursor-not-allowed disabled:opacity-40
-              {pending.danger
+ disabled:cursor-not-allowed disabled:opacity-40
+ {pending.danger
               ? 'bg-red-500 text-white hover:bg-red-600'
               : 'bg-cn-yellow hover:bg-cn-yellow-hover text-cn-dark'}"
           >

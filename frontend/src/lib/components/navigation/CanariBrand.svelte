@@ -40,7 +40,7 @@
 
     {#if subtitle}
       <p
-        class="text-text-muted mt-[1px] text-[11px] font-medium opacity-80 transition-opacity duration-300 group-hover:opacity-100"
+        class="text-text-muted text-2xs mt-[1px] font-medium opacity-80 transition-opacity duration-300 group-hover:opacity-100"
       >
         {subtitle}
       </p>

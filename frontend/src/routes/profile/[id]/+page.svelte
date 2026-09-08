@@ -248,7 +248,7 @@
     </div>
   {:else if error}
     <div
-      class="flex items-start gap-3 rounded-2xl border border-red-500/20 bg-red-500/10 p-5 text-red-600 shadow-sm backdrop-blur-md dark:text-red-400"
+      class="flex items-start gap-3 rounded-2xl border border-red-500/20 bg-red-500/10 p-5 text-red-600 shadow-sm dark:text-red-400"
       in:slide
     >
       <CircleAlert size={20} class="mt-0.5 shrink-0" />
@@ -269,7 +269,7 @@
       </div>
 
       <div class="min-w-0 flex-1">
-        <h1 class="text-text-main mb-1 truncate text-2xl font-extrabold tracking-tight sm:text-3xl">
+        <h1 class="text-text-main mb-1 truncate text-2xl font-bold tracking-tight sm:text-3xl">
           {displayFallbackName}
         </h1>
         <ProfileMinesweeperBadge userId={profile.id} />
@@ -288,9 +288,8 @@
         <button
           onclick={handleFollowToggle}
           disabled={followLoading}
-          class="focus-visible:ring-cn-yellow/50 inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-bold transition-all outline-none focus-visible:ring-2 active:scale-95 disabled:opacity-60
-            {following
-            ? 'text-text-main border border-black/10 bg-white/60 hover:border-red-500/20 hover:bg-red-500/10 hover:text-red-600 dark:border-white/10 dark:bg-white/10'
+          class="focus-visible:ring-cn-yellow/50 inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 text-sm font-bold transition-all outline-none focus-visible:ring-2 active:scale-95 disabled:opacity-60 {following
+            ? 'text-text-main bg-cn-surface border border-black/10 hover:border-red-500/20 hover:bg-red-500/10 hover:text-red-600 dark:border-white/10 '
             : 'bg-cn-yellow/10 border-cn-yellow/20 dark:text-cn-yellow hover:bg-cn-yellow/20 border text-amber-700'}"
         >
           {#if following}
@@ -331,7 +330,7 @@
         onclick={handleBlockToggle}
         disabled={blockLoading}
         class="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-colors disabled:opacity-50
-          {blocked
+ {blocked
           ? 'text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/5'
           : 'text-red-600 hover:bg-red-500/10 dark:text-red-400'}"
       >
@@ -354,7 +353,7 @@
         class="border-cn-border animate-in fade-in slide-in-from-bottom-4 rounded-2xl border bg-(--cn-surface) p-6 shadow-sm delay-75 duration-500 md:p-8"
         style="animation-fill-mode: backwards;"
       >
-        <h2 class="text-text-main mb-4 text-lg font-extrabold">
+        <h2 class="text-text-main mb-4 text-lg font-bold">
           {m.profile_public_about_heading()}
         </h2>
         <ProfileBioMarkdown source={profile.bio} />
@@ -363,7 +362,7 @@
 
     {#if memberships.length > 0 || extrasLoading}
       <div class="border-cn-border rounded-2xl border bg-(--cn-surface) p-6 shadow-sm md:p-8">
-        <h2 class="text-text-main mb-5 flex items-center gap-2 text-lg font-extrabold">
+        <h2 class="text-text-main mb-5 flex items-center gap-2 text-lg font-bold">
           <Building2 size={20} />
           {m.assoc_list_heading()}
         </h2>
@@ -373,7 +372,7 @@
 
     {#if roleHistory.length > 0 || extrasLoading}
       <div class="border-cn-border rounded-2xl border bg-(--cn-surface) p-6 shadow-sm md:p-8">
-        <h2 class="text-text-main mb-5 text-lg font-extrabold">
+        <h2 class="text-text-main mb-5 text-lg font-bold">
           {m.profile_public_career_heading()}
         </h2>
         <ProfileRoleHistorySection entries={roleHistory} />
@@ -382,7 +381,7 @@
 
     {#if (parrainage?.parrains.length ?? 0) > 0 || (parrainage?.fillots.length ?? 0) > 0 || extrasLoading}
       <div class="border-cn-border rounded-2xl border bg-(--cn-surface) p-6 shadow-sm md:p-8">
-        <h2 class="text-text-main mb-5 flex items-center gap-2 text-lg font-extrabold">
+        <h2 class="text-text-main mb-5 flex items-center gap-2 text-lg font-bold">
           <Users size={20} />
           {m.profile_public_sponsorship_heading()}
         </h2>
@@ -399,17 +398,17 @@
       class="border-cn-border animate-in fade-in slide-in-from-bottom-4 rounded-2xl border bg-(--cn-surface) p-6 shadow-sm delay-150 duration-500 md:p-8"
       style="animation-fill-mode: backwards;"
     >
-      <h2 class="text-text-main mb-6 text-lg font-extrabold">{m.profile_public_info_heading()}</h2>
+      <h2 class="text-text-main mb-6 text-lg font-bold">{m.profile_public_info_heading()}</h2>
 
       <div class="grid grid-cols-1 gap-5 md:grid-cols-2">
         <div
-          class="flex items-center gap-3.5 rounded-2xl border border-black/5 bg-white/50 p-4 shadow-sm dark:border-white/5 dark:bg-white/5"
+          class="bg-cn-surface flex items-center gap-3.5 rounded-2xl border border-black/5 p-4 shadow-sm dark:border-white/5"
         >
           <div class="text-text-muted rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
             <GraduationCap size={20} strokeWidth={2.5} />
           </div>
           <div class="min-w-0">
-            <p class="text-text-muted mb-0.5 text-[0.65rem] font-bold tracking-wider uppercase">
+            <p class="text-text-muted text-2xs mb-0.5 font-bold tracking-wider uppercase">
               {m.profile_promo_label()}
             </p>
             <p class="text-text-main truncate text-sm font-bold">{formatYear(profile.promo)}</p>
@@ -417,13 +416,13 @@
         </div>
 
         <div
-          class="flex items-center gap-3.5 rounded-2xl border border-black/5 bg-white/50 p-4 shadow-sm dark:border-white/5 dark:bg-white/5"
+          class="bg-cn-surface flex items-center gap-3.5 rounded-2xl border border-black/5 p-4 shadow-sm dark:border-white/5"
         >
           <div class="text-text-muted rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
             <CalendarDays size={20} strokeWidth={2.5} />
           </div>
           <div class="min-w-0">
-            <p class="text-text-muted mb-0.5 text-[0.65rem] font-bold tracking-wider uppercase">
+            <p class="text-text-muted text-2xs mb-0.5 font-bold tracking-wider uppercase">
               {m.profile_member_since_label()}
             </p>
             <p class="text-text-main text-sm font-bold capitalize">

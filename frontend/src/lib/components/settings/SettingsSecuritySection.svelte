@@ -138,7 +138,7 @@
     <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
       <Shield size={22} strokeWidth={2.5} />
     </div>
-    <h2 class="text-text-main text-lg font-extrabold">{m.profile_security_heading()}</h2>
+    <h2 class="text-text-main text-lg font-bold">{m.profile_security_heading()}</h2>
   </div>
 
   {#if changePinSuccess}
@@ -154,7 +154,7 @@
   {#if session.isLoggedIn}
     <div class="space-y-4">
       <div
-        class="flex items-center justify-between gap-4 rounded-2xl border border-black/5 bg-white/50 p-4 shadow-sm dark:border-white/5 dark:bg-white/5"
+        class="bg-cn-surface flex items-center justify-between gap-4 rounded-2xl border border-black/5 p-4 shadow-sm dark:border-white/5"
       >
         <div class="flex min-w-0 items-center gap-3.5">
           <div class="text-text-muted shrink-0 rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
@@ -190,7 +190,7 @@
 
       {#if biometricAvailable}
         <div
-          class="flex items-center justify-between gap-4 rounded-2xl border border-black/5 bg-white/50 p-4 shadow-sm dark:border-white/5 dark:bg-white/5"
+          class="bg-cn-surface flex items-center justify-between gap-4 rounded-2xl border border-black/5 p-4 shadow-sm dark:border-white/5"
         >
           <div class="flex min-w-0 items-center gap-3.5">
             <div class="text-text-muted shrink-0 rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
@@ -210,11 +210,11 @@
             disabled={biometricBusy}
             onclick={toggleBiometric}
             class="focus-visible:ring-cn-yellow relative h-6 w-12 shrink-0 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-offset-2 disabled:opacity-50
-              {biometricEnabled ? 'bg-cn-yellow' : 'bg-black/20 dark:bg-white/15'}"
+ {biometricEnabled ? 'bg-cn-yellow' : 'bg-black/20 dark:bg-white/15'}"
           >
             <span
               class="absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-transform duration-200
-                {biometricEnabled ? 'translate-x-6' : 'translate-x-0'}"
+ {biometricEnabled ? 'translate-x-6' : 'translate-x-0'}"
             ></span>
           </button>
         </div>
@@ -222,7 +222,7 @@
 
       {#if showStaySignedIn}
         <div
-          class="flex items-center justify-between gap-4 rounded-2xl border border-black/5 bg-white/50 p-4 shadow-sm dark:border-white/5 dark:bg-white/5"
+          class="bg-cn-surface flex items-center justify-between gap-4 rounded-2xl border border-black/5 p-4 shadow-sm dark:border-white/5"
         >
           <div class="flex min-w-0 items-center gap-3.5">
             <div class="text-text-muted shrink-0 rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
@@ -241,18 +241,18 @@
             aria-label={m.profile_stay_signed_in_heading()}
             onclick={toggleStaySignedIn}
             class="focus-visible:ring-cn-yellow relative h-6 w-12 shrink-0 rounded-full transition-colors duration-200 outline-none focus-visible:ring-2 focus-visible:ring-offset-2
-              {staySignedIn ? 'bg-cn-yellow' : 'bg-black/20 dark:bg-white/15'}"
+ {staySignedIn ? 'bg-cn-yellow' : 'bg-black/20 dark:bg-white/15'}"
           >
             <span
               class="absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow-md transition-transform duration-200
-                {staySignedIn ? 'translate-x-6' : 'translate-x-0'}"
+ {staySignedIn ? 'translate-x-6' : 'translate-x-0'}"
             ></span>
           </button>
         </div>
       {/if}
 
       <div
-        class="flex items-center justify-between gap-4 rounded-2xl border border-black/5 bg-white/50 p-4 shadow-sm dark:border-white/5 dark:bg-white/5"
+        class="bg-cn-surface flex items-center justify-between gap-4 rounded-2xl border border-black/5 p-4 shadow-sm dark:border-white/5"
       >
         <div class="flex min-w-0 items-center gap-3.5">
           <div class="text-text-muted shrink-0 rounded-xl bg-black/5 p-2.5 dark:bg-black/40">
@@ -273,7 +273,7 @@
           <span class="hidden sm:inline">{m.profile_devices_manage_btn()}</span>
           {#if deviceCount > 1}
             <span
-              class="absolute -top-1.5 -right-1.5 flex h-4.5 min-w-4.5 items-center justify-center rounded-full bg-orange-500 px-1 text-[10px] font-bold text-white shadow"
+              class="text-2xs absolute -top-1.5 -right-1.5 flex h-4.5 min-w-4.5 items-center justify-center rounded-full bg-orange-500 px-1 font-bold text-white shadow"
             >
               {deviceCount > 99 ? '99+' : deviceCount}
             </span>

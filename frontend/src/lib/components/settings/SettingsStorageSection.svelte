@@ -53,7 +53,7 @@
     <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
       <HardDrive size={22} strokeWidth={2.5} />
     </div>
-    <h2 class="text-text-main text-lg font-extrabold">{m.settings_storage_heading()}</h2>
+    <h2 class="text-text-main text-lg font-bold">{m.settings_storage_heading()}</h2>
   </div>
   <p class="text-text-muted mb-6 text-xs leading-relaxed font-medium sm:pl-[3.75rem]">
     {m.settings_storage_desc()}
@@ -84,7 +84,7 @@
       {/if}
       <div class="border-cn-border flex items-center justify-between border-t pt-3 text-sm">
         <span class="text-text-main font-bold">{m.settings_storage_total_label()}</span>
-        <span class="text-text-main font-extrabold">{formatStorageBytes(usage.totalBytes)}</span>
+        <span class="text-text-main font-bold">{formatStorageBytes(usage.totalBytes)}</span>
       </div>
     </div>
 

@@ -171,7 +171,7 @@
           <h2 class="text-text-main font-bold">{m.admin_storage_postgres_label()}</h2>
         </div>
         {#if usage.postgresBytes !== null}
-          <p class="text-text-main text-2xl font-extrabold">
+          <p class="text-text-main text-2xl font-bold">
             {formatStorageBytes(usage.postgresBytes)}
           </p>
         {:else}
@@ -189,7 +189,7 @@
           <h2 class="text-text-main font-bold">{m.admin_storage_redis_label()}</h2>
         </div>
         {#if usage.redisBytes !== null}
-          <p class="text-text-main text-2xl font-extrabold">
+          <p class="text-text-main text-2xl font-bold">
             {formatStorageBytes(usage.redisBytes)}
           </p>
         {:else}
@@ -213,7 +213,7 @@
 
         {#if media}
           <div>
-            <p class="text-text-main text-2xl font-extrabold">
+            <p class="text-text-main text-2xl font-bold">
               {formatStorageBytes(media.totalBytes)}
             </p>
             <p class="text-text-muted text-sm">
@@ -228,14 +228,14 @@
             <div class="flex h-24 items-end gap-2">
               {#each weekBars as bar (bar.index)}
                 <div class="flex h-full flex-1 flex-col items-center justify-end gap-1.5">
-                  <span class="text-text-main text-[0.65rem] font-bold">
+                  <span class="text-text-main text-2xs font-bold">
                     {formatStorageBytes(bar.bytes)}
                   </span>
                   <div
                     class="bg-cn-yellow/70 w-full rounded-t-lg"
                     style="height: {bar.percent}%"
                   ></div>
-                  <span class="text-text-muted text-center text-[0.65rem]">
+                  <span class="text-text-muted text-2xs text-center">
                     {bar.index === 0
                       ? m.admin_storage_media_week_current()
                       : m.admin_storage_media_week_range({
@@ -425,12 +425,12 @@
               <div class="flex h-20 items-end gap-2">
                 {#each queueBars as bar (bar.index)}
                   <div class="flex h-full flex-1 flex-col items-center justify-end gap-1.5">
-                    <span class="text-text-main text-[0.65rem] font-bold">{bar.rows}</span>
+                    <span class="text-text-main text-2xs font-bold">{bar.rows}</span>
                     <div
                       class="bg-cn-yellow/70 w-full rounded-t-lg"
                       style="height: {bar.percent}%"
                     ></div>
-                    <span class="text-text-muted text-center text-[0.65rem]">
+                    <span class="text-text-muted text-2xs text-center">
                       {bar.index === 0
                         ? m.admin_storage_media_week_current()
                         : m.admin_storage_media_week_range({

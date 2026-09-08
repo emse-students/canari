@@ -109,7 +109,7 @@
         <FileCheckCorner size={20} />
       </span>
       <div>
-        <h2 class="text-text-main text-lg font-extrabold">{m.docreview_title()}</h2>
+        <h2 class="text-text-main text-lg font-bold">{m.docreview_title()}</h2>
         <p class="text-text-muted mt-0.5 text-sm">{m.docreview_subtitle()}</p>
       </div>
     </header>

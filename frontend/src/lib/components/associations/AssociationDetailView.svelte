@@ -194,7 +194,7 @@
       {error}
     </div>
   {:else if asso}
-    <div class="border-cn-border rounded-2xl border bg-(--cn-surface)/90 p-6 shadow-sm">
+    <div class="border-cn-border bg-cn-surface rounded-2xl border p-6 shadow-sm">
       <div class="flex items-start gap-4">
         <div class="flex shrink-0 gap-2">
           <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="lg" />
@@ -207,7 +207,7 @@
           {/if}
         </div>
         <div class="min-w-0 flex-1">
-          <h1 class="text-text-main truncate text-xl font-extrabold tracking-tight">
+          <h1 class="text-text-main truncate text-xl font-bold tracking-tight">
             {asso.name}{#if kind === 'list' && asso.name2}<span class="text-text-muted font-bold">
                 &amp; {asso.name2}</span
               >{/if}
@@ -262,7 +262,7 @@
     {/if}
 
     <nav
-      class="border-cn-border/80 sticky top-0 z-30 -mx-4 border-y bg-(--cn-bg)/95 px-4 py-3 backdrop-blur-md sm:mx-0 sm:rounded-2xl sm:border"
+      class="border-cn-border/80 bg-cn-bg sticky top-0 z-30 -mx-4 border-y px-4 py-3 sm:mx-0 sm:rounded-2xl sm:border"
       aria-label="Sections"
     >
       <div class="flex gap-2 overflow-x-auto pb-1" data-swipe-nav-ignore>
@@ -270,7 +270,7 @@
           type="button"
           onclick={() => (activeSection = 'about')}
           class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-          {activeSection === 'about'
+ {activeSection === 'about'
             ? 'bg-cn-yellow text-cn-ink shadow-sm'
             : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
         >
@@ -281,7 +281,7 @@
           type="button"
           onclick={() => (activeSection = 'calendar')}
           class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-          {activeSection === 'calendar'
+ {activeSection === 'calendar'
             ? 'bg-cn-yellow text-cn-ink shadow-sm'
             : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
         >
@@ -292,7 +292,7 @@
           type="button"
           onclick={() => (activeSection = 'members')}
           class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-          {activeSection === 'members'
+ {activeSection === 'members'
             ? 'bg-cn-yellow text-cn-ink shadow-sm'
             : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
         >
@@ -304,7 +304,7 @@
             type="button"
             onclick={() => (activeSection = 'shop')}
             class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-            {activeSection === 'shop'
+ {activeSection === 'shop'
               ? 'bg-cn-yellow text-cn-ink shadow-sm'
               : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
           >
@@ -317,7 +317,7 @@
             type="button"
             onclick={() => (activeSection = 'partnerships')}
             class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-            {activeSection === 'partnerships'
+ {activeSection === 'partnerships'
               ? 'bg-cn-yellow text-cn-ink shadow-sm'
               : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
           >
@@ -329,7 +329,7 @@
     </nav>
 
     {#if activeSection === 'about'}
-      <div class="border-cn-border space-y-4 rounded-2xl border bg-(--cn-surface)/90 p-6 shadow-sm">
+      <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
         <h2 class="text-text-main text-lg font-bold tracking-tight">{m.asso_tab_about()}</h2>
         {#if asso.description?.trim()}
           <ProfileBioMarkdown source={asso.description} class="text-sm" />
@@ -350,7 +350,7 @@
         {/if}
       </div>
     {:else if activeSection === 'calendar'}
-      <div class="border-cn-border rounded-2xl border bg-(--cn-surface)/90 p-6 shadow-sm">
+      <div class="border-cn-border bg-cn-surface rounded-2xl border p-6 shadow-sm">
         <div class="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <h2 class="text-text-main text-lg font-bold tracking-tight">{m.asso_tab_calendar()}</h2>
           <a
@@ -370,7 +370,7 @@
         />
       </div>
     {:else if activeSection === 'members'}
-      <div class="border-cn-border space-y-4 rounded-2xl border bg-(--cn-surface)/90 p-6 shadow-sm">
+      <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
         <div class="flex items-center justify-between gap-2">
           <h2 class="text-text-main text-lg font-bold tracking-tight">
             {m.common_members_label()}
@@ -405,7 +405,7 @@
         </div>
       </div>
     {:else if activeSection === 'shop'}
-      <div class="border-cn-border space-y-4 rounded-2xl border bg-(--cn-surface)/90 p-6 shadow-sm">
+      <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
         <div class="flex items-center justify-between gap-2">
           <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
             <ShoppingBag size={20} />
@@ -444,7 +444,7 @@
                       {m.asso_product_free_price()}
                     {/if}
                     <span
-                      class="bg-cn-border/40 ml-2 rounded-full px-1.5 py-0.5 text-[10px] font-bold uppercase"
+                      class="bg-cn-border/40 text-2xs ml-2 rounded-full px-1.5 py-0.5 font-bold uppercase"
                     >
                       {product.type === 'membership'
                         ? m.asso_product_membership_type()
@@ -491,7 +491,7 @@
         </div>
       </div>
     {:else if activeSection === 'partnerships'}
-      <div class="border-cn-border space-y-4 rounded-2xl border bg-(--cn-surface)/90 p-6 shadow-sm">
+      <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
         <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
           <Handshake size={20} />
           {m.asso_tab_partnerships()}

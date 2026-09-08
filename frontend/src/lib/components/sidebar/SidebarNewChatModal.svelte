@@ -50,7 +50,7 @@
   const baseTabClass =
     'flex-1 px-3 py-2 text-sm font-semibold rounded-xl transition-all duration-200 outline-none focus-visible:ring-2 focus-visible:ring-amber-400';
   const activeTabClass =
-    'bg-white/80 dark:bg-black/40 text-text-main border border-white/60 dark:border-white/10 shadow-sm';
+    'bg-cn-surface dark:bg-black/40 text-text-main border border-white/60 dark:border-white/10 shadow-sm';
   const inactiveTabClass =
     'text-text-muted hover:text-text-main hover:bg-white/35 dark:hover:bg-black/30 border border-transparent';
 
@@ -70,7 +70,7 @@
   <!-- Système d'onglets accessible -->
   <div
     role="tablist"
-    class="mb-4 flex gap-2 rounded-2xl border border-white/50 bg-white/45 p-1 dark:border-white/10 dark:bg-black/25"
+    class="bg-cn-surface mb-4 flex gap-2 rounded-2xl border border-white/50 p-1 dark:border-white/10"
   >
     <button
       id="tab-contact"
@@ -145,7 +145,7 @@
             value={groupName}
             oninput={(e) => onGroupNameChange(e.currentTarget.value)}
             placeholder={m.chat_modal_group_name_placeholder()}
-            class="placeholder:text-text-muted/70 w-full rounded-xl border border-white/60 bg-white/65 px-4 py-2.5 text-sm transition-all outline-none focus:border-amber-400/50 focus:ring-2 focus:ring-amber-400/45 dark:border-white/10 dark:bg-black/30"
+            class="placeholder:text-text-muted/70 bg-cn-surface w-full rounded-xl border border-white/60 px-4 py-2.5 text-sm transition-all outline-none focus:border-amber-400/50 focus:ring-2 focus:ring-amber-400/45 dark:border-white/10"
             autocomplete="off"
           />
         </div>

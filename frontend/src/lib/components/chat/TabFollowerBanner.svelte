@@ -55,8 +55,8 @@
         type="button"
         onclick={takeOver}
         class="flex shrink-0 items-center gap-1.5 rounded bg-amber-600 px-2.5 py-1
-               text-xs text-white
-               transition-colors hover:bg-amber-700"
+ text-xs text-white
+ transition-colors hover:bg-amber-700"
       >
         <ArrowLeftRight size={12} aria-hidden="true" />
         {m.chat_take_over_button()}

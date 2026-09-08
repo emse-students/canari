@@ -48,7 +48,7 @@
 
 <nav
   id="bottom-nav"
-  class="fixed inset-x-0 bottom-0 z-30 border-t border-black/5 bg-white/70 shadow-[0_-4px_24px_rgba(0,0,0,0.02)] backdrop-blur-2xl md:hidden dark:border-white/10 dark:bg-black/80 dark:shadow-[0_-4px_24px_rgba(0,0,0,0.2)]"
+  class="bg-cn-surface fixed inset-x-0 bottom-0 z-30 border-t border-black/5 shadow-[0_-4px_24px_rgba(0,0,0,0.02)] md:hidden dark:border-white/10 dark:shadow-[0_-4px_24px_rgba(0,0,0,0.2)]"
   style="padding-bottom: var(--safe-area-inset-bottom, 0px)"
 >
   <div class="flex h-16 items-stretch justify-around">
@@ -61,9 +61,7 @@
         href={place.href}
         data-sveltekit-preload-code="viewport"
         class="group relative flex min-w-0 flex-1 flex-col items-center justify-center gap-1 px-1 py-1 transition-all duration-200 active:scale-95
-          {isActive
-          ? 'text-amber-600 dark:text-amber-400'
-          : 'text-text-muted hover:text-text-main'}"
+ {isActive ? 'text-amber-600 dark:text-amber-400' : 'text-text-muted hover:text-text-main'}"
       >
         <span
           class="relative transition-transform duration-300 {isActive
@@ -81,7 +79,7 @@
         </span>
 
         <span
-          class="max-w-full truncate text-[10px] leading-none font-bold transition-opacity duration-200 {isActive
+          class="text-2xs max-w-full truncate leading-none font-bold transition-opacity duration-200 {isActive
             ? 'opacity-100'
             : 'font-medium opacity-70'}"
         >

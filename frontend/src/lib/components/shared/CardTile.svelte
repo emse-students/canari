@@ -89,7 +89,7 @@
   <div class="flex items-start gap-3 px-4 pt-4">
     {#if trimmedBadge}
       <span
-        class="rounded-full bg-(--tile-accent) px-2.5 py-0.5 text-[10px] font-bold tracking-wide text-(--tile-accent-ink) uppercase"
+        class="text-2xs rounded-full bg-(--tile-accent) px-2.5 py-0.5 font-bold tracking-wide text-(--tile-accent-ink) uppercase"
       >
         {trimmedBadge}
       </span>

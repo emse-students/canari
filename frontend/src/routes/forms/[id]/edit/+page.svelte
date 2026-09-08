@@ -273,7 +273,7 @@
       <ArrowLeft size={20} />
     </button>
     <div class="min-w-0 flex-1">
-      <h1 class="text-text-main text-2xl font-extrabold tracking-tight">{m.form_edit_heading()}</h1>
+      <h1 class="text-text-main text-2xl font-bold tracking-tight">{m.form_edit_heading()}</h1>
       {#if form}
         <p class="text-text-muted mt-0.5 truncate text-sm">{form.title}</p>
       {/if}

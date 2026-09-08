@@ -98,7 +98,7 @@
       <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
         <CreditCard size={22} strokeWidth={2.5} />
       </div>
-      <h2 class="text-text-main text-lg font-extrabold">{m.profile_payment_heading()}</h2>
+      <h2 class="text-text-main text-lg font-bold">{m.profile_payment_heading()}</h2>
     </div>
 
     <button
@@ -155,12 +155,10 @@
               </div>
 
               <div class="flex flex-col">
-                <span class="text-text-main font-mono text-[0.95rem] font-bold tracking-wider">
+                <span class="text-text-main font-mono text-sm font-bold tracking-wider">
                   •••• •••• •••• {pm.last4}
                 </span>
-                <span
-                  class="text-text-muted mt-0.5 text-[0.65rem] font-extrabold tracking-wider uppercase"
-                >
+                <span class="text-text-muted text-2xs mt-0.5 font-bold tracking-wider uppercase">
                   {brandLabel(pm.brand)} • Exp: {String(pm.expMonth).padStart(2, '0')}/{pm.expYear}
                 </span>
               </div>

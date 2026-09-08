@@ -66,7 +66,7 @@
       <ArrowLeft size={16} />
       {m.list_new_back()}
     </a>
-    <h1 class="text-text-main mt-2 text-2xl font-extrabold tracking-tight">
+    <h1 class="text-text-main mt-2 text-2xl font-bold tracking-tight">
       {m.list_new_create_btn()}
     </h1>
   </div>

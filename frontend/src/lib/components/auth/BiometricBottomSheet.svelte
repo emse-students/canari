@@ -29,7 +29,7 @@
 {#if open}
   <!-- Backdrop -->
   <div
-    class="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm"
+    class="fixed inset-0 z-50 bg-black/40"
     onclick={() => onSkip?.()}
     role="presentation"
     aria-hidden="true"
@@ -37,7 +37,7 @@
 
   <!-- Sheet -->
   <div
-    class="border-cn-border bg-cn-surface/95 fixed inset-x-0 bottom-0 z-50 rounded-t-3xl border-t px-6 pt-5 pb-[calc(1.5rem+var(--safe-area-inset-bottom,0px))] shadow-2xl backdrop-blur-2xl"
+    class="border-cn-border bg-cn-surface/95 fixed inset-x-0 bottom-0 z-50 rounded-t-3xl border-t px-6 pt-5 pb-[calc(1.5rem+var(--safe-area-inset-bottom,0px))] shadow-2xl"
     role="dialog"
     aria-modal="true"
     aria-label={m.auth_biometric_aria()}
@@ -55,7 +55,7 @@
       </div>
     </div>
 
-    <h2 class="text-text-main mb-1 text-center text-lg font-extrabold">
+    <h2 class="text-text-main mb-1 text-center text-lg font-bold">
       {title}
     </h2>
     <p class="text-text-muted mb-6 text-center text-sm leading-relaxed">

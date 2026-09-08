@@ -135,14 +135,14 @@
 </script>
 
 <div
-  class="group relative w-full min-w-0 rounded-xl border border-black/5 bg-white/40 p-3 shadow-sm backdrop-blur-xl transition-all duration-300 sm:rounded-[2rem] sm:p-5 sm:hover:border-amber-500/30 sm:hover:shadow-md md:p-6 dark:border-white/10 dark:bg-black/20"
+  class="group bg-cn-surface relative w-full min-w-0 rounded-xl border border-black/5 p-3 shadow-sm transition-all duration-300 sm:rounded-[2rem] sm:p-5 sm:hover:border-amber-500/30 sm:hover:shadow-md md:p-6 dark:border-white/10"
 >
   <!-- Action bar (mobile: reorder + delete) -->
   <div class="mb-3 flex items-center justify-between gap-2 sm:mb-4">
     <div class="flex min-w-0 items-center gap-2">
       {#if questionIndex != null}
         <span
-          class="shrink-0 rounded-md bg-amber-500/10 px-2 py-0.5 text-[0.65rem] font-extrabold tracking-wider text-amber-600 uppercase dark:text-amber-400"
+          class="text-2xs shrink-0 rounded-md bg-amber-500/10 px-2 py-0.5 font-bold tracking-wider text-amber-600 uppercase dark:text-amber-400"
         >
           Q{questionIndex}
         </span>
@@ -434,7 +434,7 @@
           {isMatrix ? m.form_builder_columns_header() : m.form_builder_options_header()}
         </h4>
         {#if !isMatrix && showPriceModifier && !pricedByGrid}
-          <div class="text-text-muted flex gap-2 text-[0.65rem] font-semibold sm:text-xs">
+          <div class="text-text-muted text-2xs flex gap-2 font-semibold sm:text-xs">
             <span class="w-20 text-right">{m.form_builder_price_public_header()}</span>
           </div>
         {/if}
@@ -454,7 +454,7 @@
             class="rounded-xl border border-black/5 bg-black/[0.02] p-2.5 sm:rounded-none sm:border-0 sm:bg-transparent sm:p-0 dark:border-white/10 dark:bg-white/[0.02]"
           >
             <div class="mb-2 flex items-center justify-between gap-2 sm:hidden">
-              <span class="text-text-muted text-[0.65rem] font-bold tracking-wide uppercase">
+              <span class="text-text-muted text-2xs font-bold tracking-wide uppercase">
                 {isMatrix
                   ? m.form_builder_column_mobile_label()
                   : m.form_builder_option_mobile_label()}
@@ -518,7 +518,7 @@
                 <div>
                   <label
                     for="opt-price-{opt.id}"
-                    class="text-text-muted mb-1 block text-[0.65rem] font-bold"
+                    class="text-text-muted text-2xs mb-1 block font-bold"
                     >{m.form_builder_price_public_mobile()}</label
                   >
                   <input
@@ -559,7 +559,7 @@
                 class="rounded-xl border border-black/5 bg-black/[0.02] p-2.5 sm:border-0 sm:bg-transparent sm:p-0 dark:border-white/10 dark:bg-white/[0.02]"
               >
                 <div class="mb-2 flex items-center justify-between gap-2 sm:hidden">
-                  <span class="text-text-muted text-[0.65rem] font-bold tracking-wide uppercase">
+                  <span class="text-text-muted text-2xs font-bold tracking-wide uppercase">
                     {m.form_builder_row_mobile_label({ idx: idx + 1 })}
                   </span>
                   <button
@@ -618,7 +618,7 @@
     <div class="mt-4 border-t border-black/5 pt-4 dark:border-white/5">
       <div class="mb-2 flex items-center gap-1.5">
         <GitBranch size={13} class="text-text-muted/70 shrink-0" />
-        <span class="text-text-muted text-[0.65rem] font-bold tracking-wider uppercase"
+        <span class="text-text-muted text-2xs font-bold tracking-wider uppercase"
           >{m.form_builder_conditional_label()}</span
         >
       </div>

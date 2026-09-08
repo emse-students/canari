@@ -58,7 +58,7 @@
               </p>
               {#if card.membersOnly}
                 <span
-                  class="bg-amber-warn/15 text-amber-warn rounded-full px-2 py-0.5 text-[10px] font-bold uppercase"
+                  class="bg-amber-warn/15 text-amber-warn text-2xs rounded-full px-2 py-0.5 font-bold uppercase"
                 >
                   {m.shop_partnership_members_only_badge()}
                 </span>

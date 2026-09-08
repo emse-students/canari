@@ -69,7 +69,7 @@
       />
     {:else}
       <div
-        class="border-cn-border rounded-3xl border border-dashed bg-(--cn-surface)/50 px-6 py-16 text-center backdrop-blur-xl"
+        class="border-cn-border bg-cn-surface rounded-3xl border border-dashed px-6 py-16 text-center"
       >
         <FileX size={48} class="text-text-muted mx-auto mb-3 opacity-40" />
         <h3 class="text-text-main mb-1 text-lg font-bold">Publication introuvable</h3>

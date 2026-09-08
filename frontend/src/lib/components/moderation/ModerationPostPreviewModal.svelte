@@ -79,7 +79,7 @@
         <PostHeader {post} />
         <PostContent {post} {authToken} fullContent />
       </Card>
-      <p class="text-text-muted/50 mt-3 truncate px-1 font-mono text-[10px]" title={post.id}>
+      <p class="text-text-muted/50 text-2xs mt-3 truncate px-1 font-mono" title={post.id}>
         {post.id}
       </p>
     {/if}

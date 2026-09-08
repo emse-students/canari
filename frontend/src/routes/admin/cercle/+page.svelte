@@ -242,7 +242,7 @@
         <Wallet size={20} />
       </span>
       <div>
-        <h2 class="text-text-main text-lg font-extrabold">{m.admin_cercle_title()}</h2>
+        <h2 class="text-text-main text-lg font-bold">{m.admin_cercle_title()}</h2>
         <p class="text-text-muted mt-0.5 text-sm">{m.admin_cercle_subtitle()}</p>
       </div>
     </header>
@@ -281,7 +281,7 @@
     {#if !loading && !asso}
       <p class="text-text-muted text-sm">{m.admin_cercle_select_asso_hint()}</p>
     {:else if !loading && asso}
-      <div class="border-cn-border space-y-5 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm">
+      <div class="border-cn-border bg-cn-surface space-y-5 rounded-2xl border p-6 shadow-sm">
         <div class="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 class="text-text-main text-base font-bold">{m.admin_cercle_config_title()}</h3>
@@ -410,9 +410,7 @@
       </div>
 
       {#if webhookFailures.length > 0}
-        <div
-          class="border-cn-border space-y-3 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm"
-        >
+        <div class="border-cn-border bg-cn-surface space-y-3 rounded-2xl border p-6 shadow-sm">
           <h3 class="text-amber-warn flex items-center gap-2 text-sm font-bold">
             <TriangleAlert size={16} />
             {m.admin_cercle_webhook_failures_title({ count: webhookFailures.length })}

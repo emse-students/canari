@@ -124,7 +124,7 @@
       {/if}
     </div>
 
-    <p class="text-text-muted text-[11px]">
+    <p class="text-text-muted text-2xs">
       {m.asso_calendar_subscribe_note()}
     </p>
   </div>

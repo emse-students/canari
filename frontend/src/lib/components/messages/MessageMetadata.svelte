@@ -40,9 +40,18 @@
     groupPosition,
   }: Props = $props();
 
-  // Show timestamp on the last message of a group only (end/single), never mid-run.
+  /*
+   * Show the timestamp on the last message of a group only (end/single), never mid-run - AND
+   * OUTSIDE THE BUBBLE, not in it.
+   *
+   * It used to render as its own flex row INSIDE the bubble, which made every bubble that carried
+   * one two lines tall: a one-line message measured 66px where the reference measures 35px. The
+   * reference puts no metadata inside a bubble at all - the bubble is exactly the text - and hangs
+   * the time under the group. Halving the height of the most repeated element on the screen is the
+   * single largest density win available here.
+   */
   const showTimestamp = $derived(
-    !outsideBubble && !!timestamp && groupPosition !== 'start' && groupPosition !== 'middle'
+    outsideBubble && !!timestamp && groupPosition !== 'start' && groupPosition !== 'middle'
   );
   const showEdited = $derived(isEdited && !outsideBubble);
   const showSendStatus = $derived(
@@ -71,26 +80,26 @@
       : 'mt-1 justify-end'}"
   >
     {#if showTimestamp}
-      <span class="text-[0.65rem] font-medium tabular-nums opacity-50">
+      <span class="text-2xs font-medium tabular-nums opacity-50">
         {formatTime24(timestamp!)}
       </span>
     {/if}
     {#if showEdited}
-      <span class="text-[0.65rem] font-medium italic opacity-65">{m.msg_modifie()}</span>
+      <span class="text-2xs font-medium italic opacity-65">{m.msg_modifie()}</span>
     {/if}
     {#if showSendStatus}
       {#if status === 'pending'}
-        <span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold opacity-50">
+        <span class="text-2xs inline-flex items-center gap-1 font-semibold opacity-50">
           <Clock size={12} />
           {m.msg_en_attente()}
         </span>
       {:else if status === 'sending'}
-        <span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold opacity-50">
+        <span class="text-2xs inline-flex items-center gap-1 font-semibold opacity-50">
           <LoaderCircle size={12} class="animate-spin" />
           {m.common_sending_label()}
         </span>
       {:else if status === 'error'}
-        <span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold text-red-500">
+        <span class="text-2xs inline-flex items-center gap-1 font-semibold text-red-500">
           <TriangleAlert size={12} />
           {m.msg_echec()}
         </span>
@@ -113,7 +122,7 @@
             <Avatar {userId} size="xs" shape="circle" />
           {/each}
           {#if readBy.length > 3}
-            <span class="text-[0.6rem] font-bold opacity-70">+{readBy.length - 3}</span>
+            <span class="text-2xs font-bold opacity-70">+{readBy.length - 3}</span>
           {/if}
           <CheckCheck
             size={12}

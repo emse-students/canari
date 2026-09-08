@@ -35,7 +35,7 @@
 
 {#if !isLinkOnly}
   <p
-    class="text-[0.95rem] leading-relaxed wrap-anywhere whitespace-pre-wrap select-text {isDeleted
+    class="text-sm leading-relaxed wrap-anywhere whitespace-pre-wrap select-text {isDeleted
       ? 'italic opacity-60'
       : ''}"
   >

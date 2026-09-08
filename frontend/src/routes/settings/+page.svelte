@@ -59,7 +59,7 @@
       <SlidersHorizontal size={26} strokeWidth={2.5} />
     </div>
     <div>
-      <h1 class="text-text-main text-2xl font-extrabold tracking-tight sm:text-3xl">
+      <h1 class="text-text-main text-2xl font-bold tracking-tight sm:text-3xl">
         {m.settings_page_title()}
       </h1>
       <p class="text-text-muted mt-0.5 text-sm">{m.settings_page_subtitle()}</p>
@@ -80,7 +80,7 @@
   {#if session.myDeviceId}
     <button
       type="button"
-      class="text-text-muted/40 block w-full cursor-default pt-2 text-center font-mono text-[0.65rem] select-none"
+      class="text-text-muted/40 text-2xs block w-full cursor-default pt-2 text-center font-mono select-none"
       onclick={onDeviceIdTap}
       aria-label={m.settings_device_id_label({ id: session.myDeviceId })}
     >

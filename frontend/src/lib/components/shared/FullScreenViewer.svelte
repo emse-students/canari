@@ -83,7 +83,7 @@
   <!-- Backdrop: clicking outside the card closes. Escape is handled on the window above. -->
   <div
     role="presentation"
-    class="fixed inset-0 z-300 flex items-center justify-center bg-black/70 backdrop-blur-lg sm:p-4"
+    class="fixed inset-0 z-300 flex items-center justify-center bg-black/70 sm:p-4"
     style={touchStyle}
     onclick={onClose}
   >
@@ -94,10 +94,9 @@
       tabindex="-1"
       use:focusTrap
       class="relative flex h-dvh w-full flex-col overflow-hidden
-             text-white sm:h-[90dvh] {maxWidthClass}
-             bg-black/20 sm:rounded-xl sm:border
-             sm:border-white/8 sm:bg-white/4 sm:shadow-[0_20px_60px_rgba(0,0,0,0.7)]
-             sm:backdrop-blur-2xl"
+ text-white sm:h-[90dvh] {maxWidthClass}
+ bg-black/20 sm:rounded-xl sm:border
+ sm:border-white/8 sm:bg-white/4 sm:shadow-[0_20px_60px_rgba(0,0,0,0.7)]"
       style={touchStyle}
       onclick={(e) => e.stopPropagation()}
       transition:fly={{ y: 18, duration: 240, easing: cubicOut }}

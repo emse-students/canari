@@ -69,7 +69,7 @@
   rel="noopener noreferrer"
   class="group relative isolate overflow-hidden {standalone
     ? ''
-    : 'mt-3'} flex items-center gap-3.5 rounded-2xl border border-black/5 bg-gradient-to-br from-amber-100/50 via-white/45 to-rose-100/40 p-3 pr-2.5 backdrop-blur-xl transition-all duration-300 hover:border-amber-500/40 hover:shadow-lg hover:shadow-amber-500/10 dark:border-white/10 dark:from-amber-400/10 dark:via-black/25 dark:to-fuchsia-400/10 dark:hover:shadow-amber-400/5"
+    : 'mt-3'} flex items-center gap-3.5 rounded-2xl border border-black/5 bg-gradient-to-br from-amber-100/50 via-white/45 to-rose-100/40 p-3 pr-2.5 transition-all duration-300 hover:border-amber-500/40 hover:shadow-lg hover:shadow-amber-500/10 dark:border-white/10 dark:from-amber-400/10 dark:via-black/25 dark:to-fuchsia-400/10 dark:hover:shadow-amber-400/5"
 >
   <!-- The cover's own colours, blurred out of legibility, under a scrim -->
   {#if coverUrl}
@@ -80,16 +80,16 @@
       loading="lazy"
       class="absolute inset-0 -z-10 h-full w-full scale-150 object-cover opacity-45 blur-2xl saturate-150 transition-opacity duration-500 group-hover:opacity-60 dark:opacity-35 dark:group-hover:opacity-50"
     />
-    <div class="absolute inset-0 -z-10 bg-white/55 dark:bg-black/55" aria-hidden="true"></div>
+    <div class="bg-cn-surface absolute inset-0 -z-10" aria-hidden="true"></div>
   {/if}
 
   <!-- Cover, printed on a stack of the album's other photos -->
   <div class="relative aspect-square w-24 shrink-0 sm:w-28">
     <div
-      class="absolute inset-0 scale-90 rotate-6 rounded-xl bg-white/70 shadow-sm transition-transform duration-500 motion-safe:group-hover:rotate-[14deg] dark:bg-white/15"
+      class="bg-cn-surface absolute inset-0 scale-90 rotate-6 rounded-xl shadow-sm transition-transform duration-500 motion-safe:group-hover:rotate-[14deg]"
     ></div>
     <div
-      class="absolute inset-0 scale-95 rotate-3 rounded-xl bg-white/85 shadow-sm transition-transform duration-500 motion-safe:group-hover:rotate-[7deg] dark:bg-white/20"
+      class="bg-cn-surface absolute inset-0 scale-95 rotate-3 rounded-xl shadow-sm transition-transform duration-500 motion-safe:group-hover:rotate-[7deg]"
     ></div>
 
     <div
@@ -115,7 +115,7 @@
   <!-- Text metadata -->
   <div class="flex min-w-0 flex-1 flex-col justify-center gap-1">
     <span
-      class="inline-flex max-w-full items-center gap-1 self-start truncate rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[0.6rem] font-bold tracking-wider text-amber-800 dark:bg-amber-400/12 dark:text-amber-300"
+      class="text-2xs inline-flex max-w-full items-center gap-1 self-start truncate rounded-md bg-amber-500/15 px-1.5 py-0.5 font-bold tracking-wider text-amber-800 dark:bg-amber-400/12 dark:text-amber-300"
     >
       <Images size={11} strokeWidth={2.5} />
       {siteLabel}

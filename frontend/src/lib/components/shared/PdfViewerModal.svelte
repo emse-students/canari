@@ -499,7 +499,7 @@
     <FileText size={16} strokeWidth={2.5} class="shrink-0 opacity-70" />
     <p class="min-w-0 flex-1 truncate text-xs opacity-80 sm:text-sm">{fileName}</p>
     {#if pageCount > 0}
-      <span class="shrink-0 text-[0.7rem] tabular-nums opacity-50">
+      <span class="text-2xs shrink-0 tabular-nums opacity-50">
         {m.pdf_viewer_page_count({ count: pageCount })}
       </span>
     {/if}

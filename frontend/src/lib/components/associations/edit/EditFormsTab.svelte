@@ -125,7 +125,7 @@
   }
 </script>
 
-<div class="border-cn-border space-y-5 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm">
+<div class="border-cn-border bg-cn-surface space-y-5 rounded-2xl border p-6 shadow-sm">
   <div>
     <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
       <ClipboardList size={20} />

@@ -142,7 +142,7 @@
 
 <!-- Main header -->
 <header
-  class="relative z-20 flex items-center gap-3 border-b border-black/5 bg-white/70 px-3 py-3 backdrop-blur-2xl md:gap-4 md:px-6 dark:border-white/10 dark:bg-black/50"
+  class="bg-cn-surface relative z-20 flex items-center gap-3 border-b border-black/5 px-3 py-3 md:gap-4 md:px-6 dark:border-white/10"
 >
   <!-- Back button (mobile) - fixed width so the avatar stays centered -->
   <div class="flex w-8 flex-shrink-0 items-center justify-start md:hidden">
@@ -179,13 +179,13 @@
 
   <!-- Info (name, status) -->
   <div class="flex min-w-0 flex-1 flex-col justify-center">
-    <h2 class="text-text-main mb-0.5 truncate text-base leading-tight font-bold md:text-[1.05rem]">
+    <h2 class="text-text-main mb-0.5 truncate text-base leading-tight font-bold md:text-base">
       {effectiveDisplayName}
     </h2>
 
     {#if isChannel}
       <span
-        class="text-text-muted inline-flex items-center text-[0.7rem] font-semibold tracking-wider uppercase md:text-xs"
+        class="text-text-muted text-2xs inline-flex items-center font-semibold tracking-wider uppercase md:text-xs"
       >
         {m.chat_community_channel_label()}
       </span>

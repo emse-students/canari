@@ -89,13 +89,11 @@
             <!-- Notification type icon -->
             <span
               class="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full
-                {notif.type === 'reaction' ? 'bg-pink-500/10 text-pink-500' : ''}
-                {notif.type === 'mention'
-                ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
-                : ''}
-                {notif.type === 'reply' ? 'bg-blue-500/10 text-blue-500' : ''}
-                {notif.type === 'comment' ? 'bg-green-500/10 text-green-600' : ''}
-                {notif.type === 'form_reminder' ? 'bg-purple-500/10 text-purple-500' : ''}"
+ {notif.type === 'reaction' ? 'bg-pink-500/10 text-pink-500' : ''}
+ {notif.type === 'mention' ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400' : ''}
+ {notif.type === 'reply' ? 'bg-blue-500/10 text-blue-500' : ''}
+ {notif.type === 'comment' ? 'bg-green-500/10 text-green-600' : ''}
+ {notif.type === 'form_reminder' ? 'bg-purple-500/10 text-purple-500' : ''}"
             >
               {#if notif.type === 'reaction'}
                 <span class="text-lg leading-none">{reactionTypeToEmoji(notif.text)}</span>

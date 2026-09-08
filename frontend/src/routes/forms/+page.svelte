@@ -166,7 +166,7 @@
 <div class="mx-auto max-w-3xl px-4 py-6 sm:px-6">
   <div class="mb-8 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
     <div>
-      <h1 class="text-text-main text-2xl font-extrabold tracking-tight">{m.form_list_title()}</h1>
+      <h1 class="text-text-main text-2xl font-bold tracking-tight">{m.form_list_title()}</h1>
       <p class="text-text-muted mt-0.5 text-sm">
         {forms.length === 1 ? m.form_list_count_one() : m.form_list_count({ count: forms.length })}
       </p>
@@ -352,7 +352,7 @@
                           <td class="py-2 pr-4">
                             <span
                               class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold
-                              {sub.paymentStatus === 'paid'
+ {sub.paymentStatus === 'paid'
                                 ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300'
                                 : sub.paymentStatus === 'free'
                                   ? 'bg-cn-border/40 text-text-muted'

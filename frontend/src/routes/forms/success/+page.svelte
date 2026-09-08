@@ -54,7 +54,7 @@
         </div>
       </div>
       <div>
-        <h1 class="text-text-main text-2xl font-extrabold tracking-tight">
+        <h1 class="text-text-main text-2xl font-bold tracking-tight">
           {m.form_success_confirmed_heading()}
         </h1>
         <p class="text-text-muted mt-2">
@@ -74,7 +74,7 @@
         </div>
       </div>
       <div>
-        <h1 class="text-text-main text-2xl font-extrabold tracking-tight">
+        <h1 class="text-text-main text-2xl font-bold tracking-tight">
           {m.form_success_not_found_heading()}
         </h1>
         <p class="text-text-muted mt-2">

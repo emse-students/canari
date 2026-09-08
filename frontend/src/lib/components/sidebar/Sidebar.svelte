@@ -381,7 +381,7 @@
   aria-label={viewMode === 'communities'
     ? m.nav_communities_landmark()
     : m.nav_conversations_landmark()}
-  class="sidebar-panel flex h-full border-r border-white/50 bg-white/40 backdrop-blur-md dark:border-white/10 dark:bg-gray-900/50 {viewMode ===
+  class="sidebar-panel bg-cn-surface flex h-full border-r border-white/50 dark:border-white/10 {viewMode ===
   'communities'
     ? 'flex-row'
     : 'flex-col'} {drawerMode
@@ -458,16 +458,16 @@
       />
     {:else}
       <div
-        class="sticky top-0 z-10 flex items-center justify-between border-b border-white/50 bg-white/30 px-4 py-3 backdrop-blur-sm dark:border-white/10 dark:bg-gray-900/40"
+        class="sticky top-0 z-10 flex items-center justify-between border-b border-white/50 bg-white/30 px-4 py-3 dark:border-white/10 dark:bg-gray-900/40"
       >
-        <h2 class="text-text-main truncate text-lg font-black tracking-tight">
+        <h2 class="text-text-main truncate text-lg font-bold tracking-tight">
           {selectedCommunityWorkspace?.name || m.sidebar_communities_fallback()}
         </h2>
 
         <div class="flex items-center gap-1">
           {#if selectedCommunityWorkspace}
             <button
-              class="text-text-muted hover:text-text-main flex h-8 w-8 items-center justify-center rounded-full transition-colors hover:bg-white/50 dark:hover:bg-black/30"
+              class="text-text-muted hover:text-text-main hover:bg-cn-surface flex h-8 w-8 items-center justify-center rounded-full transition-colors dark:hover:bg-black/30"
               onclick={() => {
                 showCommunityAdminModal = true;
               }}
@@ -482,7 +482,7 @@
             <button
               type="button"
               onclick={() => onCloseDrawer?.()}
-              class="text-text-muted flex h-8 w-8 items-center justify-center rounded-full bg-transparent transition-colors hover:bg-white/65 dark:hover:bg-black/30"
+              class="text-text-muted hover:bg-cn-surface flex h-8 w-8 items-center justify-center rounded-full bg-transparent transition-colors dark:hover:bg-black/30"
               aria-label={m.common_close_label()}
             >
               <X size={18} />
@@ -591,7 +591,7 @@
                 class="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors {selectedChannelId ===
                 channel.id
                   ? 'text-text-main bg-[color-mix(in_srgb,var(--cn-yellow)_16%,transparent)]'
-                  : 'text-text-muted hover:text-text-main hover:bg-white/40 dark:hover:bg-black/20'}"
+                  : 'text-text-muted hover:text-text-main hover:bg-cn-surface dark:hover:bg-black/20'}"
               >
                 <span class="opacity-70" aria-hidden="true">
                   {#if channel.isPrivate}
@@ -609,7 +609,7 @@
                 {#if unjoined}
                   <span
                     aria-hidden="true"
-                    class="border-text-muted/30 rounded-full border px-2 py-0.5 text-[0.65rem] font-semibold tracking-wide uppercase"
+                    class="border-text-muted/30 text-2xs rounded-full border px-2 py-0.5 font-semibold tracking-wide uppercase"
                   >
                     {m.chat_channel_join_as_admin_label()}
                   </span>
@@ -617,7 +617,7 @@
                 {#if channel.unreadCount}
                   <span
                     aria-hidden="true"
-                    class="bg-cn-dark text-cn-yellow inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[0.65rem] font-extrabold"
+                    class="bg-cn-dark text-cn-yellow text-2xs inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 font-bold"
                   >
                     {channel.unreadCount}
                   </span>
@@ -629,7 +629,7 @@
               <button
                 type="button"
                 onclick={() => openNewChatModal('channel')}
-                class="border-text-muted/30 text-text-muted hover:text-text-main mt-2 flex w-full items-center gap-2 rounded-xl border border-dashed px-3 py-2 text-left transition-colors hover:bg-white/40 dark:hover:bg-black/20"
+                class="border-text-muted/30 text-text-muted hover:text-text-main hover:bg-cn-surface mt-2 flex w-full items-center gap-2 rounded-xl border border-dashed px-3 py-2 text-left transition-colors dark:hover:bg-black/20"
               >
                 <Plus size={16} aria-hidden="true" />
                 <span class="text-sm font-medium">{m.chat_add_channel_label()}</span>

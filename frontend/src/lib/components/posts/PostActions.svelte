@@ -67,7 +67,7 @@
             title={reaction.type}
           >
             <span class="text-2xl">{reaction.emoji}</span>
-            <span class="text-text-muted text-[0.6rem] font-bold">{reaction.type}</span>
+            <span class="text-text-muted text-2xs font-bold">{reaction.type}</span>
           </button>
         {/each}
       </div>

@@ -142,7 +142,7 @@
   }
 </script>
 
-<div class="border-cn-border space-y-5 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm">
+<div class="border-cn-border bg-cn-surface space-y-5 rounded-2xl border p-6 shadow-sm">
   <div class="flex flex-wrap items-start justify-between gap-3">
     <div>
       <h2 class="text-text-main text-lg font-bold tracking-tight">{m.common_members_label()}</h2>

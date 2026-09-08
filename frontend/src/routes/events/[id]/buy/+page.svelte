@@ -55,7 +55,7 @@
 
 <div class="flex min-h-dvh items-start justify-center px-4 py-8 sm:px-6">
   <div class="border-cn-border bg-cn-surface/80 w-full max-w-md rounded-2xl border p-6 shadow-sm">
-    <h1 class="text-text-main mb-6 text-2xl font-extrabold tracking-tight">
+    <h1 class="text-text-main mb-6 text-2xl font-bold tracking-tight">
       {m.event_buy_heading()}
     </h1>
 

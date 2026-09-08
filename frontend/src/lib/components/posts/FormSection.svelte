@@ -50,12 +50,10 @@
 </script>
 
 <div
-  class="border-cn-border/60 bg-cn-surface/70 rounded-2xl border p-5 shadow-sm ring-1 ring-black/[0.02] dark:bg-black/25 dark:ring-white/[0.04]"
+  class="border-cn-border/60 bg-cn-surface/70 rounded-2xl border p-5 shadow-sm ring-1 ring-black/[0.02] dark:ring-white/[0.04]"
 >
   <div class="mb-4 flex items-center justify-between gap-2">
-    <p
-      class="text-text-muted flex items-center gap-2 text-[0.75rem] font-bold tracking-widest uppercase"
-    >
+    <p class="text-text-muted text-2xs flex items-center gap-2 font-bold tracking-widest uppercase">
       <ClipboardList size={16} strokeWidth={2.5} class="text-cn-yellow shrink-0" />
       {m.post_form_fallback_title()}
     </p>

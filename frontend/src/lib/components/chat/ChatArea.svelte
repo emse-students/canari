@@ -924,7 +924,7 @@
           </div>
         </div>
         {#if searchLimitedToLoaded && searchQuery.trim().length >= 2}
-          <p class="text-text-muted px-1 pt-1 text-[0.7rem]">
+          <p class="text-text-muted text-2xs px-1 pt-1">
             {m.chat_search_limited_loaded_warning()}
           </p>
         {/if}
@@ -936,7 +936,7 @@
         <button
           type="button"
           onclick={() => (showPolls = !showPolls)}
-          class="border-cn-border text-text-main flex w-full items-center gap-2 rounded-xl border bg-(--cn-surface)/80 px-3 py-1.5 text-left text-sm transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+          class="border-cn-border text-text-main bg-cn-surface flex w-full items-center gap-2 rounded-xl border px-3 py-1.5 text-left text-sm transition-colors hover:bg-black/5 dark:hover:bg-white/5"
         >
           <ChartColumn size={14} class="text-cn-yellow shrink-0" />
           <span class="font-semibold"
@@ -974,7 +974,7 @@
         <button
           type="button"
           onclick={() => (showPinned = !showPinned)}
-          class="border-cn-border text-text-main flex w-full items-center gap-2 rounded-xl border bg-(--cn-surface)/80 px-3 py-1.5 text-left text-sm transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+          class="border-cn-border text-text-main bg-cn-surface flex w-full items-center gap-2 rounded-xl border px-3 py-1.5 text-left text-sm transition-colors hover:bg-black/5 dark:hover:bg-white/5"
         >
           <Pin size={14} class="shrink-0 text-amber-500" />
           <span class="font-semibold"
@@ -1155,7 +1155,7 @@
         </span>
         {#if hiddenBelowCount > 0}
           <span
-            class="text-cn-dark pointer-events-none absolute -top-1.5 -right-1.5 inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-amber-500 px-1 text-[0.6rem] font-extrabold shadow-sm shadow-amber-500/30"
+            class="text-cn-dark text-2xs pointer-events-none absolute -top-1.5 -right-1.5 inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-amber-500 px-1 font-bold shadow-sm shadow-amber-500/30"
             aria-hidden="true"
           >
             {hiddenBelowCount > 99 ? '99+' : hiddenBelowCount}
@@ -1239,7 +1239,7 @@
       <!-- Safety net: when a conversation ID is selected but its object is null (e.g. load race),
            the back button must still be reachable on mobile or the user is completely stuck. -->
       <header
-        class="z-20 flex items-center border-b border-black/5 bg-white/70 px-3 py-3 backdrop-blur-2xl md:hidden dark:border-white/10 dark:bg-black/50"
+        class="bg-cn-surface z-20 flex items-center border-b border-black/5 px-3 py-3 md:hidden dark:border-white/10"
       >
         <button
           onclick={onBack}

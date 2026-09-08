@@ -314,10 +314,10 @@
   <div class="-mx-6 -my-4 flex h-full max-h-[800px] flex-col md:h-[65vh] md:flex-row">
     <!-- Barre de menu latérale (Onglets sur mobile) -->
     <div
-      class="custom-scrollbar flex w-full shrink-0 flex-row gap-2 overflow-x-auto border-b border-black/5 bg-white/40 p-3 md:w-64 md:flex-col md:gap-1 md:overflow-x-visible md:border-r md:border-b-0 md:p-5 dark:border-white/10 dark:bg-black/20"
+      class="custom-scrollbar bg-cn-surface flex w-full shrink-0 flex-row gap-2 overflow-x-auto border-b border-black/5 p-3 md:w-64 md:flex-col md:gap-1 md:overflow-x-visible md:border-r md:border-b-0 md:p-5 dark:border-white/10"
     >
       <h3
-        class="text-text-muted mb-3 hidden items-center gap-2 px-2 text-[0.7rem] font-extrabold tracking-widest uppercase md:flex"
+        class="text-text-muted text-2xs mb-3 hidden items-center gap-2 px-2 font-bold tracking-widest uppercase md:flex"
       >
         <span class="text-lg leading-none text-amber-500">{m.chat_channel_prefix()}</span>
         <span class="truncate"
@@ -387,7 +387,7 @@
               <div class="flex gap-2">
                 <input
                   id="channel-name"
-                  class="w-full rounded-xl border border-black/10 bg-white/80 px-4 py-3 text-sm font-semibold shadow-inner transition-all outline-none focus:ring-2 focus:ring-amber-500/50 dark:border-white/10 dark:bg-black/40"
+                  class="bg-cn-surface w-full rounded-xl border border-black/10 px-4 py-3 text-sm font-semibold shadow-inner transition-all outline-none focus:ring-2 focus:ring-amber-500/50 dark:border-white/10"
                   bind:value={channelNameInput}
                   onkeydown={(e) => e.key === 'Enter' && handleRenameChannel()}
                   placeholder={m.chat_channel_name_placeholder()}
@@ -517,7 +517,7 @@
       {#if activeTab === 'access'}
         <div class="animate-in fade-in slide-in-from-bottom-2 max-w-2xl space-y-6 duration-300">
           <div>
-            <h2 class="text-text-main mb-1 text-xl font-extrabold">
+            <h2 class="text-text-main mb-1 text-xl font-bold">
               {m.chat_channel_access_title()}
             </h2>
             <p class="text-text-muted text-sm leading-relaxed font-medium">
@@ -536,7 +536,7 @@
             </div>
           {:else}
             <div
-              class="space-y-5 rounded-[1.5rem] border border-black/5 bg-white/60 p-5 shadow-sm dark:border-white/10 dark:bg-black/20"
+              class="bg-cn-surface space-y-5 rounded-[1.5rem] border border-black/5 p-5 shadow-sm dark:border-white/10"
             >
               <!-- ═══ Visibility toggle ═══ -->
               <div class="flex items-center justify-between gap-4">
@@ -596,7 +596,7 @@
                   </p>
                 </div>
                 <select
-                  class="w-full appearance-none rounded-xl border border-black/10 bg-white/80 px-4 py-3 text-sm font-semibold shadow-inner transition-all outline-none focus:ring-2 focus:ring-amber-500/50 dark:border-white/10 dark:bg-black/40"
+                  class="bg-cn-surface w-full appearance-none rounded-xl border border-black/10 px-4 py-3 text-sm font-semibold shadow-inner transition-all outline-none focus:ring-2 focus:ring-amber-500/50 dark:border-white/10"
                   bind:value={writePolicy}
                 >
                   <option value="everyone">{m.chat_channel_write_everyone()}</option>

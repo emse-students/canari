@@ -66,7 +66,7 @@
   <div class="flex items-center gap-3">
     <Users class="text-cn-accent h-7 w-7 shrink-0" />
     <div>
-      <h1 class="text-text-main text-2xl font-extrabold tracking-tight">{m.directory_heading()}</h1>
+      <h1 class="text-text-main text-2xl font-bold tracking-tight">{m.directory_heading()}</h1>
       <p class="text-text-muted mt-0.5 text-sm">
         {m.directory_subtitle()}
       </p>
@@ -74,7 +74,7 @@
   </div>
 
   <form
-    class="border-cn-border space-y-4 rounded-2xl border bg-(--cn-surface)/90 p-5 shadow-sm"
+    class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-5 shadow-sm"
     onsubmit={(e) => void handleSearch(e)}
   >
     <div>
@@ -174,7 +174,7 @@
           <li>
             <a
               href="/profile/{encodeURIComponent(user.id)}"
-              class="border-cn-border hover:border-cn-yellow/40 flex items-center gap-3 rounded-2xl border bg-(--cn-surface)/90 px-4 py-3 transition-colors"
+              class="border-cn-border hover:border-cn-yellow/40 bg-cn-surface flex items-center gap-3 rounded-2xl border px-4 py-3 transition-colors"
             >
               <div class="h-11 w-11 shrink-0 overflow-hidden rounded-full">
                 <Avatar userId={user.id} fill shape="circle" />

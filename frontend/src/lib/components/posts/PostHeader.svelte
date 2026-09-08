@@ -61,22 +61,20 @@
       {#if post.association}
         <a
           href={associationHref}
-          class="text-text-main text-[0.95rem] font-bold transition-colors outline-none hover:text-amber-600 focus-visible:underline dark:hover:text-amber-400"
+          class="text-text-main text-sm font-bold transition-colors outline-none hover:text-amber-600 focus-visible:underline dark:hover:text-amber-400"
         >
           {post.association.name}
         </a>
       {:else}
         <a
           href="/profile/{encodeURIComponent(post.authorId ?? '')}"
-          class="text-text-main text-[0.95rem] font-bold transition-colors outline-none hover:text-amber-600 focus-visible:underline dark:hover:text-amber-400"
+          class="text-text-main text-sm font-bold transition-colors outline-none hover:text-amber-600 focus-visible:underline dark:hover:text-amber-400"
         >
           {getPostAuthorName()}
         </a>
       {/if}
     </div>
-    <div
-      class="text-text-muted mt-0.5 flex items-center gap-1.5 text-[0.75rem] font-medium opacity-80"
-    >
+    <div class="text-text-muted text-2xs mt-0.5 flex items-center gap-1.5 font-medium opacity-80">
       <Clock size={12} strokeWidth={2.5} />
       <span title={exactDate(post.createdAt)}>{timeAgo(post.createdAt)}</span>
     </div>

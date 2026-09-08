@@ -66,7 +66,7 @@
     </div>
   {/if}
 
-  <div class="border-cn-border space-y-3 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm">
+  <div class="border-cn-border bg-cn-surface space-y-3 rounded-2xl border p-6 shadow-sm">
     <h2 class="text-text-main flex items-center gap-2 text-base font-bold">
       <Building2 size={18} />
       {asso.archived

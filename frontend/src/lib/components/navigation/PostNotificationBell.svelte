@@ -43,7 +43,7 @@
     <Bell size={18} strokeWidth={2} />
     {#if postNotifStore.unread > 0}
       <span
-        class="absolute -top-0.5 -right-0.5 flex h-[1.1rem] min-w-[1.1rem] items-center justify-center rounded-full bg-red-500 px-0.5 text-[0.6rem] font-bold text-white"
+        class="text-2xs absolute -top-0.5 -right-0.5 flex h-[1.1rem] min-w-[1.1rem] items-center justify-center rounded-full bg-red-500 px-0.5 font-bold text-white"
       >
         {postNotifStore.unread > 9 ? '9+' : postNotifStore.unread}
       </span>

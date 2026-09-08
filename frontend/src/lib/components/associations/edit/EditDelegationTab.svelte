@@ -199,9 +199,7 @@
     </div>
   {:else}
     <!-- Club-side: delegate this association's payments to a parent. -->
-    <section
-      class="border-cn-border space-y-4 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm"
-    >
+    <section class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
       <div>
         <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
           <Share2 size={20} />
@@ -284,9 +282,7 @@
     </section>
 
     <!-- Parent-side: incoming delegation requests and approved children accounting. -->
-    <section
-      class="border-cn-border space-y-4 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm"
-    >
+    <section class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
       <div>
         <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
           <Inbox size={20} />

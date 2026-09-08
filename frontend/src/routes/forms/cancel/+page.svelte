@@ -36,7 +36,7 @@
       </div>
     </div>
     <div>
-      <h1 class="text-text-main text-2xl font-extrabold tracking-tight">{m.form_cancel_title()}</h1>
+      <h1 class="text-text-main text-2xl font-bold tracking-tight">{m.form_cancel_title()}</h1>
       <p class="text-text-muted mt-2">
         {m.form_cancel_desc()}
       </p>

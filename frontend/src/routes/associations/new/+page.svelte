@@ -50,7 +50,7 @@
       <ArrowLeft size={16} />
       {m.assoc_new_back()}
     </a>
-    <h1 class="text-text-main mt-2 text-2xl font-extrabold tracking-tight">
+    <h1 class="text-text-main mt-2 text-2xl font-bold tracking-tight">
       {m.assoc_new_heading()}
     </h1>
   </div>

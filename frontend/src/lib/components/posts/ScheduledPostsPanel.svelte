@@ -27,7 +27,7 @@
   }
 </script>
 
-<div class="border-cn-border mb-5 overflow-hidden rounded-2xl border bg-(--cn-surface)/40">
+<div class="border-cn-border bg-cn-surface mb-5 overflow-hidden rounded-2xl border">
   <!-- Panel header -->
   <div class="border-cn-border flex items-center gap-2 border-b bg-amber-500/5 px-4 py-2.5">
     <Clock size={14} class="shrink-0 text-amber-500" />
