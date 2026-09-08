@@ -11,6 +11,32 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - the detector for a lost keystore compared how MANY bundles there were, not which ones
+
+`recharger_mls_au_resume` accepts a reload on an epoch guard, and key material is not a group epoch -
+a snapshot predating a mint installs a keystore missing bundles the device published seconds earlier,
+`key_package_a_clef_privee` then answers `false` about its own fresh mints, and
+`reconcilePublishedKeyPackages` reads that as a server orphan. That gap was known and deliberately
+ACCUSED rather than refused, by a line reading `[RESUME] reload DROPS KEY MATERIAL`.
+
+The accusation could not fire on the shape the hardware produced. It compared cardinalities -
+`candidate_count < live_count` - and a reload that drops six bundles while a mint adds six leaves the
+count identical. Measured on the Mi 9T on 2026-09-08: `REFUSED to purge 6/50 prekey(s) this session
+published itself` on two consecutive reconnections, six of the device's own mints unbacked, and that
+line silent both times. The symptom was loud for two days while the detector written for its cause
+said nothing.
+
+`MlsManager::key_package_keys()` returns WHICH bundles a keystore holds, and the guard now reports the
+set difference with both cardinalities beside it, because `lost=6 live=50 loading=50` is a
+substitution and `lost=6 live=50 loading=44` is a shrink. The label rule that decides what counts as a
+KeyPackage row is extracted to one function, so the two callers that ask different questions about the
+same rows cannot drift apart. Proved by a test that expires the first batch and mints a second of the
+same size: the counts agree, the set names all six, and `key_package_has_private` - the question the
+reconciliation actually asks - agrees with the set.
+
+A cardinality cannot answer "which ones", and this is the second time this month that a column has
+been read as evidence for a question it was not written to answer.
+
 ### Fixed - a commit pushed onto an armed pull request was dropped, and every signal said it had landed
 
 PR #438 was opened with two commits; a third was committed and pushed while CI was still running. The

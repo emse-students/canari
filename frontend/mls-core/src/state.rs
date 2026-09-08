@@ -6,7 +6,7 @@ use openmls_traits::OpenMlsProvider;
 use openmls_traits::storage::StorageProvider;
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use tls_codec::{Deserialize as TlsDeserialize, Serialize as TlsSerialize};
 
 use crate::MlsError;
@@ -155,6 +155,21 @@ pub(crate) const STORAGE_LABELS: &[&str] = &[
     "MessageSecrets",
 ];
 
+/// Which [`STORAGE_LABELS`] prefix a raw storage key belongs to - longest match wins.
+///
+/// ONE COPY, because two callers ask different questions about the SAME rows: `state_composition`
+/// counts them and `key_package_keys` names them. A label rule written twice is those two drifting
+/// apart, and the second one deciding a reload is safe when the first would have said otherwise.
+/// Longest-match matters: several labels share a prefix, and the shortest would swallow the rest.
+fn storage_label(key: &[u8]) -> String {
+    STORAGE_LABELS
+        .iter()
+        .filter(|l| key.starts_with(l.as_bytes()))
+        .max_by_key(|l| l.len())
+        .map(|l| (*l).to_string())
+        .unwrap_or_else(|| "UNKNOWN".to_string())
+}
+
 /// One storage label's share of the state: how many entries, and how many bytes they occupy.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoragePortion {
@@ -192,12 +207,7 @@ impl MlsManager {
 
         let mut by_label: HashMap<String, StoragePortion> = HashMap::new();
         for (k, v) in values.iter() {
-            let label = STORAGE_LABELS
-                .iter()
-                .filter(|l| k.starts_with(l.as_bytes()))
-                .max_by_key(|l| l.len())
-                .map(|l| (*l).to_string())
-                .unwrap_or_else(|| "UNKNOWN".to_string());
+            let label = storage_label(k);
             let e = by_label.entry(label.clone()).or_insert(StoragePortion {
                 label,
                 entries: 0,
@@ -256,6 +266,36 @@ impl MlsManager {
             .into_iter()
             .find(|r| r.label == "KeyPackage")
             .map_or(0, |r| r.entries))
+    }
+
+    /// WHICH key package bundles this keystore holds - the axis a COUNT cannot answer.
+    ///
+    /// [`Self::key_package_count`] says HOW MANY, and the resume guard in `recharger_mls_au_resume`
+    /// compared cardinalities: a candidate holding FEWER than the live manager was accused, and one
+    /// holding the same number was waved through. Measured on the Mi 9T on 2026-09-08, and it is why
+    /// this exists: `REFUSED to purge 6/50 prekey(s) this session published itself` - six of the
+    /// device's own fresh mints unbacked by the installed keystore - while
+    /// `[RESUME] reload DROPS KEY MATERIAL` did not print once. A reload that drops six bundles and a
+    /// mint that adds six leave the cardinality untouched, so the detector written for exactly this
+    /// loss was blind to the shape it took.
+    ///
+    /// A COLUMN IS ONLY EVIDENCE FOR THE QUESTION IT WAS WRITTEN TO ANSWER, and "how many" is not
+    /// "which ones". These are the identities, so a caller can name the bundles a reload would LOSE
+    /// instead of inferring a loss from a smaller number - and a substitution, which is what the
+    /// hardware actually showed, stops being invisible.
+    ///
+    /// @returns the raw storage keys of every `KeyPackage` entry, or the error that prevented reading
+    pub fn key_package_keys(&self) -> Result<BTreeSet<Vec<u8>>, MlsError> {
+        let storage = self.provider.storage();
+        let values = storage
+            .values
+            .read()
+            .map_err(|e| MlsError::OpenMls(format!("Storage lock poisoned: {e}")))?;
+        Ok(values
+            .keys()
+            .filter(|k| storage_label(k) == "KeyPackage")
+            .cloned()
+            .collect())
     }
 
     /// Marks the CBOR snapshot stale after any MLS state mutation.

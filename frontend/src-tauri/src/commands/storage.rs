@@ -86,18 +86,38 @@ pub(crate) async fn recharger_mls_au_resume(
             //
             // So the loss is NAMED rather than prevented: a correct mechanism with no report is
             // found by hand, a day late, and this line is what turns the open cause into a reading
-            // instead of an inference. Nobody has yet seen a device print it.
-            match (current.key_package_count(), candidate.key_package_count()) {
-                (Ok(live), Ok(cand)) if cand < live => log::error!(
-                    "[RESUME] reload DROPS KEY MATERIAL - live keystore holds {} key package(s), the                      mls.bin being loaded holds {}. Every group is at or ahead of its live epoch, so                      the epoch guard cannot see this. The {} lost bundle(s) are packages this device                      may have PUBLISHED, and the reconciliation will read them back as server orphans                      and purge the pool (see backlog: the prekey purge loop). Accepted anyway - see                      the comment above for why refusing would be worse.",
-                    live,
-                    cand,
-                    live - cand
-                ),
+            // instead of an inference.
+            //
+            // AND IT COMPARED CARDINALITIES UNTIL 2026-09-08, WHICH IS NOT THE QUESTION. `cand <
+            // live` accuses a candidate holding FEWER bundles and waves through one holding the same
+            // number - so a reload that drops six and a mint that adds six is invisible to the very
+            // detector written for it. That is not hypothetical: measured on the Mi 9T that day,
+            // `reconcilePublishedKeyPackages` printed `REFUSED to purge 6/50 prekey(s) this session
+            // published itself` on two consecutive reconnections - six of the device's own mints
+            // unbacked by the installed keystore - and this line did not print once. The downstream
+            // symptom was visible and its cause was silent, which is exactly the shape that had the
+            // backlog entry calling candidate 2 unobserved for two days.
+            //
+            // A COLUMN IS ONLY EVIDENCE FOR THE QUESTION IT WAS WRITTEN TO ANSWER: "how many" cannot
+            // answer "which ones". The comparison is now a SET DIFFERENCE over the storage keys, so
+            // what is reported is the bundles the live manager holds and the candidate does not -
+            // a substitution included - and the two cardinalities go in the line beside it, because
+            // `lost=6 live=50 loading=50` and `lost=6 live=50 loading=44` are different accidents.
+            match (current.key_package_keys(), candidate.key_package_keys()) {
+                (Ok(live), Ok(cand)) => {
+                    let lost = live.difference(&cand).count();
+                    if lost > 0 {
+                        log::error!(
+                            "[RESUME] reload DROPS KEY MATERIAL - {} key package bundle(s) the live                              keystore holds are ABSENT from the mls.bin being loaded (live={},                              loading={}; equal totals mean a SUBSTITUTION, not a shrink). Every group is                              at or ahead of its live epoch, so the epoch guard cannot see this. The lost                              bundles are packages this device may have PUBLISHED, and the reconciliation                              will read them back as server orphans and purge the pool (see backlog: the                              prekey purge loop). Accepted anyway - see the comment above for why refusing                              would be worse.",
+                            lost,
+                            live.len(),
+                            cand.len()
+                        );
+                    }
+                }
                 (Err(e), _) | (_, Err(e)) => log::warn!(
-                    "[RESUME] key material could not be counted across this reload ({e}) - the epoch                      guard still held, but nothing checked whether key packages were dropped."
+                    "[RESUME] key material could not be enumerated across this reload ({e}) - the                      epoch guard still held, but nothing checked whether key packages were dropped."
                 ),
-                _ => {}
             }
         }
         *lock = Some(candidate);

@@ -26,6 +26,7 @@ plus the pointer here. Adding a rule there means asking first whether it belongs
 
 ## MLS state and keys -> [mls-protocol](protocols/mls-protocol.md), [auth](frontend/modules/auth.md)
 
+- **A CARDINALITY CANNOT ANSWER "WHICH ONES", SO A DETECTOR THAT COMPARES COUNTS IS BLIND TO A SUBSTITUTION.** The resume guard was written to catch a reload installing a keystore missing bundles this device had just published, and it compared `candidate_count < live_count`. A reload that drops six and a mint that adds six leaves the cardinality identical, and that is the shape hardware actually produced: on the Mi 9T, 2026-09-08, `reconcilePublishedKeyPackages` printed `REFUSED to purge 6/50 prekey(s) this session published itself` on two consecutive reconnections while `[RESUME] reload DROPS KEY MATERIAL` never printed - the downstream symptom loud, its cause silent, for two days. **Compare the SET, report the difference, and put both cardinalities in the line beside it**, because `lost=6 live=50 loading=50` is a substitution and `lost=6 live=50 loading=44` is a shrink, and they are different accidents. [mls-protocol](protocols/mls-protocol.md)
 Everything that touches the device key, the PIN, `mls.bin` or an unlock path is on those two pages.
 `desync` = [mls-desync-prevention](protocols/mls-desync-prevention.md).
 
