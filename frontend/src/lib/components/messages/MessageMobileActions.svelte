@@ -11,9 +11,9 @@
   } from '@lucide/svelte';
   import { fly, fade } from 'svelte/transition';
   import { m } from '$lib/paraglide/messages';
+  import { QUICK_REACTION_EMOJIS } from '$lib/utils/chat/messageActions';
 
   /** Quick-reaction emojis shown in the strip (WhatsApp/Messenger style). */
-  const QUICK_EMOJIS = ['❤️', '😂', '😮', '😢', '👍', '😡'] as const;
 
   interface Props {
     /** Whether the radial action menu overlay is visible. */
@@ -106,7 +106,7 @@
         <div
           class="bg-cn-surface flex items-center gap-1 rounded-full border border-black/10 px-3 py-2 shadow-2xl dark:border-white/10"
         >
-          {#each QUICK_EMOJIS as emoji (emoji)}
+          {#each QUICK_REACTION_EMOJIS as emoji (emoji)}
             {@const isActive = userReactions.includes(emoji)}
             <button
               type="button"

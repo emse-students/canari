@@ -243,7 +243,7 @@
             <span class="flex items-center gap-2">
               <span class="text-text-main font-bold">{card.label}</span>
               {#if card.badge}
-                <span class="text-2xs rounded-full bg-amber-500 px-2 py-0.5 font-bold text-white">
+                <span class="text-2xs text-cn-ink rounded-full bg-amber-500 px-2 py-0.5 font-bold">
                   {card.badge}
                 </span>
               {/if}

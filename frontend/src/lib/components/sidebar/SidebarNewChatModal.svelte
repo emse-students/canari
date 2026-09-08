@@ -121,7 +121,7 @@
         <button
           type="submit"
           disabled={!contactId.trim() || isSelf}
-          class="w-full rounded-xl bg-amber-500 py-2.5 font-semibold text-white transition-all duration-200 hover:bg-amber-400 focus:ring-2 focus:ring-amber-500/50 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+          class="text-cn-ink w-full rounded-xl bg-amber-500 py-2.5 font-semibold transition-all duration-200 hover:bg-amber-400 focus:ring-2 focus:ring-amber-500/50 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
         >
           {m.chat_modal_start_discussion_button()}
         </button>
@@ -152,7 +152,7 @@
         <button
           type="submit"
           disabled={!groupName.trim()}
-          class="w-full rounded-xl bg-amber-500 py-2.5 font-semibold text-white transition-all duration-200 hover:bg-amber-400 focus:ring-2 focus:ring-amber-500/50 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+          class="text-cn-ink w-full rounded-xl bg-amber-500 py-2.5 font-semibold transition-all duration-200 hover:bg-amber-400 focus:ring-2 focus:ring-amber-500/50 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
         >
           {m.chat_modal_create_group_button()}
         </button>

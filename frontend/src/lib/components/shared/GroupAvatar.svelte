@@ -48,7 +48,7 @@
   const iconSize = $derived(size === 'sm' ? 14 : size === 'lg' ? 22 : 18);
 
   const fallbackClasses = $derived(
-    variant === 'community' ? 'bg-amber-500 text-white' : 'bg-cn-dark text-cn-yellow'
+    variant === 'community' ? 'bg-amber-500 text-cn-ink' : 'bg-cn-ink text-cn-yellow'
   );
 
   function getInitials(n: string): string {

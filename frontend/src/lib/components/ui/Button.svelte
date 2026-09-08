@@ -36,7 +36,7 @@
       'bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover hover:shadow-md hover:shadow-cn-yellow/30 shadow-sm active:shadow-none',
     secondary: 'bg-cn-surface text-text-main hover:bg-cn-border/50 border border-cn-border',
     outline: 'bg-transparent border-2 border-cn-dark text-cn-dark hover:bg-cn-dark/5',
-    ghost: 'bg-transparent text-text-muted hover:text-text-main hover:bg-cn-surface/50',
+    ghost: 'bg-transparent text-text-muted hover:text-text-main hover:bg-cn-surface',
   };
 </script>
 

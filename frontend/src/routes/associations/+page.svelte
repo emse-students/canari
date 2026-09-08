@@ -77,7 +77,7 @@
       {#if canCreate}
         <a
           href="/associations/new"
-          class="bg-cn-yellow text-cn-dark hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-5 py-2 text-sm font-bold shadow-sm transition-all"
+          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-5 py-2 text-sm font-bold shadow-sm transition-all"
         >
           {m.assoc_new_create_btn()}
         </a>

@@ -56,8 +56,8 @@
    * banner then renders with no background - which is exactly the failure `cn-surface-alt` hit.
    */
   const SURFACE = {
-    neutral: 'bg-banner text-text-muted border-b border-cn-border',
-    warn: 'bg-banner-warn text-text-main border-b border-amber-warn/30',
+    neutral: 'bg-banner text-text-muted border border-cn-border',
+    warn: 'bg-banner-warn text-text-main border border-amber-warn/30',
     notice: 'bg-banner-notice text-cn-ink shadow-md',
     danger: 'bg-banner-danger text-white shadow-md',
     info: 'bg-banner-info text-white shadow-md',
@@ -65,7 +65,7 @@
 </script>
 
 <div
-  class="flex items-center gap-2 px-4 py-2 text-sm {center
+  class="mx-3 mt-2 flex items-center gap-2 rounded-xl px-4 py-2 text-sm {center
     ? 'justify-center text-center'
     : 'justify-between'} {SURFACE[variant]} {extra}"
   role={tone}

@@ -164,7 +164,7 @@
               type="button"
               class="group relative w-full overflow-hidden rounded-2xl border-2 p-4 text-left transition-all duration-300 outline-none focus-visible:ring-4 focus-visible:ring-amber-500/30 {isSelected
                 ? 'border-amber-500 bg-amber-500/5'
-                : 'bg-cn-surface hover:bg-cn-surface border-black/5 hover:border-amber-500/40 dark:border-white/5 dark:hover:bg-black/60'}"
+                : 'bg-cn-surface border-black/5 hover:border-amber-500/40 hover:bg-black/5 dark:border-white/5 dark:hover:bg-black/60'}"
               onclick={() => onVoteClick(poll.id, option.id, poll.multipleChoice)}
               aria-pressed={isSelected}
             >

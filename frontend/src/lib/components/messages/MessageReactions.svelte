@@ -64,7 +64,7 @@
         type="button"
         class="flex shrink-0 items-center gap-1.5 rounded-xl border px-2.5 py-1 text-sm shadow-sm transition-all duration-200 outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50 active:scale-95 {hasReacted
           ? 'border-amber-500/30 bg-amber-500/15 text-amber-700 hover:bg-amber-500/25 dark:border-amber-500/20 dark:bg-amber-500/20 dark:text-amber-400'
-          : 'text-text-muted hover:text-text-main bg-cn-surface hover:bg-cn-surface border-black/5 dark:border-white/10 dark:hover:bg-black/50'}"
+          : 'text-text-muted hover:text-text-main bg-cn-surface border-black/5 hover:bg-black/5 dark:border-white/10 dark:hover:bg-black/50'}"
         onclick={(e) => {
           e.stopPropagation(); // Prevent opening message info when clicking a reaction badge.
           onReact?.(emoji);

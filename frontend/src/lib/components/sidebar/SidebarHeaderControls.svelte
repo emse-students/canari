@@ -47,7 +47,7 @@
 
     <button
       onclick={onOpenNewChat}
-      class="text-text-main bg-cn-surface hover:bg-cn-surface flex h-8 w-8 items-center justify-center rounded-full border border-white/45 transition-colors dark:border-white/10 dark:hover:bg-black/40"
+      class="text-text-main bg-cn-surface flex h-8 w-8 items-center justify-center rounded-full border border-white/45 transition-colors hover:bg-black/5 dark:border-white/10 dark:hover:bg-black/40"
       title={activeSidebarTab === 'channels'
         ? m.chat_new_channel_title()
         : m.chat_new_discussion_title()}
@@ -61,7 +61,7 @@
       <button
         type="button"
         onclick={() => onOpenCommunityAdmin?.()}
-        class="text-text-main bg-cn-surface hover:bg-cn-surface flex h-8 w-8 items-center justify-center rounded-full border border-white/45 transition-colors dark:border-white/10 dark:hover:bg-black/40"
+        class="text-text-main bg-cn-surface flex h-8 w-8 items-center justify-center rounded-full border border-white/45 transition-colors hover:bg-black/5 dark:border-white/10 dark:hover:bg-black/40"
         aria-label={m.chat_manage_community_roles_label()}
         title={m.chat_manage_community_roles_title()}
       >

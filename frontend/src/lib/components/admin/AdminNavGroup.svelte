@@ -99,7 +99,7 @@
       bind:this={panelEl}
       id={panelId}
       use:portal
-      class="bg-cn-surface/95 fixed z-200 min-w-52 space-y-0.5 rounded-2xl border border-black/8 p-1.5 shadow-lg dark:border-white/10"
+      class="bg-cn-surface fixed z-200 min-w-52 space-y-0.5 rounded-2xl border border-black/8 p-1.5 shadow-lg dark:border-white/10"
     >
       {#each items as item (item.href)}
         <a

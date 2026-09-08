@@ -517,13 +517,13 @@
         placeholder={m.post_create_message_placeholder()}
         minHeight="120px"
         toolbarClass="mb-1"
-        editorClass="custom-scrollbar min-h-[120px] w-full max-w-full rounded-xl bg-transparent px-4 py-3.5 text-sm sm:text-sm font-medium leading-relaxed text-text-main"
+        editorClass="min-h-[120px] w-full max-w-full rounded-xl bg-transparent px-4 py-3.5 text-sm sm:text-sm font-medium leading-relaxed text-text-main"
       />
 
       <!-- Aperçu des médias & Légendes -->
       {#if selectedFiles.length > 0}
         <div
-          class="custom-scrollbar flex snap-x snap-mandatory gap-2.5 overflow-x-auto px-3 pt-2 pb-3"
+          class="flex snap-x snap-mandatory gap-2.5 overflow-x-auto px-3 pt-2 pb-3"
           transition:slide={{ duration: 200 }}
           role="list"
         >
@@ -624,7 +624,7 @@
     <div class="flex flex-col-reverse gap-4 pt-1 sm:flex-row sm:items-center sm:justify-between">
       <!-- Boutons d'ajouts (Toolbar) -->
       <div
-        class="custom-scrollbar bg-cn-surface flex w-full flex-wrap items-center gap-2 overflow-x-auto rounded-[1.25rem] border border-black/5 p-1.5 shadow-inner sm:w-auto dark:border-white/5"
+        class="bg-cn-surface flex w-full flex-wrap items-center gap-2 overflow-x-auto rounded-[1.25rem] border border-black/5 p-1.5 shadow-inner sm:w-auto dark:border-white/5"
       >
         <!-- Ajouter des médias -->
         <label
@@ -742,21 +742,6 @@
 </article>
 
 <style>
-  .custom-scrollbar::-webkit-scrollbar {
-    width: 4px;
-    height: 4px;
-  }
-  .custom-scrollbar::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  .custom-scrollbar::-webkit-scrollbar-thumb {
-    background: color-mix(in srgb, var(--cn-surface) 20%, transparent);
-    border-radius: 4px;
-  }
-  :global([data-theme='dark']) .custom-scrollbar::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.15);
-  }
-
   /* Hide Webkit's native calendar icon so only the custom Lucide one shows */
   input[type='datetime-local']::-webkit-calendar-picker-indicator {
     cursor: pointer;

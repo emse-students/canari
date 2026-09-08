@@ -1,6 +1,5 @@
 <script lang="ts">
   import { LoaderCircle, TriangleAlert, Check, CheckCheck, Clock } from '@lucide/svelte';
-  import { formatTime24 } from '$lib/utils/dates';
   import Avatar from '../shared/Avatar.svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -19,13 +18,6 @@
     readBy: string[];
     /** When true, renders outside the bubble (delivery/read indicators). */
     outsideBubble?: boolean;
-    /** Send time of the message, shown inside the bubble. */
-    timestamp?: Date;
-    /**
-     * Group position of the message within a run of consecutive messages from the same sender.
-     * Timestamp is suppressed on 'start' and 'middle' to reduce clutter (shown only on the last).
-     */
-    groupPosition?: 'single' | 'start' | 'middle' | 'end';
   }
 
   let {
@@ -36,23 +28,15 @@
     status,
     readBy,
     outsideBubble = false,
-    timestamp,
-    groupPosition,
   }: Props = $props();
 
   /*
-   * Show the timestamp on the last message of a group only (end/single), never mid-run - AND
-   * OUTSIDE THE BUBBLE, not in it.
-   *
-   * It used to render as its own flex row INSIDE the bubble, which made every bubble that carried
-   * one two lines tall: a one-line message measured 66px where the reference measures 35px. The
-   * reference puts no metadata inside a bubble at all - the bubble is exactly the text - and hangs
-   * the time under the group. Halving the height of the most repeated element on the screen is the
-   * single largest density win available here.
+   * THERE IS NO PER-MESSAGE TIMESTAMP (user, 2026-09-08). It was redundant twice over: the thread
+   * already prints a centred time between groups, and clicking a message opens `MessageInfoTooltip`
+   * with its exact time. What the row cost was a line of vertical margin under EVERY group, on the
+   * most repeated element in the application - and the reference prints no time in or under a bubble
+   * either. `formatTime24` is still used by the tooltip; only this row is gone.
    */
-  const showTimestamp = $derived(
-    outsideBubble && !!timestamp && groupPosition !== 'start' && groupPosition !== 'middle'
-  );
   const showEdited = $derived(isEdited && !outsideBubble);
   const showSendStatus = $derived(
     isOwn &&
@@ -70,7 +54,7 @@
       readBy.length === 0
   );
   const showRead = $derived(isOwn && isReadReceiptAnchor && outsideBubble && readBy.length > 0);
-  const show = $derived(showTimestamp || showEdited || showSendStatus || showSent || showRead);
+  const show = $derived(showEdited || showSendStatus || showSent || showRead);
 </script>
 
 {#if show}
@@ -79,11 +63,6 @@
       ? 'mt-0.5 justify-end px-0.5'
       : 'mt-1 justify-end'}"
   >
-    {#if showTimestamp}
-      <span class="text-2xs font-medium tabular-nums opacity-50">
-        {formatTime24(timestamp!)}
-      </span>
-    {/if}
     {#if showEdited}
       <span class="text-2xs font-medium italic opacity-65">{m.msg_modifie()}</span>
     {/if}

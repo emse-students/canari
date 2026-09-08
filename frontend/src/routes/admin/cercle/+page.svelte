@@ -303,7 +303,7 @@
               <button
                 type="button"
                 onclick={() => void handleToggleActive()}
-                class="border-cn-border hover:bg-cn-bg/50 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors"
+                class="border-cn-border hover:bg-cn-bg rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors"
               >
                 {product.isActive
                   ? m.admin_cercle_deactivate_button()

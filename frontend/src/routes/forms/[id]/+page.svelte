@@ -812,7 +812,7 @@
             onclick={reminder.toggle}
             disabled={reminder.toggling}
             class="flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold transition-colors {reminder.subscribed
-              ? 'bg-amber-600 text-white hover:bg-amber-700'
+              ? 'text-cn-ink bg-amber-600 hover:bg-amber-700'
               : 'bg-amber-warn/20 text-amber-warn hover:bg-amber-warn/30'}"
           >
             {#if reminder.subscribed}

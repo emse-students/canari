@@ -96,7 +96,7 @@
  disabled:cursor-not-allowed disabled:opacity-40
  {pending.danger
               ? 'bg-red-500 text-white hover:bg-red-600'
-              : 'bg-cn-yellow hover:bg-cn-yellow-hover text-cn-dark'}"
+              : 'bg-cn-yellow hover:bg-cn-yellow-hover text-cn-ink'}"
           >
             {pending.confirmLabel}
           </button>

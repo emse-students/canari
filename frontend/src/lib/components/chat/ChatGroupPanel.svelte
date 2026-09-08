@@ -232,7 +232,7 @@
       role="dialog"
       aria-modal="true"
       aria-label={m.chat_group_panel_label()}
-      class="text-text-main bg-cn-surface pointer-events-auto relative flex h-full w-full flex-col overflow-hidden border-l border-black/5 shadow-[-10px_0_30px_rgba(0,0,0,0.1)] md:w-[28rem] dark:border-white/10 dark:shadow-[-10px_0_30px_rgba(0,0,0,0.4)]"
+      class="app-drawer-panel text-text-main bg-cn-surface pointer-events-auto relative flex h-full w-full flex-col overflow-hidden md:w-[28rem]"
       transition:fly={{ x: 20, duration: 300, easing: (t) => t * (2 - t) }}
     >
       <!-- Panel header -->

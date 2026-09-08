@@ -81,6 +81,22 @@
     allowedUserIds,
   }: Props = $props();
 
+  /**
+   * Height of exactly one empty composer line, DERIVED FROM THE SAME TOKENS AS THE PADDING rather
+   * than typed as a number: the line box, plus `.chat-composer-textarea`'s 0.5rem of padding top and
+   * bottom.
+   *
+   * It used to be the literal `44px`, which matched that field's ORIGINAL 0.75rem padding
+   * (12 + 20 + 12). When the padding came down to the measured reference's 8px the natural height
+   * became 36px, but the hard floor still held the box at 44 - and because the placeholder is
+   * `absolute inset-0` and positions itself with the same padding, the placeholder text sat 8px below
+   * the top of a box 8px too tall instead of on its centre line. The floor and the padding are
+   * declared in two different files, so the only safe form is one that cannot disagree with the other.
+   */
+  const COMPOSER_MIN_HEIGHT = 'calc(var(--text-sm--line-height) + 1rem)';
+  /** Ceiling before the field scrolls instead of growing. Mirrors `.chat-composer-textarea`'s `max-height: 10rem`. */
+  const COMPOSER_MAX_HEIGHT_PX = 160;
+
   let mentionComposer = $state<MentionComposerInput | null>(null);
   let composerFooter = $state<HTMLElement | null>(null);
   let fileInput: HTMLInputElement | undefined = $state();
@@ -315,8 +331,22 @@
     tick().then(() => {
       const el = composer?.getEditorElement();
       if (!el) return;
-      el.style.height = '44px';
-      el.style.height = `${Math.min(Math.max(el.scrollHeight, 44), 160)}px`;
+      /*
+       * THE COLLAPSED HEIGHT BELONGS TO THE CSS, NOT TO THIS EFFECT. Clearing the inline height
+       * first lets `min-height` decide what one empty line is, and the grown height is only written
+       * when the content genuinely needs more than that.
+       *
+       * It used to write a literal `44px` as both the reset and the floor. That number was the
+       * field's height under its ORIGINAL padding, and an inline style beats every stylesheet - so
+       * when the padding moved to the measured 8px the box stayed pinned at 44 while `min-height`
+       * computed a correct 36, and the placeholder (absolutely positioned, padded from the top) sat
+       * 4px above the centre line. A hardcoded pixel height in script cannot be kept in agreement
+       * with a token in CSS; not writing one is the only form that can.
+       */
+      el.style.height = '';
+      const oneLine = el.getBoundingClientRect().height;
+      const needed = Math.min(el.scrollHeight, COMPOSER_MAX_HEIGHT_PX);
+      if (needed > oneLine) el.style.height = `${needed}px`;
     });
   });
 
@@ -643,7 +673,7 @@
         class="min-w-0 flex-1"
         editorClass="chat-composer-textarea"
         placeholder={m.chat_message_placeholder()}
-        minHeight="44px"
+        minHeight={COMPOSER_MIN_HEIGHT}
         onfocus={() => onFocusChange?.(true)}
         onblur={() => {
           onFocusChange?.(false);

@@ -75,7 +75,7 @@
     ? isOpen
       ? 'hidden w-64 border-l border-black/5 lg:w-72 xl:flex dark:border-white/10'
       : 'hidden'
-    : 'flex h-full w-full'} custom-scrollbar bg-cn-surface flex-col overflow-y-auto transition-all duration-300"
+    : 'flex h-full w-full'} bg-cn-surface flex-col overflow-y-auto transition-all duration-300"
 >
   {#if mode === 'mobile'}
     <div
@@ -167,26 +167,3 @@
     {/if}
   </div>
 </div>
-
-<style>
-  /* Premium scrollbar integration. */
-  .custom-scrollbar::-webkit-scrollbar {
-    width: 6px;
-  }
-  .custom-scrollbar::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  .custom-scrollbar::-webkit-scrollbar-thumb {
-    background: color-mix(in srgb, var(--cn-surface) 20%, transparent);
-    border-radius: 6px;
-  }
-  :global([data-theme='dark']) .custom-scrollbar::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.1);
-  }
-  .custom-scrollbar:hover::-webkit-scrollbar-thumb {
-    background: color-mix(in srgb, var(--cn-surface) 40%, transparent);
-  }
-  :global([data-theme='dark']) .custom-scrollbar:hover::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.2);
-  }
-</style>

@@ -271,6 +271,26 @@ length cannot produce a fractional line box; a ratio always can.
 background stayed `#070b12` while every token read `#1f1f1f`, and the tokens looked correct in a
 probe. Keep those three literals equal to `--cn-bg` by hand.
 
+**AND IT HAPPENED AGAIN, TO THE PARAGRAPH ABOVE, ELEVEN HOURS LATER.** The dark palette went OLED -
+`--cn-bg: #000` - and the three literals stayed at `#1f1f1f`. Measured 2026-09-08:
+`getComputedStyle(document.body).backgroundColor` returned `rgb(31, 31, 31)` while
+`--cn-bg` returned `#000`, so **every gutter in the app was painting a token nothing used**, and the
+OLED request was delivered in the tokens only. Writing "keep them equal by hand" did not keep them
+equal; nothing compares the two, and nothing can while one lives in an HTML file the stylesheet
+cannot see. Until something does, **a change to `--cn-bg` is not finished until `src/app.html` is
+edited in the SAME commit** - the literal is the winner, not the duplicate.
+
+It also cost a wrong diagnosis on the way. The floating drawers looked borderless because the panel
+measured rgb(18,18,18) against a surround of rgb(19,19,19), which reads as a case for raising the
+panel onto a new elevation token - and a `--cn-popover` was duly added and applied. It was wrong:
+`black/40` over a TRUE black ground is still black, and the surround only measured 19 because the
+ground was secretly `#1f1f1f` (0.6 x 31 = 18.6). Fixing the literal gave the drawer the same
+18-point step every other card gets, the token was reverted off it, and the interior surfaces that
+the raise had turned into dark wells went back to matching. **A contrast that seems to need a new
+token is usually a background that is not what the token says.** `--cn-popover` was kept, because
+the reaction pill and the message menu DO need it: they sit on the thread panel, which is itself
+`--cn-surface`, so no amount of correct background makes a same-token popover visible.
+
 ### Trap one: an invalid custom property fails silently and INHERITS
 
 `--color-bubble-out-text: var(--cn-ink)` named a variable that does not exist - the token is declared
@@ -301,3 +321,66 @@ gate is not a working system - it is not even a legible one.
   surfaces get their fills** - that is the direction, not a value to preserve.
 - Nine `em`-relative font sizes survive the sweep on purpose: a mention chip, inline code, and a
   markdown heading scale inside a bio must track the text around them, not a global step.
+
+## 10. The per-message hover, and the one scrollbar
+
+### The reference, measured 2026-09-08
+
+Messenger reveals **three circular 28x28 transparent buttons**, adjacent at a 28px pitch, OUTSIDE
+the bubble on the side away from the window edge and centred on the bubble's middle. Order **from
+the bubble outward is react, reply, more**. There is **no transition at all** - they are simply
+there. Pressing react opens a pill measuring **288x52, radius 24px, background `rgb(31,31,31)`,
+padding `8px 12px`**, holding six emojis plus a **36x36 round "+"** that opens the full picker.
+
+### What Canari had, and why the shape was the defect
+
+One strip carrying six emojis AND every action, fading in over 200ms ABOVE the bubble. Two
+consequences, both reported by the user: hovering any message that was not the last of its group put
+the strip over its neighbour, because a bar hanging off the top edge has nowhere to go in a tight
+run; and eight controls arrived at once for a question that is usually "react" or "reply".
+
+The gutter placement is not a style preference - it is the only region a thread always has spare.
+The earlier fix (2026-08-15) had moved the strip ABOVE the bubble precisely to stop a 383px bar
+being laid into the sidebar, where a click on a reaction switched conversation. Three 28px circles
+plus a 4px offset is 88px against a gutter that is at least 30% of the pane at `md` and up, so the
+overflow condition that forced that move cannot recur at this width - and the popovers extend
+INWARD over the bubble, so they are bounded by the pane rather than by the bubble.
+
+**Anchor the popovers to the bubble, not to the strip.** Positioning them against the strip put the
+reaction pill 292px into the empty gutter, visually attached to nothing. The component's root is now
+an `absolute inset-0` box over the bubble wrapper: `right-full` puts the strip in the gutter,
+`bottom-full right-0` puts a popover above the bubble aligned to its outer edge. One positioning
+context, and it is the bubble.
+
+### One scrollbar, and the feature query that makes it work
+
+There were **seven** definitions of the same scrollbar: `.chat-scrollbar` in `app.css` and
+`.custom-scrollbar` redefined inside six components, agreeing on the shape and disagreeing on the
+details (4px in three, 6px in four, two with no hover state, all webkit-only). A scroller that did
+not remember to opt in got the OS bar, so three different scrollbars could be on screen at once.
+
+All seven carried the same defect: the thumb was
+`color-mix(in srgb, var(--cn-surface) 20%, transparent)`, and in light mode `--cn-surface` is
+`#ffffff`. **The light-theme scrollbar was white at 20% over white - invisible**, and nothing
+reported it because a missing scrollbar looks exactly like a pane that does not scroll. Measured
+after the fix: thumb `rgb(214,214,214)` on white, `rgb(56,56,56)` on `#121212`.
+
+It is now one rule on `*` in `app.css`, driven by `--scrollbar-thumb` / `--scrollbar-thumb-hover`,
+which are taken from the TEXT side of the palette and flip with the theme. `.no-scrollbar` remains
+the opt-out and still wins, a class selector outranking the universal one.
+
+**The Firefox fallback needs `@supports not selector(::-webkit-scrollbar)`, and the guard is
+load-bearing.** Declaring `scrollbar-width`/`scrollbar-color` unconditionally is the obvious way to
+cover Firefox and it silently destroys the webkit rule: **Chrome ignores every `::-webkit-scrollbar`
+pseudo-element on an element that declares `scrollbar-width`.** Measured here - the thread's bar came
+back 10px and square-ended, wearing our colour with no hover state, and `bun run check` was green
+throughout. Firefox is the only engine that fails that selector query, which is exactly the set that
+needs the fallback.
+
+### An instrument fact: `Page.captureScreenshot` drops CSS `:hover`
+
+A probe read `opacity: 1`, `display: flex`, `visibility: visible` and a real rect off the hover
+toolbar; the captured PNG had nothing at those coordinates, uniform `#121212`. The DOM read and the
+capture disagree because the capture loses the synthetic hover state. **A hover affordance cannot be
+photographed through `Input.dispatchMouseEvent` alone** - drive it into a state the component holds
+in `$state` (open the popover) and photograph that, or trust the computed-style read and say so.

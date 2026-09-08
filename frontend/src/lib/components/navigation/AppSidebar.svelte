@@ -80,7 +80,7 @@
   -->
   <div
     data-nav-backdrop
-    class="fixed inset-0 top-[calc(3.5rem+env(safe-area-inset-top))] z-[22] hidden bg-black/10 md:block dark:bg-black/30"
+    class="fixed inset-0 top-[calc(var(--app-top-bar-height)+env(safe-area-inset-top))] z-[22] hidden bg-black/10 md:block dark:bg-black/30"
     transition:fade={{ duration: 300, easing: (t) => t * (2 - t) }}
     onclick={() => (isExpanded = false)}
   ></div>
@@ -100,7 +100,7 @@
     ? 'z-30 w-64'
     : 'z-20 w-[4.5rem]'}"
 >
-  <nav class="flex flex-1 flex-col gap-1.5 p-3 pt-[4.5rem]">
+  <nav class="flex flex-1 flex-col gap-1.5 p-3">
     {#each APP_PLACES as place (place.id)}
       {@const PlaceIcon = getIcon(place.icon)}
       {@const isActive = place.id === activePlaceId}

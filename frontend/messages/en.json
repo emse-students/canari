@@ -425,6 +425,7 @@
   "msg_forward_label": "Forward",
   "msg_more_reactions_label": "More reactions",
   "msg_react_label": "React",
+  "msg_more_actions_label": "More actions",
   "msg_pin_label": "Pin",
   "msg_unpin_label": "Unpin",
   "common_edit_label": "Edit",

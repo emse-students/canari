@@ -62,6 +62,39 @@ while still looking like a deliberate colour. And the light incoming bubble copi
 `#f2f4f7` verbatim onto a `#f0f2f5` thread - the handset pairs that fill with a WHITE thread, so what
 transfers from a measurement is the STEP, not the value.
 
+A second pass took the per-message hover, the scrollbars and the two conversation drawers:
+
+- **The hover is three 28px circles in the gutter beside the bubble, not one bar above it.** The old
+  strip carried six emojis AND every action, faded in over 200ms, and hung off the bubble's top edge -
+  so hovering any message that was not the last of its group put it over its neighbour. The reference
+  reveals react / reply / more instantly, outside the bubble, centred on it, with the six emojis behind
+  the react button and everything rarer behind an ellipsis. The popovers anchor to the BUBBLE and extend
+  inward over it, so they are bounded by the pane; anchored to the strip instead, the reaction pill
+  landed 292px into the empty gutter attached to nothing.
+- **One scrollbar for the whole application, replacing seven.** `.chat-scrollbar` plus `.custom-scrollbar`
+  redefined inside six components, agreeing on the shape and disagreeing on width, hover and coverage,
+  with anything that forgot to opt in getting the OS bar. All seven drew the thumb as 20% of
+  `--cn-surface`, which in light mode is `#ffffff` - **the light-theme scrollbar was white on white,
+  invisible, and a missing scrollbar looks exactly like a pane that does not scroll**. It is now one
+  rule on `*` driven by a token pair that flips with the theme, measured at `rgb(214,214,214)` on white
+  and `rgb(56,56,56)` on `#121212`. The Firefox fallback sits behind
+  `@supports not selector(::-webkit-scrollbar)` because Chrome ignores every webkit scrollbar
+  pseudo-element on an element that declares `scrollbar-width` - declared unconditionally, it silently
+  returned the bar to a 10px square-ended default wearing our colour.
+- **The media and settings drawers joined the shell's gutter grid** - rounded, inset 0.75rem, hanging
+  below the Canari bar instead of running the window's full height under it, sharing one class with the
+  rail and the three panels rather than restating the geometry twice.
+- **The dark theme is finally the OLED black the tokens claimed.** `--cn-bg` had been `#000` since the
+  palette landed and `document.body` was painting `rgb(31,31,31)`: `src/app.html` still held `#1f1f1f`,
+  and `html[data-theme='dark'] body` there outranks `html, body` in the stylesheet, so the literal is
+  the winner rather than a duplicate. Every gutter in the app was drawing a value no token named. The
+  same trap is already written up in the design reference from eleven hours earlier, with the words
+  "keep those three literals equal to `--cn-bg` by hand" - which is what a rule with nothing asserting
+  it is worth. It also produced one wrong diagnosis before it was found: the drawers looked borderless,
+  measured one point of separation, and a new elevation token was added and applied to them before the
+  arithmetic gave the real cause away (0.6 x 31 = 18.6). The token stayed, for the message popovers that
+  genuinely need it; the drawers went back to the ordinary surface.
+
 
 ### Added - the MLS state blob can carry a key fingerprint, and every reader now knows how to see one
 

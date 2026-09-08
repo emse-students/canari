@@ -72,7 +72,7 @@
   </div>
 
   <form
-    class="border-cn-border bg-cn-surface/80 space-y-5 rounded-2xl border p-6"
+    class="border-cn-border bg-cn-surface space-y-5 rounded-2xl border p-6"
     onsubmit={(e) => {
       e.preventDefault();
       handleSubmit();
@@ -132,7 +132,7 @@
     <button
       type="submit"
       disabled={submitting || !name.trim() || !slug.trim()}
-      class="bg-cn-yellow text-cn-dark hover:bg-cn-yellow-hover w-full rounded-xl px-5 py-2.5 text-sm font-bold shadow-sm transition-all disabled:cursor-not-allowed disabled:opacity-50"
+      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover w-full rounded-xl px-5 py-2.5 text-sm font-bold shadow-sm transition-all disabled:cursor-not-allowed disabled:opacity-50"
     >
       {submitting ? m.common_creating_label() : m.list_new_create_btn()}
     </button>

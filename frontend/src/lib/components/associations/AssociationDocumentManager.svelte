@@ -401,7 +401,7 @@
 
 <div class="space-y-5">
   <!-- Shared admin notepad (vault-encrypted) -->
-  <div class="border-cn-border/70 bg-cn-bg/40 space-y-2 rounded-2xl border p-4">
+  <div class="border-cn-border/70 bg-cn-bg space-y-2 rounded-2xl border p-4">
     <div class="flex items-center justify-between gap-2">
       <p class="text-text-main flex items-center gap-1.5 text-sm font-bold">
         <NotebookPen size={16} class="text-cn-dark" />
@@ -503,7 +503,7 @@
       <ul class="space-y-2">
         {#each stats.documents as doc (doc.id)}
           <li
-            class="border-cn-border/70 bg-cn-bg/40 flex items-center gap-3 rounded-xl border px-4 py-3"
+            class="border-cn-border/70 bg-cn-bg flex items-center gap-3 rounded-xl border px-4 py-3"
           >
             <FileText size={18} class="text-text-muted shrink-0" />
             <div class="min-w-0 flex-1">

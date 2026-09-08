@@ -472,7 +472,7 @@
         <button
           type="button"
           onclick={openCreate}
-          class="bg-cn-yellow text-cn-dark hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition-colors"
+          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition-colors"
         >
           <CalendarPlus size={18} />
           {m.asso_calendar_propose_event_button()}
@@ -742,7 +742,7 @@
               </div>
             {:else}
               <label
-                class="border-cn-border bg-cn-bg/40 text-text-muted hover:border-cn-yellow/50 flex cursor-pointer items-center gap-2 rounded-xl border-2 border-dashed px-4 py-3 text-sm transition-colors {uploadingImage
+                class="border-cn-border bg-cn-bg text-text-muted hover:border-cn-yellow/50 flex cursor-pointer items-center gap-2 rounded-xl border-2 border-dashed px-4 py-3 text-sm transition-colors {uploadingImage
                   ? 'pointer-events-none opacity-50'
                   : ''}"
               >

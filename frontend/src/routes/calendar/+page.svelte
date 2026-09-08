@@ -388,7 +388,7 @@
       <button
         type="button"
         onclick={openDeposit}
-        class="bg-cn-yellow text-cn-dark hover:bg-cn-yellow-hover inline-flex shrink-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition-colors"
+        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex shrink-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition-colors"
       >
         <CalendarPlus size={18} />
         {m.calendar_deposit_button()}
@@ -407,7 +407,7 @@
         <ShieldAlert size={18} />
         {m.calendar_moderate_label()}
         {#if pendingCount > 0}
-          <span class="text-2xs rounded-full bg-amber-500 px-2 py-0.5 font-bold text-white">
+          <span class="text-2xs text-cn-ink rounded-full bg-amber-500 px-2 py-0.5 font-bold">
             {pendingCount}
           </span>
         {/if}
@@ -468,7 +468,7 @@
       <button
         type="button"
         onclick={() => (showSubscribeModal = true)}
-        class="bg-cn-yellow text-cn-dark hover:bg-cn-yellow-hover hidden shrink-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition-colors sm:inline-flex"
+        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover hidden shrink-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition-colors sm:inline-flex"
       >
         <CalendarCheck size={18} />
         {m.calendar_subscribe()}
