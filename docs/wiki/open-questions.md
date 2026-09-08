@@ -133,6 +133,21 @@ the state-key comparison exists to avoid. So the question is a trade, not an ove
 new frame, but it answers a different question - "was anyone reachable" is not "did the reachable one
 agree" - and conflating them is the shape this repository keeps paying for.
 
+**ONE HALF OF THE TRADE IS NOW MEASURED, 2026-09-08, AND A THIRD OPTION APPEARED WITH IT.** The
+saving is not free: HEAL-repair heals three times in ten, and the arithmetic is the election's - three
+online members, one of which holds the messages, twenty requests routed 10 / 7 / 3 across them
+([backlog](backlog.md)). So the question is no longer *is one ack per group per ask affordable*; it
+is *is it more expensive than seven failed repairs in ten*.
+
+And the third option needs no new frame at all. The asker in that measurement DID hold local proof of
+its own incompleteness - frames it has and cannot read, the same proof `escalateReconciliation` is
+gated on - and the walk stopped anyway, because a responder that agrees on the state key answers with
+its COVERAGE, and adequate coverage is signalled by silence. So the termination is not being taken on
+an ambiguous silence at all: it is taken on a well-formed answer whose meaning, *I cover what you
+asked*, is being read as *and therefore you are complete*. Refusing to terminate while the local proof
+stands costs nothing and adds no traffic. Whether it is sufficient - whether the walk then reaches the
+holder rather than merely re-asking the same agreeing peers - is the part still owed a measurement.
+
 ### Is a Remove meant to be durable against a later re-add?
 
 **Raised 2026-08-26 by GRP-8**, and it is a decision rather than a defect - which is why the P2 it sits

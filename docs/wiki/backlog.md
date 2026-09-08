@@ -1808,6 +1808,45 @@ state to answer must not require a live waiter to answer it*. An answer that arr
 responder happens to be idle is the live waiter, and three asks 33 s apart is the deadline. Neither
 half is fixed by asking more often, which row two of the table proves by trying.
 
+**ROOT CAUSE, FOUND 2026-09-08 AFTER THE ABOVE, AND IT IS ARITHMETIC.** The server elects a RANDOM
+online member. Over the A/B window the twenty history requests were routed:
+
+    10  ->  mtnci3lc-7mhd   (W3 - same user as W1, real and active, 5 groups, seen the same day)
+     7  ->  mtry8bhy-u3tl   (W1 - the ONLY device that holds the messages)
+     3  ->  mtmp9dha-9nia   (W2 - these are W1's own asks)
+
+**Half the asks go to a member that cannot help, and the run heals only when one draws W1.** Three
+candidate responders, one holder: `P(draw the holder)` is about a third, and the row heals three
+times in ten. The stale-device theory is dead - `bun devices.mjs` shows W3 idle `0d` with five
+groups, so it is a legitimate member, not a ghost in Redis. It cannot help for a good reason: the
+rewind is on W1's SENDER ratchet, so every receiver fails those frames identically, and W3 is
+missing exactly what W2 is missing.
+
+**AND THE WALK TERMINATES ON A FALSE PROOF, at a line that says so itself.** `actions.ts`, the state
+leg: when `ourKey === probe.key` the responder logs `same state - nothing to do` and answers with its
+COVERAGE. Coverage that is adequate is signalled by SILENCE - *"a member whose coverage turns out to
+be adequate simply says nothing"* - so the asker reads *we agree, and this member is complete* and
+stops. Both halves are individually right: W2 and W3 really do hold the same messages, and W3's
+coverage really does span the window. The defect is the INFERENCE. The comment above that branch
+already says **AGREEMENT IS NOT COMPLETENESS** and then addresses only the window case - two peers
+missing the years below - never the case measured here, where two peers agree while a THIRD member
+holds what both lack.
+
+**What makes this fixable rather than philosophical: the asker holds POSITIVE PROOF it is
+incomplete** - frames it has and cannot read - which is the same evidence `escalateReconciliation` is
+already gated on. So the rule is *a peer's agreement is not a termination while this device holds
+frames it cannot read; it is a reason to EXCLUDE that peer and elect another*. That drives the
+exclusion walk from an ANSWER rather than from an absence, which is the only safe form of it - the
+2026-09-08 attempt that drove it from an absence excluded W1 two hundred milliseconds after electing
+it (see [durable-rules](durable-rules.md)).
+
+**NOT ATTEMPTED IN THIS SESSION, DELIBERATELY.** The three previous attempts to carry "this group is
+incomplete" across an exchange were all wrong in subtle and different ways - a durable marker read as
+"have I already asked", a coalescing clock, an absence read as silence - and each was measured wrong
+only after shipping. This one needs its state specified before it is built: WHAT is remembered, for
+HOW LONG, and WHAT discharges it, with the discharge being the repair landing rather than any peer
+saying anything.
+
 
 ### P3 - the pull and the socket hand the SAME row in, and the queue notices afterwards instead of the overlap not existing (measured 2026-09-08)
 
