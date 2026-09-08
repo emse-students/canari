@@ -162,6 +162,39 @@ export function inlineProtoBudget(input: PushMessageInput): number {
   return FCM_DATA_LIMIT - Math.max(dataBytes, apnsBytes);
 }
 
+/**
+ * Whether a ciphertext that did not fit is worth a line.
+ *
+ * **THE LINE IT GUARDS NAMES THE WRONG POPULATION, AND A COUNT SETTLES IT.** `messaging.service`
+ * logs `proto not inlined` whenever the ciphertext exceeds {@link inlineProtoBudget}, under a
+ * comment saying why that is worth knowing: *"a budget that is routinely too small is the fixed
+ * fields growing, and nothing else watches them"*. That reasoning holds for a MESSAGE. It cannot
+ * hold for a WELCOME: a welcome packet carries the group's ratchet tree, so its size is a property
+ * of the group rather than of `senderName` and `groupName`, and it is far over any budget the 4 KB
+ * limit can leave. Measured on the local estate over 90 minutes, 2026-09-08:
+ *
+ * | push kind | reached FCM | proto not inlined |
+ * | --- | --- | --- |
+ * | `welcome-send` | 3 | **6 of 6 prepared** |
+ * | `send` | 9 | **0 of 9** |
+ *
+ * One hundred per cent of one population and zero per cent of the other. For welcomes the line is
+ * constant, so it carries no information, and a line whose reader learns to skip it is the one that
+ * hides the next defect. For messages it has never fired here, which is exactly what makes it worth
+ * keeping: it would mean the fixed fields had grown.
+ *
+ * **NOTHING IS LOST BY NOT SAYING IT.** Not inlining is not a failure - the client fetches the
+ * ciphertext instead - and the failure that WOULD matter has its own alarm at the point it happens,
+ * `[PUSH_SIZE] refused over size`, which reports the quantities FCM's own error omits. This is a
+ * silence about a structural fact, not a demotion of a warning.
+ *
+ * @param input - The message description, read only for {@link PushMessageInput.isWelcome}.
+ * @returns true when a reader should be told; false when the overflow is the shape of the packet.
+ */
+export function uninlinedProtoIsWorthReporting(input: PushMessageInput): boolean {
+  return !input.isWelcome;
+}
+
 /** A ready-to-send APNs request: JSON body plus the headers that drive delivery. */
 export interface ApnsRequest {
   /**

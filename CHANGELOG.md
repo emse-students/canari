@@ -11,6 +11,36 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a push line accused a population it could never accuse, on every single welcome
+
+`[PUSH_SEND] proto not inlined` fires when the ciphertext is too big to ride inside the FCM data
+map, and the comment above it says why that is worth knowing: *"a budget that is routinely too small
+is the fixed fields growing, and nothing else watches them"* - `senderName` and `groupName` are
+unbounded user text.
+
+That reasoning holds for a message. It cannot hold for a WELCOME, whose payload carries the group's
+ratchet tree: its size is a property of the group, not of the fixed fields, and it is far over any
+budget the 4 KB limit can leave. Counted on the local estate over 90 minutes:
+
+| push kind | reached FCM | proto not inlined |
+| --- | --- | --- |
+| `welcome-send` | 3 | **6 of 6 prepared** |
+| `send` | 9 | **0 of 9** |
+
+One hundred per cent of one population and zero per cent of the other. A predicate that is true of
+an entire population tells its reader nothing about any member of it, and a line its reader learns
+to skip is the one that hides the next defect.
+
+Nothing is lost by the silence. Not inlining is not a failure - the client fetches the ciphertext
+instead - and the failure that WOULD matter, a payload FCM refuses, has its own alarm at the point
+it happens (`[PUSH_SIZE] refused over size`), which reports the quantities FCM's own error omits.
+The message case is untouched and has never fired here, which is exactly what makes it worth
+keeping.
+
+The decision moved next to the budget it reasons about, as `uninlinedProtoIsWorthReporting`, so it
+is testable and carries its counts.
+
+
 ### Fixed - whether a mention reached you through your own Do-Not-Disturb depended on which transport carried it
 
 Android files every notification on a channel, and a channel is not a label: it carries its own
