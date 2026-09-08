@@ -80,9 +80,23 @@ impl MlsManager {
             // Quick validation: can the key actually decrypt the blob?
             // If not (PIN changed, blob re-encrypted with a new key), delete the
             // stale keystore entry so the user is prompted for the new PIN.
+            // THROUGH THE SAME PARSER AS THE REAL READ, or this probe answers a different question
+            // from the load it is meant to predict: on a framed blob a bare `len() >= 12` hands the
+            // header to the cipher as a nonce, the tag fails, and a PERFECTLY GOOD keystore key is
+            // deleted - a self-inflicted "your PIN was changed" on the next launch.
             let key_valid = match encrypted_blob {
-                Some(blob) if blob.len() >= 12 => crate::security::decrypt_blob(&key, blob).is_ok(),
-                _ => true, // No blob yet (first launch) — key is valid by definition.
+                Some(blob) => match crate::state_blob::parse(blob) {
+                    Ok(crate::state_blob::Framed::Legacy(body)) => {
+                        crate::security::decrypt_blob(&key, body).is_ok()
+                    }
+                    Ok(crate::state_blob::Framed::V1 {
+                        key_fingerprint, ..
+                    }) => key_fingerprint == crate::state_blob::key_fingerprint(&key),
+                    // Unreadable framing is not evidence about the KEY, and this probe's only power
+                    // is to delete one. Keep it and let the load report the real reason.
+                    Err(_) => true,
+                },
+                None => true, // No blob yet (first launch) — key is valid by definition.
             };
             if key_valid {
                 return Ok(key);
@@ -109,19 +123,31 @@ impl MlsManager {
         key: &[u8; 32],
     ) -> Result<Self, MlsError> {
         let decrypted_state = if let Some(blob) = encrypted_blob {
-            // BOTH ARMS ARE THE SAME SITUATION FOR THE PERSON HOLDING THE PHONE: the saved state
-            // will not open. A blob too short to hold a nonce is a truncated write - an interrupted
-            // flush, a full disk, a killed tab - which is the most realistic shape of corruption
-            // there is, and it used to answer `InvalidData` while a failed tag answered
-            // `OpenMls("Decryption: ..")`. Two unrelated names for one outcome, and neither told
-            // the caller what it needed. See `MlsError::StateUndecryptable`.
-            if blob.len() < 12 {
-                return Err(MlsError::StateUndecryptable(format!(
-                    "state blob is {} bytes, too short to carry a nonce",
-                    blob.len()
-                )));
-            }
-            let plain = crate::security::decrypt_blob(key, &blob)
+            // THE LENGTH FLOORS AND THE SHAPE DECISION BOTH LIVE IN `state_blob::parse`, because
+            // three readers used to make them independently with a bare `len() >= 12` - and that
+            // test passes for a framed blob carrying four bytes of body.
+            let sealed = match crate::state_blob::parse(&blob)? {
+                crate::state_blob::Framed::Legacy(body) => body,
+                crate::state_blob::Framed::V1 {
+                    key_fingerprint,
+                    sealed,
+                } => {
+                    // THE DISCRIMINATOR, AND IT IS CHECKED BEFORE THE CIPHER RATHER THAN AFTER IT.
+                    // A failed AEAD tag cannot say whether the key was wrong or the bytes were
+                    // altered; the fingerprint answers the first question on its own, so asking it
+                    // first is the difference between "your PIN was changed on another device" being
+                    // a fact and being a guess. *Never learn by failing what a fact could have told
+                    // you.* Dormant until step 2 writes a header - see `state_blob`'s module docs.
+                    if key_fingerprint != crate::state_blob::key_fingerprint(key) {
+                        return Err(MlsError::StateSealedUnderAnotherKey(
+                            "the state's header names a different device key, so the PIN was                              rotated on another device and the OLD one opens this state"
+                                .into(),
+                        ));
+                    }
+                    sealed
+                }
+            };
+            let plain = crate::security::decrypt_blob(key, sealed)
                 .map_err(|s| MlsError::StateUndecryptable(s.to_string()))?;
             Some(plain)
         } else {
