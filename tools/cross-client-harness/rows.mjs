@@ -252,6 +252,10 @@ const perOrder = new Map();
  * differently by construction (that is its question, and `perOrder` above adjudicates it).
  */
 const perBuild = new Map();
+/** row -> every SKIPPED record, so a skip is reported without being allowed to grade the row. */
+const skipped = new Map();
+/** row -> the newest record that is NOT a skip, used to restore a verdict a later skip displaced. */
+const latestReal = new Map();
 const divergent = new Map();
 const diagnostics = new Map();
 const retired = new Map();
@@ -291,6 +295,24 @@ for (const line of readFileSync(LEDGER, 'utf8').split('\n')) {
     continue;
   }
   for (const row of hits) {
+    // A SKIPPED IS NOT A VERDICT, SO IT DOES NOT SUPERSEDE ONE - it is the runner saying it did not
+    // ASK, and absence of a measurement is not evidence against one. Kept out of `latest` only when
+    // the row has a real verdict somewhere: a row whose every record is a skip (READ-5 needs a
+    // fourth reader and there are two accounts) is DESCRIBED by that skip and must keep it, or it
+    // would fall into "no verdict and no claim" and read as never run.
+    //
+    // Measured 2026-09-08, which is why this is here: re-running READ with the phone behind its lock
+    // screen turned READ-2, -9 and -10 from `PASS` into `SKIPPED - second client not reachable`, and
+    // the board was then WRONG for holding the pass. Under the old rule any rung run on an
+    // incomplete fleet erased its own green rows, and the fleet is incomplete most of the time.
+    if (r.verdict === 'SKIPPED') {
+      if (!skipped.has(row)) skipped.set(row, []);
+      skipped.get(row).push({ at: r.at, build: r.build, why: r.reason || r.why || '' });
+    }
+    if (r.verdict !== 'SKIPPED') {
+      const prevReal = latestReal.get(row);
+      if (!prevReal || String(r.at) > String(prevReal.at)) latestReal.set(row, { at: r.at });
+    }
     const prev = latest.get(row);
     if (!prev || String(r.at) > String(prev.at)) {
       latest.set(row, {
@@ -310,7 +332,11 @@ for (const line of readFileSync(LEDGER, 'utf8').split('\n')) {
     // build AND checkSha AND instrumentSha: a runner EDITED between two runs is the ordinary way a
     // row goes FAIL then PASS on one build, and reporting that as flakiness buries the real thing.
     // Same build, same runner, same instrument, two answers - that is the product or the estate.
+    // A SKIP IS NOT ONE OF THE TWO ANSWERS EITHER - a row that skipped twice and failed once gave
+    // ONE answer, not three, and counting the skips would report it as intermittent for having been
+    // asked on an incomplete fleet. Same rule as `latestReal` above, same reason.
     const buildKey = [r.build || '?', r.checkSha || '?', r.instrumentSha || '?', r.order || ''].join('|');
+    if (r.verdict === 'SKIPPED') continue;
     if (!perBuild.has(row)) perBuild.set(row, new Map());
     const perKey = perBuild.get(row);
     if (!perKey.has(buildKey)) perKey.set(buildKey, new Map());
@@ -325,6 +351,36 @@ for (const line of readFileSync(LEDGER, 'utf8').split('\n')) {
         byOrder.set(r.order, { verdict: r.verdict, at: r.at, build: r.build });
       }
     }
+  }
+}
+
+// PUT BACK A VERDICT A LATER SKIP DISPLACED. The loop above takes the newest record of any kind; a
+// skip is not a measurement, so where the row HAS one it is the one that grades it. Rows whose every
+// record is a skip keep it - that skip is their description, and dropping it would move them into
+// "no verdict and no claim", which reads as never run.
+for (const [row, real] of latestReal) {
+  const now = latest.get(row);
+  if (!now || now.verdict !== 'SKIPPED') continue;
+  for (const line of readFileSync(LEDGER, 'utf8').split('\n')) {
+    if (!line.trim()) continue;
+    let rec;
+    try {
+      rec = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!rec || !rec.id || rec.at !== real.at) continue;
+    if (!boardRowsFor(rec.id).includes(row) || rec.verdict === 'SKIPPED') continue;
+    latest.set(row, {
+      verdict: rec.verdict,
+      build: rec.build,
+      at: rec.at,
+      recordedAs: rec.id,
+      check: rec.check,
+      checkSha: rec.checkSha,
+      instrumentSha: rec.instrumentSha,
+      displacedByASkip: latest.get(row).at,
+    });
   }
 }
 
