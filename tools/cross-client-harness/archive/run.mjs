@@ -47,6 +47,7 @@ import { all, clientBuild } from '../results.mjs';
 import { deployedBundleId, isOnTheDeployment, reloadOntoBundle, sourceIsDeployed } from '../bundle.mjs';
 import { stateOf } from './ready-probe.mjs';
 import { bringToReady } from './ready-repair.mjs';
+import { startBrowser } from '../launch.mjs';
 import { findScript, requireScript } from '../scriptpath.mjs';
 
 // THE PHONE THIS RUNNER DRIVES, DECLARED. Every row below is written for A1 - `PORTS.A1`,
@@ -412,7 +413,39 @@ async function preflight(devices, { quiet = false } = {}) {
     // predicate whose only home is a CLI is omitted by every other caller, and `healnew.mjs` proved it
     // by driving a signed-out W1 through an entire row. What stays HERE is what only a run can decide:
     // whether an unready client refuses the phase.
-    const r = await bringToReady(d);
+    let r = await bringToReady(d);
+    if (r.unreachable && d !== 'A1' && !/so no tab can be chosen/.test(r.unreachable)) {
+      /**
+       * A CLOSED BROWSER IS A REPAIR THIS RIG OWNS, AND NAMING IT WAS NOT DOING IT.
+       *
+       * This preflight already performs four repairs - it reloads a client stuck on an old bundle,
+       * answers a PIN gate, moves a client off `/posts` where the gate does not mount, and drives
+       * `bringToReady`'s own trail. For a closed browser it printed the command instead:
+       * `browser closed? bun launch.mjs start w1`. **A refusal that names its own repair is a
+       * missing gate, not a routing decision** - and the cost was measured twice on 2026-09-08:
+       * `healnew.mjs --row 1` kills both web clients on purpose (its topology is "nothing online")
+       * and does not restore them, so TWELVE HEAL scripts were BLOCKED behind a gesture the runner
+       * could have made itself, in a rung being used as a regression check.
+       *
+       * ONLY THE WEB CLIENTS. The rig owns those processes and can start one; the PHONE it does not
+       * own, and A1 unreachable means a cable, a backgrounded app or a device lock screen - three
+       * things a human settles. Its refusal stays a refusal.
+       *
+       * ONE ATTEMPT, and the second answer decides. A browser that will not come up is a real
+       * problem and must still stop the phase; retrying it would only make the refusal slower.
+       */
+      const restarted = await startBrowser(d.toLowerCase()).then(
+        () => true,
+        () => false
+      );
+      if (restarted) {
+        const again = await bringToReady(d);
+        if (!again.unreachable) {
+          console.log(`  fix  ${d.padEnd(3)} was closed - started it and brought it to ready`);
+          r = again;
+        }
+      }
+    }
     if (r.unreachable) {
       // NOT EVERY FAILURE HERE IS AN ABSENCE. `client()` also refuses a browser holding more than one
       // page, and that wants the opposite fix from "the browser is closed" - so the refusal is passed

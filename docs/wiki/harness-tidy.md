@@ -255,3 +255,14 @@ section 5 and is not restated here.
 - [ ] **E2. Any P2/P3 found goes to [backlog](backlog.md)** and is NOT fixed inline.
 - [ ] **E3. Read the logs on every pass** (user, 2026-08-28), the reconciliations especially.
       `PASS-DIRTY` is not a passing verdict.
+- [x] **E4. THE MOVE INTO `archive/` BROKE `run.mjs` ITSELF, AND THE GATE FOR IT WAS BLIND - fixed
+      2026-09-08.** `spawn-selftest.mjs` was written after NINE sightings of a bare-name spawn, and
+      it matched `execFileSync` and `spawnSync` only - never the asynchronous `spawn(`, which is what
+      `run.mjs` uses for its whole job loop. So the single site that launches every runner of a phase
+      passed a bare name with `cwd` set to `archive/`, and `newdevice.mjs` - still at the harness root
+      - exited 1 with `Module not found` and **recorded nothing**, inside a rung being used as a
+      regression check. Widening the pattern by one word found two more offenders immediately
+      (`synboot.mjs`, `type.mjs`). All three now go through `scriptpath.mjs`, and a manifest entry
+      that resolves nowhere is THAT JOB's failure rather than the rung's.
+      **This is the tidy's own footprint, so it belongs on this page**: anything else moved into
+      `archive/` should be re-checked against the widened gate before this file is deleted.
