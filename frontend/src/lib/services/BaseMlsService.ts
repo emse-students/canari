@@ -443,14 +443,32 @@ export abstract class BaseMlsService implements IMlsService {
    * needs a key fingerprint in the envelope's own framing, which is a write-format change and
    * therefore a two-release sequence; see `docs/wiki/backlog.md`.
    *
-   * `unknown` is the third answer and it is deliberately not folded into either: it means the
+   * **`rotated` IS THE HALF OF `undecryptable` THAT A KEY FINGERPRINT CAN FINALLY SEPARATE**, and it
+   * arrives with the reader rather than one release behind it. `mls-core` throws
+   * `STATE_KEY_MISMATCH` when a FRAMED state's header names a key other than the one in hand: no
+   * guess, no failed decrypt to interpret - the blob says so. **It cannot fire yet**, because nothing
+   * writes a header until step 2 flips the writer (`state_blob`'s module docs give the reason: a
+   * downgrade handed a header reads it as a nonce and reports this very defect). It is here so that
+   * the token is RECOGNISED the day it appears - routed through `unknown` it would print
+   * "not typed by mls-core" about an error mls-core types, which is the accusation lying.
+   *
+   * It needs no new branch at the call sites and that is not an accident: every `cause !== 'mismatch'`
+   * path already pauses and asks for the old PIN, which is exactly right for a real rotation, and the
+   * pre-v0.11.0 Argon2id retry keys off `undecryptable` and must NOT fire for a v1-framed blob. The
+   * user-facing sentence that finally states the cause outright belongs with step 2, when it becomes
+   * true.
+   *
+   * `unknown` is the fourth answer and it is deliberately not folded into any of the others: it means the
    * failure came from somewhere this classifier has never been taught about. The caller treats it
    * as conservatively as `undecryptable` - nothing is destroyed - but it is LOGGED as unrecognised
    * rather than silently wearing a diagnosis, which is the whole of what went wrong here.
    */
-  protected classifyStateLoadFailure(error: unknown): 'mismatch' | 'undecryptable' | 'unknown' {
+  protected classifyStateLoadFailure(
+    error: unknown
+  ): 'mismatch' | 'undecryptable' | 'rotated' | 'unknown' {
     const errStr = String(error);
     if (errStr.includes('IDENTITY_MISMATCH')) return 'mismatch';
+    if (errStr.includes('STATE_KEY_MISMATCH')) return 'rotated';
     if (errStr.includes('STATE_UNDECRYPTABLE')) return 'undecryptable';
     // ACCUSING, AND HERE RATHER THAN AT THE CALL SITES so that no future caller can forget it.
     // Reaching this arm means the state load failed for a reason `mls-core` does not type, and

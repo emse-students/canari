@@ -11,6 +11,43 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Added - the MLS state blob can carry a key fingerprint, and every reader now knows how to see one
+
+A ChaCha20-Poly1305 tag that does not verify has two causes the ciphertext alone cannot separate: the
+state was sealed under a different device key (a PIN rotated on another device - the old one recovers
+it) or the bytes were altered (corruption - no PIN helps). On 2026-09-08 one flipped byte in an 18.4 MB
+state told a user their PIN had been changed on another device, sent them after a credential that never
+existed, and then refused the PIN they actually held. Nothing stored beside the blob says which cause it
+is: `mls_autosave_ver` is a per-write sequence counter, not a key id.
+
+`mls-core/src/state_blob.rs` puts the discriminator in the envelope's own framing:
+
+```
+legacy : [nonce (12) || ciphertext]
+v1     : [b"CANARIS" || 1 || key_fingerprint (8) || nonce || ciphertext]
+```
+
+Seven magic bytes plus a version byte make "is this framed" a 2^-64 question against 12 bytes of OS
+randomness, so there is no re-parse-as-legacy retry - one would be a fallback, and would turn a corrupt
+framed blob into a confusing legacy one. The fingerprint is eight bytes of SHA-256 over a domain
+constant and the key, not the AEAD under a fixed nonce: the state blobs draw random nonces from that
+same key, and a fixed one carries a 2^-96 chance of reusing a nonce whose plaintext is a public
+constant, which would leak the keystream and with it the state.
+
+The three readers that each carried their own `len() >= 12` now share one parser - a check a framed blob
+passes while holding four bytes of body. The keystore probe in `resolve_at_rest_key` mattered most: on a
+framed blob it would have handed the header to the cipher as a nonce, failed the tag, and deleted a
+perfectly good keystore key, manufacturing the same defect on the next launch.
+
+**Nothing writes a header yet, deliberately.** An older build handed one reads the first twelve bytes as
+a nonce and reports the state unopenable - this very defect, newly caused by a downgrade, and downgrades
+are not hypothetical when an APK is reinstalled by hand or a store rollback happens. So the reader ships
+first and the writer follows once `minClientVersion` makes this reader the floor. `frame_v1` exists and
+is tested now so that flip is one line rather than a design revisited later.
+
+`MlsError::StateSealedUnderAnotherKey` is checked before the cipher rather than inferred from a failed
+tag, and the classifier learns it as `rotated` in the same release - routed through `unknown` it would
+have printed "not typed by mls-core" about an error mls-core types.
 ### Fixed - a resume read the MLS keystore before it took the lock, so a mint that finished in between was erased
 
 Ten prekeys a phone had just minted and published were deleted from its own keystore by the resume

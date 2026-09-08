@@ -353,9 +353,49 @@ no longer classifies - if it ever does again, someone has put the distinction ba
 The previous test file asserted the defect: its last case was named *"defaults to sealed for an
 unrecognised failure"*.
 
-**WHAT STEP 1 DID NOT DO, DELIBERATELY: the header.** Nothing writes a key fingerprint yet, so the
-two causes are still not SEPARATED - the product has stopped claiming to know which it is, that is
-all. Step 2 below is unchanged and still owed.
+**STEP 1 IS NOW COMPLETE - THE READER LANDED 2026-09-08, AND IT IS THE WHOLE OF THE READ-FIRST HALF.**
+
+`mls-core/src/state_blob.rs` is the one place either platform decides what shape a state blob is:
+
+```
+legacy : [nonce (12) || ciphertext]                                  <- every installed device
+v1     : [b"CANARIS" || 1 || key_fingerprint (8) || nonce || ct]     <- nothing writes this yet
+```
+
+Seven magic bytes plus a version byte make "is this framed" a 2^-64 question against 12 bytes of OS
+randomness, **which is why there is no re-parse-as-legacy retry**: a retry would be the fallback this
+repository forbids, and it would turn a genuinely corrupt framed blob into a confusing legacy one.
+The fingerprint is eight bytes of SHA-256 over a domain constant and the key - deliberately NOT the
+AEAD under a fixed nonce, the tempting dependency-free option, because the state blobs draw random
+nonces from the same key and a fixed one carries a 2^-96 chance of reusing a nonce whose plaintext is
+a PUBLIC CONSTANT, which leaks the keystream and therefore the state.
+
+**THE THREE READERS ARE NOW ONE.** `load_with_key`, the keystore probe in `resolve_at_rest_key` and
+`mls-wasm`'s `decrypt_mls_state_blob_with_key` each carried their own `len() >= 12` - a test a framed
+blob passes while holding four bytes of body. The probe mattered most: on a framed blob it would have
+handed the header to the cipher as a nonce, failed the tag, and DELETED A PERFECTLY GOOD KEYSTORE KEY,
+manufacturing this very defect on the next launch.
+
+`MlsError::StateSealedUnderAnotherKey` (`STATE_KEY_MISMATCH:`) is thrown when a framed header names a
+key other than the one in hand - checked BEFORE the cipher, because *never learn by failing what a
+fact could have told you*. The classifier learns it in the same release as `'rotated'`, and needs no
+new branch at any call site: every `cause !== 'mismatch'` path already pauses and asks for the old
+PIN, which is exactly right for a real rotation, and the pre-v0.11.0 Argon2id retry keys off
+`undecryptable` and must not fire for a v1 blob. Recognising it now rather than at step 2 is not
+eagerness: routed through `unknown` it would print *"not typed by mls-core"* about an error mls-core
+types, and an accusation that is wrong is worse than one that is missing.
+
+**THIS RELEASE IS BEHAVIOURALLY INERT AND THAT IS THE POINT.** No blob in the field has a header, so
+every load still takes the legacy arm and still answers `StateUndecryptable`. What shipped is the
+FLOOR: once `minClientVersion` puts this reader everywhere, step 2 is one line at
+`save_encrypted_with_key`, and `state_blob::frame_v1` already exists and is tested so that flip is not
+a design revisited months later. Two integration tests stand in for field evidence until then - a
+framed state opens with its own key, and one sealed under another key is named a rotation while the
+IDENTICAL ciphertext unframed can still only be called undecryptable, which is the entry's whole
+argument in one assertion.
+
+**STEP 2 IS UNCHANGED AND STILL OWED**, and it is blocked on exactly one thing: this reader being the
+floor. Until then the two causes remain unseparated in the field.
 
 **Where the evidence is.** Board cell CORRUPT-2 on [cross-client-testing](cross-client-testing.md);
 the runner and its reasoning in `tools/cross-client-harness/archive/corrupt2.mjs`; the parallel fix

@@ -21,10 +21,12 @@ import { BaseMlsService } from './BaseMlsService';
  * over (CORRUPT-1). A test that pins a default nobody chose pins whatever the default happens to
  * catch.
  */
-const classify = (error: unknown): 'mismatch' | 'undecryptable' | 'unknown' =>
+type Verdict = 'mismatch' | 'undecryptable' | 'rotated' | 'unknown';
+
+const classify = (error: unknown): Verdict =>
   (
     BaseMlsService.prototype as unknown as {
-      classifyStateLoadFailure(e: unknown): 'mismatch' | 'undecryptable' | 'unknown';
+      classifyStateLoadFailure(e: unknown): Verdict;
     }
   ).classifyStateLoadFailure(error);
 
@@ -41,6 +43,29 @@ describe('BaseMlsService.classifyStateLoadFailure', () => {
 
   it('reads the typed undecryptable code', () => {
     expect(classify(new Error('STATE_UNDECRYPTABLE: aead::Error'))).toBe('undecryptable');
+  });
+
+  // NOTHING WRITES A STATE HEADER YET, so this code cannot arrive from the field until step 2 flips
+  // the writer (`mls-core/src/state_blob.rs`). It is recognised NOW because the alternative is worse
+  // than not handling it: routed through `unknown` it would print "not typed by mls-core" about an
+  // error mls-core types, and an accusation that is wrong is worse than one that is missing.
+  it('reads the typed key-mismatch code as a rotation, which is the half a fingerprint separates', () => {
+    expect(classify(new Error('STATE_KEY_MISMATCH: the header names a different device key'))).toBe(
+      'rotated'
+    );
+  });
+
+  it('does not accuse a rotation of being unrecognised', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    classify(new Error('STATE_KEY_MISMATCH: x'));
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  // A rotation must never take the pre-v0.11.0 Argon2id retry, which keys off `undecryptable`: a
+  // v1-framed blob cannot be a legacy one, and trying tells the user to enter a PIN for a migration
+  // that does not apply.
+  it('keeps a rotation distinct from an undecryptable blob', () => {
+    expect(classify(new Error('STATE_KEY_MISMATCH: x'))).not.toBe('undecryptable');
   });
 
   it('reads a truncated state as undecryptable too - it is the same outcome', () => {

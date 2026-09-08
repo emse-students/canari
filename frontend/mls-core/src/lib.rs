@@ -7,6 +7,7 @@ pub mod keystore;
 pub mod members;
 pub mod messaging;
 pub mod state;
+pub mod state_blob;
 pub mod welcome;
 
 // Re-export MlsManager at crate root so that `mls_core::MlsManager` continues to work.
@@ -111,6 +112,19 @@ pub enum MlsError {
     /// this crate's own - neither is an OpenMLS message - so there was never anything to match.
     #[error("IDENTITY_MISMATCH: {0}")]
     StateIdentityMismatch(String),
+    /// The saved MLS state is FRAMED and its header names a key that is not the one in hand.
+    ///
+    /// This is the half of `StateUndecryptable` that a fingerprint can finally separate: the blob was
+    /// sealed under a different device key, so the PIN really was rotated on another device and the
+    /// OLD one recovers it. Without the header these bytes are indistinguishable from corruption, and
+    /// naming them apart is the entire purpose of [`crate::state_blob`].
+    ///
+    /// **IT CANNOT FIRE YET AND THAT IS BY DESIGN.** Nothing writes a header until step 2 (see the
+    /// module docs for why the reader must be the floor first), so every blob in the field today reads
+    /// as legacy and still answers `StateUndecryptable`. The variant ships with the reader so the
+    /// classifier on the other side can learn it in the same release rather than one behind.
+    #[error("STATE_KEY_MISMATCH: {0}")]
+    StateSealedUnderAnotherKey(String),
 }
 
 /// Classification of an incoming decryption error. THE single source of native string-matching on

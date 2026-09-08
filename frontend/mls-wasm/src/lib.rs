@@ -76,12 +76,31 @@ pub fn decrypt_mls_state_blob_with_key(
     encrypted: &[u8],
     key_b64: &str,
 ) -> Result<Vec<u8>, JsValue> {
-    if encrypted.len() < 12 {
-        return Err(JsValue::from_str("Invalid encrypted data length"));
-    }
     let key =
         mls_core::crypto::decode_base64_to_32_bytes(key_b64).map_err(|e| JsValue::from_str(&e))?;
-    mls_core::security::decrypt_blob(&key, encrypted).map_err(|e| JsValue::from_str(&e))
+    // THE THIRD READER OF THIS BLOB, AND IT GOES THROUGH THE SAME PARSER AS THE OTHER TWO. It used
+    // to carry its own `len() >= 12`, which is the check a framed blob passes while carrying four
+    // bytes of body - three independent floors for one format is how they drift.
+    let sealed = match mls_core::state_blob::parse(encrypted)
+        .map_err(|e| JsValue::from_str(&e.to_string()))?
+    {
+        mls_core::state_blob::Framed::Legacy(body) => body,
+        mls_core::state_blob::Framed::V1 {
+            key_fingerprint,
+            sealed,
+        } => {
+            if key_fingerprint != mls_core::state_blob::key_fingerprint(&key) {
+                return Err(JsValue::from_str(
+                    &mls_core::MlsError::StateSealedUnderAnotherKey(
+                        "the state's header names a different device key".into(),
+                    )
+                    .to_string(),
+                ));
+            }
+            sealed
+        }
+    };
+    mls_core::security::decrypt_blob(&key, sealed).map_err(|e| JsValue::from_str(&e))
 }
 
 // ----------------------------------------------------

@@ -103,3 +103,56 @@ fn no_state_at_all_is_not_a_failure() {
         .map(|_| ())
         .expect("a device with no saved state must simply start");
 }
+
+// ── The framed shape, which nothing writes yet ─────────────────────────────────────────────────
+//
+// `state_blob` teaches the reader a header a year of installed devices has never written, so these
+// two tests are what stands in for field evidence until step 2 flips the writer. They are the reason
+// that flip can be one line: the round trip and the discrimination are already pinned.
+
+#[test]
+fn a_framed_state_opens_with_the_key_its_header_names() {
+    let k = key(3);
+    let manager = MlsManager::load_or_create(USER, DEVICE, None).expect("make");
+    let sealed = manager.save_encrypted_with_key(&k).expect("seal");
+
+    // Exactly what step 2 will write, produced here by the writer that ships dormant.
+    let framed = mls_core::state_blob::frame_v1(&k, &sealed);
+    assert_ne!(framed, sealed, "framing must actually change the bytes");
+
+    MlsManager::load_with_key(USER, DEVICE, Some(framed), &k)
+        .map(|_| ())
+        .expect("a framed state must open with its own key");
+}
+
+#[test]
+fn a_framed_state_sealed_under_another_key_is_named_a_rotation_and_never_corruption() {
+    let sealing_key = key(4);
+    let key_in_hand = key(5);
+    let manager = MlsManager::load_or_create(USER, DEVICE, None).expect("make");
+    let sealed = manager.save_encrypted_with_key(&sealing_key).expect("seal");
+    let framed = mls_core::state_blob::frame_v1(&sealing_key, &sealed);
+
+    let err = MlsManager::load_with_key(USER, DEVICE, Some(framed), &key_in_hand)
+        .map(|_| ())
+        .expect_err("the wrong key must be refused");
+
+    // THE WHOLE POINT OF THE HEADER. Without it these bytes answer `StateUndecryptable`, which is
+    // the observation shared with a flipped byte - and the product then tells a user whose PIN was
+    // genuinely rotated the same thing it tells one whose disk filled up. Here the cause is a FACT
+    // read out of the envelope, not an inference from a failed tag.
+    assert!(
+        matches!(err, MlsError::StateSealedUnderAnotherKey(_)),
+        "expected StateSealedUnderAnotherKey, got {err:?}"
+    );
+
+    // And the legacy shape of the very same ciphertext still cannot be told apart, which is what
+    // makes step 2 worth doing rather than a nicety.
+    let err_legacy = MlsManager::load_with_key(USER, DEVICE, Some(sealed), &key_in_hand)
+        .map(|_| ())
+        .expect_err("the unframed blob must also be refused");
+    assert!(
+        matches!(err_legacy, MlsError::StateUndecryptable(_)),
+        "an unframed blob carries no discriminator, so it can only be the observation: {err_legacy:?}"
+    );
+}
