@@ -23,7 +23,8 @@
   import type { SharedContent } from '$lib/utils/chat/sharedContent';
   import { groupMessages, isMessageGroupRow } from '$lib/utils/messageGrouping';
   import { computeMessageListSwitchTime } from '$lib/utils/chat/messageUtils';
-  import { resolveRenderWindow } from '$lib/utils/chat/renderWindow';
+  import { resolveRenderWindow, stepWindowOlder } from '$lib/utils/chat/renderWindow';
+  import { countUnreadForUser, watermarkFor } from '$lib/utils/chat/readState';
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import type { ChatMessage, MessageReaction, Conversation } from '$lib/types';
@@ -249,7 +250,13 @@
   // loadOlderGroups (scroll up) paginates older ones lazily (DF8).
   const INITIAL_RENDER_GROUPS = 60;
   const RENDER_GROUPS_STEP = 140;
-  const MAX_RENDERED_GROUPS = INITIAL_RENDER_GROUPS + RENDER_GROUPS_STEP * 2; // cap on DOM nodes
+  /**
+   * How much history to open ABOVE a message the reader jumped to, so it lands with context rather
+   * than glued to the top of the pane. It used to be a cap on rendered nodes, back when the window
+   * had a fixed width and slid; the window is anchored to the newest message now and only grows, so
+   * there is no cap to name and this is the only thing that number ever did that a reader could see.
+   */
+  const NAVIGATE_CONTEXT_GROUPS = INITIAL_RENDER_GROUPS + RENDER_GROUPS_STEP * 2;
 
   let chatContainer = $state<HTMLDivElement>();
   let isNearBottom = $state(true);
@@ -489,19 +496,31 @@
    * current length; `windowStart` stays the state pagination writes.
    */
   let renderWindow = $derived(
-    resolveRenderWindow(
-      windowStart,
-      messageGroups.length,
-      INITIAL_RENDER_GROUPS,
-      MAX_RENDERED_GROUPS
-    )
+    resolveRenderWindow(windowStart, messageGroups.length, INITIAL_RENDER_GROUPS)
   );
   let windowEnd = $derived(renderWindow.end);
   let visibleMessageGroups = $derived(messageGroups.slice(renderWindow.start, renderWindow.end));
   /** Groups hidden above the render window (older messages). */
   let _hiddenGroupCount = $derived(renderWindow.start);
-  /** Groups hidden below the render window (newer messages, while scrolled far up). */
-  let hiddenBelowCount = $derived(messageGroups.length - windowEnd);
+  /**
+   * HOW MANY MESSAGES THE READER HAS NOT READ - the app's own definition, a watermark that advances.
+   *
+   * The badge used to show `messageGroups.length - windowEnd`, the count of groups the component
+   * had chosen not to draw. That number has no relation to anything the reader did: it GREW as they
+   * scrolled up, because scrolling up is what pushes groups out of the bottom of the window, and it
+   * was painted as the amber pill every messaging app uses for "new messages". A user reported it
+   * as "28 unread" on a conversation with nothing unread in it (2026-09-09), which is exactly what
+   * it looked like. Rendering bookkeeping may decide whether a control appears; it may never be
+   * dressed up as a fact about the conversation.
+   */
+  let unreadBelowCount = $derived.by(() => {
+    const convo = chatView?.conversation;
+    if (!convo) return 0;
+    return countUnreadForUser(
+      convo.messages,
+      watermarkFor(convo.readWatermarks, currentUserId.trim().toLowerCase())
+    );
+  });
   /**
    * Show the loading skeleton ONLY when there is genuinely nothing to render yet (cold
    * conversation, empty local page). When cached messages already exist they render
@@ -516,7 +535,7 @@
     // been replaced by a shorter page the two differ, and stepping back from the stale one would
     // walk a window that is already past the end.
     if (renderWindow.start > 0) {
-      windowStart = Math.max(0, renderWindow.start - RENDER_GROUPS_STEP);
+      windowStart = stepWindowOlder(renderWindow.start, RENDER_GROUPS_STEP);
       return;
     }
     if (onLoadOlderMessages && hasMoreInDb && !isLoadingOlder) {
@@ -596,7 +615,7 @@
     }
 
     if (targetIndex < renderWindow.start || targetIndex >= renderWindow.end) {
-      windowStart = Math.max(0, targetIndex - Math.floor(MAX_RENDERED_GROUPS / 2));
+      windowStart = Math.max(0, targetIndex - Math.floor(NAVIGATE_CONTEXT_GROUPS / 2));
       await tick();
     }
 
@@ -741,6 +760,12 @@
         // Always scroll to bottom for own messages; for others only if already near bottom.
         const ownMessageAdded = c.messages.at(-1)?.isOwn === true;
         if (isNearBottom || ownMessageAdded) {
+          // AND BRING THE WINDOW WITH IT. `scrollToBottom` moves the pane, not the slice: with the
+          // window stopped short of the list, it scrolled to the bottom of something that did not
+          // contain the message that had just arrived - so the message was, to the reader, simply
+          // not delivered. `isNearBottom` means "at the bottom of what is rendered", which is
+          // exactly the reader this has to serve.
+          windowStart = Math.max(0, messageGroups.length - INITIAL_RENDER_GROUPS);
           tick().then(() => scrollToBottom(true));
         }
       }
@@ -1142,7 +1167,7 @@
       </div>
     {/if}
 
-    {#if !isNearBottom || hiddenBelowCount > 0}
+    {#if !isNearBottom}
       <button
         type="button"
         onclick={jumpToLatest}
@@ -1153,12 +1178,12 @@
         <span class="inline-flex h-full w-full items-center justify-center">
           <ArrowDown size={18} />
         </span>
-        {#if hiddenBelowCount > 0}
+        {#if unreadBelowCount > 0}
           <span
             class="text-cn-ink text-2xs pointer-events-none absolute -top-1.5 -right-1.5 inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-amber-500 px-1 font-bold shadow-sm shadow-amber-500/30"
             aria-hidden="true"
           >
-            {hiddenBelowCount > 99 ? '99+' : hiddenBelowCount}
+            {unreadBelowCount > 99 ? '99+' : unreadBelowCount}
           </span>
         {/if}
       </button>

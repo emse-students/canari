@@ -96,6 +96,40 @@ A second pass took the per-message hover, the scrollbars and the two conversatio
   genuinely need it; the drawers went back to the ordinary surface.
 
 
+### Fixed - scrolling up to read history unloaded the newest messages, and nothing loaded them back
+
+Reported by a user: scrolling up to see older messages made the most recent ones disappear, and
+scrolling back down did not bring them back. Reproduced 2026-09-09 by shrinking the two window
+constants and walking the same path - the last rendered message moved backwards at every step.
+
+The render window was a FIXED-WIDTH slice that slid: `end = start + MAX_RENDERED_GROUPS`, so every
+upward step walked the end up too. Past 340 groups - three scroll-to-top gestures - the newest
+messages left the DOM, and `handleScroll` only ever called the upward step, so nothing walked the
+end back. Leaving the conversation and re-entering was the only way to see the present again.
+
+The amber pill on the jump-to-latest button made it look like unread mail: it showed
+`messageGroups.length - windowEnd`, the count of groups the component had chosen not to draw, which
+GROWS as the reader scrolls up. A user read it as "28 unread" on a conversation with nothing unread
+in it. It now shows `countUnreadForUser` against the reader's own watermark - the app's own
+definition of unread - and the render bookkeeping decides only whether the button appears.
+
+**Two wrong fixes were tried first and both are recorded because each looks right alone.** Adding a
+one-page downward step made "take me to the bottom" advance one page and stop short, which is
+indistinguishable from the original defect. Closing the gap and scrolling to the bottom fixed that
+and teleported a reader working their way down past everything in between. What settled it was the
+user's own observation: *"la barre de scroll devient fausse si des messages récents disparaissent"* -
+`scrollHeight` is the height of the RENDERED slice, so a sliding window makes the scrollbar describe
+a conversation that changes size while the reader changes nothing. Measured oscillating 1010 ->
+1940 -> 1546 -> 1524 with no content change.
+
+So the end is anchored to the end of the list and the window only ever GROWS upwards. Nothing is
+ever unloaded, so nothing has to be put back; the scrollbar only grows at the top, where the
+prepend path already compensates; and the newest message is in the DOM at every instant. What
+bounds the work is the reader's own scrolling, one page per gesture - the bound that matters for a
+conversation of any size, because the cost is proportional to what somebody actually looked at. Four
+up-and-down round trips measured after the change: the newest message present on every reading, and
+`scrollHeight` monotonically 1010 -> 5557 -> 9995, then stable.
+
 ### Fixed - the new scrollbar took five pixels off every scrolling pane on a phone
 
 Styling `::-webkit-scrollbar` converts a platform's OVERLAY scrollbar into a classic one that
