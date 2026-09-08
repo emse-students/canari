@@ -96,6 +96,20 @@ A second pass took the per-message hover, the scrollbars and the two conversatio
   genuinely need it; the drawers went back to the ordinary surface.
 
 
+### Fixed - the new scrollbar took five pixels off every scrolling pane on a phone
+
+Styling `::-webkit-scrollbar` converts a platform's OVERLAY scrollbar into a classic one that
+reserves layout width, permanently, whether or not anything is scrolling. The unified rule shipped
+applied to every element, and the first Android build after it measured `page-scroll-wrap` - the
+app's main scroller on a phone - going from a 0px gutter to 5px, plus a grey track sitting there for
+a user with no pointer to aim at it.
+
+The rule is now behind `@media (hover: hover) and (pointer: fine)`, which asks about the input device
+rather than the width: a desktop window narrowed to 390px keeps the styled bar, an Android WebView at
+any size does not. Verified on the Mi 9T - 5px back to 0 - and on the workstation, still 6px.
+Nothing here was catchable without the device: `bun run check`, `bun run lint` and the desktop
+measurement were all correct throughout.
+
 ### Fixed - opening the notifications page did not clear the badge, and the list never showed which ones were new
 
 Three things on the same surface, found while aligning it with the reference's notification design.
