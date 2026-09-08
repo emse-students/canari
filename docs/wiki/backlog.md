@@ -404,6 +404,33 @@ shade and the app holding the message. Removing the WebView notification would r
 | quick actions | six (`addAction`) | **none** - our `sendNotification` declares no `actionTypeId` |
 | tap | `ACTION_VIEW` on `fr.emse.canari://chat/<groupId>` | `ACTION_MAIN` on the launcher, lands nowhere |
 
+**WHICH BUILDER FIRES IS DECIDED BY THE MESSAGE'S ROUTE, NOT BY THE APP'S STATE - measured
+2026-09-08, and it was not what this entry assumed.** NOTIF-14 records the builder for each half it
+sends, read out of logcat rather than inferred, and one backgrounded phone produced BOTH within four
+seconds:
+
+| what was sent | notified in | built by |
+| --- | --- | --- |
+| a direct message | 2 223 ms | `tauri-plugin-notification` (WebSocket) |
+| a salon message | 2 170 ms | `CanariFirebaseMessagingService` (push) |
+
+Same handset, same HOME-backgrounded state, same session. **The salon push arrived in 2 170 ms, far
+inside the 10 s `scheduleDeferredPush` window**, so it was not the backstop firing late - the server
+pushed it immediately while the socket was demonstrably up, since the DM had just crossed it. So the
+split is not "backgrounded gets the plugin, killed gets Kotlin": a device can get either at any
+moment, and which one it gets is a fact about the conversation, not about the phone.
+
+**THIS NARROWS THE USER'S 2026-09-08 REPORT.** *"Je n'arrive pas dans la conversation"* is the tap,
+and only the plugin builder cannot deep-link (`ACTION_MAIN` on the launcher). A first message from a
+new correspondent is a DIRECT message, and a direct message is what this measurement shows arriving
+over the socket and being built by the plugin. **So the report is consistent with the plugin builder,
+and the tap half of that P1 most likely IS this entry** - which is testable the day a third account
+exists, by reading `builtBy` on the first-contact row rather than reasoning about it.
+
+**AND BOTH TITLES WERE CORRECT**, from both builders, which is worth stating because it bounds the
+defect: what these two disagree about is the icon, the channel, the style and the TAP - not what is
+written on the notification. A fix aimed at the text would be aimed at the wrong half.
+
 The first two are fixed. **The last three cannot be fixed at this call site**, and the tap is the
 expensive one: `tauri-plugin-notification` 2.3.3 puts the notification id on the tap intent, reads it
 back in `handleNotificationActionPerformed`, uses it to dismiss the notification and then DISCARDS

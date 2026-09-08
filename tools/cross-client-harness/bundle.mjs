@@ -29,9 +29,11 @@
  */
 import { readSourceStamp, sourceStamp, staleReason } from '../../frontend/scripts/source-stamp.mjs';
 
-import { evaluate } from './chat.mjs';
+import { pathToFileURL } from 'node:url';
+
+import { APP_TAB, client, evaluate } from './chat.mjs';
 import { LOCAL } from './estate.mjs';
-import { ORIGIN, SITE } from './names.mjs';
+import { ORIGIN, PORTS, SITE } from './names.mjs';
 
 const ID = /__sveltekit_[a-z0-9]+/;
 
@@ -63,7 +65,10 @@ export const isOnTheDeployment = (device) => ORIGIN[device] === SITE;
 export async function deployedBundleId() {
   const shell = await (await fetch(`${SITE}/`, { redirect: 'follow' })).text();
   const id = shell.match(ID)?.[0];
-  if (!id) throw new Error(`the shell at ${SITE}/ carries no __sveltekit_<id> - this check is broken, not the client`);
+  if (!id)
+    throw new Error(
+      `the shell at ${SITE}/ carries no __sveltekit_<id> - this check is broken, not the client`
+    );
   return id;
 }
 
@@ -136,4 +141,73 @@ export async function reloadOntoBundle(cx, deployed, { timeoutMs = 60_000 } = {}
   await cx.send('Network.setCacheDisabled', { cacheDisabled: false }).catch(() => {});
 
   return { before, after, ok: after === deployed, tookMs: Date.now() - t0 };
+}
+
+/**
+ * RUN AS A COMMAND, this file answers the question its exports are for - and until 2026-09-08 it
+ * answered nothing at all.
+ *
+ *   bun bundle.mjs                 # which web clients are stale, and whether the estate is this source
+ *   bun bundle.mjs --repair        # ...and reload the stale ones onto the deployment
+ *
+ * **WHY THIS BLOCK EXISTS.** It was a pure library, so `bun bundle.mjs` executed the module, printed
+ * nothing and exited 0 - and 0 was read, in this very repository on 2026-09-08, as "the browsers are
+ * on the new build". They were not: W2 was three builds behind, its lazy chunks 404ed against the
+ * rebuilt estate, `openChannel` could not load its page, and NOTIF-14's salon half recorded a `FAIL`
+ * that was entirely the rig's. **A tool that exits 0 when asked a question it never heard is the same
+ * defect this file was written to prevent**, one level up: the check that catches a stale client was
+ * itself unrunnable, and its silence looked exactly like a pass.
+ *
+ * It refuses rather than reporting when it cannot compare, for the reason `deployedBundleId` throws:
+ * a comparison one side of which is missing would call every browser current, for ever.
+ */
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const repair = process.argv.includes('--repair');
+  const deployed = await deployedBundleId();
+  const drift = await sourceIsDeployed(deployed);
+  console.log(`[bundle] the estate at ${SITE} serves ${deployed}`);
+  if (drift) console.log(`[bundle] ** the estate is NOT this source: ${drift} **`);
+
+  let stale = 0;
+  for (const device of ['W1', 'W2', 'W3']) {
+    if (!isOnTheDeployment(device)) continue;
+    let cx;
+    try {
+      cx = await client(PORTS[device], APP_TAB, { focus: false });
+    } catch (e) {
+      // NAMED, NEVER SKIPPED IN SILENCE: a client that cannot be attached is a client whose bundle
+      // is unknown, which is the state this tool exists to make impossible to mistake for "fine".
+      console.log(`  ${device}  UNREACHABLE - ${String(e).slice(0, 80)}`);
+      stale++;
+      continue;
+    }
+    const running = await runningBundleId(cx).catch(() => 'unknown');
+    if (running === deployed) {
+      console.log(`  ${device}  current (${running})`);
+      continue;
+    }
+    if (!repair) {
+      stale++;
+      console.log(`  ${device}  STALE - running ${running}, deployment is ${deployed}`);
+      continue;
+    }
+    // COUNTED ON THE OUTCOME, NEVER ON THE SYMPTOM. A first version incremented here and reported
+    // "2 client(s) not on the deployment after the repair" about two clients it had just reloaded
+    // successfully - a summary line contradicting the two lines above it, which is worse than no
+    // summary. What the caller needs is the state it is left in, so a repaired client is not stale.
+    const moved = await reloadOntoBundle(cx, deployed);
+    if (!moved.ok) stale++;
+    console.log(
+      `  ${device}  ${moved.ok ? 'reloaded' : 'DID NOT MOVE'} ${moved.before} -> ${moved.after} in ${moved.tookMs}ms` +
+        (moved.ok ? ' - it owes a PIN unlock, a reload re-mounts the gate' : '')
+    );
+    if (!moved.ok) console.log(`  ${device}  refuse to measure on this client until it moves`);
+  }
+
+  // EXIT CODE IS THE ANSWER, so a Makefile or a preflight can use it. Non-zero means at least one
+  // client would measure code the estate is not serving.
+  console.log(
+    `[bundle] ${stale} client(s) not on the deployment${repair ? ' after the repair' : ''}`
+  );
+  process.exit(stale === 0 ? 0 : 1);
 }
