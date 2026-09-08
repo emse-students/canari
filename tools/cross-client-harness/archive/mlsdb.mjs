@@ -15,7 +15,7 @@
  *   bun mlsdb.mjs --port 9224 snapshot    - take one (in-page)
  *   bun mlsdb.mjs --port 9224 restore     - put it back
  *   bun mlsdb.mjs --port 9224 digest      - what is there right now
- *   bun mlsdb.mjs --port 9224 truncate    - damage one entry to ZERO LENGTH, on purpose
+ *   bun mlsdb.mjs --port 9224 truncate    - shorten one entry, on purpose (`--to N`, default 0)
  *   bun mlsdb.mjs --port 9224 flip        - flip ONE byte inside an entry, on purpose
  *
  * **`truncate` IS THE DAMAGE PRIMITIVE THE CORRUPT PHASE WAS MISSING**, and the reason it lives
@@ -257,6 +257,11 @@ if (cmd === 'list') {
   // THE KEY IS NAMED, NEVER SCANNED FOR. A primitive that damaged "whatever looked like state"
   // would damage a different thing after any schema change, and the row would still be graded.
   const keyArg = arg('--key', 'mls_autosave');
+  // HOW SHORT, AND WHY THE DEFAULT IS ZERO. `--to 0` is CORRUPT-4's damage - an empty state, which
+  // must read as ABSENT. A NON-zero `--to` is CORRUPT-1's: a state that still has bytes and is not
+  // the whole of what was written, which is what an interrupted flush or a full disk actually
+  // leaves behind. The two are different questions and the same primitive answers both.
+  const toLen = Math.max(0, Number(arg('--to', '0')) || 0);
   console.log(
     await run(`
       // GATED ON THE RESTORE, not on the caller's word. Without a snapshot this tab is one command
@@ -278,12 +283,17 @@ if (cmd === 'list') {
           var was = digest(hit.value);
           await new Promise(function (res, rej) {
             var tx = db.transaction(stores[s], 'readwrite');
-            tx.objectStore(stores[s]).put(new Uint8Array(0), ${JSON.stringify(keyArg)});
+            // A COPY, NOT A VIEW: subarray would keep the whole original buffer alive behind
+            // the prefix, so slice is what makes the damage actually the length it claims.
+            tx.objectStore(stores[s]).put(
+              hit.value instanceof Uint8Array ? hit.value.slice(0, ${toLen}) : new Uint8Array(${toLen}),
+              ${JSON.stringify(keyArg)}
+            );
             tx.oncomplete = function () { res(); };
             tx.onerror = function () { rej(tx.error); };
           });
           // A LENGTH AND A HASH, never the bytes - the same rule the whole file is built on.
-          damaged.push({ db: list[i].name, store: stores[s], key: ${JSON.stringify(keyArg)}, wasLen: was.len, wasHash: was.hash, nowLen: 0 });
+          damaged.push({ db: list[i].name, store: stores[s], key: ${JSON.stringify(keyArg)}, wasLen: was.len, wasHash: was.hash, nowLen: ${toLen} });
         }
         db.close();
       }

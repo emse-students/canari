@@ -327,11 +327,11 @@ export const PHASES = {
   // `corrupt4.mjs` CORRUPT-4; a single script would take the second row down with the first on any
   // throw, and the phase would report one answer where two were owed - a rung reading green while
   // nothing ran half of it. The damage each remaining row needs is different again.
-  // CORRUPT-1/-5/-7 can now use `mlsdb.mjs truncate`, which -4 is the reason for writing, and -2 has
-  // `flip` for the same reason; -9 and -10 need A1.
+  // -5 and -7 can use `mlsdb.mjs truncate`, which -4 and -1 are the reason for writing (`--to 0` and
+  // `--to N` are two different questions), and -2 has `flip`; -9 and -10 need A1.
   CORRUPT: {
     title: "deliberate store damage",
-    scripts: ["corrupt.mjs", "corrupt2.mjs", "corrupt4.mjs"],
+    scripts: ["corrupt.mjs", "corrupt1.mjs", "corrupt2.mjs", "corrupt4.mjs"],
     needs: ["W1", "W2"],
   },
   // ONE OF TEN, AND IT WAS WRITTEN BEFORE THIS MANIFEST EXISTED. `del1.mjs` covers DEL-1

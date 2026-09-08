@@ -156,7 +156,7 @@ and its test are on [dev-environment](infrastructure/dev-environment.md).
 
 ---
 
-### P1 - a corrupted local MLS state is reported as a PIN rotation, and the user is sent after a credential that does not exist (measured 2026-09-08)
+### P1 - a damaged local MLS state is reported as a PIN rotation, and the PIN the user actually holds does not get them back in (measured 2026-09-08)
 
 **The measurement.** CORRUPT-2 (`corrupt2.mjs`) XORs ONE byte at the midpoint of the 18.4 MB
 `mls_autosave` ciphertext, leaving length and shape intact, and reloads. The client reaches its PIN
@@ -166,6 +166,27 @@ gate - it does not hang, and it does not come up quietly showing an empty histor
 [INIT] Login did not complete (state_sealed_with_old_key):
 Votre PIN a ete change sur un autre appareil. Recuperez vos messages avec votre ancien PIN.
 ```
+
+**RAISED 2026-09-08 BY CORRUPT-1, FROM A WRONG MESSAGE TO A DOOR.** The same damage in its most
+realistic shape - the state cut to HALF its length, which is what an interrupted flush, a full disk
+or a killed tab leave behind - produces the same `state_sealed_with_old_key`, and then:
+
+```
+recoveredWithTheCorrectPin = false
+recoveryTrail = ['LOCKED+overlay', 'LOCKED+overlay', 'LOCKED+overlay', 'LOCKED+overlay', 'LOCKED+overlay']
+```
+
+`bringToReady` is the PRODUCT's own recovery - it answers the gate with the correct PIN exactly as a
+user would - and five passes left the client locked. **The control is inside the row**: once the
+snapshot is restored, the same helper with the same PIN reaches a named starting point, so what locks
+the gate is the truncated state, not the gesture. Clean, no dirt, reproduced twice.
+
+So the user is told to recover with an old PIN that never existed, and the PIN they DO hold does not
+work either. **What is NOT measured**: the modal carries a sign-out button (`onSignOut` is a required
+prop precisely because the modal blocks the app), and whether that clears the unreadable state and
+lets the device re-enrol has not been tested - it is destructive to the fixture. If it does work, the
+defect is that the one remedy is never named and is presented as the destructive last resort; if it
+does not, the device is simply lost. **That measurement is the next thing this P1 owes.**
 
 **Why that is wrong.** No PIN was changed. `sessionAuth` verifies the PIN SERVER-SIDE and only then
 decrypts the local state, so at the moment this message is chosen the product already KNOWS the

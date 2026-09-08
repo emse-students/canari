@@ -11,6 +11,36 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Added - CORRUPT-1, a clean FAIL, and the measurement that turns a wrong message into a locked door
+
+`mlsdb.mjs truncate` takes `--to N`, so the same primitive answers two different questions: `--to 0`
+is CORRUPT-4's empty state, which must read as ABSENT, and a non-zero `--to` is CORRUPT-1's - a state
+that still has bytes and is not the whole of what was written, which is what an interrupted flush, a
+full disk or a killed tab actually leave behind.
+
+`corrupt1.mjs` cuts W1's 18.6 MB state in half and asks the half its siblings do not. CORRUPT-2 asked
+what the client SAYS about a state it cannot open; this row asks whether the user has a way BACK,
+because its own wording demands one in as many words - *explicit failure and recovery*.
+
+The first half holds: the failure is explicit and no empty history is presented silently. **The
+second does not.** The client repeats the same `state_sealed_with_old_key` misdiagnosis, and then
+`bringToReady` - the PRODUCT's own gesture, answering the gate with the CORRECT PIN exactly as a user
+would - returns `LOCKED+overlay` on all five passes. The control is inside the row: once the snapshot
+goes back, the same helper with the same PIN reaches a named starting point, so what locks the gate
+is the truncated state and not the gesture. Clean, no dirt, reproduced twice.
+
+The user is told to recover with an old PIN that never existed, and the PIN they do hold does not
+work either. The P1 filed against CORRUPT-2 is raised accordingly, and it now names the one thing
+still unmeasured: the modal's own sign-out button, which is a required prop precisely because the
+modal blocks the app. If it recovers the device, the defect is that the only remedy is never named;
+if it does not, the device is lost.
+
+A FAIL on the board is the campaign working. `corrupt1.mjs` is the only one of the four CORRUPT
+runners that takes the `MLS_CLIENT_INITIALISING` needle, and for a reason worth keeping: answering
+the gate is this row's own assertion, while the other three report before any such gesture, where the
+same sentence would be a finding. A disposition is per row because one row's evidence is another's
+defect.
+
 ### Added - CORRUPT-2, and the finding it exists to have made
 
 `mlsdb.mjs flip` XORs ONE byte at the midpoint of an entry, leaving its length and shape untouched so
