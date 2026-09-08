@@ -259,8 +259,8 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    Three open: the suppression CONTROL CASE the NestJS batch destroyed (Monday 2026-09-07 answers
    it), **nothing tells anybody prod is down**, and
    [host-updates](docs/wiki/infrastructure/host-updates.md) ([backlog](docs/wiki/backlog.md)).
-6. **NO CAMPAIGN ROW ASKS A QUESTION WHOSE ANSWER IS A POPULATION** - four rows written into rung
-   12 MULTI, needing only `W1 W2` ([campaign](docs/wiki/cross-client-campaign.md)).
+6. **THE POPULATION RUNG IS ANSWERED** - MULTI-7/-8/-10 clean `PASS`, MULTI-9 `VACUOUS` because a
+   healthy estate activates in 104 ms and leaves it no pending window ([board](docs/wiki/cross-client-testing.md)).
 7. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
    [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
 8. **SIX UX/RENDERING ITEMS + TWO DEV-LOG LINES** ([backlog](docs/wiki/backlog.md)); four want ONE pass over `app.css`.

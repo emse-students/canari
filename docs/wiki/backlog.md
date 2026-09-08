@@ -2872,10 +2872,19 @@ and the server's responder election is RANDOM among the members it sees online. 
 this loop touches carries a member that is elected like any other and is silently a dead end. That
 is not a second defect - it is this one's blast radius, and it explains why the history exchange
 looked intermittent rather than broken: the run's outcome depended on which member the dice named.
-**The escalation shipped on 2026-09-06 rotates past a silent responder, so the repair no longer
-depends on the election being lucky** - which is the right architecture regardless, since no client
-may assume a particular peer answers. It does NOT close this entry: a dead responder is still a
-member losing its seat, and the wasted round trip is real.
+~~**The escalation shipped on 2026-09-06 rotates past a silent responder, so the repair no longer
+depends on the election being lucky**~~ - **REFUTED BY MEASUREMENT 2026-09-08, and the reason is one
+wire.** That escalation is reached from the REPLAY path only (`history.ts`, once at the end of a
+walk); a loss detected LIVE calls the plain coalescing entry point instead, and HEAL-repair's whole
+subject is a live burst. So the dice still decide it: ten runs, three builds, **three healed**, with
+the window's twenty history requests routed 10 to a member that cannot help, 7 to the only holder and
+3 back to the asker. Wiring the live path to the escalating entry point was tried the same day and
+made it worse - a per-frame trigger judged the holder silent 200 ms after electing it and excluded
+it - so the rotation is not the fix either, and both are recorded as refuted in the HEAL-repair P1
+above. What survives from this paragraph is its observation, which was right and is now
+quantified: a kicked leaf is elected like any other member and is silently a dead end. It does NOT
+close this entry: a dead responder is still a member losing its seat, and the wasted round trip is
+real.
 
 > **A FIFTH HALF WAS FOUND ON 2026-09-04 AND FIXED THE SAME DAY, AND IT IS THE ONE THAT MADE THE
 > OTHER FOUR UNREACHABLE FOR PART OF THE POPULATION.** Everything above negotiates what a `pending`
