@@ -38,6 +38,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { recordApkBuild } from './apkbuild.mjs';
 import { SITE, STATE_DIR } from './names.mjs';
 import { PKG, adb, serial, useDevice } from './phone.mjs';
 
@@ -270,6 +271,22 @@ export async function armA1({ build = true, reverseOnly = false, device = 'A1' }
           `environment, so this APK would talk to whatever frontend/.env says (production)`
       );
     }
+
+    // WHETHER THIS APK IS ANY COMMIT AT ALL, written down while the answer is still knowable.
+    //
+    // A verdict's `a1Build` is DERIVED - `resolveStamp` names the newest commit at or before the
+    // bundle's timestamp - and that derivation is exact only for a clean tree. This gesture builds
+    // from the WORKING tree, which is the point of it and the normal shape of a session: write a
+    // fix, build, measure, commit. On 2026-09-08 that put NOTIF-16's PASS against `1fd7cecd7`, the
+    // commit BEFORE the fix that makes it pass. Recorded rather than refused: a gate against a
+    // dirty build would make the fix-and-measure loop impossible. See `apkbuild.mjs`.
+    const provenance = recordApkBuild();
+    console.log(
+      `[${TAG}] built from ${provenance.head}` +
+        (provenance.dirty
+          ? ` plus UNCOMMITTED changes (diff ${provenance.diffSha}) - a verdict on this APK is NOT a verdict on that commit`
+          : ' with a clean tree - the commit describes this APK exactly')
+    );
   }
 
   // ── install, and NEVER uninstall ────────────────────────────────────────────────────────────────

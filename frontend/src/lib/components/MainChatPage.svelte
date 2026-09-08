@@ -246,6 +246,8 @@
     return {
       conversations: convs.conversations,
       loadAndRestoreConversations: () => convs.loadAndRestoreConversations(convCtx()),
+      beginConversationSource: () => convs.beginConversationSource(),
+      endConversationSource: () => convs.endConversationSource(),
       addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
         messaging.addMessageToChat(sid, content, contactName, msgCtx(), options),
       beginBulkMessageIngest: (phase: BulkIngestPhase) => messaging.beginBulkMessageIngest(phase),

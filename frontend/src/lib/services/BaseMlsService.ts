@@ -72,7 +72,7 @@ import type {
   ExternalJoinOutcome,
 } from '$lib/mls-client/IMlsService';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
-import { noteFrameConsumed } from '$lib/utils/chat/history';
+import { commitPendingHistoryMarks, noteFrameConsumed } from '$lib/utils/chat/history';
 
 /**
  * How many times {@link BaseMlsService.externalJoin} may re-read the base and resubmit.
@@ -423,18 +423,44 @@ export abstract class BaseMlsService implements IMlsService {
    * Classifies why {@link loadStateWithKey} rejected, so `_initImpl` can pick a recovery that
    * actually addresses the cause.
    *
-   * The distinction is not cosmetic. `sealed` means the blob would not decrypt: the account key
-   * changed on another device, and re-entering the OLD PIN recovers it - so the caller must stop
-   * and offer that path rather than destroy anything. `mismatch` means the blob DID decrypt and
-   * only carries another device's identity; no PIN can fix that, so pausing for a recovery the
-   * user cannot complete just strands them. Treating the two alike is what surfaced a false
-   * "your PIN was changed on another device" to users who had never changed their PIN.
+   * The distinction is not cosmetic. `undecryptable` means the blob would not OPEN; `mismatch`
+   * means it opened and carries another device's identity, which no PIN can repair - so pausing
+   * for a recovery the user cannot complete just strands them. Treating the two alike is what
+   * surfaced a false "your PIN was changed on another device" to users who had never changed it.
+   *
+   * **IT READS A CODE, NOT A SENTENCE - AND UNTIL 2026-09-08 IT READ THE SENTENCE.** Both throws
+   * are `mls-core`'s own, so there was never a dependency's prose to match; what there was, was a
+   * default arm. `errStr.includes('identity mismatch') ? 'mismatch' : 'sealed'` gave every failure
+   * the two needles did not recognise - a flipped byte, a truncated write, an error from a layer
+   * nobody had thought about - the diagnosis "your PIN was changed on another device", together
+   * with a recovery that cannot possibly work. Measured on CORRUPT-1 and CORRUPT-2: one byte XORed
+   * in an 18.4 MB state, and the correct PIN was then refused five times over.
+   *
+   * **AND `sealed` WAS RENAMED, BECAUSE THE NAME WAS THE CLAIM.** An AEAD tag that does not verify
+   * has two explanations the blob alone cannot separate - sealed under a different device key, or
+   * altered - and nothing stored beside it says which (`mls_autosave_ver` orders concurrent
+   * flushes; it is not a key id). `undecryptable` is what is actually known. Separating the two
+   * needs a key fingerprint in the envelope's own framing, which is a write-format change and
+   * therefore a two-release sequence; see `docs/wiki/backlog.md`.
+   *
+   * `unknown` is the third answer and it is deliberately not folded into either: it means the
+   * failure came from somewhere this classifier has never been taught about. The caller treats it
+   * as conservatively as `undecryptable` - nothing is destroyed - but it is LOGGED as unrecognised
+   * rather than silently wearing a diagnosis, which is the whole of what went wrong here.
    */
-  protected classifyStateLoadFailure(error: unknown): 'mismatch' | 'sealed' {
+  protected classifyStateLoadFailure(error: unknown): 'mismatch' | 'undecryptable' | 'unknown' {
     const errStr = String(error);
-    return errStr.includes('identity mismatch') || errStr.includes('Credential identity')
-      ? 'mismatch'
-      : 'sealed';
+    if (errStr.includes('IDENTITY_MISMATCH')) return 'mismatch';
+    if (errStr.includes('STATE_UNDECRYPTABLE')) return 'undecryptable';
+    // ACCUSING, AND HERE RATHER THAN AT THE CALL SITES so that no future caller can forget it.
+    // Reaching this arm means the state load failed for a reason `mls-core` does not type, and
+    // the whole defect this classifier was rewritten for is an unrecognised failure passing
+    // quietly as a diagnosis. It stays silent for the two known answers.
+    console.warn(
+      `[MLS] Unrecognised state-load failure - not typed by mls-core, so its cause is unknown ` +
+        `and nothing will be destroyed on account of it: ${errStr.slice(0, 200)}`
+    );
+    return 'unknown';
   }
 
   /** Platform-specific init body (WASM load vs Tauri invoke). */
@@ -1002,6 +1028,34 @@ export abstract class BaseMlsService implements IMlsService {
           ' those sessions and must pass its group id rather than null.'
       );
       const waitedFrom = Date.now();
+      /**
+       * THE WAIT THE THREE COMMENTS ABOVE ALREADY PROMISE, AND IT WAS NEVER TAKEN.
+       *
+       * `settleBarrier` waits for the pull and for the scheduler's buckets. Neither is evidence
+       * about a catch-up session: a session dispatches `decryptPage` straight at the engine, so
+       * while its batch is in flight the pull is done and every bucket is empty. The barrier
+       * therefore printed the sessions it was "waiting out" and returned in **0 ms** - measured on
+       * the Mi 9T, 2026-09-08, twice in a row, with the numbers in `docs/wiki/backlog.md` under
+       * "one frame is decrypted by three engines against one receive ratchet". The archive replay
+       * went on to hand the engine two frames the catch-up had spent 83 ms earlier, and openmls
+       * refused both at `error` level (`SecretReuseError`, generations 43 and 44 of epoch 196).
+       *
+       * A COLUMN IS ONLY EVIDENCE FOR THE QUESTION IT WAS WRITTEN TO ANSWER: `isIdle` answers "is
+       * my queue empty", and it was being read as "is the group quiet". The gate below is the one
+       * that answers the second, and it already exists - every send has waited on it since
+       * 2026-08-14 for the same reason, that a catch-up must not be raced.
+       *
+       * BOUNDED BY CONSTRUCTION, not by a clock: `createDecryptSession` is the only opener, and it
+       * closes the session from a `catch` and from `finish()`'s `finally` on both platforms, while
+       * its only caller finishes from a `finally` of its own. A caller that reaches this from
+       * INSIDE a session and passes `null` still hangs - exactly as it did before this line, on
+       * `settleBarrier`, since the drain it waits for needs the mutex that session holds - and the
+       * `debug` above is still the line that names it.
+       *
+       * ORDER IS LOAD-BEARING: the sessions first, the mailbox second. A catch-up can queue work,
+       * so settling before it closed would settle a queue it had not finished filling.
+       */
+      await this.waitForCatchUpIdle();
       await this.settleBarrier();
       console.debug(
         `[QUEUE] mailbox barrier for "${caller}" waited ${Date.now() - waitedFrom}ms behind` +
@@ -2272,6 +2326,19 @@ export abstract class BaseMlsService implements IMlsService {
     const emitted = snapshotEmitted(this.userId);
     await this.writeCheckpoint(this.currentDeviceKeyB64);
     commitPersisted(this.userId, emitted);
+    // TWO LEDGERS, ONE WRITE, AND THE SECOND ONE WAS BOUND TO THE WRONG EVENT UNTIL 2026-09-08.
+    //
+    // The send ledger above declares what this checkpoint made durable. The history replay's marks
+    // owed exactly the same declaration and did not get it: they became durable only in the thunk at
+    // the END of the archive walk, so a checkpoint landing mid-walk - and one lands on any structural
+    // mutation, because `flushEncryptedInternal` is not gated by the bulk-ingest depth - made the
+    // ratchet durable while the marks were still in memory. A page killed there re-accuses frames it
+    // had really read. Proved by insertion order on TAB-3b: six accused row keys all sat at the END
+    // of a 3 511-entry set, so two whole runs had written nothing durable at all.
+    //
+    // AFTER the write, never before, for the reason spelt out on `commitPendingHistoryMarks`: the two
+    // orderings are not symmetric, and only "ratchet ahead of ledger" is survivable.
+    commitPendingHistoryMarks(this.userId);
   }
 
   /**

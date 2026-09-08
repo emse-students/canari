@@ -22,6 +22,7 @@
 // `srvReport` reaches production, so it cannot be the thing under test here. What IS under test is
 // everything that decides its answer offline: `shapeOf`, and the rule lists themselves. The bucket
 // arithmetic around them is exercised on a real window by `run.mjs`, once per pass.
+import { readFileSync } from 'node:fs';
 import {
   namesOnlyOthers,
   settleFirstLooks,
@@ -785,6 +786,62 @@ check('a line naming nobody is infrastructure, always ours', namesOnlyOthers('[B
 // A PARTITION NOBODY SUPPLIED MUST NOT SILENTLY FORGIVE ANYTHING - a caller passing no subjects is
 // asking about the whole window, not about a filtered one.
 check('with no subjects, nothing is foreign', namesOnlyOthers('[MOD] by=afc13486', []), false);
+
+/**
+ * A RULE CARRYING AN INVISIBLE CHARACTER IS A RULE THAT CAN NEVER MATCH, AND IT SAYS NOTHING.
+ *
+ * Written after one did, on 2026-09-08. The `[DEVICE_MEMBERSHIPS]` rule was added through a text
+ * edit that turned `\b` into a literal BACKSPACE (0x08) rather than a word boundary, so the list
+ * gained a rule that looked right in every diff, in every review and in `grep`, and matched nothing
+ * at all. The window stayed `NOT CLEAN` and the only account of why was that the four lines were
+ * still unexplained - the rule's own failure was silent, and finding it took reading the bytes.
+ *
+ * **AND THE FIRST VERSION OF THIS GUARD DID NOT WORK EITHER**, which is the more useful half. It
+ * tested `regex.source`, and `source` is specified to return text that PARSES BACK to the same
+ * regex - so a raw 0x08 comes out of it as the four-character escape `\u0008` and no control
+ * character is ever there to find. A guard that cannot see the thing it was written for is worse
+ * than none: it converts an open question into a settled one. The bytes on disk are the only place
+ * this is visible, so that is what is read.
+ */
+// NO REGEX HERE ON PURPOSE. A character class spelling out C0 is exactly what `no-control-regex`
+// forbids, and silencing that rule to write this one would be the wrong trade: the lint is right
+// that a control character in a pattern is almost always an accident - which is the whole subject
+// of this guard. Tab, newline and carriage return are the three that belong in a source file.
+const hasControlChar = (text) =>
+  [...text].some((c) => {
+    const n = c.charCodeAt(0);
+    return n < 0x20 && n !== 9 && n !== 10 && n !== 13;
+  });
+for (const file of ['srvlog.mjs', 'watch.mjs']) {
+  const text = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
+  const bad = text
+    .split('\n')
+    .map((line, i) => ({ line, n: i + 1 }))
+    .filter(({ line }) => hasControlChar(line));
+  check(`${file} carries no control character - a rule holding one is dead and silent`, bad.length === 0, true);
+  for (const { line, n } of bad) console.log(`    ${file}:${n} ${JSON.stringify(line.trim().slice(0, 120))}`);
+}
+
+// THE RULE THAT PROMPTED THE GUARD ABOVE, PINNED ON BOTH SIDES OF THE NUMBER THAT CARRIES THE
+// FINDING. `stranded` counts the memberships the server holds that the DEVICE cannot serve itself
+// out of, so forgiving the tag instead of the zero would have hidden the only thing this line is
+// worth reading for.
+check(
+  'a device enumerating its memberships with nothing stranded is narration',
+  matches(
+    NOTABLE_RULES,
+    '[Nest] 1 - LOG [InvitationsController] [DEVICE_MEMBERSHIPS] user=abc device=web-abc count=5 stranded=0 statuses=g1:active'
+  ),
+  true
+);
+check(
+  'the same line with a stranded membership is NOT forgiven',
+  matches(
+    NOTABLE_RULES,
+    '[Nest] 1 - LOG [InvitationsController] [DEVICE_MEMBERSHIPS] user=abc device=web-abc count=5 stranded=3 statuses=g1:active'
+  ),
+  false
+);
 
 console.log(failures ? `\n${failures} FAILURE(S)` : '\nall good');
 process.exit(failures ? 1 : 0);

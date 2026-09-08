@@ -34,6 +34,19 @@
  * three ways to write that here. A variable head is rejected whatever it holds, because nothing can
  * be shown absolute by reading it.
  *
+ * AND A TENTH TIME ON 2026-09-08, WITH THIS GATE GREEN AGAIN - BECAUSE THE GATE ONLY KNEW TWO OF THE
+ * THREE SPAWN FUNCTIONS. The pattern anchored on `execFileSync` and `spawnSync` and never on the
+ * asynchronous `spawn(`, which is what `archive/run.mjs` - THE ONE WAY TO RUN THE CAMPAIGN, and the
+ * process that spawns every other runner - uses for its whole job loop. So the single site that
+ * launches all fourteen HEAL scripts passed a bare name with `cwd` set to `archive/`, and
+ * `newdevice.mjs`, which still lives at the harness root, exited 1 with `Module not found` and
+ * recorded nothing, inside a rung being used as a REGRESSION CHECK.
+ *
+ * **A gate that enumerates its subjects is only as good as the enumeration**, and this one was
+ * written from the sites that existed when it was written. `spawn` is now in the alternation, and
+ * the `` is what keeps `respawn(` out of it. The lesson is the rule's own: a list of spellings is
+ * a list somebody will add to without telling it.
+ *
  * WHY A STYLE RULE AND NOT A RESOLUTION CHECK. Resolving each site the way the process would means
  * statically evaluating its `cwd:` expression, and those are written five different ways here - a
  * gate that has to guess is worse than one that forbids the guessable. The forbidden shape has an
@@ -54,7 +67,7 @@ const DIRS = [ROOT, join(ROOT, 'archive')];
  * Anchored on `process.execPath` rather than on the function name: `execFileSync('adb', ...)` and
  * `spawnSync('git', ...)` are everywhere here and none of them is spawning one of our scripts.
  */
-const SPAWN = /(?:execFileSync|spawnSync)\(\s*process\.execPath\s*,\s*\[/g;
+const SPAWN = /\b(?:execFileSync|spawnSync|spawn)\(\s*process\.execPath\s*,\s*\[/g;
 
 /**
  * THE FIRST ARGV ELEMENT, WHATEVER SHAPE IT IS - and the rule is about that element, not about a

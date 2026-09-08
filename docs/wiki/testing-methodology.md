@@ -2435,6 +2435,70 @@ records `a1GateSaid`, and `pingate` PRINTS a non-zero exit rather than only retu
 `LOCKED` has three causes that read alike - the PIN was refused, the modal never mounted, or the tool
 never reached the phone.
 
+## AND THE BUILD STAMP NAMED A COMMIT THAT DOES NOT CONTAIN THE CODE THAT WAS MEASURED
+
+The sibling of the section below, found the same day and worse, because it is silent in the one
+situation that produces it most: a fix being measured.
+
+`a1Build` is DERIVED. `resolveStamp` takes the SvelteKit build timestamp the packaged bundle carries
+and names the newest commit at or before it, on a stated history. That is exact for a build made
+from a clean tree. `a1apk.mjs` builds from the WORKING tree - which is the point of it, and the
+shape of every fix loop: write a fix, build, install, measure, commit. In that loop the newest
+commit at build time is the one BEFORE the change.
+
+So the ledger says NOTIF-16 passed on `1fd7cecd7`, and `1fd7cecd7` is the commit before the fix that
+makes it pass. The measurement is sound - the phone really did file a mention on `canari_mentions`.
+The attribution is false, and it is false in the direction that matters: a reader checking out that
+commit and re-running would get a `FAIL` and conclude the row is flaky.
+
+**IT RECORDS, IT DOES NOT REFUSE.** A gate against a dirty build would forbid the only way a fix can
+be measured before it is committed. What must not survive is a verdict that CLAIMS a commit it was
+not built from. So `apkbuild.mjs` writes the tree state down at build time - HEAD, dirty, and a hash
+of `git diff HEAD` plus the untracked list - and `run.mjs`'s preflight joins it back.
+
+**THE JOIN KEY IS `builtAt`, AND THAT IS NOT AN IMPLEMENTATION DETAIL.** It is the only value both
+ends know for a fact: the preflight reads it off the running app, the recorder reads it out of the
+bundle it just packaged. The commit is a derivation on both sides, so joining on the commit would be
+joining two guesses and would agree exactly when it was least entitled to.
+
+**ABSENCE IS "NOT RECORDED", NEVER "CLEAN".** Every row taken before this existed carries nothing,
+and so does an APK built by CI or by hand. `rows.mjs` prints the rows it KNOWS were measured on a
+dirty tree and says nothing about the rest, which is honest rather than reassuring.
+
+**The general shape: a derived value inherits every assumption of its derivation, and the assumption
+here was never written down.** `resolveStamp`'s own doc reasons carefully about WHICH history to
+resolve against - it was extended once already, when a locally built APK was resolved against
+`origin/main` and named two different commits for one bundle. It reasons not at all about whether
+the tree was committed, because at the time both callers built from a commit. A derivation is only
+as true as the sentence nobody thought to write.
+
+## A RUNNER OVERWROTE THE FIELD THAT SAYS WHICH RUNNER TOOK THE VERDICT
+
+`rows.mjs` can say whether a recorded verdict was taken on the code it claims, and it does it with
+three fields the ledger writes for itself: `check` (the runner FILE), `checkSha` and
+`instrumentSha`. Change a runner after a verdict and the row is reported as `runner is now
+<newsha>` - which is how a stale `PASS` is told from a current one.
+
+**Four live rows had silently left that chain** - NOTIF-7, NOTIF-7b, NOTIF-14 and NOTIF-16. `record()` wrote `check: CHECK.file` and then
+spread the caller's `detail` over it, and six runners set `out.check = '<the row id>'` as a
+self-label inside their own JSON dump - `'NOTIF-14'`, `'NOTIF-7 (bg)'`, `'NOTIF-6c'`, `'MSG-10'`,
+`'MSG-8b'`. So the ledger recorded a row id where a filename belonged, `rows.mjs` looked for a file
+called `NOTIF-7 (bg)`, found none, and printed **"its runner no longer exists"** for runners that
+exist and had just run. It prints the same sentence for FWD-3, FWD-4 and FWD-5, where it is simply
+TRUE - which is exactly why the false ones were never noticed. Nothing failed. The rows kept their verdicts and lost only the ability to
+say those verdicts were current, which is the property the whole ledger is for.
+
+**The fix is an ordering, not a rule for runners to remember.** The three provenance fields now sit
+AFTER `...detail`, so a runner cannot overwrite them; `a1Build` deliberately stays BEFORE it,
+because that one IS an observation and a runner that read the phone at its own arming moment has
+the better one. The self-labels were removed from the runners as well, but that is tidying - the
+ordering is what makes the next runner unable to reintroduce it.
+
+**The general shape, and it is the second time this campaign has met it.** A field the LEDGER owns
+and a field a RUNNER contributes are different kinds of value, and merging them with a spread makes
+the distinction depend on declaration order. Ask of every field in a record which of the two it is;
+where the answer is "the ledger's", the runner must not be able to name it at all.
+
 ## A STATUS WITH NO REQUEST IS EVIDENCE FOR NOTHING
 
 **Measured 2026-08-29, on HEAL-NEW-15's gate.** The row was demoted to `PASS-DIRTY` partly on
@@ -2569,6 +2633,62 @@ That is the measurement the row can actually support. **A rate, an interval or a
 HEAL-NEW log is a statement about ONE document or it is a statement about the harness** - the runner
 navigates the client by design, and every in-memory guard in the app is reset each time it does.
 
+## THE PRECONDITION THAT REPAIRS THE LINK ALSO REFILLS THE SHADE, AND A ROW READ IT AS ITS OWN
+
+**NOTIF-7b recorded `FAIL` on 2026-09-08 against a notification it had never sent** - the tell was
+in its own stage line and nobody had a reason to look at it:
+
+```
+[76.910s] FCM link renewed in 4316ms
+[106.856s] sending NOTIF7-mtsk277r5z2
+[107.306s] shade in 132 ms, decrypted=false; ["N17B-mtshovlkrcc | Canari Test Beta a ajoute ..."]
+```
+
+**132 ms is not a push.** What was in the shade was NOTIF-17b's group-add notification, from a row
+that had finished hours earlier, and the row tapped it, followed it nowhere, and wrote `FAIL` about
+the deep link.
+
+**AND THE CAUSE IS A PRECONDITION DOING EXACTLY WHAT IT IS FOR.** `requireFreshFcmLink` forces Play
+services onto a new connection because that is what revives a dead link - and the reason it revives
+it is that the backlog is then DELIVERED, the sends carrying `ttl: 24h`. That is written down in
+`fcmlink.mjs` as the finding that justified the whole file. So every push row now begins by dropping
+up to a day of old pushes into the shade, seconds before it reads it. The gate that made four
+verdicts believable is the gate that made this one false.
+
+**A ROW MUST WAIT FOR ITS OWN NOTIFICATION, AND THE INSTANT IT SENT IS A FACT IT ALREADY HAS.**
+`awaitNotification` takes a `sinceMs` floor read from `phone.deviceNowMs()` - the DEVICE's clock,
+because the two are minutes apart on this bench and a floor on the wrong one accepts everything or
+nothing. The record's `mUpdateTimeMs` is what it is compared against, not `when`: a stable-id repost
+UPDATES the record in place, so `when` can still name the first message of a conversation while the
+shade is showing the newest.
+
+**AND WHERE THE FLOOR CANNOT FOLLOW, THE ROW REFUSES.** The tap matches TEXT in a UI dump, so it
+cannot be given a timestamp. With the marker in the body the needle names exactly one row; without
+it the needle is the peer's name, which a backlog item carries just as well - so a row that finds a
+stale notification for its own peer and no decrypted body records `SETUP-FAILED` naming the
+ambiguity instead of tapping a coin flip and reporting where it landed.
+
+## THE LAST NOTIFICATION IN THE DUMP WAS THE REST OF THE DUMP
+
+Found while fixing the above, and it had been true of every notification row ever taken here.
+`phone.notifications()` split `dumpsys notification` on `NotificationRecord(` - and `dumpsys` prints
+the live list first, then ~900 lines of unrelated state: every package's preferences, every channel
+the phone has ever been told about, listener stats, Zen rules. The final block therefore contained
+all of it. Measured on 2026-09-08: two records, the last one **905 lines long, naming
+`fr.emse.canari` twice with nothing of ours in the shade at all.**
+
+Every row here matches on `full`, so a needle occurring anywhere in that tail read as a notification
+that was posted. `undecryptedInShade` could count a phantom; a channel assertion could read a
+`channel=` belonging to another app's record. The list is now bounded by INDENT, which is what the
+dump encodes - `  Notification List:` introduces it, records sit at four spaces, and the section
+ends at the next two-space key - and a dump without that header THROWS, because silently parsing
+the whole file is the defect wearing a fallback's clothes.
+
+**The general shape, and it is the second time this campaign has met it**: a parser given a
+delimiter and no TERMINATOR does not fail, it over-reads. What it returns is a superset that
+satisfies every `includes` a caller can write, so it produces PASSES, which is the direction nobody
+audits.
+
 ## Where a result goes
 
 - **PASS** -> one row in the [dashboard](cross-client-testing.md), with the build it ran against.
@@ -2611,6 +2731,23 @@ where they disagree, every row the board claims and the ledger cannot corroborat
 taken by a runner that has since changed. **Run it before believing a cell, and before writing a
 phase's summary line.** It had been reporting these fourteen divergences for a day before anyone
 ran it - a check that exists and is not run is worth exactly what no check is worth.
+
+**AND SINCE 2026-09-08 IT DETECTS THE INTERMITTENCE ITSELF, which the paragraph above described and
+nothing checked for eleven days.** `rows.mjs` now groups every ledger record by row AND build AND
+`checkSha` AND `instrumentSha` AND order, and reports each group that holds more than one distinct
+verdict. All four keys are load-bearing: a row re-run after a fix answers differently on two BUILDS,
+a runner EDITED between two runs answers differently on one build - which is the ordinary way a row
+goes `FAIL` then `PASS` and accounted for 49 of the first 77 hits - and a COMPARISON row's halves
+answer differently by construction, which is its question rather than a fault. What is left is same
+build, same runner, same instrument, two answers: the product or the estate.
+
+**It found 28, of which 18 decide a cell the board is showing right now**, and it names them so.
+HEAL-repair is the row that made it necessary: `2 PARTIAL, 1 PASS` on one build and `2 PASS, 2
+PARTIAL` on another, a cell that read `PASS` for two days because the last run of a rung happened to
+be a good draw, and a P1 whose cause is arithmetic ([backlog](backlog.md)). **A verdict from a row
+listed there is one draw of a distribution, not a measurement**, and grading it on the newest word is
+the same selection-from-evidence this section was written about - one level down, where the selection
+is made by the dice instead of by a person.
 
 ### Dirt repeated across rows is ONE defect, and a per-row report cannot show that
 

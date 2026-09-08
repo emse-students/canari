@@ -229,6 +229,24 @@ describe('saveMlsStateEncrypted write-if-newer (IndexedDB)', () => {
     expect(store.get(MLS_STATE_ENCRYPTED_KEY)).toEqual(new Uint8Array([5, 5]));
   });
 
+  /**
+   * A ZERO-LENGTH STATE IS AN ABSENT STATE, AND ONLY ONE OF THE TWO RUNTIMES SAID SO.
+   *
+   * `load_mls_state` on the native side guards `res.length > 0` before returning bytes; the
+   * IndexedDB path resolved `req.result ?? null` and then tested the result for truthiness - and an
+   * empty `Uint8Array` is truthy. So a web device whose stored state had been written short (an
+   * interrupted flush, a quota failure) reported a state that EXISTS and is empty.
+   *
+   * What that costs is not cosmetic. The caller sets `noFreshStart: !!bytes`, whose whole purpose is
+   * to stop a device with real history from silently starting over - so an empty state armed the
+   * guard against itself: init is handed zero bytes and forbidden to start fresh, and the login
+   * fails with no path back. The same damage on the phone re-enrols cleanly.
+   */
+  it('treats a zero-length stored state as ABSENT, like the native path does', async () => {
+    store.set(MLS_STATE_ENCRYPTED_KEY, new Uint8Array(0));
+    expect(await loadMlsState('user-empty')).toBeNull();
+  });
+
   it('loadMlsState seeds the counter from the stored version', async () => {
     const tagged = tagMlsSnapshot(new Uint8Array([8]));
     await saveMlsStateEncrypted('user-2', tagged);

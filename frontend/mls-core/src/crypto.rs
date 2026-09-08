@@ -109,11 +109,20 @@ impl MlsManager {
         key: &[u8; 32],
     ) -> Result<Self, MlsError> {
         let decrypted_state = if let Some(blob) = encrypted_blob {
+            // BOTH ARMS ARE THE SAME SITUATION FOR THE PERSON HOLDING THE PHONE: the saved state
+            // will not open. A blob too short to hold a nonce is a truncated write - an interrupted
+            // flush, a full disk, a killed tab - which is the most realistic shape of corruption
+            // there is, and it used to answer `InvalidData` while a failed tag answered
+            // `OpenMls("Decryption: ..")`. Two unrelated names for one outcome, and neither told
+            // the caller what it needed. See `MlsError::StateUndecryptable`.
             if blob.len() < 12 {
-                return Err(MlsError::InvalidData);
+                return Err(MlsError::StateUndecryptable(format!(
+                    "state blob is {} bytes, too short to carry a nonce",
+                    blob.len()
+                )));
             }
             let plain = crate::security::decrypt_blob(key, &blob)
-                .map_err(|s| MlsError::OpenMls(format!("Decryption: {}", s)))?;
+                .map_err(|s| MlsError::StateUndecryptable(s.to_string()))?;
             Some(plain)
         } else {
             None

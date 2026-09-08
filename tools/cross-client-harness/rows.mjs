@@ -238,6 +238,35 @@ const latest = new Map();
 // row, on 2026-09-05, and both were right about their own half. Rows with a single order are
 // untouched by this - the map has one entry and the worst of one is itself.
 const perOrder = new Map();
+/**
+ * row -> "build|order" -> verdict -> count. The one thing the newest-verdict model cannot express.
+ *
+ * A row is graded on its newest word, which is right when a row's answer is a fact about the build:
+ * it passed yesterday and fails today, so it is failing. It is WRONG when the row's answer is a
+ * DRAW - HEAL-repair healed 3 times in 10 across three builds on 2026-09-08, and the board carried
+ * `PASS` because the last run of a rung happened to be one of the three. Nothing here noticed, for
+ * six days, because every individual record was true.
+ *
+ * Keyed by build AND order so the two legitimate reasons for disagreement are not reported: a row
+ * re-run after a fix answers differently on two builds, and a COMPARISON row's halves answer
+ * differently by construction (that is its question, and `perOrder` above adjudicates it).
+ */
+const perBuild = new Map();
+
+/**
+ * WHAT MAKES TWO VERDICTS COMPARABLE - the same question, asked of the same code, the same way.
+ *
+ * `sourceSha` IS PART OF A BUILD'S IDENTITY and the commit is not enough on its own: see the field's
+ * note in `results.mjs` for the run that proved it. Two verdicts taken at one commit against two
+ * different served trees are a BEFORE and an AFTER, never a draw. Rows recorded before the field
+ * existed carry no stamp and keep their old grouping, so no historical draw is dissolved by this.
+ */
+const keyOf = (r) =>
+  [r.build || '?', r.sourceSha || '?', r.checkSha || '?', r.instrumentSha || '?', r.order || ''].join('|');
+/** row -> every SKIPPED record, so a skip is reported without being allowed to grade the row. */
+const skipped = new Map();
+/** row -> the newest record that is NOT a skip, used to restore a verdict a later skip displaced. */
+const latestReal = new Map();
 const divergent = new Map();
 const diagnostics = new Map();
 const retired = new Map();
@@ -277,6 +306,24 @@ for (const line of readFileSync(LEDGER, 'utf8').split('\n')) {
     continue;
   }
   for (const row of hits) {
+    // A SKIPPED IS NOT A VERDICT, SO IT DOES NOT SUPERSEDE ONE - it is the runner saying it did not
+    // ASK, and absence of a measurement is not evidence against one. Kept out of `latest` only when
+    // the row has a real verdict somewhere: a row whose every record is a skip (READ-5 needs a
+    // fourth reader and there are two accounts) is DESCRIBED by that skip and must keep it, or it
+    // would fall into "no verdict and no claim" and read as never run.
+    //
+    // Measured 2026-09-08, which is why this is here: re-running READ with the phone behind its lock
+    // screen turned READ-2, -9 and -10 from `PASS` into `SKIPPED - second client not reachable`, and
+    // the board was then WRONG for holding the pass. Under the old rule any rung run on an
+    // incomplete fleet erased its own green rows, and the fleet is incomplete most of the time.
+    if (r.verdict === 'SKIPPED') {
+      if (!skipped.has(row)) skipped.set(row, []);
+      skipped.get(row).push({ at: r.at, build: r.build, why: r.reason || r.why || '' });
+    }
+    if (r.verdict !== 'SKIPPED') {
+      const prevReal = latestReal.get(row);
+      if (!prevReal || String(r.at) > String(prevReal.at)) latestReal.set(row, { at: r.at });
+    }
     const prev = latest.get(row);
     if (!prev || String(r.at) > String(prev.at)) {
       latest.set(row, {
@@ -293,6 +340,25 @@ for (const line of readFileSync(LEDGER, 'utf8').split('\n')) {
         instrumentSha: r.instrumentSha,
       });
     }
+    // build AND checkSha AND instrumentSha: a runner EDITED between two runs is the ordinary way a
+    // row goes FAIL then PASS on one build, and reporting that as flakiness buries the real thing.
+    // Same build, same runner, same instrument, two answers - that is the product or the estate.
+    // A SKIP IS NOT ONE OF THE TWO ANSWERS EITHER - a row that skipped twice and failed once gave
+    // ONE answer, not three, and counting the skips would report it as intermittent for having been
+    // asked on an incomplete fleet. Same rule as `latestReal` above, same reason.
+    // `sourceSha` IS PART OF THE IDENTITY OF A BUILD, and the commit is not enough on its own -
+    // see the field's own note in `results.mjs` for the run that proved it. Two verdicts taken at
+    // one commit against two different served trees are a BEFORE and an AFTER, never a draw. Rows
+    // recorded before the field existed carry no stamp and keep their old grouping, so no historical
+    // draw is silently dissolved by this.
+    const buildKey = keyOf(r);
+    if (r.verdict === 'SKIPPED') continue;
+    if (!perBuild.has(row)) perBuild.set(row, new Map());
+    const perKey = perBuild.get(row);
+    if (!perKey.has(buildKey)) perKey.set(buildKey, new Map());
+    const tallyForKey = perKey.get(buildKey);
+    tallyForKey.set(r.verdict, (tallyForKey.get(r.verdict) || 0) + 1);
+
     if (r.order) {
       if (!perOrder.has(row)) perOrder.set(row, new Map());
       const byOrder = perOrder.get(row);
@@ -301,6 +367,36 @@ for (const line of readFileSync(LEDGER, 'utf8').split('\n')) {
         byOrder.set(r.order, { verdict: r.verdict, at: r.at, build: r.build });
       }
     }
+  }
+}
+
+// PUT BACK A VERDICT A LATER SKIP DISPLACED. The loop above takes the newest record of any kind; a
+// skip is not a measurement, so where the row HAS one it is the one that grades it. Rows whose every
+// record is a skip keep it - that skip is their description, and dropping it would move them into
+// "no verdict and no claim", which reads as never run.
+for (const [row, real] of latestReal) {
+  const now = latest.get(row);
+  if (!now || now.verdict !== 'SKIPPED') continue;
+  for (const line of readFileSync(LEDGER, 'utf8').split('\n')) {
+    if (!line.trim()) continue;
+    let rec;
+    try {
+      rec = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!rec || !rec.id || rec.at !== real.at) continue;
+    if (!boardRowsFor(rec.id).includes(row) || rec.verdict === 'SKIPPED') continue;
+    latest.set(row, {
+      verdict: rec.verdict,
+      build: rec.build,
+      at: rec.at,
+      recordedAs: rec.id,
+      check: rec.check,
+      checkSha: rec.checkSha,
+      instrumentSha: rec.instrumentSha,
+      displacedByASkip: latest.get(row).at,
+    });
   }
 }
 
@@ -432,6 +528,44 @@ if (notGreen.length) {
   }
 }
 
+// FLAKY: one build, one question, two answers. See `perBuild` for why this is not the same report as
+// the two above, and for the six days it went unnoticed on HEAL-repair.
+const flaky = [];
+for (const [row, perKey] of perBuild) {
+  for (const [key, tally] of perKey) {
+    if (tally.size < 2) continue;
+    const [build, , , , order] = key.split('|');
+    flaky.push({ row, build, order, tally, key });
+  }
+}
+if (flaky.length) {
+  console.log(
+    '\n[rows] ' +
+      flaky.length +
+      ' row/build pair(s) that answered DIFFERENTLY on the SAME build - a verdict here is a DRAW, not a measurement:'
+  );
+  for (const f of flaky.sort((a, b) => a.row.localeCompare(b.row))) {
+    const spread = [...f.tally.entries()].map(([v, n]) => n + ' ' + v).join(', ');
+    // THE ONES THAT DECIDE A CELL RIGHT NOW. The rest are history and are kept as evidence: a row
+    // that was a draw on an older build and is settled on this one has been fixed, and deleting the
+    // record would erase the only proof of that.
+    // ON THE WHOLE KEY, NEVER ON THE BUILD ALONE. A draw from an EARLIER key that happens to
+    // share a commit would otherwise claim to be what grades the row - which is the same confusion
+    // `sourceSha` was added to end, one level up: CORRUPT-3 carried a real historical draw at
+    // `3a622e3f` from a deliberate A/B while the three runs actually grading it were unanimous.
+    const grading = latest.get(f.row) && keyOf(latest.get(f.row)) === f.key;
+    console.log(
+      '  ' +
+        f.row.padEnd(14) +
+        String(f.build).slice(0, 8).padEnd(10) +
+        spread +
+        (f.order ? '  order=' + f.order : '') +
+        (grading ? '   <- THE BOARD GRADES THIS ROW ON THIS BUILD' : '')
+    );
+  }
+  console.log('  (grade these on the SPREAD - the newest word is one draw of it)');
+}
+
 // A VERDICT FROM A RUNNER THAT NO LONGER EXISTS IS NOT A VERDICT, and this is the trap that cost the
 // most time in the campaign. HEAL-W2's newest word was `FAIL`, from 2026-08-11 - and `heal-w2.mjs`
 // was REWRITTEN that same day, because the old verdict required a branch four runs proved
@@ -540,6 +674,32 @@ if (unstamped.length) {
   );
   for (const r of unstamped) {
     console.log('  ' + r.padEnd(14) + String(latest.get(r).verdict).padEnd(12) + latest.get(r).at);
+  }
+}
+
+// A ROW WHOSE `a1Build` NAMES A COMMIT THAT DOES NOT CONTAIN THE CODE IT MEASURED.
+//
+// `a1apk.mjs` builds from the WORKING tree - that is the point of it, and the shape of every fix
+// loop: write a fix, build, measure, commit. `resolveStamp` then dates the APK to the newest commit
+// at or before its timestamp, which for a dirty build is the commit BEFORE the change. The verdict
+// is sound and the attribution is false, and only the second half is detectable from the ledger -
+// so it is printed rather than left for a reader to disbelieve later. `apkbuild.mjs` records it.
+//
+// SILENCE HERE IS NOT A CLEAN BILL. Rows taken before that module existed carry nothing, and
+// nothing is what an APK built by CI or by hand carries too.
+const dirtyBuild = rows.filter((r) => latest.has(r) && latest.get(r).a1BuildDirty);
+if (dirtyBuild.length) {
+  console.log(
+    `
+[rows] ${dirtyBuild.length} verdict(s) were measured on an APK built from a DIRTY tree - ` +
+      `the commit beside them does NOT contain the code they ran on:`
+  );
+  for (const r of dirtyBuild) {
+    const e = latest.get(r);
+    console.log(
+      '  ' + r.padEnd(14) + String(e.verdict).padEnd(12) + String(e.a1Build ?? '?').padEnd(12) +
+        'diff ' + String(e.a1BuildDiffSha ?? '?')
+    );
   }
 }
 

@@ -89,7 +89,7 @@ function pendingSecretBytes() {
   return /^\d+$/.test(out) ? Number(out) : null;
 }
 
-const out = { check: 'NOTIF-6c' };
+const out = {};
 
 // ── 1. A fresh process, so the Keystore cannot already hold this session's secret ────────────────
 stage('HOME, then am kill - never force-stop, which cancels every FCM broadcast to the package');

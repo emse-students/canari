@@ -79,7 +79,6 @@ const gated = gate(count === 1 ? 'PASS' : 'FAIL', { A1: obs.a1, W2: obs.w2 });
 console.log(
   JSON.stringify(
     {
-      check: 'MSG-8b',
       marker: m,
       unreadSignalled: signalled,
       before,

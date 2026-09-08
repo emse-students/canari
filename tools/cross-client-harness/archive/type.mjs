@@ -30,6 +30,7 @@
  *   bun type.mjs                 # all five
  *   bun type.mjs --only 2        # one
  */
+import { requireScript } from '../scriptpath.mjs';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { client, evaluate, openDM, openChannel, realClick, until, COMPOSER } from '../chat.mjs';
@@ -203,8 +204,9 @@ async function type3() {
     await new Promise((r) => setTimeout(r, 5000));
     restored.unlocked =
       (await new Promise((resolve) => {
-        const PIN = fileURLToPath(new URL('../pin.mjs', import.meta.url));
-        const c = spawn(process.execPath, [PIN, '--device', 'W1'], {
+        // `requireScript` rather than a hand-built `../pin.mjs`: it searches both directories, so it
+        // keeps working the day a script moves - which is the move that created this whole class.
+        const c = spawn(process.execPath, [requireScript('pin.mjs'), '--device', 'W1'], {
           cwd: fileURLToPath(new URL('../', import.meta.url)),
           stdio: 'ignore',
         });

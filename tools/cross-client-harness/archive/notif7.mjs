@@ -114,9 +114,9 @@ function unlock(port = PORTS.A1) {
 // right conversation was sitting in it. So: wait on the sender's name, then RECORD whether the
 // marker is in it.
 const PEER = PEER_NAME;
-const awaitShade = (timeoutMs) => phone.awaitNotification(PEER, timeoutMs);
+const awaitShade = (timeoutMs, sinceMs) => phone.awaitNotification(PEER, timeoutMs, sinceMs);
 
-const out = { check: `NOTIF-7 (${mode})`, mode };
+const out = { mode };
 
 // ── phone: unlock, park on the FEED ──────────────────────────────────────────
 stage('waking and launching the phone');
@@ -210,17 +210,31 @@ if (out.foregroundedBefore) throw new Error('the app is still in the foreground;
 
 // ── send, and wait for the shade ─────────────────────────────────────────────
 const marker = mark('NOTIF7');
-stage(`sending ${marker}`);
+// THE FLOOR, TAKEN ON THE PHONE'S OWN CLOCK AND AFTER THE LINK RENEWAL. `requireFreshFcmLink`
+// forces Play services onto a new connection, and doing so DELIVERS THE BACKLOG - the sends carry
+// `ttl: 24h`, and that is the documented reason the renewal repairs a dead link at all. So the
+// renewal drops old pushes into the shade seconds before this row reads it. On 2026-09-08 that made
+// NOTIF-7b tap NOTIF-17b's group-add notification 132 ms after sending - a push cannot arrive in
+// 132 ms - and record a FAIL about a conversation it had never sent to. Waiting for "a notification
+// mentioning the peer" cannot tell the two apart; waiting for one UPDATED after this instant can.
+const sentFrom = phone.deviceNowMs();
+stage(`sending ${marker} (shade floor ${sentFrom})`);
 await send(w2, `${marker} deep link (${mode})`);
-out.shadeInMs = await awaitShade(120_000);
+out.shadeInMs = await awaitShade(120_000, sentFrom);
 const ours = phone.notifications().filter((n) => n.full.includes(PEER));
 out.shade = ours.map((n) => `${n.title} | ${n.body}`.slice(0, 160));
+// What the tap will be aiming at, kept apart from what merely EXISTS: a backlog item for this same
+// peer can sit in the shade beside ours, and the tap matches on TEXT in a UI dump, where a floor
+// cannot follow it.
+const fresh = ours.filter((n) => n.updatedAt >= sentFrom);
+out.freshInShade = fresh.length;
+out.staleInShade = ours.length - fresh.length;
 // The SECOND observation, recorded next to the verdict rather than gating it: did the background
 // path decrypt, or did it post the generic fallback? NOTIF-1's expectation is real content.
 out.decrypted = ours.some((n) => n.full.includes(marker));
 stage(`shade in ${out.shadeInMs} ms, decrypted=${out.decrypted}; ${JSON.stringify(out.shade)}`);
 if (out.shadeInMs === null) {
-  out.verdict = 'FAIL';
+  out.ownVerdict = 'FAIL';
   out.why = 'no notification for this conversation ever reached the shade - nothing to tap';
   const phoneReport = logcatReport(await logcatSince(phoneWindowFrom), 'A1');
   writeFileSync(new URL(`./notif7-${mode}.log`, import.meta.url), JSON.stringify({ ...out, a1: phoneReport }, null, 2));
@@ -231,6 +245,17 @@ if (out.shadeInMs === null) {
 }
 
 // ── the tap ──────────────────────────────────────────────────────────────────
+// AN AMBIGUOUS TAP IS AN INSTRUMENT FAULT, NOT A VERDICT. With the marker in the body the needle
+// names exactly one row. Without it the needle is the peer's name, which a stale backlog item
+// carries just as well - so if one is present the row REFUSES rather than tapping a coin-flip and
+// reporting whatever it lands on as the product's answer.
+if (!out.decrypted && out.staleInShade > 0) {
+  out.why =
+    `the shade holds ${out.staleInShade} notification(s) for this peer from before this send and ` +
+    'this one is not decrypted, so no text needle names ours - the tap would be a coin flip';
+  stage(`SETUP-FAILED: ${out.why}`);
+  await finishObserved(ROW, 'SETUP-FAILED', out, { W2: w });
+}
 stage('expanding the shade and tapping the notification');
 out.tap = tapNotification(out.decrypted ? marker : PEER);
 stage(`tap -> ${JSON.stringify(out.tap)}`);
@@ -297,7 +322,7 @@ out.landedAfterUnlockMs = Date.now() - measuringFrom;
 stage(`landed: ${JSON.stringify(landed)} after ${out.deepLinkMs} ms (${out.landedAfterUnlockMs} ms post-unlock)`);
 
 out.count = await countMessage(a1, marker);
-out.verdict = out.foregroundedAfter && landed.composer && landed.marker && out.count === 1 ? 'PASS' : 'FAIL';
+out.ownVerdict = out.foregroundedAfter && landed.composer && landed.marker && out.count === 1 ? 'PASS' : 'FAIL';
 
 /**
  * `out.phoneNotable = []` was the whole native observation - a literal empty array, assigned and
@@ -315,4 +340,14 @@ const phoneReport = logcatReport(await logcatSince(phoneWindowFrom), 'A1');
 writeFileSync(new URL(`./notif7-${mode}.log`, import.meta.url), JSON.stringify({ ...out, a1: phoneReport }, null, 2));
 // One id per MODE: `bg` and `killed` are two checks on the dashboard, and a shared id would let the
 // second overwrite the first's row in every reading of the ledger.
-await finishObserved(ROW, out.verdict, out, { W2: w, A1: phoneReport });
+// NOT `out.verdict`, AND THE ROW'S HAPPY PATH HAD NEVER ONCE BEEN RECORDED BECAUSE OF IT. This file
+// spreads its working object straight into the detail, and `record` REFUSES a detail naming
+// `verdict` - it would erase the row's own provenance. The two other runners that keep a working
+// verdict (`notif.mjs`, `k.mjs`) build a fresh object literal at the call, so neither ever hit it.
+// Here the field is only assigned at the decision points BELOW the tap, so every failure recorded
+// fine and the success threw: measured 2026-09-08, the first run in which the tap worked.
+//
+// `ownVerdict` is kept rather than deleted, because it is not the same fact as the row's verdict -
+// `gate()` can downgrade this to PASS-DIRTY, and knowing what the check itself decided is how the
+// two are told apart afterwards.
+await finishObserved(ROW, out.ownVerdict, out, { W2: w, A1: phoneReport });

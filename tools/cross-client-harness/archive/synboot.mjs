@@ -20,6 +20,7 @@
  *
  *   bun synboot.mjs [--device W1] [--settle 8000]
  */
+import { requireScript } from '../scriptpath.mjs';
 import { spawn } from 'node:child_process';
 import { client, evaluate } from '../chat.mjs';
 import { until } from '../cdp.mjs';
@@ -99,7 +100,7 @@ step(landed === null ? 'NEITHER PIN MODAL NOR APP within 30 s' : pinUp !== null 
 
 if (pinUp !== null) {
   const code = await new Promise((resolve) => {
-    const p = spawn(process.execPath, ['pin.mjs', '--device', device], {
+    const p = spawn(process.execPath, [requireScript('pin.mjs'), '--device', device], {
       cwd: new URL('.', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'),
       stdio: 'ignore',
     });

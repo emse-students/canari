@@ -73,3 +73,61 @@ fn allows_an_equal_snapshot() {
     // Same epoch on both sides -> monotonic (>=) -> allowed.
     assert!(alice.reload_is_monotonic(&candidate));
 }
+
+/// THE AXIS THE EPOCH GUARD CANNOT SEE, PINNED AS A MEASUREMENT RATHER THAN AN ARGUMENT.
+///
+/// The three tests above establish what `reload_is_monotonic` protects: no live group disappears,
+/// no live group regresses. This one establishes what it does NOT protect, because that gap is the
+/// standing candidate for the prekey purge loop in `docs/wiki/backlog.md` and it had never been
+/// written down as a fact.
+///
+/// A snapshot taken before a connection's mint holds every group at exactly its live epoch, so the
+/// guard accepts it - correctly, on its own terms. The keystore it installs is missing all fifty
+/// freshly published bundles, and `key_package_has_private` then answers `false` about packages
+/// this device minted seconds earlier. That answer is what `reconcilePublishedKeyPackages` reads as
+/// "the server holds an orphan" before purging the pool.
+#[test]
+fn a_snapshot_predating_a_mint_passes_the_epoch_guard_while_losing_every_minted_key_package() {
+    let mut alice = make("rel-alice-kp", "dev1");
+    let gid = "g-reload-kp";
+    alice.create_group(gid.to_string()).expect("create");
+
+    // What the resume path would find on disk had the blob been written before the mint.
+    let before_mint = alice.save_state().expect("snapshot before the mint");
+    let count_before = alice.key_package_count().expect("count before");
+
+    // Exactly the batch a connection mints when the pool reads as empty.
+    let published = alice.generate_key_packages(50).expect("50 prekeys");
+    assert_eq!(published.len(), 50);
+    assert_eq!(
+        alice.key_package_count().expect("count after"),
+        count_before + 50,
+        "the count must follow a mint, or it cannot witness a loss"
+    );
+
+    let candidate = restore("rel-alice-kp", "dev1", before_mint);
+
+    // THE EPOCH GUARD SEES NOTHING WRONG - no group moved, so this reload is accepted today.
+    assert!(
+        alice.reload_is_monotonic(&candidate),
+        "a snapshot predating only a MINT regresses no epoch, so the epoch guard must accept it -          if this ever fails, the guard has grown a second axis and the accusation in          `recharger_mls_au_resume` should become a refusal"
+    );
+
+    // AND YET IT DROPS ALL FIFTY. This is the whole finding.
+    assert_eq!(
+        candidate.key_package_count().expect("candidate count"),
+        count_before,
+        "the reloaded keystore must be the pre-mint one - otherwise this test proves nothing"
+    );
+
+    // Stated as the reconciliation itself would observe it: the installed manager can back none of
+    // the packages the device published, so every one of them reads as a server orphan.
+    let unrecognised = published
+        .iter()
+        .filter(|kp| !candidate.key_package_has_private(kp).unwrap_or(false))
+        .count();
+    assert_eq!(
+        unrecognised, 50,
+        "all fifty published packages must be unrecognisable to the reloaded manager - this is the          `purged 50/50` line measured on the Mi 9T, reproduced without a phone"
+    );
+}

@@ -1159,10 +1159,26 @@ async function upsertConversation(
             serverTimestamp: m.serverTimestamp,
           }));
         if (toSave.length > 0) {
-          await deps.storage.saveMessages(toSave, deps.deviceKeyB64).catch(() => {});
-          deps.log(
-            `[WELCOME] ${toSave.length} message(s) from ${existing.id.slice(0, 8)}… persisted in ${joinedGroupId.slice(0, 8)}… (re-keyed)`
-          );
+          // THE LINE BELOW USED TO PRINT WHETHER OR NOT THE WRITE HAPPENED. `.catch(() => {})`
+          // swallowed the failure and the next statement announced `persisted` regardless, so a
+          // store that refuses writes produced a log CLAIMING a durable write that did not occur.
+          // That is worse than silence: it answers, wrongly, the exact question a reader chasing a
+          // conversation empty after a reload would come here to ask.
+          const persisted = await deps.storage
+            .saveMessages(toSave, deps.deviceKeyB64)
+            .then(() => true)
+            .catch((e: unknown) => {
+              deps.log(
+                `[WELCOME] FAILED to persist ${toSave.length} re-keyed message(s) in ${joinedGroupId.slice(0, 8)}…: ` +
+                  `${e instanceof Error ? e.message : String(e)} - they are on screen and will NOT survive a reload`
+              );
+              return false;
+            });
+          if (persisted) {
+            deps.log(
+              `[WELCOME] ${toSave.length} message(s) from ${existing.id.slice(0, 8)}… persisted in ${joinedGroupId.slice(0, 8)}… (re-keyed)`
+            );
+          }
         }
       }
     }

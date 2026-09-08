@@ -47,7 +47,9 @@ import { all, clientBuild } from '../results.mjs';
 import { deployedBundleId, isOnTheDeployment, reloadOntoBundle, sourceIsDeployed } from '../bundle.mjs';
 import { stateOf } from './ready-probe.mjs';
 import { bringToReady } from './ready-repair.mjs';
-import { requireScript } from '../scriptpath.mjs';
+import { apkBuildProvenance } from '../apkbuild.mjs';
+import { startBrowser } from '../launch.mjs';
+import { findScript, requireScript } from '../scriptpath.mjs';
 
 // THE PHONE THIS RUNNER DRIVES, DECLARED. Every row below is written for A1 - `PORTS.A1`,
 // `peerNameFor('A1')` - and with a second phone on the bench `serial()` refuses to choose rather
@@ -412,7 +414,39 @@ async function preflight(devices, { quiet = false } = {}) {
     // predicate whose only home is a CLI is omitted by every other caller, and `healnew.mjs` proved it
     // by driving a signed-out W1 through an entire row. What stays HERE is what only a run can decide:
     // whether an unready client refuses the phase.
-    const r = await bringToReady(d);
+    let r = await bringToReady(d);
+    if (r.unreachable && d !== 'A1' && !/so no tab can be chosen/.test(r.unreachable)) {
+      /**
+       * A CLOSED BROWSER IS A REPAIR THIS RIG OWNS, AND NAMING IT WAS NOT DOING IT.
+       *
+       * This preflight already performs four repairs - it reloads a client stuck on an old bundle,
+       * answers a PIN gate, moves a client off `/posts` where the gate does not mount, and drives
+       * `bringToReady`'s own trail. For a closed browser it printed the command instead:
+       * `browser closed? bun launch.mjs start w1`. **A refusal that names its own repair is a
+       * missing gate, not a routing decision** - and the cost was measured twice on 2026-09-08:
+       * `healnew.mjs --row 1` kills both web clients on purpose (its topology is "nothing online")
+       * and does not restore them, so TWELVE HEAL scripts were BLOCKED behind a gesture the runner
+       * could have made itself, in a rung being used as a regression check.
+       *
+       * ONLY THE WEB CLIENTS. The rig owns those processes and can start one; the PHONE it does not
+       * own, and A1 unreachable means a cable, a backgrounded app or a device lock screen - three
+       * things a human settles. Its refusal stays a refusal.
+       *
+       * ONE ATTEMPT, and the second answer decides. A browser that will not come up is a real
+       * problem and must still stop the phase; retrying it would only make the refusal slower.
+       */
+      const restarted = await startBrowser(d.toLowerCase()).then(
+        () => true,
+        () => false
+      );
+      if (restarted) {
+        const again = await bringToReady(d);
+        if (!again.unreachable) {
+          console.log(`  fix  ${d.padEnd(3)} was closed - started it and brought it to ready`);
+          r = again;
+        }
+      }
+    }
     if (r.unreachable) {
       // NOT EVERY FAILURE HERE IS AN ABSENCE. `client()` also refuses a browser holding more than one
       // page, and that wants the opposite fix from "the browser is closed" - so the refusal is passed
@@ -518,8 +552,26 @@ async function preflight(devices, { quiet = false } = {}) {
       const cx = await client(PORTS.A1, null, { focus: false });
       try {
         const b = await clientBuild(cx);
+        // WHETHER THAT COMMIT DESCRIBES THE APK, joined on `builtAt` - the only value both ends
+        // know, the commit being a derivation on each side. `null` is "not recorded", never
+        // "clean": an APK from before `apkbuild.mjs`, or one built by CI, answers null and the
+        // stamp then says exactly what it always said. See `apkbuild.mjs`.
+        const prov = apkBuildProvenance(b.builtAt);
+        if (prov) {
+          b.dirty = prov.dirty;
+          b.diffSha = prov.diffSha;
+        }
         process.env.CANARI_A1_BUILD = JSON.stringify(b);
-        if (!quiet) console.log(`  ok   A1 runs ${b.commit.slice(0, 8)} built ${b.builtAt}`);
+        if (!quiet) {
+          console.log(
+            `  ok   A1 runs ${b.commit.slice(0, 8)} built ${b.builtAt}` +
+              (prov?.dirty
+                ? `  ** plus UNCOMMITTED changes (diff ${prov.diffSha}) - rows this run are NOT verdicts on ${b.commit.slice(0, 8)} **`
+                : prov
+                  ? ''
+                  : '  (tree state not recorded for this build)')
+          );
+        }
       } finally {
         cx.close();
       }
@@ -963,8 +1015,29 @@ for (const job of jobs) {
   // `grp-traffic.mjs` - computed a verdict, printed it as JSON, and recorded nothing at all. Every
   // one of them exited 0 and every one of them printed `done` here.
   const rowsBefore = all().length;
+  /**
+   * THE FIFTH SIGHTING OF THE BARE-NAME SPAWN, AND IT WAS IN THE RUNNER THAT OWNS EVERY OTHER ONE.
+   *
+   * `scriptpath.mjs` exists because this defect had already been found four times, and its header
+   * says why fixing it where it is found is how it gets found again. This file IMPORTED
+   * `requireScript` for one call and passed the bare name here - so with `cwd` set to `archive/`,
+   * a script that still lives at the harness root died with `Module not found` and the phase
+   * carried on. Measured 2026-09-08: `newdevice.mjs` exited 1 and recorded nothing, inside a HEAL
+   * rung being used as a REGRESSION CHECK - the one job where a silently absent row is worst.
+   *
+   * Resolved rather than spelled, and a name that resolves NOWHERE is this job's failure rather
+   * than the rung's: the remaining scripts still run, and the manifest is what gets corrected.
+   */
+  if (!findScript(file)) {
+    job.exit = 1;
+    job.blocked = `${file} is in neither the harness root nor archive/ - the manifest names a script that does not exist`;
+    console.log(`UNRESOLVED - ${job.blocked}`);
+    continue;
+  }
   const code = await new Promise((resolve) => {
-    const child = spawn(process.execPath, [file, ...args], {
+    // INLINE, NOT VIA A LOCAL, because `spawn-selftest.mjs` rejects a variable head whatever it
+    // holds - nothing can be shown absolute by reading it, and that is the whole rule.
+    const child = spawn(process.execPath, [requireScript(file), ...args], {
       cwd: HERE,
       stdio: ['ignore', 'pipe', 'pipe'],
     });

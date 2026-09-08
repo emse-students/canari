@@ -2431,7 +2431,7 @@
   "auth_pin_check_unreachable": "Impossible de vérifier le PIN (serveur injoignable).",
   "auth_pin_mismatch": "PIN incorrect : ce PIN ne correspond pas à celui enregistré pour ce compte. Tous vos appareils utilisent le même PIN.",
   "auth_device_revoked_reset": "Cet appareil a été révoqué. L'état local a été réinitialisé : connectez-vous avec votre PIN pour l'enregistrer comme nouvel appareil.",
-  "auth_state_sealed_old_pin": "Votre PIN a été changé sur un autre appareil. Récupérez vos messages avec votre ancien PIN.",
+  "auth_local_state_unopenable": "Vos messages enregistrés sur cet appareil n'ont pas pu être ouverts. Si vous avez changé votre PIN sur un autre appareil, saisissez l'ancien PIN ci-dessous. Sinon, les données locales sont endommagées : l'ancien PIN n'y changera rien et seule la réinitialisation redonne accès à vos conversations.",
   "auth_keystore_empty_enter_pin": "Veuillez entrer votre PIN pour déverrouiller la messagerie.",
   "auth_no_user_signed_in": "Aucun utilisateur n'est connecté.",
   "auth_pin_change_current_incorrect": "Le PIN actuel est incorrect.",

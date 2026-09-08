@@ -11,6 +11,611 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - one flipped byte told the user their PIN had been changed, and then refused the PIN they had
+
+`sessionAuth` verifies the PIN SERVER-SIDE and only then opens the local MLS state, so at the moment
+this message is chosen the product already knows the credential in the user's hands is the right
+one. It said anyway: *"Votre PIN a ete change sur un autre appareil. Recuperez vos messages avec
+votre ancien PIN."* Measured on 2026-09-08 by XORing one byte at the midpoint of an 18.4 MB state
+(CORRUPT-2), and again with the state cut to half its length (CORRUPT-1) - which is what an
+interrupted flush, a full disk or a killed tab leave behind. In the second case the product's own
+recovery, answering the gate with the correct PIN exactly as a user would, was refused five times
+running.
+
+The mechanism was a default arm:
+
+```ts
+return errStr.includes('identity mismatch') || errStr.includes('Credential identity')
+  ? 'mismatch'
+  : 'sealed';
+```
+
+Both of those throws are `mls-core`'s own, so there was never a dependency's prose to match - and
+every failure the two needles did not recognise, corruption included, acquired the diagnosis
+"sealed under an older key" together with a recovery that cannot work. The doc-comment above it
+already recorded that an earlier version of this same confusion *"surfaced a false 'your PIN was
+changed on another device' to users who had never changed their PIN"*; the case had been fixed for
+`mismatch` and left standing for everything else.
+
+`MlsError` now carries `StateUndecryptable` and `StateIdentityMismatch`, whose Display forms lead
+with `STATE_UNDECRYPTABLE:` and `IDENTITY_MISMATCH:` - the shape this enum already uses for
+`EVICTED:` and `NO_SUCH_MEMBER:`, and the form that survives both FFI boundaries unchanged. The
+classifier reads the code; anything it does not recognise is `unknown`, and `unknown` WARNS instead
+of borrowing a diagnosis.
+
+Three names were claims, and all three moved: `'sealed'` to `'undecryptable'`,
+`state_sealed_with_old_key` to `local_state_unopenable`, `auth_state_sealed_old_pin` to
+`auth_local_state_unopenable`. An AEAD tag that does not verify has two explanations - sealed under
+a different device key, or altered - and nothing stored beside the blob says which
+(`mls_autosave_ver` orders concurrent flushes; it is not a key id). The new message says both, and
+names the reset, which is the only thing that works on a damaged state and had until now been
+offered solely as the destructive last resort for a problem the user did not have. The old-PIN path
+is still there: it costs nothing and it is genuinely one of the two cases.
+
+The blocking test moved from `=== 'sealed'` to `!== 'mismatch'` in the same pass. Written the first
+way it excluded `unknown` by accident, and would have rotated away an identity rather than pausing
+on a failure nobody had classified - the same defect as the default arm, seen from the other side.
+
+**The two causes are still not told apart, and nothing here pretends otherwise.** That needs a key
+fingerprint inside the envelope's own framing, which changes the WRITE format: an older build handed
+a header reads it as a nonce and reports this very failure, newly caused by a downgrade. So it is
+read-first, write-later, across two releases, and this is the first of them.
+
+
+### Fixed - a notification tap opened the app on nothing, because the landing gave up 174 ms too early
+
+Reported from production: a first message from someone you have no conversation with notifies and
+decrypts, but the tap lands nowhere and the conversation only appears after a restart. The second
+half was fixed earlier the same day - the FCM cache wrote the conversation to the database and never
+told the in-memory list. This is the first half, and it turns out to be the same mechanism seen from
+the other end.
+
+A deep-link target is deliberately HELD until it is displayed, so a conversation that arrives late
+can still be landed on. It would have worked. The landing never got the chance, because it had
+already thrown the target away:
+
+```ts
+return input.conversationsRestored ? 'abandon' : 'wait';
+```
+
+`conversationsRestored` answers *has IndexedDB been read into the map*. The landing was asking a
+different question - *is the set of this device's conversations complete* - and the two differ by
+exactly the FCM cache, which runs after the restore and is the only route by which a first message
+from a new correspondent becomes a conversation at all. The restore raises the flag in its own
+`finally`; the cache injection is two awaits later at login and a whole resume sequence later on
+resume; the session has been logged in since long before either. So for that entire window the
+landing saw a complete-looking map without its target, concluded the conversation was not on this
+device, and cleared it. The placeholder arrived milliseconds afterwards to a landing that no longer
+existed, and the app sat on the conversation list.
+
+The fix answers the question actually being asked. `useConversations` counts the passes that can
+still add a conversation; the login sequence and the resume flush each bracket themselves in a
+`finally`; the predicate now takes `conversationSourcesSettled` - the restore AND that counter at
+zero. The input was renamed rather than merely re-pointed, so the old premise cannot be re-encoded
+by the next reader of the call site. Counted rather than flagged because the same span runs at login
+and again on every resume, and because the next source has to be able to declare itself without
+teaching the landing about its existence.
+
+The tests assert INSIDE the window: checking the end state passes on the broken code too, since the
+conversation does arrive in the end and the restore flag is true either way. Two of the four fail
+when the counter is taken back out of the predicate.
+
+The other builder is untouched and still broken in its own way: a notification posted by
+`tauri-plugin-notification` carries no conversation identity through the tap at all - `sourceJson`
+is declared and never assigned, and the id, though present on the intent, is read only to dismiss.
+No TypeScript can repair that, and it is filed as the native single-builder work package it needs.
+
+### Fixed - a push line accused a population it could never accuse, on every single welcome
+
+`[PUSH_SEND] proto not inlined` fires when the ciphertext is too big to ride inside the FCM data
+map, and the comment above it says why that is worth knowing: *"a budget that is routinely too small
+is the fixed fields growing, and nothing else watches them"* - `senderName` and `groupName` are
+unbounded user text.
+
+That reasoning holds for a message. It cannot hold for a WELCOME, whose payload carries the group's
+ratchet tree: its size is a property of the group, not of the fixed fields, and it is far over any
+budget the 4 KB limit can leave. Counted on the local estate over 90 minutes:
+
+| push kind | reached FCM | proto not inlined |
+| --- | --- | --- |
+| `welcome-send` | 3 | **6 of 6 prepared** |
+| `send` | 9 | **0 of 9** |
+
+One hundred per cent of one population and zero per cent of the other. A predicate that is true of
+an entire population tells its reader nothing about any member of it, and a line its reader learns
+to skip is the one that hides the next defect.
+
+Nothing is lost by the silence. Not inlining is not a failure - the client fetches the ciphertext
+instead - and the failure that WOULD matter, a payload FCM refuses, has its own alarm at the point
+it happens (`[PUSH_SIZE] refused over size`), which reports the quantities FCM's own error omits.
+The message case is untouched and has never fired here, which is exactly what makes it worth
+keeping.
+
+The decision moved next to the budget it reasons about, as `uninlinedProtoIsWorthReporting`, so it
+is testable and carries its counts.
+
+
+### Fixed - whether a mention reached you through your own Do-Not-Disturb depended on which transport carried it
+
+Android files every notification on a channel, and a channel is not a label: it carries its own
+importance, sound, vibration and Do-Not-Disturb standing, and the user gets a switch per channel.
+`canari_mentions` exists so that someone who mutes the chatter still hears their own name, and it is
+the only channel besides calls for which the app requests DND override.
+
+Two things build Canari's notifications and only one of them knew that. The Kotlin push service
+reads the decrypted text for `@[myUserId]` and picks `canari_mentions` or `canari_messages` from it.
+The web half exported exactly two channel constants - `canari_messages` and `canari_calls` - and
+passed `canari_messages` unconditionally, having no mentions branch at all.
+
+That is not "mentions are never special", which would at least be predictable. **The builder follows
+the message's ROUTE, not the app's state** (measured as NOTIF-14, 2026-09-08: on one backgrounded
+phone a DM was built by `tauri-plugin-notification` over the WebSocket and a salon message by
+`CanariFirebaseMessagingService` four seconds later). So the same mention was filed under the
+reader's mute settings or above them depending on a transport nobody can see and nothing makes
+stable. NOTIF-16 measured all four cells on one backgrounded handset the same day:
+
+| | route | filed on |
+| --- | --- | --- |
+| plain direct message | websocket | `canari_messages` |
+| **mention in a direct message** | **websocket** | **`canari_messages`** |
+| plain salon message | push | `canari_messages` |
+| mention in a salon | push | `canari_mentions` |
+
+The discriminator is now computed where both halves are already known - the raw text and
+`ctx.userId`, in `useMessaging`'s inbound path - and travels to `sendSystemNotification`, rather
+than being re-derived by a layer that only sees a title and a body. The tests pin it in both
+directions: always-true is the same defect wearing the other mask, since it would put every message
+above a mute the user set deliberately.
+
+The row's own premise was also wrong and is corrected on the board. It was written as "the
+importance split that bypass-DND rests on"; there is no importance split - both channels are
+`IMPORTANCE_HIGH` - and the device reports `mBypassDnd=false` on both, which is `setBypassDnd(true)`
+being a request the system honours only once the user grants the channel DND access. Code and device
+agree there, so NOTIF-16 records the policy fields and asserts only the routing.
+
+### Fixed - a first message from someone you have no conversation with was invisible until the app was restarted
+
+Reported from production by the user on 2026-09-08: someone messages you for the first time, the
+notification arrives with the text decrypted - and then the conversation is simply not there. A
+restart shows it.
+
+`consumeFcmCache` handles the new-group case correctly and always has: it writes the message AND a
+placeholder conversation row for the group the FCM service joined in the background, then logs
+`[FCM_CACHE] Injection done: 1/1 message(s) injected`. **What it did not do is tell the in-memory
+list.** `mergeFcmMessagesIntoConversations` looked the conversation up, found nothing, and
+`continue`d - silently. So the database had both halves, the list the UI renders and that a deep link
+resolves against had neither, and a restart read the placeholder back. The same drop happened at
+login, where conversations are loaded from storage just before the cache is consumed.
+
+The merge now creates the conversation from what the writer committed. The label travels with the
+messages rather than being re-derived, because a `StoredMessage` carries a sender id and no name and
+a guess here would disagree with the row already in the database. When there is no placeholder the
+drop is logged instead of silent - that silence is what hid this, since the only line in the area
+said the injection had succeeded, and it had, into the store nobody was looking at.
+
+**Neither file had a test.** `fcmMemoryMerge.test.ts` now covers the three states a cached message
+can arrive in, and its two new cases were proven to fail against the old line before being kept.
+
+**Verified on the handset, not only in tests.** `consumeFcmCache`'s contract changed and both its
+callers with it - including the login path - so NOTIF-7 was re-run on an APK rebuilt from this tree:
+`PASS`, clean, with the cache path running end to end (`1 entry/entries read` -> `Injection done:
+1/1 message(s) injected`) and the new warning correctly silent, because that run had a conversation
+to merge into. The first-contact branch itself cannot be exercised without a third test account.
+
+**The tap half of the same report is NOT fixed** and is in `docs/wiki/backlog.md` with two candidate
+causes: the known two-builder P2, and an ordering this fix makes visible rather than removes - the
+deep link is resolved 174 ms before the cache is injected, measured in the NOTIF-7 capture of the
+same day, because `flushFcmCache` is the last step of the resume sequence. Confirming either needs a
+genuine first contact, which needs a third test account.
+
+### Fixed - the mailbox barrier named the sessions it was waiting out and waited 0 ms
+
+`waitForMessageQueueIdle` printed `mailbox barrier for "archive replay" is waiting behind 1 catch-up
+session(s)` and then awaited `settleBarrier()` - the pull, and the scheduler's buckets. Neither is
+evidence about a catch-up session: a session hands `decryptPage` straight to the engine, so while
+its batch is in flight the pull is finished and every bucket is empty. The barrier resolved
+immediately and the second line duly reported `waited 0ms`.
+
+Measured on the Mi 9T on 2026-09-08, twice in a row and identically. A catch-up decrypted two frames
+of group `2bd5add9` at generations 43 and 44 of epoch 196; the archive replay behind the barrier
+handed the engine the same two frames 83 ms later; openmls refused both at `error` level with
+`SecretReuseError`, and the client paid a history reconciliation to discover it already agreed. The
+epoch never moved, so nothing that compares epochs could have seen it.
+
+**The gate it needed already existed.** Every send has awaited `waitForCatchUpIdle()` since
+2026-08-14, for the same reason - a catch-up must not be raced - and the barrier simply never called
+it. It does now, before settling the mailbox rather than after, because a catch-up can queue work
+and settling first would settle a queue it had not finished filling. The wait is bounded by
+construction: `createDecryptSession` is the only opener and closes from a `catch` and from
+`finish()`'s `finally` on both platforms, and its only caller finishes from a `finally` of its own.
+
+**The test named after this behaviour asserted the log wording instead of the ordering, and passed
+on the defect.** `waits out a catch-up it is not inside` opened a session, never closed it, awaited
+the barrier, and then checked that the pull ran and that both `debug` lines carried the right words
+- every one of which is true of a barrier that waits for nothing. It now asserts what its name
+claims: nothing past the barrier happens, not even the pull, while the session is open. Its
+neighbour was written the same way and is fixed the same way.
+
+### Fixed - the backlog said NOTHING FIXED BELONGS IN THIS FILE, and held fourteen closed entries
+
+The rule has been in the file's own header in bold since 2026-08-30, on the user's instruction, and
+it is stated twice more: an entry is deleted outright when it ships, its rule to `durable-rules`, its
+story here, its mechanism to the wiki page it points at. On 2026-09-08 the file held **fourteen**
+closed entries and **462 lines** of them, some ten days old, and their severity words were still
+being counted alongside open work.
+
+That is this campaign's own lesson turned on the repository's memory: a correct rule with nothing to
+report it is followed until somebody is busy. Restating it more firmly would not have helped - what
+was missing is the thing that notices. `backlog-closed.test.mjs` is that thing, in
+`make test-ci-scripts` beside the wiki-link checker, and it names the file, the line and the heading.
+Proven in both directions.
+
+**An entry with a closed HALF is not a closed entry**, and keeping that distinction is what makes the
+gate honest rather than merely tidy: three entries were kept and RETITLED to name what is LEFT - three
+hosts nobody reports on, a repair that still costs three minutes, a fix that is merged and unshipped -
+because the header's own words are that the shipped half is a pointer, never a retelling. So the test
+reads HEADINGS only; a body may say a half is fixed, and forbidding that would push the reasoning out
+of the file rather than the closed work.
+
+Two rows in the "owed to the USER" table went with them - the campaign phone's lock, retired by the
+user the same day, and a token whose target entry no longer exists - and the hardware row now names
+only the half still missing, an iPhone. Deleting entries broke two cross-file anchors into them; both
+are repaired and `wiki-links.test.mjs` confirms all 106 files resolve.
+
+### Added - the harness is linted, and the drift it was predicted to accumulate had already arrived
+
+Recorded here on 2026-09-08 because it was the one closed backlog entry whose story lived nowhere
+else, and the backlog is not a place closed work is allowed to stay.
+
+`bun run lint` is scoped to `frontend/`, and `make test-harness` ran the self-tests and
+`inventory.mjs --check` - neither had an opinion about the code. So the rig producing every campaign
+verdict was the one directory in this repository no linter looked at. The entry predicted drift and
+the drift is the measurement: 29 warnings on 2026-09-04, **38 on 2026-09-07**, nine more arrived
+while nothing was counting. All 38 are gone and the gate is one line in `test-harness` -
+`oxlint -c tools/cross-client-harness/.oxlintrc.json --deny-warnings` - so the 39th cannot arrive
+silently. `--deny-warnings` deliberately: a gate that only warns is one its reader learns to scroll
+past. Measured in both directions, a file with one unused variable fails the recipe.
+
+The config extends the ROOT `.oxlintrc.json` and adds `import` + `unicorn`, which is what the
+frontend's does, so the rig is held to the same rules rather than to a private set - and NOT to the
+frontend's own config, which carries `env.svelte` and paths relative to `frontend/`.
+
+**One of the 38 was a real finding rather than tidying.** `createGroup(cx, name, { label })` had
+promised "who is asking, for the error message" since it was written, nine call sites passed one, and
+no failure had ever carried it: every one surfaced as a bare `until` timeout naming a selector, so a
+row minting three groups could not say which of them died. The label is in the throw now.
+
+### Documented - the damaged-state P1 is a closed loop, and the only door out is the destructive one
+
+The sign-out half that CORRUPT-1 left owed is answered by reading rather than by a run, deliberately:
+measuring it means signing W1 out, and if the device key is not reproducible from the PIN alone the
+restored snapshot becomes undecryptable - the check investigating the destruction of a fixture's
+history would be the thing that destroyed it.
+
+`handlePinSignOut` says what it does in its own first line: *"ending the session, keeping the local
+state"*. So signing out and back in re-reads the same damaged bytes, re-arms `noFreshStart`, and
+returns to the same wall. Every exit the blocking modal offers is now accounted for: the message's
+own advice cannot work (no old PIN sealed that blob), the CORRECT PIN is measured locked, sign-out
+keeps the state by design, and the only thing that unblocks the device is `onForgotPinReset` - a
+server-side reset that DESTROYS the messaging state, behind a two-step confirmation, labelled for a
+PIN the user has not forgotten.
+
+The product already knows how to recover this device without destroying anything: CORRUPT-4 measured
+a client with no usable state re-joining all four of its groups by external commit, self-service, in
+under a second. The entire defect is that nothing tells `noFreshStart` this state is damaged rather
+than foreign.
+
+### Added - CORRUPT-1, a clean FAIL, and the measurement that turns a wrong message into a locked door
+
+`mlsdb.mjs truncate` takes `--to N`, so the same primitive answers two different questions: `--to 0`
+is CORRUPT-4's empty state, which must read as ABSENT, and a non-zero `--to` is CORRUPT-1's - a state
+that still has bytes and is not the whole of what was written, which is what an interrupted flush, a
+full disk or a killed tab actually leave behind.
+
+`corrupt1.mjs` cuts W1's 18.6 MB state in half and asks the half its siblings do not. CORRUPT-2 asked
+what the client SAYS about a state it cannot open; this row asks whether the user has a way BACK,
+because its own wording demands one in as many words - *explicit failure and recovery*.
+
+The first half holds: the failure is explicit and no empty history is presented silently. **The
+second does not.** The client repeats the same `state_sealed_with_old_key` misdiagnosis, and then
+`bringToReady` - the PRODUCT's own gesture, answering the gate with the CORRECT PIN exactly as a user
+would - returns `LOCKED+overlay` on all five passes. The control is inside the row: once the snapshot
+goes back, the same helper with the same PIN reaches a named starting point, so what locks the gate
+is the truncated state and not the gesture. Clean, no dirt, reproduced twice.
+
+The user is told to recover with an old PIN that never existed, and the PIN they do hold does not
+work either. The P1 filed against CORRUPT-2 is raised accordingly, and it now names the one thing
+still unmeasured: the modal's own sign-out button, which is a required prop precisely because the
+modal blocks the app. If it recovers the device, the defect is that the only remedy is never named;
+if it does not, the device is lost.
+
+A FAIL on the board is the campaign working. `corrupt1.mjs` is the only one of the four CORRUPT
+runners that takes the `MLS_CLIENT_INITIALISING` needle, and for a reason worth keeping: answering
+the gate is this row's own assertion, while the other three report before any such gesture, where the
+same sentence would be a finding. A disposition is per row because one row's evidence is another's
+defect.
+
+### Added - CORRUPT-2, and the finding it exists to have made
+
+`mlsdb.mjs flip` XORs ONE byte at the midpoint of an entry, leaving its length and shape untouched so
+every structural check passes and the failure lands on the AEAD tag. The offset is the midpoint
+rather than a random draw: a row whose stimulus moves cannot tell a flaky product from a flaky
+stimulus. Like `truncate` it REFUSES without a snapshot.
+
+`corrupt2.mjs` runs it against W1's 18.4 MB MLS state, and the row's literal claim holds - the client
+reaches its PIN gate, does not hang, and does not come up quietly showing an empty history. **What it
+SAYS is the finding**, and the check was deliberately written to record that rather than assert it,
+because writing an assertion for the diagnosis before measuring what the diagnosis IS would be a
+check pre-judging its own row:
+
+```
+[INIT] Login did not complete (state_sealed_with_old_key):
+Votre PIN a ete change sur un autre appareil. Recuperez vos messages avec votre ancien PIN.
+```
+
+No PIN was changed. `sessionAuth` verifies the PIN SERVER-SIDE and only then decrypts the local
+state, so at the moment that message is chosen the product already knows the credential in the
+user's hands is the right one. It sends them after an old PIN that does not exist, never names the
+real cause, and never offers the one recovery that works - the clean re-enrolment CORRUPT-4 measured
+on the same estate the same day.
+
+The mechanism is `BaseMlsService.classifyStateLoadFailure`, which branches on an error MESSAGE -
+`errStr.includes('identity mismatch')` - with `sealed` as its default arm, so every failure those two
+needles do not recognise becomes a PIN rotation. Its own doc records that an earlier version of this
+confusion "surfaced a false 'your PIN was changed on another device' to users who had never changed
+their PIN": the case was fixed for `mismatch` and left standing for everything else.
+
+Filed as a P1 with the measurement, the two candidate discriminators and the reason it is a Work
+Package rather than a session-tail fix - the fingerprint has to live where BOTH platforms can read
+it, and putting it on the web alone would recreate, in the login path, exactly the asymmetry that
+CORRUPT-4 was written to find.
+
+### Added - CORRUPT-4 is answered end to end, and the phase has the damage primitive it was missing
+
+`mlsdb.mjs` had snapshot, restore and digest and nothing that writes bad bytes, so four CORRUPT rows
+were unrunnable by design. `truncate` is that primitive, and the reason it lives beside the recovery
+rather than in a check is that a runner which damages a store it cannot put back has not measured a
+defect - it has caused one. **It REFUSES without a snapshot**, in-tab or durable: a destructive
+control is gated on the state it can restore, never on the caller's promise to have taken one. It is
+an allowlist twice over - only `CanariDBMls*` databases, only the one key named by `--key`.
+
+`corrupt4.mjs` uses it for CORRUPT-4, and the row's assertion is **the login itself**, which is
+precisely what the unit test pinning the predicate cannot make. After 18 MB of MLS state was
+truncated to zero, W1 signed in, logged `device_key_b64 provided but no encrypted state - creating
+fresh state`, marked its four conversations not-ready and re-joined every one by external commit,
+self-service. The state was then restored and the restore ASSERTED rather than assumed: 18110755
+bytes / `e75c191a` before and after, identical.
+
+Both narration lines are named per row, and the first is one `watch.mjs` explicitly calls a FINDING
+wherever it appears. That is right, and it is why it is named here and nowhere wider: the warning
+fires when a device key arrives with no encrypted state beside it and a state was genuinely expected,
+which is exactly the condition this row arranges on purpose. Its ABSENCE here would be the defect.
+
+### Fixed - a server line nothing classified, and a classifier rule that could never match
+
+`[DEVICE_MEMBERSHIPS]` was matched by no rule and landed in `unexplained` every time a device
+enumerated its memberships - routine traffic, and the first thing any client does after a
+re-enrolment. Four of them put a whole server window in `NOT CLEAN` for the most expected lines the
+run could produce. It is matched on `stranded=0`, never on the tag: `stranded` counts the memberships
+the server holds that the DEVICE cannot serve itself out of, so a non-zero value is the finding the
+line exists to carry, and forgiving the tag would have hidden it along with the noise.
+
+**The first version of that rule contained a literal BACKSPACE** where a word boundary was intended,
+so it looked right in the diff, in review and in `grep`, and matched nothing at all. The window
+stayed `NOT CLEAN` and said only that the four lines were still unexplained; the rule's own failure
+was silent. `srvclassify-selftest.mjs` now asserts that `srvlog.mjs` and `watch.mjs` carry no control
+character, naming file, line and content when one appears.
+
+**And the first version of THAT guard did not work either**, which is the more useful half. It tested
+`regex.source`, which is specified to return text that parses back to the same regex - so a raw 0x08
+comes out as the escape `` and no control character is ever there to find. It was proven by
+re-introducing the defect and watching the guard pass. A guard that cannot see the thing it was
+written for is worse than none: it turns an open question into a settled one. The bytes on disk are
+the only place this is visible, so that is what is read.
+
+### Fixed - an intermittence report named the commit, so an old draw claimed to grade a current row
+
+`rows.mjs` decided which draw grades a cell by comparing the BUILD alone, while grouping verdicts on
+the full identity of a measurement. So a draw from an earlier `checkSha` that happened to share a
+commit carried the `THE BOARD GRADES THIS ROW ON THIS BUILD` marker while the runs actually deciding
+the cell were unanimous - which is what CORRUPT-3 showed on 2026-09-08, a real historical draw from a
+deliberate A/B pointing at three later runs that agreed. Grading is now keyed on the whole identity,
+the same one the grouping uses.
+
+### Added - the CORRUPT phase has a runner, and its first row is answered end to end
+
+The phase sat on the board with ten rows and `scripts: []`: designed on 2026-08-19, never runnable,
+so every one of its cells read `pending` for three weeks while the defects they describe went
+unmeasured. `archive/corrupt.mjs` answers ONE of them, deliberately - the damage each row needs is
+different, and a file claiming a phase it half implements is how a rung reads green while nothing
+ran it.
+
+**CORRUPT-3, and why the damage is shaped rather than random.** The blob is replaced with
+`iv:cipher`, both halves valid base64, so it survives the separator check and the base64 decode and
+dies at the AEAD tag - which is the case the row names. Random bytes would die earlier and measure
+the parser. Four things are asserted: the app reaches a DETERMINATE state, a `[VAULT]` line names
+what was found, the damaged blob is CLEARED, and the wrap key is not collateral.
+
+**It is proven by an A/B, not by a single green run.** Same estate, same check, only
+`deviceKeyVault.ts` differing: the pre-fix build answers `FAIL` with `vaultLines: []`, the fixed one
+`PASS` on the *accusing* variant - wrap key present, so everything ordinary is excluded and what is
+left is alteration. A row that only ever passed would not have shown that it can fail.
+
+**Two defects were in the CHECK, and both are the expensive kind.** It first asserted `APP_READY`
+and would have recorded `theAppNeverReachedAReadableState` against an app sitting correctly on its
+own PIN gate - a device that has lost its device key is ENTITLED to ask for it, and accusing the
+product of a hang for a state the check had not anticipated is a check that does not fail but lies.
+Then `consoleLines` returns STRINGS and the check mapped `.text` over them, so every line became
+`undefined`, the `[VAULT]` filter matched nothing, and the row reported `nothingSurfacedOnTheConsole`
+about a client that had said exactly what was asked of it. Both lied in the direction of a finding,
+which is the direction that closes a question. The line is now waited for within a bounded window
+(`awaitLine`, nine seconds) rather than read once, because it is written during the boot that FOLLOWS
+the reload.
+
+Chrome's password-form hint is the one line the damage is guaranteed to provoke, and it is named per
+row as `BROWSER_PASSWORD_FORM_HINT` rather than fixed: the documented remedy is a username field
+beside the password one, which on THIS gate would invite a password manager to store an end-to-end
+encryption secret the product promises is never transmitted anywhere.
+
+### Fixed - a verdict named the commit it ran on, never the source the estate was serving
+
+`build` in the results ledger is a COMMIT, and a commit describes the tree git holds - not the tree
+`make local-frontend` last compiled. The two part company the moment a file is reverted, stashed or
+edited without being committed, which is exactly what an honest A/B does. Measured on 2026-09-08:
+CORRUPT-3 was run at one commit against `deviceKeyVault.ts` at its pre-fix and then its post-fix
+contents, and the ledger recorded `FAIL` then `PASS` as though one build had answered one question
+two ways. `rows.mjs` read that as intermittence.
+
+That is the one thing this campaign must never invent. A DRAW says a measurement cannot be believed;
+here both could, because they measured different code - and the report that exists to stop a false
+verdict was manufacturing one.
+
+Nothing new had to be built. `source-stamp.mjs` already hashes the bytes an artefact was made from,
+and its own doc names this harness as the consumer; the ledger was dropping the field. Every verdict
+now carries `sourceSha`, and `rows.mjs` treats it as part of a build's identity. Rows recorded before
+the field existed carry no stamp and keep their old grouping, so no historical draw is dissolved by
+this.
+
+### Fixed - a log announced "persisted" for a write it had just swallowed the failure of
+
+Two message writes ended in `.catch(() => {})`, and one of them then printed a success line
+regardless: the Welcome re-key path awaited `saveMessages`, discarded the rejection, and announced
+`N message(s) persisted`. A store that refuses writes therefore produced a log CLAIMING a durable
+write that did not happen - worse than silence, because it answers wrongly the exact question
+somebody chasing a conversation gone empty after a reload would come there to ask. The line is now
+conditional on the write, and a failure says so, naming the count and that the messages are on
+screen and will not survive a reload.
+
+The second, in the replay's retroactive hex-id resolution, was silent both ways. Failing there means
+the names are resolved again on every later load of that conversation - a cost nobody can see and
+nobody can attribute while the branch says nothing.
+
+Both are what CORRUPT-7 is written to find - *drop an object store from the web message store
+mid-session* - and neither needed the row to be found: every swallowed branch logs, because in a
+best-effort path that is all a loss leaves.
+
+
+### Fixed - the device-key vault reported an altered blob and an ordinary storage clear with the same silence, and left a malformed one to fail again on every load
+
+`loadDeviceKey` had two silent branches. A blob with no `iv:` separator returned null without
+clearing anything, so the unusable blob stayed and failed identically on every later load, for ever,
+having said nothing once. Everything else went through one `catch` whose comment named two causes -
+*tampered blob, key rotated* - and separated neither.
+
+**They are opposite in kind.** One is ordinary: a storage clear, a switch between session- and
+local-scoped persistence, a new profile. The other means the ciphertext, its iv or its key was
+ALTERED after it was written, which is the only security signal this file can emit. Both were
+reported by the same nothing.
+
+**The discriminator is whether a wrap key was stored at all, and it had to be read before anything
+minted one.** `getOrCreateWrapKey` generates AND STORES a fresh key when none is present - correct
+for a save, wrong on this path twice over: it is a write on a read path, and the key it writes
+destroys the evidence, after which both causes arrive at the same failed decrypt. The read now
+imports the stored key and never creates one, so the three outcomes are distinct and each says so:
+malformed, wrap key gone (explicitly *NOT evidence of tampering*), and a blob that would not open
+under a wrap key that IS present - which accuses, with everything ordinary already excluded.
+
+Five tests, none of which existed: this module had no test file at all.
+
+
+### Fixed - a web device whose MLS state had been written short could not log in at all, where the same damage on the phone re-enrols cleanly
+
+`loadMlsState` answers one question - is there a stored state - and it was answering it twice, with
+two different rules. The native branch guarded `res.length > 0` and returned `null` for nothing; the
+IndexedDB branch resolved `req.result ?? null` and then tested the result for truthiness, and an
+empty `Uint8Array` is truthy. So zero stored bytes meant *absent* on the phone and *a state that
+exists and is empty* on the web.
+
+**What made it more than an inconsistency is the guard on the other side.** `sessionAuth` passes
+`noFreshStart: !!bytes`, whose entire purpose is to stop a device that HAS history from silently
+starting over - the case where a PIN was rotated elsewhere and the local state is still sealed under
+the old one. An empty state armed that guard against itself: `init` is handed zero bytes and
+forbidden to start fresh, the rejection is not `MLS_LOCAL_STATE_UNDECRYPTABLE`, so it is rethrown
+raw and the login ends with no path back. A state can be written short by an interrupted flush, a
+full disk or a quota refusal - which is CORRUPT-10's subject on the campaign board.
+
+One predicate now decides it, applied at all three returns including the localStorage migration, so
+the next backend inherits the rule instead of restating it. This is the same shape as the reload
+guard fixed earlier in this release: *a rule that lives at one call site is a rule the next caller
+will not inherit*.
+
+It also answers CORRUPT-4 - *zero-length MLS state, treated as absent, clean re-enrolment* - which
+has been `pending` on the board since the phase was designed, and which has no runner. The unit is
+pinned by a test that was written failing first; the end-to-end row is still owed.
+
+
+### Added - the campaign tool now detects an intermittent row, which it had described and never checked for eleven days
+
+```rows.mjs``` graded every row on its newest verdict. That is right when a row's answer is a fact about
+the build - it passed yesterday and fails today, so it is failing - and wrong when the answer is a
+DRAW. HEAL-repair healed three times in ten across three builds and the board read `PASS`, because
+the last run of a rung happened to be one of the three; every individual record was true.
+
+It now groups records by row AND build AND `checkSha` AND `instrumentSha` AND order, and reports each
+group holding more than one distinct verdict. Every key earns its place: a row re-run after a fix
+answers differently on two builds, a runner edited between two runs answers differently on one build
+(49 of the first 77 hits), and a comparison row's halves answer differently by construction. What
+survives all four is same build, same runner, same instrument, two answers.
+
+Twenty-eight groups, eighteen of them deciding a cell the board shows today, and the report says
+which. The principle was written into `docs/wiki/testing-methodology.md` on 2026-08-26, naming
+COMM-18 as the example - an older PASS is not evidence against a newer FAIL, it is evidence the
+defect is intermittent - and nothing had ever asserted it.
+
+
+### Fixed - a campaign check reported "the repair never fired" on every run, healed or not, because it matched three strings the app had stopped printing
+
+`heal-web.mjs` computes `escalated` over the clients' whole console, and until 2026-09-08 it looked
+for `escalating to a history diff`, `soliciting a history diff` and `already has an attempt
+outstanding`. All three were deleted from the app with the mechanism they served - `inboundFrameLedger`
+says so in as many words, *"every one of those decisions was a clock. They are gone with the mechanism
+they served"*. So the field was not a weak signal, it was a CONSTANT FALSE, and a reader taking it at
+face value concluded that a receiver losing frames never asked for help. It does ask; the lines are
+`[MLS] Frames are being lost in <g> - reconciling this conversation`, `[HISTORY] <g> holds N frame(s)
+it can never read - reconciling` and the `[HISTORY_RECONCILE]` family, and those are what it reads now.
+
+Not `[HISTORY_REQ]`, deliberately: that family is printed by the ANSWERER, so it says a diff happened
+NEARBY and never that this device solicited one - the exact distinction the row turns on, since its
+sender and its receiver both reconcile and only one of them is the subject.
+
+The excerpt printed for a human had the same hole from the other end: its filter passed the loss and
+the answer while dropping every `[HISTORY_RECONCILE]` line, so a `PARTIAL` row could not be read to
+tell *nobody asked* from *the ask was answered badly*. It is the second time a verdict here has been
+computed over one projection of the evidence and displayed over another; the first cost a whole
+diagnosis in August and is recorded in the same file as harness fault #31.
+
+
+### Fixed - a reload could drop the fifty key packages a device had just published, and nothing anywhere said so
+
+The native foreground resume replaces the live MLS manager with one rebuilt from `mls.bin`, gated by
+`reload_is_monotonic` - which compares GROUP EPOCHS and nothing else. **Key material is not a group
+epoch.** A snapshot written before a connection's prekey mint therefore holds every group at exactly
+its live epoch, passes the guard unchanged, and installs a keystore missing all fifty bundles the
+device published seconds earlier. `key_package_has_private` then answers `false` about its own fresh
+mints, and that answer is precisely what `reconcilePublishedKeyPackages` reads as "the server holds
+an orphan" before purging the pool - the churn that grew one phone's `mls.bin` by 1.26 MB in a day
+and took a checkpoint from 17 s to 48 s.
+
+**The web side had already written the argument down and predicted this miss.**
+`installUnlessOvertaken` carries both guards there, and its docblock says an epoch is *"evidence for
+'is this snapshot from an older epoch' and for nothing else"*, then warns that *"a rule that lives at
+one call site is a rule the next off-thread worker will not inherit"*. The next caller was in Rust,
+across a boundary no compiler spans, and it inherited only the epoch half.
+
+**It accuses rather than refuses, and that is a decision rather than a shortcut.** On web the two
+candidates are ordered - the worker's output is older and the live client wins - so refusing is free.
+At a resume BOTH sides have moved: the background engine advanced the blob, the foreground minted
+into the live manager, and that advance is often a ratchet generation rather than an epoch, which no
+epoch comparison can see. Refusing would silently drop the background work the reload exists to
+rescue. So the loss is named at the boundary where it happens, and the merge that would prevent it is
+recorded as unwritten.
+
+Pinned without a phone: `reload_monotonic.rs` now asserts that a snapshot predating a mint is
+ACCEPTED by the epoch guard, that the key-package count drops by fifty across it, and that **50 of 50
+published packages are unrecognisable to the reloaded manager** - the `purged 50/50` line reproduced
+on a desktop. The byte-identity candidate for the same defect is refuted in the same pass: the
+delivery service stores and returns the published base64 verbatim, so the round trip cannot change a
+byte.
 ### Fixed
 
 - **Red triangles flashed between login screens on miconnect.** Confirmed by decoding a Firefox

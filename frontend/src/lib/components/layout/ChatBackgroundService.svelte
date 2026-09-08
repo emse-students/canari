@@ -234,7 +234,7 @@
     const recovery = landingRecovery({
       isChannel: isChannelConversationId(id),
       alreadyRefreshed: refreshedWorkspacesForTarget === id,
-      conversationsRestored: globalConvs.conversationsRestored,
+      conversationSourcesSettled: globalConvs.conversationSourcesSettled,
     });
     if (recovery === 'wait') return;
     if (recovery === 'abandon') {
@@ -657,6 +657,8 @@
     const base = {
       conversations: globalConvs.conversations,
       loadAndRestoreConversations: () => globalConvs.loadAndRestoreConversations(convCtx()),
+      beginConversationSource: () => globalConvs.beginConversationSource(),
+      endConversationSource: () => globalConvs.endConversationSource(),
       addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
         globalMessaging.addMessageToChat(sid, content, contactName, msgCtx(), options),
       drainOrphanMessages: (convoKey: string) =>
@@ -1000,11 +1002,28 @@
    */
   async function flushFcmCache(deviceKeyB64: string, storage: IStorage) {
     if (globalMessaging.isMessageCatchupActive) return;
-    const injected = await consumeFcmCache(deviceKeyB64, storage).catch(
-      () => [] as StoredMessage[]
-    );
-    if (injected.length === 0 || !globalSession.userId) return;
-    mergeFcmMessagesIntoConversations(injected, globalConvs.conversations, globalSession.userId);
+    // A CONVERSATION SOURCE, exactly as at login: this pass is what turns a first message from a
+    // new correspondent into a conversation, so a deep-link landing that ran while it was in
+    // flight would read a map that is complete-looking and wrong. Resume is if anything the more
+    // common case of the two - the app is backgrounded far more often than it is killed.
+    globalConvs.beginConversationSource();
+    try {
+      const injected = await consumeFcmCache(deviceKeyB64, storage).catch(() => ({
+        messages: [] as StoredMessage[],
+        placeholders: new Map<string, { name: string; updatedAt: number }>(),
+      }));
+      if (injected.messages.length === 0 || !globalSession.userId) return;
+      // The placeholders are what let a FIRST message from a new correspondent appear without a
+      // restart - see `mergeFcmMessagesIntoConversations`.
+      mergeFcmMessagesIntoConversations(
+        injected.messages,
+        globalConvs.conversations,
+        globalSession.userId,
+        injected.placeholders
+      );
+    } finally {
+      globalConvs.endConversationSource();
+    }
   }
 
   /** Applies leader-tab message broadcasts to follower tab UI state. */

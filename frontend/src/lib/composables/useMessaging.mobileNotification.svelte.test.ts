@@ -42,6 +42,7 @@ vi.mock('$lib/utils/appVersion', async (orig) => ({
 const { useMessaging } = await import('./useMessaging.svelte');
 type MessagingContext = import('./useMessaging.svelte').MessagingContext;
 import type { Conversation } from '$lib/types';
+import { EXAMPLE_MENTION_USER_ID, formatMentionToken } from '$lib/utils/mentions';
 
 const ME = 'me-user-id';
 const PEER = 'peer-user-id';
@@ -204,5 +205,89 @@ describe('native mobile notifies for the message no push will ever carry', () =>
     await messaging.addMessageToChat(ME, 'my own message', CONVO, ctx, { messageId: 'm-5' });
 
     expect(sendSystemNotification).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A MENTION IS FILED ON THE READER'S OWN SWITCH, AND THE WEBSOCKET HALF DID NOT KNOW IT EXISTED.
+ *
+ * `canari_mentions` is a separate Android channel with its own importance, sound, vibration and DND
+ * standing, and the user can toggle it independently - it is what lets someone mute the chatter and
+ * still hear their own name. `CanariFirebaseMessagingService` picked it by reading the decrypted
+ * text for `@[myUserId]`; this path passed `canari_messages` for everything, because it had no
+ * mentions branch at all.
+ *
+ * Since the builder follows the message's ROUTE and not the app's state, the consequence was not
+ * "mentions are never special" but something worse: measured as NOTIF-16 on 2026-09-08, one
+ * backgrounded phone filed a mention that arrived over the WebSocket on `canari_messages` and the
+ * same mention arriving as a push on `canari_mentions`. Which of the reader's switches applied was
+ * decided by the transport, which the reader cannot see and nothing makes stable.
+ *
+ * The flag is asserted in BOTH directions. Sending it always-true would be the same defect wearing
+ * the other mask: every message would bypass a mute the user set deliberately.
+ */
+describe('a message that names the reader is filed on the mentions channel', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    MOBILE = true;
+  });
+
+  /** The fixture's `ME` is not mention-shaped - a token only carries a 64-hex OIDC sub. */
+  const mentionable = (ctx: MessagingContext) => {
+    (ctx as { userId: string }).userId = EXAMPLE_MENTION_USER_ID;
+    return ctx;
+  };
+
+  it('passes the mention flag when the text carries this user token', async () => {
+    const messaging = useMessaging();
+    const { ctx, sendSystemNotification } = makeContext();
+    screen('visible', true, false);
+
+    await messaging.addMessageToChat(
+      PEER,
+      `${formatMentionToken(EXAMPLE_MENTION_USER_ID)} look at this`,
+      CONVO,
+      mentionable(ctx),
+      { messageId: 'm-mention' }
+    );
+
+    expect(sendSystemNotification).toHaveBeenCalledTimes(1);
+    expect(sendSystemNotification.mock.calls[0][3]).toBe(true);
+  });
+
+  it('does not, for a mention of somebody else in the same conversation', async () => {
+    const messaging = useMessaging();
+    const { ctx, sendSystemNotification } = makeContext();
+    screen('visible', true, false);
+
+    // A real 64-hex id that is NOT the reader's: the token is present and must not count. A check
+    // written against "does the text contain a mention" rather than "does it name ME" passes on
+    // the defect, and every busy salon message would then arrive on the mentions channel.
+    const somebodyElse = EXAMPLE_MENTION_USER_ID.replace(/^d8/, 'a1');
+    await messaging.addMessageToChat(
+      PEER,
+      `${formatMentionToken(somebodyElse)} look at this`,
+      CONVO,
+      mentionable(ctx),
+      { messageId: 'm-other-mention' }
+    );
+
+    expect(sendSystemNotification).toHaveBeenCalledTimes(1);
+    expect(sendSystemNotification.mock.calls[0][3]).toBe(false);
+  });
+
+  it('does not, for an ordinary message', async () => {
+    const messaging = useMessaging();
+    const { ctx, sendSystemNotification } = makeContext();
+    screen('visible', true, false);
+
+    await messaging.addMessageToChat(PEER, 'their message', CONVO, mentionable(ctx), {
+      messageId: 'm-plain',
+    });
+
+    expect(sendSystemNotification).toHaveBeenCalledTimes(1);
+    expect(sendSystemNotification.mock.calls[0][3]).toBe(false);
   });
 });
