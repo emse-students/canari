@@ -173,7 +173,7 @@
     ></button>
 
     <aside
-      class="relative flex h-full w-full max-w-md flex-col bg-(--cn-surface) shadow-2xl"
+      class="app-drawer-panel bg-cn-surface relative flex h-full w-full max-w-md flex-col"
       transition:fly={{ x: 320, duration: 220 }}
     >
       <!-- Header -->

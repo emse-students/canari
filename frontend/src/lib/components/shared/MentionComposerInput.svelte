@@ -280,7 +280,7 @@
     aria-multiline={singleLine ? 'false' : 'true'}
     tabindex={disabled ? -1 : 0}
     data-placeholder={placeholder}
-    class="mention-composer-editor chat-composer-editor chat-scrollbar w-full outline-none {singleLine
+    class="mention-composer-editor chat-composer-editor w-full outline-none {singleLine
       ? 'mention-composer-editor--single'
       : ''} {editorClass}"
     style:min-height={minHeight}

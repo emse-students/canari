@@ -193,7 +193,7 @@
   </div>
 
   <!-- Conversation list. -->
-  <div class="custom-scrollbar flex-1 overflow-y-auto py-2">
+  <div class="flex-1 overflow-y-auto py-2">
     {#if isLoading}
       <div class="text-text-muted flex flex-col items-center justify-center gap-3 py-10">
         <LoaderCircle size={24} class="animate-spin text-amber-500" />
@@ -249,25 +249,3 @@
     </a>
   </div>
 </aside>
-
-<style>
-  .custom-scrollbar::-webkit-scrollbar {
-    width: 6px;
-  }
-  .custom-scrollbar::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  .custom-scrollbar::-webkit-scrollbar-thumb {
-    background: color-mix(in srgb, var(--cn-surface) 20%, transparent);
-    border-radius: 6px;
-  }
-  :global([data-theme='dark']) .custom-scrollbar::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.1);
-  }
-  .custom-scrollbar:hover::-webkit-scrollbar-thumb {
-    background: color-mix(in srgb, var(--cn-surface) 40%, transparent);
-  }
-  :global([data-theme='dark']) .custom-scrollbar:hover::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.2);
-  }
-</style>

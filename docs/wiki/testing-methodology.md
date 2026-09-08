@@ -601,6 +601,7 @@ caught by a green gate:
   observation is part of a check was stated globally and simply not implemented in one phase file, so
   every TYPE pass asserted that an indicator appeared and said nothing about what the two pages
   logged while it did. A rule enforced by remembering to write it is not enforced.
+- **`Page.captureScreenshot` DROPS THE CSS `:hover` STATE, so a hover affordance cannot be photographed.** Measured 2026-09-08 on the message toolbar: a probe read `opacity: 1`, `display: flex`, `visibility: visible` and a real 84x28 rect off the element milliseconds before the capture, and the PNG held a uniform `#121212` at exactly those coordinates. `Input.dispatchMouseEvent` DOES set the hover - `matches(':hover')` is true and the computed style proves the rule fired - it just does not survive into the captured frame. The consequence is a wrong conclusion in both directions: an empty picture is not evidence the control is missing, and a probe's computed style is not evidence the user can see it. Drive the component into a state it holds itself (open the popover, which is `$state` rather than CSS) and photograph THAT, or report the computed-style read and say plainly that it is not a photograph.
 - **A syntax check is not a runtime check.** A comment inside an evaluated template literal quoted an
   identifier in backticks; the backticks closed the literal, leaving `template / identifier`, which
   is valid JavaScript. `node --check` passed and every run threw `ReferenceError` at the division.

@@ -314,7 +314,7 @@
   <div class="-mx-6 -my-4 flex h-full max-h-[800px] flex-col md:h-[65vh] md:flex-row">
     <!-- Barre de menu latérale (Onglets sur mobile) -->
     <div
-      class="custom-scrollbar bg-cn-surface flex w-full shrink-0 flex-row gap-2 overflow-x-auto border-b border-black/5 p-3 md:w-64 md:flex-col md:gap-1 md:overflow-x-visible md:border-r md:border-b-0 md:p-5 dark:border-white/10"
+      class="bg-cn-surface flex w-full shrink-0 flex-row gap-2 overflow-x-auto border-b border-black/5 p-3 md:w-64 md:flex-col md:gap-1 md:overflow-x-visible md:border-r md:border-b-0 md:p-5 dark:border-white/10"
     >
       <h3
         class="text-text-muted text-2xs mb-3 hidden items-center gap-2 px-2 font-bold tracking-widest uppercase md:flex"
@@ -374,7 +374,7 @@
     </div>
 
     <!-- Contenu Principal -->
-    <div class="custom-scrollbar flex-1 overflow-y-auto bg-transparent p-5 md:p-8">
+    <div class="flex-1 overflow-y-auto bg-transparent p-5 md:p-8">
       <!-- ================= ONGLET : GÉNÉRAL ================= -->
       {#if activeTab === 'general'}
         <div class="max-w-2xl space-y-6">
@@ -717,27 +717,3 @@
     </div>
   </div>
 </Modal>
-
-<style>
-  /* Discreet scrollbar for the menu and the content */
-  .custom-scrollbar::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-  }
-  .custom-scrollbar::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  .custom-scrollbar::-webkit-scrollbar-thumb {
-    background: color-mix(in srgb, var(--cn-surface) 20%, transparent);
-    border-radius: 6px;
-  }
-  :global([data-theme='dark']) .custom-scrollbar::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.1);
-  }
-  .custom-scrollbar:hover::-webkit-scrollbar-thumb {
-    background: color-mix(in srgb, var(--cn-surface) 40%, transparent);
-  }
-  :global([data-theme='dark']) .custom-scrollbar:hover::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.2);
-  }
-</style>

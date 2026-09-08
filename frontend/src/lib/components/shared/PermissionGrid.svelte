@@ -91,7 +91,7 @@
 {#if permissions.length === 0}
   <p class="text-text-muted text-sm italic">{m.chat_permission_grid_empty()}</p>
 {:else}
-  <div class="custom-scrollbar overflow-x-auto">
+  <div class="overflow-x-auto">
     <table class="w-full border-collapse text-xs" cellspacing="0">
       <thead>
         <tr>
@@ -188,20 +188,3 @@
     </span>
   </div>
 {/if}
-
-<style>
-  .custom-scrollbar::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-  }
-  .custom-scrollbar::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  .custom-scrollbar::-webkit-scrollbar-thumb {
-    background: color-mix(in srgb, var(--cn-surface) 20%, transparent);
-    border-radius: 6px;
-  }
-  :global([data-theme='dark']) .custom-scrollbar::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.1);
-  }
-</style>

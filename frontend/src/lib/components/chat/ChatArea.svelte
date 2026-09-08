@@ -1059,7 +1059,7 @@
       <div
         bind:this={chatContainer}
         onscroll={handleScroll}
-        class="chat-scrollbar chat-messages-scroll flex min-h-0 flex-1 flex-col gap-2 overflow-x-hidden overflow-y-auto px-3 py-3 transition-opacity duration-150 md:px-6 md:py-6 {hideDuringEntry
+        class="chat-messages-scroll flex min-h-0 flex-1 flex-col gap-2 overflow-x-hidden overflow-y-auto px-3 py-3 transition-opacity duration-150 md:px-6 md:py-6 {hideDuringEntry
           ? 'opacity-0'
           : 'opacity-100'}"
       >
