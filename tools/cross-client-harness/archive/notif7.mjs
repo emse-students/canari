@@ -220,7 +220,7 @@ out.shade = ours.map((n) => `${n.title} | ${n.body}`.slice(0, 160));
 out.decrypted = ours.some((n) => n.full.includes(marker));
 stage(`shade in ${out.shadeInMs} ms, decrypted=${out.decrypted}; ${JSON.stringify(out.shade)}`);
 if (out.shadeInMs === null) {
-  out.verdict = 'FAIL';
+  out.ownVerdict = 'FAIL';
   out.why = 'no notification for this conversation ever reached the shade - nothing to tap';
   const phoneReport = logcatReport(await logcatSince(phoneWindowFrom), 'A1');
   writeFileSync(new URL(`./notif7-${mode}.log`, import.meta.url), JSON.stringify({ ...out, a1: phoneReport }, null, 2));
@@ -297,7 +297,7 @@ out.landedAfterUnlockMs = Date.now() - measuringFrom;
 stage(`landed: ${JSON.stringify(landed)} after ${out.deepLinkMs} ms (${out.landedAfterUnlockMs} ms post-unlock)`);
 
 out.count = await countMessage(a1, marker);
-out.verdict = out.foregroundedAfter && landed.composer && landed.marker && out.count === 1 ? 'PASS' : 'FAIL';
+out.ownVerdict = out.foregroundedAfter && landed.composer && landed.marker && out.count === 1 ? 'PASS' : 'FAIL';
 
 /**
  * `out.phoneNotable = []` was the whole native observation - a literal empty array, assigned and
@@ -315,4 +315,14 @@ const phoneReport = logcatReport(await logcatSince(phoneWindowFrom), 'A1');
 writeFileSync(new URL(`./notif7-${mode}.log`, import.meta.url), JSON.stringify({ ...out, a1: phoneReport }, null, 2));
 // One id per MODE: `bg` and `killed` are two checks on the dashboard, and a shared id would let the
 // second overwrite the first's row in every reading of the ledger.
-await finishObserved(ROW, out.verdict, out, { W2: w, A1: phoneReport });
+// NOT `out.verdict`, AND THE ROW'S HAPPY PATH HAD NEVER ONCE BEEN RECORDED BECAUSE OF IT. This file
+// spreads its working object straight into the detail, and `record` REFUSES a detail naming
+// `verdict` - it would erase the row's own provenance. The two other runners that keep a working
+// verdict (`notif.mjs`, `k.mjs`) build a fresh object literal at the call, so neither ever hit it.
+// Here the field is only assigned at the decision points BELOW the tap, so every failure recorded
+// fine and the success threw: measured 2026-09-08, the first run in which the tap worked.
+//
+// `ownVerdict` is kept rather than deleted, because it is not the same fact as the row's verdict -
+// `gate()` can downgrade this to PASS-DIRTY, and knowing what the check itself decided is how the
+// two are told apart afterwards.
+await finishObserved(ROW, out.ownVerdict, out, { W2: w, A1: phoneReport });

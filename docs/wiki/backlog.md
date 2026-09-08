@@ -1624,6 +1624,29 @@ saying anything.
 
 ### P3 - the pull and the socket hand the SAME row in, and the queue notices afterwards instead of the overlap not existing (measured 2026-09-08)
 
+**SEEN ON THE PHONE FOR THE FIRST TIME, 2026-09-08, AND IT IS WORSE THERE.** NOTIF-7 (backgrounded,
+push, tap, foreground) left six `severe` lines on A1: two frames at ONE epoch - group 2bd5add9,
+`msg_epoch=196 group_epoch=196`, generations 7 and 8 - each refused with
+`Ciphertext generation out of bounds` / `SecretReuseError` and
+`MLS decryption failed at exactly its own epoch, so no redelivery can help`.
+
+A same-epoch `SecretReuseError` means the generation was ALREADY CONSUMED, so these are duplicates
+and not losses - which the row's own count confirms: it displayed exactly one message and passed
+every assertion it makes.
+
+**The asymmetry is the point.** On the web the same overlap is caught by the queue and files
+`[QUEUE] delivery ... arrived twice`, a notice. On the phone nothing catches it and it reaches
+openmls, which reports at ERROR - so the same defect costs a `PASS-DIRTY` on the web and SIX SEVERE
+LINES on a handset, in a log a user's crash reporter would carry. It is one more reason the overlap
+has to stop existing rather than be reconciled afterwards.
+
+**NOT ESTABLISHED, and naming it is part of the record**: that these two particular frames came from
+the pull/socket overlap rather than from something else. What would settle it is the pair of
+timestamps - the socket delivery and the catch-up pull for those two rows - which the phone does not
+currently log with enough precision to compare. The window is right (a backgrounded client
+foregrounded by a tap is exactly when a catch-up pull races a live socket), and no other mechanism in
+this campaign is known to hand the same generation in twice.
+
 **What is seen.** One line on W3, on every HEAL-NEW run that has a fresh device pulling while a
 socket is already live:
 
