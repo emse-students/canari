@@ -11,6 +11,16 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Red triangles flashed between login screens on miconnect.** Confirmed by decoding a Firefox
+  profiler capture's screenshot markers: navigating from one flow to the next
+  (`default-invalidation-flow` -> `miconnect-auth`) reloads the document while its JS chunks are
+  still loading, and for one frame up to four `pf-c-alert__icon` exclamation-triangle icons
+  (Authentik's danger alert) rendered at their unstyled intrinsic size - each roughly a third of
+  the card's height - before the stylesheet that normally sizes them applied. `custom-login.css`
+  now bounds that icon to a normal size unconditionally, removing the race rather than hiding it:
+  a genuine, persisting alert still renders, at its correct size.
 ### Fixed - a failed login re-entered the source that had just failed, so 21% of CAS returns became an infinite loop with the error never readable
 
 Reported from a phone that could not log in at all - *"ca boucle sur authentik"* - and the account

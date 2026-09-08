@@ -420,6 +420,17 @@ its parent to actually establish a stacking context (`isolation: isolate`, not j
 and an external `@import` (e.g. Google Fonts) can silently no-op under Authentik's default CSP,
 which blocks it - self-hosting is the fix if an exact custom font is needed.
 
+**Red triangles flashing between stages were an unstyled icon, not a validation error** - settled
+by decoding a Firefox profiler capture's screenshot markers (not just reading its metadata: a
+truncated export holds none of this and looks identical to a healthy one). Navigating from one
+flow to the next (`default-invalidation-flow` -> `miconnect-auth`) reloads the document while the
+flow's JS chunks are still loading; for one frame, up to four `pf-c-alert__icon >
+i.fas.fa-exclamation-triangle` (Authentik's danger alert icon) rendered at their unstyled intrinsic
+size - each roughly a third of the card's height - before the stylesheet that normally constrains
+icon size had applied. The CSS now bounds that icon unconditionally rather than racing the load
+that used to size it, so the race is removed rather than hidden: a genuine, persisting alert still
+renders, at its correct size.
+
 ## Database and backup
 
 The PostgreSQL database (volume `miconnect_database`) contains all Authentik configuration: providers, applications, users, OIDC settings. It is backed up daily by [`infrastructure/backup/backup.sh`](../../../infrastructure/backup/backup.sh) as `authentik_db.sql.gz`.
