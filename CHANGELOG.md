@@ -11,6 +11,34 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a pending attachment wrote its name twice, and a voice note arrived as a document glyph
+
+Both found on the Mi 9T while verifying the voice-note gesture, and neither caused by it: the tile
+is the one every pending attachment gets, whatever produced it.
+
+**The name was painted twice.** The caption strip under a tile always writes the filename, and the
+icon-and-name placeholder used when there is no preview wrote it again inside the tile. Measured at
+436px: two boxes 62px wide and 19px apart, overlapping by 7px - one wrapping to two lines, the other
+hiding 70 characters behind an ellipsis, so the same string was abbreviated two different ways in
+one 62px column. The placeholder now draws the icon and nothing else. One name, one place.
+
+**A recording is not a file.** It arrived as an 80px square captioned `vocal_1788949514272.m4a`, a
+generated timestamp that tells the reader nothing: they could not see how long it was, and could not
+hear it before sending. An audio attachment now renders through `VoiceMessagePlayer` - the same
+component the message uses once sent, rather than a second, worse one - so the composer shows the
+length, plays it back, and drops the name.
+
+**The predicate is the MIME type, and a test pins that it is.** The recorder happens to write
+`vocal_<timestamp>`; keying on that string would be a distinction carried in prose, and it would
+miss an audio file the reader picked from disk, which deserves the same player for the same reason.
+A `vocal_*.png` must stay an image, and it is asserted.
+
+**And the branch is chosen on the FILE, not on the preview URL being ready.** Gating it on the
+object URL sent the first render down the tile branch, because that URL is created by an effect
+which runs after it - so a recording appeared for one frame as a document glyph and then became a
+player, with the tile's 200ms outro still on screen underneath. Found by a test that saw both at
+once, which is the only reason a one-frame flicker was noticed at all.
+
 ### Changed - a voice note is one gesture now: hold, slide, release
 
 The microphone was three taps - tap to start, tap a square to stop, tap a bin to throw away - and it

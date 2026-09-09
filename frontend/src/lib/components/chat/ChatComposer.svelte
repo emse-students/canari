@@ -23,6 +23,7 @@
   import { isTauriRuntime } from '$lib/utils/openExternal';
   import { downloadDecryptedFile } from '$lib/utils/fileDownload';
   import { m } from '$lib/paraglide/messages';
+  import VoiceMessagePlayer from '$lib/components/messages/VoiceMessagePlayer.svelte';
   import { isNarrowChatLayout, NARROW_CHAT_QUERY, onViewportChange } from '$lib/utils/viewport';
 
   interface ReplyTo {
@@ -371,6 +372,17 @@
     return file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
   }
 
+  /**
+   * Whether an attachment is something to LISTEN to rather than a file to name.
+   *
+   * The MIME type and not the name: the recorder writes `vocal_<timestamp>`, and a predicate
+   * matching that string would be a distinction carried in prose - it would miss an audio file the
+   * reader picked from disk, which deserves the same player for the same reason.
+   */
+  function isAudioFile(file: File): boolean {
+    return file.type.startsWith('audio/');
+  }
+
   function handleVoiceRecording(audioBlob: Blob) {
     if (!onFilesSelected) return;
 
@@ -458,7 +470,7 @@
       files.forEach((entry, index) => {
         const file = entry.file;
         const key = fileKey(file, index);
-        if (!isImageFile(file) && !isPdfFile(file)) return;
+        if (!isImageFile(file) && !isPdfFile(file) && !isAudioFile(file)) return;
         next[key] = previous[key] ?? URL.createObjectURL(file);
       });
 
@@ -472,21 +484,21 @@
 </script>
 
 <!--
-  The icon-and-name tile shown for an attachment with no usable preview - a non-image, non-PDF file,
-  or a PDF whose first page has not rendered (yet, or at all). Declared once and rendered from both
-  branches: it is the PdfThumbnail fallback as well as the plain default, and the two drifting apart
-  is exactly how one of them ends up looking like a different product.
+  The tile shown for an attachment with no usable preview - a non-image, non-PDF file, or a PDF whose
+  first page has not rendered (yet, or at all). Declared once and rendered from both branches: it is
+  the PdfThumbnail fallback as well as the plain default, and the two drifting apart is exactly how
+  one of them ends up looking like a different product.
+
+  IT DOES NOT WRITE THE NAME, and that is the point. The caption strip below the tile always does,
+  so this drew it a second time: two boxes 62px wide and 19px apart, overlapping by 7px, one
+  wrapping to two lines and the other hiding 70 characters behind an ellipsis. Measured on the
+  Mi 9T, 2026-09-09. One name, one place.
 -->
-{#snippet filePlaceholder(name: string)}
+{#snippet filePlaceholder()}
   <div
     class="text-text-muted flex h-full w-full flex-col items-center justify-center gap-1.5 bg-black/5 px-2 dark:bg-white/5"
   >
     <FileText size={20} strokeWidth={1.5} />
-    <span
-      class="text-2xs sm:text-2xs line-clamp-2 px-1 text-center leading-tight font-medium break-all"
-    >
-      {name}
-    </span>
   </div>
 {/snippet}
 
@@ -573,70 +585,111 @@
               entry.width && entry.height
                 ? mediaAspectStyle(entry.width, entry.height)
                 : 'aspect-ratio: 1'}
-            <div
-              transition:scale={{ duration: 200, start: 0.9 }}
-              class="group/file bg-cn-surface relative w-20 overflow-hidden rounded-[1rem] border border-black/5 shadow-md sm:w-24 dark:border-white/10"
-              style="{thumbAspect}; max-height: 6rem;"
-            >
-              {#if isImageFile(file) && previewUrls[key]}
-                <button
-                  type="button"
-                  class="block h-full w-full cursor-zoom-in border-0 p-0"
-                  aria-label={m.chat_enlarge_preview_label()}
-                  onclick={(e) => {
-                    e.stopPropagation();
-                    openLightbox(key);
-                  }}
-                  onpointerdown={(e) => e.stopPropagation()}
-                >
-                  <img src={previewUrls[key]} alt={file.name} class="h-full w-full object-cover" />
-                </button>
-              {:else if isPdfFile(file) && previewUrls[key]}
-                <!--
+            <!--
+              A RECORDING IS NOT A FILE TILE. An 80px square with a document glyph and a generated
+              `vocal_<timestamp>` name tells the reader nothing they can act on: they cannot see how
+              long it is and cannot hear it before sending. `VoiceMessagePlayer` already answers both
+              and is what the message will look like once sent, so the composer shows the same thing
+              rather than a second, worse one - and the name is dropped, being a timestamp nobody
+              reads. It wants width (`min-w-[200px]`), so it is a sibling of the tile, not inside it.
+
+              THE BRANCH IS CHOSEN ON THE FILE, NOT ON THE URL BEING READY. Gating it on
+              `previewUrls[key]` sent the first render down the tile branch, because the object URL
+              is created by an effect that runs after it - so a recording appeared for one frame as
+              a document glyph captioned `vocal_<timestamp>` and then became a player, with the
+              tile's 200ms outro still on screen underneath. A fallback is a signal, never a path:
+              the player waits for its own source instead.
+            -->
+            {#if isAudioFile(file)}
+              <div
+                transition:scale={{ duration: 200, start: 0.9 }}
+                class="group/file relative w-full max-w-sm"
+              >
+                {#if previewUrls[key]}
+                  <VoiceMessagePlayer src={previewUrls[key]} />
+                {/if}
+                {#if onRemovePendingFile}
+                  <button
+                    type="button"
+                    class="absolute -top-1.5 -right-1.5 inline-flex h-6 w-6 items-center justify-center rounded-full bg-black/50 text-white shadow-sm transition-all duration-200 outline-none hover:scale-105 hover:bg-red-500 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95"
+                    onclick={() => onRemovePendingFile(index)}
+                    aria-label={m.chat_remove_file_label()}
+                    title={m.common_remove_label()}
+                  >
+                    <X size={14} strokeWidth={2.5} />
+                  </button>
+                {/if}
+              </div>
+            {:else}
+              <div
+                transition:scale={{ duration: 200, start: 0.9 }}
+                class="group/file bg-cn-surface relative w-20 overflow-hidden rounded-[1rem] border border-black/5 shadow-md sm:w-24 dark:border-white/10"
+                style="{thumbAspect}; max-height: 6rem;"
+              >
+                {#if isImageFile(file) && previewUrls[key]}
+                  <button
+                    type="button"
+                    class="block h-full w-full cursor-zoom-in border-0 p-0"
+                    aria-label={m.chat_enlarge_preview_label()}
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      openLightbox(key);
+                    }}
+                    onpointerdown={(e) => e.stopPropagation()}
+                  >
+                    <img
+                      src={previewUrls[key]}
+                      alt={file.name}
+                      class="h-full w-full object-cover"
+                    />
+                  </button>
+                {:else if isPdfFile(file) && previewUrls[key]}
+                  <!--
                   RASTERISED BY pdf.js, never embedded. This was an `<embed type="application/pdf">`
                   handing the blob to the browser's native plugin, which the site's own CSP forbids
                   (`object-src 'none'`) - so it was blocked for every user, on every browser, and the
                   preview it was supposed to draw was an empty white box. It is the one place that
                   was never migrated to the canvas path every other PDF surface uses.
                 -->
-                <PdfThumbnail
-                  url={previewUrls[key]}
-                  maxWidth={160}
-                  imgClass="w-full h-full object-cover object-top"
-                >
-                  {#snippet fallback()}
-                    {@render filePlaceholder(file.name)}
-                  {/snippet}
-                </PdfThumbnail>
-              {:else}
-                {@render filePlaceholder(file.name)}
-              {/if}
+                  <PdfThumbnail
+                    url={previewUrls[key]}
+                    maxWidth={160}
+                    imgClass="w-full h-full object-cover object-top"
+                  >
+                    {#snippet fallback()}
+                      {@render filePlaceholder()}
+                    {/snippet}
+                  </PdfThumbnail>
+                {:else}
+                  {@render filePlaceholder()}
+                {/if}
 
-              <!-- Gradient overlay and file name. -->
-              <div
-                class="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-2 pt-4 pb-1.5"
-              >
+                <!-- Gradient overlay and file name. -->
                 <div
-                  class="text-2xs sm:text-2xs truncate font-medium text-white drop-shadow-md"
-                  title={file.name}
+                  class="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-2 pt-4 pb-1.5"
                 >
-                  {file.name}
+                  <div
+                    class="text-2xs sm:text-2xs truncate font-medium text-white drop-shadow-md"
+                    title={file.name}
+                  >
+                    {file.name}
+                  </div>
                 </div>
-              </div>
 
-              <!-- Remove button. -->
-              {#if onRemovePendingFile}
-                <button
-                  type="button"
-                  class="absolute top-1.5 right-1.5 inline-flex h-6 w-6 scale-90 items-center justify-center rounded-full bg-black/50 text-white opacity-100 shadow-sm transition-all duration-200 outline-none hover:scale-105 hover:bg-red-500 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95 sm:opacity-0 sm:group-hover/file:opacity-100"
-                  onclick={() => onRemovePendingFile(index)}
-                  aria-label={m.chat_remove_file_label()}
-                  title={m.common_remove_label()}
-                >
-                  <X size={14} strokeWidth={2.5} />
-                </button>
-              {/if}
-            </div>
+                <!-- Remove button. -->
+                {#if onRemovePendingFile}
+                  <button
+                    type="button"
+                    class="absolute top-1.5 right-1.5 inline-flex h-6 w-6 scale-90 items-center justify-center rounded-full bg-black/50 text-white opacity-100 shadow-sm transition-all duration-200 outline-none hover:scale-105 hover:bg-red-500 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95 sm:opacity-0 sm:group-hover/file:opacity-100"
+                    onclick={() => onRemovePendingFile(index)}
+                    aria-label={m.chat_remove_file_label()}
+                    title={m.common_remove_label()}
+                  >
+                    <X size={14} strokeWidth={2.5} />
+                  </button>
+                {/if}
+              </div>
+            {/if}
           {/each}
         </div>
       </div>
