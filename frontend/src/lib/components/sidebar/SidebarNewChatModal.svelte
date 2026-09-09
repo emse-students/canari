@@ -66,7 +66,7 @@
   }
 </script>
 
-<Modal {open} {onClose} title={m.chat_new_discussion_title()}>
+<Modal {open} {onClose} topAnchored title={m.chat_new_discussion_title()}>
   <!-- Système d'onglets accessible -->
   <div
     role="tablist"

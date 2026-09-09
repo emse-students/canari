@@ -62,6 +62,41 @@ Found while reading the checks on an unrelated pull request. It is not in the `C
 advisory endpoint answered 503 twenty-six times in sixty tree-audits - so this had been merging past
 every pull request and was owed to a nightly `scheduled.yml` run.
 
+### Changed - four ways to show one thing became one, and a modal stopped riding the keyboard
+
+The report named three: *"Membres" adds an element beside and narrows the conversation block, while
+"Medias, liens et fichiers" does something on top, and "Parametres du canal" opens a modal.* Reading
+the code found a **fourth** with the same job - the group/DM settings, a portalled sheet that
+`ChatHeader` mounted itself - reached from **the same gear icon** as the channel settings. The header
+called the page's handler when it was given one and fell back to its own local flag when it was not,
+and that fallback WAS the divergence: one button, two mechanisms, decided by a prop being absent.
+
+Three consequences, none of them anyone's choice - just things nothing forbade:
+
+- **Two panels could be open at once.** The media sheet's state was a `ChatArea` local and the members
+  column's was in the store, so neither could see the other; opening media over an open members column
+  drew a scrim across a column that was still there underneath.
+- **The media panel covered the conversation it described**, on a 1920px desktop with room to spare,
+  because a child component cannot become its parent's sibling. Where a panel lived in the tree decided
+  what it was allowed to look like.
+- **Escape closed exactly one of the four.**
+
+`ConversationSidePanel` plus a single `sidePanel` value replace all of it, and one value cannot hold
+two panels open - the illegal state stopped being reachable rather than being guarded against. It is
+ONE instance with a media query moving the chrome, not a desktop branch and a mobile branch: two
+branches would mount the content twice, which for the media panel means two decrypt passes. Measured
+at 1920px: opening Medias takes the thread from **1480px to 1142px** and puts a **320px** card beside
+it on the shell's own gutter, `position: static`. Nothing overlays.
+
+Said plainly, it cost something: the channel settings lost their `max-w-4xl` two-column form, because
+a 352px panel can never satisfy it. The phone layout the file already had is now the only one.
+
+Separately, the same session's other report: **every modal was a bottom sheet on a phone**, pinned to
+the bottom edge, so opening the keyboard shoved the whole panel up the screen and closing it dropped
+it back. A new `topAnchored` flag anchors it to the top instead, and the three creation modals - new
+chat, new channel, new community, each of which opens with a text field - take it. `fullViewport` was
+not the lever: it also blows the panel up to `90rem` on desktop, which a contact picker must not be.
+
 ### Changed - the interface was measured against Messenger and rebuilt on a scale it did not have
 
 The brief was that Canari "fait trop IA" and was "pas assez ergonomique". That is an impression, so it

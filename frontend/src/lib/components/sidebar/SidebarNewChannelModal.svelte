@@ -38,7 +38,7 @@
   });
 </script>
 
-<Modal {open} {onClose} title={m.chat_modal_channel_name_label()}>
+<Modal {open} {onClose} topAnchored title={m.chat_modal_channel_name_label()}>
   <div class="space-y-4 pt-2">
     <div>
       <label for="new-channel-name" class="text-text-main mb-1 block text-sm font-medium"

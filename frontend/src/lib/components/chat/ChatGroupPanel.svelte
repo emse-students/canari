@@ -17,8 +17,7 @@
   import UserName from '../shared/UserName.svelte';
   import Modal from '../shared/Modal.svelte';
   import MultiUserSelector from '../shared/MultiUserSelector.svelte';
-  import { portal } from '$lib/actions/portal';
-  import { fade, fly } from 'svelte/transition';
+  import { fade } from 'svelte/transition';
   import { m } from '$lib/paraglide/messages';
   import { MediaService } from '$lib/media';
   import { getToken } from '$lib/stores/auth';
@@ -31,7 +30,6 @@
    */
   interface Props {
     /** Whether the panel is currently visible. */
-    showPanel: boolean;
     /** Display name shown in the panel identity card and used to seed the rename input. */
     effectiveDisplayName: string;
     /** Raw user/contact ID used for the DM avatar. */
@@ -65,7 +63,6 @@
   }
 
   let {
-    showPanel,
     effectiveDisplayName,
     contactName,
     groupId = '',
@@ -171,22 +168,16 @@
   // for the one they are looking at. Clearing is the whole fix: a link the panel did not generate
   // this session is a link it must not claim to have.
   $effect(() => {
-    if (showPanel) {
-      renameInput = effectiveDisplayName;
-      confirmDelete = false;
-      confirmLeave = false;
-      shareLink = '';
-      shareCopied = false;
-      shareError = '';
-    }
+    // Keyed on the conversation rather than on a `showPanel` flag: the panel is MOUNTED only while
+    // it is showing now, so "opened" and "landed on another group" are the same event here.
+    void groupId;
+    renameInput = effectiveDisplayName;
+    confirmDelete = false;
+    confirmLeave = false;
+    shareLink = '';
+    shareCopied = false;
+    shareError = '';
   });
-
-  const panelTitle = $derived(
-    isGroupConversation ? m.chat_group_management_title() : m.chat_group_dm_info_title()
-  );
-  const panelSubtitle = $derived(
-    isGroupConversation ? m.chat_group_management_subtitle() : m.chat_group_dm_subtitle()
-  );
 
   function submitRename() {
     const name = renameInput.trim();
@@ -216,91 +207,57 @@
   }
 </script>
 
-{#if showPanel}
-  <div use:portal class="pointer-events-none fixed inset-0 z-[260] flex justify-end">
-    <!-- Clickable dark overlay to close -->
-    <button
-      type="button"
-      class="pointer-events-auto absolute inset-0 border-0 bg-black/40 transition-opacity outline-none"
-      aria-label={m.chat_group_close_backdrop_label()}
-      onclick={closePanel}
-      transition:fade={{ duration: 250 }}
-    ></button>
-
-    <!-- Panel content -->
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={m.chat_group_panel_label()}
-      class="app-drawer-panel text-text-main bg-cn-surface pointer-events-auto relative flex h-full w-full flex-col overflow-hidden md:w-[28rem]"
-      transition:fly={{ x: 20, duration: 300, easing: (t) => t * (2 - t) }}
-    >
-      <!-- Panel header -->
-      <div
-        class="bg-cn-surface flex items-start justify-between gap-3 border-b border-black/5 px-5 py-5 md:px-6 dark:border-white/10"
-        style="padding-top: max(1.25rem, env(safe-area-inset-top))"
+<!--
+  CONTENT ONLY. This was the FOURTH mechanism for showing something about a conversation - a
+  portalled `fixed inset-0` sheet with its own scrim, its own `role="dialog"`, its own header and
+  its own 28rem width - reached from the same gear icon that opens the channel settings, which were
+  a modal. Two buttons that mean "tell me about this conversation" drew themselves two different
+  ways depending on whether it was a channel. `ConversationSidePanel` owns the shell; the subtitle
+  that used to sit under the heading is gone with it, because the panel's title bar has one line.
+-->
+<div class="keyboard-aware-panel-scroll flex min-h-0 flex-1 flex-col gap-6 p-5 md:p-6">
+  <!-- Group/contact identity card -->
+  <div
+    class="bg-cn-surface flex items-center gap-4 rounded-[1.5rem] border border-black/5 px-4 py-4 shadow-sm dark:border-white/10"
+  >
+    {#if isGroupConversation}
+      <button
+        type="button"
+        onclick={() => imageInput?.click()}
+        disabled={imageUploading}
+        aria-label={m.chat_group_change_photo_label()}
+        title={m.chat_group_change_photo_label()}
+        class="group/avatar relative h-[3.25rem] w-[3.25rem] flex-shrink-0 overflow-hidden rounded-2xl shadow-inner transition-transform outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 disabled:opacity-60"
       >
-        <div class="min-w-0">
-          <h3 class="text-text-main truncate text-lg font-bold tracking-wide">
-            {panelTitle}
-          </h3>
-          <p class="text-text-muted mt-1 text-xs leading-snug font-medium">{panelSubtitle}</p>
-        </div>
-        <button
-          onclick={closePanel}
-          class="text-text-muted hover:text-text-main shrink-0 rounded-full bg-black/5 p-2.5 transition-all outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 dark:bg-white/10 dark:hover:bg-white/20"
-          aria-label={m.common_close_label()}
+        <GroupAvatar {imageMediaId} name={effectiveDisplayName} variant="group" fill />
+        <span
+          class="absolute inset-0 flex items-center justify-center bg-black/45 text-white opacity-0 transition-opacity group-hover/avatar:opacity-100"
         >
-          <X size={18} strokeWidth={2.5} />
-        </button>
-      </div>
-
-      <!-- Scrollable content -->
-      <div
-        class="keyboard-aware-panel-scroll flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto p-5 md:p-6"
-      >
-        <!-- Group/contact identity card -->
-        <div
-          class="bg-cn-surface flex items-center gap-4 rounded-[1.5rem] border border-black/5 px-4 py-4 shadow-sm dark:border-white/10"
-        >
-          {#if isGroupConversation}
-            <button
-              type="button"
-              onclick={() => imageInput?.click()}
-              disabled={imageUploading}
-              aria-label={m.chat_group_change_photo_label()}
-              title={m.chat_group_change_photo_label()}
-              class="group/avatar relative h-[3.25rem] w-[3.25rem] flex-shrink-0 overflow-hidden rounded-2xl shadow-inner transition-transform outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 disabled:opacity-60"
-            >
-              <GroupAvatar {imageMediaId} name={effectiveDisplayName} variant="group" fill />
-              <span
-                class="absolute inset-0 flex items-center justify-center bg-black/45 text-white opacity-0 transition-opacity group-hover/avatar:opacity-100"
-              >
-                {#if imageUploading}
-                  <Clock size={18} class="animate-spin" strokeWidth={2.5} />
-                {:else}
-                  <Camera size={18} strokeWidth={2.5} />
-                {/if}
-              </span>
-            </button>
-            <input
-              bind:this={imageInput}
-              type="file"
-              accept="image/*"
-              class="hidden"
-              onchange={handleImageFileChange}
-            />
+          {#if imageUploading}
+            <Clock size={18} class="animate-spin" strokeWidth={2.5} />
           {:else}
-            <Avatar userId={contactName} size="lg" fallbackLabel={effectiveDisplayName} />
+            <Camera size={18} strokeWidth={2.5} />
           {/if}
-          <div class="min-w-0 flex-1">
-            <div class="text-text-main mb-1 truncate text-base font-bold">
-              {effectiveDisplayName}
-            </div>
-            <div
-              class="text-text-muted text-2xs inline-flex items-center gap-1.5 font-bold tracking-wider uppercase"
-            >
-              <!--
+        </span>
+      </button>
+      <input
+        bind:this={imageInput}
+        type="file"
+        accept="image/*"
+        class="hidden"
+        onchange={handleImageFileChange}
+      />
+    {:else}
+      <Avatar userId={contactName} size="lg" fallbackLabel={effectiveDisplayName} />
+    {/if}
+    <div class="min-w-0 flex-1">
+      <div class="text-text-main mb-1 truncate text-base font-bold">
+        {effectiveDisplayName}
+      </div>
+      <div
+        class="text-text-muted text-2xs inline-flex items-center gap-1.5 font-bold tracking-wider uppercase"
+      >
+        <!--
                 UNCONDITIONAL, BECAUSE IT STATES A FACT ABOUT THE CONVERSATION AND NOT ABOUT THIS
                 DEVICE. It used to fork on `isReady` and show an amber "not joined" line, which is
                 the machinery the user asked to stop exposing: the conversation is end-to-end
@@ -308,146 +265,143 @@
                 does is a transient the recovery ladder owns. The only progress a user may see is
                 "en cours de reception".
               -->
-              <Shield size={14} class="text-emerald-500" strokeWidth={2.5} />
-              {m.chat_group_secured_sync_label()}
-            </div>
-          </div>
-        </div>
+        <Shield size={14} class="text-emerald-500" strokeWidth={2.5} />
+        {m.chat_group_secured_sync_label()}
+      </div>
+    </div>
+  </div>
 
-        {#if imageUploadError}
-          <p class="-mt-3 px-1 text-xs font-medium text-red-600 dark:text-red-400">
-            {imageUploadError}
+  {#if imageUploadError}
+    <p class="-mt-3 px-1 text-xs font-medium text-red-600 dark:text-red-400">
+      {imageUploadError}
+    </p>
+  {/if}
+
+  <!-- Rename section -->
+  {#if isGroupConversation}
+    <div
+      class="bg-cn-surface flex flex-col gap-3 rounded-[1.5rem] border border-black/5 p-4 shadow-sm md:p-5 dark:border-white/10"
+    >
+      <label
+        for="group-rename-input"
+        class="text-text-muted text-2xs mb-1 inline-flex items-center gap-2 font-bold tracking-wider uppercase"
+      >
+        <PencilLine size={14} />
+        {m.chat_group_name_label()}
+      </label>
+      <div class="flex flex-col gap-3 sm:flex-row">
+        <input
+          id="group-rename-input"
+          type="text"
+          bind:value={renameInput}
+          onkeydown={handleRenameKey}
+          class="text-text-main bg-cn-surface flex-1 rounded-xl border border-black/10 px-4 py-3 text-sm font-semibold shadow-inner transition-all outline-none focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/50 dark:border-white/10"
+        />
+        <button
+          onclick={submitRename}
+          class="text-cn-ink inline-flex items-center justify-center gap-2 rounded-xl bg-amber-500 px-5 py-3 font-bold shadow-sm shadow-amber-500/20 transition-all outline-none hover:bg-amber-400 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95"
+          aria-label={m.chat_group_validate_rename_label()}
+        >
+          <Check size={16} strokeWidth={3} />
+          {m.common_validate_button()}
+        </button>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Invite link section -->
+  {#if isGroupConversation && groupId}
+    <div class="flex flex-col gap-2">
+      <span class="text-text-muted text-2xs px-1 font-bold tracking-wider uppercase">
+        {m.chat_group_invite_link_title()}
+      </span>
+      <p class="text-text-muted px-1 text-xs leading-relaxed">
+        {m.chat_group_invite_link_description()}
+      </p>
+      {#if shareLink}
+        <div class="flex items-center gap-2 px-1">
+          <input
+            type="text"
+            readonly
+            value={shareLink}
+            class="border-cn-border text-text-main min-w-0 flex-1 rounded-xl border bg-(--cn-surface) px-3 py-2 text-xs"
+          />
+          <button
+            type="button"
+            onclick={generateShareLink}
+            class="border-cn-border hover:bg-cn-bg shrink-0 rounded-xl border px-3 py-2 text-xs font-semibold"
+          >
+            {m.chat_group_regenerate_button()}
+          </button>
+        </div>
+        {#if shareCopied}
+          <p class="text-green-ok px-1 text-xs font-semibold">
+            {m.chat_group_link_copied_label()}
           </p>
         {/if}
+      {:else}
+        <button
+          type="button"
+          onclick={generateShareLink}
+          disabled={shareLoading}
+          class="text-2xs mx-1 self-start rounded-xl bg-amber-500/10 px-3 py-1.5 font-bold text-amber-600 transition-colors hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-400"
+        >
+          {shareLoading ? m.common_generating_label() : m.chat_group_generate_link_button()}
+        </button>
+      {/if}
+      {#if shareError}
+        <p class="px-1 text-xs font-medium text-red-600 dark:text-red-400">{shareError}</p>
+      {/if}
+    </div>
+  {/if}
 
-        <!-- Rename section -->
-        {#if isGroupConversation}
-          <div
-            class="bg-cn-surface flex flex-col gap-3 rounded-[1.5rem] border border-black/5 p-4 shadow-sm md:p-5 dark:border-white/10"
-          >
-            <label
-              for="group-rename-input"
-              class="text-text-muted text-2xs mb-1 inline-flex items-center gap-2 font-bold tracking-wider uppercase"
-            >
-              <PencilLine size={14} />
-              {m.chat_group_name_label()}
-            </label>
-            <div class="flex flex-col gap-3 sm:flex-row">
-              <input
-                id="group-rename-input"
-                type="text"
-                bind:value={renameInput}
-                onkeydown={handleRenameKey}
-                class="text-text-main bg-cn-surface flex-1 rounded-xl border border-black/10 px-4 py-3 text-sm font-semibold shadow-inner transition-all outline-none focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/50 dark:border-white/10"
-              />
-              <button
-                onclick={submitRename}
-                class="text-cn-ink inline-flex items-center justify-center gap-2 rounded-xl bg-amber-500 px-5 py-3 font-bold shadow-sm shadow-amber-500/20 transition-all outline-none hover:bg-amber-400 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95"
-                aria-label={m.chat_group_validate_rename_label()}
-              >
-                <Check size={16} strokeWidth={3} />
-                {m.common_validate_button()}
-              </button>
-            </div>
-          </div>
-        {/if}
+  <!-- Members section -->
+  {#if isGroupConversation}
+    <div class="flex flex-col gap-3">
+      <div class="flex items-center justify-between gap-2 px-1">
+        <span
+          class="text-text-muted text-2xs inline-flex items-center gap-2 font-bold tracking-wider uppercase"
+        >
+          <Users size={14} />
+          {m.chat_group_members_count_label({ count: groupMembers.length })}
+        </span>
+        <button
+          type="button"
+          onclick={() => {
+            showInviteModal = true;
+          }}
+          class="text-2xs inline-flex items-center gap-1.5 rounded-lg bg-amber-500/10 px-3 py-1.5 font-bold text-amber-600 transition-colors outline-none hover:bg-amber-500/20 focus-visible:ring-2 focus-visible:ring-amber-500 dark:text-amber-400"
+        >
+          <UserPlus size={14} strokeWidth={2.5} />
+          {m.common_add_button()}
+        </button>
+      </div>
 
-        <!-- Invite link section -->
-        {#if isGroupConversation && groupId}
-          <div class="flex flex-col gap-2">
-            <span class="text-text-muted text-2xs px-1 font-bold tracking-wider uppercase">
-              {m.chat_group_invite_link_title()}
-            </span>
-            <p class="text-text-muted px-1 text-xs leading-relaxed">
-              {m.chat_group_invite_link_description()}
-            </p>
-            {#if shareLink}
-              <div class="flex items-center gap-2 px-1">
-                <input
-                  type="text"
-                  readonly
-                  value={shareLink}
-                  class="border-cn-border text-text-main min-w-0 flex-1 rounded-xl border bg-(--cn-surface) px-3 py-2 text-xs"
-                />
-                <button
-                  type="button"
-                  onclick={generateShareLink}
-                  class="border-cn-border hover:bg-cn-bg shrink-0 rounded-xl border px-3 py-2 text-xs font-semibold"
-                >
-                  {m.chat_group_regenerate_button()}
-                </button>
-              </div>
-              {#if shareCopied}
-                <p class="text-green-ok px-1 text-xs font-semibold">
-                  {m.chat_group_link_copied_label()}
-                </p>
-              {/if}
-            {:else}
-              <button
-                type="button"
-                onclick={generateShareLink}
-                disabled={shareLoading}
-                class="text-2xs mx-1 self-start rounded-xl bg-amber-500/10 px-3 py-1.5 font-bold text-amber-600 transition-colors hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-400"
+      {#if groupMembers.length > 0 || pendingDisplay.length > 0}
+        <div
+          class="bg-cn-surface overflow-hidden rounded-[1.5rem] border border-black/5 shadow-sm dark:border-white/10"
+        >
+          <ul class="flex max-h-[35dvh] flex-col overflow-y-auto">
+            {#each groupMembers as member, index (member)}
+              <li
+                class="flex items-center justify-between gap-3 px-4 py-3.5 {index !==
+                  groupMembers.length - 1 || pendingDisplay.length > 0
+                  ? 'border-b border-black/5 dark:border-white/5'
+                  : ''}"
               >
-                {shareLoading ? m.common_generating_label() : m.chat_group_generate_link_button()}
-              </button>
-            {/if}
-            {#if shareError}
-              <p class="px-1 text-xs font-medium text-red-600 dark:text-red-400">{shareError}</p>
-            {/if}
-          </div>
-        {/if}
-
-        <!-- Members section -->
-        {#if isGroupConversation}
-          <div class="flex flex-col gap-3">
-            <div class="flex items-center justify-between gap-2 px-1">
-              <span
-                class="text-text-muted text-2xs inline-flex items-center gap-2 font-bold tracking-wider uppercase"
-              >
-                <Users size={14} />
-                {m.chat_group_members_count_label({ count: groupMembers.length })}
-              </span>
-              <button
-                type="button"
-                onclick={() => {
-                  showInviteModal = true;
-                }}
-                class="text-2xs inline-flex items-center gap-1.5 rounded-lg bg-amber-500/10 px-3 py-1.5 font-bold text-amber-600 transition-colors outline-none hover:bg-amber-500/20 focus-visible:ring-2 focus-visible:ring-amber-500 dark:text-amber-400"
-              >
-                <UserPlus size={14} strokeWidth={2.5} />
-                {m.common_add_button()}
-              </button>
-            </div>
-
-            {#if groupMembers.length > 0 || pendingDisplay.length > 0}
-              <div
-                class="bg-cn-surface overflow-hidden rounded-[1.5rem] border border-black/5 shadow-sm dark:border-white/10"
-              >
-                <ul class="flex max-h-[35dvh] flex-col overflow-y-auto">
-                  {#each groupMembers as member, index (member)}
-                    <li
-                      class="flex items-center justify-between gap-3 px-4 py-3.5 {index !==
-                        groupMembers.length - 1 || pendingDisplay.length > 0
-                        ? 'border-b border-black/5 dark:border-white/5'
-                        : ''}"
+                <div class="flex min-w-0 items-center gap-3">
+                  <Avatar userId={member} size="sm" />
+                  <UserName userId={member} class="text-text-main truncate text-sm font-semibold" />
+                  {#if currentUserId && member.toLowerCase() === currentUserId.toLowerCase()}
+                    <span
+                      class="text-2xs shrink-0 rounded-md bg-amber-500/10 px-1.5 py-0.5 font-bold text-amber-500"
+                      >{m.common_you_label()}</span
                     >
-                      <div class="flex min-w-0 items-center gap-3">
-                        <Avatar userId={member} size="sm" />
-                        <UserName
-                          userId={member}
-                          class="text-text-main truncate text-sm font-semibold"
-                        />
-                        {#if currentUserId && member.toLowerCase() === currentUserId.toLowerCase()}
-                          <span
-                            class="text-2xs shrink-0 rounded-md bg-amber-500/10 px-1.5 py-0.5 font-bold text-amber-500"
-                            >{m.common_you_label()}</span
-                          >
-                        {/if}
-                      </div>
+                  {/if}
+                </div>
 
-                      {#if onRemoveMember}
-                        <!--
+                {#if onRemoveMember}
+                  <!--
                           THE ACCESSIBLE NAME IS THE ONE SURFACE THAT EXISTS TO BE READ ALOUD, and it
                           was the only one saying the id: every other cell of this row renders a
                           resolved name (`UserName` right above), while the control announced
@@ -455,142 +409,139 @@
                           which used to address members through the label - the same one-attribute
                           pattern `data-conversation-tile` and `data-channel-row` already use.
                         -->
-                        <button
-                          data-remove-member={member}
-                          onclick={() => onRemoveMember?.(member)}
-                          aria-label={m.chat_group_remove_member_label({
-                            member: memberNames.get(member) ?? member,
-                          })}
-                          title={m.chat_group_remove_member_title()}
-                          class="text-text-muted flex-shrink-0 rounded-xl bg-black/5 p-2 transition-all outline-none hover:bg-red-500/10 hover:text-red-500 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95 dark:bg-white/5"
-                        >
-                          <UserMinus size={16} />
-                        </button>
-                      {/if}
-                    </li>
-                  {/each}
-                  {#each pendingDisplay as pending, index (pending)}
-                    <li
-                      class="flex items-center justify-between gap-3 px-4 py-3.5 opacity-70 {index !==
-                      pendingDisplay.length - 1
-                        ? 'border-b border-black/5 dark:border-white/5'
-                        : ''}"
-                    >
-                      <div class="flex min-w-0 items-center gap-3">
-                        <Avatar userId={pending} size="sm" />
-                        <UserName
-                          userId={pending}
-                          class="text-text-main truncate text-sm font-semibold"
-                        />
-                      </div>
-                      <span
-                        class="text-2xs shrink-0 animate-pulse rounded-md bg-amber-500/10 px-2 py-0.5 font-bold text-amber-500"
-                        >{m.chat_group_invite_pending_label()}</span
-                      >
-                    </li>
-                  {/each}
-                </ul>
-              </div>
-            {:else}
-              <div
-                class="text-text-muted rounded-[1.5rem] border border-dashed border-black/10 bg-white/30 px-4 py-6 text-center text-sm font-medium dark:border-white/20 dark:bg-black/10"
-              >
-                {m.chat_group_no_members_label()}
-              </div>
-            {/if}
-          </div>
-        {/if}
-      </div>
-
-      <!-- Leave / delete section (panel footer) -->
-      {#if onGroupLeave || onGroupDelete}
-        <div
-          class="keyboard-aware-panel-footer bg-cn-surface mt-auto flex flex-col gap-3 border-t border-black/5 p-5 md:p-6 dark:border-white/10"
-        >
-          {#if onGroupLeave && !confirmLeave && !confirmDelete}
-            <button
-              onclick={() => {
-                confirmLeave = true;
-              }}
-              class="flex w-full items-center justify-center gap-2.5 rounded-2xl border border-orange-500/20 bg-orange-500/10 px-4 py-3.5 text-sm font-bold text-orange-600 transition-all outline-none hover:bg-orange-500/20 focus-visible:ring-2 focus-visible:ring-orange-500 active:scale-[0.98] dark:text-orange-400"
-            >
-              <LogOut size={18} strokeWidth={2.5} />
-              {m.chat_group_leave_button()}
-            </button>
-          {/if}
-
-          {#if confirmLeave}
-            <div class="flex flex-col gap-3" transition:fade={{ duration: 150 }}>
-              <p class="text-center text-xs font-bold tracking-wider text-orange-500 uppercase">
-                {m.chat_group_leave_confirm_question()}
-              </p>
-              <div class="flex gap-3">
-                <button
-                  onclick={() => {
-                    confirmLeave = false;
-                  }}
-                  class="text-text-main focus-visible:ring-text-muted bg-cn-surface flex-1 rounded-2xl border border-black/10 px-4 py-3.5 font-bold transition-all outline-none hover:bg-black/5 focus-visible:ring-2 active:scale-[0.98] dark:border-white/10 dark:hover:bg-white/10"
-                >
-                  {m.common_cancel_button()}
-                </button>
-                <button
-                  onclick={() => {
-                    onGroupLeave?.();
-                    closePanel();
-                  }}
-                  class="flex-1 rounded-2xl bg-orange-500 px-4 py-3.5 font-bold text-white shadow-md shadow-orange-500/20 transition-all outline-none hover:bg-orange-600 focus-visible:ring-2 focus-visible:ring-orange-500 active:scale-[0.98]"
-                >
-                  {m.common_leave_button()}
-                </button>
-              </div>
-            </div>
-          {/if}
-
-          {#if onGroupDelete && !confirmLeave}
-            {#if !confirmDelete}
-              <button
-                onclick={() => {
-                  confirmDelete = true;
-                }}
-                class="flex w-full items-center justify-center gap-2.5 rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3.5 text-sm font-bold text-red-600 transition-all outline-none hover:bg-red-500/20 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-[0.98] dark:text-red-400"
-              >
-                <Trash2 size={18} strokeWidth={2.5} />
-                {isGroupConversation
-                  ? m.chat_group_delete_group_button()
-                  : m.chat_group_delete_dm_button()}
-              </button>
-            {:else}
-              <div class="flex flex-col gap-3" transition:fade={{ duration: 150 }}>
-                <p class="text-center text-xs font-bold tracking-wider text-red-500 uppercase">
-                  {m.chat_group_delete_confirm_question()}
-                </p>
-                <div class="flex gap-3">
                   <button
-                    onclick={() => {
-                      confirmDelete = false;
-                    }}
-                    class="text-text-main focus-visible:ring-text-muted bg-cn-surface flex-1 rounded-2xl border border-black/10 px-4 py-3.5 font-bold transition-all outline-none hover:bg-black/5 focus-visible:ring-2 active:scale-[0.98] dark:border-white/10 dark:hover:bg-white/10"
+                    data-remove-member={member}
+                    onclick={() => onRemoveMember?.(member)}
+                    aria-label={m.chat_group_remove_member_label({
+                      member: memberNames.get(member) ?? member,
+                    })}
+                    title={m.chat_group_remove_member_title()}
+                    class="text-text-muted flex-shrink-0 rounded-xl bg-black/5 p-2 transition-all outline-none hover:bg-red-500/10 hover:text-red-500 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95 dark:bg-white/5"
                   >
-                    {m.common_cancel_button()}
+                    <UserMinus size={16} />
                   </button>
-                  <button
-                    onclick={() => {
-                      onGroupDelete?.();
-                      closePanel();
-                    }}
-                    class="flex-1 rounded-2xl bg-red-500 px-4 py-3.5 font-bold text-white shadow-md shadow-red-500/20 transition-all outline-none hover:bg-red-600 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-[0.98]"
-                  >
-                    {m.common_delete_button()}
-                  </button>
+                {/if}
+              </li>
+            {/each}
+            {#each pendingDisplay as pending, index (pending)}
+              <li
+                class="flex items-center justify-between gap-3 px-4 py-3.5 opacity-70 {index !==
+                pendingDisplay.length - 1
+                  ? 'border-b border-black/5 dark:border-white/5'
+                  : ''}"
+              >
+                <div class="flex min-w-0 items-center gap-3">
+                  <Avatar userId={pending} size="sm" />
+                  <UserName
+                    userId={pending}
+                    class="text-text-main truncate text-sm font-semibold"
+                  />
                 </div>
-              </div>
-            {/if}
-          {/if}
+                <span
+                  class="text-2xs shrink-0 animate-pulse rounded-md bg-amber-500/10 px-2 py-0.5 font-bold text-amber-500"
+                  >{m.chat_group_invite_pending_label()}</span
+                >
+              </li>
+            {/each}
+          </ul>
+        </div>
+      {:else}
+        <div
+          class="text-text-muted rounded-[1.5rem] border border-dashed border-black/10 bg-white/30 px-4 py-6 text-center text-sm font-medium dark:border-white/20 dark:bg-black/10"
+        >
+          {m.chat_group_no_members_label()}
         </div>
       {/if}
     </div>
-  </div>
-{/if}
+  {/if}
+
+  <!-- Leave / delete section (panel footer) -->
+  {#if onGroupLeave || onGroupDelete}
+    <div
+      class="keyboard-aware-panel-footer bg-cn-surface mt-auto flex flex-col gap-3 border-t border-black/5 p-5 md:p-6 dark:border-white/10"
+    >
+      {#if onGroupLeave && !confirmLeave && !confirmDelete}
+        <button
+          onclick={() => {
+            confirmLeave = true;
+          }}
+          class="flex w-full items-center justify-center gap-2.5 rounded-2xl border border-orange-500/20 bg-orange-500/10 px-4 py-3.5 text-sm font-bold text-orange-600 transition-all outline-none hover:bg-orange-500/20 focus-visible:ring-2 focus-visible:ring-orange-500 active:scale-[0.98] dark:text-orange-400"
+        >
+          <LogOut size={18} strokeWidth={2.5} />
+          {m.chat_group_leave_button()}
+        </button>
+      {/if}
+
+      {#if confirmLeave}
+        <div class="flex flex-col gap-3" transition:fade={{ duration: 150 }}>
+          <p class="text-center text-xs font-bold tracking-wider text-orange-500 uppercase">
+            {m.chat_group_leave_confirm_question()}
+          </p>
+          <div class="flex gap-3">
+            <button
+              onclick={() => {
+                confirmLeave = false;
+              }}
+              class="text-text-main focus-visible:ring-text-muted bg-cn-surface flex-1 rounded-2xl border border-black/10 px-4 py-3.5 font-bold transition-all outline-none hover:bg-black/5 focus-visible:ring-2 active:scale-[0.98] dark:border-white/10 dark:hover:bg-white/10"
+            >
+              {m.common_cancel_button()}
+            </button>
+            <button
+              onclick={() => {
+                onGroupLeave?.();
+                closePanel();
+              }}
+              class="flex-1 rounded-2xl bg-orange-500 px-4 py-3.5 font-bold text-white shadow-md shadow-orange-500/20 transition-all outline-none hover:bg-orange-600 focus-visible:ring-2 focus-visible:ring-orange-500 active:scale-[0.98]"
+            >
+              {m.common_leave_button()}
+            </button>
+          </div>
+        </div>
+      {/if}
+
+      {#if onGroupDelete && !confirmLeave}
+        {#if !confirmDelete}
+          <button
+            onclick={() => {
+              confirmDelete = true;
+            }}
+            class="flex w-full items-center justify-center gap-2.5 rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3.5 text-sm font-bold text-red-600 transition-all outline-none hover:bg-red-500/20 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-[0.98] dark:text-red-400"
+          >
+            <Trash2 size={18} strokeWidth={2.5} />
+            {isGroupConversation
+              ? m.chat_group_delete_group_button()
+              : m.chat_group_delete_dm_button()}
+          </button>
+        {:else}
+          <div class="flex flex-col gap-3" transition:fade={{ duration: 150 }}>
+            <p class="text-center text-xs font-bold tracking-wider text-red-500 uppercase">
+              {m.chat_group_delete_confirm_question()}
+            </p>
+            <div class="flex gap-3">
+              <button
+                onclick={() => {
+                  confirmDelete = false;
+                }}
+                class="text-text-main focus-visible:ring-text-muted bg-cn-surface flex-1 rounded-2xl border border-black/10 px-4 py-3.5 font-bold transition-all outline-none hover:bg-black/5 focus-visible:ring-2 active:scale-[0.98] dark:border-white/10 dark:hover:bg-white/10"
+              >
+                {m.common_cancel_button()}
+              </button>
+              <button
+                onclick={() => {
+                  onGroupDelete?.();
+                  closePanel();
+                }}
+                class="flex-1 rounded-2xl bg-red-500 px-4 py-3.5 font-bold text-white shadow-md shadow-red-500/20 transition-all outline-none hover:bg-red-600 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-[0.98]"
+              >
+                {m.common_delete_button()}
+              </button>
+            </div>
+          </div>
+        {/if}
+      {/if}
+    </div>
+  {/if}
+</div>
 
 <!-- Invite modal -->
 <Modal
