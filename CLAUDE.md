@@ -236,6 +236,10 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    rows answered TWO things on ONE build, so a green cell is not yet a measurement. **NO COUNT IS
    WRITTEN HERE; run it.** PIN's four rows change a PIN or restart a browser, hence last. HEAL-NEW's
    rung redesign is open on a clean pass - one record is one draw ([backlog](docs/wiki/backlog.md)).
+   **P1, 2026-09-09: W2 IS NOT A SECOND USER RIGHT NOW.** A clean login with the peer's credentials
+   returns the OWNER's access token, so the client shows one identity and acts as another - **every
+   two-client row measured while this holds is void**, and no runner check can see it. One CDP read
+   of each client's Bearer `sub` is the probe ([backlog](docs/wiki/backlog.md)).
 2. **P1 - THE PREKEY CHURN WAS A LOCK ORDER, REPRODUCED AND REPAIRED ON HARDWARE 2026-09-08, AND
    NOT SHIPPED** - a merged fix is not a shipped fix. What is left is the weight it already wrote:
    `KeyPackage 3002x` against a pool of 50, ~6.9 MB of a 10.5 MB blob, which no prekey fix touches
@@ -271,15 +275,11 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
     deploy cannot tell a broken CHANGE from an unreachable REGISTRY, and prod's deploy job is still
     inlined shell where `deploy-dev` exercises the script ([backlog](docs/wiki/backlog.md)).
 14. **FROM THE USER, AND FIRST CONTACT IS THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** The
-    2026-09-08 PROD P1 has **BOTH HALVES FIXED AND UNSHIPPED - one mechanism from two ends** - and
-    **OWES ONE HARDWARE RUN, blocked on a THIRD account.** Still open beside it: the two-builder P2
-    (no TypeScript can route that tap), the community-invitation sibling, a P2 from 2026-09-05, and
-    the ICM/ISMIN direction. All in [backlog](docs/wiki/backlog.md).
-15. **~121 LOGINS A WEEK FAIL AT CAS AND NOTHING REPORTS IT** - and the livelock fixed 2026-09-08
-    removed the only symptom anybody could see
-    ([P2](docs/wiki/backlog.md#p2---about-121-logins-a-week-fail-at-cas-and-nothing-reports-it-measured-2026-09-08)).
-    The MAIL TO THE DSI is written and unsent. Everything on that box is a HAND MUTATION owed to the
-    restore path ([authentik](docs/wiki/infrastructure/authentik.md)).
+    2026-09-08 PROD P1 is FIXED, UNSHIPPED, and owes ONE hardware run **blocked on a THIRD account**;
+    four siblings are open beside it ([backlog](docs/wiki/backlog.md)).
+15. **~121 LOGINS A WEEK FAIL AT CAS AND NOTHING REPORTS IT**, and the 2026-09-08 livelock fix
+    removed the only visible symptom; the MAIL TO THE DSI is written and unsent, and that box is all
+    HAND MUTATION ([P2](docs/wiki/backlog.md#p2---about-121-logins-a-week-fail-at-cas-and-nothing-reports-it-measured-2026-09-08), [authentik](docs/wiki/infrastructure/authentik.md)).
 
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
 
