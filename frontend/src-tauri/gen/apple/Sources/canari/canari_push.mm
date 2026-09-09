@@ -497,6 +497,32 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     *body = CanariLocalized(@"notif.form.open.body");
     return;
   }
+  // The agenda's five. `arg` is the event's title; only `event_proposed` also names the actor.
+  if ([key isEqualToString:@"event_proposed"]) {
+    *title = CanariLocalized(@"notif.event.proposed.title");
+    *body = [NSString stringWithFormat:CanariLocalized(@"notif.event.proposed.body"), actor, arg];
+    return;
+  }
+  if ([key isEqualToString:@"event_validated"]) {
+    *title = CanariLocalized(@"notif.event.validated.title");
+    *body = [NSString stringWithFormat:CanariLocalized(@"notif.event.validated.body"), arg];
+    return;
+  }
+  if ([key isEqualToString:@"event_rejected"]) {
+    *title = CanariLocalized(@"notif.event.rejected.title");
+    *body = [NSString stringWithFormat:CanariLocalized(@"notif.event.rejected.body"), arg];
+    return;
+  }
+  if ([key isEqualToString:@"event_updated"]) {
+    *title = CanariLocalized(@"notif.event.updated.title");
+    *body = [NSString stringWithFormat:CanariLocalized(@"notif.event.updated.body"), arg];
+    return;
+  }
+  if ([key isEqualToString:@"event_deleted"]) {
+    *title = CanariLocalized(@"notif.event.deleted.title");
+    *body = [NSString stringWithFormat:CanariLocalized(@"notif.event.deleted.body"), arg];
+    return;
+  }
   NSLog(@"[CanariPush] unknown contentKey=%@ - keeping the server's own wording", key);
 }
 

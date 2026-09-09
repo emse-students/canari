@@ -24,3 +24,15 @@
 "notif.form.opening_soon.body" = "A form you are watching opens in 5 minutes!";
 "notif.form.open.title" = "Form now open!";
 "notif.form.open.body" = "The form is available - hurry, spots are limited!";
+
+/* The agenda's five. See the note in fr.lproj. */
+"notif.event.proposed.title" = "Event to review";
+"notif.event.proposed.body" = "%1$@ is proposing “%2$@”";
+"notif.event.validated.title" = "Event approved";
+"notif.event.validated.body" = "“%1$@” was approved by the BDE";
+"notif.event.rejected.title" = "Event declined";
+"notif.event.rejected.body" = "“%1$@” was declined by the BDE";
+"notif.event.updated.title" = "Event updated";
+"notif.event.updated.body" = "“%1$@” was updated by the BDE";
+"notif.event.deleted.title" = "Event removed";
+"notif.event.deleted.body" = "“%1$@” was removed by the BDE";

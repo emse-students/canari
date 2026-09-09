@@ -22,6 +22,9 @@ function makeQueryBuilder() {
 function makeService() {
   const qb = makeQueryBuilder();
   const calendarRepo = { createQueryBuilder: jest.fn(() => qb) };
+  // POSITIONAL, AND THIRTEEN LONG - so a constructor change silently shifts every argument after
+  // the one it touched. The comments are the guard: keep them aligned with the parameter list in
+  // `associations.service.ts`, and change them in the same commit that changes it.
   const service = new AssociationsService(
     undefined as never, // assoRepo
     undefined as never, // memberRepo
@@ -31,11 +34,10 @@ function makeService() {
     undefined as never, // reviewerGrantRepo
     undefined as never, // postRepo
     undefined as never, // formRepo
-    undefined as never, // notifRepo
     undefined as never, // productRepo
     undefined as never, // redis
     undefined as never, // httpService
-    undefined as never, // push
+    undefined as never, // notifications
     undefined as never // userTagService
   );
   return { service, qb };

@@ -50,4 +50,15 @@
     <string name="notif_form_opening_soon_body">A form you are watching opens in 5 minutes!</string>
     <string name="notif_form_open_title">Form now open!</string>
     <string name="notif_form_open_body">The form is available - hurry, spots are limited!</string>
+    <!-- The agenda's five. See the note in values/strings.xml. -->
+    <string name="notif_event_proposed_title">Event to review</string>
+    <string name="notif_event_proposed_body">%1$s is proposing “%2$s”</string>
+    <string name="notif_event_validated_title">Event approved</string>
+    <string name="notif_event_validated_body">“%1$s” was approved by the BDE</string>
+    <string name="notif_event_rejected_title">Event declined</string>
+    <string name="notif_event_rejected_body">“%1$s” was declined by the BDE</string>
+    <string name="notif_event_updated_title">Event updated</string>
+    <string name="notif_event_updated_body">“%1$s” was updated by the BDE</string>
+    <string name="notif_event_deleted_title">Event removed</string>
+    <string name="notif_event_deleted_body">“%1$s” was removed by the BDE</string>
 </resources>

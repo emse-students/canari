@@ -71,6 +71,44 @@ reader is actually asking. Twelve tests, including a month with 31 days and an e
 minute past midnight.
 
 
+### Added - a proposed event now tells the calendar managers, and the four answers stopped being English
+
+The user asked for the agenda's notifications to be tested (*"notifications pour les gestionnaires
+de calendrier lors de la proposition (pour l'admin BDE) / l'acceptation / le refus d'un evenement
+(pour un membre d'association qui propose l'evenement)"*). Testing them found one missing and four
+broken.
+
+**A PROPOSAL TOLD NOBODY.** Validating, updating, rejecting and deleting all reached the proposing
+association; a proposal reached no one. The pending queue was a page a BDE admin had to remember to
+open - *a correct mechanism with no report is found by hand, a day late*. It now notifies every
+holder of `VALIDATE_EVENTS` in a BDE association: the same predicate that decides who MAY validate,
+so the people told are exactly the people who can act. A proposal that reaches nobody logs a warning
+naming the association, because that is the shape of the defect being fixed.
+
+**THE OTHER FOUR SPOKE ENGLISH TO EVERYONE.** The service composed `Event "X" has been validated by
+the BDE.` itself and sent it as a raw push title and body, so a French member got an English
+notification and no translation could reach it: the sentence had already been chosen by the one
+layer that cannot know who is reading. `push-content.ts` exists to end exactly that, and this call
+site had escaped it by writing notification rows straight to the repository - which was also the
+only way to batch, so going around the mapping was the fast path.
+
+Batching moved into `PostNotificationsService`, where the type-to-key mapping lives, so the shortcut
+is gone. Five new content keys (`event_proposed`, `event_validated`, `event_rejected`,
+`event_updated`, `event_deleted`) carry the event's TITLE as data - a title is not translatable, a
+verb is, which is why there is one key per answer rather than one key with the verb as an argument.
+All five are spelled in the six native tables and handled by all three native composers;
+`nativeStrings.test.ts` demanded every one of them before it would pass.
+
+The in-app row is the same repair from the other side: it builds the sentence in Paraglide from the
+type and the title, with its own calendar glyphs, instead of printing back a sentence composed on a
+server. A refusal keeps its reason, which is the one thing a reader cannot reconstruct.
+
+**And one answer to "where does this go when tapped", not two.** The bell dropdown and
+`/notifications` each carried their own copy of that ternary; `notificationHref` is now the single
+answer. A calendar manager goes to the queue where they can act, a proposer goes to the agenda where
+the answer is already applied.
+
+
 ### Fixed - a page title painted straight over its own action buttons on a phone, on every page with two of them
 
 Reported as *"L'en-tete de la page associations est moche + chevauchements"*, and it is exactly

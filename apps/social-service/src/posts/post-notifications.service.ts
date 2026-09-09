@@ -9,6 +9,11 @@ import {
   replyContent,
   reactionContent,
   commentContent,
+  eventProposedContent,
+  eventValidatedContent,
+  eventRejectedContent,
+  eventUpdatedContent,
+  eventDeletedContent,
   type PushContent,
 } from '../push/push-content';
 
@@ -42,6 +47,18 @@ export class PostNotificationsService {
         return reactionContent(actorName, text);
       case 'comment':
         return commentContent(actorName, text);
+      // The agenda's five. `text` is the event's TITLE for all of them - never a composed sentence,
+      // which is what the server used to send here and could not translate.
+      case 'event_proposed':
+        return eventProposedContent(actorName, text);
+      case 'event_validated':
+        return eventValidatedContent(actorName, text);
+      case 'event_rejected':
+        return eventRejectedContent(actorName, text);
+      case 'event_updated':
+        return eventUpdatedContent(actorName, text);
+      case 'event_deleted':
+        return eventDeletedContent(actorName, text);
       default:
         return null;
     }
@@ -116,6 +133,64 @@ export class PostNotificationsService {
       type: 'social',
       postId: data.postId,
     });
+  }
+
+  /**
+   * `createNotification` for a SET of recipients: one actor lookup, one insert, one push each.
+   *
+   * The agenda notifies whole groups - every proposer in an association, every calendar manager -
+   * and doing that through the singular method would be one name lookup and one round trip per
+   * member. The association service used to batch it itself by writing to the repository directly,
+   * which is precisely how its push escaped `pushContent` and stayed English for as long as it did.
+   * Batching belongs here so that the mapping cannot be bypassed to get it.
+   *
+   * Returns how many rows were written, so a caller can log a delivery that reached nobody.
+   */
+  async createNotifications(data: {
+    recipientIds: string[];
+    type: string;
+    postId: string;
+    actorId: string;
+    text: string;
+    actorName?: string;
+    /** Extra fields for the push payload, e.g. the association the event belongs to. */
+    pushData?: Record<string, string>;
+  }): Promise<number> {
+    const recipients = [...new Set(data.recipientIds)].filter((id) => id !== data.actorId);
+    if (recipients.length === 0) return 0;
+
+    const actorName = data.actorName ?? (await this.resolveActorName(data.actorId));
+    await this.notifRepo.save(
+      recipients.map((recipientId) =>
+        this.notifRepo.create({
+          recipientId,
+          type: data.type,
+          postId: data.postId,
+          actorId: data.actorId,
+          text: data.text,
+          actorName,
+        })
+      )
+    );
+
+    const content = this.pushContent(data.type, actorName, data.text);
+    if (!content) {
+      this.logger.warn(
+        `[NOTIFY] no push content for type=${data.type} - ${recipients.length} in-app ` +
+          'notification(s) were written, no system one was. Add the type to pushContent.'
+      );
+      return recipients.length;
+    }
+    // Fire-and-forget, and caught PER RECIPIENT: a batch that catches once loses every failure
+    // after the first, and in a best-effort path the log is all a loss leaves.
+    void Promise.all(
+      recipients.map((recipientId) =>
+        this.push
+          .notifyContent(recipientId, content, { type: 'social', ...data.pushData })
+          .catch((e) => this.logger.warn(`[NOTIFY] push failed for ${recipientId}: ${String(e)}`))
+      )
+    );
+    return recipients.length;
   }
 
   /** Returns the most recent notifications for a user, newest first. */
