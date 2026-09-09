@@ -74,7 +74,7 @@
         <div class="flex min-w-0 items-center gap-3.5">
           <!-- Icône d'état -->
           <div
-            class="flex-shrink-0 rounded-xl p-2.5 transition-colors {fi.submitted
+            class="shrink-0 rounded-xl p-2.5 transition-colors {fi.submitted
               ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
               : 'bg-amber-500/10 text-amber-600 group-hover:bg-amber-500/20 dark:text-amber-400'}"
           >
@@ -115,7 +115,7 @@
 
         <!-- Flèche / Icône d'action externe -->
         <div
-          class="ml-4 flex-shrink-0 opacity-40 transition-all duration-300 group-hover:translate-x-1 group-hover:opacity-100 {fi.submitted
+          class="ml-4 shrink-0 opacity-40 transition-all duration-300 group-hover:translate-x-1 group-hover:opacity-100 {fi.submitted
             ? 'group-hover:text-emerald-500'
             : 'group-hover:text-amber-500'}"
         >

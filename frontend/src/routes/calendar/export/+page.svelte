@@ -289,7 +289,7 @@
               aria-checked={opts.enableTextShadow}
               onclick={() => (opts.enableTextShadow = !opts.enableTextShadow)}
               aria-label={m.calendar_export_enable_shadows_label()}
-              class="relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors {opts.enableTextShadow
+              class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors {opts.enableTextShadow
                 ? 'bg-cn-yellow'
                 : 'bg-cn-border'}"
             >
@@ -392,7 +392,7 @@
                   aria-checked={opts.weekdayFullNames}
                   onclick={() => (opts.weekdayFullNames = !opts.weekdayFullNames)}
                   aria-label={m.calendar_export_weekday_fullnames()}
-                  class="relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors {opts.weekdayFullNames
+                  class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors {opts.weekdayFullNames
                     ? 'bg-cn-yellow'
                     : 'bg-cn-border'}"
                 >

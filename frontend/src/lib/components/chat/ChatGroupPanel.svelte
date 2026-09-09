@@ -227,7 +227,7 @@
         disabled={imageUploading}
         aria-label={m.chat_group_change_photo_label()}
         title={m.chat_group_change_photo_label()}
-        class="group/avatar relative h-[3.25rem] w-[3.25rem] flex-shrink-0 overflow-hidden rounded-2xl shadow-inner transition-transform outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 disabled:opacity-60"
+        class="group/avatar relative h-[3.25rem] w-[3.25rem] shrink-0 overflow-hidden rounded-2xl shadow-inner transition-transform outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 disabled:opacity-60"
       >
         <GroupAvatar {imageMediaId} name={effectiveDisplayName} variant="group" fill />
         <span
@@ -416,7 +416,7 @@
                       member: memberNames.get(member) ?? member,
                     })}
                     title={m.chat_group_remove_member_title()}
-                    class="text-text-muted flex-shrink-0 rounded-xl bg-black/5 p-2 transition-all outline-none hover:bg-red-500/10 hover:text-red-500 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95 dark:bg-white/5"
+                    class="text-text-muted shrink-0 rounded-xl bg-black/5 p-2 transition-all outline-none hover:bg-red-500/10 hover:text-red-500 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95 dark:bg-white/5"
                   >
                     <UserMinus size={16} />
                   </button>

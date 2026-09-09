@@ -173,7 +173,7 @@
 >
   <!-- Header. -->
   <div
-    class="bg-cn-surface flex flex-shrink-0 items-center justify-between border-b border-black/5 px-5 py-4 dark:border-white/10"
+    class="bg-cn-surface flex shrink-0 items-center justify-between border-b border-black/5 px-5 py-4 dark:border-white/10"
   >
     <div class="flex items-center gap-2.5">
       <div class="rounded-lg bg-amber-500/10 p-1.5 text-amber-600 dark:text-amber-400">
@@ -239,7 +239,7 @@
   </div>
 
   <!-- Footer -->
-  <div class="bg-cn-surface flex-shrink-0 border-t border-black/5 px-4 py-4 dark:border-white/10">
+  <div class="bg-cn-surface shrink-0 border-t border-black/5 px-4 py-4 dark:border-white/10">
     <a
       href="/chat"
       class="text-cn-ink flex w-full items-center justify-center gap-2 rounded-xl bg-amber-500 py-3 text-xs font-bold shadow-md shadow-amber-500/20 transition-all outline-none hover:bg-amber-400 hover:shadow-lg hover:shadow-amber-500/30 focus-visible:ring-4 focus-visible:ring-amber-500/50 active:scale-[0.98]"

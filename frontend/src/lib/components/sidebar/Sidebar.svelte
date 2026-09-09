@@ -393,7 +393,7 @@
 >
   {#if viewMode === 'communities'}
     <div
-      class="no-scrollbar mobile-nav-inset flex h-full w-[72px] flex-shrink-0 flex-col items-center gap-3 overflow-y-auto border-r border-white/50 bg-white/20 py-3 dark:border-white/10 dark:bg-black/10"
+      class="no-scrollbar mobile-nav-inset flex h-full w-[72px] shrink-0 flex-col items-center gap-3 overflow-y-auto border-r border-white/50 bg-white/20 py-3 dark:border-white/10 dark:bg-black/10"
     >
       <div
         class="flex flex-col items-center gap-3"
@@ -404,7 +404,7 @@
         {#each orderedWorkspaces as workspace (workspace.id)}
           <div animate:flip={{ duration: 150 }}>
             <button
-              class="relative h-12 w-12 flex-shrink-0 overflow-hidden rounded-2xl transition-all duration-200 {selectedCommunityWorkspaceId ===
+              class="relative h-12 w-12 shrink-0 overflow-hidden rounded-2xl transition-all duration-200 {selectedCommunityWorkspaceId ===
               workspace.id
                 ? 'ring-cn-yellow ring-offset-cn-bg ring-2 ring-offset-2'
                 : 'opacity-70 hover:rounded-xl hover:opacity-100'}"
@@ -435,7 +435,7 @@
         onclick={() => {
           showNewCommunityModal = true;
         }}
-        class="border-text-muted/50 text-text-muted hover:text-text-main hover:border-text-main flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-2xl border border-dashed transition-all hover:rounded-[10px] hover:bg-white/10"
+        class="border-text-muted/50 text-text-muted hover:text-text-main hover:border-text-main flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-dashed transition-all hover:rounded-[10px] hover:bg-white/10"
         title={m.sidebar_add_community_title()}
         aria-label={m.sidebar_add_community_title()}
       >

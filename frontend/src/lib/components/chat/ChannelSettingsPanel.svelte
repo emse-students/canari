@@ -653,7 +653,7 @@
                           type="button"
                           onclick={() => handleRemoveMemberFromChannel(uid)}
                           disabled={memberRemoving[uid]}
-                          class="hover:text-red-err flex-shrink-0 text-red-500 transition-colors disabled:opacity-50"
+                          class="hover:text-red-err shrink-0 text-red-500 transition-colors disabled:opacity-50"
                           title={m.chat_channel_remove_access_title()}
                         >
                           {#if memberRemoving[uid]}

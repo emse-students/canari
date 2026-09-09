@@ -560,7 +560,7 @@
         {#if onCancelReply}
           <button
             onclick={onCancelReply}
-            class="text-text-muted hover:text-text-main ml-2 flex-shrink-0 rounded-full bg-black/5 p-2 transition-all outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 dark:bg-white/5 dark:hover:bg-white/10"
+            class="text-text-muted hover:text-text-main ml-2 shrink-0 rounded-full bg-black/5 p-2 transition-all outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 dark:bg-white/5 dark:hover:bg-white/10"
             aria-label={m.chat_cancel_reply_label()}
           >
             <X size={16} strokeWidth={2.5} />

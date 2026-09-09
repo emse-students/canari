@@ -612,7 +612,7 @@
     {#if pendingPreviewUrl || uploadingMedia}
       <div class="mb-2 ml-[2.125rem] flex items-center gap-2">
         <div
-          class="relative max-h-14 w-20 flex-shrink-0 overflow-hidden rounded-lg bg-black/10 dark:bg-white/10"
+          class="relative max-h-14 w-20 shrink-0 overflow-hidden rounded-lg bg-black/10 dark:bg-white/10"
           style={pendingMedia?.width && pendingMedia?.height
             ? mediaAspectStyle(pendingMedia.width, pendingMedia.height)
             : 'aspect-ratio: 10/7'}

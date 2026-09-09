@@ -177,7 +177,7 @@
       <div
         class="animate-in fade-in slide-in-from-bottom-4 flex items-center gap-5 duration-500 sm:gap-6"
       >
-        <div class="relative h-24 w-24 flex-shrink-0 sm:h-28 sm:w-28">
+        <div class="relative h-24 w-24 shrink-0 sm:h-28 sm:w-28">
           <div
             class="h-full w-full overflow-hidden rounded-full shadow-lg ring-4 ring-white/50 dark:ring-black/20"
           >

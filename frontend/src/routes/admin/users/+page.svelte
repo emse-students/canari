@@ -128,13 +128,9 @@
           >
             <div class="flex min-w-0 items-center gap-3">
               {#if user.admin}
-                <Shield size={16} class="flex-shrink-0 text-amber-500" strokeWidth={2.5} />
+                <Shield size={16} class="shrink-0 text-amber-500" strokeWidth={2.5} />
               {:else}
-                <Shield
-                  size={16}
-                  class="text-text-muted flex-shrink-0 opacity-30"
-                  strokeWidth={2}
-                />
+                <Shield size={16} class="text-text-muted shrink-0 opacity-30" strokeWidth={2} />
               {/if}
               <div class="min-w-0">
                 <p class="text-text-main truncate text-sm font-semibold">
@@ -144,7 +140,7 @@
               </div>
             </div>
 
-            <div class="flex flex-shrink-0 items-center gap-3">
+            <div class="flex shrink-0 items-center gap-3">
               {#if feedback[user.id]}
                 <span class="text-green-ok text-xs font-medium">{feedback[user.id]}</span>
               {/if}
