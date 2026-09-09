@@ -240,10 +240,12 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    one it ACTS AS, costs no traffic, and exists because a display name was used as an identity on
    2026-09-09 and produced a P1 - since REFUTED - that declared every two-client row void
    ([testing-methodology](docs/wiki/testing-methodology.md)).
-2. **P1 - THE PREKEY CHURN WAS A LOCK ORDER, REPRODUCED AND REPAIRED ON HARDWARE 2026-09-08, AND
-   NOT SHIPPED** - a merged fix is not a shipped fix. What is left is the weight it already wrote:
-   `KeyPackage 3002x` against a pool of 50, ~6.9 MB of a 10.5 MB blob, which no prekey fix touches
-   and which is the ONLY thing between NOTIF-1b and a verdict ([backlog](docs/wiki/backlog.md)).
+2. **P1 - THE PREKEY WEIGHT: BOTH CAUSES FIXED 2026-09-09, THE BALANCE UNRECOVERABLE UNTIL LATE
+   OCTOBER.** The census (`key package census` at load) weighed it rather than dividing it: 2782
+   one-time from purge/remint rounds nothing local ever dropped, plus 269 last-resort reminted once
+   per connection. Both stopped; **the 3053 already written cannot safely go** (no server record
+   proves they were never handed out) so they drain by their own 84-day lifetime, and **NOTIF-1b
+   stays blocked on the weight**. Two ways to shorten it, one owed to the USER ([backlog](docs/wiki/backlog.md)).
 3. **P1 - a PLACEHOLDER held a member's seat**; only a member's CLIENT can say whether a LEAF is
    left in the MLS tree and **NOTHING HAS** - the three identities cited here as that evidence were
    this campaign's OWN mention fixtures, named 2026-09-07 ([backlog](docs/wiki/backlog.md)).
