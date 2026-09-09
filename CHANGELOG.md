@@ -11,6 +11,77 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a community's unread badge counted UP as you scrolled back through the thread
+
+Reported on 2026-09-09. Scrolling into a salon's history made the number on the scroll-to-bottom
+button grow, on messages that had been read; the same badge in a private conversation behaved.
+
+The read watermark - the app's one definition of "how far this reader has got" - has exactly one
+place that advances it locally, and the guard that keeps a channel's read RECEIPT off the MLS outbox
+sat at the top of it. That guard is correct on its own terms: a salon is server-authoritative and has
+no MLS group, so a receipt for one leaves the outbox flusher looping on 500s for ever. But it skipped
+the local write with the network one, so every salon sat at watermark 0 permanently. "Unread" then
+meant "every message this device is holding that is not mine", and scrolling up - the one gesture
+that loads more of them - made it climb.
+
+The receipt is still refused; the watermark is not. A salon's badge now means what the same badge
+means in a DM.
+
+### Fixed - an association's Danger zone was hidden from the BDE member entitled to half of it
+
+Reported on 2026-09-09: a BDE member who administers associations could not see the section at all.
+
+It holds two controls, and the server rights them differently. Archiving is a `PATCH` the API admits
+at `MANAGE_MEMBERS` - which an association's own admin holds, and which a BDE `MANAGE_ASSO`
+super-admin holds on every association. Deleting is a `DELETE` behind the platform administrator's
+guard alone. Both were behind the stricter of the two, so a control the API accepts was hidden from
+everybody allowed to use it.
+
+The tab now opens on the right to archive, and the delete card carries its own tier. Nothing was
+widened: each half is offered exactly where the server already says yes. The lists page carried the
+same pair, plus the drift the shared permission helper was written to end - its check spelled out by
+hand, without the super-admin term - and now reads through the helper like every other screen.
+
+### Changed - a voice note sends when you lift your finger, and is drawn as a waveform
+
+Holding the microphone, watching the clock run and lifting your finger away from the bin is already
+a decision, taken three times over. The recording nevertheless went into the attachment queue and
+waited behind a "1 fichier(s) en attente" banner for a fourth act. It now goes straight out - and
+alone: lifting a finger off a microphone cannot also post a half-written caption or a photo staged
+beside it.
+
+It arrives as a waveform rather than a grey progress rail, so the shape of the speech - the pauses,
+the emphasis, where it ends - is legible before anything is played. The samples were already being
+decoded to recover a duration the recording's container does not carry, so this costs no extra
+download, changes nothing on the wire, and draws voice notes that were sent months ago. The scrubber
+under the bars is still a real range control, so dragging, arrow keys and the screen reader keep
+working exactly as before.
+
+### Fixed - staged files were painted straight onto the conversation, with no way to scroll them
+
+The composer sits over the thread on a deliberately transparent background, and the input bar was
+the only thing in it carrying a fill - so the list of files waiting to be sent had none, and read as
+two layers of text on top of each other. It now wears the same panel as the reply preview beside it.
+
+It is also capped: a wrapping row of file tiles with no ceiling grew until it pushed the input bar
+off the top of a phone, with nothing to scroll. The list scrolls inside its own panel now.
+
+### Fixed - "1 fichier(s)", and 25 more counters like it
+
+Every count in the app spelled its plural with a parenthesis. The translation format has supported
+real plural variants all along and nothing here used one, so 26 messages read "1 fichier(s) en
+attente", "1 message(s) non lu(s)", "1 vote(s)".
+
+In French the parenthesis is not merely ugly, it is wrong in both directions: the singular covers
+zero as well as one, so "0 fichier" needs no "s" and "(s)" mis-states whichever case you meet. All 26
+now carry one sentence per case, in both languages. Two others said "invite(e)", which is gender
+rather than number and is not something the app knows - those sentences no longer ask. `TTL (s)`
+keeps its parenthesis, being seconds.
+
+A new check holds the translation files to all three rules, so the twenty-seventh fails instead of
+shipping.
+
+
 ## [0.16.6] - 2026-09-09
 
 ### Changed - "Nouvelle discussion" opens on the people you already talk to
