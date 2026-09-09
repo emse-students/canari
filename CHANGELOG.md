@@ -11,6 +11,24 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a page title painted straight over its own action buttons on a phone, on every page with two of them
+
+Reported as *"L'en-tete de la page associations est moche + chevauchements"*, and it is exactly
+that. Measured at 393px: `PageHeader`'s action row is `shrink-0` and does not wrap, so on
+`/associations` its two buttons took **243.4px of a 355px row and left the title's column 99.6px**.
+"Associations" is wider than that and does not break, so the word overflowed its box and painted
+over the "Listes" button, while the subtitle wrapped into four lines beside it.
+
+Fixed in `PageHeader` rather than on that page, because it is the one heading of all 34 routes:
+every page with two or more actions had the same squeeze waiting for a long enough title, which is
+the other half of the report (*"Verifier les autres pages sur device"*). Below `sm` the actions
+stack under the title and wrap; from 640px up nothing changes. `break-words` is the floor underneath
+that - a single unbreakable word must wrap rather than escape its box, whatever the width.
+
+The header is also 10px SHORTER than before despite stacking, because the subtitle now fits on one
+line instead of four.
+
+
 ### Fixed - the reaction picker ran off the right of a phone, with two reactions behind a scroll nobody announced
 
 Measured on a 393px viewport before the change: the popover's box ran from x=37 to **x=398**, five
