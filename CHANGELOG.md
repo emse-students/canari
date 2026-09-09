@@ -11,6 +11,40 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - a voice note is one gesture now: hold, slide, release
+
+The microphone was three taps - tap to start, tap a square to stop, tap a bin to throw away - and it
+left the composer's other controls sitting beside it, so a recording looked like a widget that had
+appeared in the row rather than something the bar had become. The user asked for the reference's
+shape: *"appuyer longtemps pour enregistrer, slide vers la gauche pour annuler (afficher une
+corbeille), relacher envoie (on pourrait aussi lock en swipant vers la droite, vers un cadenas pour
+ne pas avoir a tenir pendant toute la duree du vocal), ca couvre toute la barre de saisie en faisant
+disparaitre le reste"*.
+
+**Hold** the microphone and the row becomes the recorder: a bin on the left, a pulsing dot and the
+running time, "Glissez pour annuler", and a padlock on the right. **Slide left** 96px and the thumb
+turns into the confirmation - releasing there throws the recording away. **Slide right** 72px and it
+locks the instant the threshold is crossed, with no release needed; the bar then carries its own bin
+and send buttons and the finger can leave. **Release** anywhere else and it sends. A press shorter
+than 700ms is a mis-hit, not a message, and is discarded with a hint.
+
+**What covers the bar is the parent, not an overlay.** The composer stops rendering its own children
+while a recording is active and the recorder takes the width - so there is no absolutely-positioned
+layer, no stacking context, and nothing that can end up underneath a banner later.
+
+**Two things a reading of the old code would not have caught**, both now pinned by tests. The
+microphone opens asynchronously, so a finger can lift before the permission prompt resolves: that
+case opens the device and hands it straight back rather than starting a recording nobody is waiting
+for. And `MediaRecorder.stop()` is asynchronous in the other direction - the last chunk and `onstop`
+arrive after the call, and the tracks have to stay open until they do or the tail is truncated. The
+row still comes back the instant the finger lifts, because one recording is now one object: the
+gesture drops the reference and hands that object to the close path, so pressing again immediately
+builds a fresh recording with nothing in common with the one still flushing behind it.
+
+Fifteen tests drive real pointer events at the real button, including a deferred-stop recorder that
+a component conflating those two halves would fail.
+
+
 ### Changed - every z-index that can meet another one now has a name, and a test keeps it that way
 
 There were **nineteen distinct z-index values in the tree and no scale** (counted 2026-09-09): 0, 1,

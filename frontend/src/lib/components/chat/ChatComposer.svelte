@@ -171,6 +171,16 @@
     if (!isComposing && controlsForcedOpen) controlsForcedOpen = false;
   });
 
+  /**
+   * A RECORDING TAKES THE WHOLE ROW, so the row has to know one is happening.
+   *
+   * The user asked for the reference's shape (2026-09-09): *"ca couvre toute la barre de saisie en
+   * faisant disparaitre le reste"*. This is that, done by not rendering the other children rather
+   * than by covering them - an overlay would have been a stacking context to get wrong, and the
+   * user has an open complaint about panels ending up under banners.
+   */
+  let isVoiceActive = $state(false);
+
   const isVoiceRecordingSupported = $derived(
     // Show on mobile/coarse-pointer devices AND on Tauri desktop where MediaRecorder is available.
     // Hidden on regular desktop Web browsers to keep the composer uncluttered.
@@ -637,7 +647,7 @@
       {/if}
 
       <!-- The chevron that brings the folded group back. Takes the group's place, never adds to it. -->
-      {#if controlsCollapsed}
+      {#if controlsCollapsed && !isVoiceActive}
         <div class="shrink-0">
           <button
             type="button"
@@ -653,7 +663,7 @@
       {/if}
 
       <!-- Attachment button. -->
-      {#if !controlsCollapsed}
+      {#if !controlsCollapsed && !isVoiceActive}
         <div class="shrink-0">
           <button
             onclick={() => fileInput?.click()}
@@ -672,7 +682,7 @@
       {/if}
 
       <!-- Poll button (communities only: parent provides onCreatePoll). -->
-      {#if onCreatePoll && !controlsCollapsed}
+      {#if onCreatePoll && !controlsCollapsed && !isVoiceActive}
         <div class="shrink-0">
           <button
             type="button"
@@ -687,7 +697,7 @@
       {/if}
 
       <!-- GIF button (shown when KLIPY is configured). -->
-      {#if hasGifPicker && onSendGif && !controlsCollapsed}
+      {#if hasGifPicker && onSendGif && !controlsCollapsed && !isVoiceActive}
         <div class="shrink-0">
           <button
             type="button"
@@ -701,11 +711,15 @@
         </div>
       {/if}
 
-      <!-- Voice recorder (mobile only). -->
-      {#if isVoiceRecordingSupported}
-        <div class="shrink-0">
-          <VoiceRecorder onRecordingComplete={handleVoiceRecording} />
-        </div>
+      <!-- Voice recorder (mobile and the desktop shell). Its own root owns its width, so there is
+           no wrapper here: `shrink-0` while idle, `flex-1` once it has taken the row. The second
+           half of the condition keeps it mounted through a recording that outlives the microphone
+           button's own visibility rule. -->
+      {#if isVoiceRecordingSupported || isVoiceActive}
+        <VoiceRecorder
+          onRecordingComplete={handleVoiceRecording}
+          onActiveChange={(active) => (isVoiceActive = active)}
+        />
       {/if}
 
       <input
@@ -717,43 +731,45 @@
         onchange={handleFileChange}
       />
 
-      <!-- Auto-expanding text field. -->
-      <MentionComposerInput
-        bind:this={mentionComposer}
-        value={messageText}
-        {allowedUserIds}
-        onchange={handleMessageChange}
-        class="min-w-0 flex-1"
-        editorClass="chat-composer-textarea"
-        placeholder={m.chat_message_placeholder()}
-        minHeight={COMPOSER_MIN_HEIGHT}
-        onfocus={() => onFocusChange?.(true)}
-        onblur={() => {
-          onFocusChange?.(false);
-          stopTyping();
-        }}
-        onkeydown={handleComposerKeydown}
-        onpaste={handlePaste}
-      />
-
-      <!-- Dynamic send button. -->
-      <div class="shrink-0 pr-1">
-        <button
-          onmousedown={(e) => e.preventDefault()}
-          onclick={() => {
-            mentionComposer?.commitComposition();
-            onSend();
+      <!-- Auto-expanding text field. Absent during a recording: see `isVoiceActive`. -->
+      {#if !isVoiceActive}
+        <MentionComposerInput
+          bind:this={mentionComposer}
+          value={messageText}
+          {allowedUserIds}
+          onchange={handleMessageChange}
+          class="min-w-0 flex-1"
+          editorClass="chat-composer-textarea"
+          placeholder={m.chat_message_placeholder()}
+          minHeight={COMPOSER_MIN_HEIGHT}
+          onfocus={() => onFocusChange?.(true)}
+          onblur={() => {
+            onFocusChange?.(false);
             stopTyping();
-            mentionComposer?.clearEditor();
           }}
-          disabled={isSendDisabled}
-          aria-label={m.chat_send_message_label()}
-          class="chat-composer-send-button {isSendDisabled ? 'is-disabled' : ''}"
-        >
-          <!-- Slight icon offset for optical centering. -->
-          <Send size={18} strokeWidth={2.5} class={isSendDisabled ? '' : 'mt-0.5 ml-0.5'} />
-        </button>
-      </div>
+          onkeydown={handleComposerKeydown}
+          onpaste={handlePaste}
+        />
+
+        <!-- Dynamic send button. -->
+        <div class="shrink-0 pr-1">
+          <button
+            onmousedown={(e) => e.preventDefault()}
+            onclick={() => {
+              mentionComposer?.commitComposition();
+              onSend();
+              stopTyping();
+              mentionComposer?.clearEditor();
+            }}
+            disabled={isSendDisabled}
+            aria-label={m.chat_send_message_label()}
+            class="chat-composer-send-button {isSendDisabled ? 'is-disabled' : ''}"
+          >
+            <!-- Slight icon offset for optical centering. -->
+            <Send size={18} strokeWidth={2.5} class={isSendDisabled ? '' : 'mt-0.5 ml-0.5'} />
+          </button>
+        </div>
+      {/if}
     </div>
   </div>
 </footer>

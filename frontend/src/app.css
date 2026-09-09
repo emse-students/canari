@@ -1058,6 +1058,142 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   background: rgba(255, 255, 255, 0.05);
 }
 
+/* ── The voice note, which is one gesture ──────────────────────────────────────
+   Idle, this is a 44px microphone sitting in the composer row like any other control. Recording, it
+   IS the row: the composer stops rendering its own children and this grows to fill the width, which
+   is what the user asked for ("ca couvre toute la barre de saisie en faisant disparaitre le reste")
+   and what keeps the whole thing out of any stacking context - there is no overlay to put a z-index
+   on, and nothing to end up underneath a banner. */
+.voice-recorder {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.voice-recorder.is-active {
+  /* Takes the row. `min-width: 0` because the hint below is allowed to be the part that gives. */
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-left: 0.5rem;
+}
+
+/* NO `transition` ON THE TRANSFORM. The thumb is tracking a finger, and interpolating towards where
+   the finger was 180ms ago is exactly the lag that makes a drag feel broken. Everything that is NOT
+   following the finger - the bin, the padlock - is a scale and an opacity, and those do animate. */
+.voice-recorder-thumb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  flex-shrink: 0;
+  border-radius: 9999px;
+  color: var(--text-muted);
+  /* The browser must not claim the drag for a scroll or a text selection: without this the first
+     few pixels of a leftward slide are eaten by the scroller and the gesture starts late. */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  transition:
+    background-color 180ms ease,
+    color 180ms ease;
+}
+
+.voice-recorder-thumb:hover {
+  color: var(--text-main);
+  background: color-mix(in srgb, var(--cn-dark) 5%, transparent);
+}
+
+[data-theme='dark'] .voice-recorder-thumb:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.voice-recorder-thumb:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.5);
+}
+
+.voice-recorder-thumb.is-recording {
+  color: #fff;
+  background: var(--red-err);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--red-err) 30%, transparent);
+}
+
+/* Past the threshold the thumb stops being the microphone and becomes the confirmation: releasing
+   here throws the recording away, and the control says so before the finger lifts. */
+.voice-recorder-thumb.is-cancelling {
+  background: color-mix(in srgb, var(--red-err) 55%, transparent);
+}
+
+.voice-recorder-bin,
+.voice-recorder-lock {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  transition:
+    opacity 120ms ease,
+    color 120ms ease;
+}
+
+.voice-recorder-bin.is-armed {
+  color: var(--red-err);
+}
+
+.voice-recorder-status {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.voice-recorder-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 9999px;
+  background: var(--red-err);
+  animation: voice-recorder-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes voice-recorder-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+/* The one thing allowed to disappear when the row runs out of width: the timer is the state, the
+   two icons are the destinations, and the sentence is the only part a second look can replace. */
+.voice-recorder-timer {
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.voice-recorder-hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  transition: opacity 120ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .voice-recorder-dot {
+    animation: none;
+  }
+}
+
 /* THE PLACEHOLDER IS MUTED, and it takes a rule of its own to be so. The element carries
    `text-text-muted/60` in its class list, but it also carries `chat-composer-textarea` - and that
    rule's `color: var(--text-main)` is an ordinary stylesheet rule, which beats a Tailwind utility
