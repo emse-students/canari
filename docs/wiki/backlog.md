@@ -615,6 +615,47 @@ list, the button belongs at the bottom edge of the panel instead.
 **Blocked on nothing** - local estate, and the shape is a decision rather than a measurement.
 
 ---
+### P3 - our message notification is not a CONVERSATION to Android, where the reference's is (measured against Messenger on the Mi 9T, 2026-09-09)
+
+Asked by the user: *"tu as pu observer les notifications messenger sur le telephone pour voir si
+nous sommes bien ?"*. Read from `dumpsys notification` on six live Messenger records, **structure
+only - every `text` and `content-desc` was stripped before anything was read, and no capture kept**.
+
+**On the shape of a message we already match it**, which is the half worth saying first:
+
+| | Messenger | Canari |
+| --- | --- | --- |
+| `MessagingStyle` | yes | yes |
+| a `Person` for the sender | yes | yes |
+| direct reply (`RemoteInput`) | yes | yes |
+| a large icon | yes | yes |
+| grouped at all | yes | yes |
+| bubble metadata | no | no |
+
+**Two things differ, and both change how Android FILES the notification rather than how it looks.**
+
+- **A conversation shortcut.** Every Messenger record carries
+  `shortcut=thread_shortcut_GROUP:<id> found valid? true`. We publish none: there is no
+  `ShortcutInfo`, no `ShortcutManager`, no `setLocusId` and no `setShortcutId` anywhere in
+  `CanariFirebaseMessagingService.kt`, and no share target in the manifest. Since Android 11 that
+  shortcut is what makes a notification a CONVERSATION - the section at the top of the shade, the
+  option to mark a thread Priority, bubbles, and the avatar treatment. Without it ours is filed with
+  the ordinary alerts whatever its style says.
+- **One group for everything.** `setGroup(GROUP_KEY_MESSAGES)` is a single constant at all three
+  call sites, with one summary; Messenger's key is per THREAD (`GROUP:<threadId>`). So four messages
+  across two conversations collapse into one stack of four here, and into two stacks there - and the
+  second is the one a reader can act on.
+
+**What this is NOT.** It is not a rendering defect and nothing is broken; a notification arrives,
+reads correctly and can be replied to. It is a placement difference, which is why it is a P3 and not
+higher - and why it should be measured on the phone after any change, since nothing in CI can see
+which section of the shade a notification lands in.
+
+**Order if it is taken**: the shortcut first, because the per-thread group key is what a
+conversation shortcut implies, and doing the group alone would split the stack without buying any of
+the conversation treatment.
+
+---
 ### P3 - a server exception's English text is shown verbatim to a French reader (observed 2026-09-09)
 
 Depositing an event without the right flag answers `403` from
