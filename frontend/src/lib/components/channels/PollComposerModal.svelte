@@ -91,7 +91,7 @@
 
 {#if open}
   <div
-    class="pointer-events-auto fixed inset-0 z-[130] flex items-end justify-center sm:items-center"
+    class="pointer-events-auto fixed inset-0 z-(--z-sheet) flex items-end justify-center sm:items-center"
   >
     <button
       type="button"

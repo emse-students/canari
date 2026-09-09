@@ -63,13 +63,13 @@
     <div
       use:portal
       role="presentation"
-      class="fixed inset-0 z-[190]"
+      class="fixed inset-0 z-(--z-popover-scrim)"
       onclick={() => (open = false)}
     ></div>
 
     <div
       use:portal
-      class="border-cn-border bg-cn-surface fixed top-[calc(env(safe-area-inset-top,0px)+3.5rem)] right-4 z-[200] w-80 overflow-hidden rounded-xl border shadow-2xl"
+      class="border-cn-border bg-cn-surface fixed top-[calc(env(safe-area-inset-top,0px)+3.5rem)] right-4 z-(--z-popover) w-80 overflow-hidden rounded-xl border shadow-2xl"
     >
       <div class="border-cn-border flex items-center justify-between border-b px-4 py-3">
         <span class="text-sm font-semibold">{m.notif_bell_heading()}</span>

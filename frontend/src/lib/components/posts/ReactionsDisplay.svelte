@@ -87,7 +87,7 @@
 {#if popupReactionType && popupPos}
   <div
     use:portal
-    class="bg-cn-tooltip text-2xs pointer-events-auto fixed z-[9999] max-w-[14rem] min-w-[10rem] rounded-xl px-3 py-2.5 font-medium text-white shadow-xl"
+    class="bg-cn-tooltip text-2xs pointer-events-auto fixed z-(--z-tooltip) max-w-[14rem] min-w-[10rem] rounded-xl px-3 py-2.5 font-medium text-white shadow-xl"
     style="top: {popupPos.top}px; left: {popupPos.left}px;"
     role="tooltip"
     onmouseenter={cancelHide}

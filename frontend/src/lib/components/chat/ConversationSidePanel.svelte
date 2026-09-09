@@ -60,7 +60,7 @@
   <!-- The scrim belongs to the drawer, so it exists only where the drawer does. -->
   <button
     type="button"
-    class="fixed inset-0 z-[255] bg-black/40 xl:hidden"
+    class="fixed inset-0 z-(--z-side-panel-scrim) bg-black/40 xl:hidden"
     aria-label={m.chat_panel_close_label()}
     onclick={onClose}
     transition:fade={{ duration: 180 }}

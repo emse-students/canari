@@ -39,7 +39,7 @@
   <div use:portal>
     <div
       role="presentation"
-      class="fixed inset-0 z-[300] flex items-end justify-center bg-black/40 px-4 pb-[var(--safe-area-inset-bottom,0px)] sm:items-center"
+      class="fixed inset-0 z-(--z-critical) flex items-end justify-center bg-black/40 px-4 pb-[var(--safe-area-inset-bottom,0px)] sm:items-center"
       onclick={() => resolveConfirm(false)}
       in:fly={{ duration: 150, opacity: 0 }}
     >

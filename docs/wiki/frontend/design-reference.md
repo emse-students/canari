@@ -724,3 +724,90 @@ value rather than dropping the declaration - which is a parser's error recovery 
 value being right. The stylesheet rule is sufficient on its own, proven by the three other
 `data-keyboard-aware-overlay` elements that never carried the inline copy, so the constant is deleted
 rather than repaired.
+
+## 15. The layer ladder - twenty rungs, and the two inversions that paid for it
+
+**Counted 2026-09-09, before any of this: nineteen distinct z-index values and no scale.** `0, 1, 5,
+10, 20, 22, 25, 30, 35, 40, 42, 50, 60, 110, 120, 130, 190, 200, 255, 260, 280, 300, 9999`. Every
+one of them was chosen locally, by someone looking at the single neighbour they happened to think
+of, which is the only way this number gets to nineteen. The user's report was the general case:
+*"Regler problemes de Z-index (les panneaux peuvent se retrouver en dessous d'une partie de
+l'interface, comme les bandeaux)"*.
+
+**Two inversions were already in the tree**, neither of them visible by reading the file it lived
+in:
+
+| what | was | should have been | consequence |
+| --- | --- | --- | --- |
+| `MessageMobileActions` vs the banner column | `110` vs `120` | above | a full-screen scrim with a banner painted through it |
+| `Sidebar`'s drawer scrim vs its drawer | `42` vs `40` | below | the scrim is a full-screen `<button>`, so the drawer stops answering |
+
+The second was not reproduced live - `drawerMode` did not render on any route reachable from the
+test estate - and it is fixed anyway, because the ladder makes it unspellable.
+
+### The rungs
+
+Declared in `app.css` in **ascending order**, so that reading the block is reading the stack. Markup
+says `z-(--z-modal)`; twenty-six call sites were converted.
+
+| rung | value | what it is |
+| --- | --- | --- |
+| `--z-nav-scrim` | 22 | the scrim under the expanded nav rail |
+| `--z-nav-rail` | 30 | the expanded nav rail |
+| `--z-page-sticky` | 35 | a sticky date pill inside a scroller |
+| `--z-page-overlay` | 40 | the chat's own banner stack, the composer footer |
+| `--z-nav-drawer-scrim` | 42 | |
+| `--z-nav-drawer` | 44 | |
+| `--z-toast` | 60 | |
+| `--z-banner` | 120 | the window-scale banner column in the root layout |
+| `--z-sheet` | 160 | a surface a GESTURE opened: message actions, GIF and poll pickers |
+| `--z-popover-scrim` | 190 | |
+| `--z-popover` | 200 | anchored to a control: notification panel, emoji picker |
+| `--z-side-panel-scrim` | 255 | |
+| `--z-side-panel` | 260 | |
+| `--z-modal` | 280 | |
+| `--z-modal-popover` | 290 | a dropdown opened from inside a modal, portalled out of it |
+| `--z-viewer` | 300 | a full-screen media viewer |
+| `--z-critical` | 320 | a confirmation, the call UI |
+| `--z-call-notice` | 340 | the incoming-call notice, which must clear even the call UI |
+| `--z-tooltip` | 400 | follows the pointer, never interactive |
+| `--z-skip-link` | 500 | the way out for someone who cannot use a pointer |
+
+**A sheet sits above the banner deliberately.** A banner is ambient; a sheet is what the reader just
+asked for.
+
+**Below 60, nothing was touched.** A `z-10` ordering two children of one card competes only with its
+own siblings and is invisible to everything else; naming it here would imply it can be compared with
+a modal, which it cannot. The boundary is whether the element can be on screen at the same time as
+something from another component.
+
+### What keeps it a ladder
+
+`src/lib/styles/layerLadder.test.ts`, five assertions, and the fifth is the one that matters: it
+fails on a literal `z-*` of 60 or more anywhere in the markup and the failure names the file, the
+offending token and every available rung. It also fails on a ladder declared out of order (it caught
+exactly that on the first run), on two rungs sharing a value, and on any scrim that is not strictly
+under the panel it dims.
+
+### The thing a ladder cannot fix
+
+**A rung is only comparable inside its own stacking context, and `will-change: transform` makes one
+silently - plus a containing block for `position: fixed`.**
+
+`.page-scroll-wrap` carries it for the swipe-between-tabs gesture. Measured on `/chat` at 393px, the
+ancestor chain of the message-actions sheet was:
+
+```
+.page-scroll-wrap        will-change: transform   -> stacking context + fixed containing block
+div.relative.z-10        z-index 10               -> the whole page sits at rung 10
+```
+
+So `inset-0` resolved against the WRAPPER's box rather than the viewport, and the sheet's rung was
+compared only with the wrapper's own children: a sheet asking for 160 was really asking for
+160-of-10, and anything the wrapper does not cover stayed outside the scrim. On the web at 393px the
+wrapper happens to fill the screen, which is why the sheet looked right there and was reported wrong
+on the phone.
+
+**Anything that must escape a page entirely has to be portalled to the body.**
+`MessageMobileActions` now is; `UserAutocomplete` already was. `transform`, `filter`,
+`opacity < 1`, `contain: paint` and `isolation: isolate` are the same trap.

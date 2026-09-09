@@ -1596,7 +1596,7 @@
   {@const callerName = getUserDisplayNameSync(globalSession.callService?.incomingCallerId ?? '')}
   {@const isVideoCall = globalSession.callService?.incomingHasVideo ?? true}
   <div
-    class="bg-cn-scrim/95 fixed top-4 left-1/2 z-310 flex w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 animate-[slideDown_0.3s_ease-out] items-center gap-3 rounded-2xl px-4 py-3 shadow-2xl ring-1 ring-white/10"
+    class="bg-cn-scrim/95 fixed top-4 left-1/2 z-(--z-call-notice) flex w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 animate-[slideDown_0.3s_ease-out] items-center gap-3 rounded-2xl px-4 py-3 shadow-2xl ring-1 ring-white/10"
     transition:fly={{ y: -20, duration: 250 }}
   >
     <div class="relative h-10 w-10 shrink-0">

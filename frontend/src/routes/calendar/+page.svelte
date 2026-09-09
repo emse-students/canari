@@ -552,7 +552,7 @@
   <div use:portal>
     <div
       data-keyboard-aware-overlay
-      class="z-[280] flex items-end justify-center bg-black/40 sm:items-center"
+      class="z-(--z-modal) flex items-end justify-center bg-black/40 sm:items-center"
       role="presentation"
       onclick={(e) => e.target === e.currentTarget && (depositModalOpen = false)}
     >

@@ -11,6 +11,42 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - every z-index that can meet another one now has a name, and a test keeps it that way
+
+There were **nineteen distinct z-index values in the tree and no scale** (counted 2026-09-09): 0, 1,
+5, 10, 20, 22, 25, 30, 35, 40, 42, 50, 60, 110, 120, 130, 190, 200, 255, 260, 280, 300 and 9999.
+Every one was chosen locally, by someone looking at the single neighbour they happened to think of.
+The user's report was the general case: *"Regler problemes de Z-index (les panneaux peuvent se
+retrouver en dessous d'une partie de l'interface, comme les bandeaux)"*.
+
+Two inversions were already in the tree, neither visible by reading the file it lived in:
+
+- **The message-actions sheet was `110`, under the banner column's `120`.** A full-screen scrim with
+  a banner painted through it reads as a rendering fault.
+- **`Sidebar`'s drawer scrim was `42`, over the `40` drawer it dims.** A scrim over its own panel is
+  not merely ugly - it is a full-screen click target, so the panel stops answering. (Not reproduced
+  live: `drawerMode` did not render on the routes reachable from the test estate.)
+
+`app.css` now carries **the layer ladder**: twenty named rungs from `--z-nav-scrim` to
+`--z-skip-link`, declared in ascending order so that reading the block is reading the stack, each
+one a sentence about what the layer IS. Markup says `z-(--z-modal)`; twenty-six call sites were
+converted. A sheet the reader opened now sits above the ambient banner, and every scrim sits exactly
+one rung under the thing it dims.
+
+**Below 60 nothing was touched, deliberately.** A `z-10` ordering two children of one card competes
+only with its own siblings; naming it would imply it can be compared with a modal, which it cannot.
+
+`layerLadder.test.ts` is what keeps it a ladder: it fails on a literal `z-*` of 60 or more anywhere
+in the markup (naming the file, the token and every available rung), on a ladder declared out of
+order, on two rungs sharing a value, and on any scrim that is not strictly under its panel.
+
+**And the thing a ladder cannot fix, now written down.** `.page-scroll-wrap` carries
+`will-change: transform` for the swipe-between-tabs gesture, which makes it both a stacking context
+and the containing block for every `position: fixed` inside it. Measured on `/chat` at 393px: the
+whole page sits at rung 10 of the root context, so a sheet asking for 110 was really asking for
+110-of-10. Anything that must escape a page entirely has to be portalled to the body.
+
+
 ### Added - the agenda is a schedule list on a phone, not a seven-column grid
 
 *"sur mobile, on devrait avoir la liste des evenements sous forme de planning au lieu de la

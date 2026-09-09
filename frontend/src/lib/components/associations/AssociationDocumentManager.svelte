@@ -583,7 +583,7 @@
 {#if uploadModalOpen}
   <div use:portal>
     <div
-      class="fixed inset-0 z-[280] flex items-end justify-center bg-black/40 p-4 sm:items-center"
+      class="fixed inset-0 z-(--z-modal) flex items-end justify-center bg-black/40 p-4 sm:items-center"
       role="presentation"
       onclick={(e) => e.target === e.currentTarget && (uploadModalOpen = false)}
     >
@@ -632,7 +632,7 @@
 {#if pwPromptDoc}
   <div use:portal>
     <div
-      class="fixed inset-0 z-[280] flex items-end justify-center bg-black/40 p-4 sm:items-center"
+      class="fixed inset-0 z-(--z-modal) flex items-end justify-center bg-black/40 p-4 sm:items-center"
       role="presentation"
       onclick={(e) => e.target === e.currentTarget && !pwPromptBusy && (pwPromptDoc = null)}
     >
@@ -684,7 +684,7 @@
 {#if renameDoc}
   <div use:portal>
     <div
-      class="fixed inset-0 z-[280] flex items-end justify-center bg-black/40 p-4 sm:items-center"
+      class="fixed inset-0 z-(--z-modal) flex items-end justify-center bg-black/40 p-4 sm:items-center"
       role="presentation"
       onclick={(e) => e.target === e.currentTarget && !renameBusy && (renameDoc = null)}
     >

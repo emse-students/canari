@@ -279,7 +279,7 @@
   {@const names = voterNames[tooltipOptionId]}
   <div
     use:portal
-    class="bg-cn-tooltip text-2xs pointer-events-none fixed z-[9999] -mt-1.5 max-w-[16rem] min-w-[10rem] -translate-y-full rounded-xl px-3 py-2 font-medium text-white shadow-xl"
+    class="bg-cn-tooltip text-2xs pointer-events-none fixed z-(--z-tooltip) -mt-1.5 max-w-[16rem] min-w-[10rem] -translate-y-full rounded-xl px-3 py-2 font-medium text-white shadow-xl"
     style="top: {tooltipPos.top}px; right: {tooltipPos.right}px;"
     role="tooltip"
   >
