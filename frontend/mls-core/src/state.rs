@@ -178,6 +178,45 @@ pub struct StoragePortion {
     pub bytes: usize,
 }
 
+/// WHAT THE STORED KEY PACKAGES ARE, which is the axis that decides what may be reclaimed.
+///
+/// [`MlsManager::state_composition`] says `KeyPackage 3050x7211906B` and stops there - two thirds
+/// of a 10.7 MB state on a Mi 9T, 2026-09-09, against a pool the protocol sizes at FIFTY. A count
+/// that large is not one fact, it is several stacked, and they do not have the same remedy:
+///
+/// - an EXPIRED bundle is already reclaimable and [`MlsManager::prune_key_packages_expired_at`]
+///   takes it, so any of these still present are debt with time left to run;
+/// - a LAST-RESORT bundle is superseded only by its owner. The server keeps exactly one and never
+///   hands it out-and-deletes it, so every earlier one died by an action this device took and
+///   nothing can be racing it;
+/// - a ONE-TIME bundle absent from the server is ambiguous, and that ambiguity is the whole reason
+///   the prune uses expiry alone: the delivery service DELETES the row as it hands it out, so
+///   "the server no longer has it" means either "a peer is about to send a Welcome built on it" or
+///   "its owner revoked it", and the two want opposite treatment.
+///
+/// `mint_instants` and `largest_batch` separate the last two from outside. A pool topped up
+/// incrementally carries many instants; a pool purged and reminted wholesale carries one instant
+/// per round, fifty bundles deep - the signature already measured server-side, where the harness
+/// account's fifty prekeys all shared a single timestamp to the microsecond.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyPackageCensus {
+    /// Entries proven to be key packages. `last_resort + one_time`, and `undecodable` is beside it.
+    pub total: usize,
+    /// Bundles carrying the `LastResort` extension - the static fallback, one live at a time.
+    pub last_resort: usize,
+    /// Bundles without it - the one-time pool, which the protocol sizes at fifty.
+    pub one_time: usize,
+    /// Of `total`, how many have a `not_after` already elapsed at the instant asked about.
+    pub expired: usize,
+    /// Entries under a `KeyPackage` key this build could not prove were key packages. Never
+    /// counted as either kind, and never deleted - see `for_each_proven_key_package`.
+    pub undecodable: usize,
+    /// How many DISTINCT `not_before` instants the bundles carry - one per mint round.
+    pub mint_instants: usize,
+    /// The most bundles sharing a single `not_before`. Fifty means a wholesale remint.
+    pub largest_batch: usize,
+}
+
 impl MlsManager {
     /// What this device's persisted state is MADE OF, heaviest first.
     ///
@@ -296,6 +335,144 @@ impl MlsManager {
             .filter(|k| storage_label(k) == "KeyPackage")
             .cloned()
             .collect())
+    }
+
+    /// Visits every storage entry this build can PROVE is the key package its own key names.
+    ///
+    /// ONE COPY, for the same reason [`storage_label`] is one copy, and with more at stake. Two
+    /// callers ask different questions of the same rows - [`Self::prune_key_packages_expired_at`]
+    /// DELETES from this set and [`Self::key_package_census_at`] DESCRIBES it - and a proof written
+    /// twice is those two disagreeing about what a key package is, with the delete on the wrong
+    /// side of the disagreement. The census exists to decide what may be reclaimed; it must be
+    /// counting the exact rows the prune can reach, or its numbers argue for a delete that lands
+    /// somewhere else.
+    ///
+    /// The proof itself is unchanged and is described where it was written: the prefix and the
+    /// decode both LOOK like discrimination and neither is, because serde ignores unknown fields,
+    /// so the stored key must be shown to contain the recomputed hash reference. The key is
+    /// `label || json(hash_ref) || version` by construction, which makes the containment exact.
+    ///
+    /// @returns how many entries under a `KeyPackage` key could NOT be proven - never visited,
+    ///          never deleted, and counted so a reader sees that this build did not understand them
+    fn for_each_proven_key_package<F>(
+        &self,
+        values: &HashMap<Vec<u8>, Vec<u8>>,
+        mut visit: F,
+    ) -> usize
+    where
+        F: FnMut(&[u8], &KeyPackageBundle),
+    {
+        let mut undecodable = 0usize;
+        for (k, v) in values.iter() {
+            if !k.starts_with(b"KeyPackage") {
+                continue;
+            }
+            let Ok(bundle) = serde_json::from_slice::<KeyPackageBundle>(v) else {
+                undecodable += 1;
+                continue;
+            };
+            let Ok(hash_ref) = bundle.key_package().hash_ref(self.provider.crypto()) else {
+                undecodable += 1;
+                continue;
+            };
+            let Ok(named) = serde_json::to_vec(&hash_ref) else {
+                undecodable += 1;
+                continue;
+            };
+            if !k.windows(named.len()).any(|w| w == named.as_slice()) {
+                undecodable += 1;
+                continue;
+            }
+            visit(k, &bundle);
+        }
+        undecodable
+    }
+
+    /// [`KeyPackageCensus`] for this keystore, at the instant given.
+    ///
+    /// THE CLOCK IS A PARAMETER FOR THE REASON [`Self::prune_key_packages_expired_at`] TAKES ONE,
+    /// and it matters more here: this number is meant to be compared against what the prune WILL
+    /// take, and a census that read its own clock could not be asked "what will be reclaimable in
+    /// a hundred days" - which is the question the 84-day bound makes a reader ask first.
+    ///
+    /// Reads only. Nothing here deletes, and nothing here may: the census is the evidence a reclaim
+    /// is argued from, and a measurement that mutates its subject cannot be that.
+    pub fn key_package_census_at(&self, now_secs: u64) -> Result<KeyPackageCensus, MlsError> {
+        let storage = self.provider.storage();
+        let values = storage
+            .values
+            .read()
+            .map_err(|e| MlsError::OpenMls(format!("Storage lock poisoned: {e}")))?;
+
+        let mut total = 0usize;
+        let mut last_resort = 0usize;
+        let mut expired = 0usize;
+        // A count per `not_before`, which is what tells a wholesale remint from an incremental
+        // top-up without asking the server anything.
+        let mut by_instant: HashMap<u64, usize> = HashMap::new();
+
+        let undecodable = self.for_each_proven_key_package(&values, |_k, bundle| {
+            let kp = bundle.key_package();
+            total += 1;
+            if kp.extensions().contains(ExtensionType::LastResort) {
+                last_resort += 1;
+            }
+            if kp.life_time().not_after() < now_secs {
+                expired += 1;
+            }
+            *by_instant.entry(kp.life_time().not_before()).or_insert(0) += 1;
+        });
+
+        Ok(KeyPackageCensus {
+            total,
+            last_resort,
+            one_time: total - last_resort,
+            expired,
+            undecodable,
+            mint_instants: by_instant.len(),
+            largest_batch: by_instant.values().copied().max().unwrap_or(0),
+        })
+    }
+
+    /// [`Self::key_package_census_at`] with the clock read rather than given.
+    ///
+    /// **NOT COMPILED FOR wasm32**, for the reason [`Self::prune_expired_key_packages`] is not:
+    /// `std`'s clock is unimplemented there and PANICS rather than erroring, which took down every
+    /// web login in v0.16.4. A target that cannot read a clock must not be offered a function that
+    /// reads one - callers on wasm have a clock of their own and pass it to the `_at` form.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn key_package_census(&self) -> Result<KeyPackageCensus, MlsError> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .map_err(|e| {
+                MlsError::OpenMls(format!("System clock is before the UNIX epoch: {e}"))
+            })?;
+        self.key_package_census_at(now)
+    }
+
+    /// One compact line for the load-time log, beside the composition summary.
+    ///
+    /// The composition line already prints `KeyPackage 3050x7211906B`, and that is the number that
+    /// sent two investigations looking for a mechanism. This says which of them it could be.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn key_package_census_summary(&self) -> String {
+        match self.key_package_census() {
+            Ok(c) => format!(
+                "{} proven ({} one-time, {} last-resort); {} expired, {} undecodable; \
+                 {} mint instant(s), largest batch {}",
+                c.total,
+                c.one_time,
+                c.last_resort,
+                c.expired,
+                c.undecodable,
+                c.mint_instants,
+                c.largest_batch
+            ),
+            // NOT SWALLOWED INTO AN EMPTY STRING, for the reason `state_composition_summary` says:
+            // a line reading as "there are no key packages" is a worse answer than none.
+            Err(e) => format!("unavailable ({e})"),
+        }
     }
 
     /// Marks the CBOR snapshot stale after any MLS state mutation.
@@ -449,6 +626,26 @@ impl MlsManager {
             log::info!(
                 "load_or_create: state composition - {}",
                 manager.state_composition_summary()
+            );
+
+            // AND WHAT THE HEAVIEST LABEL IS MADE OF, because on every device measured so far it
+            // has been `KeyPackage` and the count alone names no remedy. 3050 bundles against a
+            // pool of fifty is expired debt, superseded fallbacks and a revoked pool stacked in one
+            // number, and those three are reclaimed by three different things - one of which is
+            // already running. This line is what stops the next reader dividing 7.2 MB by 50.
+            //
+            // NATIVE ONLY, and gated by the SAME rule as the prune above rather than by a second
+            // one: the summary reads a clock to fill `expired`, and this crate must not read a
+            // clock on wasm - `SystemTime::now()` PANICS there, which is the v0.16.4 outage the
+            // block above is written around. The other six figures need no clock, so a web caller
+            // that wants them calls `key_package_census_at` with `Date.now()/1000`, exactly as the
+            // prune's escape hatch works. It is not a gap worth closing blind: the accumulation
+            // this measures was measured on a handset, and a browser profile does not live long
+            // enough to reach the horizon.
+            #[cfg(not(target_arch = "wasm32"))]
+            log::info!(
+                "load_or_create: key package census - {}",
+                manager.key_package_census_summary()
             );
 
             Ok(manager)
@@ -672,47 +869,15 @@ impl MlsManager {
             .write()
             .map_err(|e| MlsError::OpenMls(format!("Storage lock poisoned: {e}")))?;
 
-        let mut undecodable = 0usize;
+        // THE ENTRY MUST PROVE IT IS THE KEY PACKAGE ITS OWN KEY NAMES, AND NOT MERELY DECODE -
+        // see `for_each_proven_key_package`, which owns that proof so the census cannot describe a
+        // different set of rows from the one this deletes.
         let mut doomed: Vec<Vec<u8>> = Vec::new();
-        for (k, v) in values.iter() {
-            if !k.starts_with(b"KeyPackage") {
-                continue;
-            }
-            let Ok(bundle) = serde_json::from_slice::<KeyPackageBundle>(v) else {
-                undecodable += 1;
-                continue;
-            };
-
-            // THE ENTRY MUST PROVE IT IS THE KEY PACKAGE ITS OWN KEY NAMES, AND NOT MERELY DECODE.
-            //
-            // The prefix and the decode both look like discrimination and neither is: an empty
-            // prefix passes every one of this file's tests, because serde ignores unknown fields
-            // and it is the decode that ends up refusing group state - by luck, on a struct that
-            // happens not to carry these three field names. Luck is not a safety property when the
-            // failure mode is a device that saves and loads while having silently lost every
-            // conversation.
-            //
-            // So recompute the hash reference and require the stored key to contain it. The key is
-            // `label || json(hash_ref) || version` by construction, so this is exact, it is what
-            // makes the delete provably confined to key packages, and it costs one hash on an entry
-            // that is about to be dropped anyway.
-            let Ok(hash_ref) = bundle.key_package().hash_ref(self.provider.crypto()) else {
-                undecodable += 1;
-                continue;
-            };
-            let Ok(named) = serde_json::to_vec(&hash_ref) else {
-                undecodable += 1;
-                continue;
-            };
-            if !k.windows(named.len()).any(|w| w == named.as_slice()) {
-                undecodable += 1;
-                continue;
-            }
-
+        let undecodable = self.for_each_proven_key_package(&values, |k, bundle| {
             if bundle.key_package().life_time().not_after() < now_secs {
-                doomed.push(k.clone());
+                doomed.push(k.to_vec());
             }
-        }
+        });
 
         for key in &doomed {
             values.remove(key);
