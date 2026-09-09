@@ -11,6 +11,23 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Security - three HIGH denial-of-service advisories against `multer`, in all four NestJS services
+
+`bun audit` refused every one of the four service trees: `multer@2.2.0`, reached through
+`@nestjs/platform-express`, carries GHSA-wc9g-mqfw-jrwm, GHSA-qfvm-cv95-jqjf and GHSA-535w-7cp7-47q4 -
+denial of service via crafted multipart field names, via a file-descriptor leak on aborted uploads,
+and via an oversized array index in field names. All three are fixed in 2.3.0.
+
+**Nothing had to be decided to fix it, which is the interesting part.** The four `package.json`
+overrides already say `"multer": "^2.2.0"`, a range that admits 2.3.0; what held the services on the
+vulnerable build was four LOCKFILES resolved before it was published, kept in place by
+`--frozen-lockfile`. The whole change is one line per tree.
+
+Found while reading the checks on an unrelated pull request. It is not in the `CI passed` aggregate -
+[`ci.yml`](.github/workflows/ci.yml) takes `dependency-audit` out of it on purpose, because npm's
+advisory endpoint answered 503 twenty-six times in sixty tree-audits - so this had been merging past
+every pull request and was owed to a nightly `scheduled.yml` run.
+
 ### Changed - the interface was measured against Messenger and rebuilt on a scale it did not have
 
 The brief was that Canari "fait trop IA" and was "pas assez ergonomique". That is an impression, so it
