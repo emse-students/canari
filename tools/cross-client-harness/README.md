@@ -298,7 +298,7 @@ used to get wrong on its own.
 | File | Role |
 | ---- | ---- |
 | `atoms.mjs` | **The index of the gestures**, and the only file here that is documentation first: what each atom is, the three properties one has to have, and `run()` - the single spelling of the arguments for the atoms that are still CLI scripts. Imports nothing machine-local of its own; re-exports the importable primitives so a new script reaches the whole vocabulary in one line. |
-| `cdp.mjs` | The whole CDP client: targets, `evaluate`, `stableCentreOf`, `clickAtPoint`, `realClick`, `dragTo`, `until`, focus emulation. |
+| `cdp.mjs` | The whole CDP client: targets, `evaluate`, `stableCentreOf`, `clickAtPoint`, `realClick`, `dragTo`, `holdAndSlide`, `until`, focus emulation. **`holdAndSlide` is the one that can hold**: it slides a DISTANCE rather than to another element - a threshold has no node to name - and `release: false` leaves the pointer down, which is the only way to read a state that exists solely while a finger is on the glass. Measure over the same connection when you use it: closing one resets the browser's touch state and the next move is refused. |
 | `chat.mjs` | Chat primitives shared by every check - `client`, `ensureChat`, `openConversation`, `send`, `clickBubbleAction`. The single definition of "a message arrived", so two checks cannot disagree for harness reasons. |
 | `watch.mjs` | Continuous observation: console, page errors, HTTP, WebSocket. Attached by every runner. |
 | `srvlog.mjs` | The server observer, held to the same bar as the two clients: the whole window is classified, and it partitions by SUBJECT because production is shared. |

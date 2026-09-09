@@ -48,6 +48,7 @@ the rule in [durable-rules](durable-rules.md). Delete the line once the measurem
 | the auto-merge sweep drains its queue unattended | the next sweep after a merge must merge EVERY pull request that is mergeable, not one. Until 2026-09-01 each merge moved `main` and staleness-invalidated the rest, so the queue drained at one per pass and only while somebody pushed; the predicate now asks whether `.github/workflows/` or `.github/scripts/` moved instead. #302 and #303 are the population sitting on it - both `CLEAN`, both built on `6a356d7e`, neither touched by a gate change. One sweep log showing both merged closes this |
 | a security advisory now has an ACTOR at all | `automated-security-fixes` was `{"enabled":false}` while alerts were on, and the `cargo` ecosystem limits `production-dependencies` to patch - so `serde_with` 3.19.0 -> 3.21.0 (GHSA-7gcf-g7xr-8hxj, medium, `frontend/src-tauri/Cargo.lock`) could be reported and never fixed by anything. Enabled 2026-09-02, and it fired within the minute - **onto a THIRD refusal nobody knew about**, the update job failing on a manifest cargo cannot parse (P1 below). So **this row cannot close on alert 210**: it closes on the first security pull request Dependabot opens for ANY directory, and 210 itself waits on the P1 |
 | the auto-merge ceiling refuses a major | **half taken.** The workflow is enabled again and its shipped loop body was replayed over all 33 open Dependabot PRs: 26 merge, 6 refuse, and the 6 collapse to the two gates below. What replay cannot show is the workflow REFUSING in its own run log, because no major has opened since - so the row stays until a real one does, logging `REFUSED` and staying open |
+| a proposed event now tells the association's calendar managers | **HARDWARE, and it needs a PRECONDITION nobody has arranged.** The five push keys, the five notification rows and the fan-out are in the tree (#465) and the other five fixes of that batch were measured on A1 on 2026-09-09 - this one could not run, because the phone's account holds **no calendar-validator grant on any association**: `/dashboard` offers only Compte and Explorer, and its list reads "Aucune notification". So: grant that account validator on ONE association in the LOCAL estate, propose an event from a SECOND account, then read the shade and the in-app row. A run without both halves proves nothing, and the in-app row alone does not exercise the native tables - the sentence is built on the device ([device-verification](device-verification.md#the-layout-pass-of-2026-09-09-and-the-one-thing-it-could-not-answer)) |
 | the five products the boutique never sold are buyable | **ONE MANUAL FLIP IS OWED, and it is the user's** (2026-08-31). `activationWithheld` releases a product when payments BECOME ready, and BDE's Stripe onboarding completed long ago - no event will ever fire for it, which is the correct behaviour for an allowlist and the reason a per-tier on-sale switch now exists. So: open `/associations/bde/edit`, Cotisations tab, tick **En vente** on the 170 EUR tier, then buy nothing and simply confirm it appears in `/shop`. The other four associations have no payment account at all, so their products are correctly withheld and release themselves when one arrives - what closes THAT half is the next association to finish onboarding, whose products must go on sale with nobody touching them |
 
 ---
@@ -567,6 +568,32 @@ dead space BELOW it, so on a full-height panel the button floats mid-screen. If 
 list, the button belongs at the bottom edge of the panel instead.
 
 **Blocked on nothing** - local estate, and the shape is a decision rather than a measurement.
+
+---
+### P3 - a pending attachment's name is painted TWICE, 19px apart (observed on the Mi 9T, 2026-09-09)
+
+Found while verifying the voice-note gesture and **not caused by it**: the recorder's only output is
+a file, and this is the chip that every pending attachment gets, whatever produced it. A photo will
+do the same.
+
+Measured at 436px, both boxes 62px wide, in the same static flow:
+
+| | element | box | overflow | hidden |
+| --- | --- | --- | --- | --- |
+| inside the tile | `span.line-clamp-2` | `21,830 62x26` | `hidden` / `clip` | 0 |
+| under it | `div.truncate` | `21,849 62x14` | `hidden` / `ellipsis` | **70px of the name** |
+
+The span is 26px tall from y=830, so it runs to 856 and the div starts at 849: **they overlap by
+7px**, and the reader sees the same filename twice with the lower copy struck through the upper
+one's descenders. The two also disagree about how to shorten a name - one wraps to two lines, the
+other ellipsises - so the same string is abbreviated two different ways in one 62px column.
+
+**One of the two is redundant and the fix is to decide which**, not to nudge a margin. The tile
+already names the file; a caption under a 62px tile that hides 70 of its characters tells the reader
+less than the icon does. **Whichever survives should be the only one**, and a test asserting that a
+chip renders its name once would keep it that way.
+
+**Blocked on nothing** - local estate, and it reproduces on any attachment.
 
 ---
 ### P3 - `cleanup.mjs` sweeps groups but not the delivery queue, and 13 275 rows have accumulated (measured 2026-09-08)

@@ -89,6 +89,39 @@ naming the test device's UDID. It also buys `get-task-allow`, which is what make
 inspectable - so the one change that makes an artifact installable is the same change that makes the
 webview readable. Owed, not done.
 
+## The layout pass of 2026-09-09, and the one thing it could not answer
+
+Six fixes shipped in `v0.16.6-alpha.5`'s ancestors on the strength of a browser emulated at 393px.
+**The Mi 9T reports 436 CSS px**, not 393, which is the first reason to run them on glass: every
+breakpoint claim was made against the wrong number, and it happened to survive. Built from a tree
+carrying all six (`bun a1apk.mjs`, code 1600605) and driven over CDP, element by element.
+
+**Five measured, all PASS.** Each line is the number that decides it, not an impression:
+
+| What was reported | What the phone answers |
+| --- | --- |
+| the reaction picker ran off the right edge | the row is 363px inside a 436px viewport, `scrollWidth - clientWidth = 0`, all eight reactions between x=42 and x=395. Nothing behind a scroll |
+| the associations header overlapped its own buttons | the block is `flex-direction: column` under `sm`, so the title owns the whole row at **404px** where it had 99.6, `scrollWidth - clientWidth = 0`, and the two controls sit on their own line below. No pair of boxes intersects |
+| the agenda was a seven-column grid on a phone | **no element in the tree has seven grid columns**, and every day number shares one `left` (33) - a single gutter, which is what makes it a schedule. Today carries `rgb(255, 212, 93)` and no other day does. Day 13 is absent between 12 and 14, so an empty day draws nothing |
+| the conversation header painted over the message panel | the sheet is now **a direct child of `<body>`, `position: fixed`, `z-index: 160`** - one entry in its whole ancestry, so it is in the ROOT stacking context. `elementFromPoint` at the header's centre returns the sheet's scrim, and the header is `z-index: 20`. Verified on an OWN message, which is the case the report named: Modifier and Supprimer are both in the panel |
+| the voice note was three taps | all FIVE outcomes of one gesture, on glass: hold-and-release keeps it, sliding left past 96px discards it, sliding right past 72px locks it **while the finger is still down**, and the locked bar's two buttons keep or discard. A locked recording ran 0:23 -> 0:31 with nothing touching the screen |
+
+**The sixth could not run, and the precondition is named rather than assumed.** A proposed event is
+supposed to notify an association's calendar managers ([#465]). The phone's account holds **no
+calendar-validator grant on any association** - `/dashboard` offers only "Compte" and "Explorer",
+and its notification list reads "Aucune notification". So the check needs, in order: a validator
+grant for that account on one association in the LOCAL estate, then a proposal from a second
+account. Neither is ambient, and a run made without both proves nothing.
+
+**One thing the pass found that no report had asked about**, filed rather than fixed here: the
+composer's pending-attachment chip paints its filename TWICE
+([backlog](backlog.md#p3---a-pending-attachments-name-is-painted-twice-19px-apart-observed-on-the-mi-9t-2026-09-09)).
+
+**And one instrument came out of it.** `cdp.mjs` could click and it could drag to another element;
+it could not HOLD. `holdAndSlide` slides a distance rather than to a node - a threshold has no node
+to name - and `release: false` leaves the pointer down, without which `holding` and `locked` cannot
+be observed at all: both are gone by the time a release lands.
+
 ## Before you start
 
 - **KNOW WHAT THE DEVICE IS RUNNING, before anything else.** Not `versionName` - that is a constant

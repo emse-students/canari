@@ -627,31 +627,17 @@ export async function clickAtPoint(cx, x, y, { park = true, expect = null } = {}
 }
 
 /**
- * Drags one element onto another with real pointer events, and reports where it went.
+ * THE THREE HALVES OF A HELD POINTER, in the one spelling both gestures use.
  *
- * A CLICK IS AN EVENT AND A DRAG IS A TRAJECTORY, which is why this cannot be built out of
- * {@link clickAtPoint}. `svelte-dnd-action` - what the community rail uses - starts a drag on
- * MOVEMENT past a threshold after a press, tracks the pointer to decide the insertion index, and
- * commits on release. A press and a release at two different points produce no drag at all: the
- * library never sees the crossing, so the list never reorders and the check reads as "the product
- * does not reorder". The intermediate moves ARE the gesture.
+ * `dragTo` and `holdAndSlide` differ only in where the finger goes and whether it comes back up;
+ * the press / move / release trio is identical, and it was written twice for about a day. Touch is
+ * not mouse here for the reason `clickAtPoint` documents - the phone's WebView ignores synthetic
+ * mouse events - so the branch belongs in ONE place rather than in every caller.
  *
- * BOTH CENTRES ARE RE-READ AFTER THE PRESS, because a dnd list moves under the pointer by design:
- * the placeholder shifts every sibling the moment the drag starts, so a target centre measured
- * before the press names a position nothing occupies by the time the pointer arrives.
- *
- * TOUCH IS NOT MOUSE HERE EITHER, for the reason `clickAtPoint` documents: the phone's WebView
- * ignores synthetic mouse events. The touch path also holds still for a moment after the press,
- * which is what `svelte-dnd-action` requires before it will lift on a touch device.
- *
- * @returns {{from: {x:number,y:number}, to: {x:number,y:number}, steps: number}}
+ * `from` is only read by `press`: a move names its own coordinates, and a touch release carries no
+ * point at all.
  */
-export async function dragTo(cx, fromSelector, toSelector, { steps = 14, holdMs = 120 } = {}) {
-  if (cx.__touch === undefined) cx.__touch = await evaluate(cx, 'navigator.maxTouchPoints > 0');
-  const touch = cx.__touch;
-  const pause = (ms) => new Promise((r) => setTimeout(r, ms));
-
-  const from = await stableCentreOf(cx, fromSelector);
+function pointerDriver(cx, touch, from) {
   const press = touch
     ? () =>
         cx.send('Input.dispatchTouchEvent', {
@@ -687,6 +673,98 @@ export async function dragTo(cx, fromSelector, toSelector, { steps = 14, holdMs 
           clickCount: 1,
           buttons: 0,
         });
+  return { press, move, release };
+}
+
+/**
+ * HOLD A BUTTON, SLIDE A DISTANCE, AND OPTIONALLY DO NOT LET GO.
+ *
+ * `dragTo` cannot express either half of a threshold gesture. It slides to ANOTHER ELEMENT, and a
+ * threshold is a DISTANCE - there is no node 96px to the left of the microphone to name. And it
+ * always releases, while the states worth measuring in a held gesture exist only while the finger
+ * is down: `VoiceRecorder`'s `holding` and `locked` are both gone by the time a release lands, so
+ * a helper that always lifts can observe neither.
+ *
+ * Written for the voice note's three thresholds (2026-09-09) and immediately worth keeping: the
+ * five outcomes of that component - keep, discard, lock, then send or discard from the lock - are
+ * five different slides from the same button, and nothing else here can make one.
+ *
+ * `release: false` LEAVES THE POINTER DOWN, which is the point. Two consequences the caller owns:
+ * measure over the SAME connection, because closing it resets the browser's touch state and the
+ * next `touchMove` is refused with "Must send a TouchStart first"; and the page keeps believing a
+ * finger is on the glass until something lifts it, so a run that ends here leaves that state behind.
+ *
+ * The slide is STEPPED rather than jumped for the reason `dragTo` documents at length: a component
+ * reading a delta per move sees nothing at all in a single leap.
+ *
+ * IT IS NOT A CLICK, and calling it with no delta will not make one: a touch release at the point
+ * of the press synthesises its click asynchronously and off this code path, so the button does not
+ * fire. Measured on A1 while writing this - a `holdAndSlide` at the recorder's cancel button left
+ * the recording locked and running. `realClick` is the atom that clicks, and it verifies the
+ * landing; this one only presses, moves and lifts.
+ *
+ * @param {object} cx
+ * @param {string} selector - the element whose CENTRE the pointer goes down on
+ * @param {{holdMs?: number, dx?: number, dy?: number, steps?: number, release?: boolean}} [opts]
+ * @returns {Promise<{from: {x:number,y:number}, to: {x:number,y:number}, released: boolean}>}
+ */
+export async function holdAndSlide(
+  cx,
+  selector,
+  { holdMs = 600, dx = 0, dy = 0, steps = 6, release = true } = {}
+) {
+  if (cx.__touch === undefined) cx.__touch = await evaluate(cx, 'navigator.maxTouchPoints > 0');
+  const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  const from = await stableCentreOf(cx, selector);
+  if (!from) {
+    throw new Error(
+      `no stable element for selector: ${selector} - ${JSON.stringify(await whyNotStable(cx, selector))}`
+    );
+  }
+  const driver = pointerDriver(cx, cx.__touch, from);
+
+  await driver.press();
+  await pause(holdMs);
+
+  const to = { x: Math.round(from.x + dx), y: Math.round(from.y + dy) };
+  if (dx || dy) {
+    for (let i = 1; i <= steps; i += 1) {
+      await driver.move(Math.round(from.x + (dx * i) / steps), Math.round(from.y + (dy * i) / steps));
+      await pause(40);
+    }
+  }
+  if (release) await driver.release(to.x, to.y);
+  return { from: { x: from.x, y: from.y }, to, released: release };
+}
+
+/**
+ * Drags one element onto another with real pointer events, and reports where it went.
+ *
+ * A CLICK IS AN EVENT AND A DRAG IS A TRAJECTORY, which is why this cannot be built out of
+ * {@link clickAtPoint}. `svelte-dnd-action` - what the community rail uses - starts a drag on
+ * MOVEMENT past a threshold after a press, tracks the pointer to decide the insertion index, and
+ * commits on release. A press and a release at two different points produce no drag at all: the
+ * library never sees the crossing, so the list never reorders and the check reads as "the product
+ * does not reorder". The intermediate moves ARE the gesture.
+ *
+ * BOTH CENTRES ARE RE-READ AFTER THE PRESS, because a dnd list moves under the pointer by design:
+ * the placeholder shifts every sibling the moment the drag starts, so a target centre measured
+ * before the press names a position nothing occupies by the time the pointer arrives.
+ *
+ * TOUCH IS NOT MOUSE HERE EITHER, for the reason `clickAtPoint` documents: the phone's WebView
+ * ignores synthetic mouse events. The touch path also holds still for a moment after the press,
+ * which is what `svelte-dnd-action` requires before it will lift on a touch device.
+ *
+ * @returns {{from: {x:number,y:number}, to: {x:number,y:number}, steps: number}}
+ */
+export async function dragTo(cx, fromSelector, toSelector, { steps = 14, holdMs = 120 } = {}) {
+  if (cx.__touch === undefined) cx.__touch = await evaluate(cx, 'navigator.maxTouchPoints > 0');
+  const touch = cx.__touch;
+  const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  const from = await stableCentreOf(cx, fromSelector);
+  const { press, move, release } = pointerDriver(cx, touch, from);
 
   await press();
   await pause(holdMs);
