@@ -146,8 +146,17 @@
    * The user asked for the controls back WHILE a message is being written.
    *
    * Kept separate from `isComposing` rather than folded into it, because the two answer different
-   * questions - "is there text" and "did someone ask to see the buttons" - and one flag doing both
-   * would forget the request on every keystroke.
+   * questions - "is there text" and "did someone ask to see the buttons".
+   *
+   * **THE REQUEST LASTS UNTIL THE NEXT KEYSTROKE, NOT UNTIL THE MESSAGE IS SENT** (user,
+   * 2026-09-09: *"Taper sur le clavier doit TOUJOURS replier joindre, GIF, micro, pas juste au
+   * premier caractere"*). The first draft held it for the whole message, on the reasoning that
+   * forgetting it per keystroke would lose an explicit request. On a phone that reasoning is
+   * backwards: the group is 4 x 52px of a ~358px row, so once it is open the field is back to a
+   * third of the bar and stays there for every character after it - which is the crowding the fold
+   * exists to remove, restored permanently by one tap. Reaching a button is two taps either way
+   * (chevron, then button) and neither involves typing, so clearing the flag on text costs the
+   * user nothing and keeps the room.
    */
   let controlsForcedOpen = $state(false);
 
@@ -166,7 +175,14 @@
    */
   const controlsCollapsed = $derived(isComposing && !controlsForcedOpen);
 
-  // The request lives as long as the message does. Sending clears `messageText`, which lands here.
+  /**
+   * The other way the request ends: the message goes away without a text CHANGE event.
+   *
+   * Still load-bearing beside the reset in `handleMessageChange`. The chevron only exists while
+   * there is text, so a forced-open flag can outlive its message exactly once - press chevron,
+   * attach a file (no keystroke), send - and the parent clears `messageText` as a prop rather than
+   * through the editor's `onchange`.
+   */
   $effect(() => {
     if (!isComposing && controlsForcedOpen) controlsForcedOpen = false;
   });
@@ -214,6 +230,10 @@
 
   function handleMessageChange(value: string) {
     onMessageChange(value);
+    // Typing re-folds the edge controls, every time - see `controlsForcedOpen`. This is the single
+    // funnel for a text change (`MentionComposerInput` fires it only when the text really moved,
+    // and never mid-IME-composition), so it is the one place the rule has to hold.
+    controlsForcedOpen = false;
     if (value.trim().length > 0) pingTyping();
     else stopTyping();
   }

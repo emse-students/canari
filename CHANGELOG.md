@@ -137,6 +137,23 @@ principle and this attempt failed. The startup warning no longer claims avatars 
 clients will draw initials, and that the line appears once because the condition cannot change.
 
 
+### Fixed - one tap on the composer chevron un-folded the edge controls for the rest of the message
+
+The composer folds paperclip / poll / GIF / microphone away once a message is being written and puts
+a chevron in their place, so they stay one tap away rather than disappearing. The chevron's request
+was held for the whole message: press it, and the four buttons stayed out for every character typed
+afterwards.
+
+On a phone that is the crowding the fold exists to remove, restored permanently by a single tap -
+the group is 4 x 52px of a ~358px row, so the field goes back to about a third of the bar and stays
+there. The user asked for the opposite: *"Taper sur le clavier doit TOUJOURS replier joindre, GIF,
+micro, pas juste au premier caractere"*. Typing now folds them again, every time. Reaching a button
+is still two taps (chevron, then button) and neither is a keystroke, so nothing became harder.
+
+Pinned by six tests that drive the real contenteditable rather than calling the handler - two of
+them fail against the previous behaviour, which is the only reason the other four are worth keeping.
+
+
 ### Fixed - a top-anchored modal drew square corners in a 16px moat, and its two size utilities were dead
 
 Follow-up to the modal that used to ride the keyboard, found by looking at the phone rather than at
