@@ -1,7 +1,12 @@
 <script lang="ts">
   import { Pause, Play, Download } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
-  import { computeWaveformPeaks, mixToMono } from '$lib/utils/audio/waveform';
+  import {
+    barCountForWidth,
+    computeWaveformPeaks,
+    mixToMono,
+    resampleBars,
+  } from '$lib/utils/audio/waveform';
 
   interface Props {
     /** Audio source URL (object URL or remote URL) to load and play. */
@@ -22,13 +27,13 @@
   let cannotPlay = $state(false);
 
   /**
-   * How many bars the strip is drawn with.
+   * The resolution the peaks are STORED at, which is not the number of bars drawn.
    *
-   * Fixed rather than derived from the width, so the same recording has the same shape in a narrow
-   * bubble and a wide one - a waveform whose detail changed with the window would read as a
-   * different recording. The bars flex to fill whatever width they are given.
+   * Decoding is expensive and happens once; the strip is re-bucketed from this array on every
+   * resize, which is a loop over 64 numbers. It is the ceiling `barCountForWidth` can ask for, so a
+   * very wide bubble draws every stored peak and never interpolates one it does not have.
    */
-  const WAVEFORM_BARS = 40;
+  const PEAK_RESOLUTION = 64;
   /**
    * The height a silent bar is still drawn at, as a fraction of the strip.
    *
@@ -40,14 +45,22 @@
   /** Bar heights in 0..1, or empty until the decode lands (or for ever, where it cannot run). */
   let peaks = $state<number[]>([]);
   /**
+   * The strip's own width, which DECIDES the bar count - see `barCountForWidth` for the two
+   * measurements that made a fixed count untenable. `clientWidth` is 0 before the first layout, and
+   * the clamp inside that helper is what makes that first frame legal rather than empty.
+   */
+  let stripWidth = $state(0);
+  const barCount = $derived(barCountForWidth(stripWidth));
+  /**
    * The resting strip, drawn while the decode is in flight and wherever it cannot run at all.
    *
    * Flat and obviously flat: it must not be mistaken for a real waveform, which is why it is not a
    * plausible-looking generated shape. It keeps the control the same size and in the same place, so
    * nothing moves under the finger when the real peaks arrive.
    */
-  const restingBars = $derived(new Array<number>(WAVEFORM_BARS).fill(0));
-  const bars = $derived(peaks.length > 0 ? peaks : restingBars);
+  const bars = $derived(
+    peaks.length > 0 ? resampleBars(peaks, barCount) : Array.from({ length: barCount }, () => 0)
+  );
   /** Fraction of the recording already played, 0..1 - the split between the two bar colours. */
   const playedFraction = $derived(duration > 0 ? Math.min(1, currentTime / duration) : 0);
 
@@ -111,7 +124,7 @@
           duration = decoded.duration;
           currentTime = Math.min(currentTime, decoded.duration);
         }
-        peaks = computeWaveformPeaks(mixToMono(decoded), WAVEFORM_BARS);
+        peaks = computeWaveformPeaks(mixToMono(decoded), PEAK_RESOLUTION);
       } finally {
         void audioContext.close();
       }
@@ -215,7 +228,7 @@
       so the bars can wear its focus ring as a `peer`.
     -->
     <div class="flex min-w-0 flex-1 flex-col justify-center gap-1.5 pt-1">
-      <div class="relative h-8 w-full">
+      <div class="relative h-8 w-full" bind:clientWidth={stripWidth}>
         <input
           type="range"
           min="0"
@@ -234,7 +247,7 @@
           {#each bars as bar, index (index)}
             {@const played = (index + 1) / bars.length <= playedFraction}
             <div
-              class="min-w-[2px] flex-1 rounded-full transition-colors duration-150 {played
+              class="min-w-0 flex-1 rounded-full transition-colors duration-150 {played
                 ? 'bg-amber-500'
                 : 'bg-black/20 dark:bg-white/25'}"
               style="height: {Math.round((BAR_FLOOR + (1 - BAR_FLOOR) * bar) * 100)}%"

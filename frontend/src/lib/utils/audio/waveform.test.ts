@@ -5,7 +5,13 @@
  * rounded away.
  */
 import { describe, it, expect } from 'vitest';
-import { computeWaveformPeaks, mixToMono } from './waveform';
+import {
+  BAR_PITCH_PX,
+  barCountForWidth,
+  computeWaveformPeaks,
+  mixToMono,
+  resampleBars,
+} from './waveform';
 
 /** `n` samples of a constant amplitude - a block of "sound" with a known RMS. */
 function tone(n: number, amplitude: number): Float32Array {
@@ -28,7 +34,9 @@ describe('computeWaveformPeaks', () => {
 
   it('draws silence as silence rather than dividing by zero', () => {
     // A muted microphone is a real recording, and it must produce a flat strip, not NaN bars.
-    expect(computeWaveformPeaks(new Float32Array(500), 8)).toEqual(new Array(8).fill(0));
+    expect(computeWaveformPeaks(new Float32Array(500), 8)).toEqual(
+      Array.from({ length: 8 }, () => 0)
+    );
   });
 
   it('KEEPS THE TAIL, which a floored stride throws away', () => {
@@ -80,5 +88,64 @@ describe('mixToMono', () => {
     };
 
     expect(Array.from(mixToMono(buffer))).toEqual([0.5, -0.5, 0.5, -0.5]);
+  });
+});
+
+describe('barCountForWidth', () => {
+  it('gives a bar roughly every 5px, so a bar is ~3px wide at every size', () => {
+    expect(barCountForWidth(382)).toBe(64); // clamped: 382/5 = 76
+    expect(barCountForWidth(200)).toBe(40);
+    expect(barCountForWidth(62)).toBe(12);
+  });
+
+  it('NEVER asks for more bars than the strip can hold, which is the overflow that was measured', () => {
+    // The 62px strip of a `min-w-[200px]` bubble: 40 fixed bars at their 2px minimum plus 2px gaps
+    // needed 158px and put the last bar 31px outside the panel (measured 2026-09-09). The property
+    // that forbids it is that the bars, at their pitch, always fit.
+    for (const width of [40, 62, 100, 200, 320, 382, 700]) {
+      expect(barCountForWidth(width) * BAR_PITCH_PX).toBeLessThanOrEqual(Math.max(width, 40));
+    }
+  });
+
+  it('stays a waveform rather than becoming decoration or a hairline', () => {
+    expect(barCountForWidth(0)).toBe(8);
+    expect(barCountForWidth(-10)).toBe(8);
+    expect(barCountForWidth(Number.NaN)).toBe(8);
+    expect(barCountForWidth(100_000)).toBe(64);
+  });
+
+  it('is a pure function of the width, so the same bubble always draws the same strip', () => {
+    expect(barCountForWidth(317)).toBe(barCountForWidth(317));
+  });
+});
+
+describe('resampleBars', () => {
+  it('keeps the loudest of each slice, so a quiet passage stays quiet', () => {
+    // Averaging instead would return [0.5, 0.5] and erase the difference the strip exists to show.
+    expect(resampleBars([0.2, 0.8, 0.1, 0.9], 2)).toEqual([0.8, 0.9]);
+  });
+
+  it('returns exactly the count asked for, up or down', () => {
+    expect(resampleBars([1, 0.5], 8)).toHaveLength(8);
+    expect(
+      resampleBars(
+        Array.from({ length: 64 }, () => 0.3),
+        12
+      )
+    ).toHaveLength(12);
+  });
+
+  it('passes an already-correct array through unchanged, without aliasing it', () => {
+    const peaks = [0.1, 0.2, 0.3];
+    const bars = resampleBars(peaks, 3);
+
+    expect(bars).toEqual(peaks);
+    expect(bars).not.toBe(peaks);
+  });
+
+  it('has nothing to draw for an empty recording or a nonsense count', () => {
+    expect(resampleBars([], 12)).toEqual([]);
+    expect(resampleBars([0.5], 0)).toEqual([]);
+    expect(resampleBars([0.5], -1)).toEqual([]);
   });
 });
