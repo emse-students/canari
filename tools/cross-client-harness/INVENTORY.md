@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-54 scripts.
+56 scripts.
 
 | script | what it is |
 |---|---|
@@ -45,6 +45,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `gate-probe.mjs` | The ONE expression that answers "is the encryption PIN gate on screen". |
 | `grainedb.mjs` | The three questions the COMM phase cannot ask a SCREEN, asked of production's database instead. |
 | `groupnav.mjs` | Opening a GROUP conversation by name, and proving the right one opened. |
+| `identity.mjs` | WHICH ACCOUNT A CLIENT IS ACTUALLY ACTING AS, ASKED OF THE TOKEN AND OF NOTHING ELSE. |
 | `instrument.mjs` | THE HASH OF WHAT A CHECK MEASURES WITH, as opposed to the hash of the check itself. |
 | `inventory.mjs` | THE INDEX OF EVERY SCRIPT IN THIS RIG, GENERATED FROM THE SCRIPTS THEMSELVES. |
 | `invite.mjs` | Invites a user into the open group conversation - i.e. produces an MLS Add commit. |
@@ -73,6 +74,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `ssh.mjs` | THE ONE WAY THIS HARNESS REACHES PRODUCTION. |
 | `state.mjs` | One-line health read of every web client - the thing to run when a check behaves oddly. |
 | `stranded.mjs` | WHAT THE VENUE CHANNEL'S HISTORY PERMANENTLY CONTAINS, AND THE ONLY 404s IT MAY PRODUCE. |
+| `subject.mjs` | THE PURE HALF OF "WHO IS THIS CLIENT" - a token's subject, and what a disagreement means. |
 | `unlock.mjs` | Unlocks every client that needs it, resolving WHICH ACCOUNT owns each port by itself. |
 | `venue.mjs` | Builds the campaign's SHARED venue if it is not there, and states what it found if it is. |
 | `watch.mjs` | Continuous observation of a client while a check runs: console, page errors, HTTP, WebSocket. |
@@ -173,7 +175,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-23 scripts.
+24 scripts.
 
 | script | what it is |
 |---|---|
@@ -185,6 +187,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/exit-selftest.mjs` | A CHECK MAY NOT REPORT SUCCESS AND END IN THE SAME BREATH. |
 | `archive/gate-probe-selftest.mjs` | `pin.mjs`'s gate probe, exercised on the pages it has to tell apart. |
 | `archive/gate-selftest.mjs` | EVERY SELF-TEST IN THE CI GATE MUST BE IMPORTABLE ON A MACHINE THAT HAS NO RIG. |
+| `archive/identity-selftest.mjs` | Pins the two ways a client's identity can be misread, and the one way it must not pass quietly. |
 | `archive/imports-selftest.mjs` | EVERY IMPORT IN EVERY RUNNER RESOLVES, AND NAMES SOMETHING THE TARGET ACTUALLY EXPORTS. |
 | `archive/instrument-selftest.mjs` | THE HASH THAT SAYS WHAT A CHECK MEASURES WITH IS ONLY WORTH ANYTHING IF IT SEES EVERY FILE. |
 | `archive/logcatclassify-selftest.mjs` | EVERY RULE OF THE PHONE CLASSIFIER, PINNED AGAINST A LINE WHOSE BUCKET IS KNOWN. |
@@ -252,4 +255,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-191 scripts in total.
+194 scripts in total.

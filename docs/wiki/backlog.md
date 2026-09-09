@@ -159,51 +159,6 @@ and its test are on [dev-environment](infrastructure/dev-environment.md).
 
 ---
 
-### P1 - a login with one account's credentials returns another account's access token, so the client SHOWS user B and ACTS as user A (measured on the LOCAL estate, 2026-09-09)
-
-**What was measured, on a completely clean login.** Cookies for the origin cleared, the page
-reloaded until it sat on `/login`, then the campaign PEER's uid and password typed into Authentik's
-own form. The app landed signed in and its profile link reads the PEER's user id. **The Bearer token
-it then sends on every request carries the OWNER's user id as `sub`** - decoded from the request
-header, never from the app's own state.
-
-Everything downstream follows from that one fact, and each half was measured separately:
-
-- `GET /api/associations/me/list`, called by the PEER's browser, returned **the OWNER's**
-  memberships. Proven by coupling rather than by inspection: a BDE row was created for the owner,
-  the peer's answer became `bde:32`; the row was deleted, the peer's answer became empty. The peer's
-  own five memberships never appeared.
-- `POST /api/associations/<id>/events` was refused `403` with `Insufficient permissions in this
-  association` - the branch the guard takes for a MEMBER lacking a flag, which is true of the owner
-  and false of the peer, who is not a BDE member at all.
-- The request went to the **BDE's** id, because `/calendar` computes its deposit target from the
-  caller's BDE authority. The UI offered a control the caller could not use, which is the visible
-  end of the same split.
-
-**Six causes are eliminated, each by a measurement rather than by reasoning.** Not a browser cache
-(`fromDiskCache: false`). Not an HTTP cache (no `Cache-Control`, no `Age`, `Vary: Origin` only). Not
-an nginx `auth_request` cache - there is no `proxy_cache` on `/internal/auth/verify`. Not an
-application cache - `myAssociations` carries no interceptor and reads `x-user-id` straight from the
-header. Not the shared loopback that `adb reverse` creates: the phone's forward was REMOVED and the
-answer did not change. Not a stale session: the clean login above reproduces it.
-
-**What is NOT established, and must not be assumed.** Whether production is affected. Whether the ID
-token and the access token disagree at the IdP or at this estate's exchange. Whether it is specific
-to these two accounts, which are dedicated Authentik users signing in through the service-account
-link. **A third account settles the last one and nothing else can**, which is the same blocker the
-first-contact notification P1 already carries.
-
-**Consequence for the campaign, and it is the urgent half: every two-client measurement taken on
-this rig while this holds is void.** W2 is not a second user - it is the same user as A1 wearing the
-peer's name in the interface. A fan-out, a delivery, a HEAL row, a read receipt: all of them would
-report success for the wrong reason, and none of the runner's checks can see it. **The layout pass
-of 2026-09-09 is unaffected** - all five of its measurements were taken on the phone alone.
-
-**The cheapest probe, for any session that needs to trust two clients**: decode the `sub` of the
-Bearer header each client sends and compare the two. It is one CDP `Network.requestWillBeSent` read,
-it needs no estate access, and it would have caught this in seconds.
-
----
 ### P1 - a damaged local MLS state is reported as a PIN rotation, and the PIN the user actually holds does not get them back in (measured 2026-09-08)
 
 **The measurement.** CORRUPT-2 (`corrupt2.mjs`) XORs ONE byte at the midpoint of the 18.4 MB
