@@ -11,6 +11,33 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a message's popovers opened away from the button that opened them, and one opened off-screen
+
+Three reports from the user on 2026-09-09, all the same defect: a popover positioned against
+something other than the control that summons it.
+
+**The overflow menu could be entirely off-screen.** It was `absolute bottom-full` unconditionally, so
+on a message near the top of the thread it opened upward past the scroller's edge and
+`.chat-messages-scroll` clipped it. Measured on the live app at 958px: `top: -153px`,
+`bottom: -1px` - the whole of it above the viewport, with only a sliver surviving the clip. It reads
+as a layering fault and is not one; the same measurement showed the menu and the conversation header
+both at `z-20` with ZERO vertical overlap, so nothing was covering it. Both popovers now choose their
+side from the room the SCROLLER leaves, because the scroller is what clips. Verified at three
+anchors: a bubble with 21px of room above flips below and lands inside, the other two stay above.
+
+**And both opened beside the MESSAGE rather than beside the button.** The quick-reaction bar hung off
+the bubble's left edge while the smiley that opens it sat in the gutter on the right - *"la barre de
+smiley devrait apparaitre au niveau du bouton smiley+"*. They are children of the icon strip now.
+Anchoring them there had been tried on 2026-09-08 and reverted for laying the pill "entirely in the
+gutter, 292px to the left"; that attempt kept the bubble's SIDE, and the side has to mirror when the
+anchor moves - the strip is in the gutter, so a popover must grow back inward over the message.
+Measured after: the strip's centre falls inside the popover's own span, a 0px horizontal gap.
+
+**The full emoji picker had the same fault one level up**: its anchor was the message ROW, which on a
+wide thread is most of the window, so pressing "+" opened the panel a screen away. It now anchors to
+the strip when there is one. Below `md` there is no strip and the row is the correct anchor - two
+legitimate cases, not a fallback.
+
 ### Changed - every corner in the app now comes from the radius scale
 
 `app.css` has declared four radius meanings since #447 - 8px card, 12px larger card, 18px bubble,

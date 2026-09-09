@@ -40,6 +40,27 @@
   let panelEl = $state<HTMLElement | null>(null);
   let unbindPosition: (() => void) | null = null;
 
+  /**
+   * THE PANEL OPENS BESIDE THE CONTROL THAT OPENED IT, NOT BESIDE THE MESSAGE.
+   *
+   * `anchor` is the message ROW, and on a wide thread a row is most of the window - so aligning to
+   * its edge put the panel a screen away from the "+" that had just been pressed. The user's report
+   * was that plainly (2026-09-09): *"lorsque je clique sur + sur la barre de smiley, le panneau ne
+   * devrait pas s'ouvrir a l'autre bout de l'ecran"*.
+   *
+   * The hover toolbar publishes its icon strip as `[data-message-toolbar]`, and the "+" lives in the
+   * quick bar hanging off that strip, so the strip is where the reader's eye and pointer already
+   * are. **A row with no strip is not a failure and this is not a fallback**: below `md` the toolbar
+   * does not render at all and the picker is opened from the long-press sheet, where the ROW is the
+   * correct anchor and the only one there is. Two legitimate cases, resolved by asking the DOM which
+   * one this is.
+   *
+   * Resolved at OPEN time rather than derived: the strip is created and destroyed by hover, so a
+   * value computed once would name a node that no longer exists.
+   */
+  const positioningAnchor = () =>
+    anchor?.querySelector<HTMLElement>('[data-message-toolbar]') ?? anchor;
+
   $effect(() => {
     if (!visible || !panelEl || !anchor) {
       unbindPosition?.();
@@ -49,7 +70,7 @@
 
     unbindPosition?.();
     unbindPosition = bindFixedPopover(panelEl, {
-      anchor: () => anchor,
+      anchor: positioningAnchor,
       alignEnd: isOwn,
       estimatedHeight: 460,
     });

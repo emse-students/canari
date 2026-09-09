@@ -85,6 +85,63 @@
     quickOpen = false;
     menuOpen = false;
   }
+
+  /**
+   * WHICH SIDE OF THE BUBBLE A POPOVER OPENS ON, AND WHY IT IS NOT ALWAYS ABOVE.
+   *
+   * Both popovers used to be `bottom-full` unconditionally. On a message near the top of the thread
+   * that puts them off the top of the screen and `.chat-messages-scroll` - `overflow-y: auto` - cuts
+   * them off. Measured on 2026-09-09 at 958px, on the first visible bubble: the overflow menu
+   * rendered at `top: -153px`, `bottom: -1px`, entirely above the viewport, and the user's report of
+   * it was a screenshot of the sliver that survived. It reads as a layering fault and it is not one:
+   * the menu wins every hit-test it is given, it is simply not on screen.
+   *
+   * THE ROOM IS MEASURED AGAINST THE SCROLLER, NOT THE VIEWPORT, because the scroller is what clips.
+   * A popover anchored to the bubble also travels with it for free, which a portalled one would not:
+   * that would need scroll tracking, and an anchor that can drift is a second defect in place of
+   * this one. `MessageMobileActions` is portalled for the opposite reason - it is `inset-0` and
+   * anchored to nothing.
+   *
+   * `null` means NOT YET MEASURED, and the popover is invisible for that one frame rather than
+   * painted in the wrong place and moved. A flip the reader can see is worse than a frame they
+   * cannot.
+   */
+  let placement = $state<'above' | 'below' | null>(null);
+  let anchorEl = $state<HTMLDivElement | undefined>();
+  let popoverEl = $state<HTMLDivElement | undefined>();
+
+  $effect(() => {
+    if (!quickOpen && !menuOpen) {
+      placement = null;
+      return;
+    }
+    const popover = popoverEl;
+    const anchor = anchorEl;
+    if (!popover || !anchor) return;
+
+    const clipper = anchor.closest('.chat-messages-scroll') ?? anchor.offsetParent;
+    const bounds = clipper?.getBoundingClientRect();
+    const box = anchor.getBoundingClientRect();
+    // GAP is the `mb-2`/`mt-2` below, in pixels: the popover needs its own height plus that margin.
+    const needed = popover.offsetHeight + 8;
+    if (!bounds) {
+      placement = 'above';
+      return;
+    }
+    const roomAbove = box.top - bounds.top;
+    // Above unless it does not fit AND below is roomier - so a thread too short for either side
+    // keeps the reference's placement instead of flipping to an equally clipped one.
+    placement = roomAbove >= needed || roomAbove >= bounds.bottom - box.bottom ? 'above' : 'below';
+  });
+
+  /** The two anchoring classes, plus the one frame before the measurement exists. */
+  const placementClass = $derived(
+    placement === null
+      ? 'bottom-full mb-2 invisible'
+      : placement === 'below'
+        ? 'top-full mt-2'
+        : 'bottom-full mb-2'
+  );
 </script>
 
 <svelte:window
@@ -116,20 +173,32 @@
   finished the pointer has usually moved on.
 -->
 <div
+  bind:this={anchorEl}
   use:clickOutside={{ enabled: quickOpen || menuOpen, callback: closeAll }}
   class="pointer-events-none absolute inset-0 hidden md:block"
 >
   <!--
-    Everything here is positioned against THE BUBBLE, which is what `inset-0` on the bubble wrapper
-    buys: this box is the bubble's own rectangle, so `right-full` puts the strip in the gutter beside
-    it and `bottom-full right-0` puts a popover above it, aligned to its outer edge and extending
-    inward over the message. Anchoring the popovers to the STRIP instead - measured 2026-09-08 - laid
-    the reaction pill entirely in the gutter, 292px to the left of the message it belonged to.
+    The STRIP is positioned against the bubble, which is what `inset-0` on the wrapper buys: this box
+    is the bubble's own rectangle, so `left-full` puts the strip in the gutter beside it.
+
+    THE POPOVERS ARE POSITIONED AGAINST THE STRIP, and they are its children for that reason. They
+    were the bubble's until 2026-09-09, which put the reaction pill above the bubble's LEFT edge
+    while the smiley that opens it sat in the gutter on the right - the user's report was exactly
+    that: *"la barre de smiley devrait apparaitre au niveau du bouton smiley+"*.
+
+    ANCHORING TO THE STRIP HAD BEEN TRIED ON 2026-09-08 AND REVERTED, because it laid the pill
+    "entirely in the gutter, 292px to the left of the message". That attempt kept the bubble's SIDE,
+    and the side has to mirror when the anchor changes: the strip sits in the gutter, so a popover
+    must extend back INWARD over the message, away from the edge. For a peer message the strip is on
+    the right, so the popover's right edge pins to it (`right-0`) and it grows leftward; for an own
+    message the strip is on the left and it is `left-0`. Keeping `right-0` for an own message is what
+    sent 292px of pill into the gutter, and it is the one line that made the idea look wrong.
 
     The strip REVERSES for an own message rather than being written twice: react has to be the button
     nearest the bubble, which is the row's last child on the right and its first on the left.
   -->
   <div
+    data-message-toolbar
     class="pointer-events-auto absolute top-1/2 z-10 flex -translate-y-1/2 flex-row items-center {isOwn
       ? 'right-full mr-1 flex-row-reverse'
       : 'left-full ml-1'} {pinnedOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}"
@@ -180,125 +249,127 @@
         <Ellipsis size={16} />
       </button>
     {/if}
+
+    <!--
+      THE QUICK BAR. Measured: a 24px-radius pill on the app background, 8px/12px of padding, six
+      emojis and then the button that opens the full picker. It hangs above the strip rather than
+      above the bubble, so it clears the neighbouring message for the same reason the strip does.
+    -->
+    {#if quickOpen && onReact}
+      <div
+        bind:this={popoverEl}
+        class="bg-cn-popover pointer-events-auto absolute z-20 {placementClass} flex flex-row items-center gap-0.5 rounded-2xl px-3 py-2 shadow-lg {isOwn
+          ? 'left-0'
+          : 'right-0'}"
+        role="group"
+        aria-label={m.msg_react_label()}
+      >
+        {#each QUICK_REACTION_EMOJIS as emoji (emoji)}
+          {@const isActive = userReactions.includes(emoji)}
+          <button
+            onclick={(e) => {
+              e.stopPropagation();
+              onReact?.(emoji);
+              closeAll();
+            }}
+            class="flex h-9 w-9 items-center justify-center rounded-full text-xl leading-none transition-transform hover:scale-125 active:scale-95 {isActive
+              ? 'bg-cn-yellow/20 ring-cn-yellow ring-1'
+              : 'hover:bg-black/5 dark:hover:bg-white/10'}"
+            aria-label={m.msg_react_with_emoji({ emoji })}
+            aria-pressed={isActive}
+            title={m.msg_react_with_emoji({ emoji })}
+          >
+            {emoji}
+          </button>
+        {/each}
+        {#if onToggleEmojiPicker}
+          <button
+            onclick={(e) => {
+              e.stopPropagation();
+              quickOpen = false;
+              onToggleEmojiPicker?.();
+            }}
+            class="text-text-muted hover:text-text-main flex h-9 w-9 items-center justify-center rounded-full bg-black/5 hover:bg-black/10 dark:bg-white/10 dark:hover:bg-white/20"
+            aria-label={m.msg_more_reactions_label()}
+            title={m.msg_more_reactions_label()}
+          >
+            <Plus size={18} />
+          </button>
+        {/if}
+      </div>
+    {/if}
+
+    <!-- The overflow menu: everything that is not react or reply. -->
+    {#if menuOpen}
+      <div
+        bind:this={popoverEl}
+        class="bg-cn-popover pointer-events-auto absolute z-20 {placementClass} flex min-w-44 flex-col rounded-xl py-1 shadow-lg {isOwn
+          ? 'left-0'
+          : 'right-0'}"
+        role="menu"
+      >
+        {#if onForward}
+          <button
+            role="menuitem"
+            onclick={(e) => {
+              e.stopPropagation();
+              closeAll();
+              onForward?.();
+            }}
+            class="text-text-main flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-black/5 dark:hover:bg-white/10"
+          >
+            <Forward size={16} />
+            {m.msg_forward_label()}
+          </button>
+        {/if}
+        {#if onPin}
+          <button
+            role="menuitem"
+            onclick={(e) => {
+              e.stopPropagation();
+              closeAll();
+              onPin?.();
+            }}
+            class="text-text-main flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-black/5 dark:hover:bg-white/10"
+          >
+            {#if pinned}
+              <PinOff size={16} />
+              {m.msg_unpin_label()}
+            {:else}
+              <Pin size={16} />
+              {m.msg_pin_label()}
+            {/if}
+          </button>
+        {/if}
+        {#if canEdit}
+          <button
+            role="menuitem"
+            onclick={(e) => {
+              e.stopPropagation();
+              closeAll();
+              onEdit?.();
+            }}
+            class="text-text-main flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-black/5 dark:hover:bg-white/10"
+          >
+            <Pencil size={16} />
+            {m.common_edit_label()}
+          </button>
+        {/if}
+        {#if canDelete}
+          <button
+            role="menuitem"
+            onclick={(e) => {
+              e.stopPropagation();
+              closeAll();
+              onDelete?.();
+            }}
+            class="text-red-err flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-red-500/10"
+          >
+            <Trash2 size={16} />
+            {m.common_delete_button()}
+          </button>
+        {/if}
+      </div>
+    {/if}
   </div>
-
-  <!--
-    THE QUICK BAR. Measured: a 24px-radius pill on the app background, 8px/12px of padding, six
-    emojis and then the button that opens the full picker. It hangs above the strip rather than
-    above the bubble, so it clears the neighbouring message for the same reason the strip does.
-  -->
-  {#if quickOpen && onReact}
-    <div
-      class="bg-cn-popover pointer-events-auto absolute bottom-full z-20 mb-2 flex flex-row items-center gap-0.5 rounded-2xl px-3 py-2 shadow-lg {isOwn
-        ? 'right-0'
-        : 'left-0'}"
-      role="group"
-      aria-label={m.msg_react_label()}
-    >
-      {#each QUICK_REACTION_EMOJIS as emoji (emoji)}
-        {@const isActive = userReactions.includes(emoji)}
-        <button
-          onclick={(e) => {
-            e.stopPropagation();
-            onReact?.(emoji);
-            closeAll();
-          }}
-          class="flex h-9 w-9 items-center justify-center rounded-full text-xl leading-none transition-transform hover:scale-125 active:scale-95 {isActive
-            ? 'bg-cn-yellow/20 ring-cn-yellow ring-1'
-            : 'hover:bg-black/5 dark:hover:bg-white/10'}"
-          aria-label={m.msg_react_with_emoji({ emoji })}
-          aria-pressed={isActive}
-          title={m.msg_react_with_emoji({ emoji })}
-        >
-          {emoji}
-        </button>
-      {/each}
-      {#if onToggleEmojiPicker}
-        <button
-          onclick={(e) => {
-            e.stopPropagation();
-            quickOpen = false;
-            onToggleEmojiPicker?.();
-          }}
-          class="text-text-muted hover:text-text-main flex h-9 w-9 items-center justify-center rounded-full bg-black/5 hover:bg-black/10 dark:bg-white/10 dark:hover:bg-white/20"
-          aria-label={m.msg_more_reactions_label()}
-          title={m.msg_more_reactions_label()}
-        >
-          <Plus size={18} />
-        </button>
-      {/if}
-    </div>
-  {/if}
-
-  <!-- The overflow menu: everything that is not react or reply. -->
-  {#if menuOpen}
-    <div
-      class="bg-cn-popover pointer-events-auto absolute bottom-full z-20 mb-2 flex min-w-44 flex-col rounded-xl py-1 shadow-lg {isOwn
-        ? 'right-0'
-        : 'left-0'}"
-      role="menu"
-    >
-      {#if onForward}
-        <button
-          role="menuitem"
-          onclick={(e) => {
-            e.stopPropagation();
-            closeAll();
-            onForward?.();
-          }}
-          class="text-text-main flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-black/5 dark:hover:bg-white/10"
-        >
-          <Forward size={16} />
-          {m.msg_forward_label()}
-        </button>
-      {/if}
-      {#if onPin}
-        <button
-          role="menuitem"
-          onclick={(e) => {
-            e.stopPropagation();
-            closeAll();
-            onPin?.();
-          }}
-          class="text-text-main flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-black/5 dark:hover:bg-white/10"
-        >
-          {#if pinned}
-            <PinOff size={16} />
-            {m.msg_unpin_label()}
-          {:else}
-            <Pin size={16} />
-            {m.msg_pin_label()}
-          {/if}
-        </button>
-      {/if}
-      {#if canEdit}
-        <button
-          role="menuitem"
-          onclick={(e) => {
-            e.stopPropagation();
-            closeAll();
-            onEdit?.();
-          }}
-          class="text-text-main flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-black/5 dark:hover:bg-white/10"
-        >
-          <Pencil size={16} />
-          {m.common_edit_label()}
-        </button>
-      {/if}
-      {#if canDelete}
-        <button
-          role="menuitem"
-          onclick={(e) => {
-            e.stopPropagation();
-            closeAll();
-            onDelete?.();
-          }}
-          class="text-red-err flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-red-500/10"
-        >
-          <Trash2 size={16} />
-          {m.common_delete_button()}
-        </button>
-      {/if}
-    </div>
-  {/if}
 </div>
