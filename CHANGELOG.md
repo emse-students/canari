@@ -21,18 +21,21 @@ which is also where every release up to and including v0.13.1 now lives.
   the card's height - before the stylesheet that normally sizes them applied. `custom-login.css`
   now bounds that icon to a normal size unconditionally, removing the race rather than hiding it:
   a genuine, persisting alert still renders, at its correct size.
-### Fixed - a failed login re-entered the source that had just failed, so 21% of CAS returns became an infinite loop with the error never readable
+### Fixed - a failed login re-entered the source that had just failed, so a CAS return with no code became an infinite loop with the error never readable
 
 Reported from a phone that could not log in at all - *"ca boucle sur authentik"* - and the account
 (`robin.berthod`, 2026-09-08) never reached Canari once: zero `/auth/callback` in production's nginx
 log.
 
-**The cause is upstream, at `cas.emse.fr`.** Over the 96 h to 2026-09-08, **71 of 337** returns to
-`/source/oauth/callback/cas-emse/` carried **no query string at all** - no `code`, no `state`, no
-`error`, which RFC 6749 4.1.2.1 forbids. Authentik always sends `state`, CAS preserves it on the
-first hop, every successful return carries both, and 26 distinct IPs are affected, mobile-dominated,
-with a retry usually succeeding. **That is the DSI's to fix and the message is written**
-([authentik](docs/wiki/infrastructure/authentik.md#what-the-dsi-has-to-be-told---still-owed)).
+**The cause is upstream, at `cas.emse.fr`.** Over the 120 h to 2026-09-09, **52 of 402** returns
+from real browsers to `/source/oauth/callback/cas-emse/` carried **no query string at all** - no
+`code`, no `state`, no `error`, which RFC 6749 4.1.2.1 forbids. Authentik always sends `state`, CAS
+preserves it on the first hop, and every successful return carries both. **12.9%, mobile at three
+times the desktop rate and never once on macOS** - and it is TWO populations, not one: 31 IPs fail
+then succeed, 7 never succeed at all. **The first figure published, "71 of 337, 21%", was WRONG** -
+its numerator counted robots, this session's own reproduction probes among them, and it had already
+been mailed; the correction is owed with the follow-up. **That half is the DSI's to fix**
+([authentik](docs/wiki/infrastructure/authentik.md#the-follow-up-to-send)).
 
 **What was ours is the loop it became.** Authentik's `handle_login_failure` redirects to the literal
 `settings.LOGIN_URL`, which resolves to the **BRAND's** authentication flow - not the provider's -

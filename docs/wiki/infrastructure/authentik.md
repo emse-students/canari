@@ -236,12 +236,37 @@ An unpinned provider falls through `PolicyAccessView.handle_no_permission` to
 `ToDefaultFlow.get_flow` (`authentik/policies/views.py:101`), which returns **the BRAND's**
 authentication flow first - and the brand's flow is now the failure page, not a login page.
 
-## CAS returns nothing on 21% of logins, and our login page turned that into a livelock - 2026-09-08
+## A share of CAS returns carry no code, and our login page turned that into a livelock - 2026-09-08
 
-Measured on `docker logs miconnect-server-1` over the 96 h to 2026-09-08: of **337** returns from
-`cas.emse.fr` to `/source/oauth/callback/cas-emse/`, **71 (21%)** arrived with **no query string at
-all** - no `code`, no `state`, no `error`, which RFC 6749 4.1.2.1 forbids. 26 distinct client IPs,
-mobile-dominated, zero failures from Windows/Firefox/macOS in the window; a retry usually succeeds.
+**THE FIRST FIGURE PUBLISHED HERE WAS WRONG AND HAD ALREADY BEEN SENT TO THE DSI.** It said "71 of
+337, 21%", counting **every** empty return over a denominator that was roughly the BROWSER returns -
+and the numerator was full of robots: `curl/8.21.0` (this session's own reproduction probes),
+`Apache-HttpClient/5.5.1`, and an `X11; Linux x86_64` Chrome failing 71% of the time, none of them a
+student. **Diagnostic traffic enters the population it is measuring**, and a bare callback is the
+one request a probe makes constantly and a person almost never does.
+
+**The measurement, re-taken 2026-09-09 over 120 h, browsers only** (`iPhone|iPad|CPU OS|Android|
+Macintosh|Windows` in the user agent - everything else is dropped):
+
+| Platform | returns | empty | rate |
+|---|---|---|---|
+| macOS | 23 | 0 | 0% |
+| Windows | 59 | 4 | 7% |
+| Android | 122 | 20 | 16% |
+| iOS | 198 | 28 | 14% |
+| **all browsers** | **402** | **52** | **12.9%** |
+| (robots, excluded) | 98 | 74 | - |
+
+So **~10 failed logins a day, ~73 a week**, mobile at roughly three times the desktop rate, and
+never once on macOS. Per day the browser rate runs 4% to 22%. An empty return carries **no `code`,
+no `state`, no `error`**, which RFC 6749 4.1.2.1 forbids.
+
+**And the failures are TWO populations, which one number hides.** Of the browser IPs that saw an
+empty return, **31 also logged in successfully** in the same window - transient, a retry gets them
+in - while **7 never succeeded once** (11 empties between them). The first population is a race; the
+second is a person who cannot get in at all, which is what `robin.berthod` is. A rate alone would
+have merged them.
+
 Authentik always sends `state` (its own `redirect args` lines carry it, and
 `sources/oauth/clients/oauth2.py` shows the check reading it back out of the session), CAS preserves
 it on the first hop, and every successful return carries `code` and `state`. So the parameter is
@@ -328,7 +353,7 @@ to is the FLOW**; on a stage binding it is a router.
 **2026-09-08** brings the brand back pointing at `miconnect-auth` and the loop with it, with no
 symptom until CAS next drops a `code`.
 
-### Reproducing the whole failure on demand - no phone, no CAS account, no waiting for the 21%
+### Reproducing the whole failure on demand - no phone, no CAS account, no waiting for a real one
 
 A callback with no query string is byte-for-byte what CAS sends, so the chain is testable from a
 workstation in two seconds. This is the before/after that proved the fix:
@@ -368,43 +393,153 @@ first thing measured is the transition.
 - **`/if/flow/password-login/`** is a real identification + password + login flow, so it is a way in
   that no CAS or brand change can affect. `/if/flow/miconnect-auth/` is the other.
 
-### What the DSI has to be told - STILL OWED
+### The exchange with the DSI, and what their service registration says - 2026-09-09
 
-The 21% is theirs and nothing here can fix it. French, to send as-is:
+**A first mail went out on 2026-09-08 quoting "71 of 337, 21%". That figure is wrong** (see the top
+of this section) and a correction is owed with the follow-up below. The defect is real and theirs;
+the number attached to it was inflated by robots.
+
+The DSI answered with the CAS service registration, `/etc/cas/services/miconnect-oidc-2026030501.json`
+on `cas1`, then the full file. **It is NOT reproduced here, deliberately** - it is the DSI's
+configuration, this repository is PUBLIC, and it carries their OIDC client secret. What follows is
+the reading of it; the file itself stays in the mail thread.
+
+**The access gate, and why it is the second population's best candidate.**
+`accessStrategy.requiredAttributes` admits only a principal whose SupAnn resource state for the CAS
+service is `A`. It is **deterministic**, so it cannot explain the 31 IPs that fail and then succeed -
+but it is the best candidate for the **7 that never succeed**, and for `robin.berthod`, whose last
+successful login is 2026-06-11, an end-of-year date. Two ways it can bite somebody who looks active:
+
+- SupAnn writes this attribute as `{SERVICE}ETAT[:SOUSETAT]`, so a principal carrying
+  `{service_cas}A:<something>` is active AND does not equal `{service_cas}A`. Whether CAS compares
+  by equality or by pattern here decides whether such a person is refused, and the answer is a
+  version-dependent property of `DefaultRegisteredServiceAccessStrategy` - it is a question for them,
+  not a guess for us.
+- The attribute is **multi-valued across services**; a principal holding only `{PORTAIL}A` is refused
+  by MiConnect while every other service works, which is exactly what a student would report as
+  "everything else logs me in".
+
+**What it does NOT explain is the shape of the failure.** A CAS access refusal renders an error page,
+or at worst returns `error=access_denied` to the client. **We receive neither: we receive a redirect
+to our callback with an EMPTY query string.** That signature - the client reached, no parameters at
+all - is what a lost pac4j session at `/cas/oauth2.0/callbackAuthorize` produces, the authorization
+request context being unreconstructable. So the two populations plausibly have two different causes,
+and only their logs can separate them.
+
+**They check `supannRessourceEtat`, they release `supannRessourceEtatDate`** - different attributes,
+and only the second reaches us. So **the state that decides access is invisible on this side**, while
+the one we can see is a validity WINDOW (`{SERVICE}[ETAT]:debut:fin`). Authentik holds `promo`,
+`formation` and `school_status` and nothing else (`robin.berthod` = `{promo: 2024,
+formation: "ICM", school_status: "Eleve"}`). Releasing `supannRessourceEtat` too would let this side
+refuse with a sentence that names the reason instead of a generic failure.
+
+**Three things in the file are wider than the service they describe, and one is a credential.**
+
+- **`supportedGrantTypes` carries `password` and `client_credentials`** where the service only ever
+  performs `authorization_code`. Resource-Owner Password Credentials means anybody holding the client
+  id and secret can exchange a student's raw password for a MiConnect token, with no browser, no SSO
+  and no trace in the flow we watch. `client_credentials` mints a token with no user at all.
+- **`supportedResponseTypes` carries `token`, `id_token` and `device_code`** where `responseTypes` is
+  `["code"]`. That re-opens the implicit flow, whose tokens land in a URL fragment.
+- **The `clientSecret` is a short dictionary word, and it arrived twice identically.** Its value is
+  NOT reproduced here and must not be - this repository is PUBLIC. Either the DSI redacted it for the
+  mail, or it is the real shared secret, in which case it is the whole protection on the two grants
+  above and a rotation is worth asking for. It has been through a chat transcript in either case.
+
+**And the trailing comma is in both pastes, at the same position** - after the `supannRessourceEtat`
+entry, before the closing brace. Strict JSON forbids it. `jq . miconnect-oidc-2026030501.json`
+settles it in one second, and it matters more than it looks: **a service registry that fails to parse
+keeps the last good copy IN MEMORY, per node.** `cas1` implies siblings, so one node holding a
+different MiConnect than the others is a node-correlated intermittent failure - the exact shape of a
+13% rate that a retry usually escapes.
+
+**Two smaller things.** `generateRefreshToken: true` with no `offline_access` in `scopes`, so a
+refresh token is configured and cannot be requested; harmless today because the Authentik source only
+performs the initial code exchange. And **the file is truncated at `...`** - whatever follows
+(`properties`, an expiration policy, a logout type) has not been seen and could carry another gate.
+
+### The follow-up to send
+
+**Send this as one mail.** It opens with the correction because the wrong figure went out first, and
+it closes with the security remarks because they are a courtesy, not the subject.
 
 > Bonjour,
 >
-> Nous observons un defaut de redirection sur `cas.emse.fr` qui empeche une partie des connexions a
-> MiConnect (auth.canari-emse.fr, client OIDC declare `canari`).
+> Merci pour la declaration de service complete, elle fait beaucoup avancer le diagnostic. Trois
+> points, plus deux remarques de fin.
 >
-> **Symptome mesure** : sur 337 retours de `cas.emse.fr` vers notre URL de callback
-> `https://auth.canari-emse.fr/source/oauth/callback/cas-emse/` en 96 h (du 04/09 au 08/09/2026),
-> **71 (21%) arrivent sans aucun parametre de requete** : ni `code`, ni `state`, ni `error`. La
-> requete est un `GET` sur l'URL nue. Le protocole (RFC 6749, section 4.1.2.1) impose que la reponse
-> porte soit `code` + `state`, soit `error`.
+> **1. Correction du chiffre que nous vous avons envoye.** Notre premiere mesure (21%) comptait des
+> requetes automatiques dans le numerateur - nos propres sondes de diagnostic, un client Java et un
+> navigateur headless. **La mesure corrigee, navigateurs reels uniquement, sur 120 h
+> (04-09/09/2026) : 52 retours vides sur 402, soit 12,9%.** Le detail par plateforme : macOS 0/23,
+> Windows 4/59 (7%), Android 20/122 (16%), iOS 28/198 (14%). Le defaut est donc reel et nettement
+> mobile, mais deux fois moins frequent que ce que nous avions annonce. Desole pour le bruit.
 >
-> **Ce que nous avons verifie de notre cote** : notre serveur envoie toujours `state` a
-> `/cas/oidc/oidcAuthorize` (verifie dans nos logs, requete par requete), et `cas.emse.fr` le
-> conserve bien sur le premier saut (verifie par sonde directe). Les retours qui aboutissent portent
-> toujours `code` et `state`. La perte se produit donc apres l'authentification, au niveau de
-> `/cas/oauth2.0/callbackAuthorize`.
+> **2. Il y a DEUX populations distinctes, et elles n'ont probablement pas la meme cause.** Parmi les
+> adresses IP qui subissent un retour vide, **31 finissent par se connecter** dans la meme fenetre
+> (une nouvelle tentative passe) tandis que **7 n'y arrivent jamais**, certaines apres 3 a 5 essais.
+> La premiere ressemble a une course ; la seconde a un refus deterministe.
 >
-> **Piste** : ce point de sortie pac4j retrouve son contexte via le cookie de session distribuee
-> `DISSESSIONOauthOidcServerSupport`. Un echec de lecture de cette session (replication entre
-> instances, affinite de session derriere le repartiteur, ou ecrasement du cookie quand deux
-> autorisations sont en cours dans le meme navigateur) produirait exactement cette reponse vide.
-> Les journaux CAS de `callbackAuthorize` sur la periode devraient le confirmer.
+> **3. Votre `accessStrategy` explique peut-etre la seconde, mais pas la forme de l'echec.** Vous
+> exigez `supannRessourceEtat = {service_cas}A`. Trois questions precises :
 >
-> **Population touchee** : 26 adresses IP distinctes sur 96 h, tres majoritairement des navigateurs
-> mobiles ; aucun echec depuis Windows/Firefox ou macOS sur la fenetre mesuree. Un utilisateur qui
-> reessaie finit generalement par passer, ce qui va dans le sens d'une course plutot que d'un compte
-> mal configure. Exemple documente : le compte `robin.berthod` n'a pas pu se connecter du tout le
-> 08/09/2026 au matin.
+> - Pour le compte `robin.berthod` (derniere connexion reussie le 11/06/2026, en echec repete
+>   depuis), quelle est la valeur exacte de `supannRessourceEtat` ? Si elle ne vaut pas
+>   `{service_cas}A`, son cas est explique et n'a rien a voir avec la course.
+> - La comparaison est-elle une egalite stricte ou un motif ? SupAnn autorise
+>   `{SERVICE}ETAT:SOUSETAT` : un compte portant `{service_cas}A:quelquechose` est actif tout en
+>   n'etant pas egal a `{service_cas}A`. Si c'est une egalite, ces comptes sont refuses a tort.
+> - **Surtout** : lorsqu'un principal echoue a ce controle, que fait CAS exactement ? Nous nous
+>   attendions a une page d'erreur, ou au minimum a un retour `error=access_denied` sur le
+>   `redirectUri`. **Or nous recevons une redirection vers notre callback avec une query string
+>   entierement VIDE** - ni `code`, ni `state`, ni `error`. Cette signature-la ressemble davantage a
+>   une session pac4j perdue sur `/cas/oauth2.0/callbackAuthorize` qu'a un refus d'acces, ce qui
+>   voudrait dire que nos deux populations ont bien deux causes differentes.
 >
-> Nous pouvons fournir les horodatages precis des 71 requetes vides, avec les IP et les user agents,
-> pour recoupement avec vos journaux.
+> **Ce que nous pouvons vous donner pour recoupement**, horodatages precis de retours vides de
+> navigateurs mobiles reels (heure serveur, UTC) :
 >
-> Merci d'avance,
+> ```
+> 2026-09-09T10:26:38  2001:861:3080:b300:e3a6:9fe3:8edb:c6   iOS
+> 2026-09-09T10:27:02  2001:861:3080:b300:e3a6:9fe3:8edb:c6   iOS   (nouvelle tentative, echec aussi)
+> 2026-09-09T11:32:21  2a01:cb16:2069:74cf:0:54:1dad:f401     Android
+> 2026-09-09T14:00:49  144.214.255.138                        Android
+> 2026-09-09T15:26:23  93.23.17.178                           Android
+> ```
+>
+> Ce qui nous aiderait le plus : les journaux CAS de `/cas/oauth2.0/callbackAuthorize` sur ces
+> instants, en particulier une trace de session non retrouvee ou de refus d'acces au service.
+>
+> **Deux choses dans le fichier, en passant.**
+>
+> - **La map `requiredAttributes` se termine par une virgule** avant l'accolade fermante, et elle est
+>   presente dans les deux copies que vous nous avez envoyees. Si elle est bien dans le fichier,
+>   `jq . miconnect-oidc-2026030501.json` le dira tout de suite. Ce detail nous interesse
+>   particulierement : **un service qui ne se recharge pas garde en memoire la derniere version
+>   valide, noeud par noeud** - et `cas1` laisse supposer des freres. Un seul noeud divergent
+>   produirait exactement des echecs intermittents comme les notres, que l'utilisateur contourne en
+>   reessayant.
+> - **Vous liberez `supannRessourceEtatDate` mais vous controlez sur `supannRessourceEtat`.** Si vous
+>   pouviez liberer aussi ce dernier, nous pourrions afficher a l'etudiant refuse un message qui
+>   nomme la raison, au lieu d'un echec generique.
+>
+> **Et deux remarques de securite, que nous vous signalons par acquit de conscience** - c'est votre
+> configuration et vous avez peut-etre de bonnes raisons :
+>
+> - `supportedGrantTypes` contient `password` et `client_credentials`, alors que MiConnect n'utilise
+>   que `authorization_code`. Le grant `password` permet a qui detient le `clientId` et le
+>   `clientSecret` d'echanger le mot de passe brut d'un etudiant contre un jeton, sans navigateur et
+>   sans SSO. De meme `supportedResponseTypes` contient `token` et `id_token`, donc le flux
+>   implicite. Nous n'avons besoin d'aucun des deux : `authorization_code` + `refresh_token` et
+>   `code` suffisent.
+> - Le `clientSecret` est un mot court et identique dans les deux copies. S'il s'agit d'un caviardage,
+>   parfait. Sinon, c'est lui qui protege les deux grants ci-dessus, et nous sommes preneurs d'une
+>   rotation - de notre cote elle se fait en une minute.
+>
+> Enfin, le fichier que vous nous avez transmis est tronque apres l'`accessStrategy` : s'il reste des
+> `properties` ou une politique d'expiration en dessous, elles nous interessent aussi.
+>
+> Merci beaucoup,
 
 ## Login page branding
 

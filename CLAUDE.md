@@ -71,7 +71,7 @@
 - CHANGELOG: features, fixes and breaking changes get an entry under `[Unreleased]` (Keep a Changelog format).
 - ONE-OFF ACTIONS GO TO THE USER (2026-08-25): *"Pour les choses qui ne se font qu'une fois, tu peux me demander de les faire hein."* Building a tool for a single click is that waste.
 - DELEGATION: broad file-gathering goes to a search subagent; a big, risky or native Work Package goes to a background agent through a precise brief in `AGENTS.md`.
-- PROD ACCESS: `ssh canari`, `ssh mitv`, `ssh cercle` and `ssh miconnect` (the last two via ProxyJump canari). **Either tool works since 2026-09-02, and the old "PowerShell only" rule named the wrong culprit.** It was never Bash: MSYS `ssh` execs the cloudflared `ProxyCommand` through `/bin/bash`, which ate its backslashes. `~/.ssh/config` now spells that path with FORWARD SLASHES, which `bash` and `cmd` both exec - measured on both. A bash script may therefore reach prod directly, which matters because **PowerShell text-encodes stdout and corrupts a binary pipe** (a `pg_dump | gzip` through it is lost). Postgres, the fact that `auth_db` is the ONLY database and the SQL quoting are in [databases](docs/wiki/infrastructure/databases.md#reaching-it-from-a-workstation); `miconnect` is the Authentik box, and its access log is what settles an OIDC question ([authentik](docs/wiki/infrastructure/authentik.md#the-box-and-the-log-that-settles-an-oidc-question)).
+- PROD ACCESS: `ssh canari`, `ssh mitv`, `ssh cercle` and `ssh miconnect` (the last two via ProxyJump canari). **USE THE PowerShell TOOL. Bash reaches `canari` but NOT `miconnect`** - measured again 2026-09-08, where the jump still died on `exec: C:UsersjolanAppData...cloudflared.exe: not found`, the backslashes eaten by `/bin/bash`. `~/.ssh/config` spells the top-level `ProxyCommand` with forward slashes, which is why the direct hosts work and why the earlier "either tool works" claim looked true; the ProxyJump path does not inherit that fix. **PowerShell text-encodes stdout and corrupts a binary pipe** (a `pg_dump | gzip` through it is lost), so a binary stream still needs Bash - and that means `canari`, not the Authentik box. A bash script may therefore reach prod directly, which matters because **PowerShell text-encodes stdout and corrupts a binary pipe** (a `pg_dump | gzip` through it is lost). Postgres, the fact that `auth_db` is the ONLY database and the SQL quoting are in [databases](docs/wiki/infrastructure/databases.md#reaching-it-from-a-workstation); `miconnect` is the Authentik box, and its access log is what settles an OIDC question ([authentik](docs/wiki/infrastructure/authentik.md#the-box-and-the-log-that-settles-an-oidc-question)).
 
 ## **THE DEVELOPMENT CYCLE - THE COMMANDS, IN ORDER**
 
@@ -281,13 +281,14 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
     background notification), a QUESTION (does a community invitation notify somebody with no prior
     conversation?), and one post-campaign direction (ICM/ISMIN). All in
     [backlog](docs/wiki/backlog.md); the first two need the phone.
-15. **21% OF CAS RETURNS CARRY NO `code`, AND THE LOOP THAT MADE OF IT IS FIXED - THE FAILURES ARE
+15. **12.9% OF CAS RETURNS CARRY NO `code`, AND THE LOOP THAT MADE OF IT IS FIXED - THE FAILURES ARE
     NOT.** The livelock (a source failure re-entering the source) is closed 2026-09-08, story in
     `CHANGELOG.md`, rules in [durable-rules](docs/wiki/durable-rules.md), mechanism and the
-    reproduction probe on [authentik](docs/wiki/infrastructure/authentik.md#cas-returns-nothing-on-21-of-logins-and-our-login-page-turned-that-into-a-livelock---2026-09-08).
-    **Two things stay open and neither is code**: the MAIL TO THE DSI, written and unsent, and
-    **~121 failed logins a week that nothing reports** - and the fix removed the only symptom anybody
-    could see ([P2](docs/wiki/backlog.md#p2---about-121-logins-a-week-fail-at-cas-and-nothing-reports-it-measured-2026-09-08)).
+    reproduction probe on [authentik](docs/wiki/infrastructure/authentik.md#a-share-of-cas-returns-carry-no-code-and-our-login-page-turned-that-into-a-livelock---2026-09-08).
+    **Two things stay open and neither is code**: the MAIL TO THE DSI - unsent, and it now owes a
+    CORRECTION, the first figure mailed (21%) having counted robots including our own probes - and
+    **~73 failed logins a week that nothing reports** - and the fix removed the only symptom anybody
+    could see ([P2](docs/wiki/backlog.md#p2---about-73-logins-a-week-fail-at-cas-and-nothing-reports-it-re-measured-2026-09-09)).
     Everything on that box is a HAND MUTATION owed to the restore path.
 
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
