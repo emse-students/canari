@@ -108,3 +108,100 @@ describe('PushService.notifyContent', () => {
     expect(payload.body).toBe('nice post');
   });
 });
+
+/**
+ * THE SERVER'S SENTENCE AND THE PHONE'S SENTENCE ARE TWO COPIES OF ONE SENTENCE.
+ *
+ * `legacyTitle`/`legacyBody` are what a client too old to compose from a key is sent; the Android
+ * resources are what every other client renders. They are the same sentence written twice, and
+ * until 2026-09-09 nothing compared them - which let two divergences ship together in one feature.
+ *
+ * Both were read off the glass rather than caught here. The agenda's five pairs went into
+ * `values/strings.xml` with their ACCENTS STRIPPED, and the loss changed the word: `valide` is an
+ * adjective where `valide` with its acute is a participle, and the same for refuse and modifie. In
+ * the same file the two FORM pairs were still English on the legacy side while the resource beside
+ * them had been French for weeks, so exactly the oldest clients got the one language the app does
+ * not speak. Neither is visible to a compiler, to `nativeStrings.test.ts` - which holds the two
+ * RESOURCE files against each other and never sees this file - or to the tests above, which assert
+ * that a key travels and never what it says.
+ *
+ * So this compares the pair. It is the rule this repository already states about any two copies of
+ * one fact: derive it, or let a test compare them.
+ */
+describe('the legacy sentence and the Android resource say the same thing', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { readFileSync } = require('node:fs') as typeof import('node:fs');
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { resolve } = require('node:path') as typeof import('node:path');
+
+  const STRINGS_FR = resolve(
+    __dirname,
+    '../../../../frontend/src-tauri/gen/android/app/src/main/res/values/strings.xml'
+  );
+
+  /** Android escapes an apostrophe and a quote with a backslash; this undoes exactly those.
+   *  Two characters, not one: in a pattern a single backslash would escape the group instead. */
+  const ANDROID_ESCAPE = new RegExp(String.fromCharCode(92, 92) + '([\'"])', 'g');
+
+  /** Every `<string name="x">value</string>`, with those escapes undone. */
+  function androidStrings(): Map<string, string> {
+    const source = readFileSync(STRINGS_FR, 'utf8');
+    const out = new Map<string, string>();
+    for (const m of source.matchAll(/<string name="([^"]+)"\s*>([\s\S]*?)<\/string>/g)) {
+      out.set(m[1], m[2].replace(ANDROID_ESCAPE, '$1'));
+    }
+    return out;
+  }
+
+  // Sentinels rather than plausible values: a name that could occur in a sentence would be
+  // substituted inside the prose too, and the comparison would pass on a sentence nobody wrote.
+  const ACTOR = '\u0001ACTOR\u0001';
+  const ARG = '\u0001ARG\u0001';
+
+  // EVERY placeholder collapses to one token, and the INDEX is deliberately not compared. The
+  // four "the BDE did it" strings take the event title as their only argument, so it is the
+  // FIRST there and the second in `proposed`, which names an actor before it - both correct, and
+  // a test reading the first slot as "the actor" would fail all four for being right. What this
+  // compares is the SENTENCE. That the arguments line up is a different contract, and it already
+  // has a test: `nativeStrings.test.ts`, "keeps the same format arguments in both languages".
+  const SLOT = '{}';
+  const slot = (s: string) => s.split(ACTOR).join(SLOT).split(ARG).join(SLOT);
+  const ANDROID_SLOT = new RegExp('%' + String.fromCharCode(92) + 'd[$]s', 'g');
+  const androidSlot = (s: string) => s.replace(ANDROID_SLOT, SLOT);
+
+  // The three social bodies are the author's OWN text when there is any, and that is data rather
+  // than prose - so they are compared in the form the resource actually states, with no preview.
+  const PAIRS: [string, PushContent][] = [
+    ['social_mention', mentionContent(ACTOR, '')],
+    ['social_reply', replyContent(ACTOR, '')],
+    ['social_comment', commentContent(ACTOR, '')],
+    ['social_reaction', reactionContent(ACTOR, ARG)],
+    ['form_opening_soon', formOpeningSoonContent()],
+    ['form_open', formOpenContent()],
+    ['event_proposed', eventProposedContent(ACTOR, ARG)],
+    ['event_validated', eventValidatedContent(ACTOR, ARG)],
+    ['event_rejected', eventRejectedContent(ACTOR, ARG)],
+    ['event_updated', eventUpdatedContent(ACTOR, ARG)],
+    ['event_deleted', eventDeletedContent(ACTOR, ARG)],
+  ];
+
+  it('has a resource for every key a builder emits', () => {
+    const fr = androidStrings();
+    const missing = PAIRS.flatMap(([key]) =>
+      [`notif_${key}_title`, `notif_${key}_body`].filter((name) => !fr.has(name))
+    );
+
+    expect(missing).toEqual([]);
+  });
+
+  it.each(PAIRS)('%s reads the same on an old client and a current one', (key, content) => {
+    const fr = androidStrings();
+
+    // ONE assertion over both halves rather than two: `expect` takes no message under Jest, so
+    // a label there is silently dropped, and the diff of a whole pair names the key by itself.
+    expect({ title: slot(content.legacyTitle), body: slot(content.legacyBody) }).toEqual({
+      title: androidSlot(fr.get(`notif_${key}_title`) ?? ''),
+      body: androidSlot(fr.get(`notif_${key}_body`) ?? ''),
+    });
+  });
+});

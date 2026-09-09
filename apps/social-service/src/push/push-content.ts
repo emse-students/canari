@@ -113,8 +113,8 @@ export function formOpeningSoonContent(): PushContent {
     arg: '',
     // English, unlike every other sentence here, and for the same underlying reason: whoever wrote
     // it picked a language for everyone. It goes out with the shim like the rest.
-    legacyTitle: 'Form opening soon',
-    legacyBody: 'A form you are watching opens in 5 minutes!',
+    legacyTitle: 'Formulaire bientôt ouvert',
+    legacyBody: 'Un formulaire que vous suivez ouvre dans 5 minutes !',
   };
 }
 
@@ -124,8 +124,8 @@ export function formOpenContent(): PushContent {
     key: 'form_open',
     actorName: '',
     arg: '',
-    legacyTitle: 'Form now open!',
-    legacyBody: 'The form is available - hurry, spots are limited!',
+    legacyTitle: 'Formulaire ouvert !',
+    legacyBody: 'Le formulaire est disponible - dépêchez-vous, les places sont limitées !',
   };
 }
 
@@ -150,8 +150,8 @@ export function eventProposedContent(actorName: string, eventTitle: string): Pus
     key: 'event_proposed',
     actorName,
     arg: eventTitle,
-    legacyTitle: 'Evenement a valider',
-    legacyBody: `${actorName} propose "${eventTitle}"`,
+    legacyTitle: 'Événement à valider',
+    legacyBody: `${actorName} propose « ${eventTitle} »`,
   };
 }
 
@@ -167,8 +167,8 @@ export function eventValidatedContent(actorName: string, eventTitle: string): Pu
     key: 'event_validated',
     actorName,
     arg: eventTitle,
-    legacyTitle: 'Evenement valide',
-    legacyBody: `"${eventTitle}" a ete valide par le BDE`,
+    legacyTitle: 'Événement validé',
+    legacyBody: `« ${eventTitle} » a été validé par le BDE`,
   };
 }
 
@@ -177,8 +177,8 @@ export function eventRejectedContent(actorName: string, eventTitle: string): Pus
     key: 'event_rejected',
     actorName,
     arg: eventTitle,
-    legacyTitle: 'Evenement refuse',
-    legacyBody: `"${eventTitle}" a ete refuse par le BDE`,
+    legacyTitle: 'Événement refusé',
+    legacyBody: `« ${eventTitle} » a été refusé par le BDE`,
   };
 }
 
@@ -187,8 +187,8 @@ export function eventUpdatedContent(actorName: string, eventTitle: string): Push
     key: 'event_updated',
     actorName,
     arg: eventTitle,
-    legacyTitle: 'Evenement modifie',
-    legacyBody: `"${eventTitle}" a ete modifie par le BDE`,
+    legacyTitle: 'Événement modifié',
+    legacyBody: `« ${eventTitle} » a été modifié par le BDE`,
   };
 }
 
@@ -197,7 +197,7 @@ export function eventDeletedContent(actorName: string, eventTitle: string): Push
     key: 'event_deleted',
     actorName,
     arg: eventTitle,
-    legacyTitle: 'Evenement supprime',
-    legacyBody: `"${eventTitle}" a ete supprime par le BDE`,
+    legacyTitle: 'Événement supprimé',
+    legacyBody: `« ${eventTitle} » a été supprimé par le BDE`,
   };
 }
