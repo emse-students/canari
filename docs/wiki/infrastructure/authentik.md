@@ -474,7 +474,7 @@ it closes with the security remarks because they are a courtesy, not the subject
 > Bonjour,
 >
 > Merci pour la declaration de service complete, elle fait beaucoup avancer le diagnostic. Trois
-> points, plus deux remarques de fin.
+> points, puis quelques remarques sur le fichier lui-meme.
 >
 > **1. Correction du chiffre que nous vous avons envoye.** Notre premiere mesure (21%) comptait des
 > requetes automatiques dans le numerateur - nos propres sondes de diagnostic, un client Java et un
@@ -483,7 +483,7 @@ it closes with the security remarks because they are a courtesy, not the subject
 > Windows 4/59 (7%), Android 20/122 (16%), iOS 28/198 (14%). Le defaut est donc reel et nettement
 > mobile, mais deux fois moins frequent que ce que nous avions annonce. Desole pour le bruit.
 >
-> **2. Il y a DEUX populations distinctes, et elles n'ont probablement pas la meme cause.** Parmi les
+> **2. Il y a DEUX populations distinctes, et le point 3 propose une cause unique pour les deux.** Parmi les
 > adresses IP qui subissent un retour vide, **31 finissent par se connecter** dans la meme fenetre
 > (une nouvelle tentative passe) tandis que **7 n'y arrivent jamais**, certaines apres 3 a 5 essais.
 > La premiere ressemble a une course ; la seconde a quelque chose de systematique.
