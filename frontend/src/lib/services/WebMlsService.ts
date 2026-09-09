@@ -768,6 +768,12 @@ export class WebMlsService extends BaseMlsService {
     // devices don't consume stale prekeys that would cause NoMatchingKeyPackage.
     if (this.freshStart) {
       this.freshStart = false;
+      // THE RETURN IS DELIBERATELY UNUSED HERE, and only here. `freshStart` means the manager was
+      // built with no state at all, so the keystore holds no private bundle for anything the
+      // server is about to delete - there is nothing to reclaim, and calling `forgetPurgedPrekeys`
+      // would log a "reclaimed 0/50" line whose only content is that this branch cannot apply.
+      // The purge itself still matters: those published prekeys have no private half anywhere, and
+      // a peer consuming one is the `NoMatchingKeyPackage` loop.
       await this.delivery.deleteAllOneTimePrekeys();
     }
 
@@ -1189,5 +1195,16 @@ export class WebMlsService extends BaseMlsService {
   /** WASM client wrapper - checks via `this.client.key_package_has_private` that we hold the KeyPackage's private key. */
   protected async keyPackageHasPrivate(keyPackageBytes: Uint8Array): Promise<boolean> {
     return this.client.key_package_has_private(keyPackageBytes) as boolean;
+  }
+
+  /**
+   * WASM client wrapper - drops the private bundles the server reported purging.
+   *
+   * The web state is saved by the caller's ordinary checkpoint rather than here: unlike the
+   * native path there is no separate blob to write, and `forget_key_packages` has already marked
+   * the snapshot dirty so the next save carries the smaller store.
+   */
+  protected async forgetKeyPackages(publicKeyPackages: Uint8Array[]): Promise<number> {
+    return this.client.forget_key_packages(publicKeyPackages) as number;
   }
 }

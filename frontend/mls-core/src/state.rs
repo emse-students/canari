@@ -217,6 +217,23 @@ pub struct KeyPackageCensus {
     pub largest_batch: usize,
 }
 
+/// What [`MlsManager::forget_key_packages`] did, split so a caller can tell three things apart.
+///
+/// A single count would conflate "the purge and the keystore agreed" with "this device never held
+/// what the server just deleted for it" - and the second is the shape `reconcilePublishedKeyPackages`
+/// exists to catch, arriving from the other direction. A sweep that reports clean while every entry
+/// was `not_held` is a device whose keystore has diverged from what it published, which is worth
+/// far more than the bytes this reclaimed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ForgetOutcome {
+    /// Private bundles found and deleted.
+    pub forgotten: usize,
+    /// Payloads this device held no private bundle for - it had already lost or spent them.
+    pub not_held: usize,
+    /// Payloads that would not deserialise, validate, or hash. Never deleted, always counted.
+    pub unreadable: usize,
+}
+
 impl MlsManager {
     /// What this device's persisted state is MADE OF, heaviest first.
     ///
@@ -931,5 +948,160 @@ impl MlsManager {
             .key_package(&hash_ref)
             .map_err(|e| MlsError::OpenMls(format!("Storage read error: {:?}", e)))?;
         Ok(bundle.is_some())
+    }
+
+    /// Forgets the private bundles for key packages the SERVER HAS CONFIRMED IT DELETED.
+    ///
+    /// ## Why this is the one signal that is safe, when "absent from the server" is not
+    ///
+    /// [`Self::prune_key_packages_expired_at`] uses an elapsed lifetime and nothing else, and its
+    /// docblock says why: the delivery service DELETES a one-time prekey row as it hands it out
+    /// (`devices.controller.ts`), so a bundle missing from the server may be missing precisely
+    /// because a peer is about to send the Welcome built on it. Deleting on that signal races a
+    /// join and loses it.
+    ///
+    /// A row the server deletes *on its owner's instruction* carries no such ambiguity. It was
+    /// still in the pool at that instant, which is the same as saying it had NOT been handed to
+    /// anybody - the hand-out is what would have removed it. So nothing can hold it, nothing can
+    /// build a Welcome on it, and its private half is dead the moment the purge commits. The caller
+    /// passes exactly what the server reported deleting; this forgets exactly that.
+    ///
+    /// ## The debt this repays, measured
+    ///
+    /// `republishKeyMaterial` purges the server pool and mints up to 50 more, once per 30 s during
+    /// a `NoMatchingKeyPackage` storm. Nothing local ever dropped the previous pool, so every round
+    /// orphaned fifty bundles for 84 days. Measured on a Mi 9T on 2026-09-09: **3051 bundles, 2782
+    /// of them one-time, against a pool of fifty** - about fifty-six such rounds - and `0 expired`,
+    /// so not one of them was reclaimable that day. 7 214 310 bytes of a 10 676 363-byte state.
+    ///
+    /// ## What it deliberately does NOT do
+    ///
+    /// It never derives the set itself. A version of this that scanned for "one-time bundles the
+    /// server no longer lists" would be the racing delete above wearing a different name, and it
+    /// would also reach the bundles a hand-out removed - the exact ones that must survive. The
+    /// argument for safety is entirely in WHERE the list comes from, so the list is a parameter.
+    ///
+    /// Deletion goes through the provider's own `delete_key_package`, not the raw map, so it is
+    /// confined to key packages by the API rather than by a prefix test this code would have to get
+    /// right.
+    ///
+    /// A payload that will not deserialise, will not validate, or names a bundle this device does
+    /// not hold is COUNTED AND SKIPPED, never fatal: this is maintenance running behind a purge
+    /// that already succeeded, and a device that cannot forget one stale bundle still works.
+    ///
+    /// @param publics serialized public KeyPackages the server reported deleting
+    /// @returns how many private bundles were forgotten, and how many entries were skipped
+    pub fn forget_key_packages(&self, publics: &[Vec<u8>]) -> Result<ForgetOutcome, MlsError> {
+        let mut outcome = ForgetOutcome::default();
+
+        for bytes in publics {
+            let Ok(kp_in) = KeyPackageIn::tls_deserialize(&mut &bytes[..]) else {
+                outcome.unreadable += 1;
+                continue;
+            };
+            let Ok(key_package) = kp_in.validate(self.provider.crypto(), ProtocolVersion::Mls10)
+            else {
+                outcome.unreadable += 1;
+                continue;
+            };
+            let Ok(hash_ref) = key_package.hash_ref(self.provider.crypto()) else {
+                outcome.unreadable += 1;
+                continue;
+            };
+
+            // ASKED BEFORE DELETING, so the three outcomes stay distinguishable. `delete_key_package`
+            // succeeds on a key that was never there, which would let "the purge and the keystore
+            // disagree" - the shape `reconcilePublishedKeyPackages` exists to catch - report as a
+            // clean sweep.
+            let held: Option<KeyPackageBundle> = self
+                .provider
+                .storage()
+                .key_package(&hash_ref)
+                .map_err(|e| MlsError::OpenMls(format!("Storage read error: {:?}", e)))?;
+            if held.is_none() {
+                outcome.not_held += 1;
+                continue;
+            }
+
+            self.provider
+                .storage()
+                .delete_key_package(&hash_ref)
+                .map_err(|e| MlsError::OpenMls(format!("Storage delete error: {:?}", e)))?;
+            outcome.forgotten += 1;
+        }
+
+        if outcome.forgotten > 0 {
+            self.mark_state_dirty();
+        }
+        Ok(outcome)
+    }
+
+    /// A last-resort key package this device ALREADY HOLDS and can still publish, if there is one.
+    ///
+    /// ## The mint this replaces, and why the old one was unbounded
+    ///
+    /// `generer_key_packages_et_persister` calls [`Self::generate_last_resort_key_package`]
+    /// UNCONDITIONALLY on every connection, while the one-time pool beside it is topped up
+    /// incrementally (`needed = 50 - existing`, so nothing is minted when the pool is full). The
+    /// asymmetry has no reason behind it: a last-resort package is REUSABLE BY CONSTRUCTION - that
+    /// is the entire meaning of the extension, and why the delivery service can serve the same one
+    /// to every peer that finds the pool empty. Minting a fresh one per connection writes a 2 364-byte
+    /// bundle that nothing deletes for 84 days, to replace a package that was still perfectly good.
+    ///
+    /// Measured on a Mi 9T on 2026-09-09: **269 last-resort bundles**, one per connection since the
+    /// store was last empty, 9% of a 3051-bundle keystore.
+    ///
+    /// Republishing the one already held makes the rotation cadence the package's own lifetime -
+    /// every 84 days, when this returns `None` because nothing valid is left - instead of every
+    /// time the socket comes back. That is a cadence a reader can state, which is what the previous
+    /// one was not.
+    ///
+    /// ## Why the newest, and why validity is checked here
+    ///
+    /// The store may hold many, and they are not interchangeable: an expired one would be published
+    /// to a server that will serve it to peers who are all entitled to refuse the Welcome built on
+    /// it. So only a package valid at `now_secs` is offered, and of those the newest, so the one
+    /// published has the most life left before this has to mint again.
+    ///
+    /// THE CLOCK IS A PARAMETER for the reason it is on the prune and the census: `SystemTime::now()`
+    /// panics on wasm and took every web login down in v0.16.4.
+    ///
+    /// @returns the serialized PUBLIC key package to republish, or `None` if the device must mint
+    pub fn existing_last_resort_key_package(
+        &self,
+        now_secs: u64,
+    ) -> Result<Option<Vec<u8>>, MlsError> {
+        let storage = self.provider.storage();
+        let values = storage
+            .values
+            .read()
+            .map_err(|e| MlsError::OpenMls(format!("Storage lock poisoned: {e}")))?;
+
+        let mut best: Option<(u64, Vec<u8>)> = None;
+        self.for_each_proven_key_package(&values, |_k, bundle| {
+            let kp = bundle.key_package();
+            if !kp.extensions().contains(ExtensionType::LastResort) {
+                return;
+            }
+            let life = kp.life_time();
+            // BOTH ENDS, not just `not_after`. A package whose `not_before` is still ahead was
+            // minted moments ago on a skewed clock, and publishing it would have peers refuse it
+            // for being from the future - the same asymmetry the prune documents from the other
+            // side, where that package is the one thing that must not be deleted.
+            if life.not_after() < now_secs || life.not_before() > now_secs {
+                return;
+            }
+            let Ok(public) = kp.tls_serialize_detached() else {
+                return;
+            };
+            if best
+                .as_ref()
+                .is_none_or(|(seen, _)| life.not_before() > *seen)
+            {
+                best = Some((life.not_before(), public));
+            }
+        });
+
+        Ok(best.map(|(_, public)| public))
     }
 }

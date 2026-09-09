@@ -237,6 +237,56 @@ pub(crate) fn creer_groupe(group_id: String, state: tauri::State<AppState>) -> R
     manager.create_group(group_id).map_err(|e| e.to_string())
 }
 
+/// Drops the private bundles for key packages the SERVER reported deleting.
+///
+/// The list is always what the purge returned and never one this side derived: a row the purge
+/// removed was still in the pool, which is the same as never having been handed out, while a row
+/// absent for any other reason may be absent because a peer is about to send the Welcome built on
+/// it. See `MlsManager::forget_key_packages`.
+///
+/// PERSISTS, because this is the only caller whose whole purpose is to make the state smaller. A
+/// reclaim that is not written back is reclaimed again next session and never actually shrinks
+/// `mls.bin` - which is the file the 3051-bundle measurement was taken on.
+#[tauri::command]
+pub(crate) async fn oublier_key_packages(
+    device_key_b64: String,
+    key_packages: Vec<Vec<u8>>,
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<usize, String> {
+    let manager_state = state.mls_manager.clone();
+    let device_key_state = state.device_key.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let lock = manager_state
+            .lock()
+            .map_err(|_| "Failed to lock state".to_string())?;
+        let manager = lock
+            .as_ref()
+            .ok_or_else(|| "MLS Manager not initialized".to_string())?;
+
+        let outcome = manager
+            .forget_key_packages(&key_packages)
+            .map_err(|e| e.to_string())?;
+        log::info!(
+            "oublier_key_packages: {} forgotten, {} not held, {} unreadable",
+            outcome.forgotten,
+            outcome.not_held,
+            outcome.unreadable
+        );
+
+        if outcome.forgotten > 0 {
+            let key = session_at_rest_key(&device_key_b64, &device_key_state)?;
+            let encrypted_state = manager
+                .save_encrypted_with_key(&key)
+                .map_err(|e| e.to_string())?;
+            write_mls_state_blob(&app, &encrypted_state)?;
+        }
+        Ok::<usize, String>(outcome.forgotten)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub(crate) async fn key_package_a_clef_privee(
     key_package_bytes: Vec<u8>,
@@ -291,9 +341,39 @@ pub(crate) async fn generer_key_packages_et_persister(
         // package to every peer that finds the pool empty (`resolveKeyPackagePayloadForDevice`).
         // An ordinary KeyPackage's private bundle dies with the first Welcome built on it, so the
         // second peer to be served it could never join - see `mls-core/tests/last_resort_key_package.rs`.
-        let fallback = manager
-            .generate_last_resort_key_package()
-            .map_err(|e| e.to_string())?;
+        //
+        // REPUBLISHED, NOT REMINTED, and the old behaviour was unbounded. This minted a fresh one on
+        // EVERY connection while the pool beside it is topped up incrementally (`needed = 50 -
+        // existing`, so nothing is minted when the pool is full). The asymmetry had no reason behind
+        // it: reuse is the entire meaning of the extension, which is why the server can serve the
+        // same package to every peer. Each remint wrote a ~2 364-byte bundle nothing deletes for 84
+        // days, to replace one that was still perfectly good - 269 of them on the Mi 9T measured on
+        // 2026-09-09, 9% of a 3051-bundle keystore.
+        //
+        // Rotation is now the package's OWN lifetime: `existing_last_resort_key_package` returns
+        // `None` once nothing valid is left, and only then does this mint. Every 84 days rather than
+        // every time the socket comes back, which is a cadence a reader can state.
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .map_err(|e| format!("System clock is before the UNIX epoch: {e}"))?;
+        let fallback = match manager
+            .existing_last_resort_key_package(now_secs)
+            .map_err(|e| e.to_string())?
+        {
+            Some(held) => {
+                log::debug!("generer_key_packages_et_persister: republishing the held last-resort");
+                held
+            }
+            None => {
+                log::info!(
+                    "generer_key_packages_et_persister: no valid last-resort held - minting one"
+                );
+                manager
+                    .generate_last_resort_key_package()
+                    .map_err(|e| e.to_string())?
+            }
+        };
         let pool_packages = if count > 0 {
             manager
                 .generate_key_packages(count)

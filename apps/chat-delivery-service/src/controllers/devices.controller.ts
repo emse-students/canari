@@ -482,13 +482,38 @@ export class DevicesController {
 
   @UseGuards(HeaderAuthGuard)
   @Delete('mls/devices/:userId/:deviceId/prekeys')
-  /** Purges all one-time prekeys for a device (used when resetting a device's key material). */
+  /**
+   * Purges all one-time prekeys for a device, AND REPORTS WHICH ONES IT REMOVED.
+   *
+   * ## Why the payloads come back, and why they are the only safe reclaim signal
+   *
+   * The client keeps a private bundle for every prekey it publishes, and until 2026-09-09 nothing
+   * ever deleted one: this endpoint emptied the server and the device kept the whole abandoned pool
+   * for the 84 days until its lifetimes elapsed. `republishKeyMaterial` calls this once per 30 s
+   * during a `NoMatchingKeyPackage` storm, so each round orphaned fifty bundles. Measured on a
+   * Mi 9T on 2026-09-09: 2782 one-time bundles against a pool of fifty, ~2 364 bytes each, two
+   * thirds of a 10.7 MB state, and none of it yet expired.
+   *
+   * The device cannot work out the set for itself. `resolveKeyPackagePayloadForDevice` DELETES a
+   * row as it hands it out, so "absent from the server" means either "a peer is about to send the
+   * Welcome built on it" or "its owner revoked it" - opposite treatments, and guessing loses a
+   * join. A row THIS endpoint deletes is unambiguous: it was still in the pool, which is the same
+   * as never having been handed out.
+   *
+   * ## DELETE ... RETURNING, and not a read followed by a delete
+   *
+   * The obvious implementation - select the rows, then delete them - reintroduces the very race it
+   * is meant to close: a peer claiming a prekey between the two statements would have it reported
+   * as purged, and the client would then forget the one private bundle that Welcome needs. One
+   * statement makes the returned set exactly the deleted set, and a concurrent hand-out either
+   * committed first (the row is gone and is not returned) or waits.
+   */
   async purgeDevicePrekeys(
     @Param('userId') userId: string,
     @Param('deviceId') deviceId: string,
     @Headers('x-user-id') headerUserId?: string,
     @Headers('x-global-admin') headerGlobalAdmin?: string
-  ) {
+  ): Promise<{ status: string; deleted: number; keyPackages: string[] }> {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
     // Prekeys may only be purged for the caller's own device (audit S4): purging a victim's
@@ -499,14 +524,35 @@ export class DevicesController {
       safeUserId,
       'Cannot purge another user device prekeys'
     );
-    const result = await this.oneTimeKeyPackageRepo.delete({
-      userId: safeUserId,
-      deviceId: safeDeviceId,
-    });
-    this.logger.log(
-      `[PURGE_PREKEYS] user=${safeUserId} device=${safeDeviceId} deleted=${result.affected ?? 0}`
-    );
-    return { status: 'purged', deleted: result.affected ?? 0 };
+    const result = await this.oneTimeKeyPackageRepo
+      .createQueryBuilder()
+      .delete()
+      .from(OneTimeKeyPackage)
+      .where('userId = :userId AND deviceId = :deviceId', {
+        userId: safeUserId,
+        deviceId: safeDeviceId,
+      })
+      .returning(['keyPackage'])
+      .execute();
+
+    const rows = (result.raw ?? []) as Array<{ keyPackage?: string }>;
+    const keyPackages = rows
+      .map((r) => r.keyPackage)
+      .filter((k): k is string => typeof k === 'string' && k.length > 0);
+    const deleted = result.affected ?? keyPackages.length;
+
+    // THE TWO NUMBERS ARE LOGGED APART BECAUSE THEY CAN DISAGREE, and the disagreement is the one
+    // thing here worth an alert: a driver that stopped returning rows would leave the client
+    // reclaiming nothing while this still reported a clean purge, which is the silent return of the
+    // leak. Nothing branches on it - a purge that emptied the pool did its job either way.
+    if (deleted !== keyPackages.length) {
+      this.logger.warn(
+        `[PURGE_PREKEYS] user=${safeUserId} device=${safeDeviceId} deleted=${deleted} but only ` +
+          `${keyPackages.length} payload(s) came back - the client cannot reclaim what it is not told about`
+      );
+    }
+    this.logger.log(`[PURGE_PREKEYS] user=${safeUserId} device=${safeDeviceId} deleted=${deleted}`);
+    return { status: 'purged', deleted, keyPackages };
   }
 
   @UseGuards(HeaderAuthGuard)

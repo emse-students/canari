@@ -816,12 +816,40 @@ export class MlsDeliveryApi {
     }
   }
 
-  /** Purges server-side one-time prekeys for this device (used on fresh WASM session). */
-  async deleteAllOneTimePrekeys(): Promise<void> {
-    await this.f(
-      `${this.historyUrl}/api/mls/devices/${encodeURIComponent(this.userId)}/${encodeURIComponent(this.deviceId)}/prekeys`,
-      { method: 'DELETE', headers: await this.auth() }
-    ).catch(() => {});
+  /**
+   * Purges server-side one-time prekeys for this device, and returns the ones it removed.
+   *
+   * THE PAYLOADS ARE THE POINT, and the caller cannot derive them. A row this call deletes was
+   * still in the pool, which is the same as never having been handed out - so its private bundle
+   * is provably dead and may be dropped locally. A row absent for any OTHER reason may be absent
+   * because a peer is about to send the Welcome built on it, which is why nothing on the client
+   * may reason from "the server does not list it". See `MlsManager::forget_key_packages`.
+   *
+   * THE FAILURE IS NO LONGER SWALLOWED. This was `.catch(() => {})`, so a purge that never reached
+   * the server was indistinguishable from one that emptied the pool - and the caller went straight
+   * on to mint fifty more against a pool it had not actually cleared. An empty list is what a
+   * failure returns, because there is then nothing the device may safely forget, and the line
+   * accuses so the leak coming back has a witness.
+   *
+   * @returns the base64 KeyPackages the server deleted; empty if the call failed or the pool was
+   */
+  async deleteAllOneTimePrekeys(): Promise<string[]> {
+    try {
+      const res = await this.f(
+        `${this.historyUrl}/api/mls/devices/${encodeURIComponent(this.userId)}/${encodeURIComponent(this.deviceId)}/prekeys`,
+        { method: 'DELETE', headers: await this.auth() }
+      );
+      if (!res.ok) {
+        console.warn(`[MLS] prekey purge refused with ${res.status}; nothing may be forgotten`);
+        return [];
+      }
+      const data = await res.json();
+      const list = Array.isArray(data?.keyPackages) ? data.keyPackages : [];
+      return list.filter((k: unknown): k is string => typeof k === 'string' && k.length > 0);
+    } catch (e) {
+      console.warn('[MLS] prekey purge did not reach the server:', String(e).slice(0, 200));
+      return [];
+    }
   }
 
   /**

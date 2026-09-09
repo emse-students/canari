@@ -733,6 +733,12 @@ export class TauriMlsService extends BaseMlsService {
     // devices don't consume stale prekeys that would cause NoMatchingKeyPackage.
     if (this.freshStart) {
       this.freshStart = false;
+      // THE RETURN IS DELIBERATELY UNUSED HERE, and only here. `freshStart` means the manager was
+      // built with no state at all, so the keystore holds no private bundle for anything the
+      // server is about to delete - there is nothing to reclaim, and calling `forgetPurgedPrekeys`
+      // would log a "reclaimed 0/50" line whose only content is that this branch cannot apply.
+      // The purge itself still matters: those published prekeys have no private half anywhere, and
+      // a peer consuming one is the `NoMatchingKeyPackage` loop.
       await this.delivery.deleteAllOneTimePrekeys();
     }
 
@@ -780,6 +786,20 @@ export class TauriMlsService extends BaseMlsService {
   protected async keyPackageHasPrivate(keyPackageBytes: Uint8Array): Promise<boolean> {
     return invoke<boolean>('key_package_a_clef_privee', {
       keyPackageBytes: Array.from(keyPackageBytes),
+    });
+  }
+
+  /**
+   * Tauri-native `invoke` wrapper - drops the private bundles the server reported purging.
+   *
+   * The device key goes with it because the native side PERSISTS: a reclaim that is not written
+   * back to `mls.bin` is reclaimed again next session and never shrinks the file the whole
+   * measurement was taken on.
+   */
+  protected async forgetKeyPackages(publicKeyPackages: Uint8Array[]): Promise<number> {
+    return invoke<number>('oublier_key_packages', {
+      deviceKeyB64: this._deviceKeyB64,
+      keyPackages: publicKeyPackages.map((kp) => Array.from(kp)),
     });
   }
 
