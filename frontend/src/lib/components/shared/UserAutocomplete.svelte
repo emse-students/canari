@@ -263,7 +263,7 @@
       id={listboxId}
       role="listbox"
       aria-label={placeholder}
-      class="bg-cn-surface fixed z-290 overflow-auto rounded-xl border border-white/60 shadow-lg dark:border-white/10"
+      class="bg-cn-surface fixed z-(--z-modal-popover) overflow-auto rounded-xl border border-white/60 shadow-lg dark:border-white/10"
     >
       {#each suggestions as user, index (user.id)}
         <!--

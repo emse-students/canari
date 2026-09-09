@@ -137,6 +137,87 @@
   --radius-bubble-tail: 0.25rem;
 }
 
+/* ==========================================================================================
+   THE LAYER LADDER - EVERY Z-INDEX THAT CAN MEET ANOTHER ONE HAS A NAME HERE.
+
+   THERE WERE NINETEEN DISTINCT VALUES AND NO SCALE (counted 2026-09-09): 0, 1, 5, 10, 20, 22, 25,
+   30, 35, 40, 42, 50, 60, 110, 120, 130, 190, 200, 255, 260, 280, 300 and 9999. Every one of them
+   was chosen locally, by someone looking at the one neighbour they happened to think of, which is
+   why the tree already carried two inversions - `MessageMobileActions` at 110 UNDER the banner
+   column at 120, and `Sidebar`'s drawer scrim at 42 OVER the drawer at 40 it is meant to sit
+   behind. Neither is discoverable by reading the file it lives in. The user's report is the general
+   case: *"les panneaux peuvent se retrouver en dessous d'une partie de l'interface, comme les
+   bandeaux"*.
+
+   HOW TO USE IT: `z-(--z-modal)` in markup, `z-index: var(--z-modal)` in this file. A NEW LAYER
+   TAKES AN EXISTING RUNG OR ADDS ONE HERE - never a number at the call site. A rung is a SENTENCE
+   about what the thing is, so choosing one is a design decision made once, in the open, against
+   every other layer rather than against the one that came to mind.
+
+   WHAT DOES NOT BELONG HERE: a `z-10` ordering two children of one card. Those are LOCAL - they
+   compete only with their own siblings and are invisible to everything else - and naming them here
+   would suggest they can be compared with a modal, which they cannot. The boundary is whether the
+   element can be on screen at the same time as something from another component.
+
+   AND THE THING THE LADDER CANNOT FIX: a rung is only comparable inside its own stacking context.
+   `.page-scroll-wrap` carries `will-change: transform` for the swipe-between-tabs gesture, which
+   makes it BOTH a stacking context and the containing block for every `position: fixed` inside it -
+   so a `fixed` layer in a page is laid out against that wrapper, not the viewport, and its rung is
+   compared only with its siblings there. Measured 2026-09-09 on `/chat` at 393px: the whole page
+   sits at rung 10 of the root context, under `.page-scroll-wrap`. Anything that must escape a page
+   entirely has to be PORTALLED to the body, and `$lib/actions/portal` is how.
+   ========================================================================================== */
+:root {
+  /* The navigation frame. Each scrim is one rung UNDER the thing it dims: a scrim exists to catch
+     the click that closes it, so putting it OVER that thing makes the thing stop answering. */
+  --z-nav-scrim: 22;
+  --z-nav-rail: 30;
+
+  /* In a page, over that page's own content. */
+  --z-page-sticky: 35; /* a sticky date pill inside a scroller */
+  --z-page-overlay: 40; /* the chat's own banner stack, the composer footer */
+
+  --z-nav-drawer-scrim: 42;
+  --z-nav-drawer: 44;
+
+  --z-toast: 60;
+
+  /* Window scale: the banner column in the root layout. */
+  --z-banner: 120;
+
+  /* A surface a GESTURE opened, over the whole window: the message actions sheet, the GIF and poll
+     pickers. Above the banner deliberately - a banner is ambient, a sheet is what the reader just
+     asked for, and a full-screen scrim with a banner painted through it reads as a rendering
+     fault. This is one of the two inversions the ladder was written to end. */
+  --z-sheet: 160;
+
+  /* Anchored to a control rather than to the window: the notification panel, the emoji picker. */
+  --z-popover-scrim: 190;
+  --z-popover: 200;
+
+  --z-side-panel-scrim: 255;
+  --z-side-panel: 260;
+
+  --z-modal: 280;
+  /* A dropdown opened from INSIDE a modal, portalled out of it so nothing can clip it. It has to
+     clear the modal it belongs to, which is the whole reason it is a rung of its own. */
+  --z-modal-popover: 290;
+  /* A full-screen media viewer. Above a modal because it opens from one. */
+  --z-viewer: 300;
+
+  /* Interrupts everything below: a confirmation, the call UI. Nothing decorative may be here. */
+  --z-critical: 320;
+  /* The incoming-call notice, which must clear even the call UI - it is how a second call is
+     answered while the first one is on screen. */
+  --z-call-notice: 340;
+
+  /* Follows the pointer and is never interactive, so it may sit over anything without trapping it. */
+  --z-tooltip: 400;
+
+  /* Above everything, because it is the way out for someone who cannot use a pointer. */
+  --z-skip-link: 500;
+}
+
 :root {
   /* Default assumes the native Tauri WebView (env() answers a real question there); app.html's
    * inline script overrides this to 0px before first paint when not running in Tauri, since a
@@ -655,7 +736,7 @@ h6,
   padding-top: 0.5rem;
   padding-bottom: max(0.75rem, var(--safe-area-inset-bottom, 0px));
   pointer-events: none;
-  z-index: 40;
+  z-index: var(--z-page-overlay);
   transition: bottom 180ms ease;
 }
 
@@ -842,7 +923,7 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   top: 0;
   right: 0;
   bottom: 0;
-  z-index: 260;
+  z-index: var(--z-side-panel);
   width: 100%;
   max-width: 28rem;
 }
@@ -1139,7 +1220,7 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   top: 0.85rem;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 35;
+  z-index: var(--z-page-sticky);
   padding: 0.35rem 0.65rem;
   border-radius: 9999px;
   font-size: var(--text-2xs);
@@ -1172,7 +1253,7 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   position: absolute;
   top: -100%;
   left: 1rem;
-  z-index: 9999;
+  z-index: var(--z-skip-link);
   padding: 0.5rem 1rem;
   border-radius: 0 0 0.5rem 0.5rem;
   background: var(--cn-dark);

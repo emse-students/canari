@@ -301,12 +301,13 @@
 <a href="#main-content" class="skip-link">{m.layout_skip_to_content()}</a>
 
 <PlatformGateOverlay />
-<!-- ONE COLUMN FOR THE WINDOW-SCALE BANNERS. Both of these used to place themselves - `fixed top-0
-     z-[120]` and `fixed top-safe-area z-50` - so when both were up the maintenance notice simply
+<!-- ONE COLUMN FOR THE WINDOW-SCALE BANNERS. Both of these used to place themselves - `fixed top-0`
+     at 120 and `fixed top-safe-area` at 50 - so when both were up the maintenance notice simply
      painted over the fatal MLS error, hiding the only message that says the messaging stack is
      dead. Stacked in one flex column they queue instead, which is the lesson `ChatArea` had already
-     learnt for the conversation-scale pair. -->
-<div class="fixed inset-x-0 top-[env(safe-area-inset-top)] z-120 flex flex-col">
+     learnt for the conversation-scale pair. The column takes the `--z-banner` rung of the layer
+     ladder in `app.css`; a sheet the reader opened sits above it, deliberately. -->
+<div class="fixed inset-x-0 top-[env(safe-area-inset-top)] z-(--z-banner) flex flex-col">
   <!-- FIRST, and it decides for itself whether to render. The others come and go; this one is a
        property of the whole deployment, so a transient notice must not push it off screen. -->
   <EnvironmentBanner />

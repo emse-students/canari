@@ -410,7 +410,7 @@
 {#if compact}
   <!-- Docked, non-blocking widget: the rest of the app stays interactive. -->
   <div
-    class="bg-cn-scrim/95 fixed right-4 bottom-4 z-[300] w-[min(20rem,calc(100vw-2rem))] rounded-3xl p-4 shadow-2xl ring-1 ring-white/10 select-none"
+    class="bg-cn-scrim/95 fixed right-4 bottom-4 z-(--z-critical) w-[min(20rem,calc(100vw-2rem))] rounded-3xl p-4 shadow-2xl ring-1 ring-white/10 select-none"
     transition:fly={{ y: 30, duration: 250 }}
   >
     <audio bind:this={remoteAudioSink} autoplay class="hidden"></audio>
@@ -545,7 +545,7 @@
 {:else}
   <!-- Expanded / full-screen call view -->
   <div
-    class="fixed inset-0 z-[300] flex flex-col items-center justify-center bg-black/90 select-none {isMobileRtc
+    class="fixed inset-0 z-(--z-critical) flex flex-col items-center justify-center bg-black/90 select-none {isMobileRtc
       ? 'p-0'
       : 'p-4 sm:p-6'}"
     transition:fade={{ duration: 300 }}

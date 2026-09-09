@@ -80,7 +80,7 @@
   -->
   <div
     data-nav-backdrop
-    class="fixed inset-0 top-[calc(var(--app-top-bar-height)+env(safe-area-inset-top))] z-[22] hidden bg-black/10 md:block dark:bg-black/30"
+    class="fixed inset-0 top-[calc(var(--app-top-bar-height)+env(safe-area-inset-top))] z-(--z-nav-scrim) hidden bg-black/10 md:block dark:bg-black/30"
     transition:fade={{ duration: 300, easing: (t) => t * (2 - t) }}
     onclick={() => (isExpanded = false)}
   ></div>
@@ -109,7 +109,7 @@
   onmouseenter={handleMouseEnter}
   onmouseleave={handleMouseLeave}
   class="app-nav-rail bg-cn-surface fixed top-[env(safe-area-inset-top)] left-0 hidden h-[calc(var(--app-viewport-height,100dvh)-env(safe-area-inset-top))] flex-col overflow-hidden border-r border-black/5 shadow-[4px_0_24px_rgba(0,0,0,0.02)] transition-all duration-300 ease-out md:flex dark:border-white/10 dark:shadow-[4px_0_24px_rgba(0,0,0,0.2)] {isExpanded
-    ? 'z-30 w-[21rem]'
+    ? 'z-(--z-nav-rail) w-[21rem]'
     : 'z-20 w-[4.5rem]'}"
 >
   <nav class="flex flex-1 flex-col gap-1.5 p-3">

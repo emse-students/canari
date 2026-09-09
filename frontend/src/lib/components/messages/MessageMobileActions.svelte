@@ -10,6 +10,7 @@
     PinOff,
   } from '@lucide/svelte';
   import { fly, fade } from 'svelte/transition';
+  import { portal } from '$lib/actions/portal';
   import { m } from '$lib/paraglide/messages';
   import { QUICK_REACTION_EMOJIS } from '$lib/utils/chat/messageActions';
 
@@ -86,8 +87,22 @@
   }: Props = $props();
 </script>
 
+<!--
+  PORTALLED, AND THE RUNG ALONE WOULD NOT HAVE BEEN ENOUGH.
+
+  This sheet is rendered at the bottom of a `MessageBubble`, deep inside `.page-scroll-wrap` - which
+  carries `will-change: transform` for the swipe-between-tabs gesture. That makes the wrapper BOTH a
+  stacking context and the containing block for `position: fixed`, so before this the sheet's
+  `inset-0` resolved against the WRAPPER's box rather than the viewport, and its rung was compared
+  only with the wrapper's own children. Measured on `/chat` at 393px: the page sits at rung 10 of the
+  root context, so a sheet asking for 160 was really asking for 160-of-10, and anything the wrapper
+  does not cover - the conversation header among them - stayed outside the scrim.
+
+  Moving the node to `document.body` is what makes `inset-0` mean the viewport and `--z-sheet` mean
+  the ladder, on every device rather than on the ones whose wrapper happens to fill the screen.
+-->
 {#if visible}
-  <div class="fixed inset-0 z-[110] md:hidden">
+  <div use:portal class="fixed inset-0 z-(--z-sheet) md:hidden">
     <button
       type="button"
       class="absolute inset-0 cursor-default bg-black/45 outline-none"

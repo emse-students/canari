@@ -174,7 +174,7 @@
     <div
       role="presentation"
       data-keyboard-aware-overlay
-      class="fixed z-[280] flex justify-center bg-black/40 {backdropAlignClass}"
+      class="fixed z-(--z-modal) flex justify-center bg-black/40 {backdropAlignClass}"
       onclick={handleBackdropClick}
       in:fly={{ duration: 200, y: 0, opacity: 0 }}
     >

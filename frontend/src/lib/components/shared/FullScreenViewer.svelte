@@ -83,7 +83,7 @@
   <!-- Backdrop: clicking outside the card closes. Escape is handled on the window above. -->
   <div
     role="presentation"
-    class="fixed inset-0 z-300 flex items-center justify-center bg-black/70 sm:p-4"
+    class="fixed inset-0 z-(--z-viewer) flex items-center justify-center bg-black/70 sm:p-4"
     style={touchStyle}
     onclick={onClose}
   >
