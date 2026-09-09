@@ -11,6 +11,8 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+## [0.16.6] - 2026-09-09
+
 ### Changed - "Nouvelle discussion" opens on the people you already talk to
 
 Observed on the Mi 9T on 2026-09-09: on a 436x945 phone the panel drew a tab pair, a label, a search
