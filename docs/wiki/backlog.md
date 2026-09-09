@@ -656,7 +656,7 @@ conversation shortcut implies, and doing the group alone would split the stack w
 the conversation treatment.
 
 ---
-### P3 - a server exception's English text is shown verbatim to a French reader (observed 2026-09-09)
+### P2 - a server exception's English text is shown verbatim to a French reader, at 185 call sites (counted 2026-09-09)
 
 Depositing an event without the right flag answers `403` from
 `global-admin-or-association-role.guard.ts`, whose message is
@@ -673,9 +673,21 @@ is "vous n'avez pas le droit de deposer un evenement pour cette association", bu
 and the operation - never from prose that crossed the network. A message is a distinction carried in
 words, and branching on it later is the failure this repository already names.
 
-**Scope before touching it**: this is one call site of a general shape, so count them first. A pass
-that localises this modal and leaves nine others answering in English has moved the defect rather
-than closed it, and the count is what says whether this is a P3 or a P2.
+**COUNTED, AND THE COUNT IS WHAT PROMOTED THIS.** `err instanceof Error ? err.message : ...` appears
+**185 times across 61 `.svelte` files**. Of those, **173 assign it straight to UI state and 2 hand
+it to a toast; NOT ONE is log-only.** So this is not a modal with an English sentence - it is the
+house style for reporting a failure, and every 4xx the API answers with prose reaches a reader in
+whatever language the server happened to write it in.
+
+**That changes the shape of the fix.** 185 hand-written mappings is not a pass anybody finishes, and
+a partial one leaves the defect exactly where it was. What the count argues for is ONE helper the
+call sites already have a reason to use - a failure classified at the THROW, as a type, with the
+localized sentence chosen from the status and the operation - and then the sites migrate to it as
+they are touched. The rule this repository already carries says the same thing about error prose:
+*a distinction carried in words is a distinction exactly one call site will make*.
+
+**What must NOT happen** is translating the server's messages. They are dev-facing and English is
+correct for them, the same as every log here.
 
 **Blocked on nothing** - local estate, and it reproduces on any 4xx the API answers with prose.
 
