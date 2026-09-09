@@ -35,8 +35,33 @@ Measured after: the strip's centre falls inside the popover's own span, a 0px ho
 
 **The full emoji picker had the same fault one level up**: its anchor was the message ROW, which on a
 wide thread is most of the window, so pressing "+" opened the panel a screen away. It now anchors to
-the strip when there is one. Below `md` there is no strip and the row is the correct anchor - two
-legitimate cases, not a fallback.
+the icon strip when the toolbar's "+" opened it, and to the row when the long-press sheet did.
+
+### Fixed - the reaction picker opened in the top-left corner of the screen on a phone
+
+Found on 2026-09-09 while measuring the fix above at a viewport the size of the user's window, and it
+had never been reported because it is invisible at any width a developer works at.
+
+The picker chose its anchor by asking the DOM for the hover toolbar's icon strip. That is not a
+discriminator: the strip is in the tree at EVERY width, merely `hidden md:block`. Below 768px the
+query therefore succeeded and returned a `display: none` node - and
+`getBoundingClientRect()` on one of those is all zeros, which reads downstream as an ordinary anchor
+sitting at the window origin. Every clamp agreed, and the panel was placed neatly in the corner.
+Measured at 620px: anchor `0x0`, panel written to `left: 8px, top: 8px`, with the message it belonged
+to at `261-608`. The same code measured correct at 900px and at 1920px.
+
+Which control opened the panel is known by the control itself, so it is now carried as a value
+(`'toolbar' | 'sheet'`, which is also the open/closed state - there is no way to spell "open, from
+nowhere"). The two placement decisions that follow from it are one pure function each, in
+`frontend/src/lib/utils/chat/reactionPicker.ts`, and are pinned by tests that do not depend on a
+viewport width. Re-measured after: at 620px the panel writes `left: 256px`, its right edge on the
+message's right edge.
+
+**And `bindFixedPopover` now refuses a zero-sized anchor instead of placing against the origin**, with
+a `console.warn` naming the panel. Nothing about that failure was specific to this picker - any
+caller can name a node its own CSS has hidden, and every one of them would land in the same corner
+with the same silence. It is the one bad anchor that looks valid: `null` returns early and an
+off-screen one is clamped back in, while all-zeros is a legal rect describing a legal point.
 
 ### Changed - every corner in the app now comes from the radius scale
 

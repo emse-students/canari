@@ -90,11 +90,44 @@ export function computeFixedPopoverPosition(
   return { top, left, maxHeight, side, width: panelWidth };
 }
 
+/**
+ * Whether an anchor actually occupies space - the one precondition every placement here assumes.
+ *
+ * A ZERO-SIZED RECT IS NOT A POSITION, AND TREATING IT AS ONE PUTS THE PANEL IN THE CORNER.
+ * `getBoundingClientRect()` on a `display: none` node returns all zeros, and zeros read downstream
+ * as a perfectly ordinary anchor sitting at the window origin: the flip picks a side, both clamps
+ * agree, and the panel is placed at `(margin, margin)` with nothing anywhere saying it went wrong.
+ *
+ * That shipped. The reaction picker anchored itself to the hover toolbar's icon strip, which is in
+ * the tree at every width but `hidden md:block` - so below 768px it asked a `display: none` node
+ * where it was. Measured 2026-09-09 at a 620px viewport: anchor `0-0`, panel `8-360`, a screen away
+ * from the "+" that opened it, and the user's report was the picture of it (*"Tu vois bien que ce
+ * n'est pas aligne"*). At 900px and 1920px the same code was correct, which is why no wide-window
+ * measurement ever caught it.
+ *
+ * Checked here rather than at that one call site because nothing about it was specific to that
+ * panel: any caller can name a node its own CSS has hidden, and every one of them would land in the
+ * same corner with the same silence.
+ */
+function isLaidOut(anchor: HTMLElement): boolean {
+  const rect = anchor.getBoundingClientRect();
+  return rect.width > 0 || rect.height > 0;
+}
+
 /** Keeps a `position: fixed` popover inside the viewport while scrolling/resizing. */
 export function bindFixedPopover(panel: HTMLElement, options: FixedPopoverOptions): () => void {
   const apply = () => {
     const anchor = options.anchor();
     if (!anchor) return;
+    if (!isLaidOut(anchor)) {
+      // The caller named a node that has no box. There is nothing to position against, and the fix
+      // is always at the call site - so this refuses rather than inventing a placement, and says
+      // which panel it refused for.
+      console.warn(
+        `[popover] anchor has no box (display:none, or detached) - not positioning ${panel.className || panel.tagName}`
+      );
+      return;
+    }
     const { top, left, maxHeight, side, width } = computeFixedPopoverPosition(
       anchor,
       panel,

@@ -3,18 +3,29 @@
   import { onMount } from 'svelte';
   import { scale } from 'svelte/transition';
   import { bindFixedPopover } from '$lib/actions/fixedPopover';
+  import { portal } from '$lib/actions/portal';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
   import {
     MAX_DISTINCT_MESSAGE_REACTIONS,
     canAddDistinctReactionEmoji,
   } from '$lib/utils/chat/messageReactions';
+  import {
+    pickerAlignsToEnd,
+    pickerAnchor,
+    type MessagePickerOrigin,
+  } from '$lib/utils/chat/reactionPicker';
   import 'emoji-picker-element';
   import enI18n from 'emoji-picker-element/i18n/en';
 
   interface Props {
-    /** Whether the emoji picker panel is visible. */
-    visible: boolean;
+    /**
+     * Which control opened the panel, or `null` when it is closed - so this is its visibility too.
+     *
+     * `'toolbar'` is the "+" in the hover toolbar's quick bar, `'sheet'` the long-press actions.
+     * They want different anchors, and the panel CANNOT tell them apart by looking (see below).
+     */
+    origin: MessagePickerOrigin;
     /** When true, anchors the picker to the right side (own messages). */
     isOwn: boolean;
     /** DOM node used to position the picker (message row). */
@@ -26,7 +37,7 @@
   }
 
   let {
-    visible = false,
+    origin = null,
     isOwn = false,
     anchor = null,
     existingReactionEmojis = [],
@@ -48,21 +59,21 @@
    * was that plainly (2026-09-09): *"lorsque je clique sur + sur la barre de smiley, le panneau ne
    * devrait pas s'ouvrir a l'autre bout de l'ecran"*.
    *
-   * The hover toolbar publishes its icon strip as `[data-message-toolbar]`, and the "+" lives in the
-   * quick bar hanging off that strip, so the strip is where the reader's eye and pointer already
-   * are. **A row with no strip is not a failure and this is not a fallback**: below `md` the toolbar
-   * does not render at all and the picker is opened from the long-press sheet, where the ROW is the
-   * correct anchor and the only one there is. Two legitimate cases, resolved by asking the DOM which
-   * one this is.
+   * Which node that is depends on `origin` and on NOTHING this component can observe - the reasoning
+   * and the defect that proved it are in `reactionPicker.ts`.
    *
    * Resolved at OPEN time rather than derived: the strip is created and destroyed by hover, so a
    * value computed once would name a node that no longer exists.
    */
   const positioningAnchor = () =>
-    anchor?.querySelector<HTMLElement>('[data-message-toolbar]') ?? anchor;
+    pickerAnchor(
+      origin,
+      anchor,
+      anchor?.querySelector<HTMLElement>('[data-message-toolbar]') ?? null
+    );
 
   $effect(() => {
-    if (!visible || !panelEl || !anchor) {
+    if (!origin || !panelEl || !anchor) {
       unbindPosition?.();
       unbindPosition = null;
       return;
@@ -71,7 +82,7 @@
     unbindPosition?.();
     unbindPosition = bindFixedPopover(panelEl, {
       anchor: positioningAnchor,
-      alignEnd: isOwn,
+      alignEnd: pickerAlignsToEnd(origin, isOwn),
       estimatedHeight: 460,
     });
 
@@ -219,8 +230,27 @@
   });
 </script>
 
-{#if visible}
+<!--
+  PORTALLED, FOR THE REASON `MessageMobileActions` IS, AND THE COORDINATES PROVE IT.
+
+  This panel is `position: fixed` and it is rendered deep inside a `MessageBubble`, under
+  `.page-scroll-wrap` - which carries `will-change: transform` for the swipe-between-tabs gesture.
+  That makes the wrapper the CONTAINING BLOCK for every `fixed` descendant, so the coordinates
+  `bindFixedPopover` computes against the viewport are then resolved against the wrapper instead.
+
+  Measured on 2026-09-09, which is the only reason this is not still a guess: with the panel anchored
+  correctly to the hover toolbar's icon strip, the action wrote `left: 958.8px` - the right answer,
+  the strip's right edge minus the panel width - and the panel PAINTED at 1055. Ninety-six pixels of
+  wrapper offset, silently added to a number that was already correct. The user's report was that the
+  panel "n'est pas au meme endroit que le reste": the quick bar beside it is `absolute` and lands
+  where it is put, while this one is `fixed` and does not.
+
+  Moving the node to `document.body` is what makes `left` mean the viewport. Nothing else changes -
+  the action, the anchor and the rung are the same.
+-->
+{#if origin}
   <div
+    use:portal
     bind:this={panelEl}
     data-swipe-nav-ignore
     transition:scale={{ duration: 250, start: 0.95, opacity: 0, easing: (t) => t * (2 - t) }}

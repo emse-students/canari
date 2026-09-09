@@ -5064,53 +5064,31 @@ search requirement points at.
 
 ## Composer and reactions
 
-### P2 - the emoji picker cannot be scrolled, and often opens outside the screen
+### DONE 2026-09-09 - the emoji picker scrolls and stays on screen; BOTH halves re-measured, both already fixed
 
-Reported by the user 2026-08-23. Two defects and two questions, and they are listed apart because
-only the first two are known to be wrong.
+Reported 2026-08-23, and the fixes landed since without this entry being closed. Kept only so a later
+session does not re-open it on the strength of the old text.
 
-- **The list does not scroll.** Whatever does not fit in the panel is unreachable, so the picker
-  offers exactly one screenful of the set it claims to offer.
-- **The panel frequently renders partly off-screen.** So this is not only a scroll bug: the placement
-  has no viewport clamping, and near an edge the picker loses rows in a second, independent way.
-- **ANSWERED 2026-08-23, NO: the glyph set is the platform's.**
-  `frontend/src/lib/components/messages/MessageEmojiPicker.svelte` mounts `emoji-picker-element`,
-  which renders native codepoints in the system font - there is no bundled sprite sheet. Only the
-  DATA is self-hosted (`data-source="/emoji-data-fr.json"`, and that exists so French search keywords
-  work: `locale="fr"` alone translates the UI and not the keywords). So one codepoint, N pictures -
-  Windows, Android and iOS each draw their own, and the library even ships an
-  `emojiUnsupportedMessage` for a client with no colour emoji at all. **The product decision this
-  bullet said was owed was TAKEN on 2026-08-23: we bundle one set - see the entry below, which is
-  one work package with this one.**
-- **ANSWERED 2026-08-23, YES: recents exist** - `canari_recent_emojis` in `localStorage`, most-recent
-  first, capped at 12, rendered as a row above the picker. Two limits worth knowing before anyone
-  "adds" the feature: it is PER DEVICE and never synced, and it is fed only by
-  `handleEmojiClick`, so a reaction added by any path that does not go through this picker never
-  reaches the list.
+**Measured on the live app, 2026-09-09.** The list scrolls: the shadow root's `.tabpanel` reads
+`clientHeight=263` against `scrollHeight=880`, and `scrollTop = 400` takes. The panel is on screen:
+`350x400 at 332,177`, fully inside. **And at the edges, which is what the entry actually claimed** -
+viewport forced to `1000x420`, picker opened from the FIRST and the LAST bubble in the thread: panel
+`352x282 at 420,130` and `352x340 at 344,8`, both entirely inside the viewport, both scrolling.
 
-**The likely cause of BOTH defects is one line, and it is the same line.** The panel is
-`flex flex-col overflow-hidden` with a `max-height` written by `bindFixedPopover`
-(`frontend/src/lib/actions/fixedPopover.ts`), and the `<emoji-picker>` inside it already carries
-`min-h-0 flex-1` - which is exactly the arrangement that sizes correctly on its own. It is then
-overridden by an inline
-`style="height: min(22rem, calc(var(--popover-max-h) - {recents ? '5.5rem' : '3rem'}))"`. That
-subtraction is a HARD-CODED GUESS at the height of everything above the picker, and the recents row
-is `flex-wrap` with up to twelve 32 px buttons plus a label inside a `min(92vw,22rem)` panel - so it
-wraps to two lines well before twelve, and the guess is then short by a whole line. The picker is
-sized taller than the room actually left, the parent is `overflow-hidden`, and the bottom of the list
-- with its scroll affordance - is clipped away. **The fix is to delete the inline height, not to
-correct the constant**: the flex layout already knows the answer, and a second hard-coded number
-would be wrong again the next time the header gains a line (the reactions-at-limit banner is exactly
-such a line, and it is not in the guess either).
+**The inline height this entry blamed was already gone**, and the comment left in its place records
+that deleting it was NOT sufficient on its own - `flex-1` still measured 973px inside 417. The
+`min-h-0 w-full flex-auto` that replaced it is what sizes correctly.
 
-A second, narrower placement fault is in `computeFixedPopoverPosition`: `maxHeight` is floored at
-`Math.max(160, ...)` after the side has been chosen, so on a short viewport the panel can be given
-160 px in a gap smaller than 160 px and hang off the bottom. The floor should not be able to exceed
-the space that was measured.
+**The second fault - the floor exceeding the room - is not a fault and is now documented as such.**
+`MIN_USEFUL_HEIGHT` may exceed the space on the chosen side ON PURPOSE: a panel smaller than that
+shows nothing usable, so the height is kept and the panel is MOVED. What it may never exceed is the
+viewport, and that is enforced. Both behaviours are pinned in `fixedPopover.test.ts` - "slides a panel
+up rather than letting it hang off the bottom" and "never gives a panel more height than the viewport
+itself".
 
-Both defects are visible without any instrument, so this needs no campaign row to be believed - but
-the picker sits on the reaction path that DEL, MUT and MSG all drive, so fixing it mid-ladder changes
-code under checks that have already run. Schedule it after the ladder unless the user says otherwise.
+The picker's placement improved again on 2026-09-09 for an unrelated reason: it anchors to the hover
+toolbar's icon strip rather than to the message row, so "+" no longer opens it a screen away
+([CHANGELOG](../../CHANGELOG.md)).
 
 ### P2 - the app draws emoji with the platform's font, and must draw ONE bundled font everywhere (decided 2026-08-23)
 
