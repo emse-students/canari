@@ -11,6 +11,34 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - an estate with no avatar provider answered 502 to every face, uncached, for ever
+
+Found on `dev.canari-emse.fr` while looking for something else: **560 `502`s on
+`/api/users/<id>/avatar` since 06:00Z and still climbing**, one per face per render, none of which
+could ever have succeeded. The estate is behaving as designed - `docker-compose.dev.yml` CUTS
+`MIGALLERY_URL` rather than inheriting production's, because that gallery lives in another
+repository's estate, and the comment beside it says so. So `MIGALLERY_API_KEY` is empty there,
+`AvatarService` warns once at startup, and every request short-circuits before any network call.
+
+The defect is what that short-circuit *returned*. It answered `unavailable`, which the controller
+maps to **`502` with `Cache-Control: no-store`** - correct for a timeout, whose whole point is that
+the next request should try again, and exactly wrong for a condition read once at startup that
+cannot change while the process lives. A browser told not to store is a browser that asks again on
+every avatar of every render, so the estate generated its own load answering a question whose answer
+was fixed. The cache beside this service exists to prevent precisely that amplification, and its own
+docblock records the same shape turning one outbound failure into 479 recorded 502s on the portal;
+the *unconfigured* case walked through the one door it left open. **A predicate that named the last
+incident is not the predicate that names the next one.**
+
+There is now a fourth outcome, `disabled`, answered **`404` with `max-age=600`** - the same shape as
+`absent`, because to a client the two are the same fact: there is no image, draw the initials. Ten
+minutes rather than for ever, so an estate that *does* gain a key recovers within one TTL without a
+deploy. `unavailable` keeps `no-store` and keeps meaning what it says: the provider was reachable in
+principle and this attempt failed. The startup warning no longer claims avatars will answer
+"unavailable" either, and says instead what a reader needs - that this estate has no provider, that
+clients will draw initials, and that the line appears once because the condition cannot change.
+
+
 ### Fixed - a top-anchored modal drew square corners in a 16px moat, and its two size utilities were dead
 
 Follow-up to the modal that used to ride the keyboard, found by looking at the phone rather than at
