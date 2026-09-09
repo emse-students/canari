@@ -5,7 +5,6 @@
   import { portal } from '$lib/actions/portal';
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
   import { pushHistoryOverlay, closeHistoryOverlayFromUi } from '$lib/utils/historyOverlayStack';
-  import { keyboardAwareOverlayPadding } from '$lib/stores/keyboardViewport.svelte';
 
   interface Props {
     open?: boolean;
@@ -70,12 +69,28 @@
    * ONE OF THESE THREE IS EMITTED, NEVER TWO. They set the same properties, so a panel carrying two
    * of them would be decided by Tailwind's class ORDER rather than by the flags - which is the trap
    * the `fullViewport` comment already warns about, and `topAnchored` would have walked into it.
+   *
+   * `topAnchored` SETS NEITHER A HEIGHT NOR A RADIUS OVERRIDE, and both omissions are measured.
+   * It shipped as `h-[100dvh] max-h-[100dvh] rounded-none`, all three of which were wrong on the
+   * phone this was written for (Mi 9T, 2026-09-09):
+   *
+   *  - the max-height never applied. `.keyboard-aware-modal-panel` in `app.css` caps every panel at
+   *    `min(92dvh, var(--app-viewport-height)) !important`, so THAT rule owns the cap and no
+   *    utility here can move it - measured 540.85px against a `100dvh` of 587.88px.
+   *  - the height was redundant and 3px harmful. The backdrop is `items-stretch` on a phone, so a
+   *    panel with no height already fills the padded box (537.88px); `100dvh` only pushed it past
+   *    the backdrop's own bottom padding until the cap above clamped it.
+   *  - `rounded-none` is for a panel that reaches the screen edges, and this one never does: the
+   *    backdrop pads `max(1rem, env(safe-area-inset-*))` on all four sides, so square corners drew
+   *    a slab floating in a 16px moat. Rounded is also what the user asked every panel to be
+   *    (2026-09-08, about the conversation panels: *"comme les autres blocs, avec les coins
+   *    arrondis etc"*).
    */
   const panelSizeClass = $derived(
     fullViewport
       ? 'h-[100dvh] max-h-[100dvh] rounded-none sm:h-[min(96dvh,100%)] sm:max-h-[96dvh] sm:rounded-2xl sm:w-[min(96vw,90rem)]'
       : topAnchored
-        ? 'h-[100dvh] max-h-[100dvh] rounded-none sm:h-auto sm:max-h-[92dvh] sm:rounded-2xl'
+        ? 'rounded-2xl'
         : 'max-h-[92dvh] rounded-t-3xl sm:rounded-2xl'
   );
 
@@ -160,7 +175,6 @@
       role="presentation"
       data-keyboard-aware-overlay
       class="fixed z-[280] flex justify-center bg-black/40 {backdropAlignClass}"
-      style="padding: {keyboardAwareOverlayPadding}"
       onclick={handleBackdropClick}
       in:fly={{ duration: 200, y: 0, opacity: 0 }}
     >

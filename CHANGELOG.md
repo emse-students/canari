@@ -11,6 +11,33 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a top-anchored modal drew square corners in a 16px moat, and its two size utilities were dead
+
+Follow-up to the modal that used to ride the keyboard, found by looking at the phone rather than at
+the numbers. The fix itself held - measured on a Mi 9T with the keyboard opening and closing, the
+panel's top stayed at **34px** in both states while the viewport went 945 -> 588px, so nothing is
+translated any more. What the screenshot showed was the *chrome*: `rounded-none` on a panel that
+never reaches the screen edges, because `[data-keyboard-aware-overlay]` pads
+`max(1rem, env(safe-area-inset-*))` on all four sides. A square-cornered slab floating in a 16px
+moat, where the user had asked for the opposite ("comme les autres blocs, avec les coins arrondis
+etc"). It is a rounded card now.
+
+**Two of the three utilities it shipped with never did anything**, which is the more useful half of
+this entry. `.keyboard-aware-modal-panel` caps EVERY panel at
+`max-height: min(92dvh, var(--app-viewport-height)) !important`, unconditionally and with no media
+query, so no `max-h-*` utility in the component can move it - the panel measured **540.85px** against
+a `100dvh` of **587.88px**. And `h-[100dvh]` was redundant beside it: the backdrop is `items-stretch`
+on a phone, so a panel with no height already fills the padded box, and the explicit height only
+pushed it 3px past the backdrop's own bottom padding before the cap clamped it back. Both are gone,
+and the component now says in one place which rule owns the cap.
+
+**The overlay padding was also a second copy of a value app.css already sets**, and the copy had an
+unclosed `max(`. It rendered correctly only because CSS closes a function block left open at the end
+of a value instead of dropping the declaration - a parser's error recovery standing in for the value
+being right. Three of the four `data-keyboard-aware-overlay` elements never carried the inline copy
+at all, which is what proves the stylesheet rule sufficient; the fourth carries it no longer, and the
+exported constant is deleted rather than repaired.
+
 ### Fixed - the composer text sat 4px low on a phone and nowhere else, and the expanded rail clipped all eighteen of its texts
 
 Two reports, both measured before anything was changed, and both turning out to have a cause that is
