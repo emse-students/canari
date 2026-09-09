@@ -25,7 +25,7 @@
   });
 </script>
 
-<Modal {open} {onClose} title={m.chat_modal_community_name_label()}>
+<Modal {open} {onClose} topAnchored title={m.chat_modal_community_name_label()}>
   <div class="space-y-4 pt-2">
     <div>
       <label for="new-community-name" class="text-text-main mb-1 block text-sm font-medium"

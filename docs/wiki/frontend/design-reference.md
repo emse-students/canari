@@ -613,3 +613,77 @@ Measured after: 18 texts checked at 336px, **0 clipped**.
 
 The lesson is the one section 12 also produced: when one value in a distribution forces a layout
 number, check whether it is an outlier in the CONTENT before paying for it in the LAYOUT.
+## 14. Four ways to show one thing, and the one that survived
+
+**The user's report, 2026-09-08**, naming three of them: *"Membres d'un salon de communaute ajoute un
+element a cote et diminue la largeur du bloc conversation, tandis que 'Medias, liens et fichiers' fait
+quelque chose par dessus, et 'Parametres du canal' ouvre un modal. Je pense qu'on pourrait tout faire,
+comme sur messenger, avec un blob qui s'ajoute a cote (mais comme les autres blocs, avec les coins
+arrondis etc) au lieu de par dessus. On laisse cette histoire de par dessus pour la navbar."*
+
+### There were four, not three
+
+Reading the code for the three named surfaces turned up a fourth with the same job:
+
+| surface | how it drew itself | where the state lived |
+| --- | --- | --- |
+| Membres (channel) | inline `xl:flex` column **plus** a hand-rolled `fixed` drawer, mounted TWICE | `useConversations` |
+| Medias, liens et fichiers | portalled `fixed inset-0` + scrim, on **every** viewport | a local inside `ChatArea` |
+| Parametres du canal | `<Modal maxWidth="max-w-4xl">` with its own 16rem tab rail | `useConversations` |
+| **Parametres de la discussion** (group/DM) | portalled `fixed inset-0` + scrim + `role="dialog"` | a local inside `ChatHeader` |
+
+The last two are reached from **the same gear icon**: `ChatHeader` called `onOpenSettings` when the
+parent supplied one (channels) and otherwise fell back to its own `showPanel`. That fallback WAS the
+divergence - one button, two mechanisms, decided by a prop being absent.
+
+Three consequences, all of them things nothing forbade rather than things anyone chose:
+
+- **Two panels could be open at once.** The media sheet's state was a `ChatArea` local and the members
+  column's was in the store, so neither could see the other. Opening media over an open members column
+  drew a scrim across a column that was still there underneath.
+- **The media panel covered the conversation it was describing**, on a 1920px desktop with room for a
+  third column, because a child component cannot become its parent's sibling. Where the panel lived in
+  the tree decided what it could look like.
+- **Escape closed exactly one of the four** - the group panel, through a `svelte:window` handler inside
+  `ChatHeader` keyed on that component's own flag.
+
+### What replaced them
+
+`ConversationSidePanel.svelte`, plus a single `sidePanel: 'members' | 'media' | 'settings' |
+'conversation' | null` in `useConversations`. **One value cannot hold two panels open**, so the
+illegal state stopped being reachable rather than being guarded against.
+
+- **One instance, not two.** A desktop card and a mobile drawer as separate `{#if}` branches would
+  mount `children` twice - two copies of the media panel, two decrypt passes, two of every request its
+  content makes. The chrome is the only thing that differs, so the media query moves the chrome:
+  `.conversation-side-panel` is `position: fixed` at the base and `position: static` from 1280px up.
+- **The three CSS blocks are contiguous and ascending**, and that ordering is the mechanism. Written
+  apart they were wrong: the 1280px rule sat *before* the 768px one, so at 1400px the drawer's own
+  top-bar offset won on source order and pushed the column down by a whole bar.
+- **Escape, the scrim, the header and the close button are declared once**, in the shell.
+- **The back gesture is one entry.** `openSidePanel` unwinds the previous panel's history entry before
+  pushing its own - stacking them would make one visible panel need two back presses, the second of
+  which closes something that was never on screen.
+
+Measured after, at 1920px on the live estate: opening Medias takes the thread from **1480px to 1142px**
+and puts a **320px** panel beside it at `position: static`, on the same 18px gutter as the other cards.
+Nothing overlays.
+
+### What it cost, said plainly
+
+The channel settings lost their wide two-column form. It was `max-w-4xl` with a 16rem tab rail; a
+352px panel can never satisfy that, so the phone layout the file already had - a horizontal tab
+scroller over one column - became the only one. Keeping the wide form behind a media query would have
+left markup that nothing can ever render.
+
+### The bottom sheet that rides the keyboard
+
+Same session, same class of finding. `Modal` aligns `items-end sm:items-center`, so **every** modal is
+a bottom sheet on a phone - pinned to the bottom edge, which means opening the keyboard shoves the
+whole panel up the screen and closing it drops it back (*"le fait que ce soit colle en bas n'est pas
+pratique (deplacement lors de l'ouverture et la fermeture du clavier par exemple)"*).
+
+`topAnchored` anchors it to the top instead, and the three creation modals - new chat, new channel,
+new community, each of which opens with a text field - now pass it. It is a flag and not a change of
+default because a sheet is still right for a short modal with no input. `fullViewport` was NOT the
+lever: it also blows the panel up to `90rem` on desktop, which a contact picker must not be.

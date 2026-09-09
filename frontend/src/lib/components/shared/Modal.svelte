@@ -29,6 +29,20 @@
      * once) so `panelClass` doesn't fight the default sizing on Tailwind class order.
      */
     fullViewport?: boolean;
+    /**
+     * Anchor the panel to the TOP of a phone screen instead of the bottom.
+     *
+     * THE DEFAULT BOTTOM SHEET RIDES THE KEYBOARD, and for a modal whose first control is a text
+     * field that is the whole experience: the sheet is pinned to the bottom edge, so opening the
+     * keyboard shoves the entire panel up the screen and closing it drops the panel back down
+     * (user, 2026-09-08, about creating a conversation: *"le fait que ce soit colle en bas n'est
+     * pas pratique (deplacement lors de l'ouverture et la fermeture du clavier par exemple)"*).
+     *
+     * A sheet is still right for a short modal with no input - a confirmation, a menu - which is
+     * why this is a flag and not a change of default. `fullViewport` is NOT the same lever: it
+     * also blows the panel up to `90rem` on desktop, which a contact picker must not be.
+     */
+    topAnchored?: boolean;
     onClose: () => void;
     children?: Snippet;
     footer?: Snippet;
@@ -42,19 +56,27 @@
     panelClass = '',
     bodyClass = '',
     fullViewport = false,
+    topAnchored = false,
     onClose,
     children,
     footer,
   }: Props = $props();
 
   const backdropAlignClass = $derived(
-    fullViewport ? 'items-stretch sm:items-center' : 'items-end sm:items-center'
+    fullViewport || topAnchored ? 'items-stretch sm:items-center' : 'items-end sm:items-center'
   );
 
+  /*
+   * ONE OF THESE THREE IS EMITTED, NEVER TWO. They set the same properties, so a panel carrying two
+   * of them would be decided by Tailwind's class ORDER rather than by the flags - which is the trap
+   * the `fullViewport` comment already warns about, and `topAnchored` would have walked into it.
+   */
   const panelSizeClass = $derived(
     fullViewport
       ? 'h-[100dvh] max-h-[100dvh] rounded-none sm:h-[min(96dvh,100%)] sm:max-h-[96dvh] sm:rounded-2xl sm:w-[min(96vw,90rem)]'
-      : 'max-h-[92dvh] rounded-t-3xl sm:rounded-2xl'
+      : topAnchored
+        ? 'h-[100dvh] max-h-[100dvh] rounded-none sm:h-auto sm:max-h-[92dvh] sm:rounded-2xl'
+        : 'max-h-[92dvh] rounded-t-3xl sm:rounded-2xl'
   );
 
   let historyClose: (() => void) | null = null;

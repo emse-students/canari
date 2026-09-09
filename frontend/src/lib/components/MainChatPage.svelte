@@ -8,6 +8,7 @@
 </script>
 
 <script lang="ts">
+  import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
   import { onMount, tick, untrack } from 'svelte';
   import { foldForSearch } from '$lib/utils/textFold';
   import { goto } from '$app/navigation';
@@ -48,8 +49,11 @@
   import { openInvitedChannel, selectionBelongsToRoute } from '$lib/utils/chat/notificationRouting';
   import { notifNav } from '$lib/stores/notifNav.svelte';
   import Sidebar from './sidebar/Sidebar.svelte';
-  import ChannelMembersSidebar from './chat/ChannelMembersSidebar.svelte';
-  import ChannelSettingsModal from './chat/ChannelSettingsModal.svelte';
+  import ChannelMembersList from './chat/ChannelMembersList.svelte';
+  import ChatGroupPanel from './chat/ChatGroupPanel.svelte';
+  import ChannelSettingsPanel from './chat/ChannelSettingsPanel.svelte';
+  import ConversationMediaPanel from './chat/ConversationMediaPanel.svelte';
+  import ConversationSidePanel from './chat/ConversationSidePanel.svelte';
   import ChatArea from './chat/ChatArea.svelte';
   import MessagingSyncOverlay from './chat/MessagingSyncOverlay.svelte';
   import ForwardMessageModal from './chat/ForwardMessageModal.svelte';
@@ -134,6 +138,65 @@
 
   /** Explicit derived binding so ChatArea re-renders when the open conversation mutates. */
   const activeConversation = $derived(convs.currentConvo);
+
+  /**
+   * The open conversation's presentation, resolved the SAME way the list and the thread header
+   * resolve it - through `resolveConversationListPresentation`, not by reading fields off the
+   * record. A DM's `name` is not the peer's name, so a second derivation here would put a different
+   * title on the panel than on the row that opened it.
+   */
+  const activeView = $derived.by(() => {
+    const c = activeConversation;
+    if (!c?.id) return null;
+    const pres = resolveConversationListPresentation(
+      {
+        id: c.id,
+        name: c.name,
+        contactName: c.contactName ?? c.id,
+        conversationType: c.conversationType,
+        directPeerId: c.directPeerId,
+      },
+      session.userId ?? ''
+    );
+    return {
+      displayName: pres.displayName,
+      contactName: c.contactName ?? pres.contactId,
+      isGroup: (c.conversationType ?? 'group') === 'group',
+    };
+  });
+
+  /**
+   * WHICH side panel to draw, after the two cases where the state is stale rather than wrong.
+   *
+   * `sidePanel` survives a conversation switch only long enough for the next render, and members
+   * and settings are channel-only. Reading the store directly would draw an empty members list for
+   * a DM for one frame - so the guard is here, once, rather than repeated in each branch.
+   */
+  const sidePanelKind = $derived.by(() => {
+    const kind = convs.sidePanel;
+    if (!kind) return null;
+    if ((kind === 'members' || kind === 'settings') && !isSelectedChannel) return null;
+    if (kind === 'conversation' && isSelectedChannel) return null;
+    return kind;
+  });
+
+  /** The panel's heading. A map, because the kinds are a closed set. */
+  const sidePanelTitle = $derived(
+    sidePanelKind === 'members'
+      ? m.chat_channel_members_title()
+      : sidePanelKind === 'media'
+        ? m.chat_media_links_files_title()
+        : sidePanelKind === 'settings'
+          ? m.chat_channel_settings_title()
+          : sidePanelKind === 'conversation'
+            ? activeView?.isGroup
+              ? m.chat_group_management_title()
+              : m.chat_group_dm_info_title()
+            : ''
+  );
+
+  /** The conversation the panels describe: a channel's own id, or the selected group's. */
+  const selectedConversationId = $derived(activeConversation?.id ?? '');
 
   /** User IDs allowed in @mention suggestions for the active chat/channel, or undefined for unrestricted (e.g. posts). */
   const composerAllowedUserIds = $derived(
@@ -632,8 +695,7 @@
       pendingReadWatermark = 0;
       convs.selectedContact = null;
       channels.selectedChannelConversationId = '';
-      convs.isChannelSettingsModalOpen = false;
-      convs.isChannelMembersDrawerOpen = false;
+      convs.closeSidePanel();
       convs.sendError = '';
       messageText = '';
     });
@@ -954,7 +1016,7 @@
           onCreatePoll={isSelectedChannel ? handleCreatePoll : undefined}
           onVotePoll={isSelectedChannel ? handleVotePoll : undefined}
           onClosePoll={isSelectedChannel ? handleClosePoll : undefined}
-          onLoadSharedContent={loadSharedContent}
+          onOpenMedia={() => convs.toggleSidePanel('media')}
           onSearchAll={searchConversation}
           onInviteMembers={(ids) => void convs.inviteMembersToCurrentGroup(ids, convCtx())}
           onBack={() => {
@@ -962,9 +1024,8 @@
             convs.goBackToMenu();
           }}
           onOpenConversations={convs.openConversationDrawer}
-          onOpenSettings={isSelectedChannel
-            ? () => (convs.isChannelSettingsModalOpen = true)
-            : undefined}
+          onOpenSettings={() =>
+            convs.toggleSidePanel(isSelectedChannel ? 'settings' : 'conversation')}
           isHidden={convs.mobileView === 'list'}
           onJoinChannel={handleJoinChannel}
           isLoadingHistory={convs.isLoadingHistory}
@@ -1024,9 +1085,9 @@
               }
             : undefined}
           onOpenMembers={routeMode === 'communities' && isSelectedChannel
-            ? convs.toggleChannelMembersDrawer
+            ? () => convs.toggleSidePanel('members')
             : undefined}
-          membersActive={convs.isChannelMembersDrawerOpen}
+          membersActive={convs.sidePanel === 'members'}
           onLoadOlderMessages={() => convs.loadOlderMessages(convs.selectedContact!, convCtx())}
           onRequestOlderFromPeers={() =>
             convs.requestOlderFromPeers(convs.selectedContact!, convCtx())}
@@ -1036,34 +1097,64 @@
         />
       </svelte:boundary>
 
-      {#if routeMode === 'communities'}
-        {#if channels.selectedChannelConversationId}
-          <ChannelMembersSidebar
+      <!--
+        ONE PANEL, MOUNTED ONCE, BESIDE THE THREAD. Members, media and channel settings all render
+        here; `convs.sidePanel` decides which, and a single value cannot hold two of them open.
+        The members panel used to be mounted TWICE from this file - an inline column and a
+        hand-rolled fixed drawer with its own scrim - which is where the divergence started.
+      -->
+      <ConversationSidePanel
+        open={sidePanelKind !== null}
+        title={sidePanelTitle}
+        onClose={convs.closeSidePanel}
+      >
+        {#if sidePanelKind === 'members' && channels.selectedChannelConversationId}
+          <ChannelMembersList
             currentUserId={session.userId}
             selectedChannelId={channels.selectedChannelConversationId}
-            isOpen={convs.isChannelMembersDrawerOpen}
+          />
+        {:else if sidePanelKind === 'media' && selectedConversationId}
+          <ConversationMediaPanel
+            conversationId={selectedConversationId}
+            authToken={session.authToken}
+            {loadSharedContent}
+          />
+        {:else if sidePanelKind === 'conversation'}
+          <ChatGroupPanel
+            effectiveDisplayName={activeView?.displayName ?? ''}
+            contactName={activeView?.contactName ?? ''}
+            groupId={activeConversation?.id ?? ''}
+            isGroupConversation={activeView?.isGroup ?? false}
+            imageMediaId={activeConversation?.imageMediaId ?? null}
+            currentUserId={session.userId ?? ''}
+            groupMembers={convs.groupMembers}
+            pendingInvites={convs.pendingGroupInvites}
+            onClose={convs.closeSidePanel}
+            onRename={(name) => void convs.handleRenameGroup(name, convCtx())}
+            onSetImage={(mediaId) => void convs.handleSetGroupImage(mediaId, convCtx())}
+            onRemoveMember={(memberId) => void convs.handleRemoveMember(memberId, convCtx())}
+            onGroupDelete={() => void convs.handleDeleteGroup(convCtx())}
+            onGroupLeave={() => void convs.handleLeaveGroup(convCtx())}
+            onInviteMembers={(ids) => void convs.inviteMembersToCurrentGroup(ids, convCtx())}
+          />
+        {:else if sidePanelKind === 'settings'}
+          <ChannelSettingsPanel
+            selectedChannelId={channels.selectedChannelConversationId}
+            channelWorkspaces={channels.channelWorkspaces}
+            onClose={convs.closeSidePanel}
+            onRenameChannel={(channelId, newName) =>
+              channels.renameCurrentChannel(channelId, newName, channelsCtx())}
+            onDeleteChannel={(channelId) => {
+              void channels.deleteCurrentChannel(channelId, channelsCtx());
+              if (convs.selectedContact === channelId) convs.selectedContact = null;
+            }}
+            onLeaveChannel={(channelId) => {
+              void channels.leaveCurrentChannel(channelId, channelsCtx());
+              if (convs.selectedContact === channelId) convs.selectedContact = null;
+            }}
           />
         {/if}
-
-        {#if convs.isChannelMembersDrawerOpen}
-          <button
-            type="button"
-            class="fixed inset-0 z-40 bg-black/30 xl:hidden"
-            aria-label={m.chat_close_members_panel_aria()}
-            onclick={convs.closeChannelMembersDrawer}
-          ></button>
-          <div
-            class="border-cn-border fixed top-0 right-0 bottom-0 z-50 w-[90vw] max-w-sm border-l bg-[color-mix(in_srgb,var(--cn-surface)_90%,white)] shadow-2xl xl:hidden"
-          >
-            <ChannelMembersSidebar
-              mode="mobile"
-              currentUserId={session.userId}
-              onClose={convs.closeChannelMembersDrawer}
-              selectedChannelId={channels.selectedChannelConversationId}
-            />
-          </div>
-        {/if}
-      {/if}
+      </ConversationSidePanel>
 
       <!-- Mobile drawer sidebar (mounted only when the drawer is open) -->
       {#if convs.isConversationDrawerOpen}
@@ -1074,23 +1165,6 @@
           onCloseDrawer={convs.closeConversationDrawer}
         />
       {/if}
-
-      <ChannelSettingsModal
-        open={convs.isChannelSettingsModalOpen}
-        onClose={() => (convs.isChannelSettingsModalOpen = false)}
-        selectedChannelId={channels.selectedChannelConversationId}
-        channelWorkspaces={channels.channelWorkspaces}
-        onRenameChannel={(channelId, newName) =>
-          channels.renameCurrentChannel(channelId, newName, channelsCtx())}
-        onDeleteChannel={(channelId) => {
-          void channels.deleteCurrentChannel(channelId, channelsCtx());
-          if (convs.selectedContact === channelId) convs.selectedContact = null;
-        }}
-        onLeaveChannel={(channelId) => {
-          void channels.leaveCurrentChannel(channelId, channelsCtx());
-          if (convs.selectedContact === channelId) convs.selectedContact = null;
-        }}
-      />
 
       <ForwardMessageModal
         open={!!forwardingMessage}

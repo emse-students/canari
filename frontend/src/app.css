@@ -833,6 +833,20 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
    What is kept from the reference is the bare icons and the pill; what deliberately diverges is the
    container, which stays filled and is generously rounded (user, 2026-09-08) so it matches Canari's
    own floating panels instead of sitting among them as a square-cornered strip. */
+/* THE CONVERSATION SIDE PANEL, in its DRAWER form - the shape below `xl`, where there is no width
+   for a second column. The desktop form is in the 1280px block below, which turns the fixed box
+   back into an ordinary flex sibling. Written base-first, so a viewport matching no query still
+   gets a usable panel rather than an unpositioned one. */
+.conversation-side-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 260;
+  width: 100%;
+  max-width: 28rem;
+}
+
 .chat-composer-panel {
   /* ONE LINE OF FIELD IS EXACTLY ONE CONTROL TALL, and this is where that is decided.
      The row is `flex-end`, which is right once the field has grown - the buttons hug the bottom, as
@@ -1277,6 +1291,42 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
     border-radius: 0.75rem;
     overflow: hidden;
     background: var(--cn-surface);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════
+   THE CONVERSATION SIDE PANEL - one shell, two shapes, and the order of these three blocks IS the
+   mechanism. `Membres`, `Medias, liens et fichiers` and `Parametres du canal` all render into it.
+
+   They are written base -> 768 -> 1280 and kept TOGETHER, after the card-grid block above. Split
+   across the file they were wrong: the 1280 rule sat BEFORE the 768 one, so at 1400px the drawer's
+   own margin - which offsets it below the top bar - won on source order and pushed the column down
+   by a whole bar. A breakpoint ladder only reads correctly when it is contiguous and ascending.
+   ═══════════════════════════════════════════════════════════════════════════════════════════════ */
+@media (min-width: 768px) and (max-width: 1279.98px) {
+  /* Still a drawer here, and it takes the shell's drawer geometry - below the top bar, on the
+     gutter grid, rounded - exactly as the navigation rail's drawer does. */
+  .conversation-side-panel {
+    top: calc(env(safe-area-inset-top) + var(--app-top-bar-height) + 0.75rem);
+    bottom: 0.75rem;
+    right: 0.75rem;
+    border-radius: 0.75rem;
+  }
+}
+
+@media (min-width: 1280px) {
+  /* A COLUMN, NOT AN OVERLAY. Everything `position: fixed` implied is undone by hand: dropping to
+     `static` alone would leave the insets and the z-index behind. */
+  .conversation-side-panel {
+    position: static;
+    z-index: auto;
+    width: 20rem;
+    max-width: none;
+    flex-shrink: 0;
+    min-height: 0;
+    margin: 0.75rem 0.75rem 0.75rem 0.375rem;
+    border-radius: 0.75rem;
+    overflow: hidden;
   }
 }
 

@@ -17,10 +17,8 @@
   import ChatMessageGroups from './ChatMessageGroups.svelte';
   import ChatComposer from './ChatComposer.svelte';
   import PollComposerModal from '../channels/PollComposerModal.svelte';
-  import ConversationMediaPanel from './ConversationMediaPanel.svelte';
   import type { ChannelPollDraft } from '$lib/utils/chat/channelCrypto';
   import EmptyState from '../shared/EmptyState.svelte';
-  import type { SharedContent } from '$lib/utils/chat/sharedContent';
   import { groupMessages, isMessageGroupRow } from '$lib/utils/messageGrouping';
   import { computeMessageListSwitchTime } from '$lib/utils/chat/messageUtils';
   import { resolveRenderWindow, stepWindowOlder } from '$lib/utils/chat/renderWindow';
@@ -54,8 +52,15 @@
     onSendGif?: (url: string) => void;
     /** Optional callback to create a poll (channels only). Enables the "Sondage" button. */
     onCreatePoll?: (draft: ChannelPollDraft) => void | Promise<void>;
-    /** Loads the conversation's shared media/links/files from the local history. */
-    onLoadSharedContent?: (conversationId: string) => Promise<SharedContent>;
+    /**
+     * Opens the shared media / links / files panel. Omit to hide the button.
+     *
+     * THE PANEL ITSELF IS NOT MOUNTED HERE ANY MORE. It used to be, behind a `showMediaPanel`
+     * local, which is why it could only ever draw itself OVER the thread: a child cannot become
+     * its parent's sibling. It is one of three panels the page now mounts beside this one, and
+     * this component's job stops at saying the button was pressed.
+     */
+    onOpenMedia?: () => void;
     /**
      * Full-conversation search over the entire local history. Returns matching message IDs
      * (oldest-first), or `null` to signal the caller to fall back to in-memory search
@@ -191,7 +196,7 @@
     onCreatePoll,
     onVotePoll,
     onClosePoll,
-    onLoadSharedContent,
+    onOpenMedia,
     onSearchAll,
     onTogglePin,
     onInviteMembers,
@@ -280,7 +285,6 @@
   /** Monotonic token to drop stale async search results. */
   let searchSeq = 0;
   let showSearch = $state(false);
-  let showMediaPanel = $state(false);
   /** Whether local DB may have messages older than what's currently in memory. */
   let hasMoreInDb = $state(true);
   let isLoadingOlder = $state(false);
@@ -879,20 +883,9 @@
           }
         }}
         searchActive={showSearch}
-        onOpenMedia={onLoadSharedContent ? () => (showMediaPanel = true) : undefined}
+        {onOpenMedia}
       />
     </div>
-
-    {#if onLoadSharedContent && chatView}
-      <ConversationMediaPanel
-        open={showMediaPanel}
-        conversationId={chatView.conversation.id}
-        {authToken}
-        loadSharedContent={onLoadSharedContent}
-        onClose={() => (showMediaPanel = false)}
-        onOpenSearch={() => (showSearch = true)}
-      />
-    {/if}
 
     {#if showSearch}
       <div class="px-3 pt-2 pb-0.5 md:px-6" transition:slide={{ duration: 180 }}>

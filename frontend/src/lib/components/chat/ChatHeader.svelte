@@ -12,7 +12,6 @@
   } from '@lucide/svelte';
   import Avatar from '../shared/Avatar.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
-  import ChatGroupPanel from './ChatGroupPanel.svelte';
   import { presenceMap, watchUsers, unwatchUsers } from '$lib/stores/presenceStore';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { m } from '$lib/paraglide/messages';
@@ -103,7 +102,6 @@
     Boolean((onStartAudioCall || onStartVideoCall) && !isChannel && isReady)
   );
 
-  let showPanel = $state(false);
   let isOnline = $derived($presenceMap[contactName] || false);
   let resolvedContactDisplayName = $state('');
 
@@ -130,15 +128,7 @@
       }
     });
   });
-
-  function handlePanelKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape' && showPanel) {
-      showPanel = false;
-    }
-  }
 </script>
-
-<svelte:window onkeydown={handlePanelKeydown} />
 
 <!-- Main header -->
 <header
@@ -270,12 +260,15 @@
       </button>
     {/if}
 
+    <!--
+      ONE HANDLER, ALWAYS THE PARENT'S. This used to fall back to a local `showPanel` when
+      `onOpenSettings` was absent, and that fallback WAS the divergence: a channel's settings went
+      up to the page and opened a modal, while a group's stayed here and opened a portalled sheet
+      this component mounted itself. The page decides which panel now, so there is nothing to fall
+      back to.
+    -->
     <button
-      onclick={onOpenSettings
-        ? onOpenSettings
-        : () => {
-            showPanel = true;
-          }}
+      onclick={onOpenSettings}
       aria-label={isChannel
         ? m.chat_channel_settings_label()
         : isGroupConversation
@@ -287,26 +280,4 @@
       <Settings size={20} strokeWidth={2.5} />
     </button>
   </div>
-
-  <!-- Group / DM settings panel -->
-  <ChatGroupPanel
-    {showPanel}
-    {effectiveDisplayName}
-    {contactName}
-    {groupId}
-    {isGroupConversation}
-    {imageMediaId}
-    currentUserId={currentUserId ?? ''}
-    {groupMembers}
-    {pendingInvites}
-    onClose={() => {
-      showPanel = false;
-    }}
-    onRename={onGroupRename}
-    onSetImage={onGroupSetImage}
-    onRemoveMember={onGroupRemoveMember}
-    {onGroupDelete}
-    {onGroupLeave}
-    {onInviteMembers}
-  />
 </header>
