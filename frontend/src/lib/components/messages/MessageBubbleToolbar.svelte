@@ -189,7 +189,7 @@
   -->
   {#if quickOpen && onReact}
     <div
-      class="bg-cn-popover pointer-events-auto absolute bottom-full z-20 mb-2 flex flex-row items-center gap-0.5 rounded-[1.5rem] px-3 py-2 shadow-lg {isOwn
+      class="bg-cn-popover pointer-events-auto absolute bottom-full z-20 mb-2 flex flex-row items-center gap-0.5 rounded-2xl px-3 py-2 shadow-lg {isOwn
         ? 'right-0'
         : 'left-0'}"
       role="group"

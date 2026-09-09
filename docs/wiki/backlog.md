@@ -5282,39 +5282,27 @@ an observation.
   the lever for this.
 
 
-### P3 - the corners are NOT on the scale, and the gate that says so now exists (re-measured 2026-09-09)
+### DONE 2026-09-09 - the corners are on the scale, and a gate keeps them there
 
-**The 2026-09-04 entry here was half right and its numbers had rotted.** It listed five arbitrary
-spellings with canonical replacements. Re-measured on 2026-09-09: `md:w-[28rem]` is GONE,
-`flex-shrink-0` was 36 rather than 37, and **the replacement it named for `rounded-[1.5rem]` was
-wrong** - it said `rounded-3xl`, but #447 moved `--radius-3xl` to 1.125rem, so that mapping would
-have silently changed 24px corners into 18px ones under the banner of a spelling fix.
+Kept only for the two things a later session would otherwise re-derive. **The 2026-09-04 entry that
+asked for this had rotted**: `md:w-[28rem]` was already gone, `flex-shrink-0` was 36 and not 37, and
+the replacement it named for `rounded-[1.5rem]` was WRONG - it said `rounded-3xl`, but #447 had moved
+`--radius-3xl` to 1.125rem, so following the entry would have turned 24px corners into 18px ones
+under the banner of a spelling fix. A predicate that named the last incident is not the predicate
+that names the next one.
 
-**What is DONE.** The 36 `flex-shrink-0` are now `shrink-0`, a pure Tailwind rename with no visual
-effect, and `utilityScale.test.ts` fails on that spelling and five other renames from Tailwind's own
-upgrade table - a property, not a list of what this tree happened to contain, which is why it also
-covers `flex-grow-`, `overflow-ellipsis` and the three others nobody has written yet.
+**And two things were looked for and NOT found**, so nobody need count them again. The 73 raw hex
+values in markup are overwhelmingly legitimate - canvas drawing in `AssociationLogoCropper` and
+`PosterCanvas`, swatch DATA in `ColorPicker` and `EditProfileTab`, where a literal colour is the
+content rather than a token violation. The nine `text-[Nem]` values are proportional sizing, a
+different intent from the seven `--text-*` steps. Counting either as a violation would have made
+this entry wrong in the other direction.
 
-**What is MEASURED and now countable.** `--radius-*` declares FOUR meanings - 8px card, 12px larger
-card, 18px bubble, 999px pill - and the markup carries **39 arbitrary corners in EIGHT sizes that
-are none of them**: 1rem, 1.1rem, 1.25rem, 1.5rem, 2rem, 10px, 14px, 32px. Ten are
-`rounded-[1.5rem]`, ten `rounded-[1.1rem]`, nine `rounded-[1.25rem]`. So CLAUDE.md's "RADIUS IS
-SCALED SINCE #447" is true of `app.css` and NOT of the tree that consumes it. The test holds the
-population at 39: it may fall and it may not rise.
-
-**What is OPEN, and it is a DESIGN decision rather than a refactor.** Collapsing 24px and 32px
-corners onto an 18px scale changes how chat panels, the emoji picker and the post forms LOOK. That
-is the user's call, not a sweep to be smuggled in under a passing test - which is precisely why the
-gate ships with a baseline instead of a zero. Either the eight sizes collapse onto the four
-meanings, or the scale gains a declared fifth; both are answers, and choosing neither is what left
-39 undeclared corners in a tree whose index says the corners are scaled.
-
-**Two things that were NOT found, having been looked for.** The 73 raw hex values in markup are
-overwhelmingly legitimate - canvas drawing in `AssociationLogoCropper` and `PosterCanvas`, and the
-swatch DATA in `ColorPicker` and `EditProfileTab`, where a literal colour is the content and not a
-token violation. And the nine `text-[Nem]` values are proportional sizing, a different intent from
-the seven `--text-*` steps. Neither is a finding, and counting them as one would have made this
-entry wrong in the other direction.
+What shipped: 36 `flex-shrink-0` renamed, 39 arbitrary corners in eight sizes mapped onto the four
+declared meanings on the user's call (*"fidele a la reference"*, 2026-09-09), and
+`utilityScale.test.ts` holding both at zero - six renames from Tailwind's own upgrade table, and no
+arbitrary `rounded-[...]` at all. The remaining `app.css` items are the emoji-picker geometry, the
+device-row controls and the bundled font, below.
 
 ### P3 - the two controls on a device row do not look like the same kind of thing (reported 2026-08-25)
 

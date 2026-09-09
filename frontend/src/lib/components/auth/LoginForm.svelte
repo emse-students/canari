@@ -50,7 +50,7 @@
     <!-- Logo -->
     <div class="mb-10">
       <div
-        class="bg-cn-ink mx-auto mb-6 flex h-24 w-24 transform items-center justify-center rounded-[32px] border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.3)] transition-transform duration-300 hover:scale-105"
+        class="bg-cn-ink mx-auto mb-6 flex h-24 w-24 transform items-center justify-center rounded-lg border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.3)] transition-transform duration-300 hover:scale-105"
       >
         <img
           src="/favicon.png"

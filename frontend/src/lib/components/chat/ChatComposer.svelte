@@ -623,7 +623,7 @@
             {:else}
               <div
                 transition:scale={{ duration: 200, start: 0.9 }}
-                class="group/file bg-cn-surface relative w-20 overflow-hidden rounded-[1rem] border border-black/5 shadow-md sm:w-24 dark:border-white/10"
+                class="group/file bg-cn-surface relative w-20 overflow-hidden rounded-3xl border border-black/5 shadow-md sm:w-24 dark:border-white/10"
                 style="{thumbAspect}; max-height: 6rem;"
               >
                 {#if isImageFile(file) && previewUrls[key]}

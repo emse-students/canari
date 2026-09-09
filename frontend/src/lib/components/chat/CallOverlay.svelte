@@ -553,7 +553,7 @@
     <div
       class="relative h-full w-full {isMobileRtc
         ? 'max-h-full max-w-full rounded-none'
-        : 'max-h-[82vh] max-w-6xl rounded-[2rem]'} bg-cn-scrim flex flex-col overflow-hidden shadow-2xl ring-1 ring-white/10 transition-all duration-300"
+        : 'max-h-[82vh] max-w-6xl rounded-lg'} bg-cn-scrim flex flex-col overflow-hidden shadow-2xl ring-1 ring-white/10 transition-all duration-300"
       style={isMobileRtc
         ? 'padding-top: env(safe-area-inset-top, 0px); padding-bottom: var(--safe-area-inset-bottom, 0px);'
         : ''}

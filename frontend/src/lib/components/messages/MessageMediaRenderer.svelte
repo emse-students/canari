@@ -95,7 +95,7 @@
 </script>
 
 {#if mediaRef}
-  <div class="overflow-hidden rounded-[1.1rem]">
+  <div class="overflow-hidden rounded-3xl">
     <!-- ================= IMAGE ================= -->
     {#if mediaRef.type === 'image'}
       {#if blobUrl}
@@ -113,7 +113,7 @@
             onclick={openLightbox}
             onpointerdown={(e) => e.stopPropagation()}
             aria-label={m.msg_open_image_fullscreen_label()}
-            class="block w-56 max-w-full overflow-hidden rounded-[1.1rem] bg-black/5 dark:bg-white/5"
+            class="block w-56 max-w-full overflow-hidden rounded-3xl bg-black/5 dark:bg-white/5"
             style={imageAspectStyle}
           >
             <img
@@ -138,7 +138,7 @@
         </div>
       {:else if loadError}
         <div
-          class="w-full max-w-xs rounded-[1.1rem] border border-dashed sm:w-64 {glassBoxClass} flex flex-col items-center justify-center gap-3 p-4 text-center"
+          class="w-full max-w-xs rounded-3xl border border-dashed sm:w-64 {glassBoxClass} flex flex-col items-center justify-center gap-3 p-4 text-center"
           style={imageAspectStyle}
         >
           <CircleAlert size={28} class="opacity-50" />
@@ -149,7 +149,7 @@
       {:else}
         <!-- Skeleton Image -->
         <div
-          class="w-full max-w-[14rem] rounded-[1.1rem] sm:w-56 {isOwn
+          class="w-full max-w-[14rem] rounded-3xl sm:w-56 {isOwn
             ? 'bg-black/10'
             : 'bg-black/5 dark:bg-white/10'} flex animate-pulse items-center justify-center"
           style={imageAspectStyle}
@@ -168,7 +168,7 @@
             controls
             preload="metadata"
             onclick={(e) => e.stopPropagation()}
-            class="max-h-80 max-w-full rounded-[1.1rem] bg-black/10 shadow-sm sm:max-w-md dark:bg-black/40"
+            class="max-h-80 max-w-full rounded-3xl bg-black/10 shadow-sm sm:max-w-md dark:bg-black/40"
           ></video>
 
           <button
@@ -196,7 +196,7 @@
         </div>
       {:else if loadError}
         <div
-          class="aspect-video w-full max-w-[16rem] rounded-[1.1rem] border border-dashed {glassBoxClass} flex flex-col items-center justify-center gap-3 p-4 text-center"
+          class="aspect-video w-full max-w-[16rem] rounded-3xl border border-dashed {glassBoxClass} flex flex-col items-center justify-center gap-3 p-4 text-center"
         >
           <CircleAlert size={28} class="opacity-50" />
           <span class="text-xs leading-snug font-medium {textMutedClass}">
@@ -206,7 +206,7 @@
       {:else}
         <!-- Skeleton Video -->
         <div
-          class="aspect-video w-full max-w-[16rem] rounded-[1.1rem] {isOwn
+          class="aspect-video w-full max-w-[16rem] rounded-3xl {isOwn
             ? 'bg-black/10'
             : 'bg-black/5 dark:bg-white/10'} flex animate-pulse items-center justify-center"
         >
@@ -247,7 +247,7 @@
     {:else}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
-        class="flex w-full max-w-full items-center gap-3.5 rounded-[1rem] border px-3.5 py-3 {glassBoxClass} group/file transition-colors"
+        class="flex w-full max-w-full items-center gap-3.5 rounded-3xl border px-3.5 py-3 {glassBoxClass} group/file transition-colors"
         ontouchstart={(e) => e.stopPropagation()}
         ontouchend={(e) => e.stopPropagation()}
       >

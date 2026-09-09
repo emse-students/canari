@@ -203,7 +203,7 @@
     bind:this={panelEl}
     data-swipe-nav-ignore
     transition:scale={{ duration: 250, start: 0.95, opacity: 0, easing: (t) => t * (2 - t) }}
-    class="bg-cn-surface fixed z-(--z-popover) flex w-[min(92vw,22rem)] origin-(--popover-origin) flex-col overflow-hidden rounded-[1.5rem] border border-black/5 shadow-2xl shadow-black/10 dark:border-white/10 dark:shadow-black/40"
+    class="bg-cn-surface fixed z-(--z-popover) flex w-[min(92vw,22rem)] origin-(--popover-origin) flex-col overflow-hidden rounded-2xl border border-black/5 shadow-2xl shadow-black/10 dark:border-white/10 dark:shadow-black/40"
     style:--popover-origin={isOwn ? 'top right' : 'top left'}
   >
     <!-- En-tête -->

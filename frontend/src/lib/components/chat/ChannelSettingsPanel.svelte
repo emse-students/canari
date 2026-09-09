@@ -551,7 +551,7 @@
           </div>
         {:else}
           <div
-            class="bg-cn-surface space-y-5 rounded-[1.5rem] border border-black/5 p-5 shadow-sm dark:border-white/10"
+            class="bg-cn-surface space-y-5 rounded-2xl border border-black/5 p-5 shadow-sm dark:border-white/10"
           >
             <!-- ═══ Visibility toggle ═══ -->
             <div class="flex items-center justify-between gap-4">

@@ -435,7 +435,7 @@
         onclick={() => {
           showNewCommunityModal = true;
         }}
-        class="border-text-muted/50 text-text-muted hover:text-text-main hover:border-text-main flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-dashed transition-all hover:rounded-[10px] hover:bg-white/10"
+        class="border-text-muted/50 text-text-muted hover:text-text-main hover:border-text-main flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-dashed transition-all hover:rounded-lg hover:bg-white/10"
         title={m.sidebar_add_community_title()}
         aria-label={m.sidebar_add_community_title()}
       >

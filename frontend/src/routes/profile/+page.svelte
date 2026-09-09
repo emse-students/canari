@@ -249,7 +249,7 @@
               bind:value={bioInput}
               maxlength={500}
               minHeight="100px"
-              class="focus-within:border-cn-yellow/50 focus-within:ring-cn-yellow/30 bg-cn-surface w-full min-w-0 overflow-hidden rounded-[1.25rem] border border-black/10 shadow-inner transition-all focus-within:ring-2 dark:border-white/10"
+              class="focus-within:border-cn-yellow/50 focus-within:ring-cn-yellow/30 bg-cn-surface w-full min-w-0 overflow-hidden rounded-2xl border border-black/10 shadow-inner transition-all focus-within:ring-2 dark:border-white/10"
               editorClass="min-h-[100px] w-full max-w-full px-4 py-3 text-sm text-text-main leading-relaxed"
               placeholder={m.profile_bio_placeholder()}
             />

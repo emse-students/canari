@@ -218,7 +218,7 @@
 <div class="keyboard-aware-panel-scroll flex min-h-0 flex-1 flex-col gap-6 p-5 md:p-6">
   <!-- Group/contact identity card -->
   <div
-    class="bg-cn-surface flex items-center gap-4 rounded-[1.5rem] border border-black/5 px-4 py-4 shadow-sm dark:border-white/10"
+    class="bg-cn-surface flex items-center gap-4 rounded-2xl border border-black/5 px-4 py-4 shadow-sm dark:border-white/10"
   >
     {#if isGroupConversation}
       <button
@@ -280,7 +280,7 @@
   <!-- Rename section -->
   {#if isGroupConversation}
     <div
-      class="bg-cn-surface flex flex-col gap-3 rounded-[1.5rem] border border-black/5 p-4 shadow-sm md:p-5 dark:border-white/10"
+      class="bg-cn-surface flex flex-col gap-3 rounded-2xl border border-black/5 p-4 shadow-sm md:p-5 dark:border-white/10"
     >
       <label
         for="group-rename-input"
@@ -379,7 +379,7 @@
 
       {#if groupMembers.length > 0 || pendingDisplay.length > 0}
         <div
-          class="bg-cn-surface overflow-hidden rounded-[1.5rem] border border-black/5 shadow-sm dark:border-white/10"
+          class="bg-cn-surface overflow-hidden rounded-2xl border border-black/5 shadow-sm dark:border-white/10"
         >
           <ul class="flex max-h-[35dvh] flex-col overflow-y-auto">
             {#each groupMembers as member, index (member)}
@@ -447,7 +447,7 @@
         </div>
       {:else}
         <div
-          class="text-text-muted rounded-[1.5rem] border border-dashed border-black/10 bg-white/30 px-4 py-6 text-center text-sm font-medium dark:border-white/20 dark:bg-black/10"
+          class="text-text-muted rounded-2xl border border-dashed border-black/10 bg-white/30 px-4 py-6 text-center text-sm font-medium dark:border-white/20 dark:bg-black/10"
         >
           {m.chat_group_no_members_label()}
         </div>

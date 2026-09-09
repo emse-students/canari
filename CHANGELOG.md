@@ -11,6 +11,21 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - every corner in the app now comes from the radius scale
+
+`app.css` has declared four radius meanings since #447 - 8px card, 12px larger card, 18px bubble,
+999px pill - and the markup did not use them: **39 corners in eight sizes that were none of them**
+(1rem, 1.1rem, 1.25rem, 1.5rem, 2rem, 10px, 14px, 32px). Nothing reported it; the only thing that
+ever named these was an editor tooltip, and a rule enforced by a tooltip is not enforced.
+
+They are mapped onto the four meanings, so a few surfaces are visibly less rounded than they were -
+the call overlay, the login card, the post forms and the emoji picker most of all. That is the
+design reference's own ruling ("8px card and control, 18px message bubble, 999px pill, four values
+replacing fourteen"), taken as a decision rather than assumed.
+
+Also swept: 36 `flex-shrink-0` to `shrink-0`. Both are now held by `utilityScale.test.ts`, which
+refuses six utilities Tailwind's own upgrade table renamed and any arbitrary `rounded-[...]` at all.
+
 ### Fixed - the agenda's push notifications had lost their accents, and two more were still English
 
 The proposal notification shipped in #465 was verified on the Mi 9T: it reaches the shade in
