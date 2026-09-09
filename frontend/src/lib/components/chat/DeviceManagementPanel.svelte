@@ -531,54 +531,64 @@
                       {/if}
                     {/if}
 
-                    <div class="mt-1 flex items-center gap-2">
-                      <div
-                        class="text-text-muted text-2xs flex-1 truncate font-mono opacity-80"
-                        title={row.device?.deviceId ?? row.unlistedDeviceId ?? ''}
-                      >
-                        {#if row.device}
-                          {shortDeviceId(row.device.deviceId)}
-                          {#if rowIsMobile(row) && row.device.deviceAppVersion}
-                            <span class="ml-2 font-semibold"
-                              >{m.chat_device_version_label({
-                                device: row.device.deviceAppVersion,
-                              })}</span
-                            >
-                          {/if}
-                        {:else if row.unlistedDeviceId}
-                          {shortDeviceId(row.unlistedDeviceId)}
-                        {/if}
-                      </div>
+                    <div
+                      class="text-text-muted text-2xs mt-1 truncate font-mono opacity-80"
+                      title={row.device?.deviceId ?? row.unlistedDeviceId ?? ''}
+                    >
                       {#if row.device}
-                        <button
-                          onclick={() => row.device && startEditing(row.device.deviceId)}
-                          class="text-text-muted rounded-lg p-1.5 transition-all outline-none hover:bg-black/5 hover:text-amber-600 focus-visible:ring-2 focus-visible:ring-amber-500 dark:hover:bg-white/5 dark:hover:text-amber-400"
-                          title={m.chat_rename_device_title()}
-                          aria-label={m.chat_rename_device_label()}
-                        >
-                          <Pen size={14} strokeWidth={2} />
-                        </button>
+                        {shortDeviceId(row.device.deviceId)}
+                        {#if rowIsMobile(row) && row.device.deviceAppVersion}
+                          <span class="ml-2 font-semibold"
+                            >{m.chat_device_version_label({
+                              device: row.device.deviceAppVersion,
+                            })}</span
+                          >
+                        {/if}
+                      {:else if row.unlistedDeviceId}
+                        {shortDeviceId(row.unlistedDeviceId)}
                       {/if}
                     </div>
                   {/if}
                 </div>
 
-                <!-- One destructive control per row, and never on the machine we are running on. -->
-                {#if !row.isCurrentDevice}
-                  <button
-                    onclick={() => void handleRemoveRow(row)}
-                    disabled={deleting !== null}
-                    class="text-text-muted shrink-0 rounded-xl bg-black/5 p-2.5 transition-all outline-none hover:bg-red-500/15 hover:text-red-600 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95 disabled:opacity-40 dark:bg-white/5 dark:hover:bg-red-500/20 dark:hover:text-red-400"
-                    title={m.chat_delete_device_title()}
-                    aria-label={m.chat_delete_device_label()}
-                  >
-                    {#if deleting === row.key}
-                      <Loader size={18} class="animate-spin" />
-                    {:else}
-                      <Trash2 size={18} strokeWidth={2.5} />
-                    {/if}
-                  </button>
-                {/if}
+                <!--
+                  BOTH ROW ACTIONS IN ONE CLUSTER, because matching their appearance while leaving
+                  them in different places would only move the question. The pencil used to sit
+                  inside the text block, on the line with the device id, while the trash was a
+                  sibling of the whole row - so even once they looked alike, one was an action and
+                  the other looked like an annotation of the id beside it.
+                  Only ONE of them is destructive, which is the whole of what may differ: the shape
+                  is `ui-icon-button` for both, the hover colour is not.
+                -->
+                <div class="flex shrink-0 items-center gap-1.5">
+                  {#if row.device}
+                    <button
+                      onclick={() => row.device && startEditing(row.device.deviceId)}
+                      class="ui-icon-button hover:bg-amber-500/15 hover:text-amber-600 focus-visible:ring-2 focus-visible:ring-amber-500 dark:hover:bg-amber-500/20 dark:hover:text-amber-400"
+                      title={m.chat_rename_device_title()}
+                      aria-label={m.chat_rename_device_label()}
+                    >
+                      <Pen size={18} strokeWidth={2} />
+                    </button>
+                  {/if}
+
+                  <!-- One destructive control per row, and never on the machine we are running on. -->
+                  {#if !row.isCurrentDevice}
+                    <button
+                      onclick={() => void handleRemoveRow(row)}
+                      disabled={deleting !== null}
+                      class="ui-icon-button hover:bg-red-500/15 hover:text-red-600 focus-visible:ring-2 focus-visible:ring-red-500 dark:hover:bg-red-500/20 dark:hover:text-red-400"
+                      title={m.chat_delete_device_title()}
+                      aria-label={m.chat_delete_device_label()}
+                    >
+                      {#if deleting === row.key}
+                        <Loader size={18} class="animate-spin" />
+                      {:else}
+                        <Trash2 size={18} strokeWidth={2} />
+                      {/if}
+                    </button>
+                  {/if}
+                </div>
               </div>
 
               <!-- A login with no device: say why it is here rather than let it look like a bug. -->

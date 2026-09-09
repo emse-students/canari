@@ -5286,9 +5286,30 @@ Two things to settle before touching it, because neither is answerable from the 
   the version line - while the delete button is a sibling of the whole row. Matching their appearance
   without settling their POSITION will just move the question.
 
-Grouped with the emoji-picker geometry and the bundled-font work above: all three are user-reported
-appearance items, all three are post-ladder, and all three want the same pass over `app.css` rather
-than three local patches.
+**DONE 2026-09-09, and BOTH conditions above were met rather than skipped.** `app.css` gained
+`.ui-icon-button` - shape only, in `@layer components` so a call site's `hover:bg-red-500/15` still
+wins without the `!` that `.ui-textarea` needs - and both controls now sit in ONE action cluster on
+the right of the row, the pencil having left the device-id line. What still differs is the hover
+colour, which is the whole of what should: intent, never pressability.
+
+**One axis of the table above was a PHANTOM, and anyone re-reading it should know.** `rounded-lg`
+against `rounded-xl` looks like a divergence and is not - #447 gave both the same 8px. The table was
+written before that scale existed. Five real axes, not six.
+
+**AND THE AUDIT THE ENTRY ASKED FOR FOUND SOMETHING BIGGER THAN A PAIR.** Measured 2026-09-09 across
+`frontend/src`: **187 icon-only buttons in TWELVE radius+padding combinations** - `rounded-xl p-2.5`
+(41), `rounded-xl p-2` (40), `rounded-xl p-3` (34), `rounded-lg p-1.5` (19), `rounded-lg p-2` (11),
+`rounded-full p-1.5` (10), and six more in single digits. So the entry's premise - "the same pair
+exists elsewhere" - is not the shape of the problem: there is no duplicated pair to chase, there is
+an undeclared POPULATION, exactly as there was for the corners before #474.
+
+**That sweep is a DESIGN decision and it is the user's**, on the same reasoning that held for the
+radius scale: collapsing twelve sizes onto two or three changes how toolbars, composers and cards
+LOOK, everywhere at once, and a change of that reach does not belong inside a P3 about one row
+hiding behind a green test. What is owed first is the same thing that worked there - declare the
+sizes in `app.css`, add the gate that makes the population countable, then ask. Until it is asked,
+`.ui-icon-button` is one declared size used at one site, which is honest; spreading it to 187 call
+sites by guessing which ones meant the same thing would not be.
 
 ## Storage and retention
 

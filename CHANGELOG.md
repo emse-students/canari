@@ -11,6 +11,31 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a device row's two actions read as one button and one decoration
+
+Reported by the user with a screenshot on 2026-08-25: *"il faudrait homogeneiser la corbeille et la
+modification."* The delete control was a filled rounded square and the rename control a bare pencil
+sitting inside the text block, on the line with the device id - so two actions of equal standing did
+not look like the same kind of thing, and the pencil looked like an annotation of the id beside it.
+
+They diverged on five axes at once, none of which carried meaning: resting fill, padding, icon size,
+stroke weight, press feedback. (A sixth was in the report and is a phantom - `rounded-lg` against
+`rounded-xl` is the same 8px since #447.) `app.css` now declares `.ui-icon-button` for the shape, and
+both controls sit in ONE action cluster on the right of the row. What still differs is the hover
+colour, which is the whole of what should: a trash can and a pencil are told apart by intent, never
+by whether they look pressable.
+
+The class is in `@layer components`, unlike `.ui-textarea` beside it. Unlayered CSS beats every
+Tailwind utility whatever its specificity, which is why that one needs `border-red-err!` at its call
+site to say anything at all; declared in the components layer, a plain `hover:bg-red-500/15` wins on
+its own. Measured after, within one row: both controls 38x38 at the same baseline, one parent, 6px
+apart, identical radius, padding and fill.
+
+**The audit this asked for found something bigger than a pair**, and it is recorded rather than
+acted on: 187 icon-only buttons in twelve radius+padding combinations across `frontend/src`. There
+is no duplicated pair to chase - there is an undeclared population, the same shape as the corners
+before #474, and collapsing it is a design decision that belongs to the user.
+
 ### Fixed - a message's popovers opened away from the button that opened them, and one opened off-screen
 
 Three reports from the user on 2026-09-09, all the same defect: a popover positioned against
