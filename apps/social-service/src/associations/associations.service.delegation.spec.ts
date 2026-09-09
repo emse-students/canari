@@ -39,21 +39,23 @@ function makeService(seed: Record<string, Partial<Association>>) {
   };
   const redis = { deleteByPattern: jest.fn(() => Promise.resolve()) };
 
+  // POSITIONAL, AND THIRTEEN LONG - so a constructor change silently shifts every argument after
+  // the one it touched. The comments are the guard: keep them aligned with the parameter list in
+  // `associations.service.ts`, and change them in the same commit that changes it.
   const service = new AssociationsService(
-    assoRepo as never,
-    undefined as never,
-    undefined as never,
-    undefined as never,
-    undefined as never,
-    undefined as never, // reviewerGrantRepo (unused here)
-    undefined as never,
-    undefined as never,
-    undefined as never,
-    undefined as never,
-    redis as never,
-    undefined as never,
-    undefined,
-    undefined
+    assoRepo as never, // assoRepo
+    undefined as never, // memberRepo
+    undefined as never, // calendarRepo
+    undefined as never, // coOwnerRepo
+    undefined as never, // docRepo
+    undefined as never, // reviewerGrantRepo
+    undefined as never, // postRepo
+    undefined as never, // formRepo
+    undefined as never, // productRepo
+    redis as never, // redis
+    undefined as never, // httpService
+    undefined as never, // notifications
+    undefined as never // userTagService
   );
   return { service, db };
 }

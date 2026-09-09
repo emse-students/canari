@@ -5,6 +5,11 @@ import {
   reactionContent,
   formOpeningSoonContent,
   formOpenContent,
+  eventProposedContent,
+  eventValidatedContent,
+  eventRejectedContent,
+  eventUpdatedContent,
+  eventDeletedContent,
   pushContentData,
   type PushContent,
 } from './push-content';
@@ -29,6 +34,11 @@ describe('push content', () => {
     ['reaction', reactionContent('Claire', '😂')],
     ['formOpeningSoon', formOpeningSoonContent()],
     ['formOpen', formOpenContent()],
+    ['eventProposed', eventProposedContent('Claire', 'Soiree BDE')],
+    ['eventValidated', eventValidatedContent('Claire', 'Soiree BDE')],
+    ['eventRejected', eventRejectedContent('Claire', 'Soiree BDE')],
+    ['eventUpdated', eventUpdatedContent('Claire', 'Soiree BDE')],
+    ['eventDeleted', eventDeletedContent('Claire', 'Soiree BDE')],
   ];
 
   it.each(ALL)('%s carries a key, not only a sentence', (_name, content) => {

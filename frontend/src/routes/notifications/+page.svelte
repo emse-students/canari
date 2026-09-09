@@ -8,6 +8,7 @@
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { groupNotifications, type NotificationBucket } from '$lib/utils/notifications/grouping';
   import type { PostNotification } from '$lib/posts/api';
+  import { notificationHref } from '$lib/posts/notificationTarget';
   import { m } from '$lib/paraglide/messages';
 
   /**
@@ -66,8 +67,7 @@
   };
 
   function openNotification(notif: PostNotification) {
-    const url =
-      notif.type === 'form_reminder' ? `/forms/${notif.postId}` : `/posts/${notif.postId}`;
+    const url = notificationHref(notif);
     void goto(url);
   }
 </script>

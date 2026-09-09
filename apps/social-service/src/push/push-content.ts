@@ -25,7 +25,12 @@ export type PushContentKey =
   | 'social_comment'
   | 'social_reaction'
   | 'form_opening_soon'
-  | 'form_open';
+  | 'form_open'
+  | 'event_proposed'
+  | 'event_validated'
+  | 'event_rejected'
+  | 'event_updated'
+  | 'event_deleted';
 
 /**
  * One push's content, as data rather than prose.
@@ -44,6 +49,7 @@ export type PushContent = {
    * - `social_mention` / `social_reply` / `social_comment`: the text the author typed
    * - `social_reaction`: the reaction itself (an emoji)
    * - the two form keys: nothing, always empty
+   * - the five event keys: the event's own title, which is not translatable either
    */
   arg: string;
   legacyTitle: string;
@@ -129,5 +135,69 @@ export function pushContentData(content: PushContent): Record<string, string> {
     contentKey: content.key,
     actorName: content.actorName,
     contentArg: content.arg,
+  };
+}
+
+/**
+ * AN EVENT WAS PROPOSED AND IS WAITING FOR A CALENDAR MANAGER.
+ *
+ * The half that did not exist. `createCalendarEvent` notified the proposing association whenever the
+ * BDE acted, and told the BDE NOTHING when a proposal landed - so the pending queue was a page
+ * somebody had to remember to open. A queue nobody is told about is a queue nobody drains.
+ */
+export function eventProposedContent(actorName: string, eventTitle: string): PushContent {
+  return {
+    key: 'event_proposed',
+    actorName,
+    arg: eventTitle,
+    legacyTitle: 'Evenement a valider',
+    legacyBody: `${actorName} propose "${eventTitle}"`,
+  };
+}
+
+/**
+ * The four answers a calendar manager can give, one key each.
+ *
+ * ONE KEY PER ANSWER RATHER THAN ONE KEY PLUS AN `action` ARGUMENT, because `arg` is defined as the
+ * one piece of data that is NOT translatable and "validated" is a word. That is exactly how the
+ * sentence ended up composed server-side in English: the verb travelled as data.
+ */
+export function eventValidatedContent(actorName: string, eventTitle: string): PushContent {
+  return {
+    key: 'event_validated',
+    actorName,
+    arg: eventTitle,
+    legacyTitle: 'Evenement valide',
+    legacyBody: `"${eventTitle}" a ete valide par le BDE`,
+  };
+}
+
+export function eventRejectedContent(actorName: string, eventTitle: string): PushContent {
+  return {
+    key: 'event_rejected',
+    actorName,
+    arg: eventTitle,
+    legacyTitle: 'Evenement refuse',
+    legacyBody: `"${eventTitle}" a ete refuse par le BDE`,
+  };
+}
+
+export function eventUpdatedContent(actorName: string, eventTitle: string): PushContent {
+  return {
+    key: 'event_updated',
+    actorName,
+    arg: eventTitle,
+    legacyTitle: 'Evenement modifie',
+    legacyBody: `"${eventTitle}" a ete modifie par le BDE`,
+  };
+}
+
+export function eventDeletedContent(actorName: string, eventTitle: string): PushContent {
+  return {
+    key: 'event_deleted',
+    actorName,
+    arg: eventTitle,
+    legacyTitle: 'Evenement supprime',
+    legacyBody: `"${eventTitle}" a ete supprime par le BDE`,
   };
 }

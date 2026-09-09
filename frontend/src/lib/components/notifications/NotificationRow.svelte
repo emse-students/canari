@@ -1,5 +1,14 @@
 <script lang="ts">
-  import { AtSign, CornerDownLeft, MessageCircle, Clock } from '@lucide/svelte';
+  import {
+    AtSign,
+    CornerDownLeft,
+    MessageCircle,
+    Clock,
+    CalendarClock,
+    CalendarCheck,
+    CalendarX,
+    CalendarCog,
+  } from '@lucide/svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import { reactionTypeToEmoji } from '$lib/posts/reactions';
   import { formatRelative } from '$lib/utils/time';
@@ -62,6 +71,31 @@
   });
 
   /**
+   * THE AGENDA'S FIVE, and why they are listed rather than pattern-matched on a prefix.
+   *
+   * A notification's type decides three things here - the badge glyph, its colour and the sentence -
+   * and each one is a deliberate choice per type. A `startsWith('event_')` would make a sixth kind
+   * silently inherit whatever the fallback is, which is exactly how these five spent their life in
+   * the generic `{:else}` branch printing an English sentence the server had composed.
+   */
+  const EVENT_TYPES = [
+    'event_proposed',
+    'event_validated',
+    'event_rejected',
+    'event_updated',
+    'event_deleted',
+  ] as const;
+  const isEventNotif = $derived((EVENT_TYPES as readonly string[]).includes(notif.type));
+
+  /**
+   * A refusal carries its reason after a newline - the one thing a reader cannot reconstruct from
+   * the title. Split here so the title can stay italic and the reason can read as prose.
+   */
+  const eventLines = $derived(bodyText.split(/\r?\n/));
+  const eventTitle = $derived(eventLines[0]);
+  const eventReason = $derived(eventLines.slice(1).join(' ').trim());
+
+  /**
    * The badge fill, per type.
    *
    * The reference puts a small coloured disc on the ACTOR'S avatar rather than replacing the avatar
@@ -77,7 +111,11 @@
           ? 'bg-blue-500 text-white'
           : notif.type === 'form_reminder'
             ? 'bg-purple-500 text-white'
-            : 'bg-green-600 text-white'
+            : notif.type === 'event_rejected'
+              ? 'bg-red-500 text-white'
+              : isEventNotif
+                ? 'bg-sky-600 text-white'
+                : 'bg-green-600 text-white'
   );
 
   const avatarBox = $derived(compact ? 'h-10 w-10' : 'h-14 w-14');
@@ -113,6 +151,14 @@
         <CornerDownLeft size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'form_reminder'}
         <Clock size={glyph} strokeWidth={2.75} />
+      {:else if notif.type === 'event_proposed'}
+        <CalendarClock size={glyph} strokeWidth={2.75} />
+      {:else if notif.type === 'event_validated'}
+        <CalendarCheck size={glyph} strokeWidth={2.75} />
+      {:else if notif.type === 'event_rejected' || notif.type === 'event_deleted'}
+        <CalendarX size={glyph} strokeWidth={2.75} />
+      {:else if notif.type === 'event_updated'}
+        <CalendarCog size={glyph} strokeWidth={2.75} />
       {:else}
         <MessageCircle size={glyph} strokeWidth={2.75} />
       {/if}
@@ -140,6 +186,19 @@
         {m.notif_reply_text()}
       {:else if notif.type === 'form_reminder'}
         {bodyText}
+      {:else if isEventNotif}
+        <!-- Built HERE, in the reader's own locale, from a type and a title - never printed back
+             from a sentence the server composed. That is the whole repair. -->
+        {notif.type === 'event_proposed'
+          ? m.notif_event_proposed_text()
+          : notif.type === 'event_validated'
+            ? m.notif_event_validated_text()
+            : notif.type === 'event_rejected'
+              ? m.notif_event_rejected_text()
+              : notif.type === 'event_updated'
+                ? m.notif_event_updated_text()
+                : m.notif_event_deleted_text()}
+        <span class="italic">{eventTitle}</span>{#if eventReason}&#32;&#8212; {eventReason}{/if}
       {:else}
         {m.notif_comment_text()}
         <span class="italic">{bodyText}</span>

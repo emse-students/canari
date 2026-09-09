@@ -7,6 +7,7 @@
   import { postNotifStore } from '$lib/stores/postNotifStore.svelte';
   import NotificationRow from '$lib/components/notifications/NotificationRow.svelte';
   import type { PostNotification } from '$lib/posts/api';
+  import { notificationHref } from '$lib/posts/notificationTarget';
   import { m } from '$lib/paraglide/messages';
 
   let open = $state(false);
@@ -30,9 +31,7 @@
 
   function openNotification(notif: PostNotification) {
     open = false;
-    const url =
-      notif.type === 'form_reminder' ? `/forms/${notif.postId}` : `/posts/${notif.postId}`;
-    void goto(url);
+    void goto(notificationHref(notif));
   }
 
   onMount(() => {

@@ -165,6 +165,32 @@ class NotificationService: UNNotificationServiceExtension {
         Self.localized("notif.form.open.title", locale: locale),
         Self.localized("notif.form.open.body", locale: locale)
       )
+    // The agenda's five. `arg` is the event's title; only `event_proposed` also names the actor.
+    case "event_proposed":
+      composed = (
+        Self.localized("notif.event.proposed.title", locale: locale),
+        String(format: Self.localized("notif.event.proposed.body", locale: locale), actor, arg)
+      )
+    case "event_validated":
+      composed = (
+        Self.localized("notif.event.validated.title", locale: locale),
+        Self.localizedFormat("notif.event.validated.body", arg, locale: locale)
+      )
+    case "event_rejected":
+      composed = (
+        Self.localized("notif.event.rejected.title", locale: locale),
+        Self.localizedFormat("notif.event.rejected.body", arg, locale: locale)
+      )
+    case "event_updated":
+      composed = (
+        Self.localized("notif.event.updated.title", locale: locale),
+        Self.localizedFormat("notif.event.updated.body", arg, locale: locale)
+      )
+    case "event_deleted":
+      composed = (
+        Self.localized("notif.event.deleted.title", locale: locale),
+        Self.localizedFormat("notif.event.deleted.body", arg, locale: locale)
+      )
     default:
       NSLog("[CanariNSE] unknown contentKey=\(key) - keeping the server's own wording")
       composed = nil
