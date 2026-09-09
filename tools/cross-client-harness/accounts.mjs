@@ -67,3 +67,41 @@ export function ownerByDevice() {
   }
   return out;
 }
+
+/**
+ * One account's OIDC SUBJECT - the only key the SERVER decides identity by.
+ *
+ * THIS EXISTS BECAUSE A DISPLAY NAME WAS USED AS ONE, AND IT PRODUCED A FALSE P1 ON 2026-09-09.
+ * An association grant was aimed at a user resolved by display name, landed on a different row,
+ * and the coupling that followed - grant appears, client's answer moves; grant removed, answer
+ * empties - read as "this client is acting as the other account". It was the grant that had moved,
+ * not the identity. The claim stood long enough to declare every two-client measurement void.
+ *
+ * The trio is now complete and each key has exactly one use: `username` fills a LOGIN FORM,
+ * `OWNER_NAME`/`PEER_NAME` in `names.mjs` match a MEMBER PICKER, and this fills a WHERE clause or
+ * compares against a token. They are three different strings for one human and they are not
+ * interchangeable - two of the three have already been used as the third.
+ *
+ * Authentik mints it as `hashed_user_id`, so it is stable across this install's providers (`Canari`,
+ * `Canari Local`, `Canari Dev` are three client ids and one subject) and it is what
+ * `findOrCreateFromOidc` stores as `users.id`. Recover it with
+ * `ak shell -c "print(User.objects.get(username=...).uid)"` on the Authentik box.
+ */
+export function subjectFor(key) {
+  const acct = accountFor(key);
+  if (!acct.sub) {
+    throw new Error(
+      `account ${key} has no "sub" in test-accounts.json - add it rather than matching on a display name`
+    );
+  }
+  return acct.sub;
+}
+
+/** Account key for a subject, or null - for naming a `sub` read off a token. */
+export function roleForSubject(sub) {
+  if (!sub) return null;
+  for (const [key, acct] of Object.entries(accounts())) {
+    if (acct.sub === sub) return key;
+  }
+  return null;
+}

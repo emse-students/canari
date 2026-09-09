@@ -3545,3 +3545,62 @@ and nothing else, and the three real conversations in the same shape were left u
 The converse trap is the one the P1 itself was: **a destructive path that decides a group is dead from
 an incomplete read.** Sweeping the world and pruning inside the product are not the same act, and only
 one of them is allowed to guess.
+
+## A DISPLAY NAME WAS USED AS AN IDENTITY, AND THE COUPLING THAT FOLLOWED BECAME A P1 THAT VOIDED THE WHOLE CAMPAIGN
+
+**On 2026-09-09 a P1 was filed saying a clean login with one account's credentials returned another
+account's access token** - the client showing user B and acting as user A. Its stated consequence was
+total: *every two-client measurement taken on this rig while this holds is void*, and no runner check
+could see it. It was refuted the same day, by five measurements, and none of them took more than a
+minute. **The defect was in the evidence.**
+
+**What the refutation measured, in the order it settled things.**
+
+1. **The identity provider.** Authentik holds two distinct, active users for the campaign with two
+   distinct subjects, and its event log shows each authenticating as itself - `login` and
+   `authorize_application` against `Canari Local`, never crossed, at 12:56 and 15:33 that day and at
+   02:43-02:46 the night before. There was **no owner authentication at all** in the eight hours the
+   P1 was measured in.
+2. **The mapping.** `users.id` **IS** the OIDC subject: `findOrCreateFromOidc` looks a user up by
+   primary key, and the access token is signed `{ sub: user.id }` from that same object. One login
+   response cannot disagree with itself, so the split had nowhere to happen.
+3. **The clients, live.** W1 shows and sends the owner (34 bearer requests), W2 shows and sends the
+   peer (40), A1 shows the owner. The phone the entry named as "the same user as W2" is not.
+4. **The cookie seam**, which was the one place identity could legitimately be decided by something
+   other than the token, since nginx `auth_request` resolves `X-User-Id` for itself: no refresh
+   cookie on either origin, and a cookie-only call answers `x-logged-in: false` and 401s.
+5. **The coupling itself, re-run keyed on the SUBJECT.** Granting the owner a membership left the
+   peer's `me/list` at `[]` before, during and after - `A = B = C`. The original coupling had aimed
+   its grant at a user resolved **by display name**, which lands on a different row; the answer that
+   moved was the grant's, not the identity's.
+
+**The false step is one sentence: a display name was used where a subject was meant.** The same
+session had already been bitten by it once - an `association_members` grant matched by `displayName`
+hit five rows belonging to an unrelated real person - and the lesson was recorded as a repair rather
+than as a rule, so it was available to be made again ninety minutes later. The P1 even stated as
+evidence that "the peer's own five memberships never appeared": the peer has **no** memberships, and
+never did. Those five were the unrelated person's.
+
+**Why no check caught it, which is the part worth keeping.** The rig held three strings for one human
+- a login, a display name and a subject - and only the first two were reachable from code.
+`accounts.mjs` already carried a docblock recording that a login is not a display name, written after
+READ-10 spent a campaign never producing a verdict for the same family of reason. The third string,
+the only one the server decides anything by, existed nowhere. So `identity.mjs` and `subject.mjs`
+were written with the refutation, `subjectFor(key)` was added beside `usernames()`, and
+`identity-selftest.mjs` is in the CI gate pinning the case the P1 claimed - shows one account, acts
+as another, both halves visible. `bun identity.mjs` answers it for every client at once, costs no
+traffic and no reload, and exits non-zero when a client is not its owner.
+
+**Three rules come out of it, and only the third is new.**
+
+- **A COUPLING PROVES CAUSATION ONLY IF THE THING YOU MOVED IS THE THING YOU NAMED.** "I changed X
+  and Y responded" is worth exactly as much as the identification of X. Here X was resolved by a
+  human-readable label with no uniqueness anyone had checked, and the coupling was perfect - because
+  it was measuring the grant landing on the client's own user.
+- **A CLAIM THAT INVALIDATES A WHOLE BODY OF WORK EARNS MORE SCRUTINY THAN ONE THAT DOES NOT, NOT
+  LESS.** This one voided every two-client row on the board and was filed on a single decode, with
+  six causes eliminated around it. Eliminating six alternatives is not the same as establishing the
+  seventh, and the entry itself named the cheap probe that would have settled it - without running it.
+- **WHEN A MISTAKE IS REPAIRED, THE RULE GOES IN THE SAME COMMIT AS THE REPAIR.** The display-name
+  resolution was caught, understood and fixed hours earlier, and left as a story. A lesson that lives
+  only in a repair is available to be repeated.

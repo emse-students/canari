@@ -720,6 +720,22 @@ The link-preview pipeline, the SSRF guard, the favicon cascade and the undici se
 
 ## Contracts the compiler does not check
 
+- **IDENTIFY A SUBJECT BY THE KEY THE SYSTEM DECIDES BY, NEVER BY THE ONE A HUMAN READS.** A display
+  name is not a login is not a subject, and only the last one appears in a `WHERE` clause or a token.
+  On 2026-09-09 an `association_members` grant matched by `displayName` hit five rows belonging to an
+  unrelated real person; ninety minutes later the same resolution produced a coupling - grant appears,
+  the client's answer moves; grant removed, it empties - that was filed as a **P1 declaring every
+  two-client measurement on the rig void.** It was refuted the same day: the grant had landed on the
+  client's own user, so the coupling was perfect and meant nothing. **A coupling proves causation only
+  if the thing you moved is the thing you named.** Where a rig or a script must name a human, the
+  identifier belongs in the account record next to the login (`subjectFor` in the harness's
+  `accounts.mjs`), so the correct key is reachable and the readable one is never tempting;
+  `bun identity.mjs` then answers "who is this client" from the token rather than from the screen.
+  Two corollaries, both paid for the same day: **a claim that invalidates a whole body of work earns
+  MORE scrutiny than one that does not**, and **the rule ships in the same commit as the repair** - the
+  display-name mistake had already been caught, understood and fixed hours earlier, and left as a
+  story, which is exactly what made it available to be made again.
+  [testing-methodology](testing-methodology.md)
 - **A TEST FIXTURE SHORTER THAN EVERY REAL VALUE CANNOT FAIL A LENGTH BOUND.** `notifyHistoryRequest` capped a member key at 128 characters; a real one is 147 for a browser and 149 for the phone, so the exclusion list silently excluded nobody and a whole termination argument - *each step of the walk removes one member* - was inert in production. Thirteen tests covered that endpoint and every one of them used `ua:da`. **Where a bound is a LENGTH, the fixture must be the shape the system actually issues, and the test asserts the length before it asserts the behaviour.** The same reading applies to any bound on a value's size, count or depth. And the number itself came from `MAX_HISTORY_EXCLUSIONS` two lines above: **two limits that look alike and count different things is how a wrong one survives review** - one bounded how MANY keys, the other how LONG one is. [history-reconciliation](protocols/history-reconciliation.md)
  -> [development](development.md)
 

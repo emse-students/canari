@@ -236,10 +236,10 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    rows answered TWO things on ONE build, so a green cell is not yet a measurement. **NO COUNT IS
    WRITTEN HERE; run it.** PIN's four rows change a PIN or restart a browser, hence last. HEAL-NEW's
    rung redesign is open on a clean pass - one record is one draw ([backlog](docs/wiki/backlog.md)).
-   **P1, 2026-09-09: W2 IS NOT A SECOND USER RIGHT NOW.** A clean login with the peer's credentials
-   returns the OWNER's access token, so the client shows one identity and acts as another - **every
-   two-client row measured while this holds is void**, and no runner check can see it. One CDP read
-   of each client's Bearer `sub` is the probe ([backlog](docs/wiki/backlog.md)).
+   **`bun identity.mjs` BEFORE TRUSTING TWO CLIENTS**: it names the account each one SHOWS and the
+   one it ACTS AS, costs no traffic, and exists because a display name was used as an identity on
+   2026-09-09 and produced a P1 - since REFUTED - that declared every two-client row void
+   ([testing-methodology](docs/wiki/testing-methodology.md)).
 2. **P1 - THE PREKEY CHURN WAS A LOCK ORDER, REPRODUCED AND REPAIRED ON HARDWARE 2026-09-08, AND
    NOT SHIPPED** - a merged fix is not a shipped fix. What is left is the weight it already wrote:
    `KeyPackage 3002x` against a pool of 50, ~6.9 MB of a 10.5 MB blob, which no prekey fix touches
