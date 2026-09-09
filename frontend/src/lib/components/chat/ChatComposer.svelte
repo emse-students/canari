@@ -55,6 +55,15 @@
     onCancelReply?: () => void;
     /** Callback fired when the user selects or drops files to attach. */
     onFilesSelected?: (files: File[]) => void;
+    /**
+     * Sends a finished recording immediately, as its own message.
+     *
+     * The recording does NOT go through `onFilesSelected`, and the difference is the gesture:
+     * picking a file is a choice that still wants a send, while holding the microphone, watching
+     * the clock and lifting the finger away from the bin IS the send. Staging it asked for the
+     * same consent twice, behind a "files pending" banner.
+     */
+    onSendVoiceNote?: (file: File) => void;
     /** Files staged for sending but not yet uploaded. */
     pendingFiles?: PendingMediaFile[];
     /** Callback to remove a staged file by its index. */
@@ -77,6 +86,7 @@
     replyingTo,
     onCancelReply,
     onFilesSelected,
+    onSendVoiceNote,
     pendingFiles = [],
     onRemovePendingFile,
     isUploading = false,
@@ -384,7 +394,7 @@
   }
 
   function handleVoiceRecording(audioBlob: Blob) {
-    if (!onFilesSelected) return;
+    if (!onSendVoiceNote) return;
 
     const mimeType = audioBlob.type || 'audio/webm';
     const extension = mimeType.includes('mp4')
@@ -399,7 +409,7 @@
       type: mimeType,
     });
 
-    onFilesSelected([audioFile]);
+    onSendVoiceNote(audioFile);
   }
 
   $effect(() => {
@@ -573,19 +583,36 @@
   <div class="pointer-events-auto flex flex-col gap-2 px-3 sm:px-4 md:px-6">
     <!-- Pending file attachments. -->
     {#if pendingFiles.length > 0}
+      <!--
+        IT NEEDS ITS OWN SURFACE, BECAUSE THE FOOTER HAS NONE. `.chat-composer-footer` is
+        `position: absolute` over the message list on `background: transparent` - by design, so the
+        thread runs under the input bar - and the bar itself is the only thing here that carries a
+        fill. This strip had none, so file tiles and their captions were drawn straight onto the
+        conversation and read as two layers of text superimposed (reported 2026-09-09). The reply
+        preview strip a few lines above solves exactly this and is copied rather than re-invented:
+        one filled, rounded, shadowed panel, inset from the same gutters.
+
+        AND IT IS CAPPED. `flex-wrap` with no ceiling grows a row per two or three files and pushes
+        the input bar off the top of a phone, with nothing to scroll - the one part of a composer
+        that must never become unreachable. The cap is expressed in `rem` rather than in rows so a
+        tall tile and a short one give the same maximum.
+      -->
       <div transition:slide={{ duration: 200, axis: 'y' }} class="w-full">
-        <div class="text-text-muted text-2xs mb-2 px-1 font-bold tracking-wider uppercase">
-          {m.chat_pending_files_count({ pendingFiles: pendingFiles.length })}
-        </div>
-        <div class="flex flex-wrap gap-3">
-          {#each pendingFiles as entry, index (`${entry.file.name}-${index}`)}
-            {@const file = entry.file}
-            {@const key = fileKey(file, index)}
-            {@const thumbAspect =
-              entry.width && entry.height
-                ? mediaAspectStyle(entry.width, entry.height)
-                : 'aspect-ratio: 1'}
-            <!--
+        <div
+          class="bg-cn-surface rounded-2xl border border-black/5 p-3 shadow-lg md:p-4 dark:border-white/10"
+        >
+          <div class="text-text-muted text-2xs mb-2 px-1 font-bold tracking-wider uppercase">
+            {m.chat_pending_files_count({ pendingFiles: pendingFiles.length })}
+          </div>
+          <div class="flex max-h-52 flex-wrap gap-3 overflow-y-auto overscroll-contain">
+            {#each pendingFiles as entry, index (`${entry.file.name}-${index}`)}
+              {@const file = entry.file}
+              {@const key = fileKey(file, index)}
+              {@const thumbAspect =
+                entry.width && entry.height
+                  ? mediaAspectStyle(entry.width, entry.height)
+                  : 'aspect-ratio: 1'}
+              <!--
               A RECORDING IS NOT A FILE TILE. An 80px square with a document glyph and a generated
               `vocal_<timestamp>` name tells the reader nothing they can act on: they cannot see how
               long it is and cannot hear it before sending. `VoiceMessagePlayer` already answers both
@@ -600,97 +627,98 @@
               tile's 200ms outro still on screen underneath. A fallback is a signal, never a path:
               the player waits for its own source instead.
             -->
-            {#if isAudioFile(file)}
-              <div
-                transition:scale={{ duration: 200, start: 0.9 }}
-                class="group/file relative w-full max-w-sm"
-              >
-                {#if previewUrls[key]}
-                  <VoiceMessagePlayer src={previewUrls[key]} />
-                {/if}
-                {#if onRemovePendingFile}
-                  <button
-                    type="button"
-                    class="absolute -top-1.5 -right-1.5 inline-flex h-6 w-6 items-center justify-center rounded-full bg-black/50 text-white shadow-sm transition-all duration-200 outline-none hover:scale-105 hover:bg-red-500 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95"
-                    onclick={() => onRemovePendingFile(index)}
-                    aria-label={m.chat_remove_file_label()}
-                    title={m.common_remove_label()}
-                  >
-                    <X size={14} strokeWidth={2.5} />
-                  </button>
-                {/if}
-              </div>
-            {:else}
-              <div
-                transition:scale={{ duration: 200, start: 0.9 }}
-                class="group/file bg-cn-surface relative w-20 overflow-hidden rounded-3xl border border-black/5 shadow-md sm:w-24 dark:border-white/10"
-                style="{thumbAspect}; max-height: 6rem;"
-              >
-                {#if isImageFile(file) && previewUrls[key]}
-                  <button
-                    type="button"
-                    class="block h-full w-full cursor-zoom-in border-0 p-0"
-                    aria-label={m.chat_enlarge_preview_label()}
-                    onclick={(e) => {
-                      e.stopPropagation();
-                      openLightbox(key);
-                    }}
-                    onpointerdown={(e) => e.stopPropagation()}
-                  >
-                    <img
-                      src={previewUrls[key]}
-                      alt={file.name}
-                      class="h-full w-full object-cover"
-                    />
-                  </button>
-                {:else if isPdfFile(file) && previewUrls[key]}
-                  <!--
+              {#if isAudioFile(file)}
+                <div
+                  transition:scale={{ duration: 200, start: 0.9 }}
+                  class="group/file relative w-full max-w-sm"
+                >
+                  {#if previewUrls[key]}
+                    <VoiceMessagePlayer src={previewUrls[key]} />
+                  {/if}
+                  {#if onRemovePendingFile}
+                    <button
+                      type="button"
+                      class="absolute -top-1.5 -right-1.5 inline-flex h-6 w-6 items-center justify-center rounded-full bg-black/50 text-white shadow-sm transition-all duration-200 outline-none hover:scale-105 hover:bg-red-500 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95"
+                      onclick={() => onRemovePendingFile(index)}
+                      aria-label={m.chat_remove_file_label()}
+                      title={m.common_remove_label()}
+                    >
+                      <X size={14} strokeWidth={2.5} />
+                    </button>
+                  {/if}
+                </div>
+              {:else}
+                <div
+                  transition:scale={{ duration: 200, start: 0.9 }}
+                  class="group/file bg-cn-surface relative w-20 overflow-hidden rounded-3xl border border-black/5 shadow-md sm:w-24 dark:border-white/10"
+                  style="{thumbAspect}; max-height: 6rem;"
+                >
+                  {#if isImageFile(file) && previewUrls[key]}
+                    <button
+                      type="button"
+                      class="block h-full w-full cursor-zoom-in border-0 p-0"
+                      aria-label={m.chat_enlarge_preview_label()}
+                      onclick={(e) => {
+                        e.stopPropagation();
+                        openLightbox(key);
+                      }}
+                      onpointerdown={(e) => e.stopPropagation()}
+                    >
+                      <img
+                        src={previewUrls[key]}
+                        alt={file.name}
+                        class="h-full w-full object-cover"
+                      />
+                    </button>
+                  {:else if isPdfFile(file) && previewUrls[key]}
+                    <!--
                   RASTERISED BY pdf.js, never embedded. This was an `<embed type="application/pdf">`
                   handing the blob to the browser's native plugin, which the site's own CSP forbids
                   (`object-src 'none'`) - so it was blocked for every user, on every browser, and the
                   preview it was supposed to draw was an empty white box. It is the one place that
                   was never migrated to the canvas path every other PDF surface uses.
                 -->
-                  <PdfThumbnail
-                    url={previewUrls[key]}
-                    maxWidth={160}
-                    imgClass="w-full h-full object-cover object-top"
-                  >
-                    {#snippet fallback()}
-                      {@render filePlaceholder()}
-                    {/snippet}
-                  </PdfThumbnail>
-                {:else}
-                  {@render filePlaceholder()}
-                {/if}
+                    <PdfThumbnail
+                      url={previewUrls[key]}
+                      maxWidth={160}
+                      imgClass="w-full h-full object-cover object-top"
+                    >
+                      {#snippet fallback()}
+                        {@render filePlaceholder()}
+                      {/snippet}
+                    </PdfThumbnail>
+                  {:else}
+                    {@render filePlaceholder()}
+                  {/if}
 
-                <!-- Gradient overlay and file name. -->
-                <div
-                  class="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-2 pt-4 pb-1.5"
-                >
+                  <!-- Gradient overlay and file name. -->
                   <div
-                    class="text-2xs sm:text-2xs truncate font-medium text-white drop-shadow-md"
-                    title={file.name}
+                    class="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-2 pt-4 pb-1.5"
                   >
-                    {file.name}
+                    <div
+                      class="text-2xs sm:text-2xs truncate font-medium text-white drop-shadow-md"
+                      title={file.name}
+                    >
+                      {file.name}
+                    </div>
                   </div>
-                </div>
 
-                <!-- Remove button. -->
-                {#if onRemovePendingFile}
-                  <button
-                    type="button"
-                    class="absolute top-1.5 right-1.5 inline-flex h-6 w-6 scale-90 items-center justify-center rounded-full bg-black/50 text-white opacity-100 shadow-sm transition-all duration-200 outline-none hover:scale-105 hover:bg-red-500 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95 sm:opacity-0 sm:group-hover/file:opacity-100"
-                    onclick={() => onRemovePendingFile(index)}
-                    aria-label={m.chat_remove_file_label()}
-                    title={m.common_remove_label()}
-                  >
-                    <X size={14} strokeWidth={2.5} />
-                  </button>
-                {/if}
-              </div>
-            {/if}
-          {/each}
+                  <!-- Remove button. -->
+                  {#if onRemovePendingFile}
+                    <button
+                      type="button"
+                      class="absolute top-1.5 right-1.5 inline-flex h-6 w-6 scale-90 items-center justify-center rounded-full bg-black/50 text-white opacity-100 shadow-sm transition-all duration-200 outline-none hover:scale-105 hover:bg-red-500 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95 sm:opacity-0 sm:group-hover/file:opacity-100"
+                      onclick={() => onRemovePendingFile(index)}
+                      aria-label={m.chat_remove_file_label()}
+                      title={m.common_remove_label()}
+                    >
+                      <X size={14} strokeWidth={2.5} />
+                    </button>
+                  {/if}
+                </div>
+              {/if}
+            {/each}
+          </div>
         </div>
       </div>
     {/if}

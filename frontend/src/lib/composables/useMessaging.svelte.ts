@@ -869,9 +869,19 @@ export function useMessaging() {
   // ── Send ──────────────────────────────────────────────────────────────────
 
   /** Main send handler: verifies MLS membership, uploads any pending media files (with client-side AES-GCM encryption), then sends a text message. Handles channel (REST) and DM/group (MLS) paths. */
-  async function handleSendChat(ctx: MessagingContext, messageText: string) {
+  /**
+   * @param opts.files Send exactly these instead of draining the pending queue, and leave the
+   *        queue untouched. One caller: a voice note, which the recorder's gesture has already
+   *        committed and which must not carry along whatever else the composer happens to hold.
+   */
+  async function handleSendChat(
+    ctx: MessagingContext,
+    messageText: string,
+    opts?: { files?: import('$lib/media').PendingMediaFile[] }
+  ) {
     const text = messageText.trim();
-    const filesToSend = [...pendingMediaFiles];
+    const sendsQueue = !opts?.files;
+    const filesToSend = opts?.files ?? [...pendingMediaFiles];
     const fileEntries = filesToSend;
     const mediaCaption = text || undefined;
     let sentMediaMessageCount = 0;
@@ -940,7 +950,8 @@ export function useMessaging() {
             : 'file';
 
     if (fileEntries.length > 0) {
-      pendingMediaFiles = [];
+      // Only the queue's own send empties it; a voice note never entered it.
+      if (sendsQueue) pendingMediaFiles = [];
       try {
         for (let index = 0; index < fileEntries.length; index++) {
           const entry = fileEntries[index];
@@ -1072,7 +1083,20 @@ export function useMessaging() {
   // ── File handling ─────────────────────────────────────────────────────────
 
   /** Validates and enqueues files for sending. Images are auto-compressed with canvas API before queuing. Files exceeding the configured size limit are rejected with an error message. */
-  async function handleFilesSelected(files: File[], ctx: MessagingContext) {
+  /**
+   * The size ceiling and the image compression, applied to picked files - and NOTHING staged.
+   *
+   * Split out of {@link handleFilesSelected} because a voice note is sent the moment the finger
+   * lifts and never joins the pending queue, yet it must obey exactly the same ceiling and the
+   * same refusal message. Two call sites, one rule: a second copy of the size check is a thing
+   * that can disagree with the first.
+   *
+   * A file over the limit is REFUSED, not shrunk: the caller gets a shorter array than it passed.
+   */
+  async function prepareMediaFiles(
+    files: File[],
+    ctx: MessagingContext
+  ): Promise<import('$lib/media').PendingMediaFile[]> {
     const readyFiles: import('$lib/media').PendingMediaFile[] = [];
     for (const file of files) {
       if (Number.isFinite(mediaMaxSizeBytes) && file.size > mediaMaxSizeBytes) {
@@ -1111,7 +1135,33 @@ export function useMessaging() {
       }
       readyFiles.push(entry);
     }
+    return readyFiles;
+  }
+
+  /** Stages picked files in the pending queue, to be sent with the next message. */
+  async function handleFilesSelected(files: File[], ctx: MessagingContext) {
+    const readyFiles = await prepareMediaFiles(files, ctx);
     if (readyFiles.length > 0) pendingMediaFiles = [...pendingMediaFiles, ...readyFiles];
+  }
+
+  /**
+   * Sends a finished recording immediately, as its own message.
+   *
+   * THE GESTURE ALREADY MEANT SEND. `VoiceRecorder` is hold-to-talk with slide-to-cancel: by the
+   * time a blob reaches here the user has held the microphone, watched the clock run and lifted
+   * their finger AWAY from the bin - three deliberate acts whose only reading is "send this". The
+   * recording nevertheless landed in the pending queue and waited for a fourth act, behind a
+   * "1 fichier(s) en attente" banner, which is a confirmation the gesture had already given.
+   *
+   * It goes out ALONE, and that is the reason for the `files` override rather than a stage-then-
+   * send: draining the pending queue here would post a half-written caption and any photo staged
+   * beside it, neither of which the user asked to send by lifting their finger off a microphone.
+   */
+  async function sendVoiceNote(file: File, ctx: MessagingContext) {
+    const ready = await prepareMediaFiles([file], ctx);
+    // Empty means the ceiling refused it - `prepareMediaFiles` has already said so on both surfaces.
+    if (ready.length === 0) return;
+    await handleSendChat(ctx, '', { files: ready });
   }
 
   /** Removes a staged (not yet sent) file from the pending media queue by its index. */
@@ -1509,6 +1559,8 @@ export function useMessaging() {
     forwardMessage,
     /** Validates and enqueues files (with image compression) for the next send. */
     handleFilesSelected,
+    /** Sends a finished recording straight out, alone - the microphone gesture already said send. */
+    sendVoiceNote,
     /** Removes a staged file from the pending media queue by index. */
     removePendingMediaFile,
     /** Toggles an emoji reaction on a message (add if absent, remove if present). */

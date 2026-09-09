@@ -803,7 +803,7 @@
           <div class="border-cn-border bg-cn-surface overflow-hidden rounded-xl border text-sm">
             <div class="border-cn-border bg-cn-bg flex items-center justify-between border-b p-4">
               <span class="text-text-main font-semibold"
-                >{communityMembers.length} {m.chat_community_member_count_label()}</span
+                >{m.chat_community_member_count_label({ count: communityMembers.length })}</span
               >
             </div>
             {#if canManage}

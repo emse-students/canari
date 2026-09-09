@@ -515,10 +515,6 @@
     // Android activity states for itself, and is `true` everywhere that has a working visibility
     // API, so the two terms above keep deciding web and desktop exactly as before.
     if (!isWindowFocused || !isTabVisible || !isAppInForeground()) return;
-    // Channels are server-authoritative and have no MLS group: their read state must never
-    // go through the MLS outbox (sendReadWatermark -> enqueueControlEvent), otherwise the flusher
-    // loops forever on resolveTerminalGroup/welcome-request 500s for a channel_ conversation id.
-    if (isSelectedChannel) return;
     const convo = convs.conversations.get(convs.selectedContact);
     if (!convo || convo.lifecycle !== 'active') return;
 
@@ -542,6 +538,22 @@
         void convs.saveConversation(currentContact, convCtx());
       }, 0);
     });
+
+    // A CHANNEL IS REFUSED THE RECEIPT, NEVER THE WATERMARK, AND FOR YEARS IT WAS REFUSED BOTH.
+    //
+    // The MLS half genuinely cannot run here: a channel is server-authoritative and has no MLS
+    // group, so `sendReadWatermark` -> `enqueueControlEvent` leaves the flusher looping on
+    // resolveTerminalGroup / welcome-request 500s for a `channel_` conversation id. The guard that
+    // says so used to sit at the top of this effect, which also skipped the LOCAL write above -
+    // and the local watermark is the one thing the in-thread unread badge reads. Every channel
+    // therefore sat at watermark 0 for ever, so "unread" meant "every message this device holds
+    // that is not mine", and scrolling up - which is what loads more of them - made the badge
+    // COUNT UP. Reported from a community thread on 2026-09-09.
+    //
+    // The server keeps its own read state for a channel and `markChannelRead` is what moves it;
+    // that is the sidebar's count. This is the in-thread one, and it is now written the same way
+    // in a salon as in a DM.
+    if (isSelectedChannel) return;
 
     pendingReadWatermark = Math.max(pendingReadWatermark, target);
 
@@ -744,6 +756,22 @@
   /** Forwards selected files to the messaging composable for upload. */
   function handleFilesSelected(files: File[]) {
     void messaging.handleFilesSelected(files, msgCtx());
+  }
+
+  /**
+   * Sends a finished recording immediately - it never joins the pending queue.
+   *
+   * Same treatment as {@link sendText} for the rejection: this is a send path, and `void` on a
+   * promise throws the failure away. The recording is gone from the recorder by the time this
+   * runs, so a silent rejection would be a voice note the user watched themselves record and that
+   * nothing ever received.
+   */
+  function handleSendVoiceNote(file: File) {
+    void messaging.sendVoiceNote(file, msgCtx()).catch((e: unknown) => {
+      const reason = e instanceof Error ? e.message : String(e);
+      convs.sendError = m.chat_send_error({ reason });
+      log(`[SEND] sendVoiceNote threw - the recording was NOT queued: ${reason}`);
+    });
   }
 
   /**
@@ -1071,6 +1099,7 @@
           onCancelReply={messaging.cancelReply}
           authToken={session.authToken}
           onFilesSelected={handleFilesSelected}
+          onSendVoiceNote={handleSendVoiceNote}
           pendingFiles={messaging.pendingMediaFiles}
           onRemovePendingFile={messaging.removePendingMediaFile}
           isUploading={messaging.isUploadingMedia}

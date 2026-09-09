@@ -12,9 +12,22 @@
     onDeleted: () => void;
     /** 'list' tweaks the wording; defaults to association. */
     kind?: 'association' | 'list';
+    /**
+     * Whether to offer the irreversible half of this panel.
+     *
+     * The two cards below are rights the SERVER separates and the client used to conflate: archive
+     * is `PATCH :id { archived }`, admitted at `MANAGE_MEMBERS`, so an association's own admin and
+     * a BDE `MANAGE_ASSO` super-admin both hold it; delete is `DELETE :id` behind a bare
+     * `GlobalAdminGuard`. Gating the whole panel on the stricter of the two is what hid archiving
+     * from everybody entitled to it, so the tier the panel cannot infer is passed in.
+     *
+     * Defaults to `false`: a destructive control is offered on an explicit grant, never by
+     * omission.
+     */
+    canDelete?: boolean;
   }
 
-  let { asso, onUpdated, onDeleted, kind = 'association' }: Props = $props();
+  let { asso, onUpdated, onDeleted, kind = 'association', canDelete = false }: Props = $props();
 
   let archiving = $state(false);
   let error = $state('');
@@ -104,20 +117,22 @@
     </button>
   </div>
 
-  <div class="border-red-err/30 bg-red-err/10 space-y-3 rounded-2xl border p-6">
-    <h2 class="text-red-err flex items-center gap-2 text-base font-bold">
-      <Trash2 size={18} />
-      {m.asso_danger_title()}
-    </h2>
-    <p class="text-red-err text-sm">
-      {kind === 'list' ? m.asso_danger_delete_desc_list() : m.asso_danger_delete_desc_asso()}
-    </p>
-    <button
-      type="button"
-      onclick={handleDelete}
-      class="bg-cn-surface border-red-err/30 text-red-err hover:bg-red-err/20 rounded-xl border px-4 py-2.5 text-sm font-bold"
-    >
-      {kind === 'list' ? m.asso_danger_delete_list() : m.asso_danger_delete_asso()}
-    </button>
-  </div>
+  {#if canDelete}
+    <div class="border-red-err/30 bg-red-err/10 space-y-3 rounded-2xl border p-6">
+      <h2 class="text-red-err flex items-center gap-2 text-base font-bold">
+        <Trash2 size={18} />
+        {m.asso_danger_title()}
+      </h2>
+      <p class="text-red-err text-sm">
+        {kind === 'list' ? m.asso_danger_delete_desc_list() : m.asso_danger_delete_desc_asso()}
+      </p>
+      <button
+        type="button"
+        onclick={handleDelete}
+        class="bg-cn-surface border-red-err/30 text-red-err hover:bg-red-err/20 rounded-xl border px-4 py-2.5 text-sm font-bold"
+      >
+        {kind === 'list' ? m.asso_danger_delete_list() : m.asso_danger_delete_asso()}
+      </button>
+    </div>
+  {/if}
 </div>

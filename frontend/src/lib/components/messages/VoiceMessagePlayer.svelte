@@ -1,6 +1,12 @@
 <script lang="ts">
   import { Pause, Play, Download } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import {
+    barCountForWidth,
+    computeWaveformPeaks,
+    mixToMono,
+    resampleBars,
+  } from '$lib/utils/audio/waveform';
 
   interface Props {
     /** Audio source URL (object URL or remote URL) to load and play. */
@@ -19,6 +25,44 @@
   let lastDurationToken = 0;
   /** Set to true when the browser cannot decode the audio format (e.g. webm on iOS). */
   let cannotPlay = $state(false);
+
+  /**
+   * The resolution the peaks are STORED at, which is not the number of bars drawn.
+   *
+   * Decoding is expensive and happens once; the strip is re-bucketed from this array on every
+   * resize, which is a loop over 64 numbers. It is the ceiling `barCountForWidth` can ask for, so a
+   * very wide bubble draws every stored peak and never interpolates one it does not have.
+   */
+  const PEAK_RESOLUTION = 64;
+  /**
+   * The height a silent bar is still drawn at, as a fraction of the strip.
+   *
+   * It lives here and NOT in `computeWaveformPeaks`, because the peaks are data and this is
+   * presentation: a pause between two sentences really is silence, and the strip shows a thin
+   * continuous line through it rather than a gap that reads as the end of the message.
+   */
+  const BAR_FLOOR = 0.16;
+  /** Bar heights in 0..1, or empty until the decode lands (or for ever, where it cannot run). */
+  let peaks = $state<number[]>([]);
+  /**
+   * The strip's own width, which DECIDES the bar count - see `barCountForWidth` for the two
+   * measurements that made a fixed count untenable. `clientWidth` is 0 before the first layout, and
+   * the clamp inside that helper is what makes that first frame legal rather than empty.
+   */
+  let stripWidth = $state(0);
+  const barCount = $derived(barCountForWidth(stripWidth));
+  /**
+   * The resting strip, drawn while the decode is in flight and wherever it cannot run at all.
+   *
+   * Flat and obviously flat: it must not be mistaken for a real waveform, which is why it is not a
+   * plausible-looking generated shape. It keeps the control the same size and in the same place, so
+   * nothing moves under the finger when the real peaks arrive.
+   */
+  const bars = $derived(
+    peaks.length > 0 ? resampleBars(peaks, barCount) : Array.from({ length: barCount }, () => 0)
+  );
+  /** Fraction of the recording already played, 0..1 - the split between the two bar colours. */
+  const playedFraction = $derived(duration > 0 ? Math.min(1, currentTime / duration) : 0);
 
   function formatTime(seconds: number): string {
     if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
@@ -54,31 +98,42 @@
     audioEl.playbackRate = next;
   }
 
-  async function decodeDurationFromSource(source: string, token: number) {
+  /**
+   * ONE DECODE ANSWERS BOTH QUESTIONS. The decode was already here for the duration - a
+   * `MediaRecorder` webm carries none in its header - and the samples it produces are exactly what
+   * the waveform is drawn from, so the strip costs no second fetch and no second decode.
+   */
+  async function decodeSource(source: string, token: number) {
     try {
       const response = await fetch(source);
       const buffer = await response.arrayBuffer();
       const AudioContextCtor =
         window.AudioContext ||
         (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (!AudioContextCtor) return;
+      if (!AudioContextCtor) {
+        console.warn('[voice] no AudioContext - duration comes from the container, no waveform');
+        return;
+      }
 
       const audioContext = new AudioContextCtor();
       try {
         const decoded = await audioContext.decodeAudioData(buffer.slice(0));
-        if (
-          token === lastDurationToken &&
-          Number.isFinite(decoded.duration) &&
-          decoded.duration > 0
-        ) {
+        // A newer source has been requested while this decode ran; its own call owns the state.
+        if (token !== lastDurationToken) return;
+        if (Number.isFinite(decoded.duration) && decoded.duration > 0) {
           duration = decoded.duration;
           currentTime = Math.min(currentTime, decoded.duration);
         }
+        peaks = computeWaveformPeaks(mixToMono(decoded), PEAK_RESOLUTION);
       } finally {
         void audioContext.close();
       }
-    } catch {
-      // Keep metadata duration if decode fails.
+    } catch (e) {
+      // NOT A FALLBACK, A CAPABILITY. Safari cannot decode opus-in-webm at all, so this branch is
+      // the ordinary case on iOS rather than a failure to repair - the container's own duration
+      // still drives the timer and the strip draws its resting shape. It is logged because it also
+      // catches a genuinely corrupt blob, and those two must not be one silence.
+      console.warn(`[voice] could not decode ${src.slice(0, 48)} - no waveform:`, e);
     }
   }
 
@@ -90,8 +145,9 @@
     currentTime = 0;
     isPlaying = false;
     cannotPlay = false;
+    peaks = [];
     if (!source) return;
-    void decodeDurationFromSource(source, token);
+    void decodeSource(source, token);
   });
 </script>
 
@@ -161,19 +217,44 @@
       {/if}
     </button>
 
-    <!-- Section de la Timeline (Slider) -->
+    <!--
+      THE WAVEFORM, AND THE SLIDER IS STILL A REAL `input[type=range]` UNDERNEATH IT.
+
+      The bars are the visual and carry no interaction at all (`pointer-events-none`); the control
+      is a transparent native range stretched over them. That is not a trick to save code - it is
+      what keeps dragging, tapping, arrow keys, Home/End, the screen-reader value announcement and
+      the touch target correct without any of them being re-implemented, which is where a
+      hand-rolled scrubber loses a user who cannot use a pointer. The input comes FIRST in the DOM
+      so the bars can wear its focus ring as a `peer`.
+    -->
     <div class="flex min-w-0 flex-1 flex-col justify-center gap-1.5 pt-1">
-      <input
-        type="range"
-        min="0"
-        max={Math.max(duration, 1)}
-        step="0.01"
-        value={Math.min(currentTime, duration || 0)}
-        onclick={(e) => e.stopPropagation()}
-        oninput={(e) => seekTo((e.currentTarget as HTMLInputElement).value)}
-        class="h-1.5 w-full cursor-pointer rounded-full bg-black/10 accent-amber-500 outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50 dark:bg-white/20"
-        aria-label={m.msg_playback_position_label()}
-      />
+      <div class="relative h-8 w-full" bind:clientWidth={stripWidth}>
+        <input
+          type="range"
+          min="0"
+          max={Math.max(duration, 1)}
+          step="0.01"
+          value={Math.min(currentTime, duration || 0)}
+          onclick={(e) => e.stopPropagation()}
+          oninput={(e) => seekTo((e.currentTarget as HTMLInputElement).value)}
+          class="peer absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0 outline-none"
+          aria-label={m.msg_playback_position_label()}
+        />
+        <div
+          class="pointer-events-none flex h-full w-full items-center gap-[2px] rounded-lg peer-focus-visible:ring-2 peer-focus-visible:ring-amber-500/50"
+          aria-hidden="true"
+        >
+          {#each bars as bar, index (index)}
+            {@const played = (index + 1) / bars.length <= playedFraction}
+            <div
+              class="min-w-0 flex-1 rounded-full transition-colors duration-150 {played
+                ? 'bg-amber-500'
+                : 'bg-black/20 dark:bg-white/25'}"
+              style="height: {Math.round((BAR_FLOOR + (1 - BAR_FLOOR) * bar) * 100)}%"
+            ></div>
+          {/each}
+        </div>
+      </div>
       <div class="text-2xs flex items-center justify-between font-bold opacity-70">
         <span>{formatTime(currentTime)}</span>
         <span>{formatTime(duration)}</span>

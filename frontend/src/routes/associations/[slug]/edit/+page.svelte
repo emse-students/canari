@@ -129,6 +129,22 @@
   /** Paiements tab: boutique and/or Stripe Connect. */
   let canManagePaymentsSection = $derived(canManageStripeConnect || canManageProducts);
 
+  /**
+   * The Danger tab holds TWO controls the server rights DIFFERENTLY, and gating the tab on the
+   * stricter of the two hid the other one from everybody entitled to it.
+   *
+   * Archiving is `PATCH :id { archived }`, which the server admits through
+   * `GlobalAdminOrAssociationRoleGuard` at `MANAGE_MEMBERS` - so an association's own admin holds
+   * it, and so does a BDE `MANAGE_ASSO` super-admin, `MANAGE_MEMBERS` not being in
+   * `SUPER_ADMIN_EXCLUDED_FLAGS`. Deleting is `DELETE :id` behind a bare `GlobalAdminGuard` and is
+   * the platform administrator's alone. Both were behind `isGlobalAdminUser` here, which is how a
+   * BDE member holding the power to administer associations found the section absent (reported
+   * 2026-09-09).
+   *
+   * The tab therefore opens on the right to ARCHIVE, and the delete card carries its own tier.
+   */
+  let canArchiveAssociation = $derived(canManageMembers);
+
   const slug = $derived((page.params as Record<string, string>).slug);
 
   onMount(async () => {
@@ -477,7 +493,7 @@
               {m.asso_edit_tab_partenariats()}
             </button>
           {/if}
-          {#if isGlobalAdminUser}
+          {#if canArchiveAssociation}
             <button
               type="button"
               onclick={() => (editSection = 'danger')}
@@ -723,9 +739,10 @@
         <EditPartnershipsTab {asso} />
       {/if}
 
-      {#if editSection === 'danger' && isGlobalAdminUser}
+      {#if editSection === 'danger' && canArchiveAssociation}
         <EditDangerTab
           {asso}
+          canDelete={isGlobalAdminUser}
           onUpdated={(a) => (asso = a)}
           onDeleted={() => goto('/associations')}
         />
