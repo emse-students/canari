@@ -514,7 +514,7 @@ proof the fallback is only in the rendering: the row was reachable and deletable
 **Blocked on nothing.** Local estate, test accounts, and a reproduction that takes one group.
 
 ---
-### P3 - "Nouvelle discussion" is a full-height panel that shows nothing until you type, where the reference opens on a list (observed on the Mi 9T, 2026-09-09)
+### DONE 2026-09-09 - "Nouvelle discussion" opens on the people you already talk to (was: a full-height panel showing nothing until you type)
 
 Found while verifying the top-anchored modal, and NOT caused by it - the panel became full height,
 which is what made the emptiness visible. On a 436x945 phone the modal draws a tab pair, a label, a
@@ -5271,7 +5271,7 @@ declared meanings on the user's call (*"fidele a la reference"*, 2026-09-09), an
 arbitrary `rounded-[...]` at all. The remaining `app.css` items are the emoji-picker geometry, the
 device-row controls and the bundled font, below.
 
-### P3 - the two controls on a device row do not look like the same kind of thing (reported 2026-08-25)
+### DONE 2026-09-09 - a device row's two controls are one kind of thing (reported 2026-08-25)
 
 **Reported by the user with a screenshot**: *"Petite note graphique, il faudrait homogeneiser la
 corbeille et la modification."* On a device row the delete control is a filled rounded square and the

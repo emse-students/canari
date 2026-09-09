@@ -260,7 +260,7 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    anybody prod is down**, and [host-updates](docs/wiki/infrastructure/host-updates.md).
 7. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
    [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
-8. **EIGHT UX/RENDERING ITEMS + TWO DEV-LOG LINES** ([backlog](docs/wiki/backlog.md)); four want ONE pass over `app.css`. The newest is "Nouvelle discussion" opening on a full-height panel with ~600px of nothing, because its picker is a search field with no list behind it.
+8. **UX/RENDERING: THE NEXT ONE IS DECIDED AND UNSTARTED** - the user took it on 2026-09-09, *"poser la reference ET tout aligner maintenant"*: two declared icon-button sizes (28px on a message hover strip, 38px everywhere else) and **all 187 call sites swept in the same change**, gate included. Three of this group shipped the same day - the emoji picker's geometry, the device row's two controls, "Nouvelle discussion" - and the rest are in [backlog](docs/wiki/backlog.md), which is the only count. **Do not re-litigate the sweep; start with it.**
 9. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
    commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
 10. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
