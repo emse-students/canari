@@ -687,3 +687,40 @@ pratique (deplacement lors de l'ouverture et la fermeture du clavier par exemple
 new community, each of which opens with a text field - now pass it. It is a flag and not a change of
 default because a sheet is still right for a short modal with no input. `fullViewport` was NOT the
 lever: it also blows the panel up to `90rem` on desktop, which a contact picker must not be.
+
+Measured on a Mi 9T, 2026-09-09, keyboard opening and closing on the new-chat modal:
+
+| | layout viewport | panel top | panel height |
+| --- | --- | --- | --- |
+| keyboard closed | 945px | **34px** | 870px |
+| keyboard open | 588px | **34px** | 541px |
+
+The top is invariant, which is the whole claim: the panel re-fits the shorter viewport instead of
+being translated by it.
+
+### What sizes a modal panel, and the two utilities that never did
+
+`topAnchored` sets a RADIUS and nothing else, and that is the corrected version - it shipped with a
+height and a max-height too, and both were inert or harmful. The rules that actually decide a panel's
+box, in the order they win:
+
+| Property | Owner | Value |
+| --- | --- | --- |
+| max-height | `.keyboard-aware-modal-panel` (`app.css`) | `min(92dvh, var(--app-viewport-height))` **`!important`**, no media query, every panel |
+| height on a phone | `[data-keyboard-aware-overlay]` being `items-stretch` | the padded box, for any panel with no explicit height |
+| the four insets | `[data-keyboard-aware-overlay]` (`app.css`) | `max(1rem, env(safe-area-inset-*))` on all four sides |
+
+Three consequences a reader gets wrong by reading the component alone. **No `max-h-*` utility in
+`Modal.svelte` has any effect** - the `!important` cap outranks all of them, so `fullViewport`'s
+stated intent of `96dvh` is not what renders either; the panel measured 540.85px against a `100dvh`
+of 587.88px. **A `h-[100dvh]` is redundant under `items-stretch`** and costs 3px of overflow past the
+backdrop's own bottom padding. **And `rounded-none` is wrong for every one of these panels**, because
+the backdrop's 1rem inset means none of them ever reaches a screen edge - square corners just draw a
+slab in a moat.
+
+The same four insets were ALSO set inline by the component, from an exported constant whose last
+`max(` was never closed. It rendered anyway - CSS closes a function block left open at the end of a
+value rather than dropping the declaration - which is a parser's error recovery standing in for the
+value being right. The stylesheet rule is sufficient on its own, proven by the three other
+`data-keyboard-aware-overlay` elements that never carried the inline copy, so the constant is deleted
+rather than repaired.

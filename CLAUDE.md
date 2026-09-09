@@ -165,7 +165,7 @@ exceeds a 5-minute foreground timeout.
 - Language: code, comments, docs and dev-facing strings MUST be English. User-visible strings use Paraglide (`messages/fr.json`, `en.json`) - no inline literals, ALWAYS, even in a plain `.ts` util, and even when a nearby call site already has raw strings.
 - Punctuation: ASCII (`'`, `"`, `-`) everywhere; escape quotes in code. Keep French accents ONLY in localized strings and French comments.
 - Tests: changing logic requires changing the associated test.
-- UI: `src/app.css` holds the tokens - **COLOUR ONLY today: there is no type scale and `--radius-*` DOES NOT EXIST**, which is why 36 font sizes and 14 corner radii are in use. The measured target, and the Messenger/Facebook numbers it copies, are in [design-reference](docs/wiki/frontend/design-reference.md), the only copy. No raw hex/px. `@lucide/svelte` only (NOT `lucide-svelte`, the old name - both resolve).
+- UI: `src/app.css` holds the tokens, and **COLOUR, TYPE AND RADIUS ARE ALL SCALED SINCE #447** - seven `--text-*` steps replacing 36 sizes, and `--radius-*` replacing 14 corners with FOUR meanings (8px card / 12px larger card / 18px bubble / 999px pill). **Read the scale before reaching for a number**: `rounded-2xl` is 12px here, not Tailwind's 16px. The measured target, and the Messenger/Facebook numbers it copies, are in [design-reference](docs/wiki/frontend/design-reference.md), the only copy. No raw hex/px. `@lucide/svelte` only (NOT `lucide-svelte`, the old name - both resolve).
 
 ## **KEY COMMANDS**
 
@@ -256,7 +256,7 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    anybody prod is down**, and [host-updates](docs/wiki/infrastructure/host-updates.md).
 7. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
    [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
-8. **SEVEN UX/RENDERING ITEMS + TWO DEV-LOG LINES** ([backlog](docs/wiki/backlog.md)); four want ONE pass over `app.css`. The newest is a DELETED two-person group keeping the peer's name, so it is indistinguishable from the DM.
+8. **EIGHT UX/RENDERING ITEMS + TWO DEV-LOG LINES** ([backlog](docs/wiki/backlog.md)); four want ONE pass over `app.css`. The newest is "Nouvelle discussion" opening on a full-height panel with ~600px of nothing, because its picker is a search field with no list behind it.
 9. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
    commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
 10. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
