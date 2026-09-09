@@ -370,10 +370,22 @@ services:
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-9855dfafdadcbdcfc69bcd1fffc447f9b53536428ef767fd164297ffe49cc4cf}
       MEDIA_SERVICE_URL: http://media-service:3011
+      # PRESENT ON PROD AND LOCAL AND MISSING HERE UNTIL 2026-09-09, which is the whole of the
+      # defect: `RedisService` falls back to `redis://localhost:6379`, so this service dialled
+      # itself, failed, and retried for ever - 3 657 error lines in one hour, and `POST /api/posts`
+      # answered 500 to a member on the phone. Every other omission in this block carries a comment
+      # saying it is deliberate; this one had none, because nobody chose it.
+      #
+      # The other five services on this estate were never affected: only social-service was missing
+      # the variable, which is why the estate looked healthy from every angle except the one that
+      # counted.
+      REDIS_URL: redis://redis:6379
       # Absent, not inherited: this key reaches Le Cercle's estate, which has no dev environment.
       CERCLE_API_KEY: ${CERCLE_API_KEY:-}
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
       core-service:
         condition: service_started

@@ -12,7 +12,31 @@ export class RedisService implements OnModuleDestroy {
   private readonly client: Redis;
 
   constructor() {
-    const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+    /*
+     * THE DEFAULT IS A SIGNAL, AND FOR SEVEN DAYS IT WAS A SILENT PATH.
+     *
+     * `dev.canari-emse.fr` ran this service with no `REDIS_URL` at all - the variable is set for
+     * social-service on production and on the local stack, and was simply absent from the dev
+     * compose. So this dialled `localhost`, which is this container, and failed for ever: 3 657
+     * error lines in one hour on 2026-09-09, and a member creating a post got a 500. The error
+     * line below already named the destination (it was rewritten for exactly this failure on
+     * 2026-09-02, on a local stack that had no `REDIS_URL` either) and it still took a person
+     * hitting the bug, because nobody reads a dev log that has been shouting since it started.
+     *
+     * The default stays, because a laptop running the service outside compose is a real workflow
+     * and a hard failure there would be worse. What changes is that choosing it now ACCUSES, once,
+     * at startup, before any connection is attempted - so the cause is at the top of the log rather
+     * than inferred from the address in a repeating error. A fallback is a signal, never a path.
+     */
+    const configuredUrl = process.env.REDIS_URL;
+    const redisUrl = configuredUrl || 'redis://localhost:6379';
+    if (!configuredUrl) {
+      this.logger.error(
+        `REDIS_URL is not set - falling back to ${redisUrl}. Inside a container that is the ` +
+          'container itself, so every publish will fail and real-time channel events will not ' +
+          'reach the gateway. Set REDIS_URL in this environment.'
+      );
+    }
     this.client = new Redis(redisUrl, {
       retryStrategy: (times) => Math.min(times * 100, 3000),
       maxRetriesPerRequest: 3,
