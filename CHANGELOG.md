@@ -11,6 +11,30 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Added - the agenda is a schedule list on a phone, not a seven-column grid
+
+*"sur mobile, on devrait avoir la liste des evenements sous forme de planning au lieu de la
+grille"*. A month grid gives every day the same square whether it holds nothing or four events, so
+on a 393px screen each cell is about 48px wide and can show a coloured dot and no words: seven
+columns spent saying which days exist - which the reader already knows - and none of it on what is
+happening.
+
+Below `md` the agenda now draws one row per event, with the date in a narrow gutter that repeats
+only when the day changes and today's number in a filled pill. **Days with no events are not drawn
+at all**, so a month with four events is four rows rather than thirty. The grid is untouched from
+640px up, where it has the room and answers a different question - the shape of the month.
+
+`SCHEDULE_AGENDA_QUERY` asks about WIDTH ALONE, unlike `NARROW_CHAT_QUERY` beside it: seven columns
+is a question about room, so a touch laptop keeps its grid. The subtitle follows the view, because
+"cliquez sur un jour pour voir les evenements" is an instruction with nothing to click once the grid
+is gone.
+
+The two views share one module rather than two copies of "does this multi-day event cover this
+day" - the rule that makes a three-day event appear on all three of its days, which is what the
+reader is actually asking. Twelve tests, including a month with 31 days and an event ending one
+minute past midnight.
+
+
 ### Fixed - a page title painted straight over its own action buttons on a phone, on every page with two of them
 
 Reported as *"L'en-tete de la page associations est moche + chevauchements"*, and it is exactly

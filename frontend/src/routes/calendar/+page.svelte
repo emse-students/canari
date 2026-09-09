@@ -25,6 +25,7 @@
   import Card from '$lib/components/ui/Card.svelte';
   import MonthCalendarGridRich from '$lib/components/calendar/MonthCalendarGridRich.svelte';
   import CalendarDayEventsPanel from '$lib/components/calendar/CalendarDayEventsPanel.svelte';
+  import CalendarScheduleList from '$lib/components/calendar/CalendarScheduleList.svelte';
   import CalendarEventDetailModal from '$lib/components/calendar/CalendarEventDetailModal.svelte';
   import CalendarSubscribeModal from '$lib/components/calendar/CalendarSubscribeModal.svelte';
   import CoOwnerPicker from '$lib/components/calendar/CoOwnerPicker.svelte';
@@ -41,6 +42,21 @@
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
+  import {
+    SCHEDULE_AGENDA_QUERY,
+    isScheduleAgendaViewport,
+    onViewportChange,
+  } from '$lib/utils/viewport';
+
+  /**
+   * A PHONE GETS A SCHEDULE LIST INSTEAD OF THE MONTH GRID (user, 2026-09-09).
+   *
+   * Read at mount and kept in step with rotations rather than fixed once: the same window can be
+   * both, and a device turned sideways must get the grid back rather than keep a layout chosen for
+   * the width it used to have. `false` under SSR is the desktop answer by design - the mount that
+   * follows corrects it.
+   */
+  let scheduleLayout = $state(false);
 
   let focusDate = $state(new Date());
   let associations = $state<Association[]>([]);
@@ -122,6 +138,11 @@
     selectedDay = null;
     void loadMonth();
   }
+
+  onMount(() => {
+    scheduleLayout = isScheduleAgendaViewport();
+    return onViewportChange(SCHEDULE_AGENDA_QUERY, (narrow) => (scheduleLayout = narrow));
+  });
 
   onMount(async () => {
     filterAssociationId = page.url.searchParams.get('association')?.trim() ?? '';
@@ -374,7 +395,13 @@
   dashboard's - the navigation already carries those icons.
 -->
 <PageContainer>
-  <PageHeader title={m.calendar_heading()} subtitle={m.calendar_subtitle()}>
+  <!-- The subtitle is an instruction, so it has to be true of the view actually on screen: the
+       schedule list has no day to click, and telling a reader to click one is worse than saying
+       nothing. -->
+  <PageHeader
+    title={m.calendar_heading()}
+    subtitle={scheduleLayout ? m.calendar_subtitle_schedule() : m.calendar_subtitle()}
+  >
     {#snippet actions()}
       {#if canDepositEvent}
         <button
@@ -470,22 +497,34 @@
       </div>
     </Card>
 
-    <MonthCalendarGridRich {focusDate} events={sortedEvents} {loading} bind:selectedDay />
-
     {#if loadError}
       <div class="bg-red-err/10 border-red-err/30 text-red-err rounded-xl border p-4 text-sm">
         {loadError}
       </div>
-    {:else if !loading && sortedEvents.length === 0}
-      <Card class="text-text-muted p-8 text-center text-sm">{m.calendar_empty()}</Card>
-    {:else}
-      <CalendarDayEventsPanel
+    {:else if scheduleLayout}
+      <!-- One list, no grid: seven columns of 48px say which days exist and nothing about what is
+           on them. `CalendarScheduleList` takes the month out of the feed itself, so there is no
+           selected day to carry here. -->
+      <CalendarScheduleList
         {focusDate}
-        {selectedDay}
         events={sortedEvents}
+        {loading}
         onEventClick={openEventDetail}
-        onClearSelection={() => (selectedDay = null)}
       />
+    {:else}
+      <MonthCalendarGridRich {focusDate} events={sortedEvents} {loading} bind:selectedDay />
+
+      {#if !loading && sortedEvents.length === 0}
+        <Card class="text-text-muted p-8 text-center text-sm">{m.calendar_empty()}</Card>
+      {:else}
+        <CalendarDayEventsPanel
+          {focusDate}
+          {selectedDay}
+          events={sortedEvents}
+          onEventClick={openEventDetail}
+          onClearSelection={() => (selectedDay = null)}
+        />
+      {/if}
     {/if}
 
     <CalendarEventDetailModal

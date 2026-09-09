@@ -51,6 +51,16 @@ export const OVERLAY_LAYOUT_QUERY = below(TAILWIND_XL);
 /** Swipe-between-tabs applies here: narrow, or driven by a finger. */
 export const SWIPE_NAV_QUERY = `${below(TAILWIND_XL)}, ${COARSE_POINTER_QUERY}`;
 
+/**
+ * The agenda draws a schedule LIST rather than a month grid here (matches Tailwind `md`).
+ *
+ * WIDTH ALONE, AND THAT IS THE DISTINCTION FROM `NARROW_CHAT_QUERY`. Seven columns is a question
+ * about ROOM: a touch laptop has it and should keep the grid, which shows the shape of a month at a
+ * glance. Chat asks the other question - whether a list and a conversation fit side by side - and a
+ * finger changes that answer, which is why it also asks about the pointer.
+ */
+export const SCHEDULE_AGENDA_QUERY = below(TAILWIND_MD);
+
 /** Whether `matchMedia` can be asked at all - it cannot under SSR, nor in a bare test environment. */
 function canQuery(): boolean {
   return typeof window !== 'undefined' && typeof window.matchMedia === 'function';
@@ -81,6 +91,11 @@ export function isOverlayLayout(): boolean {
 /** True where swiping between the main tabs is enabled. */
 export function isSwipeNavViewport(): boolean {
   return matches(SWIPE_NAV_QUERY);
+}
+
+/** True where a month grid has no room and the agenda is a schedule list instead. */
+export function isScheduleAgendaViewport(): boolean {
+  return matches(SCHEDULE_AGENDA_QUERY);
 }
 
 /**
