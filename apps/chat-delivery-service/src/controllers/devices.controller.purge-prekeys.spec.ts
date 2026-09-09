@@ -130,7 +130,9 @@ describe('DevicesController - a purge that reports what it removed', () => {
   });
 
   it('refuses to purge another user device', async () => {
-    await expect(controller.purgeDevicePrekeys('victim', 'd1', 'attacker')).rejects.toThrow();
+    await expect(controller.purgeDevicePrekeys('victim', 'd1', 'attacker')).rejects.toThrow(
+      'Cannot purge another user device prekeys'
+    );
     expect(execute).not.toHaveBeenCalled();
   });
 
