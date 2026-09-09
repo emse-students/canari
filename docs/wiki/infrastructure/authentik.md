@@ -404,34 +404,42 @@ on `cas1`, then the full file. **It is NOT reproduced here, deliberately** - it 
 configuration, this repository is PUBLIC, and it carries their OIDC client secret. What follows is
 the reading of it; the file itself stays in the mail thread.
 
-**The access gate, and why it is the second population's best candidate.**
-`accessStrategy.requiredAttributes` admits only a principal whose SupAnn resource state for the CAS
-service is `A`. It is **deterministic**, so it cannot explain the 31 IPs that fail and then succeed -
-but it is the best candidate for the **7 that never succeed**, and for `robin.berthod`, whose last
-successful login is 2026-06-11, an end-of-year date. Two ways it can bite somebody who looks active:
+**The access gate was the leading hypothesis for one afternoon, and it is now RULED OUT for the one
+person we can name.** `accessStrategy.requiredAttributes` admits only a principal whose SupAnn
+resource state for the CAS service is `A`, which made it the obvious candidate for the 7 IPs that
+never succeed and for `robin.berthod`, whose last successful login is 2026-06-11, an end-of-year
+date. **The DSI confirmed on 2026-09-09 that `robin.berthod` IS authorised.** So a looping,
+never-succeeding user passes the gate - the gate is not what stops him. Keep the finding for the
+other six, whom nobody has named, and stop leading with it.
 
-- SupAnn writes this attribute as `{SERVICE}ETAT[:SOUSETAT]`, so a principal carrying
-  `{service_cas}A:<something>` is active AND does not equal `{service_cas}A`. Whether CAS compares
-  by equality or by pattern here decides whether such a person is refused, and the answer is a
-  version-dependent property of `DefaultRegisteredServiceAccessStrategy` - it is a question for them,
-  not a guess for us.
-- The attribute is **multi-valued across services**; a principal holding only `{PORTAIL}A` is refused
-  by MiConnect while every other service works, which is exactly what a student would report as
-  "everything else logs me in".
+**What that leaves is ONE mechanism that explains BOTH populations, and it is the shape of the
+failure itself.** A CAS access refusal renders an error page, or at worst returns
+`error=access_denied` to the client. **We receive neither: a redirect to our callback with an EMPTY
+query string** - the client reached, no parameters at all. That is what a **lost session at
+`/cas/oauth2.0/callbackAuthorize`** produces: pac4j cannot reconstruct the authorization request
+context, so it sends the browser to the registered `redirectUri` carrying nothing. Two facts make it
+fit where the gate does not:
 
-**What it does NOT explain is the shape of the failure.** A CAS access refusal renders an error page,
-or at worst returns `error=access_denied` to the client. **We receive neither: we receive a redirect
-to our callback with an EMPTY query string.** That signature - the client reached, no parameters at
-all - is what a lost pac4j session at `/cas/oauth2.0/callbackAuthorize` produces, the authorization
-request context being unreconstructable. So the two populations plausibly have two different causes,
-and only their logs can separate them.
+- **A cluster whose session store is not shared fails exactly this way.** `cas1` implies siblings. If
+  the authorize request and the callback land on different nodes, the second finds no session. A
+  retry that happens to land on the right node succeeds - **the 31**.
+- **And if the load balancer pins by source IP, a user whose address hashes to a node that never has
+  the session fails EVERY time** - **the 7**, deterministically, with a perfectly valid account. One
+  cause, two populations, no coincidence needed. This is now the hypothesis to test first.
+
+**One thing we can test without them, and it costs one gesture.** If the cause is instead a stale or
+oversized cookie held by the DEVICE, clearing site data for `cas.emse.fr` fixes it permanently for
+that user and changes nothing for anybody else. `robin.berthod` is the case to run it on: **if
+clearing fixes him, it is the device; if it does not, it is the node.** That single result splits the
+two remaining hypotheses and needs no cooperation from the DSI.
 
 **They check `supannRessourceEtat`, they release `supannRessourceEtatDate`** - different attributes,
 and only the second reaches us. So **the state that decides access is invisible on this side**, while
 the one we can see is a validity WINDOW (`{SERVICE}[ETAT]:debut:fin`). Authentik holds `promo`,
 `formation` and `school_status` and nothing else (`robin.berthod` = `{promo: 2024,
 formation: "ICM", school_status: "Eleve"}`). Releasing `supannRessourceEtat` too would let this side
-refuse with a sentence that names the reason instead of a generic failure.
+refuse with a sentence that names the reason - and would have settled the gate question in a second
+rather than over a mail round trip, which is the argument for asking.
 
 **Three things in the file are wider than the service they describe, and one is a credential.**
 
@@ -478,23 +486,36 @@ it closes with the security remarks because they are a courtesy, not the subject
 > **2. Il y a DEUX populations distinctes, et elles n'ont probablement pas la meme cause.** Parmi les
 > adresses IP qui subissent un retour vide, **31 finissent par se connecter** dans la meme fenetre
 > (une nouvelle tentative passe) tandis que **7 n'y arrivent jamais**, certaines apres 3 a 5 essais.
-> La premiere ressemble a une course ; la seconde a un refus deterministe.
+> La premiere ressemble a une course ; la seconde a quelque chose de systematique.
 >
-> **3. Votre `accessStrategy` explique peut-etre la seconde, mais pas la forme de l'echec.** Vous
-> exigez `supannRessourceEtat = {service_cas}A`. Trois questions precises :
+> **3. Vous nous confirmez que `robin.berthod` est autorise, et c'est ce qui oriente la suite.**
+> Nous pensions a votre `accessStrategy` (`supannRessourceEtat = {service_cas}A`) pour expliquer la
+> seconde population. Votre reponse l'ecarte pour le seul compte que nous puissions nommer : il passe
+> le controle et n'arrive pourtant jamais a se connecter.
 >
-> - Pour le compte `robin.berthod` (derniere connexion reussie le 11/06/2026, en echec repete
->   depuis), quelle est la valeur exacte de `supannRessourceEtat` ? Si elle ne vaut pas
->   `{service_cas}A`, son cas est explique et n'a rien a voir avec la course.
-> - La comparaison est-elle une egalite stricte ou un motif ? SupAnn autorise
->   `{SERVICE}ETAT:SOUSETAT` : un compte portant `{service_cas}A:quelquechose` est actif tout en
->   n'etant pas egal a `{service_cas}A`. Si c'est une egalite, ces comptes sont refuses a tort.
-> - **Surtout** : lorsqu'un principal echoue a ce controle, que fait CAS exactement ? Nous nous
->   attendions a une page d'erreur, ou au minimum a un retour `error=access_denied` sur le
->   `redirectUri`. **Or nous recevons une redirection vers notre callback avec une query string
->   entierement VIDE** - ni `code`, ni `state`, ni `error`. Cette signature-la ressemble davantage a
->   une session pac4j perdue sur `/cas/oauth2.0/callbackAuthorize` qu'a un refus d'acces, ce qui
->   voudrait dire que nos deux populations ont bien deux causes differentes.
+> **Ce qui reste explique les DEUX populations d'un coup, et c'est la forme meme de l'echec.** Un
+> refus d'acces afficherait une page d'erreur, ou renverrait au minimum `error=access_denied` sur le
+> `redirectUri`. **Nous ne recevons ni l'un ni l'autre : une redirection vers notre callback avec une
+> query string entierement VIDE** - ni `code`, ni `state`, ni `error`. C'est la signature d'une
+> session non retrouvee sur `/cas/oauth2.0/callbackAuthorize` : pac4j ne peut pas reconstituer le
+> contexte de la demande d'autorisation et renvoie le navigateur sans rien.
+>
+> D'ou nos questions, dans cet ordre :
+>
+> - **Le magasin de sessions est-il partage entre les noeuds du cluster ?** Si la requete
+>   `/authorize` et le retour `/callbackAuthorize` peuvent atterrir sur deux noeuds differents, le
+>   second ne trouve rien - et une nouvelle tentative qui retombe sur le bon noeud reussit. Cela
+>   decrirait exactement nos 31 adresses qui finissent par passer.
+> - **Le repartiteur de charge epingle-t-il par adresse IP source ?** Si oui, un utilisateur dont
+>   l'adresse tombe toujours sur le meme noeud echouerait **a chaque fois**, avec un compte
+>   parfaitement valide - ce qui decrirait nos 7 adresses qui n'y arrivent jamais, `robin.berthod`
+>   compris. Une seule cause, deux populations.
+> - **Que fait CAS, concretement, quand un principal echoue au controle `requiredAttributes` ?** Page
+>   d'erreur ou redirection ? Nous posons la question meme si ce n'est pas le cas de robin : c'est ce
+>   qui nous dit si un refus peut se deguiser en retour vide.
+>
+> De notre cote nous faisons vider les donnees de site `cas.emse.fr` sur le telephone concerne : si
+> cela le debloque, la cause est un cookie sur l'appareil et non chez vous, et nous vous le dirons.
 >
 > **Ce que nous pouvons vous donner pour recoupement**, horodatages precis de retours vides de
 > navigateurs mobiles reels (heure serveur, UTC) :
