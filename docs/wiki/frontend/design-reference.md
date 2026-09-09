@@ -532,3 +532,84 @@ Two findings the sweep produced that the eye could not:
 Three raw French literals were found in the pages being converted and localized in the same pass -
 `Retour aux publications`, `Publication introuvable` and `Gestion de la liste`. Nothing types a string
 as user-visible, which is why they survived; the sweep is what surfaced them.
+
+## 13. The composer row, and the rail that clipped every text it had
+
+Two reports from the user on 2026-09-08, both measured before anything was changed, and both with a
+cause that is not the one the symptom suggests.
+
+### The composer sat 4px low, on a phone and nowhere else
+
+Measured at 390x844 through CDP, on the live local estate:
+
+| element | phone (390px) | desktop (>=768px) |
+| --- | --- | --- |
+| `.chat-composer-icon-button` | **44px** | 36px |
+| `.chat-composer-send-button` | **44px** | 36px |
+| `.chat-composer-textarea`, one line | 36px | 36px |
+| centre-line delta, field vs icons | **4px** | 0px |
+
+The row is `align-items: flex-end`. That is CORRECT once the field has grown - the buttons hug the
+bottom, as the reference does - and it is only wrong when the field is one line and shorter than the
+controls beside it. Below 768px the controls are 44px because a touch target is 44px; the field was
+36px everywhere. So the text sat exactly 4px below the icons' centre line, on a phone only, which is
+why it survived every look at a desktop browser and got reported twice.
+
+**The height comes from the PADDING, never from a floor above the natural height.** The placeholder is
+`absolute inset-0` and positions its text with the same padding as the editor, so a `min-height`
+taller than the content leaves the placeholder off the line the real text sits on - that was the
+defect this file already records at section 9, and it is why the fix is `padding: 0.75rem` (12 + 20 +
+12 = 44) on a phone and `0.5rem 0.75rem` (8 + 20 + 8 = 36) from 768px up. `--composer-field-height` is
+declared in the same block as the padding that produces it, so a floor and a padding in two different
+files can no longer disagree.
+
+Measured after: **`midDelta` 4 -> 0** on the phone, 0 -> 0 on the desktop.
+
+### The edge controls fold while you type
+
+The user's words: *"sur messenger, les icones sur les bords disparaissent quand tu commences a taper
+pour laisser toute la place"*. Three of the four already did this - poll, GIF and the voice recorder
+all guarded on `isComposing` - and the paperclip did not, which reads as an oversight rather than a
+rule.
+
+It is a **fold, not a removal**: a chevron takes the group's place and brings every button back for as
+long as the message lasts. Hiding a control with no way to reach it would mean clearing a half-written
+message to attach a file. The request is tracked separately from "is there text", because one flag
+doing both would forget it on the next keystroke.
+
+Measured, field width while typing: **206px -> 274px** on a phone (a third more room), 1328 -> 1336 on
+a desktop DM where the paperclip is the only control. In a community channel the folded group is
+paperclip + poll + GIF + voice.
+
+**One of the fix's own defects was caught by the same measurement.** The chevron is styled narrower
+than the buttons it stands for, but it also carries `.chat-composer-icon-button`, and the desktop
+block sets `width: 2.25rem` on that class LATER in `app.css` - a single-class rule beating a
+single-class rule on source order. The chevron rendered at 36px and folding freed exactly **0px**.
+`.chat-composer-icon-button.chat-composer-chevron` is two classes and wins.
+
+### The expanded rail clipped all eighteen of its texts
+
+`w-64` is 256px. The row is `px-3` + a `w-7` icon + `gap-4`, so the text gets
+256 - 24 - 28 - 16 = **188px** - and every description in the list is wider than that:
+
+| natural width | text |
+| --- | --- |
+| 282px | `settings_page_subtitle` - "Preferences, securite et gestion de votre compte" |
+| 219px | "Reactions, mentions et commentaires" |
+| 205px | "Messages directs et petits groupes" |
+| 194px | "Espaces d'associations et canaux" |
+| 187px | "Vue d'ensemble de l'application" |
+| 178px | "Le fil social de la communaute" |
+| 131-149px | the other four |
+| 34-113px | every LABEL, which always fitted |
+
+**The 282px entry is not like the others.** The settings row borrows a PAGE subtitle - 47 characters -
+where every other row uses a purpose-written `nav_*_desc` of 3 to 5 words. Fitting it would have cost
+a 384px overlay, so it was given `nav_settings_desc` instead and the rail sized for the real widest,
+219px, with room for the unread badge the two counted rows carry:
+24 + 28 + 16 + 219 + 30 = 317px, rounded up to **`w-[21rem]` = 336px**.
+
+Measured after: 18 texts checked at 336px, **0 clipped**.
+
+The lesson is the one section 12 also produced: when one value in a distribution forces a layout
+number, check whether it is an outlier in the CONTENT before paying for it in the LAYOUT.

@@ -834,6 +834,12 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
    container, which stays filled and is generously rounded (user, 2026-09-08) so it matches Canari's
    own floating panels instead of sitting among them as a square-cornered strip. */
 .chat-composer-panel {
+  /* ONE LINE OF FIELD IS EXACTLY ONE CONTROL TALL, and this is where that is decided.
+     The row is `flex-end`, which is right once the field has grown - the buttons hug the bottom, as
+     the reference does. It is only wrong when the field is ONE line and shorter than the controls
+     beside it, and that is what this pair of numbers removes: the padding below produces this
+     height, so a floor can never disagree with it. Measured 2026-09-09: 20px line box + 12 + 12. */
+  --composer-field-height: calc(var(--text-sm--line-height) + 1.5rem);
   position: relative;
   display: flex;
   max-width: 100%;
@@ -887,6 +893,15 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
 
 [data-theme='dark'] .chat-composer-icon-button:hover {
   background: rgba(255, 255, 255, 0.1);
+}
+
+/* Narrower than the buttons it stands for: it is a way back to them, not a fifth action.
+   TWO CLASSES, DELIBERATELY. The element carries `.chat-composer-icon-button` as well, and the
+   desktop block further down sets `width: 2.25rem` on that class - a single-class rule that comes
+   LATER in this file, so it wins a specificity tie. Measured 2026-09-09: the chevron rendered at
+   36px and folding the controls freed exactly 0px on desktop. */
+.chat-composer-icon-button.chat-composer-chevron {
+  width: 1.75rem;
 }
 
 .chat-composer-icon-button:active {
@@ -968,7 +983,9 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   min-width: 0;
   max-width: 100%;
   max-height: 10rem;
-  padding: 0.5rem 0.75rem;
+  /* 12px, so one line measures 44px - the height of the touch targets beside it. The desktop
+     override below takes it back to the measured reference's 8px, where the controls are 36px. */
+  padding: 0.75rem;
   border: none;
   outline: none;
   resize: none;
@@ -1199,6 +1216,16 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   .chat-composer-send-button {
     width: 2.25rem;
     height: 2.25rem;
+  }
+
+  /* The controls lose 8px here, so the field must lose the same 8px or the row stops agreeing. */
+  .chat-composer-panel {
+    --composer-field-height: calc(var(--text-sm--line-height) + 1rem);
+  }
+
+  .chat-composer-textarea,
+  .mention-composer-editor.chat-composer-textarea {
+    padding: 0.5rem 0.75rem;
   }
 
   .chat-floating-alert {
