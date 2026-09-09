@@ -11,6 +11,25 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - "Nouvelle discussion" opens on the people you already talk to
+
+Observed on the Mi 9T on 2026-09-09: on a 436x945 phone the panel drew a tab pair, a label, a search
+field and its button in the top ~230px, and then **~600 pixels of nothing**. The cause was not the
+modal - a search field simply has no suggestions before a keystroke, and the reference opens on the
+people you talk to most and treats typing as a filter over them.
+
+It now opens on that list: the conversations already in the sidebar, most recent first, one row per
+person, names that have not resolved dropped rather than shown as "unknown user", capped at eight.
+No new endpoint and no new disclosure question - a directory of every account in the school is a
+different feature with a different answer owed. Choosing someone fills the field and starts the
+conversation, the way selecting an autocomplete suggestion already did, and the list shows only
+while the field is empty so it never competes with the picker's own dropdown.
+
+The primary action moved to the modal footer, at the bottom edge, where it can no longer float
+mid-screen or scroll away with the list. Measured at 436x945: with eight people the blank falls from
+~600px to 220px, with twenty the list scrolls while the section header and the button hold their
+places.
+
 ### Fixed - a device row's two actions read as one button and one decoration
 
 Reported by the user with a screenshot on 2026-08-25: *"il faudrait homogeneiser la corbeille et la

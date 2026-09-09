@@ -539,7 +539,24 @@ typing as a filter over that list, which is why its panel is full of content the
 dead space BELOW it, so on a full-height panel the button floats mid-screen. If the panel gains a
 list, the button belongs at the bottom edge of the panel instead.
 
-**Blocked on nothing** - local estate, and the shape is a decision rather than a measurement.
+**DONE 2026-09-09, both halves, and the list is the one the entry proposed** - the conversations
+already in the sidebar, most recent first, deduped per person, placeholder names dropped, capped at
+eight (`recentDirectPeers`, seven tests). No new endpoint and no new disclosure question, because a
+DIRECTORY of every account is still the different feature this entry said it was. Choosing someone
+fills the field AND starts the conversation, the way selecting an autocomplete suggestion already
+did. The list shows only while the field is empty: `UserAutocomplete` opens its own dropdown from
+the first keystroke, and two lists competing for one space is worse than the blank it replaced.
+
+The button moved to the modal's `footer`, so it sits at the bottom edge and cannot scroll away with
+the list; `form="new-contact-form"` is what keeps a submit button working from outside its form. The
+body took `bodyClass="flex min-h-0 flex-col overflow-hidden"`, replacing the modal's own scroll -
+one list scrolling inside a scrolling block is two scrollbars and a header that drifts.
+
+**Measured at the reported 436x945.** Panel 182->832. With this harness account's ONE contact the
+list holds one 40px row and 500px is still blank - that emptiness is now DATA and not layout, and
+the account cannot show otherwise. Proved by cloning the row in the DOM (a CSS experiment, labelled
+as one): at 8 rows the blank falls to 220px with no scrollbar, at 20 the list scrolls, and in both
+the section header stays put and the button stays at the bottom.
 
 ---
 ### P3 - our message notification is not a CONVERSATION to Android, where the reference's is (measured against Messenger on the Mi 9T, 2026-09-09)
@@ -5305,11 +5322,51 @@ an undeclared POPULATION, exactly as there was for the corners before #474.
 
 **That sweep is a DESIGN decision and it is the user's**, on the same reasoning that held for the
 radius scale: collapsing twelve sizes onto two or three changes how toolbars, composers and cards
-LOOK, everywhere at once, and a change of that reach does not belong inside a P3 about one row
-hiding behind a green test. What is owed first is the same thing that worked there - declare the
-sizes in `app.css`, add the gate that makes the population countable, then ask. Until it is asked,
-`.ui-icon-button` is one declared size used at one site, which is honest; spreading it to 187 call
-sites by guessing which ones meant the same thing would not be.
+LOOK, everywhere at once.
+
+### P2 - DECIDED 2026-09-09 BY THE USER, NOT YET DONE: two declared icon-button sizes, and all 187 sites aligned
+
+**The decision, and it is taken**: *"Poser la reference ET tout aligner maintenant"*. Both halves -
+declare the sizes in `app.css`, AND sweep every call site in the same change, the way #474/#476 did
+for the corners. It was put to them twice; the first framing was too abstract to answer (*"Je ne
+sais pas de quoi on parle"*), and what made it answerable was naming buttons they use.
+
+**What they were shown, measured on ONE screen of `/chat` at 1280px** - 163 icon-only buttons
+visible at once, in four sizes:
+
+| button | size |
+| --- | --- |
+| "Parametres de la discussion" (conversation header) | 40px |
+| "Joindre un fichier" (composer paperclip) | 36px |
+| "Envoyer le message" | 36px |
+| "Nouvelle discussion" (sidebar) | 32px |
+| "Repondre" / "Reagir" (message hover strip) | 28px |
+
+Four gaps of four pixels, side by side. Small enough that nobody chose them - each button was
+written against the one neighbour its author had in mind - and large enough to see where two
+surfaces touch. Across `frontend/src` it is **187 occurrences in twelve radius+padding
+combinations**: `rounded-xl p-2.5` (41), `rounded-xl p-2` (40), `rounded-xl p-3` (34),
+`rounded-lg p-1.5` (19), `rounded-lg p-2` (11), `rounded-full p-1.5` (10), and six more in single
+digits.
+
+**The scale that was accepted**: 28px for a control that appears on hover inside a dense row (the
+message strip), 38px for everything else. `.ui-icon-button` already declares the 38px one -
+`app.css`, `@layer components`, shape only - and the device row uses it.
+
+**What is left, and none of it is decided-by-guessing**:
+
+- the `--sm` (28px) modifier beside it;
+- the sweep itself, and it is NOT a regex over `rounded-* p-*`: that pattern also matches badges,
+  chips and plain divs. A site qualifies only if it is a `<button>` whose content is an icon and no
+  text. Hover colour, focus ring, `disabled:` and any layout class at the call site are KEPT - the
+  class replaces shape and nothing else;
+- a gate in the shape of `utilityScale.test.ts`, so the thirteenth size fails rather than ships;
+- one screen re-measured afterwards: the five buttons in the table above must read 38, 38, 38, 38, 28.
+
+**The reason it is not in the 2026-09-09 session**: the user stopped it deliberately mid-flight -
+*"Je commence a perdre le fil de tout ce que l'on fait. Finis ce qui est en cours, consigne le reste
+dans le backlog"* - and asked for a release instead. The decision above stands and is not to be
+re-litigated; what it needs is a session that starts with it.
 
 ## Storage and retention
 
