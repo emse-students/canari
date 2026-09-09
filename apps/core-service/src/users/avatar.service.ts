@@ -10,13 +10,34 @@ import { AvatarCache, isCacheableAbsence } from './avatar.cache';
  *
  * `absent` is an ANSWER about the avatar: the upstream says this user has none. It may be cached,
  * and it is what the great majority of accounts return.
- * `unavailable` is NOT an answer about the avatar - a rejected key, an upstream 5xx, a timeout, or
- * no key configured at all. It is never cached, at any layer, so recovery is immediate.
+ * `unavailable` is NOT an answer about the avatar - a rejected key, an upstream 5xx or a timeout.
+ * It is never cached, at any layer, so recovery is immediate.
+ * `disabled` is an answer about the ESTATE: no avatar provider is configured here at all.
+ *
+ * ## Why `disabled` is not `unavailable`, measured 2026-09-09
+ *
+ * It used to be. `unavailable` is marked `no-store` precisely so a PASSING outage is retried at
+ * once - correct for a timeout, and wrong for a condition that cannot change without a human
+ * editing an environment and restarting the process. On `dev.canari-emse.fr`, where MiGallery is
+ * deliberately absent (`docker-compose.dev.yml` cuts the URL rather than inheriting production's
+ * gallery, which lives in another repository's estate), that produced **560 uncached 502s in two
+ * hours and still climbing**, one per avatar per render, for ever.
+ *
+ * This is the amplification the cache beside this file was written for, arriving through the one
+ * door it left open: that docblock records the same shape turning one outbound failure into 479
+ * recorded 502s on the portal. A predicate that named the last incident is not the predicate that
+ * names the next one.
+ *
+ * From the browser's side `disabled` behaves like `absent` - a clean, cacheable miss, and the
+ * client draws initials either way - because on an estate with no provider "there is no avatar to
+ * be had here" is TRUE and stable, not a lie that gets cached. The condition is announced ONCE at
+ * startup by the constructor's warning, which is where a configuration fact belongs.
  */
 export type AvatarOutcome =
   | { readonly kind: 'image'; readonly body: Buffer; readonly contentType: string }
   | { readonly kind: 'absent' }
-  | { readonly kind: 'unavailable' };
+  | { readonly kind: 'unavailable' }
+  | { readonly kind: 'disabled' };
 
 /**
  * How long to wait before deciding MiGallery is not answering. An avatar is not worth more, and the
@@ -59,7 +80,11 @@ export class AvatarService {
     this.avatarApiKey = this.configService.get<string>('MIGALLERY_API_KEY', '');
 
     if (!this.avatarApiKey) {
-      this.logger.warn('MIGALLERY_API_KEY is not set - every avatar will answer unavailable.');
+      this.logger.warn(
+        'MIGALLERY_API_KEY is not set - this estate has no avatar provider, so every avatar ' +
+          'answers as absent and clients draw initials. Announced ONCE here rather than per ' +
+          'request: it cannot change while this process lives.'
+      );
     }
   }
 
@@ -80,7 +105,9 @@ export class AvatarService {
       throw new HttpException('Invalid user ID', HttpStatus.BAD_REQUEST);
     }
 
-    if (!this.avatarApiKey) return { kind: 'unavailable' };
+    // NOT `unavailable`: see the type's docblock. This cannot change while the process lives, so
+    // answering "try again" to every render is a storm with no exit.
+    if (!this.avatarApiKey) return { kind: 'disabled' };
 
     const cached = this.cache.get(userId);
     if (cached) return cached;
