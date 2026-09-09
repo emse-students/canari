@@ -1433,40 +1433,6 @@ byte.
   the card's height - before the stylesheet that normally sizes them applied. `custom-login.css`
   now bounds that icon to a normal size unconditionally, removing the race rather than hiding it:
   a genuine, persisting alert still renders, at its correct size.
-### Fixed - a failed login re-entered the source that had just failed, so 21% of CAS returns became an infinite loop with the error never readable
-
-Reported from a phone that could not log in at all - *"ca boucle sur authentik"* - and the account
-(`robin.berthod`, 2026-09-08) never reached Canari once: zero `/auth/callback` in production's nginx
-log.
-
-**The cause is upstream, at `cas.emse.fr`.** Over the 96 h to 2026-09-08, **71 of 337** returns to
-`/source/oauth/callback/cas-emse/` carried **no query string at all** - no `code`, no `state`, no
-`error`, which RFC 6749 4.1.2.1 forbids. Authentik always sends `state`, CAS preserves it on the
-first hop, every successful return carries both, and 26 distinct IPs are affected, mobile-dominated,
-with a retry usually succeeding. **That is the DSI's to fix and the message is written**
-([authentik](docs/wiki/infrastructure/authentik.md#what-the-dsi-has-to-be-told---still-owed)).
-
-**What was ours is the loop it became.** Authentik's `handle_login_failure` redirects to the literal
-`settings.LOGIN_URL`, which resolves to the **BRAND's** authentication flow - not the provider's -
-and that was `miconnect-auth`, the app's own flow, whose identification stage carries one source and
-no user fields: the exact condition on which the shipped bundle enters that source immediately. Each
-failure therefore re-created its own precondition. **A livelock, and the second one this month.**
-
-**The error message was never missing.** It is injected into the flow page as `Authentication
-failed: State check failed.` and rendered as a red toast - but **a page that auto-redirects cannot
-show anyone an error**, so it left before the toast could be read, every five seconds. That is why
-the user saw a silent loop rather than a failure.
-
-The fix gives the failure somewhere else to land: the brand now points at `miconnect-auth-fallback`,
-one Deny stage that renders and stops, in French, with the toast underneath. Every provider pins
-`miconnect-auth` explicitly, so the app's one-tap path is byte-identical - proved before and after
-with the same deterministic probe, a callback with no query string being exactly what CAS sends, so
-the whole chain reproduces from a workstation with no phone and no CAS account. **A first attempt
-used a second source to break the auto-redirect condition instead, and was wrong**: the Alumni
-provider is not wired up yet, so it offered a button leading nowhere. `Canari Dev` was also the one
-provider of seven pinning no flow at all - a third field differing on that provider after the two
-fixed on 2026-09-07 - which is why dev logins met a username/password form instead of CAS.
-
 ### Fixed - a device whose notification permission is denied narrated three log lines per message, and one of them was false
 
 Measured on HEAL-REVOKE-9 (2026-09-07): **12 inbound messages produced 33 `[NOTIF]` lines** on a

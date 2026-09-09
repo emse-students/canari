@@ -277,9 +277,6 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
 14. **FROM THE USER, AND FIRST CONTACT IS THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** The
     2026-09-08 PROD P1 is FIXED, UNSHIPPED, and owes ONE hardware run **blocked on a THIRD account**;
     four siblings are open beside it ([backlog](docs/wiki/backlog.md)).
-15. **~121 LOGINS A WEEK FAIL AT CAS AND NOTHING REPORTS IT**, and the 2026-09-08 livelock fix
-    removed the only visible symptom; the MAIL TO THE DSI is written and unsent, and that box is all
-    HAND MUTATION ([P2](docs/wiki/backlog.md#p2---about-121-logins-a-week-fail-at-cas-and-nothing-reports-it-measured-2026-09-08), [authentik](docs/wiki/infrastructure/authentik.md)).
 
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
 

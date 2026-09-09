@@ -65,8 +65,6 @@ else holds, a console owned by the user, or hardware that does not exist.
 | --- | --- | --- |
 | ~~UNLOCK THE CAMPAIGN PHONE~~ **DONE 2026-09-05** (`deviceLocked=0`, measured). What remains is OPTIONAL and the user asked for it: removing the pattern needs the credential, so either they clear it in Settings or it joins `test-accounts.json` like every other one. Retiring the lock costs no key material - both keystore keys are explicitly `setUserAuthenticationRequired(false)`, measured before proposing it | 1 gesture on the device | [P2 - every silent push on the phone fails to decrypt](#p1---a-backgrounded-phone-is-never-told-about-a-message-it-has-already-received-because-the-js-layer-waits-for-a-push-the-server-never-sends-measured-on-device-2026-09-05) |
 | **UNLOCK THE CAMPAIGN PHONE, AGAIN - and this time RETIRE the lock** (2026-09-07). It re-locked mid-session (`deviceLocked=1`, `trustManaged=1`, `strongAuthRequired=0x0`, `mDreamingLockscreen=true`); `wm dismiss-keyguard` is refused on a secure keyguard and no credential is in the rig by design. It cost LIFE-3 and LIFE-4 their re-runs, which were owed only their re-measurement against a classifier that had just been widened for them, and it will cost every phone row the moment the screen times out again. **Retiring the lock costs no key material** - both keystore keys are explicitly `setUserAuthenticationRequired(false)`, measured before this was first proposed on 2026-09-05 - so either the pattern is cleared in Settings or it joins `test-accounts.json` like every other credential | 1 gesture on the device, then a decision | [cross-client-testing](cross-client-testing.md) LIFE-3, LIFE-4, LIFE-5 |
-| **SEND THE MAIL TO THE DSI** - 21% of CAS returns carry no `code`, and no change on our side can make `cas.emse.fr` send one. The loop it caused is fixed; the failures are not. The text is written and needs no editing | 1 mail | [authentik](infrastructure/authentik.md#what-the-dsi-has-to-be-told---still-owed) |
-| **PKCE on the `cas-emse` source: `none` -> `S256`, DELIBERATELY NOT DONE.** It is unrelated to the loop, it cannot be verified without completing a real CAS login, and its blast radius is every login of all seven clients. Flip it, then log in once immediately, and roll back to `none` if that login fails - not the other way round | decision, then 1 login | [authentik](infrastructure/authentik.md#cas-returns-nothing-on-21-of-logins-and-our-login-page-turned-that-into-a-livelock---2026-09-08) |
 | set up the external uptime probe that mails - **decided 2026-09-06, mail**; the probe must hit `/api/version` AND `/api/chat-delivery-health`, never the homepage, which answered 200 through both outages | ~1 click in Cloudflare or an uptime service | [P2 - NOTHING TELLS ANYBODY PRODUCTION IS DOWN](#p2---nothing-tells-anybody-production-is-down-and-both-outages-of-2026-09-01-were-reported-by-the-user-owed-to-the-user-a-decision-then-one-click) |
 | `DEPENDABOT_ALERTS_TOKEN` - a fine-grained token with **"Dependabot alerts: read"** on this repository. The nightly alerts job has NEVER passed: it declared `security-events: read`, which is code scanning, and Dependabot alerts have no `permissions:` key at all, so `GITHUB_TOKEN` cannot read them at any setting. The job now reads this secret when it exists and fails loudly when it does not - deliberately, because an alert list nobody reads looks exactly like an empty one | 1 token, 1 secret | `.github/scripts/dependabot-alerts-report.sh`, and the 403 it now names correctly |
 | should a reaction to YOUR OWN message notify, when every other reaction must not - and on which channel; **NOTIF-15 cannot be run until this is answered**, because today it would fail against a design doing exactly what it says | decision | [open-questions](open-questions.md#decision-owed---should-a-reaction-to-your-own-message-notify-when-every-other-reaction-must-not) |
@@ -401,32 +399,6 @@ floor. Until then the two causes remain unseparated in the field.
 **Where the evidence is.** Board cell CORRUPT-2 on [cross-client-testing](cross-client-testing.md);
 the runner and its reasoning in `tools/cross-client-harness/archive/corrupt2.mjs`; the parallel fix
 and its five tests in `frontend/src/lib/utils/deviceKeyVault.ts` and its test file.
-
----
-
-## P2 - about 121 logins a week fail at CAS and NOTHING reports it, measured 2026-09-08
-
-**Substance, and the only copy.** 71 empty returns in 96 h is **~18 a day, ~121 a week**, every one
-of them a student who could not log in. The whole population was found by hand, in
-`docker logs miconnect-server-1`, because a user brought a phone that looped
-([authentik](infrastructure/authentik.md#cas-returns-nothing-on-21-of-logins-and-our-login-page-turned-that-into-a-livelock---2026-09-08)).
-**A correct mechanism with no report is found by hand, a day late** - and the fix of 2026-09-08 makes
-this *worse* in one specific way: the loop was the only symptom anybody could see. A failure now
-stops quietly on a page, so nothing at all points at the 121.
-
-**And an Authentik Notification Rule cannot see them.** `handle_login_failure` writes a Django
-message and a log line; it creates **no Authentik Event**, so there is no `event_matcher` to bind a
-rule to. The counter has to come from outside, over the container log, which means it belongs with
-whatever ends up watching production - the uptime probe row in the table above is the natural place,
-since both are "something outside the box has to look".
-
-**What it must count, and what it must NOT.** The population is a `GET` on
-`/source/oauth/callback/cas-emse/` with an EMPTY query string; a return carrying
-`?error=access_denied` is a user cancelling and is not this. The rate is the number worth alerting
-on (21% now), never the absolute count, because the denominator is a live population and moves with
-the hour of the day. A single empty return proves nothing and must not page anybody.
-
-**Blocked on nothing.** It needs a decision about where the counter lives, not hardware.
 
 ---
 
