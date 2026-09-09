@@ -48,7 +48,7 @@ the rule in [durable-rules](durable-rules.md). Delete the line once the measurem
 | the auto-merge sweep drains its queue unattended | the next sweep after a merge must merge EVERY pull request that is mergeable, not one. Until 2026-09-01 each merge moved `main` and staleness-invalidated the rest, so the queue drained at one per pass and only while somebody pushed; the predicate now asks whether `.github/workflows/` or `.github/scripts/` moved instead. #302 and #303 are the population sitting on it - both `CLEAN`, both built on `6a356d7e`, neither touched by a gate change. One sweep log showing both merged closes this |
 | a security advisory now has an ACTOR at all | `automated-security-fixes` was `{"enabled":false}` while alerts were on, and the `cargo` ecosystem limits `production-dependencies` to patch - so `serde_with` 3.19.0 -> 3.21.0 (GHSA-7gcf-g7xr-8hxj, medium, `frontend/src-tauri/Cargo.lock`) could be reported and never fixed by anything. Enabled 2026-09-02, and it fired within the minute - **onto a THIRD refusal nobody knew about**, the update job failing on a manifest cargo cannot parse (P1 below). So **this row cannot close on alert 210**: it closes on the first security pull request Dependabot opens for ANY directory, and 210 itself waits on the P1 |
 | the auto-merge ceiling refuses a major | **half taken.** The workflow is enabled again and its shipped loop body was replayed over all 33 open Dependabot PRs: 26 merge, 6 refuse, and the 6 collapse to the two gates below. What replay cannot show is the workflow REFUSING in its own run log, because no major has opened since - so the row stays until a real one does, logging `REFUSED` and staying open |
-| a proposed event now tells the association's calendar managers | **HARDWARE, and it needs a PRECONDITION nobody has arranged.** The five push keys, the five notification rows and the fan-out are in the tree (#465) and the other five fixes of that batch were measured on A1 on 2026-09-09 - this one could not run, because the phone's account holds **no calendar-validator grant on any association**: `/dashboard` offers only Compte and Explorer, and its list reads "Aucune notification". So: grant that account validator on ONE association in the LOCAL estate, propose an event from a SECOND account, then read the shade and the in-app row. A run without both halves proves nothing, and the in-app row alone does not exercise the native tables - the sentence is built on the device ([device-verification](device-verification.md#the-layout-pass-of-2026-09-09-and-the-one-thing-it-could-not-answer)) |
+| a proposed event now tells the association's calendar managers | **HARDWARE, and it needs a PRECONDITION nobody has arranged.** The five push keys, the five notification rows and the fan-out are in the tree (#465) and the other five fixes of that batch were measured on A1 on 2026-09-09 - this one could not run, because the phone's account holds **no calendar-validator grant on any association**: `/dashboard` offers only Compte and Explorer, and its list reads "Aucune notification". So: grant that account validator on ONE association in the LOCAL estate, propose an event from a SECOND account, then read the shade and the in-app row. **Both grants must name the account by the id the CLIENT reports, never by `displayName`**: a 2026-09-09 attempt matched `displayName like 'Canari Test%'`, granted the wrong user, and read the refusal as a product defect - W2's own id comes from its `a[href^="/profile/"]`. The two writes are `insert into association_members ("associationId","userId",role,permissions) values (<bde>,<phone>,'Membre',32)` and the same with `PROPOSE_EVENT` (2) on the association the proposer will actually pick; delete both afterwards, because an undeclared membership reattributes whatever the next run measures. A run without both halves proves nothing, and the in-app row alone does not exercise the native tables - the sentence is built on the device ([device-verification](device-verification.md#the-layout-pass-of-2026-09-09-and-the-one-thing-it-could-not-answer)) |
 | the five products the boutique never sold are buyable | **ONE MANUAL FLIP IS OWED, and it is the user's** (2026-08-31). `activationWithheld` releases a product when payments BECOME ready, and BDE's Stripe onboarding completed long ago - no event will ever fire for it, which is the correct behaviour for an allowlist and the reason a per-tier on-sale switch now exists. So: open `/associations/bde/edit`, Cotisations tab, tick **En vente** on the 170 EUR tier, then buy nothing and simply confirm it appears in `/shop`. The other four associations have no payment account at all, so their products are correctly withheld and release themselves when one arrives - what closes THAT half is the next association to finish onboarding, whose products must go on sale with nobody touching them |
 
 ---
@@ -568,6 +568,30 @@ dead space BELOW it, so on a full-height panel the button floats mid-screen. If 
 list, the button belongs at the bottom edge of the panel instead.
 
 **Blocked on nothing** - local estate, and the shape is a decision rather than a measurement.
+
+---
+### P3 - a server exception's English text is shown verbatim to a French reader (observed 2026-09-09)
+
+Depositing an event without the right flag answers `403` from
+`global-admin-or-association-role.guard.ts`, whose message is
+`Insufficient permissions in this association`. The calendar page prints **that string**, unchanged,
+under the form - eight English words in an otherwise French modal, seen on W2 at 958px.
+
+**The server is not wrong.** Its exception messages are dev-facing and MUST be English, like every
+other log and error in this tree. What is wrong is a client that treats `error.message` as display
+copy: nothing types a string as user-visible, so no compiler catches it, which is exactly why the
+rule says *default to Paraglide for ANY new user-visible string, on the first draft*.
+
+**The fix is on the CLIENT and it is a mapping, not a translation.** A refusal the reader can act on
+is "vous n'avez pas le droit de deposer un evenement pour cette association", built from the STATUS
+and the operation - never from prose that crossed the network. A message is a distinction carried in
+words, and branching on it later is the failure this repository already names.
+
+**Scope before touching it**: this is one call site of a general shape, so count them first. A pass
+that localises this modal and leaves nine others answering in English has moved the defect rather
+than closed it, and the count is what says whether this is a P3 or a P2.
+
+**Blocked on nothing** - local estate, and it reproduces on any 4xx the API answers with prose.
 
 ---
 ### P3 - a pending attachment's name is painted TWICE, 19px apart (observed on the Mi 9T, 2026-09-09)
