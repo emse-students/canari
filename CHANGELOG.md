@@ -11,6 +11,26 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - the reaction picker ran off the right of a phone, with two reactions behind a scroll nobody announced
+
+Measured on a 393px viewport before the change: the popover's box ran from x=37 to **x=398**, five
+pixels past the edge of the screen. Its cap was `max-w-[min(100vw-2rem,32rem)]` - a width measured
+against the VIEWPORT while the element was positioned against a button already 37px in. A cap that
+does not know where its element starts cannot keep it on screen.
+
+The cap was not even the binding constraint. The eight reactions came to **488px of content in a
+359px box**: 129px of it - Canari and Marteau, the last two - reachable only by a horizontal scroll
+with no scrollbar and no hint. Each tile was 54.5 x 72px because it stacked the reaction's NAME
+under the emoji.
+
+It follows the reference now (*"barre de reaction trop large pour l'ecran voir facebook (web &
+mobile)"*): one compact pill, emoji only, the name carried by `title` and `aria-label` where a
+pointer and a screen reader both reach it. It is anchored to the actions ROW rather than to the
+button inside it, so the eight share whatever width the card has and the bar can never be wider than
+the thing it belongs to. Measured after: **313px wide inside a 393px screen, 0px hidden, all eight
+visible**, tiles 36 x 44px.
+
+
 ### Fixed - an estate with no avatar provider answered 502 to every face, uncached, for ever
 
 Found on `dev.canari-emse.fr` while looking for something else: **560 `502`s on
