@@ -51,15 +51,34 @@
       {backLabel}
     </a>
   {/if}
-  <div class="flex items-start justify-between gap-3">
+  <!--
+    THE ACTIONS GO UNDER THE TITLE ON A PHONE, and this is not a preference.
+
+    Measured on `/associations` at 393px, 2026-09-09: the two action buttons are `shrink-0` at a
+    combined 243.4px of a 355px row, which leaves the title's column **99.6px**. "Associations" is
+    wider than that and does not break, so the word overflowed its box and painted straight over the
+    "Listes" button - the overlap the user reported (*"L'en-tete de la page associations est moche +
+    chevauchements"*) - while the subtitle wrapped into four lines beside it.
+
+    It is fixed HERE rather than on that page because `PageHeader` is the one heading of all 34
+    routes: every page with two or more actions had the same squeeze waiting for a long enough
+    title, which is the other half of the report (*"Verifier les autres pages sur device"*).
+
+    Stacked and wrapping below `sm`, unchanged from 640px up where the row genuinely has the width.
+    `break-words` stays as the floor: a single unbreakable word - an association's name on a detail
+    page - must wrap rather than escape its box, whatever the width turns out to be.
+  -->
+  <div class="flex flex-col items-stretch gap-3 sm:flex-row sm:items-start sm:justify-between">
     <div class="min-w-0">
-      <h1 class="text-text-main text-2xl font-bold tracking-tight">{title}</h1>
+      <h1 class="text-text-main text-2xl font-bold tracking-tight break-words">{title}</h1>
       {#if subtitle}
         <p class="text-text-muted mt-0.5 text-sm">{subtitle}</p>
       {/if}
     </div>
     {#if actions}
-      <div class="flex shrink-0 items-center gap-2">{@render actions()}</div>
+      <div class="flex flex-wrap items-center gap-2 sm:shrink-0 sm:flex-nowrap">
+        {@render actions()}
+      </div>
     {/if}
   </div>
   {#if children}

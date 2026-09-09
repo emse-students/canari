@@ -1983,6 +1983,7 @@
   "shop_current_tier_badge": "Your current tier",
   "calendar_heading": "Association calendar",
   "calendar_subtitle": "Monthly view - click a day to see its events.",
+  "calendar_subtitle_schedule": "This month's events, day by day.",
   "calendar_deposit_button": "Submit an event",
   "calendar_moderate_label": "Moderate pending events",
   "calendar_moderate_open": "Open the queue",

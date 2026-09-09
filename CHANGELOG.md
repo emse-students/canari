@@ -11,6 +11,68 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Added - the agenda is a schedule list on a phone, not a seven-column grid
+
+*"sur mobile, on devrait avoir la liste des evenements sous forme de planning au lieu de la
+grille"*. A month grid gives every day the same square whether it holds nothing or four events, so
+on a 393px screen each cell is about 48px wide and can show a coloured dot and no words: seven
+columns spent saying which days exist - which the reader already knows - and none of it on what is
+happening.
+
+Below `md` the agenda now draws one row per event, with the date in a narrow gutter that repeats
+only when the day changes and today's number in a filled pill. **Days with no events are not drawn
+at all**, so a month with four events is four rows rather than thirty. The grid is untouched from
+640px up, where it has the room and answers a different question - the shape of the month.
+
+`SCHEDULE_AGENDA_QUERY` asks about WIDTH ALONE, unlike `NARROW_CHAT_QUERY` beside it: seven columns
+is a question about room, so a touch laptop keeps its grid. The subtitle follows the view, because
+"cliquez sur un jour pour voir les evenements" is an instruction with nothing to click once the grid
+is gone.
+
+The two views share one module rather than two copies of "does this multi-day event cover this
+day" - the rule that makes a three-day event appear on all three of its days, which is what the
+reader is actually asking. Twelve tests, including a month with 31 days and an event ending one
+minute past midnight.
+
+
+### Fixed - a page title painted straight over its own action buttons on a phone, on every page with two of them
+
+Reported as *"L'en-tete de la page associations est moche + chevauchements"*, and it is exactly
+that. Measured at 393px: `PageHeader`'s action row is `shrink-0` and does not wrap, so on
+`/associations` its two buttons took **243.4px of a 355px row and left the title's column 99.6px**.
+"Associations" is wider than that and does not break, so the word overflowed its box and painted
+over the "Listes" button, while the subtitle wrapped into four lines beside it.
+
+Fixed in `PageHeader` rather than on that page, because it is the one heading of all 34 routes:
+every page with two or more actions had the same squeeze waiting for a long enough title, which is
+the other half of the report (*"Verifier les autres pages sur device"*). Below `sm` the actions
+stack under the title and wrap; from 640px up nothing changes. `break-words` is the floor underneath
+that - a single unbreakable word must wrap rather than escape its box, whatever the width.
+
+The header is also 10px SHORTER than before despite stacking, because the subtitle now fits on one
+line instead of four.
+
+
+### Fixed - the reaction picker ran off the right of a phone, with two reactions behind a scroll nobody announced
+
+Measured on a 393px viewport before the change: the popover's box ran from x=37 to **x=398**, five
+pixels past the edge of the screen. Its cap was `max-w-[min(100vw-2rem,32rem)]` - a width measured
+against the VIEWPORT while the element was positioned against a button already 37px in. A cap that
+does not know where its element starts cannot keep it on screen.
+
+The cap was not even the binding constraint. The eight reactions came to **488px of content in a
+359px box**: 129px of it - Canari and Marteau, the last two - reachable only by a horizontal scroll
+with no scrollbar and no hint. Each tile was 54.5 x 72px because it stacked the reaction's NAME
+under the emoji.
+
+It follows the reference now (*"barre de reaction trop large pour l'ecran voir facebook (web &
+mobile)"*): one compact pill, emoji only, the name carried by `title` and `aria-label` where a
+pointer and a screen reader both reach it. It is anchored to the actions ROW rather than to the
+button inside it, so the eight share whatever width the card has and the bar can never be wider than
+the thing it belongs to. Measured after: **313px wide inside a 393px screen, 0px hidden, all eight
+visible**, tiles 36 x 44px.
+
+
 ### Fixed - an estate with no avatar provider answered 502 to every face, uncached, for ever
 
 Found on `dev.canari-emse.fr` while looking for something else: **560 `502`s on
