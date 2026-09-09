@@ -89,7 +89,7 @@ naming the test device's UDID. It also buys `get-task-allow`, which is what make
 inspectable - so the one change that makes an artifact installable is the same change that makes the
 webview readable. Owed, not done.
 
-## The layout pass of 2026-09-09, and the one thing it could not answer
+## The layout pass of 2026-09-09, and the sixth check that ran later the same day
 
 Six fixes shipped in `v0.16.6-alpha.5`'s ancestors on the strength of a browser emulated at 393px.
 **The Mi 9T reports 436 CSS px**, not 393, which is the first reason to run them on glass: every
@@ -106,12 +106,41 @@ carrying all six (`bun a1apk.mjs`, code 1600605) and driven over CDP, element by
 | the conversation header painted over the message panel | the sheet is now **a direct child of `<body>`, `position: fixed`, `z-index: 160`** - one entry in its whole ancestry, so it is in the ROOT stacking context. `elementFromPoint` at the header's centre returns the sheet's scrim, and the header is `z-index: 20`. Verified on an OWN message, which is the case the report named: Modifier and Supprimer are both in the panel |
 | the voice note was three taps | all FIVE outcomes of one gesture, on glass: hold-and-release keeps it, sliding left past 96px discards it, sliding right past 72px locks it **while the finger is still down**, and the locked bar's two buttons keep or discard. A locked recording ran 0:23 -> 0:31 with nothing touching the screen |
 
-**The sixth could not run, and the precondition is named rather than assumed.** A proposed event is
-supposed to notify an association's calendar managers ([#465]). The phone's account holds **no
-calendar-validator grant on any association** - `/dashboard` offers only "Compte" and "Explorer",
-and its notification list reads "Aucune notification". So the check needs, in order: a validator
-grant for that account on one association in the LOCAL estate, then a proposal from a second
-account. Neither is ambient, and a run made without both proves nothing.
+**The sixth ran once its precondition was arranged, and BOTH halves pass.** A proposed event is
+supposed to notify an association's calendar managers ([#465]), and the phone's account held no
+calendar-validator grant on any association - the precondition is not ambient, and it is more
+specific than it first looked: the recipient query is `a.isBDE = true AND (permissions &
+VALIDATE_EVENTS)`, so the grant must be on **the BDE**, while the proposer needs `PROPOSE_EVENT` on
+a NON-BDE association or their event is validated on the spot and never becomes a proposal at all.
+Both grants name their account by its OIDC SUBJECT (`subjectFor` in the harness's `accounts.mjs`),
+because the display name that was used for this on the morning of the same day granted the wrong
+user and produced a P1 ([testing-methodology](testing-methodology.md)).
+
+| half | measured on the Mi 9T, 2026-09-09 |
+| --- | --- |
+| the shade | **2 271 ms** from the proposal, app in the background. Channel `canari_social`, `BigTextStyle`, `AUTO_CANCEL`, `timeout=PT72H`, a `contentIntent` that starts the activity. Title `Evenement a valider`, body `Canari Test Beta propose << Proposition agenda 496596 >>` - composed by the PHONE from its own `values/strings.xml`, which is the whole point of the key-not-a-sentence seam |
+| the in-app row | `Canari Test Beta propose un evenement` + the title, marked `Nouveau`, with a relative time. It renders from Paraglide's `notif_event_proposed_text`, NOT from the native table |
+| the fan-out | two `event_proposed` rows written, to both `VALIDATE_EVENTS` holders on the BDE - the phone's account and one other. The event stayed `status=pending` |
+
+**A ROUTE CHANGE IS NOT A REFETCH, and the first reading of the in-app half was a false negative.**
+Pushing `/notifications` through `history.pushState` rendered the page and found nothing; the same
+page after a reload showed the row. Anything asking whether a LIST contains something must make the
+list fetch, or it is reading the one it already had.
+
+**Two defects came out of reading the notification rather than counting it.** The agenda's five
+resource pairs had shipped **with their accents stripped** - `Evenement a valider`, `Evenement
+valide` - while every neighbour in the same file carries them, and the loss changes the word:
+`valide` is an adjective, `valide` with its acute a participle. In the same file the two FORM pairs
+were still ENGLISH on the legacy side while the resource beside them had been French for weeks, so
+the oldest clients got the one language the app does not speak. Both are fixed, and both are now
+held by a test that compares the server's `legacyTitle`/`legacyBody` against the Android resource
+for every key - two copies of one sentence that nothing had ever compared. **The in-app row was
+correct throughout**, which is exactly why neither was noticed: the two halves read from two
+different string tables, and only the native one was written without accents.
+
+**The estate is left as it was found**: both grants, the proposed event and the two notification
+rows were deleted by an allowlist on the marker role and the marker title, and both accounts read
+zero memberships afterwards - an undeclared membership reattributes whatever the next run measures.
 
 **One thing the pass found that no report had asked about**, filed rather than fixed here: the
 composer's pending-attachment chip paints its filename TWICE

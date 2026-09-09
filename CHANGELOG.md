@@ -11,6 +11,31 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - the agenda's push notifications had lost their accents, and two more were still English
+
+The proposal notification shipped in #465 was verified on the Mi 9T: it reaches the shade in
+2 271 ms with the app backgrounded, the in-app row renders, and both BDE validators get a row.
+Reading the notification rather than counting it found two things no gate could see.
+
+**The five agenda resource pairs had been written without their accents.** `Evenement a valider`,
+`Evenement valide`, `a ete refuse par le BDE` - while every neighbouring string in the same file
+carries them. On four of them the loss changes the WORD, not just the spelling: `valide` is an
+adjective and `valide` with its acute is a participle, and the same for refuse and modifie. The
+in-app row was correct throughout, because it renders from Paraglide's `fr.json` and the shade
+composes from the phone's own `values/strings.xml` - two string tables, and only the native one was
+written unaccented, which is exactly why nobody saw it.
+
+**And the two FORM pairs were still English on the legacy side** - `Form opening soon`, `A form you
+are watching opens in 5 minutes!` - while the Android resource beside them had been French for
+weeks. Those sentences are sent only to clients too old to compose from a key, so the oldest
+clients were the ones getting the one language the app does not speak.
+
+Both are the same shape: `legacyTitle`/`legacyBody` and the Android resource are two copies of one
+sentence, and nothing compared them. A test in `push-content.spec.ts` now does, for all eleven keys.
+It compares the SENTENCE and deliberately not the placeholder index - the four "the BDE did it"
+strings take the event title as their only argument where `proposed` names an actor first, and both
+are correct; that arguments line up is `nativeStrings.test.ts`'s contract, not this one.
+
 ### Fixed - a pending attachment wrote its name twice, and a voice note arrived as a document glyph
 
 Both found on the Mi 9T while verifying the voice-note gesture, and neither caused by it: the tile
