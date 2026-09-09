@@ -7,12 +7,12 @@
   import {
     getAssociationBySlug,
     listMembers,
-    hasPermissionFlag,
+    mayActOnAssociation,
     AssociationPermissionFlag,
     type Association,
     type AssociationMember,
   } from '$lib/associations/api';
-  import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
+  import { currentUserId, isAssociationSuperAdmin, isGlobalAdmin } from '$lib/stores/user';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { Building2, Users, TriangleAlert } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
@@ -30,11 +30,26 @@
   let userId = $derived(currentUserId());
   let myMembership = $derived(members.find((m) => m.userId === userId));
   let isGlobalAdminUser = $derived(isGlobalAdmin());
+  /**
+   * The same three tiers the association edit page gates on, read through the same helper. This
+   * page used to spell the expression out by hand and omit the middle one, so a BDE `MANAGE_ASSO`
+   * super-admin - whom the server grants `MANAGE_MEMBERS` on every association - was refused the
+   * controls here. That omission is the exact drift `mayActOnAssociation` exists to end.
+   */
+  let permissionContext = $derived({
+    isGlobalAdmin: isGlobalAdminUser,
+    isSuperAdmin: isAssociationSuperAdmin(),
+    memberPermissions: myMembership?.permissions,
+  });
   let canManageMembers = $derived(
-    isGlobalAdminUser ||
-      (!!myMembership &&
-        hasPermissionFlag(myMembership.permissions ?? 0, AssociationPermissionFlag.MANAGE_MEMBERS))
+    mayActOnAssociation(AssociationPermissionFlag.MANAGE_MEMBERS, permissionContext)
   );
+  /**
+   * Archiving is `PATCH :id { archived }`, admitted at `MANAGE_MEMBERS`; deleting is `DELETE :id`
+   * behind a bare global-admin guard. The tab opens on the first, the delete card carries the
+   * second - see the same pair on the association edit page.
+   */
+  let canArchiveList = $derived(canManageMembers);
 
   const slug = $derived((page.params as Record<string, string>).slug);
 
@@ -132,10 +147,10 @@
                 : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
             >
               <Users size={17} />
-              Membres
+              {m.common_members_label()}
             </button>
           {/if}
-          {#if isGlobalAdminUser}
+          {#if canArchiveList}
             <button
               type="button"
               onclick={() => (editSection = 'danger')}
@@ -145,7 +160,7 @@
                 : 'border-cn-border text-text-muted hover:text-red-err border bg-(--cn-surface)'}"
             >
               <TriangleAlert size={17} />
-              Danger
+              {m.asso_edit_tab_danger()}
             </button>
           {/if}
         </div>
@@ -159,10 +174,11 @@
         <EditMembersTab asso={list} bind:members bind:resolvedMemberNames />
       {/if}
 
-      {#if editSection === 'danger' && isGlobalAdminUser}
+      {#if editSection === 'danger' && canArchiveList}
         <EditDangerTab
           asso={list}
           kind="list"
+          canDelete={isGlobalAdminUser}
           onUpdated={(a) => (list = a)}
           onDeleted={() => goto('/lists')}
         />

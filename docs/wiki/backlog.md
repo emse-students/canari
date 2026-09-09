@@ -5046,6 +5046,29 @@ Contrast 6.4 MB. A set with no flags cannot be THE set for a French student asso
   binary, and the font is never sold on its own. One notch more verbose than MIT, no practical effect
   here, and compatible with a public repository.
 
+#### The disparity is now OBSERVED, not only predicted (user, 2026-09-09)
+
+The user reports seeing it in the running app: *"tous les emojis de l'app (dans le selecteur, dans
+les reactions, dans toute l'interface) devront etre mis a Noto Color Emoji, il y a deja des
+disparites et il va falloir les regler en meme temps, sur tous les appareils."*
+
+Three things that changes for this entry, none of them its scope:
+
+- **It has a reporter and a date.** Everything above was written while SCOPING, from the fact that
+  neither global stack declares an emoji family. The prediction has now been met, so the entry is no
+  longer speculative and does not need re-justifying to be picked up.
+- **The named surfaces are the picker, the REACTIONS and the rest of the interface.** Reactions were
+  not listed among the surfaces that have to change, because they inherit `body` and were assumed
+  covered - and an assumption is what a user just contradicted. Whether a reaction pill resolves the
+  same family as the bubble text beside it is a MEASUREMENT this WP owes before it declares the two
+  stacks sufficient, taken the way the entry already prescribes: read the resolved family, never
+  judge the picture.
+- **"En meme temps, sur tous les appareils"** is an acceptance condition and belongs with the
+  campaign rows below: one glyph, drawn from one family, on Android, iOS and the web build - and the
+  disparity between two SURFACES on ONE device is as much a failure as a disparity between two
+  devices. It is stated here because the natural way to close this WP is per-surface, and per-surface
+  is exactly how the current disparity was produced.
+
 #### The format is the whole difficulty, and it has a solution
 
 No single colour-font table covers both engine families, and Canari ships on both:
@@ -5175,6 +5198,56 @@ an observation.
 - A member on an Android WebView older than Chrome 98 gets neither table and falls back to the system
   emoji font - which on Android is Noto anyway, so the picture is unchanged. `minClientVersion` is not
   the lever for this.
+
+### P2 - a GRID page is capped at the FEED's reading width, so a month fits in 680px (user, 2026-09-09)
+
+*"Les pages web n'exploitent pas du tout la largeur de l'ecran. Il y a matiere a faire sur beaucoup
+de pages, notamment la page associations ou l'agenda ! (tout est serre au milieu, on pourrait
+prendre plus de place !)"*
+
+**This is a re-decision, not a regression.** `PageContainer.svelte` declares exactly two widths -
+`42.5rem` (680px) and `max-w-5xl` (1024px) behind `wide` - and its own docblock says the narrow one
+is *"THE ONLY WIDTH A BROWSING PAGE MAY HAVE"*, the wide one being *"for the few surfaces that are
+editors rather than documents"*. That column was introduced for a real defect: six routes carried
+six different widths (42.5 / 36 / 48 / 56rem) that nobody had chosen, so moving between two tabs
+moved the text under the reader. **None of that is to be undone.** What is wrong is the TAXONOMY,
+and the measurement below is what shows it.
+
+**26 routes use the column. Four pass `wide`** - `admin/status`, `calendar/export`, `forms/create`,
+`forms/[id]/edit` - and every one of the four is a form or a table. The other 22 are at 680px,
+including these, measured off their own grid classes on 2026-09-09:
+
+| route | grid it draws | width per cell at 680px |
+| --- | --- | --- |
+| `/associations` | `sm:grid-cols-2` | ~330px per club card |
+| `/directory` | `sm:grid-cols-3` | ~215px per person |
+| `/calendar` | a month | ~95px per day cell |
+| `/shop` | `sm:grid-cols-2` | ~330px per product |
+
+On a 1920px window the page uses **35 % of the width** and a day of the month gets 95 pixels.
+
+**The split the code makes is document-versus-editor. The split that decides a width is a COLUMN OF
+PROSE versus a GRID OF ITEMS**, and the four `wide` pages are only a subset of the second. A reading
+measure exists to stop a LINE OF TEXT running too long - it has no meaning for a row of cards, where
+capping the container does not shorten anything, it just draws fewer columns. The feed, a post, a
+profile and the notification list are prose and are right as they are. A month, a roster, a
+catalogue and a club list are grids and are being measured by a rule written for their neighbours.
+
+**What this owes before anything is changed:**
+
+- **A third declared value, or a second axis - decide which, and only once.** A free `max-width` per
+  page is what the container was written to kill, so the answer is a NAMED shape (`grid`, say)
+  alongside `wide`, not a number at the call site. If a page ends up wanting a fourth, the question
+  is why it is none of the three.
+- **A reference measurement, which the user has offered to help take.** Google Agenda's month view
+  is full-bleed; Facebook keeps a narrow feed and spends the rest of the window on side columns -
+  two different answers to the same question, and the app already has an `aside` snippet for the
+  second. Measure BOTH before choosing, and record the numbers here.
+- **Per-page grid steps, because widening alone changes nothing.** `sm:grid-cols-2` stays two
+  columns at 1600px; a wider container with no `lg:`/`xl:` step just makes each card wider. Each
+  page in the table needs its own ladder.
+- **The narrow pages must be left alone**, and the change must say so explicitly rather than sweep
+  every `PageContainer`. The prose routes are the ones the reading width was chosen for.
 
 ### P2 - two declared icon-button sizes, and all 187 call sites aligned in the same change (decided by the user 2026-09-09, not started)
 

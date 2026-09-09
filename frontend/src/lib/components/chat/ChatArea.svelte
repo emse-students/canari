@@ -139,6 +139,8 @@
     canWrite?: boolean;
     /** Callback fired when the user selects or drops files to attach. */
     onFilesSelected?: (files: File[]) => void;
+    /** Sends a finished recording straight out, without staging it. Enables the microphone. */
+    onSendVoiceNote?: (file: File) => void;
     /** Files staged for sending but not yet uploaded. */
     pendingFiles?: PendingMediaFile[];
     /** Callback to remove a staged file by its index. */
@@ -228,6 +230,7 @@
     authToken = '',
     onJoinChannel,
     onFilesSelected,
+    onSendVoiceNote,
     pendingFiles = [],
     onRemovePendingFile,
     isUploading = false,
@@ -1238,6 +1241,7 @@
           {replyingTo}
           {onCancelReply}
           {onFilesSelected}
+          {onSendVoiceNote}
           {pendingFiles}
           {onRemovePendingFile}
           {isUploading}
