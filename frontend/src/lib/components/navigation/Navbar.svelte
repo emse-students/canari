@@ -15,16 +15,16 @@
 </script>
 
 <header
-  class="app-top-bar border-cn-border sticky top-0 z-20 hidden flex-shrink-0 border-b bg-(--surface-elevated) md:block"
+  class="app-top-bar border-cn-border sticky top-0 z-20 hidden shrink-0 border-b bg-(--surface-elevated) md:block"
 >
   <div class="flex h-(--app-top-bar-height) items-center justify-between gap-3 px-4 py-2 md:px-6">
     <!-- Left: Brand -->
-    <div class="flex flex-shrink-0 items-center gap-2">
+    <div class="flex shrink-0 items-center gap-2">
       <CanariBrand compact={true} />
     </div>
 
     <!-- Right: Status + Theme + actions -->
-    <div class="ml-auto flex flex-shrink-0 items-center gap-2">
+    <div class="ml-auto flex shrink-0 items-center gap-2">
       <StatusPill isConnected={globalSession.isWsConnected} />
       <SessionActionButtons onLogout={handleLogout} />
       {#if globalSession.isLoggedIn && globalSession.userId}

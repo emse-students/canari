@@ -135,7 +135,7 @@
   class="bg-cn-surface relative z-20 flex items-center gap-3 border-b border-black/5 px-3 py-3 md:gap-4 md:px-6 dark:border-white/10"
 >
   <!-- Back button (mobile) - fixed width so the avatar stays centered -->
-  <div class="flex w-8 flex-shrink-0 items-center justify-start md:hidden">
+  <div class="flex w-8 shrink-0 items-center justify-start md:hidden">
     {#if onBack}
       <button
         onclick={onBack}
@@ -149,11 +149,11 @@
 
   <!-- Conversation icon (avatar for groups/DMs; channels show no avatar, only a type icon) -->
   {#if isChannel}
-    <div class="text-text-muted flex h-10 w-10 flex-shrink-0 items-center justify-center">
+    <div class="text-text-muted flex h-10 w-10 shrink-0 items-center justify-center">
       <Hash size={22} strokeWidth={2.5} />
     </div>
   {:else if isGroupConversation}
-    <div class="flex h-10 w-10 flex-shrink-0 items-center justify-center">
+    <div class="flex h-10 w-10 shrink-0 items-center justify-center">
       <GroupAvatar {imageMediaId} name={displayName} variant="group" size="lg" />
     </div>
   {:else}

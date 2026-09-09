@@ -5282,23 +5282,39 @@ an observation.
   the lever for this.
 
 
-### P3 - 37 arbitrary Tailwind values have a canonical spelling, and only the IDE says so (measured 2026-09-04)
+### P3 - the corners are NOT on the scale, and the gate that says so now exists (re-measured 2026-09-09)
 
-`flex-shrink-0` (37 occurrences across 20 components), `rounded-[1.5rem]` -> `rounded-3xl`,
-`h-[3.25rem]` -> `h-13`, `z-[260]` -> `z-260`, `md:w-[28rem]` -> `md:w-md`. Ten of them sit in
-`ChatGroupPanel.svelte` alone.
+**The 2026-09-04 entry here was half right and its numbers had rotted.** It listed five arbitrary
+spellings with canonical replacements. Re-measured on 2026-09-09: `md:w-[28rem]` is GONE,
+`flex-shrink-0` was 36 rather than 37, and **the replacement it named for `rounded-[1.5rem]` was
+wrong** - it said `rounded-3xl`, but #447 moved `--radius-3xl` to 1.125rem, so that mapping would
+have silently changed 24px corners into 18px ones under the banner of a spelling fix.
 
-**Nothing in the repository reports these.** `bun run check` answers `0 ERRORS 0 WARNINGS` on 8128
-files and `oxlint` is silent; the only thing that names them is the editor's Tailwind plugin, which
-means they are invisible to CI and to any session not looking at that file in an IDE. That is the
-part worth fixing first - a rule enforced by a tooltip is not enforced.
+**What is DONE.** The 36 `flex-shrink-0` are now `shrink-0`, a pure Tailwind rename with no visual
+effect, and `utilityScale.test.ts` fails on that spelling and five other renames from Tailwind's own
+upgrade table - a property, not a list of what this tree happened to contain, which is why it also
+covers `flex-grow-`, `overflow-ellipsis` and the three others nobody has written yet.
 
-**It is ONE sweep, and it must not ride along with an unrelated change.** Three of them are in the
-files the SYNC-badge fix touched and were deliberately left: correcting three of thirty-seven inside
-a behaviour PR produces a file that disagrees with its twenty neighbours and hides the real diff.
-Wants doing with the four other items that each want one pass over `app.css` (queue item 7), and the
-gate that would keep it fixed - a lint rule in `bun run check` - is the deliverable, not the
-replacement.
+**What is MEASURED and now countable.** `--radius-*` declares FOUR meanings - 8px card, 12px larger
+card, 18px bubble, 999px pill - and the markup carries **39 arbitrary corners in EIGHT sizes that
+are none of them**: 1rem, 1.1rem, 1.25rem, 1.5rem, 2rem, 10px, 14px, 32px. Ten are
+`rounded-[1.5rem]`, ten `rounded-[1.1rem]`, nine `rounded-[1.25rem]`. So CLAUDE.md's "RADIUS IS
+SCALED SINCE #447" is true of `app.css` and NOT of the tree that consumes it. The test holds the
+population at 39: it may fall and it may not rise.
+
+**What is OPEN, and it is a DESIGN decision rather than a refactor.** Collapsing 24px and 32px
+corners onto an 18px scale changes how chat panels, the emoji picker and the post forms LOOK. That
+is the user's call, not a sweep to be smuggled in under a passing test - which is precisely why the
+gate ships with a baseline instead of a zero. Either the eight sizes collapse onto the four
+meanings, or the scale gains a declared fifth; both are answers, and choosing neither is what left
+39 undeclared corners in a tree whose index says the corners are scaled.
+
+**Two things that were NOT found, having been looked for.** The 73 raw hex values in markup are
+overwhelmingly legitimate - canvas drawing in `AssociationLogoCropper` and `PosterCanvas`, and the
+swatch DATA in `ColorPicker` and `EditProfileTab`, where a literal colour is the content and not a
+token violation. And the nine `text-[Nem]` values are proportional sizing, a different intent from
+the seven `--text-*` steps. Neither is a finding, and counting them as one would have made this
+entry wrong in the other direction.
 
 ### P3 - the two controls on a device row do not look like the same kind of thing (reported 2026-08-25)
 

@@ -161,7 +161,7 @@
       : 'hover:bg-cn-surface border border-transparent dark:hover:bg-black/20'} animate-rise-in"
 >
   <!-- Avatar / group icon zone -->
-  <div class="relative flex-shrink-0">
+  <div class="relative shrink-0">
     {#if isDirect}
       <Avatar userId={contactName} size="lg" fallbackLabel={effectiveDisplayName} />
       {#if isOnline}
@@ -187,7 +187,7 @@
       </span>
 
       <!-- Badges area (unread, sync) -->
-      <div class="flex flex-shrink-0 items-center gap-2">
+      <div class="flex shrink-0 items-center gap-2">
         <!--
           NO BADGE FOR "NOT JOINED YET", AND THAT IS A PRODUCT DECISION (user, 2026-09-04): *"tu
           peux le laisser dans les logs. L'utilisateur doit voir le moins possible qu'il se passe des

@@ -572,7 +572,7 @@
         ? 'animate-rise-in'
         : ''}"
     >
-      <Info size={14} class="flex-shrink-0 opacity-60" />
+      <Info size={14} class="shrink-0 opacity-60" />
       <span>{textContent}</span>
     </div>
   {/if}

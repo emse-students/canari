@@ -167,7 +167,7 @@
                 fallbackLabel={cand.label}
               />
             {:else if cand.conversation.conversationType === 'channel'}
-              <div class="text-text-muted flex h-8 w-8 flex-shrink-0 items-center justify-center">
+              <div class="text-text-muted flex h-8 w-8 shrink-0 items-center justify-center">
                 <Hash size={18} strokeWidth={2.5} />
               </div>
             {:else}

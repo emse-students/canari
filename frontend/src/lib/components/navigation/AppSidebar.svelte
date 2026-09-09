@@ -142,7 +142,7 @@
 
         <!-- Icon container with scale-on-hover effect. -->
         <span
-          class="relative flex w-7 flex-shrink-0 items-center justify-center transition-transform duration-300 group-hover:scale-110"
+          class="relative flex w-7 shrink-0 items-center justify-center transition-transform duration-300 group-hover:scale-110"
         >
           <PlaceIcon size={22} strokeWidth={isActive ? 2.5 : 2} />
 
@@ -172,7 +172,7 @@
         <!-- Full count badge, visible only when the sidebar is expanded. -->
         {#if unread > 0}
           <span
-            class="text-2xs ml-auto inline-flex flex-shrink-0 items-center justify-center rounded-full bg-red-500 px-2 py-0.5 leading-none font-bold text-white shadow-sm shadow-red-500/30 transition-all duration-300
+            class="text-2xs ml-auto inline-flex shrink-0 items-center justify-center rounded-full bg-red-500 px-2 py-0.5 leading-none font-bold text-white shadow-sm shadow-red-500/30 transition-all duration-300
  {isExpanded ? 'scale-100 opacity-100 delay-100' : 'scale-75 opacity-0'}"
           >
             {unread > 99 ? '99+' : unread}
@@ -203,7 +203,7 @@
         {/if}
 
         <span
-          class="relative flex w-7 flex-shrink-0 items-center justify-center transition-transform duration-300 group-hover:scale-110"
+          class="relative flex w-7 shrink-0 items-center justify-center transition-transform duration-300 group-hover:scale-110"
         >
           <SlidersHorizontal size={22} strokeWidth={settingsActive ? 2.5 : 2} />
         </span>
