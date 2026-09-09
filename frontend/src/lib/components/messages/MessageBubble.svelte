@@ -17,6 +17,7 @@
   import MessageReactions from './MessageReactions.svelte';
   import type { MessageReaction } from '$lib/types';
   import { activeReactions } from '$lib/utils/chat/messageReactions';
+  import type { MessagePickerOrigin } from '$lib/utils/chat/reactionPicker';
   import MessageInfoTooltip from './MessageInfoTooltip.svelte';
   import MessageReplyQuote from './MessageReplyQuote.svelte';
   import MessageTextBody from './MessageTextBody.svelte';
@@ -160,7 +161,15 @@
   }: Props = $props();
 
   let bubbleAnchor = $state<HTMLElement | null>(null);
-  let showEmojiPicker = $state(false);
+  /**
+   * WHICH CONTROL OPENED THE FULL PICKER - the panel cannot tell, and it needs to know.
+   *
+   * This is the open/closed state as well: `null` is closed, and there is no way to spell "open,
+   * from nowhere". Two openers set it, and each names itself; the reasoning is in
+   * `$lib/utils/chat/reactionPicker`.
+   */
+  let emojiPickerOrigin = $state<MessagePickerOrigin>(null);
+  const showEmojiPicker = $derived(emojiPickerOrigin !== null);
   let showInfo = $state(false);
   let showMobileActions = $state(false);
   let showDeleteModal = $state(false);
@@ -293,7 +302,7 @@
   function startInlineEdit() {
     editText = textContent;
     isEditingInline = true;
-    showEmojiPicker = false;
+    emojiPickerOrigin = null;
     showInfo = false;
     showMobileActions = false;
   }
@@ -338,7 +347,7 @@
 
   function toggleInfo(e: MouseEvent) {
     e.stopPropagation();
-    showEmojiPicker = false;
+    emojiPickerOrigin = null;
     showInfo = !showInfo;
   }
 
@@ -379,7 +388,7 @@
         // family as the picker button below: the actions were gated, the surfaces were not.
         if (isDeleted) return;
         showMobileActions = true;
-        showEmojiPicker = false;
+        emojiPickerOrigin = null;
         showInfo = false;
         if (
           settings.vibrationsEnabled &&
@@ -583,7 +592,7 @@
     use:clickOutside={{
       enabled: showEmojiPicker || showInfo || showMobileActions,
       callback: () => {
-        showEmojiPicker = false;
+        emojiPickerOrigin = null;
         showInfo = false;
         showMobileActions = false;
       },
@@ -726,7 +735,7 @@
         userReactions={userOwnReactions}
         onToggleEmojiPicker={!isDeleted && onReact
           ? () => {
-              showEmojiPicker = !showEmojiPicker;
+              emojiPickerOrigin = emojiPickerOrigin ? null : 'toolbar';
             }
           : undefined}
         {canModerate}
@@ -759,7 +768,7 @@
     />
 
     <MessageEmojiPicker
-      visible={showEmojiPicker}
+      origin={emojiPickerOrigin}
       {isOwn}
       anchor={bubbleAnchor}
       existingReactionEmojis={Object.keys(groupedReactions)}
@@ -815,7 +824,7 @@
       }}
       onOpenFullPicker={() => {
         showMobileActions = false;
-        showEmojiPicker = true;
+        emojiPickerOrigin = 'sheet';
       }}
       onReply={onReply && !isDeleted
         ? () => {

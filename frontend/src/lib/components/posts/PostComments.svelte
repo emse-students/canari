@@ -643,7 +643,7 @@
     <div class="flex items-center gap-2.5">
       <div class="shrink-0"><Avatar userId={currentUserId} size="sm" /></div>
       <div
-        class="flex min-w-0 flex-1 items-end rounded-[1.25rem] border border-black/5 bg-black/5 px-3.5 py-1.5 shadow-inner transition-all focus-within:bg-white focus-within:ring-2 focus-within:ring-amber-500/50 dark:border-white/10 dark:bg-white/5 dark:focus-within:bg-black/40"
+        class="flex min-w-0 flex-1 items-end rounded-2xl border border-black/5 bg-black/5 px-3.5 py-1.5 shadow-inner transition-all focus-within:bg-white focus-within:ring-2 focus-within:ring-amber-500/50 dark:border-white/10 dark:bg-white/5 dark:focus-within:bg-black/40"
         onfocusin={() => (commentInputFocused = true)}
         onfocusout={() => (commentInputFocused = false)}
       >

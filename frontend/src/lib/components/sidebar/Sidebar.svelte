@@ -16,6 +16,7 @@
   import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
   import {
     conversationMatchesQuery,
+    recentDirectPeers,
     resolveConversationListPresentation,
   } from '$lib/utils/chat/conversations';
   import { pullToRefresh } from '$lib/actions/pullToRefresh';
@@ -292,6 +293,21 @@
       .sort((a, b) => (b.convo.lastMessageAt ?? 0) - (a.convo.lastMessageAt ?? 0))
   );
 
+  /**
+   * What "Nouvelle discussion" opens on, built from the rows already resolved above rather than
+   * from a second pass over the map - so the picker and the sidebar can never disagree about a
+   * person's name. Derived from ALL rows, not the filtered ones: the sidebar's search box has
+   * nothing to do with what the modal offers.
+   */
+  const recentPeers = $derived(
+    recentDirectPeers(
+      conversationRows.map(({ convo, resolved }) => ({
+        resolved,
+        lastMessageAt: convo.lastMessageAt,
+      }))
+    )
+  );
+
   function openNewChatModal(tab: 'contact' | 'group' | 'channel' = 'contact') {
     if (tab === 'channel') {
       channelName = newChannelInput || '';
@@ -435,7 +451,7 @@
         onclick={() => {
           showNewCommunityModal = true;
         }}
-        class="border-text-muted/50 text-text-muted hover:text-text-main hover:border-text-main flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-dashed transition-all hover:rounded-[10px] hover:bg-white/10"
+        class="border-text-muted/50 text-text-muted hover:text-text-main hover:border-text-main flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-dashed transition-all hover:rounded-lg hover:bg-white/10"
         title={m.sidebar_add_community_title()}
         aria-label={m.sidebar_add_community_title()}
       >
@@ -652,7 +668,12 @@
   {contactId}
   {groupName}
   {currentUserId}
+  {recentPeers}
   onClose={closeNewChatModal}
+  onPickPeer={(peerId) => {
+    contactId = peerId;
+    handleAddContact();
+  }}
   onTabChange={(tab) => {
     activeTab = tab;
   }}

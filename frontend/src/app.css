@@ -563,6 +563,55 @@ h6,
 }
 
 /**
+ * A ROW'S ACTIONS ARE ONE KIND OF THING, AND ONLY THEIR INTENT MAY DIFFER.
+ *
+ * Reported by the user with a screenshot on 2026-08-25: *"il faudrait homogeneiser la corbeille et
+ * la modification."* On a device row the delete control was a filled rounded square and the rename
+ * control a bare pencil sitting under the text, so two actions of equal standing read as one button
+ * and one decoration. They diverged on five axes at once - resting fill, padding, icon size, stroke
+ * weight, press feedback - and not one of the five carried meaning.
+ *
+ * (A sixth was in the report and is a PHANTOM: `rounded-lg` against `rounded-xl` looks like a
+ * difference and is not, because #447 gave both the same 8px. Anyone re-reading that table should
+ * know the scale answered it already.)
+ *
+ * WHAT MAY STILL DIFFER IS COLOUR, AND ONLY ON HOVER. A trash can and a pencil are told apart by
+ * intent, never by whether they look pressable - so this declares the SHAPE and nothing else, and
+ * the call site keeps `hover:text-red-600` or `hover:text-amber-600` as utilities.
+ *
+ * IN `@layer components` DELIBERATELY, which `.ui-textarea` above is not. Unlayered CSS beats every
+ * Tailwind utility whatever its specificity, which is why that one needs `border-red-err!` at its
+ * call site to say anything. Declared in the components layer, a plain `hover:bg-red-500/15` wins on
+ * its own and no call site has to shout.
+ */
+@layer components {
+  .ui-icon-button {
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    padding: 0.625rem;
+    border-radius: var(--radius-xl);
+    color: var(--text-muted);
+    background: color-mix(in srgb, var(--cn-border) 50%, transparent);
+    outline: none;
+    transition:
+      background-color 180ms ease,
+      color 180ms ease,
+      transform 120ms ease;
+  }
+
+  .ui-icon-button:active:not(:disabled) {
+    transform: scale(0.95);
+  }
+
+  .ui-icon-button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+}
+
+/**
  * The pricing grid's geometry: every price column the same size, and never below a readable one.
  *
  * The sizes are declared here, and the grid supplies only `--group-cols` and `--price-cols` - the

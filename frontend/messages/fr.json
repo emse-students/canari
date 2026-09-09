@@ -137,6 +137,7 @@
   "chat_modal_group_tab": "Groupe",
   "chat_modal_contact_label": "Contact",
   "chat_modal_search_user_placeholder": "Rechercher un nom…",
+  "chat_modal_recent_peers_label": "Discussions récentes",
   "chat_modal_start_discussion_button": "Démarrer la discussion",
   "chat_modal_self_conversation_error": "Vous ne pouvez pas démarrer une discussion avec vous-même.",
   "chat_modal_group_name_label": "Nom du groupe",

@@ -145,7 +145,7 @@
         {#each paymentMethods as pm (pm.id)}
           <div
             transition:slide={{ duration: 200 }}
-            class="group flex items-center justify-between rounded-[1.25rem] border border-black/5 bg-gradient-to-r from-black/5 to-transparent px-5 py-4 shadow-sm transition-colors hover:border-black/10 dark:border-white/5 dark:from-white/5 dark:to-transparent dark:hover:border-white/10"
+            class="group flex items-center justify-between rounded-2xl border border-black/5 bg-gradient-to-r from-black/5 to-transparent px-5 py-4 shadow-sm transition-colors hover:border-black/10 dark:border-white/5 dark:from-white/5 dark:to-transparent dark:hover:border-white/10"
           >
             <div class="flex items-center gap-4">
               <div
@@ -177,7 +177,7 @@
       </div>
     {:else}
       <div
-        class="mb-6 rounded-[1.25rem] border border-dashed border-black/10 bg-black/5 px-4 py-6 text-center dark:border-white/10 dark:bg-white/5"
+        class="mb-6 rounded-2xl border border-dashed border-black/10 bg-black/5 px-4 py-6 text-center dark:border-white/10 dark:bg-white/5"
       >
         <p class="text-text-muted text-sm font-semibold">{m.profile_payment_none_title()}</p>
       </div>

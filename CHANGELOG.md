@@ -11,6 +11,117 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - "Nouvelle discussion" opens on the people you already talk to
+
+Observed on the Mi 9T on 2026-09-09: on a 436x945 phone the panel drew a tab pair, a label, a search
+field and its button in the top ~230px, and then **~600 pixels of nothing**. The cause was not the
+modal - a search field simply has no suggestions before a keystroke, and the reference opens on the
+people you talk to most and treats typing as a filter over them.
+
+It now opens on that list: the conversations already in the sidebar, most recent first, one row per
+person, names that have not resolved dropped rather than shown as "unknown user", capped at eight.
+No new endpoint and no new disclosure question - a directory of every account in the school is a
+different feature with a different answer owed. Choosing someone fills the field and starts the
+conversation, the way selecting an autocomplete suggestion already did, and the list shows only
+while the field is empty so it never competes with the picker's own dropdown.
+
+The primary action moved to the modal footer, at the bottom edge, where it can no longer float
+mid-screen or scroll away with the list. Measured at 436x945: with eight people the blank falls from
+~600px to 220px, with twenty the list scrolls while the section header and the button hold their
+places.
+
+### Fixed - a device row's two actions read as one button and one decoration
+
+Reported by the user with a screenshot on 2026-08-25: *"il faudrait homogeneiser la corbeille et la
+modification."* The delete control was a filled rounded square and the rename control a bare pencil
+sitting inside the text block, on the line with the device id - so two actions of equal standing did
+not look like the same kind of thing, and the pencil looked like an annotation of the id beside it.
+
+They diverged on five axes at once, none of which carried meaning: resting fill, padding, icon size,
+stroke weight, press feedback. (A sixth was in the report and is a phantom - `rounded-lg` against
+`rounded-xl` is the same 8px since #447.) `app.css` now declares `.ui-icon-button` for the shape, and
+both controls sit in ONE action cluster on the right of the row. What still differs is the hover
+colour, which is the whole of what should: a trash can and a pencil are told apart by intent, never
+by whether they look pressable.
+
+The class is in `@layer components`, unlike `.ui-textarea` beside it. Unlayered CSS beats every
+Tailwind utility whatever its specificity, which is why that one needs `border-red-err!` at its call
+site to say anything at all; declared in the components layer, a plain `hover:bg-red-500/15` wins on
+its own. Measured after, within one row: both controls 38x38 at the same baseline, one parent, 6px
+apart, identical radius, padding and fill.
+
+**The audit this asked for found something bigger than a pair**, and it is recorded rather than
+acted on: 187 icon-only buttons in twelve radius+padding combinations across `frontend/src`. There
+is no duplicated pair to chase - there is an undeclared population, the same shape as the corners
+before #474, and collapsing it is a design decision that belongs to the user.
+
+### Fixed - a message's popovers opened away from the button that opened them, and one opened off-screen
+
+Three reports from the user on 2026-09-09, all the same defect: a popover positioned against
+something other than the control that summons it.
+
+**The overflow menu could be entirely off-screen.** It was `absolute bottom-full` unconditionally, so
+on a message near the top of the thread it opened upward past the scroller's edge and
+`.chat-messages-scroll` clipped it. Measured on the live app at 958px: `top: -153px`,
+`bottom: -1px` - the whole of it above the viewport, with only a sliver surviving the clip. It reads
+as a layering fault and is not one; the same measurement showed the menu and the conversation header
+both at `z-20` with ZERO vertical overlap, so nothing was covering it. Both popovers now choose their
+side from the room the SCROLLER leaves, because the scroller is what clips. Verified at three
+anchors: a bubble with 21px of room above flips below and lands inside, the other two stay above.
+
+**And both opened beside the MESSAGE rather than beside the button.** The quick-reaction bar hung off
+the bubble's left edge while the smiley that opens it sat in the gutter on the right - *"la barre de
+smiley devrait apparaitre au niveau du bouton smiley+"*. They are children of the icon strip now.
+Anchoring them there had been tried on 2026-09-08 and reverted for laying the pill "entirely in the
+gutter, 292px to the left"; that attempt kept the bubble's SIDE, and the side has to mirror when the
+anchor moves - the strip is in the gutter, so a popover must grow back inward over the message.
+Measured after: the strip's centre falls inside the popover's own span, a 0px horizontal gap.
+
+**The full emoji picker had the same fault one level up**: its anchor was the message ROW, which on a
+wide thread is most of the window, so pressing "+" opened the panel a screen away. It now anchors to
+the icon strip when the toolbar's "+" opened it, and to the row when the long-press sheet did.
+
+### Fixed - the reaction picker opened in the top-left corner of the screen on a phone
+
+Found on 2026-09-09 while measuring the fix above at a viewport the size of the user's window, and it
+had never been reported because it is invisible at any width a developer works at.
+
+The picker chose its anchor by asking the DOM for the hover toolbar's icon strip. That is not a
+discriminator: the strip is in the tree at EVERY width, merely `hidden md:block`. Below 768px the
+query therefore succeeded and returned a `display: none` node - and
+`getBoundingClientRect()` on one of those is all zeros, which reads downstream as an ordinary anchor
+sitting at the window origin. Every clamp agreed, and the panel was placed neatly in the corner.
+Measured at 620px: anchor `0x0`, panel written to `left: 8px, top: 8px`, with the message it belonged
+to at `261-608`. The same code measured correct at 900px and at 1920px.
+
+Which control opened the panel is known by the control itself, so it is now carried as a value
+(`'toolbar' | 'sheet'`, which is also the open/closed state - there is no way to spell "open, from
+nowhere"). The two placement decisions that follow from it are one pure function each, in
+`frontend/src/lib/utils/chat/reactionPicker.ts`, and are pinned by tests that do not depend on a
+viewport width. Re-measured after: at 620px the panel writes `left: 256px`, its right edge on the
+message's right edge.
+
+**And `bindFixedPopover` now refuses a zero-sized anchor instead of placing against the origin**, with
+a `console.warn` naming the panel. Nothing about that failure was specific to this picker - any
+caller can name a node its own CSS has hidden, and every one of them would land in the same corner
+with the same silence. It is the one bad anchor that looks valid: `null` returns early and an
+off-screen one is clamped back in, while all-zeros is a legal rect describing a legal point.
+
+### Changed - every corner in the app now comes from the radius scale
+
+`app.css` has declared four radius meanings since #447 - 8px card, 12px larger card, 18px bubble,
+999px pill - and the markup did not use them: **39 corners in eight sizes that were none of them**
+(1rem, 1.1rem, 1.25rem, 1.5rem, 2rem, 10px, 14px, 32px). Nothing reported it; the only thing that
+ever named these was an editor tooltip, and a rule enforced by a tooltip is not enforced.
+
+They are mapped onto the four meanings, so a few surfaces are visibly less rounded than they were -
+the call overlay, the login card, the post forms and the emoji picker most of all. That is the
+design reference's own ruling ("8px card and control, 18px message bubble, 999px pill, four values
+replacing fourteen"), taken as a decision rather than assumed.
+
+Also swept: 36 `flex-shrink-0` to `shrink-0`. Both are now held by `utilityScale.test.ts`, which
+refuses six utilities Tailwind's own upgrade table renamed and any arbitrary `rounded-[...]` at all.
+
 ### Fixed - the agenda's push notifications had lost their accents, and two more were still English
 
 The proposal notification shipped in #465 was verified on the Mi 9T: it reaches the shade in

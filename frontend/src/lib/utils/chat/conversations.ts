@@ -953,3 +953,59 @@ export function conversationMatchesQuery(
   if (!q) return true;
   return foldForSearch(displayName).includes(q) || foldForSearch(lastMessageContent).includes(q);
 }
+
+/** One person offered by "Nouvelle discussion" before anything is typed. */
+export interface RecentDirectPeer {
+  /** The peer's user id - the only thing starting a conversation actually needs. */
+  peerId: string;
+  /** The label the sidebar already shows for that person, so both surfaces agree by construction. */
+  displayName: string;
+}
+
+/**
+ * The people this account already talks to, most recent first.
+ *
+ * WHY THIS EXISTS. "Nouvelle discussion" opened on a search field with no list behind it, so on a
+ * 436x945 phone the panel drew a tab pair, a label, a field and a button in the top ~230px and then
+ * SIX HUNDRED PIXELS OF NOTHING (observed on the Mi 9T, 2026-09-09). A search field has no
+ * suggestions before a keystroke; the reference opens on the people you talk to most and treats
+ * typing as a filter over them, which is why its panel is full the moment it opens.
+ *
+ * THIS IS NOT A DIRECTORY, and the distinction is the reason it needs no new endpoint and asks no
+ * new question. It is the conversations already in the sidebar, which this account can obviously
+ * see. Offering every account in the school before a character is typed is a DISCLOSURE decision
+ * and a different feature.
+ *
+ * A row whose name has not resolved is dropped rather than listed as "unknown user": the point of
+ * the list is recognition, and a placeholder is the one entry nobody can act on.
+ */
+export function recentDirectPeers(
+  rows: readonly {
+    resolved: Pick<
+      ConversationListPresentation,
+      'conversationType' | 'contactId' | 'displayName' | 'displayNameResolved'
+    >;
+    /** Epoch millis of the last message, absent for a conversation that has none yet. */
+    lastMessageAt?: number | null;
+  }[],
+  limit = 8
+): RecentDirectPeer[] {
+  const byPeer = new Map<string, { peer: RecentDirectPeer; at: number }>();
+
+  for (const row of rows) {
+    const { conversationType, contactId, displayName, displayNameResolved } = row.resolved;
+    if (conversationType !== 'direct' || !contactId || !displayNameResolved) continue;
+
+    const at = row.lastMessageAt ?? 0;
+    const seen = byPeer.get(contactId);
+    // One person can hold more than one conversation record after a reload; the newest one carries
+    // both the ordering and the label.
+    if (!seen || at > seen.at)
+      byPeer.set(contactId, { peer: { peerId: contactId, displayName }, at });
+  }
+
+  return [...byPeer.values()]
+    .sort((a, b) => b.at - a.at)
+    .slice(0, limit)
+    .map((entry) => entry.peer);
+}

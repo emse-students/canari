@@ -201,7 +201,7 @@
       </div>
     {:else if mediaType === 'video'}
       <div
-        class="flex aspect-video w-full max-w-md animate-pulse items-center justify-center rounded-[1.1rem] bg-black/5 dark:bg-white/10"
+        class="flex aspect-video w-full max-w-md animate-pulse items-center justify-center rounded-3xl bg-black/5 dark:bg-white/10"
       >
         <VideoIcon size={32} class="text-text-muted opacity-20" />
       </div>
@@ -215,7 +215,7 @@
     {:else}
       <!-- Same footprint as the loaded file card, so nothing jumps on arrival. -->
       <div
-        class="flex w-full animate-pulse items-center gap-3.5 rounded-[1rem] bg-black/5 px-3.5 py-3 dark:bg-white/10"
+        class="flex w-full animate-pulse items-center gap-3.5 rounded-3xl bg-black/5 px-3.5 py-3 dark:bg-white/10"
       >
         <div
           class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-black/10 dark:bg-white/10"
@@ -262,7 +262,7 @@
     {:else if mediaType === 'video'}
       <!-- ========== VIDEO ========== -->
       <div
-        class="group/media relative aspect-video w-full max-w-md overflow-hidden rounded-[1.1rem] bg-black/10 shadow-sm dark:bg-black/40"
+        class="group/media relative aspect-video w-full max-w-md overflow-hidden rounded-3xl bg-black/10 shadow-sm dark:bg-black/40"
       >
         <!-- svelte-ignore a11y_media_has_caption -->
         <video src={blobUrl} controls preload="metadata" class="h-full w-full object-contain"
@@ -289,7 +289,7 @@
       </div>
     {:else if mediaType === 'audio'}
       <!-- ========== AUDIO ========== -->
-      <div class="w-full max-w-md overflow-hidden rounded-[1.1rem] bg-black/5 dark:bg-white/5">
+      <div class="w-full max-w-md overflow-hidden rounded-3xl bg-black/5 dark:bg-white/5">
         <!-- svelte-ignore a11y_media_has_caption -->
         <audio src={blobUrl} controls preload="metadata" class="h-12 w-full"></audio>
       </div>

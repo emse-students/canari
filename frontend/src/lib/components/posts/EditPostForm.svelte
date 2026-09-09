@@ -271,7 +271,7 @@
 </script>
 
 <article
-  class="bg-cn-surface relative overflow-hidden rounded-[2rem] border border-black/5 shadow-sm transition-all duration-300 focus-within:border-amber-500/30 focus-within:shadow-lg dark:border-white/10"
+  class="bg-cn-surface relative overflow-hidden rounded-lg border border-black/5 shadow-sm transition-all duration-300 focus-within:border-amber-500/30 focus-within:shadow-lg dark:border-white/10"
 >
   <!-- En-tête -->
   <div class="bg-cn-surface border-b border-black/5 px-5 py-4 dark:border-white/10">
@@ -325,7 +325,7 @@
 
     <!-- Text area + image preview. -->
     <div
-      class="focus-within:bg-cn-surface relative mb-2 rounded-[1.5rem] border border-black/5 bg-black/5 p-2 shadow-inner transition-colors dark:border-white/10 dark:bg-black/40 dark:focus-within:bg-black/60"
+      class="focus-within:bg-cn-surface relative mb-2 rounded-2xl border border-black/5 bg-black/5 p-2 shadow-inner transition-colors dark:border-white/10 dark:bg-black/40 dark:focus-within:bg-black/60"
     >
       <MarkdownComposerField
         bind:value={markdown}
@@ -470,7 +470,7 @@
     <div class="flex flex-col-reverse gap-4 pt-1 sm:flex-row sm:items-center sm:justify-between">
       <!-- Toolbar -->
       <div
-        class="bg-cn-surface flex w-full flex-wrap items-center gap-2 overflow-x-auto rounded-[1.25rem] border border-black/5 p-1.5 shadow-inner sm:w-auto dark:border-white/5"
+        class="bg-cn-surface flex w-full flex-wrap items-center gap-2 overflow-x-auto rounded-2xl border border-black/5 p-1.5 shadow-inner sm:w-auto dark:border-white/5"
       >
         <!-- Add media. -->
         <label

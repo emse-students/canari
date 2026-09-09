@@ -154,7 +154,7 @@
   data-ready={isReady}
   data-removed={isRemoved}
   data-selected={isSelected}
-  class="group flex w-full items-center gap-4 rounded-[1.25rem] p-3.5 text-left transition-all duration-200 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-[0.98] {isSelected
+  class="group flex w-full items-center gap-4 rounded-2xl p-3.5 text-left transition-all duration-200 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-[0.98] {isSelected
     ? 'bg-cn-surface border border-black/5 shadow-sm dark:border-white/10 '
     : unreadCount > 0
       ? 'hover:bg-cn-surface border border-transparent bg-white/30 dark:hover:bg-white/10'

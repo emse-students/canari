@@ -115,7 +115,7 @@
       {@const totalVotes = getTotalVotes(poll)}
 
       <div
-        class="bg-cn-surface rounded-[1.5rem] border border-black/5 p-5 shadow-sm dark:border-white/10"
+        class="bg-cn-surface rounded-2xl border border-black/5 p-5 shadow-sm dark:border-white/10"
       >
         <!-- Poll header. -->
         <div class="mb-5 flex items-start gap-3">

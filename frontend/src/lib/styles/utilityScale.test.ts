@@ -13,11 +13,11 @@
  * the design does not make. The same reasoning as `layerLadder.test.ts` next door - that one keeps
  * numbers off the z-axis, this one keeps them off the corners.
  *
- * WHY A BASELINE RATHER THAN ZERO. Collapsing 24px and 32px corners onto an 18px scale CHANGES HOW
- * THE APP LOOKS, on panels, the emoji picker and the post forms - that is a design decision and not
- * a refactor, so it is the user's and it is not smuggled in under a test. What this file does today
- * is stop the population GROWING and make it countable: the number below may go down and may never
- * go up. When the sweep happens, the baseline goes to zero and this comment goes with it.
+ * IT SHIPPED WITH A BASELINE OF 39 FOR ONE DAY, AND THAT WAS DELIBERATE. Collapsing 24px and 32px
+ * corners onto the scale changes how the app LOOKS - the call overlay, the login card, the post
+ * forms, the emoji picker - and a design decision does not belong inside a refactor hiding behind a
+ * green test. The user took it (2026-09-09, "fidele a la reference"), the 39 were mapped onto the
+ * four meanings, and the number below is now what it should always have been.
  *
  * THE RULE IT ENCODES IS THE REPOSITORY'S, NOT A NEW ONE: read the scale before reaching for a
  * number (CLAUDE.md, "COLOUR, TYPE AND RADIUS ARE ALL SCALED SINCE #447").
@@ -70,25 +70,20 @@ describe('the radius scale', () => {
     expect(new Set(radii.values()).size).toBeLessThanOrEqual(5);
   });
 
-  // The population, and the only direction it may move. Written as a number rather than a list so
-  // that fixing any one of them passes without an edit here, and adding one fails.
-  const ARBITRARY_RADIUS_BASELINE = 39;
-
-  it('has no MORE arbitrary corners than the day this was measured, and ideally fewer', () => {
+  it('has no arbitrary corners at all - every one of them is a meaning the design does not make', () => {
     const found: string[] = [];
     for (const { file, body } of ALL_MARKUP) {
       for (const m of body.matchAll(/\brounded(?:-[a-z]+)?-\[[^\]]+\]/g))
         found.push(`${file}: ${m[0]}`);
     }
 
-    const sizes = new Set(found.map((f) => f.slice(f.indexOf('['))));
     expect(
-      found.length,
-      `Arbitrary corners went UP (${found.length} > ${ARBITRARY_RADIUS_BASELINE}), in ${sizes.size} distinct sizes.\n` +
-        `The radius scale in app.css has four meanings - 8px card, 12px larger card, 18px bubble, 999px pill - ` +
-        `and a number here is a fifth the design does not make. Use rounded-lg / -2xl / -3xl / -full.\n` +
-        found.slice(0, 12).join('\n')
-    ).toBeLessThanOrEqual(ARBITRARY_RADIUS_BASELINE);
+      found,
+      'The radius scale in app.css has four meanings - 8px card, 12px larger card, 18px bubble, ' +
+        '999px pill - and a number here is a fifth one the design does not make. Use ' +
+        'rounded-lg / rounded-2xl / rounded-3xl / rounded-full. Offenders: ' +
+        found.slice(0, 12).join(' | ')
+    ).toEqual([]);
   });
 });
 

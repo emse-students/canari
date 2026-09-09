@@ -811,3 +811,31 @@ on the phone.
 **Anything that must escape a page entirely has to be portalled to the body.**
 `MessageMobileActions` now is; `UserAutocomplete` already was. `transform`, `filter`,
 `opacity < 1`, `contain: paint` and `isolation: isolate` are the same trap.
+
+## 16. Three questions measured and settled, so nobody counts them again
+
+Each of these closed a backlog entry on 2026-09-09. They live here rather than there because a
+closed entry has to LEAVE the backlog - the story goes to `CHANGELOG.md`, the rule to
+[durable-rules](../durable-rules.md), and the measurement to the page it is about, which is this
+one.
+
+**The emoji picker scrolls, and it stays on screen, INCLUDING at the edges.** Measured on the live
+app: the shadow root's `.tabpanel` reads `clientHeight=263` against `scrollHeight=880` and
+`scrollTop = 400` takes; the panel is `350x400 at 332,177`, fully inside. Forced to a `1000x420`
+viewport and opened from the FIRST and the LAST bubble in a thread, it lands `352x282 at 420,130`
+and `352x340 at 344,8` - both entirely inside, both scrolling. The inline `height:` that the old
+report blamed was already gone, and deleting it was NOT sufficient on its own: with `flex-1` kept,
+the section still measured 973px inside 417. `min-h-0 w-full flex-auto` is what sizes correctly, and
+the reason is in the component's own comment.
+
+**`MIN_USEFUL_HEIGHT` exceeding the room on the chosen side is not a fault.** A panel smaller than
+it shows a header and a clipped first row, so the height is KEPT and the panel is moved instead.
+What it may never exceed is the viewport, and that IS enforced. Both are pinned in
+`fixedPopover.test.ts`.
+
+**Two things were looked for and NOT found, while sweeping the corners.** The 73 raw hex values in
+markup are overwhelmingly legitimate - canvas drawing in `AssociationLogoCropper` and
+`PosterCanvas`, and the swatch DATA in `ColorPicker` and `EditProfileTab`, where a literal colour is
+the content and not a token violation. The nine `text-[Nem]` values are proportional sizing, a
+different intent from the seven `--text-*` steps. Neither is a finding, and counting them as one
+would have made the sweep wrong in the other direction.

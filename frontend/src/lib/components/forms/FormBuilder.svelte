@@ -135,7 +135,7 @@
 </script>
 
 <div
-  class="group bg-cn-surface relative w-full min-w-0 rounded-xl border border-black/5 p-3 shadow-sm transition-all duration-300 sm:rounded-[2rem] sm:p-5 sm:hover:border-amber-500/30 sm:hover:shadow-md md:p-6 dark:border-white/10"
+  class="group bg-cn-surface relative w-full min-w-0 rounded-xl border border-black/5 p-3 shadow-sm transition-all duration-300 sm:rounded-lg sm:p-5 sm:hover:border-amber-500/30 sm:hover:shadow-md md:p-6 dark:border-white/10"
 >
   <!-- Action bar (mobile: reorder + delete) -->
   <div class="mb-3 flex items-center justify-between gap-2 sm:mb-4">

@@ -513,35 +513,6 @@ proof the fallback is only in the rendering: the row was reachable and deletable
 
 **Blocked on nothing.** Local estate, test accounts, and a reproduction that takes one group.
 
----
-### P3 - "Nouvelle discussion" is a full-height panel that shows nothing until you type, where the reference opens on a list (observed on the Mi 9T, 2026-09-09)
-
-Found while verifying the top-anchored modal, and NOT caused by it - the panel became full height,
-which is what made the emptiness visible. On a 436x945 phone the modal draws a tab pair, a label, a
-search field and the "Demarrer la discussion" button in the top ~230px, and then **~600px of nothing**
-under them.
-
-The cause is the picker, not the modal. The contact tab is a `UserAutocomplete`
-(`SidebarNewChatModal.svelte`), which is a search field: it has no suggestions before a keystroke, so
-there is nothing to render. Messenger's equivalent opens on the people you talk to most and treats
-typing as a filter over that list, which is why its panel is full of content the moment it opens.
-
-**Two things are worth separating before anyone builds this.**
-
-- **What list?** There is an obvious candidate - the conversations already in the sidebar, most
-  recent first, minus the ones that are already DMs with that person. That needs no new endpoint and
-  no new privacy question, and it is a strictly better empty state than blank.
-- **A directory of everyone is a different feature with a different answer owed.** Offering every
-  account in the school before a single character is typed is a disclosure decision, not a layout
-  one, and it is not what this entry proposes.
-
-**Also worth a look in the same pass**: the primary action sits directly under the field with the
-dead space BELOW it, so on a full-height panel the button floats mid-screen. If the panel gains a
-list, the button belongs at the bottom edge of the panel instead.
-
-**Blocked on nothing** - local estate, and the shape is a decision rather than a measurement.
-
----
 ### P3 - our message notification is not a CONVERSATION to Android, where the reference's is (measured against Messenger on the Mi 9T, 2026-09-09)
 
 Asked by the user: *"tu as pu observer les notifications messenger sur le telephone pour voir si
@@ -5036,54 +5007,6 @@ search requirement points at.
 
 ## Composer and reactions
 
-### P2 - the emoji picker cannot be scrolled, and often opens outside the screen
-
-Reported by the user 2026-08-23. Two defects and two questions, and they are listed apart because
-only the first two are known to be wrong.
-
-- **The list does not scroll.** Whatever does not fit in the panel is unreachable, so the picker
-  offers exactly one screenful of the set it claims to offer.
-- **The panel frequently renders partly off-screen.** So this is not only a scroll bug: the placement
-  has no viewport clamping, and near an edge the picker loses rows in a second, independent way.
-- **ANSWERED 2026-08-23, NO: the glyph set is the platform's.**
-  `frontend/src/lib/components/messages/MessageEmojiPicker.svelte` mounts `emoji-picker-element`,
-  which renders native codepoints in the system font - there is no bundled sprite sheet. Only the
-  DATA is self-hosted (`data-source="/emoji-data-fr.json"`, and that exists so French search keywords
-  work: `locale="fr"` alone translates the UI and not the keywords). So one codepoint, N pictures -
-  Windows, Android and iOS each draw their own, and the library even ships an
-  `emojiUnsupportedMessage` for a client with no colour emoji at all. **The product decision this
-  bullet said was owed was TAKEN on 2026-08-23: we bundle one set - see the entry below, which is
-  one work package with this one.**
-- **ANSWERED 2026-08-23, YES: recents exist** - `canari_recent_emojis` in `localStorage`, most-recent
-  first, capped at 12, rendered as a row above the picker. Two limits worth knowing before anyone
-  "adds" the feature: it is PER DEVICE and never synced, and it is fed only by
-  `handleEmojiClick`, so a reaction added by any path that does not go through this picker never
-  reaches the list.
-
-**The likely cause of BOTH defects is one line, and it is the same line.** The panel is
-`flex flex-col overflow-hidden` with a `max-height` written by `bindFixedPopover`
-(`frontend/src/lib/actions/fixedPopover.ts`), and the `<emoji-picker>` inside it already carries
-`min-h-0 flex-1` - which is exactly the arrangement that sizes correctly on its own. It is then
-overridden by an inline
-`style="height: min(22rem, calc(var(--popover-max-h) - {recents ? '5.5rem' : '3rem'}))"`. That
-subtraction is a HARD-CODED GUESS at the height of everything above the picker, and the recents row
-is `flex-wrap` with up to twelve 32 px buttons plus a label inside a `min(92vw,22rem)` panel - so it
-wraps to two lines well before twelve, and the guess is then short by a whole line. The picker is
-sized taller than the room actually left, the parent is `overflow-hidden`, and the bottom of the list
-- with its scroll affordance - is clipped away. **The fix is to delete the inline height, not to
-correct the constant**: the flex layout already knows the answer, and a second hard-coded number
-would be wrong again the next time the header gains a line (the reactions-at-limit banner is exactly
-such a line, and it is not in the guess either).
-
-A second, narrower placement fault is in `computeFixedPopoverPosition`: `maxHeight` is floored at
-`Math.max(160, ...)` after the side has been chosen, so on a short viewport the panel can be given
-160 px in a gap smaller than 160 px and hang off the bottom. The floor should not be able to exceed
-the space that was measured.
-
-Both defects are visible without any instrument, so this needs no campaign row to be believed - but
-the picker sits on the reaction path that DEL, MUT and MSG all drive, so fixing it mid-ladder changes
-code under checks that have already run. Schedule it after the ladder unless the user says otherwise.
-
 ### P2 - the app draws emoji with the platform's font, and must draw ONE bundled font everywhere (decided 2026-08-23)
 
 **Decided by the user on 2026-08-23, and the weight is explicitly NOT a factor** (their words: the
@@ -5253,76 +5176,49 @@ an observation.
   emoji font - which on Android is Noto anyway, so the picture is unchanged. `minClientVersion` is not
   the lever for this.
 
+### P2 - two declared icon-button sizes, and all 187 call sites aligned in the same change (decided by the user 2026-09-09, not started)
 
-### P3 - the corners are NOT on the scale, and the gate that says so now exists (re-measured 2026-09-09)
+**The decision, and it is taken**: *"Poser la reference ET tout aligner maintenant"*. Both halves -
+declare the sizes in `app.css`, AND sweep every call site in the same change, the way #474/#476 did
+for the corners. It was put to them twice; the first framing was too abstract to answer (*"Je ne
+sais pas de quoi on parle"*), and what made it answerable was naming buttons they use.
 
-**The 2026-09-04 entry here was half right and its numbers had rotted.** It listed five arbitrary
-spellings with canonical replacements. Re-measured on 2026-09-09: `md:w-[28rem]` is GONE,
-`flex-shrink-0` was 36 rather than 37, and **the replacement it named for `rounded-[1.5rem]` was
-wrong** - it said `rounded-3xl`, but #447 moved `--radius-3xl` to 1.125rem, so that mapping would
-have silently changed 24px corners into 18px ones under the banner of a spelling fix.
+**What they were shown, measured on ONE screen of `/chat` at 1280px** - 163 icon-only buttons
+visible at once, in four sizes:
 
-**What is DONE.** The 36 `flex-shrink-0` are now `shrink-0`, a pure Tailwind rename with no visual
-effect, and `utilityScale.test.ts` fails on that spelling and five other renames from Tailwind's own
-upgrade table - a property, not a list of what this tree happened to contain, which is why it also
-covers `flex-grow-`, `overflow-ellipsis` and the three others nobody has written yet.
+| button | size |
+| --- | --- |
+| "Parametres de la discussion" (conversation header) | 40px |
+| "Joindre un fichier" (composer paperclip) | 36px |
+| "Envoyer le message" | 36px |
+| "Nouvelle discussion" (sidebar) | 32px |
+| "Repondre" / "Reagir" (message hover strip) | 28px |
 
-**What is MEASURED and now countable.** `--radius-*` declares FOUR meanings - 8px card, 12px larger
-card, 18px bubble, 999px pill - and the markup carries **39 arbitrary corners in EIGHT sizes that
-are none of them**: 1rem, 1.1rem, 1.25rem, 1.5rem, 2rem, 10px, 14px, 32px. Ten are
-`rounded-[1.5rem]`, ten `rounded-[1.1rem]`, nine `rounded-[1.25rem]`. So CLAUDE.md's "RADIUS IS
-SCALED SINCE #447" is true of `app.css` and NOT of the tree that consumes it. The test holds the
-population at 39: it may fall and it may not rise.
+Four gaps of four pixels, side by side. Small enough that nobody chose them - each button was
+written against the one neighbour its author had in mind - and large enough to see where two
+surfaces touch. Across `frontend/src` it is **187 occurrences in twelve radius+padding
+combinations**: `rounded-xl p-2.5` (41), `rounded-xl p-2` (40), `rounded-xl p-3` (34),
+`rounded-lg p-1.5` (19), `rounded-lg p-2` (11), `rounded-full p-1.5` (10), and six more in single
+digits.
 
-**What is OPEN, and it is a DESIGN decision rather than a refactor.** Collapsing 24px and 32px
-corners onto an 18px scale changes how chat panels, the emoji picker and the post forms LOOK. That
-is the user's call, not a sweep to be smuggled in under a passing test - which is precisely why the
-gate ships with a baseline instead of a zero. Either the eight sizes collapse onto the four
-meanings, or the scale gains a declared fifth; both are answers, and choosing neither is what left
-39 undeclared corners in a tree whose index says the corners are scaled.
+**The scale that was accepted**: 28px for a control that appears on hover inside a dense row (the
+message strip), 38px for everything else. `.ui-icon-button` already declares the 38px one -
+`app.css`, `@layer components`, shape only - and the device row uses it.
 
-**Two things that were NOT found, having been looked for.** The 73 raw hex values in markup are
-overwhelmingly legitimate - canvas drawing in `AssociationLogoCropper` and `PosterCanvas`, and the
-swatch DATA in `ColorPicker` and `EditProfileTab`, where a literal colour is the content and not a
-token violation. And the nine `text-[Nem]` values are proportional sizing, a different intent from
-the seven `--text-*` steps. Neither is a finding, and counting them as one would have made this
-entry wrong in the other direction.
+**What is left, and none of it is decided-by-guessing**:
 
-### P3 - the two controls on a device row do not look like the same kind of thing (reported 2026-08-25)
+- the `--sm` (28px) modifier beside it;
+- the sweep itself, and it is NOT a regex over `rounded-* p-*`: that pattern also matches badges,
+  chips and plain divs. A site qualifies only if it is a `<button>` whose content is an icon and no
+  text. Hover colour, focus ring, `disabled:` and any layout class at the call site are KEPT - the
+  class replaces shape and nothing else;
+- a gate in the shape of `utilityScale.test.ts`, so the thirteenth size fails rather than ships;
+- one screen re-measured afterwards: the five buttons in the table above must read 38, 38, 38, 38, 28.
 
-**Reported by the user with a screenshot**: *"Petite note graphique, il faudrait homogeneiser la
-corbeille et la modification."* On a device row the delete control is a filled rounded square and the
-rename control is a bare pencil floating under the text, so two controls of equal standing read as one
-button and one decoration.
-
-The divergence is entirely in two class lists in `DeviceManagementPanel.svelte`, and it is every axis
-at once rather than a single oversight:
-
-| | rename (`Edit2`) | delete (`Trash2`) |
-| --- | --- | --- |
-| resting background | none | `bg-black/5` / `dark:bg-white/5` |
-| radius | `rounded-lg` | `rounded-xl` |
-| padding | `p-1.5` | `p-2.5` |
-| icon | `size={14} strokeWidth={2}` | `size={18} strokeWidth={2.5}` |
-| press feedback | none | `active:scale-95` |
-
-**Where they may legitimately still differ: colour.** The destructive one hovers red, the rename one
-amber, and that is the distinction worth keeping - a trash can and a pencil should differ by INTENT,
-not by whether they look clickable.
-
-Two things to settle before touching it, because neither is answerable from the row alone:
-
-- **The same pair exists elsewhere.** A homogenisation that only fixes this panel trades one
-  inconsistency for another, so the fix is a shared class (or a `.btn-glass` modifier - `app.css` is
-  the single source of truth for tokens and `--radius-*`, CLAUDE.md) applied at every site, and the
-  audit of those sites is part of the work.
-- **The rename control also sits in a different place in the layout** - inside the text block, after
-  the version line - while the delete button is a sibling of the whole row. Matching their appearance
-  without settling their POSITION will just move the question.
-
-Grouped with the emoji-picker geometry and the bundled-font work above: all three are user-reported
-appearance items, all three are post-ladder, and all three want the same pass over `app.css` rather
-than three local patches.
+**The reason it is not in the 2026-09-09 session**: the user stopped it deliberately mid-flight -
+*"Je commence a perdre le fil de tout ce que l'on fait. Finis ce qui est en cours, consigne le reste
+dans le backlog"* - and asked for a release instead. The decision above stands and is not to be
+re-litigated; what it needs is a session that starts with it.
 
 ## Storage and retention
 

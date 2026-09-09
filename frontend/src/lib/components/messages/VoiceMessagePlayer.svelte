@@ -96,7 +96,7 @@
 </script>
 
 <div
-  class="relative flex w-full min-w-[200px] items-center gap-3.5 rounded-[1.25rem] border border-black/5 bg-black/5 px-3.5 py-3 transition-colors sm:min-w-[240px] dark:border-white/10 dark:bg-white/10"
+  class="relative flex w-full min-w-[200px] items-center gap-3.5 rounded-2xl border border-black/5 bg-black/5 px-3.5 py-3 transition-colors sm:min-w-[240px] dark:border-white/10 dark:bg-white/10"
 >
   <audio
     bind:this={audioEl}
