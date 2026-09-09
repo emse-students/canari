@@ -541,6 +541,34 @@ proof the fallback is only in the rendering: the row was reachable and deletable
 **Blocked on nothing.** Local estate, test accounts, and a reproduction that takes one group.
 
 ---
+### P3 - "Nouvelle discussion" is a full-height panel that shows nothing until you type, where the reference opens on a list (observed on the Mi 9T, 2026-09-09)
+
+Found while verifying the top-anchored modal, and NOT caused by it - the panel became full height,
+which is what made the emptiness visible. On a 436x945 phone the modal draws a tab pair, a label, a
+search field and the "Demarrer la discussion" button in the top ~230px, and then **~600px of nothing**
+under them.
+
+The cause is the picker, not the modal. The contact tab is a `UserAutocomplete`
+(`SidebarNewChatModal.svelte`), which is a search field: it has no suggestions before a keystroke, so
+there is nothing to render. Messenger's equivalent opens on the people you talk to most and treats
+typing as a filter over that list, which is why its panel is full of content the moment it opens.
+
+**Two things are worth separating before anyone builds this.**
+
+- **What list?** There is an obvious candidate - the conversations already in the sidebar, most
+  recent first, minus the ones that are already DMs with that person. That needs no new endpoint and
+  no new privacy question, and it is a strictly better empty state than blank.
+- **A directory of everyone is a different feature with a different answer owed.** Offering every
+  account in the school before a single character is typed is a disclosure decision, not a layout
+  one, and it is not what this entry proposes.
+
+**Also worth a look in the same pass**: the primary action sits directly under the field with the
+dead space BELOW it, so on a full-height panel the button floats mid-screen. If the panel gains a
+list, the button belongs at the bottom edge of the panel instead.
+
+**Blocked on nothing** - local estate, and the shape is a decision rather than a measurement.
+
+---
 ### P3 - `cleanup.mjs` sweeps groups but not the delivery queue, and 13 275 rows have accumulated (measured 2026-09-08)
 
 ```
