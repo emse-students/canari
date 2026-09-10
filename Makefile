@@ -350,6 +350,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/declared-duplicates.test.mjs
 	@bun .github/scripts/tests/recipe-covers-tests.test.mjs
 	@bun .github/scripts/tests/shellcheck-scope.test.mjs
+	@bun .github/scripts/tests/claude-md-cap.test.mjs
 	@bash .github/scripts/tests/android-unit-tests.test.sh
 	@bun tools/app-store/submit.test.mjs
 	@bun tools/store-divergence/divergence.test.mjs
