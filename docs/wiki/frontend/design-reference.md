@@ -937,9 +937,9 @@ tiles**, roughly double Amazon's dominant 205.
 | 1920px | 4 x **388px** | 6 x **253px** |
 
 All three pages measure identically, which is the property that was missing. `cardGrid.test.ts`
-asserts there is exactly one such wall in the routes, and it matches **the ladder** (`sm:grid-cols-2
-lg:grid-cols-3`) rather than any `gap-4` grid: a first draft caught `/calendar`'s start/end datetime
-pair, which is a FORM ROW and correctly a fixed count, because two inputs do not re-flow into three.
+asserts every card wall uses the constant - **by naming `CardTile` rather than by matching classes**,
+and §17.7 is the story of why the first version of that guard, which matched the ladder
+`sm:grid-cols-2 lg:grid-cols-3`, missed four walls including the one the user reported next.
 
 `auto-fill` and not `auto-fit`: `auto-fit` collapses the empty tracks and stretches the survivors,
 so a section holding one association would draw a single card 1600px wide. Every one of these
@@ -988,3 +988,54 @@ answers, the pages render, and every measurement is of the old build. Rebuild bo
 and `nginx`, and always through the Makefile's env file: `docker compose` without
 `--env-file infrastructure/.env` starts garage with a blank RPC secret and takes half the estate
 down with it.
+
+### 17.7 The seventh wall, and a guard narrowed to the shape of the defect it already knew
+
+The sweep of 17.3 shipped, and the user came back the same evening with a screenshot: *"Les tiles
+de /shop m'ont l'air tres large toujours."* They were. Two partnership tiles, **660px each at a
+1384px window**, against the 205px Amazon tile the sweep had measured against.
+
+**The wall was real and the guard reported the tree clean.** `PartnershipCardList.svelte` carried
+`grid gap-4 sm:grid-cols-2`, and it escaped `cardGrid.test.ts` twice over, for two independent
+reasons - either one alone would have been enough:
+
+1. **The walk covered `src/routes` only.** This wall lives in `src/lib/components/shop/`, where the
+   scan never went. Three more were found there once looked for.
+2. **The pattern demanded the full ladder** `sm:grid-cols-2 lg:grid-cols-3`. This wall stops
+   climbing at two columns, so it never matched.
+
+The second reason is the instructive one, because it was **deliberate**. A first draft had matched
+any `sm:grid-cols-2` and caught `/calendar`'s start/end datetime pair - a form row, correctly a
+fixed count, because two inputs do not re-flow into three. The response was to narrow the pattern
+to the ladder the six known copies happened to share. **That reasoned about the false positive and
+threw away the true positive hiding behind it**: the guard was left describing the copies it was
+written against rather than the rule it was meant to hold.
+
+**So the rewrite names the thing instead of the styling.** `CardTile` IS the card, and a grid that
+renders one is a card wall by construction - a fact no re-typing of classes can disguise. Measured
+against the population before being believed, per the standing rule: a draft matching any grid
+above an `{#each}` accused **21** places - a PIN keypad at 3 columns, a month at 7, a colour
+palette at 5, a photo mosaic at 2 - every one a fixed count that IS the design and must never
+re-flow. **None of them renders a `CardTile`, and that is the entire difference.**
+
+Four walls were repaired: `PartnershipCardList`, `AssociationDetailView`'s products, and the
+`EditBoutiqueTab` / `EditPartnershipsTab` edit grids. Measured on the compiled stylesheet:
+
+| Window | Was (`sm:grid-cols-2`) | Now (`CARD_GRID`) |
+| --- | --- | --- |
+| 1384px (the user's) | 2 x **660px** | 5 x **254px** |
+| 1600px | 2 x 768px | 6 x 245px |
+| 1920px | 2 x 792px | 6 x **253px** |
+
+The 253px at 1920 is the same figure 17.3 records for the other three pages, which is the property
+that was missing. **`auto-fill` earns its keep here specifically**: the screenshot showed a section
+holding exactly TWO cards, and `auto-fit` would have collapsed the empty tracks and stretched those
+two back to 660px each - the defect restored by the fix.
+
+**Two things the rewrite is careful about.** The guard now carries a second assertion that it
+FINDS the walls it checks, and that assertion failed on its own first run: the pattern was
+case-sensitive, every repaired wall spells `{CARD_GRID}` in upper case, so it matched zero grids
+and the offender check passed vacuously - the exact failure of its predecessor, reproduced within
+minutes. And its floor is **five, measured**, not the seven a first draft guessed from the "six
+copies" story: six files render `CardTile`, five in a wall, and `CardIconEditor` draws one tile as
+a preview of an icon being chosen, which is correctly not a grid at all.
