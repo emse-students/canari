@@ -211,7 +211,7 @@
   }
 </script>
 
-<PageContainer wide={!fromPostComposer}>
+<PageContainer width={fromPostComposer ? 'reading' : 'tool'}>
   <PageHeader
     title={m.form_create_heading()}
     subtitle={m.form_create_subtitle()}

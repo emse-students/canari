@@ -149,7 +149,7 @@
   );
 </script>
 
-<PageContainer wide>
+<PageContainer width="tool">
   <PageHeader title={m.calendar_export_title()} {backHref} backLabel={m.calendar_export_back()} />
 
   <div class="space-y-6">

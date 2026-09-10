@@ -155,7 +155,7 @@
   }
 </script>
 
-<PageContainer>
+<PageContainer width="grid">
   <PageHeader title={m.shop_heading()} subtitle={m.shop_subtitle()} />
 
   <div class="space-y-8">
@@ -235,7 +235,7 @@
                 </div>
 
                 <!-- Products grid -->
-                <div class="grid gap-4 sm:grid-cols-2">
+                <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                   {#each assocProducts as product (product.id)}
                     {@const sibling = upgradeSibling(product, assocProducts)}
                     {@const memberEligible = qualifiesForMemberPrice(product, assocProducts)}

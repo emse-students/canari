@@ -45,6 +45,26 @@ Deletion also leaves a trace now. It had none, which was survivable while one pe
 it: the server counts the members and events it is about to destroy, records them and names the
 caller, before destroying anything.
 
+### Changed - the agenda, the associations, the lists and the boutique now use the screen
+
+Reported by the user on 2026-09-09: *"les pages web n'exploitent pas du tout la largeur de l'ecran...
+tout est serre au milieu, on pourrait prendre plus de place !"*, naming the associations page and
+the agenda.
+
+Every page shared one column sized for READING - 680px, the feed's width, chosen so a line of text
+does not run too long. That is the right rule for a post, a profile or the notification list, and
+the wrong one for a wall of cards, where narrowing the container shortens nothing and simply draws
+fewer columns. Measured across the 26 routes that use it: 22 sat at 680px, and the four that did
+not were all forms. A whole month fitted in 680 pixels, at 95 pixels a day.
+
+Pages are now one of three declared shapes rather than two. The agenda, the associations, the lists
+and the boutique take the grid shape: on a 1600px window the associations page goes from two club
+cards a row to four, and from 35% of the window to 96% of it. Each of them gained its own column
+steps, because a wider container with no steps only makes each card bigger.
+
+Deliberately unchanged: the feed, a post, a profile, the notifications, the settings and the
+directory. The directory looked like a grid from its markup and is not - the three columns are its
+filter fields, and the results below are full-width rows.
 
 ### Fixed - a community's unread badge counted UP as you scrolled back through the thread
 

@@ -66,7 +66,7 @@
   );
 </script>
 
-<PageContainer>
+<PageContainer width="grid">
   <PageHeader
     title={m.list_heading()}
     subtitle={m.list_subtitle()}
@@ -118,7 +118,7 @@
               </span>
               <span class="bg-cn-border h-px flex-1"></span>
             </h2>
-            <div class="grid gap-4 sm:grid-cols-2">
+            <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {#each shelf.items as list (list.id)}
                 <a
                   href="/lists/{list.slug}"
@@ -170,7 +170,7 @@
             {m.list_archived_heading({ count: archivedLists.length })}
           </button>
           {#if showArchived}
-            <div class="mt-3 grid gap-4 sm:grid-cols-2">
+            <div class="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {#each archivedLists as list (list.id)}
                 <a
                   href="/lists/{list.slug}"
