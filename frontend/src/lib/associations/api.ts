@@ -2111,11 +2111,20 @@ export interface CreatePartnershipCardPayload {
   sharedCode?: string;
   staticText?: string;
   membersOnly?: boolean;
+  /** Short decorative pill on the card. Settable at creation since 2026-09-10. */
+  badgeText?: string;
 }
 
-/** `claimMode` cannot be changed after creation - delete and recreate instead. */
+/**
+ * `claimMode` cannot be changed after creation - existing claims would have to be migrated, so the
+ * editor renders it read-only and says why rather than offering a control that fails.
+ *
+ * EVERYTHING ELSE THE CREATE FORM ACCEPTS IS ACCEPTED HERE. That symmetry is the contract the
+ * manage screen relies on: one form, one payload shape, and the only difference between creating
+ * and editing is which endpoint it is posted to.
+ */
 export type UpdatePartnershipCardPayload = Partial<
-  Omit<CreatePartnershipCardPayload, 'claimMode'>
+  Omit<CreatePartnershipCardPayload, 'claimMode' | 'badgeText'>
 > & {
   isActive?: boolean;
   /** Pass null to remove the badge shown on the card. */
