@@ -1,4 +1,4 @@
-import type { ExternalJoinOutcome, IMlsService } from '$lib/mls-client/IMlsService';
+import type { ExternalJoinOutcome, GroupMeta, IMlsService } from '$lib/mls-client/IMlsService';
 import { NotAGroupMemberError } from '$lib/mls-client/mlsDeliveryApi';
 import type { IStorage } from '$lib/db';
 import type { Conversation } from '$lib/types';
@@ -200,7 +200,25 @@ export async function requestReAdd(groupId: string, deps: RecoveryDeps): Promise
         : ` (not ready for ${formatWaitedFor(now - notReadySince)})`)
   );
 
-  const meta = await deps.mlsService.getGroupMeta(groupId).catch(() => null);
+  // AN EXPLICIT TRY RATHER THAN `.catch(() => null)`, FOR TWO REASONS AND BOTH ARE RULES HERE.
+  //
+  // EVERY SWALLOWED BRANCH LOGS. The old form turned a throw into a value and said nothing about
+  // it; the line below reports the OUTCOME (`null`) and the outcome is deliberately ambiguous -
+  // absent group and network error both land on it, which `getGroupServerStatus` then separates.
+  // What was lost was the CAUSE, and that is not recoverable anywhere downstream.
+  //
+  // AND THE NULL IS NOW VISIBLE. `.catch(() => null)` widens the awaited type in a way a static
+  // analyser does not follow: the comparison below was reported as `'meta' cannot be of type
+  // null, but it is compared to an expression of type null` - a correct reading of what it could
+  // see, about a comparison that is the whole point of the next twenty lines.
+  let meta: GroupMeta | null = null;
+  try {
+    meta = await deps.mlsService.getGroupMeta(groupId);
+  } catch (error) {
+    deps.log(
+      `[READD] ${groupId.slice(0, 8)}... getGroupMeta threw: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
   deps.log(`[READD] ${groupId.slice(0, 8)}... getGroupMeta -> ${meta === null ? 'null' : 'ok'}`);
 
   // No server metadata: `getGroupMeta` returns null for both absent groups and network errors, so

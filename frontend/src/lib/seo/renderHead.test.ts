@@ -111,7 +111,13 @@ describe('renderSeoTags structured data and the client payload', () => {
     );
 
     expect(html).not.toContain('</script><img');
-    expect(html).toContain('\u003c/script');
+    // `String.raw` IS THE POINT, and without it this line asserted nothing. JS reads
+    // `\u003c` inside a string literal as the CHARACTER `<`, so this asked whether the output
+    // contains `</script` - which every page does, its own closing tag being right there. What
+    // `serializeJsonLd` emits is the six-character SEQUENCE, and only the raw form asks for it.
+    // Verified by mutation: with the escaping removed from `serializeJsonLd` this line fails,
+    // where before only the assertion above did.
+    expect(html).toContain(String.raw`\u003c/script`);
   });
 
   it('carries the resolved metadata for the client to adopt, keyed by the REQUESTED path', () => {
@@ -122,7 +128,11 @@ describe('renderSeoTags structured data and the client payload', () => {
     expect(html).toContain('id="canari-seo-data"');
     const payload = html.match(/id="canari-seo-data" data-canari-seo>(.*?)<\/script>/)?.[1];
     expect(payload).toBeDefined();
-    const parsed = JSON.parse(payload!.replace(/\u003c/g, '<').replace(/\u0026/g, '&')) as {
+    // NO UN-ESCAPING PASS HERE, AND THERE NEVER SHOULD HAVE BEEN ONE. It read
+    // `.replace(/\u003c/g, '<')`, which in a regex literal is `<` - so it replaced `<` with
+    // `<` and did nothing at all. It was also unnecessary: `\u003c` is a JSON string escape,
+    // and `JSON.parse` decodes it. That is what makes the serializer's escaping safe to apply.
+    const parsed = JSON.parse(payload!) as {
       path: string;
       meta: SeoMeta;
     };

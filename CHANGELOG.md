@@ -33,6 +33,30 @@ codes is the next thing in the same place.
 The one field that still cannot change is HOW an offer is claimed, because codes people already
 took could not be carried across. Rather than hiding it, the form shows it with the reason and
 says what to do instead.
+### Fixed - four things the security scanner was right about
+
+Internal. A static analyser had nineteen open findings against this code. Nine were about the
+current tree and four of those were real, in the sense that the code did something other than what
+it looked like it did:
+
+- **A test that checked nothing.** Two lines meant to verify that page metadata cannot break out of
+  the script tag it is embedded in were written in a way the language reads differently from how
+  they read to a person, so one of them asked whether a page contains a closing tag - which every
+  page does - and the other performed a substitution of a character for itself. The protection
+  itself was always correct and is guarded elsewhere; what was missing was the assertion these two
+  lines appeared to be making. Both now fail if the protection is removed, verified by removing it.
+- **A form submission could name fields that do not exist.** Answers arrive keyed by question, and
+  the keys are whatever the sender writes. A handful of key names are special to the language and
+  reach shared machinery rather than the map they were meant for. The map has no such machinery now.
+- **A retry loop counted its own attempts twice**, from the same list, in two places kept in
+  agreement only by both being written correctly. It reads the list once.
+- **A file upload asked whether a session existed and then acted on the answer**, which is two
+  moments where one will do. One question now answers both, and the chunked-upload path has tests
+  for the first time - covering the checks that keep an uploader from choosing where their bytes
+  land.
+
+One of them also restored a rule this project holds everywhere else: a failure that is turned into
+a value now says so in the log, instead of disappearing.
 
 
 ### Added - the phone app's Rust dependencies get updated again

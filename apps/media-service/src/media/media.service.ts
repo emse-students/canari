@@ -2,6 +2,7 @@ import { Injectable, Logger, BadRequestException, PayloadTooLargeException } fro
 import { StorageService } from './storage.service';
 import { v4 as uuidv4 } from 'uuid';
 import * as fs from 'fs-extra';
+import type { Stats } from 'node:fs';
 import * as path from 'path';
 import { Readable } from 'stream';
 
@@ -415,11 +416,25 @@ export class MediaService {
     // Serialize concurrent chunk writes for the same uploadId to prevent TOCTOU race conditions.
     await this.withUploadLock(uploadId, async () => {
       const tempFile = this.chunkTempPath(uploadId);
-      if (!(await fs.pathExists(tempFile))) {
+
+      // ONE SYSCALL ANSWERS BOTH QUESTIONS, and that is why `pathExists` is gone. It used to ask
+      // "does this exist", then `stat` asked "how big is it" - a check followed by an act on the
+      // strength of it, which is the classic time-of-check/time-of-use pair whatever happens in
+      // between. The lock above serialises this process's own writers for one uploadId; it says
+      // nothing about the sweeper that removes expired sessions, or about anything else on the
+      // volume. `stat` reports absence by throwing, so asking it first collapses the two steps
+      // into the one that has to succeed anyway.
+      // `Stats` BY NAME, and not `Awaited<ReturnType<typeof fs.stat>>`: `fs-extra` overloads
+      // `stat` with a callback form whose return type is `void`, so the inferred version
+      // resolves to `void` and every read off it fails to compile. `nest build` caught it;
+      // `bun test` did not, because it does not typecheck.
+      let stat: Stats;
+      try {
+        stat = await fs.stat(tempFile);
+      } catch {
         throw new Error('Upload session not found or expired');
       }
 
-      const stat = await fs.stat(tempFile);
       if (stat.size + chunk.length > maxBytes) {
         await fs.remove(tempFile);
         throw new PayloadTooLargeException('Chunked upload exceeds 100 MB policy');

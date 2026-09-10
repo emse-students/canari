@@ -617,7 +617,13 @@ export class FormsService {
 
     // Answers as option-id lists, which is what every criterion reads. A free-text answer is not a
     // criterion input, so it contributes nothing here and keeps its place in `input.answers`.
-    const selections: Record<string, string[]> = {};
+    // `Object.create(null)` RATHER THAN `{}`, AND THE KEYS ARE THE REASON. Every key here comes
+    // straight off the request body, so `__proto__` - or `constructor`, or `toString` - is a key a
+    // submitter can choose. Assigning one on an ordinary object literal does not create an own
+    // property: it walks into `Object.prototype`, and every later read of this map answers from
+    // somewhere the caller never wrote. A prototype-less map has nothing to walk into, so a
+    // hostile key is just a key.
+    const selections: Record<string, string[]> = Object.create(null) as Record<string, string[]>;
     for (const [key, value] of Object.entries(input.answers ?? {})) {
       selections[key] = Array.isArray(value) ? (value as string[]) : [String(value)];
     }
