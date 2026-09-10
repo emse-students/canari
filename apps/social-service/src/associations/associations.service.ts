@@ -23,6 +23,7 @@ import {
 } from './entities/association-member.entity';
 import { AssociationDocument } from './entities/association-document.entity';
 import { DocumentReviewerGrant } from './entities/document-reviewer-grant.entity';
+import { isPasswordProtected, parseVaultMarkers } from './vault-markers.util';
 import { AssociationProduct } from './entities/association-product.entity';
 import {
   AssociationCalendarEvent,
@@ -1912,9 +1913,11 @@ ${rejectionReason}`
 
   /**
    * Renames a document's display name and/or changes its visibility (private/public).
-   * A password-protected document (has a `[pw:…]` marker) can never be made public:
-   * the server lacks the password, so a reviewer could not derive its CEK. Requires
-   * MANAGE_DOCUMENTS (enforced by the controller guard).
+   * A password-protected document can never be made public: the server lacks the password,
+   * so a reviewer could not derive its CEK. Requires MANAGE_DOCUMENTS (enforced by the
+   * controller guard). The UI also disables the toggle, but this is the enforcement - and it
+   * was dead between 2026-07-24 and 2026-09-10, when the predicate read only the marker
+   * syntax the client had stopped writing (`vault-markers.util.ts`).
    */
   async updateDocument(associationId: string, docId: string, dto: UpdateAssociationDocumentDto) {
     await this.findById(associationId);
@@ -1941,7 +1944,7 @@ ${rejectionReason}`
     }
 
     if (dto.visibility !== undefined) {
-      if (dto.visibility === 'public' && this.hasPasswordMarker(doc.description)) {
+      if (dto.visibility === 'public' && isPasswordProtected(doc.description)) {
         throw new BadRequestException('A password-protected document cannot be made public');
       }
       patch.visibility = dto.visibility;
@@ -1958,16 +1961,6 @@ ${rejectionReason}`
   }
 
   // ── Document reviewers (cross-association public-document access) ────────────
-
-  /** True when a `[pw:<hex>]` password-protection marker is present. */
-  private hasPasswordMarker(description: string | null): boolean {
-    return /\[pw:[0-9a-f]+\]/.test(description ?? '');
-  }
-
-  /** Extracts the CEK salt from a leading `[s:<salt>]` marker, or null when absent. */
-  private parseCekSalt(description: string | null): string | null {
-    return description?.match(/^\[s:([^\]]+)\]/)?.[1] ?? null;
-  }
 
   /**
    * Server-side mirror of the client's `deriveDocumentCek`: derives the 32-byte
@@ -2050,11 +2043,32 @@ ${rejectionReason}`
     const groups = new Map<string, ReviewerDocumentGroup>();
 
     for (const doc of docs) {
+      // Every branch below withholds a document its association deliberately marked public, so
+      // every one of them ACCUSES. Until 2026-09-10 they were silent `continue`s, and the whole
+      // production population (3 of 3 public documents) fell through the salt branch for seven
+      // weeks with an empty page as the only symptom.
       const asso = assoById.get(doc.associationId);
-      if (!asso?.documentVaultKey) continue;
-      const cekSalt = this.parseCekSalt(doc.description);
-      // Defensive: a public doc should never be password-protected, but skip if so.
-      if (!cekSalt || this.hasPasswordMarker(doc.description)) continue;
+      if (!asso?.documentVaultKey) {
+        this.logger.warn(
+          `Public document ${sanitizeLog(doc.id)} withheld from reviewers: association ${sanitizeLog(doc.associationId)} has no vault key`
+        );
+        continue;
+      }
+      const { cekSalt, pwSalt } = parseVaultMarkers(doc.description);
+      if (!cekSalt) {
+        this.logger.warn(
+          `Public document ${sanitizeLog(doc.id)} withheld from reviewers: no CEK salt marker in its description, so no key can be derived - check that the client's marker format still matches vault-markers.util.ts`
+        );
+        continue;
+      }
+      // Defensive: `updateDocument` refuses to make a password-protected document public, so
+      // reaching this means a row predates that guard or was written around it.
+      if (pwSalt) {
+        this.logger.warn(
+          `Public document ${sanitizeLog(doc.id)} withheld from reviewers: it is password-protected, so its CEK cannot be derived server-side`
+        );
+        continue;
+      }
 
       if (!groups.has(asso.id)) {
         groups.set(asso.id, {

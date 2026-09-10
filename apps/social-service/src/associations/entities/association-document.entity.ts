@@ -10,7 +10,10 @@ import {
 /**
  * Metadata record for a document stored in an association's encrypted vault.
  * The actual bytes are stored as an opaque encrypted blob in media-service.
- * The CEK is derived client-side via HKDF(vaultKey, salt=id, info="doc-vault").
+ * The CEK is derived via HKDF(vaultKey, salt=<the per-document salt>, info="doc-vault") - the
+ * salt is a random UUID the client generates at upload and stores in `description` as a marker,
+ * NOT this row's `id`, which is not yet known when the file is encrypted. `vault-markers.util.ts`
+ * is what reads it back.
  */
 @Entity('association_documents')
 export class AssociationDocument {
