@@ -2,6 +2,13 @@
 export interface KeyPackageMinter {
   generate_last_resort_key_package(): Uint8Array;
   generate_key_packages(count: number): unknown;
+  /**
+   * The last-resort package the device already holds, or `undefined` if it must mint one.
+   *
+   * Optional so a caller that predates the reuse still type-checks and simply mints, which is the
+   * old behaviour rather than a broken one.
+   */
+  existing_last_resort_key_package?(nowSecs: number): Uint8Array | null | undefined;
 }
 
 /** A device's published key material: one reusable fallback plus the one-time pool. */
@@ -23,7 +30,21 @@ export interface MintedKeyPackages {
  * path); a fifth would have been one more chance to mint the wrong kind.
  */
 export function mintKeyPackages(client: KeyPackageMinter, needed: number): MintedKeyPackages {
-  const fallback = client.generate_last_resort_key_package();
+  // REPUBLISHED IF HELD, MINTED ONLY IF NOT - and the old unconditional mint was the second half of
+  // the key-package leak. The pool beside it has always been incremental (`needed = 50 - existing`,
+  // so nothing is minted when the pool is full) while the fallback was reminted on EVERY
+  // connection, each one writing a ~2 364-byte bundle nothing deletes for 84 days to replace a
+  // package that was still perfectly good. Reuse is the entire meaning of the extension: it is why
+  // the delivery service can serve one package to every peer that finds the pool empty. Measured on
+  // a Mi 9T on 2026-09-09: 269 last-resort bundles, 9% of a 3051-bundle keystore.
+  //
+  // Rotation becomes the package's own lifetime - the query returns nothing once none is valid -
+  // so every 84 days instead of every time the socket comes back.
+  //
+  // The clock is read HERE and passed in, never inside the WASM crate: `SystemTime::now()` panics
+  // on wasm32 and took every web login down in v0.16.4.
+  const held = client.existing_last_resort_key_package?.(Math.floor(Date.now() / 1000));
+  const fallback = held ?? client.generate_last_resort_key_package();
   const poolPackages =
     needed > 0 ? [...(client.generate_key_packages(needed) as Iterable<Uint8Array>)] : [];
   return { fallback, poolPackages };

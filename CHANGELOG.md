@@ -96,6 +96,62 @@ steps, because a wider container with no steps only makes each card bigger.
 Deliberately unchanged: the feed, a post, a profile, the notifications, the settings and the
 directory. The directory looked like a grid from its markup and is not - the three columns are its
 filter fields, and the results below are full-width rows.
+### Fixed - a purge emptied the server and left the device holding the whole pool, and the reusable fallback was reminted on every connection
+
+Two thirds of a phone's MLS state was key material for a pool the protocol sizes at fifty, and the
+count alone named no remedy - so the first commit of this pair added the instrument. Measured on the
+Mi 9T, 2026-09-09:
+
+```
+load_or_create: state composition - 10676363B total; KeyPackage 3051x7214310B, Tree 5x1704647B, ...
+load_or_create: key package census - 3051 proven (2782 one-time, 269 last-resort);
+                0 expired, 0 undecodable; 528 mint instant(s), largest batch 51
+```
+
+`KeyPackage 3051x` is at least three debts stacked, and they are not reclaimed by the same thing.
+Reading it as one number is what sent two earlier investigations after the wrong mechanism; the
+census separates them, and `mint_instants` / `largest_batch` tell a wholesale remint from an
+incremental top-up without asking the server anything.
+
+**The one-time half, 2782 bundles, about fifty-six rounds.** `republishKeyMaterial` deletes every
+published prekey and mints up to fifty more, once per 30 s during a `NoMatchingKeyPackage` storm.
+The server end was complete; the local end never existed, so each round orphaned fifty private
+bundles for the 84 days until their lifetimes elapsed.
+
+**The device cannot work the set out for itself, which is why scanning was never the fix.** The
+delivery service DELETES a prekey row as it hands it out, so "absent from the server" means either
+"a peer is about to send the Welcome built on it" or "its owner revoked it" - opposite treatments,
+and guessing loses a join. A row the PURGE deletes is unambiguous: it was still in the pool, and
+being in the pool is the same as never having been handed out. So `DELETE /prekeys` now reports what
+it removed, in ONE `DELETE ... RETURNING` rather than a select and a delete - the two-statement
+version would let a peer claim a prekey in between and have it reported as purged, costing the one
+private bundle that Welcome needs. `forget_key_packages` takes that list and never derives one.
+
+**The fallback half, 269 bundles.** It was minted on EVERY connection while the pool beside it has
+always been incremental. Reuse is the entire meaning of the last-resort extension - it is why the
+server can serve one package to every peer that finds the pool empty - so this replaced a package
+that was still perfectly good, once per socket. Rotation is now the package's own lifetime.
+
+Verified on hardware across two app processes, which is the half that can be observed without a
+storm:
+
+```
+08:49:19  pid 19179  census - 3053 proven (2782 one-time, 271 last-resort)
+08:49:20  pid 19179  republishing the held last-resort
+08:50:10  pid 19762  census - 3053 proven (2782 one-time, 271 last-resort)
+08:50:22  pid 19762  republishing the held last-resort
+```
+
+Two connections, no mint, the count unmoved. Under the old build each of those added one.
+
+Also fixed: `deleteAllOneTimePrekeys` no longer swallows its failure into `.catch(() => {})`. A
+purge that never reached the server was indistinguishable from one that emptied the pool, and the
+caller went on to mint fifty more against a pool it had not cleared.
+
+**What this does NOT do, stated because the queue depends on it.** The 3053 bundles already written
+are not reclaimed and cannot safely be: the server has no record of them at all, so nothing can
+prove they were never handed out. They expire 84 days after minting - `0 expired` on the day of
+measurement - so the debt drains from late October. This stops it growing; it does not repay it.
 
 ### Fixed - a community's unread badge counted UP as you scrolled back through the thread
 

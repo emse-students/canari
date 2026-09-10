@@ -2007,7 +2007,8 @@ export abstract class BaseMlsService implements IMlsService {
     const now = Date.now();
     if (now - this.lastKeyMaterialRepublish < 30_000) return;
     this.lastKeyMaterialRepublish = now;
-    await this.delivery.deleteAllOneTimePrekeys();
+    const purged = await this.delivery.deleteAllOneTimePrekeys();
+    await this.forgetPurgedPrekeys(purged);
     await this.generateKeyPackage(deviceKeyB64);
   }
 
@@ -2074,6 +2075,46 @@ export abstract class BaseMlsService implements IMlsService {
 
   /** True if the local keystore still holds the private key for the given public KeyPackage. */
   protected abstract keyPackageHasPrivate(keyPackageBytes: Uint8Array): Promise<boolean>;
+
+  /**
+   * Drops the local private bundles for key packages the SERVER HAS CONFIRMED IT DELETED.
+   *
+   * Never called with a set this client worked out for itself - see
+   * {@link forgetPurgedPrekeys} for why that distinction is the whole safety argument.
+   */
+  protected abstract forgetKeyPackages(publicKeyPackages: Uint8Array[]): Promise<number>;
+
+  /**
+   * COMPLETES A PURGE, which emptied the server and left the device holding the whole pool.
+   *
+   * Publishing a prekey writes a private bundle locally, and nothing ever deleted one: for the
+   * life of an install, every purge/remint round orphaned fifty bundles of ~2 364 bytes until
+   * their 84-day lifetimes elapsed. Measured on a Mi 9T on 2026-09-09 - 2782 one-time bundles
+   * against a pool of fifty, two thirds of a 10.7 MB state, none of it yet expired.
+   *
+   * THE LIST MUST COME FROM THE SERVER AND MAY NEVER BE DERIVED HERE. A row the purge deleted was
+   * still in the pool, and being in the pool is the same as never having been handed out - the
+   * hand-out is what removes it. A row absent for any other reason may be absent precisely
+   * because a peer is about to send the Welcome built on it, and forgetting that bundle loses the
+   * join. So this takes what `deleteAllOneTimePrekeys` reported and nothing else.
+   *
+   * Best-effort by design: it runs behind a purge that already succeeded, and a device that could
+   * not shed a stale bundle still works. The failure is logged rather than swallowed, because an
+   * unreclaimed pool is the leak coming back and nothing else would say so.
+   */
+  protected async forgetPurgedPrekeys(purged: string[]): Promise<void> {
+    if (purged.length === 0) return;
+    try {
+      const bytes = purged.map((b64) => fromBase64(b64));
+      const forgotten = await this.forgetKeyPackages(bytes);
+      console.log(`[MLS] purge reclaimed ${forgotten}/${purged.length} local prekey bundle(s)`);
+    } catch (e) {
+      console.warn(
+        '[MLS] could not forget purged prekey bundles; the local pool stays until it expires:',
+        String(e).slice(0, 200)
+      );
+    }
+  }
 
   async fetchDeviceKeyPackage(
     userId: string,

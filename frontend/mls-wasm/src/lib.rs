@@ -287,11 +287,51 @@ impl WasmMlsClient {
         Ok(arr)
     }
 
+    /// The last-resort package this device already holds and can still publish, if any.
+    ///
+    /// `None` means the device must mint: nothing valid is left. The clock is a parameter because
+    /// this crate must never read one - `SystemTime::now()` panics on wasm and took every web
+    /// login down in v0.16.4.
+    #[wasm_bindgen]
+    pub fn existing_last_resort_key_package(
+        &self,
+        now_secs: u64,
+    ) -> Result<Option<Vec<u8>>, JsValue> {
+        self.manager
+            .existing_last_resort_key_package(now_secs)
+            .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
     #[wasm_bindgen]
     pub fn key_package_has_private(&self, key_package_bytes: Vec<u8>) -> Result<bool, JsValue> {
         self.manager
             .key_package_has_private(&key_package_bytes)
             .map_err(|e| JsValue::from_str(&e.to_string()))
+    }
+
+    /// Drops the private bundles for key packages the SERVER reported deleting.
+    ///
+    /// The caller passes exactly what the purge returned and never a set it worked out itself -
+    /// see `MlsManager::forget_key_packages` for why that is the entire safety argument.
+    ///
+    /// @returns how many private bundles were actually found and forgotten
+    #[wasm_bindgen]
+    pub fn forget_key_packages(
+        &mut self,
+        key_packages: Vec<js_sys::Uint8Array>,
+    ) -> Result<usize, JsValue> {
+        let publics: Vec<Vec<u8>> = key_packages.iter().map(|a| a.to_vec()).collect();
+        let outcome = self
+            .manager
+            .forget_key_packages(&publics)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        log::info!(
+            "forget_key_packages: {} forgotten, {} not held, {} unreadable",
+            outcome.forgotten,
+            outcome.not_held,
+            outcome.unreadable
+        );
+        Ok(outcome.forgotten)
     }
 
     #[wasm_bindgen]

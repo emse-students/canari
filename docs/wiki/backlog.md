@@ -5671,6 +5671,60 @@ alone, so it bounds the leak at 84 days and repays none of the balance. **That i
 NOTIF-1b's warm-up at 19 992 ms, and no prekey fix will move it.** Reclaiming the store is a separate
 piece of work from stopping the churn, and only the second one is done.
 
+#### WHAT IS LEFT IS THE BALANCE: 3053 BUNDLES THAT CANNOT SAFELY BE DROPPED, DRAINING BY THEIR OWN 84-DAY LIFETIME
+
+*The blob's composition is a hypothesis until it is weighed, and no prune may be written before it
+is.* `state_composition` said `KeyPackage 3051x` and stopped there, which is the number every
+investigation so far has divided. `MlsManager::key_package_census_at` splits it, and the load-time
+log now prints it beside the composition on every device:
+
+```
+load_or_create: state composition - 10676363B total; KeyPackage 3051x7214310B, Tree 5x1704647B, MessageSecrets 5x1703382B
+load_or_create: key package census - 3051 proven (2782 one-time, 269 last-resort);
+                0 expired, 0 undecodable; 528 mint instant(s), largest batch 51
+```
+
+**Two causes, and the pool size is neither.** 2782 one-time bundles - about fifty-six purge/remint
+rounds - plus 269 last-resort, one per connection. A hypothesis that the fallback was the dominant
+cause was REFUTED by this measurement before any code was written for it: 9%, not the bulk.
+
+**Cause one, and why nobody had fixed it by scanning.** `republishKeyMaterial` purges the server and
+mints fifty; nothing local dropped the abandoned pool. The device cannot derive the dead set,
+because `resolveKeyPackagePayloadForDevice` DELETES a row as it hands it out - so "absent from the
+server" conflates "a peer is about to send the Welcome built on it" with "its owner revoked it".
+A row the PURGE deletes carries no such ambiguity: it was still in the pool, which is the same as
+never having been handed out. `DELETE /prekeys` now returns what it removed in ONE
+`DELETE ... RETURNING`, and `forget_key_packages` drops exactly that and never derives a set. The
+two-statement version was rejected on the same argument: a peer claiming a prekey between the select
+and the delete would have it reported as purged.
+
+**Cause two.** The fallback was minted unconditionally per connection while the pool beside it has
+always been incremental (`needed = 50 - existing`). Reuse is the whole meaning of the extension.
+Rotation is now the package's own lifetime.
+
+**Verified on hardware, the half observable without a storm** - two app processes, two connections:
+
+```
+08:49:19  pid 19179  census - 3053 proven (2782 one-time, 271 last-resort)
+08:49:20  pid 19179  republishing the held last-resort
+08:50:10  pid 19762  census - 3053 proven (2782 one-time, 271 last-resort)
+08:50:22  pid 19762  republishing the held last-resort
+```
+
+The count does not move. The purge-reclaim half cannot be triggered without a `NoMatchingKeyPackage`
+storm and no debug hook was added to the product to force one; it is covered by fifteen tests across
+the three layers, including the one that proves a HANDED-OUT bundle survives a purge that did not
+name it.
+
+**WHAT IS STILL OWED, AND IT IS THE REASON NOTIF-1b IS STILL BLOCKED.** The 3053 bundles already
+written are NOT reclaimed and cannot safely be: the server has no record of them at all, so nothing
+can prove they were never handed out, and a rule that guessed would delete the bundle a pending
+Welcome needs. `0 expired` on the day of measurement means the whole balance still has time to run -
+84 days from minting, so it drains from **late October 2026**. Two ways to shorten that, neither
+taken: a server-side claim record (which would only help bundles minted after it exists), or a
+deliberate horizon prune on the test fixture, which is an operator decision about a device holding
+real groups and is owed to the USER rather than taken here.
+
 #### THE POPULATION WAS MEASURED ON 2026-09-07, AND IT REFUTES HALF OF THE HEADLINE ABOVE
 
 *A predicate that named the last incident is not the predicate that names the next one.* The claim
