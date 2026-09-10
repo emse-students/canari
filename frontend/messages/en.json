@@ -2246,6 +2246,7 @@
       }
     }
   ],
+  "calendar_month_grid_label": "Month calendar",
   "calendar_export_month_label": "Month",
   "calendar_export_theme_label": "Theme",
   "calendar_theme_rentree": "Back to school",

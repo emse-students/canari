@@ -1083,9 +1083,59 @@ nothing else needs to move.
 **One defect fell out of the narrower cell, and it was always there.** On a day whose first event
 carries a long title, the centred title ran straight over the absolutely-positioned day number in
 the corner - "29" rendered as "2". At 182px cells `px-3` left enough slack that the two never met.
-The first slot now reserves `px-5`, symmetric so the title stays centred rather than drifting.
 **This is 17.4's lesson a second time: a layout bug that only appears at a narrower size was
-already there**, held out of sight by a container wide enough to hide it.
+already there**, held out of sight by a container wide enough to hide it. What it took to actually
+close it is 17.9.
+
+### 17.9 The month grew, took the sheet's title, and the day number stopped being overrun twice
+
+**The ask, verbatim** (user, 2026-09-10): *"Tu peux afficher plus grand (en hauteur) le calendrier,
+et mettre le titre 'Septembre'... En fait tout comme l'export PDF, qui est tres bien, bien
+lisible."* So the reference for this section is not Google or Facebook - it is `/calendar/export`,
+which is the version of this same calendar the user already finds comfortable.
+
+**The sheet's geometry, from `lib/utils/calendarExport.ts`**, which is an HTML-string generator for
+a fixed 1080x764 A4-landscape page rather than a component: `HEADER_H = 88`, `WEEKDAY_ROW_H = 40`,
+`CELL_H = floor((764 - 88 - 40 - 20) / nRows)` = **123px for a 5-row month against a 154px cell
+width**, the month title 30px Fredoka centred in the header, and the first event slot a flex
+column - **day number in its own 20px row, title centred below it**.
+
+| | Was | Now | The sheet |
+| --- | --- | --- | --- |
+| month title | none on the grid | **"Septembre"**, 28px Fredoka | 30px Fredoka |
+| day cell | 127 x **100** | 127 x **128** | 154 x 123 |
+| whole card | 620px tall | **748px** | 764px |
+
+Measured at the user's 1440x950 window, September 2026 (5 rows).
+
+**Three things were copied and one was deliberately not.** Copied: the title band, the cell height,
+and the first slot's flex column. Not copied: the sheet's 9px font floor. `app.css` states that
+`--text-2xs` is 12px and that "nothing goes below this", 9px being "the single largest contributor
+to *pas assez ergonomique*". So `fitEventText` gained a `minFontSize` parameter defaulting to 9 -
+the sheet's behaviour byte-for-byte - and the screen passes 12. At that floor the ladder can only
+land on 12 or 13, which are exactly `--text-2xs` and `--text-xs`: **the screen never leaves the
+scale**, and the component emits the token rather than the number so it cannot drift off it.
+
+**The "29" defect took two fixes, and the first one is the interesting failure.** 17.8 reserved
+`px-5` on the first slot. That treats the symptom as horizontal, and it is not. A day with THREE
+events splits a 128px cell into 42px slots; the number takes 20; a title clamped to two lines wants
+`2 x 12 x 1.25 = 30px` in the 22px that remain, so the centred span overflowed its row in both
+directions and painted over the number again - visibly, on the 29th, in the screenshot taken to
+confirm the first fix. **`line-clamp-2` was a guess about how much room a slot has.** The fix is
+not a bigger inset but the sheet's own two answers: a row the title cannot enter, and a clamp
+computed from the height rather than written down. `fitEventText` is now exported and called by
+both, so the screen and the sheet cannot disagree about what fits.
+
+**One number, one statement.** The cell height is an inline `min-height:{CELL_H}px`, not a
+`min-h-32` utility, because the slot arithmetic needs the same figure: a class and a constant would
+be two statements of one fact, and a drift between them shows up only as titles that no longer fit
+boxes they were sized for. There is also no breakpoint on it - `MonthCalendarGridRich` renders only
+above `SCHEDULE_AGENDA_QUERY` (767.98px), so the `sm:` variant the cells used to carry could never
+not apply.
+
+**What guards it**: four tests on `fitEventText` in `calendarExport.test.ts` - the sheet still gets
+its 9px floor, the screen never goes below 12, the day-29 case resolves to one line, and across
+every height from 4 to 200px at both floors the clamp never asks for more height than it has.
 
 **The controls became snippets, and not to save typing.** They have two homes now - the phone's
 bar and the desktop's rail - and the phone's branch is byte-for-byte what it was. Copying them
