@@ -31,8 +31,14 @@ export function normalizedAspectRatio(
  * rather than the card because that is the thing the reader has to scroll past. `--media-max-height`
  * carries it and the reasoning; the literal here is only what applies if the stylesheet is missing.
  *
- * Past the ceiling the media is CROPPED, not shrunk - the box keeps the full width and the picture
- * keeps its scale, and the whole frame is one tap away in the viewer.
+ * PAST THE CEILING THE BOX IS SHORTER THAN THE SHAPE IT RESERVED, AND WHAT HAPPENS TO THE
+ * REMAINDER IS THE CALLER'S TO DECIDE - this function states the box and nothing else. A grid cell
+ * crops, because its square shape IS the point. A single attachment letterboxes instead
+ * (`PostMedia`'s `letterbox`), because there the picture is the point: `object-cover` used to
+ * absorb the difference by cutting the top and the bottom off, and an A4 poster - 21 x 29.7, ratio
+ * 0.707, which is what an association actually posts - lost 44% of itself in a 680px column on a
+ * 900px-tall window, starting with the band at the bottom carrying the date and the place.
+ * Anything squarer than 5:4 was cropped (user, 2026-09-10: *"on manque de l'information"*).
  */
 export function mediaAspectStyle(
   width?: number,

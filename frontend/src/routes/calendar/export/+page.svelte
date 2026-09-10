@@ -149,11 +149,28 @@
   );
 </script>
 
-<PageContainer width="tool">
+<!-- `grid` AND NOT `tool`, because what this page is mostly showing is A MONTH - the case
+     `pageWidth.ts` names for that value, and the width `/calendar` itself already takes. The
+     preview is a 1080px PDF page: at the 1024px tool measure its column was 616px and the month
+     was rendered at 57%, which is a thumbnail of the thing the page exists to let you check. -->
+<PageContainer width="grid">
   <PageHeader title={m.calendar_export_title()} {backHref} backLabel={m.calendar_export_back()} />
 
   <div class="space-y-6">
-    <div class="grid grid-cols-1 items-start gap-6 lg:grid-cols-[360px_1fr]">
+    <!-- `minmax(0,1fr)` AND NOT `1fr`, WHICH IS THE WHOLE OF THE OVERFLOW BUG (user, 2026-09-10:
+         *"je suis trop large (et en plus il y a une marge inutile a gauche)"*).
+         A grid track written `1fr` is `minmax(auto,1fr)`, and `auto` as a MINIMUM means the track
+         may not shrink below its content's min-content width. The preview's inner element is a
+         hard `width: 1080px` (`CALENDAR_CONTAINER_WIDTH`) - a PDF page is a fixed size - and the
+         `transform: scale()` that shrinks it on screen does not change its LAYOUT size, so the
+         track's floor was 1080 + the card's padding = 1114px, measured. The row therefore
+         demanded 360 + 24 + 1114 = 1498px inside a 1024px column and simply stuck out of it,
+         which is BOTH halves of the report at once: the page column is centred, so the part that
+         fits looks pushed right and leaves a margin on the left while the rest runs off the
+         right. `minmax(0,...)` says the track may be as narrow as the layout needs; the wrapper's
+         `overflow: hidden` was already there to clip what the scale leaves over, and
+         `previewScale` recomputes off `bind:clientWidth`, so the preview simply resizes. -->
+    <div class="grid grid-cols-1 items-start gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
       <!-- ── Settings panel ── -->
       <div
         class="border-cn-border bg-cn-surface space-y-5 rounded-2xl border p-5 shadow-sm lg:sticky lg:top-4"

@@ -39,8 +39,20 @@ export const PAGE_WIDTHS: Record<PageWidth, string> = {
    */
   reading: 'max-w-[42.5rem]',
   /**
-   * 1024px. An editor whose controls genuinely do not fit a reading measure - a form builder, an
-   * export table, a moderation board. Unchanged; this is the old `wide`.
+   * 1024px. AN EDITOR whose controls do not fit a reading measure - a form builder, an export
+   * table, a moderation board. This is the old `wide` and the value has not moved.
+   *
+   * THE FEED IS NOT ONE OF THEM, and that was tried and reverted on 2026-09-10. A post carrying
+   * an A4 poster - 21 x 29.7, which is what an association actually posts - does want more than
+   * 42.5rem, and the column was widened to 1024px so the picture could stand beside the text
+   * instead of being cropped. Every OTHER card inherited the width and had no use for it: a
+   * text-only post ran its paragraph to 856px, about 130 characters a line. Sizing the card per
+   * post fixed the measure and broke something worse - two card widths in one scroll, so the
+   * feed lost its single left edge and no longer lined up with its own search bar and tabs. The
+   * user settled it (*"c'est bizarre d'avoir deux tailles de posts"*): ONE width, the reading
+   * measure, and the poster is shown WHOLE under the text with the remainder filled by a
+   * blurred copy of the picture itself. A feed is a column of prose; the exception was the
+   * minority case, and it was being paid for by every post.
    */
   tool: 'max-w-5xl',
   /**

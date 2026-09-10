@@ -252,3 +252,27 @@ the two asks are one decision rather than two. See the table of what is owed to 
 [cross-client-campaign-resume](cross-client-campaign-resume.md) carries, and its E items are the
 standing bar now in `CLAUDE.md`. This was the only thing on the page that was neither done nor a
 duplicate.
+
+## Whether the three legal documents should be localized at all
+
+**Parked because it is a legal question wearing a coding rule's clothes.** This repo's standing rule
+is that every user-visible string goes through Paraglide, and the terms of use, the privacy policy
+and the child-safety standards are **~900 lines of hardcoded French** - by far the largest violation
+of it in the app. Their shell was rebuilt on 2026-09-10 and its chrome IS localized
+(`legal_eyebrow`, `legal_last_updated`, the titles, the table-of-contents heading); the bodies were
+deliberately left as they are, and not for effort.
+
+**The reason is that a translated contract is a DIFFERENT CONTRACT.** These three texts name a French
+association, a French address, the CNIL, article 33 of the RGPD and the courts of Saint-Etienne.
+Which language version governs is a thing a lawyer decides, not a translator - and shipping an
+English rendering through Paraglide would silently create a second document that a reader could
+reasonably rely on. Google Play and the App Store both take the URL rather than the text, so nothing
+in the store pipeline forces the question either.
+
+**So the question is for the USER, and it has three possible answers**: leave them French-only and
+carve them out of the Paraglide rule explicitly; translate them and state in the documents
+themselves which version governs; or serve an English *summary* that says plainly it is not the
+binding text. Only the first costs nothing.
+
+**What must NOT happen is a session "fixing the lint" by machine-translating them.** That is the
+failure mode this entry exists to prevent.

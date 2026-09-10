@@ -1,5 +1,4 @@
 <script lang="ts">
-  import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
   import {
@@ -334,581 +333,565 @@
   const resolvedReports = $derived(reports.filter((r) => r.status !== 'pending'));
 </script>
 
-<PageContainer>
-  <PageHeader title={m.moderation_title()} subtitle={m.moderation_subtitle()}>
-    {#snippet actions()}
-      <button
-        onclick={() => {
-          if (tab === 'reports') void loadReports();
-          else if (tab === 'hidden') void loadHidden();
-          else void loadMuted();
-        }}
-        disabled={loadingReports || loadingHidden || loadingMuted}
-        class="ui-icon-button border-cn-border text-text-muted hover:text-text-main rounded-xl border transition-colors disabled:opacity-40"
-        aria-label={m.moderation_refresh()}
-      >
-        <RefreshCw
-          size={18}
-          class={loadingReports || loadingHidden || loadingMuted ? 'animate-spin' : ''}
-        />
-      </button>
-    {/snippet}
-  </PageHeader>
+<PageHeader title={m.moderation_title()} subtitle={m.moderation_subtitle()}>
+  {#snippet actions()}
+    <button
+      onclick={() => {
+        if (tab === 'reports') void loadReports();
+        else if (tab === 'hidden') void loadHidden();
+        else void loadMuted();
+      }}
+      disabled={loadingReports || loadingHidden || loadingMuted}
+      class="ui-icon-button border-cn-border text-text-muted hover:text-text-main rounded-xl border transition-colors disabled:opacity-40"
+      aria-label={m.moderation_refresh()}
+    >
+      <RefreshCw
+        size={18}
+        class={loadingReports || loadingHidden || loadingMuted ? 'animate-spin' : ''}
+      />
+    </button>
+  {/snippet}
+</PageHeader>
 
-  <!-- Tabs -->
-  <div class="mb-6 flex gap-1 rounded-xl bg-black/5 p-1">
-    <button
-      onclick={() => switchTab('reports')}
-      class="flex flex-1 items-center justify-center gap-2 rounded-lg py-2 text-sm font-medium transition-colors {tab ===
-      'reports'
-        ? 'bg-cn-surface text-text-main shadow-sm'
-        : 'text-text-muted hover:text-text-main'}"
-    >
-      <Flag size={16} />
-      {m.moderation_reports_tab()}
-      {#if pendingReports.length > 0}
-        <span class="text-2xs ml-1 rounded-full bg-red-500 px-1.5 py-0.5 font-bold text-white">
-          {pendingReports.length}
-        </span>
-      {/if}
-    </button>
-    <button
-      onclick={() => switchTab('hidden')}
-      class="flex flex-1 items-center justify-center gap-2 rounded-lg py-2 text-sm font-medium transition-colors {tab ===
-      'hidden'
-        ? 'bg-cn-surface text-text-main shadow-sm'
-        : 'text-text-muted hover:text-text-main'}"
-    >
-      <EyeOff size={16} />
-      {m.moderation_hidden_tab()}
-      {#if hiddenPosts.length > 0}
-        <span class="text-2xs ml-1 rounded-full bg-orange-500 px-1.5 py-0.5 font-bold text-white">
-          {hiddenPosts.length}
-        </span>
-      {/if}
-    </button>
-    <button
-      onclick={() => switchTab('muted')}
-      class="flex flex-1 items-center justify-center gap-2 rounded-lg py-2 text-sm font-medium transition-colors {tab ===
-      'muted'
-        ? 'bg-cn-surface text-text-main shadow-sm'
-        : 'text-text-muted hover:text-text-main'}"
-    >
-      <UserX size={16} />
-      {m.moderation_muted_tab()}
-      {#if mutedUsers.length > 0}
-        <span class="text-2xs ml-1 rounded-full bg-gray-500 px-1.5 py-0.5 font-bold text-white">
-          {mutedUsers.length}
-        </span>
-      {/if}
-    </button>
+<!-- Tabs -->
+<div class="mb-6 flex gap-1 rounded-xl bg-black/5 p-1">
+  <button
+    onclick={() => switchTab('reports')}
+    class="flex flex-1 items-center justify-center gap-2 rounded-lg py-2 text-sm font-medium transition-colors {tab ===
+    'reports'
+      ? 'bg-cn-surface text-text-main shadow-sm'
+      : 'text-text-muted hover:text-text-main'}"
+  >
+    <Flag size={16} />
+    {m.moderation_reports_tab()}
+    {#if pendingReports.length > 0}
+      <span class="text-2xs ml-1 rounded-full bg-red-500 px-1.5 py-0.5 font-bold text-white">
+        {pendingReports.length}
+      </span>
+    {/if}
+  </button>
+  <button
+    onclick={() => switchTab('hidden')}
+    class="flex flex-1 items-center justify-center gap-2 rounded-lg py-2 text-sm font-medium transition-colors {tab ===
+    'hidden'
+      ? 'bg-cn-surface text-text-main shadow-sm'
+      : 'text-text-muted hover:text-text-main'}"
+  >
+    <EyeOff size={16} />
+    {m.moderation_hidden_tab()}
+    {#if hiddenPosts.length > 0}
+      <span class="text-2xs ml-1 rounded-full bg-orange-500 px-1.5 py-0.5 font-bold text-white">
+        {hiddenPosts.length}
+      </span>
+    {/if}
+  </button>
+  <button
+    onclick={() => switchTab('muted')}
+    class="flex flex-1 items-center justify-center gap-2 rounded-lg py-2 text-sm font-medium transition-colors {tab ===
+    'muted'
+      ? 'bg-cn-surface text-text-main shadow-sm'
+      : 'text-text-muted hover:text-text-main'}"
+  >
+    <UserX size={16} />
+    {m.moderation_muted_tab()}
+    {#if mutedUsers.length > 0}
+      <span class="text-2xs ml-1 rounded-full bg-gray-500 px-1.5 py-0.5 font-bold text-white">
+        {mutedUsers.length}
+      </span>
+    {/if}
+  </button>
+</div>
+
+{#if error}
+  <div class="bg-red-err/10 text-red-err border-red-err/30 mb-6 rounded-xl border p-4 text-sm">
+    {error}
   </div>
+{/if}
 
-  {#if error}
-    <div class="bg-red-err/10 text-red-err border-red-err/30 mb-6 rounded-xl border p-4 text-sm">
-      {error}
+<!-- ── Reports tab ────────────────────────────────────────────────────────── -->
+{#if tab === 'reports'}
+  {#if loadingReports}
+    <div class="space-y-3">
+      {#each { length: 3 } as _, i (i)}
+        <div class="border-cn-border bg-cn-surface animate-pulse space-y-2 rounded-2xl border p-5">
+          <div class="bg-cn-border/60 h-3 w-2/3 rounded"></div>
+          <div class="bg-cn-border/40 h-3 w-full rounded"></div>
+        </div>
+      {/each}
     </div>
-  {/if}
+  {:else if reports.length === 0}
+    <div class="text-text-muted py-16 text-center">
+      <Flag size={40} class="mx-auto mb-3 opacity-30" />
+      <p class="font-medium">{m.moderation_no_reports()}</p>
+    </div>
+  {:else}
+    <!-- Pending reports -->
+    {#if pendingReports.length > 0}
+      <h2 class="text-text-muted mb-3 text-sm font-bold tracking-wider uppercase">
+        {m.moderation_pending_header_label({ count: pendingReports.length })}
+      </h2>
+      <div class="mb-8 space-y-3">
+        {#each pendingReports as report (report.id)}
+          <div class="border-cn-border bg-cn-surface rounded-2xl border p-4 shadow-sm">
+            <!-- Header row -->
+            <div class="mb-3 flex flex-wrap items-center gap-2">
+              <span
+                class="bg-cn-border/40 text-text-muted text-2xs rounded-full px-2 py-0.5 font-bold"
+              >
+                {contentTypeLabel[report.contentType]}
+              </span>
+              <span
+                class="text-amber-warn bg-amber-warn/10 text-2xs rounded-full px-2 py-0.5 font-semibold"
+              >
+                {reasonLabel[report.reason] ?? report.reason}
+              </span>
+              <span class="text-text-muted/60 text-2xs ml-auto">{formatDate(report.createdAt)}</span
+              >
+            </div>
 
-  <!-- ── Reports tab ────────────────────────────────────────────────────────── -->
-  {#if tab === 'reports'}
-    {#if loadingReports}
-      <div class="space-y-3">
-        {#each { length: 3 } as _, i (i)}
-          <div
-            class="border-cn-border bg-cn-surface animate-pulse space-y-2 rounded-2xl border p-5"
-          >
-            <div class="bg-cn-border/60 h-3 w-2/3 rounded"></div>
-            <div class="bg-cn-border/40 h-3 w-full rounded"></div>
-          </div>
-        {/each}
-      </div>
-    {:else if reports.length === 0}
-      <div class="text-text-muted py-16 text-center">
-        <Flag size={40} class="mx-auto mb-3 opacity-30" />
-        <p class="font-medium">{m.moderation_no_reports()}</p>
-      </div>
-    {:else}
-      <!-- Pending reports -->
-      {#if pendingReports.length > 0}
-        <h2 class="text-text-muted mb-3 text-sm font-bold tracking-wider uppercase">
-          {m.moderation_pending_header_label({ count: pendingReports.length })}
-        </h2>
-        <div class="mb-8 space-y-3">
-          {#each pendingReports as report (report.id)}
-            <div class="border-cn-border bg-cn-surface rounded-2xl border p-4 shadow-sm">
-              <!-- Header row -->
-              <div class="mb-3 flex flex-wrap items-center gap-2">
-                <span
-                  class="bg-cn-border/40 text-text-muted text-2xs rounded-full px-2 py-0.5 font-bold"
-                >
-                  {contentTypeLabel[report.contentType]}
+            <!-- People row -->
+            <div class="mb-3 space-y-1.5">
+              <div class="text-text-muted flex items-center gap-2 text-xs">
+                <Flag size={12} class="shrink-0 opacity-60" />
+                <span>
+                  {m.moderation_signale_par()} :
+                  <span class="text-text-main font-medium">
+                    {names[report.reporterId] ?? report.reporterId.slice(0, 8) + '…'}
+                  </span>
                 </span>
-                <span
-                  class="text-amber-warn bg-amber-warn/10 text-2xs rounded-full px-2 py-0.5 font-semibold"
-                >
-                  {reasonLabel[report.reason] ?? report.reason}
-                </span>
-                <span class="text-text-muted/60 text-2xs ml-auto"
-                  >{formatDate(report.createdAt)}</span
-                >
               </div>
-
-              <!-- People row -->
-              <div class="mb-3 space-y-1.5">
+              {#if report.reportedUserId}
                 <div class="text-text-muted flex items-center gap-2 text-xs">
-                  <Flag size={12} class="shrink-0 opacity-60" />
+                  <UserX size={12} class="shrink-0 opacity-60" />
                   <span>
-                    {m.moderation_signale_par()} :
+                    {m.moderation_auteur_contenu()} :
                     <span class="text-text-main font-medium">
-                      {names[report.reporterId] ?? report.reporterId.slice(0, 8) + '…'}
+                      {names[report.reportedUserId] ?? report.reportedUserId.slice(0, 8) + '…'}
                     </span>
                   </span>
                 </div>
-                {#if report.reportedUserId}
-                  <div class="text-text-muted flex items-center gap-2 text-xs">
-                    <UserX size={12} class="shrink-0 opacity-60" />
-                    <span>
-                      {m.moderation_auteur_contenu()} :
-                      <span class="text-text-main font-medium">
-                        {names[report.reportedUserId] ?? report.reportedUserId.slice(0, 8) + '…'}
-                      </span>
-                    </span>
-                  </div>
-                {/if}
-              </div>
-
-              <!-- Details -->
-              {#if report.details}
-                <p class="text-text-muted mb-3 rounded-lg bg-black/5 px-3 py-2 text-xs italic">
-                  "{report.details}"
-                </p>
               {/if}
+            </div>
 
-              <!-- Content preview -->
-              {#if report.contentPreview}
-                <div class="mb-3 rounded-lg bg-black/5 px-3 py-2">
-                  {#if report.contentType === 'post'}
-                    <button
-                      type="button"
-                      onclick={() => openPostPreview(report.contentId)}
-                      class="text-text-main w-full text-left text-xs leading-relaxed transition-opacity hover:opacity-80"
-                      title={m.moderation_preview_full_label()}
-                    >
-                      {excerpt(report.contentPreview, 200)}
-                    </button>
-                  {:else}
-                    <p class="text-text-main text-xs leading-relaxed">
-                      {excerpt(report.contentPreview, 180)}
-                    </p>
-                  {/if}
-                </div>
-              {/if}
+            <!-- Details -->
+            {#if report.details}
+              <p class="text-text-muted mb-3 rounded-lg bg-black/5 px-3 py-2 text-xs italic">
+                "{report.details}"
+              </p>
+            {/if}
 
-              <!-- ID + navigation -->
-              <div class="mb-3 flex items-center gap-2">
-                <button
-                  onclick={() => copyId(report.contentId)}
-                  class="text-text-muted/50 hover:text-text-muted text-2xs flex items-center gap-1 font-mono transition-colors"
-                  title={m.moderation_copy_id_label()}
-                >
-                  {report.contentId.slice(0, 8)}…
-                  <Copy size={10} />
-                </button>
+            <!-- Content preview -->
+            {#if report.contentPreview}
+              <div class="mb-3 rounded-lg bg-black/5 px-3 py-2">
                 {#if report.contentType === 'post'}
                   <button
                     type="button"
                     onclick={() => openPostPreview(report.contentId)}
-                    class="text-cn-yellow text-2xs ml-auto flex items-center gap-1 font-semibold hover:underline"
-                    title={m.moderation_preview_post_label()}
+                    class="text-text-main w-full text-left text-xs leading-relaxed transition-opacity hover:opacity-80"
+                    title={m.moderation_preview_full_label()}
                   >
-                    <Eye size={11} />
-                    {m.moderation_apercu()}
+                    {excerpt(report.contentPreview, 200)}
                   </button>
-                  <a
-                    href="/posts/{report.contentId}"
-                    target="_blank"
-                    class="text-text-muted hover:text-text-main text-2xs flex items-center gap-1 font-semibold"
-                    title={m.moderation_open_post_label()}
-                  >
-                    <ExternalLink size={11} />
-                    {m.moderation_ouvrir()}
-                  </a>
-                {:else if report.contentType === 'comment' && report.postId}
-                  <a
-                    href="/posts/{report.postId}"
-                    target="_blank"
-                    class="text-text-muted hover:text-text-main text-2xs ml-auto flex items-center gap-1 font-semibold"
-                    title={m.moderation_open_post_with_comment_label()}
-                  >
-                    <ExternalLink size={11} />
-                    {m.moderation_voir_post_label()}
-                  </a>
-                {:else if report.contentType === 'user'}
-                  <a
-                    href="/profile/{report.contentId}"
-                    target="_blank"
-                    class="text-text-muted hover:text-text-main text-2xs ml-auto flex items-center gap-1 font-semibold"
-                    title={m.moderation_open_profile_label()}
-                  >
-                    <ExternalLink size={11} />
-                    {m.moderation_voir_profil_label()}
-                  </a>
+                {:else}
+                  <p class="text-text-main text-xs leading-relaxed">
+                    {excerpt(report.contentPreview, 180)}
+                  </p>
                 {/if}
               </div>
+            {/if}
 
-              <!-- Actions -->
-              <div class="border-cn-border/40 space-y-2 border-t pt-2">
-                <div class="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onclick={() => handleReview(report.id, 'reviewed')}
-                    disabled={processingId === report.id}
-                    class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-green-400 hover:text-green-600 disabled:opacity-40"
-                  >
-                    <Check size={13} />
-                    {m.moderation_marquer_traite()}
-                  </button>
-                  <button
-                    type="button"
-                    onclick={() => handleReview(report.id, 'dismissed')}
-                    disabled={processingId === report.id}
-                    class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-gray-400 hover:text-gray-600 disabled:opacity-40"
-                  >
-                    <X size={13} />
-                    {m.moderation_ignorer()}
-                  </button>
-                </div>
-                <div class="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onclick={() =>
-                      openMuteDialog(
-                        report.reporterId,
-                        displayNameFor(report.reporterId),
-                        report.id
-                      )}
-                    disabled={processingId === report.id}
-                    class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-orange-400 hover:text-orange-600 disabled:opacity-40"
-                    title={m.moderation_mute_reporter_hint()}
-                  >
-                    <UserX size={13} />
-                    {m.moderation_muter_signaleur()}
-                  </button>
-                  {#if report.reportedUserId}
-                    <button
-                      type="button"
-                      onclick={() =>
-                        openMuteDialog(
-                          report.reportedUserId!,
-                          displayNameFor(report.reportedUserId!),
-                          report.id
-                        )}
-                      disabled={processingId === report.id}
-                      class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-red-400 hover:text-red-600 disabled:opacity-40"
-                      title={m.moderation_mute_author_hint()}
-                    >
-                      <UserX size={13} />
-                      {m.moderation_muter_auteur()}
-                    </button>
-                  {/if}
-                </div>
-                {#if report.contentType === 'post'}
-                  <div class="flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onclick={() => handleHidePost(report)}
-                      disabled={processingId === report.id}
-                      class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-amber-400 hover:text-amber-600 disabled:opacity-40"
-                    >
-                      <EyeOff size={13} />
-                      {m.moderation_masquer_post()}
-                    </button>
-                    <button
-                      type="button"
-                      onclick={() => handleDeletePost(report)}
-                      disabled={processingId === report.id}
-                      class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-red-400 hover:text-red-600 disabled:opacity-40"
-                    >
-                      <Trash2 size={13} />
-                      {m.moderation_supprimer_post()}
-                    </button>
-                  </div>
-                {:else if report.contentType === 'comment'}
-                  <button
-                    type="button"
-                    onclick={() => handleDeleteComment(report)}
-                    disabled={processingId === report.id}
-                    class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-red-400 hover:text-red-600 disabled:opacity-40"
-                  >
-                    <Trash2 size={13} />
-                    {m.moderation_supprimer_commentaire()}
-                  </button>
-                {/if}
-              </div>
-            </div>
-          {/each}
-        </div>
-      {/if}
-
-      <!-- Resolved reports -->
-      {#if resolvedReports.length > 0}
-        <h2 class="text-text-muted mb-3 text-sm font-bold tracking-wider uppercase">
-          {m.moderation_resolved_header_label({ count: resolvedReports.length })}
-        </h2>
-        <div class="space-y-2">
-          {#each resolvedReports as report (report.id)}
-            <div
-              class="border-cn-border bg-cn-surface flex items-center gap-3 rounded-xl border p-3"
-            >
-              <span
-                class="text-2xs shrink-0 rounded-full px-2 py-0.5 font-bold {statusClass[
-                  report.status
-                ]}"
+            <!-- ID + navigation -->
+            <div class="mb-3 flex items-center gap-2">
+              <button
+                onclick={() => copyId(report.contentId)}
+                class="text-text-muted/50 hover:text-text-muted text-2xs flex items-center gap-1 font-mono transition-colors"
+                title={m.moderation_copy_id_label()}
               >
-                {statusLabel[report.status]}
-              </span>
-              <span class="text-text-muted text-xs">
-                {contentTypeLabel[report.contentType]} · {reasonLabel[report.reason] ??
-                  report.reason}
-              </span>
-              {#if report.reportedUserId}
-                <span class="text-text-muted hidden text-xs sm:inline">
-                  - {names[report.reportedUserId] ?? report.reportedUserId.slice(0, 8) + '…'}
-                </span>
-              {/if}
+                {report.contentId.slice(0, 8)}…
+                <Copy size={10} />
+              </button>
               {#if report.contentType === 'post'}
                 <button
                   type="button"
                   onclick={() => openPostPreview(report.contentId)}
-                  class="text-cn-yellow text-2xs flex shrink-0 items-center gap-1 hover:underline"
+                  class="text-cn-yellow text-2xs ml-auto flex items-center gap-1 font-semibold hover:underline"
                   title={m.moderation_preview_post_label()}
                 >
                   <Eye size={11} />
+                  {m.moderation_apercu()}
                 </button>
                 <a
                   href="/posts/{report.contentId}"
                   target="_blank"
-                  class="text-text-muted/60 hover:text-text-muted text-2xs shrink-0"
+                  class="text-text-muted hover:text-text-main text-2xs flex items-center gap-1 font-semibold"
                   title={m.moderation_open_post_label()}
                 >
                   <ExternalLink size={11} />
+                  {m.moderation_ouvrir()}
                 </a>
               {:else if report.contentType === 'comment' && report.postId}
                 <a
                   href="/posts/{report.postId}"
                   target="_blank"
-                  class="text-text-muted/60 hover:text-text-muted text-2xs shrink-0"
-                  title={m.moderation_open_post_short_label()}
+                  class="text-text-muted hover:text-text-main text-2xs ml-auto flex items-center gap-1 font-semibold"
+                  title={m.moderation_open_post_with_comment_label()}
                 >
                   <ExternalLink size={11} />
+                  {m.moderation_voir_post_label()}
                 </a>
               {:else if report.contentType === 'user'}
                 <a
                   href="/profile/{report.contentId}"
                   target="_blank"
-                  class="text-text-muted/60 hover:text-text-muted text-2xs shrink-0"
+                  class="text-text-muted hover:text-text-main text-2xs ml-auto flex items-center gap-1 font-semibold"
                   title={m.moderation_open_profile_label()}
                 >
                   <ExternalLink size={11} />
+                  {m.moderation_voir_profil_label()}
                 </a>
               {/if}
-              <span class="text-text-muted/60 text-2xs ml-auto shrink-0"
-                >{formatDate(report.createdAt)}</span
-              >
-            </div>
-          {/each}
-        </div>
-      {/if}
-    {/if}
-  {/if}
-
-  <!-- ── Hidden posts tab ───────────────────────────────────────────────────── -->
-  {#if tab === 'hidden'}
-    {#if loadingHidden}
-      <div class="space-y-3">
-        {#each { length: 3 } as _, i (i)}
-          <div
-            class="border-cn-border bg-cn-surface animate-pulse space-y-2 rounded-2xl border p-5"
-          >
-            <div class="bg-cn-border/60 h-3 w-1/2 rounded"></div>
-            <div class="bg-cn-border/40 h-3 w-full rounded"></div>
-            <div class="bg-cn-border/30 h-3 w-3/4 rounded"></div>
-          </div>
-        {/each}
-      </div>
-    {:else if hiddenPosts.length === 0}
-      <div class="text-text-muted py-16 text-center">
-        <EyeOff size={40} class="mx-auto mb-3 opacity-30" />
-        <p class="font-medium">{m.moderation_no_hidden()}</p>
-        <p class="mt-1 text-sm">
-          {m.moderation_auto_hide_hint()}
-        </p>
-      </div>
-    {:else}
-      <p class="text-text-muted mb-4 text-xs">
-        {m.moderation_hidden_desc()}
-      </p>
-      <div class="space-y-3">
-        {#each hiddenPosts as post (post.id)}
-          <div
-            class="rounded-2xl border border-orange-200 bg-orange-50/50 p-4 shadow-sm dark:border-orange-900/40 dark:bg-orange-950/20"
-          >
-            <!-- Meta -->
-            <div class="mb-2 flex flex-wrap items-center gap-2">
-              {#if post.authorId}
-                <div class="flex items-center gap-1.5">
-                  <Avatar userId={post.authorId} size="xs" />
-                  <span class="text-text-main text-xs font-medium">
-                    {names[post.authorId] ?? post.authorId.slice(0, 8) + '…'}
-                  </span>
-                </div>
-              {:else}
-                <span class="text-text-muted text-xs italic"
-                  >{m.moderation_association_post_label()}</span
-                >
-              {/if}
-              <span class="text-text-muted/60 text-2xs ml-auto">{formatDate(post.createdAt)}</span>
-            </div>
-
-            <!-- Excerpt -->
-            <button
-              type="button"
-              onclick={() => openPostPreview(post.id)}
-              class="text-text-main mb-3 w-full text-left text-sm leading-relaxed transition-opacity hover:opacity-90"
-              title={m.moderation_preview_full_short_label()}
-            >
-              {excerpt(post.markdown)}
-            </button>
-
-            <!-- Report count + ID -->
-            <div class="mb-3 flex items-center gap-2">
-              <span class="bg-red-err/20 text-red-err text-2xs rounded-full px-2 py-0.5 font-bold">
-                {m.moderation_pending_reports_count_label({ count: post.pendingReportCount })}
-              </span>
-              <button
-                onclick={() => copyId(post.id)}
-                class="text-text-muted/50 hover:text-text-muted text-2xs flex items-center gap-1 font-mono transition-colors"
-                title={m.moderation_copy_id_label()}
-              >
-                {post.id.slice(0, 12)}…
-                <Copy size={10} />
-              </button>
             </div>
 
             <!-- Actions -->
-            <div
-              class="flex items-center gap-2 border-t border-orange-200/60 pt-2 dark:border-orange-900/30"
-            >
-              <button
-                type="button"
-                onclick={() => openPostPreview(post.id)}
-                class="border-cn-border text-text-muted hover:text-cn-yellow flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-amber-400"
-                title={m.moderation_preview_full_label()}
-              >
-                <Eye size={13} />
-                {m.moderation_apercu()}
-              </button>
-              <button
-                onclick={() => handleRestore(post.id)}
-                disabled={processingId === post.id}
-                class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-green-400 hover:text-green-600 disabled:opacity-40"
-                title={m.moderation_restore_hint()}
-              >
-                {m.moderation_restaurer()}
-              </button>
-              {#if post.authorId}
+            <div class="border-cn-border/40 space-y-2 border-t pt-2">
+              <div class="flex flex-wrap items-center gap-2">
                 <button
-                  onclick={async () => {
-                    processingId = post.id;
-                    try {
-                      await muteUser(post.authorId!);
-                    } catch {
-                      /* already muted is fine */
-                    }
-                    await handleDeleteHidden(post.id);
-                  }}
-                  disabled={processingId === post.id}
+                  type="button"
+                  onclick={() => handleReview(report.id, 'reviewed')}
+                  disabled={processingId === report.id}
+                  class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-green-400 hover:text-green-600 disabled:opacity-40"
+                >
+                  <Check size={13} />
+                  {m.moderation_marquer_traite()}
+                </button>
+                <button
+                  type="button"
+                  onclick={() => handleReview(report.id, 'dismissed')}
+                  disabled={processingId === report.id}
+                  class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-gray-400 hover:text-gray-600 disabled:opacity-40"
+                >
+                  <X size={13} />
+                  {m.moderation_ignorer()}
+                </button>
+              </div>
+              <div class="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onclick={() =>
+                    openMuteDialog(report.reporterId, displayNameFor(report.reporterId), report.id)}
+                  disabled={processingId === report.id}
                   class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-orange-400 hover:text-orange-600 disabled:opacity-40"
-                  title={m.moderation_delete_mute_hint()}
+                  title={m.moderation_mute_reporter_hint()}
                 >
                   <UserX size={13} />
-                  {m.moderation_supprimer_muter()}
+                  {m.moderation_muter_signaleur()}
+                </button>
+                {#if report.reportedUserId}
+                  <button
+                    type="button"
+                    onclick={() =>
+                      openMuteDialog(
+                        report.reportedUserId!,
+                        displayNameFor(report.reportedUserId!),
+                        report.id
+                      )}
+                    disabled={processingId === report.id}
+                    class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-red-400 hover:text-red-600 disabled:opacity-40"
+                    title={m.moderation_mute_author_hint()}
+                  >
+                    <UserX size={13} />
+                    {m.moderation_muter_auteur()}
+                  </button>
+                {/if}
+              </div>
+              {#if report.contentType === 'post'}
+                <div class="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onclick={() => handleHidePost(report)}
+                    disabled={processingId === report.id}
+                    class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-amber-400 hover:text-amber-600 disabled:opacity-40"
+                  >
+                    <EyeOff size={13} />
+                    {m.moderation_masquer_post()}
+                  </button>
+                  <button
+                    type="button"
+                    onclick={() => handleDeletePost(report)}
+                    disabled={processingId === report.id}
+                    class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-red-400 hover:text-red-600 disabled:opacity-40"
+                  >
+                    <Trash2 size={13} />
+                    {m.moderation_supprimer_post()}
+                  </button>
+                </div>
+              {:else if report.contentType === 'comment'}
+                <button
+                  type="button"
+                  onclick={() => handleDeleteComment(report)}
+                  disabled={processingId === report.id}
+                  class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-red-400 hover:text-red-600 disabled:opacity-40"
+                >
+                  <Trash2 size={13} />
+                  {m.moderation_supprimer_commentaire()}
                 </button>
               {/if}
-              <button
-                onclick={() => handleDeleteHidden(post.id)}
-                disabled={processingId === post.id}
-                class="border-cn-border text-text-muted ml-auto flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-red-400 hover:text-red-600 disabled:opacity-40"
-                title={m.moderation_delete_permanently_hint()}
-              >
-                <Trash2 size={13} />
-                {m.common_delete_button()}
-              </button>
             </div>
           </div>
         {/each}
       </div>
     {/if}
-  {/if}
 
-  <!-- ── Muted users tab ────────────────────────────────────────────────────── -->
-  {#if tab === 'muted'}
-    {#if loadingMuted}
-      <div class="space-y-3">
-        {#each { length: 3 } as _, i (i)}
-          <div
-            class="border-cn-border bg-cn-surface animate-pulse space-y-2 rounded-2xl border p-5"
-          >
-            <div class="bg-cn-border/60 h-3 w-2/3 rounded"></div>
+    <!-- Resolved reports -->
+    {#if resolvedReports.length > 0}
+      <h2 class="text-text-muted mb-3 text-sm font-bold tracking-wider uppercase">
+        {m.moderation_resolved_header_label({ count: resolvedReports.length })}
+      </h2>
+      <div class="space-y-2">
+        {#each resolvedReports as report (report.id)}
+          <div class="border-cn-border bg-cn-surface flex items-center gap-3 rounded-xl border p-3">
+            <span
+              class="text-2xs shrink-0 rounded-full px-2 py-0.5 font-bold {statusClass[
+                report.status
+              ]}"
+            >
+              {statusLabel[report.status]}
+            </span>
+            <span class="text-text-muted text-xs">
+              {contentTypeLabel[report.contentType]} · {reasonLabel[report.reason] ?? report.reason}
+            </span>
+            {#if report.reportedUserId}
+              <span class="text-text-muted hidden text-xs sm:inline">
+                - {names[report.reportedUserId] ?? report.reportedUserId.slice(0, 8) + '…'}
+              </span>
+            {/if}
+            {#if report.contentType === 'post'}
+              <button
+                type="button"
+                onclick={() => openPostPreview(report.contentId)}
+                class="text-cn-yellow text-2xs flex shrink-0 items-center gap-1 hover:underline"
+                title={m.moderation_preview_post_label()}
+              >
+                <Eye size={11} />
+              </button>
+              <a
+                href="/posts/{report.contentId}"
+                target="_blank"
+                class="text-text-muted/60 hover:text-text-muted text-2xs shrink-0"
+                title={m.moderation_open_post_label()}
+              >
+                <ExternalLink size={11} />
+              </a>
+            {:else if report.contentType === 'comment' && report.postId}
+              <a
+                href="/posts/{report.postId}"
+                target="_blank"
+                class="text-text-muted/60 hover:text-text-muted text-2xs shrink-0"
+                title={m.moderation_open_post_short_label()}
+              >
+                <ExternalLink size={11} />
+              </a>
+            {:else if report.contentType === 'user'}
+              <a
+                href="/profile/{report.contentId}"
+                target="_blank"
+                class="text-text-muted/60 hover:text-text-muted text-2xs shrink-0"
+                title={m.moderation_open_profile_label()}
+              >
+                <ExternalLink size={11} />
+              </a>
+            {/if}
+            <span class="text-text-muted/60 text-2xs ml-auto shrink-0"
+              >{formatDate(report.createdAt)}</span
+            >
           </div>
         {/each}
       </div>
-    {:else if mutedUsers.length === 0}
-      <div class="text-text-muted py-16 text-center">
-        <UserCheck size={40} class="mx-auto mb-3 opacity-30" />
-        <p class="font-medium">{m.moderation_no_muted()}</p>
-      </div>
-    {:else}
-      <div class="space-y-3">
-        {#each mutedUsers as user (user.userId)}
-          <div
-            class="border-cn-border bg-cn-surface flex items-start gap-3 rounded-2xl border p-4 shadow-sm"
+    {/if}
+  {/if}
+{/if}
+
+<!-- ── Hidden posts tab ───────────────────────────────────────────────────── -->
+{#if tab === 'hidden'}
+  {#if loadingHidden}
+    <div class="space-y-3">
+      {#each { length: 3 } as _, i (i)}
+        <div class="border-cn-border bg-cn-surface animate-pulse space-y-2 rounded-2xl border p-5">
+          <div class="bg-cn-border/60 h-3 w-1/2 rounded"></div>
+          <div class="bg-cn-border/40 h-3 w-full rounded"></div>
+          <div class="bg-cn-border/30 h-3 w-3/4 rounded"></div>
+        </div>
+      {/each}
+    </div>
+  {:else if hiddenPosts.length === 0}
+    <div class="text-text-muted py-16 text-center">
+      <EyeOff size={40} class="mx-auto mb-3 opacity-30" />
+      <p class="font-medium">{m.moderation_no_hidden()}</p>
+      <p class="mt-1 text-sm">
+        {m.moderation_auto_hide_hint()}
+      </p>
+    </div>
+  {:else}
+    <p class="text-text-muted mb-4 text-xs">
+      {m.moderation_hidden_desc()}
+    </p>
+    <div class="space-y-3">
+      {#each hiddenPosts as post (post.id)}
+        <div
+          class="rounded-2xl border border-orange-200 bg-orange-50/50 p-4 shadow-sm dark:border-orange-900/40 dark:bg-orange-950/20"
+        >
+          <!-- Meta -->
+          <div class="mb-2 flex flex-wrap items-center gap-2">
+            {#if post.authorId}
+              <div class="flex items-center gap-1.5">
+                <Avatar userId={post.authorId} size="xs" />
+                <span class="text-text-main text-xs font-medium">
+                  {names[post.authorId] ?? post.authorId.slice(0, 8) + '…'}
+                </span>
+              </div>
+            {:else}
+              <span class="text-text-muted text-xs italic"
+                >{m.moderation_association_post_label()}</span
+              >
+            {/if}
+            <span class="text-text-muted/60 text-2xs ml-auto">{formatDate(post.createdAt)}</span>
+          </div>
+
+          <!-- Excerpt -->
+          <button
+            type="button"
+            onclick={() => openPostPreview(post.id)}
+            class="text-text-main mb-3 w-full text-left text-sm leading-relaxed transition-opacity hover:opacity-90"
+            title={m.moderation_preview_full_short_label()}
           >
-            <div class="mt-0.5 shrink-0"><Avatar userId={user.userId} size="sm" /></div>
-            <div class="min-w-0 flex-1">
-              <p class="text-text-main text-sm font-medium">
-                {names[user.userId] ?? user.userId}
-              </p>
-              <p class="text-text-muted/50 text-2xs font-mono">{user.userId.slice(0, 16)}…</p>
-              {#if user.mutedReason}
-                <p class="text-text-muted mt-0.5 text-xs italic">"{user.mutedReason}"</p>
-              {/if}
-              {#if user.mutedAt}
-                <p class="text-text-muted/60 text-2xs mt-1">
-                  {m.moderation_muted_on_label({ date: formatDate(user.mutedAt) })}
-                  {#if user.mutedBy}
-                    {m.moderation_muted_by_label({
-                      name: names[user.mutedBy] ?? user.mutedBy.slice(0, 8) + '…',
-                    })}
-                  {/if}
-                </p>
-              {/if}
-            </div>
+            {excerpt(post.markdown)}
+          </button>
+
+          <!-- Report count + ID -->
+          <div class="mb-3 flex items-center gap-2">
+            <span class="bg-red-err/20 text-red-err text-2xs rounded-full px-2 py-0.5 font-bold">
+              {m.moderation_pending_reports_count_label({ count: post.pendingReportCount })}
+            </span>
             <button
-              onclick={() => handleUnmute(user.userId)}
-              disabled={processingId === user.userId}
-              class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-green-400 hover:text-green-600 disabled:opacity-40"
+              onclick={() => copyId(post.id)}
+              class="text-text-muted/50 hover:text-text-muted text-2xs flex items-center gap-1 font-mono transition-colors"
+              title={m.moderation_copy_id_label()}
             >
-              <UserCheck size={14} />
-              {m.moderation_demuter()}
+              {post.id.slice(0, 12)}…
+              <Copy size={10} />
             </button>
           </div>
-        {/each}
-      </div>
-    {/if}
+
+          <!-- Actions -->
+          <div
+            class="flex items-center gap-2 border-t border-orange-200/60 pt-2 dark:border-orange-900/30"
+          >
+            <button
+              type="button"
+              onclick={() => openPostPreview(post.id)}
+              class="border-cn-border text-text-muted hover:text-cn-yellow flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-amber-400"
+              title={m.moderation_preview_full_label()}
+            >
+              <Eye size={13} />
+              {m.moderation_apercu()}
+            </button>
+            <button
+              onclick={() => handleRestore(post.id)}
+              disabled={processingId === post.id}
+              class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-green-400 hover:text-green-600 disabled:opacity-40"
+              title={m.moderation_restore_hint()}
+            >
+              {m.moderation_restaurer()}
+            </button>
+            {#if post.authorId}
+              <button
+                onclick={async () => {
+                  processingId = post.id;
+                  try {
+                    await muteUser(post.authorId!);
+                  } catch {
+                    /* already muted is fine */
+                  }
+                  await handleDeleteHidden(post.id);
+                }}
+                disabled={processingId === post.id}
+                class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-orange-400 hover:text-orange-600 disabled:opacity-40"
+                title={m.moderation_delete_mute_hint()}
+              >
+                <UserX size={13} />
+                {m.moderation_supprimer_muter()}
+              </button>
+            {/if}
+            <button
+              onclick={() => handleDeleteHidden(post.id)}
+              disabled={processingId === post.id}
+              class="border-cn-border text-text-muted ml-auto flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-red-400 hover:text-red-600 disabled:opacity-40"
+              title={m.moderation_delete_permanently_hint()}
+            >
+              <Trash2 size={13} />
+              {m.common_delete_button()}
+            </button>
+          </div>
+        </div>
+      {/each}
+    </div>
   {/if}
-</PageContainer>
+{/if}
+
+<!-- ── Muted users tab ────────────────────────────────────────────────────── -->
+{#if tab === 'muted'}
+  {#if loadingMuted}
+    <div class="space-y-3">
+      {#each { length: 3 } as _, i (i)}
+        <div class="border-cn-border bg-cn-surface animate-pulse space-y-2 rounded-2xl border p-5">
+          <div class="bg-cn-border/60 h-3 w-2/3 rounded"></div>
+        </div>
+      {/each}
+    </div>
+  {:else if mutedUsers.length === 0}
+    <div class="text-text-muted py-16 text-center">
+      <UserCheck size={40} class="mx-auto mb-3 opacity-30" />
+      <p class="font-medium">{m.moderation_no_muted()}</p>
+    </div>
+  {:else}
+    <div class="space-y-3">
+      {#each mutedUsers as user (user.userId)}
+        <div
+          class="border-cn-border bg-cn-surface flex items-start gap-3 rounded-2xl border p-4 shadow-sm"
+        >
+          <div class="mt-0.5 shrink-0"><Avatar userId={user.userId} size="sm" /></div>
+          <div class="min-w-0 flex-1">
+            <p class="text-text-main text-sm font-medium">
+              {names[user.userId] ?? user.userId}
+            </p>
+            <p class="text-text-muted/50 text-2xs font-mono">{user.userId.slice(0, 16)}…</p>
+            {#if user.mutedReason}
+              <p class="text-text-muted mt-0.5 text-xs italic">"{user.mutedReason}"</p>
+            {/if}
+            {#if user.mutedAt}
+              <p class="text-text-muted/60 text-2xs mt-1">
+                {m.moderation_muted_on_label({ date: formatDate(user.mutedAt) })}
+                {#if user.mutedBy}
+                  {m.moderation_muted_by_label({
+                    name: names[user.mutedBy] ?? user.mutedBy.slice(0, 8) + '…',
+                  })}
+                {/if}
+              </p>
+            {/if}
+          </div>
+          <button
+            onclick={() => handleUnmute(user.userId)}
+            disabled={processingId === user.userId}
+            class="border-cn-border text-text-muted flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:border-green-400 hover:text-green-600 disabled:opacity-40"
+          >
+            <UserCheck size={14} />
+            {m.moderation_demuter()}
+          </button>
+        </div>
+      {/each}
+    </div>
+  {/if}
+{/if}
 
 <ModerationPostPreviewModal open={previewOpen} postId={previewPostId} onClose={closePostPreview} />
 

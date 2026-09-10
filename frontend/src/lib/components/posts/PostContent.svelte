@@ -81,7 +81,7 @@
 
 {#if post.markdown}
   <div class="px-5 pb-3">
-    <div class="text-text-main text-sm leading-relaxed break-words">
+    <div class="text-text-main text-sm leading-relaxed wrap-break-word">
       <div
         class="post-markdown max-w-none opacity-90 [&_br]:block [&_h1]:mt-1 [&_h1]:mb-0.5 [&_h1]:text-xl [&_h1]:leading-tight [&_h1]:font-bold [&_h1]:tracking-tight [&_h1+_p]:mt-2 [&_h2]:mt-1 [&_h2]:mb-0.5 [&_h2]:text-lg [&_h2]:leading-snug [&_h2]:font-bold [&_h2+_p]:mt-2 [&_h3]:mt-0.5 [&_h3]:mb-0 [&_h3]:text-base [&_h3]:leading-snug [&_h3]:font-bold [&_h3+_p]:mt-1.5 [&_p+p]:mt-3 [&_p:first-child]:mt-0"
       >
@@ -114,15 +114,15 @@
       {@const reserved = reservesAspectRatio(resolveMediaType(media))}
       <div>
         <!-- An image is deliberately full-bleed; a document card is not, so it
-             lines up with the post text (px-5) instead of touching the edges. -->
+           lines up with the post text (px-5) instead of touching the edges. -->
         <div
-          class="relative w-full overflow-hidden {reserved
-            ? 'bg-black/5 dark:bg-white/5'
-            : 'px-5 pb-1'}"
+          class="relative overflow-hidden {reserved
+            ? 'w-full bg-black/5 dark:bg-white/5'
+            : 'w-full px-5 pb-1'}"
           style={reserved ? mediaAspectStyle(media.width, media.height) : ''}
         >
           <!-- Single attachment: PostMedia handles its own lightbox/download -->
-          <PostMedia {media} {authToken} />
+          <PostMedia {media} {authToken} letterbox={reserved} />
         </div>
         {#if media.caption}
           <p class="text-text-muted px-4 pt-2 pb-1 text-xs italic">{media.caption}</p>

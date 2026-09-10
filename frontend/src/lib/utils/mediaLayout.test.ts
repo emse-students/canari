@@ -41,6 +41,16 @@ describe('mediaLayout', () => {
     expect(mediaAspectStyle(100, 4000)).toContain('var(--media-max-height');
   });
 
+  // THE TWO RULES DISAGREE ON PURPOSE, and that disagreement is the whole of the letterbox.
+  // A box reserved at the picture's shape and then capped is SHORTER than the picture wants; what
+  // fills the difference is the caller's choice, and for a single attachment it is the picture
+  // itself, blurred, rather than a crop. An A4 poster is the shape that pays the most for it.
+  it('reserves an A4 poster at its own shape and still caps it - the gap the caller must fill', () => {
+    const style = mediaAspectStyle(2100, 2970);
+    expect(style).toBe(`aspect-ratio: ${2100 / 2970}; ${MAX_HEIGHT}`);
+    expect(2100 / 2970).toBeCloseTo(0.7071, 4);
+  });
+
   describe('resolveMediaType', () => {
     it('trusts the explicit type over the mime type', () => {
       expect(resolveMediaType({ type: 'file', mimeType: 'image/png' })).toBe('file');

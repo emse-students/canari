@@ -105,7 +105,37 @@ export interface PostEntity {
   updatedAt: string;
 }
 
-export type PostFeed = 'all' | 'followed' | 'custom' | 'associations';
+/**
+ * The four feeds, as DATA rather than as a union spelled out at each call site.
+ *
+ * It was a bare union type, and the list therefore existed twice: once here and once as a literal
+ * array in `routes/posts/+page.ts`, which validated the `?feed=` parameter against it. A type
+ * cannot be iterated, so a fifth feed would have compiled everywhere and been silently rejected
+ * by the URL parser. It also now has a THIRD reader - the persisted preference, which is a string
+ * off `localStorage` and therefore untrusted in exactly the same way a query parameter is.
+ */
+export const POST_FEEDS = ['all', 'followed', 'custom', 'associations'] as const;
+
+/** Which feed the posts page is showing. */
+export type PostFeed = (typeof POST_FEEDS)[number];
+
+/**
+ * The feed a reader who has never chosen one gets.
+ *
+ * Association posts, because that is the half of the feed nobody can miss without missing an
+ * event; the other three are refinements of it.
+ */
+export const DEFAULT_POST_FEED: PostFeed = 'associations';
+
+/**
+ * Narrows an untrusted string to a feed, or null when it names none.
+ *
+ * NULL RATHER THAN THE DEFAULT, so a caller can tell "not stated" from "stated as the default" -
+ * the posts page has two sources to try in order and needs to fall through the first.
+ */
+export function parsePostFeed(value: string | null | undefined): PostFeed | null {
+  return POST_FEEDS.includes(value as PostFeed) ? (value as PostFeed) : null;
+}
 
 export interface ListPostsOptions {
   limit?: number;

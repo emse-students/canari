@@ -21,7 +21,7 @@
   import { X } from '@lucide/svelte';
   import { portal } from '$lib/actions/portal';
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
-  import { fly } from 'svelte/transition';
+  import { fade, fly } from 'svelte/transition';
   import { cubicOut } from 'svelte/easing';
   import { m } from '$lib/paraglide/messages';
 
@@ -80,12 +80,27 @@
 
 <div use:portal>
   <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <!-- Backdrop: clicking outside the card closes. Escape is handled on the window above. -->
+  <!--
+    Backdrop: clicking outside the card closes. Escape is handled on the window above.
+
+    OPAQUE, AND THAT IS THE WHOLE POINT OF A VIEWER (user, 2026-09-10: *"la visionneuse qui s'ouvre
+    a un fond transparent, ce qui n'est pas genial"*). It was `bg-black/70`, so three tenths of the
+    feed carried on showing through the one surface whose job is to leave nothing else on screen -
+    a photograph was then read against whatever happened to be behind it, and its own colours were
+    the thing that suffered. `cn-scrim` is the token for exactly this: a surface deliberately dark
+    in BOTH themes, already carrying the call and video chrome, so the viewer stops inventing its
+    own black. The card above it keeps its translucency, which now reads as elevation over an
+    opaque ground rather than as a window.
+
+    The fade is what an opaque backdrop owes: appearing in one frame is a flash, and the card's own
+    `fly` is 240ms, so the ground must not land after the thing standing on it.
+  -->
   <div
     role="presentation"
-    class="fixed inset-0 z-(--z-viewer) flex items-center justify-center bg-black/70 sm:p-4"
+    class="bg-cn-scrim fixed inset-0 z-(--z-viewer) flex items-center justify-center sm:p-4"
     style={touchStyle}
     onclick={onClose}
+    transition:fade={{ duration: 160 }}
   >
     <div
       role="dialog"

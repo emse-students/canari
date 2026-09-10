@@ -1,5 +1,4 @@
 <script lang="ts">
-  import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
@@ -173,118 +172,116 @@
   {/if}
 {/snippet}
 
-<PageContainer width="tool">
-  <PageHeader
-    title={m.admin_status_title()}
-    subtitle={m.admin_status_subtitle({ count: total, sec: REFRESH_MS / 1000 })}
-  >
-    {#snippet actions()}
-      {#if lastUpdated}
-        <span class="text-text-muted text-xs"
-          >{m.admin_status_last_updated_label({
-            time: lastUpdated.toLocaleTimeString(getLocale() === 'en' ? 'en-US' : 'fr-FR'),
-          })}</span
-        >
-      {/if}
-      <button
-        onclick={() => (showLegend = !showLegend)}
-        class="border-cn-border text-text-muted hover:border-cn-yellow hover:text-text-main flex items-center gap-1.5 rounded-lg border bg-(--cn-surface) px-3 py-1.5 text-sm transition-colors"
+<PageHeader
+  title={m.admin_status_title()}
+  subtitle={m.admin_status_subtitle({ count: total, sec: REFRESH_MS / 1000 })}
+>
+  {#snippet actions()}
+    {#if lastUpdated}
+      <span class="text-text-muted text-xs"
+        >{m.admin_status_last_updated_label({
+          time: lastUpdated.toLocaleTimeString(getLocale() === 'en' ? 'en-US' : 'fr-FR'),
+        })}</span
       >
-        <Info size={14} />
-        {m.admin_status_legend_button()}
-      </button>
-      <button
-        onclick={() => void fetchPresence()}
-        class="border-cn-border text-text-muted hover:border-cn-yellow hover:text-text-main flex items-center gap-1.5 rounded-lg border bg-(--cn-surface) px-3 py-1.5 text-sm transition-colors"
-      >
-        <RefreshCw size={14} />
-        {m.common_refresh_button()}
-      </button>
-    {/snippet}
-  </PageHeader>
-
-  <!-- Légende -->
-  {#if showLegend}
-    <div class="border-cn-border mb-6 rounded-xl border bg-(--cn-surface) p-5 text-sm">
-      <h2 class="text-text-main mb-4 font-semibold">{m.admin_status_legend_heading()}</h2>
-      <div class="grid gap-4 sm:grid-cols-2">
-        <div>
-          <p class="text-text-main mb-1 font-medium">
-            <Wifi size={13} class="text-green-ok mr-1 inline" />{m.admin_status_legend_ws_label()}
-          </p>
-          <p class="text-text-muted">
-            <!-- eslint-disable-next-line svelte/no-at-html-tags -- static admin-authored copy, not user input -->
-            {@html m.admin_status_legend_ws_html()}
-          </p>
-        </div>
-        <div>
-          <p class="text-text-main mb-1 font-medium">{m.admin_status_legend_redis_label()}</p>
-          <p class="text-text-muted">
-            <!-- eslint-disable-next-line svelte/no-at-html-tags -- static admin-authored copy, not user input -->
-            {@html m.admin_status_legend_redis_html()}
-          </p>
-        </div>
-        <div>
-          <p class="text-text-main mb-1 font-medium">{m.admin_status_legend_ttl_label()}</p>
-          <p class="text-text-muted">
-            <!-- eslint-disable-next-line svelte/no-at-html-tags -- static admin-authored copy, not user input -->
-            {@html m.admin_status_legend_ttl_html()}
-          </p>
-        </div>
-        <div>
-          <p class="text-text-main mb-1 font-medium">
-            <TriangleAlert
-              size={13}
-              class="text-cn-yellow mr-1 inline"
-            />{m.admin_status_legend_anomalies_label()}
-          </p>
-          <p class="text-text-muted">
-            <!-- eslint-disable-next-line svelte/no-at-html-tags -- static admin-authored copy, not user input -->
-            {@html m.admin_status_legend_anomalies_html()}
-          </p>
-        </div>
-      </div>
-    </div>
-  {/if}
-
-  {#if error}
-    <div
-      class="border-red-err/30 text-red-err mb-4 rounded-xl border bg-[color-mix(in_srgb,var(--red-err)_8%,var(--cn-surface))] px-4 py-3 text-sm"
-    >
-      {error}
-    </div>
-  {/if}
-
-  {#if loading}
-    <div class="text-text-muted">{m.common_loading_label()}</div>
-  {:else}
-    <!-- Anomalies -->
-    {#if anomalies.length > 0}
-      <section class="mb-8">
-        <h2 class="text-text-main mb-1 flex items-center gap-2 font-semibold">
-          <TriangleAlert size={16} class="text-cn-yellow" />
-          {m.admin_status_anomalies_heading({ count: anomalies.length })}
-        </h2>
-        <p class="text-text-muted mb-3 text-sm">
-          {m.admin_status_anomalies_desc()}
-        </p>
-        {@render deviceTable(anomalies)}
-      </section>
-    {:else}
-      <div
-        class="border-cn-border text-green-ok mb-6 flex items-center gap-2 rounded-xl border bg-(--cn-surface) px-4 py-3 text-sm"
-      >
-        <Wifi size={14} />
-        {m.admin_status_no_anomalies()}
-      </div>
     {/if}
+    <button
+      onclick={() => (showLegend = !showLegend)}
+      class="border-cn-border text-text-muted hover:border-cn-yellow hover:text-text-main flex items-center gap-1.5 rounded-lg border bg-(--cn-surface) px-3 py-1.5 text-sm transition-colors"
+    >
+      <Info size={14} />
+      {m.admin_status_legend_button()}
+    </button>
+    <button
+      onclick={() => void fetchPresence()}
+      class="border-cn-border text-text-muted hover:border-cn-yellow hover:text-text-main flex items-center gap-1.5 rounded-lg border bg-(--cn-surface) px-3 py-1.5 text-sm transition-colors"
+    >
+      <RefreshCw size={14} />
+      {m.common_refresh_button()}
+    </button>
+  {/snippet}
+</PageHeader>
 
-    <!-- Tous les appareils -->
-    <section>
-      <h2 class="text-text-muted mb-3 text-xs font-semibold tracking-widest uppercase">
-        {m.admin_status_all_devices_heading({ count: total })}
+<!-- Légende -->
+{#if showLegend}
+  <div class="border-cn-border mb-6 rounded-xl border bg-(--cn-surface) p-5 text-sm">
+    <h2 class="text-text-main mb-4 font-semibold">{m.admin_status_legend_heading()}</h2>
+    <div class="grid gap-4 sm:grid-cols-2">
+      <div>
+        <p class="text-text-main mb-1 font-medium">
+          <Wifi size={13} class="text-green-ok mr-1 inline" />{m.admin_status_legend_ws_label()}
+        </p>
+        <p class="text-text-muted">
+          <!-- eslint-disable-next-line svelte/no-at-html-tags -- static admin-authored copy, not user input -->
+          {@html m.admin_status_legend_ws_html()}
+        </p>
+      </div>
+      <div>
+        <p class="text-text-main mb-1 font-medium">{m.admin_status_legend_redis_label()}</p>
+        <p class="text-text-muted">
+          <!-- eslint-disable-next-line svelte/no-at-html-tags -- static admin-authored copy, not user input -->
+          {@html m.admin_status_legend_redis_html()}
+        </p>
+      </div>
+      <div>
+        <p class="text-text-main mb-1 font-medium">{m.admin_status_legend_ttl_label()}</p>
+        <p class="text-text-muted">
+          <!-- eslint-disable-next-line svelte/no-at-html-tags -- static admin-authored copy, not user input -->
+          {@html m.admin_status_legend_ttl_html()}
+        </p>
+      </div>
+      <div>
+        <p class="text-text-main mb-1 font-medium">
+          <TriangleAlert
+            size={13}
+            class="text-cn-yellow mr-1 inline"
+          />{m.admin_status_legend_anomalies_label()}
+        </p>
+        <p class="text-text-muted">
+          <!-- eslint-disable-next-line svelte/no-at-html-tags -- static admin-authored copy, not user input -->
+          {@html m.admin_status_legend_anomalies_html()}
+        </p>
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if error}
+  <div
+    class="border-red-err/30 text-red-err mb-4 rounded-xl border bg-[color-mix(in_srgb,var(--red-err)_8%,var(--cn-surface))] px-4 py-3 text-sm"
+  >
+    {error}
+  </div>
+{/if}
+
+{#if loading}
+  <div class="text-text-muted">{m.common_loading_label()}</div>
+{:else}
+  <!-- Anomalies -->
+  {#if anomalies.length > 0}
+    <section class="mb-8">
+      <h2 class="text-text-main mb-1 flex items-center gap-2 font-semibold">
+        <TriangleAlert size={16} class="text-cn-yellow" />
+        {m.admin_status_anomalies_heading({ count: anomalies.length })}
       </h2>
-      {@render deviceTable(devices)}
+      <p class="text-text-muted mb-3 text-sm">
+        {m.admin_status_anomalies_desc()}
+      </p>
+      {@render deviceTable(anomalies)}
     </section>
+  {:else}
+    <div
+      class="border-cn-border text-green-ok mb-6 flex items-center gap-2 rounded-xl border bg-(--cn-surface) px-4 py-3 text-sm"
+    >
+      <Wifi size={14} />
+      {m.admin_status_no_anomalies()}
+    </div>
   {/if}
-</PageContainer>
+
+  <!-- Tous les appareils -->
+  <section>
+    <h2 class="text-text-muted mb-3 text-xs font-semibold tracking-widest uppercase">
+      {m.admin_status_all_devices_heading({ count: total })}
+    </h2>
+    {@render deviceTable(devices)}
+  </section>
+{/if}

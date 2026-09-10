@@ -41,9 +41,23 @@
     onOpen?: () => void;
     /** When true, renders the image/video filling its container (used inside gallery lightbox). */
     galleryMode?: boolean;
+    /**
+     * Show the WHOLE picture, and fill whatever the box has left over with the picture itself.
+     *
+     * TRUE wherever the box's width is imposed by something other than the picture - a single
+     * attachment stacked under the post text, where the card sets the width and the ceiling sets
+     * the height, so the two rarely agree with the picture's own shape. FALSE for the multi-image
+     * grid, whose square cells are square ON PURPOSE and where filling the cell is the point.
+     *
+     * The fill is the same already-decrypted blob drawn again as a blurred `cover` layer, under a
+     * veil of `--cn-surface`. That is deliberately not a dominant-colour extraction: no canvas, no
+     * pixel read, no worker, no second decrypt - and the bands still come from the picture's own
+     * colours by construction, with the theme holding them.
+     */
+    letterbox?: boolean;
   }
 
-  let { media, authToken, onOpen, galleryMode = false }: Props = $props();
+  let { media, authToken, onOpen, galleryMode = false, letterbox = false }: Props = $props();
 
   let blobUrl = $state<string | null>(null);
   let loading = $state(true);
@@ -248,14 +262,27 @@
         class="group/img block h-full w-full cursor-zoom-in outline-none focus-visible:z-10 focus-visible:ring-4 focus-visible:ring-amber-500/50"
         aria-label={m.post_zoom_image_label()}
       >
-        <!-- Past the box ceiling the picture is cropped, not shrunk, and the crop is CENTRED:
-             what a reader is shown is then the middle of the frame in both axes, which is where a
-             photograph puts its subject. A top anchor reads as a bug on anything that is not a
-             screenshot, and the full frame is one tap away in the viewer either way. -->
+        {#if letterbox}
+          <!-- The remainder, painted with the picture. Blurred hard and scaled past the edges so
+               the blur's own transparent fringe never reaches the box, then veiled with the
+               surface token so the bands sit in the theme instead of shouting over it. It is
+               `aria-hidden` because it is the same picture as the one below, at no information. -->
+          <div
+            class="absolute inset-0 scale-125 bg-cover bg-center blur-2xl saturate-150"
+            style="background-image: url({blobUrl})"
+            aria-hidden="true"
+          ></div>
+          <div class="bg-cn-surface/35 absolute inset-0" aria-hidden="true"></div>
+        {/if}
+        <!-- NO HOVER ZOOM WHEN THE WHOLE PICTURE IS THE POINT: scaling a contained picture past
+             its box crops it again, which is the defect this branch exists to end. The grid cell
+             keeps the zoom, having been cropped by design already. -->
         <img
           src={blobUrl}
           alt={media.fileName ?? m.post_image_alt()}
-          class="h-full w-full object-cover object-center transition-transform duration-700 group-hover/img:scale-105"
+          class={letterbox
+            ? 'relative h-full w-full object-contain'
+            : 'h-full w-full object-cover object-center transition-transform duration-700 group-hover/img:scale-105'}
           loading="lazy"
         />
       </button>

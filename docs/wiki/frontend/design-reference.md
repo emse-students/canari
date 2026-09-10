@@ -877,3 +877,114 @@ markup are overwhelmingly legitimate - canvas drawing in `AssociationLogoCropper
 the content and not a token violation. The nine `text-[Nem]` values are proportional sizing, a
 different intent from the seven `--text-*` steps. Neither is a finding, and counting them as one
 would have made the sweep wrong in the other direction.
+
+## 17. The width sweep - three references, 52 routes, and the three pages that invented a number
+
+Section 12 gave the app one page column and two named widths. This section is what happened when
+every route was actually MEASURED against it, and against the web, on 2026-09-10. The user's
+report: *"Il y a des disparites importantes de largeur, et c'est tres bizarre. C'est tres bizarre
+quand c'est trop large, trop etroit, ou quand ca change tout le temps."*
+
+### 17.1 The three web references, measured the same day at a 1920px window
+
+Geometry only. Facebook and Messenger are read for element boxes and computed colours, never for
+content, and no capture is kept.
+
+| Reference | What was measured | Value |
+| --- | --- | --- |
+| Facebook, feed | the post column | **680px exactly** - 153 elements at that width, three articles each `left 613, width 680` |
+| Google Agenda, month | `[role=main]` | **1592px** (`left 256, right 1848`) - effectively full-bleed |
+| Amazon, catalogue | `.a-container` | **1905px**, full-bleed |
+| Amazon, tiles | the most repeated tile width | **205px** (290 elements), then 207, 290, 192, 306; the main product grid is 5 columns of **331px** |
+
+**Canari's own doctrine survived the comparison unchanged.** `reading: 680` is Facebook's feed
+width to the pixel, and `grid: 1600` is within half a percent of Google Agenda's 1592. Nothing in
+`pageWidth.ts` moved as a result of this sweep - which is the useful outcome, because it means the
+disparities were pages NOT USING it rather than the values being wrong.
+
+### 17.2 What the sweep found
+
+**27 of 52 routes do not use `PageContainer` at all**, and most of them are right not to:
+`/communities` renders `MainChatPage`, the full-height three-column shell, exactly like `/chat`.
+Two GROUPS, though, had invented a width, and both did it in a place that reached many pages at
+once:
+
+| Group | Was | Now | Why it mattered |
+| --- | --- | --- | --- |
+| `/admin/*`, 11 pages | `mx-auto max-w-4xl` = **896px** in `admin/+layout.svelte` | `PageContainer width="tool"` = **1024px** | A FOURTH width, and being an ANCESTOR it CLAMPED the pages below it - `/admin/status` declared `width="tool"` and was drawn at 896 with nothing reporting the difference. Measured at 1440px: eleven pages, eleven times 896. |
+| `/legal/*`, 3 pages | `mx-auto max-w-2xl` = **672px** | `PageContainer width="reading"` = **680px** | A FIFTH width, on the same element as the heading, so it capped the chrome too. |
+
+**A fourth width applied by an ancestor is worse than one applied by a page**, because the page
+still declares the right thing and every instrument agrees with it. The only way to see it is to
+measure the rendered box, which is why this sweep exists.
+
+### 17.3 The card wall - the rule had the wrong shape, and six copies hid it
+
+Six grids across `/associations` (3), `/lists` (2) and `/shop` (1) carried the identical literal
+`grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4`. Six copies of one decision is a decision
+nobody can change; but the deeper fault is that **a fixed column count states the wrong thing**. It
+says how many cards to draw and lets the WIDTH fall out, so a card's size depends on whichever page
+column it happens to sit in - and once `grid` pages went to 1600px, four columns meant **388px
+tiles**, roughly double Amazon's dominant 205.
+
+`frontend/src/lib/components/layout/cardGrid.ts` inverts it: the CARD's minimum is stated at
+`15rem` and the column count follows.
+
+| Window | Was (4 cols at the cap) | Now |
+| --- | --- | --- |
+| 1280px | 4 x ~267px | 4 x **267px** |
+| 1440px | 4 x ~308px | 5 x **242px** |
+| 1920px | 4 x **388px** | 6 x **253px** |
+
+All three pages measure identically, which is the property that was missing. `cardGrid.test.ts`
+asserts there is exactly one such wall in the routes, and it matches **the ladder** (`sm:grid-cols-2
+lg:grid-cols-3`) rather than any `gap-4` grid: a first draft caught `/calendar`'s start/end datetime
+pair, which is a FORM ROW and correctly a fixed count, because two inputs do not re-flow into three.
+
+`auto-fill` and not `auto-fit`: `auto-fit` collapses the empty tracks and stretches the survivors,
+so a section holding one association would draw a single card 1600px wide. Every one of these
+grids can hold one item.
+
+### 17.4 Two defects the narrower tile surfaced, and they are the same defect
+
+A number input inside a shop tile could not shrink below its intrinsic ~170px, so the currency
+label beside it was cut off by the card's edge at 242px. The cause is that **a flex item's
+`min-width` is `auto`, which resolves to min-content** - the exact rule that made a grid `1fr`
+track overflow `/calendar/export` in the same sweep, since `1fr` is `minmax(auto, 1fr)`. One rule,
+two symptoms, two call sites: `min-w-0` on the flex item, `minmax(0, 1fr)` on the grid track.
+
+**A layout bug that only appears at a narrower size was always there.** Neither of these was
+introduced by the width work; both were held out of sight by a container wide enough to hide them.
+
+### 17.5 The legal documents
+
+Sharing the shell (`lib/components/legal/LegalDocument.svelte`) is the smaller half. The design was
+*"vraiment pauvre"*, and the three causes are each a rule:
+
+1. **The body was set as caption text** - `text-text-muted text-sm` on nearly every paragraph of a
+   legally binding document. A muted colour means "subordinate to something", and there was nothing
+   for it to be subordinate to. The one place it IS right is a note ABOUT a clause, which is what
+   `.legal-fineprint` is for.
+2. **Everything was a card.** Twenty-odd `rounded-xl border bg-white/10` blocks meant the two that
+   are genuine warnings - the encryption note, the CSAE prohibition - read exactly like a list of
+   defined terms. Cards are now spent on callouts only; a definition list is a `<dl>` with a
+   hanging rule.
+3. **It wore the login screen's glass.** `bg-white/20`, `border-white/40`, `shadow-2xl` and a
+   centred favicon work over the auth screen's backdrop and float over nothing on a document route.
+
+The type is set once, on the elements, in the shell's own `:global()` block: three documents
+totalling ~900 lines cannot hold one measure if every paragraph restates it, and they did not. The
+table of contents uses an `IntersectionObserver` rather than `:target`, because `:target` only
+changes when the reader CLICKS - scrolling would leave it pointing at whatever was clicked last.
+
+### 17.6 An instrument fact this sweep cost an hour to
+
+**The local estate's frontend image is `frontend/build`, and that directory means two different
+things.** A bare `bun run build` produces the adapter-static SPA; the SSR container needs
+`BUILD_WEB=1 bun run build`, which produces adapter-node with an `index.js` at the root. Building
+without it and baking the image leaves the container crash-looping on
+`Cannot find module '/app/index.js'` while nginx still serves the PREVIOUS assets - so the site
+answers, the pages render, and every measurement is of the old build. Rebuild both `frontend-ssr`
+and `nginx`, and always through the Makefile's env file: `docker compose` without
+`--env-file infrastructure/.env` starts garage with a blank RPC secret and takes half the estate
+down with it.
