@@ -11,6 +11,20 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - three security alerts that were one idiom copied three times
+
+Internal, and none of them exploitable: three test files that read the app's own source to check
+it against the design scales each carried a private copy of the same directory walk and the same
+comment stripper. One idiom, three copies, three open high-severity CodeQL alerts saying the same
+thing.
+
+There is one reader now, with its own tests. **The obvious repair would have been a defect**: the
+alert's usual remedy is to strip comments repeatedly until nothing changes, and HTML comments do
+not nest - `<!-- a <!-- b --> c -->` ends at the first `-->`, so a second pass would have deleted
+markup the file really has. The stripper scans instead, which is the same behaviour written so a
+reader can see it, verified byte-for-byte identical on all 236 files it runs over.
+
+
 ### Changed - every icon button is the same size as the one beside it
 
 Decided by the user on 2026-09-09 after being shown the measurement: *"Poser la reference ET tout

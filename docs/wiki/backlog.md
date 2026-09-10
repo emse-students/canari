@@ -966,6 +966,43 @@ hardware-blocked items rather than with this one.
 
 ## CI and the chain that runs unattended
 
+### P3 - the `CodeQL` check has failed on every pull request since the workflow migration, and the reason is bookkeeping (observed 2026-09-10 on #482)
+
+Not our `Security / CodeQL Security Analysis` job, which is green. This is the separate **GitHub
+Advanced Security** check, and its title is `6 configurations not found`:
+
+```
+.github/workflows/pull-request.yml:codeql/language:javascript-typescript
+.github/workflows/code-analysis.yml:codeql/language:javascript
+.github/workflows/code-analysis.yml:codeql/language:typescript
+.github/workflows/code-analysis.yml:codeql/language:javascript-typescript
+.github/workflows/scheduled.yml:codeql/language:javascript-typescript
+.github/workflows/cd.yml:codeql/language:javascript-typescript
+```
+
+**Four of the six name workflows that no longer exist.** `pull-request.yml` and `cd.yml` were
+deleted by the 2026-09-02 migration ([workflow-migration](workflow-migration.md)), and
+`code-analysis.yml` stopped declaring `javascript` and `typescript` separately in the same change.
+GHAS remembers a configuration it has seen on `main` and warns until it stops seeing it, so this is
+a comparison against a tree that is eight days gone.
+
+**It merges anyway and that is correct** - `CI passed` is the one check the branch ruleset
+requires, and this one is advisory. **It is still noise, which is the problem**: a red cross a
+reader learns to skip is the one that hides the next defect, and this one hid a REAL high-severity
+alert on #482 for as long as it took to open the summary.
+
+**What would settle it, in order of preference:**
+
+- **Wait, and check.** GHAS drops a configuration it has not seen for roughly 14 days, so these
+  should clear on their own around **2026-09-16**. If the check is still red after that date the
+  cause is NOT ageing and this entry is wrong - re-open it against the live configuration list
+  rather than waiting longer.
+- There is no public API to delete a stale CodeQL configuration; the alternative is a one-off click
+  in the repository's Code security settings, which is the USER's to make if the date passes.
+
+**Do not "fix" this by making the check non-blocking or by deleting the tool** - it is already
+non-blocking, and it is the thing that reported the alert this entry exists because of.
+
 ### P2 - the Android unit tests are never run by anything, so one suite has been decorative since it was written (measured 2026-09-07)
 
 `frontend/src-tauri/gen/android/app/src/test/java/fr/emse/canari/PushDecryptLadderTest.kt` is a real

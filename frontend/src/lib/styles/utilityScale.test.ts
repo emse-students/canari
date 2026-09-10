@@ -23,33 +23,15 @@
  * number (CLAUDE.md, "COLOUR, TYPE AND RADIUS ARE ALL SCALED SINCE #447").
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { allMarkup } from './markupSources';
 
 const src = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const cssPath = join(src, 'app.css');
 
-function svelteFiles(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) svelteFiles(full, out);
-    else if (entry.endsWith('.svelte')) out.push(full);
-  }
-  return out;
-}
-
-/** Markup only: a rule about class lists must not be tripped by a docblock explaining the rule. */
-function withoutComments(source: string): string {
-  return source.replace(/<!--[\s\S]*?-->/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
-}
-
-const ALL_MARKUP = svelteFiles(join(src, 'lib'))
-  .concat(svelteFiles(join(src, 'routes')))
-  .map((file) => ({
-    file: relative(src, file),
-    body: withoutComments(readFileSync(file, 'utf8')),
-  }));
+const ALL_MARKUP = allMarkup(src);
 
 describe('the radius scale', () => {
   /** Every `--radius-*` the theme declares, as a set of CSS lengths. */
