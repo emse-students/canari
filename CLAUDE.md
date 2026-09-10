@@ -232,11 +232,8 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    PIN's four rows change a PIN or restart a browser, hence last; HEAL-NEW's rung redesign is open
    on a clean pass ([backlog](docs/wiki/backlog.md)).
 2. **P1 - THE PREKEY WEIGHT: BOTH CAUSES FIXED 2026-09-09, THE BALANCE UNRECOVERABLE UNTIL LATE
-   OCTOBER.** The census (`key package census` at load) weighed it rather than dividing it: 2782
-   one-time from purge/remint rounds nothing local ever dropped, plus 269 last-resort reminted once
-   per connection. Both stopped; **the 3053 already written cannot safely go** (no server record
-   proves they were never handed out) so they drain by their own 84-day lifetime, and **NOTIF-1b
-   stays blocked on the weight**. Two ways to shorten it, one owed to the USER ([backlog](docs/wiki/backlog.md)).
+   OCTOBER**, and **NOTIF-1b stays blocked on it**. Counts, causes and the two ways to shorten the
+   drain - one owed to the USER - are in [backlog](docs/wiki/backlog.md), the only copy.
 3. **P1 - a PLACEHOLDER held a member's seat**; only a member's CLIENT can say whether a LEAF is
    left in the MLS tree and **NOTHING HAS** - the three identities cited here as that evidence were
    this campaign's OWN mention fixtures, named 2026-09-07 ([backlog](docs/wiki/backlog.md)).
@@ -253,11 +250,13 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    anybody prod is down**, and [host-updates](docs/wiki/infrastructure/host-updates.md).
 7. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
    [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
-8. **UX/RENDERING: ONLY THE EMOJI FONT IS LEFT.** Both decided items shipped and neither reopens -
-   one icon-button box (`iconButtonScale.test.ts`) and three page shapes (`pageWidth.ts`). What
-   remains: ONE bundled Noto Color Emoji everywhere with the disparities resolved in the same
-   change, and the English locale still fetching emoji data from `cdn.jsdelivr.net`
-   ([backlog](docs/wiki/backlog.md)).
+8. **UX/RENDERING: ONLY THE EMOJI FONT IS LEFT.** Three decided items shipped and none reopens -
+   one icon-button box, three page shapes (`pageWidth.ts`), ONE card wall (`cardGrid.ts`), each
+   asserted by its own test; **the 52-route width sweep against Facebook, Google Agenda and Amazon
+   is DONE**, its numbers the only copy on
+   [design-reference](docs/wiki/frontend/design-reference.md) section 17. What remains: ONE bundled
+   Noto Color Emoji everywhere with the disparities resolved in the same change, and the English
+   locale still fetching emoji data from `cdn.jsdelivr.net` ([backlog](docs/wiki/backlog.md)).
 9. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
    commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
 10. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
@@ -271,7 +270,10 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
     ([dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy). Two open: a dev
     deploy cannot tell a broken CHANGE from an unreachable REGISTRY, and prod's deploy job is still
     inlined shell where `deploy-dev` exercises the script ([backlog](docs/wiki/backlog.md)).
-14. **FROM THE USER, AND FIRST CONTACT IS THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** The
+14. **NOBODY IS TOLD ABOUT A POST** (user, 2026-09-10) - and **NO SCHEDULER PUBLISHES POSTS AT
+    ALL**. Designed to the migration, not started, owes the USER one decision on volume
+    ([backlog](docs/wiki/backlog.md)).
+15. **FROM THE USER, AND FIRST CONTACT IS THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** The
     2026-09-08 PROD P1 is FIXED, UNSHIPPED, and owes ONE hardware run **blocked on a THIRD account**;
     four siblings are open beside it ([backlog](docs/wiki/backlog.md)).
 

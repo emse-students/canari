@@ -21,6 +21,7 @@
   import Button from '$lib/components/ui/Button.svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import { getToken } from '$lib/stores/auth';
+  import { settings } from '$lib/stores/settingsStore.svelte';
   import { currentUserId } from '$lib/stores/user';
   import { RefreshCw, SquarePen, Inbox, Search, X } from '@lucide/svelte';
   import { SvelteMap } from 'svelte/reactivity';
@@ -141,7 +142,20 @@
   // Sentinel element for IntersectionObserver
   let sentinel = $state<HTMLElement | null>(null);
 
-  const activeFeed = $derived((page.url.searchParams.get('feed') || 'associations') as PostFeed);
+  /**
+   * WHICH TAB IS CURRENT, AND IT COMES FROM `load` RATHER THAN FROM THE URL.
+   *
+   * This read `page.url.searchParams.get('feed') || 'associations'`, which is the SAME decision
+   * `load` makes and a DIFFERENT implementation of it - and the two disagreed the moment the
+   * remembered tab was added, because a bare `/posts` has no `feed` parameter at all. Measured
+   * 2026-09-10: with `canari_preferred_post_feed = followed` stored, a reload fetched the
+   * followed feed and drew "Associations" as the selected tab. The posts were right and the
+   * highlight was wrong, which is the worst of the three possible outcomes.
+   *
+   * `load` resolves url -> preference -> default once and publishes the answer; nothing else
+   * re-derives it.
+   */
+  const activeFeed = $derived(data.feedParams.feed);
 
   $effect(() => {
     void page.url.search;
@@ -163,22 +177,27 @@
       .catch(() => {});
   });
 
+  /**
+   * The next page's query, and it asks for exactly what the first page asked for.
+   *
+   * This used to re-parse `feed`, `promo` and `formation` off the URL - a third copy of `load`'s
+   * parsing, complete with its own `parseInt` and its own default - so page 2 could be fetched
+   * from a different feed than page 1 whenever the two disagreed. `load` publishes what it
+   * resolved; the only thing that changes between pages is the offset.
+   */
   function buildListOptions(offset = 0) {
-    const u = page.url.searchParams;
-    const feed = (u.get('feed') || 'associations') as PostFeed;
-    const promoStr = u.get('promo');
-    const promo = promoStr !== null && promoStr !== '' ? parseInt(promoStr, 10) : undefined;
-    const formation = u.get('formation')?.trim() || undefined;
-    return {
-      limit: PAGE_SIZE,
-      offset,
-      feed,
-      promo: promo !== undefined && Number.isFinite(promo) ? promo : undefined,
-      formation,
-    };
+    return { limit: PAGE_SIZE, offset, ...data.feedParams };
   }
 
+  /**
+   * Switches feed, and REMEMBERS IT - the tab is a preference, not a navigation.
+   *
+   * Written here and not in `load`, which is the distinction that makes the feature work: `load`
+   * also runs for a link someone was sent, and recording the feed there would let a shared
+   * `?feed=all` quietly rewrite the reader's own choice. Only a click on a tab is a choice.
+   */
   function navigateFeed(feed: PostFeed) {
+    settings.setPreferredPostFeed(feed);
     const u = new URL(page.url);
     u.searchParams.set('feed', feed);
     u.searchParams.delete('promo');

@@ -11,6 +11,61 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - the width of a page stopped depending on which page it was
+
+Moving between two tabs of Canari moved the text under the reader, and the user said so plainly:
+*"Il y a des disparites importantes de largeur, et c'est tres bizarre. C'est tres bizarre quand
+c'est trop large, trop etroit, ou quand ca change tout le temps."* Every page was measured against
+the web's own references at the same window size - Facebook's feed, Google Agenda's month, Amazon's
+catalogue - and three pages turned out to be inventing widths nobody had chosen.
+
+**The admin console** drew all eleven of its pages at 896px, from a container declared once in the
+section's layout. Because that container was an ANCESTOR of every admin page it also silently
+overruled them: the connections board asked for the 1024px editor width and was drawn at 896 with
+nothing anywhere reporting the difference. The console now uses the shared editor width, and the
+three pages that had declared their own column no longer do.
+
+**The legal pages** sat at 672px - a width used nowhere else in the app - applied to the same
+element as their heading, so it capped the title as well as the text.
+
+**The card walls** on the clubs, lists and shop pages counted their columns instead of sizing their
+cards: two, then three, then four as the window grew. Four columns of a 1600px page is a 388px
+tile, roughly double what a shopping site draws. They now state the card's minimum width and let
+the column count follow, which gives the same tile on every page at every window size - 242px on a
+laptop, 253px on a large display, against the 205-330px band measured on Amazon. One definition,
+covered by a test, replacing six identical copies.
+
+### Changed - the legal documents read like documents
+
+The terms of use, the privacy policy and the child-safety standards shared forty lines of
+copy-pasted chrome and, in the user's words, a design that was *"vraiment pauvre"*. Three things
+caused that. The body text of all three documents was set in the secondary colour at the secondary
+size - caption styling, for the whole of a legally binding text. Every block was a card, so the
+definitions of terms looked exactly like the two blocks that are actual warnings. And the page wore
+the login screen's translucent glass, which is designed to float over that screen's backdrop and
+floats over nothing here.
+
+All three now share one shell: a real type hierarchy, a table of contents pinned beside the text on
+a wide window that tracks where you are as you scroll, definitions set as definitions, and cards
+kept for the two genuine warnings. The child-safety page gained a table of contents it never had.
+No word of any of the three documents changed.
+
+### Fixed - the remembered feed tab was fetched but not shown
+
+The posts page can remember which tab you last chose. It resolved that once when loading the page -
+the address, then your remembered choice, then the default - and then the page worked it out a
+second and a third time from the address alone, defaulting to Associations when the address said
+nothing. So arriving at `/posts` with "Suivis" remembered fetched the followed feed and highlighted
+Associations: the posts were right and the tab was wrong, which is worse than either being wrong on
+its own. The two extra copies are gone, and a test now fails if one comes back.
+
+### Fixed - a shop tile clipped its own amount field
+
+The free-amount products let you type what you want to pay. The field could not shrink below about
+170px - the intrinsic width a number input carries - so once tiles stopped being 388px wide, the
+currency beside it was cut in half by the edge of the card.
+
+
 ### Fixed - a form accepted answers to questions it never asked
 
 A registration form declares its questions. The code that worked out what a submitter had answered

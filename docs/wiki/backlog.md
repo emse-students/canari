@@ -647,6 +647,54 @@ What is left is the QUEUE half above, which no sweep looks at.
 
 ## Notifications - the two builders, and the rung of the campaign that reads them as one
 
+### P2 - NOBODY IS TOLD ABOUT A POST. No notification exists for an association's publication, nor for a post by anyone you follow (user, 2026-09-10)
+
+Reported as two items in one breath: *"Les gens doivent avoir une notif pour tous les posts
+d'associations"* and *"Les gens doivent avoir une notif pour tous les posts de gens ou d'assos
+qu'ils suivent"*. They are one mechanism with two recipient derivations, so they ship together.
+
+**NOT STARTED. The design below is settled and measured; what is missing is the code.**
+
+**There is no scheduler for posts at all, and that is the first thing to know.** `scheduledAt` on
+`posts` appears only inside a `WHERE` clause - nothing ever publishes a scheduled post, and nothing
+sweeps the table. But `ScheduleModule.forRoot()` IS already in
+`apps/social-service/src/app.module.ts`, with four `@Cron` schedulers beside it, so the seam exists.
+
+**The model to copy verbatim is `apps/social-service/src/forms/forms-reminder.scheduler.ts`**:
+`@Cron('* * * * *')`, a durable `notified*` boolean, **stamped BEFORE sending** (its own comment
+states the trade: *"Worst case: the notification is silently lost; acceptable vs spamming the user
+on every cron tick"*), and a `try`/`catch` per item with a `logger.warn`. That shape satisfies this
+repo's standing rule - idempotence from durable state, never from a clock.
+
+**What it needs, in order:**
+
+1. **A column.** `feedNotifiedAt timestamptz null` on `posts`, plus a numbered SQL migration in
+   `apps/social-service/src/migrations/`. **The migration must STAMP EVERY EXISTING ROW**, or the
+   first deploy notifies the whole school about 119 old posts. This is the one step that cannot be
+   undone by a revert.
+2. **One sweeper, two recipient derivations.** An association post goes to the feed audience; a
+   personal post goes to that author's followers in `user_follows`.
+3. **The feed audience is ICM + global admin, and it is gated ONLY IN THE CLIENT.**
+   `routes/posts/+page.ts` and `routes/posts/[postId]/+page.ts` redirect on
+   `profile.formation !== 'ICM'`; the backend has no such gate. So the recipient query has to
+   re-state the rule server-side (`users.formation = 'ICM' OR users.admin`), and doing that makes
+   the client gate a second implementation of one decision - worth resolving in the same change
+   rather than adding a third.
+4. **`PostNotificationsService.createNotifications` already does the hard part** - it dedupes,
+   excludes the actor, batch-saves, and pushes per recipient with a per-recipient catch.
+5. **One new `PushContentKey`, and it costs SIX native string tables and THREE composers**: the
+   builder in `push/push-content.ts` and its entry in `push-content.spec.ts`;
+   `notif_<key>_title`/`notif_<key>_body` in BOTH Android tables (`values/`, `values-en/`);
+   `notif.<dotted>.title`/`.body` in ALL FOUR iOS `.lproj` tables; and the key handled in
+   `CanariFirebaseMessagingService.kt`, `NotificationService.swift` and `canari_push.mm`. All of it
+   is enforced by `frontend/src/lib/mobile/nativeStrings.test.ts` - the gate will name whatever is
+   missing.
+
+**The open question is VOLUME, and it is the user's to answer.** Every association post reaching
+every ICM student is, on the current population, 368 recipients per post. Whether that wants a
+per-association mute, a daily digest, or nothing at all is a product decision, not a code one.
+
+
 ### P1 - a FIRST message from someone you have no conversation with notifies, decrypts, and then goes nowhere: the tap does not land and the conversation is invisible until the app is restarted (user, 2026-09-08, on PRODUCTION)
 
 Reported verbatim: *"Quelqu'un m'envoie un message alors que nous n'avons pas encore de discussion. Je

@@ -1,5 +1,6 @@
 <script lang="ts">
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
+  import { CARD_GRID } from '$lib/components/layout/cardGrid';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
   import {
@@ -118,7 +119,7 @@
               </span>
               <span class="bg-cn-border h-px flex-1"></span>
             </h2>
-            <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            <div class={CARD_GRID}>
               {#each shelf.items as list (list.id)}
                 <a
                   href="/lists/{list.slug}"
@@ -170,7 +171,7 @@
             {m.list_archived_heading({ count: archivedLists.length })}
           </button>
           {#if showArchived}
-            <div class="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            <div class="mt-3 {CARD_GRID}">
               {#each archivedLists as list (list.id)}
                 <a
                   href="/lists/{list.slug}"

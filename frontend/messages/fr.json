@@ -1960,6 +1960,8 @@
   "form_view_error_payment_failed": "Le paiement a échoué. Vous pouvez soumettre à nouveau le formulaire.",
   "form_view_payment_success": "Paiement effectué avec succès !",
   "form_view_submission_success": "Réponse envoyée !",
+  "legal_eyebrow": "Mentions légales",
+  "legal_last_updated": "Dernière mise à jour : {date}",
   "legal_toc_heading": "Sommaire",
   "legal_cgu_subtitle": "Canari - Messagerie sécurisée EMSE",
   "legal_child_safety_title": "Normes de sécurité des enfants",

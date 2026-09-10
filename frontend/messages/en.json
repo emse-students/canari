@@ -1939,6 +1939,8 @@
   "form_view_error_payment_failed": "Payment failed. You can submit the form again.",
   "form_view_payment_success": "Payment successful!",
   "form_view_submission_success": "Response sent!",
+  "legal_eyebrow": "Legal",
+  "legal_last_updated": "Last updated: {date}",
   "legal_toc_heading": "Table of contents",
   "legal_cgu_subtitle": "Canari - Secure EMSE Messaging",
   "legal_child_safety_title": "Child Safety Standards",

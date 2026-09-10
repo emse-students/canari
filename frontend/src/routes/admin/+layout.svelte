@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
@@ -137,7 +138,16 @@
     ></div>
   </div>
 {:else}
-  <div class="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:px-6">
+  <!-- THE ADMIN CONSOLE IS ONE PAGE SHAPE, AND IT IS THE SHARED ONE.
+       This was `mx-auto max-w-4xl` with its own padding - a FOURTH width, outside the three
+       `pageWidth.ts` allows, applied to all eleven admin pages at once. It did not merely differ:
+       being an ancestor of every page it CLAMPED them, so `/admin/status` asked for the 1024px
+       editor measure and was drawn at 896 with nothing reporting it. Measured 2026-09-10, at
+       1440px: eleven pages, eleven times 896.
+       `tool` and not `reading`, because every one of them is a table or a board rather than a
+       column of prose. The three pages that declared their own container no longer do - one
+       column per page, and the layout owns it here because the header above is part of it. -->
+  <PageContainer width="tool" class="space-y-6">
     <a
       href="/dashboard"
       class="text-text-muted hover:text-text-main inline-flex items-center gap-1 text-sm transition-colors"
@@ -197,5 +207,5 @@
     </nav>
 
     {@render children?.()}
-  </div>
+  </PageContainer>
 {/if}

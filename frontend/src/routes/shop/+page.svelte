@@ -1,5 +1,6 @@
 <script lang="ts">
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
+  import { CARD_GRID } from '$lib/components/layout/cardGrid';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
@@ -235,7 +236,7 @@
                 </div>
 
                 <!-- Products grid -->
-                <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                <div class={CARD_GRID}>
                   {#each assocProducts as product (product.id)}
                     {@const sibling = upgradeSibling(product, assocProducts)}
                     {@const memberEligible = qualifiesForMemberPrice(product, assocProducts)}
@@ -306,6 +307,13 @@
 
                         <!-- Custom amount input -->
                         {#if product.allowCustomAmount && product.amountCents === null}
+                          <!-- `min-w-0` on the input, and it is load-bearing: a flex item's
+                               `min-width` is `auto`, which resolves to its MIN-CONTENT width, and
+                               a bare `input type=number` carries an intrinsic one of about 170px
+                               that `flex-1` cannot shrink past. The row therefore overflowed its
+                               card the moment the card stopped being 388px wide - measured
+                               2026-09-10 on a 242px tile, with the currency label cut in half.
+                               Exactly the trap `/calendar/export` hit on a grid `1fr` track. -->
                           <div class="flex items-center gap-2">
                             <input
                               type="number"
@@ -317,7 +325,7 @@
                                 : undefined}
                               step="0.01"
                               placeholder={m.shop_amount_placeholder()}
-                              class="border-cn-border text-text-main focus:ring-cn-accent flex-1 rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
+                              class="border-cn-border text-text-main focus:ring-cn-accent w-full min-w-0 flex-1 rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
                               bind:value={customAmounts[product.id]}
                             />
                             <span class="text-text-muted text-xs"

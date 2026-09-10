@@ -642,8 +642,15 @@
     {/if}
     <div class="flex items-center gap-2.5">
       <div class="shrink-0"><Avatar userId={currentUserId} size="sm" /></div>
+      <!-- `items-center`, and it was `items-end` (user, 2026-09-10: *"le texte n'est pas centre
+           ici"*). The row's tallest child is the 40px send button, not the 28px editor, so
+           bottom-aligning left the text 17px from the top of the pill and 7px from the bottom -
+           measured, off by 10px. `items-end` is the right rule for a composer that GROWS, and
+           this one cannot: `singleLine` is set on the input. Its two local antidotes go with it,
+           the GIF button's `self-center` and the send icon's `mt-0.5` - a nudge kept once the
+           thing it compensated for is gone is how the next offset gets built. -->
       <div
-        class="flex min-w-0 flex-1 items-end rounded-2xl border border-black/5 bg-black/5 px-3.5 py-1.5 shadow-inner transition-all focus-within:bg-white focus-within:ring-2 focus-within:ring-amber-500/50 dark:border-white/10 dark:bg-white/5 dark:focus-within:bg-black/40"
+        class="flex min-w-0 flex-1 items-center rounded-2xl border border-black/5 bg-black/5 px-3.5 py-1.5 shadow-inner transition-all focus-within:bg-white focus-within:ring-2 focus-within:ring-amber-500/50 dark:border-white/10 dark:bg-white/5 dark:focus-within:bg-black/40"
         onfocusin={() => (commentInputFocused = true)}
         onfocusout={() => (commentInputFocused = false)}
       >
@@ -665,7 +672,7 @@
             disabled={uploadingMedia}
             title={m.chat_send_gif_title()}
             aria-label={m.chat_send_gif_label()}
-            class="text-text-muted text-2xs mr-0.5 shrink-0 self-center px-1.5 font-bold tracking-tight transition-colors hover:text-amber-500 disabled:opacity-40"
+            class="text-text-muted text-2xs mr-0.5 shrink-0 px-1.5 font-bold tracking-tight transition-colors hover:text-amber-500 disabled:opacity-40"
           >
             GIF
           </button>
@@ -677,7 +684,7 @@
           class="ui-icon-button ml-1 rounded-full text-amber-500 transition-all outline-none hover:bg-amber-500/10 hover:text-amber-600 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 disabled:opacity-40 disabled:hover:bg-transparent"
           aria-label={m.post_send_comment_label()}
         >
-          <Send size={18} strokeWidth={2.5} class="mt-0.5 ml-0.5" />
+          <Send size={18} strokeWidth={2.5} class="ml-0.5" />
         </button>
       </div>
     </div>
