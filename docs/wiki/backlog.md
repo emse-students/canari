@@ -966,42 +966,75 @@ hardware-blocked items rather than with this one.
 
 ## CI and the chain that runs unattended
 
-### P3 - the `CodeQL` check has failed on every pull request since the workflow migration, and the reason is bookkeeping (observed 2026-09-10 on #482)
+### P3 - two wire contracts are written twice, and `libs/proto` is the mechanism that already exists for exactly that (measured 2026-09-10)
 
-Not our `Security / CodeQL Security Analysis` job, which is green. This is the separate **GitHub
-Advanced Security** check, and its title is `6 configurations not found`:
+Found by scanning the tree for duplicated blocks after a triplicated comment stripper produced
+three CodeQL alerts. **Most of what that scan returned is DELIBERATE and is now asserted** by
+`declared-duplicates.test.mjs` - four copies of the CORS allowlist and its test, four of the
+NestJS framework-boot assertion, and the 636-line Minesweeper engine the server replays to decide
+whether a ranked score is a cheat. Those stay duplicated for the reasons their own docblocks give.
 
-```
-.github/workflows/pull-request.yml:codeql/language:javascript-typescript
-.github/workflows/code-analysis.yml:codeql/language:javascript
-.github/workflows/code-analysis.yml:codeql/language:typescript
-.github/workflows/code-analysis.yml:codeql/language:javascript-typescript
-.github/workflows/scheduled.yml:codeql/language:javascript-typescript
-.github/workflows/cd.yml:codeql/language:javascript-typescript
-```
+**These two are a different shape and are NOT covered by that gate**, because the copies are not
+copies - they are one contract described twice, in two languages of the same repository:
 
-**Four of the six name workflows that no longer exist.** `pull-request.yml` and `cd.yml` were
-deleted by the 2026-09-02 migration ([workflow-migration](workflow-migration.md)), and
-`code-analysis.yml` stopped declaring `javascript` and `typescript` separately in the same change.
-GHAS remembers a configuration it has seen on `main` and warns until it stops seeing it, so this is
-a comparison against a tree that is eight days gone.
+| the shared block | the two places | lines |
+| --- | --- | --- |
+| the published-carte stage shape | `frontend/src/lib/carte/publish.ts` + `apps/social-service/src/associations/published-carte.ts` | 44 |
+| the backend-storage report shape | `frontend/src/lib/utils/backendStorage.ts` + `apps/chat-delivery-service/src/controllers/admin-storage.controller.ts` | 48 |
 
-**It merges anyway and that is correct** - `CI passed` is the one check the branch ruleset
-requires, and this one is advisory. **It is still noise, which is the problem**: a red cross a
-reader learns to skip is the one that hides the next defect, and this one hid a REAL high-severity
-alert on #482 for as long as it took to open the summary.
+The rest of each file legitimately differs - one produces, one consumes - so an identity gate
+would be wrong. What is duplicated is the SHAPE crossing the wire, and a shape that disagrees
+across the wire is a runtime failure no compiler here can see, because the two sides are compiled
+separately.
 
-**What would settle it, in order of preference:**
+**The repository already answers this question once**: `libs/proto/canari.proto` is a wire
+contract with ONE definition and generated bindings on both sides. These two predate that habit
+rather than reject it.
 
-- **Wait, and check.** GHAS drops a configuration it has not seen for roughly 14 days, so these
-  should clear on their own around **2026-09-16**. If the check is still red after that date the
-  cause is NOT ageing and this entry is wrong - re-open it against the live configuration list
-  rather than waiting longer.
-- There is no public API to delete a stale CodeQL configuration; the alternative is a one-off click
-  in the repository's Code security settings, which is the USER's to make if the date passes.
+**What it owes before anything moves:** whether a `.proto` is proportionate for a 44-line
+presentational shape, or whether the honest cheaper answer is a generated type checked into both
+trees. **Do NOT answer it by creating a shared TypeScript package** - that was tried
+(`libs/shared-ts`), imported by nothing, and deleted on 2026-08-27; the reasoning is in any copy
+of `cors-origins.ts` and it has not changed.
 
-**Do not "fix" this by making the check non-blocking or by deleting the tool** - it is already
-non-blocking, and it is the thing that reported the alert this entry exists because of.
+### P3 - 1 884 dead CodeQL analyses still name four workflows that no longer exist, and only the USER can clear them (measured 2026-09-10)
+
+**The structural half is FIXED, in the same session** - `code-analysis.yml` now pins
+`category: "/language:<lang>"`, so one definition uploads under one identity instead of being
+named after whichever workflow called it. `codeql-category.test.mjs` holds it. What is left here
+is HISTORY, and it is the only part a commit cannot touch.
+
+**The measurement, `GET /code-scanning/analyses?ref=refs/heads/main`, 2 039 analyses:**
+
+| category | newest | count | state |
+| --- | --- | --- | --- |
+| `ci.yml:...javascript-typescript` | 2026-09-10 | 138 | superseded by the explicit category |
+| `scheduled.yml:...javascript-typescript` | 2026-09-10 | 7 | superseded by the explicit category |
+| `cd.yml:...javascript-typescript` | 2026-09-02 | 792 | **workflow deleted 2026-09-02** |
+| `cd.yml:...javascript` | 2026-07-24 | 281 | **workflow deleted** |
+| `cd.yml:...typescript` | 2026-07-24 | 281 | **workflow deleted** |
+| `code-analysis.yml:...typescript` | 2026-07-24 | 245 | language split removed |
+| `code-analysis.yml:...javascript` | 2026-07-24 | 244 | language split removed |
+| `code-analysis.yml:...javascript-typescript` | 2026-09-03 | 41 | now uploads under the pinned category |
+| `pull-request.yml:...javascript-typescript` | 2026-09-04 | 10 | **workflow deleted 2026-09-02** |
+
+**WAITING IS NOT THE ANSWER AND AN EARLIER VERSION OF THIS ENTRY SAID IT WAS.** It claimed GHAS
+would drop these around 2026-09-16 on a 14-day window. The window is **90 days**, so
+`cd.yml:...javascript-typescript` would not clear until **1 December 2026** and the 2026-07-24
+rows not until late October. That claim was wrong and is recorded here so it is not made again.
+
+**What clears them, and it is the documented remedy**: `DELETE
+/repos/{owner}/{repo}/code-scanning/analyses/{id}?confirm_delete`, walked down each category's
+chain. Alerts detected ONLY by a deleted analysis are closed - which is the intended effect here,
+those alerts being stale copies of what the live configuration already reports.
+
+**IT IS THE USER'S CLICK BECAUSE IT IS NOT REVERSIBLE.** 1 884 records, on a PUBLIC repository's
+security history, with no undo. The agent standing rule is that a one-off action belongs to the
+user (2026-08-25); the standing rule that a defect is repaired whether or not you caused it is why
+the half that COULD be committed already was.
+
+**Do not "fix" the remainder by making the check non-blocking or by removing the tool** - it is
+already advisory, and it is the thing that reported the high-severity alert this entry came from.
 
 ### P2 - the Android unit tests are never run by anything, so one suite has been decorative since it was written (measured 2026-09-07)
 

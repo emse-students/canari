@@ -11,6 +11,36 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - the CodeQL check had been red on every pull request for eight days, and that hid a real alert
+
+Internal. The security analysis is one definition called from two places - once on every pull
+request, once nightly - and CodeQL names an analysis after the workflow that CALLED it, so one
+definition was uploading under two identities. GitHub then expected both on every branch, and a
+pull request can never carry the nightly one, because a nightly does not run on a branch.
+
+The check that said so is advisory, so everything merged anyway. That is the worse half: a red
+cross that is always there is one a reader learns to skip, and on the previous change it hid a
+genuine high-severity alert inside a summary nobody had a reason to open. The analysis now
+declares its own identity, and a check refuses one that does not.
+
+What a commit cannot repair is the history: 1 884 analyses still name four workflows deleted on
+2 September. Clearing them is a deletion with no undo, so it is written down as the user's to
+make - along with a correction, because a first version of that note said the platform would
+forget them by 16 September and the real window is ninety days.
+
+### Changed - the copies this project keeps on purpose are now checked for being copies
+
+Internal, and it came out of the alert above. Scanning for duplicated code found that most of
+what this repository duplicates, it duplicates deliberately and says why: four services carry the
+same CORS allowlist because a shared package would add a build stage to four production images,
+and the Minesweeper engine exists twice because the server replays a ranked game to decide whether
+a score is a cheat.
+
+Those decisions stand. What was missing is that nothing checked the copies still matched - the
+Minesweeper pair, 636 lines deciding whether a player cheated, was held together by a comment
+reading "keep in sync". All four groups were in sync when measured, and a check now keeps them
+that way, naming the first line where any copy drifts.
+
 ### Fixed - three security alerts that were one idiom copied three times
 
 Internal, and none of them exploitable: three test files that read the app's own source to check
