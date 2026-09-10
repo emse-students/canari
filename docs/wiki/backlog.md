@@ -7529,13 +7529,22 @@ file in the user's stack trace, with no credentials and in seconds. It belongs a
 where it would have stopped this build before production. It is NOT a login and must not be sold as
 one; the honest check is a real sign-in on the deployed build, and no campaign row does that.
 
-**3. NOTHING REPORTS THAT PRODUCTION DID NOT MOVE.** P2, sibling of the open "nothing tells anybody
-prod is down". `Production estate` needs `[android, ios]` in success - deliberately, and the reason
-is good: production must not serve a version a store has just refused. But a store arm failed on
-v0.16.2 AND v0.16.3, so both were published, announced, and served to nobody. **Production ran
-v0.16.1 from 2026-09-03 until this outage**, and the only reason anybody found out is that the next
-deploy broke. The `prod-released` marker already answers the question exactly; a release whose marker
-did not move is a release that did not ship, and that should be loud.
+**3. A RELEASE THAT DID NOT REACH PRODUCTION IS LOUD NOW; WHAT IS STILL SILENT IS PRODUCTION
+FALLING OVER LATER.** The first half is closed (2026-09-10). `Production estate` needs
+`[android, ios]` in success - deliberately, and that dependency is untouched: production must not
+serve a version a store has just refused. What was wrong is that a SKIPPED job does not fail a
+run, so v0.16.2 and v0.16.3 were published, announced and served to nobody while production ran
+v0.16.1 from 2026-09-03 until the next deploy broke.
+
+`release-shipped.sh` closes it, and it reads the `prod-released` MARKER rather than the estate
+job's result - a job result says what the workflow did, the marker says what production serves,
+and they differ exactly when it matters (a tag push that fails after a green deploy, an emergency
+deploy by hand). Seven assertions in `release-shipped.test.sh`, including the case nobody expects:
+a SUCCESSFUL estate whose marker did not move.
+
+**The sibling is still open and it is the USER's**: nothing watches production between releases.
+This check fires once, at the moment of a release. An estate that dies an hour later is still
+reported by nobody - see the external uptime probe in the table at the top of this page.
 
 **4. THE EMERGENCY PATH SHORTENS NOTHING.** P2, measured under real urgency. `gh pr merge --admin`
 skips the ruleset's required check on the PULL REQUEST; `release-preflight.sh` gate 3 then refuses

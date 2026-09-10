@@ -536,3 +536,35 @@ jobs:
 
           gh api -X PATCH "repos/$REPO/releases/$RELEASE_ID" -F body=@body-next.md --jq '.html_url'
           printf 'release body updated - %s characters of notes for %s\n' "${#notes}" "$MARKETING_VERSION"
+
+  # =================================================================================================
+  # A STABLE THAT DID NOT REACH PRODUCTION MUST BE LOUD
+  # =================================================================================================
+  # `release-shipped.sh` carries the reasoning and the recovery text; it is a script rather than
+  # inline shell for the reason the notes job gives above - it is a pure function of its inputs,
+  # and the cases worth testing are ones a live release never produces.
+  #
+  # `always()` HERE AND NOT ON THE ESTATE. The estate's dependency on the two store arms stays a
+  # SUCCESS dependency, deliberately: adding `always()` there is how a gate becomes a formality.
+  # This job depends on nothing and gates nothing - it only refuses to let the run report success
+  # for a release production never received.
+  #
+  # STABLES ONLY: a pre-release has no production estate, so there is no marker to move.
+  shipped:
+    name: Did it reach production
+    needs: [preflight, bump, serve-prod]
+    if: always() && needs.preflight.outputs.prerelease == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: The marker production writes for itself
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RELEASED_SHA: ${{ needs.bump.outputs.sha }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+          ESTATE_RESULT: ${{ needs.serve-prod.result }}
+        run: bash .github/scripts/release-shipped.sh
