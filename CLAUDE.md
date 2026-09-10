@@ -231,9 +231,9 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    three commands a run owes before any of it is believed are in the campaign section below.
    PIN's four rows change a PIN or restart a browser, hence last; HEAL-NEW's rung redesign is open
    on a clean pass ([backlog](docs/wiki/backlog.md)).
-2. **P1 - THE PREKEY WEIGHT: BOTH CAUSES FIXED 2026-09-09, THE BALANCE UNRECOVERABLE UNTIL LATE
-   OCTOBER**, and **NOTIF-1b stays blocked on it**. Counts, causes and the two ways to shorten the
-   drain - one owed to the USER - are in [backlog](docs/wiki/backlog.md), the only copy.
+2. **P1 - THE PREKEY WEIGHT: BOTH CAUSES FIXED 2026-09-09, AND THE TEST PHONE'S HORIZON IS TO BE
+   PRUNED** rather than waited out to late October (user, 2026-09-10), which UNBLOCKS NOTIF-1b.
+   What the prune risks and the evidence it must log FIRST are in [backlog](docs/wiki/backlog.md).
 3. **P1 - a PLACEHOLDER held a member's seat**; only a member's CLIENT can say whether a LEAF is
    left in the MLS tree and **NOTHING HAS** - the three identities cited here as that evidence were
    this campaign's OWN mention fixtures, named 2026-09-07 ([backlog](docs/wiki/backlog.md)).
@@ -248,15 +248,14 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    ([cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them), the only copy).
    Three open, all in [backlog](docs/wiki/backlog.md): the suppression control case, **nothing tells
    anybody prod is down**, and [host-updates](docs/wiki/infrastructure/host-updates.md).
+   **PostgreSQL 15 -> 18 IS OWED, PRODUCTION INCLUDED** (the user's 2026-09-10 authorization is
+   the one exception to read-only prod): verified dump, local proof, cutover with rollback; #309.
 7. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
    [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
-8. **UX/RENDERING: ONLY THE EMOJI FONT IS LEFT.** Three decided items shipped and none reopens -
-   one icon-button box, three page shapes (`pageWidth.ts`), ONE card wall (`cardGrid.ts`), each
-   asserted by its own test; **the 52-route width sweep against Facebook, Google Agenda and Amazon
-   is DONE**, its numbers the only copy on
-   [design-reference](docs/wiki/frontend/design-reference.md) section 17. What remains: ONE bundled
-   Noto Color Emoji everywhere with the disparities resolved in the same change, and the English
-   locale still fetching emoji data from `cdn.jsdelivr.net` ([backlog](docs/wiki/backlog.md)).
+8. **UX/RENDERING: THE EMOJI FONT, AND THE SERVER'S ENGLISH.** All decided items shipped, each
+   asserted by its own test, numbers on [design-reference](docs/wiki/frontend/design-reference.md)
+   section 17. Two left: ONE bundled Noto Color Emoji everywhere, and **sweeping ALL 184 screens
+   that still show the server's English prose** (user, 2026-09-10) ([backlog](docs/wiki/backlog.md)).
 9. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
    commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
 10. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
@@ -274,8 +273,9 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
     200 for a logged-OUT caller, so the edge check only IDENTIFIES. Feed and presence FIXED;
     **14 locations unaudited**, and a 404 at the bare path proves nothing ([backlog](docs/wiki/backlog.md)).
 15. **FROM THE USER, AND FIRST CONTACT IS THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** The
-    2026-09-08 PROD P1 is FIXED, UNSHIPPED, and owes ONE hardware run **blocked on a THIRD account**;
-    four siblings are open beside it ([backlog](docs/wiki/backlog.md)).
+    2026-09-08 PROD P1 is FIXED, UNSHIPPED, and owes ONE hardware run that nothing blocks now.
+    **A reaction to your OWN message must notify by push, and NOTIF-15 asserts the opposite** -
+    the row and the code both move, and which channel carries it is open ([backlog](docs/wiki/backlog.md)).
 
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
 
