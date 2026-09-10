@@ -11,6 +11,23 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - a BDE manager can delete an association, not only create one
+
+Decided by the user on 2026-09-10, after the Danger panel was made visible to them. The right that
+already creates an association now ends one: `MANAGE_ASSO`, held by a BDE member, alongside the
+platform administrator. Administering associations without being able to remove one leaves every
+mistake permanent.
+
+Archiving and deleting stay different things, and the panel says so: archiving retires an
+association from the lists and undoes itself, and anyone with *Gerer les membres* can do it -
+including an association's own officers. Deleting erases the association, its members and its
+agenda, and nothing brings them back.
+
+Deletion also leaves a trace now. It had none, which was survivable while one person could reach
+it: the server counts the members and events it is about to destroy, records them and names the
+caller, before destroying anything.
+
+
 ### Fixed - a community's unread badge counted UP as you scrolled back through the thread
 
 Reported on 2026-09-09. Scrolling into a salon's history made the number on the scroll-to-bottom

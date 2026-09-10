@@ -20,7 +20,6 @@ import {
 import type { Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
-import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import {
   PERM_FLAG_KEY,
   GlobalAdminOrAssociationRoleGuard,
@@ -434,11 +433,24 @@ export class AssociationsController {
     return this.service.create(dto, userId);
   }
 
-  /** Deletes an association; requires global admin privileges. */
-  @UseGuards(NginxAuthGuard, GlobalAdminGuard)
+  /**
+   * Deletes an association, its members and its calendar. Global admin, or a BDE member holding
+   * `MANAGE_ASSO`.
+   *
+   * WIDENED FROM GLOBAL-ADMIN-ONLY ON 2026-09-10, BY THE USER, AND THE SYMMETRY IS THE ARGUMENT:
+   * the same right already CREATES an association through the endpoint above, and administering
+   * associations without being able to end one leaves every mistake permanent. The client used to
+   * hide the whole Danger panel behind the stricter of its two controls, so a BDE administrator
+   * saw neither this nor the archive beside it.
+   *
+   * Archiving stays the reversible answer and is a `PATCH` at `MANAGE_MEMBERS`; this is the one
+   * that does not come back, which is why the caller reaches `remove` rather than the service
+   * being trusted to identify them.
+   */
+  @UseGuards(NginxAuthGuard, GlobalAdminOrBdeSuperAdminGuard)
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.service.remove(id);
+  remove(@Param('id') id: string, @Headers('x-user-id') userId: string) {
+    return this.service.remove(id, userId);
   }
 
   // ── Global Admin OR Association Admin (MANAGE_MEMBERS) ───────────────────

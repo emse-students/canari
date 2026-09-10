@@ -1,6 +1,8 @@
 import { ForbiddenException } from '@nestjs/common';
 import { GUARDS_METADATA } from '@nestjs/common/constants';
+import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
+import { GlobalAdminOrBdeSuperAdminGuard } from './guards/global-admin-or-bde-super-admin.guard';
 import { AssociationsController } from './associations.controller';
 import { AssociationsService } from './associations.service';
 import { ProductsService } from './products.service';
@@ -159,4 +161,47 @@ describe('AssociationsController read guards', () => {
       expect(guards).toContain(NginxAuthGuard);
     }
   );
+});
+
+/**
+ * DELETING AN ASSOCIATION IS THE ONE CALL HERE THAT DOES NOT COME BACK, AND ITS TIER MOVED.
+ *
+ * It was `GlobalAdminGuard` - the platform administrator alone - and on 2026-09-10 the user widened
+ * it to the same tier that already CREATES an association: a global admin, or a BDE member holding
+ * `MANAGE_ASSO`. A guard is a decorator, so nothing in the type system notices one being swapped
+ * back or dropped; the metadata Nest actually reads is the only thing that can be asserted.
+ *
+ * The pair below is the point. Asserting the new guard alone would still pass if someone ADDED
+ * `GlobalAdminGuard` beside it, which would silently restore the old behaviour - two guards are an
+ * AND.
+ */
+describe('AssociationsController delete tier', () => {
+  it('admits a global admin OR a BDE MANAGE_ASSO holder, and nothing narrower', () => {
+    // Indexed rather than dotted, like the read-guard block above: a bare `prototype.remove` is an
+    // unbound method reference and the linter is right to say so, even though nothing calls it.
+    const guards = Reflect.getMetadata(
+      GUARDS_METADATA,
+      AssociationsController.prototype['remove']
+    ) as unknown[] | undefined;
+
+    expect(guards).toContain(NginxAuthGuard);
+    expect(guards).toContain(GlobalAdminOrBdeSuperAdminGuard);
+    expect(guards).not.toContain(GlobalAdminGuard);
+  });
+
+  it('hands the caller down, because the service line that records the deletion needs a name', () => {
+    const service = { remove: jest.fn(() => Promise.resolve({ ok: true })) };
+    const controller = new AssociationsController(
+      service as unknown as AssociationsService,
+      {} as ProductsService,
+      {} as PartnershipsService,
+      {} as FollowsService,
+      {} as UserTagService,
+      {} as UserProfileService
+    );
+
+    void controller.remove('asso1', 'user-42');
+
+    expect(service.remove).toHaveBeenCalledWith('asso1', 'user-42');
+  });
 });
