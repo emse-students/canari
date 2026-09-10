@@ -25,15 +25,7 @@ import {
 } from '$lib/utils/hex';
 import MlsKeyPackageWorker from '../workers/mlsKeyPackage.worker?worker';
 import { BaseMlsService } from './BaseMlsService';
-
-/**
- * Strips CR/LF and control characters (and truncates) from a remote-controlled
- * value before it is interpolated into a log line, preventing log forging
- * (CWE-117): a crafted userId/deviceId/groupId cannot inject fake log entries.
- */
-function sanitizeForLog(value: string): string {
-  return value.replace(/[\r\n\t\p{Cc}]/gu, ' ').slice(0, 200);
-}
+import { sanitizeForLog } from '$lib/utils/logSanitize';
 
 /**
  * Worker result for key package generation done off the main thread.
@@ -395,7 +387,7 @@ export class WebMlsService extends BaseMlsService {
         clearTimeout(timeout);
         resolved = true;
         this.startHeartbeat();
-        console.log(`[WS] Connected to Chat Gateway - device=${this.deviceId}`);
+        console.log(`[WS] Connected to Chat Gateway - device=${sanitizeForLog(this.deviceId)}`);
         resolve();
       };
       this.ws.onerror = (event) => {
@@ -450,10 +442,15 @@ export class WebMlsService extends BaseMlsService {
           // frame that was perfectly well formed. A reader who learns to skip that is a reader who
           // will skip the next real one, and one who does not learns nothing from three `undefined`s.
           // The payload fields are logged on the payload branch below, where they exist.
-          console.log(`[WS RCV] ${frameType || 'payload'} frame for group ${msg.groupId ?? '-'}`);
+          console.log(
+            `[WS RCV] ${sanitizeForLog(frameType || 'payload')} frame for group ` +
+              sanitizeForLog(String(msg.groupId ?? '-'))
+          );
           if (isChannelEventFrame(frameType)) {
             if (this.onChannelEvent) {
-              console.log(`[WS RCV] Triggering onChannelEvent for ${msg.type}`);
+              console.log(
+                `[WS RCV] Triggering onChannelEvent for ${sanitizeForLog(String(msg.type))}`
+              );
               this.onChannelEvent({ type: msg.type, data: msg.data });
             } else {
               console.warn(
@@ -564,7 +561,7 @@ export class WebMlsService extends BaseMlsService {
             // and died on this line under a comment saying it was silently ignored; nothing anywhere
             // could have said so. It accuses now, and names the type, which is the whole diagnosis.
             console.warn(
-              `[WS RCV] frame type "${frameType}" reached no handler - the server is sending ` +
+              `[WS RCV] frame type "${sanitizeForLog(frameType)}" reached no handler - the server is sending ` +
                 `something this client does not route (see channelEventTypes)`
             );
           }

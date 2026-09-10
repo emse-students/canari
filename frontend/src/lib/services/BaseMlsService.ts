@@ -73,6 +73,7 @@ import type {
 } from '$lib/mls-client/IMlsService';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { commitPendingHistoryMarks, noteFrameConsumed } from '$lib/utils/chat/history';
+import { sanitizeForLog } from '$lib/utils/logSanitize';
 
 /**
  * How many times {@link BaseMlsService.externalJoin} may re-read the base and resubmit.
@@ -1299,8 +1300,10 @@ export abstract class BaseMlsService implements IMlsService {
         : BaseMlsService.REPEAT_MEANS[channel][known];
     const shape = `${channel}:${known}` as DeliveryRepeatShape;
     this.repeats[shape] += 1;
+    // `queuedMessageId` is the SERVER's, and a truncation is not a sanitiser - eight
+    // characters are enough to hold a newline and start a line of the sender's choosing.
     const line =
-      `[QUEUE] delivery ${queuedMessageId.slice(0, 8)}... arrived twice - ${meaning.say};` +
+      `[QUEUE] delivery ${sanitizeForLog(queuedMessageId).slice(0, 8)}... arrived twice - ${meaning.say};` +
       ` not decrypting it again` +
       (known === 'done' ? ', acknowledging it once more' : '');
     // A RATE IS NOT READ ONE LINE AT A TIME, and this comment used to say so while the code printed
@@ -1444,7 +1447,9 @@ export abstract class BaseMlsService implements IMlsService {
         // group_reset control messages: ACK and ignore on both platforms.
         // The WebSocket reconnect is sufficient to re-sync state.
         if (msg.type === 'group_reset') {
-          console.log(`[QUEUE] group_reset (control) ignored - group=${groupId ?? 'unknown'}`);
+          console.log(
+            `[QUEUE] group_reset (control) ignored - group=${sanitizeForLog(groupId ?? 'unknown')}`
+          );
           const ackedReset = shouldAckGroupResetControl({
             hasQueuedId: Boolean(msg.queuedMessageId),
           });
@@ -1652,7 +1657,11 @@ export abstract class BaseMlsService implements IMlsService {
         // the fact the barrier is allowed to stand on.
         this.mailboxEmptiedByAPull = true;
         if (fetched === 0) {
-          console.log(`[PENDING] No pending MLS messages for ${this.userId}:${this.deviceId}`);
+          console.log(
+            `[PENDING] No pending MLS messages for ${sanitizeForLog(this.userId)}:${sanitizeForLog(
+              this.deviceId
+            )}`
+          );
         }
       } catch (e) {
         // Partial progress is still progress, and saying so is the difference between "the pull
@@ -1924,7 +1933,11 @@ export abstract class BaseMlsService implements IMlsService {
     } catch (e) {
       if (!(e instanceof DeviceRevokedError)) throw e;
       const abandoned = await this.rotateDeviceIdentity(deviceKeyB64, 'revoked server-side');
-      console.warn(`[MLS] Device ${abandoned} was revoked - re-enrolled as ${this.deviceId}`);
+      console.warn(
+        `[MLS] Device ${sanitizeForLog(abandoned)} was revoked - re-enrolled as ${sanitizeForLog(
+          this.deviceId
+        )}`
+      );
       return this.generateKeyPackageImpl(deviceKeyB64);
     }
   }
@@ -2797,7 +2810,12 @@ export abstract class BaseMlsService implements IMlsService {
     const scope = this.distributionScopeByGroup.get(groupId);
     if (scope === undefined) {
       // Unreachable through the pipeline, which only calls this behind `isDistributionGroup`.
-      console.warn(`[GRAINE] frame for unregistered distribution group ${groupId.slice(0, 8)}...`);
+      console.warn(
+        `[GRAINE] frame for unregistered distribution group ${sanitizeForLog(groupId).slice(
+          0,
+          8
+        )}...`
+      );
       return false;
     }
     const { workspaceId } = scope;
