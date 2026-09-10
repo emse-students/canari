@@ -508,7 +508,7 @@
   {#snippet headerActions()}
     <button
       type="button"
-      class="rounded-lg bg-white/15 p-2 transition-colors hover:bg-white/25 disabled:opacity-30"
+      class="ui-icon-button rounded-lg bg-white/15 transition-colors hover:bg-white/25 disabled:opacity-30"
       disabled={zoomIndex === 0}
       onclick={() => (zoomIndex = Math.max(0, zoomIndex - 1))}
       aria-label={m.pdf_viewer_zoom_out()}
@@ -517,7 +517,7 @@
     </button>
     <button
       type="button"
-      class="rounded-lg bg-white/15 p-2 transition-colors hover:bg-white/25 disabled:opacity-30"
+      class="ui-icon-button rounded-lg bg-white/15 transition-colors hover:bg-white/25 disabled:opacity-30"
       disabled={zoomIndex === ZOOM_STEPS.length - 1}
       onclick={() => (zoomIndex = Math.min(ZOOM_STEPS.length - 1, zoomIndex + 1))}
       aria-label={m.pdf_viewer_zoom_in()}
@@ -527,7 +527,7 @@
     {#if onDownload}
       <button
         type="button"
-        class="rounded-lg bg-white/15 p-2 transition-colors hover:bg-white/25"
+        class="ui-icon-button rounded-lg bg-white/15 transition-colors hover:bg-white/25"
         onclick={onDownload}
         aria-label={m.common_download_label()}
         title={m.common_download_label()}

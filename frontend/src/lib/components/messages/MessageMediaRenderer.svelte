@@ -310,7 +310,7 @@
             }}
             aria-label={m.msg_download_file_label()}
             title={m.common_download_label()}
-            class="shrink-0 rounded-xl p-2.5 transition-all outline-none hover:bg-current/10 focus-visible:ring-2 focus-visible:ring-current"
+            class="ui-icon-button rounded-xl transition-all outline-none hover:bg-current/10 focus-visible:ring-2 focus-visible:ring-current"
           >
             <Download
               size={18}

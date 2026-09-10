@@ -52,7 +52,7 @@
         <button
           type="button"
           onclick={() => onDelete(sp.id)}
-          class="text-text-muted shrink-0 rounded-lg p-1.5 transition-colors hover:bg-red-500/10 hover:text-red-500"
+          class="ui-icon-button text-text-muted rounded-lg transition-colors hover:bg-red-500/10 hover:text-red-500"
           title={m.common_delete_button()}
           aria-label={m.common_delete_button()}
         >

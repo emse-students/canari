@@ -483,7 +483,7 @@
         <div class="flex items-center gap-1">
           {#if selectedCommunityWorkspace}
             <button
-              class="text-text-muted hover:text-text-main hover:bg-cn-surface flex h-8 w-8 items-center justify-center rounded-full transition-colors dark:hover:bg-black/30"
+              class="ui-icon-button text-text-muted hover:text-text-main hover:bg-cn-surface rounded-full transition-colors dark:hover:bg-black/30"
               onclick={() => {
                 showCommunityAdminModal = true;
               }}
@@ -498,7 +498,7 @@
             <button
               type="button"
               onclick={() => onCloseDrawer?.()}
-              class="text-text-muted hover:bg-cn-surface flex h-8 w-8 items-center justify-center rounded-full bg-transparent transition-colors dark:hover:bg-black/30"
+              class="ui-icon-button text-text-muted hover:bg-cn-surface rounded-full bg-transparent transition-colors dark:hover:bg-black/30"
               aria-label={m.common_close_label()}
             >
               <X size={18} />

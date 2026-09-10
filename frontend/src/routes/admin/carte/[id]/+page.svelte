@@ -520,7 +520,7 @@
               type="button"
               onclick={() => zoomBy(-0.25)}
               aria-label={m.carte_zoom_out()}
-              class="border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg inline-flex items-center justify-center rounded-lg border p-1.5"
+              class="ui-icon-button border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg rounded-lg border"
             >
               <ZoomOut size={15} />
             </button>
@@ -535,7 +535,7 @@
               type="button"
               onclick={() => zoomBy(0.25)}
               aria-label={m.carte_zoom_in()}
-              class="border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg inline-flex items-center justify-center rounded-lg border p-1.5"
+              class="ui-icon-button border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg rounded-lg border"
             >
               <ZoomIn size={15} />
             </button>

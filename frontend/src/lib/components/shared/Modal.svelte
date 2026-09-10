@@ -197,7 +197,7 @@
             {#if dismissible}
               <button
                 onclick={dismiss}
-                class="hover:bg-cn-bg text-text-muted hover:text-cn-dark rounded-lg p-1.5 transition-colors"
+                class="ui-icon-button hover:bg-cn-bg text-text-muted hover:text-cn-dark rounded-lg transition-colors"
                 aria-label="Fermer"
               >
                 <X size={16} />

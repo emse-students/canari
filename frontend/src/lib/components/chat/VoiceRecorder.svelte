@@ -353,7 +353,7 @@
       <span class="voice-recorder-hint">{m.chat_voice_locked_hint()}</span>
       <button
         type="button"
-        class="chat-composer-icon-button"
+        class="ui-icon-button chat-composer-icon-button"
         onclick={() => finish(false, 'bin pressed while locked')}
         aria-label={m.chat_cancel_recording_label()}
         title={m.chat_cancel_recording_label()}
@@ -362,7 +362,7 @@
       </button>
       <button
         type="button"
-        class="chat-composer-send-button"
+        class="ui-icon-button chat-composer-send-button"
         onclick={() => finish(true, 'send pressed while locked')}
         aria-label={m.chat_stop_and_send_title()}
         title={m.chat_stop_and_send_title()}

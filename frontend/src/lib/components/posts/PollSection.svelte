@@ -39,7 +39,7 @@
     <button
       type="button"
       onclick={onRemove}
-      class="text-text-muted hover:bg-cn-surface hover:text-text-main rounded-full p-1.5 transition-colors"
+      class="ui-icon-button text-text-muted hover:bg-cn-surface hover:text-text-main rounded-full transition-colors"
       title={m.post_poll_remove_label()}
     >
       <X size={16} />

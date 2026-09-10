@@ -84,7 +84,7 @@
     <button
       type="button"
       onclick={sharePost}
-      class="text-text-muted rounded-lg p-1.5 transition-colors outline-none hover:bg-amber-500/10 hover:text-amber-600"
+      class="ui-icon-button text-text-muted rounded-lg transition-colors outline-none hover:bg-amber-500/10 hover:text-amber-600"
       aria-label={copiedLink ? m.post_link_copied_label() : m.post_share_post_label()}
       title={copiedLink ? m.post_link_copied_label() : m.post_share_label()}
     >
@@ -98,7 +98,7 @@
       <button
         type="button"
         onclick={onTogglePin}
-        class="text-text-muted rounded-lg p-1.5 transition-colors outline-none hover:bg-amber-500/10 hover:text-amber-500"
+        class="ui-icon-button text-text-muted rounded-lg transition-colors outline-none hover:bg-amber-500/10 hover:text-amber-500"
         aria-label={pinned ? m.post_unpin_action_label() : m.post_pin_action_label()}
         title={pinned ? m.post_unpin_action_label() : m.post_pin_action_label()}
       >
@@ -113,7 +113,7 @@
       <button
         type="button"
         onclick={onStartEdit}
-        class="text-text-muted rounded-lg p-1.5 transition-colors outline-none hover:bg-amber-500/10 hover:text-amber-500"
+        class="ui-icon-button text-text-muted rounded-lg transition-colors outline-none hover:bg-amber-500/10 hover:text-amber-500"
         aria-label={m.post_edit_post_label()}
       >
         <Pencil size={14} strokeWidth={2.5} />
@@ -123,7 +123,7 @@
       <button
         type="button"
         onclick={onDelete}
-        class="text-text-muted rounded-lg p-1.5 transition-colors outline-none hover:bg-red-500/10 hover:text-red-500"
+        class="ui-icon-button text-text-muted rounded-lg transition-colors outline-none hover:bg-red-500/10 hover:text-red-500"
         aria-label={m.post_delete_post_label()}
       >
         <Trash2 size={14} strokeWidth={2.5} />
@@ -173,7 +173,7 @@
         <button
           type="button"
           onclick={() => onToggleReport(true)}
-          class="text-text-muted rounded-lg p-1.5 transition-colors outline-none hover:bg-red-500/10 hover:text-red-500"
+          class="ui-icon-button text-text-muted rounded-lg transition-colors outline-none hover:bg-red-500/10 hover:text-red-500"
           aria-label={m.post_report_post_title()}
         >
           <Flag size={14} strokeWidth={2.5} />

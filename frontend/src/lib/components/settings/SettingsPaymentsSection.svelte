@@ -166,7 +166,7 @@
 
             <button
               onclick={() => handleDeletePaymentMethod(pm.id)}
-              class="text-text-muted rounded-xl p-2.5 opacity-100 transition-all outline-none hover:bg-red-500/10 hover:text-red-500 focus:opacity-100 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95 sm:opacity-0 sm:group-hover:opacity-100"
+              class="ui-icon-button text-text-muted rounded-xl opacity-100 transition-all outline-none hover:bg-red-500/10 hover:text-red-500 focus:opacity-100 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95 sm:opacity-0 sm:group-hover:opacity-100"
               title={m.profile_payment_delete_label()}
               aria-label={m.common_delete_button()}
             >

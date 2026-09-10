@@ -94,7 +94,7 @@
         type="button"
         onclick={load}
         disabled={loading}
-        class="text-text-muted rounded-xl p-2 transition-colors hover:bg-black/5 disabled:opacity-50 dark:hover:bg-white/5"
+        class="ui-icon-button text-text-muted rounded-xl transition-colors hover:bg-black/5 disabled:opacity-50 dark:hover:bg-white/5"
         title={m.moderation_refresh()}
       >
         <RefreshCw size={18} class={loading ? 'animate-spin' : ''} />

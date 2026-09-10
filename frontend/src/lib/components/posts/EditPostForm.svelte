@@ -355,7 +355,7 @@
                 <button
                   type="button"
                   onclick={() => removeExistingMedia(i)}
-                  class="absolute top-1.5 right-1.5 rounded-full bg-black/60 p-1.5 text-white opacity-0 shadow-sm transition-all outline-none group-hover:opacity-100 hover:scale-110 hover:bg-red-500 focus:opacity-100 focus-visible:ring-2 focus-visible:ring-red-400 active:scale-95"
+                  class="ui-icon-button absolute top-1.5 right-1.5 rounded-full bg-black/60 text-white opacity-0 shadow-sm transition-all outline-none group-hover:opacity-100 hover:scale-110 hover:bg-red-500 focus:opacity-100 focus-visible:ring-2 focus-visible:ring-red-400 active:scale-95"
                   aria-label={m.post_edit_remove_image_aria()}
                   title="Supprimer"
                 >
@@ -404,7 +404,7 @@
                 <button
                   type="button"
                   onclick={() => removeNewFile(i)}
-                  class="absolute top-1.5 right-1.5 rounded-full bg-black/60 p-1.5 text-white opacity-0 shadow-sm transition-all outline-none group-hover:opacity-100 hover:scale-110 hover:bg-red-500 focus:opacity-100 focus-visible:ring-2 focus-visible:ring-red-400 active:scale-95"
+                  class="ui-icon-button absolute top-1.5 right-1.5 rounded-full bg-black/60 text-white opacity-0 shadow-sm transition-all outline-none group-hover:opacity-100 hover:scale-110 hover:bg-red-500 focus:opacity-100 focus-visible:ring-2 focus-visible:ring-red-400 active:scale-95"
                   aria-label={m.post_edit_remove_image_aria()}
                   title="Supprimer"
                 >
@@ -556,7 +556,7 @@
             <button
               type="button"
               onclick={() => (scheduledAt = '')}
-              class="text-text-muted rounded-full p-1 transition-colors outline-none hover:bg-red-500/10 hover:text-red-500"
+              class="ui-icon-button text-text-muted rounded-full transition-colors outline-none hover:bg-red-500/10 hover:text-red-500"
               title={m.post_edit_cancel_schedule_title()}
             >
               <X size={14} strokeWidth={2.5} />

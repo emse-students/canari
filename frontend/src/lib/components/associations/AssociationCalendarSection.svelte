@@ -485,7 +485,7 @@
     <button
       type="button"
       onclick={prevMonth}
-      class="border-cn-border text-text-main hover:bg-cn-bg inline-flex items-center justify-center rounded-xl border p-2 transition-colors"
+      class="ui-icon-button border-cn-border text-text-main hover:bg-cn-bg rounded-xl border transition-colors"
       aria-label={m.asso_calendar_prev_month_label()}
     >
       <ChevronLeft size={20} />
@@ -494,7 +494,7 @@
     <button
       type="button"
       onclick={nextMonth}
-      class="border-cn-border text-text-main hover:bg-cn-bg inline-flex items-center justify-center rounded-xl border p-2 transition-colors"
+      class="ui-icon-button border-cn-border text-text-main hover:bg-cn-bg rounded-xl border transition-colors"
       aria-label={m.asso_calendar_next_month_label()}
     >
       <ChevronRight size={20} />
@@ -564,7 +564,7 @@
             <button
               type="button"
               onclick={() => openEdit(ev)}
-              class="border-cn-border hover:bg-cn-bg text-text-main rounded-xl border p-2"
+              class="ui-icon-button border-cn-border hover:bg-cn-bg text-text-main rounded-xl border"
               title={m.common_edit_label()}
             >
               <Pencil size={16} />
@@ -572,7 +572,7 @@
             <button
               type="button"
               onclick={() => removeEvent(ev.id)}
-              class="border-red-err/30 text-red-err hover:bg-red-err/10 rounded-xl border p-2"
+              class="ui-icon-button border-red-err/30 text-red-err hover:bg-red-err/10 rounded-xl border"
               title={m.common_delete_button()}
             >
               <Trash2 size={16} />
@@ -612,7 +612,7 @@
             <button
               type="button"
               onclick={() => removeEvent(ev.id)}
-              class="border-red-err/30 text-red-err hover:bg-red-err/10 rounded-xl border p-2"
+              class="ui-icon-button border-red-err/30 text-red-err hover:bg-red-err/10 rounded-xl border"
               title={m.common_delete_button()}
             >
               <Trash2 size={16} />
@@ -734,7 +734,7 @@
                   type="button"
                   onclick={handleImageRemove}
                   disabled={uploadingImage}
-                  class="absolute top-2 right-2 rounded-full bg-black/60 p-1 text-white hover:bg-black/80"
+                  class="ui-icon-button absolute top-2 right-2 rounded-full bg-black/60 text-white hover:bg-black/80"
                   title={m.asso_calendar_poster_remove_title()}
                 >
                   <X size={14} />

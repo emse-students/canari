@@ -138,7 +138,7 @@
           <button
             type="button"
             onclick={() => onRemoveBucket(bucket.id)}
-            class="text-text-muted hover:bg-red-err/10 shrink-0 rounded-lg p-2 transition-colors hover:text-red-600"
+            class="ui-icon-button text-text-muted hover:bg-red-err/10 rounded-lg transition-colors hover:text-red-600"
             title={m.form_criterion_group_remove()}
           >
             <Trash2 size={14} />

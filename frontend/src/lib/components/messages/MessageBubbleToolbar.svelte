@@ -210,7 +210,7 @@
           menuOpen = false;
           quickOpen = !quickOpen;
         }}
-        class="text-text-muted hover:text-text-main flex h-7 w-7 items-center justify-center rounded-full hover:bg-black/5 dark:hover:bg-white/10"
+        class="ui-icon-button ui-icon-button--sm text-text-muted hover:text-text-main rounded-full hover:bg-black/5 dark:hover:bg-white/10"
         aria-label={m.msg_react_label()}
         aria-expanded={quickOpen}
         title={m.msg_react_label()}
@@ -226,7 +226,7 @@
           closeAll();
           onReply?.();
         }}
-        class="text-text-muted hover:text-text-main flex h-7 w-7 items-center justify-center rounded-full hover:bg-black/5 dark:hover:bg-white/10"
+        class="ui-icon-button ui-icon-button--sm text-text-muted hover:text-text-main rounded-full hover:bg-black/5 dark:hover:bg-white/10"
         aria-label={m.msg_reply_label()}
         title={m.msg_reply_label()}
       >
@@ -241,7 +241,7 @@
           quickOpen = false;
           menuOpen = !menuOpen;
         }}
-        class="text-text-muted hover:text-text-main flex h-7 w-7 items-center justify-center rounded-full hover:bg-black/5 dark:hover:bg-white/10"
+        class="ui-icon-button ui-icon-button--sm text-text-muted hover:text-text-main rounded-full hover:bg-black/5 dark:hover:bg-white/10"
         aria-label={m.msg_more_actions_label()}
         aria-expanded={menuOpen}
         title={m.msg_more_actions_label()}

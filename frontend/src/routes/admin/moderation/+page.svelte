@@ -344,7 +344,7 @@
           else void loadMuted();
         }}
         disabled={loadingReports || loadingHidden || loadingMuted}
-        class="border-cn-border text-text-muted hover:text-text-main rounded-xl border p-2 transition-colors disabled:opacity-40"
+        class="ui-icon-button border-cn-border text-text-muted hover:text-text-main rounded-xl border transition-colors disabled:opacity-40"
         aria-label={m.moderation_refresh()}
       >
         <RefreshCw

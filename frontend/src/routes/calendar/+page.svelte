@@ -445,7 +445,7 @@
           <button
             type="button"
             onclick={prevMonth}
-            class="border-cn-border text-text-main rounded-xl border p-2 transition-colors hover:bg-(--cn-surface)"
+            class="ui-icon-button border-cn-border text-text-main rounded-xl border transition-colors hover:bg-(--cn-surface)"
             aria-label={m.calendar_prev_month()}
           >
             <ChevronLeft size={20} />
@@ -456,7 +456,7 @@
           <button
             type="button"
             onclick={nextMonth}
-            class="border-cn-border text-text-main rounded-xl border p-2 transition-colors hover:bg-(--cn-surface)"
+            class="ui-icon-button border-cn-border text-text-main rounded-xl border transition-colors hover:bg-(--cn-surface)"
             aria-label={m.calendar_next_month()}
           >
             <ChevronRight size={20} />

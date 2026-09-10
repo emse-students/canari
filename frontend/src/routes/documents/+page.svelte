@@ -208,7 +208,7 @@
                         onclick={() => handleDownload(doc)}
                         disabled={downloadingId === doc.id}
                         title={m.reviewer_docs_download_title()}
-                        class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center justify-center rounded-xl border bg-(--cn-surface) p-2 transition-colors disabled:opacity-40"
+                        class="ui-icon-button border-cn-border text-text-muted hover:text-text-main rounded-xl border bg-(--cn-surface) transition-colors disabled:opacity-40"
                       >
                         {#if downloadingId === doc.id}
                           <div

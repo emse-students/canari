@@ -11,6 +11,37 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - every icon button is the same size as the one beside it
+
+Decided by the user on 2026-09-09 after being shown the measurement: *"Poser la reference ET tout
+aligner maintenant"*.
+
+One screen of the chat at 1280px held 163 icon-only buttons in FOUR sizes - the conversation
+header at 40px, the composer's paperclip and its send button at 36px, "Nouvelle discussion" in the
+sidebar at 32px, "Repondre" on the message hover strip at 28px. Four gaps of four pixels, side by
+side: small enough that nobody chose them - each button was written against the one neighbour its
+author had in mind - and large enough to see wherever two of those surfaces touch.
+
+There are two sizes now. A button is 38px under a pointer and 28px on the message hover strip,
+which appears on hover inside a dense row and has no touch form to protect. Under a finger the
+38px one becomes 44px, because 38 is below the target every platform asks for - the composer was
+already paying that difference by hand, for its row alone, and a flat 38px would have SHRUNK the
+one control where a miss costs something. 104 buttons moved onto it.
+
+**Buttons whose size is dictated by what they sit on were left alone, and that is a decision
+rather than an omission**: a cross overlaying a 64px thumbnail, the zoom controls floating over the
+minesweeper board, the camera badge pinned to an avatar, the 48px community rail, a play button
+matched to the height of its own bubble. So were the ones that declare no box at all - the 12px
+pencil in a comment's meta row, the cross inside a chip, the avatar in the navbar - because their
+author gave them none on purpose and a 44px box would blow those rows apart. Each exception is
+held by file and by count, with its reason, in a test that fails if the reason stops being true.
+
+Two things came out of it that nothing had reported. The composer's fold chevron was supposed to
+be narrower than the four buttons it replaces and rendered at full width on a desktop, so folding
+freed exactly 0px; it is 28px everywhere now and folding actually folds. And the hover strip
+measured 38px on the first attempt because the 28px rule was declared ABOVE the desktop one - two
+rules one class deep, decided by source order alone. Both were found by measuring, not by reading.
+
 ### Fixed - the dependency gate refused the very repair it had asked for
 
 Internal, and it had blocked one dependency update since the gate was written. The check that asks

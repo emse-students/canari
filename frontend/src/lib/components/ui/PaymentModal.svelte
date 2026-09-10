@@ -135,7 +135,7 @@
       </div>
       <button
         onclick={onClose}
-        class="text-text-muted hover:text-text-main hover:bg-cn-border/30 rounded-lg p-1.5 transition-colors"
+        class="ui-icon-button text-text-muted hover:text-text-main hover:bg-cn-border/30 rounded-lg transition-colors"
         aria-label="Fermer"
       >
         <X size={18} />

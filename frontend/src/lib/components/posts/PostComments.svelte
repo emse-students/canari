@@ -587,7 +587,7 @@
           >
           <button
             onclick={cancelReply}
-            class="rounded-full p-1 transition-colors outline-none hover:bg-amber-500/20"
+            class="ui-icon-button rounded-full transition-colors outline-none hover:bg-amber-500/20"
             aria-label={m.post_cancel_reply_label()}
           >
             <X size={14} strokeWidth={2.5} />
@@ -674,7 +674,7 @@
           type="button"
           onclick={handleSubmitComment}
           disabled={(!commentText.trim() && !pendingMedia) || submittingComment || uploadingMedia}
-          class="ml-1 shrink-0 rounded-full p-1.5 text-amber-500 transition-all outline-none hover:bg-amber-500/10 hover:text-amber-600 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 disabled:opacity-40 disabled:hover:bg-transparent"
+          class="ui-icon-button ml-1 rounded-full text-amber-500 transition-all outline-none hover:bg-amber-500/10 hover:text-amber-600 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 disabled:opacity-40 disabled:hover:bg-transparent"
           aria-label={m.post_send_comment_label()}
         >
           <Send size={18} strokeWidth={2.5} class="mt-0.5 ml-0.5" />

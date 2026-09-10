@@ -110,7 +110,7 @@
         <button
           type="button"
           onclick={close}
-          class="text-text-muted rounded-xl p-2 hover:bg-black/5 dark:hover:bg-white/10"
+          class="ui-icon-button text-text-muted rounded-xl hover:bg-black/5 dark:hover:bg-white/10"
           aria-label={m.common_close_label()}
         >
           <X size={18} />
@@ -147,7 +147,7 @@
                 type="button"
                 onclick={() => removeOption(option.id)}
                 disabled={options.length <= 2}
-                class="text-text-muted rounded-xl p-2 hover:bg-black/5 disabled:opacity-30 dark:hover:bg-white/10"
+                class="ui-icon-button text-text-muted rounded-xl hover:bg-black/5 disabled:opacity-30 dark:hover:bg-white/10"
                 aria-label={m.channel_poll_remove_option_aria()}
               >
                 <Trash2 size={16} />

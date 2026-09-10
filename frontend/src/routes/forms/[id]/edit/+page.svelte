@@ -348,7 +348,7 @@
               type="button"
               onclick={handleImageRemove}
               disabled={uploadingImage}
-              class="absolute top-2 right-2 rounded-full bg-black/60 p-1.5 text-white hover:bg-black/80"
+              class="ui-icon-button absolute top-2 right-2 rounded-full bg-black/60 text-white hover:bg-black/80"
               title={m.form_image_remove_title()}
             >
               <X size={14} />
