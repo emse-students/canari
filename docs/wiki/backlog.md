@@ -1166,6 +1166,32 @@ now `frontend/src-tauri/android-tests`, a standalone Kotlin/JVM project with its
 wrapper, whose entire toolchain is a JDK. Measured after the move: **14 seconds cold, 1 second
 warm**, and the script's seven self-tests still pass against it.
 
+**AND THE FIX'S OWN FIRST CI RUN FAILED, WHICH IS A FOURTH WAY OF NOT RUNNING.** Five seconds in,
+before Gradle: the relocated `gradlew` was committed `100644` beside the `gen/android` copy at
+`100755`. **Windows has no executable bit, so no local run can ever produce this failure** - every
+invocation here goes through `bash`, where the mode is inert - and `git status` and every editor
+show nothing. The first Linux runner to reach `./gradlew` answered `Permission denied`.
+
+Guarded now by `.github/scripts/tests/executable-bit.test.mjs`, in `make test-ci-scripts`: it
+derives the set from the tree rather than a list, taking every `./x` in command position across
+the Makefile, the workflows and the shell scripts, and demanding mode `100755`. Two things it
+learned on the way, both written into its docblock:
+
+- **Command position is the whole discipline.** Matching `./x` anywhere accused nineteen files,
+  every one an ARGUMENT - `docker build -f ./Dockerfile.frontend`, a compose volume mount, a
+  `cat ./frontend/package.json`. Making those executable would have been nonsense dressed as a fix.
+- **Its first draft failed its own motivating case and reported the tree CLEAN.** It resolved
+  `./gradlew` against the caller's directory, but the call is `cd "$ANDROID_DIR" && ./gradlew` - a
+  variable. Chasing a working directory through variables and `cd` is writing half a shell, and a
+  half-written one answers "clean" when it loses track. So it matches by NAME: if a name is run as
+  a command anywhere, every tracked file with that name must be executable. That covers both
+  `gradlew` wrappers from the single call site, which is what was wanted.
+
+It immediately found three more - `infrastructure/local/{env-from-prod,pull-prod-dump,restore-into-local}.sh`,
+all invoked `./x` from the Makefile, all `100644`. The Makefile had been **working around it** with
+a `chmod +x` before each call, which is a fallback standing in for a fix and is why the defect
+survived. Modes recorded, both `chmod` lines deleted.
+
 **THE REAL REMAINDER, and it is bigger than it looks: THE SUITE TESTS A MIRROR.** `runLadder` in
 `PushDecryptLadderTest.kt` is the service's ladder WRITTEN OUT AGAIN in the test file - the
 docblock says so, because the real methods are private and JNI-bound. So it cannot fail when

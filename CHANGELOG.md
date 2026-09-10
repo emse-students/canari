@@ -30,6 +30,17 @@ What this does **not** fix is written down rather than left implied: the suite c
 the notification-recovery logic, written out again inside the test, so it cannot notice when the
 real code changes. Making it watch the real thing is a separate change and is filed as such.
 
+The repaired check then failed its own first run, five seconds in, for a second reason - and that
+is the same lesson twice in one change. The relocated launcher script was recorded as
+**not executable**. Windows has no such marking, so it cannot be seen locally and no amount of
+local testing can produce the failure; every run here went through a route where it does not
+matter. The first Linux machine to run it directly refused: *permission denied*.
+
+Both are now checked automatically. Anything this project launches directly must be recorded as
+launchable, derived from the project itself rather than a list somebody maintains. Writing that
+check turned up three more places where the same defect had been quietly worked around - the
+build file marked the files launchable again on every single run, which had been hiding it.
+
 
 ### Changed - the width of a page stopped depending on which page it was
 
