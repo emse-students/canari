@@ -100,8 +100,24 @@ jobs:
         uses: github/codeql-action/autobuild@v4
         continue-on-error: true
 
+      # ONE DEFINITION MUST UPLOAD UNDER ONE IDENTITY, and without this it uploads under TWO.
+      #
+      # CodeQL names a configuration after the workflow that CALLS it, so this file - a
+      # `workflow_call` library invoked by `ci.yml` and by `scheduled.yml` - was producing
+      # `.github/workflows/ci.yml:codeql/language:javascript-typescript` and
+      # `.github/workflows/scheduled.yml:codeql/language:javascript-typescript` as if they were two
+      # different analyses of two different things. GitHub Advanced Security then expects BOTH on
+      # every ref, and a pull request can never carry the second one: `scheduled.yml` is a cron,
+      # it does not run on a branch. So the `CodeQL` check reported `configurations not found` and
+      # went red on EVERY pull request - advisory, so it merged anyway, which is worse: on #482 it
+      # hid a real high-severity alert inside a summary nobody had a reason to open.
+      #
+      # An explicit category is the identity of the ANALYSIS, not of the occasion that asked for
+      # it. The nightly pass and the pull-request pass are the same question about the same tree.
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"
 
   secret-scan:
     name: Scan for Secrets
