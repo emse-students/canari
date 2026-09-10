@@ -205,6 +205,40 @@ and the answer is `bump.outputs.sha`. `release-chain.test.sh` asserts that no ar
 `ref: main` and that all three receive that output, because this is a wiring property and wiring is
 what a file can be read for.
 
+#### AND IT SURVIVED ALL OF THAT ON THE OTHER SIDE OF THE RUNNER, FOR A WEEK (2026-09-10)
+
+The 2026-09-03 fix stopped the arms resolving `main` **on the runner**. Neither estate uses
+`actions/checkout` for the tree it deploys: each drives a long-lived checkout on its own box, and
+both went on running `git reset --hard origin/main` there. **That tree is what production is served
+from** - `infrastructure/docker-compose.prod.yml`, the nginx configuration and the migration SQL all
+come from it, and only the service images come from the build.
+
+So the marker was false in exactly the way the section above says a marker must never be. `serve-dev.yml`
+referenced `inputs.sha` **twice, and both were inside the step tagging `dev-deployed`**: the only
+thing the dev estate did with the commit it was handed was claim to have deployed it.
+
+**The window is not small, and it is structural rather than accidental.** `serve-prod` needs
+`[build, android, ios]`, so it waits behind the iOS build; measured on the last five releases, the
+gap between the bump resolving the commit and the box resolving `main` again is:
+
+| release | bump ends | box resets | gap |
+| --- | --- | --- | --- |
+| `v0.16.6` (production) | 19:45:12 | 20:07:45 | **22 min 33 s** |
+| `v0.16.6-alpha.7` (dev) | 19:29:05 | 19:35:13 | 6 min 08 s |
+| `v0.16.6-alpha.6` (dev) | 14:14:57 | 14:21:45 | 6 min 48 s |
+| `v0.16.6-alpha.5` (dev) | 01:19:09 | 01:24:34 | 5 min 25 s |
+| `v0.16.6-alpha.4` (dev) | 12:45:11 | 12:50:47 | 5 min 36 s |
+
+Auto-merge lands pull requests unattended throughout. Both boxes now reset to `inputs.sha`; the
+released commit is always an ancestor of `main` because the ruleset forbids a force-push, so
+fetching the branch makes it reachable and the reset fails loudly if it somehow does not.
+
+**THE TEST WRITTEN TO CATCH THIS PASSED ON THE MARKER.** The assertion was `grep -q 'inputs.sha'`
+over the file, and the line satisfying it was the line making the false claim. It now derives the
+population - every workflow declaring a `sha` input, which is what "was handed a commit" means, and
+which correctly excludes `scheduled.yml`'s dev refresh - and asserts of each that every `git reset
+--hard` names that commit. A presence is not a property.
+
 #### The dev estate is the PRE-RELEASE target, and the promotion is gone
 
 | The release | Jobs that run |
@@ -1059,7 +1093,7 @@ than assumed, and three properties follow:
   #306 and #308 (`redis 8.10-alpine`) allowed, #307 (`adminer`, digest only) allowed.
 
 One operational consequence, learned twice on the day: **a fix applied to the box is erased by the
-next deploy.** `serve-prod.yml` runs `git reset --hard origin/main`, so pinning the image back over SSH
+next deploy.** `serve-prod.yml` hard-resets the box to the released commit, so pinning the image back over SSH
 restores service in seconds and survives exactly until the next dispatch - which is what happened at
 13:29, when a deploy from an origin still carrying 18 took production down a second time. The manual
 repair buys time to write the real one; it is never the repair.

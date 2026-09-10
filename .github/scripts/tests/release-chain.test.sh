@@ -130,14 +130,45 @@ for f in build.yml serve-dev.yml serve-prod.yml android.yml ios.yml; do
   fi
 done
 
-# `serve-dev.yml` IS CHECKED DIFFERENTLY ON PURPOSE: it has no `ref:` because it does not use
-# `actions/checkout` for the estate - it drives its own long-lived checkout to the commit with git.
-# The question is the same one either way: does the file act on the commit it was handed?
-for f in build.yml serve-dev.yml serve-prod.yml; do
-  if grep -q 'inputs\.sha' "$WF/$f"; then
-    pass "$f acts on the commit it was given"
+# THE TWO ESTATES HAVE NO `ref:` BECAUSE THEY DO NOT USE `actions/checkout` FOR THE ESTATE - each
+# drives a long-lived checkout on its own box with git. That is where this defect survived the
+# 2026-09-03 fix: the arms stopped resolving `main` on the RUNNER, and both boxes went on resolving
+# it for themselves with `git reset --hard origin/main`, which is the tree production is actually
+# served from - the compose file, the nginx configuration and the migration SQL all come from it.
+#
+# THE ASSERTION THAT USED TO STAND HERE WAS `grep -q 'inputs.sha'`, AND IT PASSED ON THE MARKER.
+# `serve-dev.yml` referenced `inputs.sha` exactly twice, both inside the step that tags
+# `dev-deployed` - so the only thing the file did with the commit it was handed was CLAIM to have
+# deployed it. A presence is not a property: the line satisfying the test was the line making the
+# false claim.
+#
+# THE POPULATION IS DERIVED, never listed: a workflow declaring a `sha` input is one that was
+# handed a commit, and must act on that commit. `scheduled.yml`'s dev refresh is correctly absent
+# from it - it is handed nothing, and `origin/main` is the right answer there.
+SHA_WORKFLOWS="$(grep -l -E '^      sha:' "$WF"/*.yml 2>/dev/null | xargs -r -n1 basename | sort)"
+if [ -z "$SHA_WORKFLOWS" ]; then
+  # shellcheck disable=SC2016  # markdown backticks in the message, not a substitution
+  fail 'no workflow declares a `sha` input - the derivation below would assert nothing at all'
+else
+  pass "the release path is $(echo "$SHA_WORKFLOWS" | tr '
+' ' ')"
+fi
+
+for f in $SHA_WORKFLOWS; do
+  # Every hard reset in a file that was handed a commit must name that commit. A branch here is a
+  # SECOND resolution of a reference the caller already resolved once, and `main` moves for the
+  # whole length of the run - 22 minutes on production, which waits behind the iOS build.
+  # Comment lines are excluded by SHAPE, not by wording: both files explain in prose why the two
+  # estates keep separate checkouts, and that explanation names the command it is talking about.
+  # shellcheck disable=SC2016  # `${{ }}` is GitHub Actions syntax and is matched literally
+  BAD="$(grep -nE 'reset --hard' "$WF/$f" |
+    grep -vE '^[0-9]+: *#' |
+    grep -vF 'reset --hard "${{ inputs.sha }}"' || true)"
+  if [ -n "$BAD" ]; then
+    fail "$f resets to something other than the commit it was handed: $(echo "$BAD" | tr '
+' ';')"
   else
-    fail "$f never references inputs.sha - it would act on whatever HEAD it found"
+    pass "$f never resets its tree to a moving reference"
   fi
 done
 printf '\nthe gates run BEFORE the bump, and the bump before every arm\n'
