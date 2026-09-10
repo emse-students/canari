@@ -60,7 +60,7 @@ elsewhere, which is exactly why the audit had to read call sites rather than cou
 | `MANAGE_DOCUMENTS` | 3 | 8 | the private document vault (including `GET :id/vault-key`) and the association notes |
 | `MANAGE_FORMS` | 4 | 1 | `GET :id/forms`, plus `assertFormManager` on every form write and every submission read |
 | `VALIDATE_EVENTS` | 5 | 0 | BDE only. `isUserBdeAdmin` - validating, editing and deleting **any** association's events, and depositing a pre-validated one |
-| `MANAGE_ASSO` | 6 | 0 | BDE only. Creating an association, and **being the super-admin tier above** - so it grants nearly every other flag everywhere |
+| `MANAGE_ASSO` | 6 | 0 | BDE only. Creating an association AND **deleting one** (`DELETE :id`, widened from global-admin-only 2026-09-10), and **being the super-admin tier above** - so it grants nearly every other flag everywhere |
 | `MODERATE` | 7 | 0 | BDE only. `isContentModerator` - reports, mutes and comment deletion (`moderation.controller.ts`), plus editing, deleting and PINNING any post (`assertMayManage`, `pinPost`/`unpinPost`, and the `canManage` / `canPin` fields they are drawn from) |
 | `MANAGE_PRODUCTS` | 8 | 21 | the boutique, purchases and their exports, webhook failures, the whole payment-delegation tree, and the cotisation settings on `PATCH :id` |
 | `MANAGE_STRIPE_CONNECT` | 9 | 0 | `GET :id/manage-permission`, which core-service asks before opening Connect onboarding |
@@ -135,6 +135,30 @@ Three shapes look like the same question and are not. Folding them in would have
    exist is a 404 from whoever loads it. `canPostAs` and `canManageStripeConnect` each keep their own
    `findOne`, and each says why - a post must not name a deleted association, and core-service must
    not open a Connect account against a ghost id.
+
+### The one panel that holds two tiers, and the rule it produced
+
+The association Danger panel offers **archive** and **delete**, and they are not the same right:
+
+| control | route | admitted by | reversible |
+| --- | --- | --- | --- |
+| Archive | `PATCH :id { archived }` | `GlobalAdminOrAssociationRoleGuard` at `MANAGE_MEMBERS` - so the association's own admin, and the super-admin tier | yes |
+| Delete | `DELETE :id` | `GlobalAdminOrBdeSuperAdminGuard` - global admin, or a BDE `MANAGE_ASSO` holder | **no** |
+
+Until 2026-09-09 the client gated the whole panel on the stricter of the two, so a BDE administrator
+was shown NEITHER - a control the API accepts, hidden from the person allowed to use it, which is
+D3 again in a new place. The panel now opens on the right to ARCHIVE and the delete card carries its
+own tier, defaulting to `false` so it is offered on an explicit grant rather than by omission.
+
+`DELETE :id` itself was widened on 2026-09-10 by the user. The argument is symmetry: `MANAGE_ASSO`
+already CREATES associations through `POST /`, and administering them without being able to end one
+leaves every mistake permanent. **The delete tier is NOT `mayActOnAssociation`** - it is not a flag
+on THIS association at all, so an association's own admin never holds it however many flags they
+have, and a BDE super-admin holds it everywhere.
+
+`AssociationsService.remove` had no log line, which was survivable only while one person could reach
+it. It now counts the members and events it is about to destroy, before destroying them, and names
+the caller.
 
 **Channel permissions are a different system.** `CHANNEL_PERMISSIONS` is a string-based model with
 its own roles (Membre / Moderateur / Administrateur) and no platform-administrator concept. It shares

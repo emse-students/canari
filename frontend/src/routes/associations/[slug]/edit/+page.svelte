@@ -144,6 +144,16 @@
    * The tab therefore opens on the right to ARCHIVE, and the delete card carries its own tier.
    */
   let canArchiveAssociation = $derived(canManageMembers);
+  /**
+   * The delete card's own tier, and it is NOT the platform administrator's any more.
+   *
+   * `DELETE :id` moved to `GlobalAdminOrBdeSuperAdminGuard` on 2026-09-10 (user), so it now admits
+   * exactly what CREATE has always admitted: a global admin, or a BDE member holding
+   * `MANAGE_ASSO`. It is deliberately NOT `mayActOnAssociation`, because it is not a flag on THIS
+   * association at all - a BDE super-admin holds it everywhere and an association's own admin
+   * never holds it, however many flags they have.
+   */
+  let canDeleteAssociation = $derived(isGlobalAdminUser || isSuperAdminUser);
 
   const slug = $derived((page.params as Record<string, string>).slug);
 
@@ -742,7 +752,7 @@
       {#if editSection === 'danger' && canArchiveAssociation}
         <EditDangerTab
           {asso}
-          canDelete={isGlobalAdminUser}
+          canDelete={canDeleteAssociation}
           onUpdated={(a) => (asso = a)}
           onDeleted={() => goto('/associations')}
         />

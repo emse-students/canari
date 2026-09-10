@@ -50,6 +50,8 @@
    * second - see the same pair on the association edit page.
    */
   let canArchiveList = $derived(canManageMembers);
+  /** Deleting is `DELETE :id`: a global admin, or a BDE `MANAGE_ASSO` holder - see the association page. */
+  let canDeleteList = $derived(isGlobalAdminUser || isAssociationSuperAdmin());
 
   const slug = $derived((page.params as Record<string, string>).slug);
 
@@ -178,7 +180,7 @@
         <EditDangerTab
           asso={list}
           kind="list"
-          canDelete={isGlobalAdminUser}
+          canDelete={canDeleteList}
           onUpdated={(a) => (list = a)}
           onDeleted={() => goto('/lists')}
         />

@@ -284,7 +284,28 @@ export class AssociationsService {
   }
 
   /** Permanently deletes an association and all its member records, then invalidates post-list caches. */
-  async remove(id: string) {
+  /**
+   * Deletes an association, everything scoped to it, and says so.
+   *
+   * IT HAD NO LOG AT ALL, WHICH WAS SURVIVABLE ONLY WHILE ONE PERSON COULD REACH IT. Since
+   * 2026-09-10 a BDE `MANAGE_ASSO` holder may call it too, so "who removed the association" has
+   * more than one possible answer and nothing recorded it: the rows are gone, the caller is not in
+   * any request log this service keeps, and no other table remembers the association existed.
+   *
+   * The counts are read BEFORE the deletes and logged after, because they are the only measure of
+   * what the call actually destroyed - `delete()` returns an affected count, but a caller reading
+   * "0 members" cannot tell an empty association from a failed cascade.
+   *
+   * @param actorUserId The caller, from `x-user-id`. Required: the point of the line is the name.
+   */
+  async remove(id: string, actorUserId: string) {
+    const [memberCount, eventCount] = await Promise.all([
+      this.memberRepo.count({ where: { associationId: id } }),
+      this.calendarRepo.count({ where: { associationId: id } }),
+    ]);
+    this.logger.warn(
+      `[ASSO] DELETE ${id} by ${actorUserId || 'unknown'} - removing ${memberCount} member(s) and ${eventCount} event(s); this is not reversible`
+    );
     await this.calendarRepo.delete({ associationId: id });
     await this.memberRepo.delete({ associationId: id });
     await this.assoRepo.delete(id);
