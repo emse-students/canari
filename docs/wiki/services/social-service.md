@@ -535,6 +535,58 @@ nulls rather than deletes, so responses keep the shape their TypeScript clients 
 the row are readable without a session. Adding `NginxAuthGuard` there is the right fix but changes
 access semantics for routes other repos may consume, so it is a separate decision.
 
+### The document vault's markers are parsed in two languages, and they disagreed for seven weeks
+
+A vault document's encryption key is never stored. The association holds one
+`documentVaultKey` (hex 32 bytes) and each document's CEK is
+`HKDF-SHA256(vaultKey, salt=<per-document salt>, info="doc-vault")`. That salt is a random UUID
+the client mints at upload - **not** the row's `id`, which does not exist yet when the bytes are
+encrypted - so it has to be persisted, and it is persisted as a marker at the head of
+`association_documents.description`: `(s:<cekSalt>)`, optionally followed by `(pw:<pwSaltHex>)`
+when the document is password-protected.
+
+Two implementations read that marker, in two languages, because there is no shared TS package to
+hold one (`libs/shared-ts`, deleted 2026-08-27 - see [libs](../libs.md)):
+`frontend/src/lib/associations/vaultCrypto.ts` writes and reads it, and
+`associations/vault-markers.util.ts` reads it server-side to derive a per-document key for the
+`/documents` reviewer page. **That duplication has been paid for in full, once.**
+
+The client moved from `[s:…]` to `(s:…)` on 2026-07-24 (`d4596da61`), so Tailwind's JIT scanner
+would stop reading the brackets as an arbitrary CSS property class. The server was not moved with
+it. Every public document uploaded afterwards carried a marker `parseCekSalt` returned `null` for,
+and the reviewer listing skipped it. Measured on prod on 2026-09-10, seven weeks later:
+
+```
+ marker | visibility | count
+--------+------------+-------
+ (s:    | public     |     3      -- 3 of 3, all invisible
+```
+
+`/documents` had therefore never listed a single document in production. Four things are worth
+keeping about the shape of this one:
+
+- **The two halves failed in OPPOSITE directions, and one masked the other.** `parseCekSalt`
+  failed CLOSED - a document nobody could see. `hasPasswordMarker`, bracket-only for the same
+  reason, failed OPEN: `updateDocument`'s refusal *"A password-protected document cannot be made
+  public"* stopped refusing anything. It was only invisible because the first half then skipped
+  the row at read time. **Fixing either half alone unmasks the other**, so both move in the same
+  commit, and the listing now refuses a `public` + password-protected row defensively as well.
+  Prod carried no such row (`pw_protected = f` on all three), so the open guard was never used.
+- **The symptom of the read half is an EMPTY PAGE, not an error.** Three `continue`s withheld a
+  document its association had deliberately published, in silence. They now log a warning that
+  names the document and the reason - *a correct mechanism with no report is found by hand, a day
+  late*, and this one was not found for seven weeks.
+- **Nothing compared the writer to the reader.** `vault-markers.util.spec.ts` pins the parser
+  against the literal strings `buildVaultMarkers` emits, and
+  `associations.service.reviewer-documents.spec.ts` pins the seam above it - that a document
+  written by the CURRENT client comes back listed, which no parser test would catch if the service
+  stopped calling the parser.
+- **The entity's own docstring said the salt was the row `id`.** It had been wrong since the
+  feature shipped and would have sent the next reader looking in the wrong place.
+
+Both files now carry a header naming the other and the rule: **a change to the marker format lands
+in BOTH, in the SAME commit.** A third copy is the signal to reconsider the shared package.
+
 ### A post scheduled for later is not readable by id
 
 Every `listPosts` query filters `scheduledAt IS NULL OR scheduledAt <= NOW()`. `getById` did not,

@@ -110,6 +110,13 @@ export async function importRawAesKey(hexKey: string): Promise<CryptoKey> {
  * Current format: `(s:<cekSalt>)` optionally followed by `(pw:<pwSaltHex>)`
  * for password-protected documents.  The legacy bracket syntax (using square
  * brackets instead of parentheses) is still accepted for backward compatibility.
+ *
+ * **THE SERVER READS THESE MARKERS TOO**, in
+ * `apps/social-service/src/associations/vault-markers.util.ts`, to derive a per-document key
+ * for the `/documents` reviewer page. That copy is deliberate (no shared TS package, see
+ * `docs/wiki/libs.md`) and it was left behind when this file moved from brackets to
+ * parentheses on 2026-07-24: every public document became invisible to reviewers for seven
+ * weeks. **A change to the format below lands in BOTH files, in the SAME commit.**
  */
 export function parseVaultMarkers(description: string | null | undefined): {
   cekSalt: string | null;
