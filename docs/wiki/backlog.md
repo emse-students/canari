@@ -1149,7 +1149,7 @@ So they are the control case the NestJS batch destroyed: **close ONE of the four
 question for good. Closing all four now would repeat the same mistake on the one family where
 getting it wrong is an ENCRYPTION defect rather than an availability one.
 
-### P1 - two of the six cargo directories are invisible to Dependabot, and one of them is the app that ships to phones (measured 2026-09-02)
+### P2 - two of the six cargo directories are invisible to Dependabot, and 194 updates were waiting behind that silence (measured 2026-09-02, decided and given a trigger 2026-09-10)
 
 **The Tauri app has had no automated dependency update since 2026-08-08, and its security alerts have
 no actor at all.** Enabling `automated-security-fixes` (the row above) made Dependabot attempt the
@@ -1185,7 +1185,8 @@ forgotten. The derivation is proven on a fixture in the same file rather than tr
 mutations were checked to fail (removing the `links` key, and pinning a directory `dependabot.yml`
 no longer declares).
 
-**WHAT IS OPEN IS THE CHOICE, AND ITS THREE OPTIONS ARE NOT EQUAL.**
+**THE CHOICE IS TAKEN - OPTION 3 WITH A CRON THAT OPENS AN ISSUE (user, 2026-09-10).** The three
+options are kept below because two of them are refutations worth not re-litigating.
 
 1. **Remove `links` from the plugin manifest. RULED OUT 2026-09-08 - it is WRONG, not merely risky,
    and the proof is a generated file rather than an argument about cargo.** `links` is what makes
@@ -1254,10 +1255,38 @@ directions of the real assertion re-validated by planting an undeclared cron.
 **Measured the day it was written**: 0 open alerts, 2 dismissed, 98 fixed - including
 GHSA-7gcf-g7xr-8hxj itself, now `fixed`, in `frontend/src-tauri/Cargo.lock`.
 
-Option 3 with a real trigger, plus option 1 attempted behind a mobile build when a device exists, is
-the shape that fits the rest of this repository - but which one is taken is a decision, and it is
-recorded in the table of what is owed to the user above. Upstream, this is dependabot-core's cargo
-updater not copying build scripts; nothing here can fix that.
+**THE TRIGGER EXISTS SINCE 2026-09-10, and the first thing it measured is the size of the hole:
+194 pending updates** - 193 in `/frontend/src-tauri`, one in the plugin - which is what 33 days of a
+silence nobody could see was worth.
+
+`.github/scripts/cargo-blocked-update-report.sh` runs in the weekly `Scheduled` pass, on the Monday
+cron beside `dev-refresh` rather than taking a sixth schedule line. It derives the blocked
+directories from `lib/cargo-dirs.sh` - **the same derivation `dependabot-cargo-reach.test.sh`
+refuses a new one with, moved into a library rather than written twice**, because a reporter that
+derived the set its own way would eventually report on a directory the test does not guard and
+nothing would say so.
+
+**THE REPORT IS AN ISSUE AND THE RUN STAYS GREEN, which is a deliberate departure from its two
+neighbours.** An open security alert is an anomaly, so `alerts` goes red for one. A Rust tree being
+a patch behind is its normal state: a red run for that would be red every week, and *a line its
+reader learns to skip is the one that hides the next defect*. So the split is by meaning - **the
+issue says there is work, a red run says the reporter is broken.** The issue is found by an exact
+title and UPDATED rather than duplicated, and CLOSED with a comment once the directories are level,
+because an issue nobody closes is the queue nobody drains this repository refuses everywhere else.
+
+**WHAT MUST NOT LOOK LIKE HEALTH, and all four fail loudly**: a refused issue list (which would
+otherwise read as "no issue open" and file a second one every week), a failing `cargo` (which would
+read as "nothing to update" - the exact charge this entry lays against `cargo audit`), a creation
+that did not land while updates are pending, and a derivation that found no directory at all (a
+broken parse reads exactly like a repo where the blockage was fixed). Ten assertions in
+`cargo-blocked-update-report.test.sh` drive them against a fake tree, a fake `cargo` and a fake
+`gh`, and it also pins that the directories Dependabot CAN reach are left alone - a pull request and
+an issue on the same bump would be two actors on one job.
+
+**WHAT IS STILL OPEN IS THE 194 UPDATES THEMSELVES.** They are not taken here: a cargo bump in this
+tree moves two committed lockfiles a mobile build reads, so it wants CI's Android artefact and
+belongs in its own pull request. Upstream, this is dependabot-core's cargo updater not copying build
+scripts; nothing here can fix that.
 
 ### P2 - a dev deploy still cannot tell a broken CHANGE from an unreachable REGISTRY, and the conflation MOVED rather than went away (measured 2026-09-02, first day it ran)
 

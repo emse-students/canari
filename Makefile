@@ -333,6 +333,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/deploy-migrations.test.sh
 	@bash .github/scripts/tests/dependency-ceiling.test.sh
 	@bash .github/scripts/tests/dependabot-cargo-reach.test.sh
+	@bash .github/scripts/tests/cargo-blocked-update-report.test.sh
 	@bash .github/scripts/tests/dependabot-alerts-report.test.sh
 	@bash .github/scripts/tests/bump-version.test.sh
 	@bash .github/scripts/tests/bump-staging.test.sh
