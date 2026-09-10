@@ -710,6 +710,25 @@ does not know who shares what, so answering it is a larger change than this defe
 leak that remains is therefore "any logged-in account can learn whether a named person is
 online", which is a product question and not obviously wrong.
 
+**THE SIZE OF THE AUDIT, MEASURED 2026-09-10 - AND THE FIRST NUMBER WAS WRONG.** A scan for route
+decorators without `@UseGuards` across all 389 Nest routes returned **100**, which is not the
+number of holes and must not be quoted as one. Authorization in this codebase is not always a
+decorator: `POST /associations/:id/stripe-account` has none and calls `assertInternalSecret()` as
+its first statement, exactly as `get_admin_presence` checked its header in the body. Counting
+decorators counts decorators.
+
+Re-measured with in-body idioms (`assertInternalSecret`, `assertContentModerator`, an
+`x-global-admin` read, an explicit `Unauthorized`/`Forbidden` throw) and names that are public by
+design (`health`, `version`, `webhook`, `callback`, `/public`) excluded: **52 of 389 routes have
+no visible authorization of any kind.** That is the population to triage, not 100.
+
+**AND 52 IS AN UPPER BOUND, NOT A LIST OF DEFECTS.** Several are certainly deliberate and gating
+them would BREAK a feature - `GET /associations/calendar/feed.ics` exists to be subscribed to by
+an external calendar client, which cannot carry a session, and `public.controller.ts` is named
+for what it is. Each needs a decision, and some of those decisions are the USER's rather than the
+code's. **Do not sweep this.** The two confirmed holes were each found by reading one endpoint and
+probing it; that is what the remaining 52 want.
+
 **What is owed: the other fourteen, endpoint by endpoint.** A bare-path probe does NOT settle it -
 twelve of the sixteen answered 404 to `GET /api/<thing>`, which only means no route sits at that
 exact path. Each location needs its controllers read for a guard, the way `/api/posts` did. The
