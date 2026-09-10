@@ -18,6 +18,7 @@
 <script lang="ts">
   import { ArrowUpRight, Images } from '@lucide/svelte';
   import { proxiedPreviewImageUrl } from '$lib/utils/previewImageProxy';
+  import { ensurePreviewTicket } from '$lib/utils/previewTicket.svelte';
 
   interface ExternalPreviewPayload {
     url: string;
@@ -58,6 +59,15 @@
     squareCoverUrl = null,
     standalone = false,
   }: Props = $props();
+
+  /**
+   * Asked for here as well as in the parent card, so this component holds no assumption about who
+   * rendered it: without a ticket `proxiedPreviewImageUrl` answers '', and a cover card with no
+   * cover is the whole of what this component shows. It is a no-op once a ticket is held.
+   */
+  $effect(() => {
+    void ensurePreviewTicket();
+  });
 
   /** Fetched through Canari rather than from its host - see `previewImageProxy`. */
   const coverUrl = $derived(proxiedPreviewImageUrl(squareCoverUrl ?? preview?.image));

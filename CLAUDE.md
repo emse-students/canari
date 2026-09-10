@@ -269,10 +269,7 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
     ([dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy). Two open: a dev
     deploy cannot tell a broken CHANGE from an unreachable REGISTRY, and prod's deploy job is still
     inlined shell where `deploy-dev` exercises the script ([backlog](docs/wiki/backlog.md)).
-14. **P1 - `auth_request` GUARDS 16 LOCATIONS AND CAN REFUSE NONE.** `/api/auth/verify` answers
-    200 for a logged-OUT caller, so the edge check only IDENTIFIES. Feed and presence FIXED;
-    **14 locations unaudited**, and a 404 at the bare path proves nothing ([backlog](docs/wiki/backlog.md)).
-15. **FROM THE USER, AND FIRST CONTACT IS THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** The
+14. **FROM THE USER, AND FIRST CONTACT IS THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** The
     2026-09-08 PROD P1 is FIXED, UNSHIPPED, and owes ONE hardware run that nothing blocks now.
     **A reaction to your OWN message must notify by push, and NOTIF-15 asserts the opposite** -
     the row and the code both move, and which channel carries it is open ([backlog](docs/wiki/backlog.md)).

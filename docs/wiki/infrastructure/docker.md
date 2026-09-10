@@ -108,6 +108,8 @@ Three boundaries the sweep deliberately did not cross:
 - **the local dev default credentials still read `minioadmin`.** A local `garage_meta` volume was
   provisioned with that key ID, and changing the literal locks a developer out of their own local
   media until they delete the volume. The variable NAMES around it are Garage.
+  **REVERSED 2026-09-11: the six `minioadmin` defaults are GONE**, and the section below says what
+  they cost.
 
 #### `minio_data` is gone - 2026-08-18, and what it was really holding
 
@@ -254,6 +256,61 @@ Three things worth keeping from the attempt:
   one route that sets no CSP - chosen originally because it was cheap and unauthenticated. A probe
   picked for cheapness is a probe selected for not resembling the traffic. It now fetches `/chat` as
   well, so it fails when a user would fail.
+
+### Garage on the local estate: what provisions it, and the one repair - 2026-09-11
+
+**NOTHING IN THE `Makefile` PROVISIONS GARAGE, AND NOTHING SHOULD.** `garage server --single-node
+--default-bucket` does the whole of it on any boot that finds an empty `garage_meta`: it writes the
+single-node layout, imports the access key and creates the bucket, all three from `.env`. That is
+true locally exactly as it is in production, and it is visible in the container's own log:
+
+```
+garage::server: Created initial layout for single-node configuration:
+garage::server: Creating default access key `canarilocal`
+garage::server: Creating default bucket `canari-media`
+```
+
+A `make garage-provision` target existed for a few hours on 2026-09-10 and was deleted the next
+morning. It was written against a diagnosis that was simply wrong - "`reset-services` leaves Garage
+with no layout, no key and no bucket" - and every step of it reported "already present", because
+Garage had done the work a second earlier. A second implementation of a step that already works is
+the house's NO FALLBACKS rule stated in a Makefile, and it hid the real defect for an evening.
+
+**THE REAL DEFECT WAS `docker compose restart`.** A container keeps the environment it was CREATED
+with. `media-service` had been created before `infrastructure/.env` carried `GARAGE_ACCESS_KEY_ID`,
+so it took the compose default and went on presenting `minioadmin` for ever, through every restart,
+while Garage answered:
+
+```
+error 403 Forbidden, Forbidden: No such key: minioadmin in response to ... HEAD /canari-media
+```
+
+Only `up -d --force-recreate` re-reads `.env`; `make garage-reset` does that, and any future target
+handing a container new environment must do the same.
+
+**AND THE DEFAULTS THAT MADE IT SILENT ARE GONE.** The six `GARAGE_*` credentials in
+`infrastructure/local/docker-compose.yml` now interpolate with `${VAR:?...}` and no fallback. A
+default that substitutes a DIFFERENT CREDENTIAL does not degrade - it authenticates as somebody who
+does not exist, and every container still reports itself started. `local-env` writes all six, so an
+absence is a broken `.env` and now says so before anything starts:
+
+```
+error while interpolating services.media-service.environment.GARAGE_SECRET_ACCESS_KEY:
+required variable GARAGE_SECRET_ACCESS_KEY is missing a value: run 'make local-env' - ...
+```
+
+**THE ONE REPAIR, AND WHY IT IS SO BLUNT.** Garage keeps a TOMBSTONE for a deleted access key id and
+refuses for ever to re-create it:
+
+```
+ImportKey returned KeyAlreadyExists (409): Key canarilocal already exists in data store.
+Even if it is deleted, we can't let you create a new key with the same ID. Sorry.
+```
+
+So a key whose secret has drifted from `.env` cannot be repaired in place - the metadata volume has
+to go. `make garage-reset` wipes `garage_meta` and `garage_data`, brings Garage back up so it
+self-provisions from `.env`, and force-recreates `media-service`. Local media blobs go with it,
+which on a workstation is test data. Measured 2026-09-10 the hard way, by deleting the key.
 
 ### Putting the CURRENT frontend on the local estate
 

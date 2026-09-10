@@ -164,6 +164,18 @@ export class PaymentWebhookController {
         );
         return res.status(503).send('Stripe webhook signing secret not configured');
       } else {
+        // A REQUEST BODY TAKEN AS A STRIPE EVENT, WHICH IS AN UNAUTHENTICATED CALLER DESCRIBING
+        // WHAT HAPPENED. It exists so webhook handling can be exercised on a workstation with no
+        // Stripe CLI, and the branch above makes it impossible anywhere NODE_ENV says production -
+        // an assertion `compose-wiring.test.sh` holds over every deployed compose file, so the
+        // guarantee is a gate rather than a habit. It is logged at a level that ACCUSES because
+        // that is the whole of what separates "a developer is testing" from "this estate is
+        // accepting forged payments": if this line appears anywhere it was not typed by hand, the
+        // estate is misconfigured.
+        this.logger.warn(
+          'STRIPE_WEBHOOK_SECRET is unset and NODE_ENV is not production - accepting an UNSIGNED ' +
+            'webhook body as a Stripe event. This must never appear outside a local workstation.'
+        );
         event = req.body as Stripe.Event;
       }
     } catch (err: unknown) {

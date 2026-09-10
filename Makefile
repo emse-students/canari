@@ -1,4 +1,4 @@
-.PHONY: lint-ci-scripts check-services all install install-node install-bun install-rust install-oxvelte install-wasm-pack install-frontend install-services install-hooks setup-env setup-env-prod local-env dump-prod production production-check build-frontend reload-services test test-gateway test-history test-frontend test-android test-harness test-ci-scripts bench-mls clean run-ci lint-frontend
+.PHONY: garage-reset lint-ci-scripts check-services all install install-node install-bun install-rust install-oxvelte install-wasm-pack install-frontend install-services install-hooks setup-env setup-env-prod local-env dump-prod production production-check build-frontend reload-services test test-gateway test-history test-frontend test-android test-harness test-ci-scripts bench-mls clean run-ci lint-frontend
 
 # Cible par défaut : installation complète et déploiement LOCAL
 .DEFAULT_GOAL := all
@@ -349,6 +349,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/release-shipped.test.sh
 	@bun .github/scripts/tests/recipe-covers-tests.test.mjs
 	@bun .github/scripts/tests/shellcheck-scope.test.mjs
+	@bun .github/scripts/tests/auth-request-coverage.test.mjs
 	@bun .github/scripts/tests/claude-md-cap.test.mjs
 	@bun .github/scripts/tests/executable-bit.test.mjs
 	@bash .github/scripts/tests/android-unit-tests.test.sh
@@ -525,6 +526,35 @@ reset-services:
 	@$(LOCAL_COMPOSE) down -v --remove-orphans && \
 		$(LOCAL_COMPOSE) up -d --build --remove-orphans
 	@echo "${GREEN}✅ Services reset${RESET}"
+
+# ── Garage (local object storage) ────────────────────────────────────────
+# NOTHING PROVISIONS GARAGE HERE, AND NOTHING SHOULD: `garage server --single-node --default-bucket`
+# (docker-compose.yml) builds the layout, imports the access key and creates the bucket from the
+# GARAGE_* values in `infrastructure/.env` on every boot with an empty `garage_meta`. A make target
+# doing the same thing is a second implementation of a step that already works, and it hid the real
+# defect for an evening on 2026-09-10.
+#
+# THE REAL DEFECT WAS `restart`. A container keeps the environment it was CREATED with, so a
+# media-service created before `.env` carried GARAGE_ACCESS_KEY_ID went on presenting the compose
+# default `minioadmin` for ever, and Garage answered `403 No such key: minioadmin` at every boot.
+# `restart` never re-reads `.env`; only `up -d --force-recreate` does. Everything below that needs
+# new environment therefore recreates rather than restarts.
+
+# The ONE repair for a key whose secret no longer matches `.env`: Garage TOMBSTONES a deleted access
+# key id and refuses for ever to re-create it -
+#
+#   ImportKey returned KeyAlreadyExists (409): Key canarilocal already exists in data store.
+#   Even if it is deleted, we can't let you create a new key with the same ID. Sorry.
+#
+# - so the credentials cannot be re-imported and the metadata volume has to go. Local media blobs go
+# with it, which on a workstation is test data. Measured 2026-09-10, the hard way.
+garage-reset:
+	@echo "${YELLOW}⚠️  Wiping Garage metadata and data - local media blobs are lost${RESET}"
+	@$(LOCAL_COMPOSE) rm -sf garage
+	@docker volume rm -f $(LOCAL_PROJECT)_garage_meta $(LOCAL_PROJECT)_garage_data
+	@$(LOCAL_COMPOSE) up -d garage
+	@$(LOCAL_COMPOSE) up -d --force-recreate media-service
+	@echo "${GREEN}✅ Garage rebuilt from infrastructure/.env${RESET}"
 
 reset-services-prod: production-check
 	@echo "${BLUE}🔄 Resetting services (stop + remove volumes)…${RESET}"

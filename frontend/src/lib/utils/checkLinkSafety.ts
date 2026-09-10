@@ -1,4 +1,6 @@
 import { m } from '$lib/paraglide/messages';
+import { apiFetch } from '$lib/utils/apiFetch';
+import { deliveryUrl } from '$lib/utils/apiUrl';
 import { Log } from '$lib/utils/Log';
 
 /**
@@ -37,9 +39,11 @@ export function checkLinkSafety(href: string): Promise<boolean> {
 
   const promise = (async () => {
     try {
-      const baseUrl = import.meta.env.VITE_DELIVERY_URL?.trim() || window.location.origin;
-      const endpoint = `${baseUrl}/api/mls/link-safety?url=${encodeURIComponent(href)}`;
-      const res = await fetch(endpoint);
+      // `apiFetch`, not `fetch`: the route is behind a guard since 2026-09-10, and nginx's
+      // `auth_request` identifies a caller from the `Authorization` header alone - a bare
+      // same-origin fetch would spend Canari's Safe Browsing quota for anybody who asked.
+      const endpoint = `${deliveryUrl()}/api/mls/link-safety?url=${encodeURIComponent(href)}`;
+      const res = await apiFetch(endpoint);
       if (!res.ok) return failOpen(href, `status ${res.status}`);
       const data = (await res.json()) as { unsafe?: boolean };
       return data.unsafe === true;

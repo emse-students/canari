@@ -181,24 +181,26 @@ export class MediaService {
       };
     }
 
-    // Fallback: metadata lost after a container restart (media_metadata.json not persisted).
-    // If the blob still exists in storage, serve it and backfill the metadata entry.
-    // All logos/event images are converted to WebP on upload, so content-type is safe to assume.
-    if (!entry?.purgedAt) {
-      const stream = await this.storage.get(mediaId);
-      if (stream) {
-        const data = await this.readStreamToBuffer(stream);
-        const now = Date.now();
-        this.meta.items[mediaId] = {
-          createdAt: now,
-          lastAccessAt: now,
-          publicAsset: true,
-          contentType: 'image/webp',
-        };
-        await this.persistMetadata();
-        this.logger.warn(`media ${mediaId}: metadata missing - backfilled from storage`);
-        return { status: 'ok', data, contentType: 'image/webp' };
-      }
+    // NO FALLBACK, AND THE ONE THAT WAS HERE PUBLISHED WHATEVER IT WAS ASKED FOR.
+    //
+    // It served any blob whose metadata was missing and then WROTE `publicAsset: true` for it -
+    // so one request on a chat object's id turned a private object into a public one, permanently,
+    // for everybody. The route it sits behind is unauthenticated by design (an `<img>` on a page a
+    // signed-out visitor sees), so "whoever asked" is anybody who can name a UUID. What came out
+    // was E2EE ciphertext whose key never left the client, which is why this was not a disclosure -
+    // but the metadata write was real, and nothing would ever have undone it.
+    //
+    // Its premise was "metadata lost after a container restart". That is no longer true and has not
+    // been since `media_meta` became a named volume, mounted in all three estates. So this is the
+    // fallback rule exactly: reaching it means the primary path failed, and the fix belongs THERE -
+    // in whatever lost the index - not in a branch that guesses `image/webp` and publishes on trust.
+    // An asset that has genuinely lost its metadata now 404s, visibly, instead of taking every
+    // ciphertext with it.
+    if (!entry) {
+      this.logger.warn(
+        `media ${mediaId}: asked for as a public asset with NO metadata entry - refusing. ` +
+          `If a real logo is missing, the metadata index is what broke; the volume is media_meta.`
+      );
     }
 
     return { status: 'not_found' };

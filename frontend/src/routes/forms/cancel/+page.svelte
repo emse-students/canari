@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import { CircleX } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import { apiFetch } from '$lib/utils/apiFetch';
 
   const sessionId = $derived(page.url.searchParams.get('session_id'));
   let formId = $state<string | null>(null);
@@ -11,9 +12,8 @@
     if (!sessionId) return;
     try {
       const coreUrl = (import.meta as any).env?.VITE_CORE_URL?.trim() || '';
-      const res = await fetch(`${coreUrl}/api/payments/cancel-session`, {
+      const res = await apiFetch(`${coreUrl}/api/payments/cancel-session`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId }),
       });
       const data = await res.json();

@@ -25,6 +25,7 @@ import { MessagingService } from '../services/messaging.service';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { sanitizeQueryValue, sanitizeOptionalQueryValue } from '../utils/sanitize';
+import { mintPreviewTicket, verifyPreviewTicket } from '../utils/previewTicket';
 import {
   assertSafeExternalUrl,
   fetchYouTubeOEmbed,
@@ -68,6 +69,24 @@ const IMAGE_MAX_BYTES = 3_000_000;
 const IMAGE_CACHEABLE_BYTES = 256_000;
 
 /** PIN verifier and link-preview (SSRF-protected) endpoints. */
+/**
+ * The secret both halves of the preview ticket are HMAC'd with.
+ *
+ * `INTERNAL_SHARED_SECRET` is the same secret `HeaderAuthGuard` verifies nginx's per-minute token
+ * with, and `env-from-prod.sh` regenerates it for every estate, so it is present wherever this
+ * service runs. It FAILS CLOSED when it is not: a ticket nobody can verify is a route nobody can
+ * refuse, which is the state this replaced.
+ */
+function requirePreviewTicketSecret(): string {
+  const secret = process.env.INTERNAL_SHARED_SECRET?.trim();
+  if (!secret) {
+    throw new InternalServerErrorException(
+      'INTERNAL_SHARED_SECRET is not configured - the link preview ticket cannot be minted or verified'
+    );
+  }
+  return secret;
+}
+
 @Controller()
 export class SecurityController {
   private readonly logger = new Logger(SecurityController.name);
@@ -352,6 +371,19 @@ export class SecurityController {
   }
 
   /**
+   * Mints the ticket `mls/link-preview/image` accepts, for a caller nginx has identified.
+   *
+   * It is its own route rather than a field on the preview payload because the client proxies more
+   * images than the payload names: the favicon chain is derived client-side from the page URL, so
+   * anything signed per-URL server-side would cover the cover image and none of the favicons.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Get('mls/link-preview/ticket')
+  getLinkPreviewTicket(): { ticket: string; expiresInMs: number } {
+    return mintPreviewTicket(requirePreviewTicketSecret());
+  }
+
+  /**
    * Fetches a safe external URL preview (SSRF-protected: private IPs and
    * localhost are rejected), answering from cache when it can.
    *
@@ -360,7 +392,12 @@ export class SecurityController {
    * conversation scrolled back through hammered a site that never agreed to
    * any of it. `Cache-Control` carries the same decision to the browser, which
    * is the only way to stop the request being made at all.
+   *
+   * GUARDED since 2026-09-10. It is SSRF-protected, which decides what it may be pointed at and
+   * nothing about who may point it: measured that day, a caller with no session at all had a
+   * server-side fetcher that downloaded an arbitrary page and handed back its parsed contents.
    */
+  @UseGuards(HeaderAuthGuard)
   @Get('mls/link-preview')
   async getLinkPreview(
     @Query('url') url: string,
@@ -438,10 +475,11 @@ export class SecurityController {
    * verdict down with it if the two were coupled. A caller that only wants "is this safe to
    * open" (`AppLink`) should never depend on whether the site also has good Open Graph tags.
    *
-   * Unauthenticated by design, same reasoning as `getLinkPreview`: it only ever answers about a
-   * URL that has already passed `assertSafeExternalUrl`, and the answer itself (a boolean) is not
-   * sensitive.
+   * GUARDED since 2026-09-10, and the reasoning it used to carry was wrong in the half that
+   * mattered. "The answer is not sensitive" is true and decides nothing: what an anonymous caller
+   * got out of it was a Google Safe Browsing lookup on Canari's quota, for any URL, for free.
    */
+  @UseGuards(HeaderAuthGuard)
   @Get('mls/link-safety')
   async getLinkSafety(@Query('url') url: string, @Res({ passthrough: true }) res: ExpressResponse) {
     if (!url || typeof url !== 'string') {
@@ -589,12 +627,30 @@ export class SecurityController {
    * served to an `<img>` is a site answering something other than what was
    * asked, and there is no reason to relay it.
    *
-   * Unauthenticated on purpose, like the preview endpoint it serves: it fetches
-   * only public URLs and holds no credential, so requiring a session would buy
-   * nothing and break the preview for a page rendered before the session is up.
+   * A TICKET, NOT A GUARD, AND THE DIFFERENCE IS THE `<img>`. This URL goes into an `<img src>`,
+   * so the browser makes the request itself and carries no `Authorization` header - and on
+   * `tauri://localhost` no cookie either. `HeaderAuthGuard` would refuse every mobile reader.
+   *
+   * It used to say it was unauthenticated on purpose, on the grounds that it "holds no credential,
+   * so requiring a session would buy nothing". What it bought anybody, measured 2026-09-10, was an
+   * image proxy: 5430 bytes of a Google favicon relayed with no session, on Canari's address and
+   * Canari's bandwidth. So the caller is now identified one step earlier, by a ticket an
+   * authenticated call mints - see `utils/previewTicket`.
    */
   @Get('mls/link-preview/image')
-  async getLinkPreviewImage(@Query('url') url: string, @Res() res: ExpressResponse): Promise<void> {
+  async getLinkPreviewImage(
+    @Query('url') url: string,
+    @Query('t') ticket: string,
+    @Res() res: ExpressResponse
+  ): Promise<void> {
+    // BODYLESS, like every other refusal on this route: the response is decoded by an `<img>`, and
+    // a JSON body handed to an image destination is what produces three console lines for one
+    // benign miss.
+    if (!verifyPreviewTicket(ticket, requirePreviewTicketSecret())) {
+      res.status(401).end();
+      return;
+    }
+
     if (!url || typeof url !== 'string') {
       res.status(400).end('url is required');
       return;
