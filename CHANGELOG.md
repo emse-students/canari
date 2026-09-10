@@ -109,8 +109,8 @@ is refused earlier still; the service's health endpoint stays open, as it must.
 
 One thing is recorded rather than implied. **The same authentication step fronts fifteen other
 areas of the app**, and it can refuse in none of them, so each has to be checked on its own -
-fourteen still are not. The exposure was measured on a local copy of production; production
-itself was not probed.
+fourteen were not, when this was written. The entry that closes them follows. The exposure was
+measured on a local copy of production; production itself was not probed.
 
 ### Security - whether a person is online could be read with no account
 
@@ -126,6 +126,83 @@ What this does **not** decide is whether someone logged in should be able to ask
 person rather than only people they already share a conversation with. That is a genuine
 question, a larger change, and it is written down rather than quietly settled here.
 
+
+### Security - the remaining fourteen areas were checked, and eight more answered anybody
+
+The two entries below each closed one hole and said the same thing about the rest: the
+authentication step in front of most of the app works out **who** you are and never **whether** you
+may continue, so everything behind it is only as protected as it made itself, and fourteen areas had
+never been looked at. They have now been, one at a time, by reading each one's code and then asking
+it for something with no account at all. Eight answered.
+
+What a person with no Canari account could do, measured on a local copy of production:
+
+- read **any form**, by knowing its address;
+- start, confirm or cancel a **payment** - three of those reached the real payment provider, and one
+  of them skipped its permission check entirely by simply leaving a field out of the request;
+- make Canari **download any page on the internet** and hand back what it found;
+- make Canari **fetch and relay any image**, from Canari's own address and at Canari's expense;
+- spend Canari's **link-safety allowance** with a lookup on any address they liked.
+
+All eight are closed. Forms, payments and the two link endpoints now refuse anybody the entry point
+did not identify. The image relay could not be closed the same way - it is used by the `<img>` tag
+itself, which cannot carry a session, on the phone especially - so it now requires a short-lived
+pass that the app obtains once, with a session, and attaches to each image. Previews still appear
+everywhere they did, and the relay is no longer usable by anyone else. One entry in the routing
+configuration turned out to protect a service that had never had anything there at all, and was
+deleted.
+
+**The part that matters more than the eight.** A list of endpoints checked by hand is out of date
+the day somebody adds one. So the audit is now a test that runs on every change: it reads the
+routing configuration and every service, and refuses a change that puts a route behind that
+authentication step without giving it a real check - or without writing down, in one sentence, why
+it is meant to answer everybody. Thirteen routes are written down that way today, each with its
+reason, and a reason that stops being needed fails the test too, so the list cannot quietly rot.
+
+Writing that test also found three routes it had been calling safe that were not, each because it
+had read something other than the code it was judging - including a comment that merely *mentioned*
+a route. One of them, a public media address, is genuinely meant to answer everybody, and looking at
+it properly turned up something worse than the missing note: asked for an image whose bookkeeping
+entry was missing, it served **whatever was stored under that address** and then recorded it as
+public, for good. What came out was encrypted chat content that nobody without the conversation's
+key can read - so nothing was disclosed - but the entry it wrote was real and nothing would ever
+have undone it. That branch existed for a problem that no longer happens (the bookkeeping now lives
+on its own disk, in all three environments), so it is gone: an image whose entry is genuinely
+missing now says so, loudly, instead of taking every other object with it.
+
+Three smaller things were fixed in the same pass. An internal signature check compared two values
+in a way that leaks, very slightly, how much of a guess was right - it is now constant-time, like
+every other such comparison here. A malformed form address answered with a server error, which
+promises the server is broken, instead of simply refusing a malformed request; every form address
+is now checked before anything is asked of the database. And the event ticket page was deleted: it
+was linked from nowhere, never received the event it was supposed to sell, and sent the payment
+service a request it has never been able to accept, so no one can ever have bought anything
+through it.
+
+### Fixed - a developer's own copy of Canari could not serve an image, and the log said why for weeks
+
+Checking the media half of the audit above meant using the local copy of the estate, and it had no
+working image storage at all. It had been broken for as long as anybody's notes go back, and the
+storage service had been saying so on every single request: it was being asked for the bucket by a
+name nobody had ever created.
+
+The cause is worth writing down because it is not specific to storage. The service was told its
+credentials by a configuration file, and it had been started once, long ago, before that file
+carried them - so it fell back to a placeholder. A container keeps the settings it was born with,
+and restarting it does not go back and look: it has to be **replaced**. Every restart since had
+faithfully preserved the wrong password.
+
+Two things made that invisible for so long, and both are now gone. The placeholder itself: a missing
+credential quietly became a different credential, so everything started, everything reported itself
+healthy, and nothing worked. A missing credential now stops the stack before it starts and names the
+command that fixes it. And the fix: `make garage-reset` rebuilds the local storage from the
+configuration file and replaces the service that talks to it, which is the only repair available -
+the storage refuses for ever to re-create a key that was deleted once, so there is nothing to mend
+in place.
+
+A `make garage-provision` step written the evening before was deleted the next morning. It set up
+the storage the storage already sets up for itself on first boot, and it reported "already present"
+at every step - which was the evidence, not the reassurance it was read as.
 
 ### Added - nobody was ever told about a post, and now they are
 

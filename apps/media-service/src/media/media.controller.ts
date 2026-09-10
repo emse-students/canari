@@ -98,7 +98,16 @@ export class MediaController {
       .replace(/\//g, '_')
       .replace(/=+$/, '');
 
-    if (expected !== sigB64) {
+    // CONSTANT TIME, because `!==` on an HMAC tells its caller how much of a guess was right.
+    // `timingSafeEqual` THROWS on a length mismatch rather than answering false, and a signature of
+    // the wrong length is a refusal either way - so the length is checked first and the buffers are
+    // built from the same encoding.
+    const expectedBuf = Buffer.from(expected, 'utf8');
+    const actualBuf = Buffer.from(sigB64, 'utf8');
+    if (
+      expectedBuf.length !== actualBuf.length ||
+      !crypto.timingSafeEqual(expectedBuf, actualBuf)
+    ) {
       throw new UnauthorizedException('Invalid JWT signature');
     }
 

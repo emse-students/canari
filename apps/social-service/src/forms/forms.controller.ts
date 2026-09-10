@@ -6,6 +6,7 @@ import {
   Get,
   Headers,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Res,
@@ -23,7 +24,15 @@ import { PurchaseRecordService } from '../users/purchase-record.service';
 import { UserTagService } from '../users/user-tag.service';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
 
-/** Manages form resources including submissions, payment status, XLSX exports, and purchase history. */
+/**
+ * Manages form resources including submissions, payment status, XLSX exports, and purchase history.
+ *
+ * EVERY ID IS VALIDATED AT THE BOUNDARY, by the framework's own pipe. The columns are `uuid`, so an
+ * id that is not one reached Postgres and came back as a 500: a promise that the server is broken,
+ * for a request that was simply malformed. `GET /api/forms/abc` was the measured case (2026-09-10).
+ * The pipe answers 400 before the query layer is asked anything, which is also what stops the noise
+ * - a 500 whose reader learns to skip it is the line that hides the next real one.
+ */
 @Controller('forms')
 export class FormsController {
   constructor(
@@ -52,16 +61,23 @@ export class FormsController {
     return this.service.list(xUserId);
   }
 
-  /** Association agenda entry linked to this form, if configured. */
+  /**
+   * Association agenda entry linked to this form, if configured.
+   *
+   * PUBLIC BY INTENT, and it says so here because nothing else would: it is read by the public
+   * association page, which renders for a signed-out visitor. It answers one agenda entry and
+   * never the form's contents - `GET :id` is the guarded route for those.
+   */
   @Get(':id/calendar-link')
-  async getFormCalendarLink(@Param('id') id: string) {
+  async getFormCalendarLink(@Param('id', ParseUUIDPipe) id: string) {
     const linkedEvent = await this.associationsService.findCalendarEventByLinkedForm(id);
     return { linkedEvent };
   }
 
   /** Returns a single form by its ID. */
+  @UseGuards(NginxAuthGuard)
   @Get(':id')
-  get(@Param('id') id: string) {
+  get(@Param('id', ParseUUIDPipe) id: string) {
     return this.service.get(id);
   }
 
@@ -69,7 +85,7 @@ export class FormsController {
   @UseGuards(NginxAuthGuard)
   @Patch(':id')
   update(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') ga?: string,
     @Body() dto?: CreateFormDto
@@ -81,7 +97,7 @@ export class FormsController {
   @UseGuards(NginxAuthGuard)
   @Delete(':id')
   deleteForm(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') ga?: string
   ) {
@@ -93,7 +109,7 @@ export class FormsController {
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 8 * 1024 * 1024 } }))
   @Post(':id/image')
   uploadImage(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @UploadedFile() file: Express.Multer.File,
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') ga?: string,
@@ -108,7 +124,7 @@ export class FormsController {
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 8 * 1024 * 1024 } }))
   @Post(':id/items/image')
   async uploadItemImage(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @UploadedFile() file: Express.Multer.File,
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') ga?: string,
@@ -122,7 +138,7 @@ export class FormsController {
   @UseGuards(NginxAuthGuard)
   @Delete(':id/image')
   deleteImage(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') ga?: string
   ) {
@@ -132,7 +148,10 @@ export class FormsController {
   /** Returns the calling user's submission for a specific form. */
   @UseGuards(NginxAuthGuard)
   @Get(':id/submission')
-  async getSubmission(@Param('id') id: string, @Headers('x-user-id') xUserId: string) {
+  async getSubmission(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('x-user-id') xUserId: string
+  ) {
     return this.service.getSubmission(id, xUserId);
   }
 
@@ -152,7 +171,10 @@ export class FormsController {
   /** Returns whether the calling user has already submitted the specified form, with payment status. */
   @UseGuards(NginxAuthGuard)
   @Get(':id/check')
-  async checkSubmission(@Param('id') id: string, @Headers('x-user-id') xUserId: string) {
+  async checkSubmission(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('x-user-id') xUserId: string
+  ) {
     return this.service.hasSubmission(id, xUserId);
   }
 
@@ -161,7 +183,7 @@ export class FormsController {
   @Post(':id/submit')
   submit(
     @Headers('x-user-id') xUserId: string,
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: SubmitFormDto
   ) {
     return this.service.submit(id, { ...dto, userId: xUserId });
@@ -171,7 +193,7 @@ export class FormsController {
   @UseGuards(NginxAuthGuard)
   @Get(':id/submissions')
   async getSubmissions(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') ga?: string
   ) {
@@ -183,7 +205,7 @@ export class FormsController {
   @UseGuards(NginxAuthGuard)
   @Get('submissions/:submissionId')
   async getSubmissionById(
-    @Param('submissionId') submissionId: string,
+    @Param('submissionId', ParseUUIDPipe) submissionId: string,
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') ga?: string
   ) {
@@ -210,7 +232,7 @@ export class FormsController {
   @UseGuards(NginxAuthGuard)
   @Post('submissions/:submissionId/cancel')
   cancelSubmission(
-    @Param('submissionId') submissionId: string,
+    @Param('submissionId', ParseUUIDPipe) submissionId: string,
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') ga?: string
   ) {
@@ -221,7 +243,7 @@ export class FormsController {
   @UseGuards(NginxAuthGuard)
   @Delete('submissions/:submissionId')
   async deleteSubmission(
-    @Param('submissionId') submissionId: string,
+    @Param('submissionId', ParseUUIDPipe) submissionId: string,
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') ga?: string
   ) {
@@ -235,7 +257,7 @@ export class FormsController {
   @UseGuards(NginxAuthGuard)
   @Get(':id/submissions/pending-cash')
   listPendingCash(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') ga?: string
   ) {
@@ -246,8 +268,8 @@ export class FormsController {
   @UseGuards(NginxAuthGuard)
   @Post(':id/submissions/:submissionId/validate-cash')
   validateCash(
-    @Param('id') id: string,
-    @Param('submissionId') submissionId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('submissionId', ParseUUIDPipe) submissionId: string,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga?: string
   ) {
@@ -258,8 +280,8 @@ export class FormsController {
   @UseGuards(NginxAuthGuard)
   @Post(':id/submissions/:submissionId/cancel-cash')
   cancelCash(
-    @Param('id') id: string,
-    @Param('submissionId') submissionId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('submissionId', ParseUUIDPipe) submissionId: string,
     @Headers('x-user-id') callerId: string,
     @Headers('x-global-admin') ga?: string
   ) {
@@ -269,21 +291,24 @@ export class FormsController {
   /** Subscribes the calling user to open-time reminders for a form. */
   @UseGuards(NginxAuthGuard)
   @Post(':id/remind')
-  subscribeReminder(@Param('id') id: string, @Headers('x-user-id') xUserId: string) {
+  subscribeReminder(@Param('id', ParseUUIDPipe) id: string, @Headers('x-user-id') xUserId: string) {
     return this.service.subscribeReminder(id, xUserId);
   }
 
   /** Unsubscribes the calling user from reminders for a form. */
   @UseGuards(NginxAuthGuard)
   @Delete(':id/remind')
-  unsubscribeReminder(@Param('id') id: string, @Headers('x-user-id') xUserId: string) {
+  unsubscribeReminder(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('x-user-id') xUserId: string
+  ) {
     return this.service.unsubscribeReminder(id, xUserId);
   }
 
   /** Returns whether the calling user has an active reminder for a form. */
   @UseGuards(NginxAuthGuard)
   @Get(':id/remind')
-  checkReminder(@Param('id') id: string, @Headers('x-user-id') xUserId: string) {
+  checkReminder(@Param('id', ParseUUIDPipe) id: string, @Headers('x-user-id') xUserId: string) {
     return this.service.checkReminder(id, xUserId);
   }
 
@@ -309,7 +334,7 @@ export class FormsController {
   @UseGuards(NginxAuthGuard)
   @Get(':id/export')
   async export(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Res() res: Response,
     @Headers('x-user-id') xUserId: string,
     @Headers('x-global-admin') ga?: string

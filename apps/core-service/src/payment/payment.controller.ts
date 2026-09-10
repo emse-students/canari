@@ -123,12 +123,14 @@ export class PaymentController {
   }
 
   /** Returns which payment provider is active, so the frontend can render the matching onboarding flow. */
+  @UseGuards(NginxAuthGuard)
   @Get('provider')
   async getActiveProvider() {
     return { provider: await this.paymentService.getActiveProviderId() };
   }
 
   /** Starts or resumes a Connect-style onboarding flow for an association and returns the onboarding URL. */
+  @UseGuards(NginxAuthGuard)
   @Post('onboarding')
   @HttpCode(200)
   async createOnboarding(
@@ -155,13 +157,17 @@ export class PaymentController {
       return { ok: false, message: 'Payment provider not configured' };
     }
 
+    // THE CHECK IS NOT CONDITIONAL ON THE FIELD BEING SENT. It used to sit inside `if (assocId)`,
+    // so a body that simply omitted `associationId` reached the provider with no authorization at
+    // all - an authorization check a caller skips by leaving a field out is not a check.
     const assocId = body.associationId?.trim();
-    if (assocId) {
-      if (!UUID_RE.test(assocId)) {
-        throw new BadRequestException('Invalid associationId');
-      }
-      await this.assertCanManageAssociation(req, assocId);
+    if (!assocId) {
+      throw new BadRequestException('associationId is required');
     }
+    if (!UUID_RE.test(assocId)) {
+      throw new BadRequestException('Invalid associationId');
+    }
+    await this.assertCanManageAssociation(req, assocId);
 
     const legalProfile = body.legalProfile
       ? {
@@ -408,6 +414,7 @@ export class PaymentController {
   }
 
   /** Creates a Stripe Checkout session for the given line items and returns the session URL. */
+  @UseGuards(NginxAuthGuard)
   @Post('create-checkout-session')
   @HttpCode(200)
   async createCheckout(
@@ -455,6 +462,7 @@ export class PaymentController {
   }
 
   /** Verifies a completed Stripe Checkout session and marks the linked form submission as paid. */
+  @UseGuards(NginxAuthGuard)
   @Post('verify-session')
   @HttpCode(200)
   async verifySession(@Body() body: { sessionId: string }) {
@@ -494,6 +502,7 @@ export class PaymentController {
   }
 
   /** Cancels an unpaid Stripe Checkout session and marks the linked submission as cancelled. */
+  @UseGuards(NginxAuthGuard)
   @Post('cancel-session')
   @HttpCode(200)
   async cancelSession(@Body() body: { sessionId: string }) {

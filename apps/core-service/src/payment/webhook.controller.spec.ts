@@ -236,3 +236,78 @@ describe('PaymentWebhookController Stripe signature verification', () => {
     expect(res.json).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * THE BRANCH WITH NO SIGNING SECRET, WHICH IS THE ONLY WAY AN UNAUTHENTICATED CALLER DESCRIBES A
+ * PAYMENT TO THIS SERVER.
+ *
+ * `POST /api/payments/webhook` sits behind nginx's `auth_request`, which IDENTIFIES and never
+ * refuses, and it is declared public by intent in `auth-request-coverage.test.mjs` because Stripe
+ * carries no session - the `stripe-signature` HMAC is its whole authorization. Measured logged out
+ * on the local estate 2026-09-11, an empty unsigned body answered 201, and this block is what
+ * separates "a developer has no Stripe CLI" from "this estate accepts forged payments":
+ * `NODE_ENV=production` refuses, and everywhere else accuses in the log.
+ */
+describe('PaymentWebhookController with NO signing secret', () => {
+  function makeController() {
+    const config = {
+      get: jest.fn((name: string) => (name === 'STRIPE_SECRET_KEY' ? 'sk_test_x' : undefined)),
+    } as unknown as ConfigService;
+    return new PaymentWebhookController(
+      config,
+      {} as UsersService,
+      {} as unknown as PaymentService
+    );
+  }
+
+  function makeResponse() {
+    const res = {
+      status: jest.fn().mockReturnThis(),
+      send: jest.fn().mockReturnThis(),
+      json: jest.fn().mockReturnThis(),
+    };
+    return res as unknown as Response & typeof res;
+  }
+
+  /** An event the handler acknowledges and acts on in no branch. */
+  const unsignedEvent = {
+    id: 'evt_forged',
+    object: 'event',
+    type: 'payment_intent.created',
+    data: { object: { id: 'pi_forged', object: 'payment_intent' } },
+  };
+
+  const previousNodeEnv = process.env.NODE_ENV;
+  afterEach(() => {
+    process.env.NODE_ENV = previousNodeEnv;
+    jest.restoreAllMocks();
+  });
+
+  it('REFUSES an unsigned body in production, and never reads it', async () => {
+    process.env.NODE_ENV = 'production';
+    const controller = makeController();
+    const res = makeResponse();
+
+    await controller.handle({ headers: {}, body: unsignedEvent } as unknown as Request, res);
+
+    expect(res.status).toHaveBeenCalledWith(503);
+    expect(res.json).not.toHaveBeenCalled();
+  });
+
+  it('accepts one outside production, and says so at a level that ACCUSES', async () => {
+    process.env.NODE_ENV = 'development';
+    const controller = makeController();
+    const warn = jest
+      .spyOn((controller as unknown as { logger: { warn: (m: string) => void } }).logger, 'warn')
+      .mockImplementation(() => {});
+    const res = makeResponse();
+
+    await controller.handle({ headers: {}, body: unsignedEvent } as unknown as Request, res);
+
+    expect(res.json).toHaveBeenCalledWith({ received: true });
+    // A fallback is a signal, never a path: this line is the whole of what a misconfigured estate
+    // leaves behind, so its absence is the defect, not its wording.
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain('UNSIGNED');
+  });
+});

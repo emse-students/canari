@@ -8,12 +8,12 @@ Nginx is the sole public HTTP entry point. It runs inside the `frontend` Docker 
 
 It no longer serves the app shell on the happy path: HTML navigations go to `frontend-ssr`, see [SSR head](#html-navigations-go-to-frontend-ssr). It keeps a prerendered shell to fall back on when that container is unreachable.
 
-Every protected request goes through `auth_request /internal/auth/verify`, which calls `core-service:3012/api/auth/verify` internally. On success, Nginx injects three headers into the upstream request:
+Most `/api` locations carry `auth_request /internal/auth/verify`, which calls `core-service:3012/api/auth/verify` internally and injects three headers into the upstream request. **It identifies the caller; it never refuses one** - see [Auth subrequest](#auth-subrequest), and read that section before adding a location, because the name says the opposite of what the directive does here:
 
 | Header | Value | Description |
 |---|---|---|
 | `X-User-Id` | OIDC sub | Authenticated user ID |
-| `X-Logged-In` | `true` | Auth confirmation |
+| `X-Logged-In` | `true` / `false` | **`false` for an anonymous caller, and the request is still proxied** |
 | `X-Global-Admin` | `true` / `false` | Global admin flag |
 
 ## Route table
@@ -41,9 +41,12 @@ Every protected request goes through `auth_request /internal/auth/verify`, which
 
 When adding a new API route:
 1. Add the `location` block in `infrastructure/local/Dockerfile.frontend`.
-2. Decide whether it needs `auth_request` (most routes do).
+2. Decide whether it needs `auth_request` (most routes do) - remembering that it decorates and
+   never refuses, so **this step does not protect anything**.
 3. Add `proxy_set_header X-User-Id $upstream_http_x_user_id;` if the upstream needs the user ID.
-4. Update the route table in `docs/wiki/architecture.md` and `CLAUDE.md`.
+4. **Put the guard on the route itself**, or declare it public with its reason in
+   `.github/scripts/tests/auth-request-coverage.test.mjs` - CI refuses the route otherwise.
+5. Update the route table in `docs/wiki/architecture.md` and `CLAUDE.md`.
 
 Skipping step 1 means the route will be unreachable from outside Docker, even if the service implements it.
 
@@ -203,6 +206,17 @@ proxy_read_timeout 86400s;  # keep alive for long-running connections
 
 ## Auth subrequest
 
+**IT IDENTIFIES. IT NEVER REFUSES.** `/api/auth/verify` answers **200 for a logged-OUT caller** as
+well, carrying `x-logged-in: false` so signed-out pages can render - and nginx treats any 2xx as
+permission granted. So a `location` carrying `auth_request` decorates the upstream request with
+whatever the verifier could work out about the caller, and passes an anonymous one through exactly
+the same way. **Every route behind such a location is as open as its own guard makes it.**
+
+Read the block below as "tell the upstream who this is", never as "let only members in". Reading it
+the other way is how four `/api/posts` endpoints, `/api/presence`, `GET /api/forms/:id`, five
+`/api/payments` routes and the three `/api/mls/link-*` endpoints each answered a caller with no
+session at all, and it is why the identification is spelled out here rather than assumed.
+
 ```nginx
 auth_request /internal/auth/verify;
 auth_request_set $user_id $upstream_http_x_user_id;
@@ -213,3 +227,50 @@ proxy_set_header X-User-Id $user_id;
 proxy_set_header X-Logged-In $logged_in;
 proxy_set_header X-Global-Admin $global_admin;
 ```
+
+### What refuses, and what asserts that something does
+
+The refusal is the service's own: `NginxAuthGuard` (core-service, social-service) and
+`HeaderAuthGuard` (chat-delivery-service) require `x-user-id` / `x-user-logged-in`, verify the
+per-minute HMAC in `x-internal-token` when `INTERNAL_SHARED_SECRET` is set, and fail closed in
+production. Authorization is not always a decorator, though - several routes call
+`assertInternalSecret()`, `assertCanManageAssociation()` or `verifyPushSecretAuth()` as their first
+statement, and **counting decorators counts decorators.**
+
+`.github/scripts/tests/auth-request-coverage.test.mjs`, run by `make test-ci-scripts`, is what keeps
+this true without anybody re-reading it. It parses the `auth_request` locations out of the
+Dockerfile heredoc (following a `rewrite` where there is one), maps each to its upstream, scans
+every `*.controller.ts` for route decorators, class and method `@UseGuards`, and the in-body idioms,
+parses `.route(...)` out of both Rust routers, and fails on three things:
+
+1. a route behind an `auth_request` location with no authorization and no declaration;
+2. a `PUBLIC_BY_INTENT` declaration that no longer does any work - the route is gone, or has since
+   been guarded, or sits behind no such location. **A reason nobody needs reads exactly like a
+   reason somebody does**, which is how a list of deliberate exceptions becomes a list of stale
+   ones;
+3. an `auth_request` location whose upstream serves nothing under it - `/api/groups` was exactly
+   that, guarding a service that had never had a route there.
+
+Every exception is declared in that file WITH ITS REASON, so adding a public route is a sentence
+somebody has to write rather than a decorator somebody forgot.
+
+**Two traps the scanner had to be taught, both of which made it call an open route closed.** It read
+the handler body as a fixed 60 lines, which swept into the routes below and credited
+`GET /posts/health` with an idiom belonging to somebody else; and it matched route decorators
+QUOTED IN COMMENTS, inventing three routes that no service serves while truncating the real handlers
+above them. The same family as crediting `verify-session` with a check called `verifySession` - the
+method's own name. A scanner that over-credits is worse than no scanner, because it reports a
+finished audit.
+
+### An `<img src>` cannot carry a Bearer, and that is a design constraint, not an exemption
+
+Three routes are reached by the browser itself rather than by application code -
+`GET /api/users/:id/avatar`, `GET /api/media/public/:id`, `GET /api/mls/link-preview/image` - so no
+`Authorization` header exists to check, and on `tauri://localhost` no cookie either. The first two
+serve assets that public pages show anyway. The third served an arbitrary external URL to anybody
+who asked, so it carries a **ticket** instead: an authenticated call to
+`GET /api/mls/link-preview/ticket` mints an HMAC over a five-minute bucket, and the image route
+verifies that. The discriminator is carried to where the decision is made rather than learned by
+failing - `apps/chat-delivery-service/src/utils/previewTicket.ts` and
+`frontend/src/lib/utils/previewTicket.svelte.ts` are the two halves.
+

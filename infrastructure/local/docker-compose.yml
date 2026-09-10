@@ -189,14 +189,18 @@ services:
     environment:
       GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:-00000000000000000000000000000000000000000000000000000000000000}
       GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN:-dev-garage-admin-token-change-me}
-      # --default-bucket provisions this bucket and grants this exact key on first boot -
-      # same values media-service reads below, so the two never drift apart.
-      # The literal defaults still read "minioadmin" on purpose: a local `garage_meta` volume
-      # was provisioned with that key ID, and changing it locks a developer out of their own
-      # local media until they delete the volume. The VARIABLE names are Garage everywhere.
-      GARAGE_DEFAULT_ACCESS_KEY: ${GARAGE_ACCESS_KEY_ID:-minioadmin}
-      GARAGE_DEFAULT_SECRET_KEY: ${GARAGE_SECRET_ACCESS_KEY:-minioadmin-dev-secret-key}
-      GARAGE_DEFAULT_BUCKET: ${GARAGE_BUCKET:-canari-media}
+      # `--single-node --default-bucket` PROVISIONS THE WHOLE CLUSTER FROM THESE THREE VALUES on
+      # every boot with an empty `garage_meta`: the layout, the access key and the bucket. It is the
+      # only thing that provisions Garage here, and nothing in the Makefile duplicates it.
+      #
+      # NO DEFAULTS, DELIBERATELY. A missing variable used to fall back to `minioadmin`, and a
+      # fallback that substitutes a DIFFERENT CREDENTIAL does not degrade - it authenticates as
+      # somebody who does not exist, and Garage answers `403 No such key: minioadmin` at every
+      # request while every container reports itself started. `local-env` writes all three, so an
+      # absence here is a broken `.env` and has to say so before anything starts.
+      GARAGE_DEFAULT_ACCESS_KEY: ${GARAGE_ACCESS_KEY_ID:?run 'make local-env' - infrastructure/.env carries no GARAGE_ACCESS_KEY_ID}
+      GARAGE_DEFAULT_SECRET_KEY: ${GARAGE_SECRET_ACCESS_KEY:?run 'make local-env' - infrastructure/.env carries no GARAGE_SECRET_ACCESS_KEY}
+      GARAGE_DEFAULT_BUCKET: ${GARAGE_BUCKET:?run 'make local-env' - infrastructure/.env carries no GARAGE_BUCKET}
     volumes:
       - ../garage/garage.toml:/etc/garage.toml:ro
       - garage_meta:/var/lib/garage/meta
@@ -232,9 +236,13 @@ services:
       GARAGE_PORT: "${GARAGE_PORT:-3900}"
       GARAGE_USE_SSL: "${GARAGE_USE_SSL:-false}"
       GARAGE_REGION: ${GARAGE_REGION:-garage}
-      GARAGE_ACCESS_KEY_ID: ${GARAGE_ACCESS_KEY_ID:-minioadmin}
-      GARAGE_SECRET_ACCESS_KEY: ${GARAGE_SECRET_ACCESS_KEY:-minioadmin-dev-secret-key}
-      GARAGE_BUCKET: ${GARAGE_BUCKET:-canari-media}
+      # The SAME three values the garage service is provisioned with above, and with no defaults for
+      # the same reason: this container held `minioadmin` for an evening on 2026-09-10 because a
+      # `docker compose restart` keeps the environment a container was CREATED with. Only
+      # `up -d --force-recreate` re-reads `.env`; `make garage-reset` does that.
+      GARAGE_ACCESS_KEY_ID: ${GARAGE_ACCESS_KEY_ID:?run 'make local-env' - infrastructure/.env carries no GARAGE_ACCESS_KEY_ID}
+      GARAGE_SECRET_ACCESS_KEY: ${GARAGE_SECRET_ACCESS_KEY:?run 'make local-env' - infrastructure/.env carries no GARAGE_SECRET_ACCESS_KEY}
+      GARAGE_BUCKET: ${GARAGE_BUCKET:?run 'make local-env' - infrastructure/.env carries no GARAGE_BUCKET}
       MEDIA_MAX_SIZE_MB: "${MEDIA_MAX_SIZE_MB:-50}"
     volumes:
       - media_meta:/app/media_meta

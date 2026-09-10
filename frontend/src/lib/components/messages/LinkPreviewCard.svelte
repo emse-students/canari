@@ -12,7 +12,10 @@
     ecosystemSquareCoverUrl,
   } from '$lib/utils/ecosystemHosts';
   import { faviconCandidates } from '$lib/utils/faviconCandidates';
+  import { apiFetch } from '$lib/utils/apiFetch';
+  import { deliveryUrl } from '$lib/utils/apiUrl';
   import { proxiedPreviewImageUrl } from '$lib/utils/previewImageProxy';
+  import { ensurePreviewTicket } from '$lib/utils/previewTicket.svelte';
   import { inAppPathFromHref, isInAppHref, publicAppLinkLabel } from '$lib/utils/publicAppUrl';
 
   interface Props {
@@ -78,6 +81,10 @@
       canariPreview = null;
       externalPreview = null;
 
+      // Minted before the images are derived, so the first render already carries a ticket rather
+      // than painting empty and repainting. It is a no-op once one is held.
+      void ensurePreviewTicket();
+
       try {
         if (isInAppHref(targetUrl)) {
           const data = await fetchCanariLinkPreview(targetUrl);
@@ -85,9 +92,11 @@
           return;
         }
 
-        const baseUrl = import.meta.env.VITE_DELIVERY_URL?.trim() || window.location.origin;
-        const endpoint = `${baseUrl}/api/mls/link-preview?url=${encodeURIComponent(parsed.href)}`;
-        const res = await fetch(endpoint);
+        // `apiFetch`, not `fetch`: nginx's `auth_request` identifies a caller from the
+        // `Authorization` header alone, so a bare same-origin fetch reaches this route with no
+        // session at all - which is what made it a preview service for anybody who could name a URL.
+        const endpoint = `${deliveryUrl()}/api/mls/link-preview?url=${encodeURIComponent(parsed.href)}`;
+        const res = await apiFetch(endpoint);
         if (res.ok) {
           const data = (await res.json()) as ExternalPreviewPayload;
           if (!cancelled) externalPreview = data;
@@ -154,7 +163,9 @@
   const faviconChain = $derived(
     coverCard
       ? []
-      : faviconCandidates(parsed.href, externalPreview?.icon).map(proxiedPreviewImageUrl)
+      : faviconCandidates(parsed.href, externalPreview?.icon)
+          .map(proxiedPreviewImageUrl)
+          .filter(Boolean)
   );
 
   /** The Open Graph image, likewise fetched through the proxy rather than from its host. */

@@ -5,85 +5,109 @@ vi.mock('$lib/stores/confirm.svelte', () => ({
   showConfirm: showConfirmMock,
 }));
 
+/**
+ * `apiFetch`, not the global `fetch`, and that is the point of the seam.
+ *
+ * `mls/link-safety` sits behind a guard since 2026-09-10, and nginx's `auth_request` identifies a
+ * caller from the `Authorization` header alone - a bare same-origin `fetch` reaches it as nobody
+ * and spends Canari's Safe Browsing quota for whoever asked. Mocking at this boundary is also what
+ * keeps these cases about the caching rules below rather than about token refresh.
+ */
+const apiFetchMock = vi.fn();
+vi.mock('$lib/utils/apiFetch', () => ({
+  apiFetch: (...args: unknown[]) => apiFetchMock(...args),
+}));
+
 import { checkLinkSafety, confirmUnsafeLinkIfNeeded } from './checkLinkSafety';
 
-const fetchMock = vi.fn();
+/** A fresh answer per call - a `Response` body may be read once, and these tests read several. */
+function verdict(unsafe: boolean) {
+  return () => new Response(JSON.stringify({ unsafe }), { status: 200 });
+}
 
-beforeEach(async () => {
-  fetchMock.mockReset();
+beforeEach(() => {
+  apiFetchMock.mockReset();
   showConfirmMock.mockReset();
-  vi.stubGlobal('fetch', fetchMock);
   // Each test gets a fresh href so the module-level dedup cache never leaks between cases.
 });
 
 describe('checkLinkSafety', () => {
+  it('asks through the authenticated wrapper, not a bare fetch', async () => {
+    apiFetchMock.mockImplementation(verdict(false));
+
+    await checkLinkSafety('https://example.com/0');
+
+    expect(apiFetchMock).toHaveBeenCalledTimes(1);
+    expect(apiFetchMock.mock.calls[0][0]).toContain('/api/mls/link-safety?url=');
+  });
+
   it('returns true when the server flags the URL', async () => {
-    fetchMock.mockResolvedValue(new Response(JSON.stringify({ unsafe: true }), { status: 200 }));
+    apiFetchMock.mockImplementation(verdict(true));
 
     expect(await checkLinkSafety('https://evil.example.com/1')).toBe(true);
   });
 
   it('returns false when the server does not flag the URL', async () => {
-    fetchMock.mockResolvedValue(new Response(JSON.stringify({ unsafe: false }), { status: 200 }));
+    apiFetchMock.mockImplementation(verdict(false));
 
     expect(await checkLinkSafety('https://example.com/2')).toBe(false);
   });
 
   it('fails open on a non-ok response', async () => {
-    fetchMock.mockResolvedValue(new Response('', { status: 500 }));
+    apiFetchMock.mockImplementation(() => new Response('', { status: 500 }));
 
     expect(await checkLinkSafety('https://example.com/3')).toBe(false);
   });
 
   it('fails open when the request throws', async () => {
-    fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+    apiFetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
 
     expect(await checkLinkSafety('https://example.com/4')).toBe(false);
   });
 
   it('does not cache a failure, so a blip does not disable the check for the page lifetime', async () => {
     const href = 'https://example.com/4b';
-    fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    apiFetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
     expect(await checkLinkSafety(href)).toBe(false);
 
     // The page may live for days on mobile. A cached failure would answer "safe" for that whole
     // time; only a real verdict may be reused.
-    fetchMock.mockResolvedValue(new Response(JSON.stringify({ unsafe: true }), { status: 200 }));
+    apiFetchMock.mockImplementation(verdict(true));
     expect(await checkLinkSafety(href)).toBe(true);
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(apiFetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('does not cache a non-ok response either', async () => {
     const href = 'https://example.com/4c';
-    fetchMock.mockResolvedValueOnce(new Response('', { status: 503 }));
+    apiFetchMock.mockImplementationOnce(() => new Response('', { status: 503 }));
     expect(await checkLinkSafety(href)).toBe(false);
 
-    fetchMock.mockResolvedValue(new Response(JSON.stringify({ unsafe: true }), { status: 200 }));
+    apiFetchMock.mockImplementation(verdict(true));
     expect(await checkLinkSafety(href)).toBe(true);
   });
 
   it('dedupes concurrent calls for the same URL into a single request', async () => {
-    fetchMock.mockResolvedValue(new Response(JSON.stringify({ unsafe: false }), { status: 200 }));
+    apiFetchMock.mockImplementation(verdict(false));
 
     const href = 'https://example.com/5';
     const [a, b] = await Promise.all([checkLinkSafety(href), checkLinkSafety(href)]);
 
     expect(a).toBe(false);
     expect(b).toBe(false);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(apiFetchMock).toHaveBeenCalledTimes(1);
   });
 });
 
 describe('confirmUnsafeLinkIfNeeded', () => {
   it('resolves true without prompting when the link is not flagged', async () => {
-    fetchMock.mockResolvedValue(new Response(JSON.stringify({ unsafe: false }), { status: 200 }));
+    apiFetchMock.mockImplementation(verdict(false));
 
     expect(await confirmUnsafeLinkIfNeeded('https://example.com/6')).toBe(true);
     expect(showConfirmMock).not.toHaveBeenCalled();
   });
 
   it('prompts and returns the user choice when the link is flagged', async () => {
-    fetchMock.mockResolvedValue(new Response(JSON.stringify({ unsafe: true }), { status: 200 }));
+    apiFetchMock.mockImplementation(verdict(true));
     showConfirmMock.mockResolvedValue(true);
 
     const result = await confirmUnsafeLinkIfNeeded('https://evil.example.com/7');
@@ -94,7 +118,7 @@ describe('confirmUnsafeLinkIfNeeded', () => {
   });
 
   it('returns false when the user cancels', async () => {
-    fetchMock.mockResolvedValue(new Response(JSON.stringify({ unsafe: true }), { status: 200 }));
+    apiFetchMock.mockImplementation(verdict(true));
     showConfirmMock.mockResolvedValue(false);
 
     expect(await confirmUnsafeLinkIfNeeded('https://evil.example.com/8')).toBe(false);

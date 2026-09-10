@@ -623,69 +623,6 @@ is still stated once per side. Verified on the running estate, not only by test 
 ICM 200, admin 200, neither 403, on all four endpoints, where the first row had been 200 with post
 bodies.
 
-### P1 - `auth_request` GUARDS SIXTEEN LOCATIONS AND CAN REFUSE NONE OF THEM; `/api/presence` IS THE SECOND CONFIRMED HOLE (measured 2026-09-10)
-
-**The mechanism, which is one line and affects everything behind it.** Sixteen `location` blocks in
-the edge config carry `auth_request /internal/auth/verify`. That sub-request goes to
-`/api/auth/verify`, which answers **200 for a logged-OUT caller** as well, carrying
-`x-logged-in: false` so pages can render signed out. nginx treats any 2xx as permission granted.
-So `auth_request` here IDENTIFIES a caller and never refuses one, and **every endpoint behind those
-sixteen locations is as open as its own guard makes it** - which for four `/api/posts` endpoints
-was not at all.
-
-**`/api/presence` was the second one confirmed, and it is FIXED (2026-09-10).** Measured before:
-
-```
-curl 'http://localhost:8081/api/presence?users=<a real user id>'   ->  200
-{"<that user id>":false}
-```
-
-No session of any kind. It answered who is online to anybody who could name a user id, on
-`chat-gateway` (Axum), so the Nest guard shipped for the feed did not apply. `get_admin_presence`
-in the very same file had carried its `x-global-admin` check since it was written; `get_presence`
-simply never got one. It now refuses a caller nginx did not identify - 401, distinct from the
-admin handler's 403 - proved by four tests driving the REAL router (no re-implementation, after
-the mirror found in the Android suite the same day) and by removing the gate and watching exactly
-the two gate tests fail.
-
-**What the presence fix deliberately does NOT decide:** whether an authenticated user may ask
-about an ARBITRARY user id rather than only people they share a conversation with. The gateway
-does not know who shares what, so answering it is a larger change than this defect licenses. The
-leak that remains is therefore "any logged-in account can learn whether a named person is
-online", which is a product question and not obviously wrong.
-
-**THE SIZE OF THE AUDIT, MEASURED 2026-09-10 - AND THE FIRST NUMBER WAS WRONG.** A scan for route
-decorators without `@UseGuards` across all 389 Nest routes returned **100**, which is not the
-number of holes and must not be quoted as one. Authorization in this codebase is not always a
-decorator: `POST /associations/:id/stripe-account` has none and calls `assertInternalSecret()` as
-its first statement, exactly as `get_admin_presence` checked its header in the body. Counting
-decorators counts decorators.
-
-Re-measured with in-body idioms (`assertInternalSecret`, `assertContentModerator`, an
-`x-global-admin` read, an explicit `Unauthorized`/`Forbidden` throw) and names that are public by
-design (`health`, `version`, `webhook`, `callback`, `/public`) excluded: **52 of 389 routes have
-no visible authorization of any kind.** That is the population to triage, not 100.
-
-**AND 52 IS AN UPPER BOUND, NOT A LIST OF DEFECTS.** Several are certainly deliberate and gating
-them would BREAK a feature - `GET /associations/calendar/feed.ics` exists to be subscribed to by
-an external calendar client, which cannot carry a session, and `public.controller.ts` is named
-for what it is. Each needs a decision, and some of those decisions are the USER's rather than the
-code's. **Do not sweep this.** The two confirmed holes were each found by reading one endpoint and
-probing it; that is what the remaining 52 want.
-
-**What is owed: the other fourteen, endpoint by endpoint.** A bare-path probe does NOT settle it -
-twelve of the sixteen answered 404 to `GET /api/<thing>`, which only means no route sits at that
-exact path. Each location needs its controllers read for a guard, the way `/api/posts` did. The
-sixteen: `ws`, `groups`, `admin`, `presence`, `calls/`, `call`, `mls/`, `media`, `posts` (fixed),
-`payments`, `forms`, `associations`, `moderation`, `channels`, `minesweeper`, `users`.
-
-**And the question above all of them:** whether `/api/auth/verify` should keep answering 200 for
-nobody. It does so deliberately, so signed-out pages can render - but that makes `auth_request`
-decoration everywhere it appears, and a config that LOOKS like an access check and is not will
-mislead the next reader exactly as it misled this one. A second internal location whose verifier
-refuses anonymous callers, used by the locations that have no business serving them, would make
-the edge state the truth. That is a design decision and is owed to the USER.
-
 ### P1 - a FIRST message from someone you have no conversation with notifies, decrypts, and then goes nowhere: the tap does not land and the conversation is invisible until the app is restarted (user, 2026-09-08, on PRODUCTION)
 
 Reported verbatim: *"Quelqu'un m'envoie un message alors que nous n'avons pas encore de discussion. Je
