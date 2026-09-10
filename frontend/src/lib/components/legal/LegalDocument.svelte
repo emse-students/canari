@@ -221,9 +221,20 @@
     line-height: 1.7;
   }
 
-  .legal-prose :global(p + p),
-  .legal-prose :global(p + ul),
-  .legal-prose :global(ul + p) {
+  /*
+    ONE RHYTHM FOR EVERY PAIR OF BLOCKS IN A SECTION, and it replaces a rule that named three
+    pairs by hand (`p + p`, `p + ul`, `ul + p`). Naming pairs means the pairs nobody thought of
+    get nothing: a `.legal-block` followed by a paragraph touched it, with the privacy policy's
+    contact details running straight into the sentence after them.
+
+    `section > ` is load-bearing. Without the child combinator this also matches `.legal-terms >
+    div + div`, whose spacing already comes from the grid `gap`, and every definition list would
+    space at 2rem instead of 1.
+
+    `h3` is deliberately in neither list: its own `margin-top`/`margin-bottom` set the tighter
+    rhythm a sub-heading wants, and including it here would flatten that back to 1rem.
+  */
+  .legal-prose :global(section > :is(p, ul, ol, dl, div) + :is(p, ul, ol, dl, div)) {
     margin-top: 1rem;
   }
 
