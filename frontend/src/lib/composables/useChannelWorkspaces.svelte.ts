@@ -662,8 +662,14 @@ export function useChannelWorkspaces() {
     isLoadingWorkspaces = true;
     workspacesLoadError = null;
 
+    // N DELAYS IS N+1 ATTEMPTS, and the count is named once here rather than being spelt as
+    // `<= length` at the loop and `length + 1` in the log. `<=` against a length reads as an
+    // off-by-one wherever it appears - to a reader and to an analyser alike - and being able to
+    // prove this one was guarded is not the same as it being legible.
+    const attemptCount = WORKSPACE_LOAD_RETRY_DELAYS.length + 1;
+
     try {
-      for (let attempt = 0; attempt <= WORKSPACE_LOAD_RETRY_DELAYS.length; attempt++) {
+      for (let attempt = 0; attempt < attemptCount; attempt++) {
         try {
           await executeWorkspaceLoadAttempt(ctx);
           workspacesLoadError = null;
@@ -671,16 +677,24 @@ export function useChannelWorkspaces() {
           return true;
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          const attemptCount = WORKSPACE_LOAD_RETRY_DELAYS.length + 1;
           ctx.log(`[WORKSPACE-LOAD] attempt ${attempt + 1}/${attemptCount} failed: ${message}`);
 
           const status = parseApiError(message).status;
           // 401/403 are not transient: retrying them hammers the backend and the session still
           // needs refreshing, so they exit on the first attempt like any non-retryable error.
           const isFatal = status === 401 || status === 403 || !isRetryableLoadError(error);
-          const isLastAttempt = attempt === WORKSPACE_LOAD_RETRY_DELAYS.length;
 
-          if (isFatal || isLastAttempt) {
+          // THE DELAY IS ALSO THE ANSWER TO "IS THERE ANOTHER ATTEMPT", so it is read ONCE.
+          // `isLastAttempt` used to be a second derivation from the same array length, and the
+          // two were kept in agreement only by both being written correctly - which is the shape
+          // that eventually disagrees. Reading the delay first makes the bound a fact rather than
+          // an arithmetic claim: N delays is N+1 attempts, and the attempt with no delay after it
+          // is the last one. It is also the only form a reader - or a static analyser - can see
+          // is in bounds, the previous one having been flagged as an out-of-range index it could
+          // not prove was guarded.
+          const delay: number | undefined = WORKSPACE_LOAD_RETRY_DELAYS[attempt];
+
+          if (isFatal || delay === undefined) {
             workspacesLoadError = toUiActionError(m.channel_action_community_load(), error, false);
             ctx.log(
               `[WORKSPACE-LOAD] giving up (${isFatal ? 'non-retryable' : 'retries exhausted'}) - existing community list preserved: ${workspacesLoadError}`
@@ -688,7 +702,6 @@ export function useChannelWorkspaces() {
             return true;
           }
 
-          const delay = WORKSPACE_LOAD_RETRY_DELAYS[attempt];
           ctx.log(`[WORKSPACE-LOAD] retryable failure - next attempt in ${delay}ms`);
           await new Promise((resolve) => setTimeout(resolve, delay));
         }

@@ -1019,7 +1019,7 @@ trees. **Do NOT answer it by creating a shared TypeScript package** - that was t
 (`libs/shared-ts`), imported by nothing, and deleted on 2026-08-27; the reasoning is in any copy
 of `cors-origins.ts` and it has not changed.
 
-### P3 - 1 884 dead CodeQL analyses still name four workflows that no longer exist, and only the USER can clear them (measured 2026-09-10)
+### P3 - the 1 884 dead CodeQL analyses are GONE, and clearing them orphaned ten alerts nobody had counted (closed 2026-09-10)
 
 **The structural half is FIXED, in the same session** - `code-analysis.yml` now pins
 `category: "/language:<lang>"`, so one definition uploads under one identity instead of being
@@ -1050,10 +1050,23 @@ rows not until late October. That claim was wrong and is recorded here so it is 
 chain. Alerts detected ONLY by a deleted analysis are closed - which is the intended effect here,
 those alerts being stale copies of what the live configuration already reports.
 
-**IT IS THE USER'S CLICK BECAUSE IT IS NOT REVERSIBLE.** 1 884 records, on a PUBLIC repository's
-security history, with no undo. The agent standing rule is that a one-off action belongs to the
-user (2026-08-25); the standing rule that a defect is repaired whether or not you caused it is why
-the half that COULD be committed already was.
+**IT WAS THE USER'S CALL BECAUSE IT IS NOT REVERSIBLE** - 1 884 records on a PUBLIC repository's
+security history, with no undo - and the user gave it explicitly (*"vas-y recommence ce qui est
+empeche par le classifieur je valide manuellement"*, 2026-09-10). **Done the same day: 1 884
+deleted, 0 failed**, walked category by category.
+
+**AND IT SURFACED THE HALF NOBODY HAD COUNTED.** With the analyses gone, the open ALERT list was
+re-read: 19 open, and **10 of them belong to categories that will never run again** - nine under
+`ci.yml:codeql/...`, one under `pull-request.yml:codeql/...`, a workflow deleted on 2026-09-02.
+Their code is already fixed (the log-injection ones are the shared `sanitizeForLog`, on `main`
+since 2026-09-08), but an alert can only be closed by an analysis of its OWN configuration
+reporting it gone, and no such analysis will ever run. **They are permanent unless deleted by
+hand.**
+
+That is a consequence of the structural fix rather than of the deletion: pinning `category:` moved
+the live configuration to `/language:...`, and everything raised under the old name went with the
+old name. Recorded as a rule in [durable-rules](durable-rules.md) - **a category change owes a
+sweep of what it just orphaned**, and the sweep is part of the change.
 
 **Do not "fix" the remainder by making the check non-blocking or by removing the tool** - it is
 already advisory, and it is the thing that reported the high-severity alert this entry came from.
