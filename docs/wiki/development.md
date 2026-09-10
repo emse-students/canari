@@ -462,11 +462,37 @@ See `infrastructure/.env.example` for the template.
 
 ## Package manager
 
-- **Frontend**: Bun (committed `bun.lock`, CI uses `--frozen-lockfile`).
-- **Backend services**: npm (each service has its own `package.json`).
-- **Makefile**: shells out to npm for service installs.
+**Bun, everywhere, and this section said otherwise until 2026-09-10.** It claimed the backend
+services used npm and that the Makefile shelled out to npm for their installs; both were false -
+each of the four NestJS apps commits a `bun.lock`, none has a `package-lock.json`, and `make
+install-services` runs `bun install --frozen-lockfile` in each. The user's rule is *"Jamais node,
+toujours bun"* (2026-09-04), which covers the `.mjs` tooling as well.
 
-Prefer `bun` locally for frontend work; `npm` also works.
+- **Frontend and all four services**: bun, each with a committed `bun.lock`, CI installs
+  `--frozen-lockfile`.
+- **`.bun-version` is the ONE place this repository names a bun version.** No `packageManager`
+  field, no `engines.bun`.
+- **Formatting and linting are `oxfmt` + `oxlint`, never prettier.** A bare `npx prettier --write`
+  finds no config here, silently applies its own defaults and rewrites whole files - it did, and
+  shipped. Use each package's own `format` / `lint` script.
+
+## shellcheck
+
+**`.shellcheck-version` names the version CI runs**, and it exists so that "what CI runs" is not
+something you learn by failing. Installing 0.11.0 locally once reported two findings CI never sees;
+a local run that is *cleaner* than the pipeline is the same defect pointing the other way.
+
+```sh
+winget install koalaman.shellcheck   # then check `shellcheck --version` against .shellcheck-version
+make lint-ci-scripts                 # exactly the file set ci.yml lints
+```
+
+`shellcheck-scope.test.mjs` asserts three things rather than describing them: that the Makefile
+and `ci.yml` lint the same set, that **every directory holding a tracked `*.sh` is in it** - the
+list is derived from `git ls-files`, because a name-based allowlist silently misses whatever is
+added after it was written - and that the version is declared once. CI pins the archive's sha256
+beside the version, so a bump that forgets it fails on the checksum rather than fetching something
+else.
 
 ## Rust toolchain
 

@@ -321,7 +321,7 @@ test-frontend:
 # binary is absent, never silently: a lint that quietly does not run is worse than no lint.
 lint-ci-scripts:
 	@echo "${BLUE}🧹 shellcheck (the same file set as ci.yml)…${RESET}"
-	@if command -v shellcheck >/dev/null 2>&1; then 		shellcheck -x 			.github/scripts/*.sh .github/scripts/lib/*.sh .github/scripts/tests/*.sh 			infrastructure/dev/*.sh infrastructure/deploy/*.sh 			scripts/bump-app-version.sh; 	else 		echo "${YELLOW}⚠️  shellcheck absent - CI WILL still run it (winget install koalaman.shellcheck)${RESET}"; 	fi
+	@if command -v shellcheck >/dev/null 2>&1; then 		shellcheck -x 			.github/scripts/*.sh .github/scripts/lib/*.sh .github/scripts/tests/*.sh 			infrastructure/dev/*.sh infrastructure/deploy/*.sh 			infrastructure/local/*.sh infrastructure/backup/*.sh 			infrastructure/lib/*.sh infrastructure/egress-probe/*.sh 			scripts/*.sh; 	else 		echo "${YELLOW}⚠️  shellcheck absent - CI WILL still run it, at the version in .shellcheck-version ($$(tr -d '[:space:]' < .shellcheck-version)). winget install koalaman.shellcheck${RESET}"; 	fi
 
 test-ci-scripts: lint-ci-scripts
 	@echo "${BLUE}🧪 CI script self-tests…${RESET}"
@@ -349,6 +349,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/codeql-category.test.mjs
 	@bun .github/scripts/tests/declared-duplicates.test.mjs
 	@bun .github/scripts/tests/recipe-covers-tests.test.mjs
+	@bun .github/scripts/tests/shellcheck-scope.test.mjs
 	@bash .github/scripts/tests/android-unit-tests.test.sh
 	@bun tools/app-store/submit.test.mjs
 	@bun tools/store-divergence/divergence.test.mjs

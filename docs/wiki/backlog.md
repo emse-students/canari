@@ -6664,38 +6664,47 @@ P3 rather than P2 because the defect is gone and only the duplication is left.
 **It is not free**: `atoms.mjs` and `phone.mjs` are in the instrument set of nearly every runner, so
 the change ages a large part of the ledger. It belongs between rungs, or after the campaign.
 
-### P3 - `scripts/` is the one shell directory CI does not shellcheck, and it holds the release's first step (measured 2026-09-03)
+### P3 - FIVE shell directories were unchecked, not one, and both callers claimed to agree (closed 2026-09-10)
 
-`ci.yml`'s shellcheck step globs `.github/scripts/**`, `infrastructure/dev/*.sh` and
-`infrastructure/deploy/*.sh` - and, since 2026-09-03, `scripts/bump-app-version.sh` by name, because
-that file is the first thing a release runs and it was rewritten that day. **The rest of `scripts/`
-is still unchecked**, and running shellcheck 0.11.0 over it by hand found:
+This entry said `scripts/` was the one directory `ci.yml`'s shellcheck step did not cover. **When
+the fix was finally written, the derivation found five**: `scripts/`, `infrastructure/local/`,
+`infrastructure/backup/`, `infrastructure/lib/` and `infrastructure/egress-probe/` - fifty tracked
+scripts across ten directories, of which the step named five. Eight files more than this entry
+counted, including `restore-into-local.sh`, which restores a database copy into the local estate.
 
-| file | findings |
-|---|---|
-| `check-oidc.sh` | SC1090 (non-constant `source`), four SC2015 (`A && B \|\| C` is not if-then-else) |
-| `deploy.sh` | SC2046 - unquoted `export $(cat .env \| xargs)` |
-| `print-android-app-link-fingerprint.sh` | three SC2154 - `keyAlias`, `storePassword`, `keyPassword` referenced but never assigned in the file |
+**AN ALLOWLIST'S FAILURE MODE IS AN ABSENCE.** Nobody excluded those directories: they were added
+after the list was written, which is what a name-based allowlist eventually always is. So the
+guard is `shellcheck-scope.test.mjs`, and it derives the population from `git ls-files '*.sh'` -
+a directory added tomorrow fails on the day it is committed.
 
-None is obviously a live defect - the last three come from a `keystore.properties` sourced at
-runtime - but the last one is the shape that bites: a variable shellcheck cannot see assigned is
-also a variable a typo would silently empty, in a script that signs an Android release.
+**AND THE MAKEFILE CLAIMED TO MATCH `ci.yml` WITH NOTHING CHECKING.** Its comment reads *"the same
+file set as ci.yml"*, true when written and drifted the moment either was edited - both had to be
+changed by hand in the same commit as the test, which is the evidence. A local run that lints less
+than CI is a green run that means nothing. The test compares the two sets and prints the
+difference in both directions; verified by mutation, one directory removed from each side in turn.
 
-Retired by: fixing or annotating each, then widening the glob to `scripts/*.sh` so the directory
-cannot regain findings. Deliberately NOT done in the same commit as the workflow migration: it is a
-cleanup pass over five unrelated files, and mixing it in would have hidden it.
+**WHAT THE NEWLY-COVERED FILES ACTUALLY HAD**, all repaired rather than annotated away:
 
-### P3 - CI pins shellcheck 0.10.0, so a local run with a newer one disagrees (measured 2026-09-03)
+| file | finding | what it was |
+|---|---|---|
+| `check-oidc.sh` | SC1090 + four SC2015 | `A && B \|\| C` reads as if-then-else and is not one - `C` also runs when `A` succeeded and `B` failed. Harmless only because `pass` cannot fail, which is one edit away from printing "missing" about a field that is present. Now a function with a real `if`. |
+| `deploy.sh` | SC2046 | `export $(cat .env \| xargs)` word-splits every value: a password with a space becomes two exports, one of them garbage. **That is the file this deploy reads its production secrets from.** Now `set -a; . file; set +a`. |
+| `print-android-app-link-fingerprint.sh` | three SC2154 | Three variables shellcheck could not see assigned, sourced from `keystore.properties`. A typo in a key name leaves one EMPTY and `keytool` then fails with a message about the keystore rather than about the misspelt name - in the script that reads an Android signing key. Declared before the source, and asserted after it. |
+| `infrastructure/local/env-from-prod.sh` | SC2016 | Markdown backticks inside a single-quoted `printf`. Annotated, with the reason. |
+| `infrastructure/local/restore-into-local.sh` | SC1091 | The `source=` directive needed `source-path=SCRIPTDIR` to resolve. |
+| `infrastructure/backup/restore.sh` | SC1090 | A runtime secrets file, never in the tree. Annotated. |
 
-Installing shellcheck locally (0.11.0) reported two SC2329 findings CI never sees - "this function
-is never invoked" on the `psql` stubs in `deploy-migrations.test.sh`, which exist to be called from
-`eval`ed code. They are annotated now, so the two agree again, but **the class stays open**: the
-pin is a sha256 in `ci.yml` and nothing tells a developer which version to install, so the next
-divergence is found the same way - by a local run disagreeing with a green pipeline, or worse, by a
-green local run disagreeing with a red one.
+### P3 - the shellcheck version is declared in `.shellcheck-version` (closed 2026-09-10)
 
-Retired by: naming the version somewhere a human reads before installing it (the development page,
-or a `.tool-versions`-shaped file), so "what CI runs" is not something you learn by failing.
+The pin used to be one line inside `ci.yml`, so *what CI runs* was something you learnt by
+FAILING: installing 0.11.0 locally reported two SC2329 findings CI never sees, and the reverse - a
+green local run against a red pipeline - is the same defect pointing the other way.
+
+`.shellcheck-version` is now the one declaration, the same shape as `.bun-version` and for the same
+reason; `ci.yml` reads it, the Makefile names it when shellcheck is absent, and
+[development](development.md) documents it where somebody looks before installing. **The sha256
+stays in the workflow** because it is a property of the ARCHIVE rather than of the version, and a
+bump that forgets it fails CLOSED on the checksum instead of quietly fetching something else.
 
 ### P3 - the root `load` warns on every navigation that it used `window.fetch`, and the fix it asks for buys nothing here (measured 2026-09-03)
 

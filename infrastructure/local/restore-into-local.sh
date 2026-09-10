@@ -198,6 +198,9 @@ log "restore complete, psql reported no error"
 # declarations. `local_sql` is passed BY NAME so the allowlist of writable targets stays here.
 log "stripping what a copy must not carry…"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# `source-path` is what makes the line below resolvable: without it shellcheck reads the path
+# as relative to its own working directory and reports the library as missing.
+# shellcheck source-path=SCRIPTDIR
 # shellcheck source=../lib/copy-strips.sh
 . "$SCRIPT_DIR/../lib/copy-strips.sh"
 apply_copy_strips local_sql "$DATABASE" "[restore-into-local]"

@@ -11,6 +11,35 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - the shell scripts nothing was checking, including one that loads production secrets
+
+Internal. The pipeline runs a linter over the project's shell scripts, and it picks the folders to
+look at by name. Five folders had never been added to that list - fifty scripts exist, it was
+looking at about forty - and nobody had excluded them; they were simply created after the list was
+written. The record of this problem said one folder was missing. Deriving the answer instead of
+counting by hand found five.
+
+Among what had gone unchecked:
+
+- **The production deploy loaded its secrets in a way that breaks on any value containing a
+  space** - a password with one in it would be split into two half-values, silently. It now lets
+  the shell read the file, which is what understands quoting.
+- **The script that reads the Android signing key** referred to three settings the linter could
+  not see being set anywhere. They come from a file read at run time, so it was right to be
+  unsure - and a typo in one of their names would have left it empty and produced an error about
+  the keystore rather than about the misspelling. The script now checks them and says which one.
+- **A status report used a shorthand that reads like "if this, say A, otherwise say B"** and is
+  not: it can also say B when the check passed. Harmless as written, one edit away from reporting
+  a field as missing when it is present.
+
+The list of folders is no longer typed anywhere: it is worked out from what the project actually
+contains, so a folder added tomorrow is covered the day it appears. The local command and the
+pipeline are also now checked against each other - the local one claimed in a comment to match,
+and had already drifted.
+
+The linter's version is declared in one file a person can read before installing it, rather than
+being something you discover by getting different results from the pipeline.
+
 ### Fixed - a partnership could be created and then never changed
 
 Reported by the user. An association could set up a partner offer - a title, a description, a
