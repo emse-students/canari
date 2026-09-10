@@ -11,6 +11,27 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a release deployed whatever was newest, not what the release said it was
+
+Internal, and it had been true of every deployment. Publishing a release picks one commit and
+hands it to everything that follows, so the phone builds, the images and the record of what went
+live all name the same thing. The two servers were the exception: each one updated itself to
+**the newest state of the project** instead, at the moment its turn came - and that state is what
+the site is actually served from, since the service definitions, the web-server configuration and
+the database migrations all come from it rather than from the built images.
+
+The gap between choosing the commit and the server fetching one is not brief. Production waits for
+the iOS build to finish first: on the last release that was **22 minutes**, and the pipeline merges
+approved work on its own throughout. Anything merged in that window went to the server, while the
+release recorded a different commit as the one being served - a record that can be wrong is worse
+than none, because it stops the next person looking.
+
+Both servers now move to the exact commit the release chose. The check that was supposed to catch
+this had been passing because it only looked for the commit being *mentioned* somewhere in the
+file - and on one of the two, the only mention was the line writing the incorrect record. It now
+verifies the behaviour instead, on every part of the release worked out from the project itself
+rather than from a list somebody maintains.
+
 ### Fixed - the shell scripts nothing was checking, including one that loads production secrets
 
 Internal. The pipeline runs a linter over the project's shell scripts, and it picks the folders to

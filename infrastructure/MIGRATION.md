@@ -43,8 +43,8 @@ The `deploy-to-server` job runs on a self-hosted runner (label `self-hosted`).
 sudo -u canari git clone https://github.com/emse-students/canari.git /home/canari/canari
 ```
 
-The CD then runs `git reset --hard origin/main` on each deployment; the initial
-clone is sufficient.
+The CD then hard-resets this checkout to **the released commit** on each deployment - not to
+`origin/main`, which moves for the whole length of a release; the initial clone is sufficient.
 
 ## 3. GitHub Secrets
 

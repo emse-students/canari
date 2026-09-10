@@ -117,7 +117,14 @@ jobs:
           git remote set-url origin \
             "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
           git fetch origin main
-          git reset --hard origin/main
+          # THE COMMIT, NEVER THE BRANCH. `main` MOVES while a release runs - the bump's own push
+          # is on it, and auto-merge lands pull requests unattended for as long as the arms take.
+          # Resolving `main` here would be a SECOND resolution of a reference the caller already
+          # resolved once, and the `dev-deployed` tag below would then name a commit this tree is
+          # not on. The bump's commit is always an ancestor of `main` (the ruleset forbids a
+          # force-push), so fetching the branch makes it reachable, and `reset` fails loudly if
+          # it somehow is not.
+          git reset --hard "${{ inputs.sha }}"
           echo "dev checkout at $(git rev-parse --short HEAD)"
 
       # Renders infrastructure/.env for the dev estate and NOTHING ELSE, from the DEV_ secrets only.

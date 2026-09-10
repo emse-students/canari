@@ -150,12 +150,22 @@ jobs:
           cd ${{ env.DEPLOY_PATH }}
           echo "📂 Current directory: $(pwd)"
 
-      - name: Pull latest code
+      # THE COMMIT, NEVER THE BRANCH, AND THIS IS THE TREE PRODUCTION IS ACTUALLY SERVED FROM:
+      # `docker-compose.prod.yml`, the nginx configuration and the migration SQL below all come
+      # from here, not from the images. `main` MOVES while a release runs - the bump's own push is
+      # on it, and auto-merge lands pull requests unattended - and this job waits behind the iOS
+      # build, so the gap between the caller resolving the commit and this line is TWENTY-TWO
+      # MINUTES, measured on v0.16.6 (bump 19:45:12, deploy 20:07:45). Resolving `main` again here
+      # would make the `prod-released` tag at the bottom name a commit this tree is not on. The
+      # released commit is always an ancestor of `main` (the ruleset forbids a force-push), so
+      # fetching the branch makes it reachable, and `reset` fails loudly if it somehow is not.
+      - name: Put the deployment tree on the released commit
         working-directory: ${{ env.DEPLOY_PATH }}
         run: |
+          set -euo pipefail
           echo "📥 Updating repository…"
-          git fetch origin
-          git reset --hard origin/main
+          git fetch origin main
+          git reset --hard "${{ inputs.sha }}"
           echo "✅ Code updated to $(git rev-parse --short HEAD)"
 
       - name: Sync runtime secrets into infrastructure/.env
