@@ -11,6 +11,26 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a test gate that had never once run where it was supposed to
+
+Internal. A suite of Android unit tests was wired into the pull-request checks the day before, and
+verified by running it on a developer's machine. It could not run anywhere else: the tests lived
+inside the mobile app's build module, and configuring that module reads a file the mobile
+toolchain **generates**, containing absolute paths into one particular computer's package cache -
+so it is deliberately not stored with the project. Over the next fourteen runs the check was
+skipped thirteen times, because nothing had touched the Android files; the one change that did was
+refused, for a reason that had nothing to do with it.
+
+The tests never needed any of that. They import a test framework and nothing else - no Android
+code at all - and were only ever filed in that folder. They now live in a small standalone project
+whose entire requirement is a Java runtime: **14 seconds from cold, 1 second warm**, against a
+build that previously could not start.
+
+What this does **not** fix is written down rather than left implied: the suite checks a *copy* of
+the notification-recovery logic, written out again inside the test, so it cannot notice when the
+real code changes. Making it watch the real thing is a separate change and is filed as such.
+
+
 ### Changed - the width of a page stopped depending on which page it was
 
 Moving between two tabs of Canari moved the text under the reader, and the user said so plainly:

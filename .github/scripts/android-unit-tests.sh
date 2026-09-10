@@ -5,27 +5,32 @@
 # WHAT THIS EXISTS FOR. `PushDecryptLadderTest.kt` is a real JUnit suite over the order the FCM
 # service tries its recoveries in - MLS behaviour on the platform where MLS defects are hardest to
 # see - and no workflow and no Makefile target ever invoked Gradle's unit tests, so its assertions
-# had never executed on any machine. First run: 2026-09-10, five tests, all passing.
+# had never executed on any machine.
 #
-# THE SECOND HALF IS THE ONE WORTH READING. The obvious command - `./gradlew testDebugUnitTest`,
-# which is what the backlog entry proposed - MATCHES NO TASK IN THE `app` MODULE. Tauri's Android
-# template gives that module ABI product flavours, so its unit-test tasks are
-# `testUniversalDebugUnitTest`, `testArm64DebugUnitTest` and three more; a bare `testDebugUnitTest`
-# runs the plugin modules (which have no test sources) and exits 0. Measured: `BUILD SUCCESSFUL in
-# 16s`, zero `:app:` tasks, zero tests. That gate would have been green for ever while running
-# nothing - which is the same defect it was written to fix, one layer up.
+# THE SUITE IS NOT IN THE APP MODULE, AND THAT IS WHAT MAKES THIS RUNNABLE IN CI. It was, until
+# 2026-09-10, and the consequence was that this gate could only ever pass on a developer's own
+# box: configuring `:app` reads `gen/android/tauri.settings.gradle`, a file tauri GENERATES with
+# absolute paths into one machine's cargo registry and `.gitignore` therefore excludes, and the
+# module also wants a `google-services.json` that lives in a secret. This script was believed
+# green on the strength of one local run; over the fourteen CI runs that followed it was SKIPPED
+# thirteen times and FAILED the only time a change touched Android files, on `Could not read
+# script 'tauri.settings.gradle' as it does not exist`.
 #
-# So the run is not the assertion. The RESULTS ARE: this reads the JUnit XML Gradle writes and
-# fails when it finds no suite, or a suite with no tests in it. A green build that ran nothing
+# The suite imports `org.junit` and nothing else - no Android type, no tauri type, nothing from
+# `:app` - so it never needed any of that. It now lives in a standalone Kotlin/JVM project whose
+# whole toolchain is a JDK; `frontend/src-tauri/android-tests/settings.gradle.kts` carries the
+# full account, including what this still does NOT prove.
+#
+# THE RUN IS NOT THE ASSERTION. THE RESULTS ARE. The original version of this script learned that
+# the hard way on the old layout: the obvious `./gradlew testDebugUnitTest` matched NO task in the
+# flavoured app module and exited 0 having run nothing. So this reads the JUnit XML Gradle writes
+# and fails when it finds no suite, or a suite with no tests in it. A green build that ran nothing
 # cannot get past that, whatever the task is called next year.
-#
-# ONE FLAVOUR IS ENOUGH. These are JVM unit tests; the ABI a variant targets changes nothing about
-# them, and running all five flavours would run the same five tests five times.
 set -uo pipefail
 
-ANDROID_DIR="${ANDROID_DIR:-frontend/src-tauri/gen/android}"
-TASK="${TASK:-:app:testUniversalDebugUnitTest}"
-RESULTS="$ANDROID_DIR/app/build/test-results"
+ANDROID_DIR="${ANDROID_DIR:-frontend/src-tauri/android-tests}"
+TASK="${TASK:-test}"
+RESULTS="$ANDROID_DIR/build/test-results"
 
 [ -d "$ANDROID_DIR" ] || { echo "::error::$ANDROID_DIR does not exist"; exit 1; }
 
@@ -46,11 +51,9 @@ if [ "${#reports[@]}" -eq 0 ]; then
   echo "::error title=The Android suite did not run::$TASK succeeded and wrote no JUnit report to $RESULTS."
   echo ""
   echo "This is the failure mode this script exists for, and it is silent by nature: a task name"
-  echo "that matches nothing in the app module makes Gradle exit 0 having done nothing. The app"
-  echo "module has ABI product flavours, so its unit-test tasks are testUniversalDebugUnitTest,"
-  echo "testArm64DebugUnitTest and three more - a bare testDebugUnitTest matches none of them."
+  echo "that matches nothing makes Gradle exit 0 having done nothing."
   echo ""
-  echo "Run './gradlew :app:tasks --all | grep UnitTest' and set TASK to one that exists."
+  echo "Run './gradlew tasks --all | grep -i test' in $ANDROID_DIR and set TASK to one that exists."
   exit 1
 fi
 

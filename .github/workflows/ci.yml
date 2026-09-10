@@ -231,11 +231,13 @@ jobs:
           fi
 
           # -- Android unit tests --
-          # The Kotlin under `gen/android` is the whole trigger: these are JVM unit tests over the
-          # FCM decrypt ladder and they read nothing outside that tree. It is a GENERATED directory
-          # that is nevertheless committed, which is why a path filter is right here and a
-          # `cargo`-style dependency walk is not.
-          if has '^frontend/src-tauri/gen/android/'; then
+          # Two paths, and they are not the same kind of thing. `gen/android` is the committed
+          # (though generated) Android client, and a change to its Kotlin is what the ladder suite
+          # is there to catch; `android-tests` is the standalone JVM project that suite now lives
+          # in, outside the app module - see its `settings.gradle.kts` for why. A path filter is
+          # right here and a `cargo`-style dependency walk is not: neither tree reads anything
+          # outside itself.
+          if has '^frontend/src-tauri/gen/android/' || has '^frontend/src-tauri/android-tests/'; then
             echo "android=true" >> "$GITHUB_OUTPUT"
           else
             echo "android=false" >> "$GITHUB_OUTPUT"
@@ -782,7 +784,11 @@ jobs:
         with:
           ref: ${{ github.sha }}
 
-      # The runner image already has the Android SDK; this pins the JDK the Gradle build wants.
+      # A JDK IS THE WHOLE TOOLCHAIN, and that is the point of where these tests now live. They
+      # used to sit in the `:app` module, which cannot be configured without the generated
+      # `tauri.settings.gradle` and a `google-services.json` secret - so this job failed the first
+      # time a change actually triggered it. See `frontend/src-tauri/android-tests/
+      # settings.gradle.kts` for the whole account.
       - name: Setup JDK
         uses: actions/setup-java@v5
         with:
@@ -795,7 +801,7 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('frontend/src-tauri/gen/android/**/*.gradle*', 'frontend/src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties') }}
+          key: gradle-${{ runner.os }}-${{ hashFiles('frontend/src-tauri/android-tests/**/*.gradle*', 'frontend/src-tauri/android-tests/gradle/wrapper/gradle-wrapper.properties') }}
           restore-keys: gradle-${{ runner.os }}-
 
       - name: Run the Android unit tests
