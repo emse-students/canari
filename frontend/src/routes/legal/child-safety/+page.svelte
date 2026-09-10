@@ -10,7 +10,7 @@
     { id: 'contexte', label: 'Contexte et audience' },
     { id: 'mesures', label: 'Mesures de protection' },
     { id: 'signalement', label: "Signalement d'abus" },
-    { id: 'consequences', label: 'Consequences des violations' },
+    { id: 'consequences', label: 'Conséquences des violations' },
   ];
 </script>
 
