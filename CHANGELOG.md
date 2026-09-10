@@ -11,6 +11,29 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a peer could have written a line of Canari's own log
+
+Six open security alerts, low severity and higher consequence than that sounds. A log entry
+holding a raw newline is two entries, and the second one says whatever the sender chose - so an
+identifier arriving over the network could forge a line of this app's diagnostics. This project's
+standing method is that a heal which works is not a heal that was observed, and the logs are read
+on every test pass; evidence a peer can forge is not evidence.
+
+The guard already existed and could only be reached from one file, because it was declared inside
+it. So two log lines were protected and the rest of both MLS services were not, including a
+message identifier that the code truncated to eight characters - which is not the same thing as
+removing a newline, and eight characters are enough to hold one.
+
+It is one shared function now, with its own tests, applied at every point where a value that
+crossed the network reaches a log line - including four that no tool had reported.
+
+One of those tests exists for a tool rather than for the code: the guard was written with a
+Unicode control-character class that the scanner cannot read through, so the two lines already
+protected were still being reported and no future fix would have cleared them. The check now does
+the newline pass separately and first. The behaviour is identical, and a test pins that against
+the old version rather than asserting it in prose.
+
+
 ### Fixed - the CodeQL check had been red on every pull request for eight days, and that hid a real alert
 
 Internal. The security analysis is one definition called from two places - once on every pull
