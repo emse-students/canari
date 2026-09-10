@@ -11,6 +11,26 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Added - the phone app's Rust dependencies get updated again
+
+Internal. The dependency robot has been unable to update the code that builds the mobile app since
+early August, for a reason nothing could see: one file in the Android plugin declares something the
+robot's stripped-down copy of the project cannot make sense of, so it gives up before looking at a
+single version. A project that stops receiving updates looks exactly like a project with nothing to
+update, which is why it went unnoticed for a month.
+
+The file cannot simply be changed - it is what tells the build where the Android plugin's code
+lives, and removing it would produce an app that compiles perfectly and fails on a real phone.
+
+So the updates are now taken deliberately, and a weekly job remembers: it works out which parts of
+the project the robot cannot reach, asks what they are behind on, and files a single issue that it
+keeps up to date and closes once the work is done. **The first run found 194 pending updates.**
+
+The job does not turn the build red for being behind, because being slightly behind is normal and a
+warning that is always on is a warning nobody reads. It goes red only if the check itself could not
+be carried out - which covers the four ways "nothing to report" can really mean "nobody looked".
+
+
 ### Added - the Android tests that had never run, and proof that they ran
 
 Internal. A test suite covering how a push notification recovers when a message cannot be

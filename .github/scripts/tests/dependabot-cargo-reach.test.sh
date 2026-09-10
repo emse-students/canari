@@ -31,6 +31,14 @@ set -uo pipefail
 repo_root=$(cd "$(dirname "$0")/../../.." && pwd)
 config="$repo_root/.github/dependabot.yml"
 
+# THE DERIVATION IS NOT WRITTEN HERE ANY MORE. `cargo-blocked-update-report.sh` needs exactly this
+# set in order to go and update those directories by hand, and two readers of one fact drift
+# silently - so the walk lives in the library and this file proves it on a fixture before believing
+# it on the real tree.
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=../lib/cargo-dirs.sh
+source "$(cd "$(dirname "$0")" && pwd)/../lib/cargo-dirs.sh"
+
 failures=0
 
 pass() { echo "PASS $1"; }
@@ -55,23 +63,7 @@ pass "dependabot.yml is readable"
 
 # --- 2. derive the declared cargo directories -----------------------------------------------------
 
-# The `directories:` list of the ONE `package-ecosystem: "cargo"` entry. Read positionally rather
-# than with a YAML parser, because this repository has no YAML dependency for shell and the file is
-# ours: the block is entered on the ecosystem line and left on the next key at the same indent.
-cargo_dirs="$(
-  awk '
-    /^  - package-ecosystem:/ { inside = ($0 ~ /"cargo"/); inlist = 0; next }
-    !inside { next }
-    /^    directories:/ { inlist = 1; next }
-    /^    [a-z]/ { inlist = 0 }
-    inlist && /^      - "/ {
-      line = $0
-      sub(/^      - "/, "", line)
-      sub(/"[[:space:]]*$/, "", line)
-      print line
-    }
-  ' "$config"
-)"
+cargo_dirs="$(declared_cargo_dirs "$config")"
 
 if [ -z "$cargo_dirs" ]; then
   fail "no cargo directories were derived from dependabot.yml - the parse above is broken, not the config"
@@ -93,31 +85,9 @@ done <<<"$cargo_dirs"
 
 # --- 4. the derivation itself, proven on a fixture ------------------------------------------------
 
-# `links_in_graph <abs dir>` prints the repo-relative manifest paths, reachable from that directory
-# by `path = ` dependencies, that declare `links`. Proven on a fixture below before it is believed
-# on the real tree - a derivation nobody tested is a list of names with extra steps.
-links_in_graph() {
-  local seen="" queue="$1" cur manifest dep
-  while [ -n "$queue" ]; do
-    cur="$(printf '%s\n' "$queue" | head -1)"
-    queue="$(printf '%s\n' "$queue" | tail -n +2)"
-    case "$seen" in *"[$cur]"*) continue ;; esac
-    seen="${seen}[$cur]"
-    manifest="$cur/Cargo.toml"
-    [ -f "$manifest" ] || continue
-    if grep -qE '^[[:space:]]*links[[:space:]]*=' "$manifest"; then
-      printf '%s\n' "${manifest#"$repo_root"/}"
-    fi
-    # Path dependencies, which is how cargo reaches a manifest Dependabot never copied a build
-    # script for. Relative to the manifest's own directory, as cargo resolves them.
-    while IFS= read -r dep; do
-      [ -n "$dep" ] || continue
-      queue="$(printf '%s\n%s' "$queue" "$(cd "$cur" && cd "$dep" 2>/dev/null && pwd)")"
-    done <<<"$(grep -oE 'path[[:space:]]*=[[:space:]]*"[^"]+"' "$manifest" |
-      sed -E 's/.*"([^"]+)"/\1/' | grep -v '\.rs$' | sort -u)"
-  done
-}
-
+# `links_in_graph` comes from the library above; this proves it on a fixture before the real tree
+# is believed. A derivation nobody tested is a list of names with extra steps - and it is now the
+# derivation the nightly REPORT walks too, so getting it wrong would silently narrow that report.
 fixture="$(mktemp -d)"
 trap 'rm -rf "$fixture"' EXIT
 mkdir -p "$fixture/app" "$fixture/app/plug" "$fixture/app/clean"
@@ -138,10 +108,9 @@ cat >"$fixture/app/clean/Cargo.toml" <<'TOML'
 name = "clean"
 TOML
 
-# The fixture lives outside the repo, so strip its own prefix the way the real call strips the repo's.
-# The prefix assignment scopes `repo_root` to this call only, so the real assertion below still
-# strips the repository prefix.
-fixture_hits="$(repo_root="$fixture" links_in_graph "$fixture/app" | sort)"
+# The fixture lives outside the repo, so it passes its own root - which is the reason the library
+# takes the root as an argument rather than reading a global.
+fixture_hits="$(links_in_graph "$fixture" "$fixture/app" | sort)"
 if [ "$fixture_hits" = "app/plug/Cargo.toml" ]; then
   pass "the derivation follows a path dependency and reports only the manifest declaring links"
 else
@@ -150,16 +119,7 @@ fi
 
 # --- 5. the real tree, compared against the pinned set --------------------------------------------
 
-derived_blocked=""
-while IFS= read -r d; do
-  [ -n "$d" ] || continue
-  hits="$(links_in_graph "$repo_root$d")"
-  if [ -n "$hits" ]; then
-    derived_blocked="$derived_blocked$d
-"
-  fi
-done <<<"$cargo_dirs"
-derived_blocked="$(printf '%s' "$derived_blocked" | sed '/^$/d' | sort -u)"
+derived_blocked="$(blocked_cargo_dirs "$repo_root" "$config")"
 expected_blocked="$(printf '%s\n' "$EXPECTED_BLOCKED" | sed '/^$/d' | sort -u)"
 
 if [ "$derived_blocked" = "$expected_blocked" ]; then

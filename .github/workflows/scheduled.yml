@@ -45,7 +45,7 @@ on:
         description: 'Which one to run by hand'
         type: choice
         default: all
-        options: [all, hosts, analysis, alerts, caches, dev-refresh, stores]
+        options: [all, hosts, analysis, alerts, caches, dev-refresh, stores, cargo-unreachable]
       dry_run:
         description: 'dev-refresh only: report what would happen and change nothing'
         type: boolean
@@ -359,3 +359,53 @@ jobs:
           ASC_API_KEY_P8: ${{ secrets.APP_STORE_CONNECT_API_KEY_P8 }}
           APP_BUNDLE_ID: fr.emse.canari
         run: bun tools/store-divergence/divergence.mjs
+
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  # THE CARGO DIRECTORIES DEPENDABOT CANNOT REACH, AND THE TRIGGER THAT REMEMBERS THEM
+  #
+  # THE DECISION (user, 2026-09-10): keep `/frontend/src-tauri` and its custom-tabs plugin declared
+  # to Dependabot and update them deliberately - option 3 of the three in `docs/wiki/backlog.md`,
+  # with a NAMED trigger, because "somebody remembers" is not a mechanism. Option 1, dropping the
+  # `links` key, is refuted by a generated file rather than by an argument: `links` is what exports
+  # a build script's metadata to dependents, and without it `tauri-build` never learns where the
+  # plugin's Kotlin lives, so `open_custom_tab` fails on a phone while everything builds green.
+  # Option 2, undeclaring them, makes the artefact that ships to phones permanently unmanaged.
+  #
+  # 194 UPDATES WERE PENDING THE DAY THIS WAS WRITTEN - 193 in `/frontend/src-tauri` and one in the
+  # plugin - which is what 33 days of a silence nobody could see is worth.
+  #
+  # IT RIDES THE MONDAY CRON rather than taking a sixth schedule line. Two jobs on one cron is legal
+  # and `scheduled.test.sh` checks it is deliberate; a weekly cadence is also the right resolution,
+  # because a lockfile that is one patch behind is not news and a daily issue-churn would be.
+  #
+  # THE REPORT IS AN ISSUE, AND A RED RUN MEANS SOMETHING ELSE. Unlike `alerts` and `stores` above,
+  # a finding here does NOT fail the run: a Rust tree is always slightly behind, so a red nightly
+  # for it would be red every night, and a line its reader learns to skip is the one that hides the
+  # next defect. The issue says there is work; a red run says this reporter is broken. Everything
+  # that could make an empty answer a lie - a refused issue list, a failing cargo, a creation that
+  # did not land, a derivation that found no directory - fails loudly instead.
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  cargo-unreachable:
+    name: Cargo updates Dependabot cannot open
+    if: >
+      github.event.schedule == '0 4 * * 1' ||
+      (github.event_name == 'workflow_dispatch' &&
+      contains(fromJSON('["all", "cargo-unreachable"]'), inputs.job))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      # The report IS an issue, so this job writes one. It is the only thing it writes.
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+
+      # `dtolnay/rust-toolchain` pins nothing here on purpose: resolving the latest compatible
+      # versions is the entire question this job asks, so it wants the toolchain CI otherwise uses.
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Ask what those directories are behind on, and record it
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: bash .github/scripts/cargo-blocked-update-report.sh
