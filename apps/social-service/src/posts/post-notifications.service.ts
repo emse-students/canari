@@ -14,8 +14,11 @@ import {
   eventRejectedContent,
   eventUpdatedContent,
   eventDeletedContent,
+  associationPostContent,
+  followedPostContent,
   type PushContent,
 } from '../push/push-content';
+import { forEachBounded, PUSH_FAN_OUT_LIMIT } from '../push/fan-out';
 
 /** Manages in-app notifications triggered by post interactions (comments, reactions, mentions). */
 @Injectable()
@@ -47,6 +50,12 @@ export class PostNotificationsService {
         return reactionContent(actorName, text);
       case 'comment':
         return commentContent(actorName, text);
+      // The two publication notices. `actorName` is the ASSOCIATION for the first and the author
+      // for the second; `text` is the opening of the post either way, never a composed sentence.
+      case 'association_post':
+        return associationPostContent(actorName, text);
+      case 'followed_post':
+        return followedPostContent(actorName, text);
       // The agenda's five. `text` is the event's TITLE for all of them - never a composed sentence,
       // which is what the server used to send here and could not translate.
       case 'event_proposed':
@@ -181,15 +190,18 @@ export class PostNotificationsService {
       );
       return recipients.length;
     }
-    // Fire-and-forget, and caught PER RECIPIENT: a batch that catches once loses every failure
-    // after the first, and in a best-effort path the log is all a loss leaves.
-    void Promise.all(
-      recipients.map((recipientId) =>
-        this.push
-          .notifyContent(recipientId, content, { type: 'social', ...data.pushData })
-          .catch((e) => this.logger.warn(`[NOTIFY] push failed for ${recipientId}: ${String(e)}`))
-      )
-    );
+    // Fire-and-forget, BOUNDED, and logged PER RECIPIENT. Bounded because `recipients` is as wide
+    // as the audience and not as wide as the caller: announcing a post to the whole feed is 356
+    // recipients on today's population, and `Promise.all` would open 356 sockets to the delivery
+    // service from a single cron tick. Per recipient because a batch that reports once loses
+    // every failure after the first, and in a best-effort path the log is all a loss leaves.
+    void forEachBounded(recipients, PUSH_FAN_OUT_LIMIT, (recipientId) =>
+      this.push.notifyContent(recipientId, content, { type: 'social', ...data.pushData })
+    ).then((failures) => {
+      for (const { item, error } of failures) {
+        this.logger.warn(`[NOTIFY] push failed for ${item}: ${String(error)}`);
+      }
+    });
     return recipients.length;
   }
 

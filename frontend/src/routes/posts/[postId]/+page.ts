@@ -2,20 +2,10 @@ import { getPost, type PostEntity } from '$lib/posts/api';
 import { markdownToPlainText, truncateForMeta } from '$lib/seo/text';
 import type { SeoMeta } from '$lib/seo/types';
 import type { PageLoad } from './$types';
-import { fetchMyProfile, isGlobalAdmin } from '$lib/stores/user';
-import { goto } from '$app/navigation';
+import { redirectIfNotFeedAudience } from '$lib/posts/feedAudience';
 
 export const load: PageLoad = async ({ params }) => {
-  if (!isGlobalAdmin()) {
-    try {
-      const profile = await fetchMyProfile();
-      if (profile.formation !== 'ICM') {
-        return goto('/chat', { replaceState: true }).catch(() => {});
-      }
-    } catch {
-      return goto('/chat', { replaceState: true }).catch(() => {});
-    }
-  }
+  if (await redirectIfNotFeedAudience()) return;
 
   let post: PostEntity | null = null;
   try {

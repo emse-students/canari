@@ -63,6 +63,17 @@ export class Post {
   @Column({ type: 'timestamptz', nullable: true, default: null })
   scheduledAt: Date | null;
 
+  /**
+   * When this post was announced to its audience, and NULL means it has not been.
+   *
+   * Read and written only by `PostAnnounceScheduler`. It is durable state and not a clock: the
+   * sweeper stamps it BEFORE it pushes, so a crash mid-batch loses a notification rather than
+   * repeating one on every tick. Migration 058 backfills every row that predates it, because an
+   * empty column would read as "the whole archive is unannounced".
+   */
+  @Column({ type: 'timestamptz', nullable: true, default: null })
+  feedNotifiedAt: Date | null;
+
   @CreateDateColumn()
   @Index()
   createdAt: Date;

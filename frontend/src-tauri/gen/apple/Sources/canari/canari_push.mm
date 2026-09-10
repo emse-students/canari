@@ -471,6 +471,10 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     @"social_mention" : @"mention",
     @"social_reply" : @"reply",
     @"social_comment" : @"comment",
+    // The two publication notices: same shape, the actor naming the title and the post's own
+    // opening as the body. `actorName` is the ASSOCIATION for the first, the author for the second.
+    @"social_association_post" : @"association_post",
+    @"social_followed_post" : @"followed_post",
   };
   NSString *stem = actorTitled[key];
   if (stem) {

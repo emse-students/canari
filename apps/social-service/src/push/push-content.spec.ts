@@ -10,6 +10,9 @@ import {
   eventRejectedContent,
   eventUpdatedContent,
   eventDeletedContent,
+  associationPostContent,
+  followedPostContent,
+  previewOf,
   pushContentData,
   type PushContent,
 } from './push-content';
@@ -39,6 +42,8 @@ describe('push content', () => {
     ['eventRejected', eventRejectedContent('Claire', 'Soiree BDE')],
     ['eventUpdated', eventUpdatedContent('Claire', 'Soiree BDE')],
     ['eventDeleted', eventDeletedContent('Claire', 'Soiree BDE')],
+    ['associationPost', associationPostContent('BDE', 'hello')],
+    ['followedPost', followedPostContent('Claire', 'hello')],
   ];
 
   it.each(ALL)('%s carries a key, not only a sentence', (_name, content) => {
@@ -75,6 +80,40 @@ describe('push content', () => {
       expect(content.legacyTitle.length).toBeGreaterThan(0);
       expect(content.legacyBody.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('previewOf', () => {
+  /**
+   * The one piece of a push that is the USER's words rather than ours, so the only rule is that a
+   * lock screen gets an opening and not a whole post. It was inline in the comment path and
+   * became shared the day publications needed the same cut.
+   */
+  it('leaves a short text exactly as it was typed', () => {
+    expect(previewOf('hello')).toBe('hello');
+  });
+
+  it('cuts a long text to the same length whatever it says', () => {
+    // Ellipsed to the limit INCLUDING the ellipsis: a preview that grew by one character past the
+    // bound when it was truncated would be longer than the text it replaced at the boundary.
+    const cut = previewOf('x'.repeat(200));
+    expect(cut).toHaveLength(60);
+    expect(cut.endsWith('…')).toBe(true);
+  });
+
+  it('does not ellipse a text that exactly fits', () => {
+    expect(previewOf('y'.repeat(60))).toBe('y'.repeat(60));
+  });
+
+  it('trims first, so surrounding blank lines do not spend the budget', () => {
+    expect(previewOf('  hello\n\n')).toBe('hello');
+  });
+
+  it('gives an empty string for an empty post, rather than inventing a sentence', () => {
+    // An images-only post has no text. The SENTENCE for that case belongs to the native table,
+    // which is the one layer that knows the reader's language.
+    expect(previewOf('')).toBe('');
+    expect(previewOf('   ')).toBe('');
   });
 });
 
@@ -183,7 +222,26 @@ describe('the legacy sentence and the Android resource say the same thing', () =
     ['event_rejected', eventRejectedContent(ACTOR, ARG)],
     ['event_updated', eventUpdatedContent(ACTOR, ARG)],
     ['event_deleted', eventDeletedContent(ACTOR, ARG)],
+    ['social_association_post', associationPostContent(ACTOR, '')],
+    ['social_followed_post', followedPostContent(ACTOR, '')],
   ];
+
+  /**
+   * EVERY KEY IN THE UNION IS IN THE LIST ABOVE, and until 2026-09-10 nothing said so.
+   *
+   * The list was hand-maintained, so a key added to `PushContentKey` with a builder and no entry
+   * here was compared against nothing - it would pass this whole block by being absent from it.
+   * `nativeStrings.test.ts` reads the union from source for exactly this reason; this does the
+   * same, and the two now fail on the same omission from opposite sides.
+   */
+  it('compares every key the union declares, with none left out of the list', () => {
+    const source = readFileSync(resolve(__dirname, 'push-content.ts'), 'utf8');
+    const union = source.match(/export type PushContentKey =([\s\S]*?);/);
+    const declared = [...(union?.[1] ?? '').matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+
+    expect(declared.length).toBeGreaterThan(3);
+    expect(declared.filter((key) => !PAIRS.some(([k]) => k === key))).toEqual([]);
+  });
 
   it('has a resource for every key a builder emits', () => {
     const fr = androidStrings();

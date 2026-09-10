@@ -20,6 +20,10 @@
 "notif.social.comment.body" = "New comment";
 "notif.social.reaction.title" = "New reaction";
 "notif.social.reaction.body" = "%1$@ reacted %2$@ to your post";
+"notif.social.association_post.title" = "%@ posted";
+"notif.social.association_post.body" = "New post";
+"notif.social.followed_post.title" = "%@ posted";
+"notif.social.followed_post.body" = "New post";
 "notif.form.opening_soon.title" = "Form opening soon";
 "notif.form.opening_soon.body" = "A form you are watching opens in 5 minutes!";
 "notif.form.open.title" = "Form now open!";

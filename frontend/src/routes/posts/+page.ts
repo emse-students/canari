@@ -1,8 +1,7 @@
 import { listPosts, DEFAULT_POST_FEED, parsePostFeed } from '$lib/posts/api';
 import { settings } from '$lib/stores/settingsStore.svelte';
 import type { PageLoad } from './$types';
-import { fetchMyProfile, isGlobalAdmin } from '$lib/stores/user';
-import { goto } from '$app/navigation';
+import { redirectIfNotFeedAudience } from '$lib/posts/feedAudience';
 
 export const load: PageLoad = async ({ url }) => {
   // THE URL WINS, THEN THE REMEMBERED TAB, THEN THE DEFAULT (user, 2026-09-10: *"L'onglet du fil
@@ -24,16 +23,7 @@ export const load: PageLoad = async ({ url }) => {
   const promo = promoParsed !== undefined && Number.isFinite(promoParsed) ? promoParsed : undefined;
   const formation = url.searchParams.get('formation')?.trim() || undefined;
 
-  if (!isGlobalAdmin()) {
-    try {
-      const profile = await fetchMyProfile();
-      if (profile.formation !== 'ICM') {
-        return goto('/chat', { replaceState: true }).catch(() => {});
-      }
-    } catch {
-      return goto('/chat', { replaceState: true }).catch(() => {});
-    }
-  }
+  if (await redirectIfNotFeedAudience()) return;
 
   return {
     posts: listPosts({

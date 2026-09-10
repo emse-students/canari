@@ -3268,6 +3268,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_social_reaction_title),
                 res.getString(R.string.notif_social_reaction_body, actor, arg)
             )
+            // The two publication notices. `actor` is the ASSOCIATION's name for the first and
+            // the author's for the second; `arg` is the opening of the post, empty when the post
+            // is images only, which is why the body falls back to a fixed sentence.
+            "social_association_post" -> Pair(
+                res.getString(R.string.notif_social_association_post_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_association_post_body) }
+            )
+            "social_followed_post" -> Pair(
+                res.getString(R.string.notif_social_followed_post_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_followed_post_body) }
+            )
             "form_opening_soon" -> Pair(
                 res.getString(R.string.notif_form_opening_soon_title),
                 res.getString(R.string.notif_form_opening_soon_body)

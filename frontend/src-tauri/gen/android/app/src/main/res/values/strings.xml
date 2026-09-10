@@ -69,6 +69,10 @@
     <string name="notif_social_comment_body">Nouveau commentaire</string>
     <string name="notif_social_reaction_title">Nouvelle réaction</string>
     <string name="notif_social_reaction_body">%1$s a réagi %2$s à votre publication</string>
+    <string name="notif_social_association_post_title">%1$s a publié</string>
+    <string name="notif_social_association_post_body">Nouvelle publication</string>
+    <string name="notif_social_followed_post_title">%1$s a publié</string>
+    <string name="notif_social_followed_post_body">Nouvelle publication</string>
     <string name="notif_form_opening_soon_title">Formulaire bientôt ouvert</string>
     <string name="notif_form_opening_soon_body">Un formulaire que vous suivez ouvre dans 5 minutes !</string>
     <string name="notif_form_open_title">Formulaire ouvert !</string>

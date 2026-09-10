@@ -5,6 +5,7 @@ import { PostsController } from './posts.controller';
 import { PostsService } from './posts.service';
 import { PostInteractionsService } from './post-interactions.service';
 import { PostNotificationsService } from './post-notifications.service';
+import { PostAnnounceScheduler } from './post-announce.scheduler';
 import { Post } from './entities/post.entity';
 import { PostNotification } from './entities/post-notification.entity';
 import { AssociationsModule } from '../associations/associations.module';
@@ -21,7 +22,13 @@ import { ModerationModule } from '../moderation/moderation.module';
     ModerationModule,
   ],
   controllers: [PostsController],
-  providers: [PostsService, PostInteractionsService, PostNotificationsService, PushService],
+  providers: [
+    PostsService,
+    PostInteractionsService,
+    PostNotificationsService,
+    PostAnnounceScheduler,
+    PushService,
+  ],
   exports: [PostNotificationsService],
 })
 export class PostsModule {}

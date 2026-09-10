@@ -11,6 +11,51 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Added - nobody was ever told about a post, and now they are
+
+Canari notified you when somebody reacted to your post, replied to your comment or mentioned you.
+It never told you a post EXISTED. An association could publish an announcement to the whole school
+and the only people who saw it were the ones who happened to open the feed afterwards; following
+somebody did the same nothing. Reported by the user as two asks in one breath, and they are one
+mechanism with two audiences: **an association's post is announced to everyone who can see the
+feed, and a person's post to the people who follow them.**
+
+**No scheduler published posts at all**, which is the first thing this had to find out.
+`scheduledAt` existed on a post and nothing had ever swept it - the column appeared only inside a
+`WHERE` clause. So the announcement is decided from the row's committed state by a sweeper rather
+than sent inline by whatever wrote it: a post can become visible without any request happening at
+the moment it does, and a notification sent inline is one a rollback silently keeps.
+
+**A post is announced once, and that comes from a column rather than from a clock.**
+`feedNotifiedAt` is stamped BEFORE the notifications go out - the same trade the form reminders
+already document. A crash between the stamp and the send loses one announcement; the other order
+would re-announce on every tick for as long as it kept failing, sixty times an hour, to 356
+people. The migration that adds the column **backfills every existing row**, or the first deploy
+would have announced the entire archive.
+
+**The volume was measured rather than guessed**, because "everyone gets told about every
+association post" is the kind of sentence that sounds alarming. Over the seventeen weeks to
+2026-09-10 the real rate is **0.53 association posts a week**, and a person's post reaches the 2.8
+people who follow them on average. No digest and no per-association mute: the population does not
+produce enough posts for either to be anything but a setting nobody would find.
+
+### Changed - one push, one socket at a time
+
+Every push is an HTTP request to the delivery service, and the batch helper opened all of them at
+once. That was survivable while the widest notification was an association's officers. Announcing
+to the feed audience would have opened 356 sockets from a single cron tick - and the failure that
+produces is not a lost notification, it is the delivery service refusing everything for the
+duration, ordinary messages included. The fan-out is now bounded, and it neither abandons the
+recipients queued behind a failure nor swallows the failure itself.
+
+### Fixed - one rule, one statement of it, on each side
+
+"Who may see the social feed" was written out twice in the client - the same eleven lines in two
+route files - and **the backend had no such rule at all**. Deciding who to tell about a post
+needed it server-side, which would have made three copies of one decision in two languages. The
+two client copies are now one helper and the server states it once beside them. This decides who
+is TOLD, not who may READ: the API still answers anybody who asks, which is unchanged and open.
+
 ### Fixed - a test gate that had never once run where it was supposed to
 
 Internal. A suite of Android unit tests was wired into the pull-request checks the day before, and

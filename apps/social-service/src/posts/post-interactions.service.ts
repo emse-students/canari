@@ -16,6 +16,7 @@ import {
   commentContent,
   replyContent,
   mentionContent,
+  previewOf,
 } from '../push/push-content';
 
 /** Handles reactions, comments, polls, and form submissions on posts. */
@@ -171,7 +172,7 @@ export class PostInteractionsService {
     // recipient does not prevent the others from being notified.
     void (async () => {
       const text = data.text ?? (data.media ? '📷 Image' : '');
-      const preview = text.length > 60 ? text.slice(0, 57) + '…' : text;
+      const preview = previewOf(text);
       const actorName = await this.notifications.resolveActorName(data.userId);
       const alreadyNotified = new Set<string>([data.userId]);
 
