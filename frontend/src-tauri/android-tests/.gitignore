@@ -1,0 +1,6 @@
+# Gradle's own working directories. Everything else here is source and IS committed - including
+# the wrapper jar, which is what lets CI run this with nothing but a JDK.
+/build
+/.gradle
+# The Kotlin plugin writes an Eclipse-style output tree beside `build` on some versions.
+/bin

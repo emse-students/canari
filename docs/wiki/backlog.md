@@ -1119,9 +1119,9 @@ sweep of what it just orphaned**, and the sweep is part of the change.
 **Do not "fix" the remainder by making the check non-blocking or by removing the tool** - it is
 already advisory, and it is the thing that reported the high-severity alert this entry came from.
 
-### P3 - the Android unit tests run now, and the obvious way to run them would have run NOTHING (closed 2026-09-10)
+### P3 - the Android unit tests run now, and they tried three ways of not running (2026-09-10)
 
-`frontend/src-tauri/gen/android/app/src/test/java/fr/emse/canari/PushDecryptLadderTest.kt` is a
+`PushDecryptLadderTest.kt` (now `frontend/src-tauri/android-tests/`) is a
 JUnit suite over the order the FCM service tries its recoveries in - MLS behaviour on the platform
 where MLS defects are hardest to see - and no workflow and no Makefile target invoked Gradle's unit
 tests, so its assertions had never executed on any machine. **First run ever: 2026-09-10, five
@@ -1150,9 +1150,60 @@ minutes" this entry set as the bar, so it is a `ci.yml` job behind a `gen/androi
 inside `ci-passed`, and `android.yml` keeps building only. `make test-android` runs the same script
 for a human.
 
-**WHAT IS STILL UNGUARDED, and it is the honest remainder**: every `.swift` in the iOS tree. The
-same trap covers it - a test file nobody runs reads as coverage - and nothing here has measured
-whether an equivalent suite even exists.
+**AND IT STILL COULD NOT RUN IN CI, WHICH THE VERY NEXT PULL REQUEST FOUND.** Everything above
+was measured on a developer's own box. `:app` cannot be CONFIGURED anywhere else: its
+`settings.gradle` applies `gen/android/tauri.settings.gradle`, which tauri generates with absolute
+paths into one machine's cargo registry and `.gitignore` therefore excludes, and the module also
+wants a `google-services.json` that lives in a secret. Over the fourteen CI runs after the merge
+the job was SKIPPED thirteen times and FAILED the only time a change touched Android files, on
+`Could not read script 'tauri.settings.gradle' as it does not exist` - blocking a pull request for
+a reason with nothing to do with it. **The 31s/8s figures above are a local machine's, and the
+"first run ever" was local too.**
+
+Fixed 2026-09-10 by moving the suite OUT of the app module: it imports `org.junit` and nothing
+else - no Android type, no tauri type, nothing from `:app` - so it never needed any of that. It is
+now `frontend/src-tauri/android-tests`, a standalone Kotlin/JVM project with its own Gradle 9.1.0
+wrapper, whose entire toolchain is a JDK. Measured after the move: **14 seconds cold, 1 second
+warm**, and the script's seven self-tests still pass against it.
+
+**AND THE FIX'S OWN FIRST CI RUN FAILED, WHICH IS A FOURTH WAY OF NOT RUNNING.** Five seconds in,
+before Gradle: the relocated `gradlew` was committed `100644` beside the `gen/android` copy at
+`100755`. **Windows has no executable bit, so no local run can ever produce this failure** - every
+invocation here goes through `bash`, where the mode is inert - and `git status` and every editor
+show nothing. The first Linux runner to reach `./gradlew` answered `Permission denied`.
+
+Guarded now by `.github/scripts/tests/executable-bit.test.mjs`, in `make test-ci-scripts`: it
+derives the set from the tree rather than a list, taking every `./x` in command position across
+the Makefile, the workflows and the shell scripts, and demanding mode `100755`. Two things it
+learned on the way, both written into its docblock:
+
+- **Command position is the whole discipline.** Matching `./x` anywhere accused nineteen files,
+  every one an ARGUMENT - `docker build -f ./Dockerfile.frontend`, a compose volume mount, a
+  `cat ./frontend/package.json`. Making those executable would have been nonsense dressed as a fix.
+- **Its first draft failed its own motivating case and reported the tree CLEAN.** It resolved
+  `./gradlew` against the caller's directory, but the call is `cd "$ANDROID_DIR" && ./gradlew` - a
+  variable. Chasing a working directory through variables and `cd` is writing half a shell, and a
+  half-written one answers "clean" when it loses track. So it matches by NAME: if a name is run as
+  a command anywhere, every tracked file with that name must be executable. That covers both
+  `gradlew` wrappers from the single call site, which is what was wanted.
+
+It immediately found three more - `infrastructure/local/{env-from-prod,pull-prod-dump,restore-into-local}.sh`,
+all invoked `./x` from the Makefile, all `100644`. The Makefile had been **working around it** with
+a `chmod +x` before each call, which is a fallback standing in for a fix and is why the defect
+survived. Modes recorded, both `chmod` lines deleted.
+
+**THE REAL REMAINDER, and it is bigger than it looks: THE SUITE TESTS A MIRROR.** `runLadder` in
+`PushDecryptLadderTest.kt` is the service's ladder WRITTEN OUT AGAIN in the test file - the
+docblock says so, because the real methods are private and JNI-bound. So it cannot fail when
+`CanariFirebaseMessagingService` changes, which is the one thing a regression test is for. Making
+it exercise the real code means lifting the ladder out of those private methods into a pure
+function the app and the test project can share; THAT test would legitimately need the app module,
+and would need this whole question answered again. Until then the green tick means "the mirror
+still agrees with itself".
+
+**AND WHAT IS STILL UNGUARDED**: every `.swift` in the iOS tree. The same trap covers it - a test
+file nobody runs reads as coverage - and nothing here has measured whether an equivalent suite
+even exists.
 
 ### P2 - a 7.3 TB RAID1 now has a sensor and still has no report, and nothing on that host can reach a human (measured 2026-09-03)
 

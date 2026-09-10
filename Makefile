@@ -263,7 +263,6 @@ setup-env-prod:
 # Le snapshot passe par un fichier temporaire hors du dépôt, jamais par le transcript.
 local-env:
 	@echo "${BLUE}🔐 Fabrication de infrastructure/.env + frontend/.env depuis la production…${RESET}"
-	@chmod +x infrastructure/local/env-from-prod.sh
 	@snap=$$(mktemp "$${TMPDIR:-/tmp}/canari-prod-env.XXXXXX"); \
 	  trap 'rm -f "$$snap"' EXIT; \
 	  ssh=$${CANARI_SSH:-$$([ -x /c/WINDOWS/System32/OpenSSH/ssh.exe ] && echo /c/WINDOWS/System32/OpenSSH/ssh.exe || echo ssh)}; \
@@ -275,7 +274,6 @@ local-env:
 # ALLOWLIST du projet compose local, effacements partagés avec la copie vers dev, puis vérification.
 dump-prod:
 	@echo "${BLUE}📦 Copie de la base de production vers la pile locale…${RESET}"
-	@chmod +x infrastructure/local/pull-prod-dump.sh infrastructure/local/restore-into-local.sh
 	@dump=$$(./infrastructure/local/pull-prod-dump.sh | tail -1); \
 	  ./infrastructure/local/restore-into-local.sh "$$dump"
 	@echo "${GREEN}✅ Base locale restaurée et vérifiée${RESET}"
@@ -351,6 +349,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/recipe-covers-tests.test.mjs
 	@bun .github/scripts/tests/shellcheck-scope.test.mjs
 	@bun .github/scripts/tests/claude-md-cap.test.mjs
+	@bun .github/scripts/tests/executable-bit.test.mjs
 	@bash .github/scripts/tests/android-unit-tests.test.sh
 	@bun tools/app-store/submit.test.mjs
 	@bun tools/store-divergence/divergence.test.mjs
@@ -361,11 +360,14 @@ test-ci-scripts: lint-ci-scripts
 # the 29 the backlog recorded on 2026-09-04 - the drift the entry predicted, invisible because
 # nothing was counting. All 38 are gone and this line is why the 39th cannot arrive silently.
 # `--deny-warnings` on purpose: a gate that only warns is a gate its reader learns to scroll past.
-# THE ANDROID UNIT TESTS, WHICH NOTHING RAN UNTIL 2026-09-10.
-# `PushDecryptLadderTest.kt` is a JUnit suite over the FCM decrypt ladder, and no workflow and
-# no target here invoked Gradle, so its five assertions had never executed anywhere. `ci.yml`
-# runs this behind a path filter on `gen/android`; this target is the same script, for a human.
-# Needs a JDK and an Android SDK (ANDROID_HOME), which is why it is NOT part of `make test`.
+# THE ANDROID UNIT TESTS, WHICH NOTHING RAN UNTIL 2026-09-10 AND NOTHING COULD RUN IN CI UNTIL THE
+# DAY AFTER. `PushDecryptLadderTest.kt` is a JUnit suite over the FCM decrypt ladder. No workflow
+# and no target here invoked Gradle, so its five assertions had never executed anywhere; the gate
+# that fixed THAT put the suite behind the `:app` module, which no runner can configure, so it was
+# skipped or refused every time until the suite moved to its own Kotlin/JVM project.
+# It needs a JDK and NOTHING ELSE - no Android SDK, no ANDROID_HOME, no tauri toolchain. It stays
+# out of `make test` only because a JDK is not something every contributor here has installed;
+# `ci.yml` runs it on any change under `android-tests/` or `gen/android/`.
 test-android:
 	@echo "${BLUE}Android unit tests...${RESET}"
 	@bash .github/scripts/android-unit-tests.sh
