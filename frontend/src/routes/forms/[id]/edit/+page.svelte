@@ -265,7 +265,7 @@
 </script>
 
 <!-- Same width as the create page: it is the same form, and it carries the same grid. -->
-<PageContainer wide>
+<PageContainer width="tool">
   <PageHeader
     title={m.form_edit_heading()}
     subtitle={form?.title}

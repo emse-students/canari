@@ -53,7 +53,7 @@
   }
 </script>
 
-<PageContainer>
+<PageContainer width="grid">
   <PageHeader title={m.assoc_list_heading()} subtitle={m.assoc_list_subtitle()}>
     {#snippet actions()}
       <a
@@ -96,7 +96,7 @@
       {#if myAssociations.length > 0}
         <section>
           <h2 class="text-text-main mb-3 text-base font-bold">{m.assoc_list_mine_heading()}</h2>
-          <div class="grid gap-4 sm:grid-cols-2">
+          <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {#each myAssociations as asso (asso.id)}
               <a
                 href={memberHref(asso)}
@@ -140,7 +140,7 @@
             <p class="text-text-muted text-sm">{m.assoc_list_empty_desc()}</p>
           </div>
         {:else}
-          <div class="grid gap-4 sm:grid-cols-2">
+          <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {#each activeAssociations as asso (asso.id)}
               <a
                 href="/associations/{asso.slug}"
@@ -191,7 +191,7 @@
             {m.assoc_list_archived_heading({ count: archivedAssociations.length })}
           </button>
           {#if showArchived}
-            <div class="mt-3 grid gap-4 sm:grid-cols-2">
+            <div class="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {#each archivedAssociations as asso (asso.id)}
                 <a
                   href="/associations/{asso.slug}"

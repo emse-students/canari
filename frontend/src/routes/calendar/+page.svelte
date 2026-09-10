@@ -394,7 +394,7 @@
   The `CalendarDays` glyph beside the word "Agenda" went with it, along with the shop's and the
   dashboard's - the navigation already carries those icons.
 -->
-<PageContainer>
+<PageContainer width="grid">
   <!-- The subtitle is an instruction, so it has to be true of the view actually on screen: the
        schedule list has no day to click, and telling a reader to click one is worse than saying
        nothing. -->

@@ -173,7 +173,7 @@
   {/if}
 {/snippet}
 
-<PageContainer wide>
+<PageContainer width="tool">
   <PageHeader
     title={m.admin_status_title()}
     subtitle={m.admin_status_subtitle({ count: total, sec: REFRESH_MS / 1000 })}
