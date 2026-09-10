@@ -37,8 +37,16 @@ case "$ENV" in
       exit 1
     fi
 
-    # Load environment variables
-    export $(cat infrastructure/.env | grep -v '^#' | xargs)
+    # LOADED BY THE SHELL, NOT BY `xargs`. It was
+    # `export $(cat infrastructure/.env | grep -v '^#' | xargs)`, which word-splits every value:
+    # a password with a space in it becomes two exports and one of them is garbage, and a value
+    # with a quote in it is re-quoted by `xargs` into something else again. That is the file this
+    # deploy reads its production secrets from. `set -a` exports everything the file assigns, and
+    # the shell parses the quoting the way the file's author meant it.
+    set -a
+    # shellcheck source=/dev/null
+    . infrastructure/.env
+    set +a
     ;;
   *)
     echo -e "${RED}❌ Unknown environment: $ENV${RESET}"

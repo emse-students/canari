@@ -184,6 +184,9 @@ HEADER
   done
 
   printf '\n# ── The local OIDC client on the production Authentik ─────────────────────────\n'
+  # The backticks are MARKDOWN in the comment this writes into the generated .env, not a
+  # command substitution - single quotes are exactly what keeps them literal.
+  # shellcheck disable=SC2016
   printf '# Created as `canari-local`, redirect URIs on http://localhost:1420. Production'"'"'s client\n'
   printf '# is deliberately NOT reused: a page served from localhost must not be able to obtain\n'
   printf '# production tokens under production'"'"'s own client id.\n'

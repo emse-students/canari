@@ -32,7 +32,12 @@ header "Backend environment variables (core-service)"
 CORE_ENV="$ROOT/apps/core-service/.env"
 if [[ -f "$CORE_ENV" ]]; then
   pass "Found $CORE_ENV"
-  set -a; source "$CORE_ENV" 2>/dev/null || true; set +a
+  # The path is built from `$ROOT`, so shellcheck cannot follow it - and it must not try. This
+  # file holds real secrets and is never in the tree.
+  set -a
+  # shellcheck source=/dev/null
+  source "$CORE_ENV" 2>/dev/null || true
+  set +a
 else
   # Also check if vars are already exported (e.g. from docker-compose or shell)
   if [[ -z "${AUTHENTIK_BASE_URL:-}" ]]; then
@@ -158,10 +163,18 @@ else
     TOKEN_EP=$(jq -r '.token_endpoint // empty' /tmp/canari_oidc_disco.json 2>/dev/null || true)
     USERINFO_EP=$(jq -r '.userinfo_endpoint // empty' /tmp/canari_oidc_disco.json 2>/dev/null || true)
 
-    [[ -n "$ISSUER" ]]      && pass "  issuer = $ISSUER"                || warn "  issuer missing"
-    [[ -n "$AUTH_EP" ]]      && pass "  authorization_endpoint OK"       || warn "  authorization_endpoint missing"
-    [[ -n "$TOKEN_EP" ]]     && pass "  token_endpoint OK"               || warn "  token_endpoint missing"
-    [[ -n "$USERINFO_EP" ]]  && pass "  userinfo_endpoint OK"            || warn "  userinfo_endpoint missing"
+    # `A && B || C` READS AS IF-THEN-ELSE AND IS NOT ONE: `C` also runs when `A` succeeded and
+    # `B` failed. It happens to be harmless here only because `pass` cannot fail - which is one
+    # edit to `pass` away from printing "missing" about a field that is present, in a script whose
+    # entire output is these lines.
+    report_field() { # <value> <ok message> <missing message>
+      if [[ -n "$1" ]]; then pass "$2"; else warn "$3"; fi
+    }
+
+    report_field "$ISSUER" "  issuer = $ISSUER" "  issuer missing"
+    report_field "$AUTH_EP" "  authorization_endpoint OK" "  authorization_endpoint missing"
+    report_field "$TOKEN_EP" "  token_endpoint OK" "  token_endpoint missing"
+    report_field "$USERINFO_EP" "  userinfo_endpoint OK" "  userinfo_endpoint missing"
 
     # Check supported scopes
     SCOPES=$(jq -r '.scopes_supported // [] | join(" ")' /tmp/canari_oidc_disco.json 2>/dev/null || true)

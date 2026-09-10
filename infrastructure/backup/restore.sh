@@ -69,7 +69,12 @@ for arg in "$@"; do
 done
 
 [ -f "$ENV_FILE" ] || fail "infrastructure/.env introuvable"
-set -a; . "$ENV_FILE"; set +a
+set -a
+# The path is a variable and the file holds production secrets: it is never in the tree,
+# so there is nothing for shellcheck to follow.
+# shellcheck source=/dev/null
+. "$ENV_FILE"
+set +a
 POSTGRES_USER="${POSTGRES_USER:?POSTGRES_USER absent de infrastructure/.env}"
 
 if docker compose version >/dev/null 2>&1; then
