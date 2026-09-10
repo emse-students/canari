@@ -4673,7 +4673,7 @@ of each entry is in [`docs/changelog-archive.md`](docs/changelog-archive.md)._
   **A dependency graph that stops moving looks exactly like one with nothing to update**, and this
   one belongs to the artefact that ships to phones. The measurement, the three ways out and the
   detection that would have named it on day one are in
-  [backlog](docs/wiki/backlog.md#p1---two-of-the-six-cargo-directories-are-invisible-to-dependabot-and-one-of-them-is-the-app-that-ships-to-phones-measured-2026-09-02); `dependabot-cargo-reach.test.sh` now pins the blocked set, so
+  [backlog](docs/wiki/backlog.md#p2---two-of-the-six-cargo-directories-are-invisible-to-dependabot-and-194-updates-were-waiting-behind-that-silence-measured-2026-09-02-decided-and-given-a-trigger-2026-09-10); `dependabot-cargo-reach.test.sh` now pins the blocked set, so
   the next one fails on the day it is committed.
 
 - **The migration set is not a schema, and the deploy learned it by failing on an arbitrary file.**
