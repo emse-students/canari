@@ -82,6 +82,7 @@ jobs:
       run-frontend: ${{ steps.matrix.outputs.frontend }}
       run-harness: ${{ steps.matrix.outputs.harness }}
       run-scripts: ${{ steps.matrix.outputs.scripts }}
+      run-android: ${{ steps.matrix.outputs.android }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -227,6 +228,17 @@ jobs:
             echo "frontend=true" >> "$GITHUB_OUTPUT"
           else
             echo "frontend=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # -- Android unit tests --
+          # The Kotlin under `gen/android` is the whole trigger: these are JVM unit tests over the
+          # FCM decrypt ladder and they read nothing outside that tree. It is a GENERATED directory
+          # that is nevertheless committed, which is why a path filter is right here and a
+          # `cargo`-style dependency walk is not.
+          if has '^frontend/src-tauri/gen/android/'; then
+            echo "android=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "android=false" >> "$GITHUB_OUTPUT"
           fi
 
           # -- Cross-client harness self-tests --
@@ -737,6 +749,59 @@ jobs:
           path: frontend/coverage/
 
   # =================================================================================================
+  # THE ANDROID UNIT TESTS, WHICH HAD NEVER RUN ON ANY MACHINE
+  # =================================================================================================
+  # `PushDecryptLadderTest.kt` is a real JUnit suite over the order the FCM service tries its
+  # recoveries in - MLS behaviour on the platform where MLS defects are hardest to see - and NOTHING
+  # invoked Gradle's unit tests. `android.yml` builds and signs; `make test` runs the gateway,
+  # delivery, frontend, harness and CI-script suites and nothing native. Its five assertions had
+  # never executed anywhere since the day they were committed, while the push ladder LOOKED guarded
+  # - which is worse than an area everybody knows is unguarded.
+  #
+  # HERE AND NOT IN `android.yml`, and the measurement decided it. `android.yml` is a
+  # `workflow_call` library reached only from `release.yml`, so a unit test placed there runs at
+  # RELEASE time, far too late to refuse a merge. The cost of putting it here is a JDK and a Gradle
+  # cache on the pull requests that touch the native tree - measured on 2026-09-10 at **31 seconds
+  # cold** with the daemon stopped, the build cache off and `app/build` and `.gradle` deleted, and
+  # 8 seconds warm. The runner already carries the Android SDK and a JDK.
+  #
+  # BEHIND THE PATH FILTER, so a pull request that does not touch `gen/android` pays nothing.
+  #
+  # THE SCRIPT ASSERTS THE SUITE RAN, and that is not ceremony: the obvious command
+  # `./gradlew testDebugUnitTest` matches NO TASK in the `app` module - Tauri gives it ABI product
+  # flavours - so it exits 0 having run nothing at all. Measured, before this job existed:
+  # `BUILD SUCCESSFUL in 16s`, zero `:app:` tasks, zero tests. A gate that green is the defect it
+  # was written to remove.
+  test-android:
+    name: Test Android (unit)
+    needs: [changes]
+    if: ${{ needs.changes.outputs.run-android == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+
+      # The runner image already has the Android SDK; this pins the JDK the Gradle build wants.
+      - name: Setup JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('frontend/src-tauri/gen/android/**/*.gradle*', 'frontend/src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: Run the Android unit tests
+        run: bash .github/scripts/android-unit-tests.sh
+
+  # =================================================================================================
   # CROSS-CLIENT HARNESS SELF-TESTS
   # The rig's rules about itself: the two log classifiers and the phase/device declarations. None of
   # the three touches a browser, a phone or production - they are pure assertions over source, which
@@ -965,8 +1030,8 @@ jobs:
     name: CI passed
     if: always()
     needs:
-      [changes, test-rust, boot-nest-apps, test-typescript-backend, test-frontend, test-harness, test-ci-scripts,
-      dependency-ceiling, security]
+      [changes, test-rust, boot-nest-apps, test-typescript-backend, test-frontend, test-android, test-harness,
+      test-ci-scripts, dependency-ceiling, security]
     runs-on: ubuntu-latest
     steps:
       - name: Every job either passed or had nothing to do
