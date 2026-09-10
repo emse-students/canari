@@ -75,8 +75,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | put the BDE 170 EUR tier on sale - an allowlist correctly withholds it and no event will ever fire | 1 click | the verification table above |
 | App Store Connect: the 2.3.6 radio button | 1 click | [mobile](frontend/mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on) |
 | Lydia's credentials, which Lydia owes | blocked upstream | WP-LYDIA-1 |
-| **an iPhone** - the Android half arrived and its lock was retired 2026-09-08, so every A1 row is runnable; what is still hardware-blocked is iOS alone | hardware | [device-verification](device-verification.md) |
-| **two more test accounts** (a THIRD, and a FOURTH for one row) - Authentik users like the two the rig has, written into `canari-harness/test-accounts.json`. **One action unblocks four rows that are otherwise permanently stuck**, and one of them is a P1 the user reported: NOTIF-17 (first contact - a message from someone you have NO conversation with, which the rig's two accounts cannot stage because they have talked for weeks and deleting that history would cost the HEAL rows more than the row answers), READ-5 (the `+N` reader overflow renders only past THREE readers, so it needs a fourth), MULTI-3 (a device enrolled after the fact), and the community-invitation question that is the same seam as NOTIF-17 | 2 accounts | [first contact](#p1---a-first-message-from-someone-you-have-no-conversation-with-notifies-decrypts-and-then-goes-nowhere-the-tap-does-not-land-and-the-conversation-is-invisible-until-the-app-is-restarted-user-2026-09-08-on-production) |
+| **an iPhone - ON ITS WAY, and the user intends the WHOLE campaign to be re-run on it** (user, 2026-09-10). The Android half arrived and its lock was retired 2026-09-08, so every A1 row is runnable; **iOS is the only thing "hardware-blocked" still means** - the redundant push `data` map on both platforms, the shade acknowledgement, iOS window layout, and no iOS build reaching a device without a pre-release. This is a DATE, not a wall: write those rows so they are ready to run rather than deferring their design | hardware, arriving | [device-verification](device-verification.md) |
 | copy `canari-harness/` to the second machine to resume the campaign; **SETUP-4's 2FA is no longer owed**, the test accounts carry no MFA | 1 copy | [cross-client-campaign-resume](cross-client-campaign-resume.md) |
 
 ## FOUR DECISIONS TAKEN BY THE USER, 2026-09-06
@@ -807,12 +806,34 @@ in its own right, and is not this one.
    state passes on the broken code, since the conversation does arrive in the end); two of them fail
    when the counter is removed from the predicate. `notificationRouting.test.ts` gains the
    first-contact case. **Owed: the hardware run.** A green test is not a working system, and this one
-   still wants the third account the row below asks for.
+   still wants the third account the row below asks for - which EXISTS since 2026-09-10 and is
+   owed enrolment rather than a decision.
 
-**WHAT IS OWED.** The row named above, run against a genuine first contact - which needs a THIRD
-account, because the rig's two have a long shared history the HEAL rows depend on and staging this by
-deleting it would cost more than it answers. That is the blocking condition, and it is a one-off the
-user can lift ([owed to the user](#owed-to-the-user---decisions-rotations-and-one-off-clicks)).
+**WHAT IS OWED, AND THE ACCOUNT HALF OF IT IS DONE (2026-09-10).** The row named above, run against
+a genuine first contact - which needs a THIRD account, because the rig's two have a long shared
+history the HEAL rows depend on and staging this by deleting it would cost more than it answers.
+
+**THAT CONDITION IS LIFTED.** The user granted the means rather than performing the click (*"tu as
+acces a miconnect pour creer autant de comptes test que necessaire"*, 2026-09-10), so `third`
+(`canari-test-gamma`) and `fourth` (`canari-test-delta`) now exist as ordinary Authentik users on
+the production identity provider, cloned from the owner's path, type and attributes, and are written
+into the out-of-tree `test-accounts.json` with their subjects. **Their passwords were verified
+against Authentik's own `check_password`, not assumed** - a created user is not a user that signs
+in. No credential passed through a shell argument, a log line or a transcript: they were generated
+locally, written straight to the out-of-tree file, and handed to the box on stdin.
+
+**WHAT IS STILL OWED IS ENROLMENT, WHICH IS A DIFFERENT THING FROM AN ACCOUNT** and needs the local
+estate up:
+
+1. **A first sign-in through the app**, because a Canari user row - and therefore the DISPLAY NAME a
+   member picker matches - is materialised by `findOrCreateFromOidc` and does not exist until then.
+   Until it happens the rig can log the account in and cannot make anybody *find* it.
+2. **A device each**, which means a Chrome profile plus `PORTS`, `ORIGIN` and `ACCOUNT_OF` entries.
+   A profile IS a device here, so this is not configuration, it is enrolment.
+3. **A name the rig can ask for.** `names.mjs` exposes exactly two identities - `OWNER_NAME` and
+   `PEER_NAME` - and `peerNameFor(device)` is `device === 'W2' ? OWNER_NAME : PEER_NAME`, which does
+   not return a wrong answer for a third identity so much as it cannot express the question. See the
+   entry below.
 
 **READ IT WITH THE RESUME RELOAD.** If half two is confirmed, it is the same seam as the receive
 ratchet and the key packages: the reload installs a `mls.bin` the background engine advanced, and
@@ -863,8 +884,9 @@ moment, and which one it gets is a fact about the conversation, not about the ph
 and only the plugin builder cannot deep-link (`ACTION_MAIN` on the launcher). A first message from a
 new correspondent is a DIRECT message, and a direct message is what this measurement shows arriving
 over the socket and being built by the plugin. **So the report is consistent with the plugin builder,
-and the tap half of that P1 most likely IS this entry** - which is testable the day a third account
-exists, by reading `builtBy` on the first-contact row rather than reasoning about it.
+and the tap half of that P1 most likely IS this entry** - which is testable by reading `builtBy` on
+the first-contact row rather than reasoning about it. **The third account exists since 2026-09-10**,
+so what stands between this and an answer is enrolment and a run, not a credential.
 
 **AND BOTH TITLES WERE CORRECT**, from both builders, which is worth stating because it bounds the
 defect: what these two disagree about is the icon, the channel, the style and the TAP - not what is
@@ -4621,6 +4643,41 @@ VERIFIED without a phone - a native change is checked by compiling, which proves
 running.
 
 ## The harness itself
+
+### P2 - the rig can express exactly TWO identities, and the third and fourth accounts now exist (measured 2026-09-10)
+
+`names.mjs` exports `OWNER_NAME` and `PEER_NAME`, and the counterpart helper is
+`peerNameFor = (device) => (device === 'W2' ? OWNER_NAME : PEER_NAME)`. Measured across the rig:
+**79 references to `OWNER_NAME`, 151 to `PEER_NAME`, 103 to `peerNameFor`, over roughly fifty
+files.** Two identities is not a limit somebody chose - it is what the campaign happened to need,
+frozen into a helper whose FALSE branch is "everything that is not W2".
+
+**A THIRD IDENTITY DOES NOT MAKE THAT HELPER WRONG, IT MAKES IT UNASKABLE**, and the failure mode is
+the dangerous one: `peerNameFor('W4')` for a device held by `third` returns `PEER_NAME` - a real
+name, of the wrong human, with no error. A check would click a conversation that exists and report
+about it confidently. This is the same class as the display-name-used-as-identity P1 of 2026-09-09.
+
+**WHAT THE SHAPE SHOULD BE.** `test-accounts.json` is already keyed by account (`owner`, `peer`,
+and now `third`, `fourth`) and `accounts.mjs` reads it generically - it has no notion of there being
+two. The names should be keyed the same way, `DISPLAY_NAME_OF[key]`, with `OWNER_NAME`/`PEER_NAME`
+derived from it so no call site moves; and `peerNameFor` should resolve the device through
+`ACCOUNT_OF`, return the counterpart for the two-party pair, and **THROW** for a device whose
+counterpart is not defined, naming `displayNameFor(key)` as the thing to call instead. A rig that
+refuses is a rig that can be extended; one that guesses cannot.
+
+**AND THERE IS A SECOND HALF, WHICH IS WHY THIS IS P2 RATHER THAN P3.** `peerNameFor` is LOGIC, and
+it lives in `names.mjs`, which is **gitignored** - so it is not reviewable, not testable, and not
+carried by the handoff bundle. The split the file's own docblock argues for is SECRETS out of tree;
+what is actually out of tree is secrets AND the derivations over them. Inverting it is cheap: a
+machine-local `values.mjs` holding only values, and a COMMITTED `names.mjs` that re-exports it and
+adds the derivations, so every call site keeps the same specifier and the helpers finally get a
+test. The cost is one renamed file on each machine that already has a rig, which is why it is
+recorded rather than done in passing.
+
+**WHAT IS OWED TO USE THE NEW ACCOUNTS AT ALL** is in the first-contact P1 above: a first sign-in to
+materialise each Canari user row and its display name, then a Chrome profile, `PORTS`, `ORIGIN` and
+`ACCOUNT_OF` entry per device.
+
 
 ### P3 - a check run BY HAND can measure a bundle older than the build it stamps, and nothing refuses it (measured 2026-09-05)
 
