@@ -17,9 +17,10 @@
  * element is claiming a place in the window, and that is a claim against every other layer.
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { svelteFiles, withoutComments } from './markupSources';
 
 const src = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const cssPath = join(src, 'app.css');
@@ -32,26 +33,6 @@ function readLadder(): { name: string; value: number }[] {
     rungs.push({ name: match[1], value: Number(match[2]) });
   }
   return rungs;
-}
-
-function svelteFiles(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) svelteFiles(full, out);
-    else if (entry.endsWith('.svelte')) out.push(full);
-  }
-  return out;
-}
-
-/**
- * Strips comments, so a rung named in prose is not read as a call site.
- *
- * Both kinds: `<!-- -->` in markup and `/* *\/` in the script block. The ladder is DISCUSSED in
- * several docblocks - `+layout.svelte` explains which rung its banner column takes - and a test
- * that failed on the explanation would be a test that punishes documenting the rule.
- */
-function withoutComments(source: string): string {
-  return source.replace(/<!--[\s\S]*?-->/g, '').replace(/\/\*[\s\S]*?\*\//g, '');
 }
 
 describe('the layer ladder', () => {

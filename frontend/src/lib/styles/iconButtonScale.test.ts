@@ -30,9 +30,10 @@
  * unswept button in one of these files fails, and so does an entry whose buttons have gone.
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { svelteFiles, withoutComments } from './markupSources';
 
 const src = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const cssPath = join(src, 'app.css');
@@ -91,15 +92,6 @@ const BOXED_CLASSES = [
   'chat-composer-send-button',
   'chat-search-action',
 ];
-
-function svelteFiles(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) svelteFiles(full, out);
-    else if (entry.endsWith('.svelte')) out.push(full);
-  }
-  return out;
-}
 
 const ALL_FILES = svelteFiles(join(src, 'lib')).concat(svelteFiles(join(src, 'routes')));
 
@@ -173,7 +165,7 @@ function buttonsIn(source: string): ButtonTag[] {
 const MARK = '@@ICON@@';
 function isIconOnly(body: string): boolean {
   let s = body;
-  s = s.replace(/<!--[\s\S]*?-->/g, '');
+  s = withoutComments(s);
   s = s.replace(/<svg\b[\s\S]*?<\/svg>/g, MARK);
   s = s.replace(/<[A-Z][\w.]*\b[^>]*\/>/g, MARK);
   s = s.replace(/<span\b[^>]*sr-only[^>]*>[\s\S]*?<\/span>/g, '');
@@ -227,8 +219,8 @@ describe('the icon-button box', () => {
   it('declares exactly two sizes, and a 44px touch form of the larger one', () => {
     // COMMENTS OUT FIRST. The block above `.ui-icon-button` explains the 2.25rem the composer used
     // to declare, and a rule about declared widths that counts the ones in its own explanation is
-    // measuring prose. `utilityScale.test.ts` next door strips them for the same reason.
-    const css = readFileSync(cssPath, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    // measuring prose - it reported a fifth size that did not exist until this line was added.
+    const css = withoutComments(readFileSync(cssPath, 'utf8'));
     const widths = [...css.matchAll(/\.ui-icon-button[^{]*\{[^}]*?width:\s*([\d.]+rem)/g)].map(
       (m) => m[1]
     );
