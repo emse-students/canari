@@ -5714,7 +5714,7 @@ alone, so it bounds the leak at 84 days and repays none of the balance. **That i
 NOTIF-1b's warm-up at 19 992 ms, and no prekey fix will move it.** Reclaiming the store is a separate
 piece of work from stopping the churn, and only the second one is done.
 
-#### THE COMPOSITION WAS WEIGHED ON 2026-09-09, AND BOTH CAUSES ARE NOW FIXED - THE BALANCE IS NOT
+#### WHAT IS LEFT IS THE BALANCE: 3053 BUNDLES THAT CANNOT SAFELY BE DROPPED, DRAINING BY THEIR OWN 84-DAY LIFETIME
 
 *The blob's composition is a hypothesis until it is weighed, and no prune may be written before it
 is.* `state_composition` said `KeyPackage 3051x` and stopped there, which is the number every
