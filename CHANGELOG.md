@@ -11,6 +11,23 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a release that never reached production used to report itself shipped
+
+Two versions were published, announced, and served to nobody. Production kept running the version
+from five days earlier, and the only reason anybody noticed is that the next deployment broke.
+
+The cause is narrow and the design around it is right: production is only updated once both app
+stores have accepted the same version, so that a release a store refuses is never served. When a
+store arm does not succeed, the deployment step is skipped - and a skipped step does not make a
+release fail. The run went green over a release that had not shipped.
+
+A release now ends by asking production what it is actually serving, and says so loudly when the
+answer is not the version just published. Nothing was weakened to do it: the deployment still
+waits for both stores, nothing depends on the new check, and it deploys and undoes nothing. It
+reads the record the deployment writes on the machine itself rather than the outcome of the step
+that was supposed to write it - which is the same answer right up until a deployment succeeds and
+fails to record itself, and that case is one of the seven the check is tested against.
+
 ### Security - the social feed was readable by anyone, with no account at all
 
 The list of posts, the search, a single post and its linked agenda entry answered **any request**,

@@ -346,6 +346,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/backlog-closed.test.mjs
 	@bun .github/scripts/tests/codeql-category.test.mjs
 	@bun .github/scripts/tests/declared-duplicates.test.mjs
+	@bash .github/scripts/tests/release-shipped.test.sh
 	@bun .github/scripts/tests/recipe-covers-tests.test.mjs
 	@bun .github/scripts/tests/shellcheck-scope.test.mjs
 	@bun .github/scripts/tests/claude-md-cap.test.mjs
