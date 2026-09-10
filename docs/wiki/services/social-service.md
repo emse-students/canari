@@ -544,6 +544,45 @@ only the post's **author** (so scheduling does not hide a post from whoever wrot
 admin. Everyone else gets 404, not 403: the existence of an unpublished post is itself the thing to
 hide. Pinned by `posts.service.scheduling.spec.ts`.
 
+### Who may READ the feed, and why the edge check was not one
+
+`FeedAudienceGuard` (`posts/feed-audience.guard.ts`) sits on the four read endpoints - `GET
+/api/posts`, `/search`, `/:postId`, `/:postId/calendar-link` - paired with `NginxAuthGuard` and in
+that order. `health` is deliberately outside it.
+
+**Until 2026-09-10 there was no server-side gate at all**, and the reason it survived is worth
+keeping. `/api/posts` carries `auth_request /internal/auth/verify` in the edge config, which is
+exactly what an access check looks like; reading that block is what convinced two earlier passes
+the endpoint was protected. But `/api/auth/verify` answers **200 for a logged-out caller** as well,
+carrying `x-logged-in: false` so signed-out pages can render, and nginx treats any 2xx as
+permission granted. Measured that day: an anonymous `GET /api/posts?limit=1` returned 200 with post
+bodies. **A gate is only a gate if it can say no.**
+
+The guard asks the database and ignores `x-global-admin`, though that header is trustworthy.
+Admins are already inside the audience predicate, so reading the header would state half the rule a
+second time in a second place - the exact shape of the original defect - and `formation` is not in
+the JWT, so the query is needed regardless.
+
+| Caller | Answer |
+| --- | --- |
+| no identity | **401**, from `NginxAuthGuard`, before this guard runs |
+| `formation = 'ICM'` | 200 |
+| `admin = true` | 200 |
+| neither | **403** |
+
+403 rather than 404: the client already redirects a non-ICM user away from `/posts`, so a
+distinguishable refusal is what lets the two agree.
+
+**The predicate lives in `feed-audience.ts` and the parentheses in `IS_FEED_AUDIENCE_SQL` are
+load-bearing.** `AND` binds tighter than `OR`, so `WHERE id = $1 AND formation = 'ICM' OR admin =
+true` parses as `(id = $1 AND formation = 'ICM') OR (admin = true)` - true for every admin row
+whoever asked. Measured against the local copy of production with an id belonging to nobody: **4
+rows without the brackets, 0 with them**, the four being the school's four administrators. A
+fragment meant to be combined has to say so, which is why the combining lives beside it.
+
+**This closes the feed and not the class.** Sixteen edge locations carry the same `auth_request`,
+and `/api/presence` is a second confirmed hole - see [backlog](../backlog.md).
+
 ### A post is announced once, by a sweeper, and the column is the whole mechanism
 
 Until 2026-09-10 **no notification existed for a publication**. `post_notifications` carried only

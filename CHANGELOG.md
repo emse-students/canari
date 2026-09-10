@@ -11,6 +11,32 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Security - the social feed was readable by anyone, with no account at all
+
+The list of posts, the search, a single post and its linked agenda entry answered **any request**,
+including one from someone with no Canari account and no session. The rule about who may see the
+feed - students of one programme, plus administrators - had only ever been written in the app, so
+the app obeyed it and the server had never been told.
+
+What made this hard to notice is that the entry point *looked* protected. Requests for the feed do
+pass through an authentication step, and that step is what a reader checks. But its job is to work
+out **who** you are, not **whether** you may continue - it answers "nobody, and that's fine" for a
+signed-out visitor, so pages can render for people who have not logged in. Everything behind it was
+therefore only as protected as it made itself, and the feed had made itself not at all. A check
+that cannot refuse is not a check.
+
+The four ways in now ask the question properly, against the same single definition of the audience
+the notification work introduced the same day, so there is still one statement of the rule on each
+side rather than a third copy. Someone outside the audience is refused; a visitor with no account
+is refused earlier still; the service's health endpoint stays open, as it must.
+
+Two things are recorded rather than implied. **The same authentication step fronts fifteen other
+areas of the app**, and it can refuse in none of them - each has to be checked on its own, and one
+already has a confirmed smaller leak: **whether a given person is currently online** can be read
+without an account. Neither is fixed here. And the exposure was measured on a local copy of
+production; production itself was not probed.
+
+
 ### Added - nobody was ever told about a post, and now they are
 
 Canari notified you when somebody reacted to your post, replied to your comment or mentioned you.

@@ -13,6 +13,7 @@ import {
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
+import { FeedAudienceGuard } from './feed-audience.guard';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { PostsService } from './posts.service';
 import { PostInteractionsService } from './post-interactions.service';
@@ -89,6 +90,7 @@ export class PostsController {
   }
 
   /** Returns posts matching the given search query. */
+  @UseGuards(NginxAuthGuard, FeedAudienceGuard)
   @Get('search')
   searchPosts(
     @Query('q') q: string,
@@ -106,6 +108,7 @@ export class PostsController {
   }
 
   /** Returns a paginated list of posts for the requested feed. */
+  @UseGuards(NginxAuthGuard, FeedAudienceGuard)
   @Get()
   listPosts(
     @Query() query: ListPostsQueryDto,
@@ -174,6 +177,7 @@ export class PostsController {
   }
 
   /** Association agenda entry linked to this post (same association), if configured. */
+  @UseGuards(NginxAuthGuard, FeedAudienceGuard)
   @Get(':postId/calendar-link')
   async getPostCalendarLink(@Param('postId') postId: string) {
     const linkedEvent = await this.associationsService.findCalendarEventByLinkedPost(postId);
@@ -184,6 +188,7 @@ export class PostsController {
    * Returns a single post by its ID. Global admins may load moderation-hidden posts; the author
    * may load their own post before its scheduled publication date, nobody else can.
    */
+  @UseGuards(NginxAuthGuard, FeedAudienceGuard)
   @Get(':postId')
   getPost(
     @Param('postId') postId: string,
