@@ -1,4 +1,4 @@
-.PHONY: lint-ci-scripts check-services all install install-node install-bun install-rust install-oxvelte install-wasm-pack install-frontend install-services install-hooks setup-env setup-env-prod local-env dump-prod production production-check build-frontend reload-services test test-gateway test-history test-frontend test-harness test-ci-scripts bench-mls clean run-ci lint-frontend
+.PHONY: lint-ci-scripts check-services all install install-node install-bun install-rust install-oxvelte install-wasm-pack install-frontend install-services install-hooks setup-env setup-env-prod local-env dump-prod production production-check build-frontend reload-services test test-gateway test-history test-frontend test-android test-harness test-ci-scripts bench-mls clean run-ci lint-frontend
 
 # Cible par défaut : installation complète et déploiement LOCAL
 .DEFAULT_GOAL := all
@@ -348,6 +348,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/codeql-category.test.mjs
 	@bun .github/scripts/tests/declared-duplicates.test.mjs
 	@bun .github/scripts/tests/recipe-covers-tests.test.mjs
+	@bash .github/scripts/tests/android-unit-tests.test.sh
 	@bun tools/app-store/submit.test.mjs
 	@bun tools/store-divergence/divergence.test.mjs
 
@@ -357,6 +358,15 @@ test-ci-scripts: lint-ci-scripts
 # the 29 the backlog recorded on 2026-09-04 - the drift the entry predicted, invisible because
 # nothing was counting. All 38 are gone and this line is why the 39th cannot arrive silently.
 # `--deny-warnings` on purpose: a gate that only warns is a gate its reader learns to scroll past.
+# THE ANDROID UNIT TESTS, WHICH NOTHING RAN UNTIL 2026-09-10.
+# `PushDecryptLadderTest.kt` is a JUnit suite over the FCM decrypt ladder, and no workflow and
+# no target here invoked Gradle, so its five assertions had never executed anywhere. `ci.yml`
+# runs this behind a path filter on `gen/android`; this target is the same script, for a human.
+# Needs a JDK and an Android SDK (ANDROID_HOME), which is why it is NOT part of `make test`.
+test-android:
+	@echo "${BLUE}Android unit tests...${RESET}"
+	@bash .github/scripts/android-unit-tests.sh
+
 test-harness:
 	@echo "${BLUE}🧪 Harness self-tests…${RESET}"
 	@bunx oxlint -c tools/cross-client-harness/.oxlintrc.json --deny-warnings tools/cross-client-harness

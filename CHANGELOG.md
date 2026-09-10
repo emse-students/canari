@@ -11,6 +11,27 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Added - the Android tests that had never run, and proof that they ran
+
+Internal. A test suite covering how a push notification recovers when a message cannot be
+decrypted on the phone - the behaviour hardest to observe on that platform - had never executed on
+any machine since the day it was written. Nothing invoked it: the release pipeline builds and
+signs the app, and the test command runs everything except the native code. Five assertions that
+looked like coverage and were not, which is worse than an area everybody knows is unguarded.
+
+They run on every change to the Android tree now, and they pass.
+
+**The obvious way to run them would have run nothing.** The natural command matches no task in the
+app module, because the Android project splits into one variant per processor architecture. It
+exits successfully having done nothing at all - measured, before the fix: a green build, sixteen
+seconds, zero tests. So the check does not trust the build's exit code: it clears the previous
+results, runs the suite, and then reads the report. No report, or a report with no tests in it,
+fails and explains why.
+
+Placing it on every change rather than at release time was a measurement, not a preference: a cold
+run takes thirty-one seconds.
+
+
 ### Fixed - a peer could have written a line of Canari's own log
 
 Six open security alerts, low severity and higher consequence than that sounds. A log entry

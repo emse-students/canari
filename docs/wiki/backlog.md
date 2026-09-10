@@ -1036,33 +1036,40 @@ the half that COULD be committed already was.
 **Do not "fix" the remainder by making the check non-blocking or by removing the tool** - it is
 already advisory, and it is the thing that reported the high-severity alert this entry came from.
 
-### P2 - the Android unit tests are never run by anything, so one suite has been decorative since it was written (measured 2026-09-07)
+### P3 - the Android unit tests run now, and the obvious way to run them would have run NOTHING (closed 2026-09-10)
 
-`frontend/src-tauri/gen/android/app/src/test/java/fr/emse/canari/PushDecryptLadderTest.kt` is a real
-JUnit suite over the background decrypt ladder - the order the FCM service tries its recoveries in,
-which is MLS behaviour on the platform where MLS defects are hardest to see. **No workflow and no
-Makefile target invokes Gradle's unit tests.** `android.yml` builds and signs; `make test` runs the
-gateway, delivery, frontend, harness and CI-script suites and nothing native. So the assertions in
-that file have never executed, on any machine, since the day they were committed.
+`frontend/src-tauri/gen/android/app/src/test/java/fr/emse/canari/PushDecryptLadderTest.kt` is a
+JUnit suite over the order the FCM service tries its recoveries in - MLS behaviour on the platform
+where MLS defects are hardest to see - and no workflow and no Makefile target invoked Gradle's unit
+tests, so its assertions had never executed on any machine. **First run ever: 2026-09-10, five
+tests, all passing.**
 
-**What makes it a P2 rather than a P3.** A test nobody runs is not merely useless: it is read as
-coverage. The push ladder LOOKS guarded, so the next person to change it reasonably believes a gate
-is watching - which is worse than an area everybody knows is unguarded. The same trap covers every
-`.kt` and every `.swift` in the two native trees.
+**THE REMEDY THIS ENTRY PROPOSED WOULD HAVE BEEN A SECOND INSTANCE OF THE SAME DEFECT.** It said
+"`./gradlew testDebugUnitTest` is a few lines". That command **matches no task in the `app`
+module**: Tauri's Android template gives it ABI product flavours, so its unit-test tasks are
+`testUniversalDebugUnitTest`, `testArm64DebugUnitTest`, `testArmDebugUnitTest`,
+`testX86DebugUnitTest` and `testX86_64DebugUnitTest`. Measured before the fix: `BUILD SUCCESSFUL in
+16s`, **zero `:app:` tasks, zero tests**. A gate that green is exactly the "read as coverage"
+failure this entry was written about, one layer up.
 
-**What was done instead, on 2026-09-07, and why it is not the fix.** The foreground-handover guard
-found that day needed a gate, and it got one in `frontend/src/lib/mobile/pushForegroundHandover.test.ts`
-- vitest reading the Kotlin SOURCE, the convention `nativeStrings` and `androidFcmManifest` already
-use, and one that actually runs. That reaches text, never behaviour: it can prove a call is written
-and never that it is reached.
+So `android-unit-tests.sh` does not treat the Gradle exit code as the answer. It deletes the
+results directory first (a stale report is not this run's evidence), runs the flavoured task, and
+then **reads the JUnit XML**: no report, or a report with no tests in it, fails and says why. Seven
+assertions in `android-unit-tests.test.sh` drive it against a fake `gradlew`, because the
+interesting case - green and empty - is one a real run does not produce on demand.
 
-**The remedy, and its one real question.** `./gradlew testDebugUnitTest` in `android.yml` (or a
-`make test-android`) is a few lines. The question is where it belongs: `android.yml` is a
-`workflow_call` library reached only from `release.yml`, so a unit test placed there runs at RELEASE
-time - far too late to refuse a merge. Putting it in `ci.yml` means a JDK and a Gradle cache on every
-pull request that touches the native tree, which is the cost to weigh. Measure the cold run first;
-if it is under a couple of minutes behind the existing `changed native files` detector, it belongs
-in `ci.yml` beside the other suites, and `android.yml` keeps building only.
+**WHERE IT RUNS, and the measurement decided it.** The open question was `android.yml` (a
+`workflow_call` library reached only from `release.yml`, so a unit test there runs at RELEASE time,
+far too late to refuse a merge) against `ci.yml` (a JDK and a Gradle cache on pull requests that
+touch the native tree). Measured on 2026-09-10 with the daemon stopped, the build cache off and
+`app/build` and `.gradle` deleted: **31 seconds cold, 8 seconds warm**. Well inside the "couple of
+minutes" this entry set as the bar, so it is a `ci.yml` job behind a `gen/android` path filter,
+inside `ci-passed`, and `android.yml` keeps building only. `make test-android` runs the same script
+for a human.
+
+**WHAT IS STILL UNGUARDED, and it is the honest remainder**: every `.swift` in the iOS tree. The
+same trap covers it - a test file nobody runs reads as coverage - and nothing here has measured
+whether an equivalent suite even exists.
 
 ### P2 - a 7.3 TB RAID1 now has a sensor and still has no report, and nothing on that host can reach a human (measured 2026-09-03)
 
