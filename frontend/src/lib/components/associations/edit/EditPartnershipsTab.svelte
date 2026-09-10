@@ -1,24 +1,31 @@
 <script lang="ts">
+  /**
+   * The partnerships an association offers, and the ONE place they are created and changed.
+   *
+   * WHAT THIS USED TO BE, and why it was reported (user, 2026-09-10: *"pas tres intuitive, et qui
+   * ne permet pas d'editer un partenariat"*). Creating one was a flat form over eight fields.
+   * Changing one afterwards was a toggle button, a chevron whose LABEL changed meaning by mode,
+   * and a one-field badge form buried inside the expander - three fields between them. The other
+   * six were settable once and frozen for ever, so fixing a typo in a title meant deleting the
+   * partnership and recreating it, which destroys the claim ledger with it.
+   *
+   * THE FORM IS `PartnershipEditor` AND IT IS THE SAME COMPONENT IN BOTH FLOWS. This file is now
+   * the LIST: what exists, what state each one is in, and the three list-level actions - edit,
+   * activate/deactivate, delete. Anything that edits a field lives in the editor, once.
+   */
   import { onMount } from 'svelte';
   import {
     listAssociationPartnershipsForManage,
-    createPartnershipCard,
     updatePartnershipCard,
     deletePartnershipCard,
-    addPartnershipCodes,
-    listPartnershipClaims,
-    uploadPartnershipIcon,
-    deletePartnershipIcon,
     type Association,
     type ManagedPartnershipCard,
     type PartnershipClaimMode,
-    type PartnershipClaimRow,
   } from '$lib/associations/api';
   import { showConfirm } from '$lib/stores/confirm.svelte';
-  import { Plus, Trash2, ChevronDown, Handshake } from '@lucide/svelte';
-  import Textarea from '$lib/components/ui/Textarea.svelte';
+  import { Plus, Trash2, Pencil, Handshake } from '@lucide/svelte';
   import CardTile from '$lib/components/shared/CardTile.svelte';
-  import CardIconEditor from '$lib/components/shared/CardIconEditor.svelte';
+  import PartnershipEditor from './PartnershipEditor.svelte';
   import { PARTNERSHIP_FALLBACK_ICON } from '$lib/utils/cardIcons';
   import { generateAvatarColor } from '$lib/utils/avatar';
   import { m } from '$lib/paraglide/messages';
@@ -35,23 +42,18 @@
   let cards = $state<ManagedPartnershipCard[]>([]);
   let cardsLoading = $state(false);
   let cardsError = $state('');
-  let showForm = $state(false);
-  let saving = $state(false);
 
-  let newTitle = $state('');
-  let newDescription = $state('');
-  let newLink = $state('');
-  let newClaimMode = $state<PartnershipClaimMode>('code_pool');
-  let newSharedCode = $state('');
-  let newStaticText = $state('');
-  let newMembersOnly = $state(false);
-
-  let expandedCardId = $state<string | null>(null);
-  let codesPaste = $state('');
-  let savingCodes = $state<string | null>(null);
-  let claimsByCard = $state<Record<string, PartnershipClaimRow[]>>({});
-  let claimsLoading = $state<string | null>(null);
-  let savingBadge = $state<string | null>(null);
+  /**
+   * Which card the editor is open on: a card id, `'new'`, or `null` for closed.
+   *
+   * ONE piece of state for both flows, because they are one flow. It is a card ID rather than the
+   * card object so that a save which replaces the object in `cards` does not close the editor -
+   * which is what lets a CREATE hand straight over to editing the card it just made.
+   */
+  let editing = $state<string | null>(null);
+  const editingCard = $derived(
+    editing === null || editing === 'new' ? null : (cards.find((c) => c.id === editing) ?? null)
+  );
 
   onMount(loadCards);
 
@@ -67,44 +69,25 @@
     }
   }
 
-  function resetForm() {
-    newTitle = '';
-    newDescription = '';
-    newLink = '';
-    newClaimMode = 'code_pool';
-    newSharedCode = '';
-    newStaticText = '';
-    newMembersOnly = false;
-    showForm = false;
+  /** Every write the editor makes lands here, so the list never re-fetches to stay honest. */
+  function handleSaved(card: ManagedPartnershipCard, created: boolean) {
+    cards = created ? [...cards, card] : cards.map((c) => (c.id === card.id ? card : c));
+    // The editor stays open on the new card: the icon and the codes need it to exist, and sending
+    // the user back to the list to find what they just made is the second journey this removes.
+    if (created) editing = card.id;
   }
 
-  async function handleCreate() {
-    if (!newTitle.trim()) return;
-    saving = true;
-    cardsError = '';
-    try {
-      await createPartnershipCard(asso.id, {
-        title: newTitle.trim(),
-        description: newDescription.trim() || undefined,
-        link: newLink.trim() || undefined,
-        claimMode: newClaimMode,
-        sharedCode: newClaimMode === 'shared_code' ? newSharedCode.trim() : undefined,
-        staticText: newClaimMode === 'text' ? newStaticText.trim() : undefined,
-        membersOnly: newMembersOnly,
-      });
-      resetForm();
-      await loadCards();
-    } catch (e) {
-      cardsError = e instanceof Error ? e.message : 'Error';
-    } finally {
-      saving = false;
-    }
-  }
-
+  /**
+   * The list-level shortcut for hiding an offer, which the editor also carries.
+   *
+   * TWO TRIGGERS, ONE WRITE - not two implementations. Hiding an expired offer fast is a real need
+   * and does not deserve opening a form, while an editor that omitted the field would be the same
+   * "where do I change this" the rest of this change removes.
+   */
   async function handleToggleActive(card: ManagedPartnershipCard) {
     try {
-      await updatePartnershipCard(asso.id, card.id, { isActive: !card.isActive });
-      cards = cards.map((c) => (c.id === card.id ? { ...c, isActive: !card.isActive } : c));
+      const updated = await updatePartnershipCard(asso.id, card.id, { isActive: !card.isActive });
+      cards = cards.map((c) => (c.id === card.id ? { ...c, ...updated } : c));
     } catch (e) {
       cardsError = e instanceof Error ? e.message : 'Error';
     }
@@ -121,77 +104,10 @@
     try {
       await deletePartnershipCard(asso.id, card.id);
       cards = cards.filter((c) => c.id !== card.id);
+      if (editing === card.id) editing = null;
     } catch (e) {
       cardsError = e instanceof Error ? e.message : 'Error';
     }
-  }
-
-  async function toggleExpanded(card: ManagedPartnershipCard) {
-    if (expandedCardId === card.id) {
-      expandedCardId = null;
-      return;
-    }
-    expandedCardId = card.id;
-    codesPaste = '';
-    if (!claimsByCard[card.id]) {
-      claimsLoading = card.id;
-      try {
-        claimsByCard = {
-          ...claimsByCard,
-          [card.id]: await listPartnershipClaims(asso.id, card.id),
-        };
-      } catch (e) {
-        cardsError = e instanceof Error ? e.message : 'Error';
-      } finally {
-        claimsLoading = null;
-      }
-    }
-  }
-
-  async function handleAddCodes(card: ManagedPartnershipCard) {
-    const codes = codesPaste
-      .split('\n')
-      .map((c) => c.trim())
-      .filter(Boolean);
-    if (codes.length === 0) return;
-    savingCodes = card.id;
-    cardsError = '';
-    try {
-      const { totalCodes } = await addPartnershipCodes(asso.id, card.id, codes);
-      cards = cards.map((c) => (c.id === card.id ? { ...c, totalCodes } : c));
-      codesPaste = '';
-    } catch (e) {
-      cardsError = e instanceof Error ? e.message : 'Error';
-    } finally {
-      savingCodes = null;
-    }
-  }
-
-  async function handleSaveBadge(card: ManagedPartnershipCard, form: HTMLFormElement) {
-    const fd = new FormData(form);
-    const badgeTextRaw = String(fd.get('badgeText') ?? '').trim();
-    savingBadge = card.id;
-    cardsError = '';
-    try {
-      const updated = await updatePartnershipCard(asso.id, card.id, {
-        badgeText: badgeTextRaw || null,
-      });
-      cards = cards.map((c) => (c.id === card.id ? { ...c, ...updated } : c));
-    } catch (e) {
-      cardsError = e instanceof Error ? e.message : 'Error';
-    } finally {
-      savingBadge = null;
-    }
-  }
-
-  async function handleUploadCardIcon(card: ManagedPartnershipCard, file: File) {
-    const updated = await uploadPartnershipIcon(asso.id, card.id, file);
-    cards = cards.map((c) => (c.id === card.id ? { ...c, ...updated } : c));
-  }
-
-  async function handleRemoveCardIcon(card: ManagedPartnershipCard) {
-    const updated = await deletePartnershipIcon(asso.id, card.id);
-    cards = cards.map((c) => (c.id === card.id ? { ...c, ...updated } : c));
   }
 
   function modeLabel(mode: PartnershipClaimMode): string {
@@ -216,7 +132,7 @@
     </div>
     <button
       type="button"
-      onclick={() => (showForm = !showForm)}
+      onclick={() => (editing = editing === 'new' ? null : 'new')}
       class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition-colors"
     >
       <Plus size={16} />
@@ -230,114 +146,17 @@
     </div>
   {/if}
 
-  {#if showForm}
-    <form
-      class="border-cn-border bg-cn-bg space-y-4 rounded-xl border p-5"
-      onsubmit={(e) => {
-        e.preventDefault();
-        void handleCreate();
-      }}
-    >
-      <h3 class="text-text-main text-sm font-bold">{m.asso_partnership_form_title()}</h3>
-
-      <div class="space-y-1">
-        <label for="new-partnership-title" class="text-text-muted text-xs font-semibold"
-          >{m.asso_partnership_title_label()}</label
-        >
-        <input
-          id="new-partnership-title"
-          type="text"
-          bind:value={newTitle}
-          required
-          class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
-        />
-      </div>
-
-      <Textarea
-        id="new-partnership-description"
-        bind:value={newDescription}
-        rows={2}
-        label={m.asso_partnership_description_label()}
+  <!-- Keyed on the identity being edited, so switching cards reseeds the form rather than
+       carrying the previous card's values into it. -->
+  {#if editing !== null}
+    {#key editing}
+      <PartnershipEditor
+        {asso}
+        card={editingCard}
+        onSaved={handleSaved}
+        onClose={() => (editing = null)}
       />
-
-      <div class="space-y-1">
-        <label for="new-partnership-link" class="text-text-muted text-xs font-semibold"
-          >{m.asso_partnership_link_label()}</label
-        >
-        <input
-          id="new-partnership-link"
-          type="url"
-          bind:value={newLink}
-          placeholder={m.asso_partnership_link_placeholder()}
-          class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
-        />
-      </div>
-
-      <div class="space-y-1">
-        <span class="text-text-muted text-xs font-semibold">{m.asso_partnership_mode_label()}</span>
-        <div class="flex flex-wrap gap-3">
-          {#each [['code_pool', m.asso_partnership_mode_code_pool()], ['shared_code', m.asso_partnership_mode_shared_code()], ['text', m.asso_partnership_mode_text()]] as [value, label] (value)}
-            <label class="flex cursor-pointer items-center gap-2 text-sm">
-              <input
-                type="radio"
-                name="claimMode"
-                {value}
-                checked={newClaimMode === value}
-                onchange={() => (newClaimMode = value as PartnershipClaimMode)}
-              />
-              {label}
-            </label>
-          {/each}
-        </div>
-      </div>
-
-      {#if newClaimMode === 'shared_code'}
-        <div class="space-y-1">
-          <label for="new-partnership-shared-code" class="text-text-muted text-xs font-semibold"
-            >{m.asso_partnership_shared_code_label()}</label
-          >
-          <input
-            id="new-partnership-shared-code"
-            type="text"
-            bind:value={newSharedCode}
-            required
-            class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
-          />
-        </div>
-      {:else if newClaimMode === 'text'}
-        <Textarea
-          id="new-partnership-static-text"
-          bind:value={newStaticText}
-          rows={2}
-          label={m.asso_partnership_static_text_label()}
-        />
-      {:else}
-        <p class="text-text-muted text-xs">{m.asso_partnership_codes_after_create_hint()}</p>
-      {/if}
-
-      <label class="flex cursor-pointer items-center gap-2 text-sm">
-        <input type="checkbox" bind:checked={newMembersOnly} class="rounded" />
-        {m.asso_partnership_members_only_label()}
-      </label>
-
-      <div class="flex items-center gap-3 pt-2">
-        <button
-          type="submit"
-          disabled={saving ||
-            !newTitle.trim() ||
-            (newClaimMode === 'shared_code' && !newSharedCode.trim()) ||
-            (newClaimMode === 'text' && !newStaticText.trim())}
-          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-5 py-2.5 text-sm font-bold disabled:opacity-50"
-        >
-          {saving ? m.asso_partnership_creating() : m.asso_partnership_create_button()}
-        </button>
-        <button
-          type="button"
-          onclick={resetForm}
-          class="text-text-muted hover:text-text-main text-sm">{m.common_cancel_button()}</button
-        >
-      </div>
-    </form>
+    {/key}
   {/if}
 
   {#if cardsLoading}
@@ -351,7 +170,7 @@
   {:else}
     <ul class="grid gap-4 sm:grid-cols-2">
       {#each cards as card (card.id)}
-        <li class={expandedCardId === card.id ? 'sm:col-span-2' : ''}>
+        <li>
           <CardTile
             iconUrl={card.iconUrl}
             fallbackIcon={PARTNERSHIP_FALLBACK_ICON}
@@ -392,16 +211,11 @@
               <div class="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  onclick={() => toggleExpanded(card)}
+                  onclick={() => (editing = editing === card.id ? null : card.id)}
                   class="border-cn-border inline-flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-(--cn-surface)"
                 >
-                  {card.claimMode === 'code_pool'
-                    ? m.asso_partnership_codes_button()
-                    : m.asso_partnership_icon_button()}
-                  <ChevronDown
-                    size={12}
-                    class="transition-transform {expandedCardId === card.id ? 'rotate-180' : ''}"
-                  />
+                  <Pencil size={12} />
+                  {m.asso_partnership_edit_button()}
                 </button>
                 <button
                   type="button"
@@ -422,87 +236,6 @@
                 </button>
               </div>
             </div>
-
-            {#if expandedCardId === card.id}
-              <div class="border-cn-border/60 bg-cn-bg/20 space-y-4 border-t px-4 py-3">
-                <CardIconEditor
-                  iconUrl={card.iconUrl}
-                  fallbackIcon={PARTNERSHIP_FALLBACK_ICON}
-                  onUpload={(file) => handleUploadCardIcon(card, file)}
-                  onRemove={() => handleRemoveCardIcon(card)}
-                />
-
-                <form
-                  class="flex items-end gap-2"
-                  onsubmit={(e) => {
-                    e.preventDefault();
-                    void handleSaveBadge(card, e.currentTarget);
-                  }}
-                >
-                  <div class="flex-1 space-y-1">
-                    <label for="badge-text-{card.id}" class="text-text-muted text-xs font-semibold"
-                      >{m.asso_card_badge_label()}</label
-                    >
-                    <input
-                      id="badge-text-{card.id}"
-                      name="badgeText"
-                      type="text"
-                      maxlength="30"
-                      value={card.badgeText ?? ''}
-                      placeholder={m.asso_card_badge_placeholder()}
-                      class="border-cn-border w-full rounded-xl border bg-transparent px-3 py-2 text-sm"
-                    />
-                  </div>
-                  <button
-                    type="submit"
-                    disabled={savingBadge === card.id}
-                    class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-lg px-4 py-2 text-xs font-bold disabled:opacity-50"
-                  >
-                    {savingBadge === card.id ? m.common_saving_label() : m.common_save_button()}
-                  </button>
-                </form>
-
-                {#if card.claimMode === 'code_pool'}
-                  <div class="space-y-2">
-                    <Textarea
-                      id="codes-paste-{card.id}"
-                      bind:value={codesPaste}
-                      rows={4}
-                      label={m.asso_partnership_codes_paste_label()}
-                      placeholder={m.asso_partnership_codes_paste_placeholder()}
-                    />
-                    <button
-                      type="button"
-                      onclick={() => handleAddCodes(card)}
-                      disabled={savingCodes === card.id || !codesPaste.trim()}
-                      class="bg-cn-yellow text-cn-ink rounded-lg px-4 py-2 text-xs font-bold disabled:opacity-50"
-                    >
-                      {m.asso_partnership_codes_add_button()}
-                    </button>
-                  </div>
-
-                  <div class="space-y-1">
-                    <p class="text-text-main text-xs font-bold tracking-wide uppercase">
-                      {m.asso_partnership_claims_title()}
-                    </p>
-                    {#if claimsLoading === card.id}
-                      <p class="text-text-muted text-xs">{m.asso_partnership_claims_loading()}</p>
-                    {:else if (claimsByCard[card.id] ?? []).length === 0}
-                      <p class="text-text-muted text-xs">{m.asso_partnership_claims_empty()}</p>
-                    {:else}
-                      <ul class="space-y-1">
-                        {#each claimsByCard[card.id] as claim (claim.userId)}
-                          <li class="text-text-muted flex items-center justify-between text-xs">
-                            <span>{claim.firstName ?? ''} {claim.lastName ?? ''}</span>
-                            <span class="font-mono">{claim.code}</span>
-                          </li>
-                        {/each}
-                      </ul>
-                    {/if}
-                  </div>
-                {/if}
-              </div>
-            {/if}
           </CardTile>
         </li>
       {/each}

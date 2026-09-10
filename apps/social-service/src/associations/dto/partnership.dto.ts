@@ -55,6 +55,18 @@ export class CreatePartnershipCardDto {
   @IsBoolean()
   @IsOptional()
   membersOnly?: boolean;
+
+  /**
+   * Short decorative label shown as a pill on the card (e.g. "Nouveau", "Offre limitee").
+   *
+   * IT IS ACCEPTED HERE BECAUSE THE UPDATE DTO ACCEPTS IT, and a field that can only be set on the
+   * SECOND save is a field the create form cannot show - which is what made the manage screen two
+   * different shapes for one object. Nothing about a badge needs the card to exist first.
+   */
+  @IsString()
+  @IsOptional()
+  @MaxLength(30)
+  badgeText?: string;
 }
 
 /**

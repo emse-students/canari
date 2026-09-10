@@ -236,6 +236,39 @@ describe('PartnershipsService claiming, gating and mode validation', () => {
     });
   });
 
+  describe('create - badgeText', () => {
+    /**
+     * IT IS SETTABLE AT CREATION SINCE 2026-09-10, and the asymmetry it removes is the point: a
+     * field only `update` accepted was a field the create form could not show, which is what made
+     * the manage screen two different shapes for one object.
+     */
+    it('persists a badge given at creation', async () => {
+      const { service, cardRepo } = makeService();
+      await service.create('asso1', {
+        title: 'X',
+        claimMode: 'code_pool',
+        badgeText: 'Nouveau',
+      } as any);
+      expect(cardRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ badgeText: 'Nouveau' })
+      );
+    });
+
+    it('stores a blank or absent badge as null rather than an empty pill', async () => {
+      const { service, cardRepo } = makeService();
+      await service.create('asso1', { title: 'X', claimMode: 'code_pool', badgeText: '  ' } as any);
+      await service.create('asso1', { title: 'Y', claimMode: 'code_pool' } as any);
+      expect(cardRepo.create).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({ badgeText: null })
+      );
+      expect(cardRepo.create).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ badgeText: null })
+      );
+    });
+  });
+
   describe('update - badgeText', () => {
     it('persists badgeText, and clears it with null', async () => {
       const { service, cardRepo } = makeService();

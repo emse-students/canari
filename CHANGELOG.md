@@ -11,6 +11,30 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a partnership could be created and then never changed
+
+Reported by the user. An association could set up a partner offer - a title, a description, a
+link, how students claim it, whether it is reserved to members - and from that moment on could
+change almost none of it. A typo in the title, a partner's new address, a shared code that
+changed: the only way through was to DELETE the offer and make it again, which throws away the
+record of who already claimed a code.
+
+What could be changed afterwards was three things, and they were in three different places: a
+button on the card, a small form hidden behind an arrow, and the picture. The arrow even changed
+its label depending on the offer, so the same control did two different jobs. Creating and editing
+were not two views of one thing, they were two unrelated screens.
+
+**Now there is one form, and it is the same form both times.** Everything the offer has is in it,
+including the things that used to be scattered - the picture, the little coloured label, the
+codes, and who has claimed them. Creating an offer no longer closes the form and sends you back to
+a list to find what you just made: it stays open on the new offer, so adding its picture and its
+codes is the next thing in the same place.
+
+The one field that still cannot change is HOW an offer is claimed, because codes people already
+took could not be carried across. Rather than hiding it, the form shows it with the reason and
+says what to do instead.
+
+
 ### Added - the phone app's Rust dependencies get updated again
 
 Internal. The dependency robot has been unable to update the code that builds the mobile app since

@@ -165,6 +165,7 @@ export class PartnershipsService {
       sharedCode: dto.claimMode === 'shared_code' ? (dto.sharedCode ?? null) : null,
       staticText: dto.claimMode === 'text' ? (dto.staticText ?? null) : null,
       membersOnly: dto.membersOnly ?? false,
+      badgeText: dto.badgeText?.trim() || null,
     });
     return this.cardRepo.save(card);
   }
