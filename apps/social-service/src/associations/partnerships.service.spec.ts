@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Repository } from 'typeorm';
-import { PartnershipsService } from './partnerships.service';
+import { PARTNERSHIP_ERROR_CODES, PartnershipsService } from './partnerships.service';
 import { PartnershipCard } from './entities/partnership-card.entity';
 import { PartnershipCode } from './entities/partnership-code.entity';
 import { Association } from './entities/association.entity';
@@ -341,6 +341,79 @@ describe('PartnershipsService claiming, gating and mode validation', () => {
         'old-media',
         'Bearer token'
       );
+    });
+  });
+
+  /**
+   * THE CODE IS THE CONTRACT, AND THE SENTENCE IS NOT.
+   *
+   * Every refusal above is asserted by exception TYPE, which was the whole contract until
+   * 2026-09-10 - and a type is not enough to tell a client WHICH 400 it got. The shop therefore
+   * showed the server's English prose, and a student out of codes read "No codes left for this
+   * partnership" in a French page (user). The client now translates the code, so the code is
+   * load-bearing: renaming one silently turns a translated message back into the generic line.
+   */
+  describe('claimCard - every refusal names itself with a code', () => {
+    function codeOf(err: unknown): unknown {
+      return (err as { response?: { code?: unknown } }).response?.code;
+    }
+
+    it('PARTNERSHIP_NOT_FOUND when the card does not exist', async () => {
+      const { service, cardRepo } = makeService();
+      cardRepo.findOne.mockResolvedValue(null);
+
+      await expect(service.claimCard('missing', 'user1')).rejects.toMatchObject({
+        response: { code: PARTNERSHIP_ERROR_CODES.NOT_FOUND },
+      });
+    });
+
+    it('PARTNERSHIP_MEMBERS_ONLY when the caller is not a cotisant', async () => {
+      const { service, cardRepo, assoRepo, productsService } = makeService();
+      cardRepo.findOne.mockResolvedValue(card({ membersOnly: true }));
+      assoRepo.findOne.mockResolvedValue(asso());
+      productsService.isBuyerCotisant.mockResolvedValue(false);
+
+      await expect(service.claimCard('card1', 'user1')).rejects.toMatchObject({
+        response: { code: PARTNERSHIP_ERROR_CODES.MEMBERS_ONLY },
+      });
+    });
+
+    it('ASSOCIATION_NOT_FOUND when the owning association is gone', async () => {
+      const { service, cardRepo, assoRepo } = makeService();
+      cardRepo.findOne.mockResolvedValue(card({ membersOnly: true }));
+      assoRepo.findOne.mockResolvedValue(null);
+
+      await expect(service.claimCard('card1', 'user1')).rejects.toMatchObject({
+        response: { code: PARTNERSHIP_ERROR_CODES.ASSOCIATION_NOT_FOUND },
+      });
+    });
+
+    it('PARTNERSHIP_NO_CODES_LEFT when the pool is empty - the reported case', async () => {
+      const { service, cardRepo, codeRepo, manager } = makeService();
+      cardRepo.findOne.mockResolvedValue(card());
+      codeRepo.findOne.mockResolvedValue(null);
+      manager.query.mockResolvedValue([]);
+
+      await expect(service.claimCard('card1', 'user1')).rejects.toMatchObject({
+        response: { code: PARTNERSHIP_ERROR_CODES.NO_CODES_LEFT },
+      });
+    });
+
+    // Seven call sites throw "no such partnership" and they go through ONE builder, so the code
+    // cannot drift between them. This is the assertion that keeps the factoring honest.
+    it('uses the same code from a management path as from the claim path', async () => {
+      const { service, cardRepo } = makeService();
+      cardRepo.findOne.mockResolvedValue(null);
+
+      const fromClaim = await service
+        .claimCard('missing', 'user1')
+        .catch((e: unknown) => codeOf(e));
+      const fromUpdate = await service
+        .update('asso1', 'missing', {} as never)
+        .catch((e: unknown) => codeOf(e));
+
+      expect(fromClaim).toBe(PARTNERSHIP_ERROR_CODES.NOT_FOUND);
+      expect(fromUpdate).toBe(fromClaim);
     });
   });
 });

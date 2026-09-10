@@ -55,6 +55,37 @@ export interface PartnershipClaimRow {
  * code. See `claimPoolCode` for how the partial unique index on `(cardId, claimedByUserId)`
  * (migration 047) and `FOR UPDATE SKIP LOCKED` combine to provide both.
  */
+/**
+ * THE REFUSALS THIS SERVICE MAKES, AS CODES A CLIENT CAN ACT ON.
+ *
+ * The claim path used to throw four English sentences and nothing else, and the shop rendered
+ * whichever one came back verbatim - so a student out of luck read "No codes left for this
+ * partnership" in the middle of a French page (user, 2026-09-10). A sentence is for a developer
+ * reading a log; a CODE is what a client translates, and the two must not be the same string.
+ *
+ * Same convention as the delivery service's `DEVICE_REVOKED` / `DEVICE_LIMIT_REACHED`, which
+ * exists for the same reason and is the precedent here: the discriminator is the code in the
+ * body, never the prose beside it.
+ */
+export const PARTNERSHIP_ERROR_CODES = {
+  NOT_FOUND: 'PARTNERSHIP_NOT_FOUND',
+  ASSOCIATION_NOT_FOUND: 'ASSOCIATION_NOT_FOUND',
+  MEMBERS_ONLY: 'PARTNERSHIP_MEMBERS_ONLY',
+  NO_CODES_LEFT: 'PARTNERSHIP_NO_CODES_LEFT',
+} as const;
+
+/**
+ * One refusal for "no such partnership", built once rather than at each of its SEVEN call sites.
+ * Seven copies of a code is seven chances for one of them to drift, which is the defect this
+ * whole change is about wearing a different hat.
+ */
+function partnershipNotFound(): NotFoundException {
+  return new NotFoundException({
+    code: PARTNERSHIP_ERROR_CODES.NOT_FOUND,
+    message: 'Partnership not found',
+  });
+}
+
 @Injectable()
 export class PartnershipsService {
   private readonly logger = new Logger(PartnershipsService.name);
@@ -177,7 +208,7 @@ export class PartnershipsService {
     dto: UpdatePartnershipCardDto
   ): Promise<PartnershipCard> {
     const card = await this.cardRepo.findOne({ where: { id: cardId, associationId } });
-    if (!card) throw new NotFoundException('Partnership not found');
+    if (!card) throw partnershipNotFound();
     this.assertUpdateModeShape(card.claimMode, dto);
     Object.assign(card, dto);
     return this.cardRepo.save(card);
@@ -186,7 +217,7 @@ export class PartnershipsService {
   /** Deletes a partnership card. Its codes cascade-delete (FK, migration 047). Requires MANAGE_PARTNERSHIPS. */
   async delete(associationId: string, cardId: string): Promise<void> {
     const card = await this.cardRepo.findOne({ where: { id: cardId, associationId } });
-    if (!card) throw new NotFoundException('Partnership not found');
+    if (!card) throw partnershipNotFound();
     await this.cardRepo.remove(card);
   }
 
@@ -202,7 +233,7 @@ export class PartnershipsService {
     authorization: string | undefined
   ): Promise<PartnershipCard> {
     const card = await this.cardRepo.findOne({ where: { id: cardId, associationId } });
-    if (!card) throw new NotFoundException('Partnership not found');
+    if (!card) throw partnershipNotFound();
     if (!authorization?.startsWith('Bearer ')) {
       throw new BadRequestException('Missing authorization header');
     }
@@ -232,7 +263,7 @@ export class PartnershipsService {
     authorization: string | undefined
   ): Promise<PartnershipCard> {
     const card = await this.cardRepo.findOne({ where: { id: cardId, associationId } });
-    if (!card) throw new NotFoundException('Partnership not found');
+    if (!card) throw partnershipNotFound();
     const oldMediaId = card.iconMediaId;
     card.iconMediaId = null;
     card.iconUrl = null;
@@ -289,7 +320,7 @@ export class PartnershipsService {
     dto: AddPartnershipCodesDto
   ): Promise<{ added: number; totalCodes: number }> {
     const card = await this.cardRepo.findOne({ where: { id: cardId, associationId } });
-    if (!card) throw new NotFoundException('Partnership not found');
+    if (!card) throw partnershipNotFound();
     if (card.claimMode !== 'code_pool') {
       throw new BadRequestException('Codes can only be added to a code_pool partnership');
     }
@@ -318,7 +349,7 @@ export class PartnershipsService {
   /** Lists claimed codes for a `code_pool` card with claimant display names. Requires MANAGE_PARTNERSHIPS. */
   async listClaims(associationId: string, cardId: string): Promise<PartnershipClaimRow[]> {
     const card = await this.cardRepo.findOne({ where: { id: cardId, associationId } });
-    if (!card) throw new NotFoundException('Partnership not found');
+    if (!card) throw partnershipNotFound();
 
     const claims = await this.codeRepo.find({
       where: { cardId, claimedByUserId: Not(IsNull()) },
@@ -348,17 +379,25 @@ export class PartnershipsService {
   /** Claims a partnership card for a student: any logged-in user, gated only on `membersOnly`. */
   async claimCard(cardId: string, userId: string): Promise<PartnershipClaimResult> {
     const card = await this.cardRepo.findOne({ where: { id: cardId, isActive: true } });
-    if (!card) throw new NotFoundException('Partnership not found');
+    if (!card) throw partnershipNotFound();
 
     if (card.membersOnly) {
       const asso = await this.assoRepo.findOne({ where: { id: card.associationId } });
-      if (!asso) throw new NotFoundException('Association not found');
+      if (!asso) {
+        throw new NotFoundException({
+          code: PARTNERSHIP_ERROR_CODES.ASSOCIATION_NOT_FOUND,
+          message: 'Association not found',
+        });
+      }
       const isCotisant = await this.productsService.isBuyerCotisant(asso, userId);
       this.logger.debug(
         `[PARTNERSHIP] claim gate: card=${cardId.slice(0, 8)} user=${userId.slice(0, 8)} isCotisant=${isCotisant}`
       );
       if (!isCotisant) {
-        throw new ForbiddenException("This partnership is reserved to the association's cotisants");
+        throw new ForbiddenException({
+          code: PARTNERSHIP_ERROR_CODES.MEMBERS_ONLY,
+          message: "This partnership is reserved to the association's cotisants",
+        });
       }
     }
 
@@ -401,7 +440,12 @@ export class PartnershipsService {
           [cardId]
         );
         const row = locked[0];
-        if (!row) throw new BadRequestException('No codes left for this partnership');
+        if (!row) {
+          throw new BadRequestException({
+            code: PARTNERSHIP_ERROR_CODES.NO_CODES_LEFT,
+            message: 'No codes left for this partnership',
+          });
+        }
 
         const updated: { code: string }[] = await manager.query(
           `UPDATE partnership_codes

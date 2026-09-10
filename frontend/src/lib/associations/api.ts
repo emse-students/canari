@@ -351,12 +351,42 @@ export function associationLogoSrc(logoUrl: string | null | undefined): string |
   return u;
 }
 
+/**
+ * A refusal the SERVER classified, carrying the machine code it sent beside the sentence.
+ *
+ * WHY THE CODE AND NOT THE SENTENCE. Every refusal from this service used to arrive as an
+ * `Error` whose message was the server's own English prose, and a screen that wanted to say
+ * something to a student had nothing else to show - so it showed that. "No codes left for this
+ * partnership" reached a French page that way (user, 2026-09-10). The sentence is written for a
+ * developer reading a log and is not translated, will never be translated, and must not be.
+ *
+ * The code is. It is the same convention the delivery service already uses for `DEVICE_REVOKED`,
+ * and it obeys the standing rule that a distinction carried in prose is a distinction exactly one
+ * call site will make: classify at the THROW, as data, and let each screen map the codes it knows
+ * to its own words.
+ *
+ * `code` is `null` for a refusal that carries no code, which is most of them today - 184 other
+ * places still render `.message`, measured 2026-09-10 and recorded in the backlog. A screen must
+ * therefore treat an unknown or absent code as "something went wrong" in its own language, never
+ * by falling back to printing `message`.
+ */
+export class SocialApiError extends Error {
+  constructor(
+    message: string,
+    readonly code: string | null
+  ) {
+    super(message);
+    this.name = 'SocialApiError';
+  }
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const base = socialUrl();
   const res = await apiFetch(`${base}${path}`, init as any);
   if (!res.ok) {
     const raw = await res.text().catch(() => '');
     let message = raw || res.statusText;
+    let code: string | null = null;
     try {
       const parsed: unknown = JSON.parse(raw);
       if (
@@ -367,10 +397,19 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       ) {
         message = (parsed as Record<string, string>).message;
       }
+      // Nest serialises `throw new XException({ code, message })` as the body itself, so the code
+      // sits beside the message rather than under an envelope.
+      if (
+        parsed &&
+        typeof parsed === 'object' &&
+        typeof (parsed as Record<string, unknown>).code === 'string'
+      ) {
+        code = (parsed as Record<string, string>).code;
+      }
     } catch {
-      // Ignore JSON parse failure: message is the raw error text
+      // Ignore JSON parse failure: message is the raw error text and there is no code to read
     }
-    throw new Error(message);
+    throw new SocialApiError(message, code);
   }
   // A successful response is not always JSON: DELETEs and void POSTs answer 204, or 200 with an
   // empty body. `res.json()` on those throws "unexpected end of data", turning a call that WORKED

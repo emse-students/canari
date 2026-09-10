@@ -7013,6 +7013,37 @@ directory either way; that comparison is a thing against itself and it read as 0
 as long as it took to run the real gate. Move the file.
 
 
+## Localisation
+
+### P2 - 184 screens still render the server's English prose to a French user (measured 2026-09-10)
+
+**How it was found.** The user hit one of them: *"En passant, 'No codes left for this partnership'
+est non traduite."* That sentence is thrown by `partnerships.service.ts` and was rendered verbatim
+because the shop had nothing else to show - `request()` in `lib/associations/api.ts` threw
+`new Error(serverMessage)`, and the sentence was the only thing that survived the hop.
+
+**The reported path is fixed** and is the pattern for the rest: the service classifies at the
+THROW with a code (`PARTNERSHIP_NO_CODES_LEFT` and three siblings, one builder for the seven
+identical "not found" throws), `request()` throws `SocialApiError` carrying that code, and the
+screen maps codes it knows to Paraglide messages. **Anything unrecognised becomes a generic
+localised line rather than the server's text**, so no path is left that can put English on screen
+in that component - asserted by `socialApiError.test.ts`, which fails if `.message` reappears in
+the file.
+
+**The measurement, and it is the reason this is an entry rather than a sweep.** A census of
+`frontend/src` on 2026-09-10 found **185** places rendering `e instanceof Error ? e.message`, of
+which **20** are in the shop and associations trees. One is now fixed. The other 184 are the same
+defect in the same shape, and every one of them needs its server side to grow a code first - which
+is per-endpoint judgement about which refusals a user can act on, not a mechanical rewrite.
+
+**What NOT to do**: translate the sentences. A distinction carried in prose is a distinction
+exactly one call site will make, and the sentences are log text for developers. The delivery
+service's `DEVICE_REVOKED` / `DEVICE_LIMIT_REACHED` is the precedent and the shape to copy.
+
+**What would close it**: a guard of the same kind as `socialApiError.test.ts` but tree-wide, which
+cannot be turned on until the codes exist - so the honest order is endpoint by endpoint, most-used
+screens first, with the guard's allowlist shrinking as they land.
+
 ## Infrastructure
 
 ### P3 - no docker prune runs on `canari` or `mitv`, and 141 dangling volumes say so
