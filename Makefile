@@ -331,6 +331,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/dev-gap.test.sh
 	@bash .github/scripts/tests/deploy-env.test.sh
 	@bash .github/scripts/tests/deploy-migrations.test.sh
+	@bash .github/scripts/tests/dependency-ceiling.test.sh
 	@bash .github/scripts/tests/dependabot-cargo-reach.test.sh
 	@bash .github/scripts/tests/dependabot-alerts-report.test.sh
 	@bash .github/scripts/tests/bump-version.test.sh
@@ -344,6 +345,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/no-nul-in-source.test.mjs
 	@bun .github/scripts/tests/wiki-links.test.mjs
 	@bun .github/scripts/tests/backlog-closed.test.mjs
+	@bun .github/scripts/tests/recipe-covers-tests.test.mjs
 	@bun tools/app-store/submit.test.mjs
 	@bun tools/store-divergence/divergence.test.mjs
 

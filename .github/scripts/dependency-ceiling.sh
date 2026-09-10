@@ -62,13 +62,27 @@ HEAD_SHA="${HEAD_SHA:-}"
 
 printf 'dependency ceiling - pull request #%s at %s\n' "$PR" "${HEAD_SHA:0:8}"
 
-message="$(gh api "repos/$REPO/commits/$HEAD_SHA" --jq '.commit.message' 2>/dev/null)" || message=''
-if [ -z "$message" ]; then
+# EVERY COMMIT ON THE PULL REQUEST, NOT ONLY ITS HEAD - the block describes the PULL REQUEST.
+#
+# It used to read `commits/$HEAD_SHA` alone, and that made the check unusable the moment a
+# maintainer touched a Dependabot branch: on 2026-09-10 #423 was refused by its own repair. That
+# pull request needed one - Dependabot moves the JS half of a Tauri plugin and cannot move the Rust
+# crate beside it, so `Guard the Tauri JS/Rust version parity` fails until a human pushes the
+# `cargo update` - and the moment that commit landed it became the head, carried no
+# `updated-dependencies` block, and the ceiling answered "nothing here can tell what it changes".
+# A gate that refuses the FIX for the failure it reported is not measuring the dependency any more.
+#
+# Reading them all is also the conservative direction. A branch Dependabot has rebased may carry
+# several blocks, so the union can name a dependency the tree no longer changes - and that demands
+# MORE gates rather than fewer, which is the side of the line this check belongs on.
+messages="$(gh api "repos/$REPO/pulls/$PR/commits" --paginate --jq '.[].commit.message' 2>/dev/null)" || messages=''
+if [ -z "$messages" ]; then
   # AN UNREADABLE ANSWER IS NOT PERMISSION. Every other refusal here names a missing test; this one
   # names a broken instrument, and both must stop the merge.
-  echo "::error::Could not read the head commit of #$PR, so nothing here can tell what it changes."
+  echo "::error::Could not read the commits of #$PR, so nothing here can tell what it changes."
   exit 1
 fi
+message="$messages"
 
 # Dependabot writes a machine-readable block into its commit message. It is the only description of
 # the update that is not prose.
@@ -84,7 +98,7 @@ parsed="$(awk '
 ' <<< "$message")"
 
 if [ -z "$parsed" ]; then
-  echo "::error::This commit carries no updated-dependencies block, so nothing here can tell what it changes. Refusing to guess."
+  echo "::error::No commit on #$PR carries an updated-dependencies block, so nothing here can tell what it changes. Refusing to guess."
   exit 1
 fi
 
