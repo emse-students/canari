@@ -110,7 +110,7 @@
 <!-- Backdrop -->
 <div
   data-keyboard-aware-overlay
-  class="z-50 flex items-end justify-center bg-black/40 backdrop-blur-sm sm:items-center"
+  class="z-50 flex items-end justify-center bg-black/40 sm:items-center"
   role="presentation"
 >
   <div
@@ -127,7 +127,7 @@
           <CreditCard size={20} />
         </div>
         <div>
-          <h2 class="text-text-main text-base font-extrabold">{m.payment_modal_title()}</h2>
+          <h2 class="text-text-main text-base font-bold">{m.payment_modal_title()}</h2>
           <p class="text-text-muted text-xs">
             {m.payment_modal_amount_label({ amount: formatted })}
           </p>
@@ -159,7 +159,7 @@
         {#each paymentMethods as pm (pm.id)}
           <label
             class="flex cursor-pointer items-center gap-3 rounded-xl border-2 px-4 py-3 transition-colors
-            {selectedMethodId === pm.id
+ {selectedMethodId === pm.id
               ? 'border-cn-yellow bg-cn-yellow/5'
               : 'border-cn-border hover:border-cn-yellow/50'}"
           >

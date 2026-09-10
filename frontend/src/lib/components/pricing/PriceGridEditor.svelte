@@ -199,7 +199,7 @@
           {/each}
         </colgroup>
         <thead>
-          <tr class="border-cn-border bg-cn-bg/40 border-b-2">
+          <tr class="border-cn-border bg-cn-bg border-b-2">
             {#each matrix.dimensions.slice(0, -1) as dimension (dimension.id)}
               <th
                 class="text-text-muted px-3 py-2 text-left text-xs font-bold tracking-wide uppercase"

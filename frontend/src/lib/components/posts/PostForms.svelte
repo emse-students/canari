@@ -67,14 +67,14 @@
     {#each formInfos as fi (fi.id)}
       <a
         href="/forms/{fi.id}?redirect=/posts"
-        class="group relative flex items-center justify-between rounded-2xl border border-black/5 bg-white/60 p-4 shadow-sm backdrop-blur-xl transition-all duration-300 outline-none hover:-translate-y-0.5 hover:shadow-md focus-visible:ring-4 focus-visible:ring-amber-500/50 dark:border-white/10 dark:bg-black/20 {fi.submitted
+        class="group bg-cn-surface relative flex items-center justify-between rounded-2xl border border-black/5 p-4 shadow-sm transition-all duration-300 outline-none hover:-translate-y-0.5 hover:shadow-md focus-visible:ring-4 focus-visible:ring-amber-500/50 dark:border-white/10 {fi.submitted
           ? 'hover:border-emerald-500/30'
           : 'hover:border-amber-500/30'}"
       >
         <div class="flex min-w-0 items-center gap-3.5">
           <!-- Icône d'état -->
           <div
-            class="flex-shrink-0 rounded-xl p-2.5 transition-colors {fi.submitted
+            class="shrink-0 rounded-xl p-2.5 transition-colors {fi.submitted
               ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
               : 'bg-amber-500/10 text-amber-600 group-hover:bg-amber-500/20 dark:text-amber-400'}"
           >
@@ -88,14 +88,14 @@
           <!-- Informations du Formulaire -->
           <div class="min-w-0 flex-1">
             <h3
-              class="text-text-main truncate text-[0.95rem] font-bold transition-colors {fi.submitted
+              class="text-text-main truncate text-sm font-bold transition-colors {fi.submitted
                 ? 'group-hover:text-emerald-600 dark:group-hover:text-emerald-400'
                 : 'group-hover:text-amber-600 dark:group-hover:text-amber-400'}"
             >
               {fi.title || m.post_form_fallback_title()}
             </h3>
             <p
-              class="mt-0.5 text-[0.75rem] font-semibold {fi.submitted
+              class="text-2xs mt-0.5 font-semibold {fi.submitted
                 ? 'text-emerald-600/80 dark:text-emerald-400/80'
                 : 'text-text-muted'}"
             >
@@ -115,7 +115,7 @@
 
         <!-- Flèche / Icône d'action externe -->
         <div
-          class="ml-4 flex-shrink-0 opacity-40 transition-all duration-300 group-hover:translate-x-1 group-hover:opacity-100 {fi.submitted
+          class="ml-4 shrink-0 opacity-40 transition-all duration-300 group-hover:translate-x-1 group-hover:opacity-100 {fi.submitted
             ? 'group-hover:text-emerald-500'
             : 'group-hover:text-amber-500'}"
         >

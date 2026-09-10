@@ -1,7 +1,8 @@
 <script lang="ts">
+  import PageContainer from '$lib/components/layout/PageContainer.svelte';
+  import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { SlidersHorizontal } from '@lucide/svelte';
   import { globalSession as session } from '$lib/stores/globalChatSingleton.svelte';
   import { currentUserId } from '$lib/stores/user';
   import SettingsPreferencesSection from '$lib/components/settings/SettingsPreferencesSection.svelte';
@@ -53,41 +54,33 @@
   }
 </script>
 
-<div class="mx-auto max-w-3xl space-y-6 px-4 py-8 sm:px-6 md:space-y-8">
-  <div class="animate-in fade-in slide-in-from-bottom-4 flex items-center gap-4 duration-500">
-    <div class="bg-cn-yellow/10 text-cn-dark rounded-2xl p-3">
-      <SlidersHorizontal size={26} strokeWidth={2.5} />
-    </div>
-    <div>
-      <h1 class="text-text-main text-2xl font-extrabold tracking-tight sm:text-3xl">
-        {m.settings_page_title()}
-      </h1>
-      <p class="text-text-muted mt-0.5 text-sm">{m.settings_page_subtitle()}</p>
-    </div>
+<PageContainer>
+  <PageHeader title={m.settings_page_title()} subtitle={m.settings_page_subtitle()} />
+
+  <div class="space-y-6 md:space-y-8">
+    <SettingsPreferencesSection />
+    <SettingsSecuritySection />
+    <SettingsBackupSection />
+    <SettingsPaymentsSection />
+    <SettingsSubscriptionsSection />
+    <SettingsBlockedSection />
+    <SettingsAboutSection />
+    <SettingsStorageSection />
+    <SettingsDangerZone />
+
+    <!-- Device identifier (discreet diagnostic). Tap 5x quickly to unlock Minesweeper. -->
+    {#if session.myDeviceId}
+      <button
+        type="button"
+        class="text-text-muted/40 text-2xs block w-full cursor-default pt-2 text-center font-mono select-none"
+        onclick={onDeviceIdTap}
+        aria-label={m.settings_device_id_label({ id: session.myDeviceId })}
+      >
+        {m.settings_device_id_label({ id: session.myDeviceId })}
+      </button>
+    {/if}
   </div>
-
-  <SettingsPreferencesSection />
-  <SettingsSecuritySection />
-  <SettingsBackupSection />
-  <SettingsPaymentsSection />
-  <SettingsSubscriptionsSection />
-  <SettingsBlockedSection />
-  <SettingsAboutSection />
-  <SettingsStorageSection />
-  <SettingsDangerZone />
-
-  <!-- Device identifier (discreet diagnostic). Tap 5x quickly to unlock Minesweeper. -->
-  {#if session.myDeviceId}
-    <button
-      type="button"
-      class="text-text-muted/40 block w-full cursor-default pt-2 text-center font-mono text-[0.65rem] select-none"
-      onclick={onDeviceIdTap}
-      aria-label={m.settings_device_id_label({ id: session.myDeviceId })}
-    >
-      {m.settings_device_id_label({ id: session.myDeviceId })}
-    </button>
-  {/if}
-</div>
+</PageContainer>
 
 {#if minesweeperOpen}
   <MinesweeperModal open={true} onClose={() => (minesweeperOpen = false)} />

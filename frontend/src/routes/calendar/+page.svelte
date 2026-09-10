@@ -1,4 +1,6 @@
 <script lang="ts">
+  import PageContainer from '$lib/components/layout/PageContainer.svelte';
+  import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
   import { afterNavigate, goto } from '$app/navigation';
   import { page } from '$app/state';
@@ -23,6 +25,7 @@
   import Card from '$lib/components/ui/Card.svelte';
   import MonthCalendarGridRich from '$lib/components/calendar/MonthCalendarGridRich.svelte';
   import CalendarDayEventsPanel from '$lib/components/calendar/CalendarDayEventsPanel.svelte';
+  import CalendarScheduleList from '$lib/components/calendar/CalendarScheduleList.svelte';
   import CalendarEventDetailModal from '$lib/components/calendar/CalendarEventDetailModal.svelte';
   import CalendarSubscribeModal from '$lib/components/calendar/CalendarSubscribeModal.svelte';
   import CoOwnerPicker from '$lib/components/calendar/CoOwnerPicker.svelte';
@@ -32,15 +35,28 @@
   import {
     ChevronLeft,
     ChevronRight,
-    CalendarDays,
     CalendarCheck,
     CalendarPlus,
     ShieldAlert,
     FileDown,
-    ArrowLeft,
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
+  import {
+    SCHEDULE_AGENDA_QUERY,
+    isScheduleAgendaViewport,
+    onViewportChange,
+  } from '$lib/utils/viewport';
+
+  /**
+   * A PHONE GETS A SCHEDULE LIST INSTEAD OF THE MONTH GRID (user, 2026-09-09).
+   *
+   * Read at mount and kept in step with rotations rather than fixed once: the same window can be
+   * both, and a device turned sideways must get the grid back rather than keep a layout chosen for
+   * the width it used to have. `false` under SSR is the desktop answer by design - the mount that
+   * follows corrects it.
+   */
+  let scheduleLayout = $state(false);
 
   let focusDate = $state(new Date());
   let associations = $state<Association[]>([]);
@@ -122,6 +138,11 @@
     selectedDay = null;
     void loadMonth();
   }
+
+  onMount(() => {
+    scheduleLayout = isScheduleAgendaViewport();
+    return onViewportChange(SCHEDULE_AGENDA_QUERY, (narrow) => (scheduleLayout = narrow));
+  });
 
   onMount(async () => {
     filterAssociationId = page.url.searchParams.get('association')?.trim() ?? '';
@@ -365,160 +386,173 @@
   });
 </script>
 
-<div class="mx-auto max-w-3xl space-y-6 px-4 py-6 sm:px-6">
-  <a
-    href="/associations"
-    class="text-text-muted hover:text-text-main inline-flex items-center gap-2 text-sm transition-colors"
+<!--
+  NO BACK LINK AND NO LOGO (user, 2026-09-09).
+
+  The agenda is a top-level destination reached from the navigation, not a sub-page of
+  `/associations`, so a back arrow to that route sent the reader somewhere they had not come from.
+  The `CalendarDays` glyph beside the word "Agenda" went with it, along with the shop's and the
+  dashboard's - the navigation already carries those icons.
+-->
+<PageContainer width="grid">
+  <!-- The subtitle is an instruction, so it has to be true of the view actually on screen: the
+       schedule list has no day to click, and telling a reader to click one is worse than saying
+       nothing. -->
+  <PageHeader
+    title={m.calendar_heading()}
+    subtitle={scheduleLayout ? m.calendar_subtitle_schedule() : m.calendar_subtitle()}
   >
-    <ArrowLeft size={16} />
-    {m.calendar_back_associations()}
-  </a>
-
-  <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-    <div>
-      <h1 class="text-text-main flex items-center gap-2 text-2xl font-extrabold tracking-tight">
-        <CalendarDays size={28} class="text-cn-dark shrink-0" />
-        {m.calendar_heading()}
-      </h1>
-      <p class="text-text-muted mt-1 text-sm">
-        {m.calendar_subtitle()}
-      </p>
-    </div>
-    {#if canDepositEvent}
-      <button
-        type="button"
-        onclick={openDeposit}
-        class="bg-cn-yellow text-cn-dark hover:bg-cn-yellow-hover inline-flex shrink-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition-colors"
-      >
-        <CalendarPlus size={18} />
-        {m.calendar_deposit_button()}
-      </button>
-    {/if}
-  </div>
-
-  {#if canModerateAgenda}
-    <a
-      href="/admin/agenda"
-      class="border-amber-warn/30 bg-amber-warn/10 hover:border-amber-warn/40 flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 transition-colors"
-    >
-      <span
-        class="flex items-center gap-2 text-sm font-semibold text-amber-900 dark:text-amber-100"
-      >
-        <ShieldAlert size={18} />
-        {m.calendar_moderate_label()}
-        {#if pendingCount > 0}
-          <span class="rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-bold text-white">
-            {pendingCount}
-          </span>
-        {/if}
-      </span>
-      <span class="text-xs text-amber-800/80 dark:text-amber-200/80"
-        >{m.calendar_moderate_open()} →</span
-      >
-    </a>
-  {/if}
-
-  <Card class="space-y-4 p-4 sm:p-5">
-    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-      <div class="flex items-center gap-2">
+    {#snippet actions()}
+      {#if canDepositEvent}
         <button
           type="button"
-          onclick={prevMonth}
-          class="border-cn-border text-text-main rounded-xl border p-2 transition-colors hover:bg-(--cn-surface)"
-          aria-label={m.calendar_prev_month()}
+          onclick={openDeposit}
+          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex shrink-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition-colors"
         >
-          <ChevronLeft size={20} />
+          <CalendarPlus size={18} />
+          {m.calendar_deposit_button()}
         </button>
-        <span class="text-text-main min-w-[10rem] text-center text-sm font-bold capitalize">
-          {titleMonth}
+      {/if}
+    {/snippet}
+  </PageHeader>
+
+  <div class="space-y-6">
+    {#if canModerateAgenda}
+      <a
+        href="/admin/agenda"
+        class="border-amber-warn/30 bg-amber-warn/10 hover:border-amber-warn/40 flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 transition-colors"
+      >
+        <span
+          class="flex items-center gap-2 text-sm font-semibold text-amber-900 dark:text-amber-100"
+        >
+          <ShieldAlert size={18} />
+          {m.calendar_moderate_label()}
+          {#if pendingCount > 0}
+            <span class="text-2xs text-cn-ink rounded-full bg-amber-500 px-2 py-0.5 font-bold">
+              {pendingCount}
+            </span>
+          {/if}
         </span>
-        <button
-          type="button"
-          onclick={nextMonth}
-          class="border-cn-border text-text-main rounded-xl border p-2 transition-colors hover:bg-(--cn-surface)"
-          aria-label={m.calendar_next_month()}
+        <span class="text-xs text-amber-800/80 dark:text-amber-200/80"
+          >{m.calendar_moderate_open()} →</span
         >
-          <ChevronRight size={20} />
-        </button>
+      </a>
+    {/if}
+
+    <Card class="space-y-4 p-4 sm:p-5">
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div class="flex items-center gap-2">
+          <button
+            type="button"
+            onclick={prevMonth}
+            class="border-cn-border text-text-main rounded-xl border p-2 transition-colors hover:bg-(--cn-surface)"
+            aria-label={m.calendar_prev_month()}
+          >
+            <ChevronLeft size={20} />
+          </button>
+          <span class="text-text-main min-w-[10rem] text-center text-sm font-bold capitalize">
+            {titleMonth}
+          </span>
+          <button
+            type="button"
+            onclick={nextMonth}
+            class="border-cn-border text-text-main rounded-xl border p-2 transition-colors hover:bg-(--cn-surface)"
+            aria-label={m.calendar_next_month()}
+          >
+            <ChevronRight size={20} />
+          </button>
+        </div>
+
+        <label class="text-text-muted flex flex-col gap-1 text-xs font-semibold sm:min-w-[14rem]">
+          {m.calendar_filter_label()}
+          <select
+            class="border-cn-border text-text-main rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm font-medium"
+            bind:value={filterAssociationId}
+            onchange={onFilterSelectChange}
+          >
+            <option value="">{m.calendar_filter_all()}</option>
+            {#each associations as a (a.id)}
+              <option value={a.id}>{a.name}</option>
+            {/each}
+          </select>
+        </label>
       </div>
 
-      <label class="text-text-muted flex flex-col gap-1 text-xs font-semibold sm:min-w-[14rem]">
-        {m.calendar_filter_label()}
-        <select
-          class="border-cn-border text-text-main rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm font-medium"
-          bind:value={filterAssociationId}
-          onchange={onFilterSelectChange}
+      <div class="border-cn-border/60 flex flex-wrap justify-end gap-2 border-t pt-4">
+        <a
+          href={exportHref}
+          class="border-cn-border text-text-main hover:bg-cn-bg inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border bg-(--cn-surface) px-4 py-2.5 text-sm font-bold transition-colors"
         >
-          <option value="">{m.calendar_filter_all()}</option>
-          {#each associations as a (a.id)}
-            <option value={a.id}>{a.name}</option>
-          {/each}
-        </select>
-      </label>
-    </div>
+          <FileDown size={18} />
+          {m.calendar_export_pdf()}
+        </a>
+        <button
+          type="button"
+          onclick={() => (showSubscribeModal = true)}
+          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover hidden shrink-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition-colors sm:inline-flex"
+        >
+          <CalendarCheck size={18} />
+          {m.calendar_subscribe()}
+        </button>
+      </div>
+    </Card>
 
-    <div class="border-cn-border/60 flex flex-wrap justify-end gap-2 border-t pt-4">
-      <a
-        href={exportHref}
-        class="border-cn-border text-text-main hover:bg-cn-bg inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border bg-(--cn-surface) px-4 py-2.5 text-sm font-bold transition-colors"
-      >
-        <FileDown size={18} />
-        {m.calendar_export_pdf()}
-      </a>
-      <button
-        type="button"
-        onclick={() => (showSubscribeModal = true)}
-        class="bg-cn-yellow text-cn-dark hover:bg-cn-yellow-hover hidden shrink-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition-colors sm:inline-flex"
-      >
-        <CalendarCheck size={18} />
-        {m.calendar_subscribe()}
-      </button>
-    </div>
-  </Card>
+    {#if loadError}
+      <div class="bg-red-err/10 border-red-err/30 text-red-err rounded-xl border p-4 text-sm">
+        {loadError}
+      </div>
+    {:else if scheduleLayout}
+      <!-- One list, no grid: seven columns of 48px say which days exist and nothing about what is
+           on them. `CalendarScheduleList` takes the month out of the feed itself, so there is no
+           selected day to carry here. -->
+      <CalendarScheduleList
+        {focusDate}
+        events={sortedEvents}
+        {loading}
+        onEventClick={openEventDetail}
+      />
+    {:else}
+      <MonthCalendarGridRich {focusDate} events={sortedEvents} {loading} bind:selectedDay />
 
-  <MonthCalendarGridRich {focusDate} events={sortedEvents} {loading} bind:selectedDay />
+      {#if !loading && sortedEvents.length === 0}
+        <Card class="text-text-muted p-8 text-center text-sm">{m.calendar_empty()}</Card>
+      {:else}
+        <CalendarDayEventsPanel
+          {focusDate}
+          {selectedDay}
+          events={sortedEvents}
+          onEventClick={openEventDetail}
+          onClearSelection={() => (selectedDay = null)}
+        />
+      {/if}
+    {/if}
 
-  {#if loadError}
-    <div class="bg-red-err/10 border-red-err/30 text-red-err rounded-xl border p-4 text-sm">
-      {loadError}
-    </div>
-  {:else if !loading && sortedEvents.length === 0}
-    <Card class="text-text-muted p-8 text-center text-sm">{m.calendar_empty()}</Card>
-  {:else}
-    <CalendarDayEventsPanel
-      {focusDate}
-      {selectedDay}
-      events={sortedEvents}
-      onEventClick={openEventDetail}
-      onClearSelection={() => (selectedDay = null)}
+    <CalendarEventDetailModal
+      open={detailModalOpen}
+      event={detailEvent}
+      canEdit={canEditDetailEvent}
+      onClose={() => {
+        detailModalOpen = false;
+        detailEvent = null;
+      }}
+      onEdit={handleDetailEdit}
+      onDelete={handleDetailDelete}
     />
-  {/if}
 
-  <CalendarEventDetailModal
-    open={detailModalOpen}
-    event={detailEvent}
-    canEdit={canEditDetailEvent}
-    onClose={() => {
-      detailModalOpen = false;
-      detailEvent = null;
-    }}
-    onEdit={handleDetailEdit}
-    onDelete={handleDetailDelete}
-  />
-
-  <CalendarSubscribeModal
-    open={showSubscribeModal}
-    onClose={() => (showSubscribeModal = false)}
-    icsUrl={calendarIcsUrl}
-    intro={m.calendar_subscribe_intro()}
-  />
-</div>
+    <CalendarSubscribeModal
+      open={showSubscribeModal}
+      onClose={() => (showSubscribeModal = false)}
+      icsUrl={calendarIcsUrl}
+      intro={m.calendar_subscribe_intro()}
+    />
+  </div>
+</PageContainer>
 
 {#if depositModalOpen}
   <div use:portal>
     <div
       data-keyboard-aware-overlay
-      class="z-[280] flex items-end justify-center bg-black/40 backdrop-blur-sm sm:items-center"
+      class="z-(--z-modal) flex items-end justify-center bg-black/40 sm:items-center"
       role="presentation"
       onclick={(e) => e.target === e.currentTarget && (depositModalOpen = false)}
     >

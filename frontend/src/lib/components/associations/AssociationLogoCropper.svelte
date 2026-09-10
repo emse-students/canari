@@ -188,13 +188,13 @@
   }
 </script>
 
-<div class="border-cn-border space-y-4 rounded-2xl border bg-(--cn-surface)/60 p-4">
+<div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-4">
   <div class="flex flex-wrap items-center gap-3">
     <input
       type="file"
       accept="image/jpeg,image/png,image/webp"
       onchange={onPickFile}
-      class="text-text-main file:bg-cn-yellow file:text-cn-dark text-sm file:mr-2 file:rounded-lg file:border-0 file:px-3 file:py-1.5 file:text-sm file:font-bold"
+      class="text-text-main file:bg-cn-yellow file:text-cn-ink text-sm file:mr-2 file:rounded-lg file:border-0 file:px-3 file:py-1.5 file:text-sm file:font-bold"
     />
     {#if pickedName}
       <span class="text-text-muted max-w-[200px] truncate text-xs">{pickedName}</span>

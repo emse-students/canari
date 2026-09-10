@@ -364,7 +364,7 @@
 
 {#snippet participantLabel(participant: CallParticipant)}
   <div
-    class="flex max-w-full items-center gap-2 rounded-full border border-white/10 bg-black/50 px-2.5 py-1.5 text-sm font-semibold text-white backdrop-blur-md"
+    class="flex max-w-full items-center gap-2 rounded-full border border-white/10 bg-black/50 px-2.5 py-1.5 text-sm font-semibold text-white"
   >
     <div class="h-7 w-7 shrink-0 overflow-hidden rounded-full ring-1 ring-white/20">
       <Avatar
@@ -387,7 +387,7 @@
   {#if e2eActive}
     <span
       class="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 font-bold text-emerald-300 {small
-        ? 'px-1.5 py-0.5 text-[10px]'
+        ? 'text-2xs px-1.5 py-0.5'
         : 'px-2 py-1 text-xs'}"
       title={m.call_e2e_encrypted_title()}
     >
@@ -397,7 +397,7 @@
   {:else}
     <span
       class="inline-flex items-center gap-1 rounded-full bg-amber-500/20 font-bold text-amber-300 {small
-        ? 'px-1.5 py-0.5 text-[10px]'
+        ? 'text-2xs px-1.5 py-0.5'
         : 'px-2 py-1 text-xs'}"
       title={m.call_not_e2e_encrypted_title()}
     >
@@ -410,7 +410,7 @@
 {#if compact}
   <!-- Docked, non-blocking widget: the rest of the app stays interactive. -->
   <div
-    class="bg-cn-scrim/95 fixed right-4 bottom-4 z-[300] w-[min(20rem,calc(100vw-2rem))] rounded-3xl p-4 shadow-2xl ring-1 ring-white/10 backdrop-blur-2xl select-none"
+    class="bg-cn-scrim/95 fixed right-4 bottom-4 z-(--z-critical) w-[min(20rem,calc(100vw-2rem))] rounded-3xl p-4 shadow-2xl ring-1 ring-white/10 select-none"
     transition:fly={{ y: 30, duration: 250 }}
   >
     <audio bind:this={remoteAudioSink} autoplay class="hidden"></audio>
@@ -429,9 +429,7 @@
           srcObject={localStreamVal}
         ></video>
         {#if isMuted}
-          <div
-            class="absolute top-1 right-1 rounded-full bg-red-500/80 p-0.5 text-white backdrop-blur-md"
-          >
+          <div class="absolute top-1 right-1 rounded-full bg-red-500/80 p-0.5 text-white">
             <MicOff size={10} strokeWidth={2.5} />
           </div>
         {/if}
@@ -547,7 +545,7 @@
 {:else}
   <!-- Expanded / full-screen call view -->
   <div
-    class="fixed inset-0 z-[300] flex flex-col items-center justify-center bg-black/90 backdrop-blur-2xl select-none {isMobileRtc
+    class="fixed inset-0 z-(--z-critical) flex flex-col items-center justify-center bg-black/90 select-none {isMobileRtc
       ? 'p-0'
       : 'p-4 sm:p-6'}"
     transition:fade={{ duration: 300 }}
@@ -555,7 +553,7 @@
     <div
       class="relative h-full w-full {isMobileRtc
         ? 'max-h-full max-w-full rounded-none'
-        : 'max-h-[82vh] max-w-6xl rounded-[2rem]'} bg-cn-scrim flex flex-col overflow-hidden shadow-2xl ring-1 ring-white/10 transition-all duration-300"
+        : 'max-h-[82vh] max-w-6xl rounded-lg'} bg-cn-scrim flex flex-col overflow-hidden shadow-2xl ring-1 ring-white/10 transition-all duration-300"
       style={isMobileRtc
         ? 'padding-top: env(safe-area-inset-top, 0px); padding-bottom: var(--safe-area-inset-bottom, 0px);'
         : ''}
@@ -720,7 +718,7 @@
             onpointermove={handlePipPointerMove}
             onpointerup={handlePipPointerUp}
             onpointercancel={handlePipPointerUp}
-            class="pointer-events-auto h-48 w-32 touch-none overflow-hidden rounded-2xl bg-black/60 shadow-2xl ring-1 ring-white/20 backdrop-blur-md md:h-72 md:w-48 {isDragging
+            class="pointer-events-auto h-48 w-32 touch-none overflow-hidden rounded-2xl bg-black/60 shadow-2xl ring-1 ring-white/20 md:h-72 md:w-48 {isDragging
               ? 'scale-105 cursor-grabbing'
               : 'cursor-grab hover:scale-[1.02]'}"
             style="transform: translate({pipOffsetX}px, {pipOffsetY}px);"
@@ -748,15 +746,13 @@
               </div>
             {/if}
             {#if isMuted}
-              <div
-                class="absolute top-3 right-3 rounded-full bg-red-500/80 p-1.5 text-white backdrop-blur-md"
-              >
+              <div class="absolute top-3 right-3 rounded-full bg-red-500/80 p-1.5 text-white">
                 <MicOff size={14} strokeWidth={2.5} />
               </div>
             {/if}
             <div class="pointer-events-none absolute right-2 bottom-2 left-2 flex justify-center">
               <span
-                class="rounded-full bg-black/40 px-2 py-0.5 text-[10px] font-bold tracking-wider text-white/80 uppercase"
+                class="text-2xs rounded-full bg-black/40 px-2 py-0.5 font-bold tracking-wider text-white/80 uppercase"
                 >{m.call_you_label()}</span
               >
             </div>
@@ -766,7 +762,7 @@
 
       <!-- Top-left status badge -->
       <div
-        class="absolute top-6 left-6 z-10 flex items-center gap-3 rounded-full border border-white/10 bg-black/40 px-4 py-2 text-sm font-bold text-white/90 backdrop-blur-md"
+        class="absolute top-6 left-6 z-10 flex items-center gap-3 rounded-full border border-white/10 bg-black/40 px-4 py-2 text-sm font-bold text-white/90"
       >
         <span
           class="h-2.5 w-2.5 rounded-full {callState === 'incall'
@@ -814,7 +810,7 @@
     <div
       class="{isMobileRtc
         ? 'mb-[var(--safe-area-inset-bottom,12px)]'
-        : 'mt-6'} flex items-center gap-3 rounded-full border border-white/20 bg-white/10 px-6 py-4 shadow-2xl backdrop-blur-2xl sm:gap-4 sm:px-8"
+        : 'mt-6'} flex items-center gap-3 rounded-full border border-white/20 bg-white/10 px-6 py-4 shadow-2xl sm:gap-4 sm:px-8"
       transition:fly={{ y: 40, duration: 500, delay: 100 }}
     >
       {#if callState === 'incoming'}
@@ -831,7 +827,7 @@
           >
             <Phone size={28} class="fill-current" />
           </button>
-          <span class="text-[10px] font-semibold tracking-wider text-emerald-400 uppercase"
+          <span class="text-2xs font-semibold tracking-wider text-emerald-400 uppercase"
             >{m.call_accept_label()}</span
           >
         </div>
@@ -844,7 +840,7 @@
           >
             <PhoneOff size={28} />
           </button>
-          <span class="text-[10px] font-semibold tracking-wider text-red-400 uppercase"
+          <span class="text-2xs font-semibold tracking-wider text-red-400 uppercase"
             >{m.call_decline_label()}</span
           >
         </div>

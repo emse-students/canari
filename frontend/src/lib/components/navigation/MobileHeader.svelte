@@ -13,8 +13,8 @@
   Le spacer gauche a la même largeur que le groupe droit pour centrer le logo.
 -->
 <header
-  class="border-cn-border z-20 flex h-14 flex-shrink-0 items-center justify-between
-         border-b bg-(--surface-elevated) px-3 backdrop-blur-sm md:hidden"
+  class="border-cn-border z-20 flex h-14 shrink-0 items-center justify-between
+ border-b bg-(--surface-elevated) px-3 md:hidden"
 >
   <!-- Spacer gauche de même largeur que le groupe droit pour centrer le logo -->
   <div class="w-[4.5rem]"></div>

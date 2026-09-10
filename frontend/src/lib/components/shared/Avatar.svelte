@@ -21,7 +21,7 @@
     fallbackLabel?: string;
   }
 
-  let { userId, size = 'md', fill = false, shape = 'soft', fallbackLabel = '' }: Props = $props();
+  let { userId, size = 'md', fill = false, shape = 'circle', fallbackLabel = '' }: Props = $props();
 
   /**
    * WHETHER THERE IS ANYONE TO ASK ABOUT.
@@ -97,7 +97,7 @@
     fill
       ? 'w-full h-full text-base'
       : size === 'xs'
-        ? 'w-4 h-4 text-[0.5rem]'
+        ? 'w-4 h-4 text-2xs'
         : size === 'sm'
           ? 'w-6 h-6 text-xs'
           : size === 'lg'
@@ -109,7 +109,7 @@
 
 {#if imageFailed || display?.kind === 'none'}
   <div
-    class="{shapeClasses} shrink-0 shadow-sm ring-1 ring-white/20 select-none {sizeClasses} bg-cn-dark text-cn-yellow flex items-center justify-center overflow-hidden font-bold"
+    class="{shapeClasses} shrink-0 shadow-sm select-none {sizeClasses} bg-cn-ink text-cn-yellow flex items-center justify-center overflow-hidden font-bold"
     title={displayLabel}
     aria-label={`Avatar de ${displayLabel}`}
   >
@@ -117,7 +117,7 @@
   </div>
 {:else}
   <div
-    class="{shapeClasses} shrink-0 shadow-sm ring-1 ring-white/20 {sizeClasses} relative overflow-hidden"
+    class="{shapeClasses} shrink-0 shadow-sm {sizeClasses} relative overflow-hidden"
     title={displayLabel}
     aria-label={`Avatar de ${displayLabel}`}
   >
@@ -125,7 +125,7 @@
       <!-- Placeholder a initiales affiche immediatement (displayLabel est resolu de facon
            synchrone) : evite l'attente d'un round-trip reseau avant de voir quelque chose. -->
       <div
-        class="bg-cn-dark text-cn-yellow absolute inset-0 flex items-center justify-center font-bold select-none"
+        class="bg-cn-ink text-cn-yellow absolute inset-0 flex items-center justify-center font-bold select-none"
       >
         {initials}
       </div>

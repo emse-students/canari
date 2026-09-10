@@ -160,7 +160,14 @@ function headline(path) {
   // ` * ` group never got a chance to run - every multi-line headline was captured WITH its
   // leading asterisk and the table read `| * TURNS A BROWSER PROFILE... |`. The one-line form
   // (`shot.mjs`) was right by accident, which is why it looked like a one-off rather than the rule.
-  const m = /\/\*\*[ \t]*(?:\n[ \t]*\*[ \t]*)?(.+?)[ \t]*(?:\n|\*\/)/.exec(src);
+  // CARRIAGE RETURN IS HORIZONTAL SPACE HERE TOO. On a CRLF working copy the optional inner
+  // prefix cannot run, because the space class did not include it - so the capture fell through
+  // to the NEXT docblock in the file, and cdp.mjs was described by the one-line comment on its
+  // IS_CLI constant. The gate then FAILED with "a script was added, moved or renamed", which is
+  // the one thing that had not happened. A checkout is LF here, but an editor or a script that
+  // rewrites a file need not be, and an extractor that reads a DIFFERENT block rather than none
+  // is worse than one that finds nothing: it accuses the tree of a change nobody made.
+  const m = /\/\*\*[ \t\r]*(?:\n[ \t]*\*[ \t]*)?(.+?)[ \t\r]*(?:\n|\*\/)/.exec(src);
   if (!m) return null;
   // Collapse whitespace and strip the markdown emphasis these headers use, which reads as noise in
   // a table cell where every row is already a title.

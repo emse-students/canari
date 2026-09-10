@@ -38,7 +38,7 @@
   });
 </script>
 
-<Modal {open} {onClose} title={m.chat_modal_channel_name_label()}>
+<Modal {open} {onClose} topAnchored title={m.chat_modal_channel_name_label()}>
   <div class="space-y-4 pt-2">
     <div>
       <label for="new-channel-name" class="text-text-main mb-1 block text-sm font-medium"
@@ -51,7 +51,7 @@
         value={channelName}
         oninput={(e) => onChannelNameChange((e.target as HTMLInputElement).value)}
         placeholder={m.chat_modal_channel_name_placeholder()}
-        class="w-full rounded-xl border border-white/60 bg-white/65 px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-amber-400/45 dark:border-white/10 dark:bg-black/30"
+        class="bg-cn-surface w-full rounded-xl border border-white/60 px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-amber-400/45 dark:border-white/10"
         onkeydown={(e) => e.key === 'Enter' && onSubmitChannel()}
       />
     </div>
@@ -68,7 +68,7 @@
           class="flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all {visibility ===
           'public'
             ? 'border border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-            : 'text-text-muted hover:text-text-main border border-white/60 bg-white/65 dark:border-white/10 dark:bg-black/30'}"
+            : 'text-text-muted hover:text-text-main bg-cn-surface border border-white/60 dark:border-white/10 '}"
         >
           <Globe size={16} />
           {m.chat_channel_visibility_public()}
@@ -79,7 +79,7 @@
           class="flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all {visibility ===
           'private'
             ? 'border border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400'
-            : 'text-text-muted hover:text-text-main border border-white/60 bg-white/65 dark:border-white/10 dark:bg-black/30'}"
+            : 'text-text-muted hover:text-text-main bg-cn-surface border border-white/60 dark:border-white/10 '}"
         >
           <Lock size={16} />
           {m.chat_channel_visibility_private()}
@@ -95,7 +95,7 @@
     <button
       onclick={onSubmitChannel}
       disabled={!channelName.trim()}
-      class="w-full rounded-xl bg-amber-500 py-2.5 font-semibold text-white transition-colors hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
+      class="text-cn-ink w-full rounded-xl bg-amber-500 py-2.5 font-semibold transition-colors hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-50"
     >
       {m.chat_modal_create_channel_button()}
     </button>

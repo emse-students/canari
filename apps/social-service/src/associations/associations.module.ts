@@ -18,6 +18,7 @@ import { PartnershipCode } from './entities/partnership-code.entity';
 import { Post } from '../posts/entities/post.entity';
 import { Form } from '../forms/entities/form.entity';
 import { PostNotification } from '../posts/entities/post-notification.entity';
+import { PostNotificationsService } from '../posts/post-notifications.service';
 import { AssociationsService } from './associations.service';
 import { UserProfileService } from './user-profile.service';
 import { ProductsService } from './products.service';
@@ -76,6 +77,12 @@ import { PricingModule } from '../pricing/pricing.module';
     GlobalAdminOrBdeSuperAdminGuard,
     ReviewerAccessGuard,
     PushService,
+    // PROVIDED HERE RATHER THAN IMPORTED, because `PostsModule` already imports this one and a
+    // second edge back would be a cycle. Its three dependencies - the notification repository, the
+    // post repository and `PushService` - are all in this module already, and the service is
+    // stateless, so a second instance costs nothing and buys the mapping that keeps a push
+    // translatable.
+    PostNotificationsService,
   ],
   // Category/poster controllers are listed FIRST so their literal `associations/categories`
   // and `associations/poster` routes register before the `associations/:id` matcher.

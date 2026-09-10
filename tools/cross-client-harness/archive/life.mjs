@@ -220,8 +220,18 @@ phone.launch();
 await sleep(4_000);
 phone.forwardDevtools(PORTS.A1);
 const a1Setup = await client(PORTS.A1, 'tauri.localhost');
-await ensureChat(a1Setup).catch(() => null);
-await openConversation(a1Setup, peerNameFor('A1')).catch(() => null);
+// A SWALLOWED SETUP FAILURE MAKES THE RUN MEAN SOMETHING ELSE WITHOUT SAYING SO, and this file
+// already knows it: `reopenAfterKill` above records both reasons into `reopened` rather than
+// discarding them. This pair did not. `openConversation` refuses precisely - on 2026-09-08 it was
+// "2 of 5 conversation tiles match the requested name [...] so the row is AMBIGUOUS and none was
+// opened", a deleted group still listed under the peer's name - and three NOTIF-1b verdicts were
+// spent before anyone read that sentence. Announced here for the same reason it is recorded there.
+await ensureChat(a1Setup).catch((e) =>
+  console.error(`[setup] A1 ensureChat FAILED - ${e?.message || e}`)
+);
+await openConversation(a1Setup, peerNameFor('A1')).catch((e) =>
+  console.error(`[setup] A1 openConversation FAILED - ${e?.message || e}`)
+);
 const w2 = await client(PORTS.W2, APP_TAB);
 await ensureChat(w2);
 await openConversation(w2, peerNameFor('W2'));

@@ -19,6 +19,15 @@ export interface ChatSessionCallbacks {
   conversations: SvelteMap<string, Conversation>;
   /** Restores conversations from IndexedDB and re-checks MLS state consistency. */
   loadAndRestoreConversations: () => Promise<void>;
+  /**
+   * Opens/closes the span during which a conversation may still appear from a startup source.
+   *
+   * The restore is only the first of those sources, and a deep-link landing that abandoned as soon
+   * as it finished threw away the target of a first-contact notification just before the FCM cache
+   * created it. The login sequence brackets the whole span so the landing waits for all of it.
+   */
+  beginConversationSource: () => void;
+  endConversationSource: () => void;
   addMessageToChat: (
     senderId: string,
     content: string,

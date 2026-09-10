@@ -71,7 +71,7 @@
         type="button"
         onclick={() => void close()}
         disabled={dismissing}
-        class="bg-cn-yellow hover:bg-cn-yellow-hover text-cn-dark rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
+        class="bg-cn-yellow hover:bg-cn-yellow-hover text-cn-ink rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
       >
         {m.announcement_understood_button()}
       </button>

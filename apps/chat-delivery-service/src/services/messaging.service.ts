@@ -36,6 +36,7 @@ import {
   LONGEST_FALLBACK_LOCALE,
   buildInternalApnsRequest,
   inlineProtoBudget,
+  uninlinedProtoIsWorthReporting,
   measureDataFields,
   measureApnsPayload,
   FCM_DATA_LIMIT,
@@ -528,10 +529,13 @@ export class MessagingService {
     const protoBytes = Buffer.byteLength(protoB64, 'utf8');
     const inlineProto = protoBytes > 0 && protoBytes <= budget ? protoB64 : '';
     messageInput.proto = inlineProto;
-    if (protoBytes > budget) {
-      // Not an error: the client fetches the ciphertext instead. It IS worth a line, because a
-      // budget that is routinely too small is the fixed fields growing, and nothing else watches
-      // them - `senderName` and `groupName` are unbounded user text.
+    if (protoBytes > budget && uninlinedProtoIsWorthReporting(messageInput)) {
+      // Not an error: the client fetches the ciphertext instead. It IS worth a line for a MESSAGE,
+      // because a budget that is routinely too small is the fixed fields growing, and nothing else
+      // watches them - `senderName` and `groupName` are unbounded user text. It is NOT worth one
+      // for a WELCOME, whose size is the ratchet tree and never fits: measured 6 of 6 welcomes over
+      // budget against 0 of 9 messages, so for that population the line is constant and says
+      // nothing. `uninlinedProtoIsWorthReporting` carries the reasoning and the counts.
       this.logger.log(
         `[PUSH_SEND][${traceId}] proto not inlined: ${protoBytes}B over a ${budget}B budget ` +
           `(senderName=${Buffer.byteLength(senderName, 'utf8')}B groupName=${Buffer.byteLength(groupName, 'utf8')}B)`

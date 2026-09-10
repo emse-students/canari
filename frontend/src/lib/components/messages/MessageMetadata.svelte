@@ -1,6 +1,5 @@
 <script lang="ts">
   import { LoaderCircle, TriangleAlert, Check, CheckCheck, Clock } from '@lucide/svelte';
-  import { formatTime24 } from '$lib/utils/dates';
   import Avatar from '../shared/Avatar.svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -19,13 +18,6 @@
     readBy: string[];
     /** When true, renders outside the bubble (delivery/read indicators). */
     outsideBubble?: boolean;
-    /** Send time of the message, shown inside the bubble. */
-    timestamp?: Date;
-    /**
-     * Group position of the message within a run of consecutive messages from the same sender.
-     * Timestamp is suppressed on 'start' and 'middle' to reduce clutter (shown only on the last).
-     */
-    groupPosition?: 'single' | 'start' | 'middle' | 'end';
   }
 
   let {
@@ -36,14 +28,15 @@
     status,
     readBy,
     outsideBubble = false,
-    timestamp,
-    groupPosition,
   }: Props = $props();
 
-  // Show timestamp on the last message of a group only (end/single), never mid-run.
-  const showTimestamp = $derived(
-    !outsideBubble && !!timestamp && groupPosition !== 'start' && groupPosition !== 'middle'
-  );
+  /*
+   * THERE IS NO PER-MESSAGE TIMESTAMP (user, 2026-09-08). It was redundant twice over: the thread
+   * already prints a centred time between groups, and clicking a message opens `MessageInfoTooltip`
+   * with its exact time. What the row cost was a line of vertical margin under EVERY group, on the
+   * most repeated element in the application - and the reference prints no time in or under a bubble
+   * either. `formatTime24` is still used by the tooltip; only this row is gone.
+   */
   const showEdited = $derived(isEdited && !outsideBubble);
   const showSendStatus = $derived(
     isOwn &&
@@ -61,7 +54,7 @@
       readBy.length === 0
   );
   const showRead = $derived(isOwn && isReadReceiptAnchor && outsideBubble && readBy.length > 0);
-  const show = $derived(showTimestamp || showEdited || showSendStatus || showSent || showRead);
+  const show = $derived(showEdited || showSendStatus || showSent || showRead);
 </script>
 
 {#if show}
@@ -70,27 +63,22 @@
       ? 'mt-0.5 justify-end px-0.5'
       : 'mt-1 justify-end'}"
   >
-    {#if showTimestamp}
-      <span class="text-[0.65rem] font-medium tabular-nums opacity-50">
-        {formatTime24(timestamp!)}
-      </span>
-    {/if}
     {#if showEdited}
-      <span class="text-[0.65rem] font-medium italic opacity-65">{m.msg_modifie()}</span>
+      <span class="text-2xs font-medium italic opacity-65">{m.msg_modifie()}</span>
     {/if}
     {#if showSendStatus}
       {#if status === 'pending'}
-        <span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold opacity-50">
+        <span class="text-2xs inline-flex items-center gap-1 font-semibold opacity-50">
           <Clock size={12} />
           {m.msg_en_attente()}
         </span>
       {:else if status === 'sending'}
-        <span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold opacity-50">
+        <span class="text-2xs inline-flex items-center gap-1 font-semibold opacity-50">
           <LoaderCircle size={12} class="animate-spin" />
           {m.common_sending_label()}
         </span>
       {:else if status === 'error'}
-        <span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold text-red-500">
+        <span class="text-2xs inline-flex items-center gap-1 font-semibold text-red-500">
           <TriangleAlert size={12} />
           {m.msg_echec()}
         </span>
@@ -113,7 +101,7 @@
             <Avatar {userId} size="xs" shape="circle" />
           {/each}
           {#if readBy.length > 3}
-            <span class="text-[0.6rem] font-bold opacity-70">+{readBy.length - 3}</span>
+            <span class="text-2xs font-bold opacity-70">+{readBy.length - 3}</span>
           {/if}
           <CheckCheck
             size={12}

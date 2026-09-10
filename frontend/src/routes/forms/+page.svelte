@@ -1,4 +1,6 @@
 <script lang="ts">
+  import PageContainer from '$lib/components/layout/PageContainer.svelte';
+  import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
   import { showToast } from '$lib/stores/toast.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
@@ -163,22 +165,23 @@
   }
 </script>
 
-<div class="mx-auto max-w-3xl px-4 py-6 sm:px-6">
-  <div class="mb-8 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-    <div>
-      <h1 class="text-text-main text-2xl font-extrabold tracking-tight">{m.form_list_title()}</h1>
-      <p class="text-text-muted mt-0.5 text-sm">
-        {forms.length === 1 ? m.form_list_count_one() : m.form_list_count({ count: forms.length })}
-      </p>
-    </div>
-    <a
-      href="/forms/create"
-      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 self-start rounded-xl px-5 py-2.5 text-sm font-bold transition-colors sm:self-auto"
-    >
-      <Plus size={16} />
-      {m.form_list_new_button()}
-    </a>
-  </div>
+<PageContainer>
+  <PageHeader
+    title={m.form_list_title()}
+    subtitle={forms.length === 1
+      ? m.form_list_count_one()
+      : m.form_list_count({ count: forms.length })}
+  >
+    {#snippet actions()}
+      <a
+        href="/forms/create"
+        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold transition-colors"
+      >
+        <Plus size={16} />
+        {m.form_list_new_button()}
+      </a>
+    {/snippet}
+  </PageHeader>
 
   {#if loading}
     <div class="flex justify-center py-16">
@@ -352,7 +355,7 @@
                           <td class="py-2 pr-4">
                             <span
                               class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold
-                              {sub.paymentStatus === 'paid'
+ {sub.paymentStatus === 'paid'
                                 ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300'
                                 : sub.paymentStatus === 'free'
                                   ? 'bg-cn-border/40 text-text-muted'
@@ -389,7 +392,7 @@
       {/each}
     </div>
   {/if}
-</div>
+</PageContainer>
 
 {#if qrForm}
   <QrCodeModal

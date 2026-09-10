@@ -201,7 +201,7 @@
       </div>
     {:else if mediaType === 'video'}
       <div
-        class="flex aspect-video w-full max-w-md animate-pulse items-center justify-center rounded-[1.1rem] bg-black/5 dark:bg-white/10"
+        class="flex aspect-video w-full max-w-md animate-pulse items-center justify-center rounded-3xl bg-black/5 dark:bg-white/10"
       >
         <VideoIcon size={32} class="text-text-muted opacity-20" />
       </div>
@@ -215,7 +215,7 @@
     {:else}
       <!-- Same footprint as the loaded file card, so nothing jumps on arrival. -->
       <div
-        class="flex w-full animate-pulse items-center gap-3.5 rounded-[1rem] bg-black/5 px-3.5 py-3 dark:bg-white/10"
+        class="flex w-full animate-pulse items-center gap-3.5 rounded-3xl bg-black/5 px-3.5 py-3 dark:bg-white/10"
       >
         <div
           class="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-black/10 dark:bg-white/10"
@@ -262,7 +262,7 @@
     {:else if mediaType === 'video'}
       <!-- ========== VIDEO ========== -->
       <div
-        class="group/media relative aspect-video w-full max-w-md overflow-hidden rounded-[1.1rem] bg-black/10 shadow-sm dark:bg-black/40"
+        class="group/media relative aspect-video w-full max-w-md overflow-hidden rounded-3xl bg-black/10 shadow-sm dark:bg-black/40"
       >
         <!-- svelte-ignore a11y_media_has_caption -->
         <video src={blobUrl} controls preload="metadata" class="h-full w-full object-contain"
@@ -270,7 +270,7 @@
         <button
           type="button"
           onclick={handleClick}
-          class="absolute bottom-2.5 left-2.5 inline-flex h-8 items-center justify-center rounded-full bg-black/50 px-2.5 text-xs font-bold text-white shadow-lg backdrop-blur-md transition-all duration-300 hover:bg-black/70"
+          class="absolute bottom-2.5 left-2.5 inline-flex h-8 items-center justify-center rounded-full bg-black/50 px-2.5 text-xs font-bold text-white shadow-lg transition-all duration-300 hover:bg-black/70"
           aria-label={m.post_fullscreen_label()}
         >
           {m.post_fullscreen_label()}
@@ -281,7 +281,7 @@
             e.stopPropagation();
             downloadBlob(blobUrl!, media.fileName ?? 'video.mp4');
           }}
-          class="absolute top-2.5 right-2.5 z-10 inline-flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white shadow-lg backdrop-blur-md transition-all duration-300 outline-none hover:scale-110 hover:bg-black/70 focus:opacity-100 md:opacity-0 md:group-hover/media:opacity-100"
+          class="absolute top-2.5 right-2.5 z-10 inline-flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white shadow-lg transition-all duration-300 outline-none hover:scale-110 hover:bg-black/70 focus:opacity-100 md:opacity-0 md:group-hover/media:opacity-100"
           aria-label={m.post_download_label()}
         >
           <Download size={16} strokeWidth={2.5} />
@@ -289,7 +289,7 @@
       </div>
     {:else if mediaType === 'audio'}
       <!-- ========== AUDIO ========== -->
-      <div class="w-full max-w-md overflow-hidden rounded-[1.1rem] bg-black/5 dark:bg-white/5">
+      <div class="w-full max-w-md overflow-hidden rounded-3xl bg-black/5 dark:bg-white/5">
         <!-- svelte-ignore a11y_media_has_caption -->
         <audio src={blobUrl} controls preload="metadata" class="h-12 w-full"></audio>
       </div>
@@ -302,18 +302,18 @@
           <FileText size={22} strokeWidth={2} class="text-text-muted" />
         </div>
         <div class="min-w-0 flex-1 overflow-hidden text-left">
-          <p class="mb-0.5 truncate text-[0.85rem] leading-tight font-bold">
+          <p class="mb-0.5 truncate text-xs leading-tight font-bold">
             {media.fileName ?? m.post_media_file_label()}
           </p>
           <!-- No `uppercase` here: it would render the "Ko" unit as "KO". -->
-          <p class="text-text-muted text-[0.65rem] font-semibold tracking-wider">
+          <p class="text-text-muted text-2xs font-semibold tracking-wider">
             {formatFileSize(media.size)}
           </p>
         </div>
       {/snippet}
 
       <div
-        class="group/file w-full max-w-full overflow-hidden rounded-2xl border border-black/5 bg-black/5 backdrop-blur-md transition-colors dark:border-white/10 dark:bg-white/10"
+        class="group/file w-full max-w-full overflow-hidden rounded-2xl border border-black/5 bg-black/5 transition-colors dark:border-white/10 dark:bg-white/10"
       >
         <div class="flex items-center gap-3.5 px-3.5 py-3">
           {#if isPdf}

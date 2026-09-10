@@ -1,7 +1,9 @@
-version: 0.16.5
+version: 0.16.6
 
-Correction d'un blocage a la connexion : l'application refusait le code de deverrouillage en
-affirmant qu'il ne correspondait pas au compte, alors qu'il etait correct. Aucun code n'avait
-change, et aucune donnee n'a ete perdue.
+Interface entièrement remise à l'échelle : typographie, couleurs et coins suivent une seule référence.
 
-Il suffit de se reconnecter normalement avec son code habituel.
+L'agenda devient une liste sur téléphone, et un événement proposé prévient maintenant les responsables.
+
+"Nouvelle discussion" s'ouvre sur vos conversations récentes au lieu d'un champ vide.
+
+Corrections : menus et sélecteur d'emoji qui s'ouvraient au mauvais endroit, titres qui recouvraient les boutons, notes vocales en un seul geste.

@@ -25,7 +25,12 @@ export type PushContentKey =
   | 'social_comment'
   | 'social_reaction'
   | 'form_opening_soon'
-  | 'form_open';
+  | 'form_open'
+  | 'event_proposed'
+  | 'event_validated'
+  | 'event_rejected'
+  | 'event_updated'
+  | 'event_deleted';
 
 /**
  * One push's content, as data rather than prose.
@@ -44,6 +49,7 @@ export type PushContent = {
    * - `social_mention` / `social_reply` / `social_comment`: the text the author typed
    * - `social_reaction`: the reaction itself (an emoji)
    * - the two form keys: nothing, always empty
+   * - the five event keys: the event's own title, which is not translatable either
    */
   arg: string;
   legacyTitle: string;
@@ -107,8 +113,8 @@ export function formOpeningSoonContent(): PushContent {
     arg: '',
     // English, unlike every other sentence here, and for the same underlying reason: whoever wrote
     // it picked a language for everyone. It goes out with the shim like the rest.
-    legacyTitle: 'Form opening soon',
-    legacyBody: 'A form you are watching opens in 5 minutes!',
+    legacyTitle: 'Formulaire bientôt ouvert',
+    legacyBody: 'Un formulaire que vous suivez ouvre dans 5 minutes !',
   };
 }
 
@@ -118,8 +124,8 @@ export function formOpenContent(): PushContent {
     key: 'form_open',
     actorName: '',
     arg: '',
-    legacyTitle: 'Form now open!',
-    legacyBody: 'The form is available - hurry, spots are limited!',
+    legacyTitle: 'Formulaire ouvert !',
+    legacyBody: 'Le formulaire est disponible - dépêchez-vous, les places sont limitées !',
   };
 }
 
@@ -129,5 +135,69 @@ export function pushContentData(content: PushContent): Record<string, string> {
     contentKey: content.key,
     actorName: content.actorName,
     contentArg: content.arg,
+  };
+}
+
+/**
+ * AN EVENT WAS PROPOSED AND IS WAITING FOR A CALENDAR MANAGER.
+ *
+ * The half that did not exist. `createCalendarEvent` notified the proposing association whenever the
+ * BDE acted, and told the BDE NOTHING when a proposal landed - so the pending queue was a page
+ * somebody had to remember to open. A queue nobody is told about is a queue nobody drains.
+ */
+export function eventProposedContent(actorName: string, eventTitle: string): PushContent {
+  return {
+    key: 'event_proposed',
+    actorName,
+    arg: eventTitle,
+    legacyTitle: 'Événement à valider',
+    legacyBody: `${actorName} propose « ${eventTitle} »`,
+  };
+}
+
+/**
+ * The four answers a calendar manager can give, one key each.
+ *
+ * ONE KEY PER ANSWER RATHER THAN ONE KEY PLUS AN `action` ARGUMENT, because `arg` is defined as the
+ * one piece of data that is NOT translatable and "validated" is a word. That is exactly how the
+ * sentence ended up composed server-side in English: the verb travelled as data.
+ */
+export function eventValidatedContent(actorName: string, eventTitle: string): PushContent {
+  return {
+    key: 'event_validated',
+    actorName,
+    arg: eventTitle,
+    legacyTitle: 'Événement validé',
+    legacyBody: `« ${eventTitle} » a été validé par le BDE`,
+  };
+}
+
+export function eventRejectedContent(actorName: string, eventTitle: string): PushContent {
+  return {
+    key: 'event_rejected',
+    actorName,
+    arg: eventTitle,
+    legacyTitle: 'Événement refusé',
+    legacyBody: `« ${eventTitle} » a été refusé par le BDE`,
+  };
+}
+
+export function eventUpdatedContent(actorName: string, eventTitle: string): PushContent {
+  return {
+    key: 'event_updated',
+    actorName,
+    arg: eventTitle,
+    legacyTitle: 'Événement modifié',
+    legacyBody: `« ${eventTitle} » a été modifié par le BDE`,
+  };
+}
+
+export function eventDeletedContent(actorName: string, eventTitle: string): PushContent {
+  return {
+    key: 'event_deleted',
+    actorName,
+    arg: eventTitle,
+    legacyTitle: 'Événement supprimé',
+    legacyBody: `« ${eventTitle} » a été supprimé par le BDE`,
   };
 }

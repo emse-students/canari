@@ -591,7 +591,7 @@
 </script>
 
 <div class="space-y-6">
-  <div class="border-cn-border space-y-1 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm">
+  <div class="border-cn-border bg-cn-surface space-y-1 rounded-2xl border p-6 shadow-sm">
     <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
       <HandCoins size={20} />
       {m.asso_cotisations_title()}
@@ -601,7 +601,7 @@
 
   {#if !asso.cotisationEnabled}
     {#if canManageProducts}
-      <div class="border-cn-border space-y-4 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm">
+      <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
         <div>
           <h3 class="text-text-main text-sm font-bold">{m.asso_cotisations_activate_title()}</h3>
           <p class="text-text-muted mt-1 text-xs">{m.asso_cotisations_activate_desc()}</p>
@@ -639,7 +639,7 @@
         </button>
       </div>
     {:else}
-      <div class="border-cn-border rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm">
+      <div class="border-cn-border bg-cn-surface rounded-2xl border p-6 shadow-sm">
         <p class="text-text-main text-sm font-semibold">
           {m.asso_cotisations_disabled_no_perm_title()}
         </p>
@@ -648,7 +648,7 @@
     {/if}
   {:else}
     <!-- Config summary -->
-    <div class="border-cn-border space-y-4 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm">
+    <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
       <div class="flex flex-wrap items-start justify-between gap-3">
         <h3 class="text-text-main text-sm font-bold">{m.asso_cotisations_config_title()}</h3>
         {#if canManageProducts && !editingConfig}
@@ -753,7 +753,7 @@
           {:else}
             <ul class="space-y-3">
               {#each tierProducts as product (product.id)}
-                <li class="border-cn-border/70 bg-cn-bg/40 overflow-hidden rounded-xl border">
+                <li class="border-cn-border/70 bg-cn-bg overflow-hidden rounded-xl border">
                   <div class="flex items-center gap-3 px-4 py-3">
                     <div class="min-w-0 flex-1">
                       <div class="flex flex-wrap items-center gap-2">
@@ -984,7 +984,7 @@
                         <button
                           type="submit"
                           disabled={savingTierId === product.id || gridProblem !== null}
-                          class="bg-cn-yellow text-cn-dark w-fit rounded-lg px-4 py-2 text-xs font-bold disabled:opacity-50 sm:col-span-2"
+                          class="bg-cn-yellow text-cn-ink w-fit rounded-lg px-4 py-2 text-xs font-bold disabled:opacity-50 sm:col-span-2"
                         >
                           {savingTierId === product.id
                             ? m.common_saving_label()
@@ -1000,7 +1000,7 @@
 
           {#if showAddTierForm}
             <form
-              class="border-cn-border bg-cn-bg/40 space-y-3 rounded-xl border p-4"
+              class="border-cn-border bg-cn-bg space-y-3 rounded-xl border p-4"
               onsubmit={(e) => {
                 e.preventDefault();
                 void handleCreateTier();
@@ -1113,7 +1113,7 @@
     </div>
 
     <!-- Roster -->
-    <div class="border-cn-border space-y-4 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm">
+    <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
       <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h3 class="text-text-main text-sm font-bold">{m.asso_cotisations_roster_title()}</h3>
         {#if canManageMembers}
@@ -1172,7 +1172,7 @@
               <ul class="space-y-2">
                 {#each group.items as item (item.tagId)}
                   <li
-                    class="border-cn-border bg-cn-bg/40 flex items-center gap-3 rounded-xl border px-4 py-3"
+                    class="border-cn-border bg-cn-bg flex items-center gap-3 rounded-xl border px-4 py-3"
                   >
                     <div class="min-w-0 flex-1">
                       <div class="flex flex-wrap items-center gap-2">

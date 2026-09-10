@@ -24,7 +24,7 @@
 {#if open}
   <!-- Backdrop -->
   <div
-    class="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm"
+    class="fixed inset-0 z-50 bg-black/40"
     onclick={onDismiss}
     role="presentation"
     aria-hidden="true"
@@ -32,7 +32,7 @@
 
   <!-- Sheet -->
   <div
-    class="border-cn-border bg-cn-surface/95 fixed inset-x-0 bottom-0 z-50 rounded-t-3xl border-t px-6 pt-5 pb-[calc(1.5rem+var(--safe-area-inset-bottom,0px))] shadow-2xl backdrop-blur-2xl"
+    class="border-cn-border bg-cn-surface fixed inset-x-0 bottom-0 z-50 rounded-t-3xl border-t px-6 pt-5 pb-[calc(1.5rem+var(--safe-area-inset-bottom,0px))] shadow-2xl"
     role="dialog"
     aria-modal="true"
     aria-label={m.auth_biometric_enroll_title()}
@@ -46,7 +46,7 @@
       </div>
     </div>
 
-    <h2 class="text-text-main mb-1 text-center text-lg font-extrabold">
+    <h2 class="text-text-main mb-1 text-center text-lg font-bold">
       {m.auth_biometric_enroll_title()}
     </h2>
     <p class="text-text-muted mb-6 text-center text-sm leading-relaxed">
@@ -56,7 +56,7 @@
     <button
       type="button"
       onclick={onEnroll}
-      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover w-full rounded-xl py-3.5 text-sm font-extrabold transition-all active:scale-95"
+      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover w-full rounded-xl py-3.5 text-sm font-bold transition-all active:scale-95"
     >
       {m.auth_biometric_enable_btn()}
     </button>

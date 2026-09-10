@@ -68,7 +68,7 @@
       <ImageOff size={18} />
       {#if expired}
         <!-- The tile is ~5rem wide: the short label fits, the sentence is on the tooltip. -->
-        <span class="text-[0.625rem] leading-tight">{m.msg_expired_label()}</span>
+        <span class="text-2xs leading-tight">{m.msg_expired_label()}</span>
       {/if}
     </div>
   {:else if blobUrl}

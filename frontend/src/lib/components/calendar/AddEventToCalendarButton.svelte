@@ -45,7 +45,7 @@
 <button
   type="button"
   onclick={handleClick}
-  class="text-text-muted hover:text-cn-dark hover:bg-cn-bg/60 shrink-0 rounded-lg p-1.5 transition-colors"
+  class="text-text-muted hover:text-cn-dark hover:bg-cn-bg shrink-0 rounded-lg p-1.5 transition-colors"
   title={m.calendar_add_title()}
 >
   <CalendarPlus size={16} />

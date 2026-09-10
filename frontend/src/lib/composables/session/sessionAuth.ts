@@ -597,7 +597,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       const reasonStr = reason instanceof Error ? reason.message : String(reason);
       const isUndecryptable = reasonStr === MLS_LOCAL_STATE_UNDECRYPTABLE;
       if (isUndecryptable) {
-        throw new LoginFailure('state_sealed_with_old_key', m.auth_state_sealed_old_pin());
+        throw new LoginFailure('local_state_unopenable', m.auth_local_state_unopenable());
       }
       // Empty keystore on biometric path: no key stored yet (first launch or
       // keystore was wiped). Surface a clean message and let the caller recover.
@@ -916,39 +916,61 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       (e) => cb.log(`[OUTBOX_MIRROR] Adoption pass failed: ${String(e)}`)
     );
 
-    // Load conversations first: consumeFcmCache can access
-    // the conversations Map via addMessageToChat once it is populated.
-    beginStartupCatchupPhase('load_conversations');
-    await cb.loadAndRestoreConversations();
-    {
-      const stats = summarizeConversationStats(cb.conversations);
-      endStartupCatchupPhase({
-        conversationCount: stats.conversationCount,
-        messageCount: stats.localMessageCount,
-      });
-    }
-    // Reconcile background sends (killed app) first: remove from the outbox any
-    // messages already delivered by the native service, BEFORE re-deriving "pending"
-    // statuses (otherwise an already-sent message would be shown as pending again).
-    await reconcileOutboxSent(ctx.getStorage()!).catch(() => {});
-    // Re-mark "pending" messages still in the outbox queue (derived status, not persisted).
-    await applyOutboxPendingStatuses();
+    // EVERYTHING FROM HERE TO THE FCM MERGE IS ONE SPAN, and a deep-link landing must not conclude
+    // anything about this device's conversations until it closes. The restore below marks itself
+    // finished the moment IndexedDB is read, which is BEFORE `consumeFcmCache` writes the
+    // placeholder for a group joined in the background - so a tap on a first message from a new
+    // correspondent used to see a settled map without its target and abandon, milliseconds early.
+    // Opened BEFORE the restore rather than around the cache alone: the two are separated by
+    // awaits, and a gap between them is the whole defect in miniature.
+    cb.beginConversationSource();
+    try {
+      // Load conversations first: consumeFcmCache can access
+      // the conversations Map via addMessageToChat once it is populated.
+      beginStartupCatchupPhase('load_conversations');
+      await cb.loadAndRestoreConversations();
+      {
+        const stats = summarizeConversationStats(cb.conversations);
+        endStartupCatchupPhase({
+          conversationCount: stats.conversationCount,
+          messageCount: stats.localMessageCount,
+        });
+      }
+      // Reconcile background sends (killed app) first: remove from the outbox any
+      // messages already delivered by the native service, BEFORE re-deriving "pending"
+      // statuses (otherwise an already-sent message would be shown as pending again).
+      await reconcileOutboxSent(ctx.getStorage()!).catch(() => {});
+      // Re-mark "pending" messages still in the outbox queue (derived status, not persisted).
+      await applyOutboxPendingStatuses();
 
-    beginStartupCatchupPhase('fcm_cache');
-    const fcmInjected = await consumeFcmCache(ctx.getDeviceKey(), ctx.getStorage()!).catch(
-      () => [] as []
-    );
-    if (Array.isArray(fcmInjected) && fcmInjected.length > 0) {
-      const mergedCount = mergeFcmMessagesIntoConversations(
-        fcmInjected,
-        cb.conversations,
-        ctx.getUserId()
+      beginStartupCatchupPhase('fcm_cache');
+      // THE PLACEHOLDERS TRAVEL WITH THE MESSAGES, and at login as much as on resume: the
+      // conversations were loaded from storage a few lines above, which is BEFORE this call writes
+      // the placeholder for a group joined in the background - so a first message from a new
+      // correspondent has no conversation in the map here either.
+      const fcmInjected = await consumeFcmCache(ctx.getDeviceKey(), ctx.getStorage()!).catch(
+        () => ({
+          messages: [],
+          placeholders: new Map<string, { name: string; updatedAt: number }>(),
+        })
       );
-      cb.log(`[FCM_CACHE] ${mergedCount} message(s) merged in memory at login`);
+      if (fcmInjected.messages.length > 0) {
+        const mergedCount = mergeFcmMessagesIntoConversations(
+          fcmInjected.messages,
+          cb.conversations,
+          ctx.getUserId(),
+          fcmInjected.placeholders
+        );
+        cb.log(`[FCM_CACHE] ${mergedCount} message(s) merged in memory at login`);
+      }
+      endStartupCatchupPhase({
+        messageCount: fcmInjected.messages.length,
+      });
+    } finally {
+      // A throw anywhere in the span still has to release the landing, or a failed restore would
+      // leave every deep link waiting for a source that is never coming back.
+      cb.endConversationSource();
     }
-    endStartupCatchupPhase({
-      messageCount: Array.isArray(fcmInjected) ? fcmInjected.length : 0,
-    });
 
     // What the notification shade acknowledged while the app was not running. AFTER the FCM cache:
     // the watermark's whole job is to recompute `unreadCount`, and it must count the messages that

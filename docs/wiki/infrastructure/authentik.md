@@ -217,6 +217,26 @@ device, and it distinguishes all three failure shapes: a `400` with `DisallowedR
 (mobile scheme, some other fault), a `302 ...?error=<code>` (the fault, readable) and a `302
 /if/flow/...` (the provider is willing, and what is left is the user's own credentials).
 
+### And a THIRD field on pk 10 differed - it had no `authentication_flow`, fixed 2026-09-08
+
+The rule above ("compare every field, not the one the symptom names") held a third time.
+`Canari Dev` was the only one of the seven providers on this box with
+`authentication_flow_id IS NULL`, so a dev login did not enter `miconnect-auth` and met a
+username/password form instead of CAS - which is what the `login_failed` events against that
+provider are. All seven now pin it explicitly, copied from pk 1.
+
+**That pin is worth asserting**, and it is one query:
+
+```sql
+select p.name from authentik_core_provider p where p.authentication_flow_id is null;
+-- must return zero rows
+```
+
+An unpinned provider falls through `PolicyAccessView.handle_no_permission` to
+`ToDefaultFlow.get_flow` (`authentik/policies/views.py:101`), which returns **the BRAND's**
+authentication flow rather than the provider's - so it silently authenticates against whatever the
+brand happens to point at.
+
 ## Login page branding
 
 `infrastructure/authentik/custom-login.css` is the versioned source of truth for the login flow's
@@ -230,6 +250,17 @@ its parent to actually establish a stacking context (`isolation: isolate`, not j
 `position: relative`) or it paints behind the whole page instead of just behind its own sibling;
 and an external `@import` (e.g. Google Fonts) can silently no-op under Authentik's default CSP,
 which blocks it - self-hosting is the fix if an exact custom font is needed.
+
+**Red triangles flashing between stages were an unstyled icon, not a validation error** - settled
+by decoding a Firefox profiler capture's screenshot markers (not just reading its metadata: a
+truncated export holds none of this and looks identical to a healthy one). Navigating from one
+flow to the next (`default-invalidation-flow` -> `miconnect-auth`) reloads the document while the
+flow's JS chunks are still loading; for one frame, up to four `pf-c-alert__icon >
+i.fas.fa-exclamation-triangle` (Authentik's danger alert icon) rendered at their unstyled intrinsic
+size - each roughly a third of the card's height - before the stylesheet that normally constrains
+icon size had applied. The CSS now bounds that icon unconditionally rather than racing the load
+that used to size it, so the race is removed rather than hidden: a genuine, persisting alert still
+renders, at its correct size.
 
 ## Database and backup
 

@@ -48,7 +48,7 @@
   const iconSize = $derived(size === 'sm' ? 14 : size === 'lg' ? 22 : 18);
 
   const fallbackClasses = $derived(
-    variant === 'community' ? 'bg-amber-500 text-white' : 'bg-cn-dark text-cn-yellow'
+    variant === 'community' ? 'bg-amber-500 text-cn-ink' : 'bg-cn-ink text-cn-yellow'
   );
 
   function getInitials(n: string): string {
@@ -106,11 +106,11 @@
   <img
     src={blobUrl}
     alt={name || m.group_avatar_fallback_alt()}
-    class="{shapeClasses} flex-shrink-0 object-cover shadow-sm ring-1 ring-white/20 select-none {sizeClasses}"
+    class="{shapeClasses} shrink-0 object-cover shadow-sm select-none {sizeClasses}"
   />
 {:else}
   <div
-    class="{shapeClasses} flex flex-shrink-0 items-center justify-center font-bold shadow-sm ring-1 ring-white/20 select-none {sizeClasses} {fallbackClasses}"
+    class="{shapeClasses} flex shrink-0 items-center justify-center font-bold shadow-sm select-none {sizeClasses} {fallbackClasses}"
     title={name}
   >
     {#if initials}

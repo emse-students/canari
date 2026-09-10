@@ -601,6 +601,7 @@ caught by a green gate:
   observation is part of a check was stated globally and simply not implemented in one phase file, so
   every TYPE pass asserted that an indicator appeared and said nothing about what the two pages
   logged while it did. A rule enforced by remembering to write it is not enforced.
+- **`Page.captureScreenshot` DROPS THE CSS `:hover` STATE, so a hover affordance cannot be photographed.** Measured 2026-09-08 on the message toolbar: a probe read `opacity: 1`, `display: flex`, `visibility: visible` and a real 84x28 rect off the element milliseconds before the capture, and the PNG held a uniform `#121212` at exactly those coordinates. `Input.dispatchMouseEvent` DOES set the hover - `matches(':hover')` is true and the computed style proves the rule fired - it just does not survive into the captured frame. The consequence is a wrong conclusion in both directions: an empty picture is not evidence the control is missing, and a probe's computed style is not evidence the user can see it. Drive the component into a state it holds itself (open the popover, which is `$state` rather than CSS) and photograph THAT, or report the computed-style read and say plainly that it is not a photograph.
 - **A syntax check is not a runtime check.** A comment inside an evaluated template literal quoted an
   identifier in backticks; the backticks closed the literal, leaving `template / identifier`, which
   is valid JavaScript. `node --check` passed and every run threw `ReferenceError` at the division.
@@ -2435,6 +2436,70 @@ records `a1GateSaid`, and `pingate` PRINTS a non-zero exit rather than only retu
 `LOCKED` has three causes that read alike - the PIN was refused, the modal never mounted, or the tool
 never reached the phone.
 
+## AND THE BUILD STAMP NAMED A COMMIT THAT DOES NOT CONTAIN THE CODE THAT WAS MEASURED
+
+The sibling of the section below, found the same day and worse, because it is silent in the one
+situation that produces it most: a fix being measured.
+
+`a1Build` is DERIVED. `resolveStamp` takes the SvelteKit build timestamp the packaged bundle carries
+and names the newest commit at or before it, on a stated history. That is exact for a build made
+from a clean tree. `a1apk.mjs` builds from the WORKING tree - which is the point of it, and the
+shape of every fix loop: write a fix, build, install, measure, commit. In that loop the newest
+commit at build time is the one BEFORE the change.
+
+So the ledger says NOTIF-16 passed on `1fd7cecd7`, and `1fd7cecd7` is the commit before the fix that
+makes it pass. The measurement is sound - the phone really did file a mention on `canari_mentions`.
+The attribution is false, and it is false in the direction that matters: a reader checking out that
+commit and re-running would get a `FAIL` and conclude the row is flaky.
+
+**IT RECORDS, IT DOES NOT REFUSE.** A gate against a dirty build would forbid the only way a fix can
+be measured before it is committed. What must not survive is a verdict that CLAIMS a commit it was
+not built from. So `apkbuild.mjs` writes the tree state down at build time - HEAD, dirty, and a hash
+of `git diff HEAD` plus the untracked list - and `run.mjs`'s preflight joins it back.
+
+**THE JOIN KEY IS `builtAt`, AND THAT IS NOT AN IMPLEMENTATION DETAIL.** It is the only value both
+ends know for a fact: the preflight reads it off the running app, the recorder reads it out of the
+bundle it just packaged. The commit is a derivation on both sides, so joining on the commit would be
+joining two guesses and would agree exactly when it was least entitled to.
+
+**ABSENCE IS "NOT RECORDED", NEVER "CLEAN".** Every row taken before this existed carries nothing,
+and so does an APK built by CI or by hand. `rows.mjs` prints the rows it KNOWS were measured on a
+dirty tree and says nothing about the rest, which is honest rather than reassuring.
+
+**The general shape: a derived value inherits every assumption of its derivation, and the assumption
+here was never written down.** `resolveStamp`'s own doc reasons carefully about WHICH history to
+resolve against - it was extended once already, when a locally built APK was resolved against
+`origin/main` and named two different commits for one bundle. It reasons not at all about whether
+the tree was committed, because at the time both callers built from a commit. A derivation is only
+as true as the sentence nobody thought to write.
+
+## A RUNNER OVERWROTE THE FIELD THAT SAYS WHICH RUNNER TOOK THE VERDICT
+
+`rows.mjs` can say whether a recorded verdict was taken on the code it claims, and it does it with
+three fields the ledger writes for itself: `check` (the runner FILE), `checkSha` and
+`instrumentSha`. Change a runner after a verdict and the row is reported as `runner is now
+<newsha>` - which is how a stale `PASS` is told from a current one.
+
+**Four live rows had silently left that chain** - NOTIF-7, NOTIF-7b, NOTIF-14 and NOTIF-16. `record()` wrote `check: CHECK.file` and then
+spread the caller's `detail` over it, and six runners set `out.check = '<the row id>'` as a
+self-label inside their own JSON dump - `'NOTIF-14'`, `'NOTIF-7 (bg)'`, `'NOTIF-6c'`, `'MSG-10'`,
+`'MSG-8b'`. So the ledger recorded a row id where a filename belonged, `rows.mjs` looked for a file
+called `NOTIF-7 (bg)`, found none, and printed **"its runner no longer exists"** for runners that
+exist and had just run. It prints the same sentence for FWD-3, FWD-4 and FWD-5, where it is simply
+TRUE - which is exactly why the false ones were never noticed. Nothing failed. The rows kept their verdicts and lost only the ability to
+say those verdicts were current, which is the property the whole ledger is for.
+
+**The fix is an ordering, not a rule for runners to remember.** The three provenance fields now sit
+AFTER `...detail`, so a runner cannot overwrite them; `a1Build` deliberately stays BEFORE it,
+because that one IS an observation and a runner that read the phone at its own arming moment has
+the better one. The self-labels were removed from the runners as well, but that is tidying - the
+ordering is what makes the next runner unable to reintroduce it.
+
+**The general shape, and it is the second time this campaign has met it.** A field the LEDGER owns
+and a field a RUNNER contributes are different kinds of value, and merging them with a spread makes
+the distinction depend on declaration order. Ask of every field in a record which of the two it is;
+where the answer is "the ledger's", the runner must not be able to name it at all.
+
 ## A STATUS WITH NO REQUEST IS EVIDENCE FOR NOTHING
 
 **Measured 2026-08-29, on HEAL-NEW-15's gate.** The row was demoted to `PASS-DIRTY` partly on
@@ -2569,6 +2634,175 @@ That is the measurement the row can actually support. **A rate, an interval or a
 HEAL-NEW log is a statement about ONE document or it is a statement about the harness** - the runner
 navigates the client by design, and every in-memory guard in the app is reset each time it does.
 
+## THE PRECONDITION THAT REPAIRS THE LINK ALSO REFILLS THE SHADE, AND A ROW READ IT AS ITS OWN
+
+**NOTIF-7b recorded `FAIL` on 2026-09-08 against a notification it had never sent** - the tell was
+in its own stage line and nobody had a reason to look at it:
+
+```
+[76.910s] FCM link renewed in 4316ms
+[106.856s] sending NOTIF7-mtsk277r5z2
+[107.306s] shade in 132 ms, decrypted=false; ["N17B-mtshovlkrcc | Canari Test Beta a ajoute ..."]
+```
+
+**132 ms is not a push.** What was in the shade was NOTIF-17b's group-add notification, from a row
+that had finished hours earlier, and the row tapped it, followed it nowhere, and wrote `FAIL` about
+the deep link.
+
+**AND THE CAUSE IS A PRECONDITION DOING EXACTLY WHAT IT IS FOR.** `requireFreshFcmLink` forces Play
+services onto a new connection because that is what revives a dead link - and the reason it revives
+it is that the backlog is then DELIVERED, the sends carrying `ttl: 24h`. That is written down in
+`fcmlink.mjs` as the finding that justified the whole file. So every push row now begins by dropping
+up to a day of old pushes into the shade, seconds before it reads it. The gate that made four
+verdicts believable is the gate that made this one false.
+
+**A ROW MUST WAIT FOR ITS OWN NOTIFICATION, AND THE INSTANT IT SENT IS A FACT IT ALREADY HAS.**
+`awaitNotification` takes a `sinceMs` floor read from `phone.deviceNowMs()` - the DEVICE's clock,
+because the two are minutes apart on this bench and a floor on the wrong one accepts everything or
+nothing. The record's `mUpdateTimeMs` is what it is compared against, not `when`: a stable-id repost
+UPDATES the record in place, so `when` can still name the first message of a conversation while the
+shade is showing the newest.
+
+**AND WHERE THE FLOOR CANNOT FOLLOW, THE ROW REFUSES.** The tap matches TEXT in a UI dump, so it
+cannot be given a timestamp. With the marker in the body the needle names exactly one row; without
+it the needle is the peer's name, which a backlog item carries just as well - so a row that finds a
+stale notification for its own peer and no decrypted body records `SETUP-FAILED` naming the
+ambiguity instead of tapping a coin flip and reporting where it landed.
+
+## THE LAST NOTIFICATION IN THE DUMP WAS THE REST OF THE DUMP
+
+Found while fixing the above, and it had been true of every notification row ever taken here.
+`phone.notifications()` split `dumpsys notification` on `NotificationRecord(` - and `dumpsys` prints
+the live list first, then ~900 lines of unrelated state: every package's preferences, every channel
+the phone has ever been told about, listener stats, Zen rules. The final block therefore contained
+all of it. Measured on 2026-09-08: two records, the last one **905 lines long, naming
+`fr.emse.canari` twice with nothing of ours in the shade at all.**
+
+Every row here matches on `full`, so a needle occurring anywhere in that tail read as a notification
+that was posted. `undecryptedInShade` could count a phantom; a channel assertion could read a
+`channel=` belonging to another app's record. The list is now bounded by INDENT, which is what the
+dump encodes - `  Notification List:` introduces it, records sit at four spaces, and the section
+ends at the next two-space key - and a dump without that header THROWS, because silently parsing
+the whole file is the defect wearing a fallback's clothes.
+
+**The general shape, and it is the second time this campaign has met it**: a parser given a
+delimiter and no TERMINATOR does not fail, it over-reads. What it returns is a superset that
+satisfies every `includes` a caller can write, so it produces PASSES, which is the direction nobody
+audits.
+
+## THREE PROVENANCE REPORTS COULD NOT FIRE, AND THEIR SILENCE READ AS A CLEAN BILL
+
+`rows.mjs` reduces the ledger to one entry per row, and that reduction is an EXPLICIT PROJECTION -
+it names the fields it copies. Its own comment, written when `instrumentSha` was forgotten, says
+what happens when a field is left out: *"the report said 'predates instrumentSha' about verdicts
+recorded minutes earlier. A projection that names its fields is right; one that names all but the
+newest is a silent zero."*
+
+The warning was right and nobody applied it to the next three. `a1Build`, `a1BuildDirty` and
+`a1BuildUnstamped` were never in the projection, so all three reports that read them printed
+nothing - on a ledger holding **54 stamped verdicts**, several dirty ones, and thirty taken with no
+stamp at all. One of the three had been added that same morning and was believed to be working
+because it was silent.
+
+With the fields copied:
+
+| report | what it had been saying | what it says |
+| --- | --- | --- |
+| measured a phone, no `a1Build` | nothing | **30 verdicts** |
+| built from a DIRTY tree | nothing | 0 among the newest - correctly silent, and now provably so |
+| names an unreachable commit | did not exist | **38 verdicts** |
+
+**A REPORT THAT CANNOT FIRE IS WORSE THAN NO REPORT**, because a missing report is a known gap and
+a silent one is read as an all-clear. The general shape: a projection is a place where a field goes
+missing WITHOUT a compiler noticing, and every consumer downstream then reads `undefined` as
+"false" - which for a provenance flag is the reassuring answer.
+
+## AND THE SQUASH MERGE ORPHANS EVERY DEVICE VERDICT IT EVER TAKES
+
+`a1Build` is a BRANCH commit by construction. The fix loop is write, build, measure, commit - the
+measuring happens before the pull request exists, let alone merges. GitHub then SQUASHES that pull
+request and deletes the branch, so the commit a verdict names stops being reachable from `main`. It
+survives in the clone that made it, and in `refs/pull/<n>/head` on the remote. **It exists nowhere a
+fresh clone can see.**
+
+Measured 2026-09-08: **9 of 13 distinct `a1Build` values, covering 38 verdicts, were already
+orphaned** - including the two taken that morning, whose whole point had been that their commit
+described their APK exactly. It did, for about ninety minutes.
+
+`rows.mjs` reports it and cannot repair it: the durable name for that code is the PULL REQUEST, and
+the harness does not know the number at build time. What it can do is refuse to print a commit as
+though a reader could resolve it, and say how to get it back -
+`gh api repos/:owner/:repo/commits/<sha>/pulls`, then `git fetch origin refs/pull/<n>/head`.
+
+**This does not weaken a verdict**; it weakens a READER's ability to reproduce one, which is the
+same thing a day later. The pair with the dirty-tree check is the whole picture: one says the commit
+does not describe the code, the other says the commit cannot be found.
+
+## A PRECONDITION CANNOT PRODUCE A PRODUCT VERDICT, AND FOUR OF THEM DID
+
+NOTIF-1b recorded `FAIL` twice on 2026-09-08 while the thing it exists to measure answered perfectly:
+notified in 2206 ms and 2203 ms, inside the 10 s discriminator, with the body drawn. What failed was
+`warmUpInMs: null` - a clause the row's own comment labels *"A RIG CLAUSE, NOT A PRODUCT ONE"*, sitting
+in the same array as the product clauses, where `unmet.length > 0` made it a product verdict.
+
+The file already knew better in three places and could not act on any of them. Its docblock promises
+that a failed warm-up makes the run *"say so and STOP rather than measuring a booting app and blaming
+the notification layer"*. Its `theOsLetTheHiddenAppKeepItsNetwork` comment says *"the OS cut the
+network" and "the product stayed silent" are different findings and must not share a verdict*. And
+its `baselineTooSlow` branch does the right thing for the WEAKER form of the same problem - a warm-up
+that is merely slow makes the discriminator ungradeable rather than unmet. A warm-up that never
+arrives at all was graded `FAIL`.
+
+**The rule.** A clause is a PRECONDITION when its failure relocates the run onto a different subject.
+A dead process measures the KILLED path; an app HOME never hid measures the FOREGROUND path; an OS
+that cut the network measures no path; a warm-up that never arrives measures a booting app. In every
+one of those the clauses downstream were never validly asked, so grading their answers is reading a
+measurement that was not taken. Preconditions yield `SETUP-FAILED` with a `notMeasured` field naming
+them; only product clauses may yield `FAIL`.
+
+**And it does not generalise to the ungradeable discriminator, deliberately.** `baselineTooSlow`
+still lets a product failure win, because a slow-but-arriving warm-up proves the app IS routing: the
+other clauses were validly asked and a failure among them is real. The distinction is whether the
+run reached the subject, not whether it was comfortable.
+
+**The same conflation was in `k.mjs` (NOTIF-6c)**, whose `thePreconditionWasArmed` is labelled *"NOT
+a product clause"* on the line above where it is pushed, and which was graded `FAIL` anyway. That row
+had already invented the pattern for a fourth clause - `theShadeWasAnswered` returns `SKIPPED`,
+because *"a zero that could mean 'refused' or 'never asked' is a defect in the instrument"* - and
+simply had not applied it to the other three.
+
+## AND THE PRECONDITION UNDER THAT ONE FAILED IN SILENCE
+
+The same row opened the phone's conversation with `.catch(() => null)`. Twice:
+
+```js
+await withDeadline(ensureChat(a1Setup), 60_000, 'A1 ensureChat').catch(() => null);
+await withDeadline(openConversation(a1Setup, peerNameFor('A1')), 90_000, 'A1 openConversation').catch(() => null);
+```
+
+W2's and W1's equivalents are allowed to throw; only the phone's were swallowed. So "the DM never
+opened" and "the DM was open and the message never came" produced the same run - no console line, no
+field, `clean: true` - and those are the exact two findings the warm-up exists to separate. **A
+swallowed setup failure does not make a run fail; it makes a run mean something else without saying
+so.** Recorded in `a1SetupFaults`, announced, and asserted as `theDmWasOpenOnThePhone`.
+
+## READ THE SERVER'S LOGS BEFORE FILING A CLIENT DEFECT
+
+The P1 CANDIDATE filed from NOTIF-1b's console said *"a zombie socket in a FOREGROUNDED app"*, and
+named a rig alternative it could not rule out. Three logs were sitting on the same machine and none
+had been opened. Each one took under a minute and each refuted a load-bearing claim:
+
+| the claim | the log | what it said |
+| --- | --- | --- |
+| the socket was a zombie | `docker logs canari-local-chat-gateway-1` | `[Gateway] Message directly routed to ...tauri-...` at 13:50:32.372 |
+| nothing was delivered | `docker logs canari-local-chat-delivery-service-1` | `QUEUED count=6`, `online=false`, `FCM sent ... bytes=659`, then the phone's ACK |
+| `make local-frontend` killed it | `docker inspect --format '{{.State.StartedAt}}'` | nginx up 13:28:36Z against runs at 13:41 and 13:52; the gateway up since 2026-09-04 |
+| the app was ready | the delivery log again | `REGISTER_DEVICE`, `REGISTER_PREKEYS`, `USER_GROUPS groups=7` at 13:50:45 - **13 s after the warm-up** |
+
+`docker logs --since/--until` with a bare timestamp misparses and returns nothing here; strip the ANSI
+codes and grep the embedded ISO timestamps instead. A client console describes what the client
+believes. It is evidence about the client, and it is never evidence about the peer.
+
 ## Where a result goes
 
 - **PASS** -> one row in the [dashboard](cross-client-testing.md), with the build it ran against.
@@ -2611,6 +2845,23 @@ where they disagree, every row the board claims and the ledger cannot corroborat
 taken by a runner that has since changed. **Run it before believing a cell, and before writing a
 phase's summary line.** It had been reporting these fourteen divergences for a day before anyone
 ran it - a check that exists and is not run is worth exactly what no check is worth.
+
+**AND SINCE 2026-09-08 IT DETECTS THE INTERMITTENCE ITSELF, which the paragraph above described and
+nothing checked for eleven days.** `rows.mjs` now groups every ledger record by row AND build AND
+`checkSha` AND `instrumentSha` AND order, and reports each group that holds more than one distinct
+verdict. All four keys are load-bearing: a row re-run after a fix answers differently on two BUILDS,
+a runner EDITED between two runs answers differently on one build - which is the ordinary way a row
+goes `FAIL` then `PASS` and accounted for 49 of the first 77 hits - and a COMPARISON row's halves
+answer differently by construction, which is its question rather than a fault. What is left is same
+build, same runner, same instrument, two answers: the product or the estate.
+
+**It found 28, of which 18 decide a cell the board is showing right now**, and it names them so.
+HEAL-repair is the row that made it necessary: `2 PARTIAL, 1 PASS` on one build and `2 PASS, 2
+PARTIAL` on another, a cell that read `PASS` for two days because the last run of a rung happened to
+be a good draw, and a P1 whose cause is arithmetic ([backlog](backlog.md)). **A verdict from a row
+listed there is one draw of a distribution, not a measurement**, and grading it on the newest word is
+the same selection-from-evidence this section was written about - one level down, where the selection
+is made by the dice instead of by a person.
 
 ### Dirt repeated across rows is ONE defect, and a per-row report cannot show that
 
@@ -3294,3 +3545,62 @@ and nothing else, and the three real conversations in the same shape were left u
 The converse trap is the one the P1 itself was: **a destructive path that decides a group is dead from
 an incomplete read.** Sweeping the world and pruning inside the product are not the same act, and only
 one of them is allowed to guess.
+
+## A DISPLAY NAME WAS USED AS AN IDENTITY, AND THE COUPLING THAT FOLLOWED BECAME A P1 THAT VOIDED THE WHOLE CAMPAIGN
+
+**On 2026-09-09 a P1 was filed saying a clean login with one account's credentials returned another
+account's access token** - the client showing user B and acting as user A. Its stated consequence was
+total: *every two-client measurement taken on this rig while this holds is void*, and no runner check
+could see it. It was refuted the same day, by five measurements, and none of them took more than a
+minute. **The defect was in the evidence.**
+
+**What the refutation measured, in the order it settled things.**
+
+1. **The identity provider.** Authentik holds two distinct, active users for the campaign with two
+   distinct subjects, and its event log shows each authenticating as itself - `login` and
+   `authorize_application` against `Canari Local`, never crossed, at 12:56 and 15:33 that day and at
+   02:43-02:46 the night before. There was **no owner authentication at all** in the eight hours the
+   P1 was measured in.
+2. **The mapping.** `users.id` **IS** the OIDC subject: `findOrCreateFromOidc` looks a user up by
+   primary key, and the access token is signed `{ sub: user.id }` from that same object. One login
+   response cannot disagree with itself, so the split had nowhere to happen.
+3. **The clients, live.** W1 shows and sends the owner (34 bearer requests), W2 shows and sends the
+   peer (40), A1 shows the owner. The phone the entry named as "the same user as W2" is not.
+4. **The cookie seam**, which was the one place identity could legitimately be decided by something
+   other than the token, since nginx `auth_request` resolves `X-User-Id` for itself: no refresh
+   cookie on either origin, and a cookie-only call answers `x-logged-in: false` and 401s.
+5. **The coupling itself, re-run keyed on the SUBJECT.** Granting the owner a membership left the
+   peer's `me/list` at `[]` before, during and after - `A = B = C`. The original coupling had aimed
+   its grant at a user resolved **by display name**, which lands on a different row; the answer that
+   moved was the grant's, not the identity's.
+
+**The false step is one sentence: a display name was used where a subject was meant.** The same
+session had already been bitten by it once - an `association_members` grant matched by `displayName`
+hit five rows belonging to an unrelated real person - and the lesson was recorded as a repair rather
+than as a rule, so it was available to be made again ninety minutes later. The P1 even stated as
+evidence that "the peer's own five memberships never appeared": the peer has **no** memberships, and
+never did. Those five were the unrelated person's.
+
+**Why no check caught it, which is the part worth keeping.** The rig held three strings for one human
+- a login, a display name and a subject - and only the first two were reachable from code.
+`accounts.mjs` already carried a docblock recording that a login is not a display name, written after
+READ-10 spent a campaign never producing a verdict for the same family of reason. The third string,
+the only one the server decides anything by, existed nowhere. So `identity.mjs` and `subject.mjs`
+were written with the refutation, `subjectFor(key)` was added beside `usernames()`, and
+`identity-selftest.mjs` is in the CI gate pinning the case the P1 claimed - shows one account, acts
+as another, both halves visible. `bun identity.mjs` answers it for every client at once, costs no
+traffic and no reload, and exits non-zero when a client is not its owner.
+
+**Three rules come out of it, and only the third is new.**
+
+- **A COUPLING PROVES CAUSATION ONLY IF THE THING YOU MOVED IS THE THING YOU NAMED.** "I changed X
+  and Y responded" is worth exactly as much as the identification of X. Here X was resolved by a
+  human-readable label with no uniqueness anyone had checked, and the coupling was perfect - because
+  it was measuring the grant landing on the client's own user.
+- **A CLAIM THAT INVALIDATES A WHOLE BODY OF WORK EARNS MORE SCRUTINY THAN ONE THAT DOES NOT, NOT
+  LESS.** This one voided every two-client row on the board and was filed on a single decode, with
+  six causes eliminated around it. Eliminating six alternatives is not the same as establishing the
+  seventh, and the entry itself named the cheap probe that would have settled it - without running it.
+- **WHEN A MISTAKE IS REPAIRED, THE RULE GOES IN THE SAME COMMIT AS THE REPAIR.** The display-name
+  resolution was caught, understood and fixed hours earlier, and left as a story. A lesson that lives
+  only in a repair is available to be repeated.

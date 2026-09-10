@@ -1,6 +1,6 @@
 //! Re-bootstrap (fail-safe) Tauri command, used to recreate a dead MLS group.
 
-use crate::concurrency::write_mls_state_blob;
+use crate::concurrency::{write_mls_state_blob, ForegroundCritical};
 use crate::state::{AppState, HttpClient, PendingDb};
 use base64::Engine as _;
 
@@ -233,6 +233,10 @@ pub(crate) async fn bootstrap_dead_conversation(
     };
 
     // --- Step 6: persist the MLS state -----------------------------------------
+    // Spans the serialise, the checkpoint row AND the blob write: the re-bootstrapped group exists
+    // only in this engine until the last of the three lands, and a background engine writing back
+    // its older blob in between undoes the whole repair (see `concurrency.rs`).
+    let _checkpoint = ForegroundCritical::enter();
     let enc = {
         let lock = state
             .mls_manager

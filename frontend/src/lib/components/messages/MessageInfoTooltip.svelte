@@ -67,7 +67,7 @@
   <div
     class="absolute {isOwn
       ? 'right-0'
-      : 'left-0'} text-text-main top-full z-50 mt-1.5 flex flex-col gap-1.5 rounded-xl border border-black/5 bg-white/90 px-3.5 py-2.5 text-[0.7rem] whitespace-nowrap shadow-xl shadow-black/10 backdrop-blur-xl dark:border-white/10 dark:bg-black/80 dark:shadow-black/40"
+      : 'left-0'} text-text-main bg-cn-surface text-2xs top-full z-50 mt-1.5 flex flex-col gap-1.5 rounded-xl border border-black/5 px-3.5 py-2.5 whitespace-nowrap shadow-xl shadow-black/10 dark:border-white/10 dark:shadow-black/40"
     in:fly={{ y: -4, duration: 200, opacity: 0, easing: (t) => t * (2 - t) }}
   >
     <!-- Send timestamp. -->

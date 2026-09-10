@@ -605,7 +605,7 @@
   <!-- Compact segmented tab control: Play (game) vs Leaderboard (ranked scores). -->
   <div
     role="tablist"
-    class="mb-2 flex shrink-0 gap-1 rounded-xl border border-white/50 bg-white/45 p-1 dark:border-white/10 dark:bg-black/25"
+    class="bg-cn-surface mb-2 flex shrink-0 gap-1 rounded-xl border border-white/50 p-1 dark:border-white/10"
   >
     <button
       type="button"
@@ -614,7 +614,7 @@
       onclick={() => selectTab('play')}
       class="flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-semibold transition-colors {activeTab ===
       'play'
-        ? 'bg-cn-yellow text-cn-dark shadow-sm'
+        ? 'bg-cn-yellow text-cn-ink shadow-sm'
         : 'text-text-muted hover:bg-black/5 dark:hover:bg-white/10'}"
     >
       {m.minesweeper_tab_play()}
@@ -626,7 +626,7 @@
       onclick={() => selectTab('leaderboard')}
       class="flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-semibold transition-colors {activeTab ===
       'leaderboard'
-        ? 'bg-cn-yellow text-cn-dark shadow-sm'
+        ? 'bg-cn-yellow text-cn-ink shadow-sm'
         : 'text-text-muted hover:bg-black/5 dark:hover:bg-white/10'}"
     >
       <Trophy size={14} />
@@ -667,7 +667,7 @@
               onclick={toggleFlagPrimary}
               aria-pressed={flagPrimary}
               title={m.minesweeper_flag_primary_hint()}
-              class="flex items-center gap-1 rounded-lg px-1.5 py-0.5 text-[0.65rem] font-bold tracking-wide uppercase transition-colors {flagPrimary
+              class="text-2xs flex items-center gap-1 rounded-lg px-1.5 py-0.5 font-bold tracking-wide uppercase transition-colors {flagPrimary
                 ? 'bg-cn-yellow/20 text-cn-dark'
                 : 'text-text-muted hover:bg-cn-bg'}"
             >
@@ -675,7 +675,7 @@
               {m.minesweeper_flag_primary()}
             </button>
             <span
-              class="text-[0.65rem] font-bold tracking-wide uppercase {rankedMode
+              class="text-2xs font-bold tracking-wide uppercase {rankedMode
                 ? 'text-cn-yellow'
                 : 'text-text-muted'}"
             >
@@ -688,7 +688,7 @@
       <div
         bind:this={viewportEl}
         role="presentation"
-        class="border-cn-border bg-cn-bg/40 relative min-h-0 flex-1 overflow-hidden rounded-xl border"
+        class="border-cn-border bg-cn-bg relative min-h-0 flex-1 overflow-hidden rounded-xl border"
         style="touch-action: none;"
         onwheel={handleWheel}
         onpointerdown={handleViewportPointerDown}
@@ -717,17 +717,18 @@
                 onpointerup={handlePointerRelease}
                 onpointerleave={handlePointerRelease}
                 onpointercancel={handlePointerRelease}
-                class="box-border flex h-[length:var(--ms-cell)] w-[length:var(--ms-cell)] shrink-0 touch-manipulation items-center justify-center rounded-sm border font-mono text-xs font-bold select-none sm:text-sm
-              {cell.state === 'hidden'
+                class="box-border flex h-[length:var(--ms-cell)] w-[length:var(--ms-cell)] shrink-0 touch-manipulation items-center justify-center rounded-sm border font-mono text-xs font-bold select-none sm:text-sm {cell.state ===
+                'hidden'
                   ? 'bg-cn-yellow/25 hover:bg-cn-yellow/40 border-cn-border'
                   : cell.state === 'flagged'
                     ? 'bg-cn-yellow/25 hover:bg-cn-yellow/40 border-cn-border'
                     : cell.mine
                       ? 'border-transparent bg-red-500/80'
                       : cell.adjacent === 0
-                        ? 'bg-cn-bg/60 border-transparent'
-                        : 'bg-cn-bg/80 border-transparent'}
-              {cell.state === 'revealed' && !cell.mine && cell.adjacent > 0
+                        ? 'bg-cn-bg border-transparent'
+                        : 'bg-cn-bg border-transparent'} {cell.state === 'revealed' &&
+                !cell.mine &&
+                cell.adjacent > 0
                   ? NUMBER_COLORS[cell.adjacent]
                   : ''}"
               >
@@ -748,7 +749,7 @@
             type="button"
             onclick={zoomIn}
             aria-label={m.minesweeper_zoom_in()}
-            class="bg-cn-surface/90 border-cn-border text-text-main hover:bg-cn-bg flex size-8 items-center justify-center rounded-lg border shadow-sm transition-colors"
+            class="bg-cn-surface border-cn-border text-text-main hover:bg-cn-bg flex size-8 items-center justify-center rounded-lg border shadow-sm transition-colors"
           >
             <ZoomIn size={15} />
           </button>
@@ -756,7 +757,7 @@
             type="button"
             onclick={zoomOut}
             aria-label={m.minesweeper_zoom_out()}
-            class="bg-cn-surface/90 border-cn-border text-text-main hover:bg-cn-bg flex size-8 items-center justify-center rounded-lg border shadow-sm transition-colors"
+            class="bg-cn-surface border-cn-border text-text-main hover:bg-cn-bg flex size-8 items-center justify-center rounded-lg border shadow-sm transition-colors"
           >
             <ZoomOut size={15} />
           </button>
@@ -764,7 +765,7 @@
             type="button"
             onclick={handleResetView}
             aria-label={m.minesweeper_zoom_reset()}
-            class="bg-cn-surface/90 border-cn-border text-text-main hover:bg-cn-bg flex size-8 items-center justify-center rounded-lg border shadow-sm transition-colors"
+            class="bg-cn-surface border-cn-border text-text-main hover:bg-cn-bg flex size-8 items-center justify-center rounded-lg border shadow-sm transition-colors"
           >
             <Maximize2 size={15} />
           </button>
@@ -775,11 +776,11 @@
           <!-- Game-over overlay: sits above the zoom controls, scoped to the viewport only so
            the Modal header/close button above it stays reachable at all times. -->
           <div
-            class="absolute inset-0 z-10 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+            class="absolute inset-0 z-10 flex items-center justify-center bg-black/50 p-4"
             transition:fade={{ duration: 200 }}
           >
             <div
-              class="bg-cn-surface/95 pointer-events-auto flex flex-col items-center gap-3 rounded-2xl border px-6 py-6 text-center shadow-2xl {isWin
+              class="bg-cn-surface pointer-events-auto flex flex-col items-center gap-3 rounded-2xl border px-6 py-6 text-center shadow-2xl {isWin
                 ? 'border-cn-yellow/50 shadow-[0_0_40px_-12px_rgba(246,194,50,0.45)]'
                 : 'border-red-500/40 shadow-[0_0_40px_-12px_rgba(239,68,68,0.35)]'}"
               transition:scaleTransition={{ duration: 280, start: 0.9, easing: backOut }}
@@ -790,7 +791,7 @@
                 <Bomb size={28} class="text-red-500" />
               {/if}
               <p
-                class="text-2xl font-extrabold sm:text-3xl {isWin
+                class="text-2xl font-bold sm:text-3xl {isWin
                   ? 'ms-win-pulse text-cn-yellow'
                   : 'text-red-500'}"
               >
@@ -798,7 +799,7 @@
               </p>
               {#if isWin}
                 <p
-                  class="border-cn-yellow/40 bg-cn-yellow/15 text-text-main flex items-center gap-2 rounded-xl border px-4 py-2 font-mono text-xl font-extrabold tabular-nums sm:text-2xl"
+                  class="border-cn-yellow/40 bg-cn-yellow/15 text-text-main flex items-center gap-2 rounded-xl border px-4 py-2 font-mono text-xl font-bold tabular-nums sm:text-2xl"
                 >
                   <Timer size={20} class="text-cn-yellow shrink-0" strokeWidth={2.5} />
                   {m.minesweeper_time({
@@ -830,7 +831,7 @@
               <button
                 type="button"
                 onclick={newGame}
-                class="bg-cn-yellow text-cn-dark hover:bg-cn-yellow-hover mt-1 flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-bold transition-colors"
+                class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover mt-1 flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-bold transition-colors"
               >
                 <RotateCcw size={15} strokeWidth={2.5} />
                 {m.minesweeper_new_game()}
@@ -842,7 +843,7 @@
 
       <!-- Compact one-line control/zoom hints + score feedback, kept on the play tab. -->
       <div class="border-cn-border mt-2 shrink-0 border-t pt-1.5">
-        <p class="text-text-muted truncate text-center text-[11px]">
+        <p class="text-text-muted text-2xs truncate text-center">
           <span class="hidden sm:inline">
             {flagPrimary ? m.minesweeper_hint_desktop_flag_primary() : m.minesweeper_hint_desktop()}
           </span>
@@ -880,7 +881,7 @@
         <ol class="space-y-1.5">
           {#each leaderboard as entry (entry.userId)}
             <li
-              class="border-cn-border bg-cn-bg/60 flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5"
+              class="border-cn-border bg-cn-bg flex items-center justify-between gap-3 rounded-xl border px-3 py-2.5"
             >
               <span class="flex items-center gap-2.5 truncate">
                 <span class="text-text-muted w-7 shrink-0 font-mono text-sm font-bold">

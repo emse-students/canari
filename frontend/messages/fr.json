@@ -137,6 +137,7 @@
   "chat_modal_group_tab": "Groupe",
   "chat_modal_contact_label": "Contact",
   "chat_modal_search_user_placeholder": "Rechercher un nom…",
+  "chat_modal_recent_peers_label": "Discussions récentes",
   "chat_modal_start_discussion_button": "Démarrer la discussion",
   "chat_modal_self_conversation_error": "Vous ne pouvez pas démarrer une discussion avec vous-même.",
   "chat_modal_group_name_label": "Nom du groupe",
@@ -189,7 +190,16 @@
   "chat_community_history_shared_note": "Un lien d'invitation qui fuite donne aussi accès au passé. Gardez le lien limité dans le temps et en nombre d'usages.",
   "chat_community_history_joined_note": "Les messages envoyés avant l'arrivée d'un membre resteront illisibles pour lui, définitivement.",
   "chat_community_members_description": "Gestion des membres de la communauté et de leurs rôles globaux.",
-  "chat_community_member_count_label": "Membre(s)",
+  "chat_community_member_count_label": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} membre",
+        "countPlural=other": "{count} membres"
+      }
+    }
+  ],
   "chat_community_generate_invite_button": "Générer une invitation",
   "chat_community_search_user_placeholder": "Rechercher un utilisateur…",
   "chat_community_select_first_error": "Sélectionnez d'abord une communauté.",
@@ -216,8 +226,26 @@
   "chat_previous_match_label": "Occurrence précédente",
   "chat_next_match_label": "Occurrence suivante",
   "chat_search_limited_loaded_warning": "Recherche limitée aux messages chargés. Faites défiler vers le haut pour en charger davantage.",
-  "chat_active_polls_count": "{activePolls} sondage(s) actif(s)",
-  "chat_pinned_messages_count": "{pinnedIds} message(s) épinglé(s)",
+  "chat_active_polls_count": [
+    {
+      "declarations": ["input activePolls", "local activePollsPlural = activePolls: plural"],
+      "selectors": ["activePollsPlural"],
+      "match": {
+        "activePollsPlural=one": "{activePolls} sondage actif",
+        "activePollsPlural=other": "{activePolls} sondages actifs"
+      }
+    }
+  ],
+  "chat_pinned_messages_count": [
+    {
+      "declarations": ["input pinnedIds", "local pinnedIdsPlural = pinnedIds: plural"],
+      "selectors": ["pinnedIdsPlural"],
+      "match": {
+        "pinnedIdsPlural=one": "{pinnedIds} message épinglé",
+        "pinnedIdsPlural=other": "{pinnedIds} messages épinglés"
+      }
+    }
+  ],
   "chat_pinned_message_default_label": "Message épinglé",
   "chat_unpin_label": "Désépingler",
   "chat_unpin_title": "Désépingler",
@@ -231,7 +259,17 @@
   "chat_typing_two_people": "{name1} et {name2} écrivent…",
   "chat_typing_multiple_people": "Plusieurs personnes écrivent…",
   "chat_back_label": "Retour au menu",
-  "chat_pending_files_count": "{pendingFiles} fichier(s) en attente",
+  "chat_pending_files_count": [
+    {
+      "declarations": ["input pendingFiles", "local countPlural = pendingFiles: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{pendingFiles} fichier en attente",
+        "countPlural=other": "{pendingFiles} fichiers en attente"
+      }
+    }
+  ],
+  "chat_show_composer_actions_title": "Afficher les actions",
   "chat_attach_file_title": "Envoyer une image, vidéo ou fichier",
   "chat_attach_file_label": "Joindre un fichier",
   "chat_create_poll_title": "Créer un sondage",
@@ -256,7 +294,6 @@
   "chat_admins_count_label": "Administrateurs - {admins}",
   "chat_members_count_label": "Membres - {regulars}",
   "chat_media_links_files_title": "Médias, liens & fichiers",
-  "chat_search_in_conversation_title": "Rechercher dans la conversation",
   "chat_search_in_conversation_label": "Rechercher dans la conversation",
   "chat_media_tab": "Médias",
   "chat_links_tab": "Liens",
@@ -277,7 +314,16 @@
   "chat_devices_load_error": "Impossible de charger les appareils liés à votre compte.",
   "chat_device_not_listed_warning": "Cet appareil ({id}) n'apparaît pas dans la liste ci-dessous. Rechargez avant de supprimer quoi que ce soit : une suppression est définitive et empêche le réenregistrement.",
   "chat_device_last_one_error": "Impossible de supprimer le dernier appareil : vous perdriez l'accès à vos conversations chiffrées, et cet appareil ne pourrait plus se réenregistrer.",
-  "chat_devices_count_label": "{devices} appareil(s) enregistré(s)",
+  "chat_devices_count_label": [
+    {
+      "declarations": ["input devices", "local devicesPlural = devices: plural"],
+      "selectors": ["devicesPlural"],
+      "match": {
+        "devicesPlural=one": "{devices} appareil enregistré",
+        "devicesPlural=other": "{devices} appareils enregistrés"
+      }
+    }
+  ],
   "chat_no_devices_registered": "Aucun appareil enregistré",
   "chat_device_name_placeholder": "Nom de l'appareil",
   "common_ok_button": "OK",
@@ -424,6 +470,10 @@
   "chat_stop_recording_label": "Arrêter l'enregistrement",
   "chat_stop_and_send_title": "Arrêter et envoyer",
   "chat_cancel_recording_label": "Annuler l'enregistrement",
+  "chat_voice_hold_to_record": "Maintenez pour enregistrer",
+  "chat_voice_slide_to_cancel": "Glissez pour annuler",
+  "chat_voice_release_to_cancel": "Relâchez pour annuler",
+  "chat_voice_locked_hint": "Enregistrement verrouillé",
   "common_cancel_button": "Annuler",
   "chat_mic_permission_error": "Impossible d'accéder au microphone. Vérifiez les permissions.",
   "msg_supprimer_message": "Supprimer le message",
@@ -446,6 +496,7 @@
   "msg_forward_label": "Transférer",
   "msg_more_reactions_label": "Plus de réactions",
   "msg_react_label": "Réagir",
+  "msg_more_actions_label": "Plus d'actions",
   "msg_pin_label": "Épingler",
   "msg_unpin_label": "Désépingler",
   "common_edit_label": "Modifier",
@@ -583,13 +634,58 @@
   "post_fullscreen_label": "Plein écran",
   "post_download_label": "Télécharger",
   "post_poll_multiple_choice_label": "Choix multiples autorisés",
-  "post_poll_days_remaining": "{count} j restant(s)",
-  "post_poll_hours_remaining": "{count} h restante(s)",
-  "post_poll_minutes_remaining": "{count} min restante(s)",
+  "post_poll_days_remaining": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} j restant",
+        "countPlural=other": "{count} j restants"
+      }
+    }
+  ],
+  "post_poll_hours_remaining": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} h restante",
+        "countPlural=other": "{count} h restantes"
+      }
+    }
+  ],
+  "post_poll_minutes_remaining": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} min restante",
+        "countPlural=other": "{count} min restantes"
+      }
+    }
+  ],
   "post_poll_ended_label": "Terminé",
   "post_poll_you_voted_label": "Vous avez voté",
-  "post_poll_vote_count_label": "{count} vote(s)",
-  "post_poll_total_votes_label": "{count} vote(s) au total",
+  "post_poll_vote_count_label": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} vote",
+        "countPlural=other": "{count} votes"
+      }
+    }
+  ],
+  "post_poll_total_votes_label": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} vote au total",
+        "countPlural=other": "{count} votes au total"
+      }
+    }
+  ],
   "post_poll_ended_full_label": "Sondage terminé",
   "post_poll_voters_label": "Votants",
   "post_form_fallback_title": "Formulaire",
@@ -776,7 +872,16 @@
   "moderation_mute_author_hint": "Restreindre l'auteur du contenu signalé",
   "moderation_auto_hide_hint": "Les posts atteignant 5 signalements sont automatiquement masqués ici.",
   "moderation_association_post_label": "Publication d'association",
-  "moderation_pending_reports_count_label": "{count} signalement(s) en attente",
+  "moderation_pending_reports_count_label": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} signalement en attente",
+        "countPlural=other": "{count} signalements en attente"
+      }
+    }
+  ],
   "moderation_restore_hint": "Remettre le post dans les fils d'actualité",
   "moderation_delete_mute_hint": "Supprime le post et mute l'auteur",
   "moderation_delete_permanently_hint": "Supprime définitivement le post",
@@ -896,7 +1001,16 @@
   "admin_status_col_ttl": "TTL (s)",
   "admin_status_ws_connected_label": "Connecté",
   "admin_status_title": "Connexions en direct",
-  "admin_status_subtitle": "{count} appareil(s) - rafraîchissement toutes les {sec}s",
+  "admin_status_subtitle": [
+    {
+      "declarations": ["input count", "input sec", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} appareil - rafraîchissement toutes les {sec}s",
+        "countPlural=other": "{count} appareils - rafraîchissement toutes les {sec}s"
+      }
+    }
+  ],
   "admin_status_last_updated_label": "MAJ {time}",
   "admin_status_legend_button": "Légende",
   "admin_status_legend_heading": "Comment interpréter ce tableau",
@@ -909,7 +1023,16 @@
   "admin_status_legend_anomalies_label": "Anomalies (fond jaune)",
   "admin_status_legend_anomalies_html": "<strong class=\"text-text-main\">Redis ✓ mais WS -</strong> : connexion fermée (ex. arrêt forcé de l'app) mais la clé Redis n'a pas encore expiré. Disparaîtra en ≤30s.<br /><strong class=\"text-text-main\">WS ✓ mais Redis -</strong> : connexion active mais présence jamais écrite (bug gateway) ou TTL expiré sans rafraîchissement.",
   "admin_status_no_devices": "Aucun appareil.",
-  "admin_status_anomalies_heading": "{count} anomalie(s) - WS et Redis désynchronisés",
+  "admin_status_anomalies_heading": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} anomalie - WS et Redis désynchronisés",
+        "countPlural=other": "{count} anomalies - WS et Redis désynchronisés"
+      }
+    }
+  ],
   "admin_status_anomalies_desc": "Fond jaune = WS et Redis ne sont pas d'accord sur le statut de l'appareil.",
   "admin_status_no_anomalies": "Aucune anomalie - WS et Redis sont synchronisés sur tous les appareils",
   "admin_status_all_devices_heading": "Tous les appareils ({count})",
@@ -927,7 +1050,16 @@
   "chat_dm_settings_label": "Paramètres de la discussion",
   "chat_settings_title": "Paramètres",
   "chat_e2e_established_preview": "Canal E2E établi.",
-  "chat_unread_messages_label": "{count} message(s) non lu(s)",
+  "chat_unread_messages_label": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} message non lu",
+        "countPlural=other": "{count} messages non lus"
+      }
+    }
+  ],
   "chat_forward_modal_title": "Transférer à…",
   "chat_search_discussion_placeholder": "Rechercher une discussion…",
   "chat_search_discussion_label": "Rechercher une discussion",
@@ -960,12 +1092,8 @@
   "chat_sync_overlay_message": "Synchronisation des messages…",
   "chat_sync_overlay_description": "Vos conversations s'afficheront dès qu'elles seront prêtes.",
   "chat_open_media_label": "Ouvrir le média",
-  "chat_group_close_backdrop_label": "Fermer les paramètres du groupe",
-  "chat_group_panel_label": "Paramètres du groupe",
   "chat_group_management_title": "Gestion du groupe",
   "chat_group_dm_info_title": "Infos de la discussion",
-  "chat_group_management_subtitle": "Organisez les membres, le nom et la suppression.",
-  "chat_group_dm_subtitle": "Cette discussion est privée entre deux participants.",
   "chat_group_secured_sync_label": "Chiffré de bout en bout",
   "chat_group_name_label": "Nom du groupe",
   "chat_group_change_photo_label": "Changer la photo du groupe",
@@ -1006,8 +1134,26 @@
   "asso_tab_shop": "Boutique",
   "asso_tab_partnerships": "Partenariats",
   "asso_promo_label": "Promo {promo}",
-  "asso_member_count_association": "{count} personne(s) dans cette association.",
-  "asso_member_count_list": "{count} personne(s) dans cette liste.",
+  "asso_member_count_association": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} personne dans cette association.",
+        "countPlural=other": "{count} personnes dans cette association."
+      }
+    }
+  ],
+  "asso_member_count_list": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} personne dans cette liste.",
+        "countPlural=other": "{count} personnes dans cette liste."
+      }
+    }
+  ],
   "asso_no_description": "Aucune description pour le moment.",
   "asso_view_global_calendar": "Voir dans l'agenda global →",
   "asso_view_all_shop": "Voir toute la boutique →",
@@ -1140,7 +1286,16 @@
   "reviewer_docs_empty": "Aucune association n'a encore rendu de document public.",
   "reviewer_docs_search_placeholder": "Rechercher une association ou un document…",
   "reviewer_docs_count_label": "{assos} associations · {docs} documents",
-  "reviewer_docs_group_count": "{count} document(s)",
+  "reviewer_docs_group_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} document",
+        "countPlural=other": "{count} documents"
+      }
+    }
+  ],
   "reviewer_docs_download_title": "Télécharger (déchiffré localement)",
   "carte_card_label": "Carte de la Vie Asso",
   "carte_card_desc": "Générez l'affiche des associations regroupées par thématique.",
@@ -1268,7 +1423,16 @@
   "asso_forms_cash_accepted": "Espèces acceptées",
   "asso_forms_payments_not_configured_badge": "Paiements non configurés",
   "asso_forms_view_link": "Voir le formulaire ↗",
-  "asso_forms_pending_cash_label": "{count} paiement(s) en attente de validation",
+  "asso_forms_pending_cash_label": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} paiement en attente de validation",
+        "countPlural=other": "{count} paiements en attente de validation"
+      }
+    }
+  ],
   "asso_forms_cancel_cash_confirm": "Annuler ce paiement ?",
   "asso_forms_cancel_cash_confirm_button": "Annuler le paiement",
   "asso_forms_cancel_cash_cancel": "Non",
@@ -1299,7 +1463,16 @@
   "asso_achats_source_form": "Formulaire",
   "asso_achats_payment_cash": "Espèces / manuel",
   "asso_achats_payment_online": "En ligne",
-  "asso_achats_count_label": "{count} achat(s)",
+  "asso_achats_count_label": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} achat",
+        "countPlural=other": "{count} achats"
+      }
+    }
+  ],
   "asso_cotisations_title": "Cotisations",
   "asso_cotisations_subtitle": "Gérez la cotisation de l'association et la liste des cotisants.",
   "asso_cotisations_disabled_no_perm_title": "Cotisation non activée",
@@ -1365,7 +1538,16 @@
   "asso_cotisations_revoke_confirm": "Révoquer le statut cotisant de {name} ?",
   "asso_cotisations_no_cotisants": "Aucun cotisant pour le moment.",
   "asso_cotisations_load_error": "Erreur lors du chargement des cotisants.",
-  "asso_cotisations_total_label": "{count} cotisant(s)",
+  "asso_cotisations_total_label": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} cotisant",
+        "countPlural=other": "{count} cotisants"
+      }
+    }
+  ],
   "asso_cotisations_add_title": "Ajouter un cotisant",
   "asso_cotisations_add_error": "Erreur lors de l'ajout.",
   "asso_cotisations_export_button": "Exporter (.xlsx)",
@@ -1808,6 +1990,7 @@
   "nav_shop_label": "Boutique",
   "nav_shop_desc": "Produits et cotisations",
   "nav_dashboard_label": "Tableau de bord",
+  "nav_settings_desc": "Préférences, sécurité, appareils",
   "nav_dashboard_desc": "Vue d'ensemble de l'application",
   "error_unexpected_message": "Une erreur inattendue est survenue.",
   "error_back_home": "Retour à l'accueil",
@@ -1847,8 +2030,40 @@
   "profile_backup_export_label": "Exporter",
   "profile_backup_export_sub": "Sauvegarder",
   "profile_backup_locked": "Déverrouillez la messagerie pour sauvegarder ou restaurer vos conversations.",
-  "profile_backup_import_ok": "Sauvegarde restaurée : {conversations} conversation(s), {messages} message(s).",
-  "profile_backup_import_ok_other_device": "Sauvegarde restaurée sur un autre appareil : {conversations} conversation(s), {messages} message(s). Les conversations restent en lecture seule jusqu'à ce que l'appareil d'origine vous y réinvite.",
+  "profile_backup_import_ok": [
+    {
+      "declarations": [
+        "input conversations",
+        "input messages",
+        "local conversationsPlural = conversations: plural",
+        "local messagesPlural = messages: plural"
+      ],
+      "selectors": ["conversationsPlural", "messagesPlural"],
+      "match": {
+        "conversationsPlural=one,messagesPlural=one": "Sauvegarde restaurée : {conversations} conversation, {messages} message.",
+        "conversationsPlural=one,messagesPlural=other": "Sauvegarde restaurée : {conversations} conversation, {messages} messages.",
+        "conversationsPlural=other,messagesPlural=one": "Sauvegarde restaurée : {conversations} conversations, {messages} message.",
+        "conversationsPlural=other,messagesPlural=other": "Sauvegarde restaurée : {conversations} conversations, {messages} messages."
+      }
+    }
+  ],
+  "profile_backup_import_ok_other_device": [
+    {
+      "declarations": [
+        "input conversations",
+        "input messages",
+        "local conversationsPlural = conversations: plural",
+        "local messagesPlural = messages: plural"
+      ],
+      "selectors": ["conversationsPlural", "messagesPlural"],
+      "match": {
+        "conversationsPlural=one,messagesPlural=one": "Sauvegarde restaurée sur un autre appareil : {conversations} conversation, {messages} message. Les conversations restent en lecture seule jusqu'à ce que l'appareil d'origine vous y réinvite.",
+        "conversationsPlural=one,messagesPlural=other": "Sauvegarde restaurée sur un autre appareil : {conversations} conversation, {messages} messages. Les conversations restent en lecture seule jusqu'à ce que l'appareil d'origine vous y réinvite.",
+        "conversationsPlural=other,messagesPlural=one": "Sauvegarde restaurée sur un autre appareil : {conversations} conversations, {messages} message. Les conversations restent en lecture seule jusqu'à ce que l'appareil d'origine vous y réinvite.",
+        "conversationsPlural=other,messagesPlural=other": "Sauvegarde restaurée sur un autre appareil : {conversations} conversations, {messages} messages. Les conversations restent en lecture seule jusqu'à ce que l'appareil d'origine vous y réinvite."
+      }
+    }
+  ],
   "profile_backup_export_ok": "Sauvegarde exportée.",
   "profile_backup_error_not_a_backup": "Ce fichier n'est pas une sauvegarde Canari.",
   "profile_backup_error_too_old": "Cette sauvegarde a été créée par une version trop ancienne de Canari et ne peut plus être ouverte. Exportez-en une nouvelle depuis l'appareil d'origine.",
@@ -2006,7 +2221,7 @@
   "shop_current_tier_badge": "Votre palier actuel",
   "calendar_heading": "Agenda des associations",
   "calendar_subtitle": "Calendrier mensuel - cliquez sur un jour pour voir les événements.",
-  "calendar_back_associations": "Associations",
+  "calendar_subtitle_schedule": "Les événements du mois, jour par jour.",
   "calendar_deposit_button": "Déposer un événement",
   "calendar_moderate_label": "Modérer les événements en attente",
   "calendar_moderate_open": "Ouvrir la file",
@@ -2032,7 +2247,16 @@
   "calendar_error_choose_asso": "Choisissez une association.",
   "calendar_error_title_required": "Titre et date de début requis.",
   "calendar_export_back": "Retour à l'agenda",
-  "calendar_export_more_events": "+{count} autre(s)",
+  "calendar_export_more_events": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "+{count} autre",
+        "countPlural=other": "+{count} autres"
+      }
+    }
+  ],
   "calendar_export_month_label": "Mois",
   "calendar_export_theme_label": "Thème",
   "calendar_theme_rentree": "Rentrée",
@@ -2144,10 +2368,22 @@
   "layout_error_boundary_message": "Une erreur est survenue sur cette page.",
   "notif_empty_message": "Aucune notification pour l'instant",
   "notif_actor_unknown": "Quelqu'un",
+  "notif_event_proposed_text": "propose un événement",
+  "notif_event_validated_text": "a validé votre événement",
+  "notif_event_rejected_text": "a refusé votre événement",
+  "notif_event_updated_text": "a modifié votre événement",
+  "notif_event_deleted_text": "a supprimé votre événement",
   "notif_reaction_text": "a réagi à votre publication",
   "notif_mention_text": "vous a mentionné",
   "notif_reply_text": "a répondu à votre commentaire",
   "notif_comment_text": "a commenté :",
+  "notif_filter_all": "Tout",
+  "notif_filter_unread": "Non lu",
+  "notif_group_new": "Nouveau",
+  "notif_group_today": "Aujourd'hui",
+  "notif_group_week": "Cette semaine",
+  "notif_group_earlier": "Plus tôt",
+  "notif_empty_unread": "Aucune notification non lue",
   "list_heading": "Listes",
   "list_subtitle": "Les listes de promotion de la communauté",
   "list_new_create_btn": "Créer une liste",
@@ -2173,7 +2409,7 @@
   "community_join_page_title": "Rejoindre une communauté - Canari",
   "community_join_error_fallback": "Impossible de rejoindre la communauté",
   "community_join_back": "Retour aux communautés",
-  "community_join_invited_text": "Vous avez été invité(e) à rejoindre",
+  "community_join_invited_text": "Invitation à rejoindre",
   "community_join_btn": "Rejoindre la communauté",
   "group_join_page_title": "Rejoindre un groupe - Canari",
   "group_join_error_fallback": "Impossible de rejoindre le groupe",
@@ -2182,7 +2418,7 @@
   "group_join_group_fallback": "le groupe",
   "group_join_go_to_chat": "Aller à la messagerie",
   "group_join_back_chat": "Retour à la messagerie",
-  "group_join_invited_text": "Vous avez été invité(e) à rejoindre le groupe",
+  "group_join_invited_text": "Invitation à rejoindre le groupe",
   "group_join_btn": "Rejoindre le groupe",
   "profile_public_missing_id": "Identifiant utilisateur manquant",
   "profile_public_load_error": "Impossible de charger ce profil",
@@ -2217,7 +2453,16 @@
   "calendar_day_no_events": "Aucun événement ce jour-là.",
   "calendar_day_choose_another": "Choisir un autre jour",
   "calendar_day_all_month": "Tout le mois",
-  "calendar_day_event_count": "{count} événement(s)",
+  "calendar_day_event_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} événement",
+        "countPlural=other": "{count} événements"
+      }
+    }
+  ],
   "calendar_event_fallback_title": "Événement",
   "calendar_event_linked_form": "Formulaire lié",
   "mls_error_oom_text": "Mémoire insuffisante - rechargez l'application pour recevoir de nouveaux messages.",
@@ -2324,6 +2569,7 @@
   "tag_autocomplete_select_asso_first": "Sélectionnez d'abord l'association bénéficiaire.",
   "tag_autocomplete_no_tag_hint": "Aucun tag existant - vous pouvez en créer un nouveau (ex. cotisant:bde-2026-2027).",
   "form_card_registration_error": "Impossible de démarrer l'enregistrement de carte",
+  "list_edit_page_title": "Gestion de la liste",
   "list_edit_back_to_public": "Retour à la page publique",
   "list_edit_sections_aria": "Sections édition",
   "posts_page_subtitle": "Partage, sondages et événements",
@@ -2331,6 +2577,8 @@
   "posts_no_results_asso": "Aucune association n'a encore publié. Revenez bientôt !",
   "posts_empty_cta": "Soyez le premier à partager quelque chose !",
   "post_link_copied": "Lien copié !",
+  "post_back_to_feed": "Retour aux publications",
+  "post_not_found_title": "Publication introuvable",
   "post_not_found_desc": "Cette publication n'existe plus ou a été supprimée.",
   "post_edit_published_as": "Publiée au nom de",
   "post_edit_caption_placeholder": "Légende (opt.)",
@@ -2365,7 +2613,6 @@
   "common_delete_error": "Erreur lors de la suppression",
   "common_save_error": "Erreur lors de la sauvegarde",
   "migallery_album_fallback": "Album photo",
-  "chat_close_members_panel_aria": "Fermer le panneau membres",
   "profile_asso_empty": "Aucune association pour le moment.",
   "sidebar_close_panel_aria": "Fermer le volet des conversations",
   "group_avatar_fallback_alt": "Avatar du groupe",
@@ -2431,7 +2678,7 @@
   "auth_pin_check_unreachable": "Impossible de vérifier le PIN (serveur injoignable).",
   "auth_pin_mismatch": "PIN incorrect : ce PIN ne correspond pas à celui enregistré pour ce compte. Tous vos appareils utilisent le même PIN.",
   "auth_device_revoked_reset": "Cet appareil a été révoqué. L'état local a été réinitialisé : connectez-vous avec votre PIN pour l'enregistrer comme nouvel appareil.",
-  "auth_state_sealed_old_pin": "Votre PIN a été changé sur un autre appareil. Récupérez vos messages avec votre ancien PIN.",
+  "auth_local_state_unopenable": "Vos messages enregistrés sur cet appareil n'ont pas pu être ouverts. Si vous avez changé votre PIN sur un autre appareil, saisissez l'ancien PIN ci-dessous. Sinon, les données locales sont endommagées : l'ancien PIN n'y changera rien et seule la réinitialisation redonne accès à vos conversations.",
   "auth_keystore_empty_enter_pin": "Veuillez entrer votre PIN pour déverrouiller la messagerie.",
   "auth_no_user_signed_in": "Aucun utilisateur n'est connecté.",
   "auth_pin_change_current_incorrect": "Le PIN actuel est incorrect.",
@@ -2494,7 +2741,16 @@
   "admin_announcement_section_desc": "Un message affiché une seule fois par compte, à la prochaine ouverture de l'application, sur le premier appareil qui y arrive.",
   "admin_announcement_none_label": "Aucune annonce publiée.",
   "admin_announcement_active_label": "Annonce en cours",
-  "admin_announcement_seen_count": "Vue par {count} compte(s)",
+  "admin_announcement_seen_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Vue par {count} compte",
+        "countPlural=other": "Vue par {count} comptes"
+      }
+    }
+  ],
   "admin_announcement_title_fr_label": "Titre (français)",
   "admin_announcement_title_en_label": "Titre (anglais)",
   "admin_announcement_body_fr_label": "Message (français)",

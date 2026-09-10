@@ -17,6 +17,7 @@
   import MessageReactions from './MessageReactions.svelte';
   import type { MessageReaction } from '$lib/types';
   import { activeReactions } from '$lib/utils/chat/messageReactions';
+  import type { MessagePickerOrigin } from '$lib/utils/chat/reactionPicker';
   import MessageInfoTooltip from './MessageInfoTooltip.svelte';
   import MessageReplyQuote from './MessageReplyQuote.svelte';
   import MessageTextBody from './MessageTextBody.svelte';
@@ -160,7 +161,15 @@
   }: Props = $props();
 
   let bubbleAnchor = $state<HTMLElement | null>(null);
-  let showEmojiPicker = $state(false);
+  /**
+   * WHICH CONTROL OPENED THE FULL PICKER - the panel cannot tell, and it needs to know.
+   *
+   * This is the open/closed state as well: `null` is closed, and there is no way to spell "open,
+   * from nowhere". Two openers set it, and each names itself; the reasoning is in
+   * `$lib/utils/chat/reactionPicker`.
+   */
+  let emojiPickerOrigin = $state<MessagePickerOrigin>(null);
+  const showEmojiPicker = $derived(emojiPickerOrigin !== null);
   let showInfo = $state(false);
   let showMobileActions = $state(false);
   let showDeleteModal = $state(false);
@@ -293,7 +302,7 @@
   function startInlineEdit() {
     editText = textContent;
     isEditingInline = true;
-    showEmojiPicker = false;
+    emojiPickerOrigin = null;
     showInfo = false;
     showMobileActions = false;
   }
@@ -338,7 +347,7 @@
 
   function toggleInfo(e: MouseEvent) {
     e.stopPropagation();
-    showEmojiPicker = false;
+    emojiPickerOrigin = null;
     showInfo = !showInfo;
   }
 
@@ -379,7 +388,7 @@
         // family as the picker button below: the actions were gated, the surfaces were not.
         if (isDeleted) return;
         showMobileActions = true;
-        showEmojiPicker = false;
+        emojiPickerOrigin = null;
         showInfo = false;
         if (
           settings.vibrationsEnabled &&
@@ -524,7 +533,7 @@
   {#if channelInvite}
     <!-- Channel invite card with Join button -->
     <div
-      class="inline-flex max-w-xs flex-col gap-2.5 rounded-2xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 shadow-sm backdrop-blur-md dark:bg-amber-500/10 {shouldAnimate
+      class="inline-flex max-w-xs flex-col gap-2.5 rounded-2xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 shadow-sm dark:bg-amber-500/10 {shouldAnimate
         ? 'animate-rise-in'
         : ''}"
     >
@@ -568,11 +577,11 @@
     </div>
   {:else}
     <div
-      class="text-text-muted inline-flex max-w-md items-center gap-2 rounded-xl border border-black/5 bg-black/5 px-3.5 py-1.5 text-center text-xs font-medium shadow-sm backdrop-blur-md dark:border-white/10 dark:bg-white/5 {shouldAnimate
+      class="text-text-muted inline-flex max-w-md items-center gap-2 rounded-xl border border-black/5 bg-black/5 px-3.5 py-1.5 text-center text-xs font-medium shadow-sm dark:border-white/10 dark:bg-white/5 {shouldAnimate
         ? 'animate-rise-in'
         : ''}"
     >
-      <Info size={14} class="flex-shrink-0 opacity-60" />
+      <Info size={14} class="shrink-0 opacity-60" />
       <span>{textContent}</span>
     </div>
   {/if}
@@ -583,7 +592,7 @@
     use:clickOutside={{
       enabled: showEmojiPicker || showInfo || showMobileActions,
       callback: () => {
-        showEmojiPicker = false;
+        emojiPickerOrigin = null;
         showInfo = false;
         showMobileActions = false;
       },
@@ -594,7 +603,7 @@
       {#if replyDragPx !== 0 && onReply}
         <div
           class="text-cn-ink pointer-events-none absolute top-1/2 z-20 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-amber-400/90 shadow-md transition-opacity
-          {isOwn ? 'right-full mr-1.5' : 'left-full ml-1.5'}"
+ {isOwn ? 'right-full mr-1.5' : 'left-full ml-1.5'}"
           style:opacity={replyHintOpacity}
           aria-hidden="true"
         >
@@ -604,8 +613,9 @@
 
       {#if reactDragPx !== 0 && onReact}
         <div
-          class="pointer-events-none absolute top-1/2 z-20 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full bg-white/90 shadow-md transition-opacity dark:bg-black/60
-          {isOwn ? 'left-full ml-1.5' : 'right-full mr-1.5'}"
+          class="bg-cn-surface pointer-events-none absolute top-1/2 z-20 flex h-9 w-9 -translate-y-1/2 items-center justify-center rounded-full shadow-md transition-opacity {isOwn
+            ? 'left-full ml-1.5'
+            : 'right-full mr-1.5'}"
           style:opacity={Math.min(1, Math.abs(reactDragPx) / 56)}
           aria-hidden="true"
         >
@@ -645,22 +655,19 @@
           : undefined}
         class="{isMediaOnly || isLinkOnly || isGifOnly || isPollOnly
           ? 'p-0'
-          : 'px-4 py-2.5'} w-fit max-w-full cursor-pointer touch-pan-y {isMobile
+          : 'px-3 py-2'} w-fit max-w-full cursor-pointer touch-pan-y {isMobile
           ? 'select-none [-webkit-touch-callout:none] [-webkit-user-select:none]'
           : ''} {isMediaOnly || isLinkOnly || isGifOnly || isPollOnly
           ? ''
           : getBubbleShapeClass(groupPosition, isOwn)} {replyDragPx !== 0
           ? 'message-swipe-reply-active'
-          : 'transition-shadow duration-200'}
-        {isMediaOnly || isLinkOnly || isGifOnly || isPollOnly
+          : 'transition-shadow duration-200'} {isMediaOnly || isLinkOnly || isGifOnly || isPollOnly
           ? ''
           : isOwn
-            ? 'text-cn-ink bg-gradient-to-br from-amber-400 to-amber-500 shadow-md shadow-amber-500/20 hover:shadow-lg hover:shadow-amber-500/30'
-            : 'text-text-main border border-black/5 bg-white/70 shadow-sm backdrop-blur-xl hover:shadow-md dark:border-white/10 dark:bg-black/40'}
-        {isHighlighted
+            ? 'text-bubble-out-text bg-bubble-out'
+            : 'text-text-main bg-bubble-in'} {isHighlighted
           ? 'animate-pulse ring-2 ring-amber-500/80 ring-offset-2 ring-offset-transparent'
-          : ''}
-        {shouldAnimate ? 'animate-rise-in' : ''}"
+          : ''} {shouldAnimate ? 'animate-rise-in' : ''}"
       >
         {#if effectiveReplyTo}
           <MessageReplyQuote
@@ -714,8 +721,6 @@
           isReadReceiptAnchor={false}
           {status}
           {readBy}
-          {timestamp}
-          {groupPosition}
         />
       </div>
 
@@ -730,7 +735,7 @@
         userReactions={userOwnReactions}
         onToggleEmojiPicker={!isDeleted && onReact
           ? () => {
-              showEmojiPicker = !showEmojiPicker;
+              emojiPickerOrigin = emojiPickerOrigin ? null : 'toolbar';
             }
           : undefined}
         {canModerate}
@@ -763,7 +768,7 @@
     />
 
     <MessageEmojiPicker
-      visible={showEmojiPicker}
+      origin={emojiPickerOrigin}
       {isOwn}
       anchor={bubbleAnchor}
       existingReactionEmojis={Object.keys(groupedReactions)}
@@ -772,8 +777,9 @@
 
     {#if showQuickReactions && onReact}
       <div
-        class="bg-cn-surface/95 absolute z-30 flex items-center gap-1 rounded-2xl border border-black/8 px-2 py-1.5 shadow-lg backdrop-blur-xl dark:border-white/10
-          {isOwn ? 'right-0 bottom-full mb-2' : 'bottom-full left-0 mb-2'}"
+        class="bg-cn-surface absolute z-30 flex items-center gap-1 rounded-2xl border border-black/8 px-2 py-1.5 shadow-lg dark:border-white/10 {isOwn
+          ? 'right-0 bottom-full mb-2'
+          : 'bottom-full left-0 mb-2'}"
         use:clickOutside={() => (showQuickReactions = false)}
       >
         {#each ['❤️', '😂', '😮', '😢', '👍', '👎'] as emoji (emoji)}
@@ -818,7 +824,7 @@
       }}
       onOpenFullPicker={() => {
         showMobileActions = false;
-        showEmojiPicker = true;
+        emojiPickerOrigin = 'sheet';
       }}
       onReply={onReply && !isDeleted
         ? () => {

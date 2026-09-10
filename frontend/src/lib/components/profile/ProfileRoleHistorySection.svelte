@@ -112,7 +112,7 @@
     <ul class="space-y-2">
       {#each entries as entry (entry.id)}
         <li
-          class="flex items-start gap-3 rounded-xl border border-black/5 bg-white/50 px-4 py-3 dark:border-white/10 dark:bg-white/5"
+          class="bg-cn-surface flex items-start gap-3 rounded-xl border border-black/5 px-4 py-3 dark:border-white/10"
         >
           <div class="mt-0.5 shrink-0">
             <AssociationAvatar
@@ -242,7 +242,7 @@
           <button
             type="submit"
             disabled={saving}
-            class="bg-cn-yellow text-cn-dark rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
+            class="bg-cn-yellow text-cn-ink rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
           >
             {saving ? m.common_saving_label() : m.common_add_button()}
           </button>

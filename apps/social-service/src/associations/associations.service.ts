@@ -50,8 +50,7 @@ import {
   UpdateAssociationCalendarEventDto,
 } from './dto/association.dto';
 import { RedisService } from '../common/redis/redis.service';
-import { PostNotification } from '../posts/entities/post-notification.entity';
-import { PushService } from '../push/push.service';
+import { PostNotificationsService } from '../posts/post-notifications.service';
 import { UserTagService } from '../users/user-tag.service';
 import { sanitizeLog } from '../common/log.utils';
 
@@ -108,13 +107,13 @@ export class AssociationsService {
     private readonly postRepo: Repository<Post>,
     @InjectRepository(Form)
     private readonly formRepo: Repository<Form>,
-    @InjectRepository(PostNotification)
-    private readonly notifRepo: Repository<PostNotification>,
     @InjectRepository(AssociationProduct)
     private readonly productRepo: Repository<AssociationProduct>,
     private readonly redis: RedisService,
     private readonly httpService: HttpService,
-    private readonly push: PushService,
+    /** Owns the type -> push-content mapping. Writing notification rows directly bypasses it, which
+        is how the agenda's push stayed English; go through this. */
+    private readonly notifications: PostNotificationsService,
     private readonly userTagService: UserTagService
   ) {}
 
@@ -285,7 +284,28 @@ export class AssociationsService {
   }
 
   /** Permanently deletes an association and all its member records, then invalidates post-list caches. */
-  async remove(id: string) {
+  /**
+   * Deletes an association, everything scoped to it, and says so.
+   *
+   * IT HAD NO LOG AT ALL, WHICH WAS SURVIVABLE ONLY WHILE ONE PERSON COULD REACH IT. Since
+   * 2026-09-10 a BDE `MANAGE_ASSO` holder may call it too, so "who removed the association" has
+   * more than one possible answer and nothing recorded it: the rows are gone, the caller is not in
+   * any request log this service keeps, and no other table remembers the association existed.
+   *
+   * The counts are read BEFORE the deletes and logged after, because they are the only measure of
+   * what the call actually destroyed - `delete()` returns an affected count, but a caller reading
+   * "0 members" cannot tell an empty association from a failed cascade.
+   *
+   * @param actorUserId The caller, from `x-user-id`. Required: the point of the line is the name.
+   */
+  async remove(id: string, actorUserId: string) {
+    const [memberCount, eventCount] = await Promise.all([
+      this.memberRepo.count({ where: { associationId: id } }),
+      this.calendarRepo.count({ where: { associationId: id } }),
+    ]);
+    this.logger.warn(
+      `[ASSO] DELETE ${id} by ${actorUserId || 'unknown'} - removing ${memberCount} member(s) and ${eventCount} event(s); this is not reversible`
+    );
     await this.calendarRepo.delete({ associationId: id });
     await this.memberRepo.delete({ associationId: id });
     await this.assoRepo.delete(id);
@@ -1409,8 +1429,14 @@ export class AssociationsService {
   }
 
   /**
-   * Sends in-app + push notifications to all members with PROPOSE_EVENT flag in an association.
-   * Used when a BDE admin validates, modifies, or deletes an event on behalf of another asso.
+   * Tells the association's proposers what a calendar manager did with their event.
+   *
+   * THE TYPE CARRIES THE VERB AND THE TEXT CARRIES THE TITLE - never a composed sentence. Until
+   * 2026-09-09 this method wrote `Event "X" has been validated by the BDE.` straight into the
+   * notification row and sent the same English string as a raw push title and body, so a French
+   * member got an English notification and no translation could fix it: the sentence had already
+   * been chosen by the one layer that cannot know who is reading. `push-content.ts` exists to end
+   * exactly that, and going to the repository directly is how this call site escaped it.
    */
   private async notifyAssocAdminsOfEventAction(
     associationId: string,
@@ -1423,51 +1449,71 @@ export class AssociationsService {
       where: { associationId },
       select: { userId: true, permissions: true },
     });
-    const proposers = members.filter(
-      (m) => (m.permissions & AssociationPermissionFlag.PROPOSE_EVENT) !== 0
-    );
-    if (proposers.length === 0) return;
+    const recipientIds = members
+      .filter((m) => (m.permissions & AssociationPermissionFlag.PROPOSE_EVENT) !== 0)
+      .map((m) => m.userId);
+    if (recipientIds.length === 0) return;
 
-    const actionLabel =
-      action === 'validated'
-        ? 'validated'
-        : action === 'updated'
-          ? 'updated'
-          : action === 'rejected'
-            ? 'rejected'
-            : 'deleted';
-    const reasonSuffix =
-      action === 'rejected' && rejectionReason ? ` Reason: ${rejectionReason}` : '';
-    const text = `Event "${eventTitle}" has been ${actionLabel} by the BDE.${reasonSuffix}`;
+    await this.notifications.createNotifications({
+      recipientIds,
+      type: `event_${action}`,
+      postId: associationId,
+      actorId,
+      // The rejection reason is the one thing a reader cannot reconstruct from the title, so it
+      // travels with it rather than being dropped for the sake of a tidy column.
+      text:
+        action === 'rejected' && rejectionReason
+          ? `${eventTitle}
+${rejectionReason}`
+          : eventTitle,
+      pushData: { associationId, action },
+    });
+  }
 
-    const targets = proposers.filter((m) => m.userId !== actorId);
-    if (targets.length === 0) return;
-
-    // Batch-insert all in-app notifications in one round trip instead of one per member.
-    const notifs = targets.map((m) =>
-      this.notifRepo.create({
-        recipientId: m.userId,
-        type: 'event_action',
-        postId: associationId, // closest available context ID
-        actorId,
-        text,
-        read: false,
+  /**
+   * Tells the calendar managers that an event is waiting for them.
+   *
+   * THE HALF THAT DID NOT EXIST. Every other transition on this seam notified somebody - validating,
+   * updating, rejecting and deleting all reach the proposing association - and a PROPOSAL reached
+   * nobody. The pending queue was a page a BDE admin had to remember to open, and *a correct
+   * mechanism with no report is found by hand, a day late*. The user asked for this to be tested on
+   * 2026-09-09; testing it found it absent.
+   *
+   * Recipients are every holder of `VALIDATE_EVENTS` in a BDE association - the same predicate
+   * `isUserBdeAdmin` uses to decide who MAY validate, so the people told are exactly the people who
+   * can act on it. Telling anyone else would be noise.
+   */
+  private async notifyEventValidatorsOfProposal(
+    associationId: string,
+    actorId: string,
+    eventTitle: string
+  ): Promise<void> {
+    const validators = await this.memberRepo
+      .createQueryBuilder('m')
+      .innerJoin(Association, 'a', 'a.id = m.associationId')
+      .where('a.isBDE = true')
+      .andWhere('(m.permissions & :flag) <> 0', {
+        flag: AssociationPermissionFlag.VALIDATE_EVENTS,
       })
-    );
-    await this.notifRepo.save(notifs);
+      .select('m.userId', 'userId')
+      .distinct(true)
+      .getRawMany<{ userId: string }>();
 
-    // Push notifications are fire-and-forget - failures do not block the response.
-    void Promise.all(
-      targets.map((m) =>
-        this.push
-          .notify(m.userId, 'Association event', text, {
-            type: 'event_action',
-            associationId,
-            action,
-          })
-          .catch((e) => this.logger.warn(`[notify] push failed for ${m.userId}: ${String(e)}`))
-      )
-    );
+    const written = await this.notifications.createNotifications({
+      recipientIds: validators.map((v) => v.userId),
+      type: 'event_proposed',
+      postId: associationId,
+      actorId,
+      text: eventTitle,
+      pushData: { associationId, action: 'proposed' },
+    });
+    if (written === 0) {
+      // Not an error - an estate can legitimately have no BDE yet - but a proposal that told nobody
+      // is the exact shape of the defect this method was written for, so it says so.
+      this.logger.warn(
+        `[notify] event proposed for asso ${sanitizeLog(associationId)} and no VALIDATE_EVENTS holder was told`
+      );
+    }
   }
 
   /**
@@ -1521,9 +1567,13 @@ export class AssociationsService {
     this.logger.debug(
       `Event created: ${sanitizeLog(saved.id)} for asso ${sanitizeLog(targetId)} by ${sanitizeLog(userId)} (status=${sanitizeLog(saved.status)}, coOwners=${coOwners.length})`
     );
-    // Notify asso admins when BDE creates an event on their behalf
+    // Notify asso admins when BDE creates an event on their behalf...
     if (canValidate && targetId !== associationId) {
       void this.notifyAssocAdminsOfEventAction(targetId, userId, saved.title, 'validated');
+    }
+    // ...and, the other way round, tell the calendar managers that one is waiting for them.
+    if (saved.status === AssociationCalendarEventStatus.Pending) {
+      void this.notifyEventValidatorsOfProposal(targetId, userId, saved.title);
     }
     return this.serializeCalendarEvent(saved, coOwners);
   }

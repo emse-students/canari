@@ -269,13 +269,31 @@ export async function saveMlsState(userId: string, bytes: Uint8Array): Promise<v
  * localStorage (old format), the data is migrated automatically and the
  * localStorage entry is removed.
  */
+/**
+ * A state of ZERO bytes is an ABSENT state, and this is the only place that decides it.
+ *
+ * It used to be decided twice. The native branch guarded `res.length > 0`; the IndexedDB branch
+ * resolved `req.result ?? null` and then tested the result for truthiness - and an empty
+ * `Uint8Array` is truthy. So the same damage answered "nothing stored" on the phone and "a state
+ * that exists and is empty" on the web.
+ *
+ * The asymmetry is not cosmetic, because of what the caller does with the answer: `sessionAuth`
+ * passes `noFreshStart: !!bytes`, whose entire purpose is to stop a device that HAS history from
+ * silently starting over. An empty state armed that guard against itself - init is handed zero bytes
+ * and forbidden to start fresh - so a web device whose state had been written short by an
+ * interrupted flush or a full disk could not log in at all, while the phone re-enrolled cleanly.
+ *
+ * One predicate, at both returns, so the next backend inherits the rule instead of restating it.
+ */
+const stateOrAbsent = (bytes: Uint8Array | null | undefined): Uint8Array | null =>
+  bytes && bytes.length > 0 ? bytes : null;
+
 export async function loadMlsState(userId: string): Promise<Uint8Array | null> {
   if (isTauriRuntime()) {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       const res = await invoke<number[] | null>('load_mls_state');
-      if (res && Array.isArray(res) && res.length > 0) return Uint8Array.from(res);
-      return null;
+      return res && Array.isArray(res) ? stateOrAbsent(Uint8Array.from(res)) : null;
     } catch (e) {
       console.warn('[MLS] load_mls_state failed:', e);
       return null;
@@ -296,9 +314,10 @@ export async function loadMlsState(userId: string): Promise<Uint8Array | null> {
     };
     tx.onerror = () => reject(tx.error);
   });
-  if (idbResult) {
+  const stored = stateOrAbsent(idbResult);
+  if (stored) {
     void purgeLegacyPlainMlsState(userId).catch(() => {});
-    return idbResult;
+    return stored;
   }
 
   // Migration path: read legacy localStorage entry, move it to IDB, erase from localStorage.
@@ -309,7 +328,9 @@ export async function loadMlsState(userId: string): Promise<Uint8Array | null> {
     : fromHex(saved);
   await saveMlsState(userId, bytes);
   localStorage.removeItem('mls_autosave_' + userId);
-  return bytes;
+  // The migration path answers the same question, so it takes the same rule: a legacy entry that
+  // decoded to nothing is not a state to hand to init either.
+  return stateOrAbsent(bytes);
 }
 
 /** Remove the MLS state for `userId` from IndexedDB (and legacy localStorage). */

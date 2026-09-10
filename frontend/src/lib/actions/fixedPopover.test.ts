@@ -1,4 +1,7 @@
-import { computeFixedPopoverPosition } from './fixedPopover';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { join, dirname, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { bindFixedPopover, computeFixedPopoverPosition } from './fixedPopover';
 
 describe('computeFixedPopoverPosition', () => {
   beforeEach(() => {
@@ -168,5 +171,143 @@ describe('computeFixedPopoverPosition', () => {
     const pos = computeFixedPopoverPosition(anchor, panel, { matchAnchorWidth: true, margin: 8 });
     expect(pos.width).toBe(384);
     expect(pos.left).toBe(8);
+  });
+});
+
+/**
+ * A PANEL THIS ACTION POSITIONS MUST BE PORTALLED, OR ITS COORDINATES MEAN SOMETHING ELSE.
+ *
+ * Everything above computes viewport coordinates. `position: fixed` only resolves against the
+ * viewport while no ancestor establishes a containing block - and `.page-scroll-wrap` carries
+ * `will-change: transform` for the swipe-between-tabs gesture, which does exactly that for every
+ * `fixed` descendant in the chat tree.
+ *
+ * MEASURED, NOT FEARED. On 2026-09-09 `MessageEmojiPicker` was anchored correctly and still opened
+ * in the wrong place: the action wrote `left: 958.8px`, the right answer, and the panel painted at
+ * 1055. Ninety-six pixels of wrapper offset added to a number that was already correct, which is why
+ * it survived a fix to the anchor - the anchor was never the problem. The user saw it as the panel
+ * not being "au meme endroit que le reste", the quick bar beside it being `absolute` and landing
+ * where it is put.
+ *
+ * The rule is therefore a property of the ACTION, not of one component: whatever it positions leaves
+ * the tree first. This is a source scan because there is nothing to run - the fault is invisible
+ * until a specific ancestor exists above a specific component, and by then it is a bug report.
+ */
+describe('every panel bound to this action', () => {
+  const dir = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+  function svelteFiles(from: string, out: string[] = []): string[] {
+    for (const entry of readdirSync(from)) {
+      const full = join(from, entry);
+      if (statSync(full).isDirectory()) svelteFiles(full, out);
+      else if (entry.endsWith('.svelte')) out.push(full);
+    }
+    return out;
+  }
+
+  it('is portalled out of the tree, so its viewport coordinates mean the viewport', () => {
+    const offenders = svelteFiles(dir)
+      .map((file) => ({ file, body: readFileSync(file, 'utf8') }))
+      .filter(({ body }) => body.includes('bindFixedPopover') && !body.includes('use:portal'))
+      .map(({ file }) => relative(dir, file));
+
+    expect(
+      offenders,
+      'These position a panel with viewport coordinates but leave it in the tree, where ' +
+        '`will-change: transform` on an ancestor silently offsets it. Add `use:portal`: ' +
+        offenders.join(', ')
+    ).toEqual([]);
+  });
+});
+
+/**
+ * A ZERO-SIZED ANCHOR IS THE ONE INPUT THAT LOOKS VALID AND IS NOT.
+ *
+ * Every other bad anchor announces itself - `null` returns early, an off-screen one is clamped back
+ * in. All-zeros passes every check: it is a legal rect describing a legal point, the window origin,
+ * and the panel is placed neatly beside it in the corner. It is what `getBoundingClientRect()`
+ * returns for a `display: none` node, which is how the reaction picker came to open in the top-left
+ * of a 620px window while being correct at 900px and 1920px.
+ */
+describe('an anchor with no box', () => {
+  const observed: unknown[] = [];
+
+  beforeEach(() => {
+    observed.length = 0;
+    vi.stubGlobal('innerWidth', 400);
+    vi.stubGlobal('innerHeight', 600);
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe() {}
+        disconnect() {}
+      }
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  function panelNode(): HTMLElement {
+    const panel = document.createElement('div');
+    Object.defineProperty(panel, 'offsetWidth', { value: 320 });
+    Object.defineProperty(panel, 'offsetHeight', { value: 360 });
+    return panel;
+  }
+
+  function anchorWith(width: number, height: number): HTMLElement {
+    const anchor = document.createElement('div');
+    anchor.getBoundingClientRect = () =>
+      ({
+        top: 100,
+        bottom: 100 + height,
+        left: 50,
+        right: 50 + width,
+        width,
+        height,
+        x: 50,
+        y: 100,
+        toJSON: () => ({}),
+      }) as DOMRect;
+    return anchor;
+  }
+
+  it('is refused rather than treated as the window origin', () => {
+    const panel = panelNode();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const unbind = bindFixedPopover(panel, { anchor: () => anchorWith(0, 0) });
+
+    // Nothing written at all: a panel that was never placed must not LOOK placed.
+    expect({
+      top: panel.style.top,
+      left: panel.style.left,
+      warned: warn.mock.calls.length,
+    }).toEqual({ top: '', left: '', warned: 1 });
+    unbind();
+  });
+
+  it('accuses, because a silent refusal is the same bug one layer down', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    bindFixedPopover(panelNode(), { anchor: () => anchorWith(0, 0) })();
+
+    expect(String(warn.mock.calls[0][0])).toContain('anchor has no box');
+  });
+
+  it('still positions against an anchor that is a line with no height', () => {
+    // Not a width check: an inline anchor can legitimately measure 0 tall and still have a place.
+    const panel = panelNode();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const unbind = bindFixedPopover(panel, { anchor: () => anchorWith(120, 0) });
+
+    expect({ left: panel.style.left, warned: warn.mock.calls.length }).toEqual({
+      left: '50px',
+      warned: 0,
+    });
+    unbind();
   });
 });

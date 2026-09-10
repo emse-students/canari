@@ -5,7 +5,6 @@
   import { portal } from '$lib/actions/portal';
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
   import { pushHistoryOverlay, closeHistoryOverlayFromUi } from '$lib/utils/historyOverlayStack';
-  import { keyboardAwareOverlayPadding } from '$lib/stores/keyboardViewport.svelte';
 
   interface Props {
     open?: boolean;
@@ -29,6 +28,20 @@
      * once) so `panelClass` doesn't fight the default sizing on Tailwind class order.
      */
     fullViewport?: boolean;
+    /**
+     * Anchor the panel to the TOP of a phone screen instead of the bottom.
+     *
+     * THE DEFAULT BOTTOM SHEET RIDES THE KEYBOARD, and for a modal whose first control is a text
+     * field that is the whole experience: the sheet is pinned to the bottom edge, so opening the
+     * keyboard shoves the entire panel up the screen and closing it drops the panel back down
+     * (user, 2026-09-08, about creating a conversation: *"le fait que ce soit colle en bas n'est
+     * pas pratique (deplacement lors de l'ouverture et la fermeture du clavier par exemple)"*).
+     *
+     * A sheet is still right for a short modal with no input - a confirmation, a menu - which is
+     * why this is a flag and not a change of default. `fullViewport` is NOT the same lever: it
+     * also blows the panel up to `90rem` on desktop, which a contact picker must not be.
+     */
+    topAnchored?: boolean;
     onClose: () => void;
     children?: Snippet;
     footer?: Snippet;
@@ -42,19 +55,43 @@
     panelClass = '',
     bodyClass = '',
     fullViewport = false,
+    topAnchored = false,
     onClose,
     children,
     footer,
   }: Props = $props();
 
   const backdropAlignClass = $derived(
-    fullViewport ? 'items-stretch sm:items-center' : 'items-end sm:items-center'
+    fullViewport || topAnchored ? 'items-stretch sm:items-center' : 'items-end sm:items-center'
   );
 
+  /*
+   * ONE OF THESE THREE IS EMITTED, NEVER TWO. They set the same properties, so a panel carrying two
+   * of them would be decided by Tailwind's class ORDER rather than by the flags - which is the trap
+   * the `fullViewport` comment already warns about, and `topAnchored` would have walked into it.
+   *
+   * `topAnchored` SETS NEITHER A HEIGHT NOR A RADIUS OVERRIDE, and both omissions are measured.
+   * It shipped as `h-[100dvh] max-h-[100dvh] rounded-none`, all three of which were wrong on the
+   * phone this was written for (Mi 9T, 2026-09-09):
+   *
+   *  - the max-height never applied. `.keyboard-aware-modal-panel` in `app.css` caps every panel at
+   *    `min(92dvh, var(--app-viewport-height)) !important`, so THAT rule owns the cap and no
+   *    utility here can move it - measured 540.85px against a `100dvh` of 587.88px.
+   *  - the height was redundant and 3px harmful. The backdrop is `items-stretch` on a phone, so a
+   *    panel with no height already fills the padded box (537.88px); `100dvh` only pushed it past
+   *    the backdrop's own bottom padding until the cap above clamped it.
+   *  - `rounded-none` is for a panel that reaches the screen edges, and this one never does: the
+   *    backdrop pads `max(1rem, env(safe-area-inset-*))` on all four sides, so square corners drew
+   *    a slab floating in a 16px moat. Rounded is also what the user asked every panel to be
+   *    (2026-09-08, about the conversation panels: *"comme les autres blocs, avec les coins
+   *    arrondis etc"*).
+   */
   const panelSizeClass = $derived(
     fullViewport
       ? 'h-[100dvh] max-h-[100dvh] rounded-none sm:h-[min(96dvh,100%)] sm:max-h-[96dvh] sm:rounded-2xl sm:w-[min(96vw,90rem)]'
-      : 'max-h-[92dvh] rounded-t-3xl sm:rounded-2xl'
+      : topAnchored
+        ? 'rounded-2xl'
+        : 'max-h-[92dvh] rounded-t-3xl sm:rounded-2xl'
   );
 
   let historyClose: (() => void) | null = null;
@@ -137,8 +174,7 @@
     <div
       role="presentation"
       data-keyboard-aware-overlay
-      class="fixed z-[280] flex justify-center bg-black/40 backdrop-blur-sm {backdropAlignClass}"
-      style="padding: {keyboardAwareOverlayPadding}"
+      class="fixed z-(--z-modal) flex justify-center bg-black/40 {backdropAlignClass}"
       onclick={handleBackdropClick}
       in:fly={{ duration: 200, y: 0, opacity: 0 }}
     >

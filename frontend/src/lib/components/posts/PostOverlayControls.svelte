@@ -135,7 +135,7 @@
           class="bg-surface-elevated border-cn-border absolute top-0 right-0 z-50 flex w-52 flex-col gap-2 rounded-xl border p-3 shadow-lg"
           transition:slide={{ duration: 150 }}
         >
-          <p class="text-text-muted text-[0.65rem] font-bold tracking-wide uppercase">
+          <p class="text-text-muted text-2xs font-bold tracking-wide uppercase">
             {m.post_report_post_title()}
           </p>
           <div class="flex flex-col gap-1">
@@ -149,7 +149,7 @@
                   onchange={() => onReportReasonChange(r)}
                   class="shrink-0 accent-amber-500"
                 />
-                <span class="text-[0.82rem]">{r}</span>
+                <span class="text-xs">{r}</span>
               </label>
             {/each}
           </div>

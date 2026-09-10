@@ -1,6 +1,9 @@
 <script lang="ts">
-  import { generateAvatarColor } from '$lib/utils/avatar';
-  import { toHex } from '$lib/utils/color';
+  import {
+    eventAccentColor,
+    eventsOnDay as eventsOnDayOf,
+    formatEventTimeRange,
+  } from '$lib/calendar/feedEvents';
   import { associationLogoSrc, type AssociationCalendarFeedEvent } from '$lib/associations/api';
   import { ChevronRight, CalendarDays } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
@@ -24,21 +27,11 @@
     onClearSelection,
   }: Props = $props();
 
-  function eventsOnDay(day: number): AssociationCalendarFeedEvent[] {
-    const d = new Date(focusDate.getFullYear(), focusDate.getMonth(), day);
-    return events
-      .filter((ev) => {
-        const start = new Date(ev.startsAt);
-        const startDay = new Date(start.getFullYear(), start.getMonth(), start.getDate());
-        if (!ev.endsAt) return d.getTime() === startDay.getTime();
-        const end = new Date(ev.endsAt);
-        const endDay = new Date(end.getFullYear(), end.getMonth(), end.getDate());
-        return d >= startDay && d <= endDay;
-      })
-      .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
-  }
-
-  const dayEvents = $derived(selectedDay != null ? eventsOnDay(selectedDay) : []);
+  // Which day an event occupies, and how its time reads, are shared with the phone's schedule list:
+  // two copies of "does this multi-day event cover this day" is two chances to disagree.
+  const dayEvents = $derived(
+    selectedDay != null ? eventsOnDayOf(events, focusDate, selectedDay) : []
+  );
 
   function formatDayLabel(day: number): string {
     return new Intl.DateTimeFormat('fr-FR', {
@@ -46,22 +39,6 @@
       day: 'numeric',
       month: 'long',
     }).format(new Date(focusDate.getFullYear(), focusDate.getMonth(), day));
-  }
-
-  function formatTimeRange(ev: AssociationCalendarFeedEvent): string {
-    const start = formatTime(ev.startsAt);
-    if (!ev.endsAt) return start;
-    return `${start} - ${formatTime(ev.endsAt)}`;
-  }
-
-  function formatTime(iso: string): string {
-    return new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' }).format(
-      new Date(iso)
-    );
-  }
-
-  function eventAccentColor(ev: AssociationCalendarFeedEvent): string {
-    return toHex(ev.associationColor ?? generateAvatarColor(ev.associationId));
   }
 </script>
 
@@ -74,7 +51,7 @@
   </div>
 {:else if dayEvents.length === 0}
   <div
-    class="border-cn-border text-text-muted rounded-2xl border bg-(--cn-surface)/90 px-4 py-5 text-center text-sm"
+    class="border-cn-border text-text-muted bg-cn-surface rounded-2xl border px-4 py-5 text-center text-sm"
   >
     {m.calendar_day_no_events()}
     {#if onClearSelection}
@@ -88,7 +65,7 @@
     {/if}
   </div>
 {:else}
-  <div class="border-cn-border overflow-hidden rounded-2xl border bg-(--cn-surface)/90 shadow-sm">
+  <div class="border-cn-border bg-cn-surface overflow-hidden rounded-2xl border shadow-sm">
     <div
       class="border-cn-border/60 bg-cn-bg/30 flex items-center justify-between gap-2 border-b px-4 py-3"
     >
@@ -115,7 +92,7 @@
         <li>
           <button
             type="button"
-            class="hover:bg-cn-bg/50 flex w-full items-center gap-3 px-4 py-3 text-left transition-colors"
+            class="hover:bg-cn-bg flex w-full items-center gap-3 px-4 py-3 text-left transition-colors"
             onclick={() => onEventClick(ev)}
           >
             <span
@@ -133,7 +110,7 @@
                   <span class="font-semibold">{ev.associationName}</span>
                   <span class="mx-1">·</span>
                 {/if}
-                {formatTimeRange(ev)}
+                {formatEventTimeRange(ev)}
               </p>
             </div>
             <ChevronRight size={18} class="text-text-muted shrink-0" />

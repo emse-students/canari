@@ -109,6 +109,18 @@ export interface ConversationContext {
   ) => Promise<void>;
 }
 
+/**
+ * The four things a conversation can show BESIDE itself.
+ *
+ * `settings` is a CHANNEL's settings and `conversation` is a group's or a DM's - two screens
+ * reached from the same gear icon, which is exactly why they had ended up as two different
+ * mechanisms: a modal for one, a portalled sheet the header mounted itself for the other.
+ *
+ * A closed set rather than a string, because every consumer switches on it and a typo would
+ * silently render nothing.
+ */
+export type ConversationSidePanelKind = 'members' | 'media' | 'settings' | 'conversation';
+
 /** Creates and returns the reactive conversation store with all selection, history, group, and storage operations. */
 export function useConversations() {
   const conversations = new SvelteMap<string, Conversation>();
@@ -116,10 +128,21 @@ export function useConversations() {
   // ── UI state ──────────────────────────────────────────────────────────────
   let selectedContact = $state<string | null>(null);
   let isConversationDrawerOpen = $state(false);
-  // Desktop (xl+) shows the members panel inline by default; mobile uses this same flag to
-  // gate a full-screen overlay drawer, which must start closed.
-  let isChannelMembersDrawerOpen = $state(!isMobileOverlayLayout());
-  let isChannelSettingsModalOpen = $state(false);
+  /**
+   * WHICH conversation side panel is open, and there is only ever one.
+   *
+   * This was three separate booleans living in three places - a members flag here, a
+   * `showMediaPanel` local inside `ChatArea`, and a settings-modal flag here - so opening the media
+   * sheet over an already-open members column was a state nothing forbade, and each of the three
+   * drew itself with a different mechanism. One value cannot hold two panels open, which is the
+   * point: the illegal state stopped being reachable rather than being guarded against.
+   *
+   * Desktop (xl+) starts with the members panel showing, which is the behaviour the members column
+   * already had; the drawer form must start closed.
+   */
+  let sidePanel = $state<ConversationSidePanelKind | null>(
+    isMobileOverlayLayout() ? null : 'members'
+  );
   let groupMembers = $state<string[]>([]);
   // Optimistic invite feedback: user IDs with an add-member operation in flight,
   // keyed by group so a mid-invite conversation switch never leaks pending rows.
@@ -129,6 +152,23 @@ export function useConversations() {
   // /posts mini-panel) can treat the live map as authoritative and reflect deletions
   // instead of resurrecting stale rows from their own snapshot.
   let conversationsRestored = $state(false);
+  /**
+   * How many startup/resume passes that can still ADD a conversation are running.
+   *
+   * `conversationsRestored` answers "has IndexedDB been read into the map", and a deep-link landing
+   * used it to answer a DIFFERENT question - "is the set of this device's conversations complete".
+   * Those differ by exactly the FCM cache, which runs AFTER the restore and is the only way a first
+   * message from a new correspondent reaches the map at all. So the landing saw a settled map
+   * without the target, concluded the conversation was not on this device, and abandoned - a few
+   * milliseconds before `consumeFcmCache` wrote the placeholder that would have satisfied it. The
+   * tap opened the app on nothing, which is precisely what was reported from production.
+   *
+   * Counted rather than flagged because the same span runs at login and again on every resume, and
+   * because the next source to be added must be able to say so without teaching the landing about
+   * itself. Zero means nothing is running, NOT that anything has run - which is why the settled
+   * predicate still requires the restore.
+   */
+  let pendingConversationSources = $state(0);
   let sendError = $state('');
 
   // ── Input state ───────────────────────────────────────────────────────────
@@ -149,7 +189,7 @@ export function useConversations() {
 
   let mobileConvoHistoryClose: (() => void) | null = null;
   let drawerHistoryClose: (() => void) | null = null;
-  let channelMembersDrawerHistoryClose: (() => void) | null = null;
+  let sidePanelHistoryClose: (() => void) | null = null;
 
   function ensureMobileConvoHistory() {
     if (!isMobileOverlayLayout() || !selectedContact || mobileConvoHistoryClose) return;
@@ -170,19 +210,13 @@ export function useConversations() {
     pushHistoryOverlay(drawerHistoryClose);
   }
 
-  function ensureChannelMembersDrawerHistory() {
-    if (
-      !isMobileOverlayLayout() ||
-      !isChannelMembersDrawerOpen ||
-      channelMembersDrawerHistoryClose
-    ) {
-      return;
-    }
-    channelMembersDrawerHistoryClose = () => {
-      channelMembersDrawerHistoryClose = null;
-      isChannelMembersDrawerOpen = false;
+  function ensureSidePanelHistory() {
+    if (!isMobileOverlayLayout() || !sidePanel || sidePanelHistoryClose) return;
+    sidePanelHistoryClose = () => {
+      sidePanelHistoryClose = null;
+      sidePanel = null;
     };
-    pushHistoryOverlay(channelMembersDrawerHistoryClose);
+    pushHistoryOverlay(sidePanelHistoryClose);
   }
 
   // ── Derived ───────────────────────────────────────────────────────────────
@@ -683,14 +717,14 @@ export function useConversations() {
 
   // ── Selection + navigation ────────────────────────────────────────────────
 
-  function dismissChannelMembersDrawerIfAny() {
-    if (!channelMembersDrawerHistoryClose) {
-      isChannelMembersDrawerOpen = false;
+  function dismissSidePanelIfAny() {
+    if (!sidePanelHistoryClose) {
+      sidePanel = null;
       return;
     }
-    const ref = channelMembersDrawerHistoryClose;
-    channelMembersDrawerHistoryClose = null;
-    isChannelMembersDrawerOpen = false;
+    const ref = sidePanelHistoryClose;
+    sidePanelHistoryClose = null;
+    sidePanel = null;
     abandonHistoryOverlay(ref);
   }
 
@@ -723,7 +757,7 @@ export function useConversations() {
   function selectConversation(name: string) {
     endLandingUnlessTarget(name);
     dismissDrawerHistoryIfAny();
-    dismissChannelMembersDrawerIfAny();
+    dismissSidePanelIfAny();
     selectedContact = name;
     sendError = '';
     const convo = conversations.get(name);
@@ -738,7 +772,7 @@ export function useConversations() {
   function selectConversationWithCtx(name: string, ctx: ConversationContext) {
     endLandingUnlessTarget(name);
     dismissDrawerHistoryIfAny();
-    dismissChannelMembersDrawerIfAny();
+    dismissSidePanelIfAny();
     selectedContact = name;
     sendError = '';
     const convo = conversations.get(name);
@@ -754,8 +788,7 @@ export function useConversations() {
   function goBackToMenu() {
     // Backing out of the thread ends any landing, or the target would be re-selected instantly.
     endLandingUnlessTarget(null);
-    isChannelSettingsModalOpen = false;
-    dismissChannelMembersDrawerIfAny();
+    dismissSidePanelIfAny();
     if (mobileConvoHistoryClose) {
       // Clear state synchronously so any rapid click on a new conversation after
       // pressing back pushes a fresh history overlay rather than reusing the stale one.
@@ -786,26 +819,33 @@ export function useConversations() {
     isConversationDrawerOpen = false;
   }
 
-  function openChannelMembersDrawer() {
-    isChannelMembersDrawerOpen = true;
-    ensureChannelMembersDrawerHistory();
+  /**
+   * Shows one side panel, replacing whatever was open.
+   *
+   * SWITCHING PANELS UNWINDS THE OLD HISTORY ENTRY FIRST. Pushing a second overlay entry for a
+   * panel that is being replaced rather than stacked would make the phone's back gesture need two
+   * presses to leave one visible panel, and the second press would close a panel that was never
+   * on screen.
+   */
+  function openSidePanel(kind: ConversationSidePanelKind) {
+    if (sidePanel === kind) return;
+    if (sidePanel && sidePanelHistoryClose) dismissSidePanelIfAny();
+    sidePanel = kind;
+    ensureSidePanelHistory();
   }
 
-  function closeChannelMembersDrawer() {
-    if (channelMembersDrawerHistoryClose) {
-      closeHistoryOverlayFromUi(channelMembersDrawerHistoryClose);
+  function closeSidePanel() {
+    if (sidePanelHistoryClose) {
+      closeHistoryOverlayFromUi(sidePanelHistoryClose);
       return;
     }
-    isChannelMembersDrawerOpen = false;
+    sidePanel = null;
   }
 
-  /** Toggles the members panel: opens/closes the mobile drawer, or shows/hides the desktop panel. */
-  function toggleChannelMembersDrawer() {
-    if (isChannelMembersDrawerOpen) {
-      closeChannelMembersDrawer();
-    } else {
-      openChannelMembersDrawer();
-    }
+  /** Opens a panel, or closes it if it is the one already showing. */
+  function toggleSidePanel(kind: ConversationSidePanelKind) {
+    if (sidePanel === kind) closeSidePanel();
+    else openSidePanel(kind);
   }
 
   // ── Group members ─────────────────────────────────────────────────────────
@@ -1325,6 +1365,22 @@ export function useConversations() {
     get conversationsRestored() {
       return conversationsRestored;
     },
+    /**
+     * True once every pass that can add a conversation has finished - the restore AND the FCM
+     * cache injections that follow it. What a deep-link landing must consult before deciding a
+     * target is not on this device; see {@link pendingConversationSources}.
+     */
+    get conversationSourcesSettled() {
+      return conversationsRestored && pendingConversationSources === 0;
+    },
+    /** Opens a span during which a conversation may still appear. Always paired in a `finally`. */
+    beginConversationSource() {
+      pendingConversationSources += 1;
+    },
+    /** Closes one such span. Floored at zero so an unbalanced call cannot wedge the landing shut. */
+    endConversationSource() {
+      pendingConversationSources = Math.max(0, pendingConversationSources - 1);
+    },
 
     // UI state
     /** Currently selected conversation name (null when no conversation is open). */
@@ -1346,19 +1402,10 @@ export function useConversations() {
       isConversationDrawerOpen = v;
     },
     /** Whether the channel members side drawer is open. */
-    get isChannelMembersDrawerOpen() {
-      return isChannelMembersDrawerOpen;
-    },
-    set isChannelMembersDrawerOpen(v: boolean) {
-      isChannelMembersDrawerOpen = v;
+    get sidePanel() {
+      return sidePanel;
     },
     /** Whether the channel settings modal is open. */
-    get isChannelSettingsModalOpen() {
-      return isChannelSettingsModalOpen;
-    },
-    set isChannelSettingsModalOpen(v: boolean) {
-      isChannelSettingsModalOpen = v;
-    },
     /** Deduplicated list of userIds currently in the selected group. */
     get groupMembers() {
       return groupMembers;
@@ -1439,9 +1486,9 @@ export function useConversations() {
     goBackToMenu,
     openConversationDrawer,
     closeConversationDrawer,
-    openChannelMembersDrawer,
-    closeChannelMembersDrawer,
-    toggleChannelMembersDrawer,
+    openSidePanel,
+    closeSidePanel,
+    toggleSidePanel,
     /** Fetches and stores the deduplicated member list for an MLS group. */
     loadGroupMembers,
     /** Checks and caches whether the current user is still in the given conversation. */

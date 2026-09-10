@@ -139,13 +139,6 @@ export function getKeyboardViewport(): KeyboardViewportSnapshot {
   return snapshot;
 }
 
-/**
- * Padding for portaled overlays aligned to the visual viewport (see Modal overlay styles).
- * Does not add `--keyboard-inset-bottom` - the overlay box already matches `--app-viewport-height`.
- */
-export const keyboardAwareOverlayPadding =
-  'max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) max(1rem, var(--safe-area-inset-bottom, 0px)) max(1rem, env(safe-area-inset-left)';
-
 function isFocusableField(el: HTMLElement): boolean {
   return el.matches(
     'input:not([type="hidden"]):not([disabled]), textarea:not([disabled]), select:not([disabled]), [contenteditable="true"]'

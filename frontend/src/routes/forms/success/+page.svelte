@@ -54,7 +54,7 @@
         </div>
       </div>
       <div>
-        <h1 class="text-text-main text-2xl font-extrabold tracking-tight">
+        <h1 class="text-text-main text-2xl font-bold tracking-tight">
           {m.form_success_confirmed_heading()}
         </h1>
         <p class="text-text-muted mt-2">
@@ -63,7 +63,7 @@
       </div>
       <a
         href={formId ? `/forms/${formId}` : '/forms'}
-        class="bg-cn-yellow text-cn-dark hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold shadow-sm transition-all"
+        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold shadow-sm transition-all"
       >
         {m.form_success_back_to_form()}
       </a>
@@ -74,7 +74,7 @@
         </div>
       </div>
       <div>
-        <h1 class="text-text-main text-2xl font-extrabold tracking-tight">
+        <h1 class="text-text-main text-2xl font-bold tracking-tight">
           {m.form_success_not_found_heading()}
         </h1>
         <p class="text-text-muted mt-2">

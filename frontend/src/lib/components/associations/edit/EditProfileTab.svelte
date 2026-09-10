@@ -160,7 +160,7 @@
   }
 </script>
 
-<div class="border-cn-border space-y-5 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm">
+<div class="border-cn-border bg-cn-surface space-y-5 rounded-2xl border p-6 shadow-sm">
   <h2 class="text-text-main text-lg font-bold tracking-tight">{m.asso_edit_profile_title()}</h2>
   <div class="flex flex-wrap items-start gap-4">
     <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="lg" />
@@ -264,7 +264,7 @@
           onclick={() => (editColor = c)}
           title={c}
           class="h-7 w-7 shrink-0 rounded-full border-2 transition-all hover:scale-110 focus:outline-none
-                 {editColor === c
+ {editColor === c
             ? 'border-cn-dark ring-cn-yellow/70 scale-110 ring-2 ring-offset-1'
             : 'border-transparent hover:border-white/60'}"
           style="background:{c};"
@@ -297,9 +297,7 @@
     </div>
   {/if}
 
-  <div
-    class="border-cn-border/70 bg-cn-bg/40 text-text-muted space-y-3 rounded-xl border p-3 text-xs"
-  >
+  <div class="border-cn-border/70 bg-cn-bg text-text-muted space-y-3 rounded-xl border p-3 text-xs">
     <p class="text-text-main font-semibold">{m.asso_edit_preview_label()}</p>
     {#if editDescription.trim()}
       <div>

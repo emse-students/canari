@@ -37,3 +37,15 @@
 "notif.form.opening_soon.body" = "Un formulaire que vous suivez ouvre dans 5 minutes !";
 "notif.form.open.title" = "Formulaire ouvert !";
 "notif.form.open.body" = "Le formulaire est disponible - dépêchez-vous, les places sont limitées !";
+
+/* The agenda's five, added 2026-09-09 with the notifications themselves. */
+"notif.event.proposed.title" = "Événement à valider";
+"notif.event.proposed.body" = "%1$@ propose « %2$@ »";
+"notif.event.validated.title" = "Événement validé";
+"notif.event.validated.body" = "« %1$@ » a été validé par le BDE";
+"notif.event.rejected.title" = "Événement refusé";
+"notif.event.rejected.body" = "« %1$@ » a été refusé par le BDE";
+"notif.event.updated.title" = "Événement modifié";
+"notif.event.updated.body" = "« %1$@ » a été modifié par le BDE";
+"notif.event.deleted.title" = "Événement supprimé";
+"notif.event.deleted.body" = "« %1$@ » a été supprimé par le BDE";

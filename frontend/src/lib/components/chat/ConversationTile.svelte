@@ -154,16 +154,14 @@
   data-ready={isReady}
   data-removed={isRemoved}
   data-selected={isSelected}
-  class="group flex w-full items-center gap-4 rounded-[1.25rem] p-3.5 text-left transition-all duration-200 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-[0.98]
-    {isSelected
-    ? 'border border-black/5 bg-white/60 shadow-sm backdrop-blur-md dark:border-white/10 dark:bg-black/40'
+  class="group flex w-full items-center gap-4 rounded-2xl p-3.5 text-left transition-all duration-200 outline-none focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-[0.98] {isSelected
+    ? 'bg-cn-surface border border-black/5 shadow-sm dark:border-white/10 '
     : unreadCount > 0
-      ? 'border border-transparent bg-white/30 hover:bg-white/50 dark:bg-white/5 dark:hover:bg-white/10'
-      : 'border border-transparent hover:bg-white/40 dark:hover:bg-black/20'}
-    animate-rise-in"
+      ? 'hover:bg-cn-surface border border-transparent bg-white/30 dark:hover:bg-white/10'
+      : 'hover:bg-cn-surface border border-transparent dark:hover:bg-black/20'} animate-rise-in"
 >
   <!-- Avatar / group icon zone -->
-  <div class="relative flex-shrink-0">
+  <div class="relative shrink-0">
     {#if isDirect}
       <Avatar userId={contactName} size="lg" fallbackLabel={effectiveDisplayName} />
       {#if isOnline}
@@ -184,16 +182,12 @@
   <div class="flex min-w-0 flex-1 flex-col justify-center">
     <div class="mb-0.5 flex items-center justify-between gap-3">
       <!-- Conversation name -->
-      <span
-        class="text-text-main truncate text-[0.95rem] {unreadCount > 0
-          ? 'font-extrabold'
-          : 'font-bold'}"
-      >
+      <span class="text-text-main truncate text-sm {unreadCount > 0 ? 'font-bold' : 'font-bold'}">
         {effectiveDisplayName}
       </span>
 
       <!-- Badges area (unread, sync) -->
-      <div class="flex flex-shrink-0 items-center gap-2">
+      <div class="flex shrink-0 items-center gap-2">
         <!--
           NO BADGE FOR "NOT JOINED YET", AND THAT IS A PRODUCT DECISION (user, 2026-09-04): *"tu
           peux le laisser dans les logs. L'utilisateur doit voir le moins possible qu'il se passe des
@@ -212,7 +206,7 @@
         -->
         {#if unreadCount > 0}
           <span
-            class="inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-red-500 px-1.5 text-[0.7rem] font-bold text-white shadow-sm shadow-red-500/20"
+            class="text-2xs inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-red-500 px-1.5 font-bold text-white shadow-sm shadow-red-500/20"
             aria-label={m.chat_unread_messages_label({ count: unreadCount })}
           >
             {unreadCount > 99 ? '99+' : unreadCount}

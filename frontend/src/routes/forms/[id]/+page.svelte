@@ -713,7 +713,7 @@
           ></div>
           <div class="absolute inset-x-0 bottom-0 flex items-end gap-3 p-5">
             <div class="min-w-0 flex-1">
-              <h1 class="text-2xl leading-tight font-extrabold text-white">{form.title}</h1>
+              <h1 class="text-2xl leading-tight font-bold text-white">{form.title}</h1>
               {#if !priceUnavailable && priceCents > 0}
                 <span
                   class="bg-cn-yellow text-cn-ink mt-1.5 inline-block rounded-full px-2.5 py-1 text-xs font-bold"
@@ -738,7 +738,7 @@
             <ClipboardList size={26} />
           </div>
           <div class="min-w-0 flex-1">
-            <h1 class="text-text-main text-2xl leading-tight font-extrabold">{form.title}</h1>
+            <h1 class="text-text-main text-2xl leading-tight font-bold">{form.title}</h1>
             {#if !priceUnavailable && priceCents > 0}
               <span
                 class="bg-cn-yellow text-cn-ink mt-1.5 inline-block rounded-full px-2.5 py-1 text-xs font-bold"
@@ -812,7 +812,7 @@
             onclick={reminder.toggle}
             disabled={reminder.toggling}
             class="flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-bold transition-colors {reminder.subscribed
-              ? 'bg-amber-600 text-white hover:bg-amber-700'
+              ? 'text-cn-ink bg-amber-600 hover:bg-amber-700'
               : 'bg-amber-warn/20 text-amber-warn hover:bg-amber-warn/30'}"
           >
             {#if reminder.subscribed}
@@ -877,7 +877,7 @@
           <!-- svelte-ignore a11y_label_has_associated_control -->
           <label class="mb-1.5 flex items-start gap-2">
             <span
-              class="text-text-muted bg-cn-border/50 mt-0.5 shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold tabular-nums"
+              class="text-text-muted bg-cn-border/50 text-2xs mt-0.5 shrink-0 rounded-md px-1.5 py-0.5 font-bold tabular-nums"
             >
               {qi + 1}
             </span>
@@ -935,11 +935,13 @@
             <div class="space-y-2">
               {#each item.options ?? [] as opt (opt.id)}
                 <label
-                  class="flex cursor-pointer items-center gap-3 rounded-2xl border-2 px-4 py-3 transition-all select-none
-                  {selections[item.id] === opt.id
+                  class="flex cursor-pointer items-center gap-3 rounded-2xl border-2 px-4 py-3 transition-all select-none {selections[
+                    item.id
+                  ] === opt.id
                     ? 'border-cn-yellow bg-cn-yellow/8'
-                    : 'border-cn-border hover:border-cn-yellow/60 bg-cn-bg'}
-                  {submitted || isNotOpenYet || optionClosed(opt)
+                    : 'border-cn-border hover:border-cn-yellow/60 bg-cn-bg'} {submitted ||
+                  isNotOpenYet ||
+                  optionClosed(opt)
                     ? 'cursor-not-allowed opacity-60'
                     : ''}"
                 >
@@ -977,11 +979,13 @@
             <div class="space-y-2">
               {#each item.options ?? [] as opt (opt.id)}
                 <label
-                  class="flex cursor-pointer items-center gap-3 rounded-2xl border-2 px-4 py-3 transition-all select-none
-                  {(selections[item.id] ?? []).includes(opt.id)
+                  class="flex cursor-pointer items-center gap-3 rounded-2xl border-2 px-4 py-3 transition-all select-none {(
+                    selections[item.id] ?? []
+                  ).includes(opt.id)
                     ? 'border-cn-yellow bg-cn-yellow/8'
-                    : 'border-cn-border hover:border-cn-yellow/60 bg-cn-bg'}
-                  {submitted || isNotOpenYet || optionClosed(opt)
+                    : 'border-cn-border hover:border-cn-yellow/60 bg-cn-bg'} {submitted ||
+                  isNotOpenYet ||
+                  optionClosed(opt)
                     ? 'cursor-not-allowed opacity-60'
                     : ''}"
                 >
@@ -1026,8 +1030,8 @@
                 {#each Array.from({ length: (item.scale?.max || 5) - (item.scale?.min || 1) + 1 }, (_, i) => (item.scale?.min || 1) + i) as val (val)}
                   <label
                     class="flex flex-1 cursor-pointer flex-col items-center justify-center gap-1.5 py-3 transition-all select-none
-                    {selections[item.id] === val ? 'bg-cn-yellow/15' : 'hover:bg-cn-border/30'}
-                    {submitted || isNotOpenYet ? 'cursor-not-allowed opacity-60' : ''}"
+ {selections[item.id] === val ? 'bg-cn-yellow/15' : 'hover:bg-cn-border/30'}
+ {submitted || isNotOpenYet ? 'cursor-not-allowed opacity-60' : ''}"
                   >
                     <input
                       type="radio"
@@ -1180,7 +1184,7 @@
       : ''}"
   >
     <div
-      class="border-cn-border/60 flex items-center gap-3 rounded-2xl border bg-(--cn-surface)/90 px-4 py-3 shadow-lg backdrop-blur-xl"
+      class="border-cn-border/60 bg-cn-surface flex items-center gap-3 rounded-2xl border px-4 py-3 shadow-lg"
     >
       <div class="min-w-0 flex-1">
         {#if submitted}
@@ -1192,7 +1196,7 @@
         {:else if calculateTotal() > 0}
           <div>
             <p class="text-text-muted text-xs font-medium">{m.form_view_total_to_pay()}</p>
-            <p class="text-cn-dark text-lg font-extrabold">
+            <p class="text-cn-dark text-lg font-bold">
               {formatCurrency(calculateTotal(), form.currency)}
             </p>
           </div>

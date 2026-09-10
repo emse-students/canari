@@ -772,7 +772,10 @@ async function comeBack(label, { beforeTheWatch } = {}) {
   note(`${label}: login ${JSON.stringify(login)}`);
   const pin = runScript("pin.mjs", ["--device", VICTIM]);
   note(`${label}: pin ${JSON.stringify(pin)}`);
-  await ensureChat(cx).catch(() => null);
+  // ANNOUNCED, NOT SWALLOWED: everything this helper returns is read as a statement about a client
+  // sitting on /chat, and a discarded failure here makes each of those a statement about some other
+  // screen. `note` is this file's channel, so the reason goes where the rest of its narration goes.
+  await ensureChat(cx).catch((e) => note(`${label}: ensureChat FAILED - ${e?.message || e}`));
   const who = await whoAmI(cx);
   note(`${label}: it is now device ${who.deviceId?.slice(0, 8)} of ${who.userId?.slice(0, 8)}`);
   const alone = beforeTheWatch ? await beforeTheWatch(cx) : null;

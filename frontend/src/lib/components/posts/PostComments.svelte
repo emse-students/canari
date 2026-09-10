@@ -354,7 +354,7 @@
             bind:this={editInputEl}
             bind:value={editingText}
             onkeydown={handleEditKeyDown}
-            class="text-text-main flex-1 bg-transparent text-[0.9rem] font-medium outline-none"
+            class="text-text-main flex-1 bg-transparent text-sm font-medium outline-none"
           />
           <button
             type="button"
@@ -379,7 +379,7 @@
         >
           <a
             href="/profile/{encodeURIComponent(comment.userId)}"
-            class="text-text-main mb-0.5 block text-[0.8rem] font-bold transition-colors outline-none hover:text-amber-500 focus-visible:underline"
+            class="text-text-main mb-0.5 block text-xs font-bold transition-colors outline-none hover:text-amber-500 focus-visible:underline"
           >
             {getCommentAuthorName(comment)}
           </a>
@@ -388,7 +388,7 @@
             {@const parentComment = comments.find((c) => c.id === comment.parentId)}
             {#if parentComment}
               <span
-                class="text-text-muted mb-1 flex items-center gap-1 text-[0.65rem] font-semibold opacity-75"
+                class="text-text-muted text-2xs mb-1 flex items-center gap-1 font-semibold opacity-75"
               >
                 <CornerDownRight size={11} />
                 {getCommentAuthorName(parentComment)}
@@ -399,7 +399,7 @@
             {@const isLong = comment.text.length > COMMENT_TRUNCATE_THRESHOLD}
             {@const isExpanded = expandedComments.has(comment.id)}
             <div
-              class="text-text-main text-[0.9rem] leading-snug break-words [&_p]:m-0 [&_p]:inline {isLong &&
+              class="text-text-main text-sm leading-snug break-words [&_p]:m-0 [&_p]:inline {isLong &&
               !isExpanded
                 ? 'line-clamp-5'
                 : ''}"
@@ -414,7 +414,7 @@
               <button
                 type="button"
                 onclick={() => toggleCommentExpanded(comment.id)}
-                class="text-primary mt-0.5 text-[0.75rem] font-semibold outline-none hover:underline focus-visible:underline"
+                class="text-primary text-2xs mt-0.5 font-semibold outline-none hover:underline focus-visible:underline"
               >
                 {isExpanded ? m.post_voir_moins() : m.post_voir_plus()}
               </button>
@@ -436,14 +436,14 @@
 
       <div class="mt-1 flex items-center gap-3.5 px-2">
         <span
-          class="text-text-muted text-[0.65rem] font-bold opacity-80"
+          class="text-text-muted text-2xs font-bold opacity-80"
           title={exactDate(comment.createdAt)}>{timeAgo(comment.createdAt)}</span
         >
 
         <button
           type="button"
           onclick={() => onLikeComment(comment.id)}
-          class="text-[0.7rem] font-extrabold transition-colors outline-none focus-visible:underline {comment.likes?.includes(
+          class="text-2xs font-bold transition-colors outline-none focus-visible:underline {comment.likes?.includes(
             currentUserId
           )
             ? 'text-red-500'
@@ -457,7 +457,7 @@
         <button
           type="button"
           onclick={() => initiateReply(comment)}
-          class="text-text-muted hover:text-text-main text-[0.7rem] font-extrabold transition-colors outline-none focus-visible:underline"
+          class="text-text-muted hover:text-text-main text-2xs font-bold transition-colors outline-none focus-visible:underline"
         >
           {m.post_reply_label()}
         </button>
@@ -466,7 +466,7 @@
           <button
             type="button"
             onclick={() => initiateEdit(comment)}
-            class="text-text-muted text-[0.7rem] font-extrabold transition-colors outline-none hover:text-amber-500"
+            class="text-text-muted text-2xs font-bold transition-colors outline-none hover:text-amber-500"
             aria-label={m.common_edit_label()}
           >
             <Pencil size={12} strokeWidth={2.5} />
@@ -474,7 +474,7 @@
           <button
             type="button"
             onclick={() => onDeleteComment(comment.id)}
-            class="text-text-muted text-[0.7rem] font-extrabold transition-colors outline-none hover:text-red-500"
+            class="text-text-muted text-2xs font-bold transition-colors outline-none hover:text-red-500"
             aria-label={m.common_delete_button()}
           >
             <Trash2 size={12} strokeWidth={2.5} />
@@ -483,7 +483,7 @@
           <button
             type="button"
             onclick={() => onReport?.(comment.id)}
-            class="text-text-muted text-[0.7rem] font-extrabold transition-colors outline-none hover:text-red-400"
+            class="text-text-muted text-2xs font-bold transition-colors outline-none hover:text-red-400"
             aria-label={m.post_report_comment_label()}
             title={m.post_report_label()}
           >
@@ -519,7 +519,7 @@
           <button
             type="button"
             onclick={onToggleComments}
-            class="text-text-muted hover:text-text-main flex items-center gap-1.5 rounded-lg px-2 py-1 text-[0.75rem] font-bold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+            class="text-text-muted hover:text-text-main text-2xs flex items-center gap-1.5 rounded-lg px-2 py-1 font-bold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
           >
             <ChevronDown size={16} strokeWidth={2.5} />
             {m.post_show_comments_label({ count: topLevelComments.length })}
@@ -528,7 +528,7 @@
           <button
             type="button"
             onclick={onToggleComments}
-            class="text-text-muted hover:text-text-main flex items-center gap-1.5 rounded-lg px-2 py-1 text-[0.75rem] font-bold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+            class="text-text-muted hover:text-text-main text-2xs flex items-center gap-1.5 rounded-lg px-2 py-1 font-bold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
           >
             <ChevronUp size={16} strokeWidth={2.5} />
             {m.post_hide_comments_label()}
@@ -544,7 +544,7 @@
             <button
               type="button"
               onclick={() => (sortMode = mode)}
-              class="rounded-full px-2 py-0.5 text-[0.65rem] font-bold transition-colors {sortMode ===
+              class="text-2xs rounded-full px-2 py-0.5 font-bold transition-colors {sortMode ===
               mode
                 ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
                 : 'text-text-muted hover:text-text-main'}"
@@ -569,7 +569,7 @@
         type="button"
         onclick={handleLoadAll}
         disabled={loadingAll}
-        class="text-text-muted hover:text-text-main mb-2 w-full rounded-lg py-1.5 text-[0.75rem] font-bold transition-colors disabled:opacity-50"
+        class="text-text-muted hover:text-text-main text-2xs mb-2 w-full rounded-lg py-1.5 font-bold transition-colors disabled:opacity-50"
       >
         {loadingAll ? m.common_loading_label() : m.post_load_all_comments_label()}
       </button>
@@ -579,7 +579,7 @@
     <div class="flex flex-col gap-2 pt-3">
       {#if replyingToId}
         <div
-          class="animate-in fade-in slide-in-from-bottom-1 ml-10 flex items-center justify-between rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-1.5 text-[0.7rem] font-bold text-amber-700 dark:text-amber-400"
+          class="animate-in fade-in slide-in-from-bottom-1 text-2xs ml-10 flex items-center justify-between rounded-xl border border-amber-500/20 bg-amber-500/10 px-3 py-1.5 font-bold text-amber-700 dark:text-amber-400"
         >
           <span class="flex items-center gap-1.5"
             ><CornerDownRight size={14} />
@@ -612,7 +612,7 @@
     {#if pendingPreviewUrl || uploadingMedia}
       <div class="mb-2 ml-[2.125rem] flex items-center gap-2">
         <div
-          class="relative max-h-14 w-20 flex-shrink-0 overflow-hidden rounded-lg bg-black/10 dark:bg-white/10"
+          class="relative max-h-14 w-20 shrink-0 overflow-hidden rounded-lg bg-black/10 dark:bg-white/10"
           style={pendingMedia?.width && pendingMedia?.height
             ? mediaAspectStyle(pendingMedia.width, pendingMedia.height)
             : 'aspect-ratio: 10/7'}
@@ -636,15 +636,14 @@
           {/if}
         </div>
         {#if uploadingMedia}
-          <span class="text-text-muted animate-pulse text-[0.7rem]">{m.common_loading_label()}</span
-          >
+          <span class="text-text-muted text-2xs animate-pulse">{m.common_loading_label()}</span>
         {/if}
       </div>
     {/if}
     <div class="flex items-center gap-2.5">
       <div class="shrink-0"><Avatar userId={currentUserId} size="sm" /></div>
       <div
-        class="flex min-w-0 flex-1 items-end rounded-[1.25rem] border border-black/5 bg-black/5 px-3.5 py-1.5 shadow-inner transition-all focus-within:bg-white focus-within:ring-2 focus-within:ring-amber-500/50 dark:border-white/10 dark:bg-white/5 dark:focus-within:bg-black/40"
+        class="flex min-w-0 flex-1 items-end rounded-2xl border border-black/5 bg-black/5 px-3.5 py-1.5 shadow-inner transition-all focus-within:bg-white focus-within:ring-2 focus-within:ring-amber-500/50 dark:border-white/10 dark:bg-white/5 dark:focus-within:bg-black/40"
         onfocusin={() => (commentInputFocused = true)}
         onfocusout={() => (commentInputFocused = false)}
       >
@@ -654,7 +653,7 @@
           {placeholder}
           singleLine
           class="min-w-0 flex-1"
-          editorClass="flex-1 bg-transparent text-[0.9rem] font-medium text-text-main outline-none py-1 min-h-0"
+          editorClass="flex-1 bg-transparent text-sm font-medium text-text-main outline-none py-1 min-h-0"
           minHeight="0"
           onpaste={handleCommentPaste}
           onkeydown={handleInternalKeyDown}
@@ -666,7 +665,7 @@
             disabled={uploadingMedia}
             title={m.chat_send_gif_title()}
             aria-label={m.chat_send_gif_label()}
-            class="text-text-muted mr-0.5 shrink-0 self-center px-1.5 text-[0.7rem] font-extrabold tracking-tight transition-colors hover:text-amber-500 disabled:opacity-40"
+            class="text-text-muted text-2xs mr-0.5 shrink-0 self-center px-1.5 font-bold tracking-tight transition-colors hover:text-amber-500 disabled:opacity-40"
           >
             GIF
           </button>

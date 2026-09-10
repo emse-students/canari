@@ -13,7 +13,7 @@
 
 {#if open && suggestions.length > 0}
   <ul
-    class="absolute right-0 bottom-full left-0 z-50 mb-1 max-h-48 overflow-auto rounded-xl border border-black/10 bg-white/95 shadow-xl backdrop-blur-sm dark:border-white/10 dark:bg-gray-900/95"
+    class="bg-cn-surface absolute right-0 bottom-full left-0 z-50 mb-1 max-h-48 overflow-auto rounded-xl border border-black/10 shadow-xl dark:border-white/10"
   >
     {#each suggestions as user, i (user.id)}
       <li>

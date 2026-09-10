@@ -94,7 +94,7 @@
 </script>
 
 <div
-  class="border-cn-border/70 bg-cn-bg/40 hover:bg-cn-bg/60 flex flex-col gap-3 rounded-2xl border px-4 py-3 transition-colors"
+  class="border-cn-border/70 bg-cn-bg flex flex-col gap-3 rounded-2xl border px-4 py-3 transition-colors hover:bg-black/5 dark:hover:bg-white/10"
 >
   <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
     <div class="flex min-w-0 flex-1 items-center gap-3">
@@ -115,16 +115,14 @@
         <div class="mt-1 flex flex-wrap items-center gap-2">
           <span
             class="rounded-full px-2.5 py-0.5 text-xs font-semibold
-            {member.isAdmin
+ {member.isAdmin
               ? 'bg-cn-yellow/25 text-cn-dark dark:text-cn-yellow'
               : 'bg-cn-border/50 text-text-muted'}"
           >
             {member.role}
           </span>
           {#if member.isAdmin}
-            <span class="text-text-muted text-[11px] font-medium tracking-wide uppercase"
-              >Admin</span
-            >
+            <span class="text-text-muted text-2xs font-medium tracking-wide uppercase">Admin</span>
           {/if}
         </div>
       </div>

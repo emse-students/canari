@@ -15,6 +15,7 @@ import { request as requestOverHttps } from 'node:https';
 import { LOCAL } from './estate.mjs';
 import { instrumentShaOf } from './instrument.mjs';
 import { SITE, STATE_DIR } from './names.mjs';
+import { readSourceStamp } from '../../frontend/scripts/source-stamp.mjs';
 import { gate, report } from './watch.mjs';
 
 /**
@@ -22,6 +23,9 @@ import { gate, report } from './watch.mjs';
  * condensed dirt of the run, which quotes captured console lines, and those name real conversations.
  */
 const FILE = join(STATE_DIR, 'results.ndjson');
+
+/** The served frontend's own content hash, read once: a rebuild mid-run is not a case this models. */
+const SOURCE_STAMP = readSourceStamp()?.sha ?? null;
 
 /**
  * THE BUILD EVERY ROW OF THIS PROCESS RAN AGAINST - read from the DEPLOYMENT, never from git alone.
@@ -451,17 +455,56 @@ export function record(id, verdict, detail) {
     at: new Date().toISOString(),
     build: BUILD.commit,
     builtAt: BUILD.builtAt,
-    check: CHECK.file,
-    checkSha: CHECK.sha,
-    instrumentSha: CHECK.instrumentSha,
+    // WHICH SOURCE THE ESTATE WAS ACTUALLY SERVING, and why the commit alone cannot say it.
+    // `build` is a COMMIT, and a commit describes the tree GIT holds - never the tree
+    // `make local-frontend` last compiled. The two part company the moment a file is reverted,
+    // stashed or edited without being committed, which is exactly what a deliberate A/B does.
+    // Measured on 2026-09-08: CORRUPT-3 was run at ONE commit against `deviceKeyVault.ts` at its
+    // pre-fix and then its post-fix contents - the honest way to show a fix does what its row
+    // claims - and the ledger recorded FAIL then PASS as though one build had answered one
+    // question two ways. `rows.mjs` read that as intermittence, which is the one thing this
+    // campaign must never invent: a DRAW says a measurement cannot be believed, and here both
+    // could, because they measured different code.
+    //
+    // Nothing new had to be built to fix it. `source-stamp.mjs` already hashes the bytes the
+    // artefact was made from, and its own doc names THIS harness as the consumer - the ledger was
+    // simply dropping the field on the floor.
+    ...(SOURCE_STAMP ? { sourceSha: SOURCE_STAMP } : {}),
+    // NOT HERE ANY MORE - see the block after `...detail`. Left as this comment rather than
+    // deleted, because "why is the provenance written out of order" is the question a reader of
+    // the next merge conflict will have, and the answer is that a runner was able to overwrite it.
     // BEFORE `detail`, so a runner that read the phone at its OWN arming moment overrides this one.
     // Four COMM checks do, and theirs is the more precise of the two.
     ...(A1_BUILD ? { a1Build: A1_BUILD.commit, a1BuiltAt: A1_BUILD.builtAt } : {}),
+    // ONLY WHEN IT IS KNOWN AND TRUE. An APK built from a dirty tree is dated to a commit that does
+    // not contain the code measured, so the row has to say so or it states a falsehood a later
+    // reader cannot detect. Absent means "not recorded" - see `apkbuild.mjs` - and absent is what
+    // every row taken before that module existed carries, which is honest and not reassuring.
+    ...(A1_BUILD?.dirty ? { a1BuildDirty: true, a1BuildDiffSha: A1_BUILD.diffSha } : {}),
     ...(unstamped ? { a1BuildUnstamped: 'bound a phone, no preflight stamp' } : {}),
     ...detail,
     ...(owedObservation
       ? { claimedVerdict: verdict, unobserved: 'no report was gated into this verdict - see gate() in watch.mjs' }
       : {}),
+    // PROVENANCE IS THE LEDGER'S, AND A RUNNER MAY NOT OVERWRITE IT - which is why these three sit
+    // AFTER `detail` while `a1Build` deliberately sits before it. `a1Build` is an observation, and a
+    // runner that read the phone at its own arming moment has the better one. `check` is not an
+    // observation: it is the FILE this verdict came out of, and it is what `rows.mjs` uses to ask
+    // whether the runner has changed since - the question that tells a stale verdict from a current
+    // one.
+    //
+    // Six runners set `out.check = '<the row id>'` as a self-label in their own JSON dump, and the
+    // spread carried it straight over this field. `rows.mjs` then looked for a file called
+    // `NOTIF-14` or `NOTIF-7 (bg)`, found none, and reported "its runner no longer exists" for FOUR
+    // rows whose runner had in one case just passed - NOTIF-7, NOTIF-7b, NOTIF-14, NOTIF-16. (The
+    // three FWD rows it names alongside them are a DIFFERENT and honest case: their runners really
+    // were retired.) Those four silently left the checkSha/instrumentSha chain, which is the whole
+    // reason this campaign can say a verdict was taken on the code it claims. The self-labels are
+    // gone from the runners too, but a value the ledger owns must not depend on every future runner
+    // remembering not to name it.
+    check: CHECK.file,
+    checkSha: CHECK.sha,
+    instrumentSha: CHECK.instrumentSha,
   };
   appendFileSync(FILE, `${JSON.stringify(row)}\n`);
   console.log(`[${stated}] ${id} ${JSON.stringify(detail)}`);

@@ -20,7 +20,7 @@
 <div class="group flex items-center gap-3 select-none">
   <!-- Conteneur de l'icône -->
   <div
-    class="bg-cn-ink relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[14px] border border-black/5 shadow-md shadow-black/10 transition-all duration-300 group-hover:scale-105 group-hover:shadow-lg group-hover:shadow-black/20 dark:border-white/10 dark:group-hover:shadow-white/5"
+    class="bg-cn-ink relative flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-black/5 shadow-md shadow-black/10 transition-all duration-300 group-hover:scale-105 group-hover:shadow-lg group-hover:shadow-black/20 dark:border-white/10 dark:group-hover:shadow-white/5"
   >
     <!-- Le logo avec un léger effet de rotation au survol pour le dynamisme -->
     <img
@@ -31,7 +31,7 @@
   </div>
 
   <!-- Conteneur du texte -->
-  <div class="flex flex-col justify-center leading-tight {compact ? 'hidden sm:flex' : 'flex'}">
+  <div class="flex flex-col justify-center gap-0.5 {compact ? 'hidden sm:flex' : 'flex'}">
     <p
       class="font-brand text-text-main text-xl font-bold tracking-wide capitalize transition-colors duration-300 group-hover:text-amber-500 dark:group-hover:text-amber-400"
     >
@@ -40,7 +40,7 @@
 
     {#if subtitle}
       <p
-        class="text-text-muted mt-[1px] text-[11px] font-medium opacity-80 transition-opacity duration-300 group-hover:opacity-100"
+        class="text-text-muted text-2xs mt-[1px] font-medium opacity-80 transition-opacity duration-300 group-hover:opacity-100"
       >
         {subtitle}
       </p>

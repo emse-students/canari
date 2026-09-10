@@ -1,10 +1,11 @@
 <script lang="ts">
+  import PageContainer from '$lib/components/layout/PageContainer.svelte';
+  import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
   import { createAssociation, listAssociations, type Association } from '$lib/associations/api';
   import { goto } from '$app/navigation';
   import Input from '$lib/components/ui/Input.svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
-  import { ArrowLeft } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { slugify } from '$lib/utils/textFold';
 
@@ -57,22 +58,11 @@
   }
 </script>
 
-<div class="mx-auto max-w-lg space-y-6 px-4 py-6 sm:px-6">
-  <div>
-    <a
-      href="/lists"
-      class="text-text-muted hover:text-text-main inline-flex items-center gap-2 text-sm transition-colors"
-    >
-      <ArrowLeft size={16} />
-      {m.list_new_back()}
-    </a>
-    <h1 class="text-text-main mt-2 text-2xl font-extrabold tracking-tight">
-      {m.list_new_create_btn()}
-    </h1>
-  </div>
+<PageContainer>
+  <PageHeader title={m.list_new_create_btn()} backHref="/lists" backLabel={m.list_new_back()} />
 
   <form
-    class="border-cn-border bg-cn-surface/80 space-y-5 rounded-2xl border p-6"
+    class="border-cn-border bg-cn-surface space-y-5 rounded-2xl border p-6"
     onsubmit={(e) => {
       e.preventDefault();
       handleSubmit();
@@ -132,9 +122,9 @@
     <button
       type="submit"
       disabled={submitting || !name.trim() || !slug.trim()}
-      class="bg-cn-yellow text-cn-dark hover:bg-cn-yellow-hover w-full rounded-xl px-5 py-2.5 text-sm font-bold shadow-sm transition-all disabled:cursor-not-allowed disabled:opacity-50"
+      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover w-full rounded-xl px-5 py-2.5 text-sm font-bold shadow-sm transition-all disabled:cursor-not-allowed disabled:opacity-50"
     >
       {submitting ? m.common_creating_label() : m.list_new_create_btn()}
     </button>
   </form>
-</div>
+</PageContainer>

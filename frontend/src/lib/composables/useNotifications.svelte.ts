@@ -5,6 +5,7 @@
 import { SvelteMap } from 'svelte/reactivity';
 import { m } from '$lib/paraglide/messages';
 import { notifNav } from '$lib/stores/notifNav.svelte';
+import { chatDeepLinkRoute } from '$lib/utils/chat/notificationRouting';
 import { setTabRinging } from '$lib/stores/tabIndicator';
 import { settings } from '$lib/stores/settingsStore.svelte';
 import { isTauriRuntime } from '$lib/utils/openExternal';
@@ -55,6 +56,22 @@ export const NOTIFICATION_ICON = 'ic_notification';
 
 export const CHANNEL_MESSAGES = 'canari_messages';
 export const CHANNEL_CALLS = 'canari_calls';
+/**
+ * The channel a message that NAMES the reader is filed on - `CanariApplication.ensureChannels`.
+ *
+ * IT IS THE USER'S OWN SWITCH, WHICH IS WHY IT CANNOT BE LEFT TO ONE TRANSPORT. Android gives every
+ * channel its own importance, sound, vibration and Do-Not-Disturb standing, and it gives the user a
+ * toggle per channel: `canari_mentions` exists so that someone who mutes the chatter still hears
+ * their own name, and it is the only channel besides calls for which the app requests DND override.
+ *
+ * Until this constant existed the web half had no mentions branch at all and passed
+ * {@link CHANNEL_MESSAGES} for everything, while `CanariFirebaseMessagingService` read the decrypted
+ * text for `@[myUserId]` and filed it correctly. Since the builder follows the message's ROUTE and
+ * not the app's state, one mention was filed under the reader's mute settings and the next was not,
+ * decided by nothing the reader can see. Measured as NOTIF-16 on 2026-09-08: a mention over the
+ * WebSocket landed on `canari_messages`, the same mention pushed landed on `canari_mentions`.
+ */
+export const CHANNEL_MENTIONS = 'canari_mentions';
 
 /** Returns a stable positive integer ID derived from a conversation ID string, used to replace existing Tauri notifications for the same conversation. */
 function stableNotifId(conversationId: string): number {
@@ -73,6 +90,98 @@ export function useNotifications() {
   // Per-conversation rate limit: conversationId → last notification timestamp.
   // Prevents notification spam on burst but lets different conversations notify independently.
   const lastNotifAtByConv = new SvelteMap<string, number>();
+  /**
+   * Notification id -> the conversation it was posted for, so a tap can be routed by the only
+   * value that crosses the OS boundary.
+   *
+   * The table exists because the LISTENER IS REGISTERED ONCE and therefore cannot close over one
+   * conversation. It used to be registered inside the post itself, which added a listener per
+   * notification: every one of them survived, every one of them fired on every tap, and after ten
+   * messages a single tap printed the diagnostic below ten times. A leak and a noise multiplier
+   * from the same line.
+   *
+   * Unbounded is fine and bounded would be wrong: one entry per conversation this session has
+   * notified about, overwritten in place because the id is a pure function of the conversation.
+   */
+  const notifTargetsById = new SvelteMap<number, string>();
+  let notifTapListenerArmed = false;
+  let notifIdentityMissingAnnounced = false;
+
+  /**
+   * Registers the ONE notification-tap listener this session will have, the first time a
+   * notification is posted with a conversation attached.
+   *
+   * **THIS CANNOT WORK ON ANDROID TODAY AND THE PLATFORM IS WHY** - measured on a Mi 9T on
+   * 2026-09-07 with a real message, which opened the app and landed on nothing, and confirmed
+   * against `tauri-plugin-notification` 2.3.3 on 2026-09-08. The tap payload is exactly
+   * `{inputValue, actionId, notification}`. `notification` is parsed from the intent extra
+   * `sourceJson`, which `Notification.kt` declares as `var sourceJson: String? = null` and the
+   * plugin assigns NOWHERE. The notification id IS on the intent
+   * (`TauriNotificationManager.kt:300`) but `handleNotificationActionPerformed` reads it only to
+   * dismiss the notification and never puts it in the payload, and `extra` never reaches the intent
+   * at all. **There is no field to read**, so no amount of TypeScript here routes an Android tap.
+   *
+   * Kept, and written to route correctly the moment a payload does carry an id, because desktop is
+   * a different implementation (`desktop.rs`, notify-rust) that has not been measured - deleting
+   * this would trade a known-broken path for an unmeasured claim about another one.
+   *
+   * The durable answer is for ONE builder to post every notification natively: the Kotlin path
+   * already posts `ACTION_VIEW fr.emse.canari://chat/<groupId>`, a deep link the app handles. It is
+   * filed as a native work package; see `docs/wiki/backlog.md`.
+   */
+  function armNotificationTapListener() {
+    if (notifTapListenerArmed) return;
+    // Latched before the attempt, not after it: ONE attempt per session whatever the outcome, and
+    // one line about it. Both failure branches below were silent, which made "this platform cannot
+    // observe a tap" and "the code never got here" the same observation from outside.
+    notifTapListenerArmed = true;
+    if (typeof onAction !== 'function') {
+      console.warn(
+        '[NOTIF] This plugin build exposes no onAction, so a tap cannot be observed at all. Taps ' +
+          'open the app on whatever it was last showing.'
+      );
+      return;
+    }
+    try {
+      (
+        onAction as unknown as (
+          cb: (action: { notification?: { id?: number } | null }) => void
+        ) => Promise<unknown>
+      )(async (action) => {
+        const id = action?.notification?.id;
+        if (typeof id !== 'number') {
+          // ANNOUNCED ONCE PER SESSION. The cause is a property of the platform, not of the tap,
+          // so repeating it per tap says nothing new and buries what does.
+          if (!notifIdentityMissingAnnounced) {
+            notifIdentityMissingAnnounced = true;
+            console.warn(
+              '[NOTIF] A notification tap arrived carrying no notification identity, so it cannot ' +
+                'be routed to a conversation. This is tauri-plugin-notification never populating ' +
+                'sourceJson; the notification must be posted natively instead. Opening nothing, ' +
+                'and this is said once per session.'
+            );
+          }
+          return;
+        }
+        const target = notifTargetsById.get(id);
+        if (!target) {
+          console.warn(`[NOTIF] Tap on notification ${id}, which this session did not post.`);
+          return;
+        }
+        notifNav.navigate(target);
+        try {
+          const { goto } = await import('$app/navigation');
+          await goto(chatDeepLinkRoute(target));
+        } catch (e) {
+          console.warn(`[NOTIF] Tap on ${target} could not route: ${String(e)}`);
+        }
+      });
+    } catch (e) {
+      // Registration itself threw - a plugin version whose `onAction` rejects the shape above. The
+      // latch stays set: calling it again would throw again.
+      console.warn(`[NOTIF] The notification-tap listener could not be registered: ${String(e)}`);
+    }
+  }
   let browserPermissionRetryAbort: AbortController | null = null;
 
   /**
@@ -524,7 +633,12 @@ export function useNotifications() {
   }
 
   /** Shows an OS-level notification (via Tauri plugin or Web Notification API). Rate-limited per conversation to 800 ms to absorb bursts while allowing different conversations to notify independently. Uses a stable ID/tag per conversation so successive messages replace rather than stack. */
-  async function sendSystemNotification(title: string, body: string, conversationId?: string) {
+  async function sendSystemNotification(
+    title: string,
+    body: string,
+    conversationId?: string,
+    mentionsMe = false
+  ) {
     if (typeof window === 'undefined') return;
     const convKey = conversationId ?? '__default__';
 
@@ -559,9 +673,13 @@ export function useNotifications() {
         if (await isPermissionGranted()) {
           await sendNotification({
             title,
-            ...androidNotificationOptions(body, CHANNEL_MESSAGES),
+            ...androidNotificationOptions(body, mentionsMe ? CHANNEL_MENTIONS : CHANNEL_MESSAGES),
             ...(conversationId ? { id: stableNotifId(conversationId) } : {}),
           });
+          // THE CHOICE IS LOGGED BECAUSE IT IS INVISIBLE OTHERWISE. A channel does not appear on
+          // the notification; it decides which of the reader's own switches apply to it, and the
+          // only place it can be read back is `dumpsys notification`, with the phone in hand.
+          if (mentionsMe) console.log(`[NOTIF] Filed on ${CHANNEL_MENTIONS} - it names this user.`);
           // TAPPING THIS NOTIFICATION CANNOT REACH THE CONVERSATION ON ANDROID, AND THE PLUGIN IS
           // WHY - measured on a Mi 9T on 2026-09-07 with a real message, which opened the app and
           // landed on nothing.
@@ -589,36 +707,8 @@ export function useNotifications() {
           // notify-rust) and this session measured Android only. Deleting it would trade a known
           // broken path for an unmeasured claim about another one.
           if (conversationId) {
-            try {
-              if (typeof onAction === 'function') {
-                (
-                  onAction as unknown as (
-                    cb: (action: { notification?: { id?: number } | null }) => void
-                  ) => Promise<unknown>
-                )(async (action) => {
-                  if (!action?.notification) {
-                    console.warn(
-                      '[NOTIF] A notification tap arrived carrying no notification identity, so it ' +
-                        'cannot be routed to a conversation. This is tauri-plugin-notification ' +
-                        'never populating sourceJson; the notification must be posted natively ' +
-                        'instead. Opening nothing.'
-                    );
-                    return;
-                  }
-                  if (action.notification.id === stableNotifId(conversationId)) {
-                    notifNav.navigate(conversationId);
-                    try {
-                      const { goto } = await import('$app/navigation');
-                      await goto('/chat');
-                    } catch {
-                      /* ignore */
-                    }
-                  }
-                });
-              }
-            } catch {
-              /* onAction unavailable on this platform/version */
-            }
+            notifTargetsById.set(stableNotifId(conversationId), conversationId);
+            armNotificationTapListener();
           }
         }
         return;

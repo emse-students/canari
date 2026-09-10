@@ -203,7 +203,7 @@
   }
 </script>
 
-<div class="border-cn-border space-y-6 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm">
+<div class="border-cn-border bg-cn-surface space-y-6 rounded-2xl border p-6 shadow-sm">
   <div class="flex flex-wrap items-center justify-between gap-3">
     <div>
       <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
@@ -232,7 +232,7 @@
 
   {#if showForm}
     <form
-      class="border-cn-border bg-cn-bg/40 space-y-4 rounded-xl border p-5"
+      class="border-cn-border bg-cn-bg space-y-4 rounded-xl border p-5"
       onsubmit={(e) => {
         e.preventDefault();
         void handleCreate();

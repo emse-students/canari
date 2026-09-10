@@ -95,7 +95,7 @@
 </script>
 
 {#if mediaRef}
-  <div class="overflow-hidden rounded-[1.1rem]">
+  <div class="overflow-hidden rounded-3xl">
     <!-- ================= IMAGE ================= -->
     {#if mediaRef.type === 'image'}
       {#if blobUrl}
@@ -113,7 +113,7 @@
             onclick={openLightbox}
             onpointerdown={(e) => e.stopPropagation()}
             aria-label={m.msg_open_image_fullscreen_label()}
-            class="block w-56 max-w-full overflow-hidden rounded-[1.1rem] bg-black/5 dark:bg-white/5"
+            class="block w-56 max-w-full overflow-hidden rounded-3xl bg-black/5 dark:bg-white/5"
             style={imageAspectStyle}
           >
             <img
@@ -129,7 +129,7 @@
               e.stopPropagation();
               downloadBlob(blobUrl!, mediaRef.fileName ?? 'image');
             }}
-            class="absolute right-2.5 bottom-2.5 inline-flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white shadow-lg backdrop-blur-md transition-all duration-300 outline-none hover:scale-110 hover:bg-black/70 focus:opacity-100 md:opacity-0 md:group-hover/media:opacity-100"
+            class="absolute right-2.5 bottom-2.5 inline-flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white shadow-lg transition-all duration-300 outline-none hover:scale-110 hover:bg-black/70 focus:opacity-100 md:opacity-0 md:group-hover/media:opacity-100"
             aria-label={m.msg_download_image_label()}
             title={m.common_download_label()}
           >
@@ -138,7 +138,7 @@
         </div>
       {:else if loadError}
         <div
-          class="w-full max-w-xs rounded-[1.1rem] border border-dashed sm:w-64 {glassBoxClass} flex flex-col items-center justify-center gap-3 p-4 text-center"
+          class="w-full max-w-xs rounded-3xl border border-dashed sm:w-64 {glassBoxClass} flex flex-col items-center justify-center gap-3 p-4 text-center"
           style={imageAspectStyle}
         >
           <CircleAlert size={28} class="opacity-50" />
@@ -149,7 +149,7 @@
       {:else}
         <!-- Skeleton Image -->
         <div
-          class="w-full max-w-[14rem] rounded-[1.1rem] sm:w-56 {isOwn
+          class="w-full max-w-[14rem] rounded-3xl sm:w-56 {isOwn
             ? 'bg-black/10'
             : 'bg-black/5 dark:bg-white/10'} flex animate-pulse items-center justify-center"
           style={imageAspectStyle}
@@ -168,13 +168,13 @@
             controls
             preload="metadata"
             onclick={(e) => e.stopPropagation()}
-            class="max-h-80 max-w-full rounded-[1.1rem] bg-black/10 shadow-sm sm:max-w-md dark:bg-black/40"
+            class="max-h-80 max-w-full rounded-3xl bg-black/10 shadow-sm sm:max-w-md dark:bg-black/40"
           ></video>
 
           <button
             type="button"
             onclick={openLightbox}
-            class="absolute bottom-2.5 left-2.5 inline-flex h-8 items-center justify-center rounded-full bg-black/50 px-2.5 text-white shadow-lg backdrop-blur-md transition-all duration-300 hover:bg-black/70"
+            class="absolute bottom-2.5 left-2.5 inline-flex h-8 items-center justify-center rounded-full bg-black/50 px-2.5 text-white shadow-lg transition-all duration-300 hover:bg-black/70"
             aria-label={m.msg_open_video_fullscreen_label()}
             title={m.msg_fullscreen_label()}
           >
@@ -187,7 +187,7 @@
               e.stopPropagation();
               downloadBlob(blobUrl!, mediaRef.fileName ?? 'video.mp4');
             }}
-            class="absolute top-2.5 right-2.5 z-10 inline-flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white shadow-lg backdrop-blur-md transition-all duration-300 outline-none hover:scale-110 hover:bg-black/70 focus:opacity-100 md:opacity-0 md:group-hover/media:opacity-100"
+            class="absolute top-2.5 right-2.5 z-10 inline-flex h-9 w-9 items-center justify-center rounded-full bg-black/50 text-white shadow-lg transition-all duration-300 outline-none hover:scale-110 hover:bg-black/70 focus:opacity-100 md:opacity-0 md:group-hover/media:opacity-100"
             aria-label={m.msg_download_video_label()}
             title={m.common_download_label()}
           >
@@ -196,7 +196,7 @@
         </div>
       {:else if loadError}
         <div
-          class="aspect-video w-full max-w-[16rem] rounded-[1.1rem] border border-dashed {glassBoxClass} flex flex-col items-center justify-center gap-3 p-4 text-center"
+          class="aspect-video w-full max-w-[16rem] rounded-3xl border border-dashed {glassBoxClass} flex flex-col items-center justify-center gap-3 p-4 text-center"
         >
           <CircleAlert size={28} class="opacity-50" />
           <span class="text-xs leading-snug font-medium {textMutedClass}">
@@ -206,7 +206,7 @@
       {:else}
         <!-- Skeleton Video -->
         <div
-          class="aspect-video w-full max-w-[16rem] rounded-[1.1rem] {isOwn
+          class="aspect-video w-full max-w-[16rem] rounded-3xl {isOwn
             ? 'bg-black/10'
             : 'bg-black/5 dark:bg-white/10'} flex animate-pulse items-center justify-center"
         >
@@ -227,7 +227,7 @@
         <div
           class="h-14 w-full rounded-xl border border-dashed sm:w-56 {glassBoxClass} flex items-center justify-center px-4 text-center"
         >
-          <span class="text-[0.7rem] leading-snug font-medium {textMutedClass}">
+          <span class="text-2xs leading-snug font-medium {textMutedClass}">
             {mediaPurgedByRetention ? m.msg_audio_expired_label() : m.msg_audio_load_error()}
           </span>
         </div>
@@ -247,7 +247,7 @@
     {:else}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
-        class="flex w-full max-w-full items-center gap-3.5 rounded-[1rem] border px-3.5 py-3 {glassBoxClass} group/file backdrop-blur-md transition-colors"
+        class="flex w-full max-w-full items-center gap-3.5 rounded-3xl border px-3.5 py-3 {glassBoxClass} group/file transition-colors"
         ontouchstart={(e) => e.stopPropagation()}
         ontouchend={(e) => e.stopPropagation()}
       >
@@ -273,12 +273,12 @@
 
           <!-- File metadata. -->
           <div class="min-w-0 flex-1 overflow-hidden text-left">
-            <p class="mb-0.5 truncate text-[0.85rem] leading-tight font-bold">
+            <p class="mb-0.5 truncate text-xs leading-tight font-bold">
               {mediaRef!.fileName ?? m.msg_attached_file_label()}
             </p>
             {#if !mediaPurgedByRetention}
               <!-- No `uppercase`: it would render the "Ko" unit as "KO". -->
-              <p class="text-[0.65rem] font-semibold tracking-wider opacity-60">
+              <p class="text-2xs font-semibold tracking-wider opacity-60">
                 {formatFileSize(mediaRef!.size)}
               </p>
             {/if}
@@ -320,7 +320,7 @@
           </button>
         {:else if mediaPurgedByRetention}
           <span
-            class="shrink-0 rounded-md bg-red-500/10 px-2 py-1 text-[0.65rem] font-bold text-red-600 dark:text-red-400"
+            class="text-2xs shrink-0 rounded-md bg-red-500/10 px-2 py-1 font-bold text-red-600 dark:text-red-400"
           >
             {m.msg_expired_label()}
           </span>
@@ -337,7 +337,7 @@
 
   <!-- Caption text below the media. -->
   {#if textContent}
-    <p class="mt-2 text-[0.95rem] leading-relaxed break-words whitespace-pre-wrap select-text">
+    <p class="mt-2 text-sm leading-relaxed break-words whitespace-pre-wrap select-text">
       {#each textSegments as segment, index (`${segment.type}-${segment.value}-${index}`)}
         {#if segment.type === 'link'}
           <AppLink href={segment.value} />

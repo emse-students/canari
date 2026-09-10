@@ -472,7 +472,7 @@
         <button
           type="button"
           onclick={openCreate}
-          class="bg-cn-yellow text-cn-dark hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition-colors"
+          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition-colors"
         >
           <CalendarPlus size={18} />
           {m.asso_calendar_propose_event_button()}
@@ -544,7 +544,7 @@
             <p class="text-text-main flex flex-wrap items-center gap-2 font-bold">
               {ev.title}
               <span
-                class="text-amber-warn bg-amber-warn/20 rounded-full px-2 py-0.5 text-[10px] font-bold tracking-wide uppercase"
+                class="text-amber-warn bg-amber-warn/20 text-2xs rounded-full px-2 py-0.5 font-bold tracking-wide uppercase"
               >
                 {m.asso_calendar_pending_badge()}
               </span>
@@ -596,7 +596,7 @@
             <p class="text-text-main flex flex-wrap items-center gap-2 font-bold">
               {ev.title}
               <span
-                class="text-red-err bg-red-err/20 rounded-full px-2 py-0.5 text-[10px] font-bold tracking-wide uppercase"
+                class="text-red-err bg-red-err/20 text-2xs rounded-full px-2 py-0.5 font-bold tracking-wide uppercase"
               >
                 {m.asso_calendar_rejected_badge()}
               </span>
@@ -628,7 +628,7 @@
   <div use:portal>
     <div
       data-keyboard-aware-overlay
-      class="z-[280] flex items-end justify-center bg-black/40 backdrop-blur-sm sm:items-center"
+      class="z-(--z-modal) flex items-end justify-center bg-black/40 sm:items-center"
       role="presentation"
       onclick={(e) => e.target === e.currentTarget && closeModal()}
     >
@@ -742,7 +742,7 @@
               </div>
             {:else}
               <label
-                class="border-cn-border bg-cn-bg/40 text-text-muted hover:border-cn-yellow/50 flex cursor-pointer items-center gap-2 rounded-xl border-2 border-dashed px-4 py-3 text-sm transition-colors {uploadingImage
+                class="border-cn-border bg-cn-bg text-text-muted hover:border-cn-yellow/50 flex cursor-pointer items-center gap-2 rounded-xl border-2 border-dashed px-4 py-3 text-sm transition-colors {uploadingImage
                   ? 'pointer-events-none opacity-50'
                   : ''}"
               >

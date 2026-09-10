@@ -63,8 +63,8 @@
       bind:value={noteInput}
       placeholder={m.profile_notepad_placeholder()}
       minHeight="140px"
-      class="focus-within:border-cn-yellow/50 focus-within:ring-cn-yellow/30 w-full min-w-0 overflow-hidden rounded-[1.25rem] border border-black/10 bg-white/80 shadow-inner transition-all focus-within:ring-2 dark:border-white/10 dark:bg-black/40"
-      editorClass="min-h-[140px] w-full max-w-full px-4 py-3 text-[0.95rem] text-text-main leading-relaxed"
+      class="focus-within:border-cn-yellow/50 focus-within:ring-cn-yellow/30 bg-cn-surface w-full min-w-0 overflow-hidden rounded-2xl border border-black/10 shadow-inner transition-all focus-within:ring-2 dark:border-white/10"
+      editorClass="min-h-[140px] w-full max-w-full px-4 py-3 text-sm text-text-main leading-relaxed"
     />
     <div class="flex items-center justify-end gap-3 pt-3">
       {#if noteError}

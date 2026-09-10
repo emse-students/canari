@@ -56,12 +56,40 @@ import { psql } from '../estate.mjs';
  * `CanariDB_<userId>`, so two of them means two identities in one profile and `[0]` would be a
  * position rather than a choice - the same fault `client()` documents for tabs. `CanariDBMls_<id>`
  * is the MLS store, and the underscore-anchored prefix is what separates the two.
+ *
+ * ZERO AND TWO ARE DIFFERENT FINDINGS AND ONE MESSAGE COVERED BOTH. *"0 CanariDB_<user>
+ * database(s), so none can be chosen"* reads as a chooser that declined, which is what TWO means -
+ * and on the PHONE it is not a chooser problem at all: the Tauri client keeps no conversation store
+ * in IndexedDB, so this whole reader is looking at the wrong estate. Measured 2026-09-08 on A1,
+ * origin `http://tauri.localhost`, `indexedDB.databases()` supported and answering: the only
+ * database there is `emoji-picker-element-fr`. The run printed *"A1 debris NOT swept"* and looked
+ * like a chooser refusing, so nobody asked why - meanwhile a group deleted seven hours earlier was
+ * still in that phone's sidebar, rendering under the PEER's name, which made `openConversation`
+ * ambiguous and cost NOTIF-1b three verdicts. **A zero that could mean "declined" or "wrong estate"
+ * is a defect in the instrument, not a finding**, so they are separate sentences now and the empty
+ * one names the origin, lists what IS there, and says the phone is not sweepable from here.
+ *
+ * FOR WHOEVER CLOSES THAT GAP: the filter is `isGroupDebris(row.name)`, and the phone's DOM carries
+ * the PEER's name for such a row rather than the group's, so enumerating from the sidebar would not
+ * recognise the debris either. The name has to come from somewhere that still has it.
+ *
+ * NOTHING INSIDE THE TEMPLATE BELOW MAY CONTAIN A BACKTICK - it is a `String.raw` literal, and one
+ * in a comment ends it and breaks the file. That is why this paragraph is out here.
  */
 const READ_STORE = String.raw`(async function () {
   var names = (await indexedDB.databases()).map(function (d) { return d.name; });
   var mine = names.filter(function (n) { return /^CanariDB_/.test(n); });
-  if (mine.length !== 1)
-    return JSON.stringify({ error: mine.length + ' CanariDB_<user> database(s), so none can be chosen' });
+  if (mine.length === 0)
+    return JSON.stringify({
+      error:
+        'NO Canari conversation store at ' + location.origin + ' - this client does not keep one in ' +
+        'IndexedDB (present: ' + (names.join(', ') || 'none') + '). The Tauri clients are NOT ' +
+        'sweepable by this tool; their local rows have to be dismissed through the app.',
+    });
+  if (mine.length > 1)
+    return JSON.stringify({
+      error: mine.length + ' CanariDB_<user> databases in one profile, so none can be chosen - two identities share it',
+    });
   var db = await new Promise(function (res, rej) {
     var r = indexedDB.open(mine[0]);
     r.onsuccess = function () { res(r.result); };

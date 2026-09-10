@@ -1,4 +1,6 @@
 <script lang="ts">
+  import PageContainer from '$lib/components/layout/PageContainer.svelte';
+  import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
@@ -26,7 +28,6 @@
   import {
     Users,
     CreditCard,
-    ArrowLeft,
     Building2,
     TriangleAlert,
     FolderLock,
@@ -127,6 +128,32 @@
 
   /** Paiements tab: boutique and/or Stripe Connect. */
   let canManagePaymentsSection = $derived(canManageStripeConnect || canManageProducts);
+
+  /**
+   * The Danger tab holds TWO controls the server rights DIFFERENTLY, and gating the tab on the
+   * stricter of the two hid the other one from everybody entitled to it.
+   *
+   * Archiving is `PATCH :id { archived }`, which the server admits through
+   * `GlobalAdminOrAssociationRoleGuard` at `MANAGE_MEMBERS` - so an association's own admin holds
+   * it, and so does a BDE `MANAGE_ASSO` super-admin, `MANAGE_MEMBERS` not being in
+   * `SUPER_ADMIN_EXCLUDED_FLAGS`. Deleting is `DELETE :id` behind a bare `GlobalAdminGuard` and is
+   * the platform administrator's alone. Both were behind `isGlobalAdminUser` here, which is how a
+   * BDE member holding the power to administer associations found the section absent (reported
+   * 2026-09-09).
+   *
+   * The tab therefore opens on the right to ARCHIVE, and the delete card carries its own tier.
+   */
+  let canArchiveAssociation = $derived(canManageMembers);
+  /**
+   * The delete card's own tier, and it is NOT the platform administrator's any more.
+   *
+   * `DELETE :id` moved to `GlobalAdminOrBdeSuperAdminGuard` on 2026-09-10 (user), so it now admits
+   * exactly what CREATE has always admitted: a global admin, or a BDE member holding
+   * `MANAGE_ASSO`. It is deliberately NOT `mayActOnAssociation`, because it is not a flag on THIS
+   * association at all - a BDE super-admin holds it everywhere and an association's own admin
+   * never holds it, however many flags they have.
+   */
+  let canDeleteAssociation = $derived(isGlobalAdminUser || isSuperAdminUser);
 
   const slug = $derived((page.params as Record<string, string>).slug);
 
@@ -324,412 +351,412 @@
   }
 </script>
 
-<div class="mx-auto max-w-4xl space-y-6 px-4 py-6 sm:px-6">
-  <a
-    href="/associations/{encodeURIComponent(slug)}"
-    class="text-text-muted hover:text-text-main inline-flex items-center gap-2 text-sm transition-colors"
-  >
-    <ArrowLeft size={16} />
-    {m.asso_edit_page_back()}
-  </a>
+<PageContainer>
+  <PageHeader
+    title={m.asso_edit_page_title()}
+    subtitle={asso ? `@${asso.slug}` : undefined}
+    backHref="/associations/{encodeURIComponent(slug)}"
+    backLabel={m.asso_edit_page_back()}
+  />
 
-  {#if loading}
-    <div class="flex items-center justify-center py-20">
-      <div
-        class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
-      ></div>
-    </div>
-  {:else if error && !asso}
-    <div class="bg-red-err/10 border-red-err/30 text-red-err rounded-xl border p-4 text-sm">
-      {error}
-    </div>
-  {:else if asso}
-    <header class="space-y-1">
-      <h1 class="text-text-main text-2xl font-extrabold tracking-tight">
-        {m.asso_edit_page_title()}
-      </h1>
-      <p class="text-text-muted text-sm">@{asso.slug}</p>
-    </header>
-
-    {#if error}
+  <div class="space-y-6">
+    {#if loading}
+      <div class="flex items-center justify-center py-20">
+        <div
+          class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
+        ></div>
+      </div>
+    {:else if error && !asso}
       <div class="bg-red-err/10 border-red-err/30 text-red-err rounded-xl border p-4 text-sm">
         {error}
       </div>
-    {/if}
+    {:else if asso}
+      {#if error}
+        <div class="bg-red-err/10 border-red-err/30 text-red-err rounded-xl border p-4 text-sm">
+          {error}
+        </div>
+      {/if}
 
-    <!-- Section tabs -->
-    <nav
-      data-swipe-nav-ignore
-      class="border-cn-border/80 sticky top-0 z-30 -mx-4 border-y bg-(--cn-bg)/95 px-4 py-3 backdrop-blur-md sm:mx-0 sm:rounded-2xl sm:border"
-      aria-label="Edit sections"
-    >
-      <div class="flex flex-wrap gap-2">
-        <button
-          type="button"
-          onclick={() => (editSection = 'profile')}
-          class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-          {editSection === 'profile'
-            ? 'bg-cn-yellow text-cn-ink shadow-sm'
-            : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
-        >
-          <Building2 size={17} />
-          {m.asso_edit_tab_profile()}
-        </button>
-        {#if canManageMembers}
+      <!-- Section tabs -->
+      <nav
+        data-swipe-nav-ignore
+        class="border-cn-border/80 bg-cn-bg sticky top-0 z-30 -mx-4 border-y px-4 py-3 sm:mx-0 sm:rounded-2xl sm:border"
+        aria-label="Edit sections"
+      >
+        <div class="flex flex-wrap gap-2">
           <button
             type="button"
-            onclick={() => (editSection = 'members')}
+            onclick={() => (editSection = 'profile')}
             class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-            {editSection === 'members'
+ {editSection === 'profile'
               ? 'bg-cn-yellow text-cn-ink shadow-sm'
               : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
           >
-            <Users size={17} />
-            {m.common_members_label()}
+            <Building2 size={17} />
+            {m.asso_edit_tab_profile()}
           </button>
-        {/if}
-        {#if canManagePaymentsSection}
-          <button
-            type="button"
-            onclick={() => {
-              editSection = 'payments';
-              void refreshActivePaymentProvider();
-              if (canManageStripeConnect) void refreshConnectAccountStatus();
-            }}
-            class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-            {editSection === 'payments'
-              ? 'bg-cn-yellow text-cn-ink shadow-sm'
-              : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
-          >
-            <CreditCard size={17} />
-            {m.asso_edit_tab_payments()}
-          </button>
-        {/if}
-        {#if canManageDocuments}
-          <button
-            type="button"
-            onclick={() => (editSection = 'documents')}
-            class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-            {editSection === 'documents'
-              ? 'bg-cn-yellow text-cn-ink shadow-sm'
-              : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
-          >
-            <FolderLock size={17} />
-            {m.asso_edit_tab_documents()}
-          </button>
-        {/if}
-        {#if canManageProducts}
-          <button
-            type="button"
-            onclick={() => (editSection = 'achats')}
-            class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-            {editSection === 'achats'
-              ? 'bg-cn-yellow text-cn-ink shadow-sm'
-              : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
-          >
-            <UsersIcon size={17} />
-            {m.asso_edit_tab_achats()}
-          </button>
-        {/if}
-        {#if (canManageMembers || canManageProducts) && asso}
-          <button
-            type="button"
-            onclick={() => (editSection = 'cotisations')}
-            class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-            {editSection === 'cotisations'
-              ? 'bg-cn-yellow text-cn-ink shadow-sm'
-              : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
-          >
-            <HandCoins size={17} />
-            {m.asso_edit_tab_cotisations()}
-          </button>
-        {/if}
-        {#if canManageProducts}
-          <button
-            type="button"
-            onclick={() => (editSection = 'delegation')}
-            class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-            {editSection === 'delegation'
-              ? 'bg-cn-yellow text-cn-ink shadow-sm'
-              : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
-          >
-            <Share2 size={17} />
-            {m.asso_edit_tab_delegation()}
-          </button>
-        {/if}
-        {#if canManageForms}
-          <button
-            type="button"
-            onclick={() => (editSection = 'formulaires')}
-            class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-            {editSection === 'formulaires'
-              ? 'bg-cn-yellow text-cn-ink shadow-sm'
-              : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
-          >
-            <ClipboardList size={17} />
-            {m.asso_edit_tab_formulaires()}
-          </button>
-        {/if}
-        {#if canManagePartnerships}
-          <button
-            type="button"
-            onclick={() => (editSection = 'partnerships')}
-            class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-            {editSection === 'partnerships'
-              ? 'bg-cn-yellow text-cn-ink shadow-sm'
-              : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
-          >
-            <Handshake size={17} />
-            {m.asso_edit_tab_partenariats()}
-          </button>
-        {/if}
-        {#if isGlobalAdminUser}
-          <button
-            type="button"
-            onclick={() => (editSection = 'danger')}
-            class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-            {editSection === 'danger'
-              ? 'bg-red-err/20 text-red-err border-red-err/30 border'
-              : 'border-cn-border text-text-muted hover:text-red-err border bg-(--cn-surface)'}"
-          >
-            <TriangleAlert size={17} />
-            {m.asso_edit_tab_danger()}
-          </button>
-        {/if}
-      </div>
-    </nav>
+          {#if canManageMembers}
+            <button
+              type="button"
+              onclick={() => (editSection = 'members')}
+              class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+ {editSection === 'members'
+                ? 'bg-cn-yellow text-cn-ink shadow-sm'
+                : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
+            >
+              <Users size={17} />
+              {m.common_members_label()}
+            </button>
+          {/if}
+          {#if canManagePaymentsSection}
+            <button
+              type="button"
+              onclick={() => {
+                editSection = 'payments';
+                void refreshActivePaymentProvider();
+                if (canManageStripeConnect) void refreshConnectAccountStatus();
+              }}
+              class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+ {editSection === 'payments'
+                ? 'bg-cn-yellow text-cn-ink shadow-sm'
+                : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
+            >
+              <CreditCard size={17} />
+              {m.asso_edit_tab_payments()}
+            </button>
+          {/if}
+          {#if canManageDocuments}
+            <button
+              type="button"
+              onclick={() => (editSection = 'documents')}
+              class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+ {editSection === 'documents'
+                ? 'bg-cn-yellow text-cn-ink shadow-sm'
+                : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
+            >
+              <FolderLock size={17} />
+              {m.asso_edit_tab_documents()}
+            </button>
+          {/if}
+          {#if canManageProducts}
+            <button
+              type="button"
+              onclick={() => (editSection = 'achats')}
+              class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+ {editSection === 'achats'
+                ? 'bg-cn-yellow text-cn-ink shadow-sm'
+                : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
+            >
+              <UsersIcon size={17} />
+              {m.asso_edit_tab_achats()}
+            </button>
+          {/if}
+          {#if (canManageMembers || canManageProducts) && asso}
+            <button
+              type="button"
+              onclick={() => (editSection = 'cotisations')}
+              class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+ {editSection === 'cotisations'
+                ? 'bg-cn-yellow text-cn-ink shadow-sm'
+                : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
+            >
+              <HandCoins size={17} />
+              {m.asso_edit_tab_cotisations()}
+            </button>
+          {/if}
+          {#if canManageProducts}
+            <button
+              type="button"
+              onclick={() => (editSection = 'delegation')}
+              class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+ {editSection === 'delegation'
+                ? 'bg-cn-yellow text-cn-ink shadow-sm'
+                : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
+            >
+              <Share2 size={17} />
+              {m.asso_edit_tab_delegation()}
+            </button>
+          {/if}
+          {#if canManageForms}
+            <button
+              type="button"
+              onclick={() => (editSection = 'formulaires')}
+              class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+ {editSection === 'formulaires'
+                ? 'bg-cn-yellow text-cn-ink shadow-sm'
+                : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
+            >
+              <ClipboardList size={17} />
+              {m.asso_edit_tab_formulaires()}
+            </button>
+          {/if}
+          {#if canManagePartnerships}
+            <button
+              type="button"
+              onclick={() => (editSection = 'partnerships')}
+              class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+ {editSection === 'partnerships'
+                ? 'bg-cn-yellow text-cn-ink shadow-sm'
+                : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
+            >
+              <Handshake size={17} />
+              {m.asso_edit_tab_partenariats()}
+            </button>
+          {/if}
+          {#if canArchiveAssociation}
+            <button
+              type="button"
+              onclick={() => (editSection = 'danger')}
+              class="inline-flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+ {editSection === 'danger'
+                ? 'bg-red-err/20 text-red-err border-red-err/30 border'
+                : 'border-cn-border text-text-muted hover:text-red-err border bg-(--cn-surface)'}"
+            >
+              <TriangleAlert size={17} />
+              {m.asso_edit_tab_danger()}
+            </button>
+          {/if}
+        </div>
+      </nav>
 
-    {#if editSection === 'profile'}
-      <EditProfileTab {asso} canEdit={canManageMembers} onUpdated={(a) => (asso = a)} />
-    {/if}
+      {#if editSection === 'profile'}
+        <EditProfileTab {asso} canEdit={canManageMembers} onUpdated={(a) => (asso = a)} />
+      {/if}
 
-    {#if editSection === 'payments' && canManagePaymentsSection && asso}
-      <div class="space-y-6">
-        {#if canManageStripeConnect && activePaymentProvider === 'lydia'}
-          <LydiaBusinessOnboardingForm
-            {asso}
-            onAccountCreated={(accountId) => {
-              if (asso) asso = { ...asso, lydiaAccountId: accountId };
-            }}
-            onDisconnected={() => {
-              if (asso) asso = { ...asso, lydiaAccountId: null, lydiaOnboardingComplete: false };
-            }}
-          />
-        {:else if canManageStripeConnect}
-          <div
-            class="border-cn-border space-y-4 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm"
-          >
-            <div class="flex flex-wrap items-start justify-between gap-3">
-              <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
-                <CreditCard size={20} />
-                {m.asso_payments_section_title()}
-              </h2>
-              <div class="flex items-center gap-2">
-                <button
-                  type="button"
-                  onclick={() => void refreshConnectAccountStatus()}
-                  disabled={statusLoading}
-                  class="border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
-                >
-                  <RefreshCw size={14} class={statusLoading ? 'animate-spin' : ''} />
-                  {m.common_refresh_button()}
-                </button>
-                {#if asso.stripeAccountId}
+      {#if editSection === 'payments' && canManagePaymentsSection && asso}
+        <div class="space-y-6">
+          {#if canManageStripeConnect && activePaymentProvider === 'lydia'}
+            <LydiaBusinessOnboardingForm
+              {asso}
+              onAccountCreated={(accountId) => {
+                if (asso) asso = { ...asso, lydiaAccountId: accountId };
+              }}
+              onDisconnected={() => {
+                if (asso) asso = { ...asso, lydiaAccountId: null, lydiaOnboardingComplete: false };
+              }}
+            />
+          {:else if canManageStripeConnect}
+            <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
+              <div class="flex flex-wrap items-start justify-between gap-3">
+                <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+                  <CreditCard size={20} />
+                  {m.asso_payments_section_title()}
+                </h2>
+                <div class="flex items-center gap-2">
                   <button
                     type="button"
-                    onclick={() => void handleDisconnectAccount()}
-                    disabled={disconnecting}
-                    class="border-red-err/30 text-red-err hover:bg-red-err/10 inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+                    onclick={() => void refreshConnectAccountStatus()}
+                    disabled={statusLoading}
+                    class="border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
                   >
-                    {disconnecting
-                      ? m.asso_payments_disconnect_loading()
-                      : m.asso_payments_disconnect_button()}
+                    <RefreshCw size={14} class={statusLoading ? 'animate-spin' : ''} />
+                    {m.common_refresh_button()}
                   </button>
-                {/if}
-              </div>
-            </div>
-
-            {#if statusLoading && !connectAccountStatus}
-              <p class="text-text-muted text-sm">{m.asso_payments_status_verifying()}</p>
-            {:else if connectAccountStatus?.status === 'active' || onlinePaymentsReady}
-              <p class="text-green-ok text-sm font-semibold">{m.asso_payments_connected_label()}</p>
-              <p class="text-text-muted text-xs">
-                {m.asso_payments_connected_desc()}
-              </p>
-              {#if connectAccountStatus?.balance}
-                <div class="border-cn-border bg-cn-bg/50 space-y-3 rounded-xl border p-4">
-                  <p class="text-text-main flex items-center gap-2 text-sm font-bold">
-                    <Wallet size={18} class="text-cn-dark" />
-                    {m.asso_payments_balance_title()}
-                  </p>
-                  <div class="grid grid-cols-2 gap-3">
-                    <div>
-                      <p class="text-text-muted text-xs">{m.asso_payments_balance_available()}</p>
-                      <p class="text-text-main text-lg font-extrabold tabular-nums">
-                        {formatConnectAccountAmount(
-                          connectAccountStatus.balance.availableCents,
-                          connectAccountStatus.balance.currency
-                        )}
-                      </p>
-                    </div>
-                    <div>
-                      <p class="text-text-muted text-xs">{m.asso_payments_balance_pending()}</p>
-                      <p class="text-text-muted text-lg font-extrabold tabular-nums">
-                        {formatConnectAccountAmount(
-                          connectAccountStatus.balance.pendingCents,
-                          connectAccountStatus.balance.currency
-                        )}
-                      </p>
-                    </div>
-                  </div>
-                  <p class="text-text-muted text-xs leading-relaxed">
-                    {m.asso_payments_balance_pending_note()}
-                  </p>
-                  {#if connectAccountStatus.payoutsEnabled !== false}
+                  {#if asso.stripeAccountId}
                     <button
                       type="button"
-                      onclick={() => void handleOpenProviderDashboard()}
-                      disabled={dashboardLoading}
-                      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:opacity-50 sm:w-auto"
+                      onclick={() => void handleDisconnectAccount()}
+                      disabled={disconnecting}
+                      class="border-red-err/30 text-red-err hover:bg-red-err/10 inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
                     >
-                      {#if dashboardLoading}
-                        <RefreshCw size={16} class="animate-spin" />
-                        {m.asso_payments_manage_payouts_loading()}
-                      {:else}
-                        <ArrowUpRight size={16} />
-                        {m.asso_payments_manage_payouts_button()}
-                      {/if}
+                      {disconnecting
+                        ? m.asso_payments_disconnect_loading()
+                        : m.asso_payments_disconnect_button()}
                     </button>
                   {/if}
                 </div>
-              {:else if asso.stripeAccountId}
-                <button
-                  type="button"
-                  onclick={() => void handleOpenProviderDashboard()}
-                  disabled={dashboardLoading}
-                  class="border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+              </div>
+
+              {#if statusLoading && !connectAccountStatus}
+                <p class="text-text-muted text-sm">{m.asso_payments_status_verifying()}</p>
+              {:else if connectAccountStatus?.status === 'active' || onlinePaymentsReady}
+                <p class="text-green-ok text-sm font-semibold">
+                  {m.asso_payments_connected_label()}
+                </p>
+                <p class="text-text-muted text-xs">
+                  {m.asso_payments_connected_desc()}
+                </p>
+                {#if connectAccountStatus?.balance}
+                  <div class="border-cn-border bg-cn-bg space-y-3 rounded-xl border p-4">
+                    <p class="text-text-main flex items-center gap-2 text-sm font-bold">
+                      <Wallet size={18} class="text-cn-dark" />
+                      {m.asso_payments_balance_title()}
+                    </p>
+                    <div class="grid grid-cols-2 gap-3">
+                      <div>
+                        <p class="text-text-muted text-xs">{m.asso_payments_balance_available()}</p>
+                        <p class="text-text-main text-lg font-bold tabular-nums">
+                          {formatConnectAccountAmount(
+                            connectAccountStatus.balance.availableCents,
+                            connectAccountStatus.balance.currency
+                          )}
+                        </p>
+                      </div>
+                      <div>
+                        <p class="text-text-muted text-xs">{m.asso_payments_balance_pending()}</p>
+                        <p class="text-text-muted text-lg font-bold tabular-nums">
+                          {formatConnectAccountAmount(
+                            connectAccountStatus.balance.pendingCents,
+                            connectAccountStatus.balance.currency
+                          )}
+                        </p>
+                      </div>
+                    </div>
+                    <p class="text-text-muted text-xs leading-relaxed">
+                      {m.asso_payments_balance_pending_note()}
+                    </p>
+                    {#if connectAccountStatus.payoutsEnabled !== false}
+                      <button
+                        type="button"
+                        onclick={() => void handleOpenProviderDashboard()}
+                        disabled={dashboardLoading}
+                        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex w-full items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:opacity-50 sm:w-auto"
+                      >
+                        {#if dashboardLoading}
+                          <RefreshCw size={16} class="animate-spin" />
+                          {m.asso_payments_manage_payouts_loading()}
+                        {:else}
+                          <ArrowUpRight size={16} />
+                          {m.asso_payments_manage_payouts_button()}
+                        {/if}
+                      </button>
+                    {/if}
+                  </div>
+                {:else if asso.stripeAccountId}
+                  <button
+                    type="button"
+                    onclick={() => void handleOpenProviderDashboard()}
+                    disabled={dashboardLoading}
+                    class="border-cn-border text-text-muted hover:text-text-main hover:bg-cn-bg inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
+                  >
+                    {m.asso_payments_manage_payouts_link()}
+                  </button>
+                {/if}
+              {:else if connectAccountStatus?.status === 'pending'}
+                <div
+                  class="space-y-2 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sky-900 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-100"
                 >
-                  {m.asso_payments_manage_payouts_link()}
-                </button>
-              {/if}
-            {:else if connectAccountStatus?.status === 'pending'}
-              <div
-                class="space-y-2 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sky-900 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-100"
-              >
-                <p class="flex items-center gap-2 text-sm font-semibold">
-                  <Clock size={18} class="shrink-0" />
-                  {m.asso_payments_verification_pending_title()}
-                </p>
-                <p class="text-sm leading-relaxed">
-                  {m.asso_payments_verification_pending_desc()}
-                </p>
-                {#if connectAccountStatus.pendingVerification && connectAccountStatus.pendingVerification.length > 0}
-                  <p class="text-xs text-sky-800/80 dark:text-sky-200/80">
-                    {m.asso_payments_verification_items({
-                      count: connectAccountStatus.pendingVerification.length,
-                    })}
+                  <p class="flex items-center gap-2 text-sm font-semibold">
+                    <Clock size={18} class="shrink-0" />
+                    {m.asso_payments_verification_pending_title()}
                   </p>
-                {/if}
-              </div>
-            {:else if connectAccountStatus?.status === 'restricted'}
-              <div
-                class="border-red-err/30 bg-red-err/10 text-red-err space-y-1 rounded-xl border px-4 py-3 text-sm"
-              >
-                <p class="font-semibold">{m.asso_payments_restricted_title()}</p>
-                <p>
-                  {m.asso_payments_restricted_prefix()}<a
-                    href="https://dashboard.stripe.com/connect/accounts/{asso.stripeAccountId}"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    class="font-semibold underline">{m.asso_payments_restricted_dashboard_link()}</a
-                  >{m.asso_payments_restricted_suffix()}
-                </p>
-              </div>
-            {:else if connectAccountStatus?.status === 'unavailable'}
-              <p class="text-amber-warn text-sm">{m.asso_payments_unavailable()}</p>
-            {:else}
-              <p class="text-text-muted text-sm leading-relaxed">
-                {#if asso.stripeAccountId}
-                  {m.asso_payments_complete_setup()}
-                {:else}
-                  {m.asso_payments_connect_account()}
-                {/if}
-              </p>
-              {#if connectAccountStatus?.status === 'onboarding_required' || !asso.stripeAccountId}
-                <button
-                  type="button"
-                  onclick={handleStartOnboarding}
-                  disabled={onboardingLoading}
-                  class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-5 py-2.5 text-sm font-bold shadow-sm disabled:opacity-50"
+                  <p class="text-sm leading-relaxed">
+                    {m.asso_payments_verification_pending_desc()}
+                  </p>
+                  {#if connectAccountStatus.pendingVerification && connectAccountStatus.pendingVerification.length > 0}
+                    <p class="text-xs text-sky-800/80 dark:text-sky-200/80">
+                      {m.asso_payments_verification_items({
+                        count: connectAccountStatus.pendingVerification.length,
+                      })}
+                    </p>
+                  {/if}
+                </div>
+              {:else if connectAccountStatus?.status === 'restricted'}
+                <div
+                  class="border-red-err/30 bg-red-err/10 text-red-err space-y-1 rounded-xl border px-4 py-3 text-sm"
                 >
-                  {onboardingLoading
-                    ? m.asso_payments_onboarding_loading()
-                    : asso.stripeAccountId
-                      ? m.asso_payments_continue_setup_button()
-                      : m.asso_payments_configure_button()}
-                </button>
+                  <p class="font-semibold">{m.asso_payments_restricted_title()}</p>
+                  <p>
+                    {m.asso_payments_restricted_prefix()}<a
+                      href="https://dashboard.stripe.com/connect/accounts/{asso.stripeAccountId}"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="font-semibold underline"
+                      >{m.asso_payments_restricted_dashboard_link()}</a
+                    >{m.asso_payments_restricted_suffix()}
+                  </p>
+                </div>
+              {:else if connectAccountStatus?.status === 'unavailable'}
+                <p class="text-amber-warn text-sm">{m.asso_payments_unavailable()}</p>
+              {:else}
+                <p class="text-text-muted text-sm leading-relaxed">
+                  {#if asso.stripeAccountId}
+                    {m.asso_payments_complete_setup()}
+                  {:else}
+                    {m.asso_payments_connect_account()}
+                  {/if}
+                </p>
+                {#if connectAccountStatus?.status === 'onboarding_required' || !asso.stripeAccountId}
+                  <button
+                    type="button"
+                    onclick={handleStartOnboarding}
+                    disabled={onboardingLoading}
+                    class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-5 py-2.5 text-sm font-bold shadow-sm disabled:opacity-50"
+                  >
+                    {onboardingLoading
+                      ? m.asso_payments_onboarding_loading()
+                      : asso.stripeAccountId
+                        ? m.asso_payments_continue_setup_button()
+                        : m.asso_payments_configure_button()}
+                  </button>
+                {/if}
               {/if}
-            {/if}
-          </div>
-        {/if}
-      </div>
-    {/if}
-
-    {#if editSection === 'members' && canManageMembers}
-      <EditMembersTab {asso} bind:members bind:resolvedMemberNames />
-    {/if}
-
-    {#if editSection === 'documents' && canManageDocuments && asso}
-      <div class="border-cn-border space-y-5 rounded-2xl border bg-(--cn-surface)/95 p-6 shadow-sm">
-        <div>
-          <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
-            <FolderLock size={20} />
-            {m.asso_doc_vault_title()}
-          </h2>
-          <p class="text-text-muted mt-1 text-sm">
-            {m.asso_doc_vault_desc()}
-          </p>
+            </div>
+          {/if}
         </div>
-        <AssociationDocumentManager associationId={asso.id} />
-      </div>
-    {/if}
+      {/if}
 
-    {#if editSection === 'achats' && canManageProducts && asso}
-      <EditAchatsTab {asso} />
-    {/if}
+      {#if editSection === 'members' && canManageMembers}
+        <EditMembersTab {asso} bind:members bind:resolvedMemberNames />
+      {/if}
 
-    {#if editSection === 'cotisations' && (canManageMembers || canManageProducts) && asso}
-      <EditCotisationsTab bind:asso {canManageMembers} {canManageProducts} />
-    {/if}
+      {#if editSection === 'documents' && canManageDocuments && asso}
+        <div class="border-cn-border bg-cn-surface space-y-5 rounded-2xl border p-6 shadow-sm">
+          <div>
+            <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+              <FolderLock size={20} />
+              {m.asso_doc_vault_title()}
+            </h2>
+            <p class="text-text-muted mt-1 text-sm">
+              {m.asso_doc_vault_desc()}
+            </p>
+          </div>
+          <AssociationDocumentManager associationId={asso.id} />
+        </div>
+      {/if}
 
-    {#if editSection === 'payments' && canManagePaymentsSection && asso && canManageProducts}
-      <EditBoutiqueTab
-        {asso}
-        {onlinePaymentsReady}
-        payoutAccountPending={connectAccountStatus?.status === 'pending'}
-        {canManageStripeConnect}
-      />
-    {/if}
+      {#if editSection === 'achats' && canManageProducts && asso}
+        <EditAchatsTab {asso} />
+      {/if}
 
-    {#if editSection === 'delegation' && canManageProducts && asso}
-      <EditDelegationTab {asso} />
-    {/if}
+      {#if editSection === 'cotisations' && (canManageMembers || canManageProducts) && asso}
+        <EditCotisationsTab bind:asso {canManageMembers} {canManageProducts} />
+      {/if}
 
-    {#if editSection === 'formulaires' && canManageForms && asso}
-      <EditFormsTab
-        {asso}
-        {onlinePaymentsReady}
-        {canManageStripeConnect}
-        onGoToPayments={() => (editSection = 'payments')}
-      />
-    {/if}
+      {#if editSection === 'payments' && canManagePaymentsSection && asso && canManageProducts}
+        <EditBoutiqueTab
+          {asso}
+          {onlinePaymentsReady}
+          payoutAccountPending={connectAccountStatus?.status === 'pending'}
+          {canManageStripeConnect}
+        />
+      {/if}
 
-    {#if editSection === 'partnerships' && canManagePartnerships && asso}
-      <EditPartnershipsTab {asso} />
-    {/if}
+      {#if editSection === 'delegation' && canManageProducts && asso}
+        <EditDelegationTab {asso} />
+      {/if}
 
-    {#if editSection === 'danger' && isGlobalAdminUser}
-      <EditDangerTab {asso} onUpdated={(a) => (asso = a)} onDeleted={() => goto('/associations')} />
+      {#if editSection === 'formulaires' && canManageForms && asso}
+        <EditFormsTab
+          {asso}
+          {onlinePaymentsReady}
+          {canManageStripeConnect}
+          onGoToPayments={() => (editSection = 'payments')}
+        />
+      {/if}
+
+      {#if editSection === 'partnerships' && canManagePartnerships && asso}
+        <EditPartnershipsTab {asso} />
+      {/if}
+
+      {#if editSection === 'danger' && canArchiveAssociation}
+        <EditDangerTab
+          {asso}
+          canDelete={canDeleteAssociation}
+          onUpdated={(a) => (asso = a)}
+          onDeleted={() => goto('/associations')}
+        />
+      {/if}
     {/if}
-  {/if}
-</div>
+  </div>
+</PageContainer>

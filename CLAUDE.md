@@ -165,7 +165,7 @@ exceeds a 5-minute foreground timeout.
 - Language: code, comments, docs and dev-facing strings MUST be English. User-visible strings use Paraglide (`messages/fr.json`, `en.json`) - no inline literals, ALWAYS, even in a plain `.ts` util, and even when a nearby call site already has raw strings.
 - Punctuation: ASCII (`'`, `"`, `-`) everywhere; escape quotes in code. Keep French accents ONLY in localized strings and French comments.
 - Tests: changing logic requires changing the associated test.
-- UI: single source of truth is `src/app.css` (tokens, `--radius-*`). `.btn-glass` with modifiers. Dark-first glassmorphism. No raw hex/px. `@lucide/svelte` only (NOT `lucide-svelte`, the old package name - both resolve).
+- UI: `src/app.css` holds the tokens, and **COLOUR, TYPE AND RADIUS ARE ALL SCALED SINCE #447** - seven `--text-*` steps replacing 36 sizes, and `--radius-*` replacing 14 corners with FOUR meanings (8px card / 12px larger card / 18px bubble / 999px pill). **Read the scale before reaching for a number**: `rounded-2xl` is 12px here, not Tailwind's 16px. The measured target, and the Messenger/Facebook numbers it copies, are in [design-reference](docs/wiki/frontend/design-reference.md), the only copy. No raw hex/px. `@lucide/svelte` only (NOT `lucide-svelte`, the old name - both resolve).
 
 ## **KEY COMMANDS**
 
@@ -224,11 +224,6 @@ workflow.**
 
 ### CANARI - THE QUEUE, IN ORDER
 
-**0. THE HARNESS TIDY IS IN FLIGHT AND ITS WORK LIST IS [harness-tidy](docs/wiki/harness-tidy.md)** -
-delete the file and this line together when it is empty. The bar it carries: **every row must be
-`PASS`, never `PASS-DIRTY`**, a P1 found on the way is fixed in the same session, and P2/P3 go to
-[backlog](docs/wiki/backlog.md) rather than inline.
-
 **A HEADLINE AND A LINK EACH, AND THAT IS ALL THIS SECTION IS FOR.** It was 152 lines for 11 items
 on 2026-09-03 - restating the substance the linked pages carry, in violation of both this file's
 line cap and its own "not restated" rule, and TWO of the items had gone FALSE without anyone
@@ -237,33 +232,35 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
 [cross-client-testing](docs/wiki/cross-client-testing.md).
 
 1. **THE BOARD IS [cross-client-testing](docs/wiki/cross-client-testing.md) AND `bun rows.mjs`
-   SETTLES IT** - what is answered, what is not `PASS`, and a COMPARISON row adjudicated on ALL its
-   halves. **No count is written here**: the two that were went stale within a day. PIN's four
-   remaining rows CHANGE a PIN or restart a browser, which is why they are last. **The HEAL-NEW rung
-   now refuses rather than passes**: a fresh device reaches every group with NOTHING online, so the
-   rows that watch a responder heal one have no window left and need a group the device cannot
-   self-serve ([backlog](docs/wiki/backlog.md)).
-2. **P1 - A DEVICE REPLACES ITS WHOLE PREKEY BATCH ON EVERY CONNECTION, AND THAT CHURN GROWS
-   `mls.bin`** - P1 for the checkpoint it feeds, not because pools run dry. Measured on both estates
-   2026-09-07; CAUSE STILL OPEN ([backlog](docs/wiki/backlog.md)).
+   SETTLES IT** - what is answered, what is not `PASS`, a COMPARISON row on all its halves, and which
+   rows answered TWO things on ONE build, so a green cell is not yet a measurement. **NO COUNT IS
+   WRITTEN HERE; run it.** PIN's four rows change a PIN or restart a browser, hence last. HEAL-NEW's
+   rung redesign is open on a clean pass - one record is one draw ([backlog](docs/wiki/backlog.md)).
+   **`bun identity.mjs` BEFORE TRUSTING TWO CLIENTS**: it names the account each one SHOWS and the
+   one it ACTS AS, costs no traffic, and exists because a display name was used as an identity on
+   2026-09-09 and produced a P1 - since REFUTED - that declared every two-client row void
+   ([testing-methodology](docs/wiki/testing-methodology.md)).
+2. **P1 - THE PREKEY CHURN WAS A LOCK ORDER, REPRODUCED AND REPAIRED ON HARDWARE 2026-09-08, AND
+   NOT SHIPPED** - a merged fix is not a shipped fix. What is left is the weight it already wrote:
+   `KeyPackage 3002x` against a pool of 50, ~6.9 MB of a 10.5 MB blob, which no prekey fix touches
+   and which is the ONLY thing between NOTIF-1b and a verdict ([backlog](docs/wiki/backlog.md)).
 3. **P1 - a PLACEHOLDER held a member's seat**; only a member's CLIENT can say whether a LEAF is
    left in the MLS tree and **NOTHING HAS** - the three identities cited here as that evidence were
    this campaign's OWN mention fixtures, named 2026-09-07 ([backlog](docs/wiki/backlog.md)).
-4. **HEAL-REVOKE IS FOUR CLEAN `PASS` ROWS SINCE 2026-09-07** - their shared dirty line was the
-   key-package path writing outside the persister; it now measures 0 where it was 4-in-5, and
-   removing it exposed the notification noise underneath ([backlog](docs/wiki/backlog.md), `CHANGELOG.md`).
-5. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - ONE merge mechanism
+4. **P1 - HEAL-repair HEALS 3 TIMES IN 10, SAME ASK CADENCE EITHER WAY**; two causes REFUTED by
+   A/B, not to be re-opened ([backlog](docs/wiki/backlog.md)). HEAL-REVOKE stays four clean `PASS`.
+5. **P1 - A DAMAGED MLS STATE IS CALLED A PIN ROTATION** (CORRUPT-2 + CORRUPT-1). The typed errors
+   and the blob-header READER are done 2026-09-08 and unshipped; the WRITER cannot follow until that
+   reader is the floor (`minClientVersion`), so the two causes are still not separated in the field
+   ([backlog](docs/wiki/backlog.md)).
+6. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - ONE merge mechanism
    and ONE arming point, asserted only by `bun tools/ecosystem-shape/shape.mjs`
-   ([rebuild](docs/wiki/ecosystem-convergence.md#12-the-cicd-rebuild-2026-09-04---the-same-four-workflows-in-every-repository),
-   [cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them), the only copies).
-   Three open: the suppression CONTROL CASE the NestJS batch destroyed (Monday 2026-09-07 answers
-   it), **nothing tells anybody prod is down**, and
-   [host-updates](docs/wiki/infrastructure/host-updates.md) ([backlog](docs/wiki/backlog.md)).
-6. **NO CAMPAIGN ROW ASKS A QUESTION WHOSE ANSWER IS A POPULATION** - four rows written into rung
-   12 MULTI, needing only `W1 W2` ([campaign](docs/wiki/cross-client-campaign.md)).
+   ([cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them), the only copy).
+   Three open, all in [backlog](docs/wiki/backlog.md): the suppression control case, **nothing tells
+   anybody prod is down**, and [host-updates](docs/wiki/infrastructure/host-updates.md).
 7. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
    [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
-8. **SIX UX/RENDERING ITEMS + TWO DEV-LOG LINES** ([backlog](docs/wiki/backlog.md)); four want ONE pass over `app.css`.
+8. **UX/RENDERING: ONE DECISION TAKEN AND UNSTARTED.** *"Poser la reference ET tout aligner maintenant"* (2026-09-09): two declared icon-button sizes (28px on a message hover strip, 38px everywhere else) and **all 187 call sites swept in the same change**, gate included - **do not re-litigate it, start with it** ([backlog](docs/wiki/backlog.md), the only count). Page width is DONE: three named shapes in `pageWidth.ts`, `/dashboard` deliberately left at the reading measure and `/directory` correctly there.
 9. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
    commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
 10. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
@@ -271,16 +268,15 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
 11. **P1 - A DEVICE ASKS FOR A WELCOME FOR EVER AND THE MEMBER ANSWERING RESETS THE HEALING ROW** -
     five halves fixed 2026-09-04, **ONE PROD MEASUREMENT OWED**; read with its sibling P2
     ([backlog](docs/wiki/backlog.md)).
-12. **TWELVE MESSAGES DROPPED, PERMANENT COMMIT-LOG HOLE AT EPOCH 121** - the four defects shipped
-    in `v0.15.0`'s ancestors; the RESIDUE and the 13:10 arm are open ([backlog](docs/wiki/backlog.md)).
+12. **TWELVE MESSAGES DROPPED, PERMANENT COMMIT-LOG HOLE AT EPOCH 121** - four defects shipped in
+    `v0.15.0`'s ancestors; RESIDUE and the 13:10 arm open ([backlog](docs/wiki/backlog.md)).
 13. **`dev.canari-emse.fr` IS THE PRE-RELEASE TARGET**
     ([dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy). Two open: a dev
     deploy cannot tell a broken CHANGE from an unreachable REGISTRY, and prod's deploy job is still
     inlined shell where `deploy-dev` exercises the script ([backlog](docs/wiki/backlog.md)).
-14. **THREE MORE FROM THE USER, 2026-09-05** - a P2 (a COMMUNITY message is not decrypted in a
-    background notification), a QUESTION (does a community invitation notify somebody with no prior
-    conversation?), and one post-campaign direction (ICM/ISMIN). All in
-    [backlog](docs/wiki/backlog.md); the first two need the phone.
+14. **FROM THE USER, AND FIRST CONTACT IS THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** The
+    2026-09-08 PROD P1 is FIXED, UNSHIPPED, and owes ONE hardware run **blocked on a THIRD account**;
+    four siblings are open beside it ([backlog](docs/wiki/backlog.md)).
 
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
 
@@ -332,12 +328,17 @@ re-deriving anything here, and keep no second copy.**
 caught the board wrong FIVE times. **`bun cleanup.mjs` BEFORE believing a measurement**: 42 leftover
 groups made a run misread twice on 2026-09-06, and sweeping them turned a `FAIL` into the row's
 first clean `PASS` and PROVED a P1 - debris does not just slow a run, it reattributes what the run
-measures. **The rig targets the LOCAL estate since 2026-09-03**, so a push deploys nothing and the
+measures (it does NOT sweep `queued_message`: 13 275 rows since 2026-08-05). **BEFORE FILING A
+CLIENT DEFECT, READ THE OTHER END** - a "zombie socket" P1 died to three `docker logs` here, under a
+minute each, every load-bearing claim wrong ([methodology](docs/wiki/testing-methodology.md)).
+**The rig targets the LOCAL estate since 2026-09-03**, so a push deploys nothing and the
 mutual-exclusion rule died with that move ([methodology](docs/wiki/testing-methodology.md)); what
 replaces it is a rebuild or a `bun run dev` SAVE, which `bundle.mjs` measures. **The board is reset
 to zero**, archived at [archive](docs/wiki/cross-client-testing-archive.md). **A killed run can
 destroy a measurement seconds from being recorded, and losing a `chrome-w1`/`chrome-w2` profile costs
-a DEVICE.** **THE USER ASKED FOR THE LOGS TO BE READ ON EVERY PASS** (2026-08-28) - a heal that works
+a DEVICE.** **THE BAR IS `PASS`, NEVER `PASS-DIRTY`** (user: *"Tout doit etre PASS. Pas PASS-DIRTY, PASS"*) -
+a P1 met on the way is fixed in the SAME session, P2/P3 go to [backlog](docs/wiki/backlog.md) rather
+than inline. **THE USER ASKED FOR THE LOGS TO BE READ ON EVERY PASS** (2026-08-28) - a heal that works
 is not a heal that was observed, and reading them has since found two P1s no row asks about. Three
 instrument facts: the disposition for expected noise is `ignoringExpectedLog` **per row**, never a
 wider classifier - and a list the runner never NAMES is the same as no list - and the device cap is

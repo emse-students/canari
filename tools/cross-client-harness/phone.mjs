@@ -765,10 +765,41 @@ export function deviceLocked() {
  * `--noredact` matters: without it the OS hides the text of notifications it considers sensitive,
  * and the check then reports "no content" for a notification that was perfectly decrypted.
  */
+/**
+ * The `NotificationRecord` blocks that are actually IN THE SHADE, and nothing else in the dump.
+ *
+ * **THE LAST BLOCK USED TO BE THE REST OF THE FILE.** `dumpsys notification` prints the live list
+ * first and then ~900 lines of unrelated state - every package's preferences, every channel it has
+ * ever declared, the listener stats, Zen rules. Splitting the whole dump on `NotificationRecord(`
+ * gave the final record everything that followed it, so `full` for that one block contained
+ * `fr.emse.canari` and every channel id whether or not the app had a notification posted at all.
+ * Every row here matches on `full`, so a needle occurring anywhere in that tail read as a
+ * notification in the shade. Measured on 2026-09-08: two records, the last one 905 lines long,
+ * mentioning this package twice with nothing of ours in the shade.
+ *
+ * The list is bounded by INDENT, which is what the dump actually encodes: `  Notification List:`
+ * introduces it, records sit at four spaces and their fields deeper, and the section ends at the
+ * next two-space key. A dump that does not carry that header is a format this parser has not been
+ * read against, so it THROWS - silently returning the old behaviour would restore the defect and
+ * call it a product answer.
+ */
+function liveRecords(dump) {
+  const at = dump.indexOf('  Notification List:');
+  if (at === -1) {
+    throw new Error(
+      'dumpsys notification carries no "  Notification List:" header - the format changed, and ' +
+        'parsing the whole dump would let package config read as notifications in the shade'
+    );
+  }
+  const afterHeader = dump.slice(at + '  Notification List:'.length);
+  // The first line indented by exactly two spaces closes the list; records are indented by four.
+  const listOnly = afterHeader.split(/\n(?= {2}\S)/)[0];
+  return listOnly.split(/NotificationRecord\(/).slice(1);
+}
+
 export function notifications() {
   const out = adb(['shell', 'dumpsys', 'notification', '--noredact'], 45_000);
-  const blocks = out.split(/NotificationRecord\(/).slice(1);
-  return blocks
+  return liveRecords(out)
     .filter((b) => b.includes(PKG))
     .map((b) => ({
       // `full` is what checks MATCH on; `text` is only what they PRINT. Matching on the truncated
@@ -778,6 +809,21 @@ export function notifications() {
       text: b.replace(/\s+/g, ' ').slice(0, 900),
       title: (b.match(/android\.title=(?:String \()?([^\n)]*)/) || [])[1]?.trim() ?? '',
       body: (b.match(/android\.text=(?:String \()?([^\n)]*)/) || [])[1]?.trim() ?? '',
+      // WHICH CHANNEL THE OS FILED IT UNDER, and it is a POLICY and not a label: the app
+      // declares five, and they differ in importance, sound, vibration and whether they may
+      // cross Do Not Disturb. A notification that ARRIVED is a different fact from one filed
+      // where the user's own mute and DND choices will find it - which is NOTIF-16's question.
+      channel: (b.match(/channel=([A-Za-z0-9_.]+)/) || [])[1] ?? '',
+      // WHO THIS RECORD IS, and WHEN IT LAST CHANGED. A row that waits for "a notification
+      // mentioning the peer" cannot tell its own from one an earlier row left in the shade, and on
+      // 2026-09-08 NOTIF-7b tapped a leftover from NOTIF-17b 132 ms after sending - a push cannot
+      // arrive in 132 ms, and the FAIL it recorded was about a notification for another group.
+      // `mUpdateTimeMs` and not `when`: a stable-id repost UPDATES the record in place, so `when`
+      // can still name the first message of a conversation while the shade shows the newest.
+      key: ((b.match(/key=([^\s)]+)/) || [])[1] ?? '').replace(/:$/, ''),
+      updatedAt: Number(
+        (b.match(/mUpdateTimeMs=(\d+)/) || b.match(/when=(\d+)/) || [])[1] ?? 0
+      ),
       // The two fields that decide whether that body reaches a SCREEN - see `bodyIsDrawn`.
       template: (b.match(/android\.template=(?:String \()?([^\n)]*)/) || [])[1]?.trim() ?? '',
       inboxLines: Number((b.match(/android\.textLines=CharSequence\[\] \((\d+)\)/) || [])[1] ?? -1),
@@ -832,11 +878,30 @@ export const undecryptedInShade = () =>
     .filter((i) => i >= 0)
     .map((i) => String(GENERIC_BODIES[i]));
 
-/** Waits until some notification's text contains `needle`; returns the elapsed ms or null. */
-export async function awaitNotification(needle, timeoutMs = 45_000) {
+/**
+ * The phone's own wall clock in ms, for comparing against a notification's `updatedAt`.
+ *
+ * READ FROM THE DEVICE, never taken from the host. The two clocks are minutes apart on this bench,
+ * and a floor computed on the wrong one either accepts everything or nothing - both of which look
+ * like a product answer.
+ */
+export const deviceNowMs = () => Number(adb(['shell', 'date', '+%s%3N'], 15_000).trim());
+
+/**
+ * Waits until some notification's text contains `needle`; returns the elapsed ms or null.
+ *
+ * @param {number} [sinceMs] a device-clock floor from {@link deviceNowMs}: only a record UPDATED at
+ *   or after this instant counts. **Every push row should pass it**, taken immediately before the
+ *   send. Without it the wait is satisfied by anything already in the shade that happens to mention
+ *   the needle, which is how NOTIF-7b came to tap NOTIF-17b's leftover and record a FAIL about a
+ *   conversation it had never sent to. Omitted, the behaviour is the old one - a row that has
+ *   genuinely cleared the shade first does not need a floor.
+ */
+export async function awaitNotification(needle, timeoutMs = 45_000, sinceMs = 0) {
   const t0 = Date.now();
+  const fresh = (n) => n.full.includes(needle) && n.updatedAt >= sinceMs;
   while (Date.now() - t0 < timeoutMs) {
-    if (notifications().some((n) => n.full.includes(needle))) return Date.now() - t0;
+    if (notifications().some(fresh)) return Date.now() - t0;
     await new Promise((r) => setTimeout(r, 2_000));
   }
   return null;

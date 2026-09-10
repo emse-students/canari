@@ -39,12 +39,16 @@ export function selectionBelongsToRoute(
 export function landingRecovery(input: {
   isChannel: boolean;
   alreadyRefreshed: boolean;
-  conversationsRestored: boolean;
+  conversationSourcesSettled: boolean;
 }): 'refresh' | 'wait' | 'abandon' {
   if (input.isChannel) return input.alreadyRefreshed ? 'wait' : 'refresh';
-  // A DM or group is restored from IndexedDB in one pass: absent from a settled map means this
-  // device does not have it. Before that, the map is simply not populated yet.
-  return input.conversationsRestored ? 'abandon' : 'wait';
+  // A DM or group appears from more than one place, and the IndexedDB restore is merely the FIRST:
+  // the FCM cache injection that follows it is the ONLY way a first message from a new
+  // correspondent becomes a conversation. Reading the restore alone said "settled" while that
+  // injection was still pending, so a tap on a first-contact notification abandoned its target
+  // milliseconds before the target existed. Absent from a map no source is still filling is the
+  // only form of "this device does not have it" that is true.
+  return input.conversationSourcesSettled ? 'abandon' : 'wait';
 }
 
 /**

@@ -81,6 +81,58 @@ would be a threshold nobody has measured against the population it would run on.
 ---
 
 
+### QUESTION - iOS has the mention elevation on ONE path too, and the plugin cannot express it
+
+NOTIF-16 fixed the Android half on 2026-09-08: a message naming the reader is filed on
+`canari_mentions`, and it is now chosen by BOTH builders rather than only the push one
+([story](../../CHANGELOG.md), [rule](durable-rules.md)). The obvious follow-up - "does iOS need the
+same?" - is ANSWERED in the source, and the answer is half of one and half of the other.
+
+**iOS has no notification channels, and it does not need them: it has the elevation already, on the
+push path.** `canari_NSE/NotificationService.swift` scans the decrypted text for `@[uuid]` exactly as
+the Kotlin service does and sets `content.interruptionLevel = .timeSensitive` for a mention, which is
+what breaks through Focus. That half is done and is not owed anything.
+
+**The other half cannot be fixed the way Android's was.** The WebSocket path on iOS is the same
+`tauri-plugin-notification` call, and its `Options` type declares `channelId` and NO
+`interruptionLevel` - so there is no argument to pass. The Android fix worked because the plugin
+happened to expose the field that mattered there; here the field does not exist. Closing it means
+patching the plugin, adding a native command beside it, or accepting that a mention delivered over
+the socket on iOS arrives at the default level.
+
+**So the QUESTION is which of those three, and it is a judgement, not a measurement.** What each path
+requests is readable in the source, above; what a locked iPhone does with it is not, and that part
+waits on hardware like everything else iOS. Do not "fix" this by marking every message
+`.timeSensitive` - that is the always-true mutation the Android tests exist to forbid, wearing an
+Apple badge, and Apple reviews it.
+
+### DECISION OWED - should a reaction to YOUR OWN message notify, when every other reaction must not?
+
+Today none of them does. `frontend/src/lib/mls-client/frameDelivery.ts` classifies every frame the
+app sends into one of four kinds, and a reaction is a `mutation`: `{ silent: true, durable: true }`,
+carrying its own reason - *"It must not notify, and it must survive"*. The server states the same
+rule from its side: *"every control frame is silent by construction"*, and notifying from that
+stream *"would otherwise ring for every reaction"*. Both are right about the case they name: a busy
+salon where people react to each other constantly would be unusable.
+
+**The case they do not distinguish is a reaction to something YOU wrote**, which most chat products
+do notify, and which is the only reaction a person is plausibly waiting for.
+
+**IT IS NOT BLOCKED ON THE SERVER HOLDING CIPHERTEXT, WHICH IS THE OBVIOUS WRONG ANSWER.** The
+server cannot classify a frame and does not need to: the class is DECLARED BY THE SENDER, exactly as
+`durable` is, and the reacting client already knows whose message it reacted to. The discriminator
+is available where the decision is made, which is the standing rule. A fifth `DELIVERY` class -
+silent for everyone except the author of the target - is expressible with no plaintext leaving the
+device.
+
+**WHAT MAKES IT A DECISION AND NOT A TASK.** A reaction that notifies is a notification the reader
+cannot mute separately unless it also gets a channel, and `canari_social` already exists for
+reactions and comments on POSTS at `IMPORTANCE_DEFAULT`, silent - which is probably where it should
+land rather than `canari_messages`. So the answer decides three things at once: whether to notify,
+which channel it is filed on, and whether NOTIF-15 asserts a notification or asserts silence.
+**NOTIF-15 cannot be run until this is answered**, because today it would fail against a design that
+is doing what it says.
+
 ### DECISION OWED - naming the author of each line inside a salon's stacked notification
 
 Asked for by the user on 2026-08-20: salon notifications should read like a DM's - successive
@@ -106,6 +158,47 @@ Two shapes, and the choice is the user's:
 **Recommended: (2)**, because the avatar proved the shape and it keeps the wire where it was. Not
 started - it is a real work package, and NOTIF-12 records the current behaviour rather than failing
 on it, so nothing here blocks the campaign.
+
+### QUESTION - a reconciler's SILENCE means both "we agree" and "nobody answered", and only one of them is safe to escalate on
+
+Split out of the responder P1 on 2026-09-08, when that entry closed on its measurement. **The defect
+is fixed and measured; what is left is a design choice nobody has made**, which is why it belongs
+here rather than in [backlog](backlog.md).
+
+`escalateReconciliation` rotates to another member when a device can PROVE it is incomplete - it
+holds a frame it can never read. That proof is what gates the escalation, and the gate exists
+because the observation it would otherwise act on is ambiguous: a responder that stays quiet because
+it holds the same history and a responder that is frozen produce **the identical silence**. A device
+with no local proof of a gap cannot tell them apart, so it cannot escalate on silence alone.
+
+**The obvious answer costs the saving the mechanism was built for.** Making the agreeing responder
+ACK would disambiguate it immediately - one frame per group per ask - and that is exactly the traffic
+the state-key comparison exists to avoid. So the question is a trade, not an oversight:
+
+- is one ack per group per ask affordable at the population's real ask rate, measured rather than
+  assumed?
+- or is there a cheaper discriminator - the server already knows whether it forwarded to anybody
+  (`no_peer_online`, `excludedOnline`), and that is a fact about REACHABILITY the asker currently
+  never sees?
+
+**Nothing should be written until one of those is measured.** The second looks cheaper and needs no
+new frame, but it answers a different question - "was anyone reachable" is not "did the reachable one
+agree" - and conflating them is the shape this repository keeps paying for.
+
+**ONE HALF OF THE TRADE IS NOW MEASURED, 2026-09-08, AND A THIRD OPTION APPEARED WITH IT.** The
+saving is not free: HEAL-repair heals three times in ten, and the arithmetic is the election's - three
+online members, one of which holds the messages, twenty requests routed 10 / 7 / 3 across them
+([backlog](backlog.md)). So the question is no longer *is one ack per group per ask affordable*; it
+is *is it more expensive than seven failed repairs in ten*.
+
+And the third option needs no new frame at all. The asker in that measurement DID hold local proof of
+its own incompleteness - frames it has and cannot read, the same proof `escalateReconciliation` is
+gated on - and the walk stopped anyway, because a responder that agrees on the state key answers with
+its COVERAGE, and adequate coverage is signalled by silence. So the termination is not being taken on
+an ambiguous silence at all: it is taken on a well-formed answer whose meaning, *I cover what you
+asked*, is being read as *and therefore you are complete*. Refusing to terminate while the local proof
+stands costs nothing and adds no traffic. Whether it is sufficient - whether the walk then reaches the
+holder rather than merely re-asking the same agreeing peers - is the part still owed a measurement.
 
 ### Is a Remove meant to be durable against a later re-add?
 
@@ -138,3 +231,24 @@ the server can answer - not a client-side change, because a client asking polite
 must not be, the P2 behind this shrinks to what it already claims: stop calling the exclusion window a
 loss, and stop reconciling for it.
 
+## Which account a SECOND phone would carry, the day one is attached again
+
+**Parked because the hardware is gone, not because the question is hard.** A Pixel 6a was plugged in
+temporarily on 2026-09-04; `adb devices` has listed only the Mi 9T (A1) since, which is what
+`state.mjs` reports as `A2 (9335) UNREACHABLE` - **that line is explained and is not a defect, so no
+session should spend time chasing the forward.**
+
+The question it leaves: A2 is bound and addressable on port 9335, and **no account is assigned**. The
+peer's, or a third one? One line in the out-of-tree `names.mjs` decides it, and guessing is an
+identity invented by a tool rather than chosen by the person who owns the accounts.
+
+**It is worth answering BEFORE the hardware returns**, because it now overlaps something concrete:
+the third test account owed for first contact (NOTIF-17) would also be the obvious occupant of A2, so
+the two asks are one decision rather than two. See the table of what is owed to the user in
+[backlog](backlog.md).
+
+**Where it came from.** Item C1 of the harness tidy, which is otherwise complete and was deleted on
+2026-09-08 - its A and B sections shipped, its D items are the campaign order that
+[cross-client-campaign-resume](cross-client-campaign-resume.md) carries, and its E items are the
+standing bar now in `CLAUDE.md`. This was the only thing on the page that was neither done nor a
+duplicate.

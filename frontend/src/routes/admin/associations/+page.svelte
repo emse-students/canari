@@ -71,7 +71,7 @@
       <Building2 size={20} />
     </span>
     <div>
-      <h2 class="text-text-main text-lg font-extrabold">{m.admin_assoc_title()}</h2>
+      <h2 class="text-text-main text-lg font-bold">{m.admin_assoc_title()}</h2>
       <p class="text-text-muted mt-0.5 text-sm">
         {m.admin_assoc_subtitle()}
       </p>

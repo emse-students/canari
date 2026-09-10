@@ -228,7 +228,7 @@
                 }
               }}
               class="text-text-main h-14 rounded-2xl text-xl font-semibold transition-all active:scale-95 disabled:opacity-50
-                {key === '⌫'
+ {key === '⌫'
                 ? 'bg-black/5 text-base dark:bg-white/10'
                 : 'bg-black/5 hover:bg-black/10 dark:bg-white/8 dark:hover:bg-white/15'}"
             >
@@ -316,7 +316,7 @@
     <button
       type="submit"
       disabled={isLoading}
-      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover shadow-cn-yellow/20 flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-sm font-extrabold shadow-lg transition-all hover:-translate-y-0.5 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:translate-y-0"
+      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover shadow-cn-yellow/20 flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-sm font-bold shadow-lg transition-all hover:-translate-y-0.5 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:translate-y-0"
     >
       {#if isLoading}
         <LoaderCircle size={16} class="animate-spin" />

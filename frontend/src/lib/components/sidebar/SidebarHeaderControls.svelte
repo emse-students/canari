@@ -31,7 +31,7 @@
 </script>
 
 <div
-  class="border-b border-white/50 bg-white/30 px-4 py-3 backdrop-blur-sm dark:border-white/10 dark:bg-gray-900/40"
+  class="border-b border-white/50 bg-white/30 px-4 py-3 dark:border-white/10 dark:bg-gray-900/40"
 >
   <div class="flex items-center gap-2">
     <div class="relative flex-1">
@@ -41,13 +41,13 @@
         value={searchQuery}
         oninput={(e) => onSearchQueryChange((e.target as HTMLInputElement).value)}
         placeholder={m.chat_search_placeholder()}
-        class="w-full rounded-2xl border border-white/50 bg-white/60 py-2.5 pr-4 pl-10 text-sm outline-none focus:ring-2 focus:ring-amber-400/45 dark:border-white/10 dark:bg-black/30"
+        class="bg-cn-surface w-full rounded-2xl border border-white/50 py-2.5 pr-4 pl-10 text-sm outline-none focus:ring-2 focus:ring-amber-400/45 dark:border-white/10"
       />
     </div>
 
     <button
       onclick={onOpenNewChat}
-      class="text-text-main flex h-8 w-8 items-center justify-center rounded-full border border-white/45 bg-white/65 transition-colors hover:bg-white/80 dark:border-white/10 dark:bg-black/30 dark:hover:bg-black/40"
+      class="text-text-main bg-cn-surface flex h-8 w-8 items-center justify-center rounded-full border border-white/45 transition-colors hover:bg-black/5 dark:border-white/10 dark:hover:bg-black/40"
       title={activeSidebarTab === 'channels'
         ? m.chat_new_channel_title()
         : m.chat_new_discussion_title()}
@@ -61,7 +61,7 @@
       <button
         type="button"
         onclick={() => onOpenCommunityAdmin?.()}
-        class="text-text-main flex h-8 w-8 items-center justify-center rounded-full border border-white/45 bg-white/65 transition-colors hover:bg-white/80 dark:border-white/10 dark:bg-black/30 dark:hover:bg-black/40"
+        class="text-text-main bg-cn-surface flex h-8 w-8 items-center justify-center rounded-full border border-white/45 transition-colors hover:bg-black/5 dark:border-white/10 dark:hover:bg-black/40"
         aria-label={m.chat_manage_community_roles_label()}
         title={m.chat_manage_community_roles_title()}
       >
@@ -73,7 +73,7 @@
       <button
         type="button"
         onclick={() => onCloseDrawer?.()}
-        class="text-text-muted rounded-lg border border-white/45 bg-white/65 p-2 dark:border-white/10 dark:bg-black/30"
+        class="text-text-muted bg-cn-surface rounded-lg border border-white/45 p-2 dark:border-white/10"
         aria-label={m.common_close_label()}
       >
         <X size={16} />

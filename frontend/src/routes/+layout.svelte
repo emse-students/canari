@@ -3,7 +3,6 @@
   import { beforeNavigate, goto } from '$app/navigation';
   import { onMount, tick } from 'svelte';
   import { themeStore } from '$lib/stores/themeStore.svelte';
-  import BackgroundBlobs from '$lib/components/shared/BackgroundBlobs.svelte';
   import ChatBackgroundService from '$lib/components/layout/ChatBackgroundService.svelte';
   import TabFollowerBanner from '$lib/components/chat/TabFollowerBanner.svelte';
   import Navbar from '$lib/components/navigation/Navbar.svelte';
@@ -302,12 +301,13 @@
 <a href="#main-content" class="skip-link">{m.layout_skip_to_content()}</a>
 
 <PlatformGateOverlay />
-<!-- ONE COLUMN FOR THE WINDOW-SCALE BANNERS. Both of these used to place themselves - `fixed top-0
-     z-[120]` and `fixed top-safe-area z-50` - so when both were up the maintenance notice simply
+<!-- ONE COLUMN FOR THE WINDOW-SCALE BANNERS. Both of these used to place themselves - `fixed top-0`
+     at 120 and `fixed top-safe-area` at 50 - so when both were up the maintenance notice simply
      painted over the fatal MLS error, hiding the only message that says the messaging stack is
      dead. Stacked in one flex column they queue instead, which is the lesson `ChatArea` had already
-     learnt for the conversation-scale pair. -->
-<div class="fixed inset-x-0 top-[env(safe-area-inset-top)] z-120 flex flex-col">
+     learnt for the conversation-scale pair. The column takes the `--z-banner` rung of the layer
+     ladder in `app.css`; a sheet the reader opened sits above it, deliberately. -->
+<div class="fixed inset-x-0 top-[env(safe-area-inset-top)] z-(--z-banner) flex flex-col">
   <!-- FIRST, and it decides for itself whether to render. The others come and go; this one is a
        property of the whole deployment, so a transient notice must not push it off screen. -->
   <EnvironmentBanner />
@@ -334,7 +334,7 @@
     <AppSidebar />
   {/if}
 
-  <div class="relative z-10 flex flex-1 flex-col overflow-hidden md:pl-18">
+  <div class="relative z-10 flex flex-1 flex-col overflow-hidden md:pl-[6rem]">
     <!-- Bandeau multi-onglets : pleine largeur, en haut du contenu (jamais dans la rangée sidebar). -->
     <TabFollowerBanner />
     <OfflineBanner />
@@ -346,7 +346,6 @@
     {/if}
 
     <main id="main-content" class="relative flex-1 overflow-hidden">
-      <BackgroundBlobs />
       <div
         bind:this={pageScrollWrap}
         class="page-scroll-wrap absolute inset-0 overflow-y-auto pb-[calc(4rem+var(--safe-area-inset-bottom,0px))] md:pb-0"
@@ -359,7 +358,7 @@
               <button
                 type="button"
                 onclick={reset}
-                class="rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold text-white"
+                class="text-cn-ink rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold"
               >
                 {m.common_retry_button()}
               </button>

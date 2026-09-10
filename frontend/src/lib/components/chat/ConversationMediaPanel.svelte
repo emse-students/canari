@@ -1,15 +1,11 @@
 <script lang="ts">
   import {
-    X,
-    Search,
     Image as ImageIcon,
     ImageOff,
     Link as LinkIcon,
     FileText,
     Download,
   } from '@lucide/svelte';
-  import { fade, fly } from 'svelte/transition';
-  import { portal } from '$lib/actions/portal';
   import { MediaService } from '$lib/media';
   import { releaseDecryptedMediaBlobUrl } from '$lib/utils/mediaBlobCache';
   import { isMediaPurgedError } from '$lib/utils/mediaErrors';
@@ -25,20 +21,15 @@
   import { formatFileSize } from '$lib/utils/fileSize';
 
   interface Props {
-    open: boolean;
     /** Conversation whose shared content is displayed (groupId or channel_<id>). */
     conversationId: string;
     /** Non-empty once the session is authenticated; the download resolves its own live token. */
     authToken: string;
-    onClose: () => void;
     /** Loads the full aggregated shared content from the local message history. */
     loadSharedContent: (conversationId: string) => Promise<SharedContent>;
-    /** Opens the in-conversation message search (panel closes first). */
-    onOpenSearch?: () => void;
   }
 
-  let { open, conversationId, authToken, onClose, loadSharedContent, onOpenSearch }: Props =
-    $props();
+  let { conversationId, authToken, loadSharedContent }: Props = $props();
 
   type Tab = 'media' | 'links' | 'files';
   let activeTab = $state<Tab>('media');
@@ -76,9 +67,15 @@
     }
   }
 
-  // (Re)load whenever the panel opens or the conversation changes.
+  /*
+   * (Re)load whenever the conversation changes.
+   *
+   * The `open` guard that used to be here is gone WITH the prop: the panel is now mounted only
+   * while it is showing, so "open" is no longer a state this component can be in and false for -
+   * it is the difference between existing and not.
+   */
   $effect(() => {
-    if (!open || !conversationId) return;
+    if (!conversationId) return;
     const id = conversationId;
     loading = true;
     mediaWindow = 60;
@@ -150,11 +147,6 @@
     void openExternal(url);
   }
 
-  function triggerSearch() {
-    onClose();
-    onOpenSearch?.();
-  }
-
   const tabs: { id: Tab; label: string; count: number }[] = $derived([
     { id: 'media', label: m.chat_media_tab(), count: content.media.length },
     { id: 'links', label: m.chat_links_tab(), count: content.links.length },
@@ -162,154 +154,118 @@
   ]);
 </script>
 
-{#if open}
-  <div use:portal class="fixed inset-0 z-[260] flex justify-end">
-    <button
-      type="button"
-      class="absolute inset-0 bg-black/40 backdrop-blur-sm"
-      aria-label={m.chat_panel_close_label()}
-      onclick={onClose}
-      transition:fade={{ duration: 180 }}
-    ></button>
+<!--
+  CONTENT ONLY, and the scrim it used to draw is the reason this file changed. It portalled itself
+  to `fixed inset-0` with a black overlay on EVERY viewport, so on a desktop with room for a third
+  column it covered the conversation it was describing. `ConversationSidePanel` owns the shell, the
+  header and the close button now; the search action is handed up to it as a header control.
+-->
+<div class="flex h-full min-h-0 flex-col">
+  <!-- Tabs -->
+  <div class="border-cn-border flex gap-1 border-b px-2 py-2">
+    {#each tabs as tab (tab.id)}
+      <button
+        type="button"
+        onclick={() => (activeTab = tab.id)}
+        class="flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-sm font-semibold transition-colors {activeTab ===
+        tab.id
+          ? 'bg-cn-yellow text-cn-ink'
+          : 'text-text-muted hover:bg-black/5 dark:hover:bg-white/10'}"
+      >
+        {#if tab.id === 'media'}<ImageIcon size={15} />{:else if tab.id === 'links'}<LinkIcon
+            size={15}
+          />{:else}<FileText size={15} />{/if}
+        {tab.label}
+        {#if tab.count > 0}<span class="text-xs opacity-70">{tab.count}</span>{/if}
+      </button>
+    {/each}
+  </div>
 
-    <aside
-      class="relative flex h-full w-full max-w-md flex-col bg-(--cn-surface) shadow-2xl"
-      transition:fly={{ x: 320, duration: 220 }}
-    >
-      <!-- Header -->
-      <div class="border-cn-border flex items-center justify-between gap-2 border-b px-4 py-3">
-        <h2 class="text-text-main text-base font-bold">{m.chat_media_links_files_title()}</h2>
-        <div class="flex items-center gap-1">
-          {#if onOpenSearch}
+  <!-- Content -->
+  <div class="min-h-0 flex-1 overflow-y-auto p-3">
+    {#if loading}
+      <div class="flex justify-center py-16">
+        <div
+          class="border-cn-yellow h-7 w-7 animate-spin rounded-full border-4 border-t-transparent"
+        ></div>
+      </div>
+    {:else if activeTab === 'media'}
+      {#if content.media.length === 0}
+        <p class="text-text-muted py-12 text-center text-sm">{m.chat_no_shared_media()}</p>
+      {:else}
+        <div class="grid grid-cols-3 gap-1.5">
+          {#each content.media.slice(0, mediaWindow) as item (item.messageId + item.media.mediaId)}
+            <SharedMediaThumb
+              media={item.media}
+              {authToken}
+              onClick={() => (lightboxIndex = content.media.indexOf(item))}
+            />
+          {/each}
+        </div>
+        {#if content.media.length > mediaWindow}
+          <button
+            type="button"
+            onclick={() => (mediaWindow += 60)}
+            class="border-cn-border text-text-muted mt-3 w-full rounded-xl border py-2 text-sm font-semibold hover:bg-black/5 dark:hover:bg-white/10"
+          >
+            {m.chat_see_more_media_button({ content: content.media.length - mediaWindow })}
+          </button>
+        {/if}
+      {/if}
+    {:else if activeTab === 'links'}
+      {#if content.links.length === 0}
+        <p class="text-text-muted py-12 text-center text-sm">{m.chat_no_shared_links()}</p>
+      {:else}
+        <div class="flex flex-col gap-1">
+          {#each content.links as link (link.messageId + link.url)}
             <button
               type="button"
-              onclick={triggerSearch}
-              class="text-text-muted hover:text-text-main rounded-xl p-2 transition-colors hover:bg-black/5 dark:hover:bg-white/10"
-              title={m.chat_search_in_conversation_title()}
-              aria-label={m.chat_search_in_conversation_label()}
+              onclick={() => openLink(link.url)}
+              class="flex flex-col items-start gap-0.5 rounded-xl px-3 py-2 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/10"
             >
-              <Search size={18} />
+              <span class="w-full truncate text-sm font-semibold text-amber-600 dark:text-amber-400"
+                >{hostOf(link.url)}</span
+              >
+              <span class="text-text-muted w-full truncate text-xs">{link.url}</span>
+              <span class="text-text-muted/80 text-2xs"
+                >{senderName(link.senderId)} · {dateFmt.format(link.timestamp)}</span
+              >
             </button>
-          {/if}
-          <button
-            type="button"
-            onclick={onClose}
-            class="text-text-muted hover:text-text-main rounded-xl p-2 transition-colors hover:bg-black/5 dark:hover:bg-white/10"
-            aria-label={m.common_close_label()}
-          >
-            <X size={18} />
-          </button>
+          {/each}
         </div>
-      </div>
-
-      <!-- Tabs -->
-      <div class="border-cn-border flex gap-1 border-b px-2 py-2">
-        {#each tabs as tab (tab.id)}
+      {/if}
+    {:else if content.files.length === 0}
+      <p class="text-text-muted py-12 text-center text-sm">{m.chat_no_shared_files()}</p>
+    {:else}
+      <div class="flex flex-col gap-1">
+        {#each content.files as file (file.messageId + file.media.mediaId)}
           <button
             type="button"
-            onclick={() => (activeTab = tab.id)}
-            class="flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-sm font-semibold transition-colors {activeTab ===
-            tab.id
-              ? 'bg-cn-yellow text-cn-ink'
-              : 'text-text-muted hover:bg-black/5 dark:hover:bg-white/10'}"
+            onclick={() => downloadFile(file.media)}
+            class="flex items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/10"
           >
-            {#if tab.id === 'media'}<ImageIcon size={15} />{:else if tab.id === 'links'}<LinkIcon
-                size={15}
-              />{:else}<FileText size={15} />{/if}
-            {tab.label}
-            {#if tab.count > 0}<span class="text-xs opacity-70">{tab.count}</span>{/if}
+            <span
+              class="bg-cn-yellow/15 text-cn-ink flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
+            >
+              <FileText size={18} />
+            </span>
+            <span class="min-w-0 flex-1">
+              <span class="text-text-main block truncate text-sm font-medium"
+                >{file.media.fileName ?? m.chat_file_label()}</span
+              >
+              <span class="text-text-muted block text-xs"
+                >{formatFileSize(file.media.size)} · {senderName(file.senderId)} · {dateFmt.format(
+                  file.timestamp
+                )}</span
+              >
+            </span>
+            <Download size={16} class="text-text-muted shrink-0" />
           </button>
         {/each}
       </div>
-
-      <!-- Content -->
-      <div class="min-h-0 flex-1 overflow-y-auto p-3">
-        {#if loading}
-          <div class="flex justify-center py-16">
-            <div
-              class="border-cn-yellow h-7 w-7 animate-spin rounded-full border-4 border-t-transparent"
-            ></div>
-          </div>
-        {:else if activeTab === 'media'}
-          {#if content.media.length === 0}
-            <p class="text-text-muted py-12 text-center text-sm">{m.chat_no_shared_media()}</p>
-          {:else}
-            <div class="grid grid-cols-3 gap-1.5">
-              {#each content.media.slice(0, mediaWindow) as item (item.messageId + item.media.mediaId)}
-                <SharedMediaThumb
-                  media={item.media}
-                  {authToken}
-                  onClick={() => (lightboxIndex = content.media.indexOf(item))}
-                />
-              {/each}
-            </div>
-            {#if content.media.length > mediaWindow}
-              <button
-                type="button"
-                onclick={() => (mediaWindow += 60)}
-                class="border-cn-border text-text-muted mt-3 w-full rounded-xl border py-2 text-sm font-semibold hover:bg-black/5 dark:hover:bg-white/10"
-              >
-                {m.chat_see_more_media_button({ content: content.media.length - mediaWindow })}
-              </button>
-            {/if}
-          {/if}
-        {:else if activeTab === 'links'}
-          {#if content.links.length === 0}
-            <p class="text-text-muted py-12 text-center text-sm">{m.chat_no_shared_links()}</p>
-          {:else}
-            <div class="flex flex-col gap-1">
-              {#each content.links as link (link.messageId + link.url)}
-                <button
-                  type="button"
-                  onclick={() => openLink(link.url)}
-                  class="flex flex-col items-start gap-0.5 rounded-xl px-3 py-2 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/10"
-                >
-                  <span
-                    class="w-full truncate text-sm font-semibold text-amber-600 dark:text-amber-400"
-                    >{hostOf(link.url)}</span
-                  >
-                  <span class="text-text-muted w-full truncate text-xs">{link.url}</span>
-                  <span class="text-text-muted/80 text-[0.7rem]"
-                    >{senderName(link.senderId)} · {dateFmt.format(link.timestamp)}</span
-                  >
-                </button>
-              {/each}
-            </div>
-          {/if}
-        {:else if content.files.length === 0}
-          <p class="text-text-muted py-12 text-center text-sm">{m.chat_no_shared_files()}</p>
-        {:else}
-          <div class="flex flex-col gap-1">
-            {#each content.files as file (file.messageId + file.media.mediaId)}
-              <button
-                type="button"
-                onclick={() => downloadFile(file.media)}
-                class="flex items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/10"
-              >
-                <span
-                  class="bg-cn-yellow/15 text-cn-ink flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
-                >
-                  <FileText size={18} />
-                </span>
-                <span class="min-w-0 flex-1">
-                  <span class="text-text-main block truncate text-sm font-medium"
-                    >{file.media.fileName ?? m.chat_file_label()}</span
-                  >
-                  <span class="text-text-muted block text-xs"
-                    >{formatFileSize(file.media.size)} · {senderName(file.senderId)} · {dateFmt.format(
-                      file.timestamp
-                    )}</span
-                  >
-                </span>
-                <Download size={16} class="text-text-muted shrink-0" />
-              </button>
-            {/each}
-          </div>
-        {/if}
-      </div>
-    </aside>
+    {/if}
   </div>
-{/if}
+</div>
 
 {#if lightboxIndex !== null && content.media[lightboxIndex]}
   {@const current = content.media[lightboxIndex]}

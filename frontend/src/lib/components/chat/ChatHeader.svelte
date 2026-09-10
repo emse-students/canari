@@ -12,7 +12,6 @@
   } from '@lucide/svelte';
   import Avatar from '../shared/Avatar.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
-  import ChatGroupPanel from './ChatGroupPanel.svelte';
   import { presenceMap, watchUsers, unwatchUsers } from '$lib/stores/presenceStore';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { m } from '$lib/paraglide/messages';
@@ -103,7 +102,6 @@
     Boolean((onStartAudioCall || onStartVideoCall) && !isChannel && isReady)
   );
 
-  let showPanel = $state(false);
   let isOnline = $derived($presenceMap[contactName] || false);
   let resolvedContactDisplayName = $state('');
 
@@ -130,22 +128,14 @@
       }
     });
   });
-
-  function handlePanelKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape' && showPanel) {
-      showPanel = false;
-    }
-  }
 </script>
-
-<svelte:window onkeydown={handlePanelKeydown} />
 
 <!-- Main header -->
 <header
-  class="relative z-20 flex items-center gap-3 border-b border-black/5 bg-white/70 px-3 py-3 backdrop-blur-2xl md:gap-4 md:px-6 dark:border-white/10 dark:bg-black/50"
+  class="bg-cn-surface relative z-20 flex items-center gap-3 border-b border-black/5 px-3 py-3 md:gap-4 md:px-6 dark:border-white/10"
 >
   <!-- Back button (mobile) - fixed width so the avatar stays centered -->
-  <div class="flex w-8 flex-shrink-0 items-center justify-start md:hidden">
+  <div class="flex w-8 shrink-0 items-center justify-start md:hidden">
     {#if onBack}
       <button
         onclick={onBack}
@@ -159,11 +149,11 @@
 
   <!-- Conversation icon (avatar for groups/DMs; channels show no avatar, only a type icon) -->
   {#if isChannel}
-    <div class="text-text-muted flex h-10 w-10 flex-shrink-0 items-center justify-center">
+    <div class="text-text-muted flex h-10 w-10 shrink-0 items-center justify-center">
       <Hash size={22} strokeWidth={2.5} />
     </div>
   {:else if isGroupConversation}
-    <div class="flex h-10 w-10 flex-shrink-0 items-center justify-center">
+    <div class="flex h-10 w-10 shrink-0 items-center justify-center">
       <GroupAvatar {imageMediaId} name={displayName} variant="group" size="lg" />
     </div>
   {:else}
@@ -179,13 +169,13 @@
 
   <!-- Info (name, status) -->
   <div class="flex min-w-0 flex-1 flex-col justify-center">
-    <h2 class="text-text-main mb-0.5 truncate text-base leading-tight font-bold md:text-[1.05rem]">
+    <h2 class="text-text-main mb-0.5 truncate text-base leading-tight font-bold md:text-base">
       {effectiveDisplayName}
     </h2>
 
     {#if isChannel}
       <span
-        class="text-text-muted inline-flex items-center text-[0.7rem] font-semibold tracking-wider uppercase md:text-xs"
+        class="text-text-muted text-2xs inline-flex items-center font-semibold tracking-wider uppercase md:text-xs"
       >
         {m.chat_community_channel_label()}
       </span>
@@ -270,12 +260,15 @@
       </button>
     {/if}
 
+    <!--
+      ONE HANDLER, ALWAYS THE PARENT'S. This used to fall back to a local `showPanel` when
+      `onOpenSettings` was absent, and that fallback WAS the divergence: a channel's settings went
+      up to the page and opened a modal, while a group's stayed here and opened a portalled sheet
+      this component mounted itself. The page decides which panel now, so there is nothing to fall
+      back to.
+    -->
     <button
-      onclick={onOpenSettings
-        ? onOpenSettings
-        : () => {
-            showPanel = true;
-          }}
+      onclick={onOpenSettings}
       aria-label={isChannel
         ? m.chat_channel_settings_label()
         : isGroupConversation
@@ -287,26 +280,4 @@
       <Settings size={20} strokeWidth={2.5} />
     </button>
   </div>
-
-  <!-- Group / DM settings panel -->
-  <ChatGroupPanel
-    {showPanel}
-    {effectiveDisplayName}
-    {contactName}
-    {groupId}
-    {isGroupConversation}
-    {imageMediaId}
-    currentUserId={currentUserId ?? ''}
-    {groupMembers}
-    {pendingInvites}
-    onClose={() => {
-      showPanel = false;
-    }}
-    onRename={onGroupRename}
-    onSetImage={onGroupSetImage}
-    onRemoveMember={onGroupRemoveMember}
-    {onGroupDelete}
-    {onGroupLeave}
-    {onInviteMembers}
-  />
 </header>

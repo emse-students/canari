@@ -60,7 +60,7 @@
           href={googleCalendarSubscribeUrl}
           target="_blank"
           rel="noopener noreferrer"
-          class="bg-cn-yellow text-cn-dark hover:bg-cn-yellow-hover inline-flex w-full items-center justify-center rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition-colors"
+          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex w-full items-center justify-center rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition-colors"
         >
           {m.asso_calendar_google_add_button()}
         </a>
@@ -94,7 +94,7 @@
               type="text"
               readonly
               value={icsUrl}
-              class="border-cn-border bg-cn-bg/50 text-text-main min-w-0 flex-1 rounded-xl border px-3 py-2 font-mono text-xs"
+              class="border-cn-border bg-cn-bg text-text-main min-w-0 flex-1 rounded-xl border px-3 py-2 font-mono text-xs"
               onclick={(e) => e.currentTarget.select()}
             />
             <button
@@ -117,14 +117,14 @@
       {#if webcalUrl}
         <a
           href={webcalUrl}
-          class="bg-cn-yellow text-cn-dark hover:bg-cn-yellow-hover inline-flex w-full items-center justify-center rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition-colors"
+          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex w-full items-center justify-center rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition-colors"
         >
           {m.asso_calendar_apple_subscribe_button()}
         </a>
       {/if}
     </div>
 
-    <p class="text-text-muted text-[11px]">
+    <p class="text-text-muted text-2xs">
       {m.asso_calendar_subscribe_note()}
     </p>
   </div>

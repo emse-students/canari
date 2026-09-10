@@ -1,4 +1,6 @@
 <script lang="ts">
+  import PageContainer from '$lib/components/layout/PageContainer.svelte';
+  import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
   import { page } from '$app/state';
   import {
@@ -24,7 +26,6 @@
     RotateCcw,
     Check,
     SlidersHorizontal,
-    ArrowLeft,
   } from '@lucide/svelte';
   import ColorPicker from '$lib/components/ui/ColorPicker.svelte';
   import { m } from '$lib/paraglide/messages';
@@ -148,410 +149,405 @@
   );
 </script>
 
-<div class="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6">
-  <a
-    href={backHref}
-    class="text-text-muted hover:text-text-main inline-flex items-center gap-2 text-sm transition-colors"
-  >
-    <ArrowLeft size={16} />
-    {m.calendar_export_back()}
-  </a>
+<PageContainer width="tool">
+  <PageHeader title={m.calendar_export_title()} {backHref} backLabel={m.calendar_export_back()} />
 
-  <h1 class="text-text-main text-2xl font-extrabold tracking-tight">{m.calendar_export_title()}</h1>
-
-  <div class="grid grid-cols-1 items-start gap-6 lg:grid-cols-[360px_1fr]">
-    <!-- ── Settings panel ── -->
-    <div
-      class="border-cn-border space-y-5 rounded-2xl border bg-(--cn-surface)/90 p-5 shadow-sm lg:sticky lg:top-4"
-    >
-      <!-- Month navigation -->
-      <div>
-        <p class="text-text-muted mb-2 text-xs font-bold tracking-wider uppercase">
-          {m.calendar_export_month_label()}
-        </p>
-        <div class="flex items-center gap-2">
-          <button
-            type="button"
-            onclick={prevMonth}
-            class="border-cn-border text-text-main hover:bg-cn-bg rounded-xl border p-2 transition-colors"
-            aria-label={m.calendar_prev_month()}
-          >
-            <ChevronLeft size={18} />
-          </button>
-          <span class="text-text-main flex-1 text-center text-sm font-bold capitalize"
-            >{titleMonth}</span
-          >
-          <button
-            type="button"
-            onclick={nextMonth}
-            class="border-cn-border text-text-main hover:bg-cn-bg rounded-xl border p-2 transition-colors"
-            aria-label={m.calendar_next_month()}
-          >
-            <ChevronRight size={18} />
-          </button>
-        </div>
-      </div>
-
-      <hr class="border-cn-border/60" />
-
-      <!-- Theme picker -->
-      <div class="space-y-2">
-        <p class="text-text-muted text-xs font-bold tracking-wider uppercase">
-          {m.calendar_export_theme_label()}
-        </p>
-        <div class="grid grid-cols-3 gap-2">
-          {#each CALENDAR_THEMES as theme (theme.id)}
-            <button
-              type="button"
-              onclick={() => applyTheme(theme.id)}
-              class="relative rounded-xl border p-2 transition-colors {selectedThemeId === theme.id
-                ? 'border-cn-yellow ring-cn-yellow/40 ring-2'
-                : 'border-cn-border hover:bg-cn-bg'}"
-            >
-              <span
-                class="mb-1 block h-8 w-full rounded-md"
-                style="background:linear-gradient(135deg, {theme.options.pageBg} 55%, {theme.options
-                  .weekendLabelColor} 55%);"
-              ></span>
-              <span class="text-text-main block text-center text-[11px] font-semibold"
-                >{theme.name()}</span
-              >
-              {#if selectedThemeId === theme.id}
-                <span class="text-cn-yellow absolute top-1 right-1"><Check size={12} /></span>
-              {/if}
-            </button>
-          {/each}
-        </div>
-      </div>
-
-      <hr class="border-cn-border/60" />
-
-      <!-- Background image -->
-      <div class="space-y-3">
-        <p class="text-text-muted text-xs font-bold tracking-wider uppercase">
-          {m.calendar_export_bg_label()}
-        </p>
-        {#if opts.bgDataUrl}
+  <div class="space-y-6">
+    <div class="grid grid-cols-1 items-start gap-6 lg:grid-cols-[360px_1fr]">
+      <!-- ── Settings panel ── -->
+      <div
+        class="border-cn-border bg-cn-surface space-y-5 rounded-2xl border p-5 shadow-sm lg:sticky lg:top-4"
+      >
+        <!-- Month navigation -->
+        <div>
+          <p class="text-text-muted mb-2 text-xs font-bold tracking-wider uppercase">
+            {m.calendar_export_month_label()}
+          </p>
           <div class="flex items-center gap-2">
-            <span class="text-text-muted flex-1 text-xs">{m.calendar_export_bg_loaded()}</span>
             <button
               type="button"
-              onclick={clearBg}
-              class="border-cn-border text-text-muted hover:bg-cn-bg rounded-lg border p-1.5"
-              title={m.calendar_export_bg_remove()}
+              onclick={prevMonth}
+              class="border-cn-border text-text-main hover:bg-cn-bg rounded-xl border p-2 transition-colors"
+              aria-label={m.calendar_prev_month()}
             >
-              <X size={14} />
+              <ChevronLeft size={18} />
+            </button>
+            <span class="text-text-main flex-1 text-center text-sm font-bold capitalize"
+              >{titleMonth}</span
+            >
+            <button
+              type="button"
+              onclick={nextMonth}
+              class="border-cn-border text-text-main hover:bg-cn-bg rounded-xl border p-2 transition-colors"
+              aria-label={m.calendar_next_month()}
+            >
+              <ChevronRight size={18} />
             </button>
           </div>
-        {:else}
-          <label
-            class="border-cn-border bg-cn-bg text-text-muted inline-flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold transition-colors hover:bg-(--cn-surface)"
-          >
-            <ImagePlus size={14} />
-            {m.calendar_export_bg_choose()}
-            <input type="file" accept="image/*" class="sr-only" onchange={handleBgChange} />
-          </label>
-        {/if}
-        <div class="flex items-center justify-between gap-2">
-          <span class="text-text-muted text-xs"
-            >{m.calendar_export_opacity({ value: opts.bgOpacity })}</span
-          >
-          <input
-            type="range"
-            min="0"
-            max="100"
-            bind:value={opts.bgOpacity}
-            class="accent-cn-dark w-28"
-          />
         </div>
-        {#if opts.bgDataUrl}
+
+        <hr class="border-cn-border/60" />
+
+        <!-- Theme picker -->
+        <div class="space-y-2">
+          <p class="text-text-muted text-xs font-bold tracking-wider uppercase">
+            {m.calendar_export_theme_label()}
+          </p>
+          <div class="grid grid-cols-3 gap-2">
+            {#each CALENDAR_THEMES as theme (theme.id)}
+              <button
+                type="button"
+                onclick={() => applyTheme(theme.id)}
+                class="relative rounded-xl border p-2 transition-colors {selectedThemeId ===
+                theme.id
+                  ? 'border-cn-yellow ring-cn-yellow/40 ring-2'
+                  : 'border-cn-border hover:bg-cn-bg'}"
+              >
+                <span
+                  class="mb-1 block h-8 w-full rounded-md"
+                  style="background:linear-gradient(135deg, {theme.options.pageBg} 55%, {theme
+                    .options.weekendLabelColor} 55%);"
+                ></span>
+                <span class="text-text-main text-2xs block text-center font-semibold"
+                  >{theme.name()}</span
+                >
+                {#if selectedThemeId === theme.id}
+                  <span class="text-cn-yellow absolute top-1 right-1"><Check size={12} /></span>
+                {/if}
+              </button>
+            {/each}
+          </div>
+        </div>
+
+        <hr class="border-cn-border/60" />
+
+        <!-- Background image -->
+        <div class="space-y-3">
+          <p class="text-text-muted text-xs font-bold tracking-wider uppercase">
+            {m.calendar_export_bg_label()}
+          </p>
+          {#if opts.bgDataUrl}
+            <div class="flex items-center gap-2">
+              <span class="text-text-muted flex-1 text-xs">{m.calendar_export_bg_loaded()}</span>
+              <button
+                type="button"
+                onclick={clearBg}
+                class="border-cn-border text-text-muted hover:bg-cn-bg rounded-lg border p-1.5"
+                title={m.calendar_export_bg_remove()}
+              >
+                <X size={14} />
+              </button>
+            </div>
+          {:else}
+            <label
+              class="border-cn-border bg-cn-bg text-text-muted inline-flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold transition-colors hover:bg-(--cn-surface)"
+            >
+              <ImagePlus size={14} />
+              {m.calendar_export_bg_choose()}
+              <input type="file" accept="image/*" class="sr-only" onchange={handleBgChange} />
+            </label>
+          {/if}
           <div class="flex items-center justify-between gap-2">
             <span class="text-text-muted text-xs"
-              >{m.calendar_export_scrim({ value: opts.scrimOpacity })}</span
+              >{m.calendar_export_opacity({ value: opts.bgOpacity })}</span
             >
             <input
               type="range"
               min="0"
-              max="80"
-              bind:value={opts.scrimOpacity}
+              max="100"
+              bind:value={opts.bgOpacity}
               class="accent-cn-dark w-28"
             />
           </div>
-        {/if}
-      </div>
+          {#if opts.bgDataUrl}
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-text-muted text-xs"
+                >{m.calendar_export_scrim({ value: opts.scrimOpacity })}</span
+              >
+              <input
+                type="range"
+                min="0"
+                max="80"
+                bind:value={opts.scrimOpacity}
+                class="accent-cn-dark w-28"
+              />
+            </div>
+          {/if}
+        </div>
 
-      <hr class="border-cn-border/60" />
+        <hr class="border-cn-border/60" />
 
-      <!-- Text shadows (kept simple: Justine relies on them) -->
-      <div class="space-y-2">
-        <div class="flex items-center justify-between gap-2">
-          <span class="text-text-muted text-xs font-bold tracking-wider uppercase"
-            >{m.calendar_export_text_shadow()}</span
+        <!-- Text shadows (kept simple: Justine relies on them) -->
+        <div class="space-y-2">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-text-muted text-xs font-bold tracking-wider uppercase"
+              >{m.calendar_export_text_shadow()}</span
+            >
+            <button
+              type="button"
+              role="switch"
+              aria-checked={opts.enableTextShadow}
+              onclick={() => (opts.enableTextShadow = !opts.enableTextShadow)}
+              aria-label={m.calendar_export_enable_shadows_label()}
+              class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors {opts.enableTextShadow
+                ? 'bg-cn-yellow'
+                : 'bg-cn-border'}"
+            >
+              <span
+                class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform {opts.enableTextShadow
+                  ? 'translate-x-4'
+                  : 'translate-x-0'}"
+              ></span>
+            </button>
+          </div>
+          {#if opts.enableTextShadow}
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-text-muted text-xs">{m.calendar_export_shadow_color()}</span>
+              <ColorPicker
+                bind:value={opts.textShadowColor}
+                label={m.calendar_export_shadow_color()}
+              />
+            </div>
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-text-muted text-xs"
+                >{m.calendar_export_shadow_offset({ value: opts.textShadowOffset })}</span
+              >
+              <input
+                type="range"
+                min="1"
+                max="8"
+                bind:value={opts.textShadowOffset}
+                class="accent-cn-dark w-28"
+              />
+            </div>
+          {/if}
+        </div>
+
+        <hr class="border-cn-border/60" />
+
+        <!-- Advanced (fine-grained) controls, collapsed by default -->
+        <details bind:open={showAdvanced}>
+          <summary
+            class="text-text-muted flex cursor-pointer list-none items-center gap-2 text-xs font-bold tracking-wider uppercase"
           >
+            <SlidersHorizontal size={14} />
+            {m.calendar_export_advanced()}
+          </summary>
+          <div class="mt-4 space-y-5">
+            <!-- Header -->
+            <div class="space-y-2">
+              <p class="text-text-muted text-xs font-bold tracking-wider uppercase">
+                {m.calendar_export_header_label()}
+              </p>
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-text-muted text-xs">{m.calendar_export_bg_field()}</span>
+                <ColorPicker bind:value={opts.headerBg} label={m.calendar_export_bg_field()} />
+              </div>
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-text-muted text-xs">{m.calendar_export_month_title_color()}</span>
+                <ColorPicker
+                  bind:value={opts.monthTitleColor}
+                  label={m.calendar_export_month_title_color()}
+                />
+              </div>
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-text-muted text-xs">{m.calendar_export_page_bg()}</span>
+                <ColorPicker bind:value={opts.pageBg} label={m.calendar_export_page_bg()} />
+              </div>
+            </div>
+
+            <hr class="border-cn-border/60" />
+
+            <!-- Weekday row -->
+            <div class="space-y-2">
+              <p class="text-text-muted text-xs font-bold tracking-wider uppercase">
+                {m.calendar_export_weekday_row_label()}
+              </p>
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-text-muted text-xs">{m.calendar_export_bg_field()}</span>
+                <ColorPicker
+                  bind:value={opts.weekdayRowBg}
+                  label={m.calendar_export_weekday_row_label()}
+                />
+              </div>
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-text-muted text-xs">{m.calendar_export_weekday_labels()}</span>
+                <ColorPicker
+                  bind:value={opts.weekdayLabelColor}
+                  label={m.calendar_export_weekday_labels()}
+                />
+              </div>
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-text-muted text-xs">{m.calendar_export_weekend_labels()}</span>
+                <ColorPicker
+                  bind:value={opts.weekendLabelColor}
+                  label={m.calendar_export_weekend_labels()}
+                />
+              </div>
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-text-muted text-xs">{m.calendar_export_weekday_fullnames()}</span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={opts.weekdayFullNames}
+                  onclick={() => (opts.weekdayFullNames = !opts.weekdayFullNames)}
+                  aria-label={m.calendar_export_weekday_fullnames()}
+                  class="relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors {opts.weekdayFullNames
+                    ? 'bg-cn-yellow'
+                    : 'bg-cn-border'}"
+                >
+                  <span
+                    class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform {opts.weekdayFullNames
+                      ? 'translate-x-4'
+                      : 'translate-x-0'}"
+                  ></span>
+                </button>
+              </div>
+            </div>
+
+            <hr class="border-cn-border/60" />
+
+            <!-- Cells -->
+            <div class="space-y-2">
+              <p class="text-text-muted text-xs font-bold tracking-wider uppercase">
+                {m.calendar_export_cells_label()}
+              </p>
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-text-muted text-xs">{m.calendar_export_cell_bg_normal()}</span>
+                <ColorPicker bind:value={opts.cellBg} label={m.calendar_export_cell_bg_normal()} />
+              </div>
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-text-muted text-xs"
+                  >{m.calendar_export_cell_opacity_normal({ value: opts.cellBgOpacity })}</span
+                >
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  bind:value={opts.cellBgOpacity}
+                  class="accent-cn-dark w-28"
+                />
+              </div>
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-text-muted text-xs">{m.calendar_export_cell_bg_weekend()}</span>
+                <ColorPicker
+                  bind:value={opts.weekendCellBg}
+                  label={m.calendar_export_cell_bg_weekend()}
+                />
+              </div>
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-text-muted text-xs"
+                  >{m.calendar_export_cell_opacity_weekend({
+                    value: opts.weekendCellBgOpacity,
+                  })}</span
+                >
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  bind:value={opts.weekendCellBgOpacity}
+                  class="accent-cn-dark w-28"
+                />
+              </div>
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-text-muted text-xs">{m.calendar_export_empty_day_color()}</span>
+                <ColorPicker
+                  bind:value={opts.emptyDayColor}
+                  label={m.calendar_export_empty_day_color()}
+                />
+              </div>
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-text-muted text-xs"
+                  >{m.calendar_export_break_tint({ value: opts.breakTintOpacity })}</span
+                >
+                <input
+                  type="range"
+                  min="0"
+                  max="60"
+                  bind:value={opts.breakTintOpacity}
+                  class="accent-cn-dark w-28"
+                />
+              </div>
+            </div>
+
+            <hr class="border-cn-border/60" />
+
+            <!-- Grid borders -->
+            <div class="space-y-2">
+              <p class="text-text-muted text-xs font-bold tracking-wider uppercase">
+                {m.calendar_export_grid_label()}
+              </p>
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-text-muted text-xs">{m.calendar_export_inner_borders()}</span>
+                <ColorPicker
+                  bind:value={opts.borderColor}
+                  label={m.calendar_export_inner_borders()}
+                />
+              </div>
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-text-muted text-xs">{m.calendar_export_outer_border()}</span>
+                <ColorPicker
+                  bind:value={opts.gridOuterBorder}
+                  label={m.calendar_export_outer_border()}
+                />
+              </div>
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-text-muted text-xs">{m.calendar_export_scrim_color()}</span>
+                <ColorPicker bind:value={opts.scrimColor} label={m.calendar_export_scrim_color()} />
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <hr class="border-cn-border/60" />
+
+        <!-- Actions -->
+        <div class="flex flex-col gap-2">
           <button
             type="button"
-            role="switch"
-            aria-checked={opts.enableTextShadow}
-            onclick={() => (opts.enableTextShadow = !opts.enableTextShadow)}
-            aria-label={m.calendar_export_enable_shadows_label()}
-            class="relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors {opts.enableTextShadow
-              ? 'bg-cn-yellow'
-              : 'bg-cn-border'}"
+            onclick={handleExport}
+            disabled={loading || exporting}
+            class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-bold transition-colors disabled:pointer-events-none disabled:opacity-40"
           >
-            <span
-              class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform {opts.enableTextShadow
-                ? 'translate-x-4'
-                : 'translate-x-0'}"
-            ></span>
+            <FileDown size={18} />
+            {exporting ? m.common_generating_label() : m.calendar_export_download_btn()}
+          </button>
+          <button
+            type="button"
+            onclick={resetOptions}
+            class="border-cn-border text-text-muted hover:bg-cn-bg inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-2 text-xs font-semibold transition-colors"
+          >
+            <RotateCcw size={14} />
+            {m.calendar_export_reset_colors()}
           </button>
         </div>
-        {#if opts.enableTextShadow}
-          <div class="flex items-center justify-between gap-2">
-            <span class="text-text-muted text-xs">{m.calendar_export_shadow_color()}</span>
-            <ColorPicker
-              bind:value={opts.textShadowColor}
-              label={m.calendar_export_shadow_color()}
-            />
-          </div>
-          <div class="flex items-center justify-between gap-2">
-            <span class="text-text-muted text-xs"
-              >{m.calendar_export_shadow_offset({ value: opts.textShadowOffset })}</span
-            >
-            <input
-              type="range"
-              min="1"
-              max="8"
-              bind:value={opts.textShadowOffset}
-              class="accent-cn-dark w-28"
-            />
-          </div>
-        {/if}
       </div>
 
-      <hr class="border-cn-border/60" />
-
-      <!-- Advanced (fine-grained) controls, collapsed by default -->
-      <details bind:open={showAdvanced}>
-        <summary
-          class="text-text-muted flex cursor-pointer list-none items-center gap-2 text-xs font-bold tracking-wider uppercase"
-        >
-          <SlidersHorizontal size={14} />
-          {m.calendar_export_advanced()}
-        </summary>
-        <div class="mt-4 space-y-5">
-          <!-- Header -->
-          <div class="space-y-2">
-            <p class="text-text-muted text-xs font-bold tracking-wider uppercase">
-              {m.calendar_export_header_label()}
-            </p>
-            <div class="flex items-center justify-between gap-2">
-              <span class="text-text-muted text-xs">{m.calendar_export_bg_field()}</span>
-              <ColorPicker bind:value={opts.headerBg} label={m.calendar_export_bg_field()} />
+      <!-- ── Preview panel ── -->
+      <div class="border-cn-border bg-cn-surface rounded-2xl border p-4 shadow-sm">
+        <p class="text-text-muted mb-3 text-xs font-bold tracking-wider uppercase">
+          {m.calendar_export_preview_label()}
+        </p>
+        <div bind:clientWidth={previewContainerWidth}>
+          {#if loading}
+            <div class="flex items-center justify-center py-16">
+              <div
+                class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
+              ></div>
             </div>
-            <div class="flex items-center justify-between gap-2">
-              <span class="text-text-muted text-xs">{m.calendar_export_month_title_color()}</span>
-              <ColorPicker
-                bind:value={opts.monthTitleColor}
-                label={m.calendar_export_month_title_color()}
-              />
-            </div>
-            <div class="flex items-center justify-between gap-2">
-              <span class="text-text-muted text-xs">{m.calendar_export_page_bg()}</span>
-              <ColorPicker bind:value={opts.pageBg} label={m.calendar_export_page_bg()} />
-            </div>
-          </div>
-
-          <hr class="border-cn-border/60" />
-
-          <!-- Weekday row -->
-          <div class="space-y-2">
-            <p class="text-text-muted text-xs font-bold tracking-wider uppercase">
-              {m.calendar_export_weekday_row_label()}
-            </p>
-            <div class="flex items-center justify-between gap-2">
-              <span class="text-text-muted text-xs">{m.calendar_export_bg_field()}</span>
-              <ColorPicker
-                bind:value={opts.weekdayRowBg}
-                label={m.calendar_export_weekday_row_label()}
-              />
-            </div>
-            <div class="flex items-center justify-between gap-2">
-              <span class="text-text-muted text-xs">{m.calendar_export_weekday_labels()}</span>
-              <ColorPicker
-                bind:value={opts.weekdayLabelColor}
-                label={m.calendar_export_weekday_labels()}
-              />
-            </div>
-            <div class="flex items-center justify-between gap-2">
-              <span class="text-text-muted text-xs">{m.calendar_export_weekend_labels()}</span>
-              <ColorPicker
-                bind:value={opts.weekendLabelColor}
-                label={m.calendar_export_weekend_labels()}
-              />
-            </div>
-            <div class="flex items-center justify-between gap-2">
-              <span class="text-text-muted text-xs">{m.calendar_export_weekday_fullnames()}</span>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={opts.weekdayFullNames}
-                onclick={() => (opts.weekdayFullNames = !opts.weekdayFullNames)}
-                aria-label={m.calendar_export_weekday_fullnames()}
-                class="relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors {opts.weekdayFullNames
-                  ? 'bg-cn-yellow'
-                  : 'bg-cn-border'}"
+          {:else if previewScale > 0}
+            <div style="height: {CALENDAR_CONTAINER_HEIGHT * previewScale}px; overflow: hidden;">
+              <div
+                style="width: {CALENDAR_CONTAINER_WIDTH}px; transform: scale({previewScale}); transform-origin: top left;"
+                aria-label={m.calendar_export_preview_title()}
               >
-                <span
-                  class="inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform {opts.weekdayFullNames
-                    ? 'translate-x-4'
-                    : 'translate-x-0'}"
-                ></span>
-              </button>
+                <!-- eslint-disable-next-line svelte/no-at-html-tags -- titles are HTML-escaped in buildCalendarHtml -->
+                {@html previewHtml}
+              </div>
             </div>
-          </div>
-
-          <hr class="border-cn-border/60" />
-
-          <!-- Cells -->
-          <div class="space-y-2">
-            <p class="text-text-muted text-xs font-bold tracking-wider uppercase">
-              {m.calendar_export_cells_label()}
-            </p>
-            <div class="flex items-center justify-between gap-2">
-              <span class="text-text-muted text-xs">{m.calendar_export_cell_bg_normal()}</span>
-              <ColorPicker bind:value={opts.cellBg} label={m.calendar_export_cell_bg_normal()} />
-            </div>
-            <div class="flex items-center justify-between gap-2">
-              <span class="text-text-muted text-xs"
-                >{m.calendar_export_cell_opacity_normal({ value: opts.cellBgOpacity })}</span
-              >
-              <input
-                type="range"
-                min="0"
-                max="100"
-                bind:value={opts.cellBgOpacity}
-                class="accent-cn-dark w-28"
-              />
-            </div>
-            <div class="flex items-center justify-between gap-2">
-              <span class="text-text-muted text-xs">{m.calendar_export_cell_bg_weekend()}</span>
-              <ColorPicker
-                bind:value={opts.weekendCellBg}
-                label={m.calendar_export_cell_bg_weekend()}
-              />
-            </div>
-            <div class="flex items-center justify-between gap-2">
-              <span class="text-text-muted text-xs"
-                >{m.calendar_export_cell_opacity_weekend({
-                  value: opts.weekendCellBgOpacity,
-                })}</span
-              >
-              <input
-                type="range"
-                min="0"
-                max="100"
-                bind:value={opts.weekendCellBgOpacity}
-                class="accent-cn-dark w-28"
-              />
-            </div>
-            <div class="flex items-center justify-between gap-2">
-              <span class="text-text-muted text-xs">{m.calendar_export_empty_day_color()}</span>
-              <ColorPicker
-                bind:value={opts.emptyDayColor}
-                label={m.calendar_export_empty_day_color()}
-              />
-            </div>
-            <div class="flex items-center justify-between gap-2">
-              <span class="text-text-muted text-xs"
-                >{m.calendar_export_break_tint({ value: opts.breakTintOpacity })}</span
-              >
-              <input
-                type="range"
-                min="0"
-                max="60"
-                bind:value={opts.breakTintOpacity}
-                class="accent-cn-dark w-28"
-              />
-            </div>
-          </div>
-
-          <hr class="border-cn-border/60" />
-
-          <!-- Grid borders -->
-          <div class="space-y-2">
-            <p class="text-text-muted text-xs font-bold tracking-wider uppercase">
-              {m.calendar_export_grid_label()}
-            </p>
-            <div class="flex items-center justify-between gap-2">
-              <span class="text-text-muted text-xs">{m.calendar_export_inner_borders()}</span>
-              <ColorPicker
-                bind:value={opts.borderColor}
-                label={m.calendar_export_inner_borders()}
-              />
-            </div>
-            <div class="flex items-center justify-between gap-2">
-              <span class="text-text-muted text-xs">{m.calendar_export_outer_border()}</span>
-              <ColorPicker
-                bind:value={opts.gridOuterBorder}
-                label={m.calendar_export_outer_border()}
-              />
-            </div>
-            <div class="flex items-center justify-between gap-2">
-              <span class="text-text-muted text-xs">{m.calendar_export_scrim_color()}</span>
-              <ColorPicker bind:value={opts.scrimColor} label={m.calendar_export_scrim_color()} />
-            </div>
-          </div>
+          {/if}
         </div>
-      </details>
-
-      <hr class="border-cn-border/60" />
-
-      <!-- Actions -->
-      <div class="flex flex-col gap-2">
-        <button
-          type="button"
-          onclick={handleExport}
-          disabled={loading || exporting}
-          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-bold transition-colors disabled:pointer-events-none disabled:opacity-40"
-        >
-          <FileDown size={18} />
-          {exporting ? m.common_generating_label() : m.calendar_export_download_btn()}
-        </button>
-        <button
-          type="button"
-          onclick={resetOptions}
-          class="border-cn-border text-text-muted hover:bg-cn-bg inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-2 text-xs font-semibold transition-colors"
-        >
-          <RotateCcw size={14} />
-          {m.calendar_export_reset_colors()}
-        </button>
-      </div>
-    </div>
-
-    <!-- ── Preview panel ── -->
-    <div class="border-cn-border rounded-2xl border bg-(--cn-surface)/90 p-4 shadow-sm">
-      <p class="text-text-muted mb-3 text-xs font-bold tracking-wider uppercase">
-        {m.calendar_export_preview_label()}
-      </p>
-      <div bind:clientWidth={previewContainerWidth}>
-        {#if loading}
-          <div class="flex items-center justify-center py-16">
-            <div
-              class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
-            ></div>
-          </div>
-        {:else if previewScale > 0}
-          <div style="height: {CALENDAR_CONTAINER_HEIGHT * previewScale}px; overflow: hidden;">
-            <div
-              style="width: {CALENDAR_CONTAINER_WIDTH}px; transform: scale({previewScale}); transform-origin: top left;"
-              aria-label={m.calendar_export_preview_title()}
-            >
-              <!-- eslint-disable-next-line svelte/no-at-html-tags -- titles are HTML-escaped in buildCalendarHtml -->
-              {@html previewHtml}
-            </div>
-          </div>
-        {/if}
       </div>
     </div>
   </div>
-</div>
+</PageContainer>

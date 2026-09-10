@@ -34,11 +34,11 @@
 >
   {#if label}
     <span
-      class="text-text-muted absolute top-2 right-2.5 z-10 rounded-md bg-black/5 px-1.5 py-0.5 font-mono text-[0.62rem] font-semibold tracking-wide uppercase dark:bg-white/10"
+      class="text-text-muted text-2xs absolute top-2 right-2.5 z-10 rounded-md bg-black/5 px-1.5 py-0.5 font-mono font-semibold tracking-wide uppercase dark:bg-white/10"
     >
       {label}
     </span>
   {/if}
-  <pre class="hljs m-0 overflow-x-auto p-4 text-[0.82rem] leading-relaxed"><code bind:this={codeEl}
+  <pre class="hljs m-0 overflow-x-auto p-4 text-xs leading-relaxed"><code bind:this={codeEl}
     ></code></pre>
 </div>

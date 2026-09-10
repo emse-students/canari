@@ -80,7 +80,7 @@
   -->
   <div
     data-nav-backdrop
-    class="fixed inset-0 top-[calc(3.5rem+env(safe-area-inset-top))] z-[22] hidden bg-black/10 backdrop-blur-[2px] md:block dark:bg-black/30"
+    class="fixed inset-0 top-[calc(var(--app-top-bar-height)+env(safe-area-inset-top))] z-(--z-nav-scrim) hidden bg-black/10 md:block dark:bg-black/30"
     transition:fade={{ duration: 300, easing: (t) => t * (2 - t) }}
     onclick={() => (isExpanded = false)}
   ></div>
@@ -92,14 +92,27 @@
   technology offered the user two identical, indistinguishable regions. The name is also what lets a
   harness address one of them without resorting to pixel widths.
 -->
+<!--
+  THE EXPANDED WIDTH IS MEASURED, NOT CHOSEN. The rail was `w-64` (256px), which leaves
+  256 - 24 (px-3) - 28 (the icon) - 16 (gap-4) = 188px for the text, and every description in the
+  list is wider than that - so the second line of every single row was truncated. `w-[21rem]`
+  (336px) leaves 288px, and the widest description now measures 219px, which still fits once the
+  unread badge takes its ~30px on the two rows that have one.
+
+  This only became a reachable number after the settings row stopped borrowing
+  `settings_page_subtitle` - a 47-character PAGE subtitle at 282px, where every other row uses a
+  purpose-written `nav_*_desc` of 131-219px. Fitting that one string would have cost a 384px
+  overlay; the outlier was the string, not the width.
+-->
 <aside
   aria-label={m.nav_main_landmark()}
   onmouseenter={handleMouseEnter}
   onmouseleave={handleMouseLeave}
-  class="app-nav-rail fixed top-[env(safe-area-inset-top)] left-0 hidden h-[calc(var(--app-viewport-height,100dvh)-env(safe-area-inset-top))] flex-col overflow-hidden border-r border-black/5 bg-white/70 shadow-[4px_0_24px_rgba(0,0,0,0.02)] backdrop-blur-2xl transition-all duration-300 ease-out md:flex dark:border-white/10 dark:bg-black/80 dark:shadow-[4px_0_24px_rgba(0,0,0,0.2)]
-    {isExpanded ? 'z-30 w-64' : 'z-20 w-[4.5rem]'}"
+  class="app-nav-rail bg-cn-surface fixed top-[env(safe-area-inset-top)] left-0 hidden h-[calc(var(--app-viewport-height,100dvh)-env(safe-area-inset-top))] flex-col overflow-hidden border-r border-black/5 shadow-[4px_0_24px_rgba(0,0,0,0.02)] transition-all duration-300 ease-out md:flex dark:border-white/10 dark:shadow-[4px_0_24px_rgba(0,0,0,0.2)] {isExpanded
+    ? 'z-(--z-nav-rail) w-[21rem]'
+    : 'z-20 w-[4.5rem]'}"
 >
-  <nav class="flex flex-1 flex-col gap-1.5 p-3 pt-[4.5rem]">
+  <nav class="flex flex-1 flex-col gap-1.5 p-3">
     {#each APP_PLACES as place (place.id)}
       {@const PlaceIcon = getIcon(place.icon)}
       {@const isActive = place.id === activePlaceId}
@@ -116,7 +129,7 @@
         title={isExpanded ? undefined : place.label()}
         aria-current={isActive ? 'page' : undefined}
         class="group relative flex h-12 w-full items-center gap-4 overflow-hidden rounded-2xl px-3 text-left transition-all duration-200
-          {isActive
+ {isActive
           ? 'bg-amber-500/15 text-amber-700 shadow-sm shadow-amber-500/5 hover:bg-amber-500/25 dark:bg-amber-400/10 dark:text-amber-400 dark:hover:bg-amber-400/20'
           : 'text-text-muted hover:text-text-main hover:bg-black/10 dark:hover:bg-white/10'}"
       >
@@ -129,7 +142,7 @@
 
         <!-- Icon container with scale-on-hover effect. -->
         <span
-          class="relative flex w-7 flex-shrink-0 items-center justify-center transition-transform duration-300 group-hover:scale-110"
+          class="relative flex w-7 shrink-0 items-center justify-center transition-transform duration-300 group-hover:scale-110"
         >
           <PlaceIcon size={22} strokeWidth={isActive ? 2.5 : 2} />
 
@@ -144,11 +157,9 @@
         <!-- Label with slide-in animation and a short delay to avoid clipping during collapse. -->
         <span
           class="min-w-0 flex-1 overflow-hidden transition-all duration-300 ease-out
-            {isExpanded
-            ? 'translate-x-0 opacity-100 delay-75'
-            : '-translate-x-4 opacity-0 delay-0'}"
+ {isExpanded ? 'translate-x-0 opacity-100 delay-75' : '-translate-x-4 opacity-0 delay-0'}"
         >
-          <span class="block truncate text-[0.9rem] leading-tight font-bold whitespace-nowrap">
+          <span class="block truncate text-sm leading-tight font-bold whitespace-nowrap">
             {place.label()}
           </span>
           <span
@@ -161,8 +172,8 @@
         <!-- Full count badge, visible only when the sidebar is expanded. -->
         {#if unread > 0}
           <span
-            class="ml-auto inline-flex flex-shrink-0 items-center justify-center rounded-full bg-red-500 px-2 py-0.5 text-[0.7rem] leading-none font-bold text-white shadow-sm shadow-red-500/30 transition-all duration-300
-              {isExpanded ? 'scale-100 opacity-100 delay-100' : 'scale-75 opacity-0'}"
+            class="text-2xs ml-auto inline-flex shrink-0 items-center justify-center rounded-full bg-red-500 px-2 py-0.5 leading-none font-bold text-white shadow-sm shadow-red-500/30 transition-all duration-300
+ {isExpanded ? 'scale-100 opacity-100 delay-100' : 'scale-75 opacity-0'}"
           >
             {unread > 99 ? '99+' : unread}
           </span>
@@ -181,7 +192,7 @@
         title={isExpanded ? undefined : m.settings_page_title()}
         aria-current={settingsActive ? 'page' : undefined}
         class="group relative flex h-12 w-full items-center gap-4 overflow-hidden rounded-2xl px-3 text-left transition-all duration-200
-          {settingsActive
+ {settingsActive
           ? 'bg-amber-500/15 text-amber-700 shadow-sm shadow-amber-500/5 hover:bg-amber-500/25 dark:bg-amber-400/10 dark:text-amber-400 dark:hover:bg-amber-400/20'
           : 'text-text-muted hover:text-text-main hover:bg-black/10 dark:hover:bg-white/10'}"
       >
@@ -192,24 +203,22 @@
         {/if}
 
         <span
-          class="relative flex w-7 flex-shrink-0 items-center justify-center transition-transform duration-300 group-hover:scale-110"
+          class="relative flex w-7 shrink-0 items-center justify-center transition-transform duration-300 group-hover:scale-110"
         >
           <SlidersHorizontal size={22} strokeWidth={settingsActive ? 2.5 : 2} />
         </span>
 
         <span
           class="min-w-0 flex-1 overflow-hidden transition-all duration-300 ease-out
-            {isExpanded
-            ? 'translate-x-0 opacity-100 delay-75'
-            : '-translate-x-4 opacity-0 delay-0'}"
+ {isExpanded ? 'translate-x-0 opacity-100 delay-75' : '-translate-x-4 opacity-0 delay-0'}"
         >
-          <span class="block truncate text-[0.9rem] leading-tight font-bold whitespace-nowrap">
+          <span class="block truncate text-sm leading-tight font-bold whitespace-nowrap">
             {m.settings_page_title()}
           </span>
           <span
             class="mt-0.5 block truncate text-xs leading-snug font-medium whitespace-nowrap opacity-70"
           >
-            {m.settings_page_subtitle()}
+            {m.nav_settings_desc()}
           </span>
         </span>
       </a>

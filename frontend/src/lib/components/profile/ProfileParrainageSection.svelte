@@ -31,7 +31,7 @@
             <svelte:element
               this={member.sub ? 'a' : 'div'}
               href={member.sub ? `/profile/${encodeURIComponent(member.sub)}` : undefined}
-              class="border-cn-border flex items-center gap-3 rounded-xl border bg-white/50 px-4 py-3 dark:bg-white/5 {member.sub
+              class="border-cn-border bg-cn-surface flex items-center gap-3 rounded-xl border px-4 py-3 {member.sub
                 ? 'hover:border-cn-yellow/30 transition-colors'
                 : ''}"
             >

@@ -3276,6 +3276,28 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_form_open_title),
                 res.getString(R.string.notif_form_open_body)
             )
+            // The agenda's five. `arg` is the event's title for all of them; only `event_proposed`
+            // also uses the actor, because it is the only one where WHO acted is the useful half.
+            "event_proposed" -> Pair(
+                res.getString(R.string.notif_event_proposed_title),
+                res.getString(R.string.notif_event_proposed_body, actor, arg)
+            )
+            "event_validated" -> Pair(
+                res.getString(R.string.notif_event_validated_title),
+                res.getString(R.string.notif_event_validated_body, arg)
+            )
+            "event_rejected" -> Pair(
+                res.getString(R.string.notif_event_rejected_title),
+                res.getString(R.string.notif_event_rejected_body, arg)
+            )
+            "event_updated" -> Pair(
+                res.getString(R.string.notif_event_updated_title),
+                res.getString(R.string.notif_event_updated_body, arg)
+            )
+            "event_deleted" -> Pair(
+                res.getString(R.string.notif_event_deleted_title),
+                res.getString(R.string.notif_event_deleted_body, arg)
+            )
             else -> {
                 Log.w(TAG, "unknown contentKey=$key - using the server's own wording")
                 null

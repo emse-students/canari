@@ -22,7 +22,7 @@
   }: Props = $props();
 
   const selectPlainClass =
-    'w-full appearance-none rounded-xl border border-cn-border/70 bg-cn-surface/95 dark:bg-cn-dark/50 px-4 pr-10 py-3 text-sm font-medium text-text-main shadow-sm transition-all outline-none focus:border-cn-yellow focus:ring-2 focus:ring-cn-yellow/25 hover:border-cn-border';
+    'w-full appearance-none rounded-xl border border-cn-border/70 bg-cn-surface px-4 pr-10 py-3 text-sm font-medium text-text-main shadow-sm transition-all outline-none focus:border-cn-yellow focus:ring-2 focus:ring-cn-yellow/25 hover:border-cn-border';
   const chevronWrapClass =
     'pointer-events-none absolute inset-y-0 right-3 flex items-center text-text-muted';
 
@@ -50,12 +50,10 @@
 </script>
 
 <div
-  class="border-cn-border/60 bg-cn-surface/70 rounded-2xl border p-5 shadow-sm ring-1 ring-black/[0.02] dark:bg-black/25 dark:ring-white/[0.04]"
+  class="border-cn-border/60 bg-cn-surface rounded-2xl border p-5 shadow-sm ring-1 ring-black/[0.02] dark:ring-white/[0.04]"
 >
   <div class="mb-4 flex items-center justify-between gap-2">
-    <p
-      class="text-text-muted flex items-center gap-2 text-[0.75rem] font-bold tracking-widest uppercase"
-    >
+    <p class="text-text-muted text-2xs flex items-center gap-2 font-bold tracking-widest uppercase">
       <ClipboardList size={16} strokeWidth={2.5} class="text-cn-yellow shrink-0" />
       {m.post_form_fallback_title()}
     </p>

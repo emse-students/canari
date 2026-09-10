@@ -803,11 +803,11 @@
           <div class="border-cn-border bg-cn-surface overflow-hidden rounded-xl border text-sm">
             <div class="border-cn-border bg-cn-bg flex items-center justify-between border-b p-4">
               <span class="text-text-main font-semibold"
-                >{communityMembers.length} {m.chat_community_member_count_label()}</span
+                >{m.chat_community_member_count_label({ count: communityMembers.length })}</span
               >
             </div>
             {#if canManage}
-              <div class="border-cn-border bg-cn-bg/60 space-y-2.5 border-b px-4 py-3">
+              <div class="border-cn-border bg-cn-bg space-y-2.5 border-b px-4 py-3">
                 <div class="grid grid-cols-1 gap-2.5 md:grid-cols-[1fr_auto_auto]">
                   <!-- Members of this community are already here; inviting them again is not an action. -->
                   <UserAutocomplete
@@ -901,7 +901,7 @@
                       </div>
                     {:else}
                       <span
-                        class={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ${roleBadgeClass(member.role)}`}
+                        class={`text-2xs inline-flex items-center rounded-full px-2.5 py-1 font-semibold ${roleBadgeClass(member.role)}`}
                       >
                         {roleLabel(member.role)}
                       </span>

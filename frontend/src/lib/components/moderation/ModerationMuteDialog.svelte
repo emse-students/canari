@@ -69,7 +69,7 @@
       {#each presets as preset (preset.label)}
         <button
           type="button"
-          class="border-cn-border text-text-muted hover:text-text-main rounded-lg border px-2.5 py-1.5 text-[11px] transition-colors hover:border-amber-400"
+          class="border-cn-border text-text-muted hover:text-text-main text-2xs rounded-lg border px-2.5 py-1.5 transition-colors hover:border-amber-400"
           onclick={() => applyPreset(preset.text)}
           disabled={loading}
           title={preset.text}
@@ -88,7 +88,7 @@
         rows="4"
         maxlength="500"
         placeholder={m.moderation_mute_placeholder()}
-        class="border-cn-border text-text-main placeholder:text-text-muted/60 focus:border-cn-yellow focus:ring-cn-yellow/20 min-h-[6rem] w-full resize-y rounded-xl border bg-white/50 px-3 py-2.5 text-sm outline-none focus:ring-2 dark:bg-black/20"
+        class="border-cn-border text-text-main placeholder:text-text-muted/60 focus:border-cn-yellow focus:ring-cn-yellow/20 bg-cn-surface min-h-[6rem] w-full resize-y rounded-xl border px-3 py-2.5 text-sm outline-none focus:ring-2"
         disabled={loading}></textarea>
     </label>
 

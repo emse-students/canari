@@ -23,7 +23,7 @@ comptent.
 | **Gerer les partenariats** | Creer et modifier les cartes de partenariat, leurs codes et leurs icones, voir qui a reclame un code |
 | **Gerer Stripe Connect** | Lancer ou reprendre la liaison du compte bancaire de l'association. **C'est le droit le plus sensible : il decide ou part l'argent** |
 | **Valider les evenements** | *BDE uniquement.* Valider, modifier ou supprimer les evenements de **toutes** les associations, et deposer un evenement deja valide |
-| **Gerer les associations** | *BDE uniquement.* Creer une association, et administrer **n'importe quelle** association sans en etre membre (voir section 3) |
+| **Gerer les associations** | *BDE uniquement.* Creer **et supprimer** une association, et administrer **n'importe quelle** association sans en etre membre (voir section 3) |
 | **Moderer** | *BDE uniquement.* Traiter les signalements, supprimer des contenus, rendre un utilisateur muet |
 
 Les trois derniers droits n'ont **aucun effet** en dehors d'une association marquee BDE : les cocher
@@ -58,8 +58,8 @@ Deux garde-fous :
 Deux categories d'utilisateurs peuvent agir sur votre association sans y avoir de droits coches :
 
 **L'administrateur de la plateforme** possede **tous** les droits sur **toutes** les associations,
-qu'il en soit membre ou non. C'est le seul a pouvoir supprimer une association, marquer une
-association comme BDE ou changer son quota de documents.
+qu'il en soit membre ou non. C'est le seul a pouvoir marquer une association comme BDE ou changer
+son quota de documents.
 
 **Un membre du BDE ayant le droit *Gerer les associations*** peut administrer n'importe quelle
 association : membres, documents, formulaires, boutique. Deux exceptions, volontaires :
@@ -67,6 +67,15 @@ association : membres, documents, formulaires, boutique. Deux exceptions, volont
 - il ne peut **pas** toucher a **Gerer Stripe Connect** : le compte bancaire reste entre vos mains
   et celles de l'administrateur de la plateforme ;
 - il ne peut **pas** publier au nom de votre association : parler en votre nom n'est pas administrer.
+
+Depuis le 10 septembre 2026, il peut aussi **supprimer** une association, comme il pouvait deja en
+creer une. Archiver et supprimer ne sont pas la meme chose et se trouvent dans le meme encadre
+"Danger" de la page de modification :
+
+- **Archiver** retire l'association des listes et se defait. Toute personne ayant *Gerer les
+  membres* peut le faire, y compris vos propres responsables.
+- **Supprimer** efface l'association, ses membres et son agenda, et **rien ne les ramene**. Reserve
+  a l'administrateur de la plateforme et au BDE *Gerer les associations*.
 
 ---
 

@@ -54,14 +54,14 @@
 </script>
 
 <div class="flex min-h-dvh items-start justify-center px-4 py-8 sm:px-6">
-  <div class="border-cn-border bg-cn-surface/80 w-full max-w-md rounded-2xl border p-6 shadow-sm">
-    <h1 class="text-text-main mb-6 text-2xl font-extrabold tracking-tight">
+  <div class="border-cn-border bg-cn-surface w-full max-w-md rounded-2xl border p-6 shadow-sm">
+    <h1 class="text-text-main mb-6 text-2xl font-bold tracking-tight">
       {m.event_buy_heading()}
     </h1>
 
     <div class="mb-6 space-y-3">
       <label
-        class="border-cn-border hover:bg-cn-surface/50 flex cursor-pointer items-center gap-3 rounded-xl border p-3 transition-colors select-none"
+        class="border-cn-border hover:bg-cn-surface flex cursor-pointer items-center gap-3 rounded-xl border p-3 transition-colors select-none"
       >
         <input
           type="checkbox"
@@ -72,7 +72,7 @@
       </label>
 
       <label
-        class="border-cn-border hover:bg-cn-surface/50 flex cursor-pointer items-center gap-3 rounded-xl border p-3 transition-colors select-none"
+        class="border-cn-border hover:bg-cn-surface flex cursor-pointer items-center gap-3 rounded-xl border p-3 transition-colors select-none"
       >
         <input type="checkbox" bind:checked={options.wantsMeal} class="h-4 w-4 accent-yellow-400" />
         <span class="text-text-main text-sm font-medium">{m.event_buy_option_meal()}</span>

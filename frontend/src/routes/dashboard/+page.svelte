@@ -1,7 +1,8 @@
 <script lang="ts">
+  import PageContainer from '$lib/components/layout/PageContainer.svelte';
+  import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
   import {
-    LayoutDashboard,
     MessageCircle,
     Newspaper,
     Users,
@@ -93,45 +94,39 @@
   }
 </script>
 
-<div class="mx-auto max-w-4xl p-6">
-  <div class="mb-8">
-    <h1 class="text-text-main flex items-center gap-3 text-2xl font-bold">
-      <LayoutDashboard size={28} class="text-cn-yellow" />
-      {m.nav_dashboard_label()}
-    </h1>
-    <p class="text-text-muted mt-1">{m.dashboard_subtitle()}</p>
-  </div>
-
-  {#snippet card(s: Section)}
-    <a
-      href={s.href}
-      class="group border-cn-border hover:border-cn-yellow flex items-start gap-4 rounded-2xl border bg-(--cn-surface) p-4 transition-colors hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))]"
+{#snippet card(s: Section)}
+  <a
+    href={s.href}
+    class="group border-cn-border hover:border-cn-yellow flex items-start gap-4 rounded-2xl border bg-(--cn-surface) p-4 transition-colors hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))]"
+  >
+    <span
+      class="border-cn-border group-hover:border-cn-yellow shrink-0 rounded-xl border bg-(--surface-elevated) p-2.5 transition-colors"
     >
-      <span
-        class="border-cn-border group-hover:border-cn-yellow shrink-0 rounded-xl border bg-(--surface-elevated) p-2.5 transition-colors"
-      >
-        {#if s.icon === 'users'}
-          <Users size={20} class="text-text-muted" />
-        {:else if s.icon === 'newspaper'}
-          <Newspaper size={20} class="text-text-muted" />
-        {:else if s.icon === 'message-circle'}
-          <MessageCircle size={20} class="text-text-muted" />
-        {:else if s.icon === 'calendar-days'}
-          <CalendarDays size={20} class="text-text-muted" />
-        {:else if s.icon === 'shopping-bag'}
-          <ShoppingBag size={20} class="text-text-muted" />
-        {:else if s.icon === 'file-text'}
-          <FileText size={20} class="text-text-muted" />
-        {:else if s.icon === 'shield'}
-          <Shield size={20} class="text-text-muted" />
-        {/if}
-      </span>
-      <span>
-        <span class="text-text-main block font-semibold">{s.label}</span>
-        <span class="text-text-muted mt-0.5 block text-sm">{s.description}</span>
-      </span>
-    </a>
-  {/snippet}
+      {#if s.icon === 'users'}
+        <Users size={20} class="text-text-muted" />
+      {:else if s.icon === 'newspaper'}
+        <Newspaper size={20} class="text-text-muted" />
+      {:else if s.icon === 'message-circle'}
+        <MessageCircle size={20} class="text-text-muted" />
+      {:else if s.icon === 'calendar-days'}
+        <CalendarDays size={20} class="text-text-muted" />
+      {:else if s.icon === 'shopping-bag'}
+        <ShoppingBag size={20} class="text-text-muted" />
+      {:else if s.icon === 'file-text'}
+        <FileText size={20} class="text-text-muted" />
+      {:else if s.icon === 'shield'}
+        <Shield size={20} class="text-text-muted" />
+      {/if}
+    </span>
+    <span>
+      <span class="text-text-main block font-semibold">{s.label}</span>
+      <span class="text-text-muted mt-0.5 block text-sm">{s.description}</span>
+    </span>
+  </a>
+{/snippet}
+
+<PageContainer>
+  <PageHeader title={m.nav_dashboard_label()} subtitle={m.dashboard_subtitle()} />
 
   <!-- Account quick actions. Shown on every viewport: desktop also has the sidebar gear, but the
        dashboard is a discoverable hub where users expect profile / settings / theme / logout too. -->
@@ -245,4 +240,4 @@
       </div>
     </section>
   {/if}
-</div>
+</PageContainer>

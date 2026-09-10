@@ -102,11 +102,11 @@
 
 {#if open}
   <div
-    class="pointer-events-auto fixed inset-0 z-[130] flex items-end justify-center sm:items-center"
+    class="pointer-events-auto fixed inset-0 z-(--z-sheet) flex items-end justify-center sm:items-center"
   >
     <button
       type="button"
-      class="absolute inset-0 bg-black/45 backdrop-blur-sm"
+      class="absolute inset-0 bg-black/45"
       aria-label={m.common_close_label()}
       onclick={onClose}
       transition:fade={{ duration: 150 }}
@@ -170,7 +170,7 @@
       </div>
 
       <!-- Attribution "Powered by KLIPY" required by the KLIPY API terms. -->
-      <div class="border-cn-border text-text-muted border-t px-3 py-1.5 text-center text-[0.65rem]">
+      <div class="border-cn-border text-text-muted text-2xs border-t px-3 py-1.5 text-center">
         Powered by KLIPY
       </div>
     </div>

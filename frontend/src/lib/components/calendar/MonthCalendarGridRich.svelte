@@ -136,8 +136,8 @@
     <div class="grid grid-cols-7 bg-(--cn-surface)">
       {#each weekdayLabels as w, wi (w)}
         <div
-          class="border-cn-border/60 border-b py-2.5 text-center text-[11px] font-bold tracking-widest uppercase
-                 {wi >= 5 ? 'text-text-muted/60' : 'text-text-muted'}"
+          class="border-cn-border/60 text-2xs border-b py-2.5 text-center font-bold tracking-widest uppercase
+ {wi >= 5 ? 'text-text-muted/60' : 'text-text-muted'}"
         >
           {w}
         </div>
@@ -149,8 +149,9 @@
       {#each calendarCells as cell, i (i)}
         {#if cell.day === null}
           <div
-            class="border-cn-border/40 min-h-18 border-r border-b sm:min-h-25
-                   {isWeekend(i) ? 'bg-cn-bg/40' : 'bg-(--cn-surface)/30'}"
+            class="border-cn-border/40 min-h-18 border-r border-b sm:min-h-25 {isWeekend(i)
+              ? 'bg-cn-bg'
+              : 'bg-cn-surface'}"
             role="gridcell"
             aria-hidden="true"
           ></div>
@@ -172,9 +173,11 @@
             onclick={() => {
               selectedDay = selectedDay === cell.day ? null : cell.day;
             }}
-            class="border-cn-border/40 relative min-h-18 overflow-hidden border-r border-b text-left transition-all sm:min-h-25
-              {isWeekend(i) ? 'bg-cn-bg/40' : 'bg-(--cn-surface)/60'}
-              {selected ? '' : 'hover:brightness-95'}"
+            class="border-cn-border/40 relative min-h-18 overflow-hidden border-r border-b text-left transition-all sm:min-h-25 {isWeekend(
+              i
+            )
+              ? 'bg-cn-bg'
+              : 'bg-cn-surface'} {selected ? '' : 'hover:brightness-95'}"
           >
             <!-- Break (vacation / no-course) background tint - behind everything so a period reads
                  across days; the title shows as a bottom band and on empty days below. -->
@@ -189,11 +192,11 @@
               <!-- Empty cell: day number, plus the break title when this is a vacation day. -->
               <span
                 class="absolute top-1.5 left-2 z-10 text-xs leading-none font-bold
-                  {today ? 'text-cn-yellow' : 'text-text-muted/50'}">{cell.day}</span
+ {today ? 'text-cn-yellow' : 'text-text-muted/50'}">{cell.day}</span
               >
               {#if dayBreaks.length > 0}
                 <span
-                  class="absolute inset-x-1 bottom-1 z-10 line-clamp-2 text-center text-[9px] leading-tight font-bold"
+                  class="text-2xs absolute inset-x-1 bottom-1 z-10 line-clamp-2 text-center leading-tight font-bold"
                   style="color:{eventColors(dayBreaks[0])[0]};"
                   title={dayBreaks[0].title}>{dayBreaks[0].title}</span
                 >
@@ -220,8 +223,8 @@
                     <!-- Day number on the first slot -->
                     {#if ei === 0}
                       <span
-                        class="absolute top-1 left-1.5 z-10 text-[10px] leading-none font-extrabold
-                          {today ? 'underline decoration-2' : ''}"
+                        class="text-2xs absolute top-1 left-1.5 z-10 leading-none font-bold
+ {today ? 'underline decoration-2' : ''}"
                         style="color:{fg};">{cell.day}</span
                       >
                     {/if}
@@ -242,7 +245,7 @@
                         />
                       {:else}
                         <span
-                          class="absolute flex items-center justify-center rounded-full text-[11px] font-black opacity-15"
+                          class="text-2xs absolute flex items-center justify-center rounded-full font-bold opacity-15"
                           style="height:62%;aspect-ratio:1;max-height:52px;background:rgba(255,255,255,0.2);color:{fg};left:50%;top:50%;transform:translate(-50%,-50%);"
                           >{getInitials(ev.associationName)}</span
                         >
@@ -280,7 +283,7 @@
                                    initials, so a missing logo never lets a sibling take the whole
                                    circle - which is what disguised the defect on the export. -->
                               <span
-                                class="flex h-full w-full items-center justify-center text-[9px] font-black"
+                                class="text-2xs flex h-full w-full items-center justify-center font-bold"
                                 style="background:rgba(255,255,255,0.3);color:{fg};"
                                 >{getInitials(lg.name)}</span
                               >
@@ -291,7 +294,7 @@
                     {/if}
                     <!-- Event title, centred and always on top of watermark -->
                     <span
-                      class="relative z-10 line-clamp-2 px-3 text-center text-[10px] leading-tight font-bold"
+                      class="text-2xs relative z-10 line-clamp-2 px-3 text-center leading-tight font-bold"
                       title="{ev.title} - {ev.associationName}"
                       style="color:{fg};">{ev.title}</span
                     >
@@ -300,7 +303,7 @@
 
                 {#if overflowCount > 0}
                   <div
-                    class="text-text-muted bg-cn-bg/80 flex flex-1 items-center justify-center text-[9px] font-bold"
+                    class="text-text-muted bg-cn-bg text-2xs flex flex-1 items-center justify-center font-bold"
                   >
                     +{overflowCount} autre{overflowCount > 1 ? 's' : ''}
                   </div>

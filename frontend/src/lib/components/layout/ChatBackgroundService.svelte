@@ -234,7 +234,7 @@
     const recovery = landingRecovery({
       isChannel: isChannelConversationId(id),
       alreadyRefreshed: refreshedWorkspacesForTarget === id,
-      conversationsRestored: globalConvs.conversationsRestored,
+      conversationSourcesSettled: globalConvs.conversationSourcesSettled,
     });
     if (recovery === 'wait') return;
     if (recovery === 'abandon') {
@@ -657,6 +657,8 @@
     const base = {
       conversations: globalConvs.conversations,
       loadAndRestoreConversations: () => globalConvs.loadAndRestoreConversations(convCtx()),
+      beginConversationSource: () => globalConvs.beginConversationSource(),
+      endConversationSource: () => globalConvs.endConversationSource(),
       addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
         globalMessaging.addMessageToChat(sid, content, contactName, msgCtx(), options),
       drainOrphanMessages: (convoKey: string) =>
@@ -1000,11 +1002,28 @@
    */
   async function flushFcmCache(deviceKeyB64: string, storage: IStorage) {
     if (globalMessaging.isMessageCatchupActive) return;
-    const injected = await consumeFcmCache(deviceKeyB64, storage).catch(
-      () => [] as StoredMessage[]
-    );
-    if (injected.length === 0 || !globalSession.userId) return;
-    mergeFcmMessagesIntoConversations(injected, globalConvs.conversations, globalSession.userId);
+    // A CONVERSATION SOURCE, exactly as at login: this pass is what turns a first message from a
+    // new correspondent into a conversation, so a deep-link landing that ran while it was in
+    // flight would read a map that is complete-looking and wrong. Resume is if anything the more
+    // common case of the two - the app is backgrounded far more often than it is killed.
+    globalConvs.beginConversationSource();
+    try {
+      const injected = await consumeFcmCache(deviceKeyB64, storage).catch(() => ({
+        messages: [] as StoredMessage[],
+        placeholders: new Map<string, { name: string; updatedAt: number }>(),
+      }));
+      if (injected.messages.length === 0 || !globalSession.userId) return;
+      // The placeholders are what let a FIRST message from a new correspondent appear without a
+      // restart - see `mergeFcmMessagesIntoConversations`.
+      mergeFcmMessagesIntoConversations(
+        injected.messages,
+        globalConvs.conversations,
+        globalSession.userId,
+        injected.placeholders
+      );
+    } finally {
+      globalConvs.endConversationSource();
+    }
   }
 
   /** Applies leader-tab message broadcasts to follower tab UI state. */
@@ -1577,7 +1596,7 @@
   {@const callerName = getUserDisplayNameSync(globalSession.callService?.incomingCallerId ?? '')}
   {@const isVideoCall = globalSession.callService?.incomingHasVideo ?? true}
   <div
-    class="bg-cn-scrim/95 fixed top-4 left-1/2 z-310 flex w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 animate-[slideDown_0.3s_ease-out] items-center gap-3 rounded-2xl px-4 py-3 shadow-2xl ring-1 ring-white/10 backdrop-blur-2xl"
+    class="bg-cn-scrim/95 fixed top-4 left-1/2 z-(--z-call-notice) flex w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 animate-[slideDown_0.3s_ease-out] items-center gap-3 rounded-2xl px-4 py-3 shadow-2xl ring-1 ring-white/10"
     transition:fly={{ y: -20, duration: 250 }}
   >
     <div class="relative h-10 w-10 shrink-0">
@@ -1617,7 +1636,7 @@
         >
           <Phone size={18} class="fill-current" />
         </button>
-        <span class="text-[9px] font-bold tracking-wider text-emerald-400 uppercase"
+        <span class="text-2xs font-bold tracking-wider text-emerald-400 uppercase"
           >{m.call_accept_label()}</span
         >
       </div>
@@ -1629,7 +1648,7 @@
         >
           <PhoneOff size={18} />
         </button>
-        <span class="text-[9px] font-bold tracking-wider text-red-400 uppercase"
+        <span class="text-2xs font-bold tracking-wider text-red-400 uppercase"
           >{m.call_decline_label()}</span
         >
       </div>

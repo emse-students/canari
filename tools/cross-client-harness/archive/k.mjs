@@ -89,7 +89,7 @@ function pendingSecretBytes() {
   return /^\d+$/.test(out) ? Number(out) : null;
 }
 
-const out = { check: 'NOTIF-6c' };
+const out = {};
 
 // ── 1. A fresh process, so the Keystore cannot already hold this session's secret ────────────────
 stage('HOME, then am kill - never force-stop, which cancels every FCM broadcast to the package');
@@ -102,9 +102,23 @@ await phone.ensure({ port: PORTS.A1 });
 out.unlock = phone.unlockPin();
 stage(`unlock -> ${out.unlock}`);
 const a1 = await withDeadline(client(PORTS.A1, 'tauri.localhost'), 60_000, 'A1 attach');
-await withDeadline(ensureChat(a1), 60_000, 'A1 ensureChat').catch(() => null);
+// A SWALLOWED SETUP FAILURE MAKES THE RUN MEAN SOMETHING ELSE WITHOUT SAYING SO. `openConversation`
+// refuses precisely and says why - on 2026-09-08 it was *"2 of 5 conversation tiles match the
+// requested name on port 9333, so the row is AMBIGUOUS and none was opened"*, a deleted group still
+// listed under the peer's name - and `.catch(() => null)` threw that sentence away. Three NOTIF-1b
+// verdicts were spent before anyone read it. This row asks what the app does with a reply typed into
+// a notification, and every clause after this one assumes the DM is open, so the failure is recorded,
+// announced, and asserted below rather than discarded.
+out.a1SetupFaults = [];
+await withDeadline(ensureChat(a1), 60_000, 'A1 ensureChat').catch((e) => {
+  out.a1SetupFaults.push(`ensureChat: ${e?.message || e}`);
+  stage(`A1 ensureChat FAILED - ${e?.message || e}`);
+});
 await withDeadline(openConversation(a1, peerNameFor('A1')), 90_000, 'A1 openConversation').catch(
-  () => null
+  (e) => {
+    out.a1SetupFaults.push(`openConversation: ${e?.message || e}`);
+    stage(`A1 openConversation FAILED - ${e?.message || e}`);
+  }
 );
 
 // ── 3. THE PRECONDITION, ASSERTED ────────────────────────────────────────────────────────────────
@@ -192,6 +206,9 @@ if (!out.atSend.pid) unmet.push('theAppWasStillAlive');
 if (out.atSend.foregrounded) unmet.push('theAppWasHidden');
 // NOT a product clause: with no armed file the run exercises the Keystore path, which never broke.
 if (out.pendingSecretBytes !== 32) unmet.push('thePreconditionWasArmed');
+// Its sibling: every clause below assumes the phone is sitting in the DM, and until 2026-09-08 a
+// refusal to open it was discarded. Recorded above, asserted here.
+if (out.a1SetupFaults.length > 0) unmet.push('theDmWasOpenOnThePhone');
 if (out.notifiedInMs === null) unmet.push('aNotificationArrived');
 for (const [name, re] of WANTED) if (!re.test(log)) unmet.push(name);
 out.unmet = unmet;
@@ -203,8 +220,31 @@ if (!out.theShadeWasAnswered) {
   out.why = 'the notification was never answered - no CanariNotifAction broadcast in the window';
   stage(`NOTIF-6c -> SKIPPED (${out.why})`);
 } else {
-  out.verdict = unmet.length === 0 ? 'PASS' : 'FAIL';
-  stage(`NOTIF-6c -> ${out.verdict} (403 seen: ${out.refused403}, unmet ${JSON.stringify(unmet)})`);
+  // THE SAME REASONING AS `theShadeWasAnswered` ABOVE, APPLIED TO THE OTHER THREE PRECONDITIONS.
+  // Two of them relocate the run onto a different subject - a dead process is the KILLED path and a
+  // visible app is the FOREGROUND path, neither of which this row asks about - and the third is
+  // already labelled 'NOT a product clause' where it is pushed. Grading them FAIL reports a product
+  // defect on a run that never reached the product, which is the instrument accusing the app of a
+  // silence that was the room's. Same defect found in `notif.mjs` on 2026-09-08, same fix.
+  const PRECONDITIONS = new Set([
+    'theAppWasStillAlive',
+    'theAppWasHidden',
+    'thePreconditionWasArmed',
+    'theDmWasOpenOnThePhone',
+  ]);
+  const failedPreconditions = unmet.filter((u) => PRECONDITIONS.has(u));
+  if (failedPreconditions.length > 0) {
+    out.notMeasured =
+      `${failedPreconditions.join(', ')} - the run never exercised the path this row asks about, ` +
+      'so no clause after it was validly asked and none of them is graded';
+    out.verdict = 'SETUP-FAILED';
+  } else {
+    out.verdict = unmet.length === 0 ? 'PASS' : 'FAIL';
+  }
+  stage(
+    `NOTIF-6c -> ${out.verdict} (403 seen: ${out.refused403}, unmet ${JSON.stringify(unmet)})` +
+      (out.notMeasured ? ` - NOT MEASURED: ${out.notMeasured}` : '')
+  );
 }
 
 const phoneReport = logcatReport(await logcatSince(phoneWindowFrom), 'A1');

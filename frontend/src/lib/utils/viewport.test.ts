@@ -10,6 +10,8 @@ import {
   isOverlayLayout,
   isSwipeNavViewport,
   onViewportChange,
+  SCHEDULE_AGENDA_QUERY,
+  isScheduleAgendaViewport,
 } from './viewport';
 
 /**
@@ -31,6 +33,7 @@ describe('the viewport queries', () => {
     expect(NARROW_CHAT_QUERY).toContain('(max-width: 767.98px)');
     expect(OVERLAY_LAYOUT_QUERY).toBe('(max-width: 1279.98px)');
     expect(SWIPE_NAV_QUERY).toContain('(max-width: 1279.98px)');
+    expect(SCHEDULE_AGENDA_QUERY).toBe('(max-width: 767.98px)');
   });
 
   it('keep the pointer question exactly where it belongs', () => {
@@ -39,6 +42,9 @@ describe('the viewport queries', () => {
     expect(NARROW_CHAT_QUERY).toContain('(pointer: coarse)');
     expect(SWIPE_NAV_QUERY).toContain('(pointer: coarse)');
     expect(OVERLAY_LAYOUT_QUERY).not.toContain('pointer');
+    // The agenda asks about ROOM for seven columns, so a touch laptop keeps its month grid. Adding
+    // the pointer here would take the grid away from a device that has the width for it.
+    expect(SCHEDULE_AGENDA_QUERY).not.toContain('pointer');
   });
 
   it('answer false rather than throwing where matchMedia cannot be asked', () => {
@@ -49,6 +55,7 @@ describe('the viewport queries', () => {
       expect(isNarrowChatLayout()).toBe(false);
       expect(isOverlayLayout()).toBe(false);
       expect(isSwipeNavViewport()).toBe(false);
+      expect(isScheduleAgendaViewport()).toBe(false);
       expect(onViewportChange(NARROW_CHAT_QUERY, () => {})).toBeTypeOf('function');
       // And the teardown it hands back must be safe to call.
       expect(() => onViewportChange(NARROW_CHAT_QUERY, () => {})()).not.toThrow();

@@ -136,7 +136,7 @@
   </div>
 
   <form
-    class="border-cn-border bg-cn-bg/40 space-y-4 rounded-xl border p-4"
+    class="border-cn-border bg-cn-bg space-y-4 rounded-xl border p-4"
     onsubmit={(e) => {
       e.preventDefault();
       void handleGrantProduct();
@@ -226,9 +226,7 @@
   {:else}
     <div class="border-cn-border/70 overflow-x-auto rounded-xl border">
       <table class="w-full text-sm">
-        <thead
-          class="bg-cn-bg/60 text-text-muted text-left text-xs font-bold tracking-wide uppercase"
-        >
+        <thead class="bg-cn-bg text-text-muted text-left text-xs font-bold tracking-wide uppercase">
           <tr>
             <th class="px-4 py-3">{m.asso_achats_col_date()}</th>
             <th class="px-4 py-3">{m.asso_achats_col_buyer()}</th>
@@ -240,7 +238,7 @@
         </thead>
         <tbody class="divide-cn-border/50 divide-y">
           {#each filteredPurchases as purchase (purchase.id)}
-            <tr class="bg-cn-bg/20 hover:bg-cn-bg/40">
+            <tr class="bg-cn-bg/20 hover:bg-cn-bg">
               <td class="text-text-muted px-4 py-3 whitespace-nowrap">
                 {new Date(purchase.paidAt).toLocaleString(getLocale() === 'en' ? 'en-US' : 'fr-FR')}
               </td>

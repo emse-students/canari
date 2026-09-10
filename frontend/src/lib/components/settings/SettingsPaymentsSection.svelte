@@ -98,7 +98,7 @@
       <div class="bg-cn-yellow/10 text-cn-dark rounded-xl p-2.5">
         <CreditCard size={22} strokeWidth={2.5} />
       </div>
-      <h2 class="text-text-main text-lg font-extrabold">{m.profile_payment_heading()}</h2>
+      <h2 class="text-text-main text-lg font-bold">{m.profile_payment_heading()}</h2>
     </div>
 
     <button
@@ -145,7 +145,7 @@
         {#each paymentMethods as pm (pm.id)}
           <div
             transition:slide={{ duration: 200 }}
-            class="group flex items-center justify-between rounded-[1.25rem] border border-black/5 bg-gradient-to-r from-black/5 to-transparent px-5 py-4 shadow-sm transition-colors hover:border-black/10 dark:border-white/5 dark:from-white/5 dark:to-transparent dark:hover:border-white/10"
+            class="group flex items-center justify-between rounded-2xl border border-black/5 bg-gradient-to-r from-black/5 to-transparent px-5 py-4 shadow-sm transition-colors hover:border-black/10 dark:border-white/5 dark:from-white/5 dark:to-transparent dark:hover:border-white/10"
           >
             <div class="flex items-center gap-4">
               <div
@@ -155,12 +155,10 @@
               </div>
 
               <div class="flex flex-col">
-                <span class="text-text-main font-mono text-[0.95rem] font-bold tracking-wider">
+                <span class="text-text-main font-mono text-sm font-bold tracking-wider">
                   •••• •••• •••• {pm.last4}
                 </span>
-                <span
-                  class="text-text-muted mt-0.5 text-[0.65rem] font-extrabold tracking-wider uppercase"
-                >
+                <span class="text-text-muted text-2xs mt-0.5 font-bold tracking-wider uppercase">
                   {brandLabel(pm.brand)} • Exp: {String(pm.expMonth).padStart(2, '0')}/{pm.expYear}
                 </span>
               </div>
@@ -179,7 +177,7 @@
       </div>
     {:else}
       <div
-        class="mb-6 rounded-[1.25rem] border border-dashed border-black/10 bg-black/5 px-4 py-6 text-center dark:border-white/10 dark:bg-white/5"
+        class="mb-6 rounded-2xl border border-dashed border-black/10 bg-black/5 px-4 py-6 text-center dark:border-white/10 dark:bg-white/5"
       >
         <p class="text-text-muted text-sm font-semibold">{m.profile_payment_none_title()}</p>
       </div>

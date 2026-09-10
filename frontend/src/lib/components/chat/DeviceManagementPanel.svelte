@@ -429,7 +429,7 @@
           {m.chat_devices_intro()}
         </p>
 
-        <p class="text-text-muted text-[0.85rem] font-bold tracking-wider uppercase">
+        <p class="text-text-muted text-xs font-bold tracking-wider uppercase">
           {m.chat_devices_count_label({ devices: devices.length })}
         </p>
 
@@ -439,21 +439,19 @@
             {@const browser = sessionBrowserLabel(row)}
 
             <div
-              class="rounded-3xl border p-4 transition-all duration-300 hover:shadow-md sm:p-5
-                {row.isCurrentDevice
+              class="rounded-3xl border p-4 transition-all duration-300 hover:shadow-md sm:p-5 {row.isCurrentDevice
                 ? 'border-amber-500/30 bg-amber-500/5 shadow-inner'
                 : row.device === null
                   ? 'border-orange-500/30 bg-orange-500/5'
-                  : 'border-black/5 bg-white/40 backdrop-blur-md dark:border-white/10 dark:bg-black/20'}"
+                  : 'bg-cn-surface border-black/5 dark:border-white/10 '}"
             >
               <div class="flex items-start gap-4 sm:items-center">
                 <div
-                  class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl shadow-sm
-                  {row.isCurrentDevice
+                  class="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl shadow-sm {row.isCurrentDevice
                     ? 'bg-amber-500/20 text-amber-600 dark:text-amber-400'
                     : row.device === null
                       ? 'bg-orange-500/15 text-orange-600 dark:text-orange-400'
-                      : 'text-text-muted bg-white/80 dark:bg-white/10'}"
+                      : 'text-text-muted bg-cn-surface '}"
                 >
                   {#if row.device === null}
                     <ShieldAlert size={24} strokeWidth={2} />
@@ -472,11 +470,11 @@
                         bind:value={editingName}
                         placeholder={m.chat_device_name_placeholder()}
                         maxlength="80"
-                        class="text-text-main placeholder:text-text-muted flex-1 rounded-lg border border-black/10 bg-white/50 px-3 py-1.5 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none dark:border-white/10 dark:bg-white/10"
+                        class="text-text-main placeholder:text-text-muted bg-cn-surface flex-1 rounded-lg border border-black/10 px-3 py-1.5 text-sm focus:ring-2 focus:ring-amber-500 focus:outline-none dark:border-white/10"
                       />
                       <button
                         onclick={() => void saveName()}
-                        class="rounded-lg bg-amber-500 px-2.5 py-1.5 text-xs font-bold text-white transition-all hover:bg-amber-600 active:scale-95"
+                        class="text-cn-ink rounded-lg bg-amber-500 px-2.5 py-1.5 text-xs font-bold transition-all hover:bg-amber-600 active:scale-95"
                       >
                         {m.common_ok_button()}
                       </button>
@@ -489,19 +487,19 @@
                     </div>
                   {:else}
                     <div class="mb-1 flex flex-wrap items-center gap-2">
-                      <span class="text-text-main truncate text-[0.95rem] font-bold">
+                      <span class="text-text-main truncate text-sm font-bold">
                         {rowLabel(row)}
                       </span>
                       {#if row.device}
                         <span
-                          class="text-text-muted rounded-full bg-black/5 px-2 py-0.5 text-[0.65rem] font-semibold tracking-wider uppercase dark:bg-white/10"
+                          class="text-text-muted text-2xs rounded-full bg-black/5 px-2 py-0.5 font-semibold tracking-wider uppercase dark:bg-white/10"
                         >
                           {getDeviceOsLabel(row.device)}
                         </span>
                       {/if}
                       {#if row.isCurrentDevice}
                         <span
-                          class="text-cn-ink rounded-full bg-amber-500 px-2 py-0.5 text-[0.65rem] font-extrabold tracking-wider uppercase shadow-sm"
+                          class="text-cn-ink text-2xs rounded-full bg-amber-500 px-2 py-0.5 font-bold tracking-wider uppercase shadow-sm"
                         >
                           {m.chat_current_device_badge()}
                         </span>
@@ -533,54 +531,64 @@
                       {/if}
                     {/if}
 
-                    <div class="mt-1 flex items-center gap-2">
-                      <div
-                        class="text-text-muted flex-1 truncate font-mono text-[0.7rem] opacity-80"
-                        title={row.device?.deviceId ?? row.unlistedDeviceId ?? ''}
-                      >
-                        {#if row.device}
-                          {shortDeviceId(row.device.deviceId)}
-                          {#if rowIsMobile(row) && row.device.deviceAppVersion}
-                            <span class="ml-2 font-semibold"
-                              >{m.chat_device_version_label({
-                                device: row.device.deviceAppVersion,
-                              })}</span
-                            >
-                          {/if}
-                        {:else if row.unlistedDeviceId}
-                          {shortDeviceId(row.unlistedDeviceId)}
-                        {/if}
-                      </div>
+                    <div
+                      class="text-text-muted text-2xs mt-1 truncate font-mono opacity-80"
+                      title={row.device?.deviceId ?? row.unlistedDeviceId ?? ''}
+                    >
                       {#if row.device}
-                        <button
-                          onclick={() => row.device && startEditing(row.device.deviceId)}
-                          class="text-text-muted rounded-lg p-1.5 transition-all outline-none hover:bg-black/5 hover:text-amber-600 focus-visible:ring-2 focus-visible:ring-amber-500 dark:hover:bg-white/5 dark:hover:text-amber-400"
-                          title={m.chat_rename_device_title()}
-                          aria-label={m.chat_rename_device_label()}
-                        >
-                          <Pen size={14} strokeWidth={2} />
-                        </button>
+                        {shortDeviceId(row.device.deviceId)}
+                        {#if rowIsMobile(row) && row.device.deviceAppVersion}
+                          <span class="ml-2 font-semibold"
+                            >{m.chat_device_version_label({
+                              device: row.device.deviceAppVersion,
+                            })}</span
+                          >
+                        {/if}
+                      {:else if row.unlistedDeviceId}
+                        {shortDeviceId(row.unlistedDeviceId)}
                       {/if}
                     </div>
                   {/if}
                 </div>
 
-                <!-- One destructive control per row, and never on the machine we are running on. -->
-                {#if !row.isCurrentDevice}
-                  <button
-                    onclick={() => void handleRemoveRow(row)}
-                    disabled={deleting !== null}
-                    class="text-text-muted shrink-0 rounded-xl bg-black/5 p-2.5 transition-all outline-none hover:bg-red-500/15 hover:text-red-600 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95 disabled:opacity-40 dark:bg-white/5 dark:hover:bg-red-500/20 dark:hover:text-red-400"
-                    title={m.chat_delete_device_title()}
-                    aria-label={m.chat_delete_device_label()}
-                  >
-                    {#if deleting === row.key}
-                      <Loader size={18} class="animate-spin" />
-                    {:else}
-                      <Trash2 size={18} strokeWidth={2.5} />
-                    {/if}
-                  </button>
-                {/if}
+                <!--
+                  BOTH ROW ACTIONS IN ONE CLUSTER, because matching their appearance while leaving
+                  them in different places would only move the question. The pencil used to sit
+                  inside the text block, on the line with the device id, while the trash was a
+                  sibling of the whole row - so even once they looked alike, one was an action and
+                  the other looked like an annotation of the id beside it.
+                  Only ONE of them is destructive, which is the whole of what may differ: the shape
+                  is `ui-icon-button` for both, the hover colour is not.
+                -->
+                <div class="flex shrink-0 items-center gap-1.5">
+                  {#if row.device}
+                    <button
+                      onclick={() => row.device && startEditing(row.device.deviceId)}
+                      class="ui-icon-button hover:bg-amber-500/15 hover:text-amber-600 focus-visible:ring-2 focus-visible:ring-amber-500 dark:hover:bg-amber-500/20 dark:hover:text-amber-400"
+                      title={m.chat_rename_device_title()}
+                      aria-label={m.chat_rename_device_label()}
+                    >
+                      <Pen size={18} strokeWidth={2} />
+                    </button>
+                  {/if}
+
+                  <!-- One destructive control per row, and never on the machine we are running on. -->
+                  {#if !row.isCurrentDevice}
+                    <button
+                      onclick={() => void handleRemoveRow(row)}
+                      disabled={deleting !== null}
+                      class="ui-icon-button hover:bg-red-500/15 hover:text-red-600 focus-visible:ring-2 focus-visible:ring-red-500 dark:hover:bg-red-500/20 dark:hover:text-red-400"
+                      title={m.chat_delete_device_title()}
+                      aria-label={m.chat_delete_device_label()}
+                    >
+                      {#if deleting === row.key}
+                        <Loader size={18} class="animate-spin" />
+                      {:else}
+                        <Trash2 size={18} strokeWidth={2} />
+                      {/if}
+                    </button>
+                  {/if}
+                </div>
               </div>
 
               <!-- A login with no device: say why it is here rather than let it look like a bug. -->

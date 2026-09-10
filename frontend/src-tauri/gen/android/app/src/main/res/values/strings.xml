@@ -73,4 +73,21 @@
     <string name="notif_form_opening_soon_body">Un formulaire que vous suivez ouvre dans 5 minutes !</string>
     <string name="notif_form_open_title">Formulaire ouvert !</string>
     <string name="notif_form_open_body">Le formulaire est disponible - dépêchez-vous, les places sont limitées !</string>
+    <!-- The agenda's five pairs, added 2026-09-09 with the notifications themselves. `proposed`
+         is the only one naming an actor, because it is the only one where WHO acted is the useful
+         half: the other four are always "the BDE".
+         THESE SHIPPED WITHOUT THEIR ACCENTS and were read off the glass on 2026-09-09 - every
+         neighbour above has them, and here the loss changed the WORD: `valide` is an adjective and
+         `validé` a participle, likewise refuse/refusé and modifie/modifié. A French string in this
+         file carries its accents; only code, comments and the repo's punctuation stay ASCII. -->
+    <string name="notif_event_proposed_title">Événement à valider</string>
+    <string name="notif_event_proposed_body">%1$s propose « %2$s »</string>
+    <string name="notif_event_validated_title">Événement validé</string>
+    <string name="notif_event_validated_body">« %1$s » a été validé par le BDE</string>
+    <string name="notif_event_rejected_title">Événement refusé</string>
+    <string name="notif_event_rejected_body">« %1$s » a été refusé par le BDE</string>
+    <string name="notif_event_updated_title">Événement modifié</string>
+    <string name="notif_event_updated_body">« %1$s » a été modifié par le BDE</string>
+    <string name="notif_event_deleted_title">Événement supprimé</string>
+    <string name="notif_event_deleted_body">« %1$s » a été supprimé par le BDE</string>
 </resources>

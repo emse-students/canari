@@ -5,6 +5,7 @@ import {
   buildApnsRequest,
   buildInternalApnsRequest,
   inlineProtoBudget,
+  uninlinedProtoIsWorthReporting,
   measureDataFields,
   measureApnsPayload,
   apnsFallbackBody,
@@ -24,6 +25,36 @@ const baseInput: PushMessageInput = {
   isWelcome: false,
   createdAt: '2026-06-17T10:00:00.000Z',
 };
+
+describe('a ciphertext that did not fit is only worth a line for the population it can accuse', () => {
+  /**
+   * The log line exists to catch the FIXED fields growing - `senderName` and `groupName` are
+   * unbounded user text. That accusation is available for a message and unavailable for a welcome,
+   * whose size is the group's ratchet tree. Measured on the local estate over 90 minutes on
+   * 2026-09-08: 6 of 6 welcomes over budget, 0 of 9 messages. A predicate that is true of an entire
+   * population tells its reader nothing about any member of it.
+   */
+  it('reports a message whose ciphertext did not fit', () => {
+    expect(uninlinedProtoIsWorthReporting({ ...baseInput, isWelcome: false })).toBe(true);
+  });
+
+  it('says nothing about a welcome, whose size is the ratchet tree and never fits', () => {
+    expect(uninlinedProtoIsWorthReporting({ ...baseInput, isWelcome: true })).toBe(false);
+  });
+
+  /**
+   * THE SILENCE IS BOUNDED, AND THIS IS WHAT BOUNDS IT. Not inlining is not a failure - the client
+   * fetches the ciphertext instead - and the failure that would matter, a payload FCM refuses, has
+   * its own alarm at the point it happens. So the welcome case is the only thing that goes quiet,
+   * and it goes quiet for every welcome rather than for some of them, which is the property that
+   * makes it a structural fact rather than a swallowed branch.
+   */
+  it('is decided by the packet kind alone, not by how far over budget it went', () => {
+    const huge = { ...baseInput, isWelcome: true, proto: 'A'.repeat(100_000) };
+    const small = { ...baseInput, isWelcome: true, proto: 'A' };
+    expect(uninlinedProtoIsWorthReporting(huge)).toBe(uninlinedProtoIsWorthReporting(small));
+  });
+});
 
 describe('buildPushDataFields', () => {
   it('serialises every value as a string (FCM requirement)', () => {

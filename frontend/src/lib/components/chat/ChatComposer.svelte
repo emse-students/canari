@@ -2,6 +2,7 @@
   import {
     Send,
     Paperclip,
+    ChevronRight,
     X,
     FileText,
     CloudUpload,
@@ -22,6 +23,7 @@
   import { isTauriRuntime } from '$lib/utils/openExternal';
   import { downloadDecryptedFile } from '$lib/utils/fileDownload';
   import { m } from '$lib/paraglide/messages';
+  import VoiceMessagePlayer from '$lib/components/messages/VoiceMessagePlayer.svelte';
   import { isNarrowChatLayout, NARROW_CHAT_QUERY, onViewportChange } from '$lib/utils/viewport';
 
   interface ReplyTo {
@@ -53,6 +55,15 @@
     onCancelReply?: () => void;
     /** Callback fired when the user selects or drops files to attach. */
     onFilesSelected?: (files: File[]) => void;
+    /**
+     * Sends a finished recording immediately, as its own message.
+     *
+     * The recording does NOT go through `onFilesSelected`, and the difference is the gesture:
+     * picking a file is a choice that still wants a send, while holding the microphone, watching
+     * the clock and lifting the finger away from the bin IS the send. Staging it asked for the
+     * same consent twice, behind a "files pending" banner.
+     */
+    onSendVoiceNote?: (file: File) => void;
     /** Files staged for sending but not yet uploaded. */
     pendingFiles?: PendingMediaFile[];
     /** Callback to remove a staged file by its index. */
@@ -75,11 +86,33 @@
     replyingTo,
     onCancelReply,
     onFilesSelected,
+    onSendVoiceNote,
     pendingFiles = [],
     onRemovePendingFile,
     isUploading = false,
     allowedUserIds,
   }: Props = $props();
+
+  /**
+   * Height of exactly one empty composer line, DERIVED FROM THE SAME TOKENS AS THE PADDING rather
+   * than typed as a number: the line box, plus `.chat-composer-textarea`'s 0.5rem of padding top and
+   * bottom.
+   *
+   * IT IS A VARIABLE AND NOT A `calc`, BECAUSE THE ANSWER DIFFERS BY VIEWPORT AND AN INLINE STYLE
+   * CANNOT. Measured 2026-09-09 at 390x844: the icon buttons are 44px on a phone (a touch target)
+   * and 36px from 768px up, while the field was 36px everywhere - so with the row's `flex-end` the
+   * text sat exactly 4px below the icons' centre line ON A PHONE ONLY, which is the vertical
+   * centring the user has now reported twice. `--composer-field-height` is declared beside the
+   * padding that produces it, so the floor and the padding cannot disagree.
+   *
+   * The height comes from the PADDING, never from a floor above the natural height: the placeholder
+   * is `absolute inset-0` and positions its text with the same padding, so a floor taller than the
+   * content leaves the placeholder off the line the real text sits on. That was the previous defect
+   * here and it is the reason this is not simply `min-height: 2.75rem`.
+   */
+  const COMPOSER_MIN_HEIGHT = 'var(--composer-field-height)';
+  /** Ceiling before the field scrolls instead of growing. Mirrors `.chat-composer-textarea`'s `max-height: 10rem`. */
+  const COMPOSER_MAX_HEIGHT_PX = 160;
 
   let mentionComposer = $state<MentionComposerInput | null>(null);
   let composerFooter = $state<HTMLElement | null>(null);
@@ -120,12 +153,67 @@
   /** True as soon as the user has typed something: used to free up composer width. */
   const isComposing = $derived(messageText.trim().length > 0);
 
+  /**
+   * The user asked for the controls back WHILE a message is being written.
+   *
+   * Kept separate from `isComposing` rather than folded into it, because the two answer different
+   * questions - "is there text" and "did someone ask to see the buttons".
+   *
+   * **THE REQUEST LASTS UNTIL THE NEXT KEYSTROKE, NOT UNTIL THE MESSAGE IS SENT** (user,
+   * 2026-09-09: *"Taper sur le clavier doit TOUJOURS replier joindre, GIF, micro, pas juste au
+   * premier caractere"*). The first draft held it for the whole message, on the reasoning that
+   * forgetting it per keystroke would lose an explicit request. On a phone that reasoning is
+   * backwards: the group is 4 x 52px of a ~358px row, so once it is open the field is back to a
+   * third of the bar and stays there for every character after it - which is the crowding the fold
+   * exists to remove, restored permanently by one tap. Reaching a button is two taps either way
+   * (chevron, then button) and neither involves typing, so clearing the flag on text costs the
+   * user nothing and keeps the room.
+   */
+  let controlsForcedOpen = $state(false);
+
+  /**
+   * THE EDGE CONTROLS FOLD AWAY ONCE TYPING STARTS (user, 2026-09-08, citing the reference:
+   * *"les icones sur les bords disparaissent quand tu commences a taper pour laisser toute la
+   * place"*).
+   *
+   * Three of the four already did this and the paperclip did not, which is the shape that reads as
+   * an oversight rather than a rule. In a community channel the group is paperclip + poll + GIF +
+   * voice - 4 x 52px of a ~358px row on a phone - so folding it is most of the width back.
+   *
+   * It is a FOLD and not a removal: a chevron takes the group's place, and pressing it brings every
+   * button back for as long as this message lasts. Hiding a control with no way to reach it would
+   * mean clearing a half-written message to attach a file.
+   */
+  const controlsCollapsed = $derived(isComposing && !controlsForcedOpen);
+
+  /**
+   * The other way the request ends: the message goes away without a text CHANGE event.
+   *
+   * Still load-bearing beside the reset in `handleMessageChange`. The chevron only exists while
+   * there is text, so a forced-open flag can outlive its message exactly once - press chevron,
+   * attach a file (no keystroke), send - and the parent clears `messageText` as a prop rather than
+   * through the editor's `onchange`.
+   */
+  $effect(() => {
+    if (!isComposing && controlsForcedOpen) controlsForcedOpen = false;
+  });
+
+  /**
+   * A RECORDING TAKES THE WHOLE ROW, so the row has to know one is happening.
+   *
+   * The user asked for the reference's shape (2026-09-09): *"ca couvre toute la barre de saisie en
+   * faisant disparaitre le reste"*. This is that, done by not rendering the other children rather
+   * than by covering them - an overlay would have been a stacking context to get wrong, and the
+   * user has an open complaint about panels ending up under banners.
+   */
+  let isVoiceActive = $state(false);
+
   const isVoiceRecordingSupported = $derived(
     // Show on mobile/coarse-pointer devices AND on Tauri desktop where MediaRecorder is available.
     // Hidden on regular desktop Web browsers to keep the composer uncluttered.
     // Also hidden once the user starts typing so the text area gets the extra width
     // (fewer line wraps → the field grows vertically far less aggressively).
-    hasMediaRecorder && (isMobileViewport || isTauriRuntime()) && !isComposing
+    hasMediaRecorder && (isMobileViewport || isTauriRuntime()) && !controlsCollapsed
   );
 
   const isSendDisabled = $derived(
@@ -163,6 +251,10 @@
 
   function handleMessageChange(value: string) {
     onMessageChange(value);
+    // Typing re-folds the edge controls, every time - see `controlsForcedOpen`. This is the single
+    // funnel for a text change (`MentionComposerInput` fires it only when the text really moved,
+    // and never mid-IME-composition), so it is the one place the rule has to hold.
+    controlsForcedOpen = false;
     if (value.trim().length > 0) pingTyping();
     else stopTyping();
   }
@@ -290,8 +382,19 @@
     return file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
   }
 
+  /**
+   * Whether an attachment is something to LISTEN to rather than a file to name.
+   *
+   * The MIME type and not the name: the recorder writes `vocal_<timestamp>`, and a predicate
+   * matching that string would be a distinction carried in prose - it would miss an audio file the
+   * reader picked from disk, which deserves the same player for the same reason.
+   */
+  function isAudioFile(file: File): boolean {
+    return file.type.startsWith('audio/');
+  }
+
   function handleVoiceRecording(audioBlob: Blob) {
-    if (!onFilesSelected) return;
+    if (!onSendVoiceNote) return;
 
     const mimeType = audioBlob.type || 'audio/webm';
     const extension = mimeType.includes('mp4')
@@ -306,7 +409,7 @@
       type: mimeType,
     });
 
-    onFilesSelected([audioFile]);
+    onSendVoiceNote(audioFile);
   }
 
   $effect(() => {
@@ -315,8 +418,22 @@
     tick().then(() => {
       const el = composer?.getEditorElement();
       if (!el) return;
-      el.style.height = '44px';
-      el.style.height = `${Math.min(Math.max(el.scrollHeight, 44), 160)}px`;
+      /*
+       * THE COLLAPSED HEIGHT BELONGS TO THE CSS, NOT TO THIS EFFECT. Clearing the inline height
+       * first lets `min-height` decide what one empty line is, and the grown height is only written
+       * when the content genuinely needs more than that.
+       *
+       * It used to write a literal `44px` as both the reset and the floor. That number was the
+       * field's height under its ORIGINAL padding, and an inline style beats every stylesheet - so
+       * when the padding moved to the measured 8px the box stayed pinned at 44 while `min-height`
+       * computed a correct 36, and the placeholder (absolutely positioned, padded from the top) sat
+       * 4px above the centre line. A hardcoded pixel height in script cannot be kept in agreement
+       * with a token in CSS; not writing one is the only form that can.
+       */
+      el.style.height = '';
+      const oneLine = el.getBoundingClientRect().height;
+      const needed = Math.min(el.scrollHeight, COMPOSER_MAX_HEIGHT_PX);
+      if (needed > oneLine) el.style.height = `${needed}px`;
     });
   });
 
@@ -363,7 +480,7 @@
       files.forEach((entry, index) => {
         const file = entry.file;
         const key = fileKey(file, index);
-        if (!isImageFile(file) && !isPdfFile(file)) return;
+        if (!isImageFile(file) && !isPdfFile(file) && !isAudioFile(file)) return;
         next[key] = previous[key] ?? URL.createObjectURL(file);
       });
 
@@ -377,21 +494,21 @@
 </script>
 
 <!--
-  The icon-and-name tile shown for an attachment with no usable preview - a non-image, non-PDF file,
-  or a PDF whose first page has not rendered (yet, or at all). Declared once and rendered from both
-  branches: it is the PdfThumbnail fallback as well as the plain default, and the two drifting apart
-  is exactly how one of them ends up looking like a different product.
+  The tile shown for an attachment with no usable preview - a non-image, non-PDF file, or a PDF whose
+  first page has not rendered (yet, or at all). Declared once and rendered from both branches: it is
+  the PdfThumbnail fallback as well as the plain default, and the two drifting apart is exactly how
+  one of them ends up looking like a different product.
+
+  IT DOES NOT WRITE THE NAME, and that is the point. The caption strip below the tile always does,
+  so this drew it a second time: two boxes 62px wide and 19px apart, overlapping by 7px, one
+  wrapping to two lines and the other hiding 70 characters behind an ellipsis. Measured on the
+  Mi 9T, 2026-09-09. One name, one place.
 -->
-{#snippet filePlaceholder(name: string)}
+{#snippet filePlaceholder()}
   <div
     class="text-text-muted flex h-full w-full flex-col items-center justify-center gap-1.5 bg-black/5 px-2 dark:bg-white/5"
   >
     <FileText size={20} strokeWidth={1.5} />
-    <span
-      class="line-clamp-2 px-1 text-center text-[0.6rem] leading-tight font-medium break-all sm:text-[0.65rem]"
-    >
-      {name}
-    </span>
   </div>
 {/snippet}
 
@@ -431,7 +548,7 @@
   {#if replyingTo}
     <div transition:slide={{ duration: 200, axis: 'y' }} class="pointer-events-auto">
       <div
-        class="dark:bg-cn-ink/85 relative mx-3 mb-3 flex items-center justify-between overflow-hidden rounded-2xl border border-black/5 bg-white/85 p-3 shadow-lg backdrop-blur-2xl sm:mx-4 md:mx-6 md:p-4 dark:border-white/10"
+        class="bg-cn-surface relative mx-3 mb-3 flex items-center justify-between overflow-hidden rounded-2xl border border-black/5 p-3 shadow-lg sm:mx-4 md:mx-6 md:p-4 dark:border-white/10"
       >
         <div
           class="absolute top-0 bottom-0 left-0 w-1.5 bg-amber-500 shadow-[0_0_12px_rgba(245,158,11,0.6)]"
@@ -446,14 +563,14 @@
               })}</span
             >
           </div>
-          <div class="text-text-muted truncate text-[0.85rem] leading-snug font-medium">
+          <div class="text-text-muted truncate text-xs leading-snug font-medium">
             {replyPreviewText}
           </div>
         </div>
         {#if onCancelReply}
           <button
             onclick={onCancelReply}
-            class="text-text-muted hover:text-text-main ml-2 flex-shrink-0 rounded-full bg-black/5 p-2 transition-all outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 dark:bg-white/5 dark:hover:bg-white/10"
+            class="text-text-muted hover:text-text-main ml-2 shrink-0 rounded-full bg-black/5 p-2 transition-all outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 dark:bg-white/5 dark:hover:bg-white/10"
             aria-label={m.chat_cancel_reply_label()}
           >
             <X size={16} strokeWidth={2.5} />
@@ -466,83 +583,142 @@
   <div class="pointer-events-auto flex flex-col gap-2 px-3 sm:px-4 md:px-6">
     <!-- Pending file attachments. -->
     {#if pendingFiles.length > 0}
+      <!--
+        IT NEEDS ITS OWN SURFACE, BECAUSE THE FOOTER HAS NONE. `.chat-composer-footer` is
+        `position: absolute` over the message list on `background: transparent` - by design, so the
+        thread runs under the input bar - and the bar itself is the only thing here that carries a
+        fill. This strip had none, so file tiles and their captions were drawn straight onto the
+        conversation and read as two layers of text superimposed (reported 2026-09-09). The reply
+        preview strip a few lines above solves exactly this and is copied rather than re-invented:
+        one filled, rounded, shadowed panel, inset from the same gutters.
+
+        AND IT IS CAPPED. `flex-wrap` with no ceiling grows a row per two or three files and pushes
+        the input bar off the top of a phone, with nothing to scroll - the one part of a composer
+        that must never become unreachable. The cap is expressed in `rem` rather than in rows so a
+        tall tile and a short one give the same maximum.
+      -->
       <div transition:slide={{ duration: 200, axis: 'y' }} class="w-full">
-        <div class="text-text-muted mb-2 px-1 text-[0.7rem] font-bold tracking-wider uppercase">
-          {m.chat_pending_files_count({ pendingFiles: pendingFiles.length })}
-        </div>
-        <div class="flex flex-wrap gap-3">
-          {#each pendingFiles as entry, index (`${entry.file.name}-${index}`)}
-            {@const file = entry.file}
-            {@const key = fileKey(file, index)}
-            {@const thumbAspect =
-              entry.width && entry.height
-                ? mediaAspectStyle(entry.width, entry.height)
-                : 'aspect-ratio: 1'}
-            <div
-              transition:scale={{ duration: 200, start: 0.9 }}
-              class="dark:bg-cn-ink/90 group/file relative w-20 overflow-hidden rounded-[1rem] border border-black/5 bg-white/90 shadow-md backdrop-blur-xl sm:w-24 dark:border-white/10"
-              style="{thumbAspect}; max-height: 6rem;"
-            >
-              {#if isImageFile(file) && previewUrls[key]}
-                <button
-                  type="button"
-                  class="block h-full w-full cursor-zoom-in border-0 p-0"
-                  aria-label={m.chat_enlarge_preview_label()}
-                  onclick={(e) => {
-                    e.stopPropagation();
-                    openLightbox(key);
-                  }}
-                  onpointerdown={(e) => e.stopPropagation()}
+        <div
+          class="bg-cn-surface rounded-2xl border border-black/5 p-3 shadow-lg md:p-4 dark:border-white/10"
+        >
+          <div class="text-text-muted text-2xs mb-2 px-1 font-bold tracking-wider uppercase">
+            {m.chat_pending_files_count({ pendingFiles: pendingFiles.length })}
+          </div>
+          <div class="flex max-h-52 flex-wrap gap-3 overflow-y-auto overscroll-contain">
+            {#each pendingFiles as entry, index (`${entry.file.name}-${index}`)}
+              {@const file = entry.file}
+              {@const key = fileKey(file, index)}
+              {@const thumbAspect =
+                entry.width && entry.height
+                  ? mediaAspectStyle(entry.width, entry.height)
+                  : 'aspect-ratio: 1'}
+              <!--
+              A RECORDING IS NOT A FILE TILE. An 80px square with a document glyph and a generated
+              `vocal_<timestamp>` name tells the reader nothing they can act on: they cannot see how
+              long it is and cannot hear it before sending. `VoiceMessagePlayer` already answers both
+              and is what the message will look like once sent, so the composer shows the same thing
+              rather than a second, worse one - and the name is dropped, being a timestamp nobody
+              reads. It wants width (`min-w-[200px]`), so it is a sibling of the tile, not inside it.
+
+              THE BRANCH IS CHOSEN ON THE FILE, NOT ON THE URL BEING READY. Gating it on
+              `previewUrls[key]` sent the first render down the tile branch, because the object URL
+              is created by an effect that runs after it - so a recording appeared for one frame as
+              a document glyph captioned `vocal_<timestamp>` and then became a player, with the
+              tile's 200ms outro still on screen underneath. A fallback is a signal, never a path:
+              the player waits for its own source instead.
+            -->
+              {#if isAudioFile(file)}
+                <div
+                  transition:scale={{ duration: 200, start: 0.9 }}
+                  class="group/file relative w-full max-w-sm"
                 >
-                  <img src={previewUrls[key]} alt={file.name} class="h-full w-full object-cover" />
-                </button>
-              {:else if isPdfFile(file) && previewUrls[key]}
-                <!--
+                  {#if previewUrls[key]}
+                    <VoiceMessagePlayer src={previewUrls[key]} />
+                  {/if}
+                  {#if onRemovePendingFile}
+                    <button
+                      type="button"
+                      class="absolute -top-1.5 -right-1.5 inline-flex h-6 w-6 items-center justify-center rounded-full bg-black/50 text-white shadow-sm transition-all duration-200 outline-none hover:scale-105 hover:bg-red-500 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95"
+                      onclick={() => onRemovePendingFile(index)}
+                      aria-label={m.chat_remove_file_label()}
+                      title={m.common_remove_label()}
+                    >
+                      <X size={14} strokeWidth={2.5} />
+                    </button>
+                  {/if}
+                </div>
+              {:else}
+                <div
+                  transition:scale={{ duration: 200, start: 0.9 }}
+                  class="group/file bg-cn-surface relative w-20 overflow-hidden rounded-3xl border border-black/5 shadow-md sm:w-24 dark:border-white/10"
+                  style="{thumbAspect}; max-height: 6rem;"
+                >
+                  {#if isImageFile(file) && previewUrls[key]}
+                    <button
+                      type="button"
+                      class="block h-full w-full cursor-zoom-in border-0 p-0"
+                      aria-label={m.chat_enlarge_preview_label()}
+                      onclick={(e) => {
+                        e.stopPropagation();
+                        openLightbox(key);
+                      }}
+                      onpointerdown={(e) => e.stopPropagation()}
+                    >
+                      <img
+                        src={previewUrls[key]}
+                        alt={file.name}
+                        class="h-full w-full object-cover"
+                      />
+                    </button>
+                  {:else if isPdfFile(file) && previewUrls[key]}
+                    <!--
                   RASTERISED BY pdf.js, never embedded. This was an `<embed type="application/pdf">`
                   handing the blob to the browser's native plugin, which the site's own CSP forbids
                   (`object-src 'none'`) - so it was blocked for every user, on every browser, and the
                   preview it was supposed to draw was an empty white box. It is the one place that
                   was never migrated to the canvas path every other PDF surface uses.
                 -->
-                <PdfThumbnail
-                  url={previewUrls[key]}
-                  maxWidth={160}
-                  imgClass="w-full h-full object-cover object-top"
-                >
-                  {#snippet fallback()}
-                    {@render filePlaceholder(file.name)}
-                  {/snippet}
-                </PdfThumbnail>
-              {:else}
-                {@render filePlaceholder(file.name)}
-              {/if}
+                    <PdfThumbnail
+                      url={previewUrls[key]}
+                      maxWidth={160}
+                      imgClass="w-full h-full object-cover object-top"
+                    >
+                      {#snippet fallback()}
+                        {@render filePlaceholder()}
+                      {/snippet}
+                    </PdfThumbnail>
+                  {:else}
+                    {@render filePlaceholder()}
+                  {/if}
 
-              <!-- Gradient overlay and file name. -->
-              <div
-                class="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-2 pt-4 pb-1.5"
-              >
-                <div
-                  class="truncate text-[0.55rem] font-medium text-white drop-shadow-md sm:text-[0.6rem]"
-                  title={file.name}
-                >
-                  {file.name}
+                  <!-- Gradient overlay and file name. -->
+                  <div
+                    class="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 to-transparent px-2 pt-4 pb-1.5"
+                  >
+                    <div
+                      class="text-2xs sm:text-2xs truncate font-medium text-white drop-shadow-md"
+                      title={file.name}
+                    >
+                      {file.name}
+                    </div>
+                  </div>
+
+                  <!-- Remove button. -->
+                  {#if onRemovePendingFile}
+                    <button
+                      type="button"
+                      class="absolute top-1.5 right-1.5 inline-flex h-6 w-6 scale-90 items-center justify-center rounded-full bg-black/50 text-white opacity-100 shadow-sm transition-all duration-200 outline-none hover:scale-105 hover:bg-red-500 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95 sm:opacity-0 sm:group-hover/file:opacity-100"
+                      onclick={() => onRemovePendingFile(index)}
+                      aria-label={m.chat_remove_file_label()}
+                      title={m.common_remove_label()}
+                    >
+                      <X size={14} strokeWidth={2.5} />
+                    </button>
+                  {/if}
                 </div>
-              </div>
-
-              <!-- Remove button. -->
-              {#if onRemovePendingFile}
-                <button
-                  type="button"
-                  class="absolute top-1.5 right-1.5 inline-flex h-6 w-6 scale-90 items-center justify-center rounded-full bg-black/50 text-white opacity-100 shadow-sm backdrop-blur-md transition-all duration-200 outline-none hover:scale-105 hover:bg-red-500 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-red-500 active:scale-95 sm:opacity-0 sm:group-hover/file:opacity-100"
-                  onclick={() => onRemovePendingFile(index)}
-                  aria-label={m.chat_remove_file_label()}
-                  title={m.common_remove_label()}
-                >
-                  <X size={14} strokeWidth={2.5} />
-                </button>
               {/if}
-            </div>
-          {/each}
+            {/each}
+          </div>
         </div>
       </div>
     {/if}
@@ -563,7 +739,7 @@
           class="pointer-events-none absolute left-1/2 z-10 -translate-x-1/2 -translate-y-16"
         >
           <span
-            class="text-cn-ink flex items-center gap-2 rounded-full bg-amber-500 px-4 py-2.5 text-sm font-extrabold whitespace-nowrap shadow-xl shadow-amber-500/20"
+            class="text-cn-ink flex items-center gap-2 rounded-full bg-amber-500 px-4 py-2.5 text-sm font-bold whitespace-nowrap shadow-xl shadow-amber-500/20"
           >
             <CloudUpload size={18} strokeWidth={2.5} />
             {m.chat_drag_files_badge()}
@@ -571,25 +747,43 @@
         </div>
       {/if}
 
+      <!-- The chevron that brings the folded group back. Takes the group's place, never adds to it. -->
+      {#if controlsCollapsed && !isVoiceActive}
+        <div class="shrink-0">
+          <button
+            type="button"
+            onclick={() => (controlsForcedOpen = true)}
+            title={m.chat_show_composer_actions_title()}
+            aria-label={m.chat_show_composer_actions_title()}
+            aria-expanded="false"
+            class="chat-composer-icon-button chat-composer-chevron"
+          >
+            <ChevronRight size={20} strokeWidth={2.5} />
+          </button>
+        </div>
+      {/if}
+
       <!-- Attachment button. -->
-      <div class="shrink-0">
-        <button
-          onclick={() => fileInput?.click()}
-          disabled={isUploading}
-          title={m.chat_attach_file_title()}
-          aria-label={m.chat_attach_file_label()}
-          class="chat-composer-icon-button"
-        >
-          {#if isUploading}
-            <LoaderCircle class="h-5 w-5 animate-spin text-amber-500" strokeWidth={2.5} />
-          {:else}
-            <Paperclip size={20} strokeWidth={2} />
-          {/if}
-        </button>
-      </div>
+      {#if !controlsCollapsed && !isVoiceActive}
+        <div class="shrink-0">
+          <button
+            onclick={() => fileInput?.click()}
+            disabled={isUploading}
+            title={m.chat_attach_file_title()}
+            aria-label={m.chat_attach_file_label()}
+            class="chat-composer-icon-button"
+          >
+            {#if isUploading}
+              <LoaderCircle class="h-5 w-5 animate-spin text-amber-500" strokeWidth={2.5} />
+            {:else}
+              <Paperclip size={20} strokeWidth={2} />
+            {/if}
+          </button>
+        </div>
+      {/if}
 
       <!-- Poll button (communities only: parent provides onCreatePoll). -->
-      {#if onCreatePoll && !isComposing}
+      {#if onCreatePoll && !controlsCollapsed && !isVoiceActive}
         <div class="shrink-0">
           <button
             type="button"
@@ -604,25 +798,29 @@
       {/if}
 
       <!-- GIF button (shown when KLIPY is configured). -->
-      {#if hasGifPicker && onSendGif && !isComposing}
+      {#if hasGifPicker && onSendGif && !controlsCollapsed && !isVoiceActive}
         <div class="shrink-0">
           <button
             type="button"
             onclick={() => (showGifPicker = true)}
             title={m.chat_send_gif_title()}
             aria-label={m.chat_send_gif_label()}
-            class="chat-composer-icon-button text-[0.7rem] font-extrabold tracking-tight"
+            class="chat-composer-icon-button text-2xs font-bold tracking-tight"
           >
             GIF
           </button>
         </div>
       {/if}
 
-      <!-- Voice recorder (mobile only). -->
-      {#if isVoiceRecordingSupported}
-        <div class="shrink-0">
-          <VoiceRecorder onRecordingComplete={handleVoiceRecording} />
-        </div>
+      <!-- Voice recorder (mobile and the desktop shell). Its own root owns its width, so there is
+           no wrapper here: `shrink-0` while idle, `flex-1` once it has taken the row. The second
+           half of the condition keeps it mounted through a recording that outlives the microphone
+           button's own visibility rule. -->
+      {#if isVoiceRecordingSupported || isVoiceActive}
+        <VoiceRecorder
+          onRecordingComplete={handleVoiceRecording}
+          onActiveChange={(active) => (isVoiceActive = active)}
+        />
       {/if}
 
       <input
@@ -634,43 +832,45 @@
         onchange={handleFileChange}
       />
 
-      <!-- Auto-expanding text field. -->
-      <MentionComposerInput
-        bind:this={mentionComposer}
-        value={messageText}
-        {allowedUserIds}
-        onchange={handleMessageChange}
-        class="min-w-0 flex-1"
-        editorClass="chat-composer-textarea"
-        placeholder={m.chat_message_placeholder()}
-        minHeight="44px"
-        onfocus={() => onFocusChange?.(true)}
-        onblur={() => {
-          onFocusChange?.(false);
-          stopTyping();
-        }}
-        onkeydown={handleComposerKeydown}
-        onpaste={handlePaste}
-      />
-
-      <!-- Dynamic send button. -->
-      <div class="shrink-0 pr-1">
-        <button
-          onmousedown={(e) => e.preventDefault()}
-          onclick={() => {
-            mentionComposer?.commitComposition();
-            onSend();
+      <!-- Auto-expanding text field. Absent during a recording: see `isVoiceActive`. -->
+      {#if !isVoiceActive}
+        <MentionComposerInput
+          bind:this={mentionComposer}
+          value={messageText}
+          {allowedUserIds}
+          onchange={handleMessageChange}
+          class="min-w-0 flex-1"
+          editorClass="chat-composer-textarea"
+          placeholder={m.chat_message_placeholder()}
+          minHeight={COMPOSER_MIN_HEIGHT}
+          onfocus={() => onFocusChange?.(true)}
+          onblur={() => {
+            onFocusChange?.(false);
             stopTyping();
-            mentionComposer?.clearEditor();
           }}
-          disabled={isSendDisabled}
-          aria-label={m.chat_send_message_label()}
-          class="chat-composer-send-button {isSendDisabled ? 'is-disabled' : ''}"
-        >
-          <!-- Slight icon offset for optical centering. -->
-          <Send size={18} strokeWidth={2.5} class={isSendDisabled ? '' : 'mt-0.5 ml-0.5'} />
-        </button>
-      </div>
+          onkeydown={handleComposerKeydown}
+          onpaste={handlePaste}
+        />
+
+        <!-- Dynamic send button. -->
+        <div class="shrink-0 pr-1">
+          <button
+            onmousedown={(e) => e.preventDefault()}
+            onclick={() => {
+              mentionComposer?.commitComposition();
+              onSend();
+              stopTyping();
+              mentionComposer?.clearEditor();
+            }}
+            disabled={isSendDisabled}
+            aria-label={m.chat_send_message_label()}
+            class="chat-composer-send-button {isSendDisabled ? 'is-disabled' : ''}"
+          >
+            <!-- Slight icon offset for optical centering. -->
+            <Send size={18} strokeWidth={2.5} class={isSendDisabled ? '' : 'mt-0.5 ml-0.5'} />
+          </button>
+        </div>
+      {/if}
     </div>
   </div>
 </footer>

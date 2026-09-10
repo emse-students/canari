@@ -16,6 +16,7 @@
   import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
   import {
     conversationMatchesQuery,
+    recentDirectPeers,
     resolveConversationListPresentation,
   } from '$lib/utils/chat/conversations';
   import { pullToRefresh } from '$lib/actions/pullToRefresh';
@@ -292,6 +293,21 @@
       .sort((a, b) => (b.convo.lastMessageAt ?? 0) - (a.convo.lastMessageAt ?? 0))
   );
 
+  /**
+   * What "Nouvelle discussion" opens on, built from the rows already resolved above rather than
+   * from a second pass over the map - so the picker and the sidebar can never disagree about a
+   * person's name. Derived from ALL rows, not the filtered ones: the sidebar's search box has
+   * nothing to do with what the modal offers.
+   */
+  const recentPeers = $derived(
+    recentDirectPeers(
+      conversationRows.map(({ convo, resolved }) => ({
+        resolved,
+        lastMessageAt: convo.lastMessageAt,
+      }))
+    )
+  );
+
   function openNewChatModal(tab: 'contact' | 'group' | 'channel' = 'contact') {
     if (tab === 'channel') {
       channelName = newChannelInput || '';
@@ -366,7 +382,7 @@
 {#if drawerMode}
   <button
     type="button"
-    class="fixed inset-0 z-[42] bg-black/30 md:hidden"
+    class="fixed inset-0 z-(--z-nav-drawer-scrim) bg-black/30 md:hidden"
     onclick={() => onCloseDrawer?.()}
     aria-label={m.sidebar_close_panel_aria()}
   ></button>
@@ -381,11 +397,11 @@
   aria-label={viewMode === 'communities'
     ? m.nav_communities_landmark()
     : m.nav_conversations_landmark()}
-  class="sidebar-panel flex h-full border-r border-white/50 bg-white/40 backdrop-blur-md dark:border-white/10 dark:bg-gray-900/50 {viewMode ===
+  class="sidebar-panel bg-cn-surface flex h-full border-r border-white/50 dark:border-white/10 {viewMode ===
   'communities'
     ? 'flex-row'
     : 'flex-col'} {drawerMode
-    ? 'animate-panel-in fixed top-0 bottom-0 left-0 z-40 pt-[env(safe-area-inset-top)] pb-[var(--safe-area-inset-bottom,0px)] shadow-2xl md:hidden ' +
+    ? 'animate-panel-in fixed top-0 bottom-0 left-0 z-(--z-nav-drawer) pt-[env(safe-area-inset-top)] pb-[var(--safe-area-inset-bottom,0px)] shadow-2xl md:hidden ' +
       (viewMode === 'communities' ? 'w-[95vw] max-w-md' : 'w-[88vw] max-w-sm')
     : viewMode === 'communities'
       ? 'w-full md:w-96'
@@ -393,7 +409,7 @@
 >
   {#if viewMode === 'communities'}
     <div
-      class="no-scrollbar mobile-nav-inset flex h-full w-[72px] flex-shrink-0 flex-col items-center gap-3 overflow-y-auto border-r border-white/50 bg-white/20 py-3 dark:border-white/10 dark:bg-black/10"
+      class="no-scrollbar mobile-nav-inset flex h-full w-[72px] shrink-0 flex-col items-center gap-3 overflow-y-auto border-r border-white/50 bg-white/20 py-3 dark:border-white/10 dark:bg-black/10"
     >
       <div
         class="flex flex-col items-center gap-3"
@@ -404,7 +420,7 @@
         {#each orderedWorkspaces as workspace (workspace.id)}
           <div animate:flip={{ duration: 150 }}>
             <button
-              class="relative h-12 w-12 flex-shrink-0 overflow-hidden rounded-2xl transition-all duration-200 {selectedCommunityWorkspaceId ===
+              class="relative h-12 w-12 shrink-0 overflow-hidden rounded-2xl transition-all duration-200 {selectedCommunityWorkspaceId ===
               workspace.id
                 ? 'ring-cn-yellow ring-offset-cn-bg ring-2 ring-offset-2'
                 : 'opacity-70 hover:rounded-xl hover:opacity-100'}"
@@ -435,7 +451,7 @@
         onclick={() => {
           showNewCommunityModal = true;
         }}
-        class="border-text-muted/50 text-text-muted hover:text-text-main hover:border-text-main flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-2xl border border-dashed transition-all hover:rounded-[10px] hover:bg-white/10"
+        class="border-text-muted/50 text-text-muted hover:text-text-main hover:border-text-main flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-dashed transition-all hover:rounded-lg hover:bg-white/10"
         title={m.sidebar_add_community_title()}
         aria-label={m.sidebar_add_community_title()}
       >
@@ -458,16 +474,16 @@
       />
     {:else}
       <div
-        class="sticky top-0 z-10 flex items-center justify-between border-b border-white/50 bg-white/30 px-4 py-3 backdrop-blur-sm dark:border-white/10 dark:bg-gray-900/40"
+        class="sticky top-0 z-10 flex items-center justify-between border-b border-white/50 bg-white/30 px-4 py-3 dark:border-white/10 dark:bg-gray-900/40"
       >
-        <h2 class="text-text-main truncate text-lg font-black tracking-tight">
+        <h2 class="text-text-main truncate text-lg font-bold tracking-tight">
           {selectedCommunityWorkspace?.name || m.sidebar_communities_fallback()}
         </h2>
 
         <div class="flex items-center gap-1">
           {#if selectedCommunityWorkspace}
             <button
-              class="text-text-muted hover:text-text-main flex h-8 w-8 items-center justify-center rounded-full transition-colors hover:bg-white/50 dark:hover:bg-black/30"
+              class="text-text-muted hover:text-text-main hover:bg-cn-surface flex h-8 w-8 items-center justify-center rounded-full transition-colors dark:hover:bg-black/30"
               onclick={() => {
                 showCommunityAdminModal = true;
               }}
@@ -482,7 +498,7 @@
             <button
               type="button"
               onclick={() => onCloseDrawer?.()}
-              class="text-text-muted flex h-8 w-8 items-center justify-center rounded-full bg-transparent transition-colors hover:bg-white/65 dark:hover:bg-black/30"
+              class="text-text-muted hover:bg-cn-surface flex h-8 w-8 items-center justify-center rounded-full bg-transparent transition-colors dark:hover:bg-black/30"
               aria-label={m.common_close_label()}
             >
               <X size={18} />
@@ -539,7 +555,7 @@
               <button
                 type="button"
                 onclick={() => (showNewChatModal = true)}
-                class="rounded-xl bg-amber-500 px-4 py-2 text-xs font-semibold text-white transition-all active:scale-95"
+                class="text-cn-ink rounded-xl bg-amber-500 px-4 py-2 text-xs font-semibold transition-all active:scale-95"
               >
                 {m.chat_new_discussion_label()}
               </button>
@@ -591,7 +607,7 @@
                 class="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors {selectedChannelId ===
                 channel.id
                   ? 'text-text-main bg-[color-mix(in_srgb,var(--cn-yellow)_16%,transparent)]'
-                  : 'text-text-muted hover:text-text-main hover:bg-white/40 dark:hover:bg-black/20'}"
+                  : 'text-text-muted hover:text-text-main hover:bg-cn-surface dark:hover:bg-black/20'}"
               >
                 <span class="opacity-70" aria-hidden="true">
                   {#if channel.isPrivate}
@@ -609,7 +625,7 @@
                 {#if unjoined}
                   <span
                     aria-hidden="true"
-                    class="border-text-muted/30 rounded-full border px-2 py-0.5 text-[0.65rem] font-semibold tracking-wide uppercase"
+                    class="border-text-muted/30 text-2xs rounded-full border px-2 py-0.5 font-semibold tracking-wide uppercase"
                   >
                     {m.chat_channel_join_as_admin_label()}
                   </span>
@@ -617,7 +633,7 @@
                 {#if channel.unreadCount}
                   <span
                     aria-hidden="true"
-                    class="bg-cn-dark text-cn-yellow inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[0.65rem] font-extrabold"
+                    class="bg-cn-ink text-cn-yellow text-2xs inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 font-bold"
                   >
                     {channel.unreadCount}
                   </span>
@@ -629,7 +645,7 @@
               <button
                 type="button"
                 onclick={() => openNewChatModal('channel')}
-                class="border-text-muted/30 text-text-muted hover:text-text-main mt-2 flex w-full items-center gap-2 rounded-xl border border-dashed px-3 py-2 text-left transition-colors hover:bg-white/40 dark:hover:bg-black/20"
+                class="border-text-muted/30 text-text-muted hover:text-text-main hover:bg-cn-surface mt-2 flex w-full items-center gap-2 rounded-xl border border-dashed px-3 py-2 text-left transition-colors dark:hover:bg-black/20"
               >
                 <Plus size={16} aria-hidden="true" />
                 <span class="text-sm font-medium">{m.chat_add_channel_label()}</span>
@@ -652,7 +668,12 @@
   {contactId}
   {groupName}
   {currentUserId}
+  {recentPeers}
   onClose={closeNewChatModal}
+  onPickPeer={(peerId) => {
+    contactId = peerId;
+    handleAddContact();
+  }}
   onTabChange={(tab) => {
     activeTab = tab;
   }}

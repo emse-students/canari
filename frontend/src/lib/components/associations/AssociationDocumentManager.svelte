@@ -401,13 +401,13 @@
 
 <div class="space-y-5">
   <!-- Shared admin notepad (vault-encrypted) -->
-  <div class="border-cn-border/70 bg-cn-bg/40 space-y-2 rounded-2xl border p-4">
+  <div class="border-cn-border/70 bg-cn-bg space-y-2 rounded-2xl border p-4">
     <div class="flex items-center justify-between gap-2">
       <p class="text-text-main flex items-center gap-1.5 text-sm font-bold">
         <NotebookPen size={16} class="text-cn-dark" />
         {m.asso_doc_notepad_title()}
       </p>
-      <span class="text-text-muted text-[11px]">{m.asso_doc_notepad_badge()}</span>
+      <span class="text-text-muted text-2xs">{m.asso_doc_notepad_badge()}</span>
     </div>
     {#if noteLoading}
       <p class="text-text-muted py-3 text-xs">{m.asso_doc_decrypting()}</p>
@@ -455,7 +455,7 @@
       <div class="bg-cn-border/50 h-2 overflow-hidden rounded-full">
         <div
           class="h-full rounded-full transition-all duration-300
-            {stats.usedBytes / stats.quotaBytes > 0.9
+ {stats.usedBytes / stats.quotaBytes > 0.9
             ? 'bg-red-500'
             : stats.usedBytes / stats.quotaBytes > 0.75
               ? 'bg-amber-500'
@@ -503,7 +503,7 @@
       <ul class="space-y-2">
         {#each stats.documents as doc (doc.id)}
           <li
-            class="border-cn-border/70 bg-cn-bg/40 flex items-center gap-3 rounded-xl border px-4 py-3"
+            class="border-cn-border/70 bg-cn-bg flex items-center gap-3 rounded-xl border px-4 py-3"
           >
             <FileText size={18} class="text-text-muted shrink-0" />
             <div class="min-w-0 flex-1">
@@ -529,7 +529,7 @@
                     ? m.asso_doc_visibility_make_private_title()
                     : m.asso_doc_visibility_make_public_title()}
                 class="inline-flex items-center gap-1.5 rounded-xl border px-2.5 py-2 text-xs font-bold transition-colors disabled:opacity-40
-                  {doc.visibility === 'public' && !isProtected(doc)
+ {doc.visibility === 'public' && !isProtected(doc)
                   ? 'border-green-ok/40 bg-green-ok/10 text-green-ok'
                   : 'border-cn-border text-text-muted hover:text-text-main bg-(--cn-surface)'}"
               >
@@ -583,7 +583,7 @@
 {#if uploadModalOpen}
   <div use:portal>
     <div
-      class="fixed inset-0 z-[280] flex items-end justify-center bg-black/40 p-4 backdrop-blur-sm sm:items-center"
+      class="fixed inset-0 z-(--z-modal) flex items-end justify-center bg-black/40 p-4 sm:items-center"
       role="presentation"
       onclick={(e) => e.target === e.currentTarget && (uploadModalOpen = false)}
     >
@@ -632,7 +632,7 @@
 {#if pwPromptDoc}
   <div use:portal>
     <div
-      class="fixed inset-0 z-[280] flex items-end justify-center bg-black/40 p-4 backdrop-blur-sm sm:items-center"
+      class="fixed inset-0 z-(--z-modal) flex items-end justify-center bg-black/40 p-4 sm:items-center"
       role="presentation"
       onclick={(e) => e.target === e.currentTarget && !pwPromptBusy && (pwPromptDoc = null)}
     >
@@ -684,7 +684,7 @@
 {#if renameDoc}
   <div use:portal>
     <div
-      class="fixed inset-0 z-[280] flex items-end justify-center bg-black/40 p-4 backdrop-blur-sm sm:items-center"
+      class="fixed inset-0 z-(--z-modal) flex items-end justify-center bg-black/40 p-4 sm:items-center"
       role="presentation"
       onclick={(e) => e.target === e.currentTarget && !renameBusy && (renameDoc = null)}
     >

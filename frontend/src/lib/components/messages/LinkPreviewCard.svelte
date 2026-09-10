@@ -244,7 +244,7 @@
     rel={isInApp ? undefined : 'noopener noreferrer'}
     class="group {standalone
       ? ''
-      : 'mt-3'} flex items-stretch gap-3.5 overflow-hidden rounded-2xl border border-black/5 bg-white/45 p-3 backdrop-blur-xl transition-all duration-300 hover:border-amber-500/35 hover:bg-white/70 hover:shadow-md sm:p-4 dark:border-white/10 dark:bg-black/25 dark:hover:bg-black/40 {isInApp
+      : 'mt-3'} bg-cn-surface hover:bg-cn-surface flex items-stretch gap-3.5 overflow-hidden rounded-2xl border border-black/5 p-3 transition-all duration-300 hover:border-amber-500/35 hover:shadow-md sm:p-4 dark:border-white/10 dark:hover:bg-black/40 {isInApp
       ? 'ring-1 ring-amber-500/12'
       : ''}"
   >
@@ -253,7 +253,7 @@
     {:else}
       <div
         class="relative flex shrink-0 items-center justify-center overflow-hidden rounded-xl border border-black/5 bg-black/5 transition-all duration-300 dark:border-white/5 dark:bg-white/5
-      {previewImageUrl ? 'h-16 w-16 sm:h-[4.5rem] sm:w-[4.5rem]' : 'h-12 w-12'}"
+ {previewImageUrl ? 'h-16 w-16 sm:h-[4.5rem] sm:w-[4.5rem]' : 'h-12 w-12'}"
       >
         {#if isLoading}
           <div class="absolute inset-0 animate-pulse bg-black/10 dark:bg-white/10"></div>
@@ -279,7 +279,7 @@
 
     <div class="flex min-w-0 flex-1 flex-col justify-center gap-0.5 py-0.5">
       <span
-        class="inline-flex max-w-full items-center self-start truncate rounded-md bg-amber-500/12 px-2 py-0.5 text-[0.65rem] font-bold tracking-wider text-amber-800 sm:text-[0.68rem] dark:bg-amber-400/10 dark:text-amber-300 {isInApp
+        class="text-2xs sm:text-2xs inline-flex max-w-full items-center self-start truncate rounded-md bg-amber-500/12 px-2 py-0.5 font-bold tracking-wider text-amber-800 dark:bg-amber-400/10 dark:text-amber-300 {isInApp
           ? 'uppercase'
           : 'normal-case'}"
       >
@@ -287,7 +287,7 @@
       </span>
 
       <p
-        class="text-text-main line-clamp-2 text-sm leading-snug font-bold transition-colors duration-300 group-hover:text-amber-700 sm:text-[0.95rem] dark:group-hover:text-amber-300"
+        class="text-text-main line-clamp-2 text-sm leading-snug font-bold transition-colors duration-300 group-hover:text-amber-700 sm:text-sm dark:group-hover:text-amber-300"
       >
         {cardTitle}
       </p>

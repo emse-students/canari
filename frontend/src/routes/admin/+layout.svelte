@@ -153,7 +153,7 @@
         <Shield size={22} />
       </span>
       <div>
-        <h1 class="text-text-main text-xl font-extrabold tracking-tight">{m.admin_title()}</h1>
+        <h1 class="text-text-main text-xl font-bold tracking-tight">{m.admin_title()}</h1>
         <p class="text-text-muted mt-0.5 text-sm">
           {#if isGlobalAdminUser}
             {m.admin_global_description()}
@@ -168,7 +168,7 @@
       <a
         href="/admin"
         class="shrink-0 rounded-xl px-4 py-2 text-sm font-bold transition-colors
-        {path === '/admin'
+ {path === '/admin'
           ? 'bg-cn-yellow text-cn-ink shadow-sm'
           : 'border-cn-border text-text-muted hover:text-text-main border'}"
       >
@@ -186,7 +186,7 @@
         <a
           href={item.href}
           class="inline-flex shrink-0 items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-bold transition-colors
-          {path.startsWith(item.href)
+ {path.startsWith(item.href)
             ? 'bg-cn-yellow text-cn-ink shadow-sm'
             : 'border-cn-border text-text-muted hover:text-text-main border'}"
         >

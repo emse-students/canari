@@ -1,4 +1,6 @@
 <script lang="ts">
+  import PageContainer from '$lib/components/layout/PageContainer.svelte';
+  import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import {
@@ -15,7 +17,7 @@
   } from '$lib/associations/vaultCrypto';
   import { apiFetch } from '$lib/utils/apiFetch';
   import { socialUrl } from '$lib/utils/apiUrl';
-  import { FolderOpen, ChevronDown, Download, FileText, Building2 } from '@lucide/svelte';
+  import { ChevronDown, Download, FileText, Building2 } from '@lucide/svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { getLocale } from '$lib/paraglide/runtime';
   import { downloadDecryptedFile } from '$lib/utils/fileDownload';
@@ -120,120 +122,110 @@
 </script>
 
 {#if ready}
-  <div class="mx-auto max-w-3xl space-y-6 px-4 py-8 sm:px-6">
-    <header class="flex items-start gap-3">
-      <span
-        class="bg-cn-yellow/20 text-cn-dark flex h-11 w-11 items-center justify-center rounded-2xl"
-      >
-        <FolderOpen size={22} />
-      </span>
-      <div>
-        <h1 class="text-text-main text-xl font-extrabold tracking-tight">
-          {m.reviewer_docs_title()}
-        </h1>
-        <p class="text-text-muted mt-0.5 text-sm">{m.reviewer_docs_subtitle()}</p>
-      </div>
-    </header>
+  <PageContainer>
+    <PageHeader title={m.reviewer_docs_title()} subtitle={m.reviewer_docs_subtitle()} />
 
-    {#if loading}
-      <div class="flex justify-center py-16">
-        <div
-          class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
-        ></div>
-      </div>
-    {:else if error}
-      <p class="text-sm text-red-500" role="alert">{error}</p>
-    {:else if groups.length === 0}
-      <p
-        class="border-cn-border text-text-muted rounded-2xl border bg-(--cn-surface) px-4 py-10 text-center text-sm"
-      >
-        {m.reviewer_docs_empty()}
-      </p>
-    {:else}
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <input
-          type="text"
-          bind:value={query}
-          placeholder={m.reviewer_docs_search_placeholder()}
-          aria-label={m.reviewer_docs_search_placeholder()}
-          class="border-cn-border text-text-main focus:ring-cn-yellow/40 w-full max-w-sm rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
-        />
-        <span class="text-text-muted text-xs font-semibold">
-          {m.reviewer_docs_count_label({ assos: groups.length, docs: totalDocs })}
-        </span>
-      </div>
+    <div class="space-y-6">
+      {#if loading}
+        <div class="flex justify-center py-16">
+          <div
+            class="border-cn-yellow h-8 w-8 animate-spin rounded-full border-4 border-t-transparent"
+          ></div>
+        </div>
+      {:else if error}
+        <p class="text-sm text-red-500" role="alert">{error}</p>
+      {:else if groups.length === 0}
+        <p
+          class="border-cn-border text-text-muted rounded-2xl border bg-(--cn-surface) px-4 py-10 text-center text-sm"
+        >
+          {m.reviewer_docs_empty()}
+        </p>
+      {:else}
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <input
+            type="text"
+            bind:value={query}
+            placeholder={m.reviewer_docs_search_placeholder()}
+            aria-label={m.reviewer_docs_search_placeholder()}
+            class="border-cn-border text-text-main focus:ring-cn-yellow/40 w-full max-w-sm rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
+          />
+          <span class="text-text-muted text-xs font-semibold">
+            {m.reviewer_docs_count_label({ assos: groups.length, docs: totalDocs })}
+          </span>
+        </div>
 
-      <div class="space-y-3">
-        {#each filtered as group (group.associationId)}
-          {@const logo = associationLogoSrc(group.logoUrl)}
-          {@const isOpen = expanded.has(group.associationId)}
-          <div class="border-cn-border overflow-hidden rounded-2xl border bg-(--cn-surface)">
-            <button
-              type="button"
-              onclick={() => toggle(group.associationId)}
-              aria-expanded={isOpen}
-              class="hover:bg-cn-bg/40 flex w-full items-center gap-3 px-4 py-3 text-left transition-colors"
-            >
-              {#if logo}
-                <img
-                  src={logo}
-                  alt=""
-                  class="border-cn-border h-9 w-9 shrink-0 rounded-lg border object-cover"
+        <div class="space-y-3">
+          {#each filtered as group (group.associationId)}
+            {@const logo = associationLogoSrc(group.logoUrl)}
+            {@const isOpen = expanded.has(group.associationId)}
+            <div class="border-cn-border overflow-hidden rounded-2xl border bg-(--cn-surface)">
+              <button
+                type="button"
+                onclick={() => toggle(group.associationId)}
+                aria-expanded={isOpen}
+                class="hover:bg-cn-bg flex w-full items-center gap-3 px-4 py-3 text-left transition-colors"
+              >
+                {#if logo}
+                  <img
+                    src={logo}
+                    alt=""
+                    class="border-cn-border h-9 w-9 shrink-0 rounded-lg border object-cover"
+                  />
+                {:else}
+                  <span
+                    class="bg-cn-yellow/15 text-cn-dark flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
+                  >
+                    <Building2 size={18} />
+                  </span>
+                {/if}
+                <span class="min-w-0 flex-1">
+                  <span class="text-text-main block truncate text-sm font-bold">
+                    {group.associationName}
+                  </span>
+                  <span class="text-text-muted block text-xs">
+                    {m.reviewer_docs_group_count({ count: group.documents.length })}
+                  </span>
+                </span>
+                <ChevronDown
+                  size={18}
+                  class="text-text-muted shrink-0 transition-transform {isOpen ? 'rotate-180' : ''}"
                 />
-              {:else}
-                <span
-                  class="bg-cn-yellow/15 text-cn-dark flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
-                >
-                  <Building2 size={18} />
-                </span>
-              {/if}
-              <span class="min-w-0 flex-1">
-                <span class="text-text-main block truncate text-sm font-bold">
-                  {group.associationName}
-                </span>
-                <span class="text-text-muted block text-xs">
-                  {m.reviewer_docs_group_count({ count: group.documents.length })}
-                </span>
-              </span>
-              <ChevronDown
-                size={18}
-                class="text-text-muted shrink-0 transition-transform {isOpen ? 'rotate-180' : ''}"
-              />
-            </button>
+              </button>
 
-            {#if isOpen}
-              <ul class="divide-cn-border/70 border-cn-border/70 divide-y border-t">
-                {#each group.documents as doc (doc.id)}
-                  <li class="flex items-center gap-3 px-4 py-3">
-                    <FileText size={18} class="text-text-muted shrink-0" />
-                    <div class="min-w-0 flex-1">
-                      <p class="text-text-main truncate text-sm font-semibold">{doc.name}</p>
-                      <p class="text-text-muted text-xs">
-                        {formatBytes(doc.size)} · {doc.mimeType}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onclick={() => handleDownload(doc)}
-                      disabled={downloadingId === doc.id}
-                      title={m.reviewer_docs_download_title()}
-                      class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center justify-center rounded-xl border bg-(--cn-surface) p-2 transition-colors disabled:opacity-40"
-                    >
-                      {#if downloadingId === doc.id}
-                        <div
-                          class="border-cn-yellow h-4 w-4 animate-spin rounded-full border-2 border-t-transparent"
-                        ></div>
-                      {:else}
-                        <Download size={15} />
-                      {/if}
-                    </button>
-                  </li>
-                {/each}
-              </ul>
-            {/if}
-          </div>
-        {/each}
-      </div>
-    {/if}
-  </div>
+              {#if isOpen}
+                <ul class="divide-cn-border/70 border-cn-border/70 divide-y border-t">
+                  {#each group.documents as doc (doc.id)}
+                    <li class="flex items-center gap-3 px-4 py-3">
+                      <FileText size={18} class="text-text-muted shrink-0" />
+                      <div class="min-w-0 flex-1">
+                        <p class="text-text-main truncate text-sm font-semibold">{doc.name}</p>
+                        <p class="text-text-muted text-xs">
+                          {formatBytes(doc.size)} · {doc.mimeType}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onclick={() => handleDownload(doc)}
+                        disabled={downloadingId === doc.id}
+                        title={m.reviewer_docs_download_title()}
+                        class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center justify-center rounded-xl border bg-(--cn-surface) p-2 transition-colors disabled:opacity-40"
+                      >
+                        {#if downloadingId === doc.id}
+                          <div
+                            class="border-cn-yellow h-4 w-4 animate-spin rounded-full border-2 border-t-transparent"
+                          ></div>
+                        {:else}
+                          <Download size={15} />
+                        {/if}
+                      </button>
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  </PageContainer>
 {/if}

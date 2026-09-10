@@ -141,6 +141,16 @@ export class UsersController {
       res.status(502).end();
       return;
     }
+    // NO PROVIDER ON THIS ESTATE, which is a fact about the deployment and not about the user - so
+    // it answers like an absence and is CACHED. Marked `no-store` as an `unavailable` it produced
+    // 560 uncached 502s in two hours on dev, one per face per render, and no request could ever
+    // have succeeded: the key is read once at startup. Ten minutes matches `absent`, so a key
+    // actually being added recovers within one TTL rather than a day.
+    if (outcome.kind === 'disabled') {
+      res.set({ 'Cache-Control': 'public, max-age=600' });
+      res.status(404).end();
+      return;
+    }
 
     res.set({
       'Content-Type': outcome.contentType,

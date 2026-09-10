@@ -249,7 +249,10 @@ describe('Server-composed push keys reach every native table', () => {
   /** Keys whose title names the actor take an extra `%s`; the rest are fixed sentences. */
   const androidNames = (key: string) => [`notif_${key}_title`, `notif_${key}_body`];
   const iosNames = (key: string) => {
-    const dotted = key.replace(/^social_/, 'social.').replace(/^form_/, 'form.');
+    const dotted = key
+      .replace(/^social_/, 'social.')
+      .replace(/^form_/, 'form.')
+      .replace(/^event_/, 'event.');
     return [`notif.${dotted}.title`, `notif.${dotted}.body`];
   };
 

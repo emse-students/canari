@@ -121,7 +121,7 @@
     {#snippet footer()}
       <button
         type="button"
-        class="text-cn-dark bg-cn-yellow hover:bg-cn-yellow-hover w-full rounded-lg px-4 py-2 text-sm font-bold disabled:opacity-60"
+        class="text-cn-ink bg-cn-yellow hover:bg-cn-yellow-hover w-full rounded-lg px-4 py-2 text-sm font-bold disabled:opacity-60"
         disabled={loggingOut}
         onclick={() => void handleMaintenanceLogout()}
       >

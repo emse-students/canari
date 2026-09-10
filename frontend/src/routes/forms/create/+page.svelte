@@ -1,4 +1,6 @@
 <script lang="ts">
+  import PageContainer from '$lib/components/layout/PageContainer.svelte';
+  import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
@@ -32,7 +34,7 @@
   import { fetchFormations, type FormationOption } from '$lib/pricing/criteriaOptions';
   import { firstEmptyCondition } from '$lib/forms/audience';
   import { toFormItemsPayload } from '$lib/forms/itemsPayload';
-  import { CircleAlert, ArrowLeft, FileText } from '@lucide/svelte';
+  import { CircleAlert, FileText } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
   // General
@@ -64,7 +66,6 @@
    * past the `max-w-4xl` the other management pages use. The composer variant stays narrower
    * because it is opened as a step inside a post, but it was too narrow to read a grid in at all.
    */
-  const contentMaxWidth = $derived(fromPostComposer ? 'max-w-3xl' : 'max-w-5xl');
 
   /**
    * The associations the user belongs to - not every association there is.
@@ -210,22 +211,13 @@
   }
 </script>
 
-<div class="px-3 py-5 sm:px-6 {contentMaxWidth} mx-auto">
-  <div class="mb-8 flex items-center gap-3">
-    <button
-      onclick={() => goto(fromPostComposer ? '/posts' : returnTo)}
-      class="text-text-muted hover:text-text-main hover:bg-cn-border/30 rounded-xl p-2 transition-colors"
-      title={m.common_back()}
-    >
-      <ArrowLeft size={20} />
-    </button>
-    <div class="min-w-0 flex-1">
-      <h1 class="text-text-main text-2xl font-extrabold tracking-tight">
-        {m.form_create_heading()}
-      </h1>
-      <p class="text-text-muted mt-0.5 text-sm">{m.form_create_subtitle()}</p>
-    </div>
-  </div>
+<PageContainer width={fromPostComposer ? 'reading' : 'tool'}>
+  <PageHeader
+    title={m.form_create_heading()}
+    subtitle={m.form_create_subtitle()}
+    backHref={fromPostComposer ? '/posts' : returnTo}
+    backLabel={m.common_back()}
+  />
 
   {#if error}
     <div
@@ -308,4 +300,4 @@
     saveLabel={m.form_save_button()}
     onSave={handleSave}
   />
-</div>
+</PageContainer>

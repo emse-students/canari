@@ -1,7 +1,8 @@
 <script lang="ts">
+  import PageContainer from '$lib/components/layout/PageContainer.svelte';
+  import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
   import {
-    ShieldAlert,
     Flag,
     UserX,
     RefreshCw,
@@ -333,33 +334,26 @@
   const resolvedReports = $derived(reports.filter((r) => r.status !== 'pending'));
 </script>
 
-<div class="mx-auto max-w-3xl px-4 py-8">
-  <header class="mb-6 flex items-center justify-between gap-3">
-    <div class="flex items-center gap-3">
-      <ShieldAlert size={28} class="text-red-500" />
-      <div>
-        <h1 class="text-text-main text-2xl font-bold">{m.moderation_title()}</h1>
-        <p class="text-text-muted text-sm">
-          {m.moderation_subtitle()}
-        </p>
-      </div>
-    </div>
-    <button
-      onclick={() => {
-        if (tab === 'reports') void loadReports();
-        else if (tab === 'hidden') void loadHidden();
-        else void loadMuted();
-      }}
-      disabled={loadingReports || loadingHidden || loadingMuted}
-      class="border-cn-border text-text-muted hover:text-text-main rounded-xl border p-2 transition-colors disabled:opacity-40"
-      aria-label={m.moderation_refresh()}
-    >
-      <RefreshCw
-        size={18}
-        class={loadingReports || loadingHidden || loadingMuted ? 'animate-spin' : ''}
-      />
-    </button>
-  </header>
+<PageContainer>
+  <PageHeader title={m.moderation_title()} subtitle={m.moderation_subtitle()}>
+    {#snippet actions()}
+      <button
+        onclick={() => {
+          if (tab === 'reports') void loadReports();
+          else if (tab === 'hidden') void loadHidden();
+          else void loadMuted();
+        }}
+        disabled={loadingReports || loadingHidden || loadingMuted}
+        class="border-cn-border text-text-muted hover:text-text-main rounded-xl border p-2 transition-colors disabled:opacity-40"
+        aria-label={m.moderation_refresh()}
+      >
+        <RefreshCw
+          size={18}
+          class={loadingReports || loadingHidden || loadingMuted ? 'animate-spin' : ''}
+        />
+      </button>
+    {/snippet}
+  </PageHeader>
 
   <!-- Tabs -->
   <div class="mb-6 flex gap-1 rounded-xl bg-black/5 p-1">
@@ -373,7 +367,7 @@
       <Flag size={16} />
       {m.moderation_reports_tab()}
       {#if pendingReports.length > 0}
-        <span class="ml-1 rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
+        <span class="text-2xs ml-1 rounded-full bg-red-500 px-1.5 py-0.5 font-bold text-white">
           {pendingReports.length}
         </span>
       {/if}
@@ -388,9 +382,7 @@
       <EyeOff size={16} />
       {m.moderation_hidden_tab()}
       {#if hiddenPosts.length > 0}
-        <span
-          class="ml-1 rounded-full bg-orange-500 px-1.5 py-0.5 text-[10px] font-bold text-white"
-        >
+        <span class="text-2xs ml-1 rounded-full bg-orange-500 px-1.5 py-0.5 font-bold text-white">
           {hiddenPosts.length}
         </span>
       {/if}
@@ -405,7 +397,7 @@
       <UserX size={16} />
       {m.moderation_muted_tab()}
       {#if mutedUsers.length > 0}
-        <span class="ml-1 rounded-full bg-gray-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
+        <span class="text-2xs ml-1 rounded-full bg-gray-500 px-1.5 py-0.5 font-bold text-white">
           {mutedUsers.length}
         </span>
       {/if}
@@ -424,7 +416,7 @@
       <div class="space-y-3">
         {#each { length: 3 } as _, i (i)}
           <div
-            class="border-cn-border bg-cn-surface/60 animate-pulse space-y-2 rounded-2xl border p-5"
+            class="border-cn-border bg-cn-surface animate-pulse space-y-2 rounded-2xl border p-5"
           >
             <div class="bg-cn-border/60 h-3 w-2/3 rounded"></div>
             <div class="bg-cn-border/40 h-3 w-full rounded"></div>
@@ -444,22 +436,20 @@
         </h2>
         <div class="mb-8 space-y-3">
           {#each pendingReports as report (report.id)}
-            <div
-              class="border-cn-border bg-cn-surface/70 rounded-2xl border p-4 shadow-sm backdrop-blur-sm"
-            >
+            <div class="border-cn-border bg-cn-surface rounded-2xl border p-4 shadow-sm">
               <!-- Header row -->
               <div class="mb-3 flex flex-wrap items-center gap-2">
                 <span
-                  class="bg-cn-border/40 text-text-muted rounded-full px-2 py-0.5 text-[11px] font-bold"
+                  class="bg-cn-border/40 text-text-muted text-2xs rounded-full px-2 py-0.5 font-bold"
                 >
                   {contentTypeLabel[report.contentType]}
                 </span>
                 <span
-                  class="text-amber-warn bg-amber-warn/10 rounded-full px-2 py-0.5 text-[11px] font-semibold"
+                  class="text-amber-warn bg-amber-warn/10 text-2xs rounded-full px-2 py-0.5 font-semibold"
                 >
                   {reasonLabel[report.reason] ?? report.reason}
                 </span>
-                <span class="text-text-muted/60 ml-auto text-[11px]"
+                <span class="text-text-muted/60 text-2xs ml-auto"
                   >{formatDate(report.createdAt)}</span
                 >
               </div>
@@ -519,7 +509,7 @@
               <div class="mb-3 flex items-center gap-2">
                 <button
                   onclick={() => copyId(report.contentId)}
-                  class="text-text-muted/50 hover:text-text-muted flex items-center gap-1 font-mono text-[10px] transition-colors"
+                  class="text-text-muted/50 hover:text-text-muted text-2xs flex items-center gap-1 font-mono transition-colors"
                   title={m.moderation_copy_id_label()}
                 >
                   {report.contentId.slice(0, 8)}…
@@ -529,7 +519,7 @@
                   <button
                     type="button"
                     onclick={() => openPostPreview(report.contentId)}
-                    class="text-cn-yellow ml-auto flex items-center gap-1 text-[11px] font-semibold hover:underline"
+                    class="text-cn-yellow text-2xs ml-auto flex items-center gap-1 font-semibold hover:underline"
                     title={m.moderation_preview_post_label()}
                   >
                     <Eye size={11} />
@@ -538,7 +528,7 @@
                   <a
                     href="/posts/{report.contentId}"
                     target="_blank"
-                    class="text-text-muted hover:text-text-main flex items-center gap-1 text-[11px] font-semibold"
+                    class="text-text-muted hover:text-text-main text-2xs flex items-center gap-1 font-semibold"
                     title={m.moderation_open_post_label()}
                   >
                     <ExternalLink size={11} />
@@ -548,7 +538,7 @@
                   <a
                     href="/posts/{report.postId}"
                     target="_blank"
-                    class="text-text-muted hover:text-text-main ml-auto flex items-center gap-1 text-[11px] font-semibold"
+                    class="text-text-muted hover:text-text-main text-2xs ml-auto flex items-center gap-1 font-semibold"
                     title={m.moderation_open_post_with_comment_label()}
                   >
                     <ExternalLink size={11} />
@@ -558,7 +548,7 @@
                   <a
                     href="/profile/{report.contentId}"
                     target="_blank"
-                    class="text-text-muted hover:text-text-main ml-auto flex items-center gap-1 text-[11px] font-semibold"
+                    class="text-text-muted hover:text-text-main text-2xs ml-auto flex items-center gap-1 font-semibold"
                     title={m.moderation_open_profile_label()}
                   >
                     <ExternalLink size={11} />
@@ -669,10 +659,10 @@
         <div class="space-y-2">
           {#each resolvedReports as report (report.id)}
             <div
-              class="border-cn-border bg-cn-surface/40 flex items-center gap-3 rounded-xl border p-3"
+              class="border-cn-border bg-cn-surface flex items-center gap-3 rounded-xl border p-3"
             >
               <span
-                class="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold {statusClass[
+                class="text-2xs shrink-0 rounded-full px-2 py-0.5 font-bold {statusClass[
                   report.status
                 ]}"
               >
@@ -691,7 +681,7 @@
                 <button
                   type="button"
                   onclick={() => openPostPreview(report.contentId)}
-                  class="text-cn-yellow flex shrink-0 items-center gap-1 text-[11px] hover:underline"
+                  class="text-cn-yellow text-2xs flex shrink-0 items-center gap-1 hover:underline"
                   title={m.moderation_preview_post_label()}
                 >
                   <Eye size={11} />
@@ -699,7 +689,7 @@
                 <a
                   href="/posts/{report.contentId}"
                   target="_blank"
-                  class="text-text-muted/60 hover:text-text-muted shrink-0 text-[11px]"
+                  class="text-text-muted/60 hover:text-text-muted text-2xs shrink-0"
                   title={m.moderation_open_post_label()}
                 >
                   <ExternalLink size={11} />
@@ -708,7 +698,7 @@
                 <a
                   href="/posts/{report.postId}"
                   target="_blank"
-                  class="text-text-muted/60 hover:text-text-muted shrink-0 text-[11px]"
+                  class="text-text-muted/60 hover:text-text-muted text-2xs shrink-0"
                   title={m.moderation_open_post_short_label()}
                 >
                   <ExternalLink size={11} />
@@ -717,13 +707,13 @@
                 <a
                   href="/profile/{report.contentId}"
                   target="_blank"
-                  class="text-text-muted/60 hover:text-text-muted shrink-0 text-[11px]"
+                  class="text-text-muted/60 hover:text-text-muted text-2xs shrink-0"
                   title={m.moderation_open_profile_label()}
                 >
                   <ExternalLink size={11} />
                 </a>
               {/if}
-              <span class="text-text-muted/60 ml-auto shrink-0 text-[11px]"
+              <span class="text-text-muted/60 text-2xs ml-auto shrink-0"
                 >{formatDate(report.createdAt)}</span
               >
             </div>
@@ -739,7 +729,7 @@
       <div class="space-y-3">
         {#each { length: 3 } as _, i (i)}
           <div
-            class="border-cn-border bg-cn-surface/60 animate-pulse space-y-2 rounded-2xl border p-5"
+            class="border-cn-border bg-cn-surface animate-pulse space-y-2 rounded-2xl border p-5"
           >
             <div class="bg-cn-border/60 h-3 w-1/2 rounded"></div>
             <div class="bg-cn-border/40 h-3 w-full rounded"></div>
@@ -778,9 +768,7 @@
                   >{m.moderation_association_post_label()}</span
                 >
               {/if}
-              <span class="text-text-muted/60 ml-auto text-[11px]"
-                >{formatDate(post.createdAt)}</span
-              >
+              <span class="text-text-muted/60 text-2xs ml-auto">{formatDate(post.createdAt)}</span>
             </div>
 
             <!-- Excerpt -->
@@ -795,14 +783,12 @@
 
             <!-- Report count + ID -->
             <div class="mb-3 flex items-center gap-2">
-              <span
-                class="bg-red-err/20 text-red-err rounded-full px-2 py-0.5 text-[11px] font-bold"
-              >
+              <span class="bg-red-err/20 text-red-err text-2xs rounded-full px-2 py-0.5 font-bold">
                 {m.moderation_pending_reports_count_label({ count: post.pendingReportCount })}
               </span>
               <button
                 onclick={() => copyId(post.id)}
-                class="text-text-muted/50 hover:text-text-muted flex items-center gap-1 font-mono text-[10px] transition-colors"
+                class="text-text-muted/50 hover:text-text-muted text-2xs flex items-center gap-1 font-mono transition-colors"
                 title={m.moderation_copy_id_label()}
               >
                 {post.id.slice(0, 12)}…
@@ -872,7 +858,7 @@
       <div class="space-y-3">
         {#each { length: 3 } as _, i (i)}
           <div
-            class="border-cn-border bg-cn-surface/60 animate-pulse space-y-2 rounded-2xl border p-5"
+            class="border-cn-border bg-cn-surface animate-pulse space-y-2 rounded-2xl border p-5"
           >
             <div class="bg-cn-border/60 h-3 w-2/3 rounded"></div>
           </div>
@@ -887,19 +873,19 @@
       <div class="space-y-3">
         {#each mutedUsers as user (user.userId)}
           <div
-            class="border-cn-border bg-cn-surface/70 flex items-start gap-3 rounded-2xl border p-4 shadow-sm backdrop-blur-sm"
+            class="border-cn-border bg-cn-surface flex items-start gap-3 rounded-2xl border p-4 shadow-sm"
           >
             <div class="mt-0.5 shrink-0"><Avatar userId={user.userId} size="sm" /></div>
             <div class="min-w-0 flex-1">
               <p class="text-text-main text-sm font-medium">
                 {names[user.userId] ?? user.userId}
               </p>
-              <p class="text-text-muted/50 font-mono text-[11px]">{user.userId.slice(0, 16)}…</p>
+              <p class="text-text-muted/50 text-2xs font-mono">{user.userId.slice(0, 16)}…</p>
               {#if user.mutedReason}
                 <p class="text-text-muted mt-0.5 text-xs italic">"{user.mutedReason}"</p>
               {/if}
               {#if user.mutedAt}
-                <p class="text-text-muted/60 mt-1 text-[11px]">
+                <p class="text-text-muted/60 text-2xs mt-1">
                   {m.moderation_muted_on_label({ date: formatDate(user.mutedAt) })}
                   {#if user.mutedBy}
                     {m.moderation_muted_by_label({
@@ -922,7 +908,7 @@
       </div>
     {/if}
   {/if}
-</div>
+</PageContainer>
 
 <ModerationPostPreviewModal open={previewOpen} postId={previewPostId} onClose={closePostPreview} />
 

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import PageContainer from '$lib/components/layout/PageContainer.svelte';
+  import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
@@ -44,7 +46,7 @@
   import { fetchFormations, type FormationOption } from '$lib/pricing/criteriaOptions';
   import { firstEmptyCondition } from '$lib/forms/audience';
   import { fromFormItems, toFormItemsPayload } from '$lib/forms/itemsPayload';
-  import { CircleAlert, ArrowLeft, FileText, ImagePlus, Users, X } from '@lucide/svelte';
+  import { CircleAlert, FileText, ImagePlus, Users, X } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
   const formId = $derived(page.params.id as string);
@@ -263,22 +265,13 @@
 </script>
 
 <!-- Same width as the create page: it is the same form, and it carries the same grid. -->
-<div class="mx-auto max-w-5xl px-3 py-5 sm:px-6">
-  <div class="mb-8 flex items-center gap-3">
-    <button
-      onclick={() => goto('/forms')}
-      class="text-text-muted hover:text-text-main hover:bg-cn-border/30 rounded-xl p-2 transition-colors"
-      title={m.common_back()}
-    >
-      <ArrowLeft size={20} />
-    </button>
-    <div class="min-w-0 flex-1">
-      <h1 class="text-text-main text-2xl font-extrabold tracking-tight">{m.form_edit_heading()}</h1>
-      {#if form}
-        <p class="text-text-muted mt-0.5 truncate text-sm">{form.title}</p>
-      {/if}
-    </div>
-  </div>
+<PageContainer width="tool">
+  <PageHeader
+    title={m.form_edit_heading()}
+    subtitle={form?.title}
+    backHref="/forms"
+    backLabel={m.common_back()}
+  />
 
   {#if loadError}
     <div
@@ -363,7 +356,7 @@
           </div>
         {:else}
           <label
-            class="border-cn-border bg-cn-bg/40 text-text-muted hover:border-cn-yellow/50 flex cursor-pointer items-center gap-2 rounded-xl border-2 border-dashed px-4 py-4 text-sm transition-colors {uploadingImage
+            class="border-cn-border bg-cn-bg text-text-muted hover:border-cn-yellow/50 flex cursor-pointer items-center gap-2 rounded-xl border-2 border-dashed px-4 py-4 text-sm transition-colors {uploadingImage
               ? 'pointer-events-none opacity-50'
               : ''}"
           >
@@ -428,4 +421,4 @@
       onSave={handleSave}
     />
   {/if}
-</div>
+</PageContainer>

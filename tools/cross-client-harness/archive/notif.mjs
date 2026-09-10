@@ -84,8 +84,23 @@ phone.forwardDevtools(PORTS.A1);
 const a1Setup = await withDeadline(client(PORTS.A1, 'tauri.localhost'), 60_000, 'A1 attach');
 stage(`A1 attached; unlock -> ${unlock()}`);
 stage('A1 attached; opening the DM');
-await withDeadline(ensureChat(a1Setup), 60_000, 'A1 ensureChat').catch(() => null);
-await withDeadline(openConversation(a1Setup, peerNameFor('A1')), 90_000, 'A1 openConversation').catch(() => null);
+// A SWALLOWED SETUP FAILURE IS EXACTLY HOW A WARM-UP GOES MISSING UNDER A CLEAN LOG, and these two
+// catches are the PHONE's - W2's and W1's below are allowed to throw. Until 2026-09-08 they
+// discarded the reason entirely, so "the DM never opened" and "the DM was open and the message
+// never came" produced the same run: no line, no field, `clean: true`. Those are different
+// findings - the first is the rig's and the second is the product's - and the warm-up clause below
+// exists precisely to tell them apart, which it cannot do if its own precondition fails in silence.
+const a1SetupFaults = [];
+await withDeadline(ensureChat(a1Setup), 60_000, 'A1 ensureChat').catch((e) => {
+  a1SetupFaults.push(`ensureChat: ${e?.message || e}`);
+  stage(`A1 ensureChat FAILED - ${e?.message || e}`);
+});
+await withDeadline(openConversation(a1Setup, peerNameFor('A1')), 90_000, 'A1 openConversation').catch(
+  (e) => {
+    a1SetupFaults.push(`openConversation: ${e?.message || e}`);
+    stage(`A1 openConversation FAILED - ${e?.message || e}`);
+  }
+);
 
 stage('attaching W2');
 const w2 = await withDeadline(client(PORTS.W2, APP_TAB), 60_000, 'W2 attach');
@@ -136,7 +151,7 @@ phone.clearLogcat();
 const phoneWindowFrom = Date.now();
 const oW2 = await watch(w2, `notif${which}-w2`);
 const oW1 = await watch(w1, `notif${which}-w1`);
-const out = { check: `NOTIF-${which}` };
+const out = { check: `NOTIF-${which}`, a1SetupFaults };
 
 /**
  * NOTIF-1b - THE CASE THE P1 WAS ABOUT, AND THE ONE THIS BOARD NEVER HAD A ROW FOR.
@@ -251,13 +266,96 @@ if (which === '1b') {
   // A RIG CLAUSE, NOT A PRODUCT ONE, and named so a reader can tell at a glance: the app was still
   // booting, so nothing after this measures the notification layer.
   if (out.warmUpInMs === null) unmet.push('theAppWasRoutingBeforeItWasHidden');
+  // ITS PRECONDITION IN TURN, AND THE REASON THE ONE ABOVE CAN BE READ. A warm-up cannot arrive in a
+  // conversation the phone never opened, so a failure up there is the rig's twice over - and it was
+  // silent until 2026-09-08. Kept separate rather than folded into the clause above, because "the
+  // DM would not open" and "the DM was open and nothing came" are the two findings this row spends
+  // its whole warm-up proving apart.
+  if (a1SetupFaults.length > 0) unmet.push('theDmWasOpenOnThePhone');
   if (out.notifiedInMs === null) unmet.push('aNotificationArrived');
   if (!carriesTheText) unmet.push('itCarriedTheMessageAndNotJustASenderName');
-  if (out.notifiedInMs !== null && out.notifiedInMs >= 10_000) unmet.push('itBeatTheDeferredPushWindow');
+  // THE 10 s CLAUSE IS A DISCRIMINATOR AND IT ONLY DISCRIMINATES WHEN THE BASELINE IS BELOW IT.
+  //
+  // `scheduleDeferredPush` fires after ten seconds, so a notification INSIDE that window can only
+  // have come from the JS layer - that is the whole reasoning above, and it silently assumes this
+  // handset can deliver a message in under ten seconds at all. The warm-up already measures exactly
+  // that, in the FOREGROUND, which is the fastest path there is: this row's own comment records
+  // 2190 ms on a warm app.
+  //
+  // Measured 2026-09-08: the warm-up took 19455 ms and the hidden delivery 14728 ms, so the row
+  // recorded a product FAIL on a run whose BEST case was already slower than the discriminator. The
+  // two numbers cannot be told apart there - a silent JS layer and a uniformly slow estate produce
+  // the same reading - and the row's own history says which way that error goes: on 2026-09-06 it
+  // "accused a notification path that had simply not been asked yet. The difference was the rig's,
+  // not the product's."
+  //
+  // So a warm-up at or above the window makes this clause UNGRADEABLE rather than unmet, and it is
+  // its own precondition exactly like `theOsLetTheHiddenAppKeepItsNetwork` above: "the estate is
+  // slow" and "the product stayed silent" are different findings and must not share a verdict.
+  const baselineTooSlow = out.warmUpInMs !== null && out.warmUpInMs >= 10_000;
+  if (baselineTooSlow) {
+    out.discriminatorUngradeable =
+      `the warm-up took ${out.warmUpInMs} ms in the FOREGROUND, at or past the ${10_000} ms deferred-push ` +
+      'window this row uses to tell the JS layer from the backstop - so the timing clause proves nothing here';
+  } else if (out.notifiedInMs !== null && out.notifiedInMs >= 10_000) {
+    unmet.push('itBeatTheDeferredPushWindow');
+  }
   if (!out.heldOnA1) unmet.push('theAppActuallyHeldTheMessage');
   out.unmet = unmet;
-  out.verdict = unmet.length === 0 ? 'PASS' : 'FAIL';
-  stage(`NOTIF-1b -> ${out.verdict} (notified in ${out.notifiedInMs}ms, unmet ${JSON.stringify(unmet)})`);
+
+  // FOUR OF THESE CLAUSES ARE PRECONDITIONS, AND A PRECONDITION CANNOT PRODUCE A PRODUCT VERDICT.
+  //
+  // Every comment above already says so, one clause at a time - 'a RIG CLAUSE, not a product one',
+  // 'the OS is cutting it', 'different findings and must not share a verdict' - and the docblock
+  // promises that a failed warm-up makes the run 'say so and STOP rather than measuring a booting
+  // app and blaming the notification layer'. The code did not stop. It pushed the precondition into
+  // the same array as the product clauses, where `unmet.length > 0` turned it into `FAIL`.
+  //
+  // Measured 2026-09-08, twice: `warmUpInMs: null` with `notifiedInMs` 2206 and 2203. The
+  // notification layer - the entire subject of this row - answered in ~2.2 s, inside the
+  // discriminator, carrying its text; `itCarriedTheMessageAndNotJustASenderName` was not unmet.
+  // Both runs were recorded FAIL. The delivery service says why the warm-up missed: the app was
+  // still registering its device and draining seven pending groups THIRTEEN SECONDS AFTER the
+  // warm-up was sent. The row measured a booting app and blamed the notification layer, which is
+  // the exact sentence its own docblock forbids.
+  //
+  // WHY THIS IS NOT THE `baselineTooSlow` RULE, WHICH DELIBERATELY LETS A PRODUCT FAILURE WIN. A
+  // slow-but-arriving warm-up proves the app IS routing, so every other clause was validly asked
+  // and a failure among them is real - hence 'a genuine failure of another clause is still a
+  // failure whatever the baseline was'. A warm-up that NEVER arrives proves the opposite: nothing
+  // downstream was validly asked, `theAppActuallyHeldTheMessage` included, and grading those
+  // answers is reading a measurement that was never taken. The same holds for a dead process (the
+  // KILLED path, not the backgrounded one), an app HOME never hid (the FOREGROUND path), and an OS
+  // that cut the network (no path at all). Each one relocates the run onto a different subject.
+  const PRECONDITIONS = new Set([
+    'theAppWasStillAlive',
+    'theAppWasHidden',
+    'theOsLetTheHiddenAppKeepItsNetwork',
+    'theAppWasRoutingBeforeItWasHidden',
+    'theDmWasOpenOnThePhone',
+  ]);
+  const failedPreconditions = unmet.filter((u) => PRECONDITIONS.has(u));
+  if (failedPreconditions.length > 0) {
+    out.notMeasured =
+      `${failedPreconditions.join(', ')} - the run never reached the notification layer, so no ` +
+      'clause after it was validly asked and none of them is graded';
+  }
+
+  // A row that could not grade its own discriminator has not measured the product. `SETUP-FAILED`
+  // is the campaign's word for that. A failed PRECONDITION reaches it outright, because nothing was
+  // measured; a merely ungradeable discriminator reaches it only when nothing ELSE was unmet - a
+  // genuine failure of another clause is still a failure whatever the baseline was.
+  out.verdict = out.notMeasured
+    ? 'SETUP-FAILED'
+    : unmet.length > 0
+      ? 'FAIL'
+      : out.discriminatorUngradeable
+        ? 'SETUP-FAILED'
+        : 'PASS';
+  stage(
+    `NOTIF-1b -> ${out.verdict} (notified in ${out.notifiedInMs}ms, unmet ${JSON.stringify(unmet)})` +
+      (out.notMeasured ? ` - NOT MEASURED: ${out.notMeasured}` : '')
+  );
 } else if (which === '4') {
   // Cross-device dismissal: the phone notifies, the OTHER device of the same user reads, the
   // phone's notification must go. The two halves are asserted separately - a check that only
@@ -485,7 +583,10 @@ if (which === '1b') {
   // the encryption PIN - so the chat is behind the modal and nothing below it can be navigated to.
   out.unlock = unlock();
   stage(`unlock -> ${out.unlock}`);
-  await ensureChat(a1).catch(() => null);
+  // The pair announce together. `openConversation` already did; `ensureChat` did not, and a failure
+  // there is the reason the one below fails - reading the second without the first sends a reader
+  // looking for an ambiguous tile when the client never reached the chat surface at all.
+  await ensureChat(a1).catch((e) => stage(`A1 ensureChat FAILED - ${e?.message || e}`));
   await openConversation(a1, peerNameFor('A1')).catch((e) => stage(`openConversation: ${e.message}`));
 
   // POST-CONDITION, and the reason the first run of this check was worthless: both navigation calls
@@ -564,6 +665,23 @@ record(`NOTIF-${which}`, gated.verdict, {
   undecryptedInShade: out.undecrypted,
   notifiedInMs: out.notifiedInMs ?? null,
   markers: out.markers ?? (out.marker ? [out.marker] : []),
+  // WHY THIS ROW FAILED, IN THE LEDGER RATHER THAN IN A LOG THAT ROTATES. Measured 2026-09-08:
+  // NOTIF-1b recorded `FAIL` with `clean: true`, a marker found and a 14.7 s delivery, and NOTHING
+  // in the record said which clause was unmet - the four extras kept here did not include the list
+  // the verdict is computed FROM. Reading it took the run's own log file, which the ledger outlives.
+  // A verdict whose reason is not beside it is a verdict a later session re-runs to understand.
+  ...(out.unmet ? { unmet: out.unmet } : {}),
+  ...(out.discriminatorUngradeable ? { discriminatorUngradeable: out.discriminatorUngradeable } : {}),
+  // AND THE SAME LESSON ONE RUN LATER, WHICH IS WHY THE COMMENT ABOVE IS NOT ENOUGH. The clause list
+  // arrived here in September and these two - added the same day, on the same reasoning - did not,
+  // so the first `SETUP-FAILED` this row ever recorded carried `notMeasured: undefined` and could
+  // not say WHICH precondition had failed without the run's log. An explicit projection is a list
+  // that has to be revisited every time the record grows a field, and it will be missed again: what
+  // the verdict is computed FROM belongs here, always, and adding a clause means adding it twice.
+  ...(out.notMeasured ? { notMeasured: out.notMeasured } : {}),
+  ...(out.a1SetupFaults?.length ? { a1SetupFaults: out.a1SetupFaults } : {}),
+  // AND THE BASELINE THE 10 s DISCRIMINATOR IS ONLY MEANINGFUL AGAINST - see the warm-up clause.
+  ...(out.warmUpInMs === undefined ? {} : { warmUpInMs: out.warmUpInMs }),
 });
 console.log(JSON.stringify(out, null, 2));
 

@@ -159,6 +159,26 @@ describe('the unread badge', () => {
     expect(isUnreadForUser(msg('a', 5000, 'system'), 0)).toBe(false);
     expect(isUnreadForUser(msg('a', 5000, PEER, { isSystem: true }), 0)).toBe(false);
   });
+
+  it('COUNTS UP AS HISTORY LOADS when nothing ever advances the watermark', () => {
+    // Not a property worth having - a property worth REFUSING, and the reason a conversation kind
+    // may never be excused from the local watermark write. Community channels were: the guard that
+    // (correctly) keeps their read receipt off the MLS outbox sat at the top of the effect and
+    // skipped the local write with it, so every salon stayed at 0. The badge then meant "every
+    // message this device holds that is not mine", and scrolling up - the one gesture that loads
+    // more of them - made it climb. Reported from a community thread on 2026-09-09.
+    const onScreen = [msg('c', 3000), msg('d', 4000)];
+    const afterScrollingUp = [msg('a', 1000), msg('b', 2000), ...onScreen];
+
+    expect(countUnreadForUser(onScreen, 0)).toBe(2);
+    expect(countUnreadForUser(afterScrollingUp, 0)).toBe(4);
+
+    // With the watermark written, the same gesture loads older messages the reader is BEHIND, and
+    // the count does not move. That is the invariant the badge is drawn from.
+    const read = watermarkAfterReading(onScreen, 0);
+    expect(countUnreadForUser(onScreen, read)).toBe(0);
+    expect(countUnreadForUser(afterScrollingUp, read)).toBe(0);
+  });
 });
 
 describe('the watermark reading a conversation produces', () => {

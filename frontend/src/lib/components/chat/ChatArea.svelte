@@ -17,13 +17,12 @@
   import ChatMessageGroups from './ChatMessageGroups.svelte';
   import ChatComposer from './ChatComposer.svelte';
   import PollComposerModal from '../channels/PollComposerModal.svelte';
-  import ConversationMediaPanel from './ConversationMediaPanel.svelte';
   import type { ChannelPollDraft } from '$lib/utils/chat/channelCrypto';
   import EmptyState from '../shared/EmptyState.svelte';
-  import type { SharedContent } from '$lib/utils/chat/sharedContent';
   import { groupMessages, isMessageGroupRow } from '$lib/utils/messageGrouping';
   import { computeMessageListSwitchTime } from '$lib/utils/chat/messageUtils';
-  import { resolveRenderWindow } from '$lib/utils/chat/renderWindow';
+  import { resolveRenderWindow, stepWindowOlder } from '$lib/utils/chat/renderWindow';
+  import { countUnreadForUser, watermarkFor } from '$lib/utils/chat/readState';
   import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
   import type { ChatMessage, MessageReaction, Conversation } from '$lib/types';
@@ -53,8 +52,15 @@
     onSendGif?: (url: string) => void;
     /** Optional callback to create a poll (channels only). Enables the "Sondage" button. */
     onCreatePoll?: (draft: ChannelPollDraft) => void | Promise<void>;
-    /** Loads the conversation's shared media/links/files from the local history. */
-    onLoadSharedContent?: (conversationId: string) => Promise<SharedContent>;
+    /**
+     * Opens the shared media / links / files panel. Omit to hide the button.
+     *
+     * THE PANEL ITSELF IS NOT MOUNTED HERE ANY MORE. It used to be, behind a `showMediaPanel`
+     * local, which is why it could only ever draw itself OVER the thread: a child cannot become
+     * its parent's sibling. It is one of three panels the page now mounts beside this one, and
+     * this component's job stops at saying the button was pressed.
+     */
+    onOpenMedia?: () => void;
     /**
      * Full-conversation search over the entire local history. Returns matching message IDs
      * (oldest-first), or `null` to signal the caller to fall back to in-memory search
@@ -133,6 +139,8 @@
     canWrite?: boolean;
     /** Callback fired when the user selects or drops files to attach. */
     onFilesSelected?: (files: File[]) => void;
+    /** Sends a finished recording straight out, without staging it. Enables the microphone. */
+    onSendVoiceNote?: (file: File) => void;
     /** Files staged for sending but not yet uploaded. */
     pendingFiles?: PendingMediaFile[];
     /** Callback to remove a staged file by its index. */
@@ -190,7 +198,7 @@
     onCreatePoll,
     onVotePoll,
     onClosePoll,
-    onLoadSharedContent,
+    onOpenMedia,
     onSearchAll,
     onTogglePin,
     onInviteMembers,
@@ -222,6 +230,7 @@
     authToken = '',
     onJoinChannel,
     onFilesSelected,
+    onSendVoiceNote,
     pendingFiles = [],
     onRemovePendingFile,
     isUploading = false,
@@ -249,7 +258,13 @@
   // loadOlderGroups (scroll up) paginates older ones lazily (DF8).
   const INITIAL_RENDER_GROUPS = 60;
   const RENDER_GROUPS_STEP = 140;
-  const MAX_RENDERED_GROUPS = INITIAL_RENDER_GROUPS + RENDER_GROUPS_STEP * 2; // cap on DOM nodes
+  /**
+   * How much history to open ABOVE a message the reader jumped to, so it lands with context rather
+   * than glued to the top of the pane. It used to be a cap on rendered nodes, back when the window
+   * had a fixed width and slid; the window is anchored to the newest message now and only grows, so
+   * there is no cap to name and this is the only thing that number ever did that a reader could see.
+   */
+  const NAVIGATE_CONTEXT_GROUPS = INITIAL_RENDER_GROUPS + RENDER_GROUPS_STEP * 2;
 
   let chatContainer = $state<HTMLDivElement>();
   let isNearBottom = $state(true);
@@ -273,7 +288,6 @@
   /** Monotonic token to drop stale async search results. */
   let searchSeq = 0;
   let showSearch = $state(false);
-  let showMediaPanel = $state(false);
   /** Whether local DB may have messages older than what's currently in memory. */
   let hasMoreInDb = $state(true);
   let isLoadingOlder = $state(false);
@@ -489,19 +503,31 @@
    * current length; `windowStart` stays the state pagination writes.
    */
   let renderWindow = $derived(
-    resolveRenderWindow(
-      windowStart,
-      messageGroups.length,
-      INITIAL_RENDER_GROUPS,
-      MAX_RENDERED_GROUPS
-    )
+    resolveRenderWindow(windowStart, messageGroups.length, INITIAL_RENDER_GROUPS)
   );
   let windowEnd = $derived(renderWindow.end);
   let visibleMessageGroups = $derived(messageGroups.slice(renderWindow.start, renderWindow.end));
   /** Groups hidden above the render window (older messages). */
   let _hiddenGroupCount = $derived(renderWindow.start);
-  /** Groups hidden below the render window (newer messages, while scrolled far up). */
-  let hiddenBelowCount = $derived(messageGroups.length - windowEnd);
+  /**
+   * HOW MANY MESSAGES THE READER HAS NOT READ - the app's own definition, a watermark that advances.
+   *
+   * The badge used to show `messageGroups.length - windowEnd`, the count of groups the component
+   * had chosen not to draw. That number has no relation to anything the reader did: it GREW as they
+   * scrolled up, because scrolling up is what pushes groups out of the bottom of the window, and it
+   * was painted as the amber pill every messaging app uses for "new messages". A user reported it
+   * as "28 unread" on a conversation with nothing unread in it (2026-09-09), which is exactly what
+   * it looked like. Rendering bookkeeping may decide whether a control appears; it may never be
+   * dressed up as a fact about the conversation.
+   */
+  let unreadBelowCount = $derived.by(() => {
+    const convo = chatView?.conversation;
+    if (!convo) return 0;
+    return countUnreadForUser(
+      convo.messages,
+      watermarkFor(convo.readWatermarks, currentUserId.trim().toLowerCase())
+    );
+  });
   /**
    * Show the loading skeleton ONLY when there is genuinely nothing to render yet (cold
    * conversation, empty local page). When cached messages already exist they render
@@ -516,7 +542,7 @@
     // been replaced by a shorter page the two differ, and stepping back from the stale one would
     // walk a window that is already past the end.
     if (renderWindow.start > 0) {
-      windowStart = Math.max(0, renderWindow.start - RENDER_GROUPS_STEP);
+      windowStart = stepWindowOlder(renderWindow.start, RENDER_GROUPS_STEP);
       return;
     }
     if (onLoadOlderMessages && hasMoreInDb && !isLoadingOlder) {
@@ -596,7 +622,7 @@
     }
 
     if (targetIndex < renderWindow.start || targetIndex >= renderWindow.end) {
-      windowStart = Math.max(0, targetIndex - Math.floor(MAX_RENDERED_GROUPS / 2));
+      windowStart = Math.max(0, targetIndex - Math.floor(NAVIGATE_CONTEXT_GROUPS / 2));
       await tick();
     }
 
@@ -741,6 +767,12 @@
         // Always scroll to bottom for own messages; for others only if already near bottom.
         const ownMessageAdded = c.messages.at(-1)?.isOwn === true;
         if (isNearBottom || ownMessageAdded) {
+          // AND BRING THE WINDOW WITH IT. `scrollToBottom` moves the pane, not the slice: with the
+          // window stopped short of the list, it scrolled to the bottom of something that did not
+          // contain the message that had just arrived - so the message was, to the reader, simply
+          // not delivered. `isNearBottom` means "at the bottom of what is rendered", which is
+          // exactly the reader this has to serve.
+          windowStart = Math.max(0, messageGroups.length - INITIAL_RENDER_GROUPS);
           tick().then(() => scrollToBottom(true));
         }
       }
@@ -815,7 +847,7 @@
 </script>
 
 <section
-  class="relative flex min-h-0 min-w-0 flex-1 flex-col bg-transparent {isHidden
+  class="chat-thread-panel relative flex min-h-0 min-w-0 flex-1 flex-col bg-transparent {isHidden
     ? 'hidden md:flex'
     : ''}"
   use:swipeBack={{ onBack: onBack ?? (() => {}), enabled: _isMobile && !!onBack }}
@@ -854,20 +886,9 @@
           }
         }}
         searchActive={showSearch}
-        onOpenMedia={onLoadSharedContent ? () => (showMediaPanel = true) : undefined}
+        {onOpenMedia}
       />
     </div>
-
-    {#if onLoadSharedContent && chatView}
-      <ConversationMediaPanel
-        open={showMediaPanel}
-        conversationId={chatView.conversation.id}
-        {authToken}
-        loadSharedContent={onLoadSharedContent}
-        onClose={() => (showMediaPanel = false)}
-        onOpenSearch={() => (showSearch = true)}
-      />
-    {/if}
 
     {#if showSearch}
       <div class="px-3 pt-2 pb-0.5 md:px-6" transition:slide={{ duration: 180 }}>
@@ -924,7 +945,7 @@
           </div>
         </div>
         {#if searchLimitedToLoaded && searchQuery.trim().length >= 2}
-          <p class="text-text-muted px-1 pt-1 text-[0.7rem]">
+          <p class="text-text-muted text-2xs px-1 pt-1">
             {m.chat_search_limited_loaded_warning()}
           </p>
         {/if}
@@ -936,7 +957,7 @@
         <button
           type="button"
           onclick={() => (showPolls = !showPolls)}
-          class="border-cn-border text-text-main flex w-full items-center gap-2 rounded-xl border bg-(--cn-surface)/80 px-3 py-1.5 text-left text-sm transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+          class="border-cn-border text-text-main bg-cn-surface flex w-full items-center gap-2 rounded-xl border px-3 py-1.5 text-left text-sm transition-colors hover:bg-black/5 dark:hover:bg-white/5"
         >
           <ChartColumn size={14} class="text-cn-yellow shrink-0" />
           <span class="font-semibold"
@@ -974,7 +995,7 @@
         <button
           type="button"
           onclick={() => (showPinned = !showPinned)}
-          class="border-cn-border text-text-main flex w-full items-center gap-2 rounded-xl border bg-(--cn-surface)/80 px-3 py-1.5 text-left text-sm transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+          class="border-cn-border text-text-main bg-cn-surface flex w-full items-center gap-2 rounded-xl border px-3 py-1.5 text-left text-sm transition-colors hover:bg-black/5 dark:hover:bg-white/5"
         >
           <Pin size={14} class="shrink-0 text-amber-500" />
           <span class="font-semibold"
@@ -1059,7 +1080,7 @@
       <div
         bind:this={chatContainer}
         onscroll={handleScroll}
-        class="chat-scrollbar chat-messages-scroll flex min-h-0 flex-1 flex-col gap-2 overflow-x-hidden overflow-y-auto px-3 py-3 transition-opacity duration-150 md:px-6 md:py-6 {hideDuringEntry
+        class="chat-messages-scroll flex min-h-0 flex-1 flex-col gap-2 overflow-x-hidden overflow-y-auto px-3 py-3 transition-opacity duration-150 md:px-6 md:py-6 {hideDuringEntry
           ? 'opacity-0'
           : 'opacity-100'}"
       >
@@ -1142,7 +1163,7 @@
       </div>
     {/if}
 
-    {#if !isNearBottom || hiddenBelowCount > 0}
+    {#if !isNearBottom}
       <button
         type="button"
         onclick={jumpToLatest}
@@ -1153,12 +1174,12 @@
         <span class="inline-flex h-full w-full items-center justify-center">
           <ArrowDown size={18} />
         </span>
-        {#if hiddenBelowCount > 0}
+        {#if unreadBelowCount > 0}
           <span
-            class="text-cn-dark pointer-events-none absolute -top-1.5 -right-1.5 inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-amber-500 px-1 text-[0.6rem] font-extrabold shadow-sm shadow-amber-500/30"
+            class="text-cn-ink text-2xs pointer-events-none absolute -top-1.5 -right-1.5 inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-amber-500 px-1 font-bold shadow-sm shadow-amber-500/30"
             aria-hidden="true"
           >
-            {hiddenBelowCount > 99 ? '99+' : hiddenBelowCount}
+            {unreadBelowCount > 99 ? '99+' : unreadBelowCount}
           </span>
         {/if}
       </button>
@@ -1220,6 +1241,7 @@
           {replyingTo}
           {onCancelReply}
           {onFilesSelected}
+          {onSendVoiceNote}
           {pendingFiles}
           {onRemovePendingFile}
           {isUploading}
@@ -1239,7 +1261,7 @@
       <!-- Safety net: when a conversation ID is selected but its object is null (e.g. load race),
            the back button must still be reachable on mobile or the user is completely stuck. -->
       <header
-        class="z-20 flex items-center border-b border-black/5 bg-white/70 px-3 py-3 backdrop-blur-2xl md:hidden dark:border-white/10 dark:bg-black/50"
+        class="bg-cn-surface z-20 flex items-center border-b border-black/5 px-3 py-3 md:hidden dark:border-white/10"
       >
         <button
           onclick={onBack}

@@ -11,9 +11,7 @@
   let { class: className = '', children, title }: Props = $props();
 </script>
 
-<div
-  class="border-cn-border rounded-3xl border bg-(--cn-surface)/80 p-6 shadow-sm backdrop-blur-xl {className}"
->
+<div class="border-cn-border bg-cn-surface rounded-3xl border p-6 shadow-sm {className}">
   {#if title}
     <h3 class="text-text-main mb-4 px-1 text-xl font-bold">{title}</h3>
   {/if}

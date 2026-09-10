@@ -115,7 +115,7 @@
       {@const totalVotes = getTotalVotes(poll)}
 
       <div
-        class="rounded-[1.5rem] border border-black/5 bg-white/60 p-5 shadow-sm backdrop-blur-xl dark:border-white/10 dark:bg-black/20"
+        class="bg-cn-surface rounded-2xl border border-black/5 p-5 shadow-sm dark:border-white/10"
       >
         <!-- Poll header. -->
         <div class="mb-5 flex items-start gap-3">
@@ -125,27 +125,25 @@
             <ChartBar size={18} strokeWidth={2.5} />
           </div>
           <div class="min-w-0 flex-1">
-            <h4 class="text-text-main text-[1.05rem] leading-snug font-extrabold">
+            <h4 class="text-text-main text-base leading-snug font-bold">
               {poll.question}
             </h4>
             <div class="mt-1.5 flex flex-wrap items-center gap-2">
               {#if poll.multipleChoice}
                 <span
-                  class="text-text-muted text-[0.65rem] font-bold tracking-wider uppercase opacity-80"
+                  class="text-text-muted text-2xs font-bold tracking-wider uppercase opacity-80"
                 >
                   {m.post_poll_multiple_choice_label()}
                 </span>
               {/if}
               {#if poll.endsAt}
-                <span
-                  class="text-[0.65rem] font-bold text-amber-600 opacity-90 dark:text-amber-400"
-                >
+                <span class="text-2xs font-bold text-amber-600 opacity-90 dark:text-amber-400">
                   ⏱ {isOver(poll) ? m.post_poll_ended_label() : pollCountdown(poll.endsAt)}
                 </span>
               {/if}
               {#if hasVoted(poll)}
                 <span
-                  class="inline-flex items-center gap-1 text-[0.65rem] font-bold text-emerald-600 dark:text-emerald-400"
+                  class="text-2xs inline-flex items-center gap-1 font-bold text-emerald-600 dark:text-emerald-400"
                 >
                   ✓ {m.post_poll_you_voted_label()}
                 </span>
@@ -164,10 +162,9 @@
 
             <button
               type="button"
-              class="group relative w-full overflow-hidden rounded-2xl border-2 p-4 text-left transition-all duration-300 outline-none focus-visible:ring-4 focus-visible:ring-amber-500/30
-                {isSelected
+              class="group relative w-full overflow-hidden rounded-2xl border-2 p-4 text-left transition-all duration-300 outline-none focus-visible:ring-4 focus-visible:ring-amber-500/30 {isSelected
                 ? 'border-amber-500 bg-amber-500/5'
-                : 'border-black/5 bg-white/50 hover:border-amber-500/40 hover:bg-white/80 dark:border-white/5 dark:bg-black/40 dark:hover:bg-black/60'}"
+                : 'bg-cn-surface border-black/5 hover:border-amber-500/40 hover:bg-black/5 dark:border-white/5 dark:hover:bg-black/60'}"
               onclick={() => onVoteClick(poll.id, option.id, poll.multipleChoice)}
               aria-pressed={isSelected}
             >
@@ -212,7 +209,7 @@
                   </div>
 
                   <!-- Option label. -->
-                  <span class="text-text-main truncate text-[0.95rem] font-bold">
+                  <span class="text-text-main truncate text-sm font-bold">
                     {option.label}
                   </span>
                 </div>
@@ -220,9 +217,7 @@
                 <!-- Compteurs (Pourcentage & Votes absolus) -->
                 <div class="flex shrink-0 items-center gap-2.5">
                   {#if totalVotes > 0}
-                    <span
-                      class="text-text-main/60 min-w-[2.5rem] text-right text-xs font-extrabold"
-                    >
+                    <span class="text-text-main/60 min-w-[2.5rem] text-right text-xs font-bold">
                       {percentage}%
                     </span>
                   {/if}
@@ -230,7 +225,7 @@
                   <div
                     role="button"
                     tabindex="0"
-                    class="text-text-muted rounded-lg bg-black/5 px-2 py-1 text-[0.7rem] font-bold select-none dark:bg-white/10"
+                    class="text-text-muted text-2xs rounded-lg bg-black/5 px-2 py-1 font-bold select-none dark:bg-white/10"
                     class:cursor-pointer={voterIds.length > 0}
                     class:cursor-default={voterIds.length === 0}
                     aria-label={m.post_poll_vote_count_label({ count: voteCount })}
@@ -266,7 +261,7 @@
           {:else if poll.multipleChoice}
             <button
               type="button"
-              class="text-cn-ink rounded-xl bg-amber-500 px-5 py-2.5 text-sm font-extrabold shadow-md shadow-amber-500/20 transition-all outline-none hover:bg-amber-400 hover:shadow-lg hover:shadow-amber-500/30 focus-visible:ring-4 focus-visible:ring-amber-500/50 active:scale-95 active:shadow-md disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none disabled:hover:shadow-md disabled:active:scale-100"
+              class="text-cn-ink rounded-xl bg-amber-500 px-5 py-2.5 text-sm font-bold shadow-md shadow-amber-500/20 transition-all outline-none hover:bg-amber-400 hover:shadow-lg hover:shadow-amber-500/30 focus-visible:ring-4 focus-visible:ring-amber-500/50 active:scale-95 active:shadow-md disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none disabled:hover:shadow-md disabled:active:scale-100"
               disabled={selectedOptions.length === 0}
               onclick={() => onSubmitVote(poll.id)}
             >
@@ -284,11 +279,11 @@
   {@const names = voterNames[tooltipOptionId]}
   <div
     use:portal
-    class="bg-cn-tooltip pointer-events-none fixed z-[9999] -mt-1.5 max-w-[16rem] min-w-[10rem] -translate-y-full rounded-xl px-3 py-2 text-[0.72rem] font-medium text-white shadow-xl"
+    class="bg-cn-tooltip text-2xs pointer-events-none fixed z-(--z-tooltip) -mt-1.5 max-w-[16rem] min-w-[10rem] -translate-y-full rounded-xl px-3 py-2 font-medium text-white shadow-xl"
     style="top: {tooltipPos.top}px; right: {tooltipPos.right}px;"
     role="tooltip"
   >
-    <p class="mb-1 text-[0.6rem] font-bold tracking-wide text-white/60 uppercase">
+    <p class="text-2xs mb-1 font-bold tracking-wide text-white/60 uppercase">
       {m.post_poll_voters_label()}
     </p>
     {#if names}

@@ -651,11 +651,11 @@ export class WebMlsService extends BaseMlsService {
       // If state == null and error → real crash (no state to blame) → rethrow.
       let cause = this.classifyStateLoadFailure(e);
 
-      // Before treating a sealed state as a PIN rotation, check whether it is simply older than
+      // Before treating an unopenable state as a PIN rotation, check whether it is simply older than
       // the v0.11.0 envelope change. Those snapshots were never rewritten (the MLS IndexedDB is
       // still at schema version 1), so on the first v0.11.x login they look exactly like a state
       // sealed with someone else's key - and the recovery offered for that cannot open them.
-      if (cause === 'sealed' && state && opts?.legacyPin) {
+      if (cause === 'undecryptable' && state && opts?.legacyPin) {
         const migrated = await migrateLegacyMlsStateBlob(state, opts.legacyPin, deviceKeyB64);
         if (migrated) {
           console.log('[MLS] Pre-v0.11.0 snapshot re-sealed under the device key.');
@@ -680,10 +680,9 @@ export class WebMlsService extends BaseMlsService {
       }
 
       if (cause === 'mismatch' || state != null) {
-        // Only a `sealed` state is worth pausing for: the caller can offer the old PIN and
-        // recover the history intact. A `mismatch` decrypted fine and no PIN can repair it,
-        // so honouring noFreshStart there would strand the user with nothing to try.
-        if (opts?.noFreshStart && cause === 'sealed') {
+        // ANYTHING BUT A MISMATCH IS WORTH PAUSING FOR - same reasoning as `TauriMlsService`,
+        // and the same reason it is written as a negation: `unknown` must not be rotated away.
+        if (opts?.noFreshStart && cause !== 'mismatch') {
           throw new Error(MLS_LOCAL_STATE_UNDECRYPTABLE, { cause: e });
         }
         await this.rotateDeviceIdentity(

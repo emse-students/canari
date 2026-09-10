@@ -18,12 +18,13 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-52 scripts.
+56 scripts.
 
 | script | what it is |
 |---|---|
 | `a1apk.mjs` | BUILD THE A1 APK AGAINST THE LOCAL ESTATE, INSTALL IT, AND PROVE THE PHONE IS RUNNING IT. |
 | `accounts.mjs` | The ONE reader of `test-accounts.json`. |
+| `apkbuild.mjs` | WHETHER THE APK ON THE PHONE IS ANY COMMIT AT ALL - the provenance a build stamp cannot carry. |
 | `arm.mjs` | The one module in this harness that WRITES to production, and the distinction it turns on. |
 | `atoms.mjs` | THE ATOMS - every gesture this rig can make, in one place, each with its contract. |
 | `bundle.mjs` | WHICH BUNDLE A WEB CLIENT IS RUNNING, and the repair when it is not the deployed one. |
@@ -44,6 +45,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `gate-probe.mjs` | The ONE expression that answers "is the encryption PIN gate on screen". |
 | `grainedb.mjs` | The three questions the COMM phase cannot ask a SCREEN, asked of production's database instead. |
 | `groupnav.mjs` | Opening a GROUP conversation by name, and proving the right one opened. |
+| `identity.mjs` | WHICH ACCOUNT A CLIENT IS ACTUALLY ACTING AS, ASKED OF THE TOKEN AND OF NOTHING ELSE. |
 | `instrument.mjs` | THE HASH OF WHAT A CHECK MEASURES WITH, as opposed to the hash of the check itself. |
 | `inventory.mjs` | THE INDEX OF EVERY SCRIPT IN THIS RIG, GENERATED FROM THE SCRIPTS THEMSELVES. |
 | `invite.mjs` | Invites a user into the open group conversation - i.e. produces an MLS Add commit. |
@@ -63,6 +65,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `results.mjs` | Append-only result log for the campaign. |
 | `rows.mjs` | THE BOARD AND THE EVIDENCE, RECONCILED - which rows nothing has ever answered, and which answers |
 | `scriptpath.mjs` | WHERE ONE OF THIS RIG'S SCRIPTS ACTUALLY LIVES, resolved once instead of guessed four times. |
+| `seenset.mjs` | WHAT A WEB CLIENT REMEMBERS HAVING ALREADY READ - the seen-ciphertext ledger, read off the client. |
 | `send.mjs` | Sends one message from one client, and ends when that client's own pane shows it. |
 | `serial.mjs` | WHICH PHONE adb SHOULD TALK TO - one resolver, and it REFUSES TO GUESS between two of them. |
 | `shot.mjs` | Saves a PNG of a client, so a layout claim is LOOKED AT rather than inferred. |
@@ -71,6 +74,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `ssh.mjs` | THE ONE WAY THIS HARNESS REACHES PRODUCTION. |
 | `state.mjs` | One-line health read of every web client - the thing to run when a check behaves oddly. |
 | `stranded.mjs` | WHAT THE VENUE CHANNEL'S HISTORY PERMANENTLY CONTAINS, AND THE ONLY 404s IT MAY PRODUCE. |
+| `subject.mjs` | THE PURE HALF OF "WHO IS THIS CLIENT" - a token's subject, and what a disagreement means. |
 | `unlock.mjs` | Unlocks every client that needs it, resolving WHICH ACCOUNT owns each port by itself. |
 | `venue.mjs` | Builds the campaign's SHARED venue if it is not there, and states what it found if it is. |
 | `watch.mjs` | Continuous observation of a client while a check runs: console, page errors, HTTP, WebSocket. |
@@ -90,7 +94,7 @@ A gesture other rows REST ON, measured by a row of its own so a failure in it is
 
 One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`. See [`archive/README.md`](archive/README.md).
 
-64 scripts.
+72 scripts.
 
 | script | what it is |
 |---|---|
@@ -117,6 +121,11 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 | `archive/comm7.mjs` | COMM-7: a salon only administrators may write in - and the refusal has to be the SERVER's. |
 | `archive/comm8.mjs` | COMM-8: a private salon is invisible to a non-member, unfetchable by them, and NEVER SENT ITS SEED. |
 | `archive/comm910.mjs` | COMM-9 and COMM-10: what losing access to a private salon takes away, and what it deliberately does not. |
+| `archive/corrupt.mjs` | CORRUPT - deliberate store damage, and whether the app SAYS SO rather than failing quietly. |
+| `archive/corrupt1.mjs` | CORRUPT-1 - a SHORTENED MLS store: explicit failure and RECOVERY, never a silent empty history. |
+| `archive/corrupt2.mjs` | CORRUPT-2 - ONE byte flipped INSIDE the ciphertext: the AEAD tag must fail, and the app must say so. |
+| `archive/corrupt4.mjs` | CORRUPT-4 - a ZERO-LENGTH MLS state must read as ABSENT, and the device must re-enrol cleanly. |
+| `archive/corrupt6.mjs` | CORRUPT-6 - a DAMAGED device-key vault: recover or fail loudly, never a decrypt loop. |
 | `archive/del.mjs` | DEL-2..10 - deleting a conversation while something else is still happening to it. |
 | `archive/del1.mjs` | DEL-1 - the peer deletes a group while the other side is awaiting its history. |
 | `archive/fwd.mjs` | FWD-1 / FWD-2 - the WP-FWD-1 reproduction attempt, channel -> DM. |
@@ -146,6 +155,9 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 | `archive/multi.mjs` | MULTI - one user, two devices. Rung 12 of the ladder. |
 | `archive/mut.mjs` | MUT-1..21 - message mutation (edit, delete, react, pin) on both transports. |
 | `archive/notif.mjs` | NOTIF-1b / NOTIF-4 / NOTIF-4b / NOTIF-9 / NOTIF-10 / NOTIF-11 - the notification surface, one |
+| `archive/notif14.mjs` | NOTIF-14 - the TITLE names its conversation: a DM says WHO, a salon says WHERE. |
+| `archive/notif16.mjs` | NOTIF-16 - a mention is filed on `canari_mentions` and a plain message on `canari_messages`. |
+| `archive/notif17b.mjs` | NOTIF-17b - a first message into a conversation this device has NO RECORD OF, arriving as a PUSH. |
 | `archive/notif7.mjs` | NOTIF-7 - tapping a notification deep-links into the RIGHT conversation. Run TWICE. |
 | `archive/pinrows.mjs` | PIN - the encryption gate, one row per invocation. |
 | `archive/read.mjs` | READ-1..10 - MLS read receipts: the sidebar unread badge, and the sender's own |
@@ -163,7 +175,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-23 scripts.
+24 scripts.
 
 | script | what it is |
 |---|---|
@@ -175,6 +187,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/exit-selftest.mjs` | A CHECK MAY NOT REPORT SUCCESS AND END IN THE SAME BREATH. |
 | `archive/gate-probe-selftest.mjs` | `pin.mjs`'s gate probe, exercised on the pages it has to tell apart. |
 | `archive/gate-selftest.mjs` | EVERY SELF-TEST IN THE CI GATE MUST BE IMPORTABLE ON A MACHINE THAT HAS NO RIG. |
+| `archive/identity-selftest.mjs` | Pins the two ways a client's identity can be misread, and the one way it must not pass quietly. |
 | `archive/imports-selftest.mjs` | EVERY IMPORT IN EVERY RUNNER RESOLVES, AND NAMES SOMETHING THE TARGET ACTUALLY EXPORTS. |
 | `archive/instrument-selftest.mjs` | THE HASH THAT SAYS WHAT A CHECK MEASURES WITH IS ONLY WORTH ANYTHING IF IT SEES EVERY FILE. |
 | `archive/logcatclassify-selftest.mjs` | EVERY RULE OF THE PHONE CLASSIFIER, PINNED AGAINST A LINE WHOSE BUCKET IS KNOWN. |
@@ -242,4 +255,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-181 scripts in total.
+194 scripts in total.

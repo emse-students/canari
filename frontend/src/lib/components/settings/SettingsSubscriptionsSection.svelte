@@ -39,7 +39,7 @@
         <Tag size={22} strokeWidth={2.5} />
       </div>
       <div>
-        <h2 class="text-text-main text-lg font-extrabold">{m.profile_subs_heading()}</h2>
+        <h2 class="text-text-main text-lg font-bold">{m.profile_subs_heading()}</h2>
         <p class="text-text-muted mt-0.5 text-xs font-medium">
           {m.profile_subs_subtitle()}
         </p>
@@ -66,7 +66,7 @@
     <ul class="mb-4 space-y-2">
       {#each activeTags as tag (tag.id)}
         <li
-          class="border-cn-border flex items-center gap-3 rounded-xl border bg-white/50 px-4 py-3 dark:bg-white/5"
+          class="border-cn-border bg-cn-surface flex items-center gap-3 rounded-xl border px-4 py-3"
         >
           <CotisationTagRow {tag}>
             {#snippet trailing()}

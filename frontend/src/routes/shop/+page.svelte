@@ -1,4 +1,6 @@
 <script lang="ts">
+  import PageContainer from '$lib/components/layout/PageContainer.svelte';
+  import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { showToast } from '$lib/stores/toast.svelte';
@@ -153,69 +155,210 @@
   }
 </script>
 
-<div class="mx-auto max-w-4xl space-y-8 px-4 py-6 sm:px-6">
-  <div class="flex items-center gap-3">
-    <ShoppingBag class="text-cn-accent h-7 w-7 shrink-0" />
-    <div>
-      <h1 class="text-text-main text-2xl font-extrabold tracking-tight">{m.shop_heading()}</h1>
-      <p class="text-text-muted mt-0.5 text-sm">
-        {m.shop_subtitle()}
-      </p>
-    </div>
-  </div>
+<PageContainer width="grid">
+  <PageHeader title={m.shop_heading()} subtitle={m.shop_subtitle()} />
 
-  {#if !isLoggedIn}
-    <div class="border-cn-border space-y-3 rounded-2xl border bg-(--cn-surface) p-8 text-center">
-      <p class="text-text-main text-lg font-semibold">{m.shop_login_required_title()}</p>
-      <p class="text-text-muted text-sm">{m.shop_login_required_desc()}</p>
-      <a
-        href="/login"
-        class="bg-cn-accent inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold text-white transition-opacity hover:opacity-90"
-      >
-        {m.shop_login_button()}
-      </a>
-    </div>
-  {:else if loading}
-    <div class="flex justify-center py-16">
-      <div
-        class="border-cn-border border-t-cn-accent h-8 w-8 animate-spin rounded-full border-4"
-      ></div>
-    </div>
-  {:else if error}
-    <p class="text-sm text-red-500">{error}</p>
-  {:else}
-    <div class="flex gap-2">
-      <button
-        type="button"
-        onclick={() => (shopTab = 'products')}
-        class="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-        {shopTab === 'products'
-          ? 'bg-cn-yellow text-cn-ink shadow-sm'
-          : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
-      >
-        <ShoppingBag size={17} />
-        {m.shop_tab_products()}
-      </button>
-      <button
-        type="button"
-        onclick={() => (shopTab = 'partnerships')}
-        class="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
-        {shopTab === 'partnerships'
-          ? 'bg-cn-yellow text-cn-ink shadow-sm'
-          : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
-      >
-        <Handshake size={17} />
-        {m.shop_tab_partnerships()}
-      </button>
-    </div>
+  <div class="space-y-8">
+    {#if !isLoggedIn}
+      <div class="border-cn-border space-y-3 rounded-2xl border bg-(--cn-surface) p-8 text-center">
+        <p class="text-text-main text-lg font-semibold">{m.shop_login_required_title()}</p>
+        <p class="text-text-muted text-sm">{m.shop_login_required_desc()}</p>
+        <a
+          href="/login"
+          class="bg-cn-accent inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold text-white transition-opacity hover:opacity-90"
+        >
+          {m.shop_login_button()}
+        </a>
+      </div>
+    {:else if loading}
+      <div class="flex justify-center py-16">
+        <div
+          class="border-cn-border border-t-cn-accent h-8 w-8 animate-spin rounded-full border-4"
+        ></div>
+      </div>
+    {:else if error}
+      <p class="text-sm text-red-500">{error}</p>
+    {:else}
+      <div class="flex gap-2">
+        <button
+          type="button"
+          onclick={() => (shopTab = 'products')}
+          class="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+ {shopTab === 'products'
+            ? 'bg-cn-yellow text-cn-ink shadow-sm'
+            : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
+        >
+          <ShoppingBag size={17} />
+          {m.shop_tab_products()}
+        </button>
+        <button
+          type="button"
+          onclick={() => (shopTab = 'partnerships')}
+          class="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
+ {shopTab === 'partnerships'
+            ? 'bg-cn-yellow text-cn-ink shadow-sm'
+            : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
+        >
+          <Handshake size={17} />
+          {m.shop_tab_partnerships()}
+        </button>
+      </div>
 
-    {#if shopTab === 'products'}
-      {#if grouped.size === 0}
+      {#if shopTab === 'products'}
+        {#if grouped.size === 0}
+          <div class="border-cn-border rounded-2xl border bg-(--cn-surface) p-10 text-center">
+            <p class="text-text-muted text-sm">{m.shop_empty()}</p>
+          </div>
+        {:else}
+          {#each [...grouped.entries()] as [assocId, assocProducts] (assocId)}
+            {@const asso = associations.get(assocId)}
+            {#if asso}
+              <section class="space-y-4">
+                <!-- Association header -->
+                <div class="flex items-center gap-3">
+                  <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="md" />
+                  <div>
+                    <a
+                      href="/associations/{asso.slug}"
+                      class="text-text-main hover:text-cn-accent font-bold transition-colors"
+                    >
+                      {asso.name}
+                    </a>
+                    {#if asso.description?.trim()}
+                      <div
+                        class="text-text-muted [&_.post-markdown]:text-xs [&_.post-markdown]:leading-snug [&_.post-markdown_p]:m-0 [&_.post-markdown_p+p]:mt-0"
+                      >
+                        <ProfileBioMarkdown source={asso.description} compact />
+                      </div>
+                    {/if}
+                  </div>
+                </div>
+
+                <!-- Products grid -->
+                <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                  {#each assocProducts as product (product.id)}
+                    {@const sibling = upgradeSibling(product, assocProducts)}
+                    {@const memberEligible = qualifiesForMemberPrice(product, assocProducts)}
+                    <CardTile
+                      iconUrl={product.iconUrl}
+                      fallbackIcon={productFallbackIcon(product.type)}
+                      accentColor={asso.color ?? generateAvatarColor(asso.name)}
+                      badgeText={product.badgeText}
+                    >
+                      <div class="flex flex-col gap-3 p-5">
+                        <!-- Type badge -->
+                        <div class="flex flex-wrap items-center justify-between gap-2">
+                          <div class="flex flex-wrap items-center gap-1.5">
+                            <span
+                              class="rounded-full px-2.5 py-0.5 text-xs font-semibold {product.type ===
+                              'membership'
+                                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+                                : product.type === 'balance_topup'
+                                  ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
+                                  : 'bg-cn-surface-alt text-text-muted'}"
+                            >
+                              {typeLabel(product.type)}
+                            </span>
+                            {#if product.membersOnly}
+                              <span
+                                class="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
+                              >
+                                {m.shop_members_only_badge()}
+                              </span>
+                            {/if}
+                            {#if product.type === 'membership' && product.variantKey !== null && product.viewerActiveTier === product.variantKey}
+                              <span
+                                class="bg-cn-accent/15 text-cn-accent rounded-full px-2.5 py-0.5 text-xs font-semibold"
+                              >
+                                {m.shop_current_tier_badge()}
+                              </span>
+                            {/if}
+                          </div>
+                          {#if memberEligible && memberPriceLabel(product)}
+                            <span class="text-right text-sm font-bold">
+                              <span class="text-text-muted font-normal line-through"
+                                >{priceLabel(product)}</span
+                              >
+                              <span class="text-emerald-600 dark:text-emerald-400"
+                                >{memberPriceLabel(product)}</span
+                              >
+                              <span class="text-text-muted block text-xs font-normal sm:inline"
+                                >{sibling
+                                  ? m.shop_tier_upgrade_price_suffix({ tier: sibling.name })
+                                  : m.shop_member_price_suffix()}</span
+                              >
+                            </span>
+                          {:else}
+                            <span class="text-cn-accent text-sm font-bold"
+                              >{priceLabel(product)}</span
+                            >
+                          {/if}
+                        </div>
+
+                        <div>
+                          <p class="text-text-main font-semibold">{product.name}</p>
+                          {#if product.description}
+                            <p class="text-text-muted mt-1 line-clamp-2 text-xs">
+                              {product.description}
+                            </p>
+                          {/if}
+                        </div>
+
+                        <!-- Custom amount input -->
+                        {#if product.allowCustomAmount && product.amountCents === null}
+                          <div class="flex items-center gap-2">
+                            <input
+                              type="number"
+                              min={product.customAmountMinCents != null
+                                ? product.customAmountMinCents / 100
+                                : 0}
+                              max={product.customAmountMaxCents != null
+                                ? product.customAmountMaxCents / 100
+                                : undefined}
+                              step="0.01"
+                              placeholder={m.shop_amount_placeholder()}
+                              class="border-cn-border text-text-main focus:ring-cn-accent flex-1 rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
+                              bind:value={customAmounts[product.id]}
+                            />
+                            <span class="text-text-muted text-xs"
+                              >{product.currency.toUpperCase()}</span
+                            >
+                          </div>
+                        {/if}
+
+                        <ProductPurchaseButton
+                          {product}
+                          customAmountEuros={customAmounts[product.id]}
+                          disabled={(product.membersOnly && !product.viewerIsCotisant) ||
+                            gridRefuses(product)}
+                          class="w-full"
+                        />
+                        {#if gridRefuses(product)}
+                          <p class="text-xs text-amber-700 dark:text-amber-400">
+                            {m.shop_price_unavailable_hint()}
+                          </p>
+                        {:else if gridPriceIsProvisional(product, isLoggedIn)}
+                          <p class="text-text-muted text-xs">{m.shop_price_profile_hint()}</p>
+                        {/if}
+                        {#if product.membersOnly && !product.viewerIsCotisant}
+                          <p class="text-xs text-amber-700 dark:text-amber-400">
+                            {m.shop_members_only_hint()}
+                          </p>
+                        {/if}
+                      </div>
+                    </CardTile>
+                  {/each}
+                </div>
+              </section>
+            {/if}
+          {/each}
+        {/if}
+      {:else if partnershipsGrouped.size === 0}
         <div class="border-cn-border rounded-2xl border bg-(--cn-surface) p-10 text-center">
-          <p class="text-text-muted text-sm">{m.shop_empty()}</p>
+          <p class="text-text-muted text-sm">{m.shop_partnership_none()}</p>
         </div>
       {:else}
-        {#each [...grouped.entries()] as [assocId, assocProducts] (assocId)}
+        {#each [...partnershipsGrouped.entries()] as [assocId, assocPartnerships] (assocId)}
           {@const asso = associations.get(assocId)}
           {#if asso}
             <section class="space-y-4">
@@ -233,166 +376,20 @@
                     <div
                       class="text-text-muted [&_.post-markdown]:text-xs [&_.post-markdown]:leading-snug [&_.post-markdown_p]:m-0 [&_.post-markdown_p+p]:mt-0"
                     >
-                      <ProfileBioMarkdown source={asso.description} compact />
+                      <ProfileBioMarkdown source={asso.description} />
                     </div>
                   {/if}
                 </div>
               </div>
 
-              <!-- Products grid -->
-              <div class="grid gap-4 sm:grid-cols-2">
-                {#each assocProducts as product (product.id)}
-                  {@const sibling = upgradeSibling(product, assocProducts)}
-                  {@const memberEligible = qualifiesForMemberPrice(product, assocProducts)}
-                  <CardTile
-                    iconUrl={product.iconUrl}
-                    fallbackIcon={productFallbackIcon(product.type)}
-                    accentColor={asso.color ?? generateAvatarColor(asso.name)}
-                    badgeText={product.badgeText}
-                  >
-                    <div class="flex flex-col gap-3 p-5">
-                      <!-- Type badge -->
-                      <div class="flex flex-wrap items-center justify-between gap-2">
-                        <div class="flex flex-wrap items-center gap-1.5">
-                          <span
-                            class="rounded-full px-2.5 py-0.5 text-xs font-semibold {product.type ===
-                            'membership'
-                              ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
-                              : product.type === 'balance_topup'
-                                ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
-                                : 'bg-cn-surface-alt text-text-muted'}"
-                          >
-                            {typeLabel(product.type)}
-                          </span>
-                          {#if product.membersOnly}
-                            <span
-                              class="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-800 dark:bg-amber-900/30 dark:text-amber-400"
-                            >
-                              {m.shop_members_only_badge()}
-                            </span>
-                          {/if}
-                          {#if product.type === 'membership' && product.variantKey !== null && product.viewerActiveTier === product.variantKey}
-                            <span
-                              class="bg-cn-accent/15 text-cn-accent rounded-full px-2.5 py-0.5 text-xs font-semibold"
-                            >
-                              {m.shop_current_tier_badge()}
-                            </span>
-                          {/if}
-                        </div>
-                        {#if memberEligible && memberPriceLabel(product)}
-                          <span class="text-right text-sm font-bold">
-                            <span class="text-text-muted font-normal line-through"
-                              >{priceLabel(product)}</span
-                            >
-                            <span class="text-emerald-600 dark:text-emerald-400"
-                              >{memberPriceLabel(product)}</span
-                            >
-                            <span class="text-text-muted block text-xs font-normal sm:inline"
-                              >{sibling
-                                ? m.shop_tier_upgrade_price_suffix({ tier: sibling.name })
-                                : m.shop_member_price_suffix()}</span
-                            >
-                          </span>
-                        {:else}
-                          <span class="text-cn-accent text-sm font-bold">{priceLabel(product)}</span
-                          >
-                        {/if}
-                      </div>
-
-                      <div>
-                        <p class="text-text-main font-semibold">{product.name}</p>
-                        {#if product.description}
-                          <p class="text-text-muted mt-1 line-clamp-2 text-xs">
-                            {product.description}
-                          </p>
-                        {/if}
-                      </div>
-
-                      <!-- Custom amount input -->
-                      {#if product.allowCustomAmount && product.amountCents === null}
-                        <div class="flex items-center gap-2">
-                          <input
-                            type="number"
-                            min={product.customAmountMinCents != null
-                              ? product.customAmountMinCents / 100
-                              : 0}
-                            max={product.customAmountMaxCents != null
-                              ? product.customAmountMaxCents / 100
-                              : undefined}
-                            step="0.01"
-                            placeholder={m.shop_amount_placeholder()}
-                            class="border-cn-border text-text-main focus:ring-cn-accent flex-1 rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
-                            bind:value={customAmounts[product.id]}
-                          />
-                          <span class="text-text-muted text-xs"
-                            >{product.currency.toUpperCase()}</span
-                          >
-                        </div>
-                      {/if}
-
-                      <ProductPurchaseButton
-                        {product}
-                        customAmountEuros={customAmounts[product.id]}
-                        disabled={(product.membersOnly && !product.viewerIsCotisant) ||
-                          gridRefuses(product)}
-                        class="w-full"
-                      />
-                      {#if gridRefuses(product)}
-                        <p class="text-xs text-amber-700 dark:text-amber-400">
-                          {m.shop_price_unavailable_hint()}
-                        </p>
-                      {:else if gridPriceIsProvisional(product, isLoggedIn)}
-                        <p class="text-text-muted text-xs">{m.shop_price_profile_hint()}</p>
-                      {/if}
-                      {#if product.membersOnly && !product.viewerIsCotisant}
-                        <p class="text-xs text-amber-700 dark:text-amber-400">
-                          {m.shop_members_only_hint()}
-                        </p>
-                      {/if}
-                    </div>
-                  </CardTile>
-                {/each}
-              </div>
+              <PartnershipCardList
+                cards={assocPartnerships}
+                accentColor={asso.color ?? generateAvatarColor(asso.name)}
+              />
             </section>
           {/if}
         {/each}
       {/if}
-    {:else if partnershipsGrouped.size === 0}
-      <div class="border-cn-border rounded-2xl border bg-(--cn-surface) p-10 text-center">
-        <p class="text-text-muted text-sm">{m.shop_partnership_none()}</p>
-      </div>
-    {:else}
-      {#each [...partnershipsGrouped.entries()] as [assocId, assocPartnerships] (assocId)}
-        {@const asso = associations.get(assocId)}
-        {#if asso}
-          <section class="space-y-4">
-            <!-- Association header -->
-            <div class="flex items-center gap-3">
-              <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="md" />
-              <div>
-                <a
-                  href="/associations/{asso.slug}"
-                  class="text-text-main hover:text-cn-accent font-bold transition-colors"
-                >
-                  {asso.name}
-                </a>
-                {#if asso.description?.trim()}
-                  <div
-                    class="text-text-muted [&_.post-markdown]:text-xs [&_.post-markdown]:leading-snug [&_.post-markdown_p]:m-0 [&_.post-markdown_p+p]:mt-0"
-                  >
-                    <ProfileBioMarkdown source={asso.description} />
-                  </div>
-                {/if}
-              </div>
-            </div>
-
-            <PartnershipCardList
-              cards={assocPartnerships}
-              accentColor={asso.color ?? generateAvatarColor(asso.name)}
-            />
-          </section>
-        {/if}
-      {/each}
     {/if}
-  {/if}
-</div>
+  </div>
+</PageContainer>
