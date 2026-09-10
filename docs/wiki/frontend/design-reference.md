@@ -1039,3 +1039,55 @@ and the offender check passed vacuously - the exact failure of its predecessor, 
 minutes. And its floor is **five, measured**, not the seven a first draft guessed from the "six
 copies" story: six files render `CardTile`, five in a wall, and `CardIconEditor` draws one tile as
 a preview of an icon being chosen, which is correctly not a grid at all.
+
+### 17.8 `/calendar` - the page the sweep never touched, and the shape it was missing
+
+**`/calendar` was not in 17.2's table**, and that was not an oversight in the measurement so much
+as a limit of what the measurement asked. The sweep compared page WIDTHS against three references
+and moved the two groups that disagreed; `/calendar` was already `grid` (1600px), which is the
+right width for a month. It was the ARRANGEMENT inside that width that was wrong, and a width
+audit cannot see an arrangement.
+
+The user named it exactly (2026-09-10): *"On pourrait reprendre exactement les formes de
+/calendar/export pour /calendar (pour la version web du moins), avec le calendrier a droite et le
+panneau a gauche."*
+
+**What was there.** Everything stacked: a full-width control bar (month navigation, association
+filter, export and subscribe), then the month grid, then the events of the selected day BELOW the
+grid. Two consequences, both measured at a 1440px window:
+
+- the month had the whole column, so seven columns came out at **182px each**, and
+- the day you clicked rendered under a 700px-tall grid, which on that window is below the fold.
+
+**What it is now** - `lg:grid-cols-[360px_minmax(0,1fr)]`, the identical declaration
+`/calendar/export` uses, with the rail `lg:sticky lg:top-4`:
+
+| | Was | Now |
+| --- | --- | --- |
+| left rail | none | **360px**, sticky, holding nav + filter + actions + the selected day |
+| month grid | 1272px | **896px** |
+| day cell | 182px | **128px** |
+
+**This is also Google Agenda's shape**, which matters because Google Agenda is one of the three
+references this page was measured against in the first place. Its `[role=main]` measured 1592px at
+a 1920px window with its left edge at 256 - that 256 is a fixed rail, and the month takes the rest.
+17.1 recorded the width and not the arrangement, so the sweep copied the number and missed the
+form.
+
+**The rail is 360 and not 256 because the user asked for the export page's shape exactly**, and
+that page states 360. The cost is visible and worth stating: at a 1920px window the day cell comes
+out at **173px**, inside Google's own band, but at 1440px it is 128px, which is narrower than
+Google would give (~169px). Narrowing the rail toward 300px is the lever if that reads too tight;
+nothing else needs to move.
+
+**One defect fell out of the narrower cell, and it was always there.** On a day whose first event
+carries a long title, the centred title ran straight over the absolutely-positioned day number in
+the corner - "29" rendered as "2". At 182px cells `px-3` left enough slack that the two never met.
+The first slot now reserves `px-5`, symmetric so the title stays centred rather than drifting.
+**This is 17.4's lesson a second time: a layout bug that only appears at a narrower size was
+already there**, held out of sight by a container wide enough to hide it.
+
+**The controls became snippets, and not to save typing.** They have two homes now - the phone's
+bar and the desktop's rail - and the phone's branch is byte-for-byte what it was. Copying them
+would be two month navigations able to disagree about what `prevMonth` resets, in a component
+that already sets `selectedDay = null` from three places.

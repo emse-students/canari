@@ -292,9 +292,20 @@
                         {/each}
                       </div>
                     {/if}
-                    <!-- Event title, centred and always on top of watermark -->
+                    <!-- Event title, centred and always on top of watermark.
+                         THE FIRST SLOT IS PADDED WIDER BECAUSE IT IS THE ONE CARRYING THE DAY
+                         NUMBER, which is absolutely positioned in its corner and therefore
+                         invisible to the centred text. At the widths this grid used to get
+                         (182px cells at a 1440px window) `px-3` left enough slack that the two
+                         never met; once the month moved beside a rail and the cell became 128px,
+                         a long title ran straight over the number and "29" read as "2". Symmetric
+                         padding rather than a left inset, so the title stays centred in what is
+                         left instead of drifting right. -->
                     <span
-                      class="text-2xs relative z-10 line-clamp-2 px-3 text-center leading-tight font-bold"
+                      class="text-2xs relative z-10 line-clamp-2 text-center leading-tight font-bold {ei ===
+                      0
+                        ? 'px-5'
+                        : 'px-3'}"
                       title="{ev.title} - {ev.associationName}"
                       style="color:{fg};">{ev.title}</span
                     >
