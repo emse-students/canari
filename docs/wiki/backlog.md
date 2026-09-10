@@ -689,16 +689,45 @@ So `auth_request` here IDENTIFIES a caller and never refuses one, and **every en
 sixteen locations is as open as its own guard makes it** - which for four `/api/posts` endpoints
 was not at all.
 
-**`/api/presence` is the second one confirmed, and it is a Rust service rather than Nest:**
+**`/api/presence` was the second one confirmed, and it is FIXED (2026-09-10).** Measured before:
 
 ```
 curl 'http://localhost:8081/api/presence?users=<a real user id>'   ->  200
 {"<that user id>":false}
 ```
 
-No session. It answers who is online to anybody who can name a user id, on `chat-gateway`
-(Axum), so the Nest guard shipped for the feed does not apply and the fix is a different one.
-Lower severity than post bodies - one boolean per id you already know - but the same defect.
+No session of any kind. It answered who is online to anybody who could name a user id, on
+`chat-gateway` (Axum), so the Nest guard shipped for the feed did not apply. `get_admin_presence`
+in the very same file had carried its `x-global-admin` check since it was written; `get_presence`
+simply never got one. It now refuses a caller nginx did not identify - 401, distinct from the
+admin handler's 403 - proved by four tests driving the REAL router (no re-implementation, after
+the mirror found in the Android suite the same day) and by removing the gate and watching exactly
+the two gate tests fail.
+
+**What the presence fix deliberately does NOT decide:** whether an authenticated user may ask
+about an ARBITRARY user id rather than only people they share a conversation with. The gateway
+does not know who shares what, so answering it is a larger change than this defect licenses. The
+leak that remains is therefore "any logged-in account can learn whether a named person is
+online", which is a product question and not obviously wrong.
+
+**THE SIZE OF THE AUDIT, MEASURED 2026-09-10 - AND THE FIRST NUMBER WAS WRONG.** A scan for route
+decorators without `@UseGuards` across all 389 Nest routes returned **100**, which is not the
+number of holes and must not be quoted as one. Authorization in this codebase is not always a
+decorator: `POST /associations/:id/stripe-account` has none and calls `assertInternalSecret()` as
+its first statement, exactly as `get_admin_presence` checked its header in the body. Counting
+decorators counts decorators.
+
+Re-measured with in-body idioms (`assertInternalSecret`, `assertContentModerator`, an
+`x-global-admin` read, an explicit `Unauthorized`/`Forbidden` throw) and names that are public by
+design (`health`, `version`, `webhook`, `callback`, `/public`) excluded: **52 of 389 routes have
+no visible authorization of any kind.** That is the population to triage, not 100.
+
+**AND 52 IS AN UPPER BOUND, NOT A LIST OF DEFECTS.** Several are certainly deliberate and gating
+them would BREAK a feature - `GET /associations/calendar/feed.ics` exists to be subscribed to by
+an external calendar client, which cannot carry a session, and `public.controller.ts` is named
+for what it is. Each needs a decision, and some of those decisions are the USER's rather than the
+code's. **Do not sweep this.** The two confirmed holes were each found by reading one endpoint and
+probing it; that is what the remaining 52 want.
 
 **What is owed: the other fourteen, endpoint by endpoint.** A bare-path probe does NOT settle it -
 twelve of the sixteen answered 404 to `GET /api/<thing>`, which only means no route sits at that

@@ -24,16 +24,61 @@ pub struct PresenceQuery {
 
 // ── GET /api/presence ─────────────────────────────────────────────────────
 
+/// Whether nginx identified the caller - the presence of a non-empty `X-User-Id`.
+///
+/// nginx sets this header after the auth sub-request and it must never be accepted from an
+/// untrusted client; that is the same contract `x-global-admin` is read under just below, and the
+/// same one `NginxAuthGuard` enforces on the Nest services. A blank value is treated as absent:
+/// `auth_request_set` yields an empty string when the sub-request set no such header, so "" is
+/// exactly what an anonymous caller arrives with.
+fn is_authenticated(headers: &HeaderMap) -> bool {
+    headers
+        .get("x-user-id")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| !v.trim().is_empty())
+}
+
 /// Return a JSON map of `{ userId -> bool }` indicating which users have at least
 /// one active device presence key in Redis.
+///
+/// REQUIRES AN AUTHENTICATED CALLER, and until 2026-09-10 it required nothing at all.
+///
+/// The edge config puts `/api/presence` behind `auth_request /internal/auth/verify`, which is
+/// exactly what an access check looks like - but `/api/auth/verify` answers 200 for a logged-OUT
+/// caller too, carrying `x-logged-in: false` so signed-out pages can render, and nginx treats any
+/// 2xx as permission granted. That sub-request says WHO you are, never WHETHER you may pass.
+/// Measured that day against the local copy of production, with no session of any kind:
+///
+/// ```text
+/// GET /api/presence?users=<a real user id>   ->  200  {"<that id>":false}
+/// ```
+///
+/// So whether a named person is online was readable by anybody who could name them.
+/// `get_admin_presence` below had carried its header check since it was written; this one simply
+/// never got one. **A gate is only a gate if it can say no.**
+///
+/// WHAT THIS DELIBERATELY DOES NOT DECIDE: whether an authenticated user may ask about an
+/// arbitrary user id, rather than only people they share a conversation with. That is a real
+/// question and a larger one - the gateway does not know who shares what - and answering it here
+/// would be scope this defect does not license. It is filed in the backlog.
 ///
 /// Uses `SCAN` with a `user:online:{userId}:*` pattern rather than `KEYS` to
 /// avoid blocking Redis on large keyspaces.
 pub async fn get_presence(
+    headers: HeaderMap,
     Query(query): Query<PresenceQuery>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
     use std::collections::HashMap;
+
+    if !is_authenticated(&headers) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "Unauthorized"})),
+        )
+            .into_response();
+    }
+
     let mut presence = HashMap::new();
     let users_list: Vec<&str> = query.users.split(',').collect();
 
@@ -203,4 +248,84 @@ pub async fn get_admin_presence(
         Json(serde_json::json!({ "devices": devices, "total": total })),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::Router;
+    use axum::body::Body;
+    use axum::http::Request;
+    use axum::routing::get;
+    use tower::ServiceExt;
+
+    /// The REAL handler behind the REAL route, not a re-implementation of it.
+    ///
+    /// This is deliberate. A sibling suite in this repository was found on the same day to be
+    /// testing a hand-written copy of the logic it was meant to watch, which cannot fail when the
+    /// real code changes. Redis is never reached here: the refusal returns before any connection
+    /// is attempted, and `redis::Client::open` does not connect on construction, so an authorised
+    /// request simply finds no keys. That difference is the whole assertion.
+    fn app() -> Router {
+        let client = redis::Client::open("redis://127.0.0.1:1/").expect("client construction");
+        let state = Arc::new(AppState::new(client, "test-secret".to_string()));
+        Router::new()
+            .route("/api/presence", get(get_presence))
+            .with_state(state)
+    }
+
+    async fn status_for(header: Option<&str>) -> StatusCode {
+        let mut builder = Request::builder().uri("/api/presence?users=someone");
+        if let Some(value) = header {
+            builder = builder.header("x-user-id", value);
+        }
+        app()
+            .oneshot(builder.body(Body::empty()).unwrap())
+            .await
+            .unwrap()
+            .status()
+    }
+
+    #[tokio::test]
+    async fn anonymous_caller_is_refused() {
+        // The measured defect: 200 with a real answer, to a request carrying no identity at all.
+        assert_eq!(status_for(None).await, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn blank_identity_is_refused() {
+        // `auth_request_set` yields "" when the sub-request set no such header, so an empty
+        // string is exactly what an anonymous caller arrives with - not a hypothetical.
+        assert_eq!(status_for(Some("")).await, StatusCode::UNAUTHORIZED);
+        assert_eq!(status_for(Some("   ")).await, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn identified_caller_is_served() {
+        // Redis is unreachable here, so the answer is an empty map - the point is that the
+        // request got PAST the gate rather than what it found.
+        assert_eq!(status_for(Some("a-real-user")).await, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn admin_presence_still_refuses_a_non_admin() {
+        // The neighbouring handler has always checked; this pins that the change above did not
+        // disturb it, and that the two refusals stay distinguishable (403 there, 401 here).
+        let client = redis::Client::open("redis://127.0.0.1:1/").expect("client construction");
+        let state = Arc::new(AppState::new(client, "test-secret".to_string()));
+        let app = Router::new()
+            .route("/api/admin/presence", get(get_admin_presence))
+            .with_state(state);
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/admin/presence")
+                    .header("x-user-id", "someone")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
 }
