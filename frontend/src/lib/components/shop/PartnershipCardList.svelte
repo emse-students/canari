@@ -1,6 +1,7 @@
 <script lang="ts">
   import {
     claimPartnership,
+    SocialApiError,
     type PartnershipCard,
     type PartnershipClaimResult,
   } from '$lib/associations/api';
@@ -22,6 +23,32 @@
   let claimErrors = $state<Record<string, string>>({});
   let claiming = $state<string | null>(null);
 
+  /**
+   * WHAT THE SERVER'S REFUSAL SAYS TO A STUDENT, KEYED BY ITS CODE AND NOT BY ITS SENTENCE.
+   *
+   * This screen used to render `e.message`, which is the server's own English prose - so a
+   * student out of codes read "No codes left for this partnership" in the middle of a French
+   * page (user, 2026-09-10). The sentence is written for a log and is not translated; the code
+   * beside it is what gets translated, here.
+   *
+   * ANYTHING NOT IN THIS TABLE BECOMES THE GENERIC LINE, and that is the point rather than a
+   * gap: printing an unrecognised `message` is exactly how the English escaped, so there is no
+   * path left that can put server prose on screen. A new code shows up as the generic line until
+   * somebody adds a translation, which is a missing word - not a leak.
+   */
+  const CLAIM_ERROR_MESSAGES: Record<string, () => string> = {
+    PARTNERSHIP_NO_CODES_LEFT: m.shop_partnership_error_no_codes_left,
+    PARTNERSHIP_MEMBERS_ONLY: m.shop_partnership_error_members_only,
+    PARTNERSHIP_NOT_FOUND: m.shop_partnership_error_not_found,
+    ASSOCIATION_NOT_FOUND: m.shop_partnership_error_not_found,
+  };
+
+  function claimErrorText(e: unknown): string {
+    const code = e instanceof SocialApiError ? e.code : null;
+    const known = code === null ? undefined : CLAIM_ERROR_MESSAGES[code];
+    return (known ?? m.shop_partnership_error_generic)();
+  }
+
   async function handleClaim(card: PartnershipCard) {
     claiming = card.id;
     claimErrors = { ...claimErrors, [card.id]: '' };
@@ -31,7 +58,7 @@
         [card.id]: await claimPartnership(card.associationId, card.id),
       };
     } catch (e) {
-      claimErrors = { ...claimErrors, [card.id]: e instanceof Error ? e.message : 'Error' };
+      claimErrors = { ...claimErrors, [card.id]: claimErrorText(e) };
     } finally {
       claiming = null;
     }

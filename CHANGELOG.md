@@ -25,6 +25,19 @@ Narrowing the month surfaced something that had always been wrong: on a day whos
 a long title, the title ran over the day number, so the 29th read as the 2nd. The number now has
 room reserved for it.
 
+### Fixed - the shop answered in English when a partnership ran out of codes
+
+A student claiming a code they could not get was told "No codes left for this partnership", in the
+middle of a French page. Three more refusals on the same button could do the same thing.
+
+The sentence was the server's, written for a log, and the page showed it because it had nothing
+else. The server now names each refusal with a code beside the sentence, and the page says the
+French for the codes it knows. Anything it does not recognise becomes a plain "the code could not
+be claimed", so there is no longer any way for the server's own words to reach a reader.
+
+This is one screen. 184 others still show whatever the server said, which is now written down with
+the count and the order to work through them.
+
 ### Fixed - four walls of cards were still twice too wide, and the guard said the tree was clean
 
 The shop's partnership tiles were 660px wide on a 1384px window, against the 205px tile the web's
