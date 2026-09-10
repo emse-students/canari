@@ -689,16 +689,26 @@ So `auth_request` here IDENTIFIES a caller and never refuses one, and **every en
 sixteen locations is as open as its own guard makes it** - which for four `/api/posts` endpoints
 was not at all.
 
-**`/api/presence` is the second one confirmed, and it is a Rust service rather than Nest:**
+**`/api/presence` was the second one confirmed, and it is FIXED (2026-09-10).** Measured before:
 
 ```
 curl 'http://localhost:8081/api/presence?users=<a real user id>'   ->  200
 {"<that user id>":false}
 ```
 
-No session. It answers who is online to anybody who can name a user id, on `chat-gateway`
-(Axum), so the Nest guard shipped for the feed does not apply and the fix is a different one.
-Lower severity than post bodies - one boolean per id you already know - but the same defect.
+No session of any kind. It answered who is online to anybody who could name a user id, on
+`chat-gateway` (Axum), so the Nest guard shipped for the feed did not apply. `get_admin_presence`
+in the very same file had carried its `x-global-admin` check since it was written; `get_presence`
+simply never got one. It now refuses a caller nginx did not identify - 401, distinct from the
+admin handler's 403 - proved by four tests driving the REAL router (no re-implementation, after
+the mirror found in the Android suite the same day) and by removing the gate and watching exactly
+the two gate tests fail.
+
+**What the presence fix deliberately does NOT decide:** whether an authenticated user may ask
+about an ARBITRARY user id rather than only people they share a conversation with. The gateway
+does not know who shares what, so answering it is a larger change than this defect licenses. The
+leak that remains is therefore "any logged-in account can learn whether a named person is
+online", which is a product question and not obviously wrong.
 
 **What is owed: the other fourteen, endpoint by endpoint.** A bare-path probe does NOT settle it -
 twelve of the sixteen answered 404 to `GET /api/<thing>`, which only means no route sits at that

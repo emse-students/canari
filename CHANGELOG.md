@@ -30,11 +30,24 @@ the notification work introduced the same day, so there is still one statement o
 side rather than a third copy. Someone outside the audience is refused; a visitor with no account
 is refused earlier still; the service's health endpoint stays open, as it must.
 
-Two things are recorded rather than implied. **The same authentication step fronts fifteen other
-areas of the app**, and it can refuse in none of them - each has to be checked on its own, and one
-already has a confirmed smaller leak: **whether a given person is currently online** can be read
-without an account. Neither is fixed here. And the exposure was measured on a local copy of
-production; production itself was not probed.
+One thing is recorded rather than implied. **The same authentication step fronts fifteen other
+areas of the app**, and it can refuse in none of them, so each has to be checked on its own -
+fourteen still are not. The exposure was measured on a local copy of production; production
+itself was not probed.
+
+### Security - whether a person is online could be read with no account
+
+Found by checking the rest of the app for the same fault rather than assuming the first one was
+alone. Asking whether a named person was currently online needed no account and no session: the
+answer came back to anybody who could name them. The neighbouring endpoint that lists everyone's
+connection state for administrators had always checked who was asking; this one had simply never
+been given the check.
+
+It now refuses anyone the entry point did not identify, and the app's own use of it is unaffected.
+
+What this does **not** decide is whether someone logged in should be able to ask about *any*
+person rather than only people they already share a conversation with. That is a genuine
+question, a larger change, and it is written down rather than quietly settled here.
 
 
 ### Added - nobody was ever told about a post, and now they are
