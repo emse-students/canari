@@ -297,7 +297,7 @@
               <button
                 onclick={() => handleDelete(form.id, form.title)}
                 disabled={deletingId === form.id}
-                class="border-red-err/30 bg-red-err/10 text-red-err hover:bg-red-err/20 inline-flex items-center justify-center rounded-xl border-2 p-2 transition-colors disabled:opacity-50"
+                class="ui-icon-button border-red-err/30 bg-red-err/10 text-red-err hover:bg-red-err/20 rounded-xl border-2 transition-colors disabled:opacity-50"
                 title={m.common_delete_button()}
               >
                 <Trash2 size={14} />
@@ -374,7 +374,7 @@
                             <button
                               onclick={() => void handleDeleteSubmission(form.id, sub)}
                               disabled={deletingSubmissionId === sub.id}
-                              class="text-text-muted hover:bg-red-err/10 inline-flex items-center justify-center rounded-lg p-1.5 transition-colors hover:text-red-600 disabled:opacity-50"
+                              class="ui-icon-button text-text-muted hover:bg-red-err/10 rounded-lg transition-colors hover:text-red-600 disabled:opacity-50"
                               title={m.form_list_delete_response_title()}
                             >
                               <X size={13} />

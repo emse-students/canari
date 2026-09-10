@@ -1626,7 +1626,7 @@
     <div class="flex shrink-0 items-center gap-2">
       <div class="flex flex-col items-center gap-0.5">
         <button
-          class="rounded-full bg-emerald-500 p-2 text-white transition-all hover:bg-emerald-400 active:scale-95"
+          class="ui-icon-button rounded-full bg-emerald-500 text-white transition-all hover:bg-emerald-400 active:scale-95"
           onclick={() =>
             globalSession.callService?.acceptCall(
               globalSession.callService.currentGroupId ?? '',
@@ -1642,7 +1642,7 @@
       </div>
       <div class="flex flex-col items-center gap-0.5">
         <button
-          class="rounded-full bg-red-500 p-2 text-white transition-all hover:bg-red-400 active:scale-95"
+          class="ui-icon-button rounded-full bg-red-500 text-white transition-all hover:bg-red-400 active:scale-95"
           onclick={() => globalSession.callService?.endCall()}
           aria-label={m.call_decline_label()}
         >

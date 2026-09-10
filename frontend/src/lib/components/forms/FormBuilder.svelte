@@ -197,7 +197,7 @@
         </button>
       {/if}
       <button
-        class="text-text-muted rounded-lg p-2 transition-colors outline-none hover:bg-red-500/10 hover:text-red-500 sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100"
+        class="ui-icon-button text-text-muted rounded-lg transition-colors outline-none hover:bg-red-500/10 hover:text-red-500 sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100"
         onclick={onRemove}
         type="button"
         title={m.form_builder_delete_title()}
@@ -302,7 +302,7 @@
           onclick={() => {
             item.description = undefined;
           }}
-          class="text-text-muted absolute top-1.5 right-1.5 rounded-lg p-1 transition-colors hover:bg-red-500/10 hover:text-red-500"
+          class="ui-icon-button text-text-muted absolute top-1.5 right-1.5 rounded-lg transition-colors hover:bg-red-500/10 hover:text-red-500"
           title={m.form_builder_remove_desc_title()}><X size={14} /></button
         >
       </div>
@@ -336,7 +336,7 @@
             onclick={() => {
               item.imageUrl = undefined;
             }}
-            class="absolute top-1.5 right-1.5 rounded-full bg-black/60 p-1 text-white hover:bg-black/80"
+            class="ui-icon-button absolute top-1.5 right-1.5 rounded-full bg-black/60 text-white hover:bg-black/80"
             title={m.form_builder_remove_image_title()}><X size={14} /></button
           >
         </div>
@@ -461,7 +461,7 @@
                 {idx + 1}
               </span>
               <button
-                class="text-text-muted rounded-lg p-1.5 transition-colors hover:bg-red-500/10 hover:text-red-500"
+                class="ui-icon-button text-text-muted rounded-lg transition-colors hover:bg-red-500/10 hover:text-red-500"
                 onclick={() => removeOption(idx)}
                 type="button"
                 title={m.common_delete_button()}
@@ -495,7 +495,7 @@
                 </div>
               {/if}
               <button
-                class="text-text-muted shrink-0 rounded-xl p-2 transition-colors hover:bg-red-500/10 hover:text-red-500"
+                class="ui-icon-button text-text-muted rounded-xl transition-colors hover:bg-red-500/10 hover:text-red-500"
                 onclick={() => removeOption(idx)}
                 type="button"
                 title={m.form_builder_option_remove_aria()}
@@ -563,7 +563,7 @@
                     {m.form_builder_row_mobile_label({ idx: idx + 1 })}
                   </span>
                   <button
-                    class="text-text-muted rounded-lg p-1.5 transition-colors hover:bg-red-500/10 hover:text-red-500"
+                    class="ui-icon-button text-text-muted rounded-lg transition-colors hover:bg-red-500/10 hover:text-red-500"
                     onclick={() => removeRow(idx)}
                     type="button"
                     title={m.common_delete_button()}
@@ -582,7 +582,7 @@
                     <Input placeholder={m.form_builder_row_placeholder()} bind:value={row.value} />
                   </div>
                   <button
-                    class="text-text-muted shrink-0 rounded-xl p-2 transition-colors hover:bg-red-500/10 hover:text-red-500"
+                    class="ui-icon-button text-text-muted rounded-xl transition-colors hover:bg-red-500/10 hover:text-red-500"
                     onclick={() => removeRow(idx)}
                     type="button"
                     title={m.form_builder_row_remove_aria()}

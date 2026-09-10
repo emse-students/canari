@@ -260,7 +260,11 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    anybody prod is down**, and [host-updates](docs/wiki/infrastructure/host-updates.md).
 7. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
    [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
-8. **UX/RENDERING: ONE DECISION TAKEN AND UNSTARTED.** *"Poser la reference ET tout aligner maintenant"* (2026-09-09): two declared icon-button sizes (28px on a message hover strip, 38px everywhere else) and **all 187 call sites swept in the same change**, gate included - **do not re-litigate it, start with it** ([backlog](docs/wiki/backlog.md), the only count). Page width is DONE: three named shapes in `pageWidth.ts`, `/dashboard` deliberately left at the reading measure and `/directory` correctly there.
+8. **UX/RENDERING: ONLY THE EMOJI FONT IS LEFT.** Both decided items shipped and neither reopens -
+   one icon-button box (`iconButtonScale.test.ts`) and three page shapes (`pageWidth.ts`). What
+   remains: ONE bundled Noto Color Emoji everywhere with the disparities resolved in the same
+   change, and the English locale still fetching emoji data from `cdn.jsdelivr.net`
+   ([backlog](docs/wiki/backlog.md)).
 9. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
    commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
 10. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract

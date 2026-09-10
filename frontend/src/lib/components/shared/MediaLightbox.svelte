@@ -372,7 +372,7 @@
       {#if showPrev && onPrev}
         <button
           type="button"
-          class="pointer-events-auto absolute left-2 z-20 rounded-full bg-black/40 p-2.5 transition-colors hover:bg-black/60"
+          class="ui-icon-button pointer-events-auto absolute left-2 z-20 rounded-full bg-black/40 transition-colors hover:bg-black/60"
           onclick={(e) => {
             e.stopPropagation();
             handlePrev();
@@ -410,7 +410,7 @@
       {#if showNext && onNext}
         <button
           type="button"
-          class="pointer-events-auto absolute right-2 z-20 rounded-full bg-black/40 p-2.5 transition-colors hover:bg-black/60"
+          class="ui-icon-button pointer-events-auto absolute right-2 z-20 rounded-full bg-black/40 transition-colors hover:bg-black/60"
           onclick={(e) => {
             e.stopPropagation();
             handleNext();

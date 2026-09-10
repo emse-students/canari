@@ -112,7 +112,7 @@
           {@render headerActions?.()}
           <button
             type="button"
-            class="rounded-lg bg-white/15 p-2 transition-colors hover:bg-white/25"
+            class="ui-icon-button rounded-lg bg-white/15 transition-colors hover:bg-white/25"
             onclick={(e) => {
               e.stopPropagation();
               onClose();

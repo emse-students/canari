@@ -5199,49 +5199,6 @@ an observation.
   emoji font - which on Android is Noto anyway, so the picture is unchanged. `minClientVersion` is not
   the lever for this.
 
-### P2 - two declared icon-button sizes, and all 187 call sites aligned in the same change (decided by the user 2026-09-09, not started)
-
-**The decision, and it is taken**: *"Poser la reference ET tout aligner maintenant"*. Both halves -
-declare the sizes in `app.css`, AND sweep every call site in the same change, the way #474/#476 did
-for the corners. It was put to them twice; the first framing was too abstract to answer (*"Je ne
-sais pas de quoi on parle"*), and what made it answerable was naming buttons they use.
-
-**What they were shown, measured on ONE screen of `/chat` at 1280px** - 163 icon-only buttons
-visible at once, in four sizes:
-
-| button | size |
-| --- | --- |
-| "Parametres de la discussion" (conversation header) | 40px |
-| "Joindre un fichier" (composer paperclip) | 36px |
-| "Envoyer le message" | 36px |
-| "Nouvelle discussion" (sidebar) | 32px |
-| "Repondre" / "Reagir" (message hover strip) | 28px |
-
-Four gaps of four pixels, side by side. Small enough that nobody chose them - each button was
-written against the one neighbour its author had in mind - and large enough to see where two
-surfaces touch. Across `frontend/src` it is **187 occurrences in twelve radius+padding
-combinations**: `rounded-xl p-2.5` (41), `rounded-xl p-2` (40), `rounded-xl p-3` (34),
-`rounded-lg p-1.5` (19), `rounded-lg p-2` (11), `rounded-full p-1.5` (10), and six more in single
-digits.
-
-**The scale that was accepted**: 28px for a control that appears on hover inside a dense row (the
-message strip), 38px for everything else. `.ui-icon-button` already declares the 38px one -
-`app.css`, `@layer components`, shape only - and the device row uses it.
-
-**What is left, and none of it is decided-by-guessing**:
-
-- the `--sm` (28px) modifier beside it;
-- the sweep itself, and it is NOT a regex over `rounded-* p-*`: that pattern also matches badges,
-  chips and plain divs. A site qualifies only if it is a `<button>` whose content is an icon and no
-  text. Hover colour, focus ring, `disabled:` and any layout class at the call site are KEPT - the
-  class replaces shape and nothing else;
-- a gate in the shape of `utilityScale.test.ts`, so the thirteenth size fails rather than ships;
-- one screen re-measured afterwards: the five buttons in the table above must read 38, 38, 38, 38, 28.
-
-**The reason it is not in the 2026-09-09 session**: the user stopped it deliberately mid-flight -
-*"Je commence a perdre le fil de tout ce que l'on fait. Finis ce qui est en cours, consigne le reste
-dans le backlog"* - and asked for a release instead. The decision above stands and is not to be
-re-litigated; what it needs is a session that starts with it.
 
 ## Storage and retention
 

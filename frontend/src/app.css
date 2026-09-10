@@ -576,8 +576,21 @@ h6,
  * know the scale answered it already.)
  *
  * WHAT MAY STILL DIFFER IS COLOUR, AND ONLY ON HOVER. A trash can and a pencil are told apart by
- * intent, never by whether they look pressable - so this declares the SHAPE and nothing else, and
- * the call site keeps `hover:text-red-600` or `hover:text-amber-600` as utilities.
+ * intent, never by whether they look pressable - so the call site keeps `hover:text-red-600` or
+ * `hover:text-amber-600` as utilities.
+ *
+ * IT DECLARES THE BOX, AND DELIBERATELY NOT THE CORNER. #447 made the corner a scale with four
+ * meanings, and a class that also set a radius would be a fifth authority on it - the round buttons
+ * would each need to shout `rounded-full` back over the top. One property, one owner: the box is
+ * here, the corner is `--radius-*` at the call site, the colour is a utility. It used to set a
+ * padding, a radius, a text colour AND a resting fill, which is why exactly two buttons in the tree
+ * could use it.
+ *
+ * WHAT IT IS NOT FOR: a button whose size is dictated by the thing under it. A cross overlaying a
+ * thumbnail, a zoom control floating over the minesweeper board, the camera badge on an avatar, the
+ * 48px community rail, a play button matched to the height of its own bubble - those are measured
+ * against a neighbour, and a shared box would break the neighbour rather than align anything.
+ * `iconButtonScale.test.ts` holds that list, by file and by count, each with its reason.
  *
  * IN `@layer components` DELIBERATELY, which `.ui-textarea` above is not. Unlayered CSS beats every
  * Tailwind utility whatever its specificity, which is why that one needs `border-red-err!` at its
@@ -590,15 +603,40 @@ h6,
     flex-shrink: 0;
     align-items: center;
     justify-content: center;
-    padding: 0.625rem;
-    border-radius: var(--radius-xl);
-    color: var(--text-muted);
-    background: color-mix(in srgb, var(--cn-border) 50%, transparent);
+    /* THE BOX IS 44px HERE AND 38px FROM `md` UP, and the two numbers are one decision.
+       38px is the size the user accepted for a pointer. It is also six pixels UNDER the touch
+       target every platform asks for, and `.chat-composer-icon-button` was already paying that
+       difference the other way round - 44px on a phone, 36px on a desktop - because whoever wrote
+       it hit the same wall. A flat 38px would have SHRUNK the composer's controls on the one device
+       where a miss costs something. So the class carries the same split, once, for every button
+       instead of for one row of them. */
+    width: 2.75rem;
+    height: 2.75rem;
     outline: none;
     transition:
       background-color 180ms ease,
       color 180ms ease,
       transform 120ms ease;
+  }
+
+  @media (min-width: 768px) {
+    .ui-icon-button {
+      width: 2.375rem;
+      height: 2.375rem;
+    }
+  }
+
+  /* A control that only ever appears under a POINTER, inside a dense row: the message hover strip.
+     It has no touch form to protect - a phone opens the action sheet instead - so it does not take
+     the 44px floor, and 28px is what the user was shown and accepted.
+
+     AFTER THE MEDIA QUERY, AND THAT IS THE WHOLE OF WHY IT WORKS. Both rules are one class deep,
+     so the cascade decides on SOURCE ORDER alone: declared above the `md` block, the modifier lost
+     to it at every pointer width and the hover strip measured 38px - which is the defect this
+     change exists to remove. Measured 28x28 at 1280px after the move. */
+  .ui-icon-button--sm {
+    width: 1.75rem;
+    height: 1.75rem;
   }
 
   .ui-icon-button:active:not(:disabled) {
@@ -1015,12 +1053,11 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   box-shadow: 0 0 20px rgba(245, 158, 11, 0.2);
 }
 
+/* THE BOX COMES FROM `.ui-icon-button`, WHICH THIS ROW IS WHERE IT WAS LEARNED. 44px on a phone
+   and a smaller box on a pointer was this class's idea first; it is now every icon button's, so
+   the numbers live in one place and this keeps only what is its own - the circle, the muted ink
+   and the hover. */
 .chat-composer-icon-button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 2.75rem;
-  height: 2.75rem;
   border-radius: 9999px;
   color: var(--text-muted);
   transition:
@@ -1040,10 +1077,12 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
 }
 
 /* Narrower than the buttons it stands for: it is a way back to them, not a fifth action.
-   TWO CLASSES, DELIBERATELY. The element carries `.chat-composer-icon-button` as well, and the
-   desktop block further down sets `width: 2.25rem` on that class - a single-class rule that comes
-   LATER in this file, so it wins a specificity tie. Measured 2026-09-09: the chevron rendered at
-   36px and folding the controls freed exactly 0px on desktop. */
+   IT NOW WINS ON DESKTOP TOO, AND THAT IS THE POINT. Until the box moved to `.ui-icon-button`
+   there was a `.chat-composer-icon-button { width: 2.25rem }` in the desktop block below - a
+   single-class rule, later in the file, beating this two-class one on a tie - so the chevron
+   rendered at 36px and folding the controls freed exactly 0px on a pointer (measured 2026-09-09).
+   `.ui-icon-button` is in `@layer components`, this rule is unlayered, and unlayered beats layered
+   whatever the specificity: the chevron is 28px wide everywhere now, and folding actually folds. */
 .chat-composer-icon-button.chat-composer-chevron {
   width: 1.75rem;
 }
@@ -1062,12 +1101,8 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.5);
 }
 
+/* Same: the box is `.ui-icon-button`'s, the yellow disc is this class's. */
 .chat-composer-send-button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 2.75rem;
-  height: 2.75rem;
   border-radius: 9999px;
   background: var(--cn-yellow);
   color: #151b2c;
@@ -1373,13 +1408,10 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   text-align: center;
 }
 
+/* The box is `.ui-icon-button`'s; this keeps the corner, the ink and the hover. It was the fourth
+   size in the ladder the user was shown - 40 / 36 / 32 / 28 - at 32px. */
 .chat-search-action {
-  width: 2rem;
-  height: 2rem;
   border-radius: var(--radius-lg);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   color: var(--text-muted);
   transition:
     background-color 160ms ease,
@@ -1492,20 +1524,15 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
     padding: 0.375rem;
   }
 
-  .chat-composer-icon-button,
-  .chat-composer-send-button {
-    width: 2.25rem;
-    height: 2.25rem;
-  }
-
-  /* The controls lose 8px here, so the field must lose the same 8px or the row stops agreeing. */
+  /* The controls lose 6px here - 44px to 38px, in `.ui-icon-button` - so the field loses the same
+     6px or the row stops agreeing. It was 8px when the controls went to 36px. */
   .chat-composer-panel {
-    --composer-field-height: calc(var(--text-sm--line-height) + 1rem);
+    --composer-field-height: calc(var(--text-sm--line-height) + 1.125rem);
   }
 
   .chat-composer-textarea,
   .mention-composer-editor.chat-composer-textarea {
-    padding: 0.5rem 0.75rem;
+    padding: 0.5625rem 0.75rem;
   }
 
   .chat-floating-alert {

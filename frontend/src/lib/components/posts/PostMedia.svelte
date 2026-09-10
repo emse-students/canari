@@ -336,7 +336,7 @@
               e.stopPropagation();
               downloadBlob(blobUrl!, media.fileName ?? 'file');
             }}
-            class="shrink-0 rounded-xl p-2.5 transition-all outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-amber-500 dark:hover:bg-white/10"
+            class="ui-icon-button rounded-xl transition-all outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-amber-500 dark:hover:bg-white/10"
             aria-label={m.post_download_label()}
           >
             <Download

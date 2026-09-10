@@ -80,7 +80,7 @@
           <button
             type="button"
             onclick={() => onChange(selected.filter((y) => y !== year))}
-            class="text-text-muted hover:bg-red-err/10 rounded-lg p-1 transition-colors hover:text-red-600"
+            class="ui-icon-button text-text-muted hover:bg-red-err/10 rounded-lg transition-colors hover:text-red-600"
             aria-label={m.form_promo_remove({ year })}
           >
             <X size={13} />

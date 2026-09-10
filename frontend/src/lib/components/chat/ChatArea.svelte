@@ -911,7 +911,7 @@
                   activeSearchIndex = -1;
                   searchLimitedToLoaded = false;
                 }}
-                class="chat-search-action"
+                class="ui-icon-button chat-search-action"
                 aria-label={m.chat_clear_search_label()}
               >
                 <X size={15} />
@@ -927,7 +927,7 @@
             <button
               type="button"
               onclick={() => void jumpSearch(-1)}
-              class="chat-search-action"
+              class="ui-icon-button chat-search-action"
               aria-label={m.chat_previous_match_label()}
               disabled={searchMatches.length === 0}
             >
@@ -936,7 +936,7 @@
             <button
               type="button"
               onclick={() => void jumpSearch(1)}
-              class="chat-search-action"
+              class="ui-icon-button chat-search-action"
               aria-label={m.chat_next_match_label()}
               disabled={searchMatches.length === 0}
             >
@@ -1029,7 +1029,7 @@
                   <button
                     type="button"
                     onclick={() => onTogglePin?.(pid)}
-                    class="text-text-muted shrink-0 rounded-lg p-1 hover:bg-red-500/10 hover:text-red-500"
+                    class="ui-icon-button text-text-muted rounded-lg hover:bg-red-500/10 hover:text-red-500"
                     aria-label={m.chat_unpin_label()}
                     title={m.chat_unpin_title()}
                   >
@@ -1266,7 +1266,7 @@
         <button
           onclick={onBack}
           aria-label={m.chat_back_label()}
-          class="text-text-muted hover:text-text-main rounded-xl p-1 transition-all hover:bg-black/5 active:scale-95 dark:hover:bg-white/10"
+          class="ui-icon-button text-text-muted hover:text-text-main rounded-xl transition-all hover:bg-black/5 active:scale-95 dark:hover:bg-white/10"
         >
           <ChevronLeft size={24} />
         </button>

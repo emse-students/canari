@@ -545,7 +545,7 @@
                 type="button"
                 onclick={() => openRename(doc)}
                 title={m.asso_doc_rename_title()}
-                class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center justify-center rounded-xl border bg-(--cn-surface) p-2 transition-colors"
+                class="ui-icon-button border-cn-border text-text-muted hover:text-text-main rounded-xl border bg-(--cn-surface) transition-colors"
               >
                 <Pencil size={15} />
               </button>
@@ -554,7 +554,7 @@
                 onclick={() => handleDownload(doc)}
                 disabled={downloadingId === doc.id}
                 title={m.asso_doc_download_title()}
-                class="border-cn-border text-text-muted hover:text-text-main inline-flex items-center justify-center rounded-xl border bg-(--cn-surface) p-2 transition-colors disabled:opacity-40"
+                class="ui-icon-button border-cn-border text-text-muted hover:text-text-main rounded-xl border bg-(--cn-surface) transition-colors disabled:opacity-40"
               >
                 {#if downloadingId === doc.id}
                   <div
@@ -568,7 +568,7 @@
                 type="button"
                 onclick={() => handleDelete(doc)}
                 title={m.common_delete_button()}
-                class="border-red-err/30 bg-red-err/10 text-red-err hover:bg-red-err/20 inline-flex items-center justify-center rounded-xl border p-2 transition-colors"
+                class="ui-icon-button border-red-err/30 bg-red-err/10 text-red-err hover:bg-red-err/20 rounded-xl border transition-colors"
               >
                 <Trash2 size={15} />
               </button>

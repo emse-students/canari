@@ -156,7 +156,7 @@
         <button
           type="button"
           onclick={() => onRemove(member.userId)}
-          class="border-red-err/30 bg-red-err/10 text-red-err hover:bg-red-err/20 inline-flex items-center justify-center rounded-xl border p-2 transition-colors"
+          class="ui-icon-button border-red-err/30 bg-red-err/10 text-red-err hover:bg-red-err/20 rounded-xl border transition-colors"
           title={m.asso_member_remove_title()}
         >
           <Trash2 size={16} />

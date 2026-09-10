@@ -480,7 +480,7 @@
                       </button>
                       <button
                         onclick={cancelEditing}
-                        class="text-text-muted rounded-lg p-1.5 transition-all hover:bg-black/5 dark:hover:bg-white/5"
+                        class="ui-icon-button text-text-muted rounded-lg transition-all hover:bg-black/5 dark:hover:bg-white/5"
                       >
                         <X size={16} />
                       </button>
@@ -557,14 +557,17 @@
                   inside the text block, on the line with the device id, while the trash was a
                   sibling of the whole row - so even once they looked alike, one was an action and
                   the other looked like an annotation of the id beside it.
-                  Only ONE of them is destructive, which is the whole of what may differ: the shape
-                  is `ui-icon-button` for both, the hover colour is not.
+                  Only ONE of them is destructive, which is the whole of what may differ: the box
+                  is `ui-icon-button` for both, the hover colour is not. The resting fill and the
+                  corner are utilities here because the class stopped declaring them - it owns the
+                  box for every icon button in the app now, and a resting grey is this row's idea,
+                  not every row's.
                 -->
                 <div class="flex shrink-0 items-center gap-1.5">
                   {#if row.device}
                     <button
                       onclick={() => row.device && startEditing(row.device.deviceId)}
-                      class="ui-icon-button hover:bg-amber-500/15 hover:text-amber-600 focus-visible:ring-2 focus-visible:ring-amber-500 dark:hover:bg-amber-500/20 dark:hover:text-amber-400"
+                      class="ui-icon-button bg-cn-border/50 text-text-muted rounded-xl hover:bg-amber-500/15 hover:text-amber-600 focus-visible:ring-2 focus-visible:ring-amber-500 dark:hover:bg-amber-500/20 dark:hover:text-amber-400"
                       title={m.chat_rename_device_title()}
                       aria-label={m.chat_rename_device_label()}
                     >
@@ -577,7 +580,7 @@
                     <button
                       onclick={() => void handleRemoveRow(row)}
                       disabled={deleting !== null}
-                      class="ui-icon-button hover:bg-red-500/15 hover:text-red-600 focus-visible:ring-2 focus-visible:ring-red-500 dark:hover:bg-red-500/20 dark:hover:text-red-400"
+                      class="ui-icon-button bg-cn-border/50 text-text-muted rounded-xl hover:bg-red-500/15 hover:text-red-600 focus-visible:ring-2 focus-visible:ring-red-500 dark:hover:bg-red-500/20 dark:hover:text-red-400"
                       title={m.chat_delete_device_title()}
                       aria-label={m.chat_delete_device_label()}
                     >

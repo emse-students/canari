@@ -167,7 +167,7 @@
             <button
               type="button"
               onclick={prevMonth}
-              class="border-cn-border text-text-main hover:bg-cn-bg rounded-xl border p-2 transition-colors"
+              class="ui-icon-button border-cn-border text-text-main hover:bg-cn-bg rounded-xl border transition-colors"
               aria-label={m.calendar_prev_month()}
             >
               <ChevronLeft size={18} />
@@ -178,7 +178,7 @@
             <button
               type="button"
               onclick={nextMonth}
-              class="border-cn-border text-text-main hover:bg-cn-bg rounded-xl border p-2 transition-colors"
+              class="ui-icon-button border-cn-border text-text-main hover:bg-cn-bg rounded-xl border transition-colors"
               aria-label={m.calendar_next_month()}
             >
               <ChevronRight size={18} />
@@ -232,7 +232,7 @@
               <button
                 type="button"
                 onclick={clearBg}
-                class="border-cn-border text-text-muted hover:bg-cn-bg rounded-lg border p-1.5"
+                class="ui-icon-button border-cn-border text-text-muted hover:bg-cn-bg rounded-lg border"
                 title={m.calendar_export_bg_remove()}
               >
                 <X size={14} />

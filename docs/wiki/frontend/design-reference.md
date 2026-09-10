@@ -549,6 +549,11 @@ Measured at 390x844 through CDP, on the live local estate:
 | `.chat-composer-textarea`, one line | 36px | 36px |
 | centre-line delta, field vs icons | **4px** | 0px |
 
+**THE DESKTOP COLUMN IS 38px SINCE 2026-09-10 AND THE BOX IS NO LONGER THIS ROW'S** - see *One box
+for every icon button* below. The 44/36 split this row invented for itself is what the whole app
+uses now, at 44/38; the field's desktop padding moved to `0.5625rem` in the same change so the two
+still agree, measured 38 against 38.
+
 The row is `align-items: flex-end`. That is CORRECT once the field has grown - the buttons hug the
 bottom, as the reference does - and it is only wrong when the field is one line and shorter than the
 controls beside it. Below 768px the controls are 44px because a touch target is 44px; the field was
@@ -582,10 +587,43 @@ a desktop DM where the paperclip is the only control. In a community channel the
 paperclip + poll + GIF + voice.
 
 **One of the fix's own defects was caught by the same measurement.** The chevron is styled narrower
-than the buttons it stands for, but it also carries `.chat-composer-icon-button`, and the desktop
-block sets `width: 2.25rem` on that class LATER in `app.css` - a single-class rule beating a
+than the buttons it stands for, but it also carried `.chat-composer-icon-button`, and the desktop
+block set `width: 2.25rem` on that class LATER in `app.css` - a single-class rule beating a
 single-class rule on source order. The chevron rendered at 36px and folding freed exactly **0px**.
-`.chat-composer-icon-button.chat-composer-chevron` is two classes and wins.
+
+**IT WAS STILL 36px UNTIL 2026-09-10, and the two-class rule is not what fixed it.** The desktop
+override is gone: the box comes from `.ui-icon-button`, which is in `@layer components`, and
+`.chat-composer-icon-button.chat-composer-chevron` is UNLAYERED - unlayered beats layered whatever
+the specificity. The chevron is 28px wide at every width now and folding frees 10px on a pointer.
+
+### One box for every icon button, and two sizes rather than four
+
+Measured on one screen of `/chat` at 1280px on 2026-09-09, then decided by the user (*"Poser la
+reference ET tout aligner maintenant"*): 163 icon-only buttons visible at once, in FOUR sizes.
+
+| button | before | after |
+| --- | --- | --- |
+| "Parametres de la discussion" (conversation header) | 40px | **38px** |
+| "Joindre un fichier" (composer paperclip) | 36px | **38px** |
+| "Envoyer le message" | 36px | **38px** |
+| "Nouvelle discussion" (sidebar) | 32px | **38px** |
+| "Repondre" / "Reagir" (message hover strip) | 28px | **28px** |
+
+Four gaps of four pixels, side by side. Nobody chose them: each button was written against the one
+neighbour its author had in mind.
+
+`.ui-icon-button` declares the box and NOTHING else - 44px below `md`, 38px from `md` up, with
+`.ui-icon-button--sm` at 28px for a control that only ever appears under a pointer inside a dense
+row. **It deliberately does not declare the corner**, which #447 made a four-meaning scale, nor the
+colour: one property, one owner. Re-measured after the sweep at 1280px - 38, 38, 38, 38, 28 - and
+at the touch form - 44, 44, 44, 44, 28.
+
+**104 call sites moved onto it; the exclusions are held by file and count in
+`iconButtonScale.test.ts`, each with its reason.** Two shapes are out by construction rather than
+by list: a button whose padding is asymmetric (`px-3 py-1.5` is a pill sized to a label) and a
+button that declares no box at all (an inline affordance - the 12px pencil in a comment's meta
+row, the cross in a chip, the avatar in the navbar). A third is out by name: a box measured against
+a neighbour, such as a cross on a 64px thumbnail or the 48px community rail.
 
 ### The expanded rail clipped all eighteen of its texts
 

@@ -570,7 +570,7 @@
         {#if onCancelReply}
           <button
             onclick={onCancelReply}
-            class="text-text-muted hover:text-text-main ml-2 shrink-0 rounded-full bg-black/5 p-2 transition-all outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 dark:bg-white/5 dark:hover:bg-white/10"
+            class="ui-icon-button text-text-muted hover:text-text-main ml-2 rounded-full bg-black/5 transition-all outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-amber-500 active:scale-95 dark:bg-white/5 dark:hover:bg-white/10"
             aria-label={m.chat_cancel_reply_label()}
           >
             <X size={16} strokeWidth={2.5} />
@@ -756,7 +756,7 @@
             title={m.chat_show_composer_actions_title()}
             aria-label={m.chat_show_composer_actions_title()}
             aria-expanded="false"
-            class="chat-composer-icon-button chat-composer-chevron"
+            class="ui-icon-button chat-composer-icon-button chat-composer-chevron"
           >
             <ChevronRight size={20} strokeWidth={2.5} />
           </button>
@@ -771,7 +771,7 @@
             disabled={isUploading}
             title={m.chat_attach_file_title()}
             aria-label={m.chat_attach_file_label()}
-            class="chat-composer-icon-button"
+            class="ui-icon-button chat-composer-icon-button"
           >
             {#if isUploading}
               <LoaderCircle class="h-5 w-5 animate-spin text-amber-500" strokeWidth={2.5} />
@@ -790,7 +790,7 @@
             onclick={() => onCreatePoll()}
             title={m.chat_create_poll_title()}
             aria-label={m.chat_create_poll_label()}
-            class="chat-composer-icon-button"
+            class="ui-icon-button chat-composer-icon-button"
           >
             <ChartColumn size={20} strokeWidth={2} />
           </button>
@@ -864,7 +864,7 @@
             }}
             disabled={isSendDisabled}
             aria-label={m.chat_send_message_label()}
-            class="chat-composer-send-button {isSendDisabled ? 'is-disabled' : ''}"
+            class="ui-icon-button chat-composer-send-button {isSendDisabled ? 'is-disabled' : ''}"
           >
             <!-- Slight icon offset for optical centering. -->
             <Send size={18} strokeWidth={2.5} class={isSendDisabled ? '' : 'mt-0.5 ml-0.5'} />

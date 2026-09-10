@@ -79,7 +79,7 @@
         <button
           type="button"
           onclick={onClose}
-          class="text-text-muted hover:text-text-main rounded-xl p-2 transition-colors hover:bg-black/5 dark:hover:bg-white/10"
+          class="ui-icon-button text-text-muted hover:text-text-main rounded-xl transition-colors hover:bg-black/5 dark:hover:bg-white/10"
           aria-label={m.common_close_label()}
         >
           <X size={18} />
