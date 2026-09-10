@@ -2,7 +2,6 @@ import { Injectable, Logger, BadRequestException, PayloadTooLargeException } fro
 import { StorageService } from './storage.service';
 import { v4 as uuidv4 } from 'uuid';
 import * as fs from 'fs-extra';
-import type { Stats } from 'node:fs';
 import * as path from 'path';
 import { Readable } from 'stream';
 
@@ -417,30 +416,44 @@ export class MediaService {
     await this.withUploadLock(uploadId, async () => {
       const tempFile = this.chunkTempPath(uploadId);
 
-      // ONE SYSCALL ANSWERS BOTH QUESTIONS, and that is why `pathExists` is gone. It used to ask
-      // "does this exist", then `stat` asked "how big is it" - a check followed by an act on the
-      // strength of it, which is the classic time-of-check/time-of-use pair whatever happens in
-      // between. The lock above serialises this process's own writers for one uploadId; it says
-      // nothing about the sweeper that removes expired sessions, or about anything else on the
-      // volume. `stat` reports absence by throwing, so asking it first collapses the two steps
-      // into the one that has to succeed anyway.
-      // `Stats` BY NAME, and not `Awaited<ReturnType<typeof fs.stat>>`: `fs-extra` overloads
-      // `stat` with a callback form whose return type is `void`, so the inferred version
-      // resolves to `void` and every read off it fails to compile. `nest build` caught it;
-      // `bun test` did not, because it does not typecheck.
-      let stat: Stats;
-      try {
-        stat = await fs.stat(tempFile);
-      } catch {
+      // ONE DESCRIPTOR, OPENED ONCE, AND THAT IS WHAT REMOVES THE RACE RATHER THAN HIDING IT.
+      //
+      // This was `pathExists` then `stat` then `appendFile`: three trips to the same PATH, each
+      // one able to find something different from the last. Collapsing it to `stat` then
+      // `appendFile` was an improvement and still a check followed by an act - correctly reported
+      // as such - because a size measured through a path says nothing about the file the next
+      // path lookup finds. The lock above serialises this process's own writers for one uploadId;
+      // it says nothing about the sweeper that removes expired sessions.
+      //
+      // `r+` FAILS IF THE FILE IS ABSENT, which is exactly the "session not found" answer this
+      // needs - `a` would create one and turn an expired upload into a new one. Everything after
+      // it - the size, the write - happens on that one open handle, so there is no second lookup
+      // to disagree with the first, and the write goes to the offset the size was read at rather
+      // than to wherever the end happens to be by then.
+      // `fs.promises.open`, NOT `fs.open`: fs-extra's promisified `open` resolves to a numeric
+      // descriptor, which has no methods and would need the same path-free operations spelt as
+      // free functions. The promises API hands back a handle that carries them.
+      const handle = await fs.promises.open(tempFile, 'r+').catch(() => {
         throw new Error('Upload session not found or expired');
+      });
+
+      let overCap = false;
+      try {
+        const { size } = await handle.stat();
+        overCap = size + chunk.length > maxBytes;
+        if (!overCap) await handle.write(chunk, 0, chunk.length, size);
+      } finally {
+        await handle.close();
       }
 
-      if (stat.size + chunk.length > maxBytes) {
+      // AFTER THE HANDLE IS CLOSED, and the partial upload still goes: a session that can never
+      // complete is not worth the volume it occupies until the sweeper notices. Removing it while
+      // the descriptor was open is what a Windows runner refuses, so the decision is taken inside
+      // and acted on outside.
+      if (overCap) {
         await fs.remove(tempFile);
         throw new PayloadTooLargeException('Chunked upload exceeds 100 MB policy');
       }
-
-      await fs.appendFile(tempFile, chunk);
     });
   }
 

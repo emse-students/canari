@@ -1,3 +1,5 @@
+/// <reference types="jest" />
+
 /**
  * `MediaService.appendChunk` - the one endpoint that writes attacker-supplied bytes to disk at an
  * attacker-supplied name, and the two things that make that safe.
@@ -26,23 +28,29 @@ import * as fs from 'fs-extra';
 import { MediaService } from './media.service';
 
 // THE MODULE IS MOCKED RATHER THAN SPIED ON. `media.service.ts` does `import * as fs from
-// 'fs-extra'`, and a namespace import's bindings are not writable - `vi.spyOn` on it fails
-// SILENTLY, so the first version of this file ran the real `stat` against a path that does not
-// exist and read the resulting refusal as the behaviour under test. Two cases passed for the
-// wrong reason and two failed for the right one, which is how it was noticed.
-vi.mock('fs-extra', () => ({
-  stat: vi.fn(),
-  appendFile: vi.fn(),
-  remove: vi.fn(),
-  pathExists: vi.fn(),
-  ensureFile: vi.fn(),
+// 'fs-extra'`, and a namespace import's bindings are not writable - a spy on it fails SILENTLY,
+// so the first version of this file ran the real `stat` against a path that does not exist and
+// read the resulting refusal as the behaviour under test. Two cases passed for the wrong reason
+// and two failed for the right one, which is how it was noticed.
+jest.mock('fs-extra', () => ({
+  promises: { open: jest.fn() },
+  remove: jest.fn(),
+  ensureFile: jest.fn(),
 }));
 
 const mocked = fs as unknown as {
-  stat: ReturnType<typeof vi.fn>;
-  appendFile: ReturnType<typeof vi.fn>;
-  remove: ReturnType<typeof vi.fn>;
+  promises: { open: jest.Mock };
+  remove: jest.Mock;
 };
+
+/** A file handle that reports `size` and records what was written through it. */
+function handle(size: number) {
+  return {
+    stat: jest.fn().mockResolvedValue({ size }),
+    write: jest.fn().mockResolvedValue({ bytesWritten: 0 }),
+    close: jest.fn().mockResolvedValue(undefined),
+  };
+}
 
 const UUID = '11111111-1111-4111-8111-111111111111';
 
@@ -60,8 +68,7 @@ function service(): MediaService {
 
 describe('MediaService.appendChunk - the premises that make an untrusted write safe', () => {
   beforeEach(() => {
-    mocked.stat.mockReset();
-    mocked.appendFile.mockReset().mockResolvedValue(undefined);
+    mocked.promises.open.mockReset();
     mocked.remove.mockReset().mockResolvedValue(undefined);
   });
 
@@ -85,46 +92,54 @@ describe('MediaService.appendChunk - the premises that make an untrusted write s
         'Invalid uploadId'
       );
 
-      // NOT TOUCHING THE FILESYSTEM IS PART OF THE ASSERTION. A refusal that happens after a stat
-      // has already been attempted on the attacker's path is a refusal that leaked the path.
-      expect(mocked.stat).not.toHaveBeenCalled();
-      expect(mocked.appendFile).not.toHaveBeenCalled();
+      // NOT TOUCHING THE FILESYSTEM IS PART OF THE ASSERTION. A refusal that happens after the
+      // attacker's path has already been opened is a refusal that leaked the path.
+      expect(mocked.promises.open).not.toHaveBeenCalled();
     });
   });
 
   describe('the content is capped', () => {
     it('refuses a chunk that would take the session over the cap, and removes the session', async () => {
-      mocked.stat.mockResolvedValue({ size: 900 });
+      const h = handle(900);
+      mocked.promises.open.mockResolvedValue(h);
 
       await expect(service().appendChunk(UUID, Buffer.alloc(200), 1_000)).rejects.toThrow(
         PayloadTooLargeException
       );
 
-      // The partial upload is deleted rather than left occupying the volume until the sweeper runs.
+      // The partial upload is deleted rather than left occupying the volume until the sweeper
+      // runs - and the handle is closed FIRST, because a Windows runner refuses to unlink a file
+      // that is still open.
+      expect(h.write).not.toHaveBeenCalled();
+      expect(h.close).toHaveBeenCalledTimes(1);
       expect(mocked.remove).toHaveBeenCalledTimes(1);
-      expect(mocked.appendFile).not.toHaveBeenCalled();
     });
 
     it('accepts a chunk that fits exactly', async () => {
-      mocked.stat.mockResolvedValue({ size: 900 });
+      const h = handle(900);
+      mocked.promises.open.mockResolvedValue(h);
 
       await expect(service().appendChunk(UUID, Buffer.alloc(100), 1_000)).resolves.toBeUndefined();
-      expect(mocked.appendFile).toHaveBeenCalledTimes(1);
+      // WRITTEN AT THE OFFSET THE SIZE WAS READ AT, on the same handle. That is what makes the
+      // measurement and the write one decision instead of two.
+      expect(h.write).toHaveBeenCalledWith(expect.any(Buffer), 0, 100, 900);
+      expect(h.close).toHaveBeenCalledTimes(1);
+      expect(mocked.remove).not.toHaveBeenCalled();
     });
   });
 
   describe('an absent session', () => {
     it('is reported as an expired session rather than as a filesystem error', async () => {
-      // `stat` is now the ONLY existence check - it used to be preceded by `pathExists`, which is
-      // a check followed by an act on the strength of it. What a caller sees must not change.
-      mocked.stat.mockRejectedValue(
+      // OPENING IS THE ONLY EXISTENCE CHECK, and `r+` is what makes it one: `a` would CREATE the
+      // file and turn an expired upload into a new one. What a caller sees must not change.
+      mocked.promises.open.mockRejectedValue(
         Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' })
       );
 
       await expect(service().appendChunk(UUID, Buffer.from('x'), 1_000)).rejects.toThrow(
         'Upload session not found or expired'
       );
-      expect(mocked.appendFile).not.toHaveBeenCalled();
+      expect(mocked.promises.open).toHaveBeenCalledWith(expect.any(String), 'r+');
     });
   });
 });

@@ -662,8 +662,14 @@ export function useChannelWorkspaces() {
     isLoadingWorkspaces = true;
     workspacesLoadError = null;
 
+    // N DELAYS IS N+1 ATTEMPTS, and the count is named once here rather than being spelt as
+    // `<= length` at the loop and `length + 1` in the log. `<=` against a length reads as an
+    // off-by-one wherever it appears - to a reader and to an analyser alike - and being able to
+    // prove this one was guarded is not the same as it being legible.
+    const attemptCount = WORKSPACE_LOAD_RETRY_DELAYS.length + 1;
+
     try {
-      for (let attempt = 0; attempt <= WORKSPACE_LOAD_RETRY_DELAYS.length; attempt++) {
+      for (let attempt = 0; attempt < attemptCount; attempt++) {
         try {
           await executeWorkspaceLoadAttempt(ctx);
           workspacesLoadError = null;
@@ -671,7 +677,6 @@ export function useChannelWorkspaces() {
           return true;
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          const attemptCount = WORKSPACE_LOAD_RETRY_DELAYS.length + 1;
           ctx.log(`[WORKSPACE-LOAD] attempt ${attempt + 1}/${attemptCount} failed: ${message}`);
 
           const status = parseApiError(message).status;

@@ -50,10 +50,11 @@ it looked like it did:
   reach shared machinery rather than the map they were meant for. The map has no such machinery now.
 - **A retry loop counted its own attempts twice**, from the same list, in two places kept in
   agreement only by both being written correctly. It reads the list once.
-- **A file upload asked whether a session existed and then acted on the answer**, which is two
-  moments where one will do. One question now answers both, and the chunked-upload path has tests
-  for the first time - covering the checks that keep an uploader from choosing where their bytes
-  land.
+- **A file upload looked at a session three separate times to add one piece to it** - does it
+  exist, how big is it, now append - and anything could have changed it in between. It opens the
+  file once now and does all three through that one open file, so there is no gap to change
+  anything in. The chunked-upload path also has tests for the first time, covering the checks
+  that keep an uploader from choosing where their bytes land.
 
 One of them also restored a rule this project holds everywhere else: a failure that is turned into
 a value now says so in the log, instead of disappearing.
