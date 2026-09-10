@@ -544,6 +544,44 @@ only the post's **author** (so scheduling does not hide a post from whoever wrot
 admin. Everyone else gets 404, not 403: the existence of an unpublished post is itself the thing to
 hide. Pinned by `posts.service.scheduling.spec.ts`.
 
+### A post is announced once, by a sweeper, and the column is the whole mechanism
+
+Until 2026-09-10 **no notification existed for a publication**. `post_notifications` carried only
+reactions to a post that already had a reader: an association could announce to the whole school
+and reach whoever happened to open the feed. `PostAnnounceScheduler` closes that.
+
+| | Association post | Personal post |
+| --- | --- | --- |
+| Recipients | everyone who can see the feed (`feed-audience.ts`) | rows in `user_follows` for the author |
+| Notification `type` | `association_post` | `followed_post` |
+| Push `actorName` | the ASSOCIATION's name | the author's display name |
+| Measured rate (17 weeks to 2026-09-10) | 0.53/week to 356 people | ~6.5/week to 2.84 people each |
+
+**Three things decide the design, and the third is the one to keep.**
+
+**It is a sweeper, not a call in `createPost`.** `scheduledAt` exists and **nothing has ever
+published a scheduled post** - before this, the column appeared only inside a `WHERE` clause - so
+a post can become visible with no request happening at that moment. And a notification sent inline
+is one a rollback keeps: the announcement has to be decided from the row's committed state.
+
+**Idempotence is `posts."feedNotifiedAt"` and nothing else.** No window, no reliance on the cron's
+period. It is stamped BEFORE the batch goes out, the trade `forms-reminder.scheduler.ts` already
+documents: a crash between the stamp and the send loses one announcement, where the other order
+re-announces on every tick for as long as it keeps failing - sixty times an hour to 356 people.
+
+**Migration 058 BACKFILLS EVERY EXISTING ROW, and that is the step a revert cannot undo.** A null
+means "not yet announced", so shipping the column empty makes the first tick read the whole
+archive as new. It stamped 120 rows on the local copy of production. A partial index on the null
+rows keeps the once-a-minute query off a growing table.
+
+**The audience query is not an access gate.** `feed-audience.ts` states "ICM plus global admin" so
+the sweeper knows who to TELL. `GET /api/posts` still answers anybody who asks - the rule has only
+ever been enforced in the client, and moving it to the API is open in
+[backlog](../backlog.md).
+
+Pinned by `post-announce.scheduler.spec.ts`, whose first assertion is the stamp/send ORDER rather
+than the recipients.
+
 ### Who may touch a calendar event
 
 One rule, enforced in `updateCalendarEvent` / `deleteCalendarEvent` and mirrored by every UI that

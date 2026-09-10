@@ -270,9 +270,9 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
     ([dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy). Two open: a dev
     deploy cannot tell a broken CHANGE from an unreachable REGISTRY, and prod's deploy job is still
     inlined shell where `deploy-dev` exercises the script ([backlog](docs/wiki/backlog.md)).
-14. **NOBODY IS TOLD ABOUT A POST** (user, 2026-09-10) - and **NO SCHEDULER PUBLISHES POSTS AT
-    ALL**. Designed to the migration, not started, owes the USER one decision on volume
-    ([backlog](docs/wiki/backlog.md)).
+14. **P1 - THE SOCIAL FEED HAS NO SERVER-SIDE GATE AND NEVER HAS** - "ICM + admin" lives only in
+    the client. MEASURED 2026-09-10: an anonymous `GET /api/posts` returns **200 with post bodies**,
+    the edge `auth_request` passing a logged-OUT caller ([backlog](docs/wiki/backlog.md)).
 15. **FROM THE USER, AND FIRST CONTACT IS THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** The
     2026-09-08 PROD P1 is FIXED, UNSHIPPED, and owes ONE hardware run **blocked on a THIRD account**;
     four siblings are open beside it ([backlog](docs/wiki/backlog.md)).

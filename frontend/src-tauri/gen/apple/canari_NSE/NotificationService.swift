@@ -149,6 +149,11 @@ class NotificationService: UNNotificationServiceExtension {
     case "social_mention": composed = actorTitled("mention")
     case "social_reply": composed = actorTitled("reply")
     case "social_comment": composed = actorTitled("comment")
+    // The two publication notices take the same shape as a comment: the actor names the
+    // title - an association for the first, a person for the second - and the post's own
+    // opening is the body, or a fixed sentence when the post carries only images.
+    case "social_association_post": composed = actorTitled("association_post")
+    case "social_followed_post": composed = actorTitled("followed_post")
     case "social_reaction":
       composed = (
         Self.localized("notif.social.reaction.title", locale: locale),

@@ -647,53 +647,71 @@ What is left is the QUEUE half above, which no sweep looks at.
 
 ## Notifications - the two builders, and the rung of the campaign that reads them as one
 
-### P2 - NOBODY IS TOLD ABOUT A POST. No notification exists for an association's publication, nor for a post by anyone you follow (user, 2026-09-10)
+### NOBODY IS TOLD ABOUT A POST - SHIPPED 2026-09-10, and what is left is the gate it revealed
 
-Reported as two items in one breath: *"Les gens doivent avoir une notif pour tous les posts
+Reported as two asks in one breath: *"Les gens doivent avoir une notif pour tous les posts
 d'associations"* and *"Les gens doivent avoir une notif pour tous les posts de gens ou d'assos
-qu'ils suivent"*. They are one mechanism with two recipient derivations, so they ship together.
+qu'ils suivent"*. Both are DONE - one sweeper with two recipient derivations, see `CHANGELOG.md`
+and `apps/social-service/src/posts/post-announce.scheduler.ts`, whose docblock is the design.
 
-**NOT STARTED. The design below is settled and measured; what is missing is the code.**
+**THE VOLUME QUESTION IS ANSWERED, AND IT WAS A MEASUREMENT RATHER THAN A DECISION.** This entry
+used to park "368 recipients per post" as a product question owed to the USER. That was the wrong
+denominator: what a reader experiences is notifications PER WEEK, and over the seventeen weeks to
+2026-09-10 the local copy of production carries **0.53 association posts a week** (9 of 120 posts,
+2026-05-13 to 2026-09-10) against **7.01 posts a week in total**. A personal post reaches **2.84
+followers on average** (25 edges over 17 followed users). So no digest and no per-association
+mute: at one announcement a fortnight, either would be a setting nobody would ever find, and both
+can be added later without touching the sweeper - the recipient derivation is two private methods.
+**Re-measure before believing this**: the predicate that named the last population is not the one
+that names the next, and one `GROUP BY` settles it.
 
-**There is no scheduler for posts at all, and that is the first thing to know.** `scheduledAt` on
-`posts` appears only inside a `WHERE` clause - nothing ever publishes a scheduled post, and nothing
-sweeps the table. But `ScheduleModule.forRoot()` IS already in
-`apps/social-service/src/app.module.ts`, with four `@Cron` schedulers beside it, so the seam exists.
+**`association_follows` IS DELIBERATELY NOT CONSULTED.** The first ask subsumes half of the
+second: if every association post reaches the whole feed audience, following an association adds
+nothing to what you are told. That table becomes the opt-in the day the first rule is narrowed,
+which is the one change that would give this sweeper a third derivation rather than a different
+one.
 
-**The model to copy verbatim is `apps/social-service/src/forms/forms-reminder.scheduler.ts`**:
-`@Cron('* * * * *')`, a durable `notified*` boolean, **stamped BEFORE sending** (its own comment
-states the trade: *"Worst case: the notification is silently lost; acceptable vs spamming the user
-on every cron tick"*), and a `try`/`catch` per item with a `logger.warn`. That shape satisfies this
-repo's standing rule - idempotence from durable state, never from a clock.
+#### What this left open, and it is a REAL hole rather than a leftover
 
-**What it needs, in order:**
+**THE FEED HAS NO SERVER-SIDE GATE.** "ICM students, plus global admins" was stated twice in the
+CLIENT (`routes/posts/+page.ts`, `routes/posts/[postId]/+page.ts`) and nowhere in the backend, so
+`GET /api/posts` answers anybody who asks and always has. Announcing posts needed the rule
+server-side to know WHO TO TELL, and that is all it added: `apps/social-service/src/posts/
+feed-audience.ts` decides recipients, not access. The two client copies were collapsed into
+`$lib/posts/feedAudience.ts` in the same change so the rule is stated once per side rather than
+three times, and `feedAudience.test.ts` fails if a copy comes back.
 
-1. **A column.** `feedNotifiedAt timestamptz null` on `posts`, plus a numbered SQL migration in
-   `apps/social-service/src/migrations/`. **The migration must STAMP EVERY EXISTING ROW**, or the
-   first deploy notifies the whole school about 119 old posts. This is the one step that cannot be
-   undone by a revert.
-2. **One sweeper, two recipient derivations.** An association post goes to the feed audience; a
-   personal post goes to that author's followers in `user_follows`.
-3. **The feed audience is ICM + global admin, and it is gated ONLY IN THE CLIENT.**
-   `routes/posts/+page.ts` and `routes/posts/[postId]/+page.ts` redirect on
-   `profile.formation !== 'ICM'`; the backend has no such gate. So the recipient query has to
-   re-state the rule server-side (`users.formation = 'ICM' OR users.admin`), and doing that makes
-   the client gate a second implementation of one decision - worth resolving in the same change
-   rather than adding a third.
-4. **`PostNotificationsService.createNotifications` already does the hard part** - it dedupes,
-   excludes the actor, batch-saves, and pushes per recipient with a per-recipient catch.
-5. **One new `PushContentKey`, and it costs SIX native string tables and THREE composers**: the
-   builder in `push/push-content.ts` and its entry in `push-content.spec.ts`;
-   `notif_<key>_title`/`notif_<key>_body` in BOTH Android tables (`values/`, `values-en/`);
-   `notif.<dotted>.title`/`.body` in ALL FOUR iOS `.lproj` tables; and the key handled in
-   `CanariFirebaseMessagingService.kt`, `NotificationService.swift` and `canari_push.mm`. All of it
-   is enforced by `frontend/src/lib/mobile/nativeStrings.test.ts` - the gate will name whatever is
-   missing.
+**MEASURED 2026-09-10, AND IT IS WORSE THAN THIS ENTRY FIRST SAID.** The sentence here used to
+end "any non-ICM account **with a session** can read it". No session is needed. Against the local
+estate, which is a copy of production and is built from the same
+`infrastructure/local/Dockerfile.frontend` that CLAUDE.md names as the edge's source of truth:
 
-**The open question is VOLUME, and it is the user's to answer.** Every association post reaching
-every ICM student is, on the current population, 368 recipients per post. Whether that wants a
-per-association mute, a daily digest, or nothing at all is a product decision, not a code one.
+```
+curl -s -o /dev/null -w '%{http_code}' http://localhost:8081/api/posts?limit=1   ->  200
+```
 
+with real post bodies in the response. `/api/posts` DOES carry `auth_request /internal/auth/verify`
+at the edge, which is what made the weaker reading look right - but `/api/auth/verify` answers
+**200 for a logged-out caller too**, carrying `x-logged-in: false` so pages can render signed out.
+`auth_request` treats any 2xx as permission granted, so the sub-request that looks like the gate
+is not one. The endpoints themselves - `@Get()`, `@Get('search')`, `@Get(':postId')` - carry no
+`NginxAuthGuard`, and take the identity headers as OPTIONAL parameters.
+
+**A GATE IS ONLY A GATE IF IT CAN SAY NO.** `auth_request` in front of a verifier that always
+succeeds is decoration, and reading the location block alone would never show it - the location
+block is where this was checked first, and it looked fine.
+
+**What is owed is the gate itself, on the API.** It is not a large change - the same predicate,
+applied in `PostsService` - but it is an authorization change on a live endpoint and wants its own
+pass, with a test for each of the three shapes (ICM, admin, neither). **And the same question is
+owed of every other `auth_request` location**: any of them fronting an endpoint with no guard of
+its own is open in exactly this way, and nothing here has enumerated them.
+
+**One thing is NOT yet measured: production.** The probe above ran against the local estate; an
+anonymous read of `canari-emse.fr` was blocked by this session's command classifier and was not
+retried. The edge config is one shared file, so the expectation is that prod behaves identically -
+but that is an inference, and the entry says so rather than claiming a measurement it does not
+have.
 
 ### P1 - a FIRST message from someone you have no conversation with notifies, decrypts, and then goes nowhere: the tap does not land and the conversation is invisible until the app is restarted (user, 2026-09-08, on PRODUCTION)
 

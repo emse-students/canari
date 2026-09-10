@@ -24,6 +24,8 @@ export type PushContentKey =
   | 'social_reply'
   | 'social_comment'
   | 'social_reaction'
+  | 'social_association_post'
+  | 'social_followed_post'
   | 'form_opening_soon'
   | 'form_open'
   | 'event_proposed'
@@ -48,6 +50,7 @@ export type PushContent = {
    * The one variable fragment, and what it means is fixed per key:
    * - `social_mention` / `social_reply` / `social_comment`: the text the author typed
    * - `social_reaction`: the reaction itself (an emoji)
+   * - `social_association_post` / `social_followed_post`: the opening of the post's own text
    * - the two form keys: nothing, always empty
    * - the five event keys: the event's own title, which is not translatable either
    */
@@ -55,6 +58,29 @@ export type PushContent = {
   legacyTitle: string;
   legacyBody: string;
 };
+
+/**
+ * How much of a piece of user text a push may carry.
+ *
+ * A notification is a lock-screen line, not the content: the number is the one the comment
+ * notifications have used since they were written, lifted here when publications became a second
+ * caller rather than copied into them.
+ */
+const PREVIEW_MAX = 60;
+
+/**
+ * The opening of a piece of user text, ellipsed, for a push that shows what was written.
+ *
+ * THE ELLIPSIS COUNTS TOWARDS THE BOUND, which is a two-character change from the inline version
+ * this replaces. That one reserved THREE characters for a ONE-character `…` - the arithmetic
+ * of `...` applied to a single glyph - so it cut comment previews at 58 while its own constant
+ * said 60. Nothing depended on either number; a bound that does not mean what it says is the part
+ * worth not copying forward.
+ */
+export function previewOf(text: string): string {
+  const trimmed = text.trim();
+  return trimmed.length > PREVIEW_MAX ? trimmed.slice(0, PREVIEW_MAX - 1) + '…' : trimmed;
+}
 
 /** Someone mentioned the recipient. */
 export function mentionContent(actorName: string, preview: string): PushContent {
@@ -199,5 +225,38 @@ export function eventDeletedContent(actorName: string, eventTitle: string): Push
     arg: eventTitle,
     legacyTitle: 'Événement supprimé',
     legacyBody: `« ${eventTitle} » a été supprimé par le BDE`,
+  };
+}
+
+/**
+ * An association published, and everyone with the feed is told.
+ *
+ * TWO KEYS AND NOT ONE WITH A FLAG, for the reason the four calendar answers are four keys: the
+ * distinction is a WORD, and a word travelling as data is how a sentence ends up composed on the
+ * one layer that cannot know the reader's language. An association announcing to the whole school
+ * and someone you chose to follow posting are different sentences, read for different reasons.
+ *
+ * `actorName` is the ASSOCIATION's name, not the member who pressed publish. The reader follows
+ * the association; which of its officers typed the post is not information they asked for, and
+ * `post.authorId` is still what the notification row records for the deep link.
+ */
+export function associationPostContent(associationName: string, preview: string): PushContent {
+  return {
+    key: 'social_association_post',
+    actorName: associationName,
+    arg: preview,
+    legacyTitle: `${associationName} a publié`,
+    legacyBody: preview || 'Nouvelle publication',
+  };
+}
+
+/** Someone the recipient follows published. */
+export function followedPostContent(actorName: string, preview: string): PushContent {
+  return {
+    key: 'social_followed_post',
+    actorName,
+    arg: preview,
+    legacyTitle: `${actorName} a publié`,
+    legacyBody: preview || 'Nouvelle publication',
   };
 }

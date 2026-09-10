@@ -33,6 +33,10 @@
 "notif.social.comment.body" = "Nouveau commentaire";
 "notif.social.reaction.title" = "Nouvelle réaction";
 "notif.social.reaction.body" = "%1$@ a réagi %2$@ à votre publication";
+"notif.social.association_post.title" = "%@ a publié";
+"notif.social.association_post.body" = "Nouvelle publication";
+"notif.social.followed_post.title" = "%@ a publié";
+"notif.social.followed_post.body" = "Nouvelle publication";
 "notif.form.opening_soon.title" = "Formulaire bientôt ouvert";
 "notif.form.opening_soon.body" = "Un formulaire que vous suivez ouvre dans 5 minutes !";
 "notif.form.open.title" = "Formulaire ouvert !";

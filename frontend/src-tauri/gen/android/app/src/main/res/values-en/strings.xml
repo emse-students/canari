@@ -46,6 +46,10 @@
     <string name="notif_social_comment_body">New comment</string>
     <string name="notif_social_reaction_title">New reaction</string>
     <string name="notif_social_reaction_body">%1$s reacted %2$s to your post</string>
+    <string name="notif_social_association_post_title">%1$s posted</string>
+    <string name="notif_social_association_post_body">New post</string>
+    <string name="notif_social_followed_post_title">%1$s posted</string>
+    <string name="notif_social_followed_post_body">New post</string>
     <string name="notif_form_opening_soon_title">Form opening soon</string>
     <string name="notif_form_opening_soon_body">A form you are watching opens in 5 minutes!</string>
     <string name="notif_form_open_title">Form now open!</string>
