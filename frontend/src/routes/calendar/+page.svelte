@@ -439,92 +439,158 @@
       </a>
     {/if}
 
-    <Card class="space-y-4 p-4 sm:p-5">
-      <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div class="flex items-center gap-2">
-          <button
-            type="button"
-            onclick={prevMonth}
-            class="ui-icon-button border-cn-border text-text-main rounded-xl border transition-colors hover:bg-(--cn-surface)"
-            aria-label={m.calendar_prev_month()}
-          >
-            <ChevronLeft size={20} />
-          </button>
-          <span class="text-text-main min-w-[10rem] text-center text-sm font-bold capitalize">
-            {titleMonth}
-          </span>
-          <button
-            type="button"
-            onclick={nextMonth}
-            class="ui-icon-button border-cn-border text-text-main rounded-xl border transition-colors hover:bg-(--cn-surface)"
-            aria-label={m.calendar_next_month()}
-          >
-            <ChevronRight size={20} />
-          </button>
-        </div>
-
-        <label class="text-text-muted flex flex-col gap-1 text-xs font-semibold sm:min-w-[14rem]">
-          {m.calendar_filter_label()}
-          <select
-            class="border-cn-border text-text-main rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm font-medium"
-            bind:value={filterAssociationId}
-            onchange={onFilterSelectChange}
-          >
-            <option value="">{m.calendar_filter_all()}</option>
-            {#each associations as a (a.id)}
-              <option value={a.id}>{a.name}</option>
-            {/each}
-          </select>
-        </label>
-      </div>
-
-      <div class="border-cn-border/60 flex flex-wrap justify-end gap-2 border-t pt-4">
-        <a
-          href={exportHref}
-          class="border-cn-border text-text-main hover:bg-cn-bg inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border bg-(--cn-surface) px-4 py-2.5 text-sm font-bold transition-colors"
-        >
-          <FileDown size={18} />
-          {m.calendar_export_pdf()}
-        </a>
+    <!-- THE CONTROLS ARE SNIPPETS BECAUSE THEY HAVE TWO HOMES, NOT TO SAVE TYPING. The phone
+         keeps them in a bar above a list; the desktop puts them in the left rail beside the
+         month. Copying them would be two month navigations that can disagree about what `prevMonth`
+         resets, which is exactly the class of bug `selectedDay = null` in three places already
+         invites. -->
+    {#snippet monthNav()}
+      <div class="flex items-center gap-2">
         <button
           type="button"
-          onclick={() => (showSubscribeModal = true)}
-          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover hidden shrink-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition-colors sm:inline-flex"
+          onclick={prevMonth}
+          class="ui-icon-button border-cn-border text-text-main rounded-xl border transition-colors hover:bg-(--cn-surface)"
+          aria-label={m.calendar_prev_month()}
         >
-          <CalendarCheck size={18} />
-          {m.calendar_subscribe()}
+          <ChevronLeft size={20} />
+        </button>
+        <span class="text-text-main flex-1 text-center text-sm font-bold capitalize">
+          {titleMonth}
+        </span>
+        <button
+          type="button"
+          onclick={nextMonth}
+          class="ui-icon-button border-cn-border text-text-main rounded-xl border transition-colors hover:bg-(--cn-surface)"
+          aria-label={m.calendar_next_month()}
+        >
+          <ChevronRight size={20} />
         </button>
       </div>
-    </Card>
+    {/snippet}
 
-    {#if loadError}
+    {#snippet associationFilter()}
+      <label class="text-text-muted flex flex-col gap-1 text-xs font-semibold sm:min-w-56">
+        {m.calendar_filter_label()}
+        <select
+          class="border-cn-border text-text-main rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm font-medium"
+          bind:value={filterAssociationId}
+          onchange={onFilterSelectChange}
+        >
+          <option value="">{m.calendar_filter_all()}</option>
+          {#each associations as a (a.id)}
+            <option value={a.id}>{a.name}</option>
+          {/each}
+        </select>
+      </label>
+    {/snippet}
+
+    {#snippet exportActions()}
+      <a
+        href={exportHref}
+        class="border-cn-border text-text-main hover:bg-cn-bg inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border bg-(--cn-surface) px-4 py-2.5 text-sm font-bold transition-colors"
+      >
+        <FileDown size={18} />
+        {m.calendar_export_pdf()}
+      </a>
+      <button
+        type="button"
+        onclick={() => (showSubscribeModal = true)}
+        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover hidden shrink-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition-colors sm:inline-flex"
+      >
+        <CalendarCheck size={18} />
+        {m.calendar_subscribe()}
+      </button>
+    {/snippet}
+
+    {#snippet loadErrorBox()}
       <div class="bg-red-err/10 border-red-err/30 text-red-err rounded-xl border p-4 text-sm">
         {loadError}
       </div>
-    {:else if scheduleLayout}
-      <!-- One list, no grid: seven columns of 48px say which days exist and nothing about what is
-           on them. `CalendarScheduleList` takes the month out of the feed itself, so there is no
-           selected day to carry here. -->
-      <CalendarScheduleList
-        {focusDate}
-        events={sortedEvents}
-        {loading}
-        onEventClick={openEventDetail}
-      />
-    {:else}
-      <MonthCalendarGridRich {focusDate} events={sortedEvents} {loading} bind:selectedDay />
+    {/snippet}
 
-      {#if !loading && sortedEvents.length === 0}
-        <Card class="text-text-muted p-8 text-center text-sm">{m.calendar_empty()}</Card>
+    {#if scheduleLayout}
+      <!-- THE PHONE IS UNCHANGED. One list, no grid: seven columns of 48px say which days exist
+           and nothing about what is on them. `CalendarScheduleList` takes the month out of the
+           feed itself, so there is no selected day to carry here, and no day panel to place. -->
+      <Card class="space-y-4 p-4 sm:p-5">
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          {@render monthNav()}
+          {@render associationFilter()}
+        </div>
+        <div class="border-cn-border/60 flex flex-wrap justify-end gap-2 border-t pt-4">
+          {@render exportActions()}
+        </div>
+      </Card>
+
+      {#if loadError}
+        {@render loadErrorBox()}
       {:else}
-        <CalendarDayEventsPanel
+        <CalendarScheduleList
           {focusDate}
-          {selectedDay}
           events={sortedEvents}
+          {loading}
           onEventClick={openEventDetail}
-          onClearSelection={() => (selectedDay = null)}
         />
       {/if}
+    {:else}
+      <!-- THE SHAPE IS `/calendar/export`'S, DELIBERATELY AND EXACTLY (user, 2026-09-10:
+           *"On pourrait reprendre exactement les formes de /calendar/export pour /calendar (pour
+           la version web du moins), avec le calendrier a droite et le panneau a gauche"*).
+
+           It is also Google Agenda's, which is the reference this page was measured against: a
+           fixed rail on the left, the month taking whatever is left. Stacking instead - a
+           full-width control bar, then the month, then the selected day BELOW it - is what made
+           the page read wide, because the month then had the whole 1600px column to spread seven
+           columns across, and the day you clicked was under the fold.
+
+           `minmax(0,1fr)` AND NOT `1fr`: a track written `1fr` is `minmax(auto,1fr)`, and `auto`
+           as a minimum means the track may not shrink below its content's min-content width -
+           the rule that made this page's sibling overflow its column in the same sweep. The
+           month grid has seven columns of its own and a min-content width worth respecting, so
+           the floor is stated as zero and `min-w-0` repeats it on the flex/grid child. -->
+      <div class="grid grid-cols-1 items-start gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
+        <div
+          class="border-cn-border bg-cn-surface space-y-5 rounded-2xl border p-5 shadow-sm lg:sticky lg:top-4"
+        >
+          {@render monthNav()}
+
+          <hr class="border-cn-border/60" />
+
+          {@render associationFilter()}
+
+          <hr class="border-cn-border/60" />
+
+          <div class="flex flex-col gap-2">
+            {@render exportActions()}
+          </div>
+
+          {#if !loadError && !(!loading && sortedEvents.length === 0)}
+            <hr class="border-cn-border/60" />
+            <!-- The selected day belongs BESIDE the month it was clicked in, not under it. The
+                 panel renders its own "pick a day" state when nothing is selected, so the rail
+                 never collapses as you navigate. -->
+            <CalendarDayEventsPanel
+              {focusDate}
+              {selectedDay}
+              events={sortedEvents}
+              onEventClick={openEventDetail}
+              onClearSelection={() => (selectedDay = null)}
+            />
+          {/if}
+        </div>
+
+        <div class="min-w-0 space-y-4">
+          {#if loadError}
+            {@render loadErrorBox()}
+          {:else}
+            <MonthCalendarGridRich {focusDate} events={sortedEvents} {loading} bind:selectedDay />
+
+            {#if !loading && sortedEvents.length === 0}
+              <Card class="text-text-muted p-8 text-center text-sm">{m.calendar_empty()}</Card>
+            {/if}
+          {/if}
+        </div>
+      </div>
     {/if}
 
     <CalendarEventDetailModal

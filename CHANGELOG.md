@@ -11,6 +11,20 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - the agenda now puts its controls beside the month instead of above it
+
+On a computer, the month sits on the right and everything else - navigation, the association
+filter, the export and subscribe buttons, and the events of the day you clicked - sits in a panel
+on the left that stays put as you scroll. It is the shape the PDF export page already used, and
+the shape Google's own agenda uses. Phones are unchanged: still one list, controls above it.
+
+The day you click used to appear underneath the whole month, which on most screens meant below
+the fold; it is now beside it, in view.
+
+Narrowing the month surfaced something that had always been wrong: on a day whose first event has
+a long title, the title ran over the day number, so the 29th read as the 2nd. The number now has
+room reserved for it.
+
 ### Fixed - four walls of cards were still twice too wide, and the guard said the tree was clean
 
 The shop's partnership tiles were 660px wide on a 1384px window, against the 205px tile the web's
