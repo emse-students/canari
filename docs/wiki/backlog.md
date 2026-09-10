@@ -681,11 +681,37 @@ feed-audience.ts` decides recipients, not access. The two client copies were col
 `$lib/posts/feedAudience.ts` in the same change so the rule is stated once per side rather than
 three times, and `feedAudience.test.ts` fails if a copy comes back.
 
+**MEASURED 2026-09-10, AND IT IS WORSE THAN THIS ENTRY FIRST SAID.** The sentence here used to
+end "any non-ICM account **with a session** can read it". No session is needed. Against the local
+estate, which is a copy of production and is built from the same
+`infrastructure/local/Dockerfile.frontend` that CLAUDE.md names as the edge's source of truth:
+
+```
+curl -s -o /dev/null -w '%{http_code}' http://localhost:8081/api/posts?limit=1   ->  200
+```
+
+with real post bodies in the response. `/api/posts` DOES carry `auth_request /internal/auth/verify`
+at the edge, which is what made the weaker reading look right - but `/api/auth/verify` answers
+**200 for a logged-out caller too**, carrying `x-logged-in: false` so pages can render signed out.
+`auth_request` treats any 2xx as permission granted, so the sub-request that looks like the gate
+is not one. The endpoints themselves - `@Get()`, `@Get('search')`, `@Get(':postId')` - carry no
+`NginxAuthGuard`, and take the identity headers as OPTIONAL parameters.
+
+**A GATE IS ONLY A GATE IF IT CAN SAY NO.** `auth_request` in front of a verifier that always
+succeeds is decoration, and reading the location block alone would never show it - the location
+block is where this was checked first, and it looked fine.
+
 **What is owed is the gate itself, on the API.** It is not a large change - the same predicate,
 applied in `PostsService` - but it is an authorization change on a live endpoint and wants its own
-pass, with a test for each of the three shapes (ICM, admin, neither). Until then the honest
-statement is that the feed is unlisted rather than private, and any non-ICM account with a session
-can read it.
+pass, with a test for each of the three shapes (ICM, admin, neither). **And the same question is
+owed of every other `auth_request` location**: any of them fronting an endpoint with no guard of
+its own is open in exactly this way, and nothing here has enumerated them.
+
+**One thing is NOT yet measured: production.** The probe above ran against the local estate; an
+anonymous read of `canari-emse.fr` was blocked by this session's command classifier and was not
+retried. The edge config is one shared file, so the expectation is that prod behaves identically -
+but that is an inference, and the entry says so rather than claiming a measurement it does not
+have.
 
 ### P1 - a FIRST message from someone you have no conversation with notifies, decrypts, and then goes nowhere: the tap does not land and the conversation is invisible until the app is restarted (user, 2026-09-08, on PRODUCTION)
 
