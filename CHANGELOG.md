@@ -11,6 +11,24 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - the dependency gate refused the very repair it had asked for
+
+Internal, and it had blocked one dependency update since the gate was written. The check that asks
+"does this project have a test that would catch a problem with this update?" read the description
+Dependabot writes into its LAST commit. That works right up until someone has to touch the branch -
+and some updates require it: Dependabot can move a plugin's JavaScript half but not the Rust half
+beside it, and another check correctly refuses the pair while they disagree. Pushing the missing
+half then became the last commit, carried no description, and the gate answered that it could no
+longer tell what the branch changed.
+
+It reads every commit on the request now. Nothing was loosened: an update with no test behind it is
+refused exactly as before, including the database upgrade that took production down for 33 minutes
+on 1 September.
+
+Also internal: the recipe that runs these self-checks was a hand-written list, so a check added
+without a line in it would have passed for ever without being asked anything. A new check asserts
+the list covers the directory.
+
 ### Changed - a BDE manager can delete an association, not only create one
 
 Decided by the user on 2026-09-10, after the Danger panel was made visible to them. The right that
