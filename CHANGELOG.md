@@ -11,6 +11,22 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - four walls of cards were still twice too wide, and the guard said the tree was clean
+
+The shop's partnership tiles were 660px wide on a 1384px window, against the 205px tile the web's
+own shops measure. Three more grids were in the same state: an association's products, and the two
+tabs where a manager edits them. All four now size themselves by the card rather than by a column
+count, and measure the same as every other card in the app - 254px at that window, 253px at 1920.
+
+The reason it was missed the first time is the part worth keeping. A test had been written to stop
+exactly this, and it looked for the specific spelling the six grids it already knew about happened
+to share, in the one folder they happened to live in. These four shared neither. A guard shaped
+like the copies it was written against is a guard for those copies only, so it now recognises a
+wall of cards by the card, which nothing can re-spell.
+
+That guard was also made to prove it can still find the walls it checks, after its first run found
+none at all and reported everything in order - the same way its predecessor had.
+
 ### Fixed - a release that never reached production used to report itself shipped
 
 Two versions were published, announced, and served to nobody. Production kept running the version

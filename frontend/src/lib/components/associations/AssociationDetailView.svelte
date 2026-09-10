@@ -20,6 +20,7 @@
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import PartnershipCardList from '$lib/components/shop/PartnershipCardList.svelte';
   import CardTile from '$lib/components/shared/CardTile.svelte';
+  import { CARD_GRID } from '$lib/components/layout/cardGrid';
   import { productFallbackIcon } from '$lib/utils/cardIcons';
   import { generateAvatarColor } from '$lib/utils/avatar';
   import { currentUserId, isGlobalAdmin, isAssociationSuperAdmin } from '$lib/stores/user';
@@ -415,7 +416,7 @@
             {m.asso_view_all_shop()}
           </a>
         </div>
-        <div class="grid gap-4 sm:grid-cols-2">
+        <div class={CARD_GRID}>
           {#each products as product (product.id)}
             <CardTile
               iconUrl={product.iconUrl}

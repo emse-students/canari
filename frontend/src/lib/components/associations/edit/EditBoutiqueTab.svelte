@@ -15,6 +15,7 @@
   import Textarea from '$lib/components/ui/Textarea.svelte';
   import StripeNetPayoutHint from '$lib/components/payments/StripeNetPayoutHint.svelte';
   import CardTile from '$lib/components/shared/CardTile.svelte';
+  import { CARD_GRID } from '$lib/components/layout/cardGrid';
   import CardIconEditor from '$lib/components/shared/CardIconEditor.svelte';
   import PriceGridEditor from '$lib/components/pricing/PriceGridEditor.svelte';
   import {
@@ -515,7 +516,7 @@
   {:else if otherProducts.length === 0}
     <p class="text-text-muted py-6 text-center text-sm">{m.asso_boutique_no_products()}</p>
   {:else}
-    <ul class="grid gap-4 sm:grid-cols-2">
+    <ul class={CARD_GRID}>
       {#each otherProducts as product (product.id)}
         <li class={expandedProductSettingsId === product.id ? 'sm:col-span-2' : ''}>
           <CardTile

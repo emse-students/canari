@@ -25,6 +25,7 @@
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { Plus, Trash2, Pencil, Handshake } from '@lucide/svelte';
   import CardTile from '$lib/components/shared/CardTile.svelte';
+  import { CARD_GRID } from '$lib/components/layout/cardGrid';
   import PartnershipEditor from './PartnershipEditor.svelte';
   import { PARTNERSHIP_FALLBACK_ICON } from '$lib/utils/cardIcons';
   import { generateAvatarColor } from '$lib/utils/avatar';
@@ -168,7 +169,7 @@
   {:else if cards.length === 0}
     <p class="text-text-muted py-6 text-center text-sm">{m.asso_partnership_no_partnerships()}</p>
   {:else}
-    <ul class="grid gap-4 sm:grid-cols-2">
+    <ul class={CARD_GRID}>
       {#each cards as card (card.id)}
         <li>
           <CardTile

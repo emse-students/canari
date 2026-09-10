@@ -6,6 +6,7 @@
   } from '$lib/associations/api';
   import { ExternalLink } from '@lucide/svelte';
   import CardTile from '$lib/components/shared/CardTile.svelte';
+  import { CARD_GRID } from '$lib/components/layout/cardGrid';
   import { PARTNERSHIP_FALLBACK_ICON } from '$lib/utils/cardIcons';
   import { m } from '$lib/paraglide/messages';
 
@@ -40,7 +41,7 @@
 {#if cards.length === 0}
   <p class="text-text-muted py-6 text-center text-sm">{m.shop_partnership_none()}</p>
 {:else}
-  <div class="grid gap-4 sm:grid-cols-2">
+  <div class={CARD_GRID}>
     {#each cards as card (card.id)}
       {@const locked = card.membersOnly && !card.viewerIsCotisant}
       {@const result = claimResults[card.id]}
