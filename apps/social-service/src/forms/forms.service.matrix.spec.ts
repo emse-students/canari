@@ -417,4 +417,55 @@ describe('FormsService pricing, through submit', () => {
       );
     });
   });
+
+  describe('the answer map handed to pricing', () => {
+    /**
+     * The body is parsed from JSON, which is the only way `__proto__` becomes an OWN property -
+     * written as an object literal it sets the prototype and `Object.entries` never sees it, so a
+     * literal here would assert nothing.
+     */
+    const bodyFromTheWire = () =>
+      JSON.parse(
+        '{"q_menu":"opt_meat","q_not_on_this_form":"x","__proto__":{"polluted":true}}'
+      ) as Record<string, unknown>;
+
+    it('carries only ids the form declares', async () => {
+      // `audience.ts` reads answers BY declared id, so an undeclared key is one nothing will ever
+      // read - and `visibleAnswers` twelve lines below already applies exactly this allowlist.
+      const { service, pricingFacts } = makeService({
+        form: form(),
+        facts: { cotisationTiers: [null] },
+      });
+
+      await submit(service, bodyFromTheWire());
+
+      const { answers } = pricingFacts.build.mock.calls[0][0];
+      expect(Object.keys(answers)).toEqual(['q_menu']);
+    });
+
+    it('is prototype-less, so a hostile key could not walk out of it even unfiltered', async () => {
+      const { service, pricingFacts } = makeService({
+        form: form(),
+        facts: { cotisationTiers: [null] },
+      });
+
+      await submit(service, bodyFromTheWire());
+
+      const { answers } = pricingFacts.build.mock.calls[0][0];
+      expect(Object.getPrototypeOf(answers)).toBeNull();
+      expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    });
+
+    it('still charges the cell the declared answer selects', async () => {
+      // The filter must remove keys and nothing else: the price is the evidence that it did.
+      const { service, saved } = makeService({
+        form: form(),
+        facts: { cotisationTiers: [null] },
+      });
+
+      await submit(service, bodyFromTheWire());
+
+      expect(saved[0].totalPaid).toBe(1200);
+    });
+  });
 });

@@ -11,6 +11,19 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a form accepted answers to questions it never asked
+
+A registration form declares its questions. The code that worked out what a submitter had answered
+accepted **any** key the browser sent, including names that mean something special to the language
+itself, and including questions belonging to no form at all. Nothing downstream ever read those
+extra entries, so no price was ever wrong - but a map built from whatever arrives is one nobody can
+reason about, and it is the kind of thing that becomes a real problem the day something new starts
+iterating over it. The answers now go through the form's own list of questions, which is the same
+filter applied a few lines later to decide what the submitter actually saw.
+
+Also removes two checks in the message-recovery path that could never be true - the case they
+guarded against always returns earlier - so what remains reads as what really happens.
+
 ### Fixed - a release deployed whatever was newest, not what the release said it was
 
 Internal, and it had been true of every deployment. Publishing a release picks one commit and

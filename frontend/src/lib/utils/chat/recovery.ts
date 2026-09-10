@@ -207,10 +207,15 @@ export async function requestReAdd(groupId: string, deps: RecoveryDeps): Promise
   // absent group and network error both land on it, which `getGroupServerStatus` then separates.
   // What was lost was the CAUSE, and that is not recoverable anywhere downstream.
   //
-  // AND THE NULL IS NOW VISIBLE. `.catch(() => null)` widens the awaited type in a way a static
-  // analyser does not follow: the comparison below was reported as `'meta' cannot be of type
-  // null, but it is compared to an expression of type null` - a correct reading of what it could
-  // see, about a comparison that is the whole point of the next twenty lines.
+  // AND THE NULL IS NOW VISIBLE, WHICH IS HOW THE REAL DEFECT SURFACED. `.catch(() => null)`
+  // widened the awaited type in a way a static analyser does not follow; writing the try out made
+  // `GroupMeta | null` explicit, and the analyser then held its ground on
+  // `'meta' cannot be of type null, but it is compared to an expression of type null` - about the
+  // join guard two hundred lines down, NOT about the branch below. It was right: every path out
+  // of that branch returns, so `meta` is a `GroupMeta` from there on and the second null check was
+  // dead. Both dead checks are gone; this one is the live one - and the COMPILER is what keeps
+  // that true: delete any `return` from the branch below and `bun run check` fails at the three
+  // sites that then read `meta` unguarded (measured, not assumed).
   let meta: GroupMeta | null = null;
   try {
     meta = await deps.mlsService.getGroupMeta(groupId);
@@ -275,8 +280,9 @@ export async function requestReAdd(groupId: string, deps: RecoveryDeps): Promise
     return;
   }
 
-  // Tombstoned server-side: mark the conversation removed, stop recovering.
-  if (meta?.deletedAt) {
+  // Tombstoned server-side: mark the conversation removed, stop recovering. `meta` is not optional
+  // here - the branch above returns on every path - so this reads it directly.
+  if (meta.deletedAt) {
     await stopRecovering(groupId, 'deleted server-side', deps);
     return;
   }
@@ -335,7 +341,7 @@ export async function requestReAdd(groupId: string, deps: RecoveryDeps): Promise
   // display name and its peer - so `undefined` is a question the server did not answer, not a
   // "no". The column is non-null server-side and the response carries the whole entity, so this
   // branch is an anomaly worth a line rather than a case to paper over with a default.
-  if (meta === null || meta.isGroup === undefined) {
+  if (meta.isGroup === undefined) {
     deps.log(
       `[READD] ${groupId.slice(0, 8)}... join deferred - the server row does not say whether this is a DM`
     );

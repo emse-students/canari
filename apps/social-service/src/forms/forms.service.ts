@@ -617,14 +617,25 @@ export class FormsService {
 
     // Answers as option-id lists, which is what every criterion reads. A free-text answer is not a
     // criterion input, so it contributes nothing here and keeps its place in `input.answers`.
-    // `Object.create(null)` RATHER THAN `{}`, AND THE KEYS ARE THE REASON. Every key here comes
-    // straight off the request body, so `__proto__` - or `constructor`, or `toString` - is a key a
-    // submitter can choose. Assigning one on an ordinary object literal does not create an own
-    // property: it walks into `Object.prototype`, and every later read of this map answers from
-    // somewhere the caller never wrote. A prototype-less map has nothing to walk into, so a
-    // hostile key is just a key.
+    // THE KEYS ARE THE FORM'S OWN QUESTION IDS, AND NOTHING ELSE GETS IN. Every key here comes
+    // straight off the request body, so `__proto__` - or `constructor`, or an id this form never
+    // declared - is a key a submitter can choose. `Object.create(null)` answers half of that: a
+    // prototype-less map has nothing to walk into, so a hostile key cannot reach
+    // `Object.prototype` the way it would on an ordinary literal. It does NOT stop the map
+    // carrying keys nothing will ever read, which is the other half and the one the analyser kept
+    // reporting.
+    //
+    // THE ALLOWLIST ALREADY EXISTED TWELVE LINES DOWN. `visibleAnswers` is built with
+    // `if (visible.has(questionId))`, over a set derived from `form.items` - the same query does
+    // not flag it, in this same file. Filtering here changes NOTHING observable: `audience.ts`
+    // reads answers BY declared id (`facts.answers[questionId]`) rather than iterating them, the
+    // size checks above run over `input.answers` untouched, the per-item loop below reads
+    // `input.answers[item.id]` directly, and `visible` is a subset of what is declared - so no
+    // key this drops could have reached anything.
+    const declaredQuestionIds = new Set((form.items ?? []).map((item: { id: string }) => item.id));
     const selections: Record<string, string[]> = Object.create(null) as Record<string, string[]>;
     for (const [key, value] of Object.entries(input.answers ?? {})) {
+      if (!declaredQuestionIds.has(key)) continue;
       selections[key] = Array.isArray(value) ? (value as string[]) : [String(value)];
     }
 
