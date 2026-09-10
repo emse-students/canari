@@ -671,47 +671,47 @@ nothing to what you are told. That table becomes the opt-in the day the first ru
 which is the one change that would give this sweeper a third derivation rather than a different
 one.
 
-#### What this left open, and it is a REAL hole rather than a leftover
+#### What this left open - the FEED half is fixed, the POPULATION is not
 
-**THE FEED HAS NO SERVER-SIDE GATE.** "ICM students, plus global admins" was stated twice in the
-CLIENT (`routes/posts/+page.ts`, `routes/posts/[postId]/+page.ts`) and nowhere in the backend, so
-`GET /api/posts` answers anybody who asks and always has. Announcing posts needed the rule
-server-side to know WHO TO TELL, and that is all it added: `apps/social-service/src/posts/
-feed-audience.ts` decides recipients, not access. The two client copies were collapsed into
-`$lib/posts/feedAudience.ts` in the same change so the rule is stated once per side rather than
-three times, and `feedAudience.test.ts` fails if a copy comes back.
+The feed gate shipped 2026-09-10: `FeedAudienceGuard` on the four read endpoints, one predicate
+(`IS_FEED_AUDIENCE_SQL`) built from the same `FEED_AUDIENCE_WHERE` the announcer uses, so the rule
+is still stated once per side. Verified on the running estate, not only by test - anonymous 401,
+ICM 200, admin 200, neither 403, on all four endpoints, where the first row had been 200 with post
+bodies.
 
-**MEASURED 2026-09-10, AND IT IS WORSE THAN THIS ENTRY FIRST SAID.** The sentence here used to
-end "any non-ICM account **with a session** can read it". No session is needed. Against the local
-estate, which is a copy of production and is built from the same
-`infrastructure/local/Dockerfile.frontend` that CLAUDE.md names as the edge's source of truth:
+### P1 - `auth_request` GUARDS SIXTEEN LOCATIONS AND CAN REFUSE NONE OF THEM; `/api/presence` IS THE SECOND CONFIRMED HOLE (measured 2026-09-10)
+
+**The mechanism, which is one line and affects everything behind it.** Sixteen `location` blocks in
+the edge config carry `auth_request /internal/auth/verify`. That sub-request goes to
+`/api/auth/verify`, which answers **200 for a logged-OUT caller** as well, carrying
+`x-logged-in: false` so pages can render signed out. nginx treats any 2xx as permission granted.
+So `auth_request` here IDENTIFIES a caller and never refuses one, and **every endpoint behind those
+sixteen locations is as open as its own guard makes it** - which for four `/api/posts` endpoints
+was not at all.
+
+**`/api/presence` is the second one confirmed, and it is a Rust service rather than Nest:**
 
 ```
-curl -s -o /dev/null -w '%{http_code}' http://localhost:8081/api/posts?limit=1   ->  200
+curl 'http://localhost:8081/api/presence?users=<a real user id>'   ->  200
+{"<that user id>":false}
 ```
 
-with real post bodies in the response. `/api/posts` DOES carry `auth_request /internal/auth/verify`
-at the edge, which is what made the weaker reading look right - but `/api/auth/verify` answers
-**200 for a logged-out caller too**, carrying `x-logged-in: false` so pages can render signed out.
-`auth_request` treats any 2xx as permission granted, so the sub-request that looks like the gate
-is not one. The endpoints themselves - `@Get()`, `@Get('search')`, `@Get(':postId')` - carry no
-`NginxAuthGuard`, and take the identity headers as OPTIONAL parameters.
+No session. It answers who is online to anybody who can name a user id, on `chat-gateway`
+(Axum), so the Nest guard shipped for the feed does not apply and the fix is a different one.
+Lower severity than post bodies - one boolean per id you already know - but the same defect.
 
-**A GATE IS ONLY A GATE IF IT CAN SAY NO.** `auth_request` in front of a verifier that always
-succeeds is decoration, and reading the location block alone would never show it - the location
-block is where this was checked first, and it looked fine.
+**What is owed: the other fourteen, endpoint by endpoint.** A bare-path probe does NOT settle it -
+twelve of the sixteen answered 404 to `GET /api/<thing>`, which only means no route sits at that
+exact path. Each location needs its controllers read for a guard, the way `/api/posts` did. The
+sixteen: `ws`, `groups`, `admin`, `presence`, `calls/`, `call`, `mls/`, `media`, `posts` (fixed),
+`payments`, `forms`, `associations`, `moderation`, `channels`, `minesweeper`, `users`.
 
-**What is owed is the gate itself, on the API.** It is not a large change - the same predicate,
-applied in `PostsService` - but it is an authorization change on a live endpoint and wants its own
-pass, with a test for each of the three shapes (ICM, admin, neither). **And the same question is
-owed of every other `auth_request` location**: any of them fronting an endpoint with no guard of
-its own is open in exactly this way, and nothing here has enumerated them.
-
-**One thing is NOT yet measured: production.** The probe above ran against the local estate; an
-anonymous read of `canari-emse.fr` was blocked by this session's command classifier and was not
-retried. The edge config is one shared file, so the expectation is that prod behaves identically -
-but that is an inference, and the entry says so rather than claiming a measurement it does not
-have.
+**And the question above all of them:** whether `/api/auth/verify` should keep answering 200 for
+nobody. It does so deliberately, so signed-out pages can render - but that makes `auth_request`
+decoration everywhere it appears, and a config that LOOKS like an access check and is not will
+mislead the next reader exactly as it misled this one. A second internal location whose verifier
+refuses anonymous callers, used by the locations that have no business serving them, would make
+the edge state the truth. That is a design decision and is owed to the USER.
 
 ### P1 - a FIRST message from someone you have no conversation with notifies, decrypts, and then goes nowhere: the tap does not land and the conversation is invisible until the app is restarted (user, 2026-09-08, on PRODUCTION)
 

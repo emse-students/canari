@@ -25,3 +25,20 @@ export const FEED_AUDIENCE_WHERE = `formation = 'ICM' OR admin = true`;
 
 /** Every user who can see the feed, and therefore everybody an association's post is announced to. */
 export const FEED_AUDIENCE_IDS_SQL = `SELECT id FROM users WHERE ${FEED_AUDIENCE_WHERE}`;
+
+/**
+ * Whether ONE user is in the audience - the question the API gate asks, `$1` being their id.
+ *
+ * THE PARENTHESES ARE THE WHOLE POINT AND ARE NOT COSMETIC. `AND` binds tighter than `OR`, so
+ * `WHERE id = $1 AND formation = 'ICM' OR admin = true` parses as
+ * `(id = $1 AND formation = 'ICM') OR (admin = true)` - true for EVERY admin row in the table,
+ * whoever asked. The gate would then answer "yes" to an anonymous caller for as long as the
+ * school has one administrator. A fragment meant to be combined has to say so, and this is why
+ * the combining lives here beside it rather than at each call site. Measured on the local copy of
+ * production with an id belonging to nobody: **4 rows without the parentheses, 0 with them** -
+ * the four are exactly the school's four administrators.
+ *
+ * `EXISTS` rather than a row count: the question is a boolean, an id that matches nothing is a
+ * clean `false`, and it stops at the first match.
+ */
+export const IS_FEED_AUDIENCE_SQL = `SELECT EXISTS (SELECT 1 FROM users WHERE id = $1 AND (${FEED_AUDIENCE_WHERE})) AS "inAudience"`;

@@ -5,6 +5,7 @@ import { PostsController } from './posts.controller';
 import { PostsService } from './posts.service';
 import { PostInteractionsService } from './post-interactions.service';
 import { PostNotificationsService } from './post-notifications.service';
+import { FeedAudienceGuard } from './feed-audience.guard';
 import { PostAnnounceScheduler } from './post-announce.scheduler';
 import { Post } from './entities/post.entity';
 import { PostNotification } from './entities/post-notification.entity';
@@ -23,6 +24,9 @@ import { ModerationModule } from '../moderation/moderation.module';
   ],
   controllers: [PostsController],
   providers: [
+    // A guard with an injected repository is resolved from this module's injector, so it belongs
+    // here beside the services. `NginxAuthGuard` needs no entry because it injects nothing.
+    FeedAudienceGuard,
     PostsService,
     PostInteractionsService,
     PostNotificationsService,
