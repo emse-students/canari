@@ -49,15 +49,10 @@
 - ASK EARLY: state assumptions explicitly. If uncertain about architecture or a bug, ASK during planning. No guessing.
 - SURGICAL EDITS: touch ONLY requested code. Map changes 1:1 to the prompt.
 - **FOUR WORKFLOWS ARE VISIBLE IN THE ACTIONS LIST, AND THAT IS DELIBERATE** (user, 2026-09-04:
-  *"le moins de workflows differents possibles, ca inonde la console github"*). `ci.yml`
-  (tests + the `CI passed` aggregate + the security pass + the dependency ceiling), `release.yml`
-  (the one deployment entry point), `arm-auto-merge.yml` (one job, `pull_request_target`, arms every
-  pull request including Dependabot's), `scheduled.yml` (everything on a clock, one job per cron).
-  Six more are `workflow_call` LIBRARIES: `build.yml`, `serve-dev.yml`, `serve-prod.yml`,
-  `code-analysis.yml`, plus `android.yml` + `ios.yml`, which DO carry a `workflow_dispatch` for
-  re-running a store arm by hand. **The deploy library became three files on 2026-09-07** - one file
-  behind a `phase` switch, called twice, drew the other call's jobs as impossible skipped rows
-  ([cicd](docs/wiki/cicd.md)). **A fifth visible workflow needs a reason beyond "another topic".**
+  *"le moins de workflows differents possibles, ca inonde la console github"*): `ci.yml`,
+  `release.yml`, `arm-auto-merge.yml`, `scheduled.yml`. Six more are `workflow_call` LIBRARIES.
+  What each carries, and why the deploy library became three files on 2026-09-07, is
+  [cicd](docs/wiki/cicd.md). **A fifth visible workflow needs a reason beyond "another topic".**
 - **WORK GOES THROUGH A PULL REQUEST, AND IT MERGES ITSELF; NOTHING DEPLOYS ON A PUSH.** Both are the same fact and the commands are in THE DEVELOPMENT CYCLE below. Two consequences no task escapes: **a merged fix is not a shipped fix**, and a hyphen in the version IS the definition of a pre-release - read that way by `release_kind()` in `.github/scripts/lib/release-preconditions.sh`, the ONE implementation, and by `scripts/bump-app-version.sh`'s store band. Model on [workflow-migration](docs/wiki/workflow-migration.md) and [cicd](docs/wiki/cicd.md), the only copies. **Admin bypass exists and is the EMERGENCY path only**: taking it means production is broken right now, and it is written into `CHANGELOG.md` when taken.
 - NO FALLBACKS: never add a fallback path. Diagnose why the primary path failed and fix it there.
 - FIX, NEVER DEFER: a warning or failure you meet is yours, whether or not you caused it. "Pre-existing" is not a disposition.
@@ -232,14 +227,10 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
 [cross-client-testing](docs/wiki/cross-client-testing.md).
 
 1. **THE BOARD IS [cross-client-testing](docs/wiki/cross-client-testing.md) AND `bun rows.mjs`
-   SETTLES IT** - what is answered, what is not `PASS`, a COMPARISON row on all its halves, and which
-   rows answered TWO things on ONE build, so a green cell is not yet a measurement. **NO COUNT IS
-   WRITTEN HERE; run it.** PIN's four rows change a PIN or restart a browser, hence last. HEAL-NEW's
-   rung redesign is open on a clean pass - one record is one draw ([backlog](docs/wiki/backlog.md)).
-   **`bun identity.mjs` BEFORE TRUSTING TWO CLIENTS**: it names the account each one SHOWS and the
-   one it ACTS AS, costs no traffic, and exists because a display name was used as an identity on
-   2026-09-09 and produced a P1 - since REFUTED - that declared every two-client row void
-   ([testing-methodology](docs/wiki/testing-methodology.md)).
+   SETTLES IT - NO COUNT IS WRITTEN HERE; run it.** A green cell is not yet a measurement. The
+   three commands a run owes before any of it is believed are in the campaign section below.
+   PIN's four rows change a PIN or restart a browser, hence last; HEAL-NEW's rung redesign is open
+   on a clean pass ([backlog](docs/wiki/backlog.md)).
 2. **P1 - THE PREKEY WEIGHT: BOTH CAUSES FIXED 2026-09-09, THE BALANCE UNRECOVERABLE UNTIL LATE
    OCTOBER.** The census (`key package census` at load) weighed it rather than dividing it: 2782
    one-time from purge/remint rounds nothing local ever dropped, plus 269 last-resort reminted once
@@ -329,28 +320,21 @@ Four files, four jobs, all listed in WHERE THINGS LIVE: board = state, campaign 
 methodology = how a result earns belief, README = operating manual. **Read them rather than
 re-deriving anything here, and keep no second copy.**
 
-**Six facts that are NOT on those pages, or that a session gets wrong by skipping them.**
-`bun rows.mjs` SETTLES whether the board matches the ledger - run it before believing a cell, it has
-caught the board wrong FIVE times. **`bun cleanup.mjs` BEFORE believing a measurement**: 42 leftover
-groups made a run misread twice on 2026-09-06, and sweeping them turned a `FAIL` into the row's
-first clean `PASS` and PROVED a P1 - debris does not just slow a run, it reattributes what the run
-measures (it does NOT sweep `queued_message`: 13 275 rows since 2026-08-05). **BEFORE FILING A
-CLIENT DEFECT, READ THE OTHER END** - a "zombie socket" P1 died to three `docker logs` here, under a
-minute each, every load-bearing claim wrong ([methodology](docs/wiki/testing-methodology.md)).
-**The rig targets the LOCAL estate since 2026-09-03**, so a push deploys nothing and the
-mutual-exclusion rule died with that move ([methodology](docs/wiki/testing-methodology.md)); what
-replaces it is a rebuild or a `bun run dev` SAVE, which `bundle.mjs` measures. **The board is reset
-to zero**, archived at [archive](docs/wiki/cross-client-testing-archive.md). **A killed run can
-destroy a measurement seconds from being recorded, and losing a `chrome-w1`/`chrome-w2` profile costs
-a DEVICE.** **THE BAR IS `PASS`, NEVER `PASS-DIRTY`** (user: *"Tout doit etre PASS. Pas PASS-DIRTY, PASS"*) -
-a P1 met on the way is fixed in the SAME session, P2/P3 go to [backlog](docs/wiki/backlog.md) rather
-than inline. **THE USER ASKED FOR THE LOGS TO BE READ ON EVERY PASS** (2026-08-28) - a heal that works
-is not a heal that was observed, and reading them has since found two P1s no row asks about. Three
-instrument facts: the disposition for expected noise is `ignoringExpectedLog` **per row**, never a
-wider classifier - and a list the runner never NAMES is the same as no list - and the device cap is
-**re-measured around every run** rather than quoted - and **A PUSH ROW MEASURES GOOGLE UNTIL THE
-PHONE'S FCM LINK IS RENEWED**, that link failing `ESTABLISHED` having cost four verdicts
-(`fcmlink.mjs`).
+**THREE COMMANDS RUN BEFORE ANY MEASUREMENT IS BELIEVED**, each because skipping it has already
+cost a verdict: `bun rows.mjs` (does the board match the ledger), `bun cleanup.mjs` (is the estate
+free of debris that would REATTRIBUTE the run - it does not sweep `queued_message`), `bun
+identity.mjs` (which account each client SHOWS and which it ACTS AS). A push row adds
+`fcmlink.mjs`. Every count, incident and disposition behind them - `ignoringExpectedLog` per row,
+the device cap re-measured rather than quoted, the LOCAL estate the rig has targeted since
+2026-09-03 - is on [methodology](docs/wiki/testing-methodology.md) and the campaign page. **Read
+them; do not restate them here** - this paragraph was a second copy of all of it until 2026-09-10.
+
+**FOUR STANDING RULES FOR A RUN.** The bar is `PASS`, **never `PASS-DIRTY`** (user) - a P1 met on
+the way is fixed in the SAME session, P2/P3 go to [backlog](docs/wiki/backlog.md) rather than
+inline. **READ THE LOGS ON EVERY PASS** (user, 2026-08-28): a heal that works is not a heal that
+was observed. **READ THE OTHER END BEFORE FILING A CLIENT DEFECT** - one P1 died to three
+`docker logs`, every load-bearing claim wrong. **A killed run can destroy a measurement seconds
+from being recorded**, and losing a `chrome-w1`/`chrome-w2` profile costs a DEVICE.
 
 **Standing architectural directives from the user, verbatim:** *"le probleme doit etre
 architecturalement regle, pas mettre des pansements avec des timeouts ou autre, je veux que tout
