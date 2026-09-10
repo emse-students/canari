@@ -2,7 +2,12 @@
   import { generateAvatarColor, getInitials } from '$lib/utils/avatar';
   import { contrastColor, toHex } from '$lib/utils/color';
   import { associationLogoSrc, type AssociationCalendarFeedEvent } from '$lib/associations/api';
-  import { splitLogoBands } from '$lib/utils/calendarExport';
+  import {
+    DAY_NUM_H,
+    EVENT_TITLE_LINE_HEIGHT,
+    fitEventText,
+    splitLogoBands,
+  } from '$lib/utils/calendarExport';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
 
@@ -27,6 +32,20 @@
         .replace(/\.$/, '')
         .slice(0, 3)
     )
+  );
+
+  /**
+   * The month's own name, capitalised - "Septembre".
+   *
+   * THE SAME DECISION THE PDF EXPORT MAKES (`calendarExport.ts`, `monthLabel`): the month alone,
+   * no year, `Intl` in the active locale. The year is not missing - it belongs to the navigation
+   * control in the rail beside this grid, while this band is the SHEET'S title, and the export is
+   * exactly what the user asked this view to read like.
+   */
+  const monthLabel = $derived(
+    new Intl.DateTimeFormat(getLocale(), { month: 'long' })
+      .format(focusDate)
+      .replace(/^\w/, (c) => c.toUpperCase())
   );
 
   const calendarCells = $derived.by(() => {
@@ -122,6 +141,40 @@
   }
 
   const MAX_VISIBLE = 3;
+
+  /**
+   * The day cell's height in pixels, and THE ONE PLACE IT IS STATED.
+   *
+   * It is an inline `min-height` rather than a `min-h-32` utility because the slot arithmetic below
+   * needs the very same number: a Tailwind class and a JavaScript constant would be two statements
+   * of one fact, free to drift the day either moves - and a drift here is silent, showing up only
+   * as titles that no longer fit the boxes they were sized for.
+   *
+   * ONE value and no breakpoint: this component renders only above `SCHEDULE_AGENDA_QUERY`
+   * (767.98px), below which `/calendar` shows `CalendarScheduleList` instead. The `sm:` variant the
+   * cells used to carry could therefore never NOT apply.
+   *
+   * 128px against a cell 127px wide, where the export gives a 154px cell 123px. Taller than the
+   * sheet's proportion on purpose - the user asked for height, and for the same legibility.
+   */
+  const CELL_H = 128;
+
+  /**
+   * The floor the screen imposes on the shared fitter, and the reason is written in `app.css`:
+   * `--text-2xs` is 12px and nothing in this app goes below it. The sheet's own floor is 9px.
+   */
+  const SCREEN_MIN_FONT = 12;
+
+  /**
+   * The two type-scale steps the fitter can land on once it may not go below 12px.
+   *
+   * Emitting the TOKEN rather than the number keeps this grid on the scale `app.css` defines: a
+   * literal `font-size:13px` would be a fourteenth hard-coded size of exactly the kind #447
+   * removed, even though it happens to equal `--text-xs` today.
+   */
+  function fontToken(px: number): string {
+    return px >= 13 ? 'var(--text-xs)' : 'var(--text-2xs)';
+  }
 </script>
 
 {#if loading}
@@ -132,6 +185,13 @@
   </div>
 {:else}
   <div class="border-cn-border/60 overflow-hidden rounded-2xl border shadow-sm">
+    <!-- Month title band, taken from the export's header (`calendarExport.ts`: 88px tall, the brand
+         face, centred). A sheet states the month it shows; leaving that to the navigation control
+         alone is what made this grid read as a widget rather than as the calendar it prints to. -->
+    <div class="border-cn-border/60 bg-cn-surface border-b px-4 py-3 text-center sm:py-4">
+      <h2 class="text-text-main text-xl font-bold sm:text-2xl">{monthLabel}</h2>
+    </div>
+
     <!-- Weekday header -->
     <div class="grid grid-cols-7 bg-(--cn-surface)">
       {#each weekdayLabels as w, wi (w)}
@@ -145,13 +205,14 @@
     </div>
 
     <!-- Day cells -->
-    <div class="grid grid-cols-7" role="grid" aria-label="Calendrier du mois">
+    <div class="grid grid-cols-7" role="grid" aria-label={m.calendar_month_grid_label()}>
       {#each calendarCells as cell, i (i)}
         {#if cell.day === null}
           <div
-            class="border-cn-border/40 min-h-18 border-r border-b sm:min-h-25 {isWeekend(i)
+            class="border-cn-border/40 border-r border-b {isWeekend(i)
               ? 'bg-cn-bg'
               : 'bg-cn-surface'}"
+            style="min-height:{CELL_H}px;"
             role="gridcell"
             aria-hidden="true"
           ></div>
@@ -161,6 +222,9 @@
           {@const nVisible = dayEvents.length > MAX_VISIBLE ? MAX_VISIBLE - 1 : dayEvents.length}
           {@const visible = dayEvents.slice(0, nVisible)}
           {@const overflowCount = dayEvents.length - nVisible}
+          <!-- The slot height the titles are fitted to, computed exactly as the export computes it
+               (`CELL_H / nSlots`, floored). The "+N autres" row is a slot and is counted. -->
+          {@const slotH = Math.floor(CELL_H / (nVisible + (overflowCount > 0 ? 1 : 0) || 1))}
           {@const selected = selectedDay === cell.day}
           {@const today = isToday(cell.day)}
           <button
@@ -173,7 +237,8 @@
             onclick={() => {
               selectedDay = selectedDay === cell.day ? null : cell.day;
             }}
-            class="border-cn-border/40 relative min-h-18 overflow-hidden border-r border-b text-left transition-all sm:min-h-25 {isWeekend(
+            style="min-height:{CELL_H}px;"
+            class="border-cn-border/40 relative overflow-hidden border-r border-b text-left transition-all {isWeekend(
               i
             )
               ? 'bg-cn-bg'
@@ -208,9 +273,11 @@
                   {@const colors = eventColors(ev)}
                   {@const fg = contrastColor(colors[0])}
                   {@const logos = eventLogos(ev)}
+                  <!-- The first slot spends `DAY_NUM_H` on the day number, so its title has that
+                       much less height to fit into - the export's own arithmetic. -->
+                  {@const fit = fitEventText(ei === 0 ? slotH - DAY_NUM_H : slotH, SCREEN_MIN_FONT)}
                   <div
-                    class="relative flex flex-1 items-center justify-center overflow-hidden {ev.status ===
-                    'pending'
+                    class="relative flex flex-1 flex-col overflow-hidden {ev.status === 'pending'
                       ? 'opacity-50'
                       : ''}"
                     style="{eventBgStyle(ev)} color:{fg};{ev.status === 'pending'
@@ -220,13 +287,23 @@
                       ? `${ev.title} - en attente de validation`
                       : `${ev.title} - ${ev.associationName}`}
                   >
-                    <!-- Day number on the first slot -->
+                    <!-- Day number on the first slot, IN ITS OWN ROW rather than pinned to the
+                         corner. The export does exactly this (`calendarExport.ts`, `DAY_NUM_H = 20`
+                         above a `flex:1` title), and the reason is the one this view walked into: a
+                         corner span is invisible to the centred title beside it, so at 182px cells
+                         the two merely happened not to meet, and once the month moved beside a rail
+                         and the cell became 128px a long title ran straight over the number - "29"
+                         read as "2". A row the title cannot enter removes the overlap by
+                         construction, where the `px-5` inset it replaces only reserved slack. -->
                     {#if ei === 0}
-                      <span
-                        class="text-2xs absolute top-1 left-1.5 z-10 leading-none font-bold
- {today ? 'underline decoration-2' : ''}"
-                        style="color:{fg};">{cell.day}</span
-                      >
+                      <div class="relative z-10 shrink-0 pt-1 pl-1.5" style="height:{DAY_NUM_H}px;">
+                        <span
+                          class="text-2xs leading-none font-bold {today
+                            ? 'underline decoration-2'
+                            : ''}"
+                          style="color:{fg};">{cell.day}</span
+                        >
+                      </div>
                     {/if}
                     <!-- Logo watermark: one centred circle, or that same circle split into one band
                          per owner for a co-owned event. Never a row of small separate logos. -->
@@ -292,23 +369,26 @@
                         {/each}
                       </div>
                     {/if}
-                    <!-- Event title, centred and always on top of watermark.
-                         THE FIRST SLOT IS PADDED WIDER BECAUSE IT IS THE ONE CARRYING THE DAY
-                         NUMBER, which is absolutely positioned in its corner and therefore
-                         invisible to the centred text. At the widths this grid used to get
-                         (182px cells at a 1440px window) `px-3` left enough slack that the two
-                         never met; once the month moved beside a rail and the cell became 128px,
-                         a long title ran straight over the number and "29" read as "2". Symmetric
-                         padding rather than a left inset, so the title stays centred in what is
-                         left instead of drifting right. -->
-                    <span
-                      class="text-2xs relative z-10 line-clamp-2 text-center leading-tight font-bold {ei ===
-                      0
-                        ? 'px-5'
-                        : 'px-3'}"
-                      title="{ev.title} - {ev.associationName}"
-                      style="color:{fg};">{ev.title}</span
+                    <!-- Event title, centred in whatever the day number left and always above the
+                         watermark.
+                         THE CLAMP IS COMPUTED, NOT WRITTEN: `line-clamp-2` was a guess about how
+                         much room a slot has, and on a day with three events it is wrong - the
+                         slot is 42px, the number takes 20, and two lines want 30. The span then
+                         overflowed its centred row in both directions and painted over the day
+                         number, which is how "29" still read as "2" after the number got a row of
+                         its own. `fitEventText` asks the height instead of assuming it. -->
+                    <div
+                      class="relative z-10 flex min-h-0 flex-1 items-center justify-center"
+                      style="padding:0 {fit.ph}px 2px;"
                     >
+                      <span
+                        class="text-center font-bold"
+                        title="{ev.title} - {ev.associationName}"
+                        style="color:{fg};font-size:{fontToken(
+                          fit.fontSize
+                        )};line-height:{EVENT_TITLE_LINE_HEIGHT};{fit.clampCss}">{ev.title}</span
+                      >
+                    </div>
                   </div>
                 {/each}
 
@@ -316,7 +396,10 @@
                   <div
                     class="text-text-muted bg-cn-bg text-2xs flex flex-1 items-center justify-center font-bold"
                   >
-                    +{overflowCount} autre{overflowCount > 1 ? 's' : ''}
+                    <!-- The export's own key, and the wording is already identical: this cell was
+                         the one place spelling "+N autres" as a French literal in code, which an
+                         English reader saw untranslated. -->
+                    {m.calendar_export_more_events({ count: overflowCount })}
                   </div>
                 {/if}
               </div>

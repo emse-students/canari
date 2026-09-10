@@ -210,17 +210,38 @@ function safe(s: string): string {
 }
 
 /** Line-height shared by the event-title fit computation and the rendered spans (must match). */
-const EVENT_TITLE_LINE_HEIGHT = 1.25;
+export const EVENT_TITLE_LINE_HEIGHT = 1.25;
+
+/**
+ * Height of the row carrying the day number, on the FIRST event slot of a day.
+ *
+ * Exported because `MonthCalendarGridRich` takes the same decision for the same reason: the day
+ * number gets a row of its own that the title cannot enter, so a long title cannot run over it.
+ * A corner-pinned number is invisible to a centred title, and the two only avoid each other by
+ * luck - which held at 182px cells and stopped holding at 128px, where "29" read as "2".
+ */
+export const DAY_NUM_H = 20;
 
 /**
  * Picks a font size, line clamp and horizontal padding so an event title fills the available cell
  * height `availH` (px) with as many lines as fit, minimising truncation. The clamp is the physical
  * last-resort cap (a cell has a fixed height); the lower font floor and the matched line-height let
  * far more text show fully than a single ellipsised line would.
+ *
+ * `minFontSize` IS WHAT SEPARATES THE SHEET FROM THE SCREEN, and it is the only difference between
+ * the two callers. The PDF may go down to 9px: it is rasterised at A4 and read on paper. The app
+ * may not - `--text-2xs` is 12px and `app.css` states in as many words that nothing goes below it,
+ * that step being "the single largest contributor to 'pas assez ergonomique'". So the screen passes
+ * 12 and buys its fit in LINES instead: a slot too short for two lines of 12px shows one, where the
+ * sheet would have shrunk the type. At that floor the ladder can only land on 12 or 13, which are
+ * exactly `--text-2xs` and `--text-xs` - the screen never leaves the scale.
  */
-function fitEventText(availH: number): { fontSize: number; clampCss: string; ph: number } {
-  const fontSize =
-    availH >= 56 ? 13 : availH >= 42 ? 12 : availH >= 30 ? 11 : availH >= 22 ? 10 : 9;
+export function fitEventText(
+  availH: number,
+  minFontSize = 9
+): { fontSize: number; clampCss: string; ph: number } {
+  const ladder = availH >= 56 ? 13 : availH >= 42 ? 12 : availH >= 30 ? 11 : availH >= 22 ? 10 : 9;
+  const fontSize = Math.max(ladder, minFontSize);
   const maxLines = Math.max(1, Math.floor(availH / (fontSize * EVENT_TITLE_LINE_HEIGHT)));
   const ph = availH >= 40 ? 8 : 5;
   const clampCss = `display:-webkit-box;-webkit-line-clamp:${maxLines};-webkit-box-orient:vertical;overflow:hidden;word-break:break-word;`;
@@ -465,7 +486,6 @@ function buildCalendarHtml(
           if (idx === 0) {
             // First slot: day number on top, title below - flex column so html2canvas sees
             // explicit heights and doesn't collapse the text area (fixes bottom:0 rendering bug).
-            const DAY_NUM_H = 20;
             const availH = slotH - DAY_NUM_H;
             const { fontSize, clampCss, ph } = fitEventText(availH);
             return `<div style="height:${slotH}px;position:relative;background:${bg};overflow:hidden;${sep};display:flex;flex-direction:column;box-sizing:border-box;">

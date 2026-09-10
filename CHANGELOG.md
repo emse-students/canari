@@ -21,9 +21,26 @@ the shape Google's own agenda uses. Phones are unchanged: still one list, contro
 The day you click used to appear underneath the whole month, which on most screens meant below
 the fold; it is now beside it, in view.
 
+The month is also taller and now states its name - "Septembre" - above the grid, both taken from
+the PDF export, which is the version of this calendar that was already comfortable to read. Days
+went from 100px to 128px tall, and the whole thing now stands 748px against the export sheet's
+764px.
+
 Narrowing the month surfaced something that had always been wrong: on a day whose first event has
-a long title, the title ran over the day number, so the 29th read as the 2nd. The number now has
-room reserved for it.
+a long title, the title ran over the day number, so the 29th read as the 2nd. It took two goes to
+fix properly. Reserving padding beside the number only bought slack, and the second symptom -
+three events in one day - walked straight through it: the slot was 42px tall, the number took 20,
+and a title asking for two lines wanted 30 in the 22 that were left, so it overflowed and painted
+over the number again. The number now has a row of its own that the title cannot enter, and how
+many lines a title gets is asked of the height rather than assumed. Both are the export's own
+answers, and both are now the same code: the screen calls the sheet's own fitter, differing only
+in refusing to go below 12px, which is the app's smallest legible size.
+
+### Fixed - the calendar's "+2 autres" and its screen-reader label were French no matter the language
+
+Two strings in the month grid were written into the code instead of the translation files, so an
+English reader saw them in French. The overflow row now uses the key the PDF export was already
+using for the same sentence.
 
 ### Fixed - four walls of cards were still twice too wide, and the guard said the tree was clean
 

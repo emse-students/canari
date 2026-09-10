@@ -2267,6 +2267,7 @@
       }
     }
   ],
+  "calendar_month_grid_label": "Calendrier du mois",
   "calendar_export_month_label": "Mois",
   "calendar_export_theme_label": "Thème",
   "calendar_theme_rentree": "Rentrée",
