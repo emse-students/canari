@@ -63,98 +63,14 @@ else holds, a console owned by the user, or hardware that does not exist.
 
 | What | Kind | Where the substance is |
 | --- | --- | --- |
-| ~~UNLOCK THE CAMPAIGN PHONE~~ **DONE 2026-09-05** (`deviceLocked=0`, measured). What remains is OPTIONAL and the user asked for it: removing the pattern needs the credential, so either they clear it in Settings or it joins `test-accounts.json` like every other one. Retiring the lock costs no key material - both keystore keys are explicitly `setUserAuthenticationRequired(false)`, measured before proposing it | 1 gesture on the device | [P2 - every silent push on the phone fails to decrypt](#p1---a-backgrounded-phone-is-never-told-about-a-message-it-has-already-received-because-the-js-layer-waits-for-a-push-the-server-never-sends-measured-on-device-2026-09-05) |
-| **UNLOCK THE CAMPAIGN PHONE, AGAIN - and this time RETIRE the lock** (2026-09-07). It re-locked mid-session (`deviceLocked=1`, `trustManaged=1`, `strongAuthRequired=0x0`, `mDreamingLockscreen=true`); `wm dismiss-keyguard` is refused on a secure keyguard and no credential is in the rig by design. It cost LIFE-3 and LIFE-4 their re-runs, which were owed only their re-measurement against a classifier that had just been widened for them, and it will cost every phone row the moment the screen times out again. **Retiring the lock costs no key material** - both keystore keys are explicitly `setUserAuthenticationRequired(false)`, measured before this was first proposed on 2026-09-05 - so either the pattern is cleared in Settings or it joins `test-accounts.json` like every other credential | 1 gesture on the device, then a decision | [cross-client-testing](cross-client-testing.md) LIFE-3, LIFE-4, LIFE-5 |
 | set up the external uptime probe that mails - **decided 2026-09-06, mail**; the probe must hit `/api/version` AND `/api/chat-delivery-health`, never the homepage, which answered 200 through both outages | ~1 click in Cloudflare or an uptime service | [P2 - NOTHING TELLS ANYBODY PRODUCTION IS DOWN](#p2---nothing-tells-anybody-production-is-down-and-both-outages-of-2026-09-01-were-reported-by-the-user-owed-to-the-user-a-decision-then-one-click) |
 | `DEPENDABOT_ALERTS_TOKEN` - a fine-grained token with **"Dependabot alerts: read"** on this repository. The nightly alerts job has NEVER passed: it declared `security-events: read`, which is code scanning, and Dependabot alerts have no `permissions:` key at all, so `GITHUB_TOKEN` cannot read them at any setting. The job now reads this secret when it exists and fails loudly when it does not - deliberately, because an alert list nobody reads looks exactly like an empty one | 1 token, 1 secret | `.github/scripts/dependabot-alerts-report.sh`, and the 403 it now names correctly |
-| should a reaction to YOUR OWN message notify, when every other reaction must not - and on which channel; **NOTIF-15 cannot be run until this is answered**, because today it would fail against a design doing exactly what it says | decision | [open-questions](open-questions.md#decision-owed---should-a-reaction-to-your-own-message-notify-when-every-other-reaction-must-not) |
-| should a dev-ONLY trigger exist - today one push deploys both estates and a broken dev BLOCKS production, by design | decision | [dev.canari-emse.fr becomes a real second environment](#devcanari-emsefr-becomes-a-real-second-environment---decided-2026-08-17) |
-| PostgreSQL 15 -> 18, parked by the user (*"on verra ca plus tard"*); its test also releases `redis` and `garage` | decision | [P2 - PostgreSQL is held at 15](#p2---postgresql-is-held-at-15-because-18-needs-a-migration-nobody-has-performed-after-the-outage-of-2026-09-01) |
-| is a MiGallery application worth building | decision | [post-campaign projects](#post-campaign-projects---decided-not-scheduled) |
-| rotate `CF_DNS_TOKEN` **and** the cloudflared tunnel run token - both reached a transcript on 2026-09-01 | rotation | agent memory names both; neither may enter this repo |
-| put the BDE 170 EUR tier on sale - an allowlist correctly withholds it and no event will ever fire | 1 click | the verification table above |
 | App Store Connect: the 2.3.6 radio button | 1 click | [mobile](frontend/mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on) |
 | Lydia's credentials, which Lydia owes | blocked upstream | WP-LYDIA-1 |
-| **an iPhone - ON ITS WAY, and the user intends the WHOLE campaign to be re-run on it** (user, 2026-09-10). The Android half arrived and its lock was retired 2026-09-08, so every A1 row is runnable; **iOS is the only thing "hardware-blocked" still means** - the redundant push `data` map on both platforms, the shade acknowledgement, iOS window layout, and no iOS build reaching a device without a pre-release. This is a DATE, not a wall: write those rows so they are ready to run rather than deferring their design | hardware, arriving | [device-verification](device-verification.md) |
-| copy `canari-harness/` to the second machine to resume the campaign; **SETUP-4's 2FA is no longer owed**, the test accounts carry no MFA | 1 copy | [cross-client-campaign-resume](cross-client-campaign-resume.md) |
+| **an iPhone - ON ITS WAY, and the user intends the WHOLE campaign to be re-run on it** (user, 2026-09-10). **iOS is the only thing "hardware-blocked" still means** - the redundant push `data` map on both platforms, the shade acknowledgement, iOS window layout, and no iOS build reaching a device without a pre-release. This is a DATE, not a wall: write those rows so they are ready to run rather than deferring their design | hardware, arriving | [device-verification](device-verification.md) |
+| copy `canari-harness/` to the second machine to resume the campaign | 1 copy | [cross-client-campaign-resume](cross-client-campaign-resume.md) |
 
-## FOUR DECISIONS TAKEN BY THE USER, 2026-09-06
-
-Asked and answered in one pass, so none of them is waiting any more. Each names what it now costs
-somebody to DO, which is the only part that was ever the user's.
-
-### Production says it is down BY MAIL - decided 2026-09-06
-
-**The entry that carries this is above and is unchanged**
-([P2 - NOTHING TELLS ANYBODY PRODUCTION IS DOWN](#p2---nothing-tells-anybody-production-is-down-and-both-outages-of-2026-09-01-were-reported-by-the-user-owed-to-the-user-a-decision-then-one-click));
-this records only the answer. **A first draft of this block claimed that entry had gone missing from
-the file and rewrote it from scratch - it had not, the heading is upper-case and a case-sensitive
-grep missed it.** Recorded because a session that invents a replacement for a page it failed to find
-is a worse failure than the one it thinks it is fixing.
-
-**THE ENTRY'S OWN ANALYSIS DECIDES WHERE THE PROBE LIVES, AND IT IS NOT HERE.** It says the cheapest
-honest option is an external probe on `/api/version` and `/api/chat-delivery-health` - Cloudflare
-already fronts all three zones and can do it, or any uptime service - and that *"building a poller in
-this repository to replace them would be exactly the waste that rule names"* (one-off actions go to
-the user). Mail is what such a service sends. So the decision does not turn into code here, and the
-click stays the user's.
-
-**Both paths must be probed and neither may be the homepage.** `frontendDist` is embedded, so nginx
-served **200** throughout both outages while `auth_db` was unreachable: an external check reading the
-homepage would have reported a healthy site for 33 minutes. `/api/version` needs the database.
-
-**AND MAIL WAS REFUSED ONCE ALREADY, ON `mitv`, which has to be said or this reads as a reversal.**
-There, `MAILADDR` would have delivered into a spool nobody opens, on a host with postfix and exim4
-both inactive and `monit` holding no destination - *a check that cannot reach its reader reports
-health*. An uptime service is a different sender entirely: a real MTA, a mailbox the user reads, and
-above all **not on the box that is down**, which is the requirement no probe hosted on `canari` or
-`mitv` could ever have met.
-
-**What IS code, and is owed whichever service is chosen** - the entry already names it: CD's
-`Health Check` and `Wait for services to be healthy` run AFTER the migration step, so a deploy that
-fails on migrations never reaches them and reports only *"migrations failed"* - true, and silent
-about the estate being down.
-
-### ONE relay-path call, by hand, and no CALL runner
-
-**Decided 2026-09-06.** The SFU's P1 says what closes it in as many words - *"what settles it is one
-call, and only one call"* - so that is what will be taken: two peers, audio and video, over the
-relay path with TURN configured as production configures it. `CALLS_ENABLED` is flipped in the LOCAL
-tree only and put back; the five switches that move together at a real revival are untouched.
-
-**The twenty CALL rows stay NEVER RUN, deliberately.** They are the largest block of unwritten
-campaign left, and the user's ranking has not changed since 2026-09-01: *"les appels video et audio
-ne sont pas la priorite"*. So the campaign cannot be called finished, and that is an honest state
-rather than a gap - the row that matters to a SHIPPED build is the one being taken by hand.
-
-### `frontend/src-tauri` stays declared, and gets a trigger with a name
-
-**Decided 2026-09-06.** Not option 1 (`links` removed): it plausibly drops the plugin's native half,
-which COMPILES and fails at runtime on a phone - the exact class of all three iOS defects - and only
-an Android AND an iOS build could clear it, while this workstation can never produce the second. Not
-option 2 either: an unmanaged mobile artefact is the opposite of *"un projet qui peut vivre tout
-seul"*.
-
-So option 3, and the half that makes it real is the trigger: a scheduled job running
-`cargo update --dry-run` in `frontend/src-tauri` and OPENING AN ISSUE when the tree is behind.
-"Somebody remembers" is not a mechanism. The gate that stops the two directories being forgotten
-already exists (`dependabot-cargo-reach.test.sh`); what is added is the thing that notices the
-updates nobody can open a pull request for.
-
-### The phone works the notification P1 first
-
-**Decided 2026-09-06.** Ahead of writing the NOTIF rung, ahead of HEAL-A1, and ahead of the
-community-notification P2: the measurement that closes a P1 already fixed in the tree beats the
-runner that would let a new one be found. Checks K and K2 and NOTIF-6b ride with it - all three have
-their procedures written and all three need the same backgrounded phone.
-
----
-
-**Firebase owes nothing** (asked 2026-09-02): dev reuses the existing `fr.emse.canari` app, and the
-`DEV_*` push secrets are disposition `warn`, so their absence has never blocked a deploy - the fact
-and its test are on [dev-environment](infrastructure/dev-environment.md).
-
----
+## Open defects, in severity order
 
 ### P1 - a damaged local MLS state is reported as a PIN rotation, and the PIN the user actually holds does not get them back in (measured 2026-09-08)
 
@@ -646,6 +562,34 @@ What is left is the QUEUE half above, which no sweep looks at.
 ---
 
 ## Notifications - the two builders, and the rung of the campaign that reads them as one
+
+### P2 - a reaction to YOUR OWN message must notify by push, and today no reaction notifies at all (decided by the user 2026-09-10)
+
+Every other reaction stays silent, which is what today's design already does and does deliberately:
+`frontend/src/lib/mls-client/frameDelivery.ts` classifies a reaction as a `mutation`,
+`{ silent: true, durable: true }`, carrying the reason *"It must not notify, and it must survive"*,
+and the server states the same rule from its side. Both are right about the case they name - a busy
+salon where people react constantly would be unusable. **The case neither distinguishes is a
+reaction to something YOU wrote**, which is the only reaction a person is plausibly waiting for, and
+which Messenger and Slack both notify.
+
+**IT IS NOT BLOCKED ON THE SERVER HOLDING CIPHERTEXT, WHICH IS THE OBVIOUS WRONG ANSWER.** The
+server cannot classify a frame and does not need to: the class is DECLARED BY THE SENDER, exactly as
+`durable` is, and the reacting client already knows whose message it reacted to. So a fifth
+`DELIVERY` class - silent for everyone except the author of the target - is expressible with no
+plaintext leaving the device. That is the standing rule about carrying the discriminator to where
+the decision is made.
+
+**NOTIF-15 IS UNBLOCKED, AND ITS EXPECTATION INVERTS.** It could not be run while the design
+notified on no reaction at all, because it would have failed against something doing exactly what it
+said. It now asserts a notification for a reaction to the recipient's own message AND the silence of
+every other reaction in the same run.
+
+**ONE SUB-QUESTION IS STILL OPEN AND MUST NOT BE GUESSED: which Android channel.** `canari_social`
+exists for reactions and comments on POSTS but sits at `IMPORTANCE_DEFAULT` and silent, which would
+contradict "you are notified"; `canari_messages` rings like a message, which may be too loud for a
+reaction. A reaction that notifies is also a notification the reader cannot mute separately unless
+it gets a channel of its own. One line to the user settles it.
 
 ### NOBODY IS TOLD ABOUT A POST - SHIPPED 2026-09-10, and what is left is the gate it revealed
 
@@ -1347,6 +1291,12 @@ no longer declares).
 **THE CHOICE IS TAKEN - OPTION 3 WITH A CRON THAT OPENS AN ISSUE (user, 2026-09-10).** The three
 options are kept below because two of them are refutations worth not re-litigating.
 
+**WHAT IS STILL OWED IS THAT CRON, AND IT IS THE HALF THAT MAKES THE CHOICE REAL:** a scheduled job
+running `cargo update --dry-run` in `frontend/src-tauri` and OPENING AN ISSUE when the tree is
+behind. The gate that stops these two directories being forgotten already exists
+(`dependabot-cargo-reach.test.sh`, above); what is missing is the thing that notices the updates
+nobody can open a pull request for. **"Somebody remembers" is not a mechanism.**
+
 1. **Remove `links` from the plugin manifest. RULED OUT 2026-09-08 - it is WRONG, not merely risky,
    and the proof is a generated file rather than an argument about cargo.** `links` is what makes
    cargo export a build script's `cargo:KEY=VALUE` metadata to dependents as `DEP_<LINKS>_KEY`, and
@@ -1404,6 +1354,25 @@ entry accuses `cargo audit` of being. Both refusal arms were measured against th
 than reasoned about, and `dependabot-alerts-report.test.sh` pins all four plus a response whose
 SHAPE changed - valid JSON, right count, none of the fields this reader wants - which must accuse the
 reader rather than count as zero. 19 assertions, in `make test-ci-scripts`.
+
+**AND THE JOB HAS STILL NEVER PASSED, BECAUSE NO WORKFLOW SETTING CAN LIFT ITS 403.** `GITHUB_TOKEN`
+cannot read Dependabot alerts at any permission level - there is no `permissions:` key for them at
+all, and `security-events` is code scanning, a different thing. The job already reads a secret when
+one exists (`.github/workflows/scheduled.yml:183`,
+`GH_TOKEN: secrets.DEPENDABOT_ALERTS_TOKEN || secrets.GITHUB_TOKEN`) and fails loudly when it does
+not, deliberately, per the paragraph above. **Only the user can mint it**, and they asked on
+2026-09-10 for the steps rather than the description:
+
+1. GitHub -> Settings -> Developer settings -> Personal access tokens -> **Fine-grained tokens** ->
+   Generate new token.
+2. Resource owner **`emse-students`**, repository access **only `emse-students/canari`**.
+3. Repository permissions: **`Dependabot alerts: Read-only`**, and nothing else.
+4. Any expiry is acceptable - note that the job starts failing loudly on the day it lapses, which is
+   the correct behaviour and not a regression.
+5. Repo -> Settings -> Secrets and variables -> Actions -> New repository secret, named exactly
+   **`DEPENDABOT_ALERTS_TOKEN`**.
+
+Nothing is deployed or merged afterwards; the next nightly run picks it up.
 
 **Adding it made `scheduled.test.sh` fail, and the test was wrong.** Two jobs on one cron is legal,
 and that test says so in its own note - while comparing declared against claimed with `comm` over
@@ -1507,11 +1476,27 @@ that reads the homepage saw a healthy site while `auth_db` was unreachable. **A 
 hit something that needs the database** - `/api/version` and `/api/chat-delivery-health` both do, and
 both returned 502 the whole time.
 
-**What is owed to the user is a DECISION, not a tool** (`CLAUDE.md`: one-off actions go to the user).
-The cheapest honest option is an external probe on `/api/version` and `/api/chat-delivery-health`
-with a notification - Cloudflare already fronts all three zones and can do it, or any uptime service.
-It is a few clicks in a dashboard, and building a poller in this repository to replace them would be
-exactly the waste that rule names.
+**WHAT IS OWED IS ONE CLICK, AND THE CHANNEL IS MAIL** (decided 2026-09-06). Not a tool: building a
+poller in this repository would be exactly the waste that `CLAUDE.md`'s one-off-actions rule names.
+The user asked on 2026-09-10 for the steps to be written out rather than described, so:
+
+| URL to probe | What its failure means |
+| --- | --- |
+| `https://canari-emse.fr/api/version` | the API is not answering, or answers as the wrong version |
+| `https://canari-emse.fr/api/chat-delivery-health` | the API is up but message delivery is not |
+
+Any external service does this. The requirements are only that it runs **from outside the box** (a
+probe on the host cannot see the host being unreachable), at an interval of 5 minutes or less, and
+that it alerts by mail. Cloudflare's own Health Checks reach the same two paths when a notification
+destination is set on the account. **Two settings to get right**: the check must assert the STATUS
+of the named path rather than follow redirects and report the final 200, and it should require two
+consecutive failures, so a nightly deploy does not page.
+
+**MAIL WAS REFUSED ONCE, ON `mitv`, and this is not a reversal.** There, `MAILADDR` would have
+delivered into a spool nobody opens, on a host with postfix and exim4 both inactive and `monit`
+holding no destination - *a check that cannot reach its reader reports health*. An uptime service is
+a different sender entirely: a real MTA, a mailbox the user reads, and above all **not on the box
+that is down**, which is the requirement no probe hosted on `canari` or `mitv` could ever meet.
 
 **One thing that would be code, and is worth doing whichever way the above goes:** CD's health checks
 (`Health Check`, `Wait for services to be healthy`) run AFTER the migration step, so a deploy that
@@ -1519,12 +1504,26 @@ fails on migrations never reaches them and reports only "migrations failed" - tr
 the estate being down. Reaching them on the failure path, or asserting the datastores before
 migrations, would make the run say what actually happened.
 
-### P2 - PostgreSQL is held at 15 because 18 needs a migration nobody has performed (after the outage of 2026-09-01)
+### P2 - PostgreSQL 15 -> 18: AUTHORIZED ON PRODUCTION (2026-09-10), and what it owes before the cutover
 
-**This is a DEFERRAL the user chose, not a defect** (2026-09-01: *"remettre 18 est pas si genant si on
-fait la migration, mais on verra ca plus tard"*). Nothing is broken while it waits; the point of the
-entry is that the reason for the pin is a missing PROCEDURE, so a later session cannot read
-`postgres:15-alpine` as neglect and bump it back.
+**The park is over.** It was a deferral the user chose (2026-09-01: *"remettre 18 est pas si genant
+si on fait la migration, mais on verra ca plus tard"*), and on 2026-09-10 they reversed it and
+authorized the whole thing, production included. **That authorization is recorded HERE because
+nothing else in this repository would carry it**, and the standing rule is that production is
+read-only except where the user says otherwise.
+
+**THE ORDER IS NOT NEGOTIABLE, and each step exists because the previous one can fail silently:**
+
+1. A verified `pg_dump` off production - **through Bash, never PowerShell**, which text-encodes
+   stdout and destroys a binary pipe, losing a `pg_dump | gzip` in transit
+   ([databases](infrastructure/databases.md#reaching-it-from-a-workstation)). `auth_db` is the ONLY
+   database.
+2. That dump RESTORED on the local estate, proving the dump is readable and not merely written.
+3. The upgrade exercised locally end to end, against a data directory written by 15.
+4. Only then the production cutover, with the rollback written down BEFORE it starts.
+
+**The reason for the pin was a missing PROCEDURE**, which is what the rest of this entry supplies,
+and it is also why a later session must not read `postgres:15-alpine` as neglect and bump the tag.
 
 **What happened, in one line:** the auto-merge shipped `15-alpine -> 18-alpine`, the deploy recreated
 the container, PostgreSQL 18 exited on startup against the existing `postgres_data`, and all eight
@@ -2069,10 +2068,14 @@ the `ErrNoTurnCredentials` change sits on and the path a STUN-only test never to
 peer connection reaching `connected` at all; the terminal ICE line the crate already logs; whether
 renegotiation still lands (`main.rs` has a renegotiation path that no test covers either).
 
-**Blocked on nothing but a runner.** This is rung 15 of the ladder, CALL, and CALL is one of the
-three phases with NO runner written - so the measurement cannot be taken until that runner exists.
-Until then the honest statement is that calls are UNVERIFIED on this build, not that they are broken:
-nothing observed them failing, because nothing observed them at all.
+**AND IT IS TAKEN BY HAND, WITH NO CALL RUNNER WRITTEN** (decided 2026-09-06). This is rung 15 of
+the ladder, CALL, one of the three phases with no runner - and building one is not what the single
+call above needs. `CALLS_ENABLED` is flipped in the LOCAL tree only and put back; the five switches
+that move together at a real revival stay untouched. **The twenty CALL rows stay NEVER RUN,
+deliberately**, the user's ranking being unchanged since 2026-09-01 (*"les appels video et audio ne
+sont pas la priorite"*) - so the campaign cannot be called finished, which is an honest state rather
+than a gap. Until the call is placed, calls are UNVERIFIED on this build, not broken: nothing
+observed them failing, because nothing observed them at all.
 
 **SETTLED 2026-09-01 BY HOLDING THE SURFACE OFF, not by taking the measurement** (user: *"les appels
 video et audio ne sont pas la priorite, et n'ont pas ete testes en bonne et due forme"*). The
@@ -6000,10 +6003,18 @@ name it.
 written are NOT reclaimed and cannot safely be: the server has no record of them at all, so nothing
 can prove they were never handed out, and a rule that guessed would delete the bundle a pending
 Welcome needs. `0 expired` on the day of measurement means the whole balance still has time to run -
-84 days from minting, so it drains from **late October 2026**. Two ways to shorten that, neither
-taken: a server-side claim record (which would only help bundles minted after it exists), or a
-deliberate horizon prune on the test fixture, which is an operator decision about a device holding
-real groups and is owed to the USER rather than taken here.
+84 days from minting, so it would drain on its own from **late October 2026**.
+
+**THE PRUNE IS THE PATH, DECIDED BY THE USER 2026-09-10, AND IT UNBLOCKS NOTIF-1b.** Of the two ways
+to shorten the wait - a server-side claim record, which would only ever help bundles minted after it
+exists, or a deliberate horizon prune on the test fixture - the second was taken. It was the user's
+to take rather than an agent's, because the device holds real groups.
+
+**WHAT THE PRUNE RISKS, WRITTEN BEFORE IT IS RUN AND NOT AFTER.** The paragraph above is the risk:
+nothing can prove a deleted bundle was not the one a pending Welcome needs. The user chose the
+direct prune over the inventory-first variant that was offered. That does not remove the risk, so
+the run ENUMERATES the device's groups and any pending Welcome into its log first - not as a gate,
+as evidence, so that a failure afterwards can be attributed rather than guessed at.
 
 #### THE POPULATION WAS MEASURED ON 2026-09-07, AND IT REFUTES HALF OF THE HEADLINE ABOVE
 
