@@ -252,16 +252,14 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    **PostgreSQL 15 -> 18 IS OWED, PRODUCTION INCLUDED** (the user's 2026-09-10 authorization is
    the one exception to read-only prod): verified dump, local proof, cutover with rollback; #309.
 7. **P2 - THE LEGACY COTISATION CLAIM SHIPPED 2026-09-11 (#512) WITH AN EMPTY TABLE, AND AN EMPTY
-   TABLE LOOKS EXACTLY LIKE A BROKEN CLAIM.** What the load owes, and the ONE assumption under it
-   still unmeasured, are in [backlog](docs/wiki/backlog.md); the mechanism is
-   [cotisations](docs/wiki/cotisations.md), the only copy.
+   TABLE LOOKS EXACTLY LIKE A BROKEN CLAIM.** What the load owes and the one assumption still
+   unmeasured: [backlog](docs/wiki/backlog.md). Mechanism: [cotisations](docs/wiki/cotisations.md).
 8. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
    [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
 9. **UX/RENDERING: THE EMOJI FONT, AND THE SERVER'S ENGLISH.** All decided items shipped, each
    asserted by its own test, numbers on [design-reference](docs/wiki/frontend/design-reference.md)
-   section 17. Two left: ONE bundled Noto Color Emoji everywhere, and the server's English prose -
-   **shop and associations CLOSED 2026-09-11 (70 sites, tree-wide guard, empty allowlist); 218
-   occurrences remain in chat, graine, settings, posts and admin** ([backlog](docs/wiki/backlog.md)).
+   section 17. Two left: ONE bundled Noto Color Emoji everywhere, and the server's English prose,
+   whose remaining areas and counts are in [backlog](docs/wiki/backlog.md).
 10. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
    commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
 11. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
