@@ -69,8 +69,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | Lydia's credentials, which Lydia owes | blocked upstream | WP-LYDIA-1 |
 | **an iPhone - ON ITS WAY, and the user intends the WHOLE campaign to be re-run on it** (user, 2026-09-10). **iOS is the only thing "hardware-blocked" still means** - the redundant push `data` map on both platforms, the shade acknowledgement, iOS window layout, and no iOS build reaching a device without a pre-release. This is a DATE, not a wall: write those rows so they are ready to run rather than deferring their design | hardware, arriving | [device-verification](device-verification.md) |
 | copy `canari-harness/` to the second machine to resume the campaign | 1 copy | [cross-client-campaign-resume](cross-client-campaign-resume.md) |
-| **where `promo.csv` comes from and how current it is** - it is the reference that rebuilds 141 names whose accents the Cercle export destroyed. Unique matches within that file prove nothing if the file is stale or partial: a repair could then name a namesake from another promo and hand them somebody else's cotisation, silently | 1 answer | [P2 - the legacy cotisation claim shipped with an empty table](#p2---the-legacy-cotisation-claim-shipped-with-an-empty-table-and-an-empty-table-is-indistinguishable-from-a-broken-claim-merged-2026-09-11-512) |
-| **three BDE rows excluded from the import, to add by hand if they should be cotisants** - one whose `Cotisation` cell is empty while its neighbours are filled, and two absent from the directory export. Decided 2026-09-11: an import may not guess, and the three carry no tag until somebody says so | 1 decision, then 3 rows | same entry |
+| **three legacy rows excluded from the import, to add by hand if they should be cotisants** - one whose `Cotisation` cell is empty while its neighbours are filled, and two whose destroyed accents no directory entry resolves. Decided 2026-09-11: an import may not guess, and the three carry no tag until somebody says so | 1 decision, then 3 rows | [P2 - the legacy rows are loaded and NOT ONE claim has been observed](#p2---the-legacy-rows-are-loaded-on-both-estates-and-not-one-claim-has-been-observed-shipped-2026-09-11-v0171) |
 
 ## Open defects, in severity order
 
@@ -395,33 +394,46 @@ devices going back to 2026-08-05, which `cleanup.mjs` does not sweep.
 ---
 
 
-### P2 - the legacy cotisation claim SHIPPED with an empty table, and an empty table is indistinguishable from a broken claim (merged 2026-09-11, #512)
+### P2 - the legacy rows are LOADED on both estates, and NOT ONE claim has been observed (shipped 2026-09-11, v0.17.1)
 
-The mechanism is on `main`: `legacy_cotisations` staging, the claim on every sign-in, the read-only
-screen at `/admin/legacy-cotisations`. **No list has been loaded into any database.** Until one is,
-every sign-in runs a lookup that correctly returns nothing, and the screen correctly shows zero -
-which is exactly what a claim broken at the key would also show. The mechanism is
-[cotisations](cotisations.md#seeding-from-a-legacy-estate-legacy_cotisations), the only copy.
+**1429 rows are staged on dev and on production** - 269 BDE, 1160 Cercle, applied through
+`--emit-sql` and `psql`, `INSERT 0 0` on a re-run. Nothing is waiting on a load any more. What is
+still missing is a single observed claim: the mechanism has never been watched granting a tag to a
+real person, and the instruments that would show it - the service log line and
+`/admin/legacy-cotisations` - have never been read against one.
 
-What the load owes, in order:
+**Sixty accounts will settle it without anybody arranging anything.** Projected against production's
+396 accounts by computing each user's key with `normalizeMatchKey` itself, rather than an
+approximation of it in SQL:
 
-1. **A rehearsal on `dev.canari-emse.fr`**, which holds a copy of production - the only place the
-   run can be judged, because it has the real names and the 434 cotisation tags already issued. The
-   numbers to read back: rows staged (dry-runs say 269 BDE and 1160 Cercle), accounts claiming
-   immediately, and rows closing `already-held` rather than granting. **A measured `already-held`
-   count above zero is the anti-downgrade guard doing its job**; zero would mean it never fired and
-   the guard is unproven, not absent.
-2. **The three source files reach the box without entering this PUBLIC repo.** They carry the names
-   of roughly 5600 people. The import script takes them by `--file`; nothing about the load requires
-   them to be committed, and nothing may.
-3. **Then production**, same two commands, `--dry-run` first.
+| | staged | has an account today | will be GRANTED | will close `already-held` |
+| --- | --- | --- | --- | --- |
+| BDE | 269 | 152 | 27 | 125 |
+| Le Cercle | 1160 | 156 | 33 | 123 |
 
-**One assumption was measured and one was not.** Measured 2026-09-11 against 396 production
-accounts: the promo conventions of Authentik, the Cercle legacy base and the directory export agree
-at offset 0 - 206 accounts match the directory and 119 match a Cercle cotisant, against 12 and 2 at
-offset +1 and nothing at +-2 or beyond. Had Authentik sent a graduation year where the legacy stores
-an entry year, every key would have been wrong by 3 and NOTHING would have reported it. Not
-measured: whether `promo.csv` is current and complete, which is what the 141 accent repairs rest on.
+Zero keys are held by two accounts on either estate, so the collisions tab starts empty and any row
+appearing in it later is a real homonym. The remaining ~1120 rows belong to people with no account,
+which is the whole reason this is a staging table and not a one-shot grant.
+
+**`already-held` is the DOMINANT case, not the rare one** - 248 of the 308 rows that have an account.
+Each is somebody who already paid through Canari and whose row closes without granting, because the
+sibling-tier revoke inside `grantCotisant` would otherwise take away the tier they paid for. The
+guard is therefore load-bearing on first contact with real data, and it is the one thing to read on
+the screen once sign-ins start.
+
+**What to read, and when.** The next time somebody signs in, `/admin/legacy-cotisations` should move
+off zero in the claimed tab. Until it does, an empty screen and a broken claim still look identical.
+
+**Both assumptions behind the keys are now measured.** The promo conventions of Authentik, the
+Cercle legacy base and the directory export agree at offset 0 - 206 accounts match the directory and
+119 a Cercle cotisant, against 12 and 2 at offset +1 and nothing beyond. Had Authentik sent a
+graduation year where the legacy stores an entry year, every key would have been wrong by 3 with
+nothing to report it. And `promo.csv`, which the 141 accent repairs rest on, is an export dated
+2025-11-13 covering 2016-2025 - contemporaneous with the sources it repairs, not older. It covers
+962 of the 1019 undamaged Cercle cotisants (94%), with 26 of the 141 repairs in a promo below 90%.
+**The decisive test simulated the exact failure mode**: corrupt an accented name, REMOVE its true
+owner from the reference, run the real repair. 599 simulations, 599 refusals, zero wrong person
+accepted; with the owner present, 599 of 599 named correctly.
 
 **The promo-2026 cohort is unserved by design and it is the LARGEST.** 153 of the 396 accounts -
 more than any other promo - are 1A who arrived after both lists were frozen. They appear in neither

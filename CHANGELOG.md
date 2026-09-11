@@ -54,6 +54,33 @@ always the answer to "why has this person not got their tag". Its third tab is t
 claim cannot decide alone: two people whose name and promo normalize to a single key, where the
 first to sign in takes the cotisation and the rest stay stuck until a human looks.
 
+### Fixed - the legacy cotisation loader could not reach either place it was meant to load
+
+Internal, and it is the kind of gap a green test suite cannot see. Dropping `--dry-run` connected
+with the `DB_*` variables the service reads, which works against a local estate and against neither
+deployed one: `canari-dev-postgres-1` and `infrastructure-postgres-1` publish no port, and the way
+into either is `docker exec ... psql` from the box, as the infrastructure notes had said all along.
+The staging table shipped with a loader that could not load it, and nothing said so, because the
+connected path is only ever exercised locally.
+
+The alternative was lifting a production password onto a workstation to open a tunnel. It buys
+nothing the emitted file does not and puts a credential somewhere it has no reason to be, so
+`--emit-sql` renders the load as one idempotent transaction and `psql` applies it. The source files,
+which name roughly 5600 people, stay on the machine that already holds them instead of being copied
+to a server.
+
+Three properties keep it the same load rather than a weaker one. It carries its own preconditions in
+a `DO` block - the association exists, cotisation is enabled, the named tier is in the catalogue -
+the last of which matters because `grantCotisant` validates the tier again at every claim, so a load
+naming a tier that does not exist stages perfectly and then refuses each member separately, months
+apart, with nothing watching. The association id is resolved by the statement rather than
+interpolated, since both estates run the same schema with different ids and a file carrying one
+estate's uuid would apply cleanly against the other. And it conflicts on the same partial index the
+connected path uses, so a re-run stages nothing twice.
+
+Both estates were loaded with it: 269 BDE rows and 1160 Cercle rows each, `INSERT 0 0` on a second
+pass.
+
 ### Fixed - the GIF toggle sat lower than every other control in the composer
 
 The composer row was `align-items: flex-end`, tuned so the text field's bottom landed level with the
