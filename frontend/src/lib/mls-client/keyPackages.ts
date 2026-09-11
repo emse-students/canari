@@ -1,15 +1,31 @@
-/** The slice of the WASM client {@link mintKeyPackages} needs. */
-export interface KeyPackageMinter {
-  generate_last_resort_key_package(): Uint8Array;
-  generate_key_packages(count: number): unknown;
-  /**
-   * The last-resort package the device already holds, or `undefined` if it must mint one.
-   *
-   * Optional so a caller that predates the reuse still type-checks and simply mints, which is the
-   * old behaviour rather than a broken one.
-   */
-  existing_last_resort_key_package?(nowSecs: number): Uint8Array | null | undefined;
-}
+/** The generated client, so the slice below is derived from the real contract and never restated. */
+type WasmClient = import('$lib/wasm/mls_wasm.js').WasmMlsClient;
+
+/**
+ * The slice of the WASM client {@link mintKeyPackages} needs, PICKED from the generated client
+ * rather than copied out of it.
+ *
+ * IT USED TO BE WRITTEN BY HAND, AND IT LIED. `existing_last_resort_key_package` was declared
+ * `(nowSecs: number)` while the binding takes a `bigint`: wasm-bindgen marshals Rust's `u64`
+ * through `BigInt.asUintN`, and `ToBigInt` throws a TypeError on ANY Number, integral or not. So
+ * from the day #458 shipped, every web key-package publication threw `can't convert <secs> to
+ * BigInt` - the worker and its main-thread fallback alike, because both mint HERE - and no web
+ * client published a single key package for as long as that was live. Observed on prod 2026-09-11:
+ * two devices of one account locked out of two conversations, `[KP] Publication failed` then
+ * `welcome_request deferred (KP not published)` on a loop.
+ *
+ * NOTHING COULD SEE IT, and that is the part worth fixing. `mintKeyPackages` is type-checked
+ * against this declaration and nothing else: both call sites hold the client as `any`
+ * (`loadAndInitWasm` returns `Promise<any>`), so a hand-written copy was the only description of
+ * the contract anywhere in the type system - and a copy of a generated contract is a claim that
+ * compiles whether or not it is true. `Pick` makes the next divergence a compile error instead of a
+ * runtime TypeError: `mls_wasm.d.ts` is regenerated from `mls-wasm` on every build, so the day a
+ * signature moves, this stops compiling.
+ */
+export type KeyPackageMinter = Pick<
+  WasmClient,
+  'generate_last_resort_key_package' | 'generate_key_packages' | 'existing_last_resort_key_package'
+>;
 
 /** A device's published key material: one reusable fallback plus the one-time pool. */
 export interface MintedKeyPackages {
@@ -43,7 +59,12 @@ export function mintKeyPackages(client: KeyPackageMinter, needed: number): Minte
   //
   // The clock is read HERE and passed in, never inside the WASM crate: `SystemTime::now()` panics
   // on wasm32 and took every web login down in v0.16.4.
-  const held = client.existing_last_resort_key_package?.(Math.floor(Date.now() / 1000));
+  //
+  // A BigInt AND NOT A NUMBER, because the binding takes a Rust `u64`. Handing that a Number does
+  // not convert, it THROWS - which is the whole of the defect described on {@link KeyPackageMinter}.
+  // The optional call it replaces was a fallback for a client without the method, and no such
+  // client exists: one generated `WasmMlsClient` serves both web call sites.
+  const held = client.existing_last_resort_key_package(BigInt(Math.floor(Date.now() / 1000)));
   const fallback = held ?? client.generate_last_resort_key_package();
   const poolPackages =
     needed > 0 ? [...(client.generate_key_packages(needed) as Iterable<Uint8Array>)] : [];

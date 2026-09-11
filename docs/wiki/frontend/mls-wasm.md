@@ -121,6 +121,36 @@ class WasmMlsClient {
 }
 ```
 
+### The type boundary, and the one place it is load-bearing
+
+`loadAndInitWasm` returns `Promise<any>`, and `WebMlsService` holds the client as `any`. So at
+every call site the generated typings are inert: nothing checks an argument against
+`mls_wasm.d.ts`. Where a helper takes the client as a narrow structural interface, that interface
+becomes the ONLY description of the contract the type system holds - and if it was written by hand,
+it can be wrong for as long as nobody reads the binding.
+
+It was. `KeyPackageMinter` declared `existing_last_resort_key_package(nowSecs: number)` while the
+binding takes a `bigint`: wasm-bindgen marshals Rust's `u64` through `BigInt.asUintN`, and
+`ToBigInt` throws a `TypeError` on any Number. Every web key-package publication threw from #458
+until 2026-09-11 - the worker and the main-thread path it falls back to alike, because both mint in
+`mintKeyPackages` - so no web client published a key package at all, and the two paths that need
+one both stopped there: a peer had none to claim, and the device's own `welcome_request` was
+deferred to a next connection that failed identically.
+
+**Any such interface is `Pick`ed from the generated client**, so a signature moving is a compile
+error rather than a runtime `TypeError`:
+
+```typescript
+type WasmClient = import('$lib/wasm/mls_wasm.js').WasmMlsClient;
+export type KeyPackageMinter = Pick<WasmClient, 'generate_key_packages' | ...>;
+```
+
+The inline `import(...)` is a type position, erased before Vite resolves anything, so the
+`mls-wasm-stub` plugin that replaces `mlsWasmLoader` on Tauri builds never sees it. And the mock in
+the helper's unit test carries the same parameter types for the same reason: the previous one
+accepted a Number and its assertion (`Number.isInteger` on the clock) demanded exactly the type the
+binding refuses.
+
 ### `stateWasExpected`, and why the constructor cannot work it out
 
 The constructor is handed a device key and, sometimes, an encrypted state. **A key with no state
