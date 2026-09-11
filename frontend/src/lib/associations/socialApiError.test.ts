@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { withoutAnyComments } from '../styles/markupSources';
+
 import { SocialApiError } from './api';
 
 /**
@@ -36,20 +38,13 @@ describe('SocialApiError', () => {
   });
 });
 
-/**
- * The file with its prose removed. The first run of the assertion below failed on the DOCBLOCK
- * that explains the defect - it names `e.message` in order to say why nothing may render it -
- * which would have made the rule impossible to document beside the code it governs.
- */
-function codeOnly(source: string): string {
-  return source
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/(^|[^:])\/\/.*$/gm, '$1');
-}
-
 describe('the partnership claim screen', () => {
-  const source = codeOnly(readFileSync(SHOP_LIST, 'utf8'));
+  // The file with its PROSE removed. The first run of the assertion below failed on the DOCBLOCK
+  // that explains the defect - it names `e.message` in order to say why nothing may render it -
+  // which would have made the rule impossible to document beside the code it governs. The stripper
+  // is the shared one on purpose: a private copy is what this repository already paid three high
+  // CodeQL alerts for, and this file was the fourth.
+  const source = withoutAnyComments(readFileSync(SHOP_LIST, 'utf8'));
 
   /**
    * THE ASSERTION THAT ACTUALLY CLOSES THE DEFECT. Translating the four known codes fixes four

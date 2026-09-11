@@ -11,6 +11,46 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - one idiom for removing comments had six copies, and the extraction meant to end that was never enforced
+
+Internal, and it is the same defect a previous entry in this file already claimed to have fixed.
+Three test files each carried a private copy of the same comment stripper, which CodeQL reads as
+an incomplete sanitizer; the repair was to write the reader once. That extraction landed, and
+nothing was watching it, so two files kept copies it never reached and a third was added on
+10 September, and a seventh landed while the repair was in review - each reopening the identical
+high-severity alert against a module written specifically to prevent it.
+
+An extraction nothing enforces is a suggestion. There is one implementation now and a check that
+refuses a second, and writing that check is what found the two copies the original sweep had
+missed - it was aimed at one file and reported three.
+
+The shared reader also learnt the line-comment pass the copies had, and it scans rather than
+matches. A regex saying "a slash-slash not preceded by a colon" states the exception instead of
+the rule, so it reads past a separator inside an ordinary string and cuts the line in half.
+
+### Changed - the shell scripts the pipeline checks are derived from the tree instead of listed by hand
+
+Internal. The lint step named the directories it covered, and the backlog had recorded one as
+missing. Deriving the set from what is actually tracked found five - fifty scripts across ten
+directories, against the five the step named - including the script that restores a database copy
+into a local estate. Nobody had excluded them; they were added after the list was written, which
+is what a list of names eventually always is. The set is derived now, so a directory added
+tomorrow is covered the day it is committed.
+
+The Makefile claimed in a comment to check the same files, and had drifted. A local run that lints
+less than the pipeline is a green run that means nothing, so the two sets are compared rather than
+asserted in prose.
+
+The newly covered files were not clean. A deploy script exported its secrets with a construct that
+splits every value on spaces - a password with a space in it became two exports, one of them
+garbage - and that is the file production secrets are read from. Another used a chain that reads
+like if-then-else and is not one, so the "else" also ran when the "then" had failed. A third could
+leave three variables silently empty, in the script that reads an Android signing key. All
+repaired rather than annotated away.
+
+Which version of the linter runs is also now declared in one file rather than learnt by failing,
+the same shape as the pinned runtime version and for the same reason.
+
 ### Changed - the agenda now puts its controls beside the month instead of above it
 
 On a computer, the month sits on the right and everything else - navigation, the association
@@ -545,10 +585,17 @@ cross that is always there is one a reader learns to skip, and on the previous c
 genuine high-severity alert inside a summary nobody had a reason to open. The analysis now
 declares its own identity, and a check refuses one that does not.
 
-What a commit cannot repair is the history: 1 884 analyses still name four workflows deleted on
-2 September. Clearing them is a deletion with no undo, so it is written down as the user's to
-make - along with a correction, because a first version of that note said the platform would
-forget them by 16 September and the real window is ninety days.
+What a commit could not repair is the history, and that half is now done too: 1 884 analyses
+naming four workflows deleted on 2 September were cleared on 10 September, category by category,
+0 failed. It is a deletion with no undo on a public repository's security history, so it was the
+user's call and was taken explicitly. A first version of this note said the platform would forget
+them by 16 September on its own; the real window is ninety days, so waiting was never the answer.
+
+Clearing them surfaced a second half nobody had counted. An alert can only be closed by an
+analysis of its OWN configuration reporting it gone, and pinning the category had moved the live
+configuration - so of 19 open alerts, 10 belonged to configurations that will never run again,
+their code already fixed. Those are gone as well, and what remains open is three alerts under the
+live category, which is the list finally meaning what it says.
 
 ### Changed - the copies this project keeps on purpose are now checked for being copies
 

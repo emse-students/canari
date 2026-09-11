@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+
+import { withoutAnyComments } from '$lib/styles/markupSources';
 import { DEFAULT_POST_FEED, POST_FEEDS, parsePostFeed } from './api';
 
 /**
@@ -43,7 +45,7 @@ describe('post feeds', () => {
     const source = readFileSync(join(process.cwd(), 'src/routes/posts/+page.svelte'), 'utf8');
     // COMMENTS FIRST, and not as a convenience: the doc above the fixed line QUOTES the line it
     // replaced, so a guard reading the raw file fails on the explanation of the bug it guards.
-    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    const code = withoutAnyComments(source);
     expect(code).not.toMatch(/get\(['"]feed['"]\)/);
     // And it does use the resolved answer, so the guard cannot pass by the page dropping the
     // feature altogether.

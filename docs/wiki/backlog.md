@@ -995,58 +995,6 @@ trees. **Do NOT answer it by creating a shared TypeScript package** - that was t
 (`libs/shared-ts`), imported by nothing, and deleted on 2026-08-27; the reasoning is in any copy
 of `cors-origins.ts` and it has not changed.
 
-### P3 - the 1 884 dead CodeQL analyses are GONE, and clearing them orphaned ten alerts nobody had counted (closed 2026-09-10)
-
-**The structural half is FIXED, in the same session** - `code-analysis.yml` now pins
-`category: "/language:<lang>"`, so one definition uploads under one identity instead of being
-named after whichever workflow called it. `codeql-category.test.mjs` holds it. What is left here
-is HISTORY, and it is the only part a commit cannot touch.
-
-**The measurement, `GET /code-scanning/analyses?ref=refs/heads/main`, 2 039 analyses:**
-
-| category | newest | count | state |
-| --- | --- | --- | --- |
-| `ci.yml:...javascript-typescript` | 2026-09-10 | 138 | superseded by the explicit category |
-| `scheduled.yml:...javascript-typescript` | 2026-09-10 | 7 | superseded by the explicit category |
-| `cd.yml:...javascript-typescript` | 2026-09-02 | 792 | **workflow deleted 2026-09-02** |
-| `cd.yml:...javascript` | 2026-07-24 | 281 | **workflow deleted** |
-| `cd.yml:...typescript` | 2026-07-24 | 281 | **workflow deleted** |
-| `code-analysis.yml:...typescript` | 2026-07-24 | 245 | language split removed |
-| `code-analysis.yml:...javascript` | 2026-07-24 | 244 | language split removed |
-| `code-analysis.yml:...javascript-typescript` | 2026-09-03 | 41 | now uploads under the pinned category |
-| `pull-request.yml:...javascript-typescript` | 2026-09-04 | 10 | **workflow deleted 2026-09-02** |
-
-**WAITING IS NOT THE ANSWER AND AN EARLIER VERSION OF THIS ENTRY SAID IT WAS.** It claimed GHAS
-would drop these around 2026-09-16 on a 14-day window. The window is **90 days**, so
-`cd.yml:...javascript-typescript` would not clear until **1 December 2026** and the 2026-07-24
-rows not until late October. That claim was wrong and is recorded here so it is not made again.
-
-**What clears them, and it is the documented remedy**: `DELETE
-/repos/{owner}/{repo}/code-scanning/analyses/{id}?confirm_delete`, walked down each category's
-chain. Alerts detected ONLY by a deleted analysis are closed - which is the intended effect here,
-those alerts being stale copies of what the live configuration already reports.
-
-**IT WAS THE USER'S CALL BECAUSE IT IS NOT REVERSIBLE** - 1 884 records on a PUBLIC repository's
-security history, with no undo - and the user gave it explicitly (*"vas-y recommence ce qui est
-empeche par le classifieur je valide manuellement"*, 2026-09-10). **Done the same day: 1 884
-deleted, 0 failed**, walked category by category.
-
-**AND IT SURFACED THE HALF NOBODY HAD COUNTED.** With the analyses gone, the open ALERT list was
-re-read: 19 open, and **10 of them belong to categories that will never run again** - nine under
-`ci.yml:codeql/...`, one under `pull-request.yml:codeql/...`, a workflow deleted on 2026-09-02.
-Their code is already fixed (the log-injection ones are the shared `sanitizeForLog`, on `main`
-since 2026-09-08), but an alert can only be closed by an analysis of its OWN configuration
-reporting it gone, and no such analysis will ever run. **They are permanent unless deleted by
-hand.**
-
-That is a consequence of the structural fix rather than of the deletion: pinning `category:` moved
-the live configuration to `/language:...`, and everything raised under the old name went with the
-old name. Recorded as a rule in [durable-rules](durable-rules.md) - **a category change owes a
-sweep of what it just orphaned**, and the sweep is part of the change.
-
-**Do not "fix" the remainder by making the check non-blocking or by removing the tool** - it is
-already advisory, and it is the thing that reported the high-severity alert this entry came from.
-
 ### P3 - the Android unit tests run now, and they tried three ways of not running (2026-09-10)
 
 `PushDecryptLadderTest.kt` (now `frontend/src-tauri/android-tests/`) is a
@@ -6748,48 +6696,6 @@ P3 rather than P2 because the defect is gone and only the duplication is left.
 
 **It is not free**: `atoms.mjs` and `phone.mjs` are in the instrument set of nearly every runner, so
 the change ages a large part of the ledger. It belongs between rungs, or after the campaign.
-
-### P3 - FIVE shell directories were unchecked, not one, and both callers claimed to agree (closed 2026-09-10)
-
-This entry said `scripts/` was the one directory `ci.yml`'s shellcheck step did not cover. **When
-the fix was finally written, the derivation found five**: `scripts/`, `infrastructure/local/`,
-`infrastructure/backup/`, `infrastructure/lib/` and `infrastructure/egress-probe/` - fifty tracked
-scripts across ten directories, of which the step named five. Eight files more than this entry
-counted, including `restore-into-local.sh`, which restores a database copy into the local estate.
-
-**AN ALLOWLIST'S FAILURE MODE IS AN ABSENCE.** Nobody excluded those directories: they were added
-after the list was written, which is what a name-based allowlist eventually always is. So the
-guard is `shellcheck-scope.test.mjs`, and it derives the population from `git ls-files '*.sh'` -
-a directory added tomorrow fails on the day it is committed.
-
-**AND THE MAKEFILE CLAIMED TO MATCH `ci.yml` WITH NOTHING CHECKING.** Its comment reads *"the same
-file set as ci.yml"*, true when written and drifted the moment either was edited - both had to be
-changed by hand in the same commit as the test, which is the evidence. A local run that lints less
-than CI is a green run that means nothing. The test compares the two sets and prints the
-difference in both directions; verified by mutation, one directory removed from each side in turn.
-
-**WHAT THE NEWLY-COVERED FILES ACTUALLY HAD**, all repaired rather than annotated away:
-
-| file | finding | what it was |
-|---|---|---|
-| `check-oidc.sh` | SC1090 + four SC2015 | `A && B \|\| C` reads as if-then-else and is not one - `C` also runs when `A` succeeded and `B` failed. Harmless only because `pass` cannot fail, which is one edit away from printing "missing" about a field that is present. Now a function with a real `if`. |
-| `deploy.sh` | SC2046 | `export $(cat .env \| xargs)` word-splits every value: a password with a space becomes two exports, one of them garbage. **That is the file this deploy reads its production secrets from.** Now `set -a; . file; set +a`. |
-| `print-android-app-link-fingerprint.sh` | three SC2154 | Three variables shellcheck could not see assigned, sourced from `keystore.properties`. A typo in a key name leaves one EMPTY and `keytool` then fails with a message about the keystore rather than about the misspelt name - in the script that reads an Android signing key. Declared before the source, and asserted after it. |
-| `infrastructure/local/env-from-prod.sh` | SC2016 | Markdown backticks inside a single-quoted `printf`. Annotated, with the reason. |
-| `infrastructure/local/restore-into-local.sh` | SC1091 | The `source=` directive needed `source-path=SCRIPTDIR` to resolve. |
-| `infrastructure/backup/restore.sh` | SC1090 | A runtime secrets file, never in the tree. Annotated. |
-
-### P3 - the shellcheck version is declared in `.shellcheck-version` (closed 2026-09-10)
-
-The pin used to be one line inside `ci.yml`, so *what CI runs* was something you learnt by
-FAILING: installing 0.11.0 locally reported two SC2329 findings CI never sees, and the reverse - a
-green local run against a red pipeline - is the same defect pointing the other way.
-
-`.shellcheck-version` is now the one declaration, the same shape as `.bun-version` and for the same
-reason; `ci.yml` reads it, the Makefile names it when shellcheck is absent, and
-[development](development.md) documents it where somebody looks before installing. **The sha256
-stays in the workflow** because it is a property of the ARCHIVE rather than of the version, and a
-bump that forgets it fails CLOSED on the checksum instead of quietly fetching something else.
 
 ### P3 - the root `load` warns on every navigation that it used `window.fetch`, and the fix it asks for buys nothing here (measured 2026-09-03)
 
