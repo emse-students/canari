@@ -1,11 +1,5 @@
-version: 0.17.0
+version: 0.17.1
 
-Sécurité : plusieurs pages répondaient encore sans compte - fil d'actualité, présence, formulaires, paiements, aperçus de liens. Toutes refusent désormais.
+Vous avez cotisé au BDE ou au Cercle avant que Canari existe ? Votre cotisation est reconnue à votre prochaine connexion, sans rien demander à personne.
 
-L'agenda place ses commandes à côté du mois, et le jour choisi s'affiche à côté plutôt qu'en dessous.
-
-Une note vocale part quand vous relevez le doigt, et s'affiche en forme d'onde.
-
-Les pages d'association et la boutique répondent enfin en français.
-
-Vous êtes prévenu quand une association publie.
+Dans une conversation, le bouton GIF est de nouveau aligné avec les autres commandes.
