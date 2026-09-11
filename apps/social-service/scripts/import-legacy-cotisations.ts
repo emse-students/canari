@@ -15,12 +15,22 @@
  *
  * Add --dry-run to parse, check and report without writing. Database connection comes from the
  * same DB_* variables the service reads.
+ *
+ * `--emit-sql <path>` writes the load as one idempotent transaction instead of connecting, for the
+ * deployed estates: neither database container publishes a port, and the way in is `docker exec ...
+ * psql` from the box (`docs/wiki/infrastructure/databases.md`). The emitted file NAMES REAL PEOPLE
+ * and must not be committed - a path outside the repository, then:
+ *
+ *   bun scripts/import-legacy-cotisations.ts --source cercle --file ... --emit-sql /tmp/cercle.sql
+ *   ssh canari 'docker exec -i infrastructure-postgres-1 psql -U canari -d auth_db -v ON_ERROR_STOP=1' \
+ *     < /tmp/cercle.sql
  */
-import { readFileSync } from 'fs';
+import { readFileSync, writeFileSync } from 'fs';
 import { Client } from 'pg';
 import { Database } from 'bun:sqlite';
 import ExcelJS from 'exceljs';
 import { normalizeMatchKey } from '../src/users/legacy-cotisation.util';
+import { renderLegacyCotisationSql } from '../src/users/legacy-cotisation-sql';
 
 /** One cotisant resolved from a source, before it is staged. */
 interface Candidate {
@@ -271,8 +281,11 @@ async function main(): Promise<void> {
   const source = arg('source');
   const file = arg('file');
   const dryRun = process.argv.includes('--dry-run');
+  const emitSql = arg('emit-sql');
   if ((source !== 'bde' && source !== 'cercle') || !file) {
-    throw new Error('usage: --source bde|cercle --file <path> [--promo-1a <year>] [--dry-run]');
+    throw new Error(
+      'usage: --source bde|cercle --file <path> [--promo-1a <year>] [--dry-run] [--emit-sql <path>]'
+    );
   }
 
   const slug = source === 'bde' ? 'bde' : 'cercle';
@@ -320,6 +333,22 @@ async function main(): Promise<void> {
   // without a connection would report a pass nobody verified.
   if (dryRun) {
     console.log(`--dry-run: source is consistent. Would stage ${candidates.length} row(s) as batch "${batch}".`);
+    return;
+  }
+
+  // Emitting SQL reaches the database no less than connecting does - it just does it through the
+  // one door the deployed estates have. Everything above has already run, so the file carries a
+  // load whose source was parsed, keyed and checked for ambiguity exactly as the connected path
+  // checks it; the three preconditions that need the database travel inside the transaction.
+  //
+  // TO A FILE AND NOT STDOUT: this script logs its progress on stdout, and interleaving that with
+  // a thousand INSERT tuples would produce a file psql refuses somewhere in the middle.
+  if (emitSql) {
+    writeFileSync(emitSql, renderLegacyCotisationSql({ rows: candidates, slug, variantKey, batch }));
+    console.log(
+      `--emit-sql: wrote ${candidates.length} row(s) as batch "${batch}" to ${emitSql}.\n` +
+        'It names real people - keep it out of the repository, and apply it with ON_ERROR_STOP=1.'
+    );
     return;
   }
 
