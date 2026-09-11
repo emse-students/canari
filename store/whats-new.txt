@@ -1,9 +1,11 @@
-version: 0.16.6
+version: 0.17.0
 
-Interface entièrement remise à l'échelle : typographie, couleurs et coins suivent une seule référence.
+Sécurité : plusieurs pages répondaient encore sans compte - fil d'actualité, présence, formulaires, paiements, aperçus de liens. Toutes refusent désormais.
 
-L'agenda devient une liste sur téléphone, et un événement proposé prévient maintenant les responsables.
+L'agenda place ses commandes à côté du mois, et le jour choisi s'affiche à côté plutôt qu'en dessous.
 
-"Nouvelle discussion" s'ouvre sur vos conversations récentes au lieu d'un champ vide.
+Une note vocale part quand vous relevez le doigt, et s'affiche en forme d'onde.
 
-Corrections : menus et sélecteur d'emoji qui s'ouvraient au mauvais endroit, titres qui recouvraient les boutons, notes vocales en un seul geste.
+Les pages d'association et la boutique répondent enfin en français.
+
+Vous êtes prévenu quand une association publie.
