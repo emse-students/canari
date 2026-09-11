@@ -251,9 +251,9 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    anybody prod is down**, and [host-updates](docs/wiki/infrastructure/host-updates.md).
    **PostgreSQL 15 -> 18 IS OWED, PRODUCTION INCLUDED** (the user's 2026-09-10 authorization is
    the one exception to read-only prod): verified dump, local proof, cutover with rollback; #309.
-7. **P2 - THE LEGACY COTISATION CLAIM SHIPPED 2026-09-11 (#512) WITH AN EMPTY TABLE, AND AN EMPTY
-   TABLE LOOKS EXACTLY LIKE A BROKEN CLAIM.** What the load owes and the one assumption still
-   unmeasured: [backlog](docs/wiki/backlog.md). Mechanism: [cotisations](docs/wiki/cotisations.md).
+7. **P2 - 1429 LEGACY COTISATION ROWS ARE LOADED ON BOTH ESTATES (v0.17.1) AND NOT ONE CLAIM HAS
+   BEEN OBSERVED** - 60 prod accounts grant at their next sign-in, 248 close `already-held`, and an
+   empty screen still looks like a broken claim ([backlog](docs/wiki/backlog.md), [cotisations](docs/wiki/cotisations.md)).
 8. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
    [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
 9. **UX/RENDERING: THE EMOJI FONT, AND THE SERVER'S ENGLISH.** All decided items shipped, each
