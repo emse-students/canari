@@ -407,6 +407,42 @@ Both associations are `lifetime`, which is what makes a historical list meaningf
 carries no academic year and does not expire. 1175 of Le Cercle's 1194 legacy buyers paid exactly
 once, which is the same fact from the other side.
 
+### Loading a DEPLOYED estate - `--emit-sql`, because there is no connection to open
+
+Dropping the `--dry-run` connects with `DB_*`, which works locally and nowhere else: neither
+`canari-dev-postgres-1` nor `infrastructure-postgres-1` publishes a port, and the way into either is
+`docker exec ... psql` from the box ([databases](infrastructure/databases.md)). The alternative -
+lifting a production password onto a workstation to open a tunnel - buys nothing and puts a
+credential somewhere it has no reason to be.
+
+So the script renders the load instead, and `psql` applies it:
+
+```sh
+bun scripts/import-legacy-cotisations.ts --source cercle --file legacy-readonly-backup.db \
+    --repair-names promo.csv --emit-sql /tmp/cercle.sql
+ssh canari 'docker exec -i canari-dev-postgres-1 psql -U canari -d auth_db -v ON_ERROR_STOP=1' \
+    < /tmp/cercle.sql
+```
+
+**The emitted file names real people and this repository is public.** Write it outside the tree; the
+file says so in its own header, because that is where whoever opens it will be.
+
+Three properties make the emitted transaction the same load rather than a weaker one:
+
+- **It carries its own preconditions.** A `DO` block raises unless the association exists, has
+  cotisation enabled, and has the named tier in its catalogue. The last one is not decoration:
+  `grantCotisant` validates the tier again at every claim, so a load naming a tier that does not
+  exist stages perfectly and then refuses each member separately, at whatever hour they sign in.
+- **The association id is resolved by the statement**, never interpolated. Both estates run the same
+  schema with different ids, and a file carrying one estate's uuid would apply cleanly against the
+  other and attach every row to the wrong association.
+- **It is idempotent on the same partial index the connected path uses**, so a re-run stages nothing
+  twice and never reopens a claimed row.
+
+`ON_ERROR_STOP=1` is not optional. Without it `psql` reports a failed statement and carries on to
+the next, which for a `BEGIN`-wrapped load means every later statement is refused as "current
+transaction is aborted" - one real error buried under a thousand identical ones.
+
 ### Reading the staging table (`/admin/legacy-cotisations`)
 
 A claim that grants nothing is invisible: the user sees no tag, and nothing tells them why. The
