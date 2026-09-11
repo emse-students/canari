@@ -546,6 +546,52 @@ being served twice, the pool prekey must not - and
 `apps/chat-delivery-service/src/controllers/devices.controller.static-fallback.spec.ts` pins the
 server's side of the promise, so the pair cannot drift apart silently.
 
+### The 84-day lifetime outlives the device, and a leaf is NEVER updated
+
+A KeyPackage carries a `Lifetime` (OpenMLS default: 84 days, `not_before` backdated one hour for
+clock skew), and the leaf node minted from it carries that same lifetime into the ratchet tree. The
+tree keeps it: **nothing in this product ever updates a leaf.** There is no periodic self-update
+commit, and the only thing that takes a leaf out of a tree is another member committing a Remove.
+
+So a device that stops running - wiped, reinstalled, abandoned, or reset through the button on the
+login page - leaves a leaf behind in every group it was in, and on day 85 that leaf elapses. Purging
+the device's server-side footprint does not touch it: `DELETE mls/devices/:userId/:deviceId` deletes
+routing rows, and a ratchet tree is not a routing row.
+
+**Until 2026-09-11 that elapsed leaf closed the group to everybody else.** RFC 9420 7.3 recommends
+validating leaf lifetimes when a ratchet tree is IMPORTED, and OpenMLS did so on both paths a device
+takes when it holds no state for a group:
+
+| Path | Where the tree is imported | What it used to do |
+|---|---|---|
+| `join_by_external_commit` | `MlsGroup::external_commit_builder().build_group(...)` | refused with `PublicGroupError(LeafNodeValidation(Lifetime(NotCurrent)))` |
+| `process_welcome` | `StagedWelcome::build_from_welcome(...)` | refused with the same error |
+
+Both are in `frontend/mls-core/src/welcome.rs`, and both now call `skip_lifetime_validation()` on
+the builder. The two paths are the ONLY two ways out of a missing group, and the Welcome is the
+repair for a failed external join - so one dead leaf closed the door and the door behind it.
+
+Measured on production 2026-09-11: `Lifetime { not_before: 1781347172, not_after: 1788608372 }` on
+one member's device, elapsed six days earlier, refusing rung 2 of the recovery ladder for a
+conversation whose other participants were all present and healthy.
+
+**What is NOT dropped.** `validate_leaf_node` (`openmls-0.8.1/src/group/public_group/validation.rs`)
+forces `LeafNodeLifetimePolicy::Verify`, so every Add proposal still refuses an expired KeyPackage,
+as does `add_members_bulk`'s own `KeyPackageIn::validate` before OpenMLS ever sees it - that one
+reports the refusal by index in `skipped` rather than failing the batch. Admission is where the
+question "may this key material enter a group" is actually decided; the tree check only re-took that
+decision, epochs later, against a clock that had moved, and billed the refusal to a member who had
+nothing to do with it. OpenMLS says as much at the check itself and exposes the builder for it
+(openmls#1810).
+
+`frontend/mls-core/tests/expired_leaf_in_tree.rs` pins the pair. It mints a "ghost" KeyPackage with
+an explicit short lifetime (openmls directly, since `MlsManager` only mints the 84-day default),
+adds it while it is still valid, waits for it to elapse, and then asserts that neither an external
+join nor a Welcome is refused - and that a KeyPackage already elapsed is still refused at admission,
+beside a good one, so the assertion distinguishes "that package was refused" from "the batch fell
+over". Remove either `skip_lifetime_validation()` and two of the three tests fail with the
+production error.
+
 ### Static fallback key package
 
 - Generated on every `generateKeyPackage()` call, and published before the pool.

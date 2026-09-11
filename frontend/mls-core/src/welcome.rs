@@ -65,9 +65,29 @@ impl MlsManager {
             .with_extensions(Extensions::default())
             .build();
 
+        // ONE MEMBER'S ELAPSED LIFETIME MUST NOT REFUSE EVERYONE ELSE THE GROUP.
+        //
+        // A leaf carries a lifetime only when it was built from a KeyPackage and has never been
+        // updated since, and ours last 84 days. Validating those while IMPORTING a ratchet tree
+        // means that on day 85 a member who simply stopped running - a device wiped, reinstalled or
+        // abandoned, which nothing will ever update - makes `join_by_external_commit` fail for
+        // every other member, permanently, with an error naming a leaf the joiner has no power over.
+        // Measured on prod 2026-09-11: `Lifetime { not_before: 1781347172, not_after: 1788608372 }`
+        // on one member's tauri device, expired six days earlier, refusing rung 2 for a conversation
+        // whose other participants were all present and healthy.
+        //
+        // Refusing an EXPIRED KEY PACKAGE at admission is the real check and it is untouched -
+        // `validate_leaf_node` still forces `Verify` on every Add - so what is dropped here is the
+        // re-litigation of an admission decision the group already took, epochs ago, against a
+        // clock that has moved since. RFC 9420 7.3 recommends the tree check and acknowledges in
+        // the same breath that it causes exactly this; OpenMLS says so too, at the check itself,
+        // and exposes this builder for it (openmls#1810). Both halves are pinned by
+        // `tests/expired_leaf_in_tree.rs`: remove either skip and two of its three tests fail with
+        // the production error.
         let (group, commit_message_bundle) = MlsGroup::external_commit_builder()
             .with_aad(b"".to_vec())
             .with_config(group_config.clone())
+            .skip_lifetime_validation()
             .build_group(&self.provider, verifiable_group_info, credential_with_key)
             .map_err(|e| MlsError::OpenMls(format!("join_by_external_commit: {:?}", e)))?
             .leaf_node_parameters(leaf_node_parameters)
@@ -168,14 +188,28 @@ impl MlsManager {
             None
         };
 
-        // Important: new_from_welcome consumes the welcome message and initializes the group
-        let staged_welcome = StagedWelcome::new_from_welcome(
-            &self.provider,
-            &group_config,
-            welcome.clone(),
-            ratchet_tree,
-        )
-        .map_err(|e| {
+        // Important: build_from_welcome consumes the welcome message and initializes the group.
+        //
+        // The builder form is used for ONE reason: `skip_lifetime_validation`, for the whole of the
+        // argument made at `join_by_external_commit` above. A Welcome carries the same ratchet tree
+        // and is validated the same way, so the same elapsed leaf that refuses an external join
+        // refuses the Welcome sent to repair it - the two paths out of a missing group, closed by
+        // one member who stopped running. Fixing only the path whose failure was observed would
+        // have left the other to be found the same way, by reading somebody's console.
+        let mut join_builder =
+            StagedWelcome::build_from_welcome(&self.provider, &group_config, welcome.clone())
+                .map_err(|e| {
+                    MlsError::OpenMls(format!(
+                        "Join error (welcome): {:?} [n_secrets={}]",
+                        e,
+                        welcome.secrets().len()
+                    ))
+                })?
+                .skip_lifetime_validation();
+        if let Some(rt) = ratchet_tree {
+            join_builder = join_builder.with_ratchet_tree(rt);
+        }
+        let staged_welcome = join_builder.build().map_err(|e| {
             MlsError::OpenMls(format!(
                 "Join error (staged): {:?} [n_secrets={}]",
                 e,
