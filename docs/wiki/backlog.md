@@ -69,6 +69,8 @@ else holds, a console owned by the user, or hardware that does not exist.
 | Lydia's credentials, which Lydia owes | blocked upstream | WP-LYDIA-1 |
 | **an iPhone - ON ITS WAY, and the user intends the WHOLE campaign to be re-run on it** (user, 2026-09-10). **iOS is the only thing "hardware-blocked" still means** - the redundant push `data` map on both platforms, the shade acknowledgement, iOS window layout, and no iOS build reaching a device without a pre-release. This is a DATE, not a wall: write those rows so they are ready to run rather than deferring their design | hardware, arriving | [device-verification](device-verification.md) |
 | copy `canari-harness/` to the second machine to resume the campaign | 1 copy | [cross-client-campaign-resume](cross-client-campaign-resume.md) |
+| **where `promo.csv` comes from and how current it is** - it is the reference that rebuilds 141 names whose accents the Cercle export destroyed. Unique matches within that file prove nothing if the file is stale or partial: a repair could then name a namesake from another promo and hand them somebody else's cotisation, silently | 1 answer | [P2 - the legacy cotisation claim shipped with an empty table](#p2---the-legacy-cotisation-claim-shipped-with-an-empty-table-and-an-empty-table-is-indistinguishable-from-a-broken-claim-merged-2026-09-11-512) |
+| **three BDE rows excluded from the import, to add by hand if they should be cotisants** - one whose `Cotisation` cell is empty while its neighbours are filled, and two absent from the directory export. Decided 2026-09-11: an import may not guess, and the three carry no tag until somebody says so | 1 decision, then 3 rows | same entry |
 
 ## Open defects, in severity order
 
@@ -392,6 +394,39 @@ it. And `queued_message` holds **13 275 undrained rows** (12 051 web, 1 224 taur
 devices going back to 2026-08-05, which `cleanup.mjs` does not sweep.
 ---
 
+
+### P2 - the legacy cotisation claim SHIPPED with an empty table, and an empty table is indistinguishable from a broken claim (merged 2026-09-11, #512)
+
+The mechanism is on `main`: `legacy_cotisations` staging, the claim on every sign-in, the read-only
+screen at `/admin/legacy-cotisations`. **No list has been loaded into any database.** Until one is,
+every sign-in runs a lookup that correctly returns nothing, and the screen correctly shows zero -
+which is exactly what a claim broken at the key would also show. The mechanism is
+[cotisations](cotisations.md#seeding-from-a-legacy-estate-legacy_cotisations), the only copy.
+
+What the load owes, in order:
+
+1. **A rehearsal on `dev.canari-emse.fr`**, which holds a copy of production - the only place the
+   run can be judged, because it has the real names and the 434 cotisation tags already issued. The
+   numbers to read back: rows staged (dry-runs say 269 BDE and 1160 Cercle), accounts claiming
+   immediately, and rows closing `already-held` rather than granting. **A measured `already-held`
+   count above zero is the anti-downgrade guard doing its job**; zero would mean it never fired and
+   the guard is unproven, not absent.
+2. **The three source files reach the box without entering this PUBLIC repo.** They carry the names
+   of roughly 5600 people. The import script takes them by `--file`; nothing about the load requires
+   them to be committed, and nothing may.
+3. **Then production**, same two commands, `--dry-run` first.
+
+**One assumption was measured and one was not.** Measured 2026-09-11 against 396 production
+accounts: the promo conventions of Authentik, the Cercle legacy base and the directory export agree
+at offset 0 - 206 accounts match the directory and 119 match a Cercle cotisant, against 12 and 2 at
+offset +1 and nothing at +-2 or beyond. Had Authentik sent a graduation year where the legacy stores
+an entry year, every key would have been wrong by 3 and NOTHING would have reported it. Not
+measured: whether `promo.csv` is current and complete, which is what the 141 accent repairs rest on.
+
+**The promo-2026 cohort is unserved by design and it is the LARGEST.** 153 of the 396 accounts -
+more than any other promo - are 1A who arrived after both lists were frozen. They appear in neither
+source, so they must pay through the shop, and all three membership products are `isActive = false`.
+The user confirmed 2026-09-11 that the inactive flag is deliberate and is not to be touched.
 
 ### P2 - a DELETED two-person group keeps the peer's name in the sidebar, so it is indistinguishable from the DM (measured 2026-09-08)
 
