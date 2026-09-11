@@ -10,7 +10,9 @@
   import { BiometricService } from '$lib/services/biometric';
   import LoginForm from './LoginForm.svelte';
   import { isTauriRuntime } from '$lib/utils/openExternal';
-  import { wipeDeviceToFactory } from '$lib/utils/deviceReset';
+  import { resetThisDeviceOnRequest } from '$lib/utils/deviceReset';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
+  import { showToast } from '$lib/stores/toast.svelte';
   import {
     getAppVersionCheck,
     isBelowMinClientVersion,
@@ -22,6 +24,7 @@
   let isLoggingIn = $state(false);
   let loginError = $state('');
   let biometricAvailable = $state(false);
+  let isResetting = $state(false);
   let requestedReturnTo = '';
 
   const platformInfo = $derived(getAppVersionCheck());
@@ -197,9 +200,47 @@
     }
   }
 
+  /**
+   * The login page's "reset this device" action.
+   *
+   * IT USED TO BE `await wipeDeviceToFactory()` AND NOTHING ELSE, which is three separate silences.
+   * It asked nothing before erasing the device; it discarded the list of steps that failed, which
+   * that function returns precisely so a caller can say what survived; and it told the user
+   * nothing at all, so a wipe that half-worked and a wipe that worked looked identical - a blank
+   * screen. `resetThisDeviceOnRequest` is the whole operation, and this is the part that belongs to
+   * the UI: ask, then report what actually happened.
+   */
   async function resetAll() {
-    await wipeDeviceToFactory();
-    loginError = '';
+    if (isResetting) return;
+    const confirmed = await showConfirm(m.auth_reset_device_confirm(), {
+      danger: true,
+      confirmLabel: m.auth_reset_device_button(),
+    });
+    if (!confirmed) {
+      console.log('[RESET] cancelled by the user');
+      return;
+    }
+
+    isResetting = true;
+    try {
+      const { declaration, failures } = await resetThisDeviceOnRequest();
+      loginError = '';
+      // Named rather than counted, for the reason the wipe's own survey names its survivors: a
+      // count cannot tell the user which door to close, and "another tab" is the one they can act
+      // on themselves.
+      if (failures.length > 0) {
+        showToast(m.auth_reset_device_partial({ steps: failures.join(', ') }), 'error', 9000);
+      } else if (declaration === 'not-declared') {
+        // The local half succeeded and the remote half did not, and those are different facts to
+        // the person holding the machine: nothing of theirs is left here, but their contacts will
+        // still be handed this device.
+        showToast(m.auth_reset_device_server_unreached(), 'warning', 9000);
+      } else {
+        showToast(m.auth_reset_device_done(), 'info');
+      }
+    } finally {
+      isResetting = false;
+    }
   }
 </script>
 
@@ -212,4 +253,5 @@
   onLogin={handleLogin}
   onPasswordLogin={handlePasswordLogin}
   onReset={resetAll}
+  {isResetting}
 />

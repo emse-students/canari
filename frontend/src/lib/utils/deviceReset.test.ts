@@ -1,4 +1,4 @@
-import { wipeDeviceToFactory } from './deviceReset';
+import { resetThisDeviceOnRequest, wipeDeviceToFactory } from './deviceReset';
 
 // Mutable, because the two runtimes are exactly what the branch below is about.
 let tauri = false;
@@ -28,6 +28,35 @@ vi.mock('$lib/utils/hex', () => ({ closeMlsDb: () => closeMlsDbMock() }));
  */
 const closeStoresMock = vi.fn(async () => 2);
 vi.mock('$lib/db', () => ({ closeOpenIndexedDbStores: () => closeStoresMock() }));
+
+/**
+ * The two remote halves a requested reset owes, mocked here because WHEN they run is the property:
+ * both need a credential the wipe is about to delete.
+ */
+const deleteDeviceMock = vi.fn(async (_u: string, _d: string) => ({
+  status: 'device_deleted',
+  groupsCleaned: 3,
+  keyPackagesDeleted: 1,
+  oneTimeKeyPackagesDeleted: 12,
+}));
+const clearAuthMock = vi.fn(async () => {});
+let signedInUser: string | null = 'u1';
+vi.mock('$lib/mls-client/mlsDeliveryApi', () => ({
+  MlsDeliveryApi: class {
+    constructor(_opts: unknown) {}
+    deleteDevice(u: string, d: string) {
+      return deleteDeviceMock(u, d);
+    }
+  },
+}));
+vi.mock('$lib/mls-client/mlsDeliveryHttp', () => ({
+  resolveMlsPublicUrls: () => ({ baseUrl: 'http://x', historyUrl: 'http://x' }),
+}));
+vi.mock('$lib/stores/auth', () => ({
+  clearAuth: () => clearAuthMock(),
+  getToken: async () => 'token',
+}));
+vi.mock('$lib/stores/userState.svelte', () => ({ currentUserId: () => signedInUser }));
 
 const forgetMock = vi.fn(async (_alias?: string) => {});
 const disableMock = vi.fn(async (_alias?: string) => {});
@@ -337,5 +366,109 @@ describe('wipeDeviceToFactory on a native runtime', () => {
     expect(order.indexOf('biometric')).toBeGreaterThan(order.indexOf('databases'));
     expect(order.indexOf('biometric')).toBeGreaterThan(order.indexOf('caches'));
     forgetMock.mockImplementation(async () => {});
+  });
+});
+
+/**
+ * The login page's reset button called `wipeDeviceToFactory` and nothing else, so a reset told
+ * NOBODY. The session row stayed valid for its full lifetime - on the web the refresh cookie is
+ * HttpOnly, so `localStorage.clear()` cannot reach it and nothing else tried - and the account went
+ * on being served a device that had just deleted every private key it held: its prekeys stayed
+ * claimable, so a peer built a Welcome on a key package whose private half was gone, which is the
+ * `NoMatchingKeyPackage` loop. These pin the order, because both remote steps need a credential the
+ * local wipe is about to destroy.
+ */
+describe('resetThisDeviceOnRequest', () => {
+  const order: string[] = [];
+
+  beforeEach(() => {
+    order.length = 0;
+    signedInUser = 'u1';
+    deleteDeviceMock.mockClear();
+    clearAuthMock.mockClear();
+    localStorage.setItem('mls_device_id_u1', 'web-u1-abcd');
+
+    deleteDeviceMock.mockImplementation(async () => {
+      order.push('declare');
+      return {
+        status: 'device_deleted',
+        groupsCleaned: 3,
+        keyPackagesDeleted: 1,
+        oneTimeKeyPackagesDeleted: 12,
+      };
+    });
+    clearAuthMock.mockImplementation(async () => void order.push('revoke'));
+    closeMlsDbMock.mockImplementation(async () => void order.push('wipe'));
+
+    vi.stubGlobal('indexedDB', { databases: async () => [] });
+    vi.stubGlobal('caches', { keys: async () => [], delete: async () => true });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    closeMlsDbMock.mockImplementation(async () => {});
+  });
+
+  it('names this device to the server, and does it BEFORE the wipe deletes the name', async () => {
+    const outcome = await resetThisDeviceOnRequest();
+
+    expect(deleteDeviceMock).toHaveBeenCalledWith('u1', 'web-u1-abcd');
+    expect(outcome.declaration).toBe('declared');
+    // `localStorage.clear()` takes the device id with it, and `clearAuth` takes the credential that
+    // authenticates the call - so either one running first makes the declaration impossible.
+    expect(order).toEqual(['declare', 'revoke', 'wipe']);
+  });
+
+  it('revokes the session, which is the half no local wipe can reach', async () => {
+    await resetThisDeviceOnRequest();
+
+    expect(clearAuthMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('wipes anyway when the server refuses, and SAYS the server still holds the device', async () => {
+    deleteDeviceMock.mockImplementation(async () => {
+      order.push('declare');
+      return {
+        status: 'error',
+        groupsCleaned: 0,
+        keyPackagesDeleted: 0,
+        oneTimeKeyPackagesDeleted: 0,
+      };
+    });
+
+    const outcome = await resetThisDeviceOnRequest();
+
+    // A user resetting a machine they are about to give away must not keep the data because a
+    // server was down - so the local wipe is never conditional on the remote half.
+    expect(order).toContain('wipe');
+    expect(outcome.declaration).toBe('not-declared');
+  });
+
+  it('hands the caller the steps that failed, which the login page used to discard', async () => {
+    // A step fails by REJECTING - `wipeDeviceToFactory` catches each one and names it. This is the
+    // list the login page threw away, so a wipe that half-worked and a wipe that worked were the
+    // same blank screen.
+    closeMlsDbMock.mockImplementation(async () => {
+      order.push('wipe');
+      throw new Error('still open');
+    });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const outcome = await resetThisDeviceOnRequest();
+
+    expect(outcome.failures).toContain('the MLS database connection');
+    // And the remote half is reported separately, because it succeeded: two different facts to the
+    // person holding the machine, and one toast cannot stand for both.
+    expect(outcome.declaration).toBe('declared');
+  });
+
+  it('declares nothing when no account is recorded here, and still wipes', async () => {
+    signedInUser = null;
+
+    const outcome = await resetThisDeviceOnRequest();
+
+    expect(deleteDeviceMock).not.toHaveBeenCalled();
+    expect(outcome.declaration).toBe('nothing-to-declare');
+    expect(order).toContain('wipe');
   });
 });

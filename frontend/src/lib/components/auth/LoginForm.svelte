@@ -17,6 +17,8 @@
     onLogin: () => void;
     /** Called when the user clicks the password test login button (store review). */
     onPasswordLogin: () => void;
+    /** Whether a device reset is running; the link is disabled for its duration. */
+    isResetting?: boolean;
     /** Called when the user clicks the device-reset link. */
     onReset: () => void;
   }
@@ -27,6 +29,7 @@
     biometricAvailable: _biometricAvailable,
     maintenanceNotice = null,
     loginDisabled = false,
+    isResetting = false,
     onLogin,
     onPasswordLogin,
     onReset,
@@ -122,7 +125,8 @@
         <button
           type="button"
           onclick={onReset}
-          class="underline transition-colors hover:text-red-500"
+          disabled={isResetting}
+          class="underline transition-colors hover:text-red-500 disabled:cursor-wait disabled:opacity-70"
         >
           {m.auth_reset_device()}
         </button>

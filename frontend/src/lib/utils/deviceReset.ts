@@ -236,3 +236,110 @@ export async function wipeDeviceToFactory(): Promise<string[]> {
 
   return failures;
 }
+
+/** What a user-requested reset actually managed to do, so the caller can say so rather than guess. */
+export interface DeviceResetOutcome {
+  /**
+   * Whether the delivery service was told to stop serving this device.
+   *
+   * `not-declared` does not say WHY - `MlsDeliveryApi.deleteDevice` swallows the difference between
+   * a refusal and an unreachable server and returns `error` for both. The console carries the
+   * evidence that separates them (the status code, or the exception); this is what the UI can
+   * honestly claim.
+   */
+  declaration: 'declared' | 'not-declared' | 'nothing-to-declare';
+  /** The wipe steps that did not finish. Empty means nothing of this device remains. */
+  failures: string[];
+}
+
+/**
+ * Tells the delivery service this device is gone, BEFORE anything local is deleted.
+ *
+ * A wipe that only clears this machine leaves the account's server-side footprint intact: the
+ * device row, its published key packages, its one-time prekeys, its push token and its routing
+ * memberships all survive. Peers keep claiming a prekey whose private half was just deleted, which
+ * is the `NoMatchingKeyPackage` loop - `BaseMlsService` already deregisters an abandoned device id
+ * for exactly this reason when it mints a fresh identity, and the reset button was the one path
+ * that wiped an identity without doing it.
+ *
+ * The denylist `deleteDevice` applies is on the OLD id, and the wipe below mints a new one, so the
+ * device that signs back in afterwards is not the device that was banned.
+ *
+ * IT DOES NOT REMOVE THE DEVICE'S LEAF FROM ANY MLS GROUP, and nothing here could: `purgeDeviceFootprint`
+ * deletes routing rows, and only a member committing a Remove can change a ratchet tree. That leaf
+ * is the open item, not an oversight of this function.
+ */
+async function declareDeviceGone(
+  userId: string | null,
+  deviceId: string | null
+): Promise<DeviceResetOutcome['declaration']> {
+  if (!userId || !deviceId) {
+    console.log('[RESET] no signed-in device recorded here - nothing to declare to the server');
+    return 'nothing-to-declare';
+  }
+  try {
+    const [{ MlsDeliveryApi }, { resolveMlsPublicUrls }, { getToken }] = await Promise.all([
+      import('$lib/mls-client/mlsDeliveryApi'),
+      import('$lib/mls-client/mlsDeliveryHttp'),
+      import('$lib/stores/auth'),
+    ]);
+    const delivery = new MlsDeliveryApi({
+      historyUrl: resolveMlsPublicUrls().historyUrl,
+      getToken,
+    });
+    const result = await delivery.deleteDevice(userId, deviceId);
+    if (result.status !== 'device_deleted') {
+      console.error(`[RESET] the server did not retire ${deviceId}: status=${result.status}`);
+      return 'not-declared';
+    }
+    console.log(
+      `[RESET] server retired ${deviceId} - groups=${result.groupsCleaned} ` +
+        `keyPackages=${result.keyPackagesDeleted} prekeys=${result.oneTimeKeyPackagesDeleted}`
+    );
+    return 'declared';
+  } catch (e) {
+    console.error('[RESET] could not tell the server this device is gone:', e);
+    return 'not-declared';
+  }
+}
+
+/**
+ * The whole of what "reset this device" means when a USER asks for it.
+ *
+ * The sibling of {@link wipeRevokedDevice}, which is the same thing when the SERVER asks - and the
+ * two used to share only their last step. The login page called `wipeDeviceToFactory` alone, so a
+ * reset told nobody: the session row stayed valid for its full lifetime (on the web the refresh
+ * cookie is HttpOnly, so `localStorage.clear()` cannot touch it and nothing else tried), and the
+ * account went on being served a device that had just deleted every private key it held.
+ *
+ * THE ORDER IS THE ONE `wipeRevokedDevice` USES, for its reasons: declare and revoke while the
+ * network context still exists, and only then delete what proves the identity. Reversed, there is
+ * no token left to authenticate the declaration with.
+ *
+ * Nothing here can block on the network. Both remote steps are best-effort and report what they
+ * could not do; the local wipe runs whatever they answered, because a user asking for this on a
+ * machine they are about to give away must not be left with the data because a server was down.
+ */
+export async function resetThisDeviceOnRequest(): Promise<DeviceResetOutcome> {
+  // READ BEFORE ANYTHING IS CLEARED, for the reason `recordedKeystoreAliases` is read first: both
+  // halves of this device's name live in the very store the wipe empties.
+  const { currentUserId } = await import('$lib/stores/userState.svelte');
+  const userId = currentUserId();
+  const deviceId = userId ? localStorage.getItem(`mls_device_id_${userId}`) : null;
+
+  const declaration = await declareDeviceGone(userId, deviceId);
+
+  // THE CREDENTIAL, WHICH THE WIPE BELOW CANNOT REACH. `clearAuth` revokes the session row server
+  // side and clears the copy this client carries itself; on the web the refresh cookie is HttpOnly,
+  // so a logout is the ONLY thing that ends it. Without this a "reset" device kept a live session
+  // for seven more days.
+  try {
+    const { clearAuth } = await import('$lib/stores/auth');
+    await clearAuth();
+  } catch (e) {
+    console.error('[RESET] could not revoke the session:', e);
+  }
+
+  const failures = await wipeDeviceToFactory();
+  return { declaration, failures };
+}

@@ -518,6 +518,53 @@ the change drops was only ever shown in a modal the app abandoned two seconds la
 user could read is lost. Pinned in `offlineUnlock.test.ts` by two guards on the handler's own text:
 the handover comes after the wipe, and it is not the retry seam.
 
+### The same erasure when the USER asks, and the three things the button never did
+
+`resetThisDeviceOnRequest` (`utils/deviceReset.ts`) is the sibling of `wipeRevokedDevice` above: the
+same operation, reached because the person holding the machine asked for it rather than because the
+server said so. The login page's "reset device" link is its only caller.
+
+It used to be `await wipeDeviceToFactory()` and nothing else, which is three silences at once.
+
+**It told nobody.** `wipeDeviceToFactory` is deliberately local - its docblock says signing out is a
+separate round trip so the wipe cannot be blocked by an unreachable server - and the revoked path
+pairs it with `clearAuth()` for that exact reason. The button paired it with nothing, so a reset
+device kept a live session row (on the web the refresh cookie is HttpOnly: `localStorage.clear()`
+cannot reach it, and nothing else tried) and stayed registered with the delivery service. Its
+published key packages remained claimable after every private key behind them had been deleted,
+which is the `NoMatchingKeyPackage` loop - and `BaseMlsService` already deregisters an abandoned
+device id for precisely this reason when it mints a fresh identity.
+
+**It asked nothing**, on a control that erases the machine.
+
+**And it discarded the answer.** `wipeDeviceToFactory` returns the steps that failed so that
+"callers that must know use the returned list"; this caller dropped it on the floor and set
+`loginError = ''`. A wipe blocked by a second open tab and a wipe that completed were the same
+thing on screen: nothing at all. That is what the user was reacting to when they said they
+suspected the button - there was no evidence it had run.
+
+The order is the revoked path's order, for the revoked path's reasons:
+
+1. read `(userId, deviceId)` - both live in the store the wipe empties, like the keystore aliases;
+2. `deleteDevice` on the delivery service - purges memberships, key packages, prekeys, push token
+   and queued messages, and denylists the OLD id (the wipe mints a new one, so the device that
+   signs back in is not the device that was banned);
+3. `clearAuth()` - while a credential still exists to authenticate with;
+4. `wipeDeviceToFactory()` - unconditionally, whatever the two remote steps answered. Someone
+   resetting a machine they are about to hand over must not keep the data because a server was down.
+
+**It does not remove the device's LEAF from any MLS group, and nothing at that layer could.**
+`purgeDeviceFootprint` deletes routing rows; only a member committing a Remove changes a ratchet
+tree. A reset device therefore still holds its seat, its leaf lifetime still runs out 84 days
+later, and an expired leaf refuses every `join_by_external_commit` into that group for everyone -
+see [mls-protocol](../../protocols/mls-protocol.md). That is the open item, not an oversight of
+this function.
+
+The caller reports three outcomes rather than one, because they are three different facts to the
+person holding the machine: steps that failed (named, so they know which tab to close), a local
+wipe that worked while the server was not told (nothing of theirs is left here, but their contacts
+will still be handed this device), and a clean reset.
+
 ## Mobile unlock flow (Tauri)
 
 Driven by `startLoginFlow()` in `components/layout/ChatBackgroundService.svelte`.
