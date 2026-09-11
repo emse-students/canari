@@ -251,27 +251,29 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    anybody prod is down**, and [host-updates](docs/wiki/infrastructure/host-updates.md).
    **PostgreSQL 15 -> 18 IS OWED, PRODUCTION INCLUDED** (the user's 2026-09-10 authorization is
    the one exception to read-only prod): verified dump, local proof, cutover with rollback; #309.
-7. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
+7. **P2 - THE LEGACY COTISATION CLAIM SHIPPED 2026-09-11 (#512) WITH AN EMPTY TABLE, AND AN EMPTY
+   TABLE LOOKS EXACTLY LIKE A BROKEN CLAIM.** What the load owes and the one assumption still
+   unmeasured: [backlog](docs/wiki/backlog.md). Mechanism: [cotisations](docs/wiki/cotisations.md).
+8. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
    [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
-8. **UX/RENDERING: THE EMOJI FONT, AND THE SERVER'S ENGLISH.** All decided items shipped, each
+9. **UX/RENDERING: THE EMOJI FONT, AND THE SERVER'S ENGLISH.** All decided items shipped, each
    asserted by its own test, numbers on [design-reference](docs/wiki/frontend/design-reference.md)
-   section 17. Two left: ONE bundled Noto Color Emoji everywhere, and the server's English prose -
-   **shop and associations CLOSED 2026-09-11 (70 sites, tree-wide guard, empty allowlist); 218
-   occurrences remain in chat, graine, settings, posts and admin** ([backlog](docs/wiki/backlog.md)).
-9. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
+   section 17. Two left: ONE bundled Noto Color Emoji everywhere, and the server's English prose,
+   whose remaining areas and counts are in [backlog](docs/wiki/backlog.md).
+10. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
    commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
-10. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
+11. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
    and audit in [backlog](docs/wiki/backlog.md).
-11. **P1 - A DEVICE ASKS FOR A WELCOME FOR EVER AND THE MEMBER ANSWERING RESETS THE HEALING ROW** -
+12. **P1 - A DEVICE ASKS FOR A WELCOME FOR EVER AND THE MEMBER ANSWERING RESETS THE HEALING ROW** -
     five halves fixed 2026-09-04, **ONE PROD MEASUREMENT OWED**; read with its sibling P2
     ([backlog](docs/wiki/backlog.md)).
-12. **TWELVE MESSAGES DROPPED, PERMANENT COMMIT-LOG HOLE AT EPOCH 121** - four defects shipped in
+13. **TWELVE MESSAGES DROPPED, PERMANENT COMMIT-LOG HOLE AT EPOCH 121** - four defects shipped in
     `v0.15.0`'s ancestors; RESIDUE and the 13:10 arm open ([backlog](docs/wiki/backlog.md)).
-13. **`dev.canari-emse.fr` IS THE PRE-RELEASE TARGET**
+14. **`dev.canari-emse.fr` IS THE PRE-RELEASE TARGET**
     ([dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy). Two open: a dev
     deploy cannot tell a broken CHANGE from an unreachable REGISTRY, and prod's deploy job is still
     inlined shell where `deploy-dev` exercises the script ([backlog](docs/wiki/backlog.md)).
-14. **FROM THE USER, AND FIRST CONTACT IS THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** The
+15. **FROM THE USER, AND FIRST CONTACT IS THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** The
     2026-09-08 PROD P1 is FIXED, UNSHIPPED, and owes ONE hardware run that nothing blocks now.
     **A reaction to your OWN message must notify by push, and NOTIF-15 asserts the opposite** -
     the row and the code both move, and which channel carries it is open ([backlog](docs/wiki/backlog.md)).
@@ -287,10 +289,9 @@ avec tous les composants stale corriges PARTOUT, bun a la place de npm PARTOUT e
 than re-deriving anything here, which is what made this section wrong twice.** Its "NOT TO BE
 RELITIGATED" paragraphs exist so a later session cannot "finish" the work by undoing a measurement.
 
-**What is left is JUDGEMENT, not migration** - MiGallery's lint warnings, the `resolve()` question
-three repos park differently, Tailwind class sorting on Portail-etu. **NestJS 12 is HALF DONE and
-needs nothing done to it**, the hold being an ASSERTION on the resolved tree rather than an ignore,
-so it ends unattended: [nestjs-framework](docs/wiki/services/nestjs-framework.md), the only copy.
+**What is left is JUDGEMENT, not migration**, and listing which ones HERE is the re-derivation that
+paragraph forbids. **NestJS 12 is HALF DONE and needs nothing done to it**, an ASSERTION rather than
+an ignore, so it ends unattended: [nestjs-framework](docs/wiki/services/nestjs-framework.md).
 
 **FIVE THINGS CANNOT BE PULLED FORWARD**, each carrying its blocking condition in
 [backlog](docs/wiki/backlog.md), the only copy: the MLS + Graine explanation owed to the USER, not to
