@@ -94,7 +94,7 @@
     try {
       products = await listAssociationProductsForManage(asso.id);
     } catch (e) {
-      productsError = e instanceof Error ? e.message : 'Error';
+      productsError = m.common_load_error();
     } finally {
       productsLoading = false;
     }
@@ -142,7 +142,7 @@
       resetProductForm();
       await loadProducts();
     } catch (e) {
-      productsError = e instanceof Error ? e.message : 'Error';
+      productsError = m.common_load_error();
     } finally {
       savingProduct = false;
     }
@@ -155,7 +155,7 @@
         p.id === product.id ? { ...p, isActive: !product.isActive } : p
       );
     } catch (e) {
-      productsError = e instanceof Error ? e.message : 'Error';
+      productsError = m.common_save_error();
     }
   }
 
@@ -244,7 +244,7 @@
       expandedProductSettingsId = null;
       editingMatrix = null;
     } catch (e) {
-      productsError = e instanceof Error ? e.message : 'Error';
+      productsError = m.common_save_error();
     } finally {
       savingProductSettings = null;
     }
@@ -262,7 +262,7 @@
       await deleteProduct(asso.id, product.id);
       products = products.filter((p) => p.id !== product.id);
     } catch (e) {
-      productsError = e instanceof Error ? e.message : 'Error';
+      productsError = m.common_delete_error();
     }
   }
 

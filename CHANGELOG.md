@@ -42,6 +42,28 @@ Two strings in the month grid were written into the code instead of the translat
 English reader saw them in French. The overflow row now uses the key the PDF export was already
 using for the same sentence.
 
+### Fixed - seventy screens in the shop and association pages answered in English
+
+The entry below fixed one of these and counted the rest. Seventy of them are now done: every screen
+under the shop and the association pages, including the whole management side - members, products,
+purchases, partnerships, forms, cotisations, delegation, documents and the calendar.
+
+They were all the same line. Each screen already had a French sentence written for the failure, and
+each then preferred whatever the server had said - which meant the French sentence only ever
+appeared when the failure was not an error at all, so in practice nobody saw it. Deleting that
+preference was the whole fix. Thirty-eight of them had no French sentence to fall back on either,
+just the word "Error" typed into the code, so those got the right one: could not load, could not
+save, could not delete.
+
+Two more were English written straight into the page rather than coming from the server - a failed
+document upload, and one that reported the storage error number - and both now read in French.
+
+**And nothing in those pages can do it again.** A check runs on every change: any screen under the
+shop or the association pages that shows the server's own sentence fails the build. It allows no
+exceptions today, and an exception that stops being needed fails too.
+
+The remaining 218 are in the chat, settings and admin pages, and each is the same deletion.
+
 ### Fixed - the shop answered in English when a partnership ran out of codes
 
 A student claiming a code they could not get was told "No codes left for this partnership", in the

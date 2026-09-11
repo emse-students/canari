@@ -121,7 +121,7 @@
       saveSuccess = true;
       setTimeout(() => (saveSuccess = false), 3500);
     } catch (err) {
-      settingsError = err instanceof Error ? err.message : m.common_save_error();
+      settingsError = m.common_save_error();
     } finally {
       saving = false;
     }
@@ -135,7 +135,7 @@
       onUpdated(await uploadAssociationLogo(asso.id, file));
       showCropper = false;
     } catch (err) {
-      settingsError = err instanceof Error ? err.message : m.asso_edit_logo_upload_error();
+      settingsError = m.asso_edit_logo_upload_error();
     } finally {
       logoBusy = false;
     }
@@ -153,7 +153,7 @@
     try {
       onUpdated(await deleteAssociationLogo(asso.id));
     } catch (err) {
-      settingsError = err instanceof Error ? err.message : 'Erreur';
+      settingsError = m.common_delete_error();
     } finally {
       logoBusy = false;
     }

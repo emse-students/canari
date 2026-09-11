@@ -189,7 +189,7 @@
         includeRejected: canEdit,
       });
     } catch (e) {
-      loadError = e instanceof Error ? e.message : 'Erreur';
+      loadError = m.common_load_error();
     } finally {
       loading = false;
     }
@@ -316,7 +316,7 @@
       // Also refresh the list so the card shows the new image
       await loadMonth();
     } catch (err) {
-      formError = err instanceof Error ? err.message : m.asso_calendar_image_upload_error();
+      formError = m.asso_calendar_image_upload_error();
     } finally {
       uploadingImage = false;
       input.value = '';
@@ -331,7 +331,7 @@
       formImageUrl = null;
       await loadMonth();
     } catch (err) {
-      formError = err instanceof Error ? err.message : 'Erreur';
+      formError = m.common_delete_error();
     } finally {
       uploadingImage = false;
     }
@@ -392,7 +392,7 @@
       dismissEventModal(false);
       await loadMonth();
     } catch (e) {
-      formError = e instanceof Error ? e.message : 'Erreur';
+      formError = m.common_save_error();
     } finally {
       saving = false;
     }
@@ -410,7 +410,7 @@
       await deleteAssociationCalendarEvent(associationId, id);
       await loadMonth();
     } catch (e) {
-      loadError = e instanceof Error ? e.message : 'Erreur';
+      loadError = m.common_delete_error();
     }
   }
 
@@ -419,7 +419,7 @@
       await validateAssociationCalendarEvent(associationId, id);
       await loadMonth();
     } catch (e) {
-      loadError = e instanceof Error ? e.message : 'Erreur';
+      loadError = m.common_generic_error_label();
     }
   }
 

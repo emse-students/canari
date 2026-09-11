@@ -35,7 +35,7 @@
       await disconnectLydiaConnect(asso.id);
       onDisconnected();
     } catch (err) {
-      error = err instanceof Error ? err.message : m.asso_lydia_disconnect_error();
+      error = m.asso_lydia_disconnect_error();
     } finally {
       disconnecting = false;
     }
@@ -82,7 +82,7 @@
       createdDashboardUrl = result.url;
       onAccountCreated(result.accountId);
     } catch (err) {
-      error = err instanceof Error ? err.message : m.common_save_error();
+      error = m.common_save_error();
     } finally {
       submitting = false;
     }

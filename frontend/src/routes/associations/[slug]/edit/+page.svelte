@@ -205,7 +205,7 @@
         return;
       }
     } catch (err) {
-      error = err instanceof Error ? err.message : m.asso_edit_load_error();
+      error = m.asso_edit_load_error();
     } finally {
       loading = false;
     }
@@ -256,7 +256,7 @@
       await navigateExternal(url);
     } catch (err) {
       console.error('[Payments] Failed to open dashboard:', err);
-      error = err instanceof Error ? err.message : m.asso_payments_dashboard_open_error();
+      error = m.asso_payments_dashboard_open_error();
     } finally {
       dashboardLoading = false;
     }
@@ -280,7 +280,7 @@
       connectAccountStatus = null;
     } catch (err) {
       console.error('[Payments] Failed to disconnect Connect account:', err);
-      error = err instanceof Error ? err.message : m.asso_payments_disconnect_error();
+      error = m.asso_payments_disconnect_error();
     } finally {
       disconnecting = false;
     }
@@ -312,7 +312,7 @@
       window.location.href = result.url;
     } catch (err) {
       console.error('[Payments] Failed to start onboarding:', err);
-      error = err instanceof Error ? err.message : m.asso_payments_onboarding_error();
+      error = m.asso_payments_onboarding_error();
       onboardingLoading = false;
     }
   }

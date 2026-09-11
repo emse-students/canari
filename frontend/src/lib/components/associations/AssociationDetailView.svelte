@@ -138,7 +138,7 @@
         following = false;
       }
     } catch (err) {
-      error = err instanceof Error ? err.message : m.common_not_found();
+      error = m.common_not_found();
     } finally {
       loading = false;
     }
@@ -168,7 +168,7 @@
         following = true;
       }
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Erreur';
+      error = m.common_generic_error_label();
     } finally {
       followLoading = false;
     }

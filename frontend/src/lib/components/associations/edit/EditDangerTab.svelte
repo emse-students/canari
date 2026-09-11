@@ -49,7 +49,7 @@
     try {
       onUpdated(await updateAssociation(asso.id, { archived: next }));
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Error';
+      error = m.common_save_error();
     } finally {
       archiving = false;
     }
@@ -67,7 +67,7 @@
       await deleteAssociation(asso.id);
       onDeleted();
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Error deleting';
+      error = m.common_delete_error();
     }
   }
 </script>

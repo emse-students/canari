@@ -1241,6 +1241,8 @@
   "asso_doc_quota_label": "Espace utilisé",
   "asso_doc_upload_encrypting": "Chiffrement et envoi…",
   "asso_doc_upload_button": "Ajouter un document",
+  "asso_doc_upload_error": "Envoi du document échoué",
+  "asso_doc_upload_storage_error": "Envoi échoué (erreur {status}) - vérifiez l'espace de stockage disponible",
   "asso_doc_no_documents": "Aucun document dans le coffre.",
   "asso_doc_protected_suffix": "protégé",
   "asso_doc_download_title": "Télécharger",

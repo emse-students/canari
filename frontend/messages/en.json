@@ -1220,6 +1220,8 @@
   "asso_doc_quota_label": "Storage used",
   "asso_doc_upload_encrypting": "Encrypting and uploading…",
   "asso_doc_upload_button": "Add a document",
+  "asso_doc_upload_error": "Document upload failed",
+  "asso_doc_upload_storage_error": "Upload failed (error {status}) - check the available storage space",
   "asso_doc_no_documents": "No documents in the vault.",
   "asso_doc_protected_suffix": "protected",
   "asso_doc_download_title": "Download",

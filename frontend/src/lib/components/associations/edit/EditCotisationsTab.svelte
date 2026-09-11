@@ -227,7 +227,7 @@
       rosterTotal = pageResult.total;
       rosterHasMore = pageResult.hasMore;
     } catch (e) {
-      rosterError = e instanceof Error ? e.message : m.asso_cotisations_load_error();
+      rosterError = m.asso_cotisations_load_error();
       console.error('[Cotisations] Failed to load roster:', e);
     } finally {
       rosterLoading = false;
@@ -253,7 +253,7 @@
       });
       asso = updated;
     } catch (e) {
-      activateError = e instanceof Error ? e.message : m.asso_cotisations_activate_error();
+      activateError = m.asso_cotisations_activate_error();
       console.error('[Cotisations] Failed to enable cotisation:', e);
     } finally {
       activating = false;
@@ -278,7 +278,7 @@
       asso = updated;
       editingConfig = false;
     } catch (e) {
-      configError = e instanceof Error ? e.message : m.asso_cotisations_config_save_error();
+      configError = m.asso_cotisations_config_save_error();
       console.error('[Cotisations] Failed to save config:', e);
     } finally {
       configSaving = false;
@@ -296,7 +296,7 @@
         .filter((p) => p.type === 'membership')
         .sort((a, b) => (a.variantKey === null ? -1 : 1) - (b.variantKey === null ? -1 : 1));
     } catch (e) {
-      tiersError = e instanceof Error ? e.message : m.asso_cotisations_membership_load_error();
+      tiersError = m.asso_cotisations_membership_load_error();
       console.error('[Cotisations] Failed to load tier products:', e);
     } finally {
       tiersLoading = false;
@@ -352,7 +352,7 @@
       resetAddTierForm();
       await Promise.all([loadTierProducts(), loadCotisationTiers()]);
     } catch (e) {
-      tiersError = e instanceof Error ? e.message : m.asso_cotisations_tier_create_error();
+      tiersError = m.asso_cotisations_tier_create_error();
       console.error('[Cotisations] Failed to create tier:', e);
     } finally {
       addingTier = false;
@@ -420,7 +420,7 @@
       const updated = await updateProduct(asso.id, product.id, { isActive: !product.isActive });
       tierProducts = tierProducts.map((p) => (p.id === product.id ? updated : p));
     } catch (e) {
-      tiersError = e instanceof Error ? e.message : m.asso_cotisations_tier_active_error();
+      tiersError = m.asso_cotisations_tier_active_error();
       console.error('[Cotisations] Failed to toggle tier availability:', e);
     } finally {
       togglingTierId = null;
@@ -470,7 +470,7 @@
       // roster's Forfait column are stale until refetched.
       await Promise.all([loadCotisationTiers(), loadRoster(0, true)]);
     } catch (e) {
-      tiersError = e instanceof Error ? e.message : m.asso_cotisations_membership_save_error();
+      tiersError = m.asso_cotisations_membership_save_error();
       console.error('[Cotisations] Failed to save tier:', e);
     } finally {
       savingTierId = null;
@@ -495,7 +495,7 @@
       tierProducts = tierProducts.filter((p) => p.id !== product.id);
       await loadCotisationTiers();
     } catch (e) {
-      tiersError = e instanceof Error ? e.message : m.asso_cotisations_tier_delete_error();
+      tiersError = m.asso_cotisations_tier_delete_error();
       console.error('[Cotisations] Failed to delete tier:', e);
     }
   }
@@ -529,7 +529,7 @@
       await grantCotisant(asso.id, item.userId, variantKey || null);
       await loadRoster(0, true);
     } catch (e) {
-      rosterError = e instanceof Error ? e.message : m.asso_cotisations_tier_change_error();
+      rosterError = m.asso_cotisations_tier_change_error();
       console.error('[Cotisations] Failed to switch tier:', e);
       // Put the <select> back on the tier actually held - the change never happened.
       rosterItems = [...rosterItems];
@@ -551,7 +551,7 @@
       rosterItems = rosterItems.filter((i) => i.tagId !== item.tagId);
       rosterTotal = Math.max(0, rosterTotal - 1);
     } catch (e) {
-      rosterError = e instanceof Error ? e.message : m.asso_cotisations_load_error();
+      rosterError = m.asso_cotisations_load_error();
       console.error('[Cotisations] Failed to revoke tag:', e);
     }
   }
@@ -568,7 +568,7 @@
       addUserId = '';
       await loadRoster(0, true);
     } catch (e) {
-      addError = e instanceof Error ? e.message : m.asso_cotisations_add_error();
+      addError = m.asso_cotisations_add_error();
       console.error('[Cotisations] Failed to grant cotisant:', e);
     } finally {
       adding = false;
@@ -582,7 +582,7 @@
     try {
       await exportCotisants(asso.id);
     } catch (e) {
-      exportError = e instanceof Error ? e.message : m.asso_cotisations_export_error();
+      exportError = m.asso_cotisations_export_error();
       console.error('[Cotisations] Failed to export roster:', e);
     } finally {
       exporting = false;

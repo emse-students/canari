@@ -134,7 +134,7 @@
         `[Vault] ${stats.documents.length} documents, ${stats.usedBytes}/${stats.quotaBytes} bytes`
       );
     } catch (e) {
-      error = e instanceof Error ? e.message : m.common_load_error();
+      error = m.common_load_error();
     } finally {
       loading = false;
     }
@@ -236,9 +236,11 @@
     } catch (e: unknown) {
       console.error('[Vault] Upload error:', e);
       if (e && typeof e === 'object' && 'status' in e) {
-        uploadError = `Error ${(e as { status: number }).status} - check available storage space`;
+        uploadError = m.asso_doc_upload_storage_error({
+          status: String((e as { status: number }).status),
+        });
       } else {
-        uploadError = e instanceof Error ? e.message : 'Upload error';
+        uploadError = m.asso_doc_upload_error();
       }
     } finally {
       uploading = false;
@@ -257,7 +259,7 @@
     performDownload(doc)
       .catch((e) => {
         console.error('[Vault] Download error:', e);
-        error = e instanceof Error ? e.message : 'Download error';
+        error = m.common_download_failed();
       })
       .finally(() => {
         downloadingId = null;
@@ -342,7 +344,7 @@
       stats = await listDocuments(associationId);
     } catch (e) {
       console.error('[Vault] Rename error:', e);
-      renameError = e instanceof Error ? e.message : m.common_generic_error_label();
+      renameError = m.common_generic_error_label();
     } finally {
       renameBusy = false;
     }
@@ -375,7 +377,7 @@
           ),
         };
       }
-      error = e instanceof Error ? e.message : m.common_generic_error_label();
+      error = m.common_generic_error_label();
     } finally {
       visibilityBusyId = null;
     }
@@ -394,7 +396,7 @@
       console.log(`[Vault] Document deleted: ${doc.id}`);
       stats = await listDocuments(associationId);
     } catch (e) {
-      error = e instanceof Error ? e.message : m.common_delete_error();
+      error = m.common_delete_error();
     }
   }
 </script>
