@@ -11,6 +11,8 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-09-11
+
 ### Fixed - one idiom for removing comments had six copies, and the extraction meant to end that was never enforced
 
 Internal, and it is the same defect a previous entry in this file already claimed to have fixed.
