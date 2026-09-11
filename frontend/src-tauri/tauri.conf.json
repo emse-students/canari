@@ -1,6 +1,6 @@
 {
   "productName": "Canari",
-  "version": "0.17.1",
+  "version": "0.17.2",
   "identifier": "fr.emse.canari",
   "build": {
     "beforeDevCommand": "bun run dev",
@@ -104,7 +104,7 @@
       "developmentTeam": "4CLNB8SR6L"
     },
     "android": {
-      "versionCode": 1700199
+      "versionCode": 1700201
     }
   }
 }
