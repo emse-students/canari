@@ -32,6 +32,34 @@ nothing else, because both call sites hold the client as `any` - `loadAndInitWas
 is now `Pick`ed from the generated `WasmMlsClient`, so the next divergence is a compile error:
 restoring the Number fails `bun run check` with one error, which is how this was verified.
 
+### Fixed - "reset device" erased the machine, told no server, and reported nothing
+
+The login page's reset button was `await wipeDeviceToFactory()` and nothing else. That function is
+deliberately local - signing out is a separate round trip, so the wipe cannot be blocked by an
+unreachable server - and the revoked-device path pairs it with `clearAuth()` for exactly that
+reason. The button paired it with nothing.
+
+So a reset device kept a live session row, which on the web cannot be ended any other way: the
+refresh cookie is HttpOnly and `localStorage.clear()` does not reach it. It also stayed registered
+with the delivery service, its published key packages still claimable after every private key
+behind them had been deleted - the `NoMatchingKeyPackage` loop that `BaseMlsService` already avoids
+by deregistering an abandoned device id when it mints a fresh identity.
+
+And it reported nothing. `wipeDeviceToFactory` returns the steps that failed so a caller can say
+what survived; this one discarded the list and cleared the login error. A wipe blocked by a second
+open tab looked exactly like a wipe that finished: a blank screen either way, which is the only
+evidence the user ever had that the control had run at all.
+
+`resetThisDeviceOnRequest` is now the whole operation, in the revoked path's order and for its
+reasons: name the device to the delivery service and revoke the session while a credential still
+exists, then wipe unconditionally - someone resetting a machine they are about to hand over must
+not keep the data because a server was down. The control asks first, and reports three outcomes
+rather than one, because they are three different facts: named steps that failed, a local wipe that
+worked while the server was not told, and a clean reset.
+
+What it still cannot do is remove the device's LEAF from any MLS group - only a member committing a
+Remove changes a ratchet tree.
+
 ## [0.17.1] - 2026-09-11
 
 ### Added - the cotisations two legacy estates recorded, granted when their holder signs in
