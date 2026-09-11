@@ -60,6 +60,38 @@ worked while the server was not told, and a clean reset.
 What it still cannot do is remove the device's LEAF from any MLS group - only a member committing a
 Remove changes a ratchet tree.
 
+### Fixed - one member who stopped running closed a conversation to everybody else
+
+A leaf node in an MLS ratchet tree carries a lifetime, and ours last 84 days. Nothing in this
+product ever updates a leaf: the one built from a device's KeyPackage is the one that stays in the
+tree until somebody commits a Remove. So the leaf of a device that was wiped, reinstalled or simply
+abandoned keeps sitting there, and on day 85 it elapses.
+
+RFC 9420 7.3 recommends validating those lifetimes when a ratchet tree is IMPORTED, and OpenMLS did
+so on BOTH paths a device takes when it holds no state for a group - `join_by_external_commit` and
+the Welcome. From that day, every other member was refused the group, permanently, by an error
+naming a leaf they have no power over: `LeafNodeValidation(Lifetime(NotCurrent))`. Measured on
+production on 2026-09-11, on a conversation whose other participants were all present and healthy:
+`Lifetime { not_before: 1781347172, not_after: 1788608372 }`, elapsed six days earlier.
+
+The two paths are the only two ways out of a missing group, so the second one was the repair for the
+first - and the same dead leaf closed it. Fixing only the half whose failure had been read in
+somebody's console would have left the other to be found the same way.
+
+Both now import the tree with `skip_lifetime_validation`. What that drops is the re-litigation,
+against a clock that has moved, of an admission decision the group took epochs ago; what decides
+whether stale key material may ENTER a group is untouched, since OpenMLS forces verification on
+every Add. `frontend/mls-core/tests/expired_leaf_in_tree.rs` pins the pair - remove either skip and
+two of its three tests fail with the production error.
+
+OpenMLS acknowledges the problem at the check itself and exposes the builder for it (openmls#1810);
+RFC 9420 recommends the check and admits in the same breath that it causes this.
+
+**This is the far end of the "Reinitialiser l'appareil" defect fixed beside it.** A reset device
+leaves its leaf in every group it was in, nothing ever updates it, and 84 days later that leaf
+starts refusing everybody. Purging a device's footprint deletes routing rows; only a member
+committing a Remove changes a ratchet tree.
+
 ## [0.17.1] - 2026-09-11
 
 ### Added - the cotisations two legacy estates recorded, granted when their holder signs in
