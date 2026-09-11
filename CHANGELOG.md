@@ -52,6 +52,16 @@ always the answer to "why has this person not got their tag". Its third tab is t
 claim cannot decide alone: two people whose name and promo normalize to a single key, where the
 first to sign in takes the cotisation and the rest stay stuck until a human looks.
 
+### Fixed - the GIF toggle sat lower than every other control in the composer
+
+The composer row was `align-items: flex-end`, tuned so the text field's bottom landed level with the
+icon buttons beside it - correct while every sibling shared the same fixed box. The GIF toggle does
+not: it carries `.chat-composer-icon-button` without `.ui-icon-button`, so its box is shorter, and
+aligning a shorter box by its BOTTOM puts its glyph below the others' centre line. `center` aligns
+each sibling on its own middle whatever its height, which is what the uniform case was already doing
+by accident. The one-line field's height floor stays where it was; it now decides only that the
+placeholder sits on the same line as the real text, which is the defect it was actually written for.
+
 ## [0.17.0] - 2026-09-11
 
 ### Fixed - one idiom for removing comments had six copies, and the extraction meant to end that was never enforced
