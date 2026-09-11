@@ -36,7 +36,7 @@
       associations = all;
       myAssociations = mine;
     } catch (err) {
-      error = err instanceof Error ? err.message : m.assoc_list_load_error_fallback();
+      error = m.assoc_list_load_error_fallback();
     } finally {
       loading = false;
     }

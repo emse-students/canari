@@ -64,7 +64,7 @@
     try {
       cards = await listAssociationPartnershipsForManage(asso.id);
     } catch (e) {
-      cardsError = e instanceof Error ? e.message : 'Error';
+      cardsError = m.common_load_error();
     } finally {
       cardsLoading = false;
     }
@@ -90,7 +90,7 @@
       const updated = await updatePartnershipCard(asso.id, card.id, { isActive: !card.isActive });
       cards = cards.map((c) => (c.id === card.id ? { ...c, ...updated } : c));
     } catch (e) {
-      cardsError = e instanceof Error ? e.message : 'Error';
+      cardsError = m.common_save_error();
     }
   }
 
@@ -107,7 +107,7 @@
       cards = cards.filter((c) => c.id !== card.id);
       if (editing === card.id) editing = null;
     } catch (e) {
-      cardsError = e instanceof Error ? e.message : 'Error';
+      cardsError = m.common_delete_error();
     }
   }
 

@@ -5947,6 +5947,26 @@ to shorten the wait - a server-side claim record, which would only ever help bun
 exists, or a deliberate horizon prune on the test fixture - the second was taken. It was the user's
 to take rather than an agent's, because the device holds real groups.
 
+**AND THE DECISION HAS NO MECHANISM, WHICH IS WHAT 2026-09-11 FOUND WHEN IT WENT TO RUN IT.** The
+choice above was recorded as though the doing were clerical. It is not. The only thing that deletes
+these bundles is `MlsManager::prune_key_packages_expired_at(now_secs)`, and a "horizon prune" means
+calling it with an instant ~100 days ahead - which the tests do and **nothing in the product can**.
+There is no debug surface to hang it on either: `VITE_ENABLE_DEV_ROUTES` survives only in generated
+ambient types, no route reads it, and `commands/mls.rs` carries no `cfg(debug_assertions)` command.
+So there are exactly two ways forward, and neither is a click:
+
+| Way | What it costs | What it leaves behind |
+| --- | --- | --- |
+| A dev-gated Tauri command that prunes at a caller-supplied instant | a DESTRUCTIVE control shipped into the product for one phone, against *one-off actions go to the user* and against *a destructive control needs an allowlist of what it may touch* | a permanent hazard, gated by a flag nothing currently reads |
+| Ship retention rule 3 - keep published + last-resort + the K most recently minted | the safety ARGUMENT the table below demands, re-measured | the population fixed, the test phone pruning itself on next load, and no manual step at all |
+
+**THE SECOND IS THE ONE WORTH BUILDING, AND IT IS BLOCKED ON A NUMBER NOBODY HOLDS.** Its safety is
+"K mints cannot happen inside a Welcome's delivery window", and the delivery window is the interval
+between a peer CLAIMING a prekey and the joiner processing the Welcome built on it. Nothing records
+it: `resolveKeyPackagePayloadForDevice` DELETES the row as it hands it out, so the claim leaves no
+trace to measure from. **That measurement is the next step for this entry** - and it is a server-side
+change (record the claim instant, or the Welcome's own age at delivery), not a device one.
+
 **WHAT THE PRUNE RISKS, WRITTEN BEFORE IT IS RUN AND NOT AFTER.** The paragraph above is the risk:
 nothing can prove a deleted bundle was not the one a pending Welcome needs. The user chose the
 direct prune over the inventory-first variant that was offered. That does not remove the risk, so
@@ -6963,7 +6983,7 @@ as long as it took to run the real gate. Move the file.
 
 ## Localisation
 
-### P2 - 184 screens still render the server's English prose to a French user (measured 2026-09-10)
+### P2 - 218 places still render the server's English prose to a French user (re-measured 2026-09-11)
 
 **How it was found.** The user hit one of them: *"En passant, 'No codes left for this partnership'
 est non traduite."* That sentence is thrown by `partnerships.service.ts` and was rendered verbatim
@@ -6991,6 +7011,47 @@ service's `DEVICE_REVOKED` / `DEVICE_LIMIT_REACHED` is the precedent and the sha
 **What would close it**: a guard of the same kind as `socialApiError.test.ts` but tree-wide, which
 cannot be turned on until the codes exist - so the honest order is endpoint by endpoint, most-used
 screens first, with the guard's allowlist shrinking as they land.
+
+#### 218 OCCURRENCES LEFT IN CHAT, GRAINE, SETTINGS, POSTS AND ADMIN - AND THE GUARD NEVER NEEDED THE CODES
+
+**2026-09-11.** The paragraph above is wrong in one load-bearing respect, and finding out cost
+nothing: **not showing English needs nothing from the server.** Distinguishing one refusal from
+another does - that is a code at the THROW, per endpoint, and it is still owed. But every one of
+these sites already declared the right answer and then threw it away:
+
+```
+uploadError = e instanceof Error ? e.message : m.asso_cotisations_load_error();
+```
+
+`request()` throws with the server's text, so the ternary picks English **every time the call
+reaches the server at all**, and the localized half is dead code that runs only for a non-`Error`
+throw. Deleting the preference is the whole fix, and it needs no endpoint to change.
+
+**Seventy sites in `components/associations`, `components/shop`, `routes/associations` and
+`routes/shop`**, in two passes that differ in what they cost:
+
+| shape | sites | what it took |
+| --- | --- | --- |
+| fallback already a Paraglide call | 30 | a deletion, scripted - the string is the one the file already declared |
+| fallback a raw literal (`'Error'`, `'Erreur'`, `'Upload error'`, `'Download error'`) | 38 | the operation read off the awaited call above it, mapped to `common_load_error` / `common_save_error` / `common_delete_error` / `common_generic_error_label` |
+| an English TEMPLATE literal carrying a status code | 1 | `asso_doc_upload_storage_error`, with `{status}` as a parameter |
+| a document upload with no key at all | 1 | `asso_doc_upload_error` |
+
+The raw literals were **two violations in one line** - the server's English when the throw was an
+`Error`, and an untranslated inline literal when it was not.
+
+**`src/lib/associations/serverProse.test.ts` is the tree-wide guard and its allowlist is EMPTY.** It
+walks all four trees, fails any file whose code (comments stripped, so the rule stays documentable
+beside itself) still matches `instanceof Error ? x.message`, and asserts per-tree that it found
+files at all - a floor on the total would not catch a path typo, because three healthy trees clear
+any floor the fourth one's absence leaves. An allowlist entry that stops offending fails too.
+
+**WHAT IS LEFT, AND THE COUNT WAS RE-MEASURED RATHER THAN CARRIED FORWARD.** The 185 above came from
+one predicate; a broader one over `frontend/src` finds **288** occurrences of the ternary, of which
+~118 assign to an error state a screen renders and 15 sit inside a `Log`/`console` call and are
+correctly dev-facing. **218 remain outside the two trees closed here** - chat (`lib/utils/chat`, 13
+files), graine (7), settings, posts, admin. Each is the same deletion, and each new tree extends
+`TREES` in the guard rather than needing a new file. The CODES are the separate, still-open half.
 
 ## Infrastructure
 

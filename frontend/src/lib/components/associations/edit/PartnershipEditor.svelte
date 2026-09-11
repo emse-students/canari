@@ -99,7 +99,7 @@
     claimsLoading = true;
     listPartnershipClaims(asso.id, card.id)
       .then((rows) => (claims = rows))
-      .catch((e) => (error = e instanceof Error ? e.message : 'Error'))
+      .catch((e) => (error = m.common_load_error()))
       .finally(() => (claimsLoading = false));
   });
 
@@ -155,7 +155,7 @@
         onSaved({ ...created, claimedCount: 0, totalCodes: 0 }, true);
       }
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Error';
+      error = m.common_save_error();
     } finally {
       saving = false;
     }
@@ -175,7 +175,7 @@
       codesPaste = '';
       onSaved({ ...card, totalCodes }, false);
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Error';
+      error = m.common_save_error();
     } finally {
       savingCodes = false;
     }

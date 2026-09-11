@@ -96,7 +96,7 @@
         await navigateExternal(res.checkoutUrl);
       }
     } catch (err) {
-      showToast(err instanceof Error ? err.message : m.shop_payment_error());
+      showToast(m.shop_payment_error());
     } finally {
       checkingOut = false;
     }

@@ -35,7 +35,7 @@
       });
       await goto(`/associations/${asso.slug}`);
     } catch (err) {
-      error = err instanceof Error ? err.message : m.assoc_new_error_fallback();
+      error = m.assoc_new_error_fallback();
     } finally {
       submitting = false;
     }

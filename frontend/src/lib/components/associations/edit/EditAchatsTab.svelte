@@ -60,7 +60,7 @@
       products = prods;
       purchases = rows;
     } catch (e) {
-      purchasesError = e instanceof Error ? e.message : 'Error';
+      purchasesError = m.common_load_error();
     } finally {
       purchasesLoading = false;
     }
@@ -100,7 +100,7 @@
       grantAmountEuros = '';
       await loadPurchases();
     } catch (e) {
-      purchasesError = e instanceof Error ? e.message : 'Error';
+      purchasesError = m.common_load_error();
     } finally {
       grantingProduct = false;
     }

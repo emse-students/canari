@@ -62,7 +62,7 @@
       newMemberRole = 'Membre';
       newMemberPermissions = 0;
     } catch (err) {
-      memberError = err instanceof Error ? err.message : 'Erreur';
+      memberError = m.common_save_error();
     } finally {
       addingMember = false;
     }
@@ -73,7 +73,7 @@
       await removeMember(asso.id, targetId);
       members = members.filter((m) => m.userId !== targetId);
     } catch (err) {
-      memberError = err instanceof Error ? err.message : 'Erreur';
+      memberError = m.common_delete_error();
     }
   }
 
@@ -95,7 +95,7 @@
           : m
       );
     } catch (err) {
-      memberError = err instanceof Error ? err.message : 'Erreur';
+      memberError = m.common_save_error();
     }
   }
 

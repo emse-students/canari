@@ -231,9 +231,10 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    three commands a run owes before any of it is believed are in the campaign section below.
    PIN's four rows change a PIN or restart a browser, hence last; HEAL-NEW's rung redesign is open
    on a clean pass ([backlog](docs/wiki/backlog.md)).
-2. **P1 - THE PREKEY WEIGHT: BOTH CAUSES FIXED 2026-09-09, AND THE TEST PHONE'S HORIZON IS TO BE
-   PRUNED** rather than waited out to late October (user, 2026-09-10), which UNBLOCKS NOTIF-1b.
-   What the prune risks and the evidence it must log FIRST are in [backlog](docs/wiki/backlog.md).
+2. **P1 - THE PREKEY WEIGHT: BOTH CAUSES FIXED 2026-09-09; THE PRUNE WAS DECIDED 2026-09-10 AND HAS
+   NO MECHANISM** - nothing in the product can hand `prune_key_packages_expired_at` an instant, and
+   the retention rule that would avoid a destructive one-off is blocked on ONE unmeasured number:
+   how long a Welcome may sit between the claim and the join ([backlog](docs/wiki/backlog.md)).
 3. **P1 - a PLACEHOLDER held a member's seat**; only a member's CLIENT can say whether a LEAF is
    left in the MLS tree and **NOTHING HAS** - the three identities cited here as that evidence were
    this campaign's OWN mention fixtures, named 2026-09-07 ([backlog](docs/wiki/backlog.md)).
@@ -254,8 +255,9 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
 8. **UX/RENDERING: THE EMOJI FONT, AND THE SERVER'S ENGLISH.** All decided items shipped, each
    asserted by its own test, numbers on [design-reference](docs/wiki/frontend/design-reference.md)
-   section 17. Two left: ONE bundled Noto Color Emoji everywhere, and **sweeping ALL 184 screens
-   that still show the server's English prose** (user, 2026-09-10) ([backlog](docs/wiki/backlog.md)).
+   section 17. Two left: ONE bundled Noto Color Emoji everywhere, and the server's English prose -
+   **shop and associations CLOSED 2026-09-11 (70 sites, tree-wide guard, empty allowlist); 218
+   occurrences remain in chat, graine, settings, posts and admin** ([backlog](docs/wiki/backlog.md)).
 9. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
    commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
 10. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract

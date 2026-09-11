@@ -77,7 +77,7 @@
       children = kids;
       associations = assos;
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Error';
+      error = m.common_load_error();
     } finally {
       loading = false;
     }
@@ -91,7 +91,7 @@
       delegation = await requestPaymentDelegation(asso.id, selectedParentId);
       selectedParentId = '';
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Error';
+      error = m.common_generic_error_label();
     } finally {
       requesting = false;
     }
@@ -103,7 +103,7 @@
     try {
       delegation = await cancelPaymentDelegation(asso.id);
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Error';
+      error = m.common_generic_error_label();
     } finally {
       cancelling = false;
     }
@@ -121,7 +121,7 @@
       await approveDelegatedChild(asso.id, childId);
       children = await listDelegatedChildren(asso.id);
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Error';
+      error = m.common_load_error();
     } finally {
       setChildBusy(childId, false);
     }
@@ -135,7 +135,7 @@
       children = await listDelegatedChildren(asso.id);
       if (expandedChildId === childId) expandedChildId = null;
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Error';
+      error = m.common_load_error();
     } finally {
       setChildBusy(childId, false);
     }
@@ -153,7 +153,7 @@
     try {
       childPurchases = { ...childPurchases, [childId]: await listChildPurchases(asso.id, childId) };
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Error';
+      error = m.common_load_error();
       expandedChildId = null;
     } finally {
       childLoading = null;
@@ -166,7 +166,7 @@
     try {
       await exportChildPurchases(asso.id, childId);
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Error';
+      error = m.common_generic_error_label();
     } finally {
       setChildBusy(childId, false);
     }

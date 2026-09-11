@@ -59,7 +59,7 @@
       );
       pendingCash = cashMap;
     } catch (e) {
-      formsError = e instanceof Error ? e.message : 'Error';
+      formsError = m.common_load_error();
     } finally {
       formsLoading = false;
     }
@@ -73,7 +73,7 @@
         [formId]: pendingCash[formId].filter((s) => s.id !== subId),
       };
     } catch (e) {
-      formsError = e instanceof Error ? e.message : 'Error';
+      formsError = m.common_generic_error_label();
     }
   }
 
@@ -93,7 +93,7 @@
         [formId]: pendingCash[formId].filter((s) => s.id !== subId),
       };
     } catch (e) {
-      formsError = e instanceof Error ? e.message : 'Error';
+      formsError = m.common_generic_error_label();
     }
   }
 
@@ -118,7 +118,7 @@
       await deleteForm(form.id);
       forms = forms.filter((f) => f.id !== form.id);
     } catch (e) {
-      formsError = e instanceof Error ? e.message : 'Error';
+      formsError = m.common_delete_error();
     } finally {
       deletingId = null;
     }

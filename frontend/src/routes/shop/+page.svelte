@@ -85,7 +85,7 @@
       partnerships = partners;
       assos.forEach((a) => associations.set(a.id, a));
     } catch (err) {
-      error = err instanceof Error ? err.message : m.shop_load_error_fallback();
+      error = m.shop_load_error_fallback();
     } finally {
       loading = false;
     }
