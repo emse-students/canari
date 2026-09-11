@@ -519,12 +519,19 @@ jobs:
       # MinIO speaks the S3 API that `StorageService` uses, and stands in for Garage. It is started
       # with `docker run` rather than declared as a service container because the image needs a
       # command (`server /data`) and `services:` cannot set one.
+      #
+      # THE REGISTRY IS quay.io AND THE TAG NAMES A RELEASE, both since 2026-09-11. `minio/minio` on
+      # Docker Hub stopped existing - the Hub API answers `object not found` for the repository
+      # itself, and the pull reports `pull access denied ... may require 'docker login'`, which
+      # reads like a credentials problem and is not one. quay.io is MinIO's own registry and carries
+      # the same releases. `:latest` is what let this break silently, so the tag is pinned: a boot
+      # probe that pulls a moving tag depends on something nothing here declares or reviews.
       - name: Start an S3 endpoint for media-service
         run: |
           docker run -d --name minio -p 9000:9000 \
             -e MINIO_ROOT_USER=boot-probe \
             -e MINIO_ROOT_PASSWORD=boot-probe-secret \
-            minio/minio:latest server /data
+            quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
           # Wait on the endpoint ANSWERING, not on a clock. MinIO's liveness route needs no
           # credentials, and a 403 would still prove the server is up - so any HTTP reply ends it.
           for i in $(seq 1 30); do
