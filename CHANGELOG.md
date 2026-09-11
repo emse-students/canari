@@ -11,6 +11,8 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+## [0.17.2] - 2026-09-11
+
 ### Fixed - no web client published a key package, and the type that would have said so was written by hand
 
 `existing_last_resort_key_package` takes a Rust `u64`, which wasm-bindgen marshals through
