@@ -6,13 +6,15 @@ import { mintKeyPackages } from './keyPackages';
  * the connection layer", and the connection layer called the service directly. Its only caller was
  * this file.
  */
-function makeClient(held?: Uint8Array | null) {
+function makeClient(held?: Uint8Array) {
   return {
     generate_last_resort_key_package: vi.fn(() => new Uint8Array([0xfa])),
     generate_key_packages: vi.fn((n: number) =>
       Array.from({ length: n }, (_, i) => new Uint8Array([i]))
     ),
-    existing_last_resort_key_package: vi.fn((_now: number) => held ?? null),
+    // `bigint`, like the generated binding - a mock that accepted a Number is what let the defect
+    // below through, since it is the only client `mintKeyPackages` is ever type-checked against.
+    existing_last_resort_key_package: vi.fn((_now: bigint) => held),
   };
 }
 
@@ -63,32 +65,31 @@ describe('mintKeyPackages republishes the fallback it already holds', () => {
   });
 
   it('mints when nothing valid is held, so rotation is the package lifetime and not the socket', () => {
-    const client = makeClient(null);
+    const client = makeClient(undefined);
     const { fallback } = mintKeyPackages(client, 0);
 
     expect(client.generate_last_resort_key_package).toHaveBeenCalledTimes(1);
     expect(fallback).toEqual(new Uint8Array([0xfa]));
   });
 
-  it('asks with a SECOND-resolution clock, because a lifetime is expressed in seconds', () => {
+  it('asks with a BigInt, because the binding takes a u64 and a Number THROWS', () => {
     const client = makeClient(new Uint8Array([1]));
     mintKeyPackages(client, 0);
 
     const asked = client.existing_last_resort_key_package.mock.calls[0][0];
-    expect(Number.isInteger(asked)).toBe(true);
-    // Milliseconds here would put every query ~1971 years in the future and reject every held
-    // package as expired, which fails safe but reinstates the remint this exists to remove.
-    expect(Math.abs(asked - Date.now() / 1000)).toBeLessThan(5);
+    // THE ASSERTION THAT USED TO BE HERE WAS `Number.isInteger(asked)`, and it is why the defect
+    // shipped: it demanded of the clock exactly the type the binding refuses. wasm-bindgen marshals
+    // `u64` through `BigInt.asUintN`, whose `ToBigInt` throws a TypeError on any Number - so every
+    // web key-package publication died from #458 until this test was corrected with the call.
+    expect(typeof asked).toBe('bigint');
+    // And still SECONDS: milliseconds would put every query ~1971 years in the future and reject
+    // every held package as expired, which fails safe but reinstates the remint this exists to
+    // remove.
+    expect(Math.abs(Number(asked) - Date.now() / 1000)).toBeLessThan(5);
   });
 
-  it('still mints for a client that predates the query, which is the old behaviour and not a broken one', () => {
-    const client = {
-      generate_last_resort_key_package: vi.fn(() => new Uint8Array([0xfa])),
-      generate_key_packages: vi.fn(() => []),
-    };
-    const { fallback } = mintKeyPackages(client, 0);
-
-    expect(client.generate_last_resort_key_package).toHaveBeenCalledTimes(1);
-    expect(fallback).toEqual(new Uint8Array([0xfa]));
-  });
+  // `mintKeyPackages` used to call the query optionally, and a test asserted that a client without
+  // it simply minted - "the old behaviour rather than a broken one". Both are gone: the method is
+  // not optional on the generated client, ONE `WasmMlsClient` serves both web call sites, and a
+  // fallback for a client that cannot exist is a path that only ever hid a signature.
 });

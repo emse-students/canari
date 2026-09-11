@@ -11,6 +11,27 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - no web client published a key package, and the type that would have said so was written by hand
+
+`existing_last_resort_key_package` takes a Rust `u64`, which wasm-bindgen marshals through
+`BigInt.asUintN`; `ToBigInt` throws a TypeError on any Number. `mintKeyPackages` handed it
+`Math.floor(Date.now() / 1000)`, so from #458 every web key-package publication threw
+`can't convert <secs> to BigInt` - the worker and the main-thread path it falls back to alike,
+because both mint in that one helper. A device therefore published nothing, and the two paths that
+need a key package both stop there: a peer has none to claim, and the device's own
+`welcome_request` is deferred to a next connection that fails identically. Observed on prod
+2026-09-11, one account whose two devices were locked out of two conversations.
+
+The fallback is the tell. It was reached, logged, and failed for the reason the primary path did -
+a fallback is a signal, never a path.
+
+Nothing could see it. `mintKeyPackages` is type-checked against a hand-written interface and
+nothing else, because both call sites hold the client as `any` - `loadAndInitWasm` returns
+`Promise<any>` - and that interface declared the clock a `number`. Its unit test then asserted
+`Number.isInteger` on the argument, demanding exactly the type the binding refuses. The interface
+is now `Pick`ed from the generated `WasmMlsClient`, so the next divergence is a compile error:
+restoring the Number fails `bun run check` with one error, which is how this was verified.
+
 ## [0.17.1] - 2026-09-11
 
 ### Added - the cotisations two legacy estates recorded, granted when their holder signs in
