@@ -252,10 +252,8 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    **PostgreSQL 15 -> 18 IS OWED, PRODUCTION INCLUDED** (the user's 2026-09-10 authorization is
    the one exception to read-only prod): verified dump, local proof, cutover with rollback; #309.
 7. **P2 - THE LEGACY COTISATION CLAIM SHIPPED 2026-09-11 (#512) WITH AN EMPTY TABLE, AND AN EMPTY
-   TABLE LOOKS EXACTLY LIKE A BROKEN CLAIM.** No list is loaded anywhere; the rehearsal belongs on
-   `dev.canari-emse.fr`, which holds the prod copy. The promo conventions were MEASURED to agree
-   (offset 0, 119 immediate matches of 396 accounts); `promo.csv`'s provenance was NOT, and 141
-   accent repairs rest on it ([backlog](docs/wiki/backlog.md)). Mechanism:
+   TABLE LOOKS EXACTLY LIKE A BROKEN CLAIM.** What the load owes, and the ONE assumption under it
+   still unmeasured, are in [backlog](docs/wiki/backlog.md); the mechanism is
    [cotisations](docs/wiki/cotisations.md), the only copy.
 8. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
    [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
@@ -293,10 +291,9 @@ avec tous les composants stale corriges PARTOUT, bun a la place de npm PARTOUT e
 than re-deriving anything here, which is what made this section wrong twice.** Its "NOT TO BE
 RELITIGATED" paragraphs exist so a later session cannot "finish" the work by undoing a measurement.
 
-**What is left is JUDGEMENT, not migration** - MiGallery's lint warnings, the `resolve()` question
-three repos park differently, Tailwind class sorting on Portail-etu. **NestJS 12 is HALF DONE and
-needs nothing done to it**, the hold being an ASSERTION on the resolved tree rather than an ignore,
-so it ends unattended: [nestjs-framework](docs/wiki/services/nestjs-framework.md), the only copy.
+**What is left is JUDGEMENT, not migration**, and listing which ones HERE is the re-derivation that
+paragraph forbids. **NestJS 12 is HALF DONE and needs nothing done to it**, an ASSERTION rather than
+an ignore, so it ends unattended: [nestjs-framework](docs/wiki/services/nestjs-framework.md).
 
 **FIVE THINGS CANNOT BE PULLED FORWARD**, each carrying its blocking condition in
 [backlog](docs/wiki/backlog.md), the only copy: the MLS + Graine explanation owed to the USER, not to
