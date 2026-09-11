@@ -250,6 +250,57 @@ declares **no conffile** for it, so an upgrade cannot replace the file carrying 
 that before upgrading on any host, and compare the token's fingerprint across the upgrade so a silent
 replacement is caught rather than assumed away.
 
+## The tunnel drops in the 22h band, and nothing on this page can fix it
+
+**Measured 2026-09-11, after the user reported `canari-emse.fr` down.** Every hostname on the zone
+returned HTTP 530 / Cloudflare error **1033** for about six minutes, `cercle.canari-emse.fr`
+included - and so did `mitv.fr`, which is a different zone on a different machine. 1033 means the
+edge has **no connector registered** for the tunnel: it is the edge reporting that the origin
+stopped answering IT, never a fault at the edge, and reading it as one costs an hour.
+
+**Nothing on the origin moved.** The box had been up 13 days, the containers 8 hours, no service
+restarted, no kernel event, conntrack at 358 of 262144, zero NIC error counters, and the journal
+carried entries for every minute of the window. The application never went down. What went down is
+the path between the origin and Cloudflare's edge:
+
+```
+failed to dial to edge with quic: timeout: no recent network activity
+```
+
+All four tunnel connections dropped inside the same second (22:23:11 CEST), the first re-registered
+at 22:27:59, full redundancy returned at 22:29:57. `cloudflared` had been running since 2026-09-02
+and never restarted: it survived the cut and re-dialled, which is exactly what it is for. **Do not
+restart it in response to a 1033** - that destroys the evidence and repairs nothing.
+
+**It is not a one-off, and it has a shape.** 175 drop events in seven days of journal, every one of
+them in hour 22 or 23 CEST, and `mitv`'s counts track `canari`'s almost exactly:
+
+| Window (CEST) | canari | mitv |
+| --- | --- | --- |
+| 09-08 22h | 30 | 38 |
+| 09-09 22h | 28 | 28 |
+| 09-09 23h | 35 | 29 |
+| 09-11 22h | 39 | 39 |
+
+Nothing at all on 09-05, 09-06 or 09-07, and a small episode on 09-10 - so "every night" is wrong,
+and saying it was the second error this incident produced.
+
+**The two boxes share exactly one thing, and that is the whole finding.** `mitv` is bare metal
+(`systemd-detect-virt: none`); `canari` is a container on different hardware. No hypervisor, no
+disk, no backup job and no host event can be common to both. What IS common: `10.0.0.3` and
+`10.0.0.4` leave through the same gateway `10.0.0.1` behind the same public address
+`193.49.174.63`. That gateway answers TLS on 443 with
+`CN=fw-ste.emse.fr, O=ECOLE NATIONALE SUPERIEURE DES MINES SAINT ETIENNE`, and its MAC OUI
+`00:0d:b4` is Stormshield. It is the School's border firewall, and it is the only element both
+paths cross.
+
+**So the cause is upstream of this repository and the remediation is a conversation, not a commit**:
+what is scheduled on `fw-ste.emse.fr` between 22h and 23h. That firewall is outside the documented
+access scope here, no attempt was made to authenticate against it, and that decision stands.
+
+What is still open - and the two instruments left running to settle it - is in
+[backlog](../backlog.md#p1---production-goes-dark-in-the-22h-band-and-the-only-thing-both-boxes-share-is-the-schools-firewall-measured-2026-09-11).
+
 ## Working against the API
 
 The account id and token are **not in this repository and must never be** - it is public. They live

@@ -70,6 +70,9 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **an iPhone - ON ITS WAY, and the user intends the WHOLE campaign to be re-run on it** (user, 2026-09-10). **iOS is the only thing "hardware-blocked" still means** - the redundant push `data` map on both platforms, the shade acknowledgement, iOS window layout, and no iOS build reaching a device without a pre-release. This is a DATE, not a wall: write those rows so they are ready to run rather than deferring their design | hardware, arriving | [device-verification](device-verification.md) |
 | copy `canari-harness/` to the second machine to resume the campaign | 1 copy | [cross-client-campaign-resume](cross-client-campaign-resume.md) |
 | **three legacy rows excluded from the import, to add by hand if they should be cotisants** - one whose `Cotisation` cell is empty while its neighbours are filled, and two whose destroyed accents no directory entry resolves. Decided 2026-09-11: an import may not guess, and the three carry no tag until somebody says so | 1 decision, then 3 rows | [P2 - the legacy rows are loaded and NOT ONE claim has been observed](#p2---the-legacy-rows-are-loaded-on-both-estates-and-not-one-claim-has-been-observed-shipped-2026-09-11-v0171) |
+| **ask the School's network service what is scheduled on `fw-ste.emse.fr` between 22h and 23h.** Two production boxes that share no hardware lose their egress together for minutes at a time, always in that band; the firewall is outside the access scope here and nothing in this repository can shorten the cut | 1 conversation | [P1 - production goes dark in the 22h band](#p1---production-goes-dark-in-the-22h-band-and-the-only-thing-both-boxes-share-is-the-schools-firewall-measured-2026-09-11) |
+| **rotate the tunnel run token on the production origin** - it was printed in full into an agent transcript on 2026-09-11 by `systemctl status`, and it sits in the unit's `ExecStart`, so it is readable by anything that can run `ps` on the box. The procedure and the ORDER that matters are already written | 1 dashboard refresh, then the unit | [cloudflare-edge](infrastructure/cloudflare-edge.md#rotating-the-run-token-and-the-order-that-matters) |
+| **rotate one credential that an hourly job on a production box passes ON ITS COMMAND LINE**, and move it into a root-only environment file - a password in `ExecStart` or a crontab is readable by every local user through `ps`, and this one was exposed in a transcript on 2026-09-11. The host and the value are in the operator's local agent memory, deliberately: this repository is PUBLIC | 1 rotation, 1 file | agent memory (secret-adjacent, must never enter this repo) |
 
 ## Open defects, in severity order
 
@@ -1392,6 +1395,61 @@ is the same probe. They want doing together. Until then the escape is still one 
 by the emergency path, a push straight to `main`.
 
 ---
+
+### P1 - production goes dark in the 22h band, and the only thing both boxes share is the School's firewall (measured 2026-09-11)
+
+**Reported by the user, again** (*"il ne faut surtout pas que la prod soit down"*, then *"Il y a des
+gens qui utilisent la prod"*, then *"Pas que canari, cercle surtout"*) - which is the third time an
+outage has been raised by a human rather than by anything here, and the reason the entry below it
+is now the more urgent of the two.
+
+**The measurement, the drop pattern and the shared uplink are on
+[cloudflare-edge](infrastructure/cloudflare-edge.md#the-tunnel-drops-in-the-22h-band-and-nothing-on-this-page-can-fix-it),
+the only copy.** In one line: every hostname on two different zones, on two different machines,
+returned 1033 for six minutes; nothing on either origin moved; 175 `cloudflared` edge-dial timeouts
+in seven days, ALL in hours 22 and 23 CEST; and the single element both egress paths cross is
+`fw-ste.emse.fr`, the School's Stormshield border firewall.
+
+**WHAT IS NOT YET KNOWN is the only thing that decides who to talk to**, and two TCP witnesses were
+installed at 22:48 CEST on 2026-09-11 to answer it. They sample every 10 seconds and **stop
+themselves after 24 hours** (8640 samples), so the window they actually cover is the evening of
+2026-09-12:
+
+| Host | Ledger | pid | Its LAN peer |
+| --- | --- | --- | --- |
+| canari `10.0.0.3` | `/home/canari/netwatch/samples.ndjson` | 3425696 | mitv `.4` |
+| mitv `10.0.0.4` | `/root/netwatch/samples.ndjson` | 2615688 | canari `.3` |
+
+Each sample is one NDJSON line probing four TCP targets - `gw` `10.0.0.1:443`, `lan` the sibling's
+`:22`, `cf` `1.1.1.1:443`, `goog` `8.8.8.8:443` - with per-target milliseconds. ICMP was not an
+option: the shell has no `cap_net_raw`, so reachability is a `/dev/tcp` connect. The script is
+`netwatch.sh` beside each ledger, its pid in `netwatch.pid`, and it is killed with
+`kill $(cat .../netwatch.pid)`.
+
+**The reading, decided before the data exists so the data cannot be read to taste:**
+
+| `gw` | `lan` | `cf`/`goog` | What it means |
+| --- | --- | --- | --- |
+| 1 | 1 | 0 | the firewall is UP and lost its route out - a **segment** event, and the question goes to the School's network service |
+| 0 | 1 | 0 | the firewall is rebooting or failing over while the LAN holds - a **device** event |
+| 0 | 0 | 0 | the LAN itself drops - switch or power |
+| 1 | 1 | 1 | all four TCP witnesses stay green while `cloudflared` still falls over - then the cut is specific to **UDP/QUIC**, which is a result and not a failed measurement |
+
+**TWO HYPOTHESES ARE REFUTED AND MUST NOT BE RE-OPENED.** A Proxmox `vzdump` freezing the container
+was inferred from five missing minutes in `egress-probe`'s per-minute ledger, and it is wrong twice
+over: `mitv` is bare metal on other hardware and was hit identically, and BOTH journals carried
+entries for every minute of the window, so neither box was frozen. The ledger gap is the probe's own
+`AbortSignal.timeout` blocking the sampler - **a gap in a ledger is evidence about its WRITER before
+it is evidence about the world** ([durable-rules](durable-rules.md)). And "the whole campus loses
+the network every evening" is not what the finding says: the certificate proves the firewall is
+School-managed, not that `10.0.0.0/16` is anything wider than the hosting segment, and there were
+zero events on 09-05, 09-06 and 09-07.
+
+**What is owed, in order.** Read both ledgers after the next 22h window and classify with the table
+above; that verdict, plus the seven-day histogram, is what the School's network service needs to be
+asked *what is scheduled on `fw-ste.emse.fr` between 22h and 23h*. Nothing here can shorten the
+outage: `cloudflared` already survives the cut and re-dials on its own, which is why the six minutes
+are the firewall's and not ours.
 
 ### P2 - NOTHING TELLS ANYBODY PRODUCTION IS DOWN, and both outages of 2026-09-01 were reported by the user (owed to the USER: a decision, then one click)
 

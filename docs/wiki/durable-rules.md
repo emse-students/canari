@@ -699,6 +699,9 @@ after its deploy - build the run that DISCRIMINATES, and assert the build id, ne
 - **The single public entry point is also a single point of DISCONNECTION: a frontend redeploy cuts every proxied WebSocket at once.** So the reconnect ladder is exercised fleet-wide by every deploy, and **any measurement window that straddles a deploy explains its own fallout**. [WP-RECONNECT-1](frontend/modules/auth.md#wp-reconnect-1---the-ladder-that-stopped-and-the-two-silences-under-it)
 - **Configuration assembled as TEXT is validated in the build, or it is validated by the outage** - `RUN nginx -t` costs a red pipeline instead of a site that will not start. [nginx](infrastructure/nginx.md)
 
+- **A CLOUDFLARE 1033 IS THE EDGE SAYING THE ORIGIN STOPPED ANSWERING IT, and it is almost never the application.** Through six minutes of it on 2026-09-11 the box was up 13 days, every container ran, and the journal had a line for every minute. **Do not restart `cloudflared` in response** - it already survives the cut and re-dials, so a restart destroys the evidence and repairs nothing. [edge](infrastructure/cloudflare-edge.md#the-tunnel-drops-in-the-22h-band-and-nothing-on-this-page-can-fix-it)
+- **WHEN TWO HOSTS THAT SHARE NO HARDWARE FAIL TOGETHER, THE CAUSE IS IN WHAT THEY DO SHARE** - here one gateway and one public address, which is how an upstream firewall was reached from two unrelated zones. The hypervisor hypothesis died to one command on the OTHER box (`systemd-detect-virt: none`), and asking that first would have saved the hour spent proving a backup job innocent. [edge](infrastructure/cloudflare-edge.md#the-tunnel-drops-in-the-22h-band-and-nothing-on-this-page-can-fix-it)
+
 ## Server-side fetches -> [chat-delivery](services/chat-delivery.md), [nginx](infrastructure/nginx.md)
 
 The link-preview pipeline, the SSRF guard, the favicon cascade and the undici seam are on
@@ -1190,6 +1193,8 @@ before touching any login, cookie or rotation.
 ## Shared gotchas -> [development](development.md), [cicd](cicd.md)
 
 Environment and tooling traps that belong to no one subsystem. Each cost a run.
+
+- **A GAP IN A LEDGER IS EVIDENCE ABOUT ITS WRITER BEFORE IT IS EVIDENCE ABOUT THE WORLD.** Five consecutive minutes missing from the per-minute egress ledger were read on 2026-09-11 as the machine having been frozen by a backup, and were the sampler itself blocking on its own `AbortSignal.timeout` - the one process whose silence the ledger cannot record is the one keeping it. The whole diagnosis built on that absence was wrong, and the journal, written by something else, refuted it in one query. **Before an absence is believed, name what writes the line and what would stop it, and corroborate with a ledger that has a different writer.** [the 22h band](backlog.md#p1---production-goes-dark-in-the-22h-band-and-the-only-thing-both-boxes-share-is-the-schools-firewall-measured-2026-09-11)
 
 - **A NUMBER WRITTEN IN PROSE IS A NUMBER NOBODY RE-MEASURES, INCLUDING A NUMBER THE FILE SETS FOR ITSELF.** `CLAUDE.md` carries a line cap, states the reason, and adds *"A cap the file itself breaks is worse than no cap"* - and on 2026-09-10 it was FOURTEEN lines over with nothing anywhere saying so. A constraint kept only in a sentence has the same failure mode as a name-based allowlist: an ABSENCE, which is invisible. `claude-md-cap.test.mjs` reads the cap **out of the file** rather than restating it, so the one place naming it stays the one place naming it, raising it stays possible and stays VISIBLE in the diff next to its reason, and deleting the sentence FAILS rather than silently disabling the check. It prints the margin even when it passes, because a file one line under a cap is a file about to break it. [development](development.md)
 
