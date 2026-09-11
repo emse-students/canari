@@ -1,5 +1,7 @@
-version: 0.17.1
+version: 0.17.2
 
-Vous avez cotisé au BDE ou au Cercle avant que Canari existe ? Votre cotisation est reconnue à votre prochaine connexion, sans rien demander à personne.
+Sur le web, un appareil ne publiait plus ses clés de chiffrement : certaines conversations restaient introuvables, et le restaient à chaque reconnexion. C'est réparé.
 
-Dans une conversation, le bouton GIF est de nouveau aligné avec les autres commandes.
+Une conversation pouvait se fermer à tous ses membres parce qu'un seul appareil, inutilisé depuis trois mois, n'y avait plus sa place. Elle se rouvre.
+
+"Réinitialiser l'appareil" demande maintenant confirmation, prévient le serveur et vous dit ce qui a réellement été effacé.
