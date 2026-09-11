@@ -128,9 +128,29 @@ jobs:
           # Helper: returns 0 if any changed file matches the pattern
           has() { echo "$CHANGED" | grep -qE "$1"; }
 
-          # CI workflow itself changed → test everything
-          if has '\.github/workflows/pull-request\.yml'; then
-            echo "CI workflow changed - running all tests."
+          # THE CI DEFINITION ITSELF CHANGED -> test everything, and THE PATH IS DERIVED FROM THE
+          # RUN rather than written down here.
+          #
+          # This guard named `pull-request.yml` from #356 - the commit that renamed the file to
+          # `ci.yml` - until 2026-09-11, so it matched nothing and said nothing. What the silence
+          # cost: #521 REPAIRED a broken `boot-nest-apps` job and merged with that very job
+          # SKIPPED, because a workflow edit touches no service path, and `CI passed` went green
+          # for the reason that the jobs had not run. A name-based guard fails by ABSENCE, which is
+          # invisible. `GITHUB_WORKFLOW_REF` is written by the runner from the workflow actually
+          # executing, so it cannot go stale under a rename and there is no second copy for a test
+          # to compare. `code-analysis.yml` is named explicitly because it RUNS inside this
+          # workflow as a library - it is part of the CI definition, not a neighbour of it.
+          if [[ -z "${GITHUB_WORKFLOW_REF:-}" ]]; then
+            echo "::error::GITHUB_WORKFLOW_REF is empty, so this step cannot name its own workflow file and the guard below would match nothing - which is the exact silent failure it was rewritten to end."
+            exit 1
+          fi
+          SELF="${GITHUB_WORKFLOW_REF%@*}"   # owner/repo/.github/workflows/ci.yml
+          SELF="${SELF#*/*/}"                # .github/workflows/ci.yml
+          # The path is matched as a FIXED WHOLE LINE, so no regex escaping stands between the
+          # name the runner gave us and the name in the diff.
+          if printf '%s\n' "$CHANGED" | grep -qxF "$SELF" \
+             || has '^\.github/workflows/code-analysis\.yml$'; then
+            echo "CI definition changed ($SELF) - running all tests."
             run_all; exit 0
           fi
 
