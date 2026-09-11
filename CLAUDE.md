@@ -248,7 +248,7 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    and ONE arming point, asserted only by `bun tools/ecosystem-shape/shape.mjs`
    ([cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them), the only copy).
    Three open, all in [backlog](docs/wiki/backlog.md): the suppression control case, **nothing tells
-   anybody prod is down**, and [host-updates](docs/wiki/infrastructure/host-updates.md).
+   anybody prod is down - it fell again for 6 min on 2026-09-11, cut by a firewall UPSTREAM of everything here**, and [host-updates](docs/wiki/infrastructure/host-updates.md).
    **PostgreSQL 15 -> 18 IS OWED, PRODUCTION INCLUDED** (the user's 2026-09-10 authorization is
    the one exception to read-only prod): verified dump, local proof, cutover with rollback; #309.
 7. **P2 - 1429 LEGACY COTISATION ROWS ARE LOADED ON BOTH ESTATES (v0.17.1) AND NOT ONE CLAIM HAS
