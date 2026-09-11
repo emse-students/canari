@@ -20,6 +20,7 @@
     FileCheckCorner,
     Map,
     HardDrive,
+    History,
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -127,6 +128,7 @@
     return [
       { href: '/admin/cercle', label: m.admin_cercle_label(), icon: Wallet },
       { href: '/admin/storage', label: m.admin_storage_label(), icon: HardDrive },
+      { href: '/admin/legacy-cotisations', label: m.admin_legacy_label(), icon: History },
     ];
   });
 </script>

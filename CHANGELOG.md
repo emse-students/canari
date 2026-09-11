@@ -11,6 +11,47 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Added - the cotisations two legacy estates recorded, granted when their holder signs in
+
+Canari models a cotisation as a tag an association grants, and nothing ever seeded it. A member who
+paid the BDE or Le Cercle before Canari existed arrived with no tag at all, and the association had
+no list to grant from but a spreadsheet. Le Cercle's own migration out of its legacy database says
+as much in a comment - "Doesn't take into account the membership. Canari integration takes care of
+it" - and Canari never did.
+
+The dues now land in a staging table and wait. Canari holds 395 accounts against roughly 1400 legacy
+cotisants, so a one-shot grant could only have served the accounts that already existed and would
+have dropped the rest; the row is claimed when someone signs in whose name and promo match it.
+
+The claim runs on **every** sign-in, not the first. It terminates because the row records who
+claimed it - keyed on account creation it would have stranded everyone who signed in before their
+association's list was loaded, and a grant that failed at that one instant could never be retried.
+A user with nothing waiting costs one indexed lookup that returns nothing.
+
+Three things it refuses to guess. A cotisation already held in Canari is never replaced, because the
+sibling-tier revoke that makes a member hold one forfait would otherwise take away the tier they
+paid for - with 200 BDE and 234 Cercle tags already issued across 395 accounts, that is the ordinary
+case here. Two source rows normalizing to one key are refused at load time, in front of whoever can
+still read the file, rather than resolved by coin flip at some member's sign-in months later. And a
+second account matching a row somebody else already claimed is reported rather than silently served
+nothing.
+
+Le Cercle's legacy base turned out to hold no non-ASCII byte at all: every accent had been destroyed
+before the export and replaced by a literal `?`, two per accented letter, across 150 of its 1169
+cotisants - 67 of them in the promos still at school. Stripped as punctuation, `"Cl??ment"` yields
+the entirely valid-looking key `cl ment` that no sign-in can ever match, so one cotisant in eight
+would have been lost with nothing to show it. The key function refuses such a name outright, and the
+import recovers the real spelling from a directory export with intact accents: 141 of the 150 resolve
+to exactly one person, 9 to none, and none to more than one.
+
+A claim that grants nothing leaves no trace a user can see, so the mechanism comes with the screen
+that reports it: `/admin/legacy-cotisations`, global admin only, showing what is waiting, what was
+granted, and what closed untouched because Canari already knew better. It puts the source's own
+spelling and the normalized key on the same row, because the difference between them is nearly
+always the answer to "why has this person not got their tag". Its third tab is the one thing the
+claim cannot decide alone: two people whose name and promo normalize to a single key, where the
+first to sign in takes the cotisation and the rest stay stuck until a human looks.
+
 ## [0.17.0] - 2026-09-11
 
 ### Fixed - one idiom for removing comments had six copies, and the extraction meant to end that was never enforced
