@@ -13,6 +13,8 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+
+import { withoutAnyComments } from '$lib/styles/markupSources';
 import { SvelteMap } from 'svelte/reactivity';
 import type { Conversation } from '$lib/types';
 import {
@@ -162,16 +164,6 @@ describe('the single-writer invariant', () => {
     return acc;
   }
 
-  /**
-   * The file with its comments removed.
-   *
-   * Without this the check fails on the prose that EXPLAINS the invariant - docblocks quote
-   * `lifecycle: 'removed'` to say why per-conversation state outlived its conversation. A guard
-   * that punishes the documentation of the rule it enforces is a guard people delete.
-   */
-  const codeOnly = (text: string) =>
-    text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
-
   it('only conversations.ts writes lifecycle: removed', () => {
     // A grep, deliberately: no unit test can observe a path that has not been wired up yet, and
     // the defect this guards against is precisely a NEW path written inline by someone who never
@@ -180,7 +172,10 @@ describe('the single-writer invariant', () => {
     for (const file of sourceFiles(join(process.cwd(), 'src'))) {
       if (file.endsWith('.test.ts')) continue;
       if (file.endsWith(join('utils', 'chat', 'conversations.ts'))) continue;
-      const text = codeOnly(readFileSync(file, 'utf8'));
+      // The SHARED stripper, because the check has to read CODE: docblocks quote `lifecycle:
+      // 'removed'` to say why per-conversation state outlived its conversation, and a guard
+      // that punishes the documentation of the rule it enforces is a guard people delete.
+      const text = withoutAnyComments(readFileSync(file, 'utf8'));
       if (/lifecycle:\s*'removed'|lifecycle\s*=\s*'removed'/.test(text)) {
         offenders.push(file.replace(process.cwd(), ''));
       }

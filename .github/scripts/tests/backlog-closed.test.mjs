@@ -38,15 +38,25 @@ const FILE = join(ROOT, 'docs', 'wiki', 'backlog.md');
 const CLOSED_WORDS = /\b(RETIRED|CLOSED|FIXED|DONE|ANSWERED)\b/;
 
 /**
+ * A trailing parenthetical that OPENS with a closure word, in any case.
+ *
+ * This is the self-declaration idiom - `(closed 2026-09-10)` - and it is checked separately from
+ * the word test so the word test can stay upper-case. A parenthetical that merely MENTIONS closure
+ * while scoping what is LEFT (`(the rest closed 2026-09-03)`) does not open with the word and is
+ * not matched; neither is `(measured 2026-09-05)`.
+ */
+const SELF_DECLARED = /\((retired|closed|fixed|done|answered)\b[^)]*\)\s*$/i;
+
+/**
  * Whether a heading announces its own completion.
  *
- * Struck-through titles are the unambiguous case. The word test is deliberately applied to the
+ * Struck-through titles are the unambiguous case. Both text tests are deliberately applied to the
  * heading ONLY: a body may and should say a half is fixed, and forbidding that would push the
  * reasoning out of the file rather than the closed work.
  */
 function readsAsClosed(heading) {
-  const text = heading.replace(/^#+\s*/, '');
-  return text.startsWith('~~') || CLOSED_WORDS.test(text);
+  const text = heading.replace(/^#+\s*/, '').trim();
+  return text.startsWith('~~') || CLOSED_WORDS.test(text) || SELF_DECLARED.test(text);
 }
 
 const lines = readFileSync(FILE, 'utf8').split('\n');

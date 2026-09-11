@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
+import { withoutAnyComments } from '$lib/styles/markupSources';
+
 /**
  * NO SCREEN IN THE SHOP OR ASSOCIATIONS TREES MAY RENDER THE SERVER'S OWN SENTENCE.
  *
@@ -55,20 +57,6 @@ function sourcesUnder(dir: string): string[] {
   return out;
 }
 
-/**
- * The file with its prose removed.
- *
- * The rule has to be documentable beside the code it governs: a docblock that explains why nothing
- * may render `.message` necessarily writes `.message`, and the first version of the single-file
- * guard failed on exactly that.
- */
-function codeOnly(source: string): string {
-  return source
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/(^|[^:])\/\/.*$/gm, '$1');
-}
-
 /** `x instanceof Error ? x.message` - the ternary that picks the server's English. */
 const SERVER_PROSE = /instanceof Error\s*\?\s*[A-Za-z_$][\w$]*\.message/;
 
@@ -88,7 +76,9 @@ describe('the shop and associations trees never render a server sentence', () =>
   });
 
   it.each(files.map((f) => [f]))('%s', (file) => {
-    const offends = SERVER_PROSE.test(codeOnly(readFileSync(join(ROOT, file), 'utf8')));
+    // The SHARED stripper: the rule has to be documentable beside the code it governs, and a
+    // docblock explaining why nothing may render `.message` necessarily writes `.message`.
+    const offends = SERVER_PROSE.test(withoutAnyComments(readFileSync(join(ROOT, file), 'utf8')));
     if (ALLOWED[file]) {
       // An allowlisted file must STILL offend, or the entry is stale and buys nothing.
       expect(offends).toBe(true);
