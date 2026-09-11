@@ -314,6 +314,121 @@ social-service never calls Stripe directly. Online sales require completed Strip
   `:id`, not to the tag id alone: `MANAGE_MEMBERS` is granted per association, so an unscoped delete
   let an admin of any association revoke any other association's cotisant (WP-COT-9).
 
+## Seeding from a legacy estate (`legacy_cotisations`)
+
+Every path above writes a tag for something that happened **in Canari**. A member who paid the BDE
+or Le Cercle before Canari existed holds nothing, and the association's only record is a file. Le
+Cercle's own migration out of its legacy database drops the membership explicitly - *"Doesn't take
+into account the membership. Canari integration takes care of it."* - so this is the half that was
+missing on both sides.
+
+`legacy_cotisations` (migration `059`, entity `LegacyCotisation`) stages one row per legacy cotisant
+and waits for them to sign in. **A one-shot grant was not an option**: Canari holds 395 accounts
+against roughly 1400 legacy cotisants, so it could only ever have served the accounts that already
+existed.
+
+### The key, and why it is a natural one
+
+`normalizeMatchKey(lastName, firstName, promo)`
+(`apps/social-service/src/users/legacy-cotisation.util.ts`) is the ONE implementation, shared by the
+import and the claim - two spellings of this key match nothing at all rather than matching wrongly.
+
+Neither legacy estate carries an email and **Canari's `users` table has no email column**, so
+`(lastName, firstName, promo)` is the only key available. It was measured before being chosen: zero
+collisions among the 1169 Cercle cotisants carrying a promo, and zero inside any year group of the
+BDE sheet. The promo is load-bearing rather than decorative - the same first-and-last name appears in
+two different year groups of that sheet - which is why a user with no promo is skipped rather than
+matched on the name alone.
+
+**A name carrying `?` is refused.** Le Cercle's legacy base holds no non-ASCII byte at all: the
+accents were destroyed before the export and replaced by a literal `?`, two per accented letter,
+across 150 of its 1169 cotisants (67 in promos still at school). Stripped like any other
+punctuation, `"Cl??ment"` yields the valid-looking key `cl ment` that no sign-in can ever match -
+one cotisant in eight lost silently. The import repairs them instead, against a directory export
+with intact accents: a `?` run becomes one wildcard per two characters and only a **unique** hit is
+accepted. Measured over the 150: 141 unique, 9 none, **0 ambiguous**, which is what makes the repair
+safe to automate rather than a guess.
+
+### The claim runs on every sign-in
+
+`LegacyCotisationService.claimFor` is called by core-service after the OIDC upsert, through
+`POST internal/legacy-cotisations/claim` (`X-Internal-Secret`, like the rest of that module).
+
+**Not on first login, deliberately.** The claim terminates on `claimedByUserId` - durable state -
+not on the account being new. Keyed on creation it would strand every user who signed in before
+their association's list was loaded, and a grant that failed at that one instant could never be
+retried. Against the indexed `matchKey` a user with nothing waiting costs one lookup returning no
+rows, and the whole thing is order-independent and self-healing.
+
+The grant goes through `grantCotisant` like every other path, with `grantedBy: 'system:legacy-import'`
+and the provenance in `metadata`, so a legacy grant is visible in the Cotisations roster exactly like
+a manual one. It is granted BEFORE the row is closed: `grantOrRenew` upserts, so a crash between the
+two costs a repeated grant, where closing first would cost the cotisation outright.
+
+Three things it will not guess:
+
+| Situation | What happens | Why |
+|---|---|---|
+| The user already holds a tag from that association | Row closed, nothing granted | The XOR sibling revoke in `grantCotisant` would take away the tier they **paid for**. With 200 BDE and 234 Cercle tags across 395 accounts, this is the ordinary case, not an edge one |
+| Two source rows normalize to one key | Import **refused**, nothing written | Resolved in front of whoever can still read the file, rather than by coin flip at a sign-in months later. Enforced by a partial unique index on `(matchKey, associationId) WHERE "claimedByUserId" IS NULL` |
+| A second account matches an already-claimed row | Logged as `CONFLICT`, nothing granted | A real homonym in one promo, or a duplicated source row. Both need a human, and neither may be guessed |
+
+A grant that throws leaves the row pending and is retried on the next sign-in; each row is caught on
+its own, so one bad association cannot swallow the rows behind it. The claim never throws - a
+cotisation that cannot be granted must not cost somebody their sign-in.
+
+### Loading a source
+
+`apps/social-service/scripts/import-legacy-cotisations.ts`, run by hand, never on a schedule: both
+sources are frozen exports of systems Canari replaced. Re-running it stages nothing new.
+
+```sh
+bun scripts/import-legacy-cotisations.ts --source bde --file "Liste cotisants 25_26.xlsx" \
+    --promo-1a 2025 --dry-run
+bun scripts/import-legacy-cotisations.ts --source cercle --file legacy-readonly-backup.db \
+    --repair-names promo.csv --dry-run
+```
+
+| Source | Shape | Staged | Tier |
+|---|---|---|---|
+| BDE spreadsheet | three year-group blocks side by side, `NOM / Prenom / Cotisation` | 269 of 471 rows (`oui` only) | base (`variantKey: null`) |
+| Le Cercle legacy SQLite | one `transaction` row against consommable `2`, "Cotisation Cercle" | 1160 | `avec-alcool` |
+
+**A year group is a position in the sheet, never a promo**, so `--promo-1a` is required rather than
+inferred: next year's sheet has the same three blocks and three different promos.
+
+**The Cercle price must not be read as a tier.** The avec/sans-alcool split post-dates the whole
+legacy estate, where one cotisation always carried alcohol; the nominal amount only tracks inflation
+(26 EUR from 2017, 30 EUR from 2023), so filtering on it would silently drop two thirds of the
+roster. The consommable is asserted **by name** before anything is read, so a dump that numbers its
+products differently fails loudly instead of staging a roster of beer drinkers.
+
+Both associations are `lifetime`, which is what makes a historical list meaningful at all: the tag
+carries no academic year and does not expire. 1175 of Le Cercle's 1194 legacy buyers paid exactly
+once, which is the same fact from the other side.
+
+### Reading the staging table (`/admin/legacy-cotisations`)
+
+A claim that grants nothing is invisible: the user sees no tag, and nothing tells them why. The
+screen at `/admin/legacy-cotisations` is the only window onto that, global admin only - the table
+spans every estate loaded and names people who have no Canari account at all.
+
+It serves one question, "why has this person not got their tag", and answers it by showing
+**`sourceLabel` and `matchKey` on the same row**. The gap between the two spellings is nearly always
+the answer: an accent the source destroyed, a compound name, a promo the source wrote as a year
+group. The search box spans both columns, so an accent-free query still finds an accented row.
+
+| Tab | Rows | What it means |
+|---|---|---|
+| Waiting | `claimedByUserId IS NULL` | Nobody matching has signed in yet - the ordinary state |
+| Granted | `claimedByUserId IS NOT NULL` | With `metadata.disposition`: `granted`, or `already-held` when Canari already knew a cotisation for that association and the row closed without touching it |
+| Namesakes | more than one row per `(matchKey, associationId)` | Two people normalize to one key, or one source row was duplicated. **Nothing can resolve this alone**: the first to sign in takes the cotisation and the rest stay stuck, so a human must look |
+
+The namesake count is a window function rather than a flag, because the pending-only unique index
+lets a second row exist for a key the moment the first is claimed - which is exactly the homonym
+case it has to catch. The three tallies span the whole table and never the filtered page; the tab's
+own `total` is what pagination walks.
+
 ## Cotisation-dependent pricing on forms
 
 A cotisation tier is one dimension a form's price grid may be divided on, alongside promo, formation
@@ -496,6 +611,8 @@ by another - a cross-tenant IDOR (WP-COT-9).
 | DELETE | `/api/associations/:id/webhook-failures/:deliveryId` | Drop a failed delivery settled by hand (`MANAGE_PRODUCTS`) |
 | POST | `/api/forms/:id/submit` | Submit a form; applies member pricing, may grant a tag |
 | GET | `/api/public/cotisant-status` | Cercle-facing live cotisant status by `assoSlug`+`sub` (`X-Api-Key`, not `MANAGE_*`) |
+| POST | `internal/legacy-cotisations/claim` | Grants what a legacy estate recorded for a signing-in user (`X-Internal-Secret`, core-service only) |
+| GET | `/api/associations/admin/legacy-cotisations` | Read-only staging table: waiting / granted / namesakes (global admin). Under `associations/` because `/api/admin/*` is proxied to chat-gateway |
 
 ## See also
 

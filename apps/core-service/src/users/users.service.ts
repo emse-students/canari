@@ -353,6 +353,38 @@ export class UsersService implements OnModuleInit {
     };
   }
 
+  /**
+   * Asks social-service to grant any cotisation a legacy estate recorded for this user, now that
+   * they have signed in and their identity is known.
+   *
+   * Called on EVERY sign-in rather than on account creation. The claim terminates on durable state
+   * in social-service (the staging row is stamped once claimed), so a second call grants nothing;
+   * keyed on account creation instead, it would strand every user who signed in before their
+   * association's list was loaded and would make one failed grant permanent.
+   *
+   * Never throws. A cotisation that cannot be granted must not cost somebody their sign-in, and the
+   * next sign-in retries it - which is why the failure is logged loudly rather than handled.
+   */
+  async claimLegacyCotisations(user: User): Promise<void> {
+    try {
+      await axios.post(
+        socialUrl('internal/legacy-cotisations/claim'),
+        {
+          userId: user.id,
+          firstName: user.firstName ?? null,
+          lastName: user.lastName ?? null,
+          promo: user.promo ?? null,
+        },
+        { headers: { 'X-Internal-Secret': this.internalSecret }, timeout: 5_000 }
+      );
+    } catch (err) {
+      this.logger.error(
+        `[legacy] cotisation claim failed for ${user.id.slice(0, 8)}: ${String(err)} - ` +
+          `retried on next sign-in`
+      );
+    }
+  }
+
   /** Fetches member user IDs from social-service for association-scoped directory search. */
   private async fetchAssociationMemberUserIds(associationId: string): Promise<string[]> {
     try {

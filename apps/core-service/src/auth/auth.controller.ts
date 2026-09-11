@@ -396,6 +396,11 @@ export class AuthController {
       });
     }
 
+    // 3b. Grant any cotisation a legacy estate recorded for them. On every sign-in, not just the
+    // first: the claim terminates on durable state in social-service, so this is idempotent, and
+    // a user who signed in before their association's list was loaded still gets their tag.
+    await this.usersService.claimLegacyCotisations(user);
+
     // 4. Issue internal JWT pair, backed by a session row so the refresh can be revoked
     const access_token = jwt.sign({ sub: user.id, admin: !!user.admin }, this.jwtSecret, {
       expiresIn: '1h',

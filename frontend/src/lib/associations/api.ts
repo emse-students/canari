@@ -1100,6 +1100,69 @@ export async function listCotisants(
   );
 }
 
+// ── Legacy cotisation staging (global admin) ─────────────────────────────────
+
+/** Which slice of the legacy staging table to list. */
+export type LegacyCotisationStatus = 'all' | 'pending' | 'claimed' | 'collisions';
+
+/** One staged legacy cotisation, joined to the account that claimed it if any. */
+export interface LegacyCotisationAdminItem {
+  id: string;
+  /** What the source file said, verbatim - accents intact, unlike `matchKey`. */
+  sourceLabel: string;
+  /** The normalized key the claim matches on. The gap between the two spellings IS the diagnosis. */
+  matchKey: string;
+  associationId: string;
+  associationName: string | null;
+  variantKey: string | null;
+  sourceBatch: string;
+  claimedByUserId: string | null;
+  claimedAt: string | null;
+  /** "granted", or "already-held" when Canari already knew a cotisation for that association. */
+  disposition: string | null;
+  claimantFirstName: string | null;
+  claimantLastName: string | null;
+  claimantPromo: number | null;
+  /** Rows sharing this `(matchKey, association)`. Above 1 is a homonym nothing can resolve alone. */
+  keyRowCount: number;
+  createdAt: string;
+}
+
+/** One page of the staging table, plus the estate-wide tallies the tabs are labelled with. */
+export interface LegacyCotisationAdminPage {
+  items: LegacyCotisationAdminItem[];
+  /** Rows matching the current status and search - what pagination walks. */
+  total: number;
+  hasMore: boolean;
+  /** Tallies over the WHOLE table, never the filtered slice. */
+  counts: { pending: number; claimed: number; collisions: number };
+}
+
+/**
+ * Lists the legacy cotisation staging table (global admin only).
+ *
+ * Mounted under `/api/associations/admin/` rather than `/api/admin/`, which nginx proxies to
+ * chat-gateway; the path is the one that reaches social-service.
+ */
+export async function listLegacyCotisations(
+  opts: {
+    status?: LegacyCotisationStatus;
+    search?: string;
+    offset?: number;
+    limit?: number;
+  } = {}
+): Promise<LegacyCotisationAdminPage> {
+  const params = new URLSearchParams();
+  if (opts.status && opts.status !== 'all') params.set('status', opts.status);
+  if (opts.search?.trim()) params.set('search', opts.search.trim());
+  if (opts.offset != null) params.set('offset', String(opts.offset));
+  if (opts.limit != null) params.set('limit', String(opts.limit));
+  const qs = params.toString();
+  return request<LegacyCotisationAdminPage>(
+    `/api/associations/admin/legacy-cotisations${qs ? `?${qs}` : ''}`
+  );
+}
+
 /** One cotisation tier of an association, as offered by its membership products. */
 export interface CotisationTier {
   /** Named tier key (e.g. "avec-alcool"), or null for the base, un-suffixed tier. */
