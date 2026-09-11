@@ -1017,15 +1017,20 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
 
 .chat-composer-panel {
   /* ONE LINE OF FIELD IS EXACTLY ONE CONTROL TALL, and this is where that is decided.
-     The row is `flex-end`, which is right once the field has grown - the buttons hug the bottom, as
-     the reference does. It is only wrong when the field is ONE line and shorter than the controls
-     beside it, and that is what this pair of numbers removes: the padding below produces this
-     height, so a floor can never disagree with it. Measured 2026-09-09: 20px line box + 12 + 12. */
+     Kept for the min-height floor `COMPOSER_MIN_HEIGHT` reads (`ChatComposer.svelte`): the padding
+     below produces this height, so the floor can never disagree with it. Measured 2026-09-09: 20px
+     line box + 12 + 12. It no longer drives the row's cross-axis alignment - see `align-items`. */
   --composer-field-height: calc(var(--text-sm--line-height) + 1.5rem);
   position: relative;
   display: flex;
   max-width: 100%;
-  align-items: flex-end;
+  /* CENTER, NOT `flex-end` (measured 2026-09-11). `flex-end` was tuned so the text field's bottom
+     landed level with the `.ui-icon-button` siblings' bottom, at their fixed 44px/38px box - but the
+     GIF toggle (`.chat-composer-icon-button` alone, no `.ui-icon-button`) sits shorter than that box,
+     so its bottom-aligned content read as sunk relative to the other icons. `center` aligns every
+     sibling on its own middle regardless of height, which is correct for a row mixing box heights
+     and was already true for the uniform ones. */
+  align-items: center;
   gap: 0.5rem;
   padding: 0;
   border: none;

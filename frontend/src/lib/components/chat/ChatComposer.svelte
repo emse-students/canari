@@ -99,16 +99,18 @@
    * bottom.
    *
    * IT IS A VARIABLE AND NOT A `calc`, BECAUSE THE ANSWER DIFFERS BY VIEWPORT AND AN INLINE STYLE
-   * CANNOT. Measured 2026-09-09 at 390x844: the icon buttons are 44px on a phone (a touch target)
-   * and 36px from 768px up, while the field was 36px everywhere - so with the row's `flex-end` the
-   * text sat exactly 4px below the icons' centre line ON A PHONE ONLY, which is the vertical
-   * centring the user has now reported twice. `--composer-field-height` is declared beside the
-   * padding that produces it, so the floor and the padding cannot disagree.
+   * CANNOT. `--composer-field-height` is declared beside the padding that produces it, so the floor
+   * and the padding cannot disagree.
    *
    * The height comes from the PADDING, never from a floor above the natural height: the placeholder
    * is `absolute inset-0` and positions its text with the same padding, so a floor taller than the
    * content leaves the placeholder off the line the real text sits on. That was the previous defect
    * here and it is the reason this is not simply `min-height: 2.75rem`.
+   *
+   * IT NO LONGER SIZES THE ROW'S VERTICAL ALIGNMENT (`.chat-composer-panel` moved to
+   * `align-items: center` 2026-09-11 - see the comment there for why `flex-end` stopped working
+   * once the GIF toggle, a shorter sibling, joined the row); this floor is now only about the
+   * placeholder staying on the line the real text sits on.
    */
   const COMPOSER_MIN_HEIGHT = 'var(--composer-field-height)';
   /** Ceiling before the field scrolls instead of growing. Mirrors `.chat-composer-textarea`'s `max-height: 10rem`. */
