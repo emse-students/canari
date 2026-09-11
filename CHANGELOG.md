@@ -11,6 +11,8 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-09-11
+
 ### Added - the cotisations two legacy estates recorded, granted when their holder signs in
 
 Canari models a cotisation as a tag an association grants, and nothing ever seeded it. A member who
