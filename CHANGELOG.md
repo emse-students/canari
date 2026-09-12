@@ -11,6 +11,29 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - the dead ends were written from the code; now they have populations
+
+Section 9 of the MLS/Graine state machine listed nine dead ends, each verified by reading the source.
+None of them carried a number, so none of them could be ranked - and a dead end with no population is
+a hypothesis. Read off production 2026-09-12, read-only, across 58 live groups and 361 accounts:
+
+- **Three survive.** A group nobody can repair: **1 of 58** (no published base, no active holder);
+  three more sit exactly one epoch behind, which is a commit that just landed, not a dead end. A
+  `pending` seat nobody honours: **30** of 91, all classified `never added`, oldest ten days, none
+  yet past the fourteen-day purge that deletes them. A commit-log hole: **18 across 11 of 58 groups**
+  - 19% of live conversations, epoch 121 among them.
+- **Four were refuted.** 1432 tombstoned groups carry zero active memberships and zero queued
+  messages. 5307 queued rows carry zero legacy `content` and none without `proto`, so those columns
+  are dead and droppable. 240 `revoked_device` rows have zero devices still holding a key package -
+  revocation purges what it bans. The five `pending_welcome_notify` keys in Redis all carry a TTL.
+- **One was half right**: `keyVersion` is at its default nowhere, `latestKeyRotationPayload` is NULL
+  in all 58 groups.
+
+**The finding worth keeping is a shape, not a count: every one of the eighteen commit-log holes is
+exactly ONE epoch wide.** Not one spans two. These are individual commits that failed to be logged,
+not ranges lost to an outage - a different defect with a different fix, and precisely what a total
+would have hidden.
+
 ### Fixed - the device cap counted an account's FAILURES to get a device working, and refused it one
 
 `MAX_DEVICES_PER_USER = 15` was compared against `key_package` rows inside the 90-day retention
