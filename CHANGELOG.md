@@ -32,6 +32,28 @@ membership somewhere (waiting for that member to return) from those that have no
 client can ever repair. A base that was never published is excluded: nothing was lost, and the
 answer to it is a Welcome rather than a republish.
 
+### Fixed - the watchdog asked twelve times a minute a question whose answer it could read
+
+The SYNC_WATCHDOG ticks every five seconds, because the stuck-epoch-gap net it also carries has a
+45-second threshold and nothing else would serve it. The recovery sweep inherited that cadence and
+had no use for it: `requestReAdd` self-throttles to one attempt per minute, so eleven passes in
+twelve could only ever return at the throttle - and each one wrote a line saying so. Measured on
+production over a three-and-a-half minute window on a tab where the user was doing nothing: **51
+`throttled` lines, 5.7% of everything the console held**, plus a WASM `get_groups()` crossing every
+tick to reach them.
+
+The seam kept its cooldown; the caller now reads it. `isReAddDue` exposes the same clock
+`requestReAdd` throttles on, FOR A CALLER THAT DRIVES A CADENCE AND NO OTHER KIND - a reactive
+caller arrives with new information, is entitled to ask, and still gets its throttle line, because
+the rate at which those arrive is a measurement rather than noise.
+
+The sweep itself moved to five minutes, chosen with the user against the same measurement: every
+real trigger for a re-add is already reactive and fires its own immediate attempt, so the sweep is
+the net under the case none of them cover. The first tick after a session starts always sweeps, and
+the minute-long floor under every caller did not move - a reactive trigger arriving in between is
+still served at once. A tick with no gap armed and no sweep owed now returns before it touches WASM
+at all.
+
 ### Fixed - a locked-out device asked the same question every minute, and the server had already answered it
 
 A device with no local MLS state enters a group by external commit, and the commit gate accepts a

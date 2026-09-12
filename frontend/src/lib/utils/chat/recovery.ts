@@ -747,8 +747,7 @@ export async function recoverRosterDisagreement(
   groupId: string,
   deps: RecoveryDeps
 ): Promise<void> {
-  const sinceLast = Date.now() - (lastReAddAt.get(groupId) ?? 0);
-  if (sinceLast < RECOVERY_TIMEOUT_MS) return;
+  if (!isReAddDue(groupId)) return;
 
   deps.log(
     `[ROSTER] ${groupId.slice(0, 8)}... the server refuses our frames while WASM holds the group` +
@@ -759,6 +758,30 @@ export async function recoverRosterDisagreement(
     await persistMlsStateAfterMutation(deps.mlsService, deps.userId, deps.deviceKeyB64, deps.log);
   }
   await requestReAdd(groupId, deps);
+}
+
+/**
+ * Whether `groupId` may be attempted again now, read from the SAME clock {@link requestReAdd}
+ * throttles on.
+ *
+ * **FOR A CALLER THAT DRIVES A CADENCE, AND FOR NO OTHER KIND.** The seam is self-throttling, so
+ * invoking it early is harmless - but it is not silent, and a caller that knows the answer should
+ * not ask. The SYNC_WATCHDOG polls every five seconds against a sixty-second cooldown: eleven
+ * invocations in twelve could only ever return at the throttle, and each one wrote a line saying
+ * so. Measured on production 2026-09-12 over a three-and-a-half minute window on an idle tab:
+ * **51 `throttled` lines, 5.7% of everything the console held** - for a decision the caller had
+ * already made and could have read.
+ *
+ * A REACTIVE CALLER MUST NOT USE THIS. An unknown group, an `epoch_rejected`, a refused send: those
+ * carry new information, they are entitled to ask, and a throttle line on one of them is the
+ * report that the information arrived and was too early to act on. Silencing those would hide the
+ * rate at which they arrive, which is the opposite of what this function is for.
+ *
+ * It is a rate limit and therefore a clock, deliberately: what this loop terminates on is a proof
+ * (a tombstone, a refused membership, a group nobody can repair), and none of those is here.
+ */
+export function isReAddDue(groupId: string): boolean {
+  return Date.now() - (lastReAddAt.get(groupId) ?? 0) >= RECOVERY_TIMEOUT_MS;
 }
 
 /**
