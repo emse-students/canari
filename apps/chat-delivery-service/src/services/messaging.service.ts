@@ -1192,10 +1192,15 @@ export class MessagingService {
     // took this path in silence, under `if (body.proto)`, without even the warning that the
     // failure branch below it had.
     //
-    // `proto` was documented optional for backward compatibility, and nothing needs that: the only
-    // caller, `submitCommit` in `frontend/src/lib/mls-client/mlsDeliveryApi.ts`, has always taken
-    // `protoBase64` as a REQUIRED argument. Held as a const so the epoch-advance transaction below
-    // reads a value the compiler knows is present.
+    // `proto` was documented optional for backward compatibility, and nothing needs that. There are
+    // TWO callers and both carry the commit: `submitCommit` in
+    // `frontend/src/lib/mls-client/mlsDeliveryApi.ts`, which has always taken `protoBase64` as a
+    // REQUIRED argument, and `sendWelcomeAndCommitPush` in `push.controller.ts`, the background
+    // re-add. **This comment named only the first for a month, and the second was passing no
+    // `proto` the whole time** - so every FCM-woken re-add threw the 400 below, before its Welcome.
+    // A seam is audited by enumerating the call sites that REACH it, never the ones that mention
+    // it. Held as a const so the epoch-advance transaction below reads a value the compiler knows
+    // is present.
     const commitProto = body.proto;
     if (!commitProto) {
       this.logger.error(

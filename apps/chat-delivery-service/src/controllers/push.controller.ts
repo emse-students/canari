@@ -560,10 +560,15 @@ export class PushController {
    * to all current group members. Called by the background service after creating
    * the Welcome package via Rust JNI (nativeCreateWelcomeBackground).
    *
-   * When `baseEpoch` is provided, the commit is validated (epoch-gated) before any Welcome or
-   * broadcast, exactly like the foreground `/api/mls/commit` path: this keeps the server's
-   * `activeEpoch` in phase with the real MLS epoch so subsequent foreground commits are not
-   * rejected as `epoch_mismatch` (C6). A rejected commit yields neither a Welcome nor a broadcast.
+   * The commit is validated (epoch-gated) before any Welcome or broadcast, exactly like the
+   * foreground `/api/mls/commit` path: this keeps the server's `activeEpoch` in phase with the real
+   * MLS epoch so subsequent foreground commits are not rejected as `epoch_mismatch` (C6). A
+   * rejected commit yields neither a Welcome nor a broadcast.
+   *
+   * `baseEpoch` and `commitPayload` are BOTH required, and both are handed to `validateCommit` -
+   * the payload as `proto`, which is what makes the commit replayable. Passing one without the
+   * other is what broke this route: see the CHANGELOG entry for this fix.
+   *
    * Auth: PushSecret (no JWT).
    */
   @Post('mls/push/send-welcome-and-commit')
@@ -579,7 +584,7 @@ export class PushController {
       welcomePayload: string;
       ratchetTreePayload?: string;
       commitPayload: string;
-      baseEpoch?: number;
+      baseEpoch: number;
     }
   ) {
     const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
@@ -595,10 +600,23 @@ export class PushController {
     if (typeof body.commitPayload !== 'string' || !body.commitPayload) {
       throw new BadRequestException('commitPayload required');
     }
+    // A COMMIT THIS ROUTE CANNOT VALIDATE MAY NOT BE BROADCAST.
+    //
+    // `baseEpoch` was optional, and its absence meant "broadcast without validating" - the exact
+    // hole `validateCommit`'s own `proto` guard exists to close, reached by the one door that
+    // skipped it. Both native callers send it whenever their JNI reports one, and the current JNI
+    // always does (`nativeCreateWelcomeBackground` puts `baseEpoch` in its result unconditionally),
+    // so the only client that can omit it now is one whose NATIVE code predates that. Such a client
+    // is told it is too old instead of silently advancing an epoch nothing recorded.
+    if (typeof body.baseEpoch !== 'number' || !Number.isFinite(body.baseEpoch)) {
+      throw new BadRequestException(
+        'baseEpoch required: a commit that cannot be validated may not be broadcast'
+      );
+    }
 
     const traceId = `bg-wlc-${crypto.randomUUID().slice(0, 8)}`;
     this.logger.log(
-      `[BG_WELCOME][${traceId}] START group=${groupId} sender=${userId}:${deviceId} target=${targetUserId}:${targetDeviceId} baseEpoch=${body.baseEpoch ?? 'n/a'}`
+      `[BG_WELCOME][${traceId}] START group=${groupId} sender=${userId}:${deviceId} target=${targetUserId}:${targetDeviceId} baseEpoch=${body.baseEpoch}`
     );
 
     // Membership guard (security): refuse to re-add a target absent from dm_group_members (a
@@ -620,28 +638,31 @@ export class PushController {
     // The background commit advances the real epoch: validate it first (same as foreground path)
     // to keep activeEpoch in sync, otherwise the next foreground commit is wrongly rejected (C6).
     // Validate BEFORE sending the Welcome: a rejection must neither broadcast the commit nor deliver
-    // a Welcome into a state other members won't adopt. Missing baseEpoch (legacy JNI) ->
-    // keep old behavior (broadcast without validation) for backward compatibility.
-    if (typeof body.baseEpoch === 'number' && Number.isFinite(body.baseEpoch)) {
-      const validation = await this.messagingService.validateCommit({
-        groupId,
-        deviceId,
-        baseEpoch: body.baseEpoch,
-      });
-      if (!validation.accepted) {
-        this.logger.warn(
-          `[BG_WELCOME][${traceId}] REJECT commit ${validation.reason} (server epoch: ${validation.currentEpoch}, sent base: ${body.baseEpoch}) - ni Welcome ni diffusion`
-        );
-        return {
-          status: 'rejected',
-          reason: validation.reason,
-          currentEpoch: validation.currentEpoch,
-        };
-      }
-      this.logger.log(
-        `[BG_WELCOME][${traceId}] commit valide -> activeEpoch=${validation.newEpoch}`
+    // a Welcome into a state other members won't adopt.
+    //
+    // `proto` is the commit itself, and it is the same value broadcast below. Without it
+    // `validateCommit` refuses outright - a commit it cannot record may not move the counter,
+    // because `IDX_mls_commit_log_group_epoch` is UNIQUE and no later call can refill a skipped
+    // epoch.
+    const validation = await this.messagingService.validateCommit({
+      groupId,
+      deviceId,
+      baseEpoch: body.baseEpoch,
+      proto: body.commitPayload,
+    });
+    if (!validation.accepted) {
+      this.logger.warn(
+        `[BG_WELCOME][${traceId}] REJECT commit ${validation.reason} (server epoch: ${validation.currentEpoch}, sent base: ${body.baseEpoch}) - neither Welcome nor broadcast`
       );
+      return {
+        status: 'rejected',
+        reason: validation.reason,
+        currentEpoch: validation.currentEpoch,
+      };
     }
+    this.logger.log(
+      `[BG_WELCOME][${traceId}] commit accepted -> activeEpoch=${validation.newEpoch}`
+    );
 
     // Send Welcome to target device (null authUserId skips membership check)
     await this.messagingService.sendWelcome(undefined, {
