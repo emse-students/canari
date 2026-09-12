@@ -11,6 +11,33 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Removed - two MLS entry points nothing called, one of which could only destroy a conversation
+
+`forceCreateGroup` and `dropGroup` were each a complete vertical stack - a TS interface declaration,
+an abstract on `BaseMlsService`, a Tauri implementation, a Web implementation, a Tauri command
+(`supprimer_groupe`), a WASM export and an `MlsManager` method - with **zero production call sites
+and zero tests**, on either platform.
+
+`force_create_group` wiped local state before creating a group. The protocol it belonged to
+(`sendGroupReset` then `forceCreateGroup`) went with `d54a58ae2 feat: remove broken MLS
+bootstrap/recovery system`; neither `sendGroupReset` nor the `forcer_creation_groupe` command the
+wiki still named has existed since. Its two implementations had also drifted apart without anyone
+noticing: the Web one really wiped orphan state, the Tauri one just called `creer_groupe` and
+swallowed the error - one method name meaning two different things per platform. Nothing is lost by
+its removal, because `create_group` already recovers an orphan out of OpenMLS storage into
+`self.groups` and *then* signals `GroupAlreadyExists`, which its one handler answers with forget +
+re-join.
+
+`drop_group` was the "Poison Pill": it purged a group and set its epoch lock to `u64::MAX` so that
+**no Welcome could ever be accepted for that id again**. Unreachable and irreversible at once - the
+one shape that can only subtract availability - and bug C3 already records its last real use being
+removed as a fix.
+
+Three wiki paragraphs described them as live, one asserting `force_create_group` "keeps other
+callers"; it kept a WASM export and an `MlsManager` method, and no caller above them. All three are
+corrected.
+
+
 ### Changed - the dead ends were written from the code; now they have populations
 
 Section 9 of the MLS/Graine state machine listed nine dead ends, each verified by reading the source.

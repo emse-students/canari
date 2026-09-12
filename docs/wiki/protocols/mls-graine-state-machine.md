@@ -544,7 +544,7 @@ it, and the only thing a server can contribute is to say which conversations are
 
 ### P2 - correctness
 
-- ~~**P2-1. Delete `bootstrap_dead_conversation`**~~ **DONE 2026-09-12.** The command, its module, its `use` and its registration are gone; `ForegroundCritical`, `write_mls_state_blob` and `force_create_group` each keep other callers and stay.
+- ~~**P2-1. Delete `bootstrap_dead_conversation`**~~ **DONE 2026-09-12.** The command, its module, its `use` and its registration are gone; `ForegroundCritical` and `write_mls_state_blob` each keep other callers and stay. `force_create_group` did NOT - it kept a WASM export and an `MlsManager` method, but no production caller above them, and it was deleted with `drop_group` on 2026-09-12 ([mls-desync-prevention](mls-desync-prevention.md#6-client---there-is-one-way-to-create-a-group-and-it-recovers-orphans-itself)).
 - **P2-2. Collapse D5**, the two group sweeps, into one predicate with one implementation. The twin cost the same fix twice.
 - **P2-3. Graine has no wiki page**, for roughly forty code files. `channel-encryption.md` is the protocol; the seeds, the sessions, the repair walk, the roster reconcile and the retention sweep have no reference page.
 - ~~**P2-4. State the SQL/Redis roster invariant** (D9) where a reader will find it, and assert it in a test.~~ **DONE 2026-09-12, with P1-2** - the invariant is in the `DeviceGroupMembership` docblock (one writer for `status`, one for the routing set, and `sendWelcome` is neither) and asserted by `messaging.welcome-membership.spec.ts`. Two rosters with no written invariant is how P1-2 shipped.

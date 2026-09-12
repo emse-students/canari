@@ -418,22 +418,6 @@ pub(crate) fn oublier_groupe(
     Ok(())
 }
 
-/// Permanent purge of a group (poison pill): memory + OpenMLS storage + epoch lock at MAX.
-/// No Welcome will ever be accepted for this groupId after this call.
-#[tauri::command]
-pub(crate) fn supprimer_groupe(
-    group_id: String,
-    state: tauri::State<AppState>,
-) -> Result<(), String> {
-    let mut lock = state
-        .mls_manager
-        .lock()
-        .map_err(|_| "Failed to lock state")?;
-    let manager = lock.as_mut().ok_or("MLS Manager not initialized")?;
-    manager.drop_group(&group_id);
-    Ok(())
-}
-
 #[tauri::command]
 pub(crate) fn lister_groupes(state: tauri::State<AppState>) -> Result<Vec<String>, String> {
     let lock = state

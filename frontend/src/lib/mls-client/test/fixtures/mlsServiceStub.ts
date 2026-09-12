@@ -8,7 +8,6 @@ export function createMlsServiceStub(
   const stub = {
     init: vi.fn().mockResolvedValue(undefined),
     createGroup: vi.fn().mockResolvedValue(undefined),
-    forceCreateGroup: vi.fn().mockResolvedValue(undefined),
     createRemoteGroup: vi.fn().mockResolvedValue('group-uuid'),
     saveState: vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3])),
     // The whole checkpoint, which is what the pipeline calls: `saveState` alone is not durable on
@@ -79,7 +78,6 @@ export function createMlsServiceStub(
     // retire every conversation the commit path touches.
     isGroupActive: vi.fn().mockResolvedValue(true),
     forgetGroup: vi.fn(),
-    dropGroup: vi.fn(),
     forceLeaveGroup: vi.fn().mockResolvedValue(undefined),
     renameGroup: vi.fn().mockResolvedValue(undefined),
     setGroupImage: vi.fn().mockResolvedValue(undefined),

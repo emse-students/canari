@@ -2498,7 +2498,6 @@ export abstract class BaseMlsService implements IMlsService {
   protected abstract generateKeyPackageImpl(deviceKeyB64: string): Promise<Uint8Array>;
   abstract publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void>;
   abstract createGroup(groupId: string): Promise<void>;
-  abstract forceCreateGroup(groupId: string): Promise<void>;
 
   // ── One commit regime (C7-A unified: stage -> validate -> merge/clear) ──────
   //
@@ -3421,5 +3420,4 @@ export abstract class BaseMlsService implements IMlsService {
   abstract getEpoch(groupId: string): number;
   abstract getGroupMemberIdentities(groupId: string): Promise<string[]>;
   abstract forgetGroup(groupId: string, minEpoch?: number): void;
-  abstract dropGroup(groupId: string): void;
 }

@@ -538,14 +538,6 @@ export class TauriMlsService extends BaseMlsService {
     this._knownGroups.add(groupId);
   }
 
-  /** Tauri-native `invoke` wrapper - calls `creer_groupe` ignoring GroupAlreadyExists, letting Rust handle orphan state cleanup. */
-  async forceCreateGroup(groupId: string): Promise<void> {
-    // Tauri: use the same creer_groupe - orphan recovery in Rust handles the wipe.
-    // A dedicated force_creer_groupe IPC command could be added later if needed.
-    await invoke('creer_groupe', { groupId }).catch(() => {});
-    this._knownGroups.add(groupId);
-  }
-
   /**
    * Native `saveState` writes `mls.bin` before it returns, so the checkpoint is that one call.
    * Handing its bytes back to `save_mls_state` would write the same file twice - 2.0 s of the
@@ -1018,22 +1010,6 @@ export class TauriMlsService extends BaseMlsService {
     this.trackRustMutation(
       invoke('oublier_groupe', { groupId, minEpoch }).catch((e) => {
         console.warn('[MLS] forgetGroup error:', e);
-        return invoke<string[]>('lister_groupes')
-          .then((groups) => {
-            this._knownGroups = new Set(groups);
-          })
-          .catch(() => {});
-      })
-    );
-  }
-
-  /** Poison Pill - definitive purge via Tauri `supprimer_groupe`: Rust memory, storage and epoch lock at MAX. */
-  dropGroup(groupId: string): void {
-    this._epochByGroupId.delete(groupId);
-    this._knownGroups.delete(groupId);
-    this.trackRustMutation(
-      invoke('supprimer_groupe', { groupId }).catch((e) => {
-        console.warn('[MLS] dropGroup error:', e);
         return invoke<string[]>('lister_groupes')
           .then((groups) => {
             this._knownGroups = new Set(groups);

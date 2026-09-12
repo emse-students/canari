@@ -317,8 +317,6 @@ export interface IMlsService {
   ): Promise<void>;
   /** Creates a new local MLS group with the given ID. */
   createGroup(groupId: string): Promise<void>;
-  /** Wipes any orphan OpenMLS state for groupId then creates a fresh group. */
-  forceCreateGroup(groupId: string): Promise<void>;
   /** Creates a new named group on the delivery server and returns its assigned group ID. */
   createRemoteGroup(name: string, isGroup?: boolean): Promise<string>;
   /** Serialises and encrypts the current MLS state to a byte array using the device key. */
@@ -732,9 +730,6 @@ export interface IMlsService {
   /** Drops the local MLS state for a group, forcing re-synchronisation via a new Welcome.
    *  `minEpoch`: minimum epoch the new Welcome must reach (0 = no restriction). */
   forgetGroup(groupId: string, minEpoch?: number): void;
-  /** Permanently purges a group (Poison Pill): clears memory and OpenMLS storage, then sets
-   *  the epoch lock to MAX so no Welcome will ever be accepted for this groupId again. */
-  dropGroup(groupId: string): void;
   /** Notifies the server that this device is leaving a group unrecoverably.
    *  Deletes the DeviceGroupMembership and removes the device from Redis routing. */
   forceLeaveGroup(groupId: string): Promise<void>;

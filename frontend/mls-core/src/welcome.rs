@@ -234,9 +234,9 @@ impl MlsManager {
         // must NOT overwrite the in-memory state: that would corrupt the key schedule
         // and produce AeadErrors on all subsequent messages.
         //
-        // Exception: if the Welcome is at epoch 0, it necessarily comes from a full
-        // re-bootstrap (forceCreateGroup). In that case the previous tree is discarded
-        // and the new tree is authoritative - replace the state.
+        // Exception: if the Welcome is at epoch 0, it necessarily comes from a group the
+        // SENDER created fresh - the only thing that produces epoch 0 - so the previous tree
+        // is discarded and the new one is authoritative: replace the state.
         if let Some(existing) = self.groups.get(&group_id) {
             let existing_epoch = existing.epoch().as_u64();
             if welcome_epoch == 0 && existing_epoch > 0 {
