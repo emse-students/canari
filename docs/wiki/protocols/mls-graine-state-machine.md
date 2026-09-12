@@ -428,7 +428,7 @@ duplicate**, and the justification is quoted so it can be argued with rather tha
 | DE1 | **`NO_REPAIRER`** - the published base is stale and the server answers `no_peer_online` | `externalJoin` returns `stale_base`, then `sendBaseRefreshRequest` answers `noPeerOnline` (recovery.ts:565-577) | **NO.** It is left only when an epoch moves, which needs a holder online - the very thing that is absent. Correctly detected, correctly logged, no exit. P1-3. |
 | DE2 | **A group whose tree NO member holds any longer** | every holder lost its state; the base is stale or absent | **YES, AND IT CANNOT BE OTHERWISE.** Every entry into a group in RFC 9420 - Welcome, external commit, ReInit, subgroup branching, external proposals - requires a party holding the group secrets. This server holds only ciphertext. A server-side resurrection would be a backdoor, which is why the spec has none. |
 | DE3 | **`bootstrap_dead_conversation`** | nothing reaches it | **DEAD CODE.** Registered at `frontend/src-tauri/src/lib.rs:905`, POSTs to `claim-bootstrap` then `reset-epoch` - both routes deleted, no frontend caller. It is also the only thing in the product claiming DE2 is recoverable. P2-1. |
-| DE4 | **The background re-add returns 400** | `POST mls/push/send-welcome-and-commit` with a finite `baseEpoch` (push.controller.ts:625) calls `validateCommit` with no `proto`, which the guard at messaging.service.ts:1199 refuses | **NO - A REGRESSION.** P1-1. |
+| DE4 | ~~**The background re-add returns 400**~~ | ~~`POST mls/push/send-welcome-and-commit` called `validateCommit` with no `proto`, which the guard at messaging.service.ts refuses~~ | **FIXED 2026-09-12 (P1-1).** The route now hands `proto: body.commitPayload` to `validateCommit`, and `baseEpoch` is required rather than optional - the optional branch broadcast without validating, which is the hole the guard exists to close. Covered by `push.controller.welcome-commit.spec.ts`, which this route did not have. |
 | DE5 | **An outbox entry held for ever** | `!isGroupHealthy` returns `retry` with no attempt ceiling (outbox.ts:462) | **NO.** The two permanent failures are `group-deleted` and `evicted`; a group in `NO_REPAIRER` is neither, so the entry retries for the life of the install. P2-5. |
 | DE6 | **`GraineBelowFirstIndexError`** | a seed handed over mid-session, and messages that precede the floor | **YES.** A repair would return the identical seed, so asking for one would loop for ever. The design says so (channelSeal.ts:60). |
 | DE7 | **The Graine roster is exhausted** | every member of the roster declined the seed | **YES, AND IT TERMINATES ON A PROOF** rather than a count or a clock, and it is said out loud. |
@@ -444,18 +444,24 @@ puis tu arbitres"*). Each P1 was verified by reading the code, not by taking a s
 
 ### P1 - a broken user-facing path
 
-**P1-1. The background re-add is dead, and it is the path that rescues a locked-out device.**
-`POST /mls/push/send-welcome-and-commit` calls `validateCommit({ groupId, deviceId, baseEpoch })`
-with **no `proto`**
-([push.controller.ts:625](../../../apps/chat-delivery-service/src/controllers/push.controller.ts)).
-Since `proto` became mandatory
-([messaging.service.ts:1199](../../../apps/chat-delivery-service/src/services/messaging.service.ts))
-every such call throws a 400 **before the Welcome is sent**. Only the legacy no-`baseEpoch` branch
-survives, and that one broadcasts without validation. This is the FCM-woken path by which a phone
-rescues a device that cannot join by itself. The guard's own comment asserts *"the only caller,
+**P1-1. FIXED 2026-09-12. The background re-add was dead, and it is the path that rescues a
+locked-out device.** `POST /mls/push/send-welcome-and-commit` called
+`validateCommit({ groupId, deviceId, baseEpoch })` with **no `proto`**
+([push.controller.ts](../../../apps/chat-delivery-service/src/controllers/push.controller.ts)), and
+since `proto` became mandatory
+([messaging.service.ts](../../../apps/chat-delivery-service/src/services/messaging.service.ts))
+every such call threw a 400 **before the Welcome was sent** - on the FCM-woken path by which a phone
+rescues a device that cannot join by itself. The guard's own comment asserted *"the only caller,
 `submitCommit` in `frontend/src/lib/mls-client/mlsDeliveryApi.ts`"*: it enumerated the consumers that
-MENTION the seam, not the ones that reach it - which is exactly what the repo rule about auditing a
+MENTION the seam, not the ones that reach it, which is exactly what the repo rule about auditing a
 seam's consumers exists to prevent.
+
+The route now passes the commit as `proto`, and **`baseEpoch` is required** rather than optional.
+The optional branch meant *broadcast without validating*, which advances the real MLS epoch while the
+commit log gains no row - the permanent hole DE9 describes. It was not a compatibility shim: the
+native JNI has returned `baseEpoch` since 2026-06-26, before `v0.10.0`, and the client floor is
+0.14.0, so no client that can reach MLS at all could omit it. **The route had no test**;
+`push.controller.welcome-commit.spec.ts` is that test, and it fails against the code this fixed.
 
 **P1-2. `sendWelcome` demotes an active membership while telling Redis to keep routing to it.**
 [messaging.service.ts:1785-1800](../../../apps/chat-delivery-service/src/services/messaging.service.ts)

@@ -130,7 +130,7 @@ WebSocket frames: see `docs/wiki/services/chat-gateway.md`.
 | POST | `/api/mls/push/acquire-add-lock` | PushSecret | Acquire add-lock |
 | DELETE | `/api/mls/push/release-add-lock` | PushSecret | Release add-lock |
 | GET | `/api/mls/push/key-package` | PushSecret | Get key package |
-| POST | `/api/mls/push/send-welcome-and-commit` | PushSecret | Send Welcome + commit |
+| POST | `/api/mls/push/send-welcome-and-commit` | PushSecret | Send Welcome + commit. `baseEpoch` + `commitPayload` REQUIRED (400 otherwise) |
 | POST | `/api/mls/push/send` | PushSecret | Send message (background) |
 
 ### Security / PIN

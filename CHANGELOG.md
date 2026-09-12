@@ -11,6 +11,34 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - the background re-add answered 400 before the Welcome, on the path that rescues a locked-out device
+
+A device that cannot rejoin a conversation by itself asks a peer to re-add it, and when that peer's
+app is closed the request arrives by FCM. The phone wakes, builds the Welcome natively, and posts it
+to `POST /api/mls/push/send-welcome-and-commit`. **That route called `validateCommit` without the
+commit**, and since `proto` became mandatory - deliberately, because a commit nothing can replay may
+not advance the epoch - every such call threw a 400 before the Welcome was ever sent. The rescue
+path answered an error to the device it existed to rescue.
+
+The guard that refuses a missing `proto` carried a comment naming *"the only caller, `submitCommit`
+in `mlsDeliveryApi.ts`"*. There were two, and the second had never passed one. Enumerating the call
+sites that MENTION a seam rather than the ones that REACH it is the mistake the rule about auditing
+a seam's consumers was written for, and the comment now names both.
+
+**`baseEpoch` is required rather than optional, and the branch behind it is deleted.** Its absence
+used to mean *broadcast this commit without validating it*, which advances the real MLS epoch while
+the commit log gains no row - and `IDX_mls_commit_log_group_epoch` is UNIQUE on `(groupId,
+baseEpoch)`, so no later call can ever refill the epoch that one skipped. It was a door beside the
+lock. It was also not a compatibility shim: the native background JNI has returned `baseEpoch` in
+its result since 2026-06-26, which predates `v0.10.0`, and the client floor is 0.14.0 - no client
+able to reach MLS at all can omit it.
+
+**The route had no test.** `push.controller.commits.spec.ts` covers a different endpoint on the same
+controller, and its existence read as coverage. `push.controller.welcome-commit.spec.ts` now asserts
+that the bytes handed to the commit log are the same bytes broadcast, that a missing or non-finite
+`baseEpoch` is refused before anything is sent, and that a rejected commit yields neither Welcome nor
+broadcast. It was run against the code this fixes, and it fails there.
+
 ### Added - the MLS and Graine state machine, drawn from the code rather than from the wiki
 
 `docs/wiki/protocols/mls-graine-state-machine.md` is the first page in this repository with diagrams
