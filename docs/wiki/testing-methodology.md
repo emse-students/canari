@@ -3238,7 +3238,10 @@ device rather than whether the device exists - and it was replaced with a read o
 **That reasoning was correct about the two columns and wrong about the defect.** The device really had
 no KeyPackage, because `POST /api/mls/register-device` had answered **400**: the account was at the
 server's fifteen-device cap, filled by the rig's own abandoned mints. The census was asking exactly
-the right question and getting the right answer. Reading the session instead made the row PASS while
+the right question and getting the right answer. (**Those mints would no longer fill it**: since
+2026-09-12 the cap counts live devices and an abandoned enrolment ages out of the count in seven
+days rather than ninety - [cd](services/chat-delivery.md). The lesson below is unaffected, and the
+refusal it teaches you to look for is still a status code in the client console.) Reading the session instead made the row PASS while
 the device was addressable by nobody - a green row over a client that could never heal, which is the
 worst outcome available.
 

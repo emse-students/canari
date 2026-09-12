@@ -11,6 +11,42 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - the device cap counted an account's FAILURES to get a device working, and refused it one
+
+`MAX_DEVICES_PER_USER = 15` was compared against `key_package` rows inside the 90-day retention
+window. That number is an account's **enrolment attempts**, not its devices - so every failed
+enrolment made the next one likelier to be refused, which is the wrong direction for a defence.
+
+Measured on production 2026-09-12: 667 enrolments across 361 accounts, of which **213** held an
+active group membership or a push token and **367 (55%) held neither**. The rule's only victim in
+the entire estate was an account with fifteen enrolments - eleven of them on one day - **zero** group
+memberships and **zero** push tokens. A student who had never managed to hold a conversation, locked
+out by a limit measuring his attempts to start one, who stopped trying the following day. Raising the
+limit to thirty would have bought him thirty failures.
+
+What the cap actually protects is the **ratchet tree**: a device is a leaf in every group it belongs
+to, so devices multiply rather than add, and Welcome size, tree export and push fan-out are all
+per-leaf. A device that joined nothing holds no leaf and costs none of it. The predicate is now an
+**active membership, or a push token, or an enrolment newer than seven days** - two halves bounding
+two different resources, tree leaves and rows, which the single 90-day row count had conflated. The
+device being registered no longer counts against itself, so re-registering an id the account already
+holds can no longer refuse it. `updatedAt` is deliberately not consulted: a liveness clock must be
+written by the thing whose liveness it measures.
+
+Under the new predicate the busiest account in production counts **six**. The limit stays at fifteen:
+it bounds an abuse, not a usage.
+
+The blocked account was freed the same day (user-authorised production write) by deleting exactly the
+footprint the product's own device deletion deletes - fifteen key packages and their 735 prekeys, with
+zero memberships, zero push tokens and zero queued messages to lose.
+
+**And the cause upstream is not iOS.** 138 of 361 accounts carry one device NAME under several device
+ids; by platform that is 40% of iOS accounts, 38% of Android, 12% of Windows, 9% of macOS. The device
+id lives in `localStorage`, whose only durable backup is `push_context.json` - written by a
+fire-and-forget chain whose first link is a network call and whose every failure is swallowed without
+a log. Mobile loses that store far more often than desktop, which is the whole of the four-fold gap.
+That defect is open and unfixed; this entry only stops it from costing an account its access.
+
 ### Fixed - the database page still banned the tool that works, and blamed the one that never broke
 
 `infrastructure/databases.md` opened its production-access section with *"Use the PowerShell tool

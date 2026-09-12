@@ -269,7 +269,7 @@ Scale, as given: **300-500 daily users; the model uses 400 DAU / ~500 accounts.*
 
 | Parameter | Value | Basis |
 | --- | --- | --- |
-| Devices per user | 2.5 | phone + laptop, plus re-enrolments. Cap is `MAX_DEVICES_PER_USER = 15` |
+| Devices per user | 2.5 | phone + laptop, plus re-enrolments. Cap is `MAX_DEVICES_PER_USER = 15`, and since 2026-09-12 it counts LIVE devices - prod then held 213 live across 361 accounts (0.6), the busiest account six ([cd](../services/chat-delivery.md)) |
 | Devices total | 1 250 | |
 | Active DM threads per user | 25 | -> ~5 000 DM groups |
 | Group DMs | ~170 | 5 per user, ~12 members each |

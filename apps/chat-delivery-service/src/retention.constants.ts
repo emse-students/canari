@@ -13,8 +13,39 @@
  */
 export const RETENTION_WINDOW_MS = 90 * 24 * 60 * 60 * 1000;
 
-/** Maximum active devices per user. Exceeding this limit blocks device registration. */
+/**
+ * Maximum devices a user may have ALIVE at once. Exceeding it refuses device registration.
+ *
+ * WHAT IT PROTECTS, which is the only reason a cap may exist: every device is a LEAF in the
+ * ratchet tree of every group it belongs to, so devices MULTIPLY rather than add - twelve members
+ * at fifteen devices is a hundred and eighty leaves, and Welcome size, ratchet-tree export and
+ * push fan-out are all per-leaf. That resource is consumed by a device that JOINED SOMETHING, and
+ * by no other.
+ *
+ * Measured on production 2026-09-12, under the live predicate below: 667 enrolments across 361
+ * accounts resolve to 213 live devices, and the busiest account holds SIX. The limit is therefore
+ * not near anyone, and it is not meant to be - it bounds an abuse, not a usage.
+ */
 export const MAX_DEVICES_PER_USER = 15;
+
+/**
+ * How long a freshly enrolled device counts against {@link MAX_DEVICES_PER_USER} before it has
+ * proved it is alive.
+ *
+ * A device that joined no group and registered no push token costs no ratchet-tree leaf and no
+ * fan-out - it costs ROWS (one key package plus its fifty prekeys). That is a different resource
+ * from the one the cap above exists for, and conflating the two is the defect this window replaces:
+ * counting `key_package` rows over the 90-day retention window made an account's ENROLMENT ATTEMPTS
+ * its device count. Production 2026-09-12: 367 of 667 enrolments (55%) were dead weight under that
+ * rule, and the cap's only victim in the estate was an account with fifteen enrolments, zero group
+ * memberships and zero push tokens - a user who was never able to hold a conversation, blocked by a
+ * limit measuring his failures to start one.
+ *
+ * Seven days rather than ninety: long enough that a device registering now is still counted while
+ * it completes its first join, short enough that a burst of broken enrolments clears within a week
+ * instead of a quarter.
+ */
+export const DEVICE_ENROLMENT_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
  * Duration after which a `pending` DeviceGroupMembership invitation that never transitioned
