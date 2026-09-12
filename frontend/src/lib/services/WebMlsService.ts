@@ -711,11 +711,6 @@ export class WebMlsService extends BaseMlsService {
     this.client.create_group(groupId);
   }
 
-  /** WASM client wrapper - calls `this.client.force_create_group`, wiping any orphan state before creating the group. */
-  async forceCreateGroup(groupId: string): Promise<void> {
-    this.client.force_create_group(groupId);
-  }
-
   /** WASM client wrapper - serialises current MLS state as plain CBOR (no Argon2). */
   async saveStatePlain(writer = 'checkpoint'): Promise<Uint8Array> {
     // Tag at the synchronous snapshot moment: this is the freshness reference the write-if-newer
@@ -1176,16 +1171,6 @@ export class WebMlsService extends BaseMlsService {
       this.client.forget_group(groupId, minEpoch);
     } catch (e) {
       console.warn('[MLS] forgetGroup error:', e);
-    }
-  }
-
-  /** Poison Pill - definitive purge: WASM memory, OpenMLS storage and epoch lock at MAX. */
-  dropGroup(groupId: string): void {
-    if (!this.client) return;
-    try {
-      this.client.drop_group(groupId);
-    } catch (e) {
-      console.warn('[MLS] dropGroup error:', e);
     }
   }
 

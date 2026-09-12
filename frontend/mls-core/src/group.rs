@@ -29,8 +29,9 @@ impl MlsManager {
     // --- B. CRÉATION DE GROUPE ---
 
     /// Creates a fresh MLS group with the given ID.
-    /// Returns Err("GroupAlreadyExists") if an orphan state is found in OpenMLS storage.
-    /// Callers that want a guaranteed-fresh group should use `force_create_group`.
+    /// Recovers an orphan already in OpenMLS storage into `self.groups` and THEN returns
+    /// Err("GroupAlreadyExists"), so the caller learns it has a usable group rather than a
+    /// failure: the one handler (`setupMessageHandler`) forgets the storage and re-joins.
     pub fn create_group(&mut self, group_id_str: String) -> Result<(), MlsError> {
         let group_id = GroupId::from_slice(group_id_str.as_bytes());
 
@@ -89,40 +90,6 @@ impl MlsManager {
                 Err(MlsError::OpenMls(format!("Creation error: {:?}", e)))
             }
         }
-    }
-
-    /// Wipes any existing MLS state for `group_id_str` from both the in-memory HashMap
-    /// and the OpenMLS storage, then creates a brand-new group.
-    /// Use this when re-bootstrapping a phantom group (lost local state) to avoid
-    /// recovering a stale-epoch orphan via `create_group`.
-    pub fn force_create_group(&mut self, group_id_str: String) -> Result<(), MlsError> {
-        self.mark_state_dirty();
-        let group_id = GroupId::from_slice(group_id_str.as_bytes());
-
-        // 1. Remove from in-memory map if present.
-        self.groups.remove(&group_id_str);
-        self.forgotten_group_min_epochs.remove(&group_id_str);
-
-        // 2. Wipe OpenMLS storage for this group if an orphan exists there.
-        match MlsGroup::load(self.provider.storage(), &group_id) {
-            Ok(Some(mut orphan)) => {
-                if let Err(e) = orphan.delete(self.provider.storage()) {
-                    log::warn!(
-                        "force_create_group: delete orphan {} failed: {:?}",
-                        group_id_str,
-                        e
-                    );
-                    // Continue anyway - worst case the create below will hit GroupAlreadyExists
-                    // and we fall back to the legacy orphan-recovery path.
-                }
-            }
-            _ => {
-                // Nothing in storage - nothing to wipe.
-            }
-        }
-
-        // 3. Create fresh group.
-        self.create_group(group_id_str)
     }
 
     pub fn get_known_groups(&self) -> Vec<String> {
@@ -208,20 +175,6 @@ impl MlsManager {
             group_id,
             min_epoch
         );
-        self.mark_state_dirty();
-    }
-
-    /// Permanent purge of all local state for a group: in-memory, OpenMLS storage,
-    /// and epoch lock set to `u64::MAX` to reject all future Welcomes.
-    /// Unlike `forget_group`, there is no way back after this call.
-    /// Reserve for the "Poison Pill" policy (unrecoverable group).
-    pub fn drop_group(&mut self, group_id: &str) {
-        self.groups.remove(group_id);
-        // u64::MAX: no Welcome will ever be accepted for this groupId.
-        self.forgotten_group_min_epochs
-            .insert(group_id.to_string(), u64::MAX);
-        self.delete_group_from_storage(group_id);
-        log::info!("[POISON_PILL] drop_group: {} permanently purged", group_id);
         self.mark_state_dirty();
     }
 }

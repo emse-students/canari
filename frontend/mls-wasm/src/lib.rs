@@ -165,16 +165,6 @@ impl WasmMlsClient {
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
-    /// Wipes any existing orphan state for this groupId then creates a fresh group.
-    /// Use for re-bootstrap after losing local MLS state (phantom group recovery).
-    #[wasm_bindgen]
-    pub fn force_create_group(&mut self, group_id: String) -> Result<(), JsValue> {
-        log::info!("force_create_group: {}", group_id);
-        self.manager
-            .force_create_group(group_id)
-            .map_err(|e| JsValue::from_str(&e.to_string()))
-    }
-
     #[wasm_bindgen]
     pub fn get_groups(&self) -> js_sys::Array {
         let groups = self.manager.get_known_groups();
@@ -191,14 +181,6 @@ impl WasmMlsClient {
         // realistic epoch, <= 2^53). Convert back to u64 (source width). [[S4]]
         log::info!("forget_group: {}, min_epoch={}", group_id, min_epoch);
         self.manager.forget_group(&group_id, min_epoch as u64);
-    }
-
-    /// Permanent purge of a group (Poison Pill): memory, OpenMLS storage, and epoch lock
-    /// set to MAX. No Welcome will ever be accepted for this groupId.
-    #[wasm_bindgen]
-    pub fn drop_group(&mut self, group_id: String) {
-        log::info!("drop_group (poison pill): {}", group_id);
-        self.manager.drop_group(&group_id);
     }
 
     /// Returns the current MLS epoch for a group as an f64 (a plain JS `number`). wasm-bindgen has

@@ -75,19 +75,29 @@ only a member holding the tree can mint a base, so there is nothing for a reset 
 
 - **`connection.ts`** — Rung-2 fallback: stale decrypt / epoch error patterns can trigger **`forgetGroup`** + **`sendReinviteRequest`** when local epoch is behind the message and rung-1 replay could not catch up (see `[RECOVER]` / `[GAP]` logs).
 
-### 6. Client - discovery re-bootstrap (stale placeholder)
+### 6. Client - there is ONE way to create a group, and it recovers orphans itself
 
-- **`discoverMissingGroups`** (**`actions.ts`**) — **`sendGroupReset`** must succeed **before** **`forceCreateGroup`** + commits; otherwise **`epoch_mismatch`** would return. **`acquireAddLock`** reduces duplicate bootstraps. **`epoch_mismatch`** after reset → **`forgetGroup`** + retry path.
+- **`create_group` is the only entry point** (WASM `create_group`, Tauri `creer_groupe`). When an
+  orphan for that `group_id` already sits in OpenMLS storage - the shape left by a `forget_group`
+  without a full reload - it LOADS that orphan back into `self.groups` and *then* returns
+  `Err("GroupAlreadyExists")`. The error is therefore good news: the caller has a usable group. Its
+  one handler is `setupMessageHandler.ts` (`GroupAlreadyExists` -> forget storage + re-join).
 
-- **`create_group` vs `force_create_group`** — two entry points that differ in exactly one way, and
-  picking the wrong one desyncs the group. `create_group` (WASM `create_group`, Tauri `creer_groupe`)
-  REFUSES to create a group that already exists locally, signalling `GroupAlreadyExists` so the caller
-  can skip a re-bootstrap it does not need; it is the normal entry point.
-  `force_create_group` (WASM `force_create_group`, Tauri `forcer_creation_groupe`) overwrites without
-  consulting local state — any existing `MlsGroup` for that `group_id` is replaced silently. Overwriting
-  a LIVE group costs epoch divergence and a broken ratchet for every other member, so it belongs only
-  in a controlled re-bootstrap: after a server `group_reset` and a local `forgetGroup`, never on its own.
-  Implementation: [`frontend/mls-core/src/group.rs`](../../../frontend/mls-core/src/group.rs).
+- **`force_create_group` and `drop_group` are GONE (2026-09-12), and nothing called either.** They
+  were a complete vertical stack each - TS interface, abstract, two platform implementations, a
+  Tauri command (`supprimer_groupe`), a WASM export, an `MlsManager` method - with zero production
+  call sites and zero tests. `force_create_group` wiped local state before creating; the paragraph
+  that used to sit here described it as the second half of a `sendGroupReset` -> `forceCreateGroup`
+  re-bootstrap, and that whole protocol went with `d54a58ae2 feat: remove broken MLS
+  bootstrap/recovery system`. Neither `sendGroupReset` nor the `forcer_creation_groupe` command the
+  text named has existed since. The two implementations had also silently diverged: the Web one
+  really wiped orphan state, while the Tauri one just called `creer_groupe` and swallowed the error,
+  so the same method name meant two different things per platform.
+
+  `drop_group` was the "Poison Pill": it purged the group and set its epoch lock to `u64::MAX`, so
+  no Welcome could EVER be accepted for that id again. Unreachable and irreversible - the one shape
+  that can only subtract availability - and bug C3 in
+  [mls-protocol](mls-protocol.md) records its last real use being removed as a fix.
 
 ### 7. Client - persistence write-if-newer (Web/IndexedDB)
 
