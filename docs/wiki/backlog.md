@@ -76,6 +76,100 @@ else holds, a console owned by the user, or hardware that does not exist.
 
 ## Open defects, in severity order
 
+### P1 - the send checkpoint has a seam, and the native side never filled it
+
+`BaseMlsService.checkpointAfterSend` carries a docblock that states an invariant and names the
+incident behind it: **`mls.bin` is never behind a frame that has already left the device**. The
+failure it describes was measured on the phone on 2026-08-14, twice, on a fleet with nothing else
+happening to it - a client sends, is reloaded before the checkpoint lands, drains its durable outbox
+against a state read back from disk that is BEHIND the sends the previous session made, and the
+peers refuse those frames with `SecretReuseError`, correctly reporting that the sender's ratchet
+rewound.
+
+The docblock then says: *"The DEFAULT does not await, and that is web's answer on purpose ... Native
+overrides this - see `TauriMlsService`."*
+
+**There is no override.** `checkpointAfterSend` has exactly two occurrences in the whole tree, both
+in `BaseMlsService.ts` - the call and the default. `git log -S` over `TauriMlsService.ts` returns
+nothing: one never existed. The commit that introduced the method says so itself (`f391c1991`,
+"`checkpointAfterSend` is added as the seam for the half that is still open"), so this is a designed
+fix that was never wired, not a regression. The guard the docblock relies on (`liveMutations`) is
+per-page-session while the outbox is durable, which is precisely why the native await was owed.
+
+So on the one platform where the fault was actually observed, the stated invariant does not hold.
+
+**This is one of four checkpoint routes carrying three different durability guarantees** (audit item
+D8), and the only one whose documentation and behaviour disagree:
+
+| Route | Guarantee |
+|---|---|
+| `persistCheckpoint()` | durable before return, or it throws |
+| `persistMlsStructuralCheckpoint({mlsService})` | same, with a fallback |
+| `persistMlsStructuralCheckpoint()` (no argument) | durable **only if a persister is registered**; otherwise writes nothing and returns `false` |
+| `checkpointAfterSend()` | never awaited; deferred to a microtask, and suppressed outright while `bulkIngestDepth > 0` |
+
+### The 2026-09-12 audit sweep - what survived verification, and what did not
+
+An audit of four subsystems produced **99 items** (49 duplicate paths, 50 dead ends). It was written
+by reading the source, so every item was a hypothesis about the code rather than a measurement of
+it - and the server half of it has since been measured against production, while the client half was
+re-verified against `main` on 2026-09-12. **Both halves moved.** The sweep is recorded here because
+re-deriving it costs four subsystem-wide searches, and because four of its items had already gone
+false within a single day the previous time.
+
+**Twenty items are false or already shipped.** `G-D12` (only one epoch source feeds rotation now;
+the server's `activeEpoch` reaches `classifyBase` alone). `G-E13` (closed: `unsettledDistributionGroups`
+holds a group across its creation, so a seed can no longer be minted against one that then loses the
+publish race). `R-D1` (the `minEpoch` asymmetry between the 30 s reactive path and the 45 s watchdog
+is gone - no caller anywhere passes a non-zero `minEpoch`). `R-D4` (mis-stated: it is a paired clear
+of **two different stores** across five sites, not a double-clear of one). `R-E2` (the re-add
+suspension does NOT renew its window - it resets from the FIRST attempt and lifts itself after 3 min).
+`R-E7` and `R-E10` (both fixed: a deferral for a group that left WASM is deleted rather than retried,
+and the unacked-frame tally gained three discharging events in place of its 15-second timer).
+`S-D3` (the two deletion routes are no longer byte-identical). `D6` (one call site remains). `D2`,
+`D7`, `DE1` (deleted 2026-09-12 - see CHANGELOG). `DE6`/`R-E6` (refuted and fixed by the live-device
+cap). `S-D11` (fixed 2026-09-12). `S-E4`, `S-E6`, `S-E8`, `S-E9`, `S-E11` (measured on production:
+zero population each).
+
+**Eight items are WORSE than the audit stated**, and a fix written to the audit's numbers would have
+missed part of each:
+
+| Item | Audit | Verified |
+|---|---|---|
+| `S-D1` | 4 writers, 2 gate behaviours | 5 paths, 3 writers, **3** behaviours - and `createGroup` has **no** addressability gate at all |
+| `S-D2` | 4 writers | 5, plus 3 `ABSENT -> pending` inserts; `sendWelcome` *resets `kickedAt` to null* |
+| `D8` | 4 routes, 3 guarantees | confirmed, **and** the documentation promises a native override that never existed (see the P1 above) |
+| `G-D11` | 2 ways | 6 sites |
+| `R-D6` | 3 places | 5 |
+| `R-D7` | 2 builders | 4 |
+| `R-D8` | 5 triggers | 6 triggers, 8 call sites |
+| `DE12` | handler exists, producer does not | the producers exist now and are **dormant** - no write path frames a `Framed::V1` blob, so the handler is still unreachable |
+
+**Seven items called dead ends have an exit the audit did not find**: `G-E5` (the roster walk
+re-arms from an empty decline set on the next `noteMissingSeed`, so reopening the salon restarts it),
+`G-E9`, `G-E14` (two), `R-E5`, `R-E8`, `DE4`, `DE9` (on the replay path only - the live path still
+ACKs and drops).
+
+**Sixteen are availability dead ends and are the work.** The user's rule, verbatim 2026-09-12: *"on
+ne peut pas demander a un utilisateur de sortir de l'impasse lui-meme. La sortie de l'impasse doit
+exister pour garantir la disponibilite"* - scoped, on the same day, to **availability** dead ends
+rather than deliberate refusals. Those with a measured population are on this page already (18
+commit-log holes across 11 of 58 groups, all exactly one epoch wide; 30 stranded `pending` seats, all
+`never added`; 1 unrepairable group). Those still to be sized: `R-E3` (`ROSTER_DISAGREE` with an
+outbox that has no attempt ceiling), `R-E4` (an `isGroupHealthy` hold that increments no counter and
+writes no `nextAttemptAt`), `R-E8` (exit-owed limbo - a group both invisible and un-recoverable while
+the server never answers), `R-E9`, `R-E11`, `R-E1`/`DE2` (`NO_REPAIRER`, left only by the epoch pair
+moving), `DE7`, `DE10` (an undecodable payload is never enqueued, so it can never be ACKed - the code
+names the 90-day retention window as its only terminator), `DE13` (leaving stages no Remove for the
+leaver's own leaf), `G-E1`, `G-E2`/`DE11`, `G-E6`, `G-E10`.
+
+**Five are deliberate refusals and are explicitly NOT to be "fixed"**, under the same scoping: `DE8`
+(a revoked device's leaf is permanent - that is MLS security, not a defect), `G-E8`
+(`historyVisibility === 'joined'` is the feature), `S-E2` (`deletedAt`), `G-E4`
+(`GraineBelowFirstIndexError`, which does have an exit via a seed at a lower `firstIndex`), and
+`past-epoch-application`, which `history.ts` deliberately does not count as a loss.
+
+
 ### P2 - five conversations rest on ONE holder and one has none, and the report can only say so (measured on production 2026-09-12)
 
 **The measurement.** Of 58 live groups on production: 1 with zero holders, 9 with one, 48 with two

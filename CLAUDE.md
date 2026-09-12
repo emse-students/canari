@@ -211,12 +211,6 @@ ships. **What only the USER can do is ONE table** -
 [backlog](docs/wiki/backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks), pointers
 only; never re-enumerate it here.
 
-### CANARI - THE DELIVERY PIPELINE
-
-**Commands: THE DEVELOPMENT CYCLE above. Model: [cicd](docs/wiki/cicd.md) +
-[workflow-migration](docs/wiki/workflow-migration.md), the ONLY copies - read before touching any
-workflow.**
-
 ### CANARI - THE QUEUE, IN ORDER
 
 **A HEADLINE AND A LINK EACH, AND THAT IS ALL THIS SECTION IS FOR.** It was 152 lines for 11 items
@@ -244,9 +238,13 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    and the blob-header READER are done 2026-09-08 and unshipped; the WRITER cannot follow until that
    reader is the floor (`minClientVersion`), so the two causes are still not separated in the field
    ([backlog](docs/wiki/backlog.md)).
-6. **FIVE LIVE CONVERSATIONS REST ON ONE HOLDER, ONE HAS NONE** (prod 2026-09-12; the state
-   machine's three P1s and both server P2s are SHIPPED). The hourly report says so and repairs
-   nothing because nothing can - levers and the rest of the triage: [backlog](docs/wiki/backlog.md), [triage](docs/wiki/protocols/mls-graine-state-machine.md#10-triage---what-is-worth-a-pull-request).
+6. **THE 99-ITEM AUDIT WAS SWEPT AGAINST `main` ON 2026-09-12 AND A FIFTH OF IT WAS ALREADY FALSE**
+   - 20 items dead or shipped, 8 WORSE than stated, 7 "dead ends" that have an exit, 16 real
+   availability dead ends, 5 deliberate refusals not to be "fixed" (user: the exit rule is for
+   AVAILABILITY). **Fix to the swept numbers, never the audit's.** P1 open: the send checkpoint's
+   native override is documented and was never written. **FIVE CONVERSATIONS REST ON ONE HOLDER,
+   ONE HAS NONE** - the hourly report says so and repairs nothing because nothing can.
+   [backlog](docs/wiki/backlog.md), [triage](docs/wiki/protocols/mls-graine-state-machine.md#10-triage---what-is-worth-a-pull-request).
 7. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - ONE merge mechanism
    and ONE arming point, asserted only by `bun tools/ecosystem-shape/shape.mjs`
    ([cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them), the only copy).

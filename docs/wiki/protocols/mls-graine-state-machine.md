@@ -445,6 +445,15 @@ not one of them spans two epochs says these are individual commits that failed t
 ranges lost to an outage - which is a different defect with a different fix, and it is the shape a
 count alone would have hidden.
 
+**This page's DE1-DE9 are the Graine subsystem's own dead ends and carry their own numbering.** They
+are nine of the **99** items a four-subsystem audit produced, and that whole set was swept against
+`main` on 2026-09-12: a fifth of it was already false, eight items were WORSE than stated, and seven
+"dead ends" turned out to have an exit. **Fix to the swept numbers, never to the audit's** - the
+verdict list is on [backlog](../backlog.md#the-2026-09-12-audit-sweep---what-survived-verification-and-what-did-not).
+Two of this page's entries moved in that sweep: the seed minted against an unsettled group can no
+longer lose the publish race (`unsettledDistributionGroups` holds it across creation), and
+`SCOPE_HAS_NO_DISTRIBUTION_GROUP` is now two codes, `WORKSPACE_`- and `CHANNEL_`-prefixed.
+
 
 | # | The dead end | How it is reached | Terminal by design? |
 | --- | --- | --- | --- |
@@ -462,8 +471,9 @@ count alone would have hidden.
 
 ## 10. Triage - what is worth a pull request
 
-**Nothing here has been opened as a PR.** The user arbitrates (2026-09-12: *"Diagramme + triage,
-puis tu arbitres"*). Each P1 was verified by reading the code, not by taking a search's word.
+**The user arbitrates** (2026-09-12: *"Diagramme + triage, puis tu arbitres"*), and each P1 below
+was verified by reading the code rather than by taking a search's word. Entries struck through have
+since SHIPPED - the date is on each one, and the story is in `CHANGELOG.md`.
 
 ### P1 - a broken user-facing path
 
