@@ -175,6 +175,42 @@ offline window - a device that is merely off for a fortnight must still get its 
 leak. Anything that needs a device to stop receiving *immediately* (a revocation) must act on the
 Redis set directly rather than wait for the reaper.
 
+### The device cap counts LIVE devices, because leaves are what it bounds
+
+`MAX_DEVICES_PER_USER = 15` refuses `POST /api/mls/register-device`. What it protects is the
+**ratchet tree**: every device is a leaf in every group it belongs to, so devices MULTIPLY rather
+than add, and Welcome size, ratchet-tree export and push fan-out are all per-leaf. That resource is
+consumed by a device that JOINED something, and by nothing else.
+
+Until 2026-09-12 the number compared against the limit was `key_package` rows inside
+`RETENTION_WINDOW_MS`, which is an account's **enrolment attempts over 90 days** - a different
+quantity that happens to be larger. Measured on production the same day:
+
+| | |
+| --- | --- |
+| `key_package` rows | 667 across 361 accounts |
+| of those, devices with an active membership or a push token | **213** |
+| of those, enrolled within 7 days and not yet proved | 87 |
+| **dead weight the old rule counted** | **367 (55%)** |
+| busiest account, under the old rule / under the new one | 15 / **6** |
+
+The single account the old rule ever refused held fifteen enrolments, **zero** group memberships and
+**zero** push tokens: a user refused a device because he had failed to get one working fifteen times,
+each failure making the next likelier to be refused. Raising the limit would have bought thirty
+failures. Its dead rows were purged (2026-09-12, user-authorised) with the same footprint the product
+deletes itself, and the account is free.
+
+`countLiveDevices` is the predicate now: **an active `dm_device_group_memberships` row, or a
+`push_token` row, or an enrolment newer than `DEVICE_ENROLMENT_GRACE_MS` (7 d)**. The two halves
+bound two different resources and are deliberately not merged - membership and push token bound TREE
+LEAVES, the grace window bounds ROWS, since a device that joined nothing still costs one key package
+and fifty prekeys. The device being registered is excluded from its own count, so re-registering an
+id the account already holds can no longer refuse it.
+
+`updatedAt` on either table is **not** consulted: a liveness clock must be written by the thing whose
+liveness it measures, and both of those are written by whatever last touched the row, the server
+included.
+
 ### The shared log keeps mutations, and records what may notify
 
 `history:{groupId}` is the only **shared** copy of a conversation: the per-device queue is deleted on

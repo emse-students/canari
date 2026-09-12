@@ -31,7 +31,15 @@ describe('DevicesController.registerDevice - revoked device', () => {
     save: jest.Mock;
     create: jest.Mock;
   };
-  let keyPackageRepo: { findOne: jest.Mock; count: jest.Mock; save: jest.Mock; create: jest.Mock };
+  let keyPackageRepo: {
+    findOne: jest.Mock;
+    count: jest.Mock;
+    save: jest.Mock;
+    create: jest.Mock;
+    createQueryBuilder: jest.Mock;
+  };
+  /** The number `countLiveDevices` reads back, set per test. */
+  let liveDevices: number;
 
   const BODY = {
     userId: 'u1',
@@ -46,11 +54,21 @@ describe('DevicesController.registerDevice - revoked device', () => {
       save: jest.fn(),
       create: jest.fn(),
     };
+    liveDevices = 0;
+    // `countLiveDevices` asks the database the whole question in one statement, so the seam a test
+    // can hold is the builder - what it ASKS is asserted in devices.controller.live-cap.spec.ts.
+    const qb = {
+      select: jest.fn(() => qb),
+      where: jest.fn(() => qb),
+      andWhere: jest.fn(() => qb),
+      getRawOne: jest.fn(() => Promise.resolve({ n: String(liveDevices) })),
+    };
     keyPackageRepo = {
       findOne: jest.fn().mockResolvedValue(null),
       count: jest.fn().mockResolvedValue(0),
       save: jest.fn().mockResolvedValue({}),
       create: jest.fn((v) => v),
+      createQueryBuilder: jest.fn(() => qb),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -105,7 +123,7 @@ describe('DevicesController.registerDevice - revoked device', () => {
    */
   it('refuses a device over the cap with a code the client can classify, and says so in the log', async () => {
     revokedDeviceRepo.findOne.mockResolvedValue(null);
-    keyPackageRepo.count.mockResolvedValue(MAX_DEVICES_PER_USER);
+    liveDevices = MAX_DEVICES_PER_USER;
     const warn = jest
       .spyOn((controller as unknown as { logger: { warn: (m: string) => void } }).logger, 'warn')
       .mockImplementation(() => undefined);
@@ -119,7 +137,7 @@ describe('DevicesController.registerDevice - revoked device', () => {
     expect(keyPackageRepo.save).not.toHaveBeenCalled();
     // A refusal with no trace is found by hand, a day late: the line must carry the count it read.
     expect(warn.mock.calls.map((c) => String(c[0])).join('\n')).toContain(
-      `spent=${MAX_DEVICES_PER_USER}/${MAX_DEVICES_PER_USER}`
+      `live=${MAX_DEVICES_PER_USER}/${MAX_DEVICES_PER_USER}`
     );
   });
 });

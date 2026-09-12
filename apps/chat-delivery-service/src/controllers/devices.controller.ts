@@ -34,7 +34,11 @@ import {
   sanitizeOptionalDeviceAppVersion,
   assertCallerOwnsUserId,
 } from '../utils/sanitize';
-import { RETENTION_WINDOW_MS, MAX_DEVICES_PER_USER } from '../retention.constants';
+import {
+  RETENTION_WINDOW_MS,
+  MAX_DEVICES_PER_USER,
+  DEVICE_ENROLMENT_GRACE_MS,
+} from '../retention.constants';
 import { resolveUserDisplayName } from '../utils/display-name';
 import { activeRevocationWhere } from '../utils/revocation';
 
@@ -62,6 +66,48 @@ export class DevicesController {
     private readonly dataSource: DataSource,
     private readonly messagingService: MessagingService
   ) {}
+
+  /**
+   * Counts the devices of `userId` that are ALIVE, which is what {@link MAX_DEVICES_PER_USER}
+   * bounds. `excludeDeviceId` is the device being registered: it is already paid for and must not
+   * refuse itself.
+   *
+   * A device is alive when it holds an ACTIVE group membership or a push token - the two facts the
+   * server holds that are written as a consequence of the device working, and the two that cost the
+   * resource the cap exists for. Anything else it enrolled within
+   * {@link DEVICE_ENROLMENT_GRACE_MS} still counts, so a burst of registrations cannot mint rows
+   * without bound before any of them has had to prove anything.
+   *
+   * WHAT THIS REPLACES, and why the old rule could not be repaired in place: it counted
+   * `key_package` rows inside the 90-day retention window, so the number it compared against the
+   * limit was the account's ENROLMENT ATTEMPTS, not its devices. Every failed enrolment made the
+   * next one likelier to be refused, which is the wrong direction for a defence - and on production
+   * it had exactly one victim, an account whose fifteen enrolments carried zero memberships and
+   * zero push tokens (2026-09-12).
+   *
+   * `updatedAt` on either table is deliberately NOT consulted. A liveness clock must be written by
+   * the thing whose liveness it measures, and both of those are written by whatever last touched
+   * the row - the server included.
+   */
+  private async countLiveDevices(userId: string, excludeDeviceId: string): Promise<number> {
+    const graceCutoff = new Date(Date.now() - DEVICE_ENROLMENT_GRACE_MS);
+    const rows = await this.keyPackageRepo
+      .createQueryBuilder('kp')
+      .select('COUNT(DISTINCT kp."deviceId")', 'n')
+      .where('kp."userId" = :userId', { userId })
+      .andWhere('kp."deviceId" != :excludeDeviceId', { excludeDeviceId })
+      .andWhere(
+        `(kp."createdAt" >= :graceCutoff
+          OR EXISTS (SELECT 1 FROM dm_device_group_memberships m
+                      WHERE m."userId" = kp."userId" AND m."deviceId" = kp."deviceId"
+                        AND m.status = 'active')
+          OR EXISTS (SELECT 1 FROM push_token p
+                      WHERE p."userId" = kp."userId" AND p."deviceId" = kp."deviceId"))`,
+        { graceCutoff }
+      )
+      .getRawOne<{ n: string }>();
+    return Number(rows?.n ?? 0);
+  }
 
   private makeTraceId(scope: string): string {
     return `${scope}-${crypto.randomUUID().slice(0, 8)}`;
@@ -187,10 +233,11 @@ export class DevicesController {
     const deviceOs = sanitizeOptionalDeviceOs(body.deviceOs);
     const deviceAppVersion = sanitizeOptionalDeviceAppVersion(body.deviceAppVersion);
 
-    // Enforce per-user device limit (M5)
-    const deviceCount = await this.keyPackageRepo.count({
-      where: { userId, createdAt: MoreThanOrEqual(new Date(Date.now() - RETENTION_WINDOW_MS)) },
-    });
+    // Enforce the per-user device limit (M5) against LIVE devices - see countLiveDevices for what
+    // that means and why the old row count was the wrong quantity. The device being registered is
+    // excluded: re-registering an id the account already holds adds nothing, and counting it
+    // refused exactly the devices that were already paid for.
+    const deviceCount = await this.countLiveDevices(userId, deviceId);
     if (deviceCount >= MAX_DEVICES_PER_USER) {
       // A REFUSAL NOBODY COULD SEE. Until 2026-08-28 this threw a bare sentence and logged nothing at
       // all - it fires BEFORE the `[REGISTER_DEVICE] START` line below, so a full account produced a
@@ -203,7 +250,7 @@ export class DevicesController {
       // device first) while other 400s and every 5xx are retryable, and a client must not tell those
       // apart by reading prose - `DEVICE_LIMIT_REACHED` is what `DeviceLimitReachedError` is thrown on.
       this.logger.warn(
-        `[REGISTER_DEVICE] REFUSED device cap user=${userId} device=${deviceId} spent=${deviceCount}/${MAX_DEVICES_PER_USER}`
+        `[REGISTER_DEVICE] REFUSED device cap user=${userId} device=${deviceId} live=${deviceCount}/${MAX_DEVICES_PER_USER}`
       );
       throw new BadRequestException({
         code: 'DEVICE_LIMIT_REACHED',
