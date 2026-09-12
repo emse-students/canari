@@ -19,9 +19,6 @@ pub(crate) struct AppState {
 /// Separate from tauri-plugin-sql (JS side) so it stays reachable from Rust commands.
 pub(crate) struct PendingDb(pub Arc<sqlx::SqlitePool>);
 
-/// Reusable HTTP client (connection pool) for Rust-side gap fetching.
-pub(crate) struct HttpClient(pub reqwest::Client);
-
 /// Result of a batch KeyPackage generation.
 #[derive(serde::Serialize)]
 pub(crate) struct KeyPackageBatchResult {

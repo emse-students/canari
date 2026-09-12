@@ -496,9 +496,9 @@ makes a reader plan around it.
   `baseEpoch + 1`. **Nothing in this system can return a group to epoch 0.**
 - `group_reset` survives only as an INBOUND control frame, which the client acknowledges and
   ignores.
-- The native `bootstrap_dead_conversation` command still POSTs to `claim-bootstrap` then
-  `reset-epoch`. **Both routes were deleted and the command has no caller** - it is registered in
-  `lib.rs` and reached from nowhere.
+- The native `bootstrap_dead_conversation` command POSTed to `claim-bootstrap` then `reset-epoch`,
+  both deleted, and had no caller of its own. **It is deleted too** (2026-09-12): it was the last
+  thing in the product claiming a group with no holder could be rebuilt.
 
 **A group whose tree no member holds any longer cannot be reopened, and that is a property of MLS
 rather than a gap here.** Every way into a group in RFC 9420 - Welcome, external commit, ReInit,

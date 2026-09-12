@@ -11,6 +11,26 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Removed - the fail-safe that rebuilt a dead conversation, which no button could reach and no route would answer
+
+`bootstrap_dead_conversation` was 282 lines of native Rust promising the one repair MLS cannot
+perform: rebuilding a group whose tree no member holds any more. It claimed a server-side optimistic
+lock (`POST .../claim-bootstrap`), reset the epoch to zero (`POST .../reset-epoch`), created a fresh
+local group and re-invited every device. **Both routes were deleted with the successor machinery in
+`009_drop_group_successor.sql`, and no frontend code has ever invoked the command** - it was
+registered in `lib.rs` and reached from nowhere.
+
+It is deleted rather than left registered because of what it asserted. Every way into a group in
+RFC 9420 - Welcome, external commit, ReInit, subgroup branching, external proposals - needs a party
+holding the group secrets, and this server holds only ciphertext; a group with no holder is terminal
+by construction, not by omission. This command was the last thing in the product implying otherwise,
+and a reader planning around a repair that cannot exist is worse served than one told there is none.
+
+**Deleting it made the crate's whole HTTP client dead**, which is the measure of how alone it was:
+`HttpClient` in `state.rs`, its `.manage()` registration, and the `reqwest` dependency itself existed
+for these two calls and nothing else. All four are gone; `ForegroundCritical`,
+`write_mls_state_blob` and `force_create_group` each keep other callers and stay.
+
 ### Removed - seven diagrams of an architecture that was never built, and the two sources nothing rendered
 
 `docs/diagrams/` held seven hand-exported PlantUML images and two `.uml` sources. **Nothing in
