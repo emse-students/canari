@@ -1,7 +1,5 @@
-version: 0.17.2
+version: 0.17.3
 
-Sur le web, un appareil ne publiait plus ses clés de chiffrement : certaines conversations restaient introuvables, et le restaient à chaque reconnexion. C'est réparé.
+Un appareil qui ne pouvait plus ouvrir une conversation redemandait de l'aide toutes les minutes, indéfiniment, même quand le serveur avait déjà répondu que personne n'était joignable pour la réparer. Il attend maintenant qu'un membre capable de le faire revienne.
 
-Une conversation pouvait se fermer à tous ses membres parce qu'un seul appareil, inutilisé depuis trois mois, n'y avait plus sa place. Elle se rouvre.
-
-"Réinitialiser l'appareil" demande maintenant confirmation, prévient le serveur et vous dit ce qui a réellement été effacé.
+L'application interrogeait le serveur douze fois par minute au sujet de conversations dont elle avait déjà la réponse. Moins de requêtes réseau, rien de changé à l'écran.
