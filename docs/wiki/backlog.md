@@ -7217,7 +7217,8 @@ do to the keys. What a stolen device gets, and what the PIN does and does not pr
 **The two audiences declined, recorded so the choice is not re-litigated.** A maintainer's page (file
 names, invariants, where each is held) would be a wiki page more, long, needing to stay synchronised
 - the wiki already carries that, split across
-[mls-protocol](protocols/mls-protocol.md) and [graine](protocols/channel-encryption.md). A security
+[mls-protocol](protocols/mls-protocol.md), [graine](protocols/channel-encryption.md) and
+[the state machine](protocols/mls-graine-state-machine.md). A security
 assessor's document (explicit threat model, what an excluded member can do) is the most demanding of
 the three and nobody has asked for one.
 
