@@ -162,6 +162,47 @@ describe('push_context.json contract (Rust writer vs 3 native readers)', () => {
   ])('%s still runs the one-shot legacy key migration', (_name, source, pattern) => {
     expect(source()).toMatch(pattern);
   });
+
+  /**
+   * `store_device_identity` is a SECOND writer of this same file, and it exists because the first
+   * one could not be reached without a device key, a keystore write and a network round-trip -
+   * none of which is a fact about who this device is. The contract it owes is narrow: the two keys
+   * every reader requires, spelled the same way, written with no precondition at all.
+   */
+  describe('the identity mirror, the writer with no precondition', () => {
+    const identityBlock = functionBody(
+      rustSource,
+      /fn store_device_identity/,
+      /std::fs::write\(&path/
+    );
+    const identityKeys = extractKeys(identityBlock, /ctx\.insert\("(\w+)"/g);
+
+    it('writes exactly the two keys that name a device, and nothing else', () => {
+      expect(identityKeys).toEqual(['deviceId', 'userId']);
+    });
+
+    it('spells them the way push.rs and the three readers already do', () => {
+      for (const key of identityKeys) expect(rustKeys).toContain(key);
+    });
+
+    it('CREATES the file when absent - that is the case the old path was losing', () => {
+      // `set_push_context_locale` deliberately returns early on an absent file: a lone locale is a
+      // context no reader can use. A lone identity is the opposite - it is exactly what
+      // `load_push_context` hands back to `restoreDeviceIdFromNative`, and the three background
+      // readers all require a non-empty `baseUrl`, so they see an absent file either way.
+      expect(identityBlock).toMatch(/Err\(_\) => serde_json::Map::new\(\)/);
+    });
+
+    it('drops the previous auth bearer when the user changes', () => {
+      // `pushToken` is the AUTH token despite its name, so it is user-scoped: left beside a new
+      // `userId` it would let a background fetch authenticate as the account that signed out.
+      expect(identityBlock).toMatch(/ctx\.remove\("pushToken"\)/);
+    });
+
+    it('depends on no device key and no keystore - re-coupling it is the regression', () => {
+      expect(identityBlock).not.toMatch(/device_key|keystore|PluginDeviceKeyStore/);
+    });
+  });
 });
 
 /**
