@@ -223,19 +223,12 @@ Backend services use `expose:` (not `ports:`) in production — only accessible 
 
 ## Sequence diagrams
 
-UML sequence diagrams for key flows are in [`docs/diagrams/`](../diagrams/):
-
-| Diagram | File | Description |
-|---|---|---|
-| App startup | `ouverture_app.png` | App bootstrap, MLS client init, WebSocket connect |
-| Login | `connexion.png` / `connexion.uml` | OIDC flow: redirect, callback, JWT, cookie |
-| Login (alt) | `connexion2.png` | Alternative login path |
-| Message send | `message_send.png` | MLS encrypt → WebSocket → gateway → recipient |
-| Message receive | `message.png` / `message.uml` | WS frame → MLS decrypt → UI render |
-| Group create | `group_create.png` | Create group, add members, commit + welcome |
-| Member add | `groupe_add.png` | Add member to existing group, welcome forward |
-
-> Source `.uml` files are PlantUML and can be edited with any PlantUML-compatible tool.
+**There are none here any more, and the replacement is a different kind of page.** `docs/diagrams/`
+held seven hand-exported PlantUML images, deleted 2026-09-12: nothing in `.github`, `tools/` or the
+Makefile ever rendered them, so a corrected source never reached its image and no gate could say so.
+The diagrams that ARE maintained are inline mermaid, checked against the code line by line - see
+[`protocols/mls-graine-state-machine.md`](protocols/mls-graine-state-machine.md), whose every
+transition names the file and line performing it.
 
 ## Key design decisions
 

@@ -11,6 +11,36 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Removed - seven diagrams of an architecture that was never built, and the two sources nothing rendered
+
+`docs/diagrams/` held seven hand-exported PlantUML images and two `.uml` sources. **Nothing in
+`.github`, `tools/` or the Makefile has ever rendered them**, which is the whole defect: a source
+could be corrected and its image left drawing the old fiction, with no gate able to notice.
+
+That is not hypothetical - it is exactly what happened. `message.uml` was corrected on 2026-08-31
+and its own header now opens *"THE PERSISTENCE HALF OF THIS DIAGRAM WAS FICTION"*, disavowing a Kafka
+topic and a "Chat History Service" that never existed here. **`message.png`, last touched
+2026-02-25, still draws Kafka, the Chat History Service and MongoDB**, and still shows the client
+sending over WebSocket where the corrected source says `POST /api/mls/send`. The image contradicts
+its own source in two ways and had done so for six months.
+
+The others are no better, each checked against the code rather than presumed stale:
+
+- `connexion.uml` calls `POST /auth/login` and `POST /auth/recover` and has the server hand back the
+  user's private key encrypted under a password hash. Neither route exists - the real ones are
+  `oidc/callback`, `refresh` and `logout` - and a server-held private key is the opposite of this
+  product's design.
+- `ouverture_app.png` draws a "Backend (Tauri Rust/OpenMLS)" reached by `invoke("check_registration")`
+  and `invoke("login", {pin})`, deriving the state key from the PIN. **Neither command exists** (every
+  real one is French-named, `initialiser_mls` and its siblings), and the PIN-derived variants were
+  replaced by key-based ones.
+- `architecture.md` described `connexion.uml` as the "OIDC flow", which its own source contradicts.
+
+Nothing is redrawn. The diagrams this repository actually maintains are inline mermaid checked
+against the code line by line, and `protocols/mls-graine-state-machine.md` is the model: every
+transition names the file and the line that performs it. The `architecture.md` section now says that
+instead of listing files that are gone, and the pointers in `CLAUDE.md` and `README.md` are removed.
+
 ### Fixed - a Welcome demoted the device it was delivered to, and told the gateway to keep routing to it
 
 `sendWelcome` ended with two writes. It upserted the device's `DeviceGroupMembership` to `pending`,

@@ -198,7 +198,6 @@ canari/
 ├── docs/
 │   ├── wiki/                  # Technical documentation (English)
 │   ├── user-guide/            # User-facing documentation (French)
-│   ├── diagrams/              # UML sequence diagrams
 │   └── changelog-archive.md   # Long-form release history (<= v0.13.1)
 ├── CHANGELOG.md
 ├── CONTRIBUTING.md
