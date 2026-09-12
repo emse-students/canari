@@ -11,6 +11,25 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - the database page still banned the tool that works, and blamed the one that never broke
+
+`infrastructure/databases.md` opened its production-access section with *"Use the PowerShell tool
+for any of these, never Bash"*. That rule was retired on 2026-09-02 and `CLAUDE.md` has said so
+since, so the two pages contradicted each other - and the page carrying the SQL, the container names
+and the fact that `auth_db` is the only database is the one a reader opens first.
+
+**It also named the wrong culprit, which is why it outlived its own correction.** It was never Bash:
+MSYS `ssh` execs the cloudflared `ProxyCommand` through `/bin/bash` whatever the caller, and it was
+the Windows BACKSLASHES in that path being eaten. `~/.ssh/config` spells it with forward slashes
+now, which `bash` and `cmd` both exec. A rule that blames the tool rather than the path cannot be
+checked, so nothing could have refuted it.
+
+The preference now runs the other way for anything binary: PowerShell text-encodes stdout, so a
+`pg_dump | gzip` through it is corrupted on arrival, and `pull-prod-dump.sh` already says so in its
+own header - it was the only one of the four sites that was current. The same stale claim in
+`env-from-prod.sh` is corrected with it. `device-verification.md`'s *"never Bash"* is left alone: it
+is about `adb` absolute device paths, a real and different rewriting, and it is right.
+
 ### Removed - the fail-safe that rebuilt a dead conversation, which no button could reach and no route would answer
 
 `bootstrap_dead_conversation` was 282 lines of native Rust promising the one repair MLS cannot
