@@ -481,6 +481,9 @@ Reception is in two steps, and the order matters. The add-path (`batchAddMessage
 
 ### Group reset - THERE IS NONE, AND EVERY PIECE THIS SECTION DESCRIBED IS GONE
 
+> Every state and transition on this page is drawn, with its `file:line`, on
+> [`mls-graine-state-machine.md`](mls-graine-state-machine.md).
+
 This section documented `mlsService.sendGroupReset(groupId)` reaching
 POST `/api/mls/groups/:id/reset`, a server resetting every `DeviceGroupMembership` to `pending` and
 the epoch to 0, and a `group_reset` broadcast. **Not one of those exists**, verified 2026-09-12 -
