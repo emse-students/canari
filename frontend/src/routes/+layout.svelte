@@ -334,7 +334,17 @@
     <AppSidebar />
   {/if}
 
-  <div class="relative z-10 flex flex-1 flex-col overflow-hidden md:pl-[6rem]">
+  <!--
+    THE GUTTER IS DECIDED BY THE SAME PREDICATE AS THE SIDEBAR IT MAKES ROOM FOR. It was a constant
+    `md:pl-[6rem]` while `AppSidebar` above was already conditional, so `/login` and `/legal/*`
+    reserved 96px for a bar they do not render: the card centred 48px right of the viewport, while
+    the confirm dialog - portalled to the body and `fixed inset-0` - centred on the real middle, and
+    the two disagreed on screen. Measured on production 2026-09-12 at 1280px: card centre 685,
+    dialog centre 640. Two independent statements about one fact, with nothing comparing them.
+  -->
+  <div
+    class="relative z-10 flex flex-1 flex-col overflow-hidden {isLoginPage ? '' : 'md:pl-[6rem]'}"
+  >
     <!-- Bandeau multi-onglets : pleine largeur, en haut du contenu (jamais dans la rangée sidebar). -->
     <TabFollowerBanner />
     <OfflineBanner />
