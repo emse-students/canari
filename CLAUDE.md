@@ -231,10 +231,10 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    three commands a run owes before any of it is believed are in the campaign section below.
    PIN's four rows change a PIN or restart a browser, hence last; HEAL-NEW's rung redesign is open
    on a clean pass ([backlog](docs/wiki/backlog.md)).
-2. **P1 - THE PREKEY WEIGHT: BOTH CAUSES FIXED 2026-09-09; THE PRUNE WAS DECIDED 2026-09-10 AND HAS
-   NO MECHANISM** - nothing in the product can hand `prune_key_packages_expired_at` an instant, and
-   the retention rule that would avoid a destructive one-off is blocked on ONE unmeasured number:
-   how long a Welcome may sit between the claim and the join ([backlog](docs/wiki/backlog.md)).
+2. **P1 - THE PREKEY WEIGHT: THE WELCOME WINDOW IS MEASURED (2026-09-12) AND IT REFUTED THE RULE
+   THAT WOULD HAVE RECLAIMED THE PILE** - worst completed join 35 d 16 h, one still in flight at
+   46 d, so a count-based horizon sits inside the window whatever K is. What survives is safe by
+   construction, reclaims only the published fifty, and has no mechanism ([backlog](docs/wiki/backlog.md)).
 3. **P1 - a PLACEHOLDER held a member's seat**; only a member's CLIENT can say whether a LEAF is
    left in the MLS tree and **NOTHING HAS** - the three identities cited here as that evidence were
    this campaign's OWN mention fixtures, named 2026-09-07 ([backlog](docs/wiki/backlog.md)).
