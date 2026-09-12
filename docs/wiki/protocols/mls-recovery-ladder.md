@@ -76,14 +76,14 @@ This document describes how the **client** recovers from MLS and delivery-queue 
 
    **A refused GroupInfo read ENDS the ladder; it does not descend it.** "Or the device is not an authorized member" used to be in the sentence above, and it was a defect: the endpoint is gated on a `dm_group_members` row, so its **403 is the roster answering** that we hold no membership — which no retry and no peer can change. It now arrives as `NotAGroupMemberError`, thrown by `fetchGroupInfo`, propagated by `externalJoin`, and terminates the recovery through the same seam as a server-side tombstone (`stopRecovering`: cancel, `clearGroupNotReady`, retire the conversation). Until then it was flattened to `null`, read as *no base published yet*, and fell to the fallback — so a group we had LEFT was chased once a minute for as long as it existed, one 403 and one broadcast per pass, contained only by the `RECOVERY_TIMEOUT_MS` throttle. Any OTHER failure (a 5xx, a transport error) says nothing about membership and must still descend to the fallback, or a bad deploy retires live conversations.
 
-5. **Stale / kick flows** — Server metadata (`DeviceGroupMembership`: `pending`, `welcome_sent`, `welcome_received`, `stale`) must match MLS reality. After remove commits, the client calls **`POST /api/mls/kick-stale-device`** (single device; used by `kickStaleDevice()` in MLS services) or **`POST /api/mls/kick-stale-user`** (all devices of a user).
+5. **Stale / kick flows** — Server metadata (`DeviceGroupMembership`, whose enum is exactly `pending` | `active` - `welcome_sent`, `welcome_received` and `stale` were retired by `001_device_group_status_enum.sql` and this page named them for a year afterwards) must match MLS reality. After remove commits, the client calls **`POST /api/mls/kick-stale-device`** (single device; used by `kickStaleDevice()` in MLS services) or **`POST /api/mls/kick-stale-user`** (all devices of a user).
 
 6. **Last resort** — Full resync / re-login / clearing local MLS state is outside normal operation; prefer fixing the specific gap (queue item, epoch, membership row) first.
 
 ## The external-join base, and who repairs it when it falls behind
 
 The base is a self-contained `GroupInfo` stored by the delivery service. It is the whole of what
-lets a device with **no local MLS state** re-enter a group without asking anybody - rung 4,
+lets a device with **no local MLS state** re-enter a group without asking anybody - rung 2,
 `externalJoin` - and the commit gate accepts `baseEpoch == activeEpoch` and nothing else.
 
 **Only a member holding the tree can mint one, and it is minted as a follow-up.** `runCommitTransaction`
@@ -91,7 +91,15 @@ ends with `void this.refreshGroupInfo(groupId)`: off the critical path, delibera
 commit that the server accepted must not be reported as failed just because a follow-up did not
 land. The cost was documented in that comment for months and was exactly as stated - lose the
 follow-up and the group's epoch has advanced while the published base has not, **permanently**,
-because nothing else ever mints one.
+because for such a commit nothing else mints one.
+
+**That is now only half of it, and this page already contradicted itself two sections down.** A
+commit that CARRIES a `groupInfo` - every external join does - has its base written by
+`validateCommit` inside the very transaction that advances the epoch, so that base cannot be lost
+any more. The follow-up remains the only minter for an ordinary staged add or remove, which is
+unapplied at submit time and therefore has nothing to export. So the permanent-staleness window is
+closed for one kind of commit and open for the other, which is exactly what the measurement below
+found in the field.
 
 **Measured on production 2026-09-04**, and the shape of the number is the diagnosis:
 
