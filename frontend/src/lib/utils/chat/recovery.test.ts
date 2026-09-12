@@ -9,6 +9,7 @@ import {
   recoverForkedGroup,
   recoverRosterDisagreement,
   resetReAddCooldowns,
+  isReAddDue,
 } from './recovery';
 import { NotAGroupMemberError } from '$lib/mls-client/mlsDeliveryApi';
 import { saveMlsState } from '$lib/utils/hex';
@@ -910,5 +911,51 @@ describe('requestReAdd - the promotion after a successful external join', () => 
 
     expect(deps.mlsService.externalJoin).not.toHaveBeenCalled();
     expect(deps.conversations.size).toBe(0);
+  });
+});
+
+describe('isReAddDue - the cooldown, read instead of learnt by failing', () => {
+  let clock = Date.now();
+  beforeEach(() => {
+    clock = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => clock);
+  });
+  afterEach(() => {
+    vi.mocked(Date.now).mockRestore();
+  });
+
+  it('says yes about a group nothing has ever attempted', () => {
+    expect(isReAddDue('never-seen')).toBe(true);
+  });
+
+  it('agrees with the throttle the seam actually applies', async () => {
+    const deps = makeDeps();
+    await requestReAdd('g1', deps);
+
+    expect(isReAddDue('g1')).toBe(false);
+
+    clock += RECOVERY_TIMEOUT_MS + 1;
+    expect(isReAddDue('g1')).toBe(true);
+  });
+
+  it('reports due again as soon as a join clears the cooldown', async () => {
+    const deps = makeDeps();
+    await requestReAdd('g1', deps);
+    cancelReAdd('g1');
+
+    expect(isReAddDue('g1')).toBe(true);
+  });
+
+  it('does not silence a reactive caller: asking early still logs the throttle', async () => {
+    // The SYNC_WATCHDOG reads the predicate because it DRIVES the cadence. Every other caller
+    // arrives with new information, and the rate at which it arrives is worth measuring - so the
+    // seam must keep accusing when one of them is early.
+    const deps = makeDeps();
+    await requestReAdd('g1', deps);
+    deps.log = vi.fn();
+
+    await requestReAdd('g1', deps);
+
+    expect(deps.log).toHaveBeenCalledWith(expect.stringContaining('throttled'));
   });
 });

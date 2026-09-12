@@ -41,6 +41,18 @@ export function clearEpochGap(groupId: string): void {
   epochGapSince.delete(groupId);
 }
 
+/**
+ * True if ANY group is currently in an unresolved epoch gap.
+ *
+ * The SYNC_WATCHDOG's stuck-gap net is the only reason it needs a fine tick, and on a session with
+ * nothing lagging that net has nothing to look at. Reading the registry's emptiness first is what
+ * lets the tick return before crossing into WASM for `get_groups()` - a boundary it was paying for
+ * every five seconds, for the whole session, to find nothing.
+ */
+export function anyEpochGapArmed(): boolean {
+  return epochGapSince.size > 0;
+}
+
 /** True if the group is currently in an unresolved epoch gap (therefore not sendable). */
 export function isInEpochGap(groupId: string): boolean {
   return epochGapSince.has(groupId);
