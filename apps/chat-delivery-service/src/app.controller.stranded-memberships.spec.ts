@@ -11,6 +11,7 @@ import { GroupMember } from './entities/group-member.entity';
 import { DeviceGroupMembership } from './entities/device-group-membership.entity';
 import { RevokedDevice } from './entities/revoked-device.entity';
 import { PushToken } from './entities/push-token.entity';
+import { MlsGroupInfo } from './entities/mls-group-info.entity';
 import { MessagingService } from './services/messaging.service';
 
 /**
@@ -104,6 +105,7 @@ describe('AppController - reportStrandedDeviceMemberships', () => {
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: deviceGroupRepo },
         { provide: getRepositoryToken(RevokedDevice), useValue: emptyRepo() },
         { provide: getRepositoryToken(PushToken), useValue: emptyRepo() },
+        { provide: getRepositoryToken(MlsGroupInfo), useValue: emptyRepo() },
         { provide: 'REDIS_CLIENT', useValue: { srem: jest.fn(), keys: jest.fn() } },
         { provide: MessagingService, useValue: { purgeDeviceFootprint: jest.fn() } },
       ],

@@ -61,6 +61,17 @@ export const STRANDED_PENDING_MEMBERSHIP_MS = 60 * 60 * 1000;
 export const STRANDED_MEMBERSHIP_REPORT_TOP_N = 10;
 
 /**
+ * How many stale external-join bases the hourly report names in each of its two lines.
+ *
+ * Ten, matching the stranded-membership report above, and for its reason: one line per cause and
+ * never one per row. This fires hourly, and a report whose reader learns to skip it is the one that
+ * hides the next defect. The measured population is three (production, 2026-09-12), so the cap is
+ * not currently reached - it exists so that the day it IS reached the line stays readable and the
+ * COUNT beside it still says how far past ten the estate went.
+ */
+export const STALE_BASE_REPORT_TOP_N = 10;
+
+/**
  * Per-device undelivered-queue depth above which the hourly queue report escalates from a
  * log line to a WARN.
  *

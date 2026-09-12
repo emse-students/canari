@@ -8,6 +8,7 @@ import { GroupMember } from './entities/group-member.entity';
 import { DeviceGroupMembership } from './entities/device-group-membership.entity';
 import { RevokedDevice } from './entities/revoked-device.entity';
 import { PushToken } from './entities/push-token.entity';
+import { MlsGroupInfo } from './entities/mls-group-info.entity';
 import Redis from 'ioredis';
 import { initializeApp, getApps, cert, type ServiceAccount } from 'firebase-admin/app';
 import {
@@ -18,6 +19,7 @@ import {
   QUEUE_DEPTH_REPORT_TOP_N,
   STRANDED_PENDING_MEMBERSHIP_MS,
   STRANDED_MEMBERSHIP_REPORT_TOP_N,
+  STALE_BASE_REPORT_TOP_N,
 } from './retention.constants';
 import { activeRevocationCutoff } from './utils/revocation';
 import {
@@ -46,6 +48,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   private cleanupExpiredRevocationsInterval: ReturnType<typeof setInterval>;
   private reportQueueDepthInterval: ReturnType<typeof setInterval>;
   private reportStrandedMembershipsInterval: ReturnType<typeof setInterval>;
+  private reportStaleBasesInterval: ReturnType<typeof setInterval>;
   private initialSweepTimeout: ReturnType<typeof setTimeout>;
 
   /**
@@ -73,6 +76,8 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     private revokedDeviceRepo: Repository<RevokedDevice>,
     @InjectRepository(PushToken)
     private pushTokenRepo: Repository<PushToken>,
+    @InjectRepository(MlsGroupInfo)
+    private groupInfoRepo: Repository<MlsGroupInfo>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
     private readonly messagingService: MessagingService
   ) {}
@@ -200,9 +205,20 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       );
     }, ONE_HOUR);
 
+    // Observe the external-join bases. The third report, and it exists for the reason the other two
+    // do: three conversations on production had been one epoch behind since 2026-08-29, 08-30 and
+    // 08-31 - thirteen days - and the only thing that ever found them was a hand-written SQL join,
+    // twice. A correct mechanism with no report is found by hand, a day late.
+    this.reportStaleBasesInterval = setInterval(() => {
+      void this.reportStaleExternalJoinBases().catch((e) =>
+        this.logger.error('[CRON] reportStaleExternalJoinBases failed', e)
+      );
+    }, ONE_HOUR);
+
     this.logger.log(
       '[CRON] Stale device detection (1h), message cleanup (1h), ' +
         'stale device GC (1h), queue depth report (1h), stranded membership report (1h), ' +
+        'stale external-join base report (1h), ' +
         'orphaned Redis groups cleanup (6h), ' +
         'soft-deleted groups purge (24h), stale push tokens purge (24h), ' +
         'orphaned member rows purge (24h), stale pending invitations purge (24h), ' +
@@ -239,6 +255,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       // `cleanupStalePendingInvitations` above is the job that deletes what the second one reads.
       ['reportQueueDepth', () => this.reportQueueDepth()],
       ['reportStrandedDeviceMemberships', () => this.reportStrandedDeviceMemberships()],
+      ['reportStaleExternalJoinBases', () => this.reportStaleExternalJoinBases()],
     ];
     for (const [name, run] of jobs) {
       // One failing job must never cost the others their only run of the deployment.
@@ -289,6 +306,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     clearInterval(this.cleanupExpiredRevocationsInterval);
     clearInterval(this.reportQueueDepthInterval);
     clearInterval(this.reportStrandedMembershipsInterval);
+    clearInterval(this.reportStaleBasesInterval);
     clearTimeout(this.initialSweepTimeout);
   }
 
@@ -561,6 +579,111 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
           `re-added - a member removed their leaf and the Add that was supposed to follow did not ` +
           `land, which is reported nowhere else. Oldest ${capped(kicked.length)}: ` +
           `${oldest(kicked, (m) => m.kickedAt as Date)}`
+      );
+    }
+  }
+
+  /**
+   * Names every group whose published external-join base has fallen behind its own epoch, and the
+   * devices that are locked out by it. Purely a report: it publishes nothing and deletes nothing.
+   *
+   * **THE SHAPE, IN ONE SENTENCE.** A device with no local MLS state can only enter a group by
+   * external commit, and the commit gate accepts a base whose epoch EQUALS `dm_groups.activeEpoch`
+   * and nothing else. Only a member holding the tree can mint one. So while
+   * `mls_group_info.baseEpoch < dm_groups.activeEpoch`, that group is shut to every stateless
+   * device - every one of them, every time - and stays shut until some member commits again or
+   * repairs it on a connection.
+   *
+   * **WHY IT NEEDS A REPORT AT ALL, GIVEN TWO MECHANISMS ALREADY FIX IT.** A commit has carried its
+   * own base since 2026-08-26, so the window that mints staleness is closed for current clients; a
+   * holder repairs a base it finds behind on every connection since v0.16.4. Both are correct and
+   * neither is a witness. Production on 2026-09-12 still held three conversations one epoch behind
+   * since 2026-08-29, 08-30 and 08-31 - thirteen days - left over from before those shipped, and
+   * the only thing that ever found them was somebody writing the join by hand. Twice: the same
+   * population was counted the same way on 2026-09-04 and the count was not automated then either.
+   *
+   * **THE PARTITION IS WHAT SEPARATES WAITING FROM DEAD.** A stale base on a group that still has
+   * an `active` device membership is waiting for that member to come back, which it eventually
+   * does; a stale base on a group with NO active device membership anywhere can never be repaired
+   * by anybody, and no amount of asking will change it. The two send their reader to opposite
+   * places, so they are counted and printed apart rather than summed.
+   *
+   * `baseEpoch IS NULL` is NOT staleness and is excluded: no base was ever published, nothing was
+   * lost, and the answer to it is a Welcome from a member rather than a republish. Reading it as
+   * zero is the silent arithmetic that would call every unpublished group the worst case in the
+   * table.
+   */
+  private async reportStaleExternalJoinBases() {
+    // One join rather than two scans: the population is small but the group table is not, and the
+    // comparison is between two columns of different tables, which no `find` can express.
+    const stale = await this.groupInfoRepo
+      .createQueryBuilder('i')
+      .innerJoin(Group, 'g', 'g.id = i."groupId"')
+      .select('i."groupId"', 'groupId')
+      .addSelect('i."baseEpoch"', 'baseEpoch')
+      .addSelect('g."activeEpoch"', 'activeEpoch')
+      .addSelect('i."updatedAt"', 'baseUpdatedAt')
+      .where('g."deletedAt" IS NULL')
+      .andWhere('i."baseEpoch" < g."activeEpoch"')
+      .orderBy('i."updatedAt"', 'ASC')
+      .getRawMany<{
+        groupId: string;
+        baseEpoch: number;
+        activeEpoch: number;
+        baseUpdatedAt: Date;
+      }>();
+
+    if (stale.length === 0) {
+      this.logger.log(
+        '[CRON] reportStaleExternalJoinBases: every published base names the current epoch of its group'
+      );
+      return;
+    }
+
+    // Who could repair each one, and who is waiting on it. Both read from the same table in one
+    // query: `active` is a member that holds the tree and will republish on its next connection,
+    // `pending` is a device that has been given a seat and cannot take it while the base is behind.
+    const groupIds = stale.map((r) => r.groupId);
+    const memberships = await this.deviceGroupRepo.find({
+      select: { groupId: true, status: true },
+      where: { groupId: In(groupIds) },
+    });
+    const activeOf = new Map<string, number>();
+    const pendingOf = new Map<string, number>();
+    for (const m of memberships) {
+      const bucket = m.status === 'active' ? activeOf : pendingOf;
+      bucket.set(m.groupId, (bucket.get(m.groupId) ?? 0) + 1);
+    }
+
+    const unrepairable = stale.filter((r) => (activeOf.get(r.groupId) ?? 0) === 0);
+    const lockedOut = stale.reduce((n, r) => n + (pendingOf.get(r.groupId) ?? 0), 0);
+    const ageDays = (at: Date) =>
+      Math.floor((Date.now() - new Date(at).getTime()) / (24 * 60 * 60 * 1000));
+    // Named oldest-first, because age is the whole accusation: a base written a minute ago is a
+    // commit whose follow-up is still in flight, and one written a fortnight ago is a conversation
+    // nobody can enter.
+    const name = (rows: typeof stale) =>
+      rows
+        .slice(0, STALE_BASE_REPORT_TOP_N)
+        .map((r) => `${r.groupId}(${r.baseEpoch}/${r.activeEpoch}, ${ageDays(r.baseUpdatedAt)}d)`)
+        .join(' ');
+
+    this.logger.warn(
+      `[CRON] reportStaleExternalJoinBases: ${stale.length} group(s) publish a base behind their ` +
+        `own epoch, so no device without local MLS state can enter them - ${lockedOut} device(s) ` +
+        `hold a pending seat on one. Oldest ` +
+        `${Math.min(stale.length, STALE_BASE_REPORT_TOP_N)}: ${name(stale)}`
+    );
+
+    if (unrepairable.length > 0) {
+      // AT THE LEVEL THAT ACCUSES, because this half is not waiting for anything. No device
+      // anywhere holds an active membership on these groups, so no republish is possible from any
+      // client, and the base will stay behind for as long as the rows exist. Nothing else names it.
+      this.logger.error(
+        `[CRON] reportStaleExternalJoinBases: ${unrepairable.length} of them have NO active device ` +
+          `membership at all - no client can mint a base for them, so they are shut permanently ` +
+          `rather than waiting for a member to return. Oldest ` +
+          `${Math.min(unrepairable.length, STALE_BASE_REPORT_TOP_N)}: ${name(unrepairable)}`
       );
     }
   }

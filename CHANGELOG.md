@@ -11,6 +11,27 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Added - the hourly report that would have found three shut conversations thirteen days ago
+
+A group whose published external-join base names an epoch the group has left is closed to every
+device that does not already hold its tree - the commit gate accepts equality and nothing else, and
+only a member holding the tree can mint a new base. Two mechanisms already keep that from happening:
+a commit has carried its own base since 2026-08-26, and a holder repairs a base it finds behind on
+every connection since `v0.16.4`. Both are correct, and neither is a witness.
+
+Production on 2026-09-12 still held three conversations one epoch behind since 2026-08-29, 08-30 and
+08-31 - left over from before those shipped. The only thing that ever found them was somebody writing
+the SQL join by hand, and it had already happened once, on 2026-09-04, without being automated then
+either.
+
+`reportStaleExternalJoinBases` runs beside the queue-depth and stranded-membership reports, on the
+same hourly interval and the same initial sweep. It publishes nothing and deletes nothing. It prints
+the count, the oldest ten with both epochs and an age in days, and how many devices hold a pending
+seat on one - then separates, at a level that accuses, the groups that still have an ACTIVE device
+membership somewhere (waiting for that member to return) from those that have none at all, which no
+client can ever repair. A base that was never published is excluded: nothing was lost, and the
+answer to it is a Welcome rather than a republish.
+
 ### Fixed - the login card sat 48px right of centre, and the dialog on top of it did not
 
 `/login` and `/legal/*` do not render `AppSidebar`, but the content wrapper beside it carried a
