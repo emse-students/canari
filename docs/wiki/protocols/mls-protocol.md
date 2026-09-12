@@ -72,7 +72,7 @@ Canari implements end-to-end encryption using **MLS (Messaging Layer Security, R
 | `OneTimeKeyPackage` | One-time prekeys (OTKP), consumed on invite |
 | `Group` | Group metadata (name, isGroup, epoch) |
 | `GroupMember` | User <-> group membership |
-| `DeviceGroupMembership` | Per-device state machine (`pending` / `active` / `removed`) |
+| `DeviceGroupMembership` | Per-device state machine (`pending` / `active`), plus the `kickedAt` marker |
 | `QueuedMessage` | Pending messages for offline devices |
 | `PinVerifier` | Argon2id verifier to detect PIN mismatch across devices |
 | `PushToken` | FCM push token per device |
@@ -81,12 +81,18 @@ Canari implements end-to-end encryption using **MLS (Messaging Layer Security, R
 ### DeviceGroupMembership state machine
 
 ```
-pending --(add commit + Welcome sent)--> active
-active --(device removed / group deleted)--> removed
-removed --(re-add)--> pending
+pending --(Welcome queued | commit accepted | activation confirmed)--> active
+active  --(kick-stale-device / kick-stale-user)--> pending, kickedAt := now
+active  --(detectStaleDevices: no KeyPackage newer than 90 d)--> pending
+either  --(device deleted | member removed | group purged | 14 d stale)--> ROW DELETED
 ```
 
-Note: prior to the 2026-06 rewrite the states were `pending / welcome_sent / welcome_received / stale`. The simplified model above is current.
+**THERE IS NO `removed` STATE, AND THE ENUM HAS EXACTLY TWO VALUES** - `'pending' | 'active'`, since
+`001_device_group_status_enum.sql` collapsed the retired `welcome_sent` / `welcome_received` /
+`stale`. Every removal is a hard `DELETE`: this table carries no `deletedAt` and no soft delete, so
+a row that left is ABSENT rather than in a third state. `kickedAt` is not a state either - it is a
+marker on a `pending` row answering one question, *is this row waiting on a re-add a kick promised*,
+and it is the evidence `reportStrandedDeviceMemberships` partitions on.
 
 ## API endpoints (chat-delivery-service)
 
@@ -120,7 +126,6 @@ kick gets. The current device has no delete button at all.
 | POST | `/api/mls/groups/:groupId/members` | Register user as member |
 | GET | `/api/mls/groups/:groupId/members` | List group members |
 | DELETE | `/api/mls/groups/:groupId/members/:userId` | Remove member |
-| POST | `/api/mls/groups/:groupId/reset` | Trigger group_reset broadcast |
 | GET | `/api/mls/users/:userId/groups` | List all groups for a user |
 
 ### Messaging
@@ -248,7 +253,7 @@ Triggered when `processIncomingMessage` fails with epoch-related errors:
 |---|---|---|
 | `TooDistantInThePast` / `CiphertextGenerationOutOfBounds` | Ratchet key consumed | ACK, then classify - see below |
 | `msg_epoch < group_epoch` | Stale message (already processed) | ACK silently |
-| `msg_epoch > group_epoch` | Local state is behind | `forgetGroup()` + `requestReAdd()` |
+| `msg_epoch > group_epoch` | Local state is behind | **Rung 1 first**, `attemptCommitReplay`, non-destructive; rung 2 `forgetGroup()` + `requestReAdd()` only on `belowFloor`, a named `gapAt`, or `EPOCH_GAP_ESCALATION_MS` |
 | `SenderDataDecryption` | Sender secrets diverged | `forgetGroup()` + `requestReAdd()` |
 | `WrongEpoch` | No epoch numbers | ACK silently |
 
@@ -474,15 +479,30 @@ Reception is in two steps, and the order matters. The add-path (`batchAddMessage
 
 **The unread badge is recomputed, never transported**, and it is derived from the read watermark rather than from any per-message field - see [Read state becomes a watermark](history-reconciliation.md#read-state-becomes-a-watermark).
 
-### Group reset
+### Group reset - THERE IS NONE, AND EVERY PIECE THIS SECTION DESCRIBED IS GONE
 
-When no automatic recovery is possible (e.g. all devices diverged):
+This section documented `mlsService.sendGroupReset(groupId)` reaching
+POST `/api/mls/groups/:id/reset`, a server resetting every `DeviceGroupMembership` to `pending` and
+the epoch to 0, and a `group_reset` broadcast. **Not one of those exists**, verified 2026-09-12 -
+and a page promising a repair that was deleted is worse than a page saying there is none, because it
+makes a reader plan around it.
 
-1. Any device calls `mlsService.sendGroupReset(groupId)` -> POST `/api/mls/groups/:id/reset`
-2. Server resets all `DeviceGroupMembership` to `pending`, resets epoch
-3. Server broadcasts `group_reset` WS event to all group members
-4. Each client: `forgetGroup(groupId)` + marks conversation `isReady: false`
-5. The triggering device creates the group fresh and invites all members
+- No `sendGroupReset` in the client, and no `reset` route on any group in the delivery service. The
+  only `@Post` matching `reset` in the whole service is `mls/security/pin-reset`.
+- `dm_groups.activeEpoch` has exactly ONE writer, `validateCommit`, and it only ever writes
+  `baseEpoch + 1`. **Nothing in this system can return a group to epoch 0.**
+- `group_reset` survives only as an INBOUND control frame, which the client acknowledges and
+  ignores.
+- The native `bootstrap_dead_conversation` command still POSTs to `claim-bootstrap` then
+  `reset-epoch`. **Both routes were deleted and the command has no caller** - it is registered in
+  `lib.rs` and reached from nowhere.
+
+**A group whose tree no member holds any longer cannot be reopened, and that is a property of MLS
+rather than a gap here.** Every way into a group in RFC 9420 - Welcome, external commit, ReInit,
+subgroup branching, external proposals - requires a party holding the group secrets, and this server
+holds only ciphertext. A server-side resurrection would be a backdoor, which is why the spec has
+none. The recovery ladder's dead ends are enumerated in
+[`mls-recovery-ladder.md`](mls-recovery-ladder.md).
 
 ### Reconnect after network loss
 

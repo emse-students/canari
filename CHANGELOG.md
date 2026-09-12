@@ -11,6 +11,38 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - the wiki documented three mechanisms that had been deleted, and a reader would have planned around them
+
+Drawing the MLS and Graine state machine from the code turned up five claims in `docs/wiki/` that the
+source refutes, all of them load-bearing.
+
+`mls-protocol.md` carried a "Group reset" procedure - `sendGroupReset` reaching
+`POST /api/mls/groups/:id/reset`, a server resetting every membership to `pending` and the epoch to
+zero - and `mls-desync-prevention.md` carried a `claim-bootstrap` / `bootstrap-info` pair guarded by
+a `bootstrapVersion` optimistic lock. **None of those routes, methods or columns exist.** The only
+`@Post` matching `reset` in the delivery service is `mls/security/pin-reset`, `activeEpoch` has
+exactly one writer and it only ever writes `baseEpoch + 1`, and the successor machinery went with
+`009_drop_group_successor.sql`. The native `bootstrap_dead_conversation` command still POSTs to both
+deleted routes and has no caller at all.
+
+`DeviceGroupMembership` was documented with a `removed` state on one page and with the pre-2026-06
+`welcome_sent` / `welcome_received` / `stale` names on another. The enum is exactly
+`'pending' | 'active'`; there is no soft delete on that table, so a removal is an absent row, and
+`kickedAt` - which no page mentioned - is the marker that separates a seat waiting on a promised
+re-add from one that never had a leaf.
+
+The epoch-recovery table still said a frame from a higher epoch forgets the group and asks for a
+re-add. Rung 1 replays the missed commits first and has since `v0.15.x`; rung 2 runs only on a proof
+(`belowFloor`, a named `gapAt`) or the escalation threshold.
+
+`mls-recovery-ladder.md` contradicted itself twice: it called the external join "rung 4" in one
+sentence and "rung 2" in another, and it stated that a follow-up `refreshGroupInfo` is the only thing
+that ever mints a base, two sections above its own description of a commit carrying the base its own
+transaction writes. Both are now stated once, with the case each covers.
+
+A claim that something is stale must name the mechanism that would honour it and show that mechanism
+gone; each correction does.
+
 ## [0.17.3] - 2026-09-12
 
 ### Added - the hourly report that would have found three shut conversations thirteen days ago

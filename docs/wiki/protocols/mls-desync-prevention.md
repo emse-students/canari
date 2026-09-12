@@ -28,11 +28,19 @@ Run the MLS service and call-site suites in `frontend` after changing **`runComm
   Commit) are exempt: they are the path OUT of `pending`, and refusing them would make the gate a
   deadlock. A missing row is logged and allowed — that is an external join in flight.
 
-### 2. Server - coordinated reset and bootstrap
+### 2. Server - coordinated reset and bootstrap: DELETED, AND NOTHING REPLACED IT
 
-- **`POST /api/mls/groups/:groupId/reset`** (**group_reset**) — Sets memberships to **pending**, **`activeEpoch = 0`**, clears Redis **`group:members`**, notifies clients (WebSocket + queued offline rows). Prevents forked MLS sessions from diverging without a shared line in the sand.
+This section described `POST /api/mls/groups/:groupId/reset`, `POST .../claim-bootstrap` and
+`GET .../bootstrap-info`, backed by an optimistic lock on `bootstrapVersion`. **None of the three
+routes exists and neither does that column**, verified 2026-09-12: the successor/reboot machinery
+they belonged to went with `009_drop_group_successor.sql`.
 
-- **`POST /api/mls/groups/:groupId/claim-bootstrap`** / **`GET …/bootstrap-info`** — **Optimistic lock** on **`bootstrapVersion`** so only one device wins re-creation of a group.
+What took their place is the external commit. A device holding no local state re-enters by building
+one against the published `GroupInfo` - no reset, no bootstrap lock, no peer liveness required - and
+the server's strict gate (`baseEpoch == activeEpoch`, tactic 1 below) is what keeps that safe. See
+[`mls-recovery-ladder.md`](mls-recovery-ladder.md). The one case it cannot serve, a published base
+behind `activeEpoch` with no holder online, is a dead end rather than something a reset would fix:
+only a member holding the tree can mint a base, so there is nothing for a reset to reset.
 
 ### 3. Server - add-member races
 
@@ -330,14 +338,14 @@ ordering is the guarantee.
 | Send / advance never straddle | A frame is posted before a local commit starts, or encrypted after it merged - in both directions, and per group | `epochSendBarrier.test.ts` |
 | Persistence monotonic | Stale encrypted flush cannot lower the stored blob | `hex.mlsVersion.test.ts` |
 | Recovery vs prevention | Desync _handling_ (ACK rules, retries) | [`mls-recovery-ladder.md`](mls-recovery-ladder.md) |
-| Server commit logic | Locks + `activeEpoch` rules | Code review / `app.controller.ts` |
+| Server commit logic | Locks + `activeEpoch` rules | `messaging.commit-log.spec.ts`, `messaging.group-info.spec.ts` |
 
 ## Related sources
 
-- [`apps/chat-delivery-service/src/app.controller.ts`](../../../apps/chat-delivery-service/src/app.controller.ts) — `validateCommit`, `resetGroup`, `resetGroupEpoch`, add-lock, claim-bootstrap.
+- [`apps/chat-delivery-service/src/services/messaging.service.ts`](../../../apps/chat-delivery-service/src/services/messaging.service.ts) — `validateCommit`, the ONE writer of `activeEpoch`, and `putGroupInfo`, the ONE writer of the base. `app.controller.ts` carries the scheduled jobs and the hourly reports only; the add-lock is in `locks.controller.ts`; `resetGroup`, `resetGroupEpoch` and `claim-bootstrap` do not exist.
 - [`frontend/src/lib/services/BaseMlsService.ts`](../../../frontend/src/lib/services/BaseMlsService.ts) - `freshEpoch`, which is where a commit's `baseEpoch` is decided before it is published.
 - [`frontend/mls-core/src/lib.rs`](../../../frontend/mls-core/src/lib.rs) — epoch gap detection in `process_incoming_message`.
-- [`frontend/src/lib/utils/chat/actions.ts`](../../../frontend/src/lib/utils/chat/actions.ts) — `discoverMissingGroups`, group_reset ordering.
+- [`frontend/src/lib/utils/chat/actions.ts`](../../../frontend/src/lib/utils/chat/actions.ts) — `discoverMissingGroups`, and `handleWelcomeRequest`, the responder side of a re-add.
 
 ## See also
 
