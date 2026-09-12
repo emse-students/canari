@@ -174,8 +174,8 @@ a loss no later call can repair
 ([messaging.service.ts:1286-1290](../../../apps/chat-delivery-service/src/services/messaging.service.ts)).
 
 **There is no path back.** Nothing writes `activeEpoch` to anything but `baseEpoch + 1`, so no group
-can return to epoch 0. The `reset-epoch` route that once did is deleted, and the only client still
-calling it has no caller of its own (section 9).
+can return to epoch 0. The `reset-epoch` route that once did is deleted, and the only
+client that still called it - `bootstrap_dead_conversation` - is deleted with it (2026-09-12).
 
 **The base is MONOTONIC**: `putGroupInfo` refuses a regression with `existing.baseEpoch >= baseEpoch`
 - note `>=`, not `>` - and returns `{ stored: false }` rather than throwing
@@ -427,7 +427,7 @@ duplicate**, and the justification is quoted so it can be argued with rather tha
 | --- | --- | --- | --- |
 | DE1 | **`NO_REPAIRER`** - the published base is stale and the server answers `no_peer_online` | `externalJoin` returns `stale_base`, then `sendBaseRefreshRequest` answers `noPeerOnline` (recovery.ts:565-577) | **NO, AND IT IS NOW COUNTED.** It is left only when an epoch moves, which needs a holder online - the very thing that is absent. Correctly detected, correctly logged, no exit. `reportSingleHolderGroups` names the population one step from it, hourly (P1-3, 2026-09-12). |
 | DE2 | **A group whose tree NO member holds any longer** | every holder lost its state; the base is stale or absent | **YES, AND IT CANNOT BE OTHERWISE.** Every entry into a group in RFC 9420 - Welcome, external commit, ReInit, subgroup branching, external proposals - requires a party holding the group secrets. This server holds only ciphertext. A server-side resurrection would be a backdoor, which is why the spec has none. **It is not hypothetical: one live group on production was in this state on 2026-09-12**, and `reportSingleHolderGroups` now names it hourly at ERROR. |
-| DE3 | **`bootstrap_dead_conversation`** | nothing reaches it | **DEAD CODE.** Registered at `frontend/src-tauri/src/lib.rs:905`, POSTs to `claim-bootstrap` then `reset-epoch` - both routes deleted, no frontend caller. It is also the only thing in the product claiming DE2 is recoverable. P2-1. |
+| DE3 | ~~**`bootstrap_dead_conversation`**~~ | ~~nothing reaches it~~ | **DELETED 2026-09-12 (P2-1).** It POSTed to `claim-bootstrap` then `reset-epoch`, both routes long gone, and no frontend caller ever invoked it. It was also the last thing in the product claiming DE2 is recoverable, which is the reason it is gone rather than merely unregistered. |
 | DE4 | ~~**The background re-add returns 400**~~ | ~~`POST mls/push/send-welcome-and-commit` called `validateCommit` with no `proto`, which the guard at messaging.service.ts refuses~~ | **FIXED 2026-09-12 (P1-1).** The route now hands `proto: body.commitPayload` to `validateCommit`, and `baseEpoch` is required rather than optional - the optional branch broadcast without validating, which is the hole the guard exists to close. Covered by `push.controller.welcome-commit.spec.ts`, which this route did not have. |
 | DE5 | **An outbox entry held for ever** | `!isGroupHealthy` returns `retry` with no attempt ceiling (outbox.ts:462) | **NO.** The two permanent failures are `group-deleted` and `evicted`; a group in `NO_REPAIRER` is neither, so the entry retries for the life of the install. P2-5. |
 | DE6 | **`GraineBelowFirstIndexError`** | a seed handed over mid-session, and messages that precede the floor | **YES.** A repair would return the identical seed, so asking for one would loop for ever. The design says so (channelSeal.ts:60). |
@@ -511,7 +511,7 @@ it, and the only thing a server can contribute is to say which conversations are
 
 ### P2 - correctness
 
-- **P2-1. Delete `bootstrap_dead_conversation`** (`frontend/src-tauri/src/commands/bootstrap.rs`, registered at `frontend/src-tauri/src/lib.rs:905`). Two deleted routes, no caller, and a false promise about DE2.
+- ~~**P2-1. Delete `bootstrap_dead_conversation`**~~ **DONE 2026-09-12.** The command, its module, its `use` and its registration are gone; `ForegroundCritical`, `write_mls_state_blob` and `force_create_group` each keep other callers and stay.
 - **P2-2. Collapse D5**, the two group sweeps, into one predicate with one implementation. The twin cost the same fix twice.
 - **P2-3. Graine has no wiki page**, for roughly forty code files. `channel-encryption.md` is the protocol; the seeds, the sessions, the repair walk, the roster reconcile and the retention sweep have no reference page.
 - ~~**P2-4. State the SQL/Redis roster invariant** (D9) where a reader will find it, and assert it in a test.~~ **DONE 2026-09-12, with P1-2** - the invariant is in the `DeviceGroupMembership` docblock (one writer for `status`, one for the routing set, and `sendWelcome` is neither) and asserted by `messaging.welcome-membership.spec.ts`. Two rosters with no written invariant is how P1-2 shipped.

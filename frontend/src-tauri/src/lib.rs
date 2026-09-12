@@ -23,10 +23,9 @@ use tauri::{
     WindowEvent,
 };
 
-use crate::state::{AppState, HttpClient, PendingDb};
+use crate::state::{AppState, PendingDb};
 
 // Re-export commands for generate_handler!
-use crate::commands::bootstrap::bootstrap_dead_conversation;
 use crate::commands::cookies::flush_webview_cookies;
 use crate::commands::mls::{
     actualiser_cle_keystore_avec_devicekey, ajouter_membres_bulk, annuler_commit, confirmer_commit,
@@ -651,12 +650,6 @@ pub fn run() {
             mls_manager: Arc::new(Mutex::new(None)),
             device_key: Arc::new(Mutex::new(None)),
         })
-        .manage(HttpClient(
-            reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(15))
-                .build()
-                .expect("Failed to build reqwest client"),
-        ))
         .setup(move |app| {
             let data_dir = app.path().app_data_dir().map_err(|e| format!("{e}"))?;
             log::info!("[Path] app_data_dir = {}", data_dir.display());
@@ -902,7 +895,6 @@ pub fn run() {
             store_push_secret,
             clear_app_data,
             remove_native_flag,
-            bootstrap_dead_conversation,
             set_native_flag,
             get_native_flags,
             get_installer_package,
