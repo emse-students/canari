@@ -26,10 +26,12 @@ export type DeviceGroupStatus = 'pending' | 'active';
  *    restart, TTL expiry). The gateway reads that Redis set to forward messages and
  *    `welcome_request` frames to online devices.
  *
- * 2. **Invitation state machine** - A row is created as `pending` by `addGroupMember`
- *    for every active device of a user. It transitions to `active` when `sendWelcome`
- *    confirms the device processed its Welcome packet. `invitations.controller` exposes
- *    the pending list to clients and drives the pending→active transition.
+ * 2. **Invitation state machine** - A row is created as `pending` by `addGroupMember` for every
+ *    active device of a user. **`activateDeviceMembership` is the ONLY thing that writes `active`,
+ *    and it is the only writer of the Redis routing set.** `sendWelcome` merely guarantees the row
+ *    exists and clears `kickedAt`; it does not promote, and it must never demote - it wrote
+ *    `'pending'` unconditionally until 2026-09-12, which knocked already-active devices out of the
+ *    fan-out. `invitations.controller` exposes the pending list to clients.
  *
  * 3. **Device lifecycle cleanup** - When a device is deleted, ALL its rows here are
  *    removed, which removes it from every group's routing set. This is intentional, but

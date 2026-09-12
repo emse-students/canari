@@ -11,6 +11,37 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a Welcome demoted the device it was delivered to, and told the gateway to keep routing to it
+
+`sendWelcome` ended with two writes. It upserted the device's `DeviceGroupMembership` to `pending`,
+then added that device to the Redis routing set `group:members:{groupId}`. **Both were wrong, in
+opposite directions, and together they left the two rosters contradicting each other.**
+
+The upsert overwrote `status` with the literal `'pending'` on every conflict.
+`skipUpdateIfNoValuesChanged` does not spare a row whose value CHANGES, so delivering a Welcome to a
+device that was already `active` DEMOTED it - and the message fan-out selects `WHERE status =
+'active'`, so that device silently stopped receiving the group it was still a member of. The comment
+directly above the write said *"Upsert DeviceGroupMembership to active"*. The conflict clause now
+overwrites `kickedAt` and nothing else: only `activateDeviceMembership` moves that column, in one
+direction.
+
+The `sadd` is deleted rather than corrected, because the invariant it broke was already written
+down. `sendMessage` states that the routing set is OWNED by `activateDeviceMembership`, which writes
+it at the pending->active transition, and that its own reconciliation firing at all "means an owner
+did not write, and the fix belongs there". `sendWelcome` was that second writer, announcing a device
+as routable one line after recording that it had not joined. The gateway broadcasts from that set
+AND elects the answerer for a `welcome_request` out of it, so a device holding no group state could
+be chosen to serve one. Nothing replaces it: a device the Welcome has not reached cannot decrypt a
+broadcast anyway, and `activateDeviceMembership` adds it and replays what it missed the moment it
+can.
+
+**`sendWelcome` had no test, and neither did the invariant.** `messaging.welcome-membership.spec.ts`
+asserts that the conflict clause names `kickedAt` alone, that a bootstrap insert is still `pending`,
+and that nothing in this path writes `group:members:`. The `DeviceGroupMembership` docblock now
+states who writes what - it previously claimed the pending->active transition happened in
+`sendWelcome`, which was never true. The spec was run against the code this fixes: three of its six
+cases fail there.
+
 ### Fixed - the background re-add answered 400 before the Welcome, on the path that rescues a locked-out device
 
 A device that cannot rejoin a conversation by itself asks a peer to re-add it, and when that peer's
