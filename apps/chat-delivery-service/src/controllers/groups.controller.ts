@@ -17,6 +17,7 @@ import * as crypto from 'crypto';
 import Redis from 'ioredis';
 import { Group } from '../entities/group.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
+import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import {
   deleteGroupOwnedRows,
@@ -34,6 +35,8 @@ export class GroupsController {
     @InjectRepository(Group) private groupRepo: Repository<Group>,
     @InjectRepository(DeviceGroupMembership)
     private deviceGroupRepo: Repository<DeviceGroupMembership>,
+    @InjectRepository(MlsGroupInfo)
+    private groupInfoRepo: Repository<MlsGroupInfo>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis
   ) {}
 
@@ -87,11 +90,33 @@ export class GroupsController {
 
   @UseGuards(HeaderAuthGuard)
   @Get('mls/groups/:groupId')
-  /** Retrieves metadata for a single group by its ID. */
+  /**
+   * Retrieves metadata for a single group by its ID.
+   *
+   * **`baseEpoch` TRAVELS WITH IT, BECAUSE THIS IS THE CALL A LOCKED-OUT DEVICE ALREADY MAKES.**
+   * `activeEpoch` is a column of the row and was already on the wire; the published external-join
+   * base lives in `mls_group_info` and was not, so a device refused `stale_base` had no way to see
+   * the two numbers converge except by attempting the join again. `GET /mls/users/:id/groups`
+   * carries both for the same reason and says why - the pair IS the durable record of "a republish
+   * is owed", and nothing else needs to store it.
+   *
+   * Measured on production 2026-09-12: one device ran the whole recovery cycle - four calls - once
+   * a minute against group `4f87267a` for at least twenty-seven consecutive minutes, and every
+   * pass could have ended on this one read. `null` means no base has ever been published, which is
+   * NOT staleness: nothing has been lost, and a joiner asks for a Welcome instead.
+   */
   async getGroup(@Param('groupId') groupId: string) {
     const g = await this.groupRepo.findOne({ where: { id: groupId } });
-    this.logger.log(`[GET_GROUP] groupId=${groupId} found=${!!g}`);
-    return g ? { ...g, groupId: g.id } : null;
+    if (!g) {
+      this.logger.log(`[GET_GROUP] groupId=${groupId} found=false`);
+      return null;
+    }
+    const base = await this.groupInfoRepo.findOne({
+      select: { groupId: true, baseEpoch: true },
+      where: { groupId: g.id },
+    });
+    this.logger.log(`[GET_GROUP] groupId=${groupId} found=true`);
+    return { ...g, groupId: g.id, baseEpoch: base?.baseEpoch ?? null };
   }
 
   @UseGuards(HeaderAuthGuard)

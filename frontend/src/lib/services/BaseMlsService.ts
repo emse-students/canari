@@ -33,6 +33,7 @@ import { fingerprintKeyPackage } from '$lib/mls-client/keyPackages';
 import type {
   DeviceMembershipRow,
   HistoryRequestOutcome,
+  BaseRefreshOutcome,
   IncomingDeliveryMeta,
 } from '$lib/mls-client/IMlsService';
 import { MlsPerGroupScheduler, type MlsQueuedMessage } from '$lib/mls-client/mlsPerGroupScheduler';
@@ -1809,15 +1810,27 @@ export abstract class BaseMlsService implements IMlsService {
    * `pending` on them - a stale base does not drain itself, because only a member's next commit
    * republishes one and a quiet conversation has none.
    *
-   * Best-effort by construction: the requester keeps its own cadence and asks again while it still
-   * cannot join, so nothing here is retried and nothing is stored for an offline member.
+   * Nothing is retried here and nothing is stored for an offline member, so THE ANSWER IS THE ONLY
+   * THING THAT SAYS WHETHER ASKING AGAIN CAN HELP - and it used to be discarded. `no_peer_online`
+   * means the server read the roster and found no member to publish to; until some member's state
+   * moves, the next ask returns the same word. Measured on production 2026-09-12: one locked-out
+   * device asked for group `4f87267a` every sixty seconds for at least twenty-seven consecutive
+   * minutes, and the server answered `NO_PEER_ONLINE members=1` every single time, about a group
+   * whose only other member had not connected since 2026-08-03.
+   *
+   * `noPeerOnline` is true ONLY on an explicit `no_peer_online`, never on a throw or an
+   * unparseable body - see {@link BaseRefreshOutcome}.
    */
-  async sendBaseRefreshRequest(groupId: string): Promise<void> {
-    await this.delivery.deliveryPost('base-refresh-request', {
+  async sendBaseRefreshRequest(groupId: string): Promise<BaseRefreshOutcome> {
+    const answer = await this.delivery.deliveryPost('base-refresh-request', {
       groupId,
       requesterUserId: this.userId,
       requesterDeviceId: this.deviceId,
     });
+    return {
+      noPeerOnline: answer?.status === 'no_peer_online',
+      target: typeof answer?.target === 'string' ? answer.target : undefined,
+    };
   }
 
   /**

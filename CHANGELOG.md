@@ -32,6 +32,33 @@ membership somewhere (waiting for that member to return) from those that have no
 client can ever repair. A base that was never published is excluded: nothing was lost, and the
 answer to it is a Welcome rather than a republish.
 
+### Fixed - a locked-out device asked the same question every minute, and the server had already answered it
+
+A device with no local MLS state enters a group by external commit, and the commit gate accepts a
+published base whose epoch EQUALS the group's active epoch and nothing else. While the two differ
+the join is refused - whoever asks, however often - and only a member holding the tree can mint a
+new base. `base-refresh-request` asks one online member to do it, and answers `no_peer_online` when
+the server read the roster and found none. That answer was discarded at the call site, so the whole
+recovery pass - the memberships, the conversation row, the join, the ask - ran again a minute later,
+and again, for the life of the session.
+
+Measured on production 2026-09-12: group `4f87267a` was asked once a minute for at least
+twenty-seven consecutive minutes and the server logged `NO_PEER_ONLINE members=1` to every one of
+them. Its only other member had not connected since 2026-08-03. Three groups on that estate had been
+one epoch behind since 2026-08-29, 08-30 and 08-31 - thirteen days, so a state rather than a moment.
+
+The verdict is now returned and acted on, and the suppression is a PROOF rather than a mute: it is
+keyed by the pair of epochs the refusal was measured against, so it lasts exactly as long as they do
+and ends the instant either moves - a member committing moves one, a member repairing on its next
+connection moves the other. `GET /mls/groups/:id` carries the published base epoch beside the active
+one so the pair is read on the call every pass already makes; `null` there still means no base was
+ever published, which is not staleness and asks for a Welcome instead. A pass that finds the dead
+end intact costs one HTTP call where it cost four, and a request that never reached the server
+proves nothing about who is reachable, so it records nothing.
+
+Nothing here opens `4f87267a`: no device can, until its other member returns. What ends is a client
+repeating a question whose answer it had been given.
+
 ### Fixed - the login card sat 48px right of centre, and the dialog on top of it did not
 
 `/login` and `/legal/*` do not render `AppSidebar`, but the content wrapper beside it carried a
