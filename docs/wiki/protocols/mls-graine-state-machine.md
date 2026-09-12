@@ -423,6 +423,29 @@ duplicate**, and the justification is quoted so it can be argued with rather tha
 
 ## 9. Dead ends - a state with no way out
 
+### What each one actually costs, measured (production, 2026-09-12)
+
+The table below was written from the code. This one was read off production, read-only, on 58 live
+groups and 361 accounts - because a dead end with no population is a hypothesis, and four of the
+claims in the audit that produced this page did not survive the query.
+
+| Claim | What production says | Verdict |
+| --- | --- | --- |
+| DE1/DE2 - a group nobody can repair | **1 of 58**: no published base at all AND no active holder. Three more sit exactly ONE epoch behind, which is a commit that just landed, not a dead end | **REAL, population 1** |
+| DE8 - a `pending` seat nobody honours | 91 pending rows, **30** past the one-hour window with no queued Welcome, **all 30 classified `never added`** (zero `kickedAt`), oldest 10 days, **0** past the 14-day purge | **REAL, and already reported hourly and swept** |
+| DE9 - a commit-log hole | **18 holes across 11 of 58 groups**, and **every single one is exactly ONE epoch wide** - including epoch 121. Two groups have no commits logged at all | **REAL, 19% of live groups** |
+| A tombstoned group still carrying live state | 1432 tombstoned groups: **0** with an active membership, **0** with a queued message | **REFUTED - tombstoning is clean** |
+| Legacy `queued_message.content` / `type` still in use | 5307 queued rows: **0** with legacy content, **0** without `proto` | **REFUTED - the columns are dead and droppable** |
+| `revoked_device` rows outliving their device | 240 rows, oldest 2026-06-14: **0** whose device still holds a key package | **REFUTED - revocation purges what it bans** |
+| `keyVersion` / `latestKeyRotationPayload` at defaults | `keyVersion`: **0 of 58** at default. `latestKeyRotationPayload`: **58 of 58 NULL** | **HALF REFUTED - the second column is dead** |
+| `pending_welcome_notify:{userId}` leaking in Redis | 5 keys, **every one carrying a TTL** (6 h to 22 h). 57 `group:members` sets for 58 live groups | **REFUTED - in-flight state, not a leak** |
+
+**The single-epoch width of every commit-log hole is the finding worth keeping.** Eighteen holes and
+not one of them spans two epochs says these are individual commits that failed to be logged, not
+ranges lost to an outage - which is a different defect with a different fix, and it is the shape a
+count alone would have hidden.
+
+
 | # | The dead end | How it is reached | Terminal by design? |
 | --- | --- | --- | --- |
 | DE1 | **`NO_REPAIRER`** - the published base is stale and the server answers `no_peer_online` | `externalJoin` returns `stale_base`, then `sendBaseRefreshRequest` answers `noPeerOnline` (recovery.ts:565-577) | **NO, AND IT IS NOW COUNTED.** It is left only when an epoch moves, which needs a holder online - the very thing that is absent. Correctly detected, correctly logged, no exit. `reportSingleHolderGroups` names the population one step from it, hourly (P1-3, 2026-09-12). |
