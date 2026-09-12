@@ -1929,6 +1929,21 @@ export abstract class BaseMlsService implements IMlsService {
     }
     this.deviceId = resolved;
     this.delivery.deviceId = resolved;
+
+    // Unconditionally, on EVERY resolution and not only on a mint: a device whose id sits in
+    // localStorage but whose native mirror was never written is one eviction away from becoming a
+    // second device, and its next sign-in is the only chance to repair it. Best-effort, because
+    // availability comes first - but it ACCUSES, since a silent loss here is what let the estate
+    // drift unnoticed.
+    try {
+      await this.persistDeviceIdNatively(userId, resolved);
+    } catch (e) {
+      console.error(
+        `[IDENTITY] Durable copy of deviceId ${sanitizeForLog(resolved)} FAILED - a localStorage` +
+          ` eviction will now mint a NEW device and orphan this one's leaf in every group:`,
+        e
+      );
+    }
     return resolved;
   }
 
@@ -1999,6 +2014,20 @@ export abstract class BaseMlsService implements IMlsService {
   protected async restoreDeviceIdFromNative(_userId: string): Promise<string | null> {
     return null;
   }
+
+  /**
+   * Platform hook: mirror this device's id somewhere a `localStorage` eviction cannot reach, so
+   * {@link restoreDeviceIdFromNative} has something to read back. Web has nowhere more durable
+   * than the store being lost, so it is a no-op there.
+   *
+   * IT TAKES NO DEVICE KEY AND MAKES NO REQUEST, and that is the whole point. The mirror used to
+   * be a side effect of `store_push_context`, which needs a derived device key, a platform-keystore
+   * write that succeeds, and - at its JS call site - an auth-token refresh that has come back from
+   * the network. None of those three is a fact about identity, and each one failing quietly minted
+   * a new device instead: on production (2026-09-12) 138 of 361 accounts carried one device NAME
+   * under several ids, 40% of iOS accounts and 38% of Android against 12% Windows and 9% macOS.
+   */
+  protected async persistDeviceIdNatively(_userId: string, _deviceId: string): Promise<void> {}
 
   /** Generates a fresh, unique per-user device id prefixed with the platform tag. */
   protected generateDeviceId(userId: string): string {

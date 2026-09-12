@@ -416,6 +416,22 @@ export class TauriMlsService extends BaseMlsService {
     return null;
   }
 
+  /**
+   * Tauri override: writes the id into `push_context.json`, which is the file
+   * {@link restoreDeviceIdFromNative} reads back and the one place the WebView cannot evict.
+   *
+   * Deliberately NOT `store_push_context`: that command needs a device key and a keystore write
+   * that succeeds, and its two call sites only reach it after an auth-token refresh returns from
+   * the network. This one patches the two identity keys and nothing else, so the backup exists
+   * from the moment the id does - offline, in biometric mode, and with the keystore refusing.
+   */
+  protected override async persistDeviceIdNatively(
+    userId: string,
+    deviceId: string
+  ): Promise<void> {
+    await invoke('store_device_identity', { userId, deviceId });
+  }
+
   /** Implementation body for init(); resolves device ID from native push context or localStorage, calls `initialiser_mls`, and seeds the known-groups cache. */
   protected async _initImpl(
     userId: string,
@@ -519,7 +535,10 @@ export class TauriMlsService extends BaseMlsService {
               locale: getLocale(),
             })
           )
-          .catch(() => {})
+          // EVERY SWALLOWED BRANCH LOGS. This chain is gated on a network round-trip and a
+          // keystore write, and it silently carried the device-identity backup until that backup
+          // became `store_device_identity`'s own job - months of drift with nothing in any log.
+          .catch((e) => console.warn('[MLS][Tauri] push_context write after init failed:', e))
       );
     }
 

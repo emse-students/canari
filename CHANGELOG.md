@@ -67,6 +67,35 @@ removed as a fix.
 Three wiki paragraphs described them as live, one asserting `force_create_group` "keeps other
 callers"; it kept a WASM export and an `MlsManager` method, and no caller above them. All three are
 corrected.
+### Fixed - a device's identity survived only a successful network call, and 138 accounts paid for it
+
+The MLS credential is `userId:deviceId`, so losing the id is not a lost preference - it makes the
+client a DIFFERENT device, orphaning the leaf it holds in every group's ratchet tree and forcing a
+re-enrolment nobody asked for. The id lives in `localStorage`, which an Android WebView evicts under
+storage pressure, and its only durable copy was `push_context.json`.
+
+Nothing wrote that file for the sake of identity. It was written exclusively by
+`store_push_context`, which needed three things that say nothing about who a device is: an auth-token
+refresh already back from the **network** (the JS call site sat inside `getToken().then(...)`), a
+non-empty derived **device key** (biometric-mode logins skipped the write entirely), and a
+**platform-keystore** write that succeeded (the command returns `Err` before it reaches the file).
+All three failures were swallowed without a log, so each one quietly minted a new device and nothing
+said so.
+
+Measured on production 2026-09-12, read-only: **138 of 361 accounts carry one device NAME under
+several ids** - 40% of iOS accounts and 38% of Android, against 12% Windows and 9% macOS. The gap is
+mobile, where eviction happens; it is not an iOS defect, which was the hypothesis this measurement
+refuted.
+
+The mirror is a step of resolution now. `resolveDeviceId` writes the id through a new
+`store_device_identity` command that patches two keys of `push_context.json`, creates the file when
+absent, and has no precondition at all. It runs on **every** resolution rather than only on a mint,
+because a device whose id sits in `localStorage` with no file behind it looks healthy and is one
+eviction from the same loss - its next sign-in is the only chance to repair it, and that is what
+reaches the accounts already affected. The `pushToken` field is dropped when the user changes: it is
+the auth bearer token despite its name, and a merge writer that kept it would leave the previous
+account's credential in a file describing the new one. The swallowed `.catch(() => {})` on the
+post-init push-context write now accuses.
 
 
 ### Changed - the dead ends were written from the code; now they have populations
