@@ -244,39 +244,39 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    and the blob-header READER are done 2026-09-08 and unshipped; the WRITER cannot follow until that
    reader is the floor (`minClientVersion`), so the two causes are still not separated in the field
    ([backlog](docs/wiki/backlog.md)).
-6. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - ONE merge mechanism
+6. **P1 x3, FOUND BY THE STATE MACHINE AND OWED AN ARBITRATION** (user: *"Diagramme + triage, puis
+   tu arbitres"*) - the FCM re-add 400s before the Welcome, `sendWelcome` demotes a member Redis
+   keeps routing to, `NO_REPAIRER` has no exit ([triage](docs/wiki/protocols/mls-graine-state-machine.md#10-triage---what-is-worth-a-pull-request)).
+7. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - ONE merge mechanism
    and ONE arming point, asserted only by `bun tools/ecosystem-shape/shape.mjs`
    ([cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them), the only copy).
    Three open, all in [backlog](docs/wiki/backlog.md): the suppression control case, **nothing tells
    anybody prod is down - it fell again for 6 min on 2026-09-11, cut by a firewall UPSTREAM of everything here**, and [host-updates](docs/wiki/infrastructure/host-updates.md).
    **PostgreSQL 15 -> 18 IS OWED, PRODUCTION INCLUDED** (the user's 2026-09-10 authorization is
    the one exception to read-only prod): verified dump, local proof, cutover with rollback; #309.
-7. **P2 - 1429 LEGACY COTISATION ROWS ARE LOADED ON BOTH ESTATES (v0.17.1) AND NOT ONE CLAIM HAS
+8. **P2 - 1429 LEGACY COTISATION ROWS ARE LOADED ON BOTH ESTATES (v0.17.1) AND NOT ONE CLAIM HAS
    BEEN OBSERVED** - 60 prod accounts grant at their next sign-in, 248 close `already-held`, and an
    empty screen still looks like a broken claim ([backlog](docs/wiki/backlog.md), [cotisations](docs/wiki/cotisations.md)).
-8. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
+9. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
    [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
-9. **UX/RENDERING: THE EMOJI FONT, AND THE SERVER'S ENGLISH.** All decided items shipped, each
-   asserted by its own test, numbers on [design-reference](docs/wiki/frontend/design-reference.md)
-   section 17. Two left: ONE bundled Noto Color Emoji everywhere, and the server's English prose,
-   whose remaining areas and counts are in [backlog](docs/wiki/backlog.md).
-10. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
-   commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
-11. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
-   and audit in [backlog](docs/wiki/backlog.md).
-12. **P1 - A DEVICE ASKS FOR A WELCOME FOR EVER AND THE MEMBER ANSWERING RESETS THE HEALING ROW** -
+10. **UX/RENDERING: TWO LEFT** - ONE bundled Noto Color Emoji everywhere, and the server's English
+    prose ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md) section 17).
+11. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
+    commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
+12. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
+    and audit in [backlog](docs/wiki/backlog.md).
+13. **P1 - A DEVICE ASKS FOR A WELCOME FOR EVER AND THE MEMBER ANSWERING RESETS THE HEALING ROW** -
     five halves fixed 2026-09-04, **ONE PROD MEASUREMENT OWED**; read with its sibling P2
     ([backlog](docs/wiki/backlog.md)).
-13. **TWELVE MESSAGES DROPPED, PERMANENT COMMIT-LOG HOLE AT EPOCH 121** - four defects shipped in
+14. **TWELVE MESSAGES DROPPED, PERMANENT COMMIT-LOG HOLE AT EPOCH 121** - four defects shipped in
     `v0.15.0`'s ancestors; RESIDUE and the 13:10 arm open ([backlog](docs/wiki/backlog.md)).
-14. **`dev.canari-emse.fr` IS THE PRE-RELEASE TARGET**
+15. **`dev.canari-emse.fr` IS THE PRE-RELEASE TARGET**
     ([dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy). Two open: a dev
     deploy cannot tell a broken CHANGE from an unreachable REGISTRY, and prod's deploy job is still
     inlined shell where `deploy-dev` exercises the script ([backlog](docs/wiki/backlog.md)).
-15. **FROM THE USER, AND FIRST CONTACT IS THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** The
-    2026-09-08 PROD P1 is FIXED, UNSHIPPED, and owes ONE hardware run that nothing blocks now.
-    **A reaction to your OWN message must notify by push, and NOTIF-15 asserts the opposite** -
-    the row and the code both move, and which channel carries it is open ([backlog](docs/wiki/backlog.md)).
+16. **FROM THE USER: FIRST CONTACT, THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** The 2026-09-08
+    PROD P1 is FIXED, UNSHIPPED, owing ONE hardware run nothing blocks. **A reaction to your OWN
+    message must notify by push and NOTIF-15 asserts the opposite** ([backlog](docs/wiki/backlog.md)).
 
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
 
