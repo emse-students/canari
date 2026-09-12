@@ -420,6 +420,24 @@ is branching on an error message twice over. Their two lists had already drifted
 `SecretReuseError`, the other did not - and between them they hid the fact that native had no shim at
 all.
 
+**THE TWO LISTS ARE NOW ONE RULE, AND IT KEYS ON THE EMITTER (2026-09-12).** The drift above was a
+symptom; branching on another crate's prose was the defect. `mls_core::logging::console_level` reads
+`record.target()` - the emitting module path, fixed at compile time - and declines to repeat at ERROR
+anything `openmls` narrates about itself. That library logs from inside its framing and validation
+code where it knows nothing actionable (`Sender data decryption error` names no group, no epoch and
+no frame; `Wrong Epoch: message.epoch() 1 > 10 ...` names no group), and every one of those paths is
+wrapped here and reported one line later with the group, both epochs and the marker every consumer
+keys on. Production 2026-09-12 held six of the first line in a single idle window, each one shadowing
+a proper report of the same frame.
+
+The line is kept at DEBUG, never dropped. `SecretReuseError` stays a separate, text-matched rule
+because it names OUR line and a different question - see the module doc. **`mlsWasmLoader`'s copy is
+gone**: only the level and the message cross into JS, so that side cannot see who wrote a line and
+now prints what Rust decided. **And native, which had no shim at all, takes the same rule** through
+`tauri_plugin_log`'s `level_for("openmls", Off)` - the asymmetry that made this defect expensive the
+first time. `mls-core/tests/console_levels.rs` pins it; `mls-wasm` has no test in CI, which is why
+the decision lives in the crate that does.
+
 **Where it comes from was itself measured, because the harness comment asserting it was wrong on both
 counts.** It does not happen on every send: `broadcast_to_group_members` already excludes the
 sender's own devices, so no live fanout returns our frame. Opening the DM on two peers **with no send

@@ -70,17 +70,18 @@ export async function loadMlsWasmModule(): Promise<MlsWasmBindings> {
       wasm_bindings_log?: (level: string, msg: string) => void;
     };
     if (typeof g.wasm_bindings_log !== 'function') {
+      // THIS SIDE CLASSIFIES NOTHING, AND THAT IS THE POINT. It used to re-match `Wrong Epoch`
+      // out of the message text to demote it - a second copy of a list the wasm logger already
+      // owned, and the two had drifted (this one never carried `SecretReuseError`, and it carried
+      // `CannotDecryptOwnMessage` after that marker had stopped being emitted at ERROR at all).
+      // A demotion that outlives its emitter hides the next thing to produce the same text.
+      //
+      // `WebLogger` in `mls-wasm/src/lib.rs` decides severity where the emitter is KNOWN - it reads
+      // `record.target()`, which this boundary cannot see because only the formatted level and
+      // message cross it. So there is one list, on the side that can key on who wrote the line, and
+      // this function does exactly what its name says: print what Rust decided.
       g.wasm_bindings_log = (level: string, msg: string) => {
-        // `CannotDecryptOwnMessage` was listed here too, demoting a severity the wasm logger had
-        // already demoted one layer down - two string lists that had drifted apart (this one never
-        // carried `SecretReuseError`). Neither is needed for it now: `mls-core` classifies our own
-        // re-offered frame at the throw and logs it at DEBUG, so no ERROR carries that marker. A
-        // demotion that outlives its emitter hides the next thing to produce the same text.
-        const isExpectedError =
-          level === 'ERROR' && (msg.includes('Wrong Epoch') || msg.includes('wrong epoch'));
-        if (isExpectedError) {
-          console.debug(`[RUST::${level}] ${msg}`);
-        } else if (level === 'DEBUG') {
+        if (level === 'DEBUG') {
           console.debug(`[RUST::${level}] ${msg}`);
         } else {
           console.log(`[RUST::${level}] ${msg}`);

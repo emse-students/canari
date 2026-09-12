@@ -4,6 +4,7 @@ pub(crate) mod byte_compat;
 pub mod crypto;
 pub mod group;
 pub mod keystore;
+pub mod logging;
 pub mod members;
 pub mod messaging;
 pub mod state;

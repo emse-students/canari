@@ -605,6 +605,21 @@ pub fn run() {
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(log::LevelFilter::Debug)
+                // OPENMLS NARRATES ITS OWN FAILURES, AND NATIVE HAD NO ANSWER TO THAT UNTIL NOW.
+                // The library logs from inside its framing and validation code, where it knows
+                // nothing a reader could act on: `Sender data decryption error` names no group and
+                // no epoch, `Wrong Epoch: message.epoch() 1 > 10` names no group. Every path into
+                // it is wrapped by `mls_core`, which reports the same event with the group, both
+                // epochs and the marker every consumer keys on - or returns a typed `MlsError` the
+                // caller surfaces. So its narration is a duplicate of a better line, at every
+                // level, and at ERROR it is a duplicate that accuses.
+                //
+                // THE WEB HAS DECLINED TO REPEAT IT FOR A WHILE AND THIS END HAD NOT. That
+                // asymmetry is the exact shape of the `CannotDecryptOwnMessage` defect recorded in
+                // `mls-wasm/src/lib.rs`: a shim on one client, nothing on the other, and the
+                // untreated end quietly doing something worse. `level_for` keys on the emitting
+                // module, so unlike a text match it cannot drift with an upstream rewording.
+                .level_for("openmls", log::LevelFilter::Off)
                 .build(),
         )
         .plugin(tauri_plugin_dialog::init())

@@ -23,24 +23,13 @@ impl log::Log for WebLogger {
     fn log(&self, record: &Record) {
         if self.enabled(record.metadata()) {
             let message = format!("{}", record.args());
-            // WrongEpoch / SecretReuseError can happen during replay and are
-            // handled gracefully by the frontend; don't emit them as ERROR noise.
-            //
-            // `CannotDecryptOwnMessage` used to be listed here as well, and it no longer needs to
-            // be: `mls-core` now classifies our own re-offered frame at the throw and logs it at
-            // DEBUG, so nothing reaches this logger at ERROR carrying that marker. Demoting a
-            // severity by re-reading the text is a rule that survives its own cause - it hid the
-            // fact that native, which has no such shim, was logging a real ERROR per own frame AND
-            // queueing it for retry. Every entry left here still has a live ERROR emitter.
-            if record.level() == Level::Error
-                && (message.contains("Wrong Epoch")
-                    || message.contains("wrong epoch")
-                    || message.contains("SecretReuseError"))
-            {
-                js_log("DEBUG", &message);
-                return;
-            }
-            js_log(&record.level().to_string(), &message);
+            // WHO WROTE THE LINE DECIDES ITS SEVERITY, AND ONLY THIS SIDE CAN SEE THAT. `target()`
+            // is the emitting module path; it does not cross into JS, where only the formatted
+            // level and text arrive. So the decision is made here, once, by `mls_core::logging`
+            // (which carries the reasoning and the tests) - and `wasm_bindings_log` on the other
+            // side prints what Rust decided instead of keeping a second, drifting copy of it.
+            let level = mls_core::logging::console_level(record.level(), record.target(), &message);
+            js_log(&level.to_string(), &message);
         }
     }
 
