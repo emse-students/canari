@@ -47,11 +47,51 @@ function formatWaitedFor(ms: number): string {
 const lastReAddAt = new Map<string, number>();
 
 /**
+ * Per-group record of a recovery that the SERVER has already proved cannot progress, keyed by the
+ * pair of epochs that made it true: `${baseEpoch}/${activeEpoch}`.
+ *
+ * **THE QUESTION WAS ANSWERED, AND ASKING IT AGAIN IS NOT A RETRY.** A group whose published base
+ * is behind its active epoch can only be repaired by a member holding the tree, and
+ * `base-refresh-request` answers `no_peer_online` when the server looked at the roster and found
+ * none. Nothing about that answer can change while both numbers stand still: the same request
+ * re-elects from the same empty set, and the same external join is refused by the same gate.
+ *
+ * Measured on production 2026-09-12, and it is the whole reason this map exists: group `4f87267a`
+ * was asked once a minute for at least twenty-seven consecutive minutes - four HTTP calls a pass -
+ * and the server logged `NO_PEER_ONLINE members=1` to every one of them. Its only other member had
+ * not connected since 2026-08-03. Three groups on that estate had been in this state since
+ * 2026-08-29, 08-30 and 08-31 respectively: thirteen days, not a transient.
+ *
+ * **THE VALUE IS THE PROOF, WHICH IS WHY IT IS NOT A BOOLEAN.** A flag would have to be expired by
+ * a clock, and this repository's rule is that termination comes from a proof and never from one.
+ * The pair IS the state the verdict was taken against - the same two numbers `classifyBase` reads
+ * for the holder's half of this problem - so the dead end ENDS the instant either moves, whoever
+ * moved it and for whatever reason. A member committing moves `activeEpoch`; a member repairing on
+ * its next connection moves `baseEpoch`; both are read on the one call every pass already makes.
+ */
+const noRepairerAt = new Map<string, string>();
+
+/** The pair of epochs a dead end is proved against, or `undefined` when the server did not say. */
+function epochPair(input: { baseEpoch?: number | null; activeEpoch?: number }): string | undefined {
+  // A server too old to send them says nothing, and nothing is not a proof: without the pair there
+  // is no way to notice the state changing, so no dead end may be recorded against it.
+  if (typeof input.activeEpoch !== 'number') return undefined;
+  if (typeof input.baseEpoch !== 'number') return undefined;
+  return `${input.baseEpoch}/${input.activeEpoch}`;
+}
+
+/**
  * Clears the recovery cooldowns. Called at session setup so a re-login does not inherit a stale
  * throttle that would delay the first recovery attempt of the new session.
+ *
+ * The dead-end records go with them. They are proofs about the SERVER'S state and the pair is what
+ * keeps them honest, so a new session does not strictly need a clean slate - but a session is the
+ * one boundary at which this device's own view was rebuilt from nothing, and paying one extra pass
+ * per locked-out group at login is cheaper than reasoning about what a stale entry would hide.
  */
 export function resetReAddCooldowns(): void {
   lastReAddAt.clear();
+  noRepairerAt.clear();
 }
 
 /**
@@ -287,6 +327,37 @@ export async function requestReAdd(groupId: string, deps: RecoveryDeps): Promise
     return;
   }
 
+  // A DEAD END THE SERVER ALREADY PROVED, RE-READ RATHER THAN RE-ASKED.
+  //
+  // The pass below costs four HTTP calls: the memberships, the conversation row, the join, and the
+  // base-refresh ask. Every one of them is decided by two numbers this pass has ALREADY read on the
+  // call above - and when a previous pass ended on `no_peer_online` against those same two numbers,
+  // all four answers are known before they are asked. See {@link noRepairerAt}: the record IS the
+  // pair, so it survives exactly as long as the state it describes.
+  //
+  // THE THROTTLE IS STILL ARMED, AND THAT HALF IS NOT OPTIONAL. The watchdog invokes this seam
+  // every five seconds; `getGroupMeta` above is what it costs to reach this line, so returning
+  // without arming anything would turn a locked-out group into one HTTP round trip every five
+  // seconds instead of one a minute - the exact shape the `findByGroupId` note records costing
+  // every received DM. `markGroupNotReady` is deliberately NOT set with it: the marker means "this
+  // device owes a recovery", and this device is not owing one, it is waiting for somebody to exist.
+  const pair = epochPair(meta);
+  const proven = noRepairerAt.get(groupId);
+  if (proven !== undefined && pair !== undefined && proven === pair) {
+    lastReAddAt.set(groupId, now);
+    return;
+  }
+  if (proven !== undefined && proven !== pair) {
+    // AND IT SAYS SO WHEN IT LEAVES, because "the group moved" is the event this whole record
+    // exists to wait for, and a dead end that ends in silence is indistinguishable from one that
+    // was never entered.
+    deps.log(
+      `[READD] ${groupId.slice(0, 8)}... the group moved since nobody could repair it ` +
+        `(${proven} -> ${pair ?? 'unknown'}) - trying again`
+    );
+    noRepairerAt.delete(groupId);
+  }
+
   // Commit to an attempt: arm the throttle and the persistent not-ready marker (the SYNC_WATCHDOG
   // enumerates it to drive the cadence).
   lastReAddAt.set(groupId, now);
@@ -470,19 +541,40 @@ export async function requestReAdd(groupId: string, deps: RecoveryDeps): Promise
   // The re-ask is the caller's existing cadence, not a retry here: the watchdog runs this seam again
   // while the device still cannot join, and each ask is forwarded to a randomly re-elected member,
   // so a responder whose own tree is behind does not absorb the request for ever.
+  //
+  // UNLESS THE SERVER SAYS THERE IS NOBODY TO RE-ELECT, which is an answer and not a failure. The
+  // election is the server's, so it is the only party that knows whether a member was reachable,
+  // and it says so. That verdict used to be discarded here and the whole pass repeated every
+  // minute for the life of the session - see {@link noRepairerAt} for what that cost on production.
   if (outcome.reason === 'stale_base') {
     deps.log(
       `[READD] ${groupId.slice(0, 8)}... the published base is at epoch ${outcome.baseEpoch} and the group ` +
         `is at ${outcome.serverEpoch} - asking a member to REPUBLISH it, not to re-add us`
     );
-    await deps.mlsService
-      .sendBaseRefreshRequest(groupId)
-      .catch((e) =>
-        deps.log(
-          `[READD] ${groupId.slice(0, 8)}... base-refresh request did not reach the server: ` +
-            `${String(e).slice(0, 120)}`
-        )
+    const asked = await deps.mlsService.sendBaseRefreshRequest(groupId).catch((e) => {
+      deps.log(
+        `[READD] ${groupId.slice(0, 8)}... base-refresh request did not reach the server: ` +
+          `${String(e).slice(0, 120)}`
       );
+      // A request that never arrived proves NOTHING about who is reachable, and reading silence as
+      // "nobody" would stop a repair on a dropped packet. The next pass asks again.
+      return { noPeerOnline: false };
+    });
+    if (!asked.noPeerOnline) return;
+    // THE PAIR THE VERDICT WAS TAKEN AGAINST IS THE JOIN'S OWN, not the one read at the top of this
+    // pass: `externalJoin` is the call the gate actually refused, and the two numbers it reports are
+    // the ones that refused it. Reading the older pair would record a proof against a state nothing
+    // was measured in.
+    const provenAt = epochPair({
+      baseEpoch: outcome.baseEpoch,
+      activeEpoch: outcome.serverEpoch,
+    });
+    if (provenAt === undefined) return;
+    noRepairerAt.set(groupId, provenAt);
+    deps.log(
+      `[READD] ${groupId.slice(0, 8)}... no member is reachable to republish the base, so nothing ` +
+        `this device does can open this group - waiting for either epoch to move (now ${provenAt})`
+    );
     return;
   }
 
@@ -683,4 +775,8 @@ export async function recoverRosterDisagreement(
  */
 export function cancelReAdd(groupId: string): void {
   lastReAddAt.delete(groupId);
+  // A group that just became joinable has no dead end to remember, and leaving one behind would
+  // outlive the thing it describes. Every caller of this function reaches it because the group is
+  // healthy again - a Welcome landed, an external join succeeded, or WASM already holds the tree.
+  noRepairerAt.delete(groupId);
 }

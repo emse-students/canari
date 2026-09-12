@@ -214,6 +214,24 @@ export type GroupMeta = {
    * private salon's seed carrier on the first sweep that ran before the Graine layer registered it.
    */
   distributionChannelId?: string | null;
+  /**
+   * The epoch the group's ratchet tree is really at, server-side.
+   *
+   * Undefined from a server too old to send it, which is not zero: reading a missing epoch as 0
+   * calls every base stale. See `classifyBase` in `$lib/utils/chat/staleBase`, where the same three
+   * numbers are turned into a verdict for the OTHER half of this problem - the holder's repair.
+   */
+  activeEpoch?: number;
+  /**
+   * The epoch of the published external-join base, `null` when none has ever been published.
+   *
+   * **THE PAIR IS WHAT SAYS WHETHER A LOCKED-OUT DEVICE HAS ANY REASON TO TRY AGAIN**, and it
+   * travels on this read because this read is the first call of every recovery pass. `baseEpoch <
+   * activeEpoch` is the stale base: the commit gate accepts equality and nothing else, so until
+   * these two numbers converge the join is refused, every time, whoever asks. `null` is NOT
+   * staleness - nothing has been lost, and the answer to it is a Welcome.
+   */
+  baseEpoch?: number | null;
 };
 
 /**
@@ -237,6 +255,29 @@ export type HistoryRequestOutcome = {
    * facts, separated by evidence rather than by prose. Zero when the server said nothing.
    */
   excludedOnline: number;
+};
+
+/**
+ * What the server did with a base-refresh request, as the server itself answers it.
+ *
+ * **THE ELECTION IS THE SERVER'S, SO THE ANSWER IS TOO** - the same shape as
+ * {@link HistoryRequestOutcome} next door, for the same reason. A requester cannot see who is
+ * online; the server picks one member and publishes to it, or finds none. Until this type existed
+ * that verdict was thrown away at the call site, and a device refused `stale_base` re-asked once a
+ * minute for as long as the session lasted. Measured on production
+ * 2026-09-12: group `4f87267a` answered `NO_PEER_ONLINE members=1` once a minute for at least
+ * twenty-seven consecutive minutes, to a group whose only other member had not connected since
+ * 2026-08-03.
+ *
+ * `noPeerOnline` is true ONLY on an explicit `no_peer_online`. A request that failed to reach the
+ * server, or answered something unparseable, proves NOTHING about who is reachable - reading
+ * silence as "nobody" would stop a repair on a dropped packet.
+ */
+export type BaseRefreshOutcome = {
+  /** The server looked at the roster and found no member it could publish to, right now. */
+  noPeerOnline: boolean;
+  /** The member key (`userId:deviceId`) the server elected, when it elected one. */
+  target?: string;
 };
 
 /**
@@ -869,8 +910,13 @@ export interface IMlsService {
    * mutates the tree, takes the add lock and replays the duplicate-leaf race; a refresh is a
    * read-only publish that takes no lock and changes no epoch. Asking for the second is what lets a
    * device go back to serving itself.
+   *
+   * THE ANSWER IS RETURNED, AND ASKING AGAIN WHILE NOTHING HAS CHANGED IS NOT A RETRY, IT IS THE
+   * SAME QUESTION. `no_peer_online` means the server read the roster and found nobody to publish
+   * to; re-asking a minute later can only produce that same answer until some member's state
+   * moves. See {@link BaseRefreshOutcome}.
    */
-  sendBaseRefreshRequest(groupId: string): Promise<void>;
+  sendBaseRefreshRequest(groupId: string): Promise<BaseRefreshOutcome>;
 
   /**
    * Register a callback invoked when this device is the member elected to republish a group's

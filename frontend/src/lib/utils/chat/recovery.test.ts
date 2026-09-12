@@ -5,6 +5,7 @@ vi.mock('$lib/utils/hex', () => ({
 import {
   requestReAdd,
   cancelReAdd,
+  RECOVERY_TIMEOUT_MS,
   recoverForkedGroup,
   recoverRosterDisagreement,
   resetReAddCooldowns,
@@ -49,7 +50,7 @@ function makeMls(overrides: Record<string, unknown> = {}) {
     notifyConversationAvailable: vi.fn(),
     getLocalGroups: vi.fn().mockReturnValue([]),
     sendWelcomeRequest: vi.fn().mockResolvedValue(undefined),
-    sendBaseRefreshRequest: vi.fn().mockResolvedValue(undefined),
+    sendBaseRefreshRequest: vi.fn().mockResolvedValue({ noPeerOnline: false }),
     sendHistoryRequest: vi.fn().mockResolvedValue({ noPeerOnline: false }),
     // A reconciliation waits for this device's own inbound queue before asking anybody anything;
     // no case here is about the mailbox, so it is already idle.
@@ -635,6 +636,145 @@ describe('requestReAdd - a stale base asks for a republish, not for a Welcome', 
 
     await expect(requestReAdd('g1', deps)).resolves.toBeUndefined();
     expect(lines.join(' | ')).toContain('did not reach the server');
+  });
+});
+
+/**
+ * NOBODY IS REACHABLE TO REPAIR IT, AND THAT IS AN ANSWER RATHER THAN A FAILED ATTEMPT.
+ *
+ * Measured on production 2026-09-12: a locked-out device ran this seam's full pass - the
+ * memberships, the row, the join, the base-refresh ask - against group `4f87267a` once a minute for
+ * at least twenty-seven consecutive minutes, and the server answered `NO_PEER_ONLINE members=1`
+ * every single time. Its only other member had not connected since 2026-08-03; three groups on that
+ * estate had been stale since 2026-08-29, 08-30 and 08-31, so this is a state and not a moment.
+ *
+ * What these cases pin is that the suppression is a PROOF and not a mute: it is keyed by the two
+ * epochs the refusal was measured against, so it survives exactly as long as they do and ends the
+ * instant either moves - whoever moved it.
+ */
+describe('requestReAdd - a dead end the server already proved', () => {
+  /**
+   * Walks the wall clock past {@link RECOVERY_TIMEOUT_MS} so the ordinary throttle lets the next
+   * pass through, WITHOUT touching the dead-end record.
+   *
+   * `cancelReAdd` would clear both, and a case that cleared both could not tell "the proof held"
+   * from "the throttle held" - which is the whole distinction these cases exist to pin. Restored in
+   * `afterEach` so no other file inherits a moved clock.
+   */
+  let clock = Date.now();
+  beforeEach(() => {
+    clock = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => clock);
+  });
+  afterEach(() => {
+    vi.mocked(Date.now).mockRestore();
+  });
+  const advanceClockPastThrottle = () => {
+    clock += RECOVERY_TIMEOUT_MS + 1_000;
+  };
+
+  const staleBase = () =>
+    vi.fn().mockResolvedValue({
+      joined: false,
+      reason: 'stale_base',
+      baseEpoch: 283,
+      serverEpoch: 284,
+    });
+
+  /** The server row as it reads while the base is one epoch behind. */
+  const metaAt = (baseEpoch: number | null, activeEpoch: number) =>
+    vi.fn().mockResolvedValue({
+      groupId: 'g1',
+      isGroup: true,
+      deletedAt: null,
+      baseEpoch,
+      activeEpoch,
+    });
+
+  it('stops re-asking once the server says no member is reachable', async () => {
+    const deps = makeDeps();
+    deps.mlsService.externalJoin = staleBase();
+    deps.mlsService.getGroupMeta = metaAt(283, 284);
+    deps.mlsService.sendBaseRefreshRequest = vi.fn().mockResolvedValue({ noPeerOnline: true });
+
+    await requestReAdd('g1', deps);
+    expect(deps.mlsService.sendBaseRefreshRequest).toHaveBeenCalledTimes(1);
+
+    // The throttle alone would let the next pass through a minute later; the proof must not.
+    advanceClockPastThrottle();
+    await requestReAdd('g1', deps);
+
+    expect(deps.mlsService.sendBaseRefreshRequest).toHaveBeenCalledTimes(1);
+    // And the pass ends on the ONE read it had already made, so nothing else is asked either.
+    expect(deps.mlsService.externalJoin).toHaveBeenCalledTimes(1);
+    expect(deps.mlsService.getDeviceMemberships).toHaveBeenCalledTimes(1);
+  });
+
+  it('tries again the moment either epoch moves', async () => {
+    const lines: string[] = [];
+    const deps = makeDeps();
+    deps.log = (m: string) => lines.push(m);
+    deps.mlsService.externalJoin = staleBase();
+    deps.mlsService.getGroupMeta = metaAt(283, 284);
+    deps.mlsService.sendBaseRefreshRequest = vi.fn().mockResolvedValue({ noPeerOnline: true });
+
+    await requestReAdd('g1', deps);
+
+    // A member came back and repaired the base on its own connection: `baseEpoch` caught up.
+    deps.mlsService.getGroupMeta = metaAt(284, 284);
+    deps.mlsService.externalJoin = vi.fn().mockResolvedValue({ joined: true });
+    advanceClockPastThrottle();
+    await requestReAdd('g1', deps);
+
+    expect(deps.mlsService.externalJoin).toHaveBeenCalledTimes(1);
+    expect(lines.join(' | ')).toContain('the group moved since nobody could repair it');
+  });
+
+  it('records nothing when a member WAS reachable - that ask is worth repeating', async () => {
+    const deps = makeDeps();
+    deps.mlsService.externalJoin = staleBase();
+    deps.mlsService.getGroupMeta = metaAt(283, 284);
+    deps.mlsService.sendBaseRefreshRequest = vi
+      .fn()
+      .mockResolvedValue({ noPeerOnline: false, target: 'u:d' });
+
+    await requestReAdd('g1', deps);
+    advanceClockPastThrottle();
+    await requestReAdd('g1', deps);
+
+    // Somebody is working on it, and each ask re-elects a member - so the cadence stands.
+    expect(deps.mlsService.sendBaseRefreshRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it('records nothing against a server that does not send the epochs', async () => {
+    // A client talking to an older server cannot see the state change, so it cannot hold a proof
+    // about it either - reading a missing epoch as 0 is the silent arithmetic `classifyBase`
+    // refuses for the same reason.
+    const deps = makeDeps();
+    deps.mlsService.externalJoin = staleBase();
+    deps.mlsService.getGroupMeta = vi
+      .fn()
+      .mockResolvedValue({ groupId: 'g1', isGroup: true, deletedAt: null });
+    deps.mlsService.sendBaseRefreshRequest = vi.fn().mockResolvedValue({ noPeerOnline: true });
+
+    await requestReAdd('g1', deps);
+    advanceClockPastThrottle();
+    await requestReAdd('g1', deps);
+
+    expect(deps.mlsService.sendBaseRefreshRequest).toHaveBeenCalledTimes(2);
+  });
+
+  it('a request that never reached the server proves nothing about who is reachable', async () => {
+    const deps = makeDeps();
+    deps.mlsService.externalJoin = staleBase();
+    deps.mlsService.getGroupMeta = metaAt(283, 284);
+    deps.mlsService.sendBaseRefreshRequest = vi.fn().mockRejectedValue(new Error('offline'));
+
+    await requestReAdd('g1', deps);
+    advanceClockPastThrottle();
+    await requestReAdd('g1', deps);
+
+    expect(deps.mlsService.sendBaseRefreshRequest).toHaveBeenCalledTimes(2);
   });
 });
 

@@ -1256,7 +1256,15 @@ export class MlsDeliveryApi {
     }
   }
 
-  /** Fetches group metadata - name, `deletedAt`. Returns `null` on 404 or error. */
+  /**
+   * Fetches group metadata - name, `deletedAt`, and the two epochs. Returns `null` on 404 or error.
+   *
+   * THE EPOCHS ARE READ AS NUMBERS OR NOT AT ALL. A server too old to send them leaves both
+   * `undefined`, and `undefined` is the only honest reading: coercing a missing `activeEpoch` to 0
+   * would call every published base stale, and coercing a missing `baseEpoch` to 0 would call an
+   * unpublished group stale. Both mistakes are silent and one line, which is why `classifyBase`
+   * separates them explicitly too.
+   */
   async getGroupMeta(groupId: string): Promise<GroupMeta | null> {
     try {
       const res = await this.f(`${this.historyUrl}/api/mls/groups/${encodeURIComponent(groupId)}`, {
@@ -1278,6 +1286,14 @@ export class MlsDeliveryApi {
             ? (g as { isGroup: boolean }).isGroup
             : undefined,
         deletedAt: (g as { deletedAt?: string | null }).deletedAt ?? null,
+        activeEpoch:
+          typeof (g as { activeEpoch?: number }).activeEpoch === 'number'
+            ? (g as { activeEpoch: number }).activeEpoch
+            : undefined,
+        baseEpoch:
+          typeof (g as { baseEpoch?: number | null }).baseEpoch === 'number'
+            ? (g as { baseEpoch: number }).baseEpoch
+            : ((g as { baseEpoch?: number | null }).baseEpoch ?? undefined),
       };
     } catch {
       return null;
