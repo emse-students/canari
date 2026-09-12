@@ -416,7 +416,7 @@ duplicate**, and the justification is quoted so it can be argued with rather tha
 | D6 | Enter rung 2 | setupMessageHandler.ts:967 (read side), `recoverForkedGroup` (recovery.ts:697, write side), the watchdog's stuck-gap net (sessionWatchdogs.ts:134), `generation-gap` (setupMessageHandler.ts:991) | Yes. BaseMlsService.ts:2620: *"THE LADDER HAD EXACTLY ONE ENTRANCE, AND IT WAS THE READ SIDE"* - the write side was added deliberately | **TENABLE.** Four symptoms, one destructive action, and all four route through `forgetGroup` plus the section-2 door chooser. |
 | D7 | Answer a `welcome_request` | foreground `handleWelcomeRequest` (actions.ts:750), background `POST mls/push/send-welcome-and-commit` (push.controller.ts:569) | Yes. push.controller.ts:604 calls the background path *"the single chokepoint for the background (push) re-add path - its foreground counterpart enforces the same check client-side in handleWelcomeRequest"* | **NOT TENABLE AS SHIPPED.** The justification is sound and the implementation broke it: the background half has been returning 400 since `proto` became mandatory. P1-1. |
 | D8 | Hold a message back | `!isGroupHealthy` returns retry (outbox.ts:462), `isInEpochGap` inside `canSendInGroup` (groupUsability.ts:61), `epochSendBarrier.ts` | Yes. groupUsability.ts:58: it *"was written inline in the session layer as `isGroupHealthy` and had exactly one caller; the second caller would have re-derived it, and two facts are easy to compose wrongly"* | **TENABLE.** The extraction is the fix; what is left is the composed predicate and its two named halves. |
-| D9 | Two rosters for one group | SQL `dm_device_group_memberships`, Redis `group:members:<groupId>` | Nowhere | **TENABLE, UNDOCUMENTED.** SQL decides the fan-out, Redis decides live routing - different questions. But nothing states the invariant, and P1-2 is the case where they provably disagree. P2-4. |
+| D9 | Two rosters for one group | SQL `dm_device_group_memberships`, Redis `group:members:<groupId>` | `device-group-membership.entity.ts`, since 2026-09-12 | **TENABLE, AND NOW WRITTEN DOWN.** SQL decides the fan-out, Redis decides live routing - different questions, one writer each. The invariant was unstated, which is how P1-2 shipped; it is now in the entity docblock and asserted by `messaging.welcome-membership.spec.ts`. P2-4 done. |
 | D10 | Forget a group | `forgetGroup` reached from six distinct sites in `BaseMlsService` alone, plus rung 2, plus both sweeps | No | **TENABLE.** One WASM primitive with many reasons to call it. The duplicated CONCERN is D5's, not this one's. |
 
 ---
@@ -463,13 +463,25 @@ native JNI has returned `baseEpoch` since 2026-06-26, before `v0.10.0`, and the 
 0.14.0, so no client that can reach MLS at all could omit it. **The route had no test**;
 `push.controller.welcome-commit.spec.ts` is that test, and it fails against the code this fixed.
 
-**P1-2. `sendWelcome` demotes an active membership while telling Redis to keep routing to it.**
-[messaging.service.ts:1785-1800](../../../apps/chat-delivery-service/src/services/messaging.service.ts)
-upserts `status: 'pending'` with `skipUpdateIfNoValuesChanged` - which does NOT protect an `active`
-row, because the value changes - and then `sadd`s the device into `group:members:<groupId>`. SQL then
-says `pending`, Redis says routable, and the SQL fan-out (`WHERE status = 'active'`) drops it. The
-comment directly above the write says *"Upsert DeviceGroupMembership to active"*. Reachable through
+**P1-2. FIXED 2026-09-12. `sendWelcome` demoted an active membership while telling Redis to keep
+routing to it.** [messaging.service.ts](../../../apps/chat-delivery-service/src/services/messaging.service.ts)
+upserted `status: 'pending'` with `skipUpdateIfNoValuesChanged` - which does NOT protect an `active`
+row, because the value CHANGES - and then `sadd`ed the device into `group:members:<groupId>`. SQL
+said `pending`, Redis said routable, and the SQL fan-out (`WHERE status = 'active'`) dropped it. The
+comment directly above the write said *"Upsert DeviceGroupMembership to active"*. Reachable through
 the roster disagreement `recoverRosterDisagreement` exists for.
+
+**Two writes, two fixes, and the second is the one that restores an invariant the code already
+declared.** The conflict clause now overwrites `kickedAt` and nothing else, so a Welcome cannot
+demote - only `activateDeviceMembership` moves that column. And the `sadd` is **deleted** rather
+than corrected: `sendMessage` states that `group:members:` is OWNED by `activateDeviceMembership`,
+which writes it at the pending->active transition, and that its own reconciliation firing at all
+"means an owner did not write". `sendWelcome` was a second writer of that set, announcing a device
+as routable one line after recording that it had not joined - and the gateway both broadcasts from
+that set and ELECTS an answerer for `welcome_request` out of it, so a device holding no group state
+could be picked to serve one. Nothing replaces it: a device the Welcome has not reached cannot
+decrypt a broadcast, and `activateDeviceMembership` adds it and replays what it missed (DF2) the
+moment it can. `sendWelcome` had no test; it has one now.
 
 **P1-3. MEASURED AND REPORTED 2026-09-12. `NO_REPAIRER` has no exit, and nothing counted how many
 conversations were in it.** `reportStaleExternalJoinBases` (shipped in #526) finds stale BASES. It
@@ -502,7 +514,7 @@ it, and the only thing a server can contribute is to say which conversations are
 - **P2-1. Delete `bootstrap_dead_conversation`** (`frontend/src-tauri/src/commands/bootstrap.rs`, registered at `frontend/src-tauri/src/lib.rs:905`). Two deleted routes, no caller, and a false promise about DE2.
 - **P2-2. Collapse D5**, the two group sweeps, into one predicate with one implementation. The twin cost the same fix twice.
 - **P2-3. Graine has no wiki page**, for roughly forty code files. `channel-encryption.md` is the protocol; the seeds, the sessions, the repair walk, the roster reconcile and the retention sweep have no reference page.
-- **P2-4. State the SQL/Redis roster invariant** (D9) where a reader will find it, and assert it in a test. Two rosters with no written invariant is how P1-2 shipped.
+- ~~**P2-4. State the SQL/Redis roster invariant** (D9) where a reader will find it, and assert it in a test.~~ **DONE 2026-09-12, with P1-2** - the invariant is in the `DeviceGroupMembership` docblock (one writer for `status`, one for the routing set, and `sendWelcome` is neither) and asserted by `messaging.welcome-membership.spec.ts`. Two rosters with no written invariant is how P1-2 shipped.
 - **P2-5. Give the held outbox entry a terminal state** (DE5), or a report naming entries held beyond a threshold. A message held for ever looks, from the outside, exactly like one delivered.
 
 ### P3 - hygiene

@@ -1776,33 +1776,51 @@ export class MessagingService {
       await this.sendFcmForQueued(queuedWelcome, traceId, safeGroupId, senderUserId, true);
     }
 
-    // Upsert DeviceGroupMembership to active.
-    // INSERT ... ON CONFLICT DO UPDATE guarantees record creation even when no prior
-    // invitation existed (bootstrap case: brand-new group, no pending record).
-    // A plain UPDATE WHERE status='pending' would touch 0 rows in that case, leaving the
-    // device without a record -> processPendingInvitations would incorrectly kick it.
+    // Ensure a DeviceGroupMembership row EXISTS, and never demote one that is already active.
+    // INSERT ... ON CONFLICT guarantees record creation even when no prior invitation existed
+    // (bootstrap case: brand-new group, no pending record). A plain UPDATE WHERE status='pending'
+    // would touch 0 rows in that case, leaving the device without a record ->
+    // processPendingInvitations would incorrectly kick it.
+    //
+    // **THE CONFLICT CLAUSE OVERWRITES `kickedAt` AND NOTHING ELSE.** It used to overwrite `status`
+    // too, with the literal `'pending'`, and `skipUpdateIfNoValuesChanged` does not protect a row
+    // whose value CHANGES - so sending a Welcome to a device that was already `active` DEMOTED it.
+    // A demoted row is dropped by the fan-out (`WHERE status = 'active'`), which is how a working
+    // device stopped receiving the messages of a group it was still in. A Welcome is a delivery,
+    // not a demotion: only `activateDeviceMembership` moves this column, in one direction.
+    //
     // `kickedAt: null` IS THE PROOF A KICK WAS FOLLOWED THROUGH. A Welcome in the queue means the
     // Add the kick promised actually landed, so the row stops being one the stranded report should
     // accuse - it is now an ordinary device owed a delivery. Left set, every successful
     // kick-and-re-add would be reported as a failed one for as long as the row stayed pending.
-    // `skipUpdateIfNoValuesChanged` still holds: on a row already pending with no kick recorded,
-    // this writes nothing.
-    await this.deviceGroupRepo.upsert(
-      {
+    await this.deviceGroupRepo
+      .createQueryBuilder()
+      .insert()
+      .into(DeviceGroupMembership)
+      .values({
         deviceId: targetDeviceId,
         groupId: safeGroupId,
         userId: deviceInfo.userId,
         status: 'pending' as const,
         kickedAt: null,
-      },
-      {
-        conflictPaths: ['deviceId', 'groupId'],
-        skipUpdateIfNoValuesChanged: true,
-      }
-    );
+      })
+      .orUpdate(['kickedAt'], ['deviceId', 'groupId'])
+      .execute();
 
-    // Device can now decrypt - add it to the routing set.
-    await this.redis.sadd(`group:members:${safeGroupId}`, `${deviceInfo.userId}:${targetDeviceId}`);
+    // THE ROUTING SET IS NOT WRITTEN HERE, AND THE `sadd` THAT USED TO BE ON THIS LINE IS THE
+    // REASON THIS FUNCTION COULD LEAVE SQL AND REDIS DISAGREEING.
+    //
+    // `group:members:{groupId}` is OWNED by `activateDeviceMembership`, which writes it at the
+    // pending->active transition - the moment membership is decided, and the invariant the
+    // reconciliation in `sendMessage` accuses a violation of. This function ran one line after
+    // writing `pending`, so it announced a device as routable in the same breath as recording that
+    // it had not joined yet: the SQL fan-out skipped it while the gateway, which broadcasts from
+    // this very set, did not. The gateway also ELECTS an answerer for `welcome_request` and
+    // `history_request` from it, so a device that holds no group state could be picked to serve
+    // one.
+    //
+    // Nothing replaces it. A device the Welcome has not reached cannot decrypt a broadcast anyway,
+    // and the moment it can, `activateDeviceMembership` adds it and replays what it missed (DF2).
 
     this.logger.log(
       `[WELCOME][${traceId}] DONE group=${safeGroupId} target=${deviceInfo.userId}:${targetDeviceId}`
