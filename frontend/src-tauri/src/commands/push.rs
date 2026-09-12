@@ -620,6 +620,60 @@ pub(crate) fn store_push_context(
     std::fs::write(data_dir.join("push_context.json"), json.to_string()).map_err(|e| e.to_string())
 }
 
+/// Mirrors THIS DEVICE'S IDENTITY, and nothing else, so it survives the WebView losing
+/// `localStorage` (Android eviction under storage pressure, a reinstall, a cleared site data).
+///
+/// WHY IT IS NOT A PART OF `store_push_context`. The MLS credential is `user_id:device_id`, so
+/// losing the id does not degrade a feature - it makes this a DIFFERENT device, orphaning the leaf
+/// it holds in every group's ratchet tree and forcing a re-enrolment no peer asked for. Its only
+/// durable copy was this same file, written exclusively by `store_push_context`, which requires a
+/// derived device key, a platform-keystore write that succeeds, and - at its JS call site - an
+/// auth-token refresh already back from the network. Not one of those three is a fact about
+/// identity, and each of them failing quietly minted a new device: on production (2026-09-12) 138
+/// of 361 accounts carried ONE device name under several ids, 40% of iOS accounts and 38% of
+/// Android against 12% Windows and 9% macOS - the gap is mobile, which is where eviction happens.
+///
+/// So this has NO precondition and patches two keys rather than rewriting the file, the way
+/// `set_push_context_locale` does for the language. It differs from that one on the absent-file
+/// case: a lone locale is a context no reader can use, but a lone identity is precisely what
+/// `load_push_context` exists to hand back, so the file IS created here. That costs nothing to the
+/// three background readers - `MlsContextLoader.loadPushContext`, the Swift NSE's and the ObjC
+/// one all require a non-empty `baseUrl` and return nil without it, exactly as for an absent file.
+///
+/// `pushToken` is dropped when the user changes. Despite its name it is the AUTH BEARER token (see
+/// `store_push_context`), so it is scoped to a user; leaving the previous one beside a new
+/// `userId` would let a background fetch authenticate as the account that just signed out.
+#[tauri::command]
+pub(crate) fn store_device_identity(
+    user_id: String,
+    device_id: String,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let user_id = user_id.trim().to_string();
+    let device_id = device_id.trim().to_string();
+    if user_id.is_empty() || device_id.is_empty() {
+        return Err("user_id and device_id are both required".to_string());
+    }
+
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
+    let path = data_dir.join("push_context.json");
+
+    let mut ctx: serde_json::Map<String, serde_json::Value> = match std::fs::read(&path) {
+        Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
+        Err(_) => serde_json::Map::new(),
+    };
+
+    let same_user = ctx.get("userId").and_then(serde_json::Value::as_str) == Some(user_id.as_str());
+    if !same_user {
+        ctx.remove("pushToken");
+    }
+
+    ctx.insert("userId".to_string(), serde_json::Value::String(user_id));
+    ctx.insert("deviceId".to_string(), serde_json::Value::String(device_id));
+    std::fs::write(&path, serde_json::Value::Object(ctx).to_string()).map_err(|e| e.to_string())
+}
+
 /// The language a background notification falls back to when nothing has been mirrored yet.
 /// Matches Paraglide's `baseLocale`.
 const DEFAULT_PUSH_LOCALE: &str = "fr";
