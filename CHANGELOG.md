@@ -54,6 +54,28 @@ the minute-long floor under every caller did not move - a reactive trigger arriv
 still served at once. A tick with no gap armed and no sweep owed now returns before it touches WASM
 at all.
 
+### Fixed - openmls narrated its own failures at ERROR, over the top of the report that explained them
+
+`openmls` logs from deep inside its framing and validation code, where it knows nothing a reader can
+act on: `Sender data decryption error` names no group, no epoch and no frame. Every path that
+produces one of those is wrapped by `mls-core`, which reports the same event one line later with the
+group, both epochs and the marker every consumer keys on - so the upstream line is a duplicate of a
+better line, at a level that accuses. Production on 2026-09-12 held six of them in a single idle
+window.
+
+The web had been demoting two of these by re-matching their TEXT, in two lists that had already
+drifted apart, and native had no such rule at all - the same asymmetry that once let a phone queue a
+frame it could never decrypt. `mls_core::logging::console_level` replaces both with one rule keyed on
+`record.target()`, the emitting module path, which cannot drift with an upstream rewording and cannot
+swallow one of our own lines for quoting the same words. The line is kept, at DEBUG. `mlsWasmLoader`'s
+copy is deleted: only the level and the message cross into JS, so that side cannot see who wrote a
+line, and it now prints what Rust decided. Native takes the same rule through `tauri_plugin_log`.
+
+`SecretReuseError` stays a separate rule, matched on text, because it names OUR line and answers a
+different question - a spent generation is expected after a reload and is still REPORTED to every
+caller as `DecryptErrorKind::SecretReuse`. The decision lives in `mls-core` rather than `mls-wasm`
+because CI runs no test in the wasm crate, and a gate that never opens is worse than none.
+
 ### Fixed - a locked-out device asked the same question every minute, and the server had already answered it
 
 A device with no local MLS state enters a group by external commit, and the commit gate accepts a
