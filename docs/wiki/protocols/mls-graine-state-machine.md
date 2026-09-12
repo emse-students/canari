@@ -425,8 +425,8 @@ duplicate**, and the justification is quoted so it can be argued with rather tha
 
 | # | The dead end | How it is reached | Terminal by design? |
 | --- | --- | --- | --- |
-| DE1 | **`NO_REPAIRER`** - the published base is stale and the server answers `no_peer_online` | `externalJoin` returns `stale_base`, then `sendBaseRefreshRequest` answers `noPeerOnline` (recovery.ts:565-577) | **NO.** It is left only when an epoch moves, which needs a holder online - the very thing that is absent. Correctly detected, correctly logged, no exit. P1-3. |
-| DE2 | **A group whose tree NO member holds any longer** | every holder lost its state; the base is stale or absent | **YES, AND IT CANNOT BE OTHERWISE.** Every entry into a group in RFC 9420 - Welcome, external commit, ReInit, subgroup branching, external proposals - requires a party holding the group secrets. This server holds only ciphertext. A server-side resurrection would be a backdoor, which is why the spec has none. |
+| DE1 | **`NO_REPAIRER`** - the published base is stale and the server answers `no_peer_online` | `externalJoin` returns `stale_base`, then `sendBaseRefreshRequest` answers `noPeerOnline` (recovery.ts:565-577) | **NO, AND IT IS NOW COUNTED.** It is left only when an epoch moves, which needs a holder online - the very thing that is absent. Correctly detected, correctly logged, no exit. `reportSingleHolderGroups` names the population one step from it, hourly (P1-3, 2026-09-12). |
+| DE2 | **A group whose tree NO member holds any longer** | every holder lost its state; the base is stale or absent | **YES, AND IT CANNOT BE OTHERWISE.** Every entry into a group in RFC 9420 - Welcome, external commit, ReInit, subgroup branching, external proposals - requires a party holding the group secrets. This server holds only ciphertext. A server-side resurrection would be a backdoor, which is why the spec has none. **It is not hypothetical: one live group on production was in this state on 2026-09-12**, and `reportSingleHolderGroups` now names it hourly at ERROR. |
 | DE3 | **`bootstrap_dead_conversation`** | nothing reaches it | **DEAD CODE.** Registered at `frontend/src-tauri/src/lib.rs:905`, POSTs to `claim-bootstrap` then `reset-epoch` - both routes deleted, no frontend caller. It is also the only thing in the product claiming DE2 is recoverable. P2-1. |
 | DE4 | ~~**The background re-add returns 400**~~ | ~~`POST mls/push/send-welcome-and-commit` called `validateCommit` with no `proto`, which the guard at messaging.service.ts refuses~~ | **FIXED 2026-09-12 (P1-1).** The route now hands `proto: body.commitPayload` to `validateCommit`, and `baseEpoch` is required rather than optional - the optional branch broadcast without validating, which is the hole the guard exists to close. Covered by `push.controller.welcome-commit.spec.ts`, which this route did not have. |
 | DE5 | **An outbox entry held for ever** | `!isGroupHealthy` returns `retry` with no attempt ceiling (outbox.ts:462) | **NO.** The two permanent failures are `group-deleted` and `evicted`; a group in `NO_REPAIRER` is neither, so the entry retries for the life of the install. P2-5. |
@@ -471,12 +471,31 @@ says `pending`, Redis says routable, and the SQL fan-out (`WHERE status = 'activ
 comment directly above the write says *"Upsert DeviceGroupMembership to active"*. Reachable through
 the roster disagreement `recoverRosterDisagreement` exists for.
 
-**P1-3. `NO_REPAIRER` has no exit, and nothing counts how many conversations are in it.**
-`reportStaleExternalJoinBases` (shipped in #526) finds stale BASES. It does not find the population
-that decides availability, which is groups with **fewer than two independent tree-holders**: a DM with
-one live leaf is one uninstall away from DE2. The predicate to replace the `active`-row count with is
-the count of HOLDERS. A predicate that named the last incident is not the predicate that names the
-next one.
+**P1-3. MEASURED AND REPORTED 2026-09-12. `NO_REPAIRER` has no exit, and nothing counted how many
+conversations were in it.** `reportStaleExternalJoinBases` (shipped in #526) finds stale BASES. It
+does not find the population that decides availability, which is groups with **fewer than two
+independent tree-holders**: a DM with one live leaf is one uninstall away from DE2. A predicate that
+named the last incident is not the predicate that names the next one.
+
+**The population was measured on production before the predicate was written**, because its shape
+decided the predicate's shape. Of **58 live groups**:
+
+| Holders (distinct users with an `active` device) | Groups | |
+| --- | --- | --- |
+| 0 | 1 | already DE2 |
+| 1 | 9 | one uninstall from DE2 |
+| 2 or more | 48 | |
+
+**And the naive predicate was wrong, which only the measurement could have said.** Five of those ten
+have fewer than two rows in `dm_group_members` - the authoritative answer to who is a member - so
+they are one-person groups and orphans, not conversations. Reporting them would have made half of
+every line noise. The shipped predicate requires `>= 2` user-level members, and it names **five real
+conversations, one of them at epoch 284 with six devices sitting `pending` on it**.
+
+`reportSingleHolderGroups` runs hourly beside the other three reports. It WARNs at one holder, where
+there is still something to do, and ERRORs at zero, where there is not. **It repairs nothing,
+because nothing can**: DE2 is terminal by RFC 9420 construction, so the only useful moment is before
+it, and the only thing a server can contribute is to say which conversations are near it.
 
 ### P2 - correctness
 

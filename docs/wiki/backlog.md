@@ -76,6 +76,37 @@ else holds, a console owned by the user, or hardware that does not exist.
 
 ## Open defects, in severity order
 
+### P2 - five conversations rest on ONE holder and one has none, and the report can only say so (measured on production 2026-09-12)
+
+**The measurement.** Of 58 live groups on production: 1 with zero holders, 9 with one, 48 with two
+or more, counting a holder as a DISTINCT USER holding an `active` device membership. Five of the ten
+have fewer than two rows in `dm_group_members` and are one-person groups or orphans rather than
+conversations; the five that remain are real, and one of them is a DM at **epoch 284 with six
+devices sitting `pending` on it**, four of them created the day of the measurement.
+
+**What shipped.** `reportSingleHolderGroups`, hourly, beside the other three reports - WARN at one
+holder, ERROR at zero, with the pending count beside each because a pending device is the cheapest
+second holder available. The predicate requires two user-level members, and that requirement came
+out of the measurement rather than out of taste: without it, half of every line is debris.
+
+**What is open, and it is a design decision rather than work.** The report names the population and
+cannot repair it. DE2 is terminal by RFC 9420 construction - every way into a group requires a party
+holding the group secrets, and this server holds only ciphertext - so the only useful moment is
+BEFORE the last holder goes, and the only levers are upstream:
+
+- **Land the Welcomes that are already owed.** Six pending devices on the epoch-284 DM would each
+  become a second holder. Whether they were starved by the background re-add returning 400 (fixed
+  2026-09-12) is measurable from the next report after that fix ships, and that is the first thing
+  to read rather than the first thing to build.
+- **Tell somebody.** A conversation with one holder is a fact about a USER's own account, and
+  nothing surfaces it to them. What channel, and whether it is worth surfacing at all, is undecided.
+- **Refuse the last exit.** A client could decline to forget a group it is the last holder of
+  without warning. This one needs care: a destructive control gated on a server's count is a
+  fallback path, and the count is a proxy.
+
+Nothing here is to be built before the next report is read. See
+[the state machine](protocols/mls-graine-state-machine.md), section 9 (DE1, DE2) and section 10.
+
 ### P1 - a damaged local MLS state is reported as a PIN rotation, and the PIN the user actually holds does not get them back in (measured 2026-09-08)
 
 **The measurement.** CORRUPT-2 (`corrupt2.mjs`) XORs ONE byte at the midpoint of the 18.4 MB
