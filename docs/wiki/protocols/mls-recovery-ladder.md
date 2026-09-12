@@ -2,7 +2,8 @@
 
 This document describes how the **client** recovers from MLS and delivery-queue issues, and where to look when debugging.
 
-**See also:** [`mls-desync-prevention.md`](mls-desync-prevention.md) — tactics that _prevent_ client/server state drift before recovery runs.
+**See also:** [`mls-desync-prevention.md`](mls-desync-prevention.md) — tactics that _prevent_ client/server state drift before recovery runs,
+and [`mls-graine-state-machine.md`](mls-graine-state-machine.md) — the same ladder as a diagram, with the `file:line` of every transition.
 
 ## Ordered recovery steps
 

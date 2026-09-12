@@ -30,6 +30,9 @@ Run the MLS service and call-site suites in `frontend` after changing **`runComm
 
 ### 2. Server - coordinated reset and bootstrap: DELETED, AND NOTHING REPLACED IT
 
+> The tactics below are the prose; the machine they act on is drawn on
+> [`mls-graine-state-machine.md`](mls-graine-state-machine.md).
+
 This section described `POST /api/mls/groups/:groupId/reset`, `POST .../claim-bootstrap` and
 `GET .../bootstrap-info`, backed by an optimistic lock on `bootstrapVersion`. **None of the three
 routes exists and neither does that column**, verified 2026-09-12: the successor/reboot machinery

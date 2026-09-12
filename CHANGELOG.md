@@ -11,6 +11,32 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Added - the MLS and Graine state machine, drawn from the code rather than from the wiki
+
+`docs/wiki/protocols/mls-graine-state-machine.md` is the first page in this repository with diagrams
+in it, and the first that can be checked line by line against the source: every transition in its
+seven mermaid diagrams names the file and the line that performs it.
+
+It was asked for as documentation and it is also an audit, because a state machine drawn from the
+code answers two questions prose cannot. **Where are there several paths to one outcome** - ten are
+tabulated, each with its written justification quoted and a verdict on whether that justification
+holds; six are tenable, three are shaped badly enough to be worth a fix, and one is a defect
+already. **Where does a path dead-end** - nine are tabulated, four terminal by design (including a
+group whose tree no member holds, which RFC 9420 makes unrecoverable by construction) and five that
+are not.
+
+Three of those were verified by hand and are now triaged P1. The background re-add - the FCM-woken
+path by which a phone rescues a device that cannot join by itself - has been returning 400 before
+the Welcome since `proto` became mandatory, because `send-welcome-and-commit` calls `validateCommit`
+without one. `sendWelcome` demotes an `active` membership to `pending` while adding the device back
+to the Redis routing set, so SQL and Redis disagree and the SQL fan-out drops it. And `NO_REPAIRER`
+- a stale base with no member reachable to republish it - is correctly detected, correctly logged,
+and has no exit; the report that would name that population would count independent tree-holders,
+which is not what the stale-base report counts.
+
+Nothing was fixed here. The page ends in a P1/P2/P3 triage and the choice of what becomes a pull
+request is the user's.
+
 ### Fixed - the wiki documented three mechanisms that had been deleted, and a reader would have planned around them
 
 Drawing the MLS and Graine state machine from the code turned up five claims in `docs/wiki/` that the
