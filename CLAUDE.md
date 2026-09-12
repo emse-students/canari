@@ -244,9 +244,9 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    and the blob-header READER are done 2026-09-08 and unshipped; the WRITER cannot follow until that
    reader is the floor (`minClientVersion`), so the two causes are still not separated in the field
    ([backlog](docs/wiki/backlog.md)).
-6. **P1 x3, FOUND BY THE STATE MACHINE AND OWED AN ARBITRATION** (user: *"Diagramme + triage, puis
-   tu arbitres"*) - the FCM re-add 400s before the Welcome, `sendWelcome` demotes a member Redis
-   keeps routing to, `NO_REPAIRER` has no exit ([triage](docs/wiki/protocols/mls-graine-state-machine.md#10-triage---what-is-worth-a-pull-request)).
+6. **FIVE LIVE CONVERSATIONS REST ON ONE HOLDER, ONE HAS NONE** (prod 2026-09-12; the state
+   machine's three P1s and both server P2s are SHIPPED). The hourly report says so and repairs
+   nothing because nothing can - levers and the rest of the triage: [backlog](docs/wiki/backlog.md), [triage](docs/wiki/protocols/mls-graine-state-machine.md#10-triage---what-is-worth-a-pull-request).
 7. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - ONE merge mechanism
    and ONE arming point, asserted only by `bun tools/ecosystem-shape/shape.mjs`
    ([cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them), the only copy).

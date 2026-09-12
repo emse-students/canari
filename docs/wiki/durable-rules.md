@@ -1446,3 +1446,14 @@ Environment and tooling traps that belong to no one subsystem. Each cost a run.
   it read a document the check never opened. A row asserting "no request was sent" would have passed
   on it perfectly. It refuses now and names `openSite`, the one navigation that spells `SITE`
   instead of reading an origin. Found while writing PIN-9, before it could produce a verdict.
+
+- **DELETE THE DEAD THING, THEN READ THE COMPILER - WHAT IT REPORTS NEWLY DEAD IS THE TRUE EXTENT OF
+  WHAT YOU DELETED.** `bootstrap_dead_conversation` was removed on 2026-09-12 as one unreachable
+  command, and `cargo check` immediately answered with a warning nobody had asked for: `HttpClient`,
+  field never read. That command was the only thing in the crate that had ever made an HTTP call, so
+  the managed client, its `.manage()` registration and the `reqwest` dependency itself were dead the
+  moment it went - four things, where the audit had found one. **A dead symbol hides its
+  dependencies from every search that looks for callers, because it HAS callers: itself.** So the
+  measure of a deletion is not the grep that preceded it but the build that follows it, and a
+  warning surfacing there is a continuation of the same task rather than a pre-existing one. The
+  same shape applies to a deleted route, a deleted entity and a deleted feature flag.
