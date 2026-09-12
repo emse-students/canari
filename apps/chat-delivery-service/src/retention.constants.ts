@@ -192,3 +192,28 @@ export const DEVICE_REVOCATION_TTL_MS = 10 * 365 * 24 * 60 * 60 * 1000;
  * `docs/wiki/protocols/history-reconciliation.md`.
  */
 export const HISTORY_STREAM_MAXLEN = 8000;
+
+/**
+ * How many single-holder conversations the hourly report names in each of its two lines.
+ *
+ * Ten, for the reason the two caps above are ten: one line per cause, never one per row.
+ *
+ * **The population was measured before this number was chosen** (production, 2026-09-12): of 58
+ * live groups, 5 real conversations had fewer than two users holding an active device and 1 had
+ * none at all. So the cap is not currently reached, and it exists so that the day it IS the line
+ * stays readable while the COUNT beside it still says how far past ten the estate went.
+ */
+export const SINGLE_HOLDER_REPORT_TOP_N = 10;
+
+/**
+ * The smallest number of user-level members a group must have before its holder count is worth
+ * reporting on.
+ *
+ * **TWO, and this is the discriminator the measurement forced.** The naive predicate - "fewer than
+ * two users hold an active device" - named 10 groups on production, and five of them were debris:
+ * groups with ZERO or ONE row in `dm_group_members`, which is the authoritative answer to who is a
+ * member. A one-person group has one holder because it has one member, and a group nobody belongs
+ * to is not a conversation at all. Reporting them would make half of every line noise, and a report
+ * whose reader learns to skip it is the one that hides the next defect.
+ */
+export const MIN_MEMBERS_FOR_HOLDER_REPORT = 2;

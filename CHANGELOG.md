@@ -39,6 +39,32 @@ that the bytes handed to the commit log are the same bytes broadcast, that a mis
 `baseEpoch` is refused before anything is sent, and that a rejected commit yields neither Welcome nor
 broadcast. It was run against the code this fixes, and it fails there.
 
+### Added - the report that counts what decides whether a conversation survives
+
+Three hourly reports watched this estate and none of them counted holders. `reportStaleExternalJoinBases`
+finds bases that have fallen behind, which is a symptom; what decides whether a conversation can be
+recovered at all is how many INDEPENDENT parties still hold its MLS tree. Every way into a group in
+RFC 9420 - Welcome, external commit, ReInit, subgroup branching, external proposals - requires a
+party holding the group secrets, and this server holds only ciphertext. A group whose last holder
+uninstalls is not degraded, it is over, and no repair exists here or in the spec.
+
+`reportSingleHolderGroups` runs hourly beside the other three. It WARNs at one holder, where there
+is still something to do, and ERRORs at zero, where there is not. Holders are counted as distinct
+USERS, not rows: three devices belonging to one person share an owner, an account, and usually a
+single act of uninstalling.
+
+**The population was measured on production before the predicate was written, and the measurement
+changed it.** Of 58 live groups, 10 matched the obvious predicate - fewer than two users holding an
+active device. Five of those had fewer than two rows in `dm_group_members`, the authoritative answer
+to who is a member: one-person groups and orphans, not conversations. Reporting them would have made
+half of every line noise, and a report whose reader learns to skip it is the one that hides the next
+defect. The shipped predicate requires two user-level members and names five real conversations, one
+of them a DM at epoch 284 with six devices sitting `pending` on it - plus one group that already has
+no holder at all, which nothing in this estate had ever said out loud.
+
+It deletes nothing and repairs nothing, because nothing can. What remains is a decision rather than
+work, and it is in the backlog.
+
 ### Added - the MLS and Graine state machine, drawn from the code rather than from the wiki
 
 `docs/wiki/protocols/mls-graine-state-machine.md` is the first page in this repository with diagrams

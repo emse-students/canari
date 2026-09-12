@@ -20,6 +20,8 @@ import {
   STRANDED_PENDING_MEMBERSHIP_MS,
   STRANDED_MEMBERSHIP_REPORT_TOP_N,
   STALE_BASE_REPORT_TOP_N,
+  SINGLE_HOLDER_REPORT_TOP_N,
+  MIN_MEMBERS_FOR_HOLDER_REPORT,
 } from './retention.constants';
 import { activeRevocationCutoff } from './utils/revocation';
 import {
@@ -49,6 +51,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   private reportQueueDepthInterval: ReturnType<typeof setInterval>;
   private reportStrandedMembershipsInterval: ReturnType<typeof setInterval>;
   private reportStaleBasesInterval: ReturnType<typeof setInterval>;
+  private reportSingleHolderInterval: ReturnType<typeof setInterval>;
   private initialSweepTimeout: ReturnType<typeof setTimeout>;
 
   /**
@@ -215,6 +218,16 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       );
     }, ONE_HOUR);
 
+    // Observe the conversations that rest on ONE holder. The fourth report, and it exists because
+    // the third counts the wrong thing: a stale base is a symptom, and what decides whether a
+    // conversation can survive at all is how many independent parties still hold its tree. Measured
+    // on production 2026-09-12: 5 real conversations were down to one holder and 1 had none.
+    this.reportSingleHolderInterval = setInterval(() => {
+      void this.reportSingleHolderGroups().catch((e) =>
+        this.logger.error('[CRON] reportSingleHolderGroups failed', e)
+      );
+    }, ONE_HOUR);
+
     this.logger.log(
       '[CRON] Stale device detection (1h), message cleanup (1h), ' +
         'stale device GC (1h), queue depth report (1h), stranded membership report (1h), ' +
@@ -256,6 +269,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       ['reportQueueDepth', () => this.reportQueueDepth()],
       ['reportStrandedDeviceMemberships', () => this.reportStrandedDeviceMemberships()],
       ['reportStaleExternalJoinBases', () => this.reportStaleExternalJoinBases()],
+      ['reportSingleHolderGroups', () => this.reportSingleHolderGroups()],
     ];
     for (const [name, run] of jobs) {
       // One failing job must never cost the others their only run of the deployment.
@@ -307,6 +321,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     clearInterval(this.reportQueueDepthInterval);
     clearInterval(this.reportStrandedMembershipsInterval);
     clearInterval(this.reportStaleBasesInterval);
+    clearInterval(this.reportSingleHolderInterval);
     clearTimeout(this.initialSweepTimeout);
   }
 
@@ -684,6 +699,99 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
           `membership at all - no client can mint a base for them, so they are shut permanently ` +
           `rather than waiting for a member to return. Oldest ` +
           `${Math.min(unrepairable.length, STALE_BASE_REPORT_TOP_N)}: ${name(unrepairable)}`
+      );
+    }
+  }
+
+  /**
+   * Observe the conversations whose availability rests on a single holder.
+   *
+   * **THE FOURTH REPORT, AND IT EXISTS BECAUSE THE THIRD COUNTS THE WRONG THING.**
+   * `reportStaleExternalJoinBases` finds bases that have fallen behind, which is a symptom. What
+   * decides whether a conversation can survive is the number of INDEPENDENT parties still holding
+   * its MLS tree, and nothing counted that. Every way into an MLS group - Welcome, external commit,
+   * ReInit, subgroup branching, external proposals - requires a party holding the group secrets,
+   * and this server holds only ciphertext. So a group whose last holder uninstalls is not degraded,
+   * it is OVER, and no repair exists here or in RFC 9420. The only useful moment is BEFORE that.
+   *
+   * Holders are counted as DISTINCT USERS, not rows. Three devices belonging to one person are one
+   * person: they share an owner, an account and usually a single act of uninstalling.
+   *
+   * Measured on production 2026-09-12, which is where {@link MIN_MEMBERS_FOR_HOLDER_REPORT} comes
+   * from: 58 live groups, 10 matching the naive predicate, 5 of those debris with fewer than two
+   * user-level members. The five that remained are real conversations, one of them at epoch 284.
+   *
+   * Purely a report. It deletes nothing and repairs nothing - there is nothing it COULD repair.
+   */
+  private async reportSingleHolderGroups() {
+    // One query rather than three scans: the answer is a comparison between aggregates over two
+    // different tables, which no `find` can express. `dm_group_members` is the authoritative
+    // answer to who is a member (the device table is a routing cache and says so); the device
+    // table is the only evidence of who still holds a tree.
+    const rows: {
+      groupId: string;
+      holders: string;
+      members: string;
+      pending: string;
+      activeEpoch: number;
+    }[] = await this.groupRepo.query(
+      `SELECT g.id                                    AS "groupId",
+              COUNT(DISTINCT m."userId")
+                FILTER (WHERE m.status = 'active')    AS holders,
+              (SELECT COUNT(*) FROM dm_group_members gm
+                WHERE gm."groupId" = g.id)            AS members,
+              COUNT(*) FILTER (WHERE m.status = 'pending') AS pending,
+              g."activeEpoch"                         AS "activeEpoch"
+         FROM dm_groups g
+         LEFT JOIN dm_device_group_memberships m ON m."groupId" = g.id
+        WHERE g."deletedAt" IS NULL
+        GROUP BY g.id
+       HAVING (SELECT COUNT(*) FROM dm_group_members gm WHERE gm."groupId" = g.id) >= $1
+          AND COUNT(DISTINCT m."userId") FILTER (WHERE m.status = 'active') < 2
+        ORDER BY holders ASC, g."activeEpoch" DESC`,
+      [MIN_MEMBERS_FOR_HOLDER_REPORT]
+    );
+
+    if (rows.length === 0) {
+      this.logger.log(
+        '[CRON] reportSingleHolderGroups: every conversation with members has at least two of them holding its tree'
+      );
+      return;
+    }
+
+    const none = rows.filter((r) => Number(r.holders) === 0);
+    const one = rows.filter((r) => Number(r.holders) === 1);
+    const name = (rs: typeof rows) =>
+      rs
+        .slice(0, SINGLE_HOLDER_REPORT_TOP_N)
+        .map(
+          (r) =>
+            `${r.groupId}(epoch ${r.activeEpoch}, ${r.members} member(s), ${r.pending} pending)`
+        )
+        .join(' ');
+
+    if (one.length > 0) {
+      // WARN, not ERROR: these still have a way out, and naming them is the whole point - the
+      // moment to act on a conversation with one holder is while it still has one. The pending
+      // count is beside it because those are the devices that would BECOME a second holder if
+      // their Welcome ever landed, which makes them the cheapest repair available.
+      this.logger.warn(
+        `[CRON] reportSingleHolderGroups: ${one.length} conversation(s) have exactly ONE user ` +
+          `holding the MLS tree - if that user uninstalls, nothing in this system or in RFC 9420 ` +
+          `can reopen them. Highest epoch first, ` +
+          `${Math.min(one.length, SINGLE_HOLDER_REPORT_TOP_N)} of ${one.length}: ${name(one)}`
+      );
+    }
+
+    if (none.length > 0) {
+      // AT THE LEVEL THAT ACCUSES, because this half is not waiting for anything: it has already
+      // happened. No device anywhere holds these trees, the server has only ciphertext, and there
+      // is no sequence of events that reopens them. Nothing else in the estate names this state.
+      this.logger.error(
+        `[CRON] reportSingleHolderGroups: ${none.length} conversation(s) have NO holder at all - ` +
+          `every member's client has lost its MLS state, so they are closed permanently rather ` +
+          `than waiting for anyone to return. ` +
+          `${Math.min(none.length, SINGLE_HOLDER_REPORT_TOP_N)} of ${none.length}: ${name(none)}`
       );
     }
   }
