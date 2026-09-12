@@ -11,6 +11,19 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - the login card sat 48px right of centre, and the dialog on top of it did not
+
+`/login` and `/legal/*` do not render `AppSidebar`, but the content wrapper beside it carried a
+constant `md:pl-[6rem]` - 96px reserved for a bar that is not there. The card centred inside that
+offset box; `ConfirmDialog` is portalled to the body as `fixed inset-0` and centred on the viewport,
+so the two disagreed by half the phantom gutter, and the confirmation shipped in 0.17.2 is what
+finally made the older misalignment visible. Measured on production at 1280px: viewport centre 640,
+dialog centre 640, card centre 685 (48 from the gutter, less 3 for the scroll container's own bar).
+
+The gutter now reads the same `isLoginPage` the sidebar does. Whether a bar is drawn and whether
+room is kept for it were two independent statements about one fact, and nothing compared them.
+
+
 ## [0.17.2] - 2026-09-11
 
 ### Fixed - no web client published a key package, and the type that would have said so was written by hand
