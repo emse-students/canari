@@ -6191,9 +6191,57 @@ Three candidate rules, and what each actually costs:
 The second is provably correct and needs the endpoint to return what it deleted rather than 204. The
 third is the only one that reclaims the historical pile, and its safety is an ARGUMENT rather than a
 construction: with the provenance guard (#393) holding the pool at 50, K=200 is four full refills -
-days - and a Welcome does not take days. **That argument must be re-measured against the mint rate
-before the rule ships, not assumed from this line.** The guard is what makes it defensible at all; on
-a build without it the loop mints 200 in hours and the rule would eat live bundles.
+days - and a Welcome does not take days. The guard is what makes it defensible at all; on a build
+without it the loop mints 200 in hours and the rule would eat live bundles.
+
+#### THE WELCOME DELIVERY WINDOW, MEASURED ON PRODUCTION 2026-09-12 - AND IT REFUTES RULE THREE
+
+The line above asked for exactly one number before the rule could ship: how long a Welcome may sit
+between the claim and the join. It was read off production, read-only, from the two populations that
+carry it.
+
+**Joins that COMPLETED** (`dm_device_group_memberships`, `status='active'`, `kickedAt IS NULL`, 265
+rows): p50 **3.6 seconds**, p90 **1 day 5 h**, p99 **11 days**, worst **35 days 16 h**. 258 of 265
+landed inside five days; the whole tail is seven rows.
+
+**Welcomes STILL in flight** (`queued_message`, `isWelcome`, 98 rows - these are deleted on delivery,
+so every survivor is a Welcome nobody has taken): p50 **9 days 23 h**, p95 **40 days 5 h**, oldest
+**45 days 20 h**. Of the 98, **64 target a membership still `pending`** - genuinely waiting, oldest
+40 days 5 h.
+
+**So a Welcome does take days, and sometimes weeks.** "K=200 is four full refills - days - and a
+Welcome does not take days" is false on both halves. A worst case of 35 days 16 h is a join that
+really landed: any rule whose horizon is shorter than that would have eaten the bundle for it.
+And the mint rate is not one batch per refill - this entry establishes three paragraphs above that
+**a fresh last-resort package is published on EVERY connection**, so a device that connects a few
+times a day mints hundreds inside a 40-day window. K=200 sits well inside the window rather than
+outside it. **Rule three is unsafe as argued, and the argument cannot be repaired by raising K**:
+the K that clears a 40-day window at this mint rate reclaims nothing.
+
+**IT ALSO SOFTENS THIS ENTRY'S OWN COMPLAINT ABOUT 84 DAYS.** "Far too generous" is right about
+RECLAIM - 84 days never arrives against a pile that accumulates in weeks - and wrong about SAFETY, in
+a way a later session would act on: the observed window reaches 46 days, so the room between a safe
+horizon and the shipped one is under two months, not the wide margin the phrase implies. A horizon
+below ~46 days is not a tightening, it is a regression with a measurement against it.
+
+**What survives is rule two**, which is safe by construction rather than by argument: a row the
+server's DELETE returns was never claimed, so no Welcome can exist for it, whatever the window is.
+It reclaims only the currently published fifty - and that is now the whole of what can be justified
+without a column recording when a package stopped being published.
+
+**THE CAVEAT ON THE COMPLETED HALF, STATED RATHER THAN BURIED.** `updatedAt` moves on every write to
+the row, not only on the join - `kickedAt IS NULL` removes the kicks, nothing removes a demotion
+followed by a re-promotion. So those deltas are UPPER bounds on the claim-to-join delay. The bias is
+upward, which is the safe direction for a retention floor, and the second population settles the
+question independently: a queued Welcome that has waited 40 days is a Welcome the server held for 40
+days, with no column to misread.
+
+**A THIRD OF THE QUEUED WELCOMES CAN NEVER BE DELIVERED, AND NOTHING SAYS SO.** Of the 98: 24 target
+a membership that is already `active` (the device joined by another route - an external commit, or a
+later Welcome - and the queued copy will never be consumed, oldest 46 days), and 10 have **no
+membership row at all** (the device was deleted, which removes every row it had). `reportQueueDepth`
+counts depth and cannot separate "waiting" from "will never be taken", which is the same shape as the
+stale-base population before `reportStaleExternalJoinBases`. Worth its own row.
 
 ~~**The pile is very likely no longer growing.**~~ **MEASURED FALSE ON THE HANDSET, 2026-09-08.** The
 device said it itself, at load, on a build carrying the guard:
