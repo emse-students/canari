@@ -11,6 +11,8 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+## [0.17.3] - 2026-09-12
+
 ### Added - the hourly report that would have found three shut conversations thirteen days ago
 
 A group whose published external-join base names an epoch the group has left is closed to every
