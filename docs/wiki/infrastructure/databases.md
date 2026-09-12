@@ -26,9 +26,17 @@ docker ps --filter label=com.docker.compose.project=infrastructure \
           --filter label=com.docker.compose.service=postgres --format '{{.Names}}'
 ```
 
-**Use the PowerShell tool for any of these, never Bash** - Git Bash strips the backslashes out of
-the cloudflared `ProxyCommand` in the SSH config, and the connection dies with an opaque error.
-Quote SQL single-outer, doubled-inner:
+**EITHER TOOL WORKS SINCE 2026-09-02, AND THE RULE THAT SAID "PowerShell, never Bash" NAMED THE
+WRONG CULPRIT.** It was never Bash. MSYS `ssh` execs the cloudflared `ProxyCommand` through
+`/bin/bash` whatever the caller, and it was the BACKSLASHES in that path, spelled Windows-style,
+that were eaten - so the connection died with an opaque error and the tool that happened to be
+running got the blame. `~/.ssh/config` now spells the path with FORWARD SLASHES, which `bash` and
+`cmd` both exec; measured on both.
+
+**The preference now runs the other way for anything binary.** PowerShell text-encodes stdout, so a
+`pg_dump | gzip` routed through it is corrupted on arrival - a backup that restores to nothing. A
+dump, a restore, or any pipe carrying bytes rather than text goes through Bash. Text queries may go
+through either. Quote SQL single-outer, doubled-inner:
 
 ```
 ssh canari 'docker exec ... psql -U canari -d auth_db -x -c "SELECT ... WHERE id = ''uuid''"'
