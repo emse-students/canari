@@ -238,12 +238,11 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    and the blob-header READER are done 2026-09-08 and unshipped; the WRITER cannot follow until that
    reader is the floor (`minClientVersion`), so the two causes are still not separated in the field
    ([backlog](docs/wiki/backlog.md)).
-6. **THE 99-ITEM AUDIT WAS SWEPT AGAINST `main` ON 2026-09-12 AND A FIFTH OF IT WAS ALREADY FALSE**
-   - 20 items dead or shipped, 8 WORSE than stated, 7 "dead ends" that have an exit, 16 real
-   availability dead ends, 5 deliberate refusals not to be "fixed" (user: the exit rule is for
-   AVAILABILITY). **Fix to the swept numbers, never the audit's.** P1 open: the send checkpoint's
-   native override is documented and was never written. **FIVE CONVERSATIONS REST ON ONE HOLDER,
-   ONE HAS NONE** - the hourly report says so and repairs nothing because nothing can.
+6. **THE MLS AUDIT: DUPLICATE PATHS TO FUSE AND AVAILABILITY DEAD ENDS TO GIVE AN EXIT** - counts
+   re-derived against `main` 2026-09-12 and EIGHT came back larger than the audit claimed, so
+   **work to the swept numbers, never the audit's**. P1 open: the send checkpoint's native override
+   is documented and was never written. **FIVE CONVERSATIONS REST ON ONE HOLDER, ONE HAS NONE** -
+   the hourly report says so and repairs nothing because nothing can.
    [backlog](docs/wiki/backlog.md), [triage](docs/wiki/protocols/mls-graine-state-machine.md#10-triage---what-is-worth-a-pull-request).
 7. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - ONE merge mechanism
    and ONE arming point, asserted only by `bun tools/ecosystem-shape/shape.mjs`

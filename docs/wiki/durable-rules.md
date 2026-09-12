@@ -157,6 +157,17 @@ Deep links, system events, rosters and the channel/DM asymmetry are on those two
 
 ## MLS membership and routing -> [mls-protocol](protocols/mls-protocol.md), [chat-delivery](services/chat-delivery.md)
 
+- **A DEAD END THAT IS A DELIBERATE REFUSAL MUST NOT BE "FIXED", AND FIVE OF THEM HAVE ALREADY BEEN
+  MISTAKEN FOR DEFECTS.** The standing rule is that a user must never be asked to leave an impasse
+  by themselves, so an exit has to EXIST - but the user scoped it to AVAILABILITY impasses
+  (2026-09-12), meaning the user can no longer read or write. A refusal the product makes on purpose
+  is not one: a revoked device's leaf stays in the tree for ever because that is RFC 9420 security;
+  `historyVisibility === 'joined'` hides the past before someone arrived because that IS the
+  feature; `deletedAt` closes a group; `GraineBelowFirstIndexError` is terminal because a repair
+  would return the identical seed, and it still has an exit through a seed at a lower `firstIndex`;
+  and `past-epoch-application` is deliberately not counted as a loss. Building an "exit" for any of
+  these removes a guarantee. [backlog](backlog.md)
+
 `mls` = [mls-protocol](protocols/mls-protocol.md), `cd` = [chat-delivery](services/chat-delivery.md),
 `hr` = [history-reconciliation](protocols/history-reconciliation.md),
 `chat` = [chat](frontend/modules/chat.md).
