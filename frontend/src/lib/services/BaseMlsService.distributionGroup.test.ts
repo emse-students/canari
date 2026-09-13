@@ -38,6 +38,8 @@ const proto = BaseMlsService.prototype as unknown as {
     fetch(): Promise<{ groupInfo: string; baseEpoch: number; activeEpoch: number } | null>;
     publish(groupInfo: string, baseEpoch: number): Promise<{ stored: boolean }>;
   };
+  exportBaseForPublication(groupId: string): Promise<{ base: string; baseEpoch: number }>;
+  publishCurrentBase(groupId: string): Promise<{ stored: boolean; baseEpoch: number }>;
   ensureDistributionGroup(
     scope: DistributionScope,
     ref: {
@@ -87,6 +89,10 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     registerDistributionGroup: proto.registerDistributionGroup,
     isDistributionBaseSettled: proto.isDistributionBaseSettled,
     groupInfoChannel: proto.groupInfoChannel,
+    // REAL, like `groupInfoChannel`: the create path publishes through the shared publisher, and a
+    // stub here would keep this file green while the one implementation drifted.
+    exportBaseForPublication: proto.exportBaseForPublication,
+    publishCurrentBase: proto.publishCurrentBase,
     ...overrides,
   };
 }

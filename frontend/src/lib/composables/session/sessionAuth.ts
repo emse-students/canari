@@ -1121,8 +1121,16 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
             );
             return;
           }
-          await mls.refreshGroupInfo(groupId);
-          cb.log(`[BASE_REFRESH] ${short}... republished at epoch ${mls.getEpoch(groupId)}`);
+          const published = await mls.refreshGroupInfo(groupId);
+          // THE EPOCH IT PUBLISHED, NOT THE ONE IT IS AT NOW. This used to read `getEpoch` again
+          // afterwards, which is a different question and can answer a number this line then
+          // reported as published.
+          cb.log(
+            published === null
+              ? `[BASE_REFRESH] ${short}... the republish failed - the asker is still locked out`
+              : `[BASE_REFRESH] ${short}... republished at epoch ${published.baseEpoch}` +
+                  (published.stored ? '' : ' - the server already holds a base at or past it')
+          );
         } catch (e) {
           cb.log(`[BASE_REFRESH] ${short}... refresh failed: ${String(e).slice(0, 120)}`);
         }

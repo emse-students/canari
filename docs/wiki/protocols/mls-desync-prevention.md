@@ -47,6 +47,13 @@ only a member holding the tree can mint a base, so there is nothing for a reset 
 
 ### 3. Server - add-member races
 
+- **The base is a PAIR, and one client function reads it** (`BaseMlsService.publishCurrentBase`).
+  A GroupInfo blob and the epoch it belongs to are read under the MLS lock and published
+  together; the round trip happens outside the lock, because a base published one epoch BEHIND
+  the group is refused harmlessly by the monotonic rule while a base labelled AHEAD of what it
+  contains owns that epoch for ever. Three paths publish one - the refresh after a staged
+  commit, a distribution group's create path, and the external join that carries its own
+  successor inside the submission - and all three go through that function.
 - **`POST/DELETE /api/mls/add-lock`** — Redis lock **`mls:addlock:{groupId}`** so only one inviter runs **add member + Welcome** at a time for that group. Used from **`processPendingInvitations`** and discovery re-bootstrap.
   **THE LOCK HAS TWO DOORS AND ONE IMPLEMENTATION** (`utils/add-lock.ts`): this JWT route, and
   `mls/push/acquire-add-lock` for the Android background service, which cannot mint a JWT. The

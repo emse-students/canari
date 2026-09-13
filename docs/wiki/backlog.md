@@ -88,7 +88,6 @@ a real collapse, not a test that fails on divergence):
 
 | Item | What is duplicated | Count | The part that bites |
 | --- | --- | --- | --- |
-| `S-D6` | base publication onto one `putGroupInfo` | 3 writers | |
 | `D8` | checkpoint | 4 routes, 3 guarantees | see the P1 above |
 | `G-D11` | ways `holdsGroupState` becomes false | **6 sites** | audit said 2 |
 | `R-D6` | where eviction is learnt | **5** | audit said 3 |

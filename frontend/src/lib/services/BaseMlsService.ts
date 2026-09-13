@@ -2634,8 +2634,10 @@ export abstract class BaseMlsService implements IMlsService {
     // self-join at the new epoch. Skipped on reject (the closure above throws before we get here, so
     // the epoch never moved). [[Phase 4]]
     //
-    // FIRE-AND-FORGET, AND WHAT IT COSTS IS NOT NOTHING. This is the ONLY thing that mints a base,
-    // so losing it strands the group's published base one epoch behind - permanently, and every
+    // FIRE-AND-FORGET, AND WHAT IT COSTS IS NOT NOTHING. For a STAGED commit this is the only thing
+    // that mints the successor base - a carried external commit publishes its own inside the
+    // submission (see {@link externalJoin}), which is the difference this comment used to flatten -
+    // so losing it strands the group's published base one epoch behind, permanently, and every
     // stateless joiner is refused for as long as it lasts. It stays off the critical path (a commit
     // that succeeded must not be reported as failed because a follow-up did not land) and the repair
     // lives where a device that CAN mint a base already reads the group: `republishStaleBase` in
@@ -2981,28 +2983,80 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   /**
+   * THE BASE AND THE EPOCH IT BELONGS TO, READ AS ONE ACT. The caller MUST hold the MLS lock.
+   *
+   * `exportGroupInfo` awaits - an IPC round trip on Tauri - so a commit landing while it is in
+   * flight moves the epoch under it: the blob is the tree at N and the number read afterwards is
+   * N+1. That pair is not a transient error. The stored base is STRICTLY monotonic, so epoch N+1 is
+   * then OWNED by a base that is actually N, the real N+1 base is refused for ever, and every
+   * stateless joiner builds an external commit the gate cannot accept. {@link externalJoin} has
+   * always guarded it - "a blob exported at any other epoch than the one the server will record it
+   * under would strand the group for good" - by exporting inside the lock its own commit holds. The
+   * other two publishers read the two halves separately, and outside any lock.
+   *
+   * The equality check is this function's self-check on the lock: under it nothing else can move the
+   * epoch, so a difference means the lock was NOT held, and the answer is to fail loudly rather than
+   * publish a pair nothing can walk back.
+   */
+  protected async exportBaseForPublication(
+    groupId: string
+  ): Promise<{ base: string; baseEpoch: number }> {
+    const before = this.getEpoch(groupId);
+    const base = toBase64(await this.exportGroupInfo(groupId));
+    const after = this.getEpoch(groupId);
+    if (before !== after) {
+      throw new Error(
+        `the epoch moved ${before} -> ${after} while exporting the base for ${groupId.slice(0, 8)}...`
+      );
+    }
+    return { base, baseEpoch: after };
+  }
+
+  /**
+   * PUBLISHES THIS DEVICE'S TREE AS THE GROUP'S EXTERNAL-JOIN BASE - the one publisher.
+   *
+   * The export happens under the MLS lock and the round trip does NOT: holding the mutex across a
+   * network call would stall every send and every commit for its duration, and a base published one
+   * epoch BEHIND the group is the harmless direction - the monotonic rule refuses it
+   * (`stored: false`) and the commit that moved the epoch publishes its own. Only a base labelled
+   * AHEAD of what it contains is unrecoverable, and that is what the lock prevents.
+   *
+   * @returns whether the server took it, and the epoch it was published under - which is the only
+   *   epoch a caller may report, a later {@link getEpoch} being a different question.
+   */
+  protected async publishCurrentBase(
+    groupId: string
+  ): Promise<{ stored: boolean; baseEpoch: number }> {
+    const { base, baseEpoch } = await this.runUnderMlsLock(() =>
+      this.exportBaseForPublication(groupId)
+    );
+    const { stored } = await this.groupInfoChannel(groupId).publish(base, baseEpoch);
+    return { stored, baseEpoch };
+  }
+
+  /**
    * Exports the current GroupInfo and pushes it to the delivery service (external-join base, Phase 4)
    * so an authorized member lacking MLS state can self-join at the current epoch.
    *
    * NEVER THROWS, AND THE LOSS IS NOT MOMENTARY - which is what the doc that used to sit here
-   * claimed ("a joiner may momentarily get a one-epoch-stale base and retry"). Nothing else ever
-   * publishes a base, so a refresh lost here leaves the published one behind the group's epoch until
-   * some unrelated member happens to commit; the strict gate refuses every external commit built on
-   * it in the meantime, and a distribution group has no peer-Welcome fallback to take instead. On
+   * claimed ("a joiner may momentarily get a one-epoch-stale base and retry"). After a STAGED commit
+   * nothing else publishes a base, so a refresh lost here leaves the published one behind the
+   * group's epoch until some unrelated member happens to commit; the strict gate refuses every
+   * external commit built on it in the meantime, and a distribution group has no peer-Welcome
+   * fallback to take instead. On
    * production 2026-08-25 that locked a member out of a private salon for the rest of the session.
    * The repair is `republishStaleBase` in
    * [distributionGroup](../utils/graine/distributionGroup.ts), driven by any HOLDER's ordinary read.
    */
-  async refreshGroupInfo(groupId: string): Promise<void> {
+  async refreshGroupInfo(groupId: string): Promise<{ stored: boolean; baseEpoch: number } | null> {
     try {
-      const groupInfo = await this.exportGroupInfo(groupId);
-      const baseEpoch = this.getEpoch(groupId);
-      await this.groupInfoChannel(groupId).publish(toBase64(groupInfo), baseEpoch);
+      return await this.publishCurrentBase(groupId);
     } catch (e) {
       console.warn(
         `[MLS] refreshGroupInfo failed for ${groupId.slice(0, 8)}...:`,
         String(e).slice(0, 120)
       );
+      return null;
     }
   }
 
@@ -3081,19 +3135,20 @@ export abstract class BaseMlsService implements IMlsService {
       try {
         joined = await this.runUnderMlsLock(async () => {
           const built = await this.joinByExternalCommit(fromBase64(gi.groupInfo));
-          const localEpoch = this.getEpoch(built.groupId);
-          // A HARD ERROR, NOT A DEGRADED SUBMISSION. The published base is monotonic and cannot be
-          // walked back, so a blob exported at any other epoch than the one the server will record
-          // it under would strand the group for good. Nothing about this can be true and unnoticed:
-          // if the instance is not at base + 1 the join is abandoned like any other build failure,
-          // and the caller's welcome_request fallback is the right next move.
-          if (localEpoch !== gi.baseEpoch + 1) {
+          // The same atomic read as every other publisher, under the lock this section already holds.
+          const { base, baseEpoch } = await this.exportBaseForPublication(built.groupId);
+          // A HARD ERROR, NOT A DEGRADED SUBMISSION, and one step STRONGER than the read above: the
+          // published base is monotonic and cannot be walked back, so a blob exported at any other
+          // epoch than the one the server will record it under would strand the group for good.
+          // Nothing about this can be true and unnoticed: if the instance is not at base + 1 the
+          // join is abandoned like any other build failure, and the caller's welcome_request
+          // fallback is the right next move.
+          if (baseEpoch !== gi.baseEpoch + 1) {
             throw new Error(
-              `external join instance at epoch ${localEpoch}, expected ${gi.baseEpoch + 1}`
+              `external join instance at epoch ${baseEpoch}, expected ${gi.baseEpoch + 1}`
             );
           }
-          const nextBase = toBase64(await this.exportGroupInfo(built.groupId));
-          return { ...built, nextBase };
+          return { ...built, nextBase: base };
         });
       } catch (e) {
         // Build failed (e.g. the group is already held locally) -> fall back.
@@ -3256,11 +3311,7 @@ export abstract class BaseMlsService implements IMlsService {
 
       let published: { stored: boolean };
       try {
-        const groupInfo = await this.exportGroupInfo(groupId);
-        published = await this.groupInfoChannel(groupId).publish(
-          toBase64(groupInfo),
-          this.getEpoch(groupId)
-        );
+        published = await this.publishCurrentBase(groupId);
       } catch (e) {
         // The group exists locally and nobody can join it: that is worse than not having created
         // it, because the next call would find it in `getLocalGroups` and return early for ever.

@@ -51,6 +51,14 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     // has to say which epoch it landed on; 6 matches the base-5 GroupInfo most of them serve.
     getEpoch: vi.fn(() => 6),
     exportGroupInfo: vi.fn().mockResolvedValue(new Uint8Array([7, 7])),
+    // The REAL atomic read, for the same reason `groupInfoChannel` is real: `externalJoin` no
+    // longer exports the base itself, and a stub reproducing that hop here would keep passing
+    // after the shared one broke.
+    exportBaseForPublication: (
+      BaseMlsService.prototype as unknown as {
+        exportBaseForPublication: (groupId: string) => Promise<{ base: string; baseEpoch: number }>;
+      }
+    ).exportBaseForPublication,
     mergePendingCommit: vi.fn().mockResolvedValue(undefined),
     refreshGroupInfo: vi.fn().mockResolvedValue(undefined),
     forgetGroup: vi.fn(),
@@ -227,8 +235,17 @@ describe('BaseMlsService.externalJoin', () => {
     ctx.delivery.submitCommit
       .mockResolvedValueOnce({ accepted: false, reason: 'epoch_mismatch', currentEpoch: 6 })
       .mockResolvedValueOnce({ accepted: true, newEpoch: 7 });
-    // One epoch per attempt: the base 5 commit lands on 6, the base 6 one on 7.
-    ctx.getEpoch.mockReturnValueOnce(6).mockReturnValue(7);
+    // ONE EPOCH PER ATTEMPT, AND IT IS THE BUILD THAT MOVES IT - not the number of times anybody
+    // reads it. The base-5 commit lands the instance on 6 and the base-6 one on 7. Counting reads
+    // instead tied this fixture to how often `getEpoch` is called, which is the publisher's
+    // business and not the join's: reading the epoch either side of the export, to prove the blob
+    // and its number come from the same tree, would have "failed" this case for no reason.
+    let epoch = 5;
+    ctx.getEpoch.mockImplementation(() => epoch);
+    ctx.joinByExternalCommit.mockImplementation(async () => {
+      epoch += 1;
+      return { groupId: 'g', commit: new Uint8Array([9]) };
+    });
 
     expect(await externalJoin(ctx, 'g')).toEqual({ joined: true });
     // The rejected external commit cannot be cleared -> the group is discarded before the retry.

@@ -94,6 +94,38 @@ lifetime the caller may ask for is a lifetime the two doors can disagree about -
 from the wire and from the three client layers that threaded it through without a single call site
 ever setting it. The log is now one line, `[ADD_LOCK] ... ttl=30s via=jwt|push`, which also puts the
 push door's locks in front of the harness classifier that `[ADD_LOCK_PUSH]` had never matched.
+### Fixed - a base published under an epoch it was not exported at owns that epoch for ever
+
+A group's external-join base is a PAIR: a GroupInfo blob, and the epoch it belongs to. Three client
+paths publish one - the refresh after a staged commit, the create path of a Graine distribution
+group, and the external join that carries the base its own commit produces - and each read the two
+halves for itself.
+
+Only the external join read them where nothing else could move the epoch, inside the MLS lock its
+own commit already held, and it says why in as many words: *a blob exported at any other epoch than
+the one the server will record it under would strand the group for good*. The other two ran
+`exportGroupInfo()` - which awaits, an IPC round trip on Tauri - and then read `getEpoch()`. A commit
+landing in that window makes the blob the tree at N and the number N+1.
+
+That pair cannot be walked back. The stored base is strictly monotonic, so epoch N+1 is then owned
+by a base that is actually N; the real N+1 base is refused for ever after; and every device holding
+no MLS state builds an external commit on it that the epoch gate must refuse - which for a
+distribution group, having no peer-Welcome fallback, is a permanent lockout from a salon the user is
+entitled to.
+
+One publisher now, `publishCurrentBase`. The pair is read under the MLS lock and the round trip
+happens outside it: holding the mutex across a network call would stall every send and every commit,
+and a base published one epoch BEHIND the group is the harmless direction - the monotonic rule
+refuses it and the commit that moved the epoch publishes its own. The atomic read carries its own
+self-check on the lock: if the epoch moved anyway, nothing is published and the failure is loud.
+
+`refreshGroupInfo` now reports the epoch it published rather than returning `void`, because the one
+line that logged a republish read `getEpoch` again afterwards - a different question, and it could
+answer a number that was never published.
+
+Two claims in the code that this contradicted are corrected with it: the follow-up refresh is the
+only thing that mints a base **after a staged commit**, not the only thing that mints a base (P3-1
+of the Graine triage).
 
 ### Added - a gate on the documentation, because two merges have now shipped something nobody wrote
 
