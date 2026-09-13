@@ -11,6 +11,25 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - the event co-host picker stops calling itself a partnership
+
+"Associations partenaires (optionnel)" named a relationship the control never asks for. The picker
+offers every association on the platform, filters on the search box and the primary owner, and tells
+none of them anything - so a name in that field is a MENTION, and the chosen association's name and
+colour ride on a card it was never asked about.
+
+**That model is what the user chose to keep**, over narrowing the list to associations the author
+belongs to and over a `pending` co-ownership the named association confirms. Both were offered and
+both were declined, so the defect is the label alone: it promises an agreement nobody sought.
+
+Worse, "partenaire" is already taken. In this app a partnership is a discount an outside business
+offers students - its own screen, its own table, its own `asso_partnership_*` keys - and two
+unrelated features sharing the word is how a reader learns the wrong thing about both.
+
+The label is now "Co-organisateurs" / "Co-hosts", with a hint saying what the field actually does:
+any association can be added, its name and colour will appear on the event, and it is not asked
+first. `paraglideMessages.test.ts` holds the two vocabularies apart so the word cannot come back.
+
 ### Changed - nine association pickers, nine answers to the same question, now one
 
 Nine controls let a user choose an association, and each decided for itself whether lists were shown

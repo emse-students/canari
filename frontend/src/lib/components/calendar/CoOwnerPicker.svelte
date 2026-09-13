@@ -1,5 +1,13 @@
 <!--
-  THE PARTNER-ASSOCIATION PICKER, AND THE LAST OF THE SEVEN TO READ THE ESTATE THE SAME WAY.
+  THE CO-HOST PICKER, AND THE LAST OF THE SEVEN TO READ THE ESTATE THE SAME WAY.
+
+  It is NOT called a partner picker any more, and the word was the whole defect. In this app a
+  "partenariat" is a discount an outside business offers students (`asso_partnership_*`, its own
+  screen, its own table) - so a label reading "Associations partenaires" named a relationship that
+  neither exists nor is checked here. What this control actually does is name the associations
+  co-hosting ONE event: it offers every association on the platform, asks none of them, and puts the
+  chosen names and colours on the card. The label and its hint now say exactly that, which is the
+  arbitration ("toute asso, et le libelle le dit") rather than a narrowing nobody asked for.
 
   This one is a multi-select over its own dropdown rather than a `<select>`, so it cannot use
   `AssociationOptions` - `<optgroup>` has no meaning here. It reads the SAME grouping helper, so
@@ -73,6 +81,7 @@
     <Users size={14} />
     {m.asso_calendar_co_owner_label()}
   </p>
+  <p class="text-text-muted text-xs">{m.asso_calendar_co_owner_hint()}</p>
   {#if selected.length > 0}
     <div class="flex flex-wrap gap-1.5">
       {#each selected as asso (asso.id)}
