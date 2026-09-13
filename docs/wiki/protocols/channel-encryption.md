@@ -1887,6 +1887,40 @@ holder: it republishes, it accuses when it does, it publishes nothing from a tre
 and it sends nothing when the epochs agree or when no base exists at all. On the wire: the two epochs
 survive each hop, and a missing `activeEpoch` reads as the base.
 
+#### There are TWO repairs, and only one of them read the server's answer (R-D3, fixed 2026-09-13)
+
+`republishBaseIfStale` heals the steady state on any holder's ordinary read of a scope it is already
+in. `answerBaseRefreshRequest` answers a `base_refresh_request` from a device that is locked out
+RIGHT NOW. **They cannot be one function, and the audit row that called them "2 mechanisms" was
+asking for the wrong collapse**: the second is handed a group id and nothing else, where
+`classifyBase` needs the group's `activeEpoch` to decide whether a publish is worth a round trip at
+all. It cannot classify, and it should not - the ask is urgent and the publish is monotonic, so
+offering a base costs nothing but the trip.
+
+**What they share is not the decision, it is the ANSWER, and the answer was already on the wire.**
+`putGroupInfo` is strictly monotonic and reports `stored: false` for a base that was not newer - the
+one authoritative statement of *your tree did not help*. The #571 work made `publishCurrentBase` the
+single publisher and threaded that answer out through `refreshGroupInfo`, and then two callers were
+entitled to describe it: the responder read it, and `republishBaseIfStale` discarded it outright. It
+logged *republishing from the tree this device holds* and never said whether the tree was TAKEN - so
+a holder that published into a refusal, which is exactly the state where the group is still shut,
+left a line that reads as a repair.
+
+`publishAndReport` is now the one reading, and the three answers are three sentences: the server took
+it and the base describes epoch N; the server KEPT the base it had, because this device's epoch was
+not newer; the republish did not land, and the base is exactly as stale as it was. **The third is not
+the second** - a publish that never arrived proves nothing about the base, and reading one as the
+other turns a dropped packet into *no holder that has connected can repair this group*. The TAG is
+the only difference between the callers: `[BASE]` is a holder healing the steady state, and
+`[BASE_REFRESH]` is a holder answering a device that cannot get in.
+
+The responder also **moved out of `sessionAuth` into `staleBase.ts`**, beside its sibling. It was the
+half of the pair with no coverage of any kind, because nothing could call it - a responder inside a
+1500-line composable is a responder no test can drive. A table now runs both repairs over the same
+three server answers and asserts that neither claims something the server refused, and that both say
+it in the same words; the two cases only the responder has - it holds no active MLS state, and it
+must never throw into the WebSocket handler that called it - are pinned beside them.
+
 ### The joiner's own commit was what stranded the next one - FIXED 2026-08-26
 
 The section above fixed the READER. COMM-22 found the same lockout one turn deeper, and the reason it

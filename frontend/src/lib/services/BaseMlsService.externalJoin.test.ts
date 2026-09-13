@@ -60,7 +60,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
       }
     ).exportBaseForPublication,
     mergePendingCommit: vi.fn().mockResolvedValue(undefined),
-    refreshGroupInfo: vi.fn().mockResolvedValue(undefined),
+    refreshGroupInfo: vi.fn().mockResolvedValue(null),
     forgetGroup: vi.fn(),
     ...overrides,
   };

@@ -27,7 +27,10 @@ function makeMls(overrides: Record<string, unknown> = {}) {
     // The published base matches the group's epoch in every case here, so nothing republishes; the
     // stale-base repair has its own describe block below and sets these itself.
     getEpoch: vi.fn().mockReturnValue(7),
-    refreshGroupInfo: vi.fn().mockResolvedValue(undefined),
+    // `null` = the publish did not land, which is what a stub that publishes nowhere honestly did.
+    // `undefined` is not a value of this contract at all; the block below that DOES republish sets
+    // a real `{ stored, baseEpoch }`.
+    refreshGroupInfo: vi.fn().mockResolvedValue(null),
     forgetDistributionGroup: vi.fn().mockReturnValue('g-1'),
     forgetDistributionGroupById: vi.fn().mockReturnValue(true),
     registerDistributionGroup: vi.fn(),
