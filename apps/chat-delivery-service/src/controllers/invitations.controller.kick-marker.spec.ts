@@ -29,6 +29,7 @@ import { MessagingService } from '../services/messaging.service';
  */
 describe('InvitationsController - the kick marker', () => {
   let controller: InvitationsController;
+  let messaging: { activateDeviceMembership: jest.Mock };
   let log: jest.SpyInstance;
 
   const deviceGroupRepo = { findOne: jest.fn(), find: jest.fn(), save: jest.fn() };
@@ -83,13 +84,19 @@ describe('InvitationsController - the kick marker', () => {
         {
           provide: MessagingService,
           // Promoting to `active` is gated on the device still being addressable (WP-GHOST-1);
-          // every case here is about the marker, so that gate is open.
-          useValue: { deviceAddressability: jest.fn().mockResolvedValue({ ok: true }) },
+          // every case here is about the marker, so that gate is open. Since 2026-09-13 the
+          // promotion is not written by this controller at all - it delegates to the ONE writer,
+          // which is what clears the marker.
+          useValue: {
+            deviceAddressability: jest.fn().mockResolvedValue({ ok: true }),
+            activateDeviceMembership: jest.fn().mockResolvedValue({ ok: true }),
+          },
         },
       ],
     }).compile();
 
     controller = module.get(InvitationsController);
+    messaging = module.get(MessagingService);
     log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
   });
 
@@ -125,19 +132,29 @@ describe('InvitationsController - the kick marker', () => {
     expect(new Set(rows.map((r) => r.kickedAt.getTime())).size).toBe(1);
   });
 
-  it('clears the marker when a device reports itself ACTIVE - the Welcome was processed', async () => {
+  it('hands the promotion to the ONE writer, which is what clears the marker', async () => {
+    // This case used to assert the cleared marker on this controller's own `save`. The clearing
+    // did not change - the WRITER did: `activateDeviceMembership` upserts `kickedAt: null` and is
+    // now the only path that writes `active`, so asserting a local save here would pin a
+    // duplicate back into place. That the upsert clears it is asserted where the upsert is.
     deviceGroupRepo.findOne.mockResolvedValue(
       membership({ status: 'pending', kickedAt: new Date('2026-09-01T10:18:38Z') })
     );
 
-    await controller.updateInvitationStatus(
+    const answer = await controller.updateInvitationStatus(
       { deviceId: DEVICE, userId: TARGET, groupId: GROUP, status: 'active' },
       TARGET,
       'false'
     );
 
-    expect(saved().status).toBe('active');
-    expect(saved().kickedAt).toBeNull();
+    expect(messaging.activateDeviceMembership).toHaveBeenCalledWith(
+      TARGET,
+      DEVICE,
+      GROUP,
+      expect.objectContaining({ tag: 'INVITATION_STATUS' })
+    );
+    expect(deviceGroupRepo.save).not.toHaveBeenCalled();
+    expect(answer).toEqual({ status: 'active' });
   });
 
   it('a DEMOTION does not clear it: cleanup promises no Add', async () => {

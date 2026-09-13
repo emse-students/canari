@@ -446,26 +446,33 @@ export class InvitationsController {
       throw new BadRequestException(`status must be one of: ${validStatuses.join(', ')}`);
     }
 
-    // A device that may not be INVITED may not be VOUCHED FOR either (WP-GHOST-1).
-    // `getPendingInvitations` above already filters this exact pair of conditions - the denylist
-    // and the presence of a static KeyPackage - and this endpoint, in the same controller, checked
-    // neither while being able to CREATE a membership row from nothing. That is how a device its
-    // owner had deleted came back `active` in every group a peer still held its leaf for, and then
-    // received every message forever with nothing able to collect it. Only `active` is gated:
-    // demoting to `pending` must always remain possible, it is a step towards cleanup.
+    // PROMOTION GOES THROUGH THE ONE WRITER; ONLY THE DEMOTION IS WRITTEN HERE.
+    //
+    // This endpoint used to do the whole promotion itself, and it diverged from
+    // `activateDeviceMembership` on two things that matter. It never added the device to
+    // `group:members:{groupId}`, so a device that processed its Welcome in the foreground held a
+    // truthful `active` row the gateway could not route to - and an INCOMPLETE routing set is not
+    // an empty one, so no election door reloaded it; the repair came on the group's next SEND, if
+    // there was one. And it never replayed the messages sent while the device was `pending`, so the
+    // notifications missed during that window were missed for good (DF2).
+    //
+    // A refusal still throws HERE, because this caller has a user to tell - that is the whole
+    // reason the shared method returns its reason instead of throwing it.
     if (body.status === 'active') {
-      const addressable = await this.messagingService.deviceAddressability(
+      const outcome = await this.messagingService.activateDeviceMembership(
         safeUserId,
-        safeDeviceId
+        safeDeviceId,
+        safeGroupId,
+        { tag: 'INVITATION_STATUS' }
       );
-      if (!addressable.ok) {
-        this.logger.warn(
-          `[INVITATION_STATUS] REFUSED device=${safeDeviceId} user=${safeUserId} group=${safeGroupId} reason=${addressable.reason}`
-        );
-        throw new BadRequestException(`Device is not addressable: ${addressable.reason}`);
+      if (!outcome.ok) {
+        throw new BadRequestException(`Device is not addressable: ${outcome.reason}`);
       }
+      return { status: 'active' as const };
     }
 
+    // The demotion, which is a different question and stays here: it must always remain possible,
+    // it promises no Add, and it is a step towards cleanup rather than away from it.
     let membership = await this.deviceGroupRepo.findOne({
       where: { deviceId: safeDeviceId, groupId: safeGroupId },
     });
@@ -480,10 +487,9 @@ export class InvitationsController {
     } else {
       membership.status = body.status;
     }
-    // `active` is the device saying it processed its Welcome, which answers "is a re-add still
-    // owed?" with no. A DEMOTION does not clear it: that is a step towards cleanup and promises no
-    // Add, so a row demoted after a kick is still a row a kick left behind.
-    if (body.status === 'active') membership.kickedAt = null;
+    // `kickedAt` is deliberately NOT cleared: a demotion promises no Add, so a row demoted after a
+    // kick is still a row a kick left behind. Clearing it is the promotion's job, and the promotion
+    // is no longer written here.
 
     await this.deviceGroupRepo.save(membership);
     this.logger.log(

@@ -28,7 +28,11 @@ export type DeviceGroupStatus = 'pending' | 'active';
  *
  * 2. **Invitation state machine** - A row is created as `pending` by `addGroupMember` for every
  *    active device of a user. **`activateDeviceMembership` is the ONLY thing that writes `active`,
- *    and it is the only writer of the Redis routing set.** `sendWelcome` merely guarantees the row
+ *    and it is the only writer of the Redis routing set.** That sentence was here, in bold, while
+ *    two other paths wrote `active` anyway - the foreground status endpoint, which wrote no routing
+ *    set at all, and group creation, which asked for no addressability. Both were fused onto it on
+ *    2026-09-13 and the sentence is now enforced rather than asserted; the table of what they
+ *    disagreed on is on `activateDeviceMembership` itself. `sendWelcome` merely guarantees the row
  *    exists and clears `kickedAt`; it does not promote, and it must never demote - it wrote
  *    `'pending'` unconditionally until 2026-09-12, which knocked already-active devices out of the
  *    fan-out. `invitations.controller` exposes the pending list to clients.

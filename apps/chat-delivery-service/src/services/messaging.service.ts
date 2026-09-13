@@ -227,6 +227,33 @@ export interface NotifyHistoryRequestBody extends NotifyWelcomeRequestBody {
   exclude?: string[];
 }
 
+/**
+ * Why a device may not be given an `active` routing membership.
+ *
+ * Same two conditions `getPendingInvitations` refuses an invitation on, because a device good
+ * enough to be MESSAGED must be at least as valid as one good enough to be INVITED (WP-GHOST-1).
+ */
+export type ActivationRefusal = 'revoked' | 'no_key_package';
+
+/**
+ * The result of {@link MessagingService.activateDeviceMembership}.
+ *
+ * Carried out rather than thrown because the three callers owe their client different things: the
+ * foreground status endpoint answers a 400, the background push and commit seams have no user to
+ * tell and carry on. The log line is written inside the method either way, so a caller that ignores
+ * this still leaves the refusal on the record.
+ *
+ * A discriminated union would say this better, but this package compiles with
+ * `strictNullChecks: false`, under which `if (!outcome.ok)` does not narrow one - so the shape that
+ * types correctly here is one object with an optional reason.
+ */
+export interface ActivationOutcome {
+  /** Whether the membership is now `active`. */
+  ok: boolean;
+  /** Set only when `ok` is false. Already logged by the method; carried for the caller's answer. */
+  reason?: ActivationRefusal;
+}
+
 /** One group cursor for batch history fetch. */
 export interface HistoryBatchRequestItem {
   groupId: string;
@@ -818,12 +845,18 @@ export class MessagingService {
 
         // The gateway's routing set is OWNED by `activateDeviceMembership`, which writes it at
         // the pending->active transition - the moment membership is decided. What remains here is
-        // a RECONCILIATION, and it exists for one historical reason: Redis ran without a volume
-        // until 2026-08-12, so the sets that died with the container have no other writer until
-        // each device happens to re-activate. Measured on prod 2026-08-15: of the 23 groups
-        // holding active memberships, the 15 that HAVE a set are complete to the row - 0 missing,
-        // 0 stale - so this adds nothing at all on any group it has ever run against, and the 11
-        // rows spread over the 8 setless groups are the whole of what it still has to repair.
+        // a RECONCILIATION.
+        //
+        // **THAT OWNERSHIP WAS AN ASSERTION UNTIL 2026-09-13, AND THIS COMMENT RESTED ON IT.** It
+        // named one historical cause - Redis ran without a volume until 2026-08-12, so the sets
+        // that died with the container had no other writer - and a measurement taken on prod
+        // 2026-08-15: of the 23 groups holding active memberships, the 15 that HAVE a set were
+        // complete to the row, 0 missing and 0 stale. What the measurement could not see is that
+        // the foreground status endpoint was ALSO promoting devices to `active` and writing no set
+        // at all, so some of what this repaired was not a dead container but a live writer that
+        // never wrote. A cause that had been fixed was covering one that had not. Both promotion
+        // paths are fused onto the owner now, so what reaches here really is only the volume-less
+        // era's residue.
         //
         // It therefore reports only when it CHANGES something, and it accuses when it does: an
         // active device absent from this set is one the gateway silently fails to reach
@@ -1830,38 +1863,63 @@ export class MessagingService {
   }
 
   /**
-   * Promotes a device membership to `active` and adds it to the Redis routing set.
+   * THE ONE WRITER OF `active`, AND THE ONE WRITER OF THE REDIS ROUTING SET.
    *
-   * Used by the background PushSecret path (FCM1): a device that joins a group via a background
-   * FCM Welcome never goes through the foreground `updateInvitationStatus` path.
-   * Without this promotion, its `dm_device_group_memberships` row stays `pending`, so
-   * recipient resolution (`status='active'` filter) EXCLUDES it and it never receives
-   * subsequent messages in real time or via push (only through history catch-up).
-   * Idempotent: upsert on the unique constraint (deviceId, groupId).
+   * That sentence is in this table's entity docblock and it was NOT true until 2026-09-13. Three
+   * paths performed the `pending -> active` transition and they agreed on nothing:
+   *
+   * | Path | Addressability gate | Redis routing set | `kickedAt` | Missed-message replay |
+   * | --- | --- | --- | --- | --- |
+   * | this method | warn and return | written | cleared | yes |
+   * | `updateInvitationStatus` | THROW | **never written** | cleared | **no** |
+   * | `createGroup` | **none at all** | written | left unset | n/a |
+   *
+   * The middle row is the one that bit. A device that processed its Welcome in the FOREGROUND got
+   * a truthful `active` row and was never added to `group:members:{groupId}`, so the gateway could
+   * not reach it and could not elect it to answer a `welcome_request` or a `history_request` -
+   * silently, because a routing set that is merely INCOMPLETE is not empty, and the reload at each
+   * election door only fires on an EMPTY set. The SEND path's reconciliation repaired it on the
+   * next message to that group, which is a witness and never a fix: until then the device was
+   * unreachable, and the reconciliation's own comment justified itself by a Redis that ran without
+   * a volume until 2026-08-12 - a cause that had been fixed, over a live writer that had not.
+   *
+   * The third row is WP-GHOST-1 with no gate: a revoked or key-package-less device creating a
+   * group enrolled itself `active` in it, which is the exact shape the other two refuse.
+   *
+   * So the three are fused here. What differs legitimately between callers is what a REFUSAL owes
+   * the client, and that is why this returns the reason rather than throwing: a foreground HTTP
+   * caller turns it into a 400, a best-effort seam logs it and carries on. The log line is written
+   * HERE, under the caller's own `tag`, so no caller can swallow it.
    *
    * `redeliverMissed` (default true) replays the messages sent during the pending window so the
    * device gets the notifications it missed. Callers where the device joined at the CURRENT epoch
-   * with no prior membership (external-commit join) must pass false: forward secrecy means it
-   * cannot decrypt anything sent before its join, so a replay would be up to 50 undecryptable
-   * frames and as many generic pushes. Pre-join content reaches it through the history bundle.
+   * with no prior membership (external-commit join, or a group created this instant) must pass
+   * false: forward secrecy means it cannot decrypt anything sent before its join, so a replay would
+   * be up to 50 undecryptable frames and as many generic pushes. Pre-join content reaches it
+   * through the history bundle.
+   *
+   * Idempotent: upsert on the unique constraint (deviceId, groupId).
    */
   async activateDeviceMembership(
     userId: string,
     deviceId: string,
     groupId: string,
-    { redeliverMissed = true }: { redeliverMissed?: boolean } = {}
-  ): Promise<void> {
+    {
+      redeliverMissed = true,
+      tag = 'MEMBERSHIP_ACTIVE',
+    }: { redeliverMissed?: boolean; tag?: string } = {}
+  ): Promise<ActivationOutcome> {
     // A revoked or key-package-less device must never be routed to (WP-GHOST-1). This path is
     // reached by the commit fan-out - where the device activating itself is the COMMIT SENDER, so
     // without this a device its owner explicitly deleted would re-enrol itself in every group it
-    // still holds MLS state for - and by the background push path. Both are best-effort seams, so
-    // the refusal is logged rather than thrown: the caller has no user to tell.
+    // still holds MLS state for - by the background push path, by the foreground status endpoint
+    // and by group creation.
     const addressable = await this.deviceAddressability(userId, deviceId);
     if (!addressable.ok) {
       this.logger.warn(
-        `[MEMBERSHIP_ACTIVE] REFUSED group=${groupId} device=${userId}:${deviceId} reason=${addressable.reason}`
+        `[${tag}] REFUSED group=${groupId} device=${userId}:${deviceId} reason=${addressable.reason}`
       );
-      return;
+      return { ok: false, reason: addressable.reason };
     }
 
     // Read prior state BEFORE the upsert: missed-message redelivery (DF2) must only
@@ -1880,7 +1938,7 @@ export class MessagingService {
     );
     // Immediate routing: add to Redis set without waiting for a cache rebuild.
     await this.redis.sadd(`group:members:${groupId}`, `${userId}:${deviceId}`).catch(() => {});
-    this.logger.log(`[MEMBERSHIP_ACTIVE] group=${groupId} device=${userId}:${deviceId}`);
+    this.logger.log(`[${tag}] group=${groupId} device=${userId}:${deviceId}`);
 
     if (!wasAlreadyActive && redeliverMissed) {
       // While the device was `pending`, recipient resolution (`status='active'` filter)
@@ -1900,6 +1958,8 @@ export class MessagingService {
         )
       );
     }
+
+    return { ok: true };
   }
 
   /**
