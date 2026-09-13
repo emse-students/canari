@@ -11,6 +11,18 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Removed - the two buttons that left the day view by landing on an empty box
+
+The day panel rendered a "Tout le mois" link beside the day's heading and a "Choisir un autre jour"
+link under its empty state. Both called the same `onClearSelection`, and clearing the selection puts
+the panel in its `selectedDay == null` branch - a dashed placeholder reading *"Selectionnez un jour
+colore dans le calendrier pour voir les evenements."*
+
+So both controls took the reader from something to nothing, and neither was the way to another day:
+that is a click on the day itself, in the grid above, which is where the reader already is. The
+prop, both buttons and the two message keys are gone.
+
+
 ### Fixed - a lost gateway routing set repopulated itself silently at two of the three doors that rebuild it
 
 `group:members:<id>` is a Redis set the gateway routes on; `device_group_memberships` is what

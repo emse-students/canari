@@ -515,7 +515,6 @@
     events={feedEvents}
     hideAssociationName={true}
     onEventClick={openEventDetail}
-    onClearSelection={() => (selectedDay = null)}
   />
 
   <CalendarEventDetailModal

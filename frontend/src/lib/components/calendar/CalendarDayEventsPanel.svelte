@@ -15,7 +15,6 @@
     /** When true, hides association name on each row (single-association agenda). */
     hideAssociationName?: boolean;
     onEventClick: (ev: AssociationCalendarFeedEvent) => void;
-    onClearSelection?: () => void;
   }
 
   let {
@@ -24,7 +23,6 @@
     events,
     hideAssociationName = false,
     onEventClick,
-    onClearSelection,
   }: Props = $props();
 
   // Which day an event occupies, and how its time reads, are shared with the phone's schedule list:
@@ -54,15 +52,6 @@
     class="border-cn-border text-text-muted bg-cn-surface rounded-2xl border px-4 py-5 text-center text-sm"
   >
     {m.calendar_day_no_events()}
-    {#if onClearSelection}
-      <button
-        type="button"
-        class="text-cn-dark mx-auto mt-2 block text-sm font-semibold hover:underline"
-        onclick={onClearSelection}
-      >
-        {m.calendar_day_choose_another()}
-      </button>
-    {/if}
   </div>
 {:else}
   <div class="border-cn-border bg-cn-surface overflow-hidden rounded-2xl border shadow-sm">
@@ -75,15 +64,6 @@
           · {m.calendar_day_event_count({ count: dayEvents.length })}
         </span>
       </p>
-      {#if onClearSelection}
-        <button
-          type="button"
-          class="text-cn-dark shrink-0 text-xs font-semibold hover:underline"
-          onclick={onClearSelection}
-        >
-          {m.calendar_day_all_month()}
-        </button>
-      {/if}
     </div>
     <ul class="divide-cn-border/40 divide-y">
       {#each dayEvents as ev (ev.id)}
