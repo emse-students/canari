@@ -7311,12 +7311,6 @@ Neither is about taking a payment. The first is the catalogue and the cotisation
 the bank account. Reword both to name the thing, and keep the provider out of the label the way the
 payout estimate already does.
 
-### P3 - "Cotisations et achats" sits in Settings, not in the profile
-
-`SettingsSubscriptionsSection.svelte` is mounted at `routes/settings/+page.svelte:65`. The user
-wants it under the profile. Moving the section is the work; the heading string
-(`profile_subs_heading`) already reads as a profile heading.
-
 ## Post-campaign projects - decided, not scheduled
 
 ### Separating ICM and ISMIN - two schools on one deployment (user, 2026-09-05)
