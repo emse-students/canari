@@ -7278,6 +7278,131 @@ already suspected. Until that scan runs, this is a slope rather than a diagnosis
 sits at P3 beside the two prod hosts above rather than being called fixed. **Ask the user before
 deleting anything that is not a build cache.**
 
+## The agenda, the admin console and four modals - eleven items from the user, 2026-09-12
+
+Handed over in one message (*"en vrac quelques items a faire quand tu peux"*). Each was traced to
+its code before being written here, so what follows is the WORK, not the question. Three of them
+are defects rather than wording: an event's dates can be moved after validation with no
+revalidation, any association admin can publish a school-wide holiday band, and the partner picker
+offers every association on the platform.
+
+### P2 - a validated event's dates can be moved and it stays validated
+
+`updateCalendarEvent` (`apps/social-service/src/associations/associations.service.ts:1588`) writes
+`title`, `kind`, `description`, `startsAt`, `endsAt`, `linkedFormId` and the co-owners, and never
+touches `ev.status`. So an association admin whose event was validated by the BDE can move it to
+another day, or to another hour, and it stays on the public agenda with nobody told.
+
+**The work.** A change to `startsAt` or `endsAt` on an event in `validated` status returns it to
+`pending`, clears `validatedAt` / `validatedBy`, and notifies the VALIDATE_EVENTS holders the way a
+fresh proposal does (`notifyValidatorsOfProposal`). A BDE or global-admin caller - the same
+`canValidate` the create path already computes - re-validates in place rather than demoting, since
+they are the authority the demotion would route to. The event's owner is told, so the demotion is
+not silent.
+
+### P2 - "Pause / vacances" is offered to every proposer and gated nowhere
+
+`kind` is a free field. `AssociationCalendarSection.svelte:651-680` offers the `break` radio to any
+member holding `PROPOSE_EVENT`, and `createCalendarEvent` / `updateCalendarEvent` accept
+`dto.kind` with no check at all. A `break` renders as a full-day background band across the whole
+school's calendar - it is a statement about the school, not about an association, so proposing one
+has no meaning and validating one is the wrong question to ask a BDE.
+
+**The work.** `kind: break` becomes a BDE/global-admin-only value, refused server-side for any
+other caller on both create and update, and the radio disappears from the propose modal for
+everyone else. The BDE's own route to creating one is then the answer to the user's question
+*"comment fait-il d'ailleurs ?"*: today there is none - the `/calendar` "Deposer un evenement"
+modal does not offer `kind` either (`frontend/src/routes/calendar/+page.svelte:348`, which omits it
+on purpose), so a break can only be made from the owning association's page. The fusion below is
+what gives it one.
+
+### P2 - "Associations partenaires (optionnel)" is every association on the platform
+
+`CoOwnerPicker.svelte:25-38` calls `listAssociations()` and filters on the search box, the primary
+owner and what is already selected. Nothing else conditions it: no partnership, no shared member,
+no consent from the association being named. So an event can declare any association on the estate
+as its partner, and that association's name and colour then ride on a card it never agreed to.
+
+**The work.** Decide what a co-owner IS before narrowing the list - the honest options are
+(a) any association, which is what ships today and should then say so in the label, (b) an
+association the author is also a member of, or (c) any association, but the co-ownership starts
+`pending` and the named association confirms it. The label is wrong under (a) as much as under the
+others, so it moves either way.
+
+### P3 - the co-owner picker's label is a raw French literal
+
+`frontend/src/lib/components/calendar/CoOwnerPicker.svelte:18` defaults `label` to the string
+`'Associations partenaires (optionnel)'`, and neither of its two call sites passes one. A
+user-visible string outside Paraglide, in a component, rendered to every locale.
+
+### P3 - four event modals, two implementations, and neither can do what the other can
+
+| Modal | Where | Fields it has |
+| --- | --- | --- |
+| "Proposer un evenement" | `AssociationCalendarSection.svelte` | title, kind, description, start, end, poster image (edit only), linked form, co-owners |
+| "Modifier l'evenement" | `AssociationCalendarSection.svelte` | the same eight |
+| "Deposer un evenement" | `routes/calendar/+page.svelte` | title, description, start, end, co-owners, target association |
+| "Modifier l'evenement" | `routes/calendar/+page.svelte` | title, description, start, end, co-owners |
+
+The agenda's pair cannot set `kind`, attach a poster or link a form - deliberately, per the comment
+at `+page.svelte:348`, because those are "only editable from the association's own page". The
+association's pair cannot target another association. The two are 728 and 824 lines of parallel
+state with the same six fields declared twice.
+
+**The work.** ONE component owning every field, with capability props deciding which are rendered
+(`canTargetAnotherAssociation`, `canSetKind`) rather than two components deciding by existing. The
+title is a prop too: "Proposer", "Deposer" and "Modifier" are the same form under three names. The
+poster's "only when editing" restriction is a consequence of the upload endpoint needing an event
+id and stays, but it stays in ONE place.
+
+### P3 - the server's event validation speaks English at a French user
+
+`endsAt must be after startsAt`, thrown twice (`associations.service.ts:1542` and `:1618`) and
+rendered verbatim by both modals through `depositError` / `formError`. Part of the 218 places
+counted under Localisation above, and fixed the same way: a typed error the client maps to a
+Paraglide message.
+
+### P3 - "Administration" is the name of a page that moderates one agenda
+
+`/admin` is reachable by any association admin (`routes/admin/+layout.svelte:60-68`), and that is
+deliberate: it is where "Agenda en attente" lives. The server agrees and enforces - the pending
+listing accepts an association admin, `canValidate` comes back false for them, and
+`validateCalendarEvent` / `rejectCalendarEvent` refuse anyone who is not BDE or global admin
+(`associations.controller.ts:670-711`). **So there is no access-control defect here**; there is a
+NAME that promises a platform console and delivers one read-only queue.
+
+**The work.** The dashboard card and the page title say what the reader can actually do. The
+description already does (`admin_associations_description` = "Moderation de l'agenda de vos
+associations.") - it is the heading above it that lies, so the heading follows the description
+rather than the description being questioned. While there: the dashboard shows the card on
+`mine.some(a => a.isAdmin)` while the layout also admits `isContentModerator()`, so a content
+moderator who administers no association can reach `/admin` and is never offered the way in.
+
+### P3 - two permission labels both say "paiements" and neither names its flag
+
+| Flag | Label today | What it actually gates |
+| --- | --- | --- |
+| `MANAGE_PRODUCTS` | "Gerer les paiements (boutique)" | create/edit/delete boutique products, AND the cotisation configuration (`associations.controller.ts:462`, `:490`), AND the listing that includes inactive products (`:1015`) |
+| `MANAGE_STRIPE_CONNECT` | "Gerer les paiements en ligne" | start or resume Stripe Connect onboarding - pointing the association's payouts at a bank account |
+
+Neither is about taking a payment. The first is the catalogue and the cotisations; the second is
+the bank account. Reword both to name the thing, and keep the provider out of the label the way the
+payout estimate already does.
+
+### P3 - "Cotisations et achats" sits in Settings, not in the profile
+
+`SettingsSubscriptionsSection.svelte` is mounted at `routes/settings/+page.svelte:65`. The user
+wants it under the profile. Moving the section is the work; the heading string
+(`profile_subs_heading`) already reads as a profile heading.
+
+### P3 - "Tout le mois"
+
+`CalendarDayEventsPanel.svelte:84`. It is not a label - it is the BUTTON that clears the day
+selection and returns the panel to the whole month, rendered only when `onClearSelection` is
+passed. Deleting the text deletes the only way back, so the work is to replace the affordance, not
+to remove it: either an X on the day header, or a second click on the selected day. **Which one is
+the user's call.**
+
 ## Post-campaign projects - decided, not scheduled
 
 ### Separating ICM and ISMIN - two schools on one deployment (user, 2026-09-05)

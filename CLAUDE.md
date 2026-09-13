@@ -256,8 +256,10 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    empty screen still looks like a broken claim ([backlog](docs/wiki/backlog.md), [cotisations](docs/wiki/cotisations.md)).
 9. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
    [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
-10. **UX/RENDERING: TWO LEFT** - ONE bundled Noto Color Emoji everywhere, and the server's English
-    prose ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md) section 17).
+10. **UX/RENDERING + THE ELEVEN AGENDA/ADMIN ITEMS (user, 2026-09-12)** - Noto Color Emoji, the
+    server's English prose, and THREE real defects among the eleven: a validated event's dates move
+    with no revalidation, any asso admin can publish a school-wide holiday band, and "Associations
+    partenaires" offers the whole estate ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md) section 17).
 11. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
     commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
 12. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
