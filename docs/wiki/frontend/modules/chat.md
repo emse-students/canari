@@ -289,7 +289,46 @@ Two rules about *when* the queue is allowed to try, both learned from the offlin
   so a queue that keeps trying against an absent network is slowest exactly when connectivity comes
   back. `canFlush: () => !ctx.isOfflineSession()` holds it, and `promoteOfflineSession` calls
   `flushOutbox()` **after** the token is refreshed and the connection re-established - never beside
-  it. The outbox's own `online` listener fires earlier than any of that.
+  it. **The reason is not that some earlier listener would beat it to the punch**, which is what this
+  said until 2026-09-13 and what the code's own comment said: `canFlush` is shut until the promotion
+  opens it, so nothing the outbox hears for itself can drain the queue at all. The ordering matters
+  because step 1 OPENS that gate without being the moment to send - a token is not a socket. See the
+  trigger table below.
+
+### Eight sites raise a flush, and there is ONE flusher (R-D8, refuted 2026-09-13)
+
+The MLS audit counted the call sites and read them as a duplicate path. They are not one, and the
+count is accurate - which is why the refutation is written down rather than deleted with the row.
+Whoever counts them next should find this before they find eight things to fuse.
+
+Every trigger reaches `runFlush`, and every gate lives there and nowhere else: the tab election, the
+leader gate, `connectivity.isOffline`, `canFlush`, and the `flushing`/`rerun` coalescer. There is no
+second flusher. **FIVE sites are internal wake-ups**, each bound to the one condition it is the seam
+for - `connectivity.onReconnect`, `visibilitychange`, a follower tab's `outbox_flush_request`, the
+backoff timer, and `enqueue`. **THREE are external moments nothing inside the module can observe:**
+
+| Site | The moment, and why the outbox cannot see it |
+|---|---|
+| `promoteOfflineSession` step 4 | a session unlocked offline now has a token AND a socket |
+| `sessionAuth`'s `onGroupReady` | one GROUP became sendable; the network never changed |
+| `sessionAuth` after `initializeConnection` | login finished, which is not a reconnection |
+
+**The fusion that looks obvious is a REGRESSION.** `connectivity.onReconnect` binds a flush to
+`isOffline` clearing, so binding one to `canFlush` opening reads as the same move. It would fire at
+`promoteOfflineSession`'s step 1, where the token is set, three steps before `initializeConnection`
+gives it a socket - every entry burning an attempt and a longer backoff on a send that never had a
+chance, which is the exact defect `canFlush` was added to prevent. A gate answers *may I send*; a
+trigger answers *now*; only the promotion knows the second.
+
+Two comments asserted otherwise until this was checked, and both are corrected in place. The login
+flush claimed to *cover reconnection, which re-runs `initializeConnection`*: it does not -
+`initializeConnection` has exactly two call sites, each running once per session, and a reconnect
+goes through `attemptReconnectImpl`, which never calls it. Believing that comment makes the login
+flush look redundant and the reconnect path look uncovered, which are wrong in opposite directions.
+
+`outbox.test.ts` drives the five internal triggers plus the external door over ONE table, asserting
+for each that the same gate refuses it shut and drains it open, and a source check pins the three
+external sites so a fourth has to be argued for rather than added.
 
 ### Everything the outbox swallows, it logs
 
