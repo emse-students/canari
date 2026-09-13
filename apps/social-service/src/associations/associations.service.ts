@@ -121,6 +121,36 @@ function assertMayDecideKind(
   throw new ForbiddenException('Only the BDE decides whether an entry is a school-wide break');
 }
 
+/**
+ * The three ways a calendar date can be refused, CLASSIFIED AT THE THROW.
+ *
+ * `endsAt must be after startsAt` was rendered verbatim to a French reader: the global agenda's
+ * deposit modal did `e instanceof Error ? e.message : <fallback>`, so the server's English won every
+ * time and the localized half was dead code. The cure is the standing rule about never branching on
+ * an error MESSAGE, applied one step earlier - the server says WHICH rule was broken, as a code, and
+ * the screen chooses the sentence.
+ *
+ * Three codes rather than one, because they are three different mistakes and the reader can only fix
+ * the one they made: a start that is not a date, an end that is not a date, and an end before its
+ * start.
+ */
+export const CALENDAR_ERROR_CODES = {
+  INVALID_START: 'CALENDAR_INVALID_START',
+  INVALID_END: 'CALENDAR_INVALID_END',
+  END_BEFORE_START: 'CALENDAR_END_BEFORE_START',
+} as const;
+
+/**
+ * One refusal per rule, built once rather than at each of its six call sites - create and update
+ * check the same three things, and six copies of a code is six chances for one to drift.
+ */
+function calendarDateRefusal(
+  code: (typeof CALENDAR_ERROR_CODES)[keyof typeof CALENDAR_ERROR_CODES],
+  message: string
+): BadRequestException {
+  return new BadRequestException({ code, message });
+}
+
 /** CRUD, logo management, membership, and Stripe helpers for student associations. */
 @Injectable()
 export class AssociationsService {
@@ -1575,13 +1605,16 @@ ${rejectionReason}`
     const startsAt = new Date(dto.startsAt);
     const endsAt = dto.endsAt ? new Date(dto.endsAt) : null;
     if (Number.isNaN(startsAt.getTime())) {
-      throw new BadRequestException('Invalid startsAt');
+      throw calendarDateRefusal(CALENDAR_ERROR_CODES.INVALID_START, 'Invalid startsAt');
     }
     if (endsAt && Number.isNaN(endsAt.getTime())) {
-      throw new BadRequestException('Invalid endsAt');
+      throw calendarDateRefusal(CALENDAR_ERROR_CODES.INVALID_END, 'Invalid endsAt');
     }
     if (endsAt && endsAt < startsAt) {
-      throw new BadRequestException('endsAt must be after startsAt');
+      throw calendarDateRefusal(
+        CALENDAR_ERROR_CODES.END_BEFORE_START,
+        'endsAt must be after startsAt'
+      );
     }
 
     const kind = dto.kind ?? AssociationCalendarEventKind.Event;
@@ -1656,7 +1689,9 @@ ${rejectionReason}`
     }
     if (dto.startsAt !== undefined) {
       const d = new Date(dto.startsAt);
-      if (Number.isNaN(d.getTime())) throw new BadRequestException('Invalid startsAt');
+      if (Number.isNaN(d.getTime())) {
+        throw calendarDateRefusal(CALENDAR_ERROR_CODES.INVALID_START, 'Invalid startsAt');
+      }
       ev.startsAt = d;
     }
     if (dto.endsAt !== undefined) {
@@ -1664,14 +1699,19 @@ ${rejectionReason}`
         ev.endsAt = null;
       } else {
         const end = new Date(dto.endsAt);
-        if (Number.isNaN(end.getTime())) throw new BadRequestException('Invalid endsAt');
+        if (Number.isNaN(end.getTime())) {
+          throw calendarDateRefusal(CALENDAR_ERROR_CODES.INVALID_END, 'Invalid endsAt');
+        }
         ev.endsAt = end;
       }
     }
     const starts = ev.startsAt instanceof Date ? ev.startsAt : new Date(ev.startsAt);
     const ends = ev.endsAt ? (ev.endsAt instanceof Date ? ev.endsAt : new Date(ev.endsAt)) : null;
     if (ends && ends < starts) {
-      throw new BadRequestException('endsAt must be after startsAt');
+      throw calendarDateRefusal(
+        CALENDAR_ERROR_CODES.END_BEFORE_START,
+        'endsAt must be after startsAt'
+      );
     }
 
     /**

@@ -7205,10 +7205,16 @@ came from one predicate; a broader one over `frontend/src` finds ~288 occurrence
 which only some assign to an error state a screen renders - the rest sit inside a `Log`/`console`
 call and are correctly dev-facing.
 
-**196 remain, down from 223** (same predicate, both ends measured on this branch's base,
-2026-09-13). The member-facing pass closed 27 across `components/posts`, `components/settings`,
-`routes/posts`, `routes/profile`, `routes/lists`, `routes/documents` and `routes/forms`, all seven
-now guarded. What is left is chat (`lib/utils/chat`), graine, `routes/admin` (11 files), and the
+**195 remain, down from 223** (same predicate, both ends measured on this branch's
+base, 2026-09-13). The member-facing pass closed 27 across `components/posts`,
+`components/settings`, `routes/posts`, `routes/profile`, `routes/lists`, `routes/documents` and
+`routes/forms`; the agenda pass closed the last three in `components/calendar` and `routes/calendar`
+and gave that endpoint its codes. **Thirteen trees are guarded.**
+
+**The raw count is an upper bound and always will be**: the predicate is a grep, so it counts the
+docblocks that QUOTE the shape in order to explain it - two of the 195 are the mapper's own
+documentation. The guard strips comments before matching, which is why it is the guard and not the
+grep that decides whether a tree is clean. What is left is chat (`lib/utils/chat`), graine, `routes/admin` (11 files), and the
 worker/`mls-client`/`services` layers, where most sites are dev-facing logs rather than screens.
 
 **A tree is added only once every file under it answers**, which is why they arrive in batches: a
@@ -7288,12 +7294,21 @@ title is a prop too: "Proposer", "Deposer" and "Modifier" are the same form unde
 poster's "only when editing" restriction is a consequence of the upload endpoint needing an event
 id and stays, but it stays in ONE place.
 
-### P3 - the server's event validation speaks English at a French user
+### P3 - "Administration" is the name of a page that moderates one agenda
 
-`endsAt must be after startsAt`, thrown twice (`associations.service.ts:1542` and `:1618`) and
-rendered verbatim by both modals through `depositError` / `formError`. Part of the 218 places
-counted under Localisation above, and fixed the same way: a typed error the client maps to a
-Paraglide message.
+`/admin` is reachable by any association admin (`routes/admin/+layout.svelte:60-68`), and that is
+deliberate: it is where "Agenda en attente" lives. The server agrees and enforces - the pending
+listing accepts an association admin, `canValidate` comes back false for them, and
+`validateCalendarEvent` / `rejectCalendarEvent` refuse anyone who is not BDE or global admin
+(`associations.controller.ts:670-711`). **So there is no access-control defect here**; there is a
+NAME that promises a platform console and delivers one read-only queue.
+
+**The work.** The dashboard card and the page title say what the reader can actually do. The
+description already does (`admin_associations_description` = "Moderation de l'agenda de vos
+associations.") - it is the heading above it that lies, so the heading follows the description
+rather than the description being questioned. While there: the dashboard shows the card on
+`mine.some(a => a.isAdmin)` while the layout also admits `isContentModerator()`, so a content
+moderator who administers no association can reach `/admin` and is never offered the way in.
 
 ### P3 - two permission labels both say "paiements" and neither names its flag
 
