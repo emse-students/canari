@@ -1,6 +1,7 @@
 <script lang="ts">
   import { X, Search } from '@lucide/svelte';
-  import { fade, fly } from 'svelte/transition';
+  import { fly } from 'svelte/transition';
+  import { portal } from '$lib/actions/portal';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -101,15 +102,39 @@
 </script>
 
 {#if open}
+  <!--
+    PORTALLED, BECAUSE `fixed` MEANS "THE VIEWPORT" ONLY WHILE NO ANCESTOR CLAIMS IT.
+
+    This one component is opened from the chat composer and from a post's comment box, and it
+    misbehaved in exactly one of them. `PostCard`'s card carries `hover:-translate-y-0.5`, and a
+    non-`none` transform makes an element the containing block for every `position: fixed`
+    DESCENDANT - so while the pointer was over the card, this modal and its backdrop were confined
+    to the card's own rectangle. Measured 2026-09-13 on a 400x200 stand-in card: the overlay reads
+    1265x400 at (0,0) with no transform and 400x200 at (109,99) with `translateY(-2px)` - the card,
+    exactly. It came back the moment the transform went.
+
+    That is why it "did weird things" intermittently and why it was worse on a phone: `:hover`
+    STICKS after a tap until something else is tapped, so on touch the card holds the transform for
+    as long as the picker is open. The 300ms `transition-all` keeps it non-`none` on the way out too.
+
+    `use:portal` is the fix and the repo already knew this shape - `fixedPopover.test.ts` refuses a
+    viewport-positioned panel left in the tree, naming this precise cause. A `fixed inset-0` overlay
+    is the same fact in a different spelling, and this one was simply not in that family.
+  -->
   <div
+    use:portal
     class="pointer-events-auto fixed inset-0 z-(--z-sheet) flex items-end justify-center sm:items-center"
   >
+    <!--
+      NO SCRIM (user, 2026-09-13: *"pas besoin de fond fonce"*). It stays a full-bleed button so a
+      click anywhere outside the panel still closes it - the target is what the scrim was FOR, and
+      the dimming was never load-bearing. `fade` goes with it: there is nothing left to fade.
+    -->
     <button
       type="button"
-      class="absolute inset-0 bg-black/45"
+      class="absolute inset-0"
       aria-label={m.common_close_label()}
       onclick={onClose}
-      transition:fade={{ duration: 150 }}
     ></button>
     <div
       class="relative flex max-h-[80vh] w-full flex-col rounded-t-2xl bg-(--cn-surface) shadow-2xl sm:max-w-lg sm:rounded-2xl"

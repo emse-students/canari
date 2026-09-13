@@ -11,6 +11,21 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - the GIF picker opened inside a post card instead of over the page
+
+Picking a GIF from a post's comment box put the picker somewhere strange: squeezed into the card, cut
+off at its edges, and never the same twice - it moved with the pointer. On a phone it was worse,
+because a tap leaves the card in its hovered state for as long as the picker is open.
+
+The picker declares that it covers the whole window. A browser honours that only while nothing above
+it has been moved, scaled, blurred or filtered - and a feed card lifts a couple of pixels under the
+pointer, which is enough to make the picker cover the CARD instead of the window. The same component
+opened from the chat composer, where nothing above it moves, was always fine.
+
+It is now rendered outside the card entirely, so it covers the window wherever it is opened from. The
+card keeps its lift. The dark shade behind the picker is gone as well - a click outside it still
+closes it.
+
 ### Fixed - a conversation nobody could repair stayed shut after the person who could came back
 
 When a conversation's entry key has fallen behind, a device that has lost its encryption state
@@ -27,6 +42,7 @@ which only builds from September onwards and is not required of anyone.
 The moment a member comes back, every conversation recorded as unrepairable is asked again. The
 cadence that keeps it to one attempt a minute is untouched, so a flaky connection on the other side
 cannot turn this into a storm.
+
 
 ### Fixed - a test that could never fail, because it was looking for something no file contains
 
