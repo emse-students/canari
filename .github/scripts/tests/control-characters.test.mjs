@@ -35,7 +35,7 @@
  *
  * Usage: bun .github/scripts/tests/control-characters.test.mjs   (no arguments, no network)
  */
-import { readFileSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -88,26 +88,28 @@ const offenders = [];
 
 for (const rel of tracked) {
   const full = resolve(repoRoot, rel);
-  // A path can be tracked and absent from the working tree (a sparse checkout, a submodule).
-  let size;
+  // ONE READ, AND NOTHING ASKED ABOUT THE PATH BEFORE IT. A stat followed by an open is two answers
+  // about two different moments, and the file may have changed in between (CodeQL js/file-system-race
+  // says so, and it is right: this walks a whole working tree while a build may be writing into it).
+  // The read itself answers every question the stat was asked: a path that is tracked but absent -
+  // a sparse checkout, a submodule - throws, and so does a directory, and neither is a finding.
+  let bytes;
   try {
-    const st = statSync(full);
-    if (!st.isFile()) continue;
-    size = st.size;
+    bytes = readFileSync(full);
   } catch {
     continue;
   }
+  if (bytes.length === 0) continue;
   // Binaries are not the subject and decoding them proves nothing: an image full of 0x08 is an
   // image. A file that does not decode as UTF-8 is skipped, and the count is PRINTED rather than
   // swallowed, so a skip that grows is visible instead of being mistaken for a clean pass.
   let text;
   try {
-    text = new TextDecoder('utf-8', { fatal: true }).decode(readFileSync(full));
+    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
   } catch {
     skippedBinary += 1;
     continue;
   }
-  if (size === 0) continue;
   scanned += 1;
 
   text.split('\n').forEach((line, i) => {
