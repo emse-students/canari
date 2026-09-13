@@ -898,6 +898,37 @@ the content and not a token violation. The nine `text-[Nem]` values are proporti
 different intent from the seven `--text-*` steps. Neither is a finding, and counting them as one
 would have made the sweep wrong in the other direction.
 
+### The association tile: one card, five copies, and a colour that existed all along (2026-09-13)
+
+`/associations` and `/lists` drew the same card FIVE times between them - "mes associations", every
+active association, the archived fold, a campaign shelf, and the archived list fold. Every copy
+`truncate`d the name and cropped the description at a raw `max-h-[2.75rem]`, which is what five
+copies of a decision always means: fixing one fixes one.
+
+**The pixel crop was measured, not merely disliked.** Against this app's own compiled CSS, that
+`max-h-[2.75rem]` is 44px where the line box is 20.625px - it stopped **2.13 lines in**, leaving the
+tops of the third line's letters showing. The replacement is a line CLAMP, which cuts on a line
+boundary and says so with an ellipsis: 165px of description becomes 62px, exactly three line boxes.
+
+**The clamp goes on the CONTAINER, not on the paragraph**, and that is the part worth writing down.
+A `-webkit-box` clamps everything inside it as one run of lines, so a two-paragraph description is
+cut once, at the third line, wherever it falls. Clamping the first paragraph instead cuts each one
+separately and rendered 95px where 57 was asked for - a truncation that forgot to truncate. All
+three numbers came from a browser at the real 240px column.
+
+**AND THE TILE NOW CARRIES `Association.color`, WHICH NOTHING IN A WALL HAD EVER READ.** The field
+has fed the calendar and the Carte de la Vie Asso for months, and `cardGrid.ts` sized its 15rem
+minimum with *"an association's colour bar"* explicitly in the budget - a bar no tile ever drew. So
+this is not a new design: it is `CardTile`, which already implements that accent (the top bar, the
+hover outline gated on `(hover: hover)`, a `contrastColor`ed badge), finally being called from the
+page the grid was sized for. The fallback is the one the rest of the app already spells,
+`generateAvatarColor(name)`, so one association is one hue everywhere.
+
+`CardTile`'s header row became OPTIONAL for this, and only for this: the tile puts an
+`AssociationAvatar` beside the name because that falls back to INITIALS where the header frame falls
+back to a generic glyph, and an association with no logo would lose the one mark that tells it
+apart. Absent, never empty.
+
 ## 17. The width sweep - three references, 52 routes, and the three pages that invented a number
 
 Section 12 gave the app one page column and two named widths. This section is what happened when

@@ -12,8 +12,7 @@
     type Association,
   } from '$lib/associations/api';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
-  import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
-  import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
+  import AssociationTile from '$lib/components/associations/AssociationTile.svelte';
   import { ChevronDown } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -123,34 +122,11 @@
             </h2>
             <div class={CARD_GRID}>
               {#each shelf.items as list (list.id)}
-                <a
+                <AssociationTile
+                  association={list}
                   href="/lists/{list.slug}"
-                  class="border-cn-border block rounded-2xl border bg-(--cn-surface) p-5 transition-shadow hover:shadow-md"
-                >
-                  <div class="flex items-start gap-3">
-                    <AssociationAvatar name={list.name} logoUrl={list.logoUrl} size="lg" />
-                    <div class="min-w-0 flex-1">
-                      {#if list.parentName}
-                        <div class="text-cn-dark text-2xs font-bold tracking-wide uppercase">
-                          {list.parentName}
-                        </div>
-                      {/if}
-                      <h3 class="text-text-main truncate font-bold">{list.name}</h3>
-                      {#if list.description?.trim()}
-                        <div
-                          class="text-text-muted mt-0.5 max-h-[2.75rem] overflow-hidden [&_.post-markdown]:text-sm [&_.post-markdown]:leading-snug [&_.post-markdown_p]:m-0 [&_.post-markdown_p+p]:mt-0"
-                        >
-                          <ProfileBioMarkdown source={list.description} compact />
-                        </div>
-                      {/if}
-                      {#if myIds.has(list.id)}
-                        <p class="text-cn-dark mt-1 text-xs font-semibold">
-                          {m.assoc_list_member_badge()}
-                        </p>
-                      {/if}
-                    </div>
-                  </div>
-                </a>
+                  isMember={myIds.has(list.id)}
+                />
               {/each}
             </div>
           </section>
@@ -175,30 +151,7 @@
           {#if showArchived}
             <div class="mt-3 {CARD_GRID}">
               {#each archivedLists as list (list.id)}
-                <a
-                  href="/lists/{list.slug}"
-                  class="border-cn-border bg-cn-surface block rounded-2xl border p-5 opacity-75 transition-all hover:opacity-100 hover:shadow-md"
-                >
-                  <div class="flex items-start gap-3">
-                    <AssociationAvatar name={list.name} logoUrl={list.logoUrl} size="lg" />
-                    <div class="min-w-0 flex-1">
-                      {#if list.parentName}
-                        <div class="text-text-muted text-2xs font-bold tracking-wide uppercase">
-                          {list.parentName}
-                        </div>
-                      {/if}
-                      <h3 class="text-text-main truncate font-bold">
-                        {list.name}
-                        {#if list.promo}
-                          <span class="text-text-muted text-xs font-semibold">· {list.promo}</span>
-                        {/if}
-                      </h3>
-                      <p class="text-text-muted mt-1 text-xs font-semibold">
-                        {m.assoc_list_archived_badge()}
-                      </p>
-                    </div>
-                  </div>
-                </a>
+                <AssociationTile association={list} href="/lists/{list.slug}" />
               {/each}
             </div>
           {/if}

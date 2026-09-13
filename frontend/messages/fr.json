@@ -2381,6 +2381,8 @@
   "assoc_list_archived_heading": "Anciennes associations ({count})",
   "assoc_member_count_one": "{count} membre",
   "assoc_member_count_many": "{count} membres",
+  "assoc_list_promo_badge": "Liste {promo}",
+  "assoc_list_type_badge": "Liste",
   "assoc_list_member_badge": "Membre",
   "assoc_list_archived_badge": "Archivée",
   "directory_heading": "Annuaire",
