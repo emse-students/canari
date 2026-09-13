@@ -40,3 +40,5 @@
 "notif.event.updated.body" = "“%1$@” was updated by the BDE";
 "notif.event.deleted.title" = "Event removed";
 "notif.event.deleted.body" = "“%1$@” was removed by the BDE";
+"notif.event.pending.title" = "Event needs approval again";
+"notif.event.pending.body" = "“%1$@” needs approval again: its dates changed";

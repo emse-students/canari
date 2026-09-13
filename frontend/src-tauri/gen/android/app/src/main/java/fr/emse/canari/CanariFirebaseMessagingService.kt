@@ -3309,6 +3309,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_event_deleted_title),
                 res.getString(R.string.notif_event_deleted_body, arg)
             )
+            "event_pending" -> Pair(
+                res.getString(R.string.notif_event_pending_title),
+                res.getString(R.string.notif_event_pending_body, arg)
+            )
             else -> {
                 Log.w(TAG, "unknown contentKey=$key - using the server's own wording")
                 null

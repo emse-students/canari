@@ -14,6 +14,7 @@ import {
   eventRejectedContent,
   eventUpdatedContent,
   eventDeletedContent,
+  eventPendingContent,
   associationPostContent,
   followedPostContent,
   type PushContent,
@@ -56,7 +57,7 @@ export class PostNotificationsService {
         return associationPostContent(actorName, text);
       case 'followed_post':
         return followedPostContent(actorName, text);
-      // The agenda's five. `text` is the event's TITLE for all of them - never a composed sentence,
+      // The agenda's six. `text` is the event's TITLE for all of them - never a composed sentence,
       // which is what the server used to send here and could not translate.
       case 'event_proposed':
         return eventProposedContent(actorName, text);
@@ -68,6 +69,8 @@ export class PostNotificationsService {
         return eventUpdatedContent(actorName, text);
       case 'event_deleted':
         return eventDeletedContent(actorName, text);
+      case 'event_pending':
+        return eventPendingContent(actorName, text);
       default:
         return null;
     }

@@ -10,6 +10,7 @@ import {
   eventRejectedContent,
   eventUpdatedContent,
   eventDeletedContent,
+  eventPendingContent,
   associationPostContent,
   followedPostContent,
   previewOf,
@@ -222,6 +223,7 @@ describe('the legacy sentence and the Android resource say the same thing', () =
     ['event_rejected', eventRejectedContent(ACTOR, ARG)],
     ['event_updated', eventUpdatedContent(ACTOR, ARG)],
     ['event_deleted', eventDeletedContent(ACTOR, ARG)],
+    ['event_pending', eventPendingContent(ACTOR, ARG)],
     ['social_association_post', associationPostContent(ACTOR, '')],
     ['social_followed_post', followedPostContent(ACTOR, '')],
   ];

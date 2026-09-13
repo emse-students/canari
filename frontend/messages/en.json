@@ -2388,6 +2388,7 @@
   "notif_event_rejected_text": "declined your event",
   "notif_event_updated_text": "updated your event",
   "notif_event_deleted_text": "removed your event",
+  "notif_event_pending_text": "changed the dates of your event, which is awaiting approval again:",
   "notif_reaction_text": "reacted to your post",
   "notif_mention_text": "mentioned you",
   "notif_reply_text": "replied to your comment",

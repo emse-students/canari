@@ -84,6 +84,7 @@
     'event_rejected',
     'event_updated',
     'event_deleted',
+    'event_pending',
   ] as const;
   const isEventNotif = $derived((EVENT_TYPES as readonly string[]).includes(notif.type));
 
@@ -113,9 +114,11 @@
             ? 'bg-purple-500 text-white'
             : notif.type === 'event_rejected'
               ? 'bg-red-500 text-white'
-              : isEventNotif
-                ? 'bg-sky-600 text-white'
-                : 'bg-green-600 text-white'
+              : notif.type === 'event_pending'
+                ? 'bg-amber-500 text-cn-ink'
+                : isEventNotif
+                  ? 'bg-sky-600 text-white'
+                  : 'bg-green-600 text-white'
   );
 
   const avatarBox = $derived(compact ? 'h-10 w-10' : 'h-14 w-14');
@@ -159,6 +162,8 @@
         <CalendarX size={glyph} strokeWidth={2.75} />
       {:else if notif.type === 'event_updated'}
         <CalendarCog size={glyph} strokeWidth={2.75} />
+      {:else if notif.type === 'event_pending'}
+        <CalendarClock size={glyph} strokeWidth={2.75} />
       {:else}
         <MessageCircle size={glyph} strokeWidth={2.75} />
       {/if}
@@ -197,7 +202,9 @@
               ? m.notif_event_rejected_text()
               : notif.type === 'event_updated'
                 ? m.notif_event_updated_text()
-                : m.notif_event_deleted_text()}
+                : notif.type === 'event_pending'
+                  ? m.notif_event_pending_text()
+                  : m.notif_event_deleted_text()}
         <span class="italic">{eventTitle}</span>{#if eventReason}&#32;&#8212; {eventReason}{/if}
       {:else}
         {m.notif_comment_text()}

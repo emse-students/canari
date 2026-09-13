@@ -196,6 +196,11 @@ class NotificationService: UNNotificationServiceExtension {
         Self.localized("notif.event.deleted.title", locale: locale),
         Self.localizedFormat("notif.event.deleted.body", arg, locale: locale)
       )
+    case "event_pending":
+      composed = (
+        Self.localized("notif.event.pending.title", locale: locale),
+        Self.localizedFormat("notif.event.pending.body", arg, locale: locale)
+      )
     default:
       NSLog("[CanariNSE] unknown contentKey=\(key) - keeping the server's own wording")
       composed = nil

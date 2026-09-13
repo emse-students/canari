@@ -7248,24 +7248,9 @@ deleting anything that is not a build cache.**
 ## The agenda, the admin console and four modals - eleven items from the user, 2026-09-12
 
 Handed over in one message (*"en vrac quelques items a faire quand tu peux"*). Each was traced to
-its code before being written here, so what follows is the WORK, not the question. Three of them
-are defects rather than wording: an event's dates can be moved after validation with no
-revalidation, any association admin can publish a school-wide holiday band, and the partner picker
-offers every association on the platform.
-
-### P2 - a validated event's dates can be moved and it stays validated
-
-`updateCalendarEvent` (`apps/social-service/src/associations/associations.service.ts:1588`) writes
-`title`, `kind`, `description`, `startsAt`, `endsAt`, `linkedFormId` and the co-owners, and never
-touches `ev.status`. So an association admin whose event was validated by the BDE can move it to
-another day, or to another hour, and it stays on the public agenda with nobody told.
-
-**The work.** A change to `startsAt` or `endsAt` on an event in `validated` status returns it to
-`pending`, clears `validatedAt` / `validatedBy`, and notifies the VALIDATE_EVENTS holders the way a
-fresh proposal does (`notifyValidatorsOfProposal`). A BDE or global-admin caller - the same
-`canValidate` the create path already computes - re-validates in place rather than demoting, since
-they are the authority the demotion would route to. The event's owner is told, so the demotion is
-not silent.
+its code before being written here, so what follows is the WORK, not the question. Two of them
+are defects rather than wording: any association admin can publish a school-wide holiday band, and
+the partner picker offers every association on the platform.
 
 ### P2 - "Pause / vacances" is offered to every proposer and gated nowhere
 
