@@ -182,6 +182,27 @@ Settings is where a reader changes how the app behaves. A list of what they have
 something they ARE, so it now sits directly under the associations they belong to, and the file is
 named for where it lives.
 
+### Fixed - the agenda's date refusals spoke English at a French reader, or said nothing useful
+
+`endsAt must be after startsAt` was thrown with nothing but that sentence, and the global agenda's
+deposit modal rendered it: `e instanceof Error ? e.message : <fallback>` picks the server's English
+every time, so the localized half was dead code. The association page's modal had the opposite
+failure - it showed "Impossible d'enregistrer" for all three date refusals, so the reader was told
+something went wrong and never which rule they broke.
+
+The server now classifies AT THE THROW. Three codes, because they are three different mistakes and a
+reader can only fix the one they made: a start that is not a date, an end that is not a date, and an
+end before its start - on both write paths, which check the same three things in two places.
+
+Both modals translate through ONE mapper, and **a code nobody has translated yet reads as the
+generic line rather than as the server's English**. That is the half that closes the class: the three
+sentences fix three messages, refusing to print `.message` is what stops the fourth.
+
+The two remaining `.message` renders in the agenda were load failures, closed by deleting the
+preference - the fallback each line already declared was the right answer. With those gone the
+calendar trees join `serverProse.test.ts`, the guard that owns this rule, which is what stops the
+next one.
+
 ### Changed - nine association pickers, nine answers to the same question, now one
 
 Nine controls let a user choose an association, and each decided for itself whether lists were shown

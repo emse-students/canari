@@ -31,11 +31,19 @@ const ROOT = process.cwd();
  *
  * A tree is added only once every file under it answers, which is why they arrive in batches
  * rather than one file at a time: a guard that owns half a directory is one a new file walks past.
+ *
+ * The calendar trees joined on 2026-09-13 with the endpoint they needed: the global agenda's three
+ * catch blocks all read `e.message`, and the one on the deposit modal is where "endsAt must be after
+ * startsAt" reached a French reader. The two load failures were closed by deleting the preference -
+ * the fallback each line already declared is the right answer - and the write failure by three
+ * codes at the throw (`CALENDAR_ERROR_CODES`) that both modals translate through one mapper.
  */
 const TREES = [
   'src/lib/components/associations',
+  'src/lib/components/calendar',
   'src/lib/components/shop',
   'src/routes/associations',
+  'src/routes/calendar',
   'src/routes/shop',
   'src/lib/components/posts',
   'src/lib/components/settings',
@@ -95,6 +103,7 @@ describe('no member-facing tree renders a server sentence', () => {
     expect(files).toContain('src/routes/shop/+page.svelte');
     expect(files).toContain('src/lib/components/posts/PostCard.svelte');
     expect(files).toContain('src/routes/lists/[slug]/edit/+page.svelte');
+    expect(files).toContain('src/routes/calendar/+page.svelte');
   });
 
   it.each(files.map((f) => [f]))('%s', (file) => {

@@ -41,6 +41,7 @@
     ShieldAlert,
     FileDown,
   } from '@lucide/svelte';
+  import { calendarErrorMessage } from '$lib/calendar/calendarErrors';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
   import {
@@ -104,8 +105,10 @@
         associationId: filterAssociationId || undefined,
         includePending: true,
       });
-    } catch (e) {
-      loadError = e instanceof Error ? e.message : m.common_generic_error_label();
+    } catch {
+      // The fallback this line already declared is the right answer; the server's own sentence is
+      // English and was winning the ternary every time.
+      loadError = m.common_generic_error_label();
       events = [];
     } finally {
       loading = false;
@@ -265,8 +268,8 @@
     try {
       await deleteAssociationCalendarEvent(target.associationId, id);
       await loadMonth();
-    } catch (e) {
-      loadError = e instanceof Error ? e.message : m.common_generic_error_label();
+    } catch {
+      loadError = m.common_generic_error_label();
     }
   }
 
@@ -376,7 +379,9 @@
       detailEvent = null;
       await loadMonth();
     } catch (e) {
-      depositError = e instanceof Error ? e.message : m.common_generic_error_label();
+      // The three date refusals now arrive as CODES, so the reader is told which rule they broke
+      // rather than being shown the server's English or a generic "something went wrong".
+      depositError = calendarErrorMessage(e, m.common_generic_error_label);
     } finally {
       depositSaving = false;
     }

@@ -46,6 +46,7 @@
   import CoOwnerPicker from '$lib/components/calendar/CoOwnerPicker.svelte';
   import { SvelteDate } from 'svelte/reactivity';
   import { pushHistoryOverlay, closeHistoryOverlayFromUi } from '$lib/utils/historyOverlayStack';
+  import { calendarErrorMessage } from '$lib/calendar/calendarErrors';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
 
@@ -400,7 +401,9 @@
       dismissEventModal(false);
       await loadMonth();
     } catch (e) {
-      formError = m.common_save_error();
+      // Was `common_save_error()` for every failure, which told the reader something went wrong and
+      // never which of the three date rules they broke.
+      formError = calendarErrorMessage(e, m.common_save_error);
     } finally {
       saving = false;
     }
