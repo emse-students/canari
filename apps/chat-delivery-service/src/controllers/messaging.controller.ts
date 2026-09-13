@@ -14,6 +14,7 @@ import type { Response } from 'express';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { MessagingService, SendMessageBody, AckMessagesBody } from '../services/messaging.service';
+import { sanitizeEpoch } from '../utils/sanitize';
 
 /** MLS message send, commit validation, welcome delivery, history, and ACK. */
 @Controller()
@@ -54,10 +55,7 @@ export class MessagingController {
     @Param('groupId') groupId: string,
     @Query('sinceEpoch') sinceEpochRaw?: string
   ) {
-    const sinceEpoch = Number.parseInt(sinceEpochRaw ?? '0', 10);
-    if (!Number.isFinite(sinceEpoch) || sinceEpoch < 0) {
-      throw new BadRequestException('sinceEpoch must be a non-negative integer');
-    }
+    const sinceEpoch = sanitizeEpoch(sinceEpochRaw, 'sinceEpoch');
     if (!authUserId) {
       throw new BadRequestException('missing x-user-id');
     }
