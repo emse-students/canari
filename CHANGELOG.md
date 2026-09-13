@@ -46,6 +46,46 @@ against the live members and adds what is missing, which answers a different que
 `messaging.routing-set-refill.spec.ts` asserts all five behaviours on all three doors - fifteen
 cases, run red first, three failing on exactly the log the silent blocks never wrote.
 
+### Fixed - a validated event's dates could move and it stayed on the public agenda
+
+`updateCalendarEvent` wrote seven columns and `status` was never one of them. So an association
+admin whose event had been approved by the BDE for a Tuesday could move it to the Saturday of the
+gala, or to another hour of a room already booked, and it stayed on the school's public agenda with
+nobody told. **The BDE validated a DATE; changing the date spends a validation that was never given
+for it.**
+
+A change to `startsAt` or `endsAt` on a `validated` event now returns it to `pending`, clears
+`validatedAt` / `validatedBy`, and tells the VALIDATE_EVENTS holders by the same route a fresh
+proposal takes - because that is what it now is. Without that last part the event would leave the
+public agenda for a queue nobody is told about, which is worse than the defect it replaces: the
+event was at least VISIBLE before.
+
+Three decisions are worth stating, because each has an obvious wrong answer.
+
+**The trigger is a date that MOVED, not a field that was SENT.** Both event modals submit every
+field they render, so keying off `dto.startsAt !== undefined` would demote an event whose author
+fixed a typo - putting every correction in front of the BDE and teaching it to approve without
+reading. The previous instants are read before any mutation and compared as milliseconds, which
+also survives `timestamptz` arriving as a `Date` on one path and a string on another.
+
+**Only the dates do it.** A title, a description, a poster or a linked form change nothing the BDE
+reasoned about when it said yes.
+
+**A caller who can validate re-validates in place.** A BDE or global admin is the authority the
+demotion would route to, so sending them their own request is a queue item nobody needs. The stamp
+still moves, because `validatedAt` must answer "when was THIS shape approved".
+
+The association's own proposers are told through a new `event_pending` notification - the sixth
+agenda type, and a deliberate addition rather than a `startsWith('event_')`, which its own docblock
+warns is how five types once spent their life printing English the server had composed. It is
+spelled in all ten places a push key lives: the union, the builder, the switch, both spec tables,
+both Android string tables and the Kotlin mapping, the Swift and ObjC++ mappings, and the four iOS
+`Localizable.strings`. `nativeStrings.test.ts` derives its cases from the union, so the parity is
+asserted rather than reviewed.
+
+`associations.service.revalidate-on-date-change.spec.ts` - 10 cases, five of them red against the
+previous method, including the two that must NOT demote (an unchanged date resent, and a
+title-only edit) and the two that must not resurrect (a pending and a rejected event).
 
 ### Removed - a seam kept open for a native await that was never owed, and three docblocks that promised it
 

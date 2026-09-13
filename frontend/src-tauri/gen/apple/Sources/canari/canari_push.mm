@@ -527,6 +527,11 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     *body = [NSString stringWithFormat:CanariLocalized(@"notif.event.deleted.body"), arg];
     return;
   }
+  if ([key isEqualToString:@"event_pending"]) {
+    *title = CanariLocalized(@"notif.event.pending.title");
+    *body = [NSString stringWithFormat:CanariLocalized(@"notif.event.pending.body"), arg];
+    return;
+  }
   NSLog(@"[CanariPush] unknown contentKey=%@ - keeping the server's own wording", key);
 }
 

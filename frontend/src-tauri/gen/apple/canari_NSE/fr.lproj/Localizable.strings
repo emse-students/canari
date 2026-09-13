@@ -45,3 +45,5 @@
 "notif.event.updated.body" = "« %1$@ » a été modifié par le BDE";
 "notif.event.deleted.title" = "Événement supprimé";
 "notif.event.deleted.body" = "« %1$@ » a été supprimé par le BDE";
+"notif.event.pending.title" = "Événement à revalider";
+"notif.event.pending.body" = "« %1$@ » doit être revalidé : ses dates ont changé";

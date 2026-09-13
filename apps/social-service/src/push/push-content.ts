@@ -32,7 +32,8 @@ export type PushContentKey =
   | 'event_validated'
   | 'event_rejected'
   | 'event_updated'
-  | 'event_deleted';
+  | 'event_deleted'
+  | 'event_pending';
 
 /**
  * One push's content, as data rather than prose.
@@ -182,7 +183,7 @@ export function eventProposedContent(actorName: string, eventTitle: string): Pus
 }
 
 /**
- * The four answers a calendar manager can give, one key each.
+ * The five answers a calendar manager can give, one key each.
  *
  * ONE KEY PER ANSWER RATHER THAN ONE KEY PLUS AN `action` ARGUMENT, because `arg` is defined as the
  * one piece of data that is NOT translatable and "validated" is a word. That is exactly how the
@@ -225,6 +226,21 @@ export function eventDeletedContent(actorName: string, eventTitle: string): Push
     arg: eventTitle,
     legacyTitle: 'Événement supprimé',
     legacyBody: `« ${eventTitle} » a été supprimé par le BDE`,
+  };
+}
+
+/**
+ * The fifth answer, and the only one a calendar manager does not give: a validated event whose
+ * DATES moved returns to the queue by itself, so the association is told its event has left the
+ * public agenda. Without this the demotion is visible only to whoever performed it.
+ */
+export function eventPendingContent(actorName: string, eventTitle: string): PushContent {
+  return {
+    key: 'event_pending',
+    actorName,
+    arg: eventTitle,
+    legacyTitle: 'Événement à revalider',
+    legacyBody: `« ${eventTitle} » doit être revalidé : ses dates ont changé`,
   };
 }
 

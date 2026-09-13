@@ -79,6 +79,18 @@ export interface ReviewerDocumentGroup {
   documents: ReviewerDocument[];
 }
 
+/**
+ * Milliseconds for a column TypeORM may hand back as a `Date` OR as a string, so two readings of
+ * the same instant compare equal. A `timestamptz` comes back as a `Date` through the driver and as
+ * a string through some raw paths, and `!==` on the mixed pair is true for values that are the
+ * same moment - which would demote an event nobody rescheduled.
+ */
+function toMillis(value: Date | string | null): number | null {
+  if (value === null || value === undefined) return null;
+  const d = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d.getTime();
+}
+
 /** CRUD, logo management, membership, and Stripe helpers for student associations. */
 @Injectable()
 export class AssociationsService {
@@ -1442,7 +1454,7 @@ export class AssociationsService {
     associationId: string,
     actorId: string,
     eventTitle: string,
-    action: 'validated' | 'updated' | 'deleted' | 'rejected',
+    action: 'validated' | 'updated' | 'deleted' | 'rejected' | 'pending',
     rejectionReason?: string
   ): Promise<void> {
     const members = await this.memberRepo.find({
@@ -1593,6 +1605,14 @@ ${rejectionReason}`
     const ev = await this.findCalendarEventForAssociation(eventId, associationId, canCrossAsso);
     if (!ev) throw new NotFoundException('Event not found');
 
+    // READ BEFORE WRITING. What returns a validated event to the queue is a date that actually
+    // MOVED, never a `startsAt` that merely appeared in the DTO: both modals submit every field
+    // they render, so keying off `dto.startsAt !== undefined` would demote an event whose author
+    // only fixed a typo in the title.
+    const wasValidated = ev.status === AssociationCalendarEventStatus.Validated;
+    const previousStartsAt = toMillis(ev.startsAt);
+    const previousEndsAt = toMillis(ev.endsAt);
+
     if (dto.title !== undefined) ev.title = dto.title.trim();
     if (dto.kind !== undefined) ev.kind = dto.kind;
     if (dto.description !== undefined) {
@@ -1618,6 +1638,37 @@ ${rejectionReason}`
       throw new BadRequestException('endsAt must be after startsAt');
     }
 
+    /**
+     * A VALIDATED EVENT WHOSE DATES MOVE IS A DIFFERENT EVENT, AND IT ASKS AGAIN.
+     *
+     * `status` was the one column this method never touched, so an association admin could have an
+     * event approved for a Tuesday and then move it to the Saturday of the gala - or to another
+     * hour of a room already booked - and it stayed on the public agenda with nobody told. The BDE
+     * validated a date; changing the date spends a validation that was never given.
+     *
+     * Only the DATES do this. A title, a description, a poster or a linked form change nothing the
+     * BDE reasoned about when it said yes, and demoting on those would turn every typo into a
+     * queue item and teach the validators to approve without reading.
+     *
+     * A caller who can validate RE-VALIDATES IN PLACE rather than demoting: they are the authority
+     * the demotion would route to, so sending them their own request is a queue item nobody needs.
+     * The stamp still moves, because `validatedAt` must answer "when was THIS shape approved".
+     */
+    const datesMoved =
+      toMillis(ev.startsAt) !== previousStartsAt || toMillis(ev.endsAt) !== previousEndsAt;
+    let demoted = false;
+    if (wasValidated && datesMoved) {
+      if (canCrossAsso) {
+        ev.validatedAt = new Date();
+        ev.validatedBy = callerOpts?.callerUserId ?? ev.validatedBy;
+      } else {
+        ev.status = AssociationCalendarEventStatus.Pending;
+        ev.validatedAt = null;
+        ev.validatedBy = null;
+        demoted = true;
+      }
+    }
+
     if (dto.linkedFormId !== undefined) {
       if (dto.linkedFormId === null || dto.linkedFormId === '') {
         ev.linkedFormId = null;
@@ -1639,6 +1690,27 @@ ${rejectionReason}`
     this.logger.debug(
       `Event updated: ${sanitizeLog(saved.id)} by ${sanitizeLog(callerOpts?.callerUserId)} (coOwners=${coOwners.length})`
     );
+    if (demoted) {
+      this.logger.debug(
+        `Event returned to pending after a date change: ${sanitizeLog(saved.id)} by ${sanitizeLog(callerOpts?.callerUserId)}`
+      );
+      // The same route a fresh proposal takes, because that is what this now is. Without it the
+      // event leaves the public agenda and lands in a queue nobody is told about - which is worse
+      // than the defect it replaces, the event having at least been VISIBLE before.
+      void this.notifyEventValidatorsOfProposal(
+        saved.associationId,
+        callerOpts?.callerUserId ?? saved.createdBy,
+        saved.title
+      );
+      // And the association's own proposers, because the one who moved the dates is rarely the
+      // only person counting on the event being on the agenda.
+      void this.notifyAssocAdminsOfEventAction(
+        saved.associationId,
+        callerOpts?.callerUserId ?? saved.createdBy,
+        saved.title,
+        'pending'
+      );
+    }
     // Notify asso admins when BDE modifies an event from another asso
     if (canCrossAsso && ev.associationId !== associationId && callerOpts?.callerUserId) {
       void this.notifyAssocAdminsOfEventAction(

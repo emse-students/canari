@@ -641,6 +641,38 @@ membership in that club sees nothing. The global agenda (`/calendar`) gates per 
 server rule, which is the only place that validator can act - deriving its gate from the other
 surface instead of from the server would have kept the right unusable.
 
+### A validation is spent on a DATE, so moving the date asks again
+
+`updateCalendarEvent` wrote seven columns and never `status`. An association admin could have an
+event approved for a Tuesday, move it to the Saturday of the gala, and keep it on the public agenda
+with nobody told - the BDE's yes was about a date it no longer describes.
+
+A `validated` event whose `startsAt` or `endsAt` MOVES therefore returns to `pending`, clears
+`validatedAt` / `validatedBy`, and re-enters the queue by the same route a fresh proposal takes
+(`notifyEventValidatorsOfProposal`). Three things decide that behaviour, and each is pinned by
+`associations.service.revalidate-on-date-change.spec.ts`:
+
+- **The trigger is a date that MOVED, not a field that was SENT.** Both modals submit every field
+  they render, so keying off `dto.startsAt !== undefined` would demote an event whose author fixed
+  a typo in the title - putting every correction in front of the BDE and teaching it to approve
+  without reading. The comparison is on INSTANTS (`toMillis`), because a `timestamptz` reaches this
+  method as a `Date` through the driver and as a string through raw paths, and `!==` on those two
+  forms is true for the same moment.
+- **Only the dates do it.** A title, a description or a linked form change nothing the BDE reasoned
+  about when it said yes. A `pending` or `rejected` event is untouched: there is no validation to
+  spend, and a second proposal notice for something already queued is noise.
+- **A caller who can validate re-validates in place.** `canCrossAsso` - the BDE/global-admin test
+  the create path already computes - means they ARE the authority the demotion would route to, so
+  sending them their own request is a queue item nobody needs. `validatedAt` still moves, because it
+  answers *when was THIS shape approved* rather than *when was some earlier shape approved*.
+
+**The demotion is not silent, and that is the half that makes it safe.** Without it the event leaves
+the public agenda for a queue nobody is told about - worse than the defect it replaces, the event
+having at least been visible before. The association's own admins get
+`notifyAssocAdminsOfEventAction(..., 'pending')`, which is the sixth key in `PushContentKey`
+(`event_pending`) and therefore owes a string in all six native tables
+([mobile](../frontend/mobile.md)).
+
 ## Redis events published
 
 The social-service publishes to `chat:channel_events`:
