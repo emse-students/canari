@@ -256,10 +256,11 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    empty screen still looks like a broken claim ([backlog](docs/wiki/backlog.md), [cotisations](docs/wiki/cotisations.md)).
 9. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
    [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
-10. **UX/RENDERING (user, 2026-09-12)** - Noto Color Emoji, and the server's English prose reaching
-    a French reader. The latter is a TREE COUNT, not a file count: seven member-facing trees plus the
-    agenda are closed and guarded by `serverProse.test.ts`; chat, graine, `routes/admin` and the
-    worker layers are not ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md) section 17).
+10. **UX/RENDERING - A FULL GRAPHICAL PASS IS OWED (user, 2026-09-13): every page, at 100 %, on a
+    phone width too.** Four things seen on the way are filed with a read diagnosis each, two of them
+    P2. Also open: Noto Color Emoji, and the server's English prose reaching a French reader - a TREE
+    count `serverProse.test.ts` settles by running, never a number quoted here, which went stale
+    ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md) section 17).
 11. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
     commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
 12. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract

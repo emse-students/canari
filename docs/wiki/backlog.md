@@ -5351,6 +5351,105 @@ Related but NOT the same item: in-conversation (chat) search is the entry above;
 social feed. MiGallery's `fuzzyScore`/`fuzzySearch` is the reference implementation the standing
 search requirement points at.
 
+## The graphical pass - every page at 100 %, and four things seen on the way (user, 2026-09-13)
+
+**The mandate, verbatim:** *"il faudra (re)faire une passe graphique aussi (tester toutes les pages,
+voir si tout s'affiche bien a 100%...)"*. Every page, at 100 % zoom, and on a phone width - not a
+sample. The four below are what the user happened to see; they are not the scope, they are the
+evidence that the scope is real. **The scale to work to is
+[design-reference](frontend/design-reference.md) - seven `--text-*` steps and FOUR radii - and no
+raw hex or px enters any of these.**
+
+**One fact these four share, and it decides three of them:** an association already HAS a colour.
+`Association.color` is a nullable hex on the DTO (`frontend/src/lib/associations/api.ts`), documented
+as *"Hex color for calendar display... Null -> frontend uses generateAvatarColor fallback"* - so
+there is both a stored colour and a deterministic fallback for every association that has none. It is
+used for the calendar and nowhere else. Nothing needs to be invented or migrated to colour the
+association surfaces.
+
+### P3 - the association tiles truncate the name they exist to show (user, 2026-09-13)
+
+Observed on `/associations`: `BDA - Bureau des ...`, `BDE - Bureau des E...`,
+`BDI - Bureau des In...`, `Mines, Etudes et Pr...`, and descriptions cut mid-clause
+(*"Dix, neuf, huit, sept, six, cinq, quatre, trois,"*). The tile is a fixed-height grid cell and the
+name gets one line of it.
+
+The user's ask, verbatim: *"on peut ameliorer l'agencement/la taille des tiles pour voir le nom des
+associations en entier, les descriptions etc. Un joli truc, auxquel tu peux meme ajouter la couleur
+de l'asso."* So: the full name, a readable description, and `Association.color` as the tile's accent.
+
+**A truncated name is not a layout preference, it is a tile that fails its one job** - the grid is
+how a member finds an association they cannot spell. Route: `frontend/src/routes/associations/+page.svelte`.
+
+### P3 - the association page is narrow, and on a phone most of its text is cut (user, 2026-09-13)
+
+*"Le fait que la page d'une association soit plutot etroite (encore plus sur mobile, ou la plupart des
+textes sont coupes) : on peut aerer, redimensionner pour homogeneiser les pages etc."* Observed on
+`/associations/bde`: the card column is far narrower than the viewport it sits in, and the
+Partenariats grid clips its own copy.
+
+**HOMOGENEITY IS THE ASK, so the deliverable is one width decision, not four pages nudged.** The
+association page, its tabs (`A propos`, `Agenda`, `Membres`, `Partenariats`) and the list page are
+the same surface and must share the same container. Route:
+`frontend/src/routes/associations/[slug]/+page.svelte`.
+
+**The partnership cards get their accent from the LOGO, with the association's colour as fallback**
+(the user: *"il pourrait etre pertinent d'utiliser la couleur du logo importe (attention au fond
+blanc des fois) comme couleur d'accentuation, en gardant la couleur de l'asso comme fallback"*). The
+warning is the substance: half the partner logos are artwork on a white plate, so a naive dominant
+colour returns white and the accent disappears. Whatever extracts it must REFUSE a near-white or
+near-grey answer and fall through to `Association.color` - and that refusal is the part a test pins,
+because a white accent is invisible rather than wrong-looking, and nobody reports it.
+
+### P2 - the quick reaction bar runs off the window on a short message, because only its VERTICAL axis is measured (user, 2026-09-13)
+
+Reported as *"La reaction sur un message court depasse de la fenetre (z-index ? Le panneau avec tous
+les emojis s'affiche bien lui)"*, with a screenshot of a `Coucou` bubble whose six-emoji strip is cut
+by the right edge of the window.
+
+**It is not z-index, and the user's own control case says so**: `MessageEmojiPicker` - the full panel -
+places correctly, and the two are different components.
+
+**Read off the source, owed one live confirmation.** `MessageBubbleToolbar.svelte` measures room
+carefully on ONE axis: an `$effect` compares `roomAbove` against the popover's height, against the
+scroller (`.chat-messages-scroll`) rather than the viewport because the scroller is what clips, and
+holds the popover invisible for the frame before the measurement exists. That work is right, and
+there is a spec for it (`MessageBubbleToolbar.placement.svelte.test.ts`). The HORIZONTAL axis has
+none of it: the quick bar's anchoring is the static `isOwn ? 'left-0' : 'right-0'`. For an own
+message the strip sits in the gutter LEFT of the bubble and the bar pins its left edge there and
+grows rightward - so the shorter the bubble, the closer that gutter is to the right edge of the
+window, and a seven-item pill runs straight off it. A long own message pushes the gutter left and
+hides the defect, which is why it reads as "short messages only".
+
+**The fix is the measurement that already exists, applied to the other axis, against the same
+clipper** - and the existing placement spec is the place it goes, because a popover that fits
+vertically and not horizontally is the same defect the file's own docblock describes: *"it reads as
+a layering fault and it is not one... it is simply not on screen."*
+
+### P2 - the GIF picker is a `fixed inset-0` modal that is not portalled, so in a post it is anchored to whatever transformed ancestor it lands in (user, 2026-09-13)
+
+*"Le selecteur de gif dans les posts qui fait des choses bizarres (ca peut juste etre un modal qui
+s'affiche par dessus le reste dans tous les contexte, pas besoin de fond fonce), et pas besoin de
+l'ancrer quelque part ca fait des choses bizarres, notamment sur mobile."*
+
+`GifPickerModal.svelte` is ONE component used from two places - `ChatComposer.svelte` and
+`PostComments.svelte` - and its root is `fixed inset-0 z-(--z-sheet)` with a `bg-black/45` backdrop.
+It is **not portalled**. `position: fixed` resolves against the viewport only while NO ancestor
+establishes a containing block, and a `transform`, `filter`, `backdrop-filter`, `perspective`,
+`contain` or `will-change` anywhere above it silently makes that ancestor the containing block
+instead. The composer sits near the root; a post's comment box sits inside the feed card. That is the
+whole difference between "works in chat" and "does weird things in a post", and it explains the
+screenshot exactly: a panel covering part of the page, a backdrop that does not reach the edges, and
+a worse result on a phone where the card is the whole width.
+
+**Two things are owed, and the second is the user's explicit preference:** portal the root to
+`<body>` so the modal is anchored to nothing in every context - the same reason
+`MessageMobileActions` is already portalled, named in `MessageBubbleToolbar`'s docblock - and drop
+the dark backdrop (*"pas besoin de fond fonce"*), keeping the click-to-close target.
+
+**A guard is owed with it**: this defect is invisible from the component and visible only from the
+call site, so what pins it is that the root is portalled, not that it says `fixed`.
+
 ## Composer and reactions
 
 ### P2 - the app draws emoji with the platform's font, and must draw ONE bundled font everywhere (decided 2026-08-23)
