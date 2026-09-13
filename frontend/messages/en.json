@@ -2466,8 +2466,6 @@
   "calendar_add_title": "Add to my calendar",
   "calendar_day_select_prompt": "Select a highlighted day on the calendar to see its events.",
   "calendar_day_no_events": "No events on this day.",
-  "calendar_day_choose_another": "Choose another day",
-  "calendar_day_all_month": "All month",
   "calendar_day_event_count": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],

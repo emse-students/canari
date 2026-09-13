@@ -2487,8 +2487,6 @@
   "calendar_add_title": "Ajouter à mon calendrier",
   "calendar_day_select_prompt": "Sélectionnez un jour coloré dans le calendrier pour voir les événements.",
   "calendar_day_no_events": "Aucun événement ce jour-là.",
-  "calendar_day_choose_another": "Choisir un autre jour",
-  "calendar_day_all_month": "Tout le mois",
   "calendar_day_event_count": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],
