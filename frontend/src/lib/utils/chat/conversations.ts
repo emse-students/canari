@@ -377,6 +377,92 @@ export function deriveConversationIdentity(
   return { conversationType: 'group', contactName: normalizedName, displayName: normalizedName };
 }
 
+/** What a site KNOWS about who a conversation is with - the shape {@link deriveConversationIdentity} returns. */
+export interface ConversationIdentity {
+  /** Omit when the site cannot tell; the builder then reads the id and falls back to `group`. */
+  conversationType?: 'direct' | 'group' | 'channel';
+  contactName: string;
+  displayName: string;
+  directPeerId?: string;
+}
+
+/** The one description of a conversation row, from which {@link buildConversationRow} makes it. */
+export interface ConversationRowSpec {
+  /** The map key AND `Conversation.id` - the MLS group id, or `channel_<id>` for a channel. */
+  id: string;
+  /** The only thing every site genuinely decides for itself. */
+  lifecycle: ConversationLifecycle;
+  identity: ConversationIdentity;
+  /**
+   * The row being replaced, when the site is refreshing rather than discovering.
+   *
+   * WHAT IT CARRIES IS PRESERVED, AND THAT IS NOT A CONVENIENCE. Six of the thirteen sites read an
+   * existing row for one field and dropped the rest by rebuilding around it; one of them reset
+   * `messages` to `[]` on every workspace hydration, which is a channel going blank in front of a
+   * user who was reading it.
+   */
+  existing?: Conversation;
+  /** Explicit `null` means "this conversation has no avatar"; absent means "this site does not know". */
+  imageMediaId?: string | null;
+  lastMessageAt?: number;
+  readWatermarks?: Conversation['readWatermarks'];
+  historyFloor?: Conversation['historyFloor'];
+}
+
+/**
+ * Builds the conversation row for a group this device has just learnt about.
+ *
+ * **THIRTEEN PLACES WROTE THIS OBJECT OUT BY HAND, AND THE TYPE HAS TWELVE FIELDS.** Boot restore,
+ * server discovery, the Welcome handler's early placeholder, the same handler's finished row, the
+ * `onWelcomeProcessed` fallback in `sessionAuth`, group creation, DM creation, the existing-server-DM
+ * path, the FCM in-memory merge, three channel builders in `useChannelWorkspaces` and one more in
+ * `ChatBackgroundService`. Every one of them agreed on `messages: []` and `mlsStateHex: null`, and
+ * disagreed about everything else - which is how a field can be declared, read, and never written.
+ *
+ * **`conversationType: 'channel'` was never written by anything.** All four channel builders left it
+ * undefined, so every reader's `conversationType ?? 'group'` classified a channel as a group. The
+ * cost is not cosmetic: the sidebar tile has a `#` branch that could not render, "add members",
+ * "rename" and "set an avatar" are each gated on `!== 'group'` with the comment *"DMs and channels
+ * cannot be invaded"* - and channels could. The id settles it here, once, for every site.
+ *
+ * **The site decides the LIFECYCLE and the IDENTITY, and nothing else.** Those are the two things
+ * that genuinely differ: a discovery placeholder is `pending` because no Welcome has landed, a
+ * created group is `active` because this device built it. Both travel as data. The defaults, the
+ * preservation of an existing row and the channel verdict are the same everywhere, so they are
+ * written once.
+ *
+ * An optional is either carried or ABSENT - never written as `undefined`. A reader that defaults
+ * `imageMediaId ?? null` and one that checks `'imageMediaId' in convo` must see the same row.
+ */
+export function buildConversationRow(spec: ConversationRowSpec): Conversation {
+  const { id, lifecycle, identity, existing } = spec;
+  const isChannel = isChannelConversationId(id);
+  const conversationType = isChannel ? 'channel' : (identity.conversationType ?? 'group');
+  // `??` WOULD BE WRONG HERE. `imageMediaId: null` is a site SAYING this conversation has no
+  // avatar, and `null ?? existing` silently restores the one it was replacing.
+  const imageMediaId = spec.imageMediaId !== undefined ? spec.imageMediaId : existing?.imageMediaId;
+  const lastMessageAt = spec.lastMessageAt ?? existing?.lastMessageAt;
+  const readWatermarks = spec.readWatermarks ?? existing?.readWatermarks;
+  const historyFloor = spec.historyFloor ?? existing?.historyFloor;
+  const directPeerId = identity.directPeerId ?? existing?.directPeerId;
+
+  return {
+    id,
+    contactName: identity.contactName,
+    name: identity.displayName,
+    messages: existing?.messages ?? [],
+    lifecycle,
+    mlsStateHex: null,
+    unreadCount: existing?.unreadCount ?? 0,
+    conversationType,
+    ...(directPeerId ? { directPeerId } : {}),
+    ...(imageMediaId !== undefined ? { imageMediaId } : {}),
+    ...(lastMessageAt !== undefined ? { lastMessageAt } : {}),
+    ...(readWatermarks !== undefined ? { readWatermarks } : {}),
+    ...(historyFloor !== undefined ? { historyFloor } : {}),
+  };
+}
+
 export interface ConversationListPresentation {
   conversationType: 'direct' | 'group';
   contactId: string;
@@ -723,30 +809,32 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
         : identity.conversationType === 'direct' && identity.directPeerId
           ? identity.directPeerId
           : identity.displayName;
-    ctx.conversations.set(meta.id, {
-      id: meta.id,
-      contactName:
-        identity.conversationType === 'direct' && identity.directPeerId
-          ? identity.directPeerId
-          : identity.contactName,
-      name: resolvedName,
-      messages: [],
-      lifecycle: meta.lifecycle,
-      mlsStateHex: null,
-      unreadCount: 0,
-      conversationType: prev?.conversationType ?? identity.conversationType,
-      directPeerId: prev?.directPeerId ?? identity.directPeerId,
-      imageMediaId: prev?.imageMediaId ?? null,
-      // Seed from DB so the sidebar can sort before messages are loaded.
-      lastMessageAt: meta.updatedAt,
-      // The conversation-level state, restored from the row it was written to. This seed is the
-      // mirror of `toConversationMeta` and has to carry everything that projection writes: a field
-      // persisted but never read back is worse than one that was never stored, because the write
-      // succeeds and the value is silently absent for the rest of the session - the unread recount
-      // below would then count messages this user has already read on another device.
-      readWatermarks: meta.readWatermarks,
-      historyFloor: meta.historyFloor,
-    });
+    ctx.conversations.set(
+      meta.id,
+      buildConversationRow({
+        id: meta.id,
+        lifecycle: meta.lifecycle,
+        identity: {
+          conversationType: prev?.conversationType ?? identity.conversationType,
+          contactName:
+            identity.conversationType === 'direct' && identity.directPeerId
+              ? identity.directPeerId
+              : identity.contactName,
+          displayName: resolvedName,
+          directPeerId: prev?.directPeerId ?? identity.directPeerId,
+        },
+        imageMediaId: prev?.imageMediaId ?? null,
+        // Seed from DB so the sidebar can sort before messages are loaded.
+        lastMessageAt: meta.updatedAt,
+        // The conversation-level state, restored from the row it was written to. This seed is the
+        // mirror of `toConversationMeta` and has to carry everything that projection writes: a field
+        // persisted but never read back is worse than one that was never stored, because the write
+        // succeeds and the value is silently absent for the rest of the session - the unread recount
+        // below would then count messages this user has already read on another device.
+        readWatermarks: meta.readWatermarks,
+        historyFloor: meta.historyFloor,
+      })
+    );
   }
 
   // Phase 2 - decrypt stored messages + replay remote history.

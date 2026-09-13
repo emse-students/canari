@@ -70,7 +70,10 @@
   import { isTauriRuntime } from '$lib/utils/openExternal';
   import { isMobileTauriRuntime } from '$lib/utils/appVersion';
   import { createPausableInterval } from '$lib/utils/backgroundPausableInterval';
-  import { resolveConversationListPresentation } from '$lib/utils/chat/conversations';
+  import {
+    buildConversationRow,
+    resolveConversationListPresentation,
+  } from '$lib/utils/chat/conversations';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
   import type { CallParticipant } from '$lib/services/CallService';
   import { notifNav } from '$lib/stores/notifNav.svelte';
@@ -684,14 +687,17 @@
           isPrivate,
         });
         if (!globalConvs.conversations.has(channelConversationId)) {
-          globalConvs.conversations.set(channelConversationId, {
-            id: channelConversationId,
-            contactName: channelConversationId,
-            name: (event.channelName || 'canal').toLowerCase(),
-            messages: [],
-            lifecycle: 'active',
-            mlsStateHex: null,
-          });
+          globalConvs.conversations.set(
+            channelConversationId,
+            buildConversationRow({
+              id: channelConversationId,
+              lifecycle: 'active',
+              identity: {
+                contactName: channelConversationId,
+                displayName: (event.channelName || 'canal').toLowerCase(),
+              },
+            })
+          );
         }
         // Without this the channel is registered but belongs to no community as far as the send
         // path is concerned, so the first message typed into it is refused until an app relaunch

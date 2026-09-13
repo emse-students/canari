@@ -1,4 +1,5 @@
 import {
+  buildConversationRow,
   findConversationKeyByGroupId,
   parseDirectPeerFromName,
   resolveDirectPeerId,
@@ -366,16 +367,19 @@ async function handleWelcome({
           ? (parseDirectPeerFromName(joinedGroupId, userId) ?? '')
           : '';
         const displayName = directPeerId || 'Groupe';
-        deps.conversations.set(joinedGroupId, {
-          id: joinedGroupId,
-          contactName: displayName,
-          name: displayName,
-          messages: [],
-          lifecycle: 'pending',
-          mlsStateHex: null,
-          conversationType: isDirectByPattern ? 'direct' : 'group',
-          ...(isDirectByPattern && directPeerId ? { directPeerId } : {}),
-        });
+        deps.conversations.set(
+          joinedGroupId,
+          buildConversationRow({
+            id: joinedGroupId,
+            lifecycle: 'pending',
+            identity: {
+              conversationType: isDirectByPattern ? 'direct' : 'group',
+              contactName: displayName,
+              displayName,
+              ...(isDirectByPattern && directPeerId ? { directPeerId } : {}),
+            },
+          })
+        );
         saveConversation(joinedGroupId).catch(() => {});
       }
 
@@ -1197,16 +1201,19 @@ async function upsertConversation(
     }
     conversations.set(newConvoKey, updated);
   } else {
-    conversations.set(newConvoKey, {
-      id: joinedGroupId,
-      contactName: displayName,
-      name: displayName,
-      messages: [],
-      lifecycle: 'active',
-      mlsStateHex: null,
-      conversationType: isDirect ? 'direct' : 'group',
-      ...(isDirect ? { directPeerId } : {}),
-    });
+    conversations.set(
+      newConvoKey,
+      buildConversationRow({
+        id: joinedGroupId,
+        lifecycle: 'active',
+        identity: {
+          conversationType: isDirect ? 'direct' : 'group',
+          contactName: displayName,
+          displayName,
+          ...(isDirect ? { directPeerId } : {}),
+        },
+      })
+    );
   }
 
   await saveConversation(newConvoKey).catch(() => {});

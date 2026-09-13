@@ -3,6 +3,7 @@ import type { Conversation } from '$lib/types';
 import { compareMessageOrder } from '$lib/utils/chat/messageOrder';
 import { mapStoredMessagesToChatMessages } from '$lib/utils/chat/history';
 import { shouldUpgradeMessage, mergeMessageUpgrade } from '$lib/utils/chat/messageMerge';
+import { buildConversationRow } from '$lib/utils/chat/conversations';
 
 /**
  * Merges FCM-cached messages into the in-memory conversation map.
@@ -21,13 +22,15 @@ import { shouldUpgradeMessage, mergeMessageUpgrade } from '$lib/utils/chat/messa
  * ID and no name, so a placeholder invented in this function would disagree with the row already in
  * the database. `consumeFcmCache` returns what it wrote for exactly that reason.
  *
- * The shape is deliberately the storage row's and no richer: `pending` lifecycle, the sender's name
- * as the label, no `conversationType` and no `directPeerId`. Two other places in the tree build an
- * in-memory placeholder - the Welcome handler in `sessionAuth` (`active`, after a real join) and
- * `setupMessageHandler` (which can parse a direct peer out of the group name) - and they mean
- * different things, so this is not a fourth copy of one fact but the third of three. What it must
- * match is the row `consumeFcmCache` just committed, so that what the user sees now is what a
- * restart would have shown them.
+ * **WHAT DIFFERS IS THE LIFECYCLE AND THE LABEL, AND NOTHING ELSE DID.** This docblock used to
+ * claim the three in-memory placeholders "mean different things, so this is not a fourth copy of one
+ * fact but the third of three". They were the third of THIRTEEN, they meant one thing - the row for
+ * a group this device has just learnt about - and what separated them was drift, not meaning.
+ * {@link buildConversationRow} is the shape; `pending` and the sender's name are this site's own,
+ * because the group is not synced yet and a `StoredMessage` carries no name.
+ *
+ * What it must match is the row `consumeFcmCache` just committed, so that what the user sees now is
+ * what a restart would have shown them.
  *
  * @param placeholders what `consumeFcmCache` wrote, keyed by group id. Absent for callers that
  *   have no cache behind them, in which case a missing conversation is still a drop - but a LOGGED
@@ -58,16 +61,12 @@ export function mergeFcmMessagesIntoConversations(
         );
         continue;
       }
-      convo = {
+      convo = buildConversationRow({
         id: convoId,
-        name: placeholder.name,
-        contactName: placeholder.name,
-        messages: [],
         lifecycle: 'pending',
-        mlsStateHex: null,
-        unreadCount: 0,
+        identity: { contactName: placeholder.name, displayName: placeholder.name },
         lastMessageAt: placeholder.updatedAt,
-      };
+      });
       conversations.set(convoId, convo);
     }
 

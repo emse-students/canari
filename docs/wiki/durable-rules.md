@@ -758,6 +758,19 @@ The link-preview pipeline, the SSRF guard, the favicon cascade and the undici se
 
 ## Contracts the compiler does not check
 
+- **A FIELD NOTHING WRITES IS A FIELD EVERY READER GUESSES, AND THEY WILL ALL GUESS THE SAME WRONG
+  THING.** `Conversation.conversationType` has allowed `'channel'` for as long as channels have
+  existed, and not one of the THIRTEEN places that built a conversation row ever wrote it - so every
+  reader's `conversationType ?? 'group'` answered "group" for a channel. A sidebar branch that could
+  not render, and three destructive controls gated on `!== 'group'` under the comment *"DMs and
+  channels cannot be invaded"*, which channels therefore could. Nothing was wrong at any single site:
+  the defect was that there were thirteen. **When an object has more fields than every site
+  remembers, the object gets a BUILDER, and what the sites legitimately differ in is passed to it as
+  DATA** - here the lifecycle and the identity, two answers out of twelve fields. The corollary is
+  that a row being REPLACED is handed to the builder whole rather than picked apart for one field:
+  six of the thirteen read the old row for its unread count, and one of those wrote `messages: []`
+  back over everything else.
+  [architecture](frontend/architecture.md#a-conversation-row-has-one-builder-and-the-site-decides-only-the-lifecycle-and-the-identity)
 - **A STATED INVARIANT WITH NO SINGLE WRITER BEHIND IT IS A COMMENT, AND WRITING IT IN BOLD DOES NOT
   MAKE IT TRUE.** `DeviceGroupMembership`'s docblock said, in bold, that `activateDeviceMembership`
   was the only thing that wrote `active` and the only writer of the Redis routing set. It was added

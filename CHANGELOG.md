@@ -11,6 +11,29 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a channel was never a channel, and hydrating a community emptied the one you were reading
+
+A conversation row carries a type - direct, group, or channel - and thirteen different places in the
+app built that row by hand. Not one of the four that build a CHANNEL ever filled the type in. Every
+piece of code that reads it falls back to "group" when it is missing, so as far as the whole app was
+concerned there were no channels at all.
+
+Three things followed. Salons showed a generic group avatar in the sidebar instead of the `#` that
+was written for them and could never appear. "Add members", "Rename" and "Set an avatar" are each
+refused for a channel, by a check that reads the type - so all three were offered on channels,
+including the invite flow whose own comment says channels cannot be invaded. And the row restored
+from disk on the next launch had the same gap, because it was rebuilt the same way.
+
+**The second one is the one that was visible.** Creating a community loads the salons the server made
+with it, and that loop rebuilt each conversation row from scratch - reading the row it was replacing
+for its unread badge, and writing an empty message list back over everything else. A channel someone
+was reading went blank, and stayed blank until a reload.
+
+There is now one builder. A site says what it knows - whether the conversation is `pending` or
+`active`, and who it is with - and the row's shape, the channel verdict and everything the previous
+row was carrying are decided in one place. A spec drives nine of the real entry points over a single
+table and asserts what actually landed, and a source check refuses a fourteenth builder.
+
 ### Fixed - a Welcome published to a frozen phone was never followed by anything
 
 `sendMessage` and `sendWelcome` both persist a row and then hand it to a device: publish on
