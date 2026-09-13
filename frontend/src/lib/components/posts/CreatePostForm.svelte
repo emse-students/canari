@@ -37,7 +37,7 @@
     type Association,
     type AssociationCalendarEvent,
   } from '$lib/associations/api';
-  import { groupAssociationsForSelect, listOptionLabel } from '$lib/associations/selectGroups';
+  import AssociationOptions from '$lib/components/associations/AssociationOptions.svelte';
   import { isGlobalAdmin } from '$lib/stores/user';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import { trimComposerText } from '$lib/utils/markdown/composerText';
@@ -93,8 +93,6 @@
   let postAsAssociations = $derived(
     isGlobalAdmin() ? myAssociations : myAssociations.filter((a) => a.isAdmin)
   );
-  /** Same set split into Associations / Listes groups for the picker. */
-  let postAsGroups = $derived(groupAssociationsForSelect(postAsAssociations));
 
   // --- UI state ---
   let publishing = $state(false);
@@ -411,24 +409,10 @@
               <option value="" class="bg-white font-medium dark:bg-zinc-900"
                 >{m.post_create_personal_profile_label()}</option
               >
-              {#if postAsGroups.assos.length > 0}
-                <optgroup label={m.post_create_associations_group_label()}>
-                  {#each postAsGroups.assos as a (a.id)}
-                    <option value={a.id} class="bg-white font-medium dark:bg-zinc-900"
-                      >{a.name}</option
-                    >
-                  {/each}
-                </optgroup>
-              {/if}
-              {#if postAsGroups.lists.length > 0}
-                <optgroup label={m.post_create_lists_group_label()}>
-                  {#each postAsGroups.lists as a (a.id)}
-                    <option value={a.id} class="bg-white font-medium dark:bg-zinc-900"
-                      >{listOptionLabel(a)}</option
-                    >
-                  {/each}
-                </optgroup>
-              {/if}
+              <AssociationOptions
+                associations={postAsAssociations}
+                optionClass="bg-white font-medium dark:bg-zinc-900"
+              />
             </select>
             <div
               class="text-text-muted pointer-events-none absolute inset-y-0 right-3.5 flex items-center transition-colors group-focus-within:text-amber-500"
