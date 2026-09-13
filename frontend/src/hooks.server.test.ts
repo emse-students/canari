@@ -91,6 +91,6 @@ describe('handleError separates a correct answer from a failure', () => {
       message: 'Not Found',
     } as never);
 
-    expect(String(warn.mock.calls[0][0])).not.toContain('[');
+    expect(String(warn.mock.calls[0][0])).not.toContain('\x1b[');
   });
 });

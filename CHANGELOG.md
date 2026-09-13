@@ -11,6 +11,25 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a test that could never fail, because it was looking for something no file contains
+
+One of the checks that runs before every release makes sure the Android app does not ask for a
+permission it should not have while calling is switched off. It was finding no permissions at all -
+not the one it was looking for, not any of the others - and reporting that as a pass. Re-adding the
+permission on purpose was not enough to make it complain.
+
+The cause is a single invisible character. A `\b` in the pattern had become a literal backspace
+through a text edit, which no diff, review, editor or search shows: the character is simply not
+drawn, and tools that print it helpfully print it back as `\b`. A pattern containing one matches
+nothing, and nothing reports that it matched nothing.
+
+The same thing had already happened once, in 2026-09-08, and the check written afterwards covered the
+two files that had been burnt. Three more had happened since, outside it - two of them in the
+frontend's own test suite, which ran green the whole time. That check now reads every file in the
+repository rather than a list, including files not yet added, and a sweep of all 2287 of them turned
+up and repaired: one test that was passing vacuously, one that had quietly lost a third of what it
+looked for, and six places where working code was written in bytes nobody could read.
+
 ### Changed - the association and promo-list cards show the whole name, and wear the association's colour
 
 The wall of cards on "Associations" and on "Listes" cut every name off at one line, mid-word, with no
@@ -26,6 +45,7 @@ the bottom of a row instead of floating at different heights.
 
 The two pages drew this card five times between them, and every copy had the same two faults. There
 is now one card, so the next change to it is one change.
+
 
 ### Fixed - the reaction bar ran off the side of the window on a short message
 
@@ -3461,7 +3481,7 @@ character, naming file, line and content when one appears.
 
 **And the first version of THAT guard did not work either**, which is the more useful half. It tested
 `regex.source`, which is specified to return text that parses back to the same regex - so a raw 0x08
-comes out as the escape `` and no control character is ever there to find. It was proven by
+comes out as the four-character escape `\u0008` and no control character is ever there to find. It was proven by
 re-introducing the defect and watching the guard pass. A guard that cannot see the thing it was
 written for is worse than none: it turns an open question into a settled one. The bytes on disk are
 the only place this is visible, so that is what is read.

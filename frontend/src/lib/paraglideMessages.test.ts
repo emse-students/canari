@@ -87,7 +87,7 @@ describe('the translation files', () => {
     for (const locale of LOCALES) {
       for (const [key, value] of Object.entries(load(locale))) {
         if (!key.startsWith('asso_calendar_co_owner')) continue;
-        if (patternsOf(value).some((p) => /partenaire|partnership|partner/i.test(p))) {
+        if (patternsOf(value).some((p) => /partenaire|partnership|partner\b/i.test(p))) {
           offenders.push(`${locale}:${key}`);
         }
       }
