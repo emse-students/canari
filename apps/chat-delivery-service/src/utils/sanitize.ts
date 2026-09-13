@@ -213,3 +213,39 @@ export function sanitizeMessageIdList(messageIds: unknown): string[] {
 export function hashJoinToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex');
 }
+
+/**
+ * THE ONE POLICY FOR A REPLAY'S `sinceEpoch`, FOR BOTH ROUTES THAT ACCEPT ONE.
+ *
+ * Commit replay is served twice - `GET mls/commits/:groupId` for a JWT-bearing client, and
+ * `POST mls/push/commits` for the background push path, which cannot mint a JWT and authenticates
+ * with its PushSecret instead. They call the SAME `getCommitsSince`, and they disagreed about what
+ * the epoch means:
+ *
+ * - the JWT route ran `Number.parseInt`, so it REFUSED a negative with 400 - and silently accepted
+ *   `5abc` as 5, and `3.9` as 3;
+ * - the push route ran `Math.max(0, Math.floor(...))`, so a negative or non-numeric epoch became
+ *   **zero**, and the caller was handed the whole log from the beginning without being told.
+ *
+ * The second is the one that bites, and it is a FALLBACK: "I could not tell you where I am" is not
+ * "I am at epoch 0", and conflating them answers a question nobody asked with a reply the device
+ * cannot use - a device that cannot read its own epoch has no state to apply those commits to.
+ * Every caller in this repository already refuses to ask: the Android service and both iOS paths
+ * check `epoch >= 0` and abort before the request, so the clamp protected nothing and only made the
+ * two routes answer differently.
+ *
+ * **An epoch is REQUIRED**, on both. A replay from the beginning is a request a caller can make by
+ * sending `0`; an absent field is a caller who did not say.
+ */
+export function sanitizeEpoch(value: unknown, fieldName: string): number {
+  // The query string carries it as text and the JSON body as a number, so both are read here rather
+  // than each route pre-converting and re-introducing the divergence one layer up.
+  // `Number('')` is 0, so an empty `?sinceEpoch=` would otherwise become a replay from the
+  // beginning - the exact conflation this function exists to refuse.
+  const text = typeof value === 'string' ? value.trim() : null;
+  const n = text === null ? value : text === '' ? NaN : Number(text);
+  if (typeof n !== 'number' || !Number.isInteger(n) || n < 0) {
+    throw new BadRequestException(`${fieldName} must be a non-negative integer`);
+  }
+  return n;
+}

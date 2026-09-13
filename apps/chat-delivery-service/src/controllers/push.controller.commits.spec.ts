@@ -86,23 +86,9 @@ describe('PushController - getCommitsPush (PushSecret commit catch-up)', () => {
     await expect(controller.getCommitsPush('', body)).rejects.toBeInstanceOf(ForbiddenException);
     expect(getCommitsSince).not.toHaveBeenCalled();
   });
-
-  it('clamps a negative or non-numeric sinceEpoch to 0', async () => {
-    pushTokenRepo.findOne.mockResolvedValue({
-      pushSecret: 'bb757689c39373a6cac9ef6ba55616c6249d7500ca4d443f1130c4766453a412',
-    });
-    getCommitsSince.mockResolvedValue(canned);
-
-    await controller.getCommitsPush('PushSecret sekret', {
-      ...body,
-      sinceEpoch: -5,
-    });
-    expect(getCommitsSince).toHaveBeenLastCalledWith('g1', 0, 'u1');
-
-    await controller.getCommitsPush('PushSecret sekret', {
-      ...body,
-      sinceEpoch: NaN,
-    });
-    expect(getCommitsSince).toHaveBeenLastCalledWith('g1', 0, 'u1');
-  });
 });
+
+// The `sinceEpoch` cases that used to live here asserted the clamp - a negative or non-numeric
+// epoch becoming 0 - which was the half of this route that disagreed with its JWT twin. Both routes
+// now share one policy, and it is asserted over BOTH of them in `commitReplay.onePolicy.spec.ts`.
+// This file keeps what is only true of this route: the PushSecret.

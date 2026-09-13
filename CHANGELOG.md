@@ -49,6 +49,26 @@ conflict marker in any tracked `.md`, and no heading twice in `backlog.md`, whos
 written once by hand and deleted the day they ship. The duplicate is the half that matters: a marker
 is obvious, where a resurrected entry reads as work still owed and sends the next reader to redo
 something already done.
+### Fixed - two commit-replay routes disagreed about what an epoch is, and one of them answered zero
+
+Commit replay is served twice: `GET mls/commits/:groupId` for a JWT-bearing client, and
+`POST mls/push/commits` for the background push path, which cannot mint a JWT and authenticates with
+its PushSecret instead. They call the same code and meant different things by the caller's epoch.
+The JWT route refused a negative with 400; the PushSecret twin ran `Math.max(0, ...)`, so a negative
+or non-numeric epoch became **zero** and the caller was handed the entire log from the beginning
+without being told. The JWT route had a quieter version of the same fault: `parseInt` read `5abc` as
+5 and `3.9` as 3.
+
+The clamp was a fallback, not a kindness. *I could not tell you where I am* is not *I am at epoch
+0*, and the reply is one the device cannot use anyway - a device that cannot read its own epoch has
+no state to apply those commits to. Every caller in the repository already checks `epoch >= 0` and
+aborts before asking, so the clamp protected nothing and only made the two routes answer
+differently.
+
+One policy now, `sanitizeEpoch`: a non-negative integer or 400, on both. A replay from the beginning
+is still a request any caller can make, by sending `0` - what is refused is not saying. The spec
+drives BOTH routes over one table, because a fusion asserted only on the shared helper is one a new
+caller can walk past by parsing its own input first.
 
 ### Changed - four event modals become one form, and what each surface may decide becomes a prop
 

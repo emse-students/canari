@@ -27,7 +27,7 @@ import { GroupMember } from '../entities/group-member.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import type { Response } from 'express';
-import { sanitizeQueryValue, sanitizeOptionalQueryValue } from '../utils/sanitize';
+import { sanitizeEpoch, sanitizeQueryValue, sanitizeOptionalQueryValue } from '../utils/sanitize';
 import { acquireAddLock, releaseAddLock } from '../utils/add-lock';
 import { MessagingService } from '../services/messaging.service';
 
@@ -709,10 +709,7 @@ export class PushController {
     await this.verifyPushSecretAuth(authHeader, userId, deviceId);
 
     const groupId = sanitizeQueryValue(body.groupId ?? '', 'groupId');
-    const sinceEpoch =
-      typeof body.sinceEpoch === 'number' && Number.isFinite(body.sinceEpoch)
-        ? Math.max(0, Math.floor(body.sinceEpoch))
-        : 0;
+    const sinceEpoch = sanitizeEpoch(body.sinceEpoch, 'sinceEpoch');
 
     return this.messagingService.getCommitsSince(groupId, sinceEpoch, userId);
   }

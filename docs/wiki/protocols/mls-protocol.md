@@ -166,6 +166,14 @@ kick gets. The current device has no delete button at all.
 | POST | `/api/mls/push/commits` | PushSecret-authed ordered commits `sinceEpoch` (background in-memory catch-up) |
 | GET | `/api/mls/history/:groupId` | Redis Stream history (incremental) |
 
+**`sinceEpoch` IS REQUIRED ON BOTH REPLAY ROUTES, AND THEY SHARE ONE POLICY** (`sanitizeEpoch`):
+a non-negative integer, or 400. The two disagreed until then - the JWT route refused a negative
+while the PushSecret twin clamped it to **zero** and replayed the whole log - and that clamp was a
+fallback rather than a kindness: *I could not tell you where I am* is not *I am at epoch 0*, and a
+device that cannot read its own epoch has no state to apply those commits to. Every caller already
+checks `epoch >= 0` and aborts before asking. A replay from the beginning is still a request any
+caller can make, by sending `0`.
+
 ### Background push commit catch-up (never-opened mobile)
 
 A device added to a group advances the epoch via a commit. A member whose mobile has not been opened
