@@ -603,7 +603,7 @@ export interface IMlsService {
    * {@link ensureDistributionGroup}: without it, a community or salon that leaves this device keeps
    * delivering seeds to it.
    */
-  forgetDistributionGroup(scope: DistributionScope): string | null;
+  forgetDistributionGroup(scope: DistributionScope): Promise<string | null>;
   /**
    * The same, named by the GROUP rather than by the scope. Returns whether anything was held.
    *
@@ -613,7 +613,7 @@ export interface IMlsService {
    * forgetting is precisely one where the two have drifted apart. The server names the group; this
    * takes that name.
    */
-  forgetDistributionGroupById(groupId: string): boolean;
+  forgetDistributionGroupById(groupId: string): Promise<boolean>;
   /** The distribution group registered for `scope`, or null when none is. */
   distributionGroupFor(scope: DistributionScope): string | null;
   /** Every scope this device currently holds a distribution group for. */

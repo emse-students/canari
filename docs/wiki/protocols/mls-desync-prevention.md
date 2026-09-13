@@ -105,6 +105,39 @@ only a member holding the tree can mint a base, so there is nothing for a reset 
   that can only subtract availability - and bug C3 in
   [mls-protocol](mls-protocol.md) records its last real use being removed as a fix.
 
+### 6bis. Client - there is ONE way to stop holding a group, and it is durable
+
+`dropGroupState` ([`utils/chat/dropGroupState.ts`](../../../frontend/src/lib/utils/chat/dropGroupState.ts))
+is the only thing that makes `holdsGroupState` answer false. It is the mirror of section 6: one
+entry point in, one out.
+
+`forgetGroup` itself was called at SEVENTEEN sites and two things that belong to the drop were
+written by hand beside it, so both drifted:
+
+| What the drop owes | Sites that did it, before |
+| --- | --- |
+| An encrypted checkpoint - `forget_group` mutates the OpenMLS store and the snapshot is written separately (section 7) | 10 of 17 |
+| Clearing the epoch gap - `isInEpochGap` is a claim about HELD state lagging, and a device holding nothing has no epoch to be behind | 2 of 17 |
+
+The checkpoint is the half that cost something. `recoverForkedGroup` forgot a forked tree, asked to
+be re-added and wrote nothing: a page killed between the two came back holding the fork it had just
+abandoned, and the re-Welcome it had asked for was then ignored as idempotent, because the group was
+local again. The gap entry is the quieter half: left behind, it refuses to encrypt in the group the
+device has just re-joined cleanly (`canSendInGroup`), and keeps `anyEpochGapArmed` true, which is
+what holds the sync watchdog on its fine tick for the rest of the session.
+
+**`checkpoint` states a fact, not a preference.** `'awaited'` - the state is in the snapshot and the
+caller waits for the snapshot without it. `'deferred'` - the same, from a holder of the MLS client
+mutex, where awaiting a whole encrypted save (1.7 s on a phone) would put it in front of every other
+MLS operation; the write is the same call, started and left to the session persister.
+`'never-persisted'` - the state was built in memory during this very call and no checkpoint has run
+since, which is `externalJoin` discarding a refused commit: there is nothing durable to undo, and a
+save would cost one per failed attempt.
+
+`dropGroupState.onePolicy.test.ts` drives five PATHS over one table - the exported entry points a
+caller really uses - because a path that keeps its own `forgetGroup` never reaches the shared
+function, and no test of the shared function can see it.
+
 ### 7. Client - persistence write-if-newer (Web/IndexedDB)
 
 - **Monotonic snapshot version** (**`utils/hex.ts`**) — the encrypted MLS checkpoint is written under a **write-if-newer** guard. Every serialized snapshot is tagged (`tagMlsSnapshot`) with an increasing version at the synchronous capture moment; the version rides with the bytes via a `WeakMap` (`propagateMlsSnapshotVersion` across the plain→encrypted step) so the off-thread Argon2 encryption cannot reorder it. **`saveMlsStateEncrypted`** does an IDB read-modify-write and refuses any blob whose version is not strictly newer than the stored **`MLS_STATE_VERSION_KEY`**. This stops a slow encrypted flush (`mlsStatePersister`, worker Argon2) from overwriting a fresher concurrent write (`generateKeyPackage`, main-thread Argon2) — which would silently regress the persisted epoch on the next reload. The in-memory counter is reseeded from the stored version at load (`seedMlsSnapshotSeq`) so a fresh session never emits a version below what is already on disk. Only a plain integer is stored — no groupId/epoch at rest, so privacy is unchanged. Web-only: Tauri persists to the filesystem under its own `mls_bin_write_lock`.

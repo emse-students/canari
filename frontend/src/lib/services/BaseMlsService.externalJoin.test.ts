@@ -216,7 +216,7 @@ describe('BaseMlsService.externalJoin', () => {
     // A refused commit is discarded with `forgetGroup`; writing it to disk would durably persist a
     // group this device is not in, and the next load would trust it.
     expect(persistMlsStructuralCheckpoint).not.toHaveBeenCalled();
-    expect(ctx.forgetGroup).toHaveBeenCalledWith('g');
+    expect(ctx.forgetGroup).toHaveBeenCalledWith('g', 0);
   });
 
   it('discards and retries with a fresher GroupInfo on an epoch-race reject, then succeeds', async () => {
@@ -232,7 +232,7 @@ describe('BaseMlsService.externalJoin', () => {
 
     expect(await externalJoin(ctx, 'g')).toEqual({ joined: true });
     // The rejected external commit cannot be cleared -> the group is discarded before the retry.
-    expect(ctx.forgetGroup).toHaveBeenCalledWith('g');
+    expect(ctx.forgetGroup).toHaveBeenCalledWith('g', 0);
     expect(ctx.delivery.fetchGroupInfo).toHaveBeenCalledTimes(2);
     expect(ctx.mergePendingCommit).toHaveBeenCalledTimes(1);
   });
@@ -394,7 +394,7 @@ describe('BaseMlsService.externalJoin', () => {
     expect(ctx.delivery.submitCommit).toHaveBeenCalledTimes(1);
     // The staged external commit still goes - it cannot be cleared, and a pending one left unmerged
     // breaks every later operation on the group.
-    expect(ctx.forgetGroup).toHaveBeenCalledWith('g');
+    expect(ctx.forgetGroup).toHaveBeenCalledWith('g', 0);
     expect(ctx.mergePendingCommit).not.toHaveBeenCalled();
   });
 });

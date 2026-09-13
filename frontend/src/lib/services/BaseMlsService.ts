@@ -72,6 +72,7 @@ import type {
   DistributionGroupInfoTransport,
   ExternalJoinOutcome,
 } from '$lib/mls-client/IMlsService';
+import { dropGroupState } from '$lib/utils/chat/dropGroupState';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { commitPendingHistoryMarks, noteFrameConsumed } from '$lib/utils/chat/history';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
@@ -2758,15 +2759,18 @@ export abstract class BaseMlsService implements IMlsService {
    *
    * Both halves or neither: forgetting the tree while leaving the registration would leave
    * `distributionGroupFor` naming a group this device no longer holds, which is the exact state
-   * `distributionEpochFor` exists to refuse. The MLS state still has to be checkpointed by the
-   * caller, which knows the device key.
+   * `distributionEpochFor` exists to refuse.
+   *
+   * ASYNC BECAUSE THE DROP IS: dropping local MLS state is one operation
+   * ({@link dropGroupState}) and it ends with a durable checkpoint, which is what this used to
+   * leave to the caller and what half its callers forgot.
    *
    * @returns the group that was left, or null when this device held none for that community.
    */
-  forgetDistributionGroup(scope: DistributionScope): string | null {
+  async forgetDistributionGroup(scope: DistributionScope): Promise<string | null> {
     const groupId = this.distributionGroupFor(scope);
     if (!groupId) return null;
-    this.forgetDistributionGroupById(groupId);
+    await this.forgetDistributionGroupById(groupId);
     return groupId;
   }
 
@@ -2783,10 +2787,13 @@ export abstract class BaseMlsService implements IMlsService {
    *
    * @returns whether this device held anything under that id
    */
-  forgetDistributionGroupById(groupId: string): boolean {
+  async forgetDistributionGroupById(groupId: string): Promise<boolean> {
     const held = holdsGroupState(this, groupId) || this.knownDistributionGroups.has(groupId);
     if (!held) return false;
-    this.forgetGroup(groupId);
+    await dropGroupState(this, groupId, {
+      reason: 'distribution group left',
+      checkpoint: 'awaited',
+    });
     this.distributionScopeByGroup.delete(groupId);
     // BOTH, OR THE PREDICATE OUTLIVES THE GROUP: a set entry left behind would go on answering
     // "distribution group" for state this device no longer holds, and the sweep would go on
@@ -3119,7 +3126,12 @@ export abstract class BaseMlsService implements IMlsService {
         // still dropped, because an external commit cannot be cleared and a pending one left
         // unmerged breaks every later operation on it - and if the server DID accept the commit we
         // never saw acknowledged, its base is now stale and a holder's republish is what fixes it.
-        this.forgetGroup(joined.groupId);
+        await dropGroupState(this, joined.groupId, {
+          reason: 'the commit gate could not be reached',
+          // Built in memory during this very call and never checkpointed: there is nothing
+          // durable to undo, and a save here would cost one per failed attempt.
+          checkpoint: 'never-persisted',
+        });
         console.warn(
           `[MLS] externalJoin could not reach the commit gate for ${short}... (base ${gi.baseEpoch}) -` +
             ` nothing is claimed about membership:`,
@@ -3178,7 +3190,12 @@ export abstract class BaseMlsService implements IMlsService {
       // REFUSED, and the server said WHY - both fields used to be dropped and the line called every
       // refusal an epoch race. An external commit cannot be cleared, so the group goes; the next
       // pass re-reads the base and exits on the stale-base fact above if nobody republished.
-      this.forgetGroup(joined.groupId);
+      await dropGroupState(this, joined.groupId, {
+        reason: 'the server refused the external commit',
+        // Built in memory during this very call and never checkpointed: there is nothing
+        // durable to undo, and a save here would cost one per failed attempt.
+        checkpoint: 'never-persisted',
+      });
       console.warn(
         `[MLS] externalJoin REFUSED for ${joined.groupId.slice(0, 8)}... (base ${gi.baseEpoch},` +
           ` reason ${validation.reason ?? 'unspecified'}, group at ${validation.currentEpoch ?? '?'})` +
@@ -3264,7 +3281,12 @@ export abstract class BaseMlsService implements IMlsService {
       } catch (e) {
         // The group exists locally and nobody can join it: that is worse than not having created
         // it, because the next call would find it in `getLocalGroups` and return early for ever.
-        this.forgetGroup(groupId);
+        await dropGroupState(this, groupId, {
+          reason: 'the base could not be published, so nobody could ever join',
+          // Built in memory during this very call and never checkpointed: there is nothing
+          // durable to undo, and a save here would cost one per failed attempt.
+          checkpoint: 'never-persisted',
+        });
         console.warn(
           `[GRAINE] publishing the base for ${groupId.slice(0, 8)}... failed - group discarded:`,
           String(e).slice(0, 120)
@@ -3276,7 +3298,12 @@ export abstract class BaseMlsService implements IMlsService {
 
       // Lost the race: another device published first and its base is what everyone else will join
       // from. Ours would fork the community in two.
-      this.forgetGroup(groupId);
+      await dropGroupState(this, groupId, {
+        reason: 'lost the first-publish race',
+        // Built in memory during this very call and never checkpointed: there is nothing
+        // durable to undo, and a save here would cost one per failed attempt.
+        checkpoint: 'never-persisted',
+      });
       console.log(
         `[GRAINE] lost the first-publish race for ${groupId.slice(0, 8)}... - joining the published base instead`
       );

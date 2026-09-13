@@ -94,8 +94,8 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
       // registration together. Delegating to `forgetGroup` here keeps the assertion below a
       // statement about the tree actually being forgotten rather than about which method was called
       // on the way to it.
-      forgetDistributionGroupById: vi.fn((groupId: string) => {
-        forgetGroup(groupId);
+      forgetDistributionGroupById: vi.fn(async (groupId: string) => {
+        forgetGroup(groupId, 0);
         return true;
       }),
       // `g-orphan` is absent from the server list AND from `dm_groups`: a real phantom, which is
@@ -141,7 +141,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
     expect(onGroupMissing).not.toHaveBeenCalledWith('g-in-wasm');
     // Group absent from server -> forgotten, tree and distribution registration together
     expect(mls.forgetDistributionGroupById).toHaveBeenCalledWith('g-orphan');
-    expect(mls.forgetGroup).toHaveBeenCalledWith('g-orphan');
+    expect(mls.forgetGroup).toHaveBeenCalledWith('g-orphan', 0);
     // No direct sendWelcomeRequest (onGroupMissing is provided)
     expect(mls.sendWelcomeRequest).not.toHaveBeenCalled();
     expect(log).toHaveBeenCalledWith(expect.stringContaining('Connected to network!'));
@@ -227,7 +227,7 @@ describe('initializeConnection (realistic connect + membership sync)', () => {
     });
 
     // Deleted group and in WASM -> forgetGroup
-    expect(mls.forgetGroup).toHaveBeenCalledWith('g-deleted');
+    expect(mls.forgetGroup).toHaveBeenCalledWith('g-deleted', 0);
     // No welcome_request for a deleted group
     expect(mls.sendWelcomeRequest).not.toHaveBeenCalled();
     // onGroupDeletedRemotely is called to notify the UI

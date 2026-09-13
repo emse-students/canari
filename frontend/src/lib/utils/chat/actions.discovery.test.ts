@@ -37,10 +37,11 @@ function makeMls(overrides: Partial<IMlsService> = {}): IMlsService {
     // every path through `ensureConversationForServerGroup` that creates a row calls it.
     notifyConversationAvailable: vi.fn(),
     registerDistributionGroup: vi.fn(),
-    forgetDistributionGroupById: vi.fn((groupId: string) => {
+    forgetDistributionGroupById: vi.fn(async (groupId: string) => {
       const local = (built.getLocalGroups as () => string[])();
       if (!local.includes(groupId)) return false;
-      (built.forgetGroup as (id: string) => void)(groupId);
+      (built.forgetGroup as (id: string, minEpoch: number) => void)(groupId, 0);
+      await (built.persistCheckpoint as () => Promise<void>)();
       return true;
     }),
     ...overrides,
@@ -49,13 +50,13 @@ function makeMls(overrides: Partial<IMlsService> = {}): IMlsService {
 }
 
 describe('forgetMlsGroupIfPresent', () => {
-  it('calls forgetGroup only when WASM knows the group', () => {
+  it('calls forgetGroup only when WASM knows the group', async () => {
     const mlsService = makeMls({
       getLocalGroups: vi.fn().mockReturnValue(['g1']),
     });
-    expect(forgetMlsGroupIfPresent(mlsService, 'g1')).toBe(true);
-    expect(mlsService.forgetGroup).toHaveBeenCalledWith('g1');
-    expect(forgetMlsGroupIfPresent(mlsService, 'missing')).toBe(false);
+    expect(await forgetMlsGroupIfPresent(mlsService, 'g1')).toBe(true);
+    expect(mlsService.forgetGroup).toHaveBeenCalledWith('g1', 0);
+    expect(await forgetMlsGroupIfPresent(mlsService, 'missing')).toBe(false);
   });
 });
 
@@ -118,7 +119,7 @@ describe('purgeOrphanGroup', () => {
       groupId: 'g1',
     });
 
-    expect(mlsService.forgetGroup).toHaveBeenCalledWith('g1');
+    expect(mlsService.forgetGroup).toHaveBeenCalledWith('g1', 0);
     // The forget has to reach disk, whatever "disk" means on this platform - which is exactly why
     // the assertion is on the checkpoint and not on `saveState`, whose result web still has to store.
     expect(mlsService.persistCheckpoint).toHaveBeenCalledWith();
@@ -379,7 +380,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
       log: vi.fn(),
     });
 
-    expect(mlsService.forgetGroup).toHaveBeenCalledWith('phantom-mls');
+    expect(mlsService.forgetGroup).toHaveBeenCalledWith('phantom-mls', 0);
     // The forget has to reach disk, whatever "disk" means on this platform - which is exactly why
     // the assertion is on the checkpoint and not on `saveState`, whose result web still has to store.
     expect(mlsService.persistCheckpoint).toHaveBeenCalledWith();

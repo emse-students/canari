@@ -51,6 +51,34 @@ hands every candidate to `purgeOrphanGroups`, which is the only thing that remov
 spec drives all three PATHS over one table, because a path that deletes a key itself is exactly what
 a test of the shared function walks past.
 
+### Fixed - a device stops holding a group in one way, and the next load no longer undoes it
+
+`forgetGroup` - the one call that makes this device stop holding a conversation's MLS state - was
+made at seventeen places, and what each did around it was written out by hand. Two things belong to
+the drop itself and neither survived being copied.
+
+**The checkpoint.** Forgetting mutates the OpenMLS store, whose encrypted snapshot is written
+separately, so a drop nobody checkpoints is undone by the next load. Seven of the seventeen wrote
+none, and four of those discard a group built in memory during that very call, where there is
+genuinely nothing durable to undo - now stated rather than left to the reader to work out. Of the
+three that remain, the one that cost something is the fork recovery: it forgot a diverged tree,
+asked a member
+to re-add it, and wrote nothing - so a page closed in between came back holding the fork it had
+just abandoned, and the Welcome it had asked for was then ignored as redundant, because the group
+was local again. The device stayed on the wrong branch, and nothing said so.
+
+**The epoch gap.** "This device is behind the group's epoch" is a claim about state it HOLDS, and a
+device holding nothing has no epoch to be behind. Fifteen of the seventeen left the entry behind.
+It then refuses to encrypt in the very group the device has just re-joined cleanly, and keeps the
+five-second sync watchdog awake for the rest of the session.
+
+There is now one `dropGroupState`, and every path goes through it: forget at the floor that path
+means, clear what described the state, checkpoint. The one real difference travels as a flag that
+states a fact rather than a preference - a group built in memory during a failed external join was
+never in the snapshot, so there is nothing to undo and no save is owed. The spec drives five PATHS
+over one table, because a path that keeps its own forget is exactly what a test of the shared
+function walks past.
+
 ### Changed - a group ends in three places, and now it ends the same way in all three
 
 `DELETE mls/groups/:groupId`, the internal retirement of a scope's distribution group, and the DM

@@ -223,7 +223,7 @@ describe('joining on first use', () => {
     expect(await ensure(ctx, WS, REF_FRESH)).toEqual({ joined: true });
     // Keeping it would fork the community: two MLS groups under one id, each holding half the
     // seeds, with nothing on either side ever reporting it.
-    expect(ctx.forgetGroup).toHaveBeenCalledWith('g-1');
+    expect(ctx.forgetGroup).toHaveBeenCalledWith('g-1', 0);
     expect(ctx.externalJoin).toHaveBeenCalledWith('g-1');
   });
 
@@ -234,7 +234,7 @@ describe('joining on first use', () => {
     expect(await ensure(ctx, WS, REF_FRESH)).toEqual({ joined: false, reason: 'unreachable' });
     // A group held locally that nobody can join is worse than no group: the next call would find
     // it in `getLocalGroups` and return early, for ever.
-    expect(ctx.forgetGroup).toHaveBeenCalledWith('g-1');
+    expect(ctx.forgetGroup).toHaveBeenCalledWith('g-1', 0);
   });
 });
 

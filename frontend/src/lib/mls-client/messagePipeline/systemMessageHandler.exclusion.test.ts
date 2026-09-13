@@ -10,7 +10,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
   const conversations = new Map<string, any>();
   conversations.set('g1', { id: 'g1', lifecycle: 'active', messages: [] });
   return {
-    mlsService: { forgetGroup: vi.fn() },
+    mlsService: { forgetGroup: vi.fn(), persistCheckpoint: vi.fn().mockResolvedValue(undefined) },
     storage: null,
     userId: 'me',
     deviceKeyB64: 'device-key',
@@ -27,7 +27,6 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     convo: { id: 'g1', lifecycle: 'active', messages: [] },
     convoKey: 'g1',
     senderNorm: 'admin',
-    persistMlsStateNow: vi.fn(),
     ...overrides,
   };
 }
@@ -39,9 +38,10 @@ describe('handleSystemEvent - memberRemoved (self-exclusion)', () => {
     const ctx = makeCtx({ senderNorm: 'admin', userId: 'me' });
     await handleSystemEvent('memberRemoved', { targetUser: 'me' }, ctx as any);
 
-    // WASM forget (can no longer decrypt future epochs) + persistence.
-    expect(ctx.mlsService.forgetGroup).toHaveBeenCalledWith('g1');
-    expect(ctx.persistMlsStateNow).toHaveBeenCalled();
+    // WASM forget (can no longer decrypt future epochs) + persistence, which `dropGroupState`
+    // owns: the checkpoint is part of the drop rather than a line each caller remembers.
+    expect(ctx.mlsService.forgetGroup).toHaveBeenCalledWith('g1', 0);
+    expect(ctx.mlsService.persistCheckpoint).toHaveBeenCalled();
     // System banner displayed, conversation marked `removed` and saved.
     expect(ctx.addMessageToChat).toHaveBeenCalledWith(
       'system',

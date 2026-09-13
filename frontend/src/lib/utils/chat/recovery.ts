@@ -10,6 +10,7 @@ import { reconcileGroup } from './historyReconcile';
 import { pendingGroupExitIds } from './pendingGroupExits';
 import { ensureConversationForServerGroup } from './serverGroupConversation';
 import { retireConversation } from './conversations';
+import { dropGroupState } from './dropGroupState';
 import { holdsGroupState } from './groupUsability';
 
 /**
@@ -145,7 +146,13 @@ async function purgePhantomConversation(groupId: string, deps: RecoveryDeps): Pr
   const entry = findByGroupId(deps.conversations, groupId);
   if (entry?.[1].lifecycle === 'removed') return false; // kept until manual local deletion
   const mutated = holdsGroupState(deps.mlsService, groupId);
-  if (mutated) deps.mlsService.forgetGroup(groupId);
+  if (mutated) {
+    await dropGroupState(deps.mlsService, groupId, {
+      reason: 'phantom conversation purged',
+      checkpoint: 'awaited',
+      log: deps.log,
+    });
+  }
   if (entry) {
     await purgeLocalConversationRecord({
       conversations: deps.conversations,
@@ -701,8 +708,15 @@ export async function recoverForkedGroup(
 ): Promise<void> {
   deps.log(`[FORK] ${groupId.slice(0, 8)}... local state forked behind server - forget + re-add`);
   // minEpoch = known server epoch: rejects a stale re-Welcome from a diverged branch
-  // (a commit queued at the old epoch must not re-fork us).
-  deps.mlsService.forgetGroup(groupId, minEpoch);
+  // (a commit queued at the old epoch must not re-fork us). Awaited BEFORE the re-add is asked for:
+  // this used to checkpoint nothing at all, so a page killed between the two came back holding the
+  // fork it had just abandoned, and the re-Welcome it had asked for was then ignored as idempotent.
+  await dropGroupState(deps.mlsService, groupId, {
+    reason: 'local state forked behind the server',
+    minEpoch,
+    checkpoint: 'awaited',
+    log: deps.log,
+  });
   await requestReAdd(groupId, deps);
 }
 
@@ -754,8 +768,11 @@ export async function recoverRosterDisagreement(
       ' - forgetting the tree the server has no leaf for, then re-entering recovery'
   );
   if (holdsGroupState(deps.mlsService, groupId)) {
-    deps.mlsService.forgetGroup(groupId);
-    await persistMlsStateAfterMutation(deps.mlsService, deps.userId, deps.deviceKeyB64, deps.log);
+    await dropGroupState(deps.mlsService, groupId, {
+      reason: 'the server has no leaf for the tree we hold',
+      checkpoint: 'awaited',
+      log: deps.log,
+    });
   }
   await requestReAdd(groupId, deps);
 }

@@ -263,7 +263,7 @@ async function joinDistributionGroup(
     log(
       `[GRAINE] ${scopeLabel(scope)}: this device holds the distribution group but the group holds NO row for it (${roster?.length ?? 0} device(s) for this user) - the local group is stale, rejoining`
     );
-    staleForgotten = mlsService.forgetDistributionGroupById(ref.groupId);
+    staleForgotten = await mlsService.forgetDistributionGroupById(ref.groupId);
   }
 
   const outcome = await mlsService.ensureDistributionGroup(scope, ref);

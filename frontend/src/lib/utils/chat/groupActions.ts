@@ -8,6 +8,7 @@ import type { Conversation } from '$lib/types';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
 import { pinEntries } from '$lib/stores/pinStore.svelte';
 import { buildUserGroupSyncIndex, isGroupEligibleForMlsRecovery } from './groupSyncEligibility';
+import { dropGroupState } from './dropGroupState';
 import { forgetGroupReconciliation } from './historyReconcile';
 import { historyRangeStart, isWithinHistoryRange } from './historyWindow';
 import { cachedHistoryStateKey } from './historyStateKey';
@@ -134,7 +135,7 @@ export async function deleteGroupAndBroadcast(params: {
   deviceKeyB64: string;
   log?: (msg: string) => void;
 }): Promise<void> {
-  const { mlsService, groupId, userId, deviceKeyB64, log } = params;
+  const { mlsService, groupId, userId, log } = params;
 
   // 1. Notify peers via MLS BEFORE server deletion.
   // Encryption requires WASM state (group must be local),
@@ -164,21 +165,16 @@ export async function deleteGroupAndBroadcast(params: {
     serverExitFailure = { error: e };
   }
 
-  // 3. Forget the group locally - after sending the message (encryption requires MLS state).
-  // Without this, the group stays in the deleter's WASM state and keeps appearing
-  // in getLocalGroups(), triggering phantom recovery attempts.
-  try {
-    mlsService.forgetGroup(groupId);
-  } catch {
-    /* non-blocking */
-  }
+  // 3. Drop the local state - after sending the message (encryption requires MLS state). Without
+  // this, the group stays in the deleter's WASM state and keeps appearing in getLocalGroups(),
+  // triggering phantom recovery attempts. The checkpoint is awaited, because the caller is told the
+  // conversation is gone and a reload must not bring it back.
+  await dropGroupState(mlsService, groupId, { reason: 'deleted here', checkpoint: 'awaited', log });
 
   // 4. Forget any outstanding reconciliation state for this conversation - per-conversation state
   // may not outlive the conversation, and the group we have just deleted cannot answer anything.
+  // NOT part of the drop: every other drop keeps the conversation and expects to re-join it.
   forgetGroupReconciliation(groupId);
-
-  // 5. Persist MLS state (forgetGroup modified the WASM tree)
-  await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
 
   // AND ONLY NOW. Every local step above has run, so the caller gets the failure with the purge
   // already done - which is what lets it keep the owed exit without keeping the conversation.
@@ -309,7 +305,7 @@ export async function leaveGroupAndBroadcast(params: {
   userId: string;
   deviceKeyB64: string;
 }): Promise<void> {
-  const { mlsService, groupId, userId, deviceKeyB64 } = params;
+  const { mlsService, groupId, userId } = params;
 
   // 1. Notify BEFORE server deletion (WASM must be intact to encrypt).
   await notifyMembershipChange(mlsService, groupId, 'memberLeft', { userId });
@@ -324,14 +320,9 @@ export async function leaveGroupAndBroadcast(params: {
     serverExitFailure = { error: e };
   }
 
-  // 3. Forget the local WASM state.
-  try {
-    mlsService.forgetGroup(groupId);
-  } catch {
-    /* non-blocking */
-  }
-
-  await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64);
+  // 3. Drop the local state. Awaited, for the reason `deleteGroupAndBroadcast` gives: the user has
+  // been told they left, and a reload must not put them back in a group they can no longer read.
+  await dropGroupState(mlsService, groupId, { reason: 'left by us', checkpoint: 'awaited' });
 
   // The local exit is complete either way; whether the SERVER performed its half is the caller's
   // to classify, and a 403/404 is one of the answers it reads as done.
@@ -367,18 +358,18 @@ export async function persistMlsStateAfterMutation(
  * "this carries seeds" about state this device no longer holds - and the reconciliation sweep,
  * which spares a seed carrier by design, would spare that entry on every later load for ever.
  * `forgetDistributionGroupById` drops the pair, and for a group registered as nothing it is exactly
- * `forgetGroup` with the same held-check in front of it (`minEpoch` defaults to 0, which is what
- * this call always passed).
+ * a {@link dropGroupState} with the same held-check in front of it.
  *
- * @returns true when the group was dropped (caller should persist MLS state).
+ * @returns true when the group was dropped. The MLS state is already durable by then - the drop
+ *   checkpoints - so this answers "did anything change", not "is a save owed".
  */
-export function forgetMlsGroupIfPresent(
+export async function forgetMlsGroupIfPresent(
   mlsService: IMlsService,
   groupId: string,
   log?: (msg: string) => void
-): boolean {
+): Promise<boolean> {
   try {
-    if (!mlsService.forgetDistributionGroupById(groupId)) return false;
+    if (!(await mlsService.forgetDistributionGroupById(groupId))) return false;
     log?.(`[MLS] forgetGroup ${groupId} (absent from server)`);
     return true;
   } catch (e) {
@@ -424,7 +415,7 @@ export async function purgeOrphanGroup(params: {
   log?: (msg: string) => void;
 }): Promise<void> {
   const { mlsService, userId, deviceKeyB64, groupId, log, ...uiParams } = params;
-  const mlsChanged = forgetMlsGroupIfPresent(mlsService, groupId, log);
+  const mlsChanged = await forgetMlsGroupIfPresent(mlsService, groupId, log);
   if (mlsChanged) {
     await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
   }

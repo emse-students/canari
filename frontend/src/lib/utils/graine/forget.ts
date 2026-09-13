@@ -1,5 +1,4 @@
 import { isGraineReady, requireGraineRuntime, forgetWorkspaceGraineState } from './runtime';
-import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
 import { forgetWorkspaceRepairState } from './repair';
 import { forgetGraineChannelMirror } from './graineMirror';
 
@@ -34,8 +33,7 @@ export async function forgetCommunityGraine(workspaceId: string): Promise<number
     return 0;
   }
 
-  const { storage, deviceKeyB64, userId, mlsService } =
-    requireGraineRuntime('forgetCommunityGraine');
+  const { storage, deviceKeyB64, mlsService } = requireGraineRuntime('forgetCommunityGraine');
 
   // THE MLS GROUP GOES FIRST, and it is the one thing this function used to leave behind. Seeds,
   // maps and the mirror are what this device HELD; the distribution group is what keeps FEEDING it
@@ -47,17 +45,18 @@ export async function forgetCommunityGraine(workspaceId: string): Promise<number
   // every private salon it could read - still fed, still committing, in a community it has left.
   // Enumerated from the MLS service rather than from the channel list, because the channel list is
   // read out of a store this purge is about to empty.
-  const leftGroups = mlsService
+  const scopes = mlsService
     .distributionScopes()
-    .filter((scope) => scope.workspaceId === workspaceId)
-    .map((scope) => mlsService.forgetDistributionGroup(scope))
-    .filter((groupId): groupId is string => groupId !== null);
+    .filter((scope) => scope.workspaceId === workspaceId);
+  // SEQUENTIALLY, not `Promise.all`: each drop ends in a checkpoint, and the persister merges
+  // concurrent flushes rather than ordering them - two communities left at once would race for the
+  // snapshot version.
+  const leftGroups: string[] = [];
+  for (const scope of scopes) {
+    const groupId = await mlsService.forgetDistributionGroup(scope);
+    if (groupId !== null) leftGroups.push(groupId);
+  }
   if (leftGroups.length > 0) {
-    // Not persisted here and forgotten: the next load would restore the group from the checkpoint
-    // and this device would be back in a community it left.
-    await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, (message) =>
-      console.info(message)
-    );
     console.info(
       `[GRAINE] left ${leftGroups.length} distribution group(s) of community ${workspaceId.slice(0, 8)}: ` +
         leftGroups.map((id) => id.slice(0, 8)).join(', ')

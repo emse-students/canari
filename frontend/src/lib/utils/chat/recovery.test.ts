@@ -495,7 +495,7 @@ describe('recoverRosterDisagreement', () => {
 
     // The forget is what makes the seam reachable at all - without it requestReAdd returns at its
     // WASM guard, which is the whole defect.
-    expect(mls.forgetGroup).toHaveBeenCalledWith('g-stuck');
+    expect(mls.forgetGroup).toHaveBeenCalledWith('g-stuck', 0);
     // And recovery actually ran: this device is owed nothing, so it serves itself.
     expect(mls.externalJoin).toHaveBeenCalledWith('g-stuck');
   });
@@ -510,7 +510,7 @@ describe('recoverRosterDisagreement', () => {
 
     await recoverRosterDisagreement('g-stuck', deps);
 
-    expect(mls.forgetGroup).toHaveBeenCalledWith('g-stuck');
+    expect(mls.forgetGroup).toHaveBeenCalledWith('g-stuck', 0);
     // A pending seat with a Welcome queued is not ours to external-join: two parties would write
     // the same leaf, which is the GRP-4 kick this discriminator exists to prevent.
     expect(mls.externalJoin).not.toHaveBeenCalled();

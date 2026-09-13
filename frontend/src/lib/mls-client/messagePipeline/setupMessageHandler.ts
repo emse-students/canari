@@ -35,6 +35,7 @@ import {
   readLocalMembership,
   retireIfEvicted,
 } from '$lib/utils/chat/eviction';
+import { dropGroupState } from '$lib/utils/chat/dropGroupState';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 export type { MessageHandlerDeps } from './deps';
 
@@ -343,7 +344,13 @@ async function handleWelcome({
       // anyway (its KeyPackage was consumed at the original join), and there is no state left to
       // protect from a fork.
       if (readmittedAfterEviction) {
-        mlsService.forgetGroup(terminalId);
+        // Deferred: this runs under the MLS mutex, and the Welcome installing the replacement is
+        // the very next statement.
+        await dropGroupState(mlsService, terminalId, {
+          reason: 'readmitted after an eviction',
+          checkpoint: 'deferred',
+          log,
+        });
       }
       // processWelcome returns the effective MLS groupId (may differ from the delivery envelope).
       // Fall back to the envelope groupId if WASM returns undefined (should not happen).
@@ -463,7 +470,6 @@ async function handleWelcome({
                       convo,
                       convoKey: joinedGroupId,
                       senderNorm: msg.sender,
-                      persistMlsStateNow: () => statePersister.persistNow(),
                       deliveryMeta: undefined,
                     });
                   }
@@ -495,8 +501,12 @@ async function handleWelcome({
         noMatchKpFailures.delete(target);
         if (!target) return null;
         log(`[WELCOME] GroupAlreadyExists pour ${target.slice(0, 8)}… - forget storage + re-join`);
-        mlsService.forgetGroup(target);
-        statePersister.persistNow();
+        // Deferred: under the MLS mutex. The clean re-join is deferred past the lock as well.
+        await dropGroupState(mlsService, target, {
+          reason: 'GroupAlreadyExists - storage held a group memory did not',
+          checkpoint: 'deferred',
+          log,
+        });
         return { kind: 'readd', target };
       }
       if (err.includes('NoMatchingKeyPackage')) {
@@ -893,7 +903,6 @@ async function handleKnownGroup({
         convo: conversations.get(convoKey) ?? convo,
         convoKey,
         senderNorm: sender,
-        persistMlsStateNow: () => statePersister.persistNow(),
         deliveryMeta,
       });
     }
@@ -965,14 +974,16 @@ async function handleKnownGroup({
       // re-Welcome is honoured (not ignored as idempotent) and we rejoin at the current epoch;
       // message history is backfilled by the history bundle.
       if (rungOneIsExhausted || now - since > EPOCH_GAP_ESCALATION_MS) {
-        clearEpochGap(groupId);
         log(
           rungOneIsExhausted
             ? `[GAP] ${groupId.slice(0, 8)}… rung-1 is exhausted (the server cannot supply the commits) - forget + welcome_request now, not in ${EPOCH_GAP_ESCALATION_MS / 1000}s`
             : `[GAP] ${groupId.slice(0, 8)}… frozen behind >${EPOCH_GAP_ESCALATION_MS / 1000}s and rung-1 replay failed - forget + welcome_request`
         );
-        mlsService.forgetGroup(groupId);
-        statePersister.persistNow();
+        await dropGroupState(mlsService, groupId, {
+          reason: 'frozen behind the group epoch - forget + welcome_request',
+          checkpoint: 'deferred',
+          log,
+        });
         startRecovery(groupId); // forget done → re-Welcome honoured (group no longer local)
       }
       return true;
@@ -989,9 +1000,11 @@ async function handleKnownGroup({
       log(
         `[MLS] LOST frame for ${convoKey.slice(0, 8)}… from ${sender}: generation too far ahead of our sender ratchet - we missed too many of their frames to catch up (${err.slice(0, 100)})`
       );
-      clearEpochGap(groupId);
-      mlsService.forgetGroup(groupId);
-      statePersister.persistNow();
+      await dropGroupState(mlsService, groupId, {
+        reason: 'sender generation too far ahead to catch up',
+        checkpoint: 'deferred',
+        log,
+      });
       startRecovery(groupId);
       return true;
     }

@@ -475,7 +475,7 @@ export async function discoverMissingGroups(params: {
         log(`[DISCOVERY] MLS state kept for ${groupId.slice(0, 8)}… - ${fate.reason}`);
         continue;
       }
-      if (forgetMlsGroupIfPresent(mlsService, groupId, log)) mlsMutated = true;
+      if (await forgetMlsGroupIfPresent(mlsService, groupId, log)) mlsMutated = true;
     }
     if (mlsMutated) {
       await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
