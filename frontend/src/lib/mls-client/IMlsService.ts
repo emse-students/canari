@@ -567,7 +567,7 @@ export interface IMlsService {
    * called after every commit (a new group's first member-add is itself a commit) so a member lacking
    * state can self-join. [[Phase 4]]
    */
-  refreshGroupInfo(groupId: string): Promise<void>;
+  refreshGroupInfo(groupId: string): Promise<{ stored: boolean; baseEpoch: number } | null>;
   /**
    * Attempts to (re)join `groupId` via an external commit built from the stored GroupInfo, without a
    * peer Welcome (self-service recovery). The outcome is a TYPE, not a boolean: see
