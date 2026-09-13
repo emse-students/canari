@@ -200,6 +200,11 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
         ctx.getUserId(),
         cb.saveConversation
       ),
+    // The two halves `recordEviction` owes: the notice in the thread, and the durable row behind
+    // the banner. Neither reached the outbox before, so a queue killed by an eviction left a red
+    // bubble, no explanation, and a conversation that read as live again after a reload.
+    addMessageToChat: cb.addMessageToChat,
+    saveConversation: cb.saveConversation,
     uploadMedia: async (media: NonNullable<import('$lib/db').OutboxEntry['media']>) => {
       const { MediaService } = await import('$lib/media');
       const token = await getToken();

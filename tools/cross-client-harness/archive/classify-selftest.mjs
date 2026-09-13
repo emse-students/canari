@@ -597,6 +597,25 @@ const CASES = [
     '[14:10:28] [EVICT] Removed from 4ca35caf… by a Remove commit - conversation retired',
     'stateChanges',
   ],
+  // THE OTHER THREE EVIDENCES THAT REACH THE SAME DISPOSITION, pinned one by one because the rule
+  // enumerates them rather than globbing: the exclusion announced by its author, a frame that
+  // arrived after the commit, and a membership check reading a commit already applied. All three
+  // used to be written out at their own sites, and two of them retired nothing at all.
+  [
+    'log',
+    '[14:10:28] [EVICT] Removed from 4ca35caf… by an exclusion its author announced - conversation retired',
+    'stateChanges',
+  ],
+  [
+    'log',
+    '[14:10:28] [EVICT] Removed from 4ca35caf… by a Remove commit a frame for the group arrived after - conversation retired',
+    'stateChanges',
+  ],
+  [
+    'log',
+    '[14:10:28] [EVICT] Removed from 4ca35caf… by a Remove commit this device had already applied - conversation retired',
+    'stateChanges',
+  ],
   [
     'log',
     '[14:10:28] [RUST::WARN] Evicted from group 4ca35caf-1f2e-4c3d-8a9b-0e1d2c3b4a59: a Remove commit naming this device was applied at epoch 4 - the group is now inactive and nothing further can be sent',
@@ -692,6 +711,21 @@ const CASES = [
   [
     'log',
     '[14:10:28] [OUTBOX] 1d9076db… send REFUSED as evicted, after isGroupActive answered that this device is still a member of 4ca35caf… - the two disagree, and OpenMLS is the one that is right',
+    'unexplained',
+  ],
+  // AND THE TWO EVIDENCES THAT MEAN THE FACT ARRIVED LATE, in the disposition's own words. They are
+  // the same `[EVICT]` module as the four successes above and they are deliberately NOT written in
+  // the `Removed from …` shape, so the rule that forgives those cannot reach them however it is
+  // later widened. Reaching one means a message was written, encrypted and refused to learn what a
+  // Remove commit had already stated, which is never a forgivable line.
+  [
+    'log',
+    '[14:10:28] [EVICT] 4ca35caf… - a send was refused as evicted, so this device learnt its removal by FAILING: the Remove commit never reached it',
+    'unexplained',
+  ],
+  [
+    'log',
+    '[14:10:28] [EVICT] 4ca35caf… - the delivery service refused this device as a non-member, so this device learnt its removal by FAILING: the Remove commit never reached it',
     'unexplained',
   ],
   // And the Rust half of that same contradiction, which accuses from the other side of the FFI.

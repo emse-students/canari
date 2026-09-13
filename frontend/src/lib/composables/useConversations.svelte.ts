@@ -40,7 +40,12 @@ import {
   classifyExitFailure,
   recordPendingGroupExit,
 } from '$lib/utils/chat/pendingGroupExits';
-import { membershipIsDurablyLost, readLocalMembership } from '$lib/utils/chat/eviction';
+import {
+  membershipIsDurablyLost,
+  readLocalMembership,
+  recordEviction,
+  type EvictionEvidence,
+} from '$lib/utils/chat/eviction';
 import { NotAGroupMemberError } from '$lib/mls-client/mlsDeliveryApi';
 import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
 import {
@@ -889,24 +894,39 @@ export function useConversations() {
   }
 
   /**
-   * Surfaces the removal notice for a conversation this device is no longer a member of, and
-   * answers `false`.
+   * Records the eviction and surfaces it, then answers `false`.
    *
    * Extracted so the LOCAL verdict and the SERVER verdict share one presentation: they are the same
    * conclusion reached from two places, and a second copy of the notice logic is a second chance for
    * them to disagree about what the user sees.
+   *
+   * IT WROTE NOTHING DOWN, AND THAT WAS THE DEFECT. This is the most user-visible of the five
+   * places an eviction is learnt - it runs on every conversation selection - and it was the only
+   * one that recorded the fact nowhere: a notice in the thread, `sendError` on the composer, and a
+   * thirty-second entry in `membershipCache`, all of which die with the page. The row stayed
+   * `active`, so the next load asked the members-only endpoint for its roster again, the re-add
+   * guards did not know to stand down, and the fact had to be re-learnt on the next selection, for
+   * ever. {@link recordEviction} writes `lifecycle: 'removed'` durably, which is what every one of
+   * those readers is already looking at.
+   *
+   * `sendError` stays here: it is the composer's live state, not a fact about the group.
    */
   async function surfaceRemoval(
     contactName: string,
     convo: Conversation,
+    evidence: EvictionEvidence,
     ctx: ConversationContext
   ): Promise<false> {
-    const notice = chat_system_removed_from_group();
     console.warn(`[VERIFY] User no longer member of ${convo.id} - showing removal notice`);
-    if (!convo.messages.some((m) => m.isSystem && m.content === notice)) {
-      await ctx.addMessageToChat('system', notice, contactName, { isSystem: true });
-    }
-    if (selectedContact === contactName) sendError = notice;
+    await recordEviction({
+      conversations,
+      groupId: convo.id,
+      evidence,
+      saveConversation: (key) => saveConversation(key, ctx),
+      addMessageToChat: ctx.addMessageToChat,
+      log: ctx.log,
+    });
+    if (selectedContact === contactName) sendError = chat_system_removed_from_group();
     return false;
   }
 
@@ -950,7 +970,7 @@ export function useConversations() {
     // MLS group this device does not hold - and that is exactly the case the server can still answer.
     if (localMembership === false) {
       cacheMembership(convo.id, false);
-      return await surfaceRemoval(contactName, convo, ctx);
+      return await surfaceRemoval(contactName, convo, 'membership-check', ctx);
     }
 
     try {
@@ -1022,7 +1042,7 @@ export function useConversations() {
           // Recovery failed - fall through to show removal notice
         }
       }
-      return await surfaceRemoval(contactName, convo, ctx);
+      return await surfaceRemoval(contactName, convo, 'server-refusal', ctx);
     } catch (e) {
       // A STATUS CODE IS AN ANSWER, A TRANSPORT FAILURE IS NOT - and this `catch` used to make no
       // such distinction: it answered `true` to everything, so the server saying "you are not a
@@ -1030,7 +1050,7 @@ export function useConversations() {
       // direction, on the exact input it was most likely to see.
       if (e instanceof NotAGroupMemberError) {
         cacheMembership(convo.id, false);
-        return await surfaceRemoval(contactName, convo, ctx);
+        return await surfaceRemoval(contactName, convo, 'server-refusal', ctx);
       }
       // Anything else - unreachable, 5xx, a refused token - says NOTHING about membership, so it
       // must not retire a conversation. `true` keeps the client working; the log is what stops the

@@ -2,7 +2,7 @@ import type { SvelteMap } from 'svelte/reactivity';
 import { DELIVERY, type FrameDelivery } from '$lib/mls-client/frameDelivery';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { IStorage, OutboxEntry } from '$lib/db';
-import type { ChatMessage, Conversation } from '$lib/types';
+import type { AddMessageToChatOptions, ChatMessage, Conversation } from '$lib/types';
 import type { MediaRef } from '$lib/media';
 import { encodeAppMessage, mkText, mkReply, mkMedia, mediaKindToType } from '$lib/proto/codec';
 import { serializeEnvelope, mkMediaEnvelope } from '$lib/envelope';
@@ -10,6 +10,7 @@ import { fromHex } from '$lib/utils/hex';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
 import { logMlsMetric } from '$lib/mls-client/mlsRecoveryMetrics';
 import { classifyOutgoingSendError } from '$lib/mls-client/mlsSendError';
+import { recordEviction } from '$lib/utils/chat/eviction';
 import { syncOutboxMirror } from '$lib/utils/chat/outboxMirror';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import {
@@ -101,6 +102,25 @@ export interface OutboxDeps {
   isGroupHealthy: (groupId: string) => boolean;
   /** Mark a conversation deletedRemotely (banner) when the group is gone server-side. */
   markDeletedRemotely?: (groupId: string) => void;
+  /**
+   * Posts a system message into a conversation, for {@link recordEviction}'s removal notice.
+   *
+   * The outbox had no chat surface at all, which is why a queue killed by an eviction used to leave
+   * a red bubble and no explanation of it anywhere.
+   */
+  addMessageToChat?: (
+    senderId: string,
+    content: string,
+    contactName: string,
+    options?: AddMessageToChatOptions
+  ) => Promise<void>;
+  /**
+   * Persists a conversation row, so a retire written here survives the reload.
+   *
+   * Without it `recordEviction` would leave `lifecycle: 'removed'` in memory only, and the next
+   * load would bring back the conversation whose queue had just been killed by the eviction.
+   */
+  saveConversation?: (key: string) => Promise<void>;
   /** Encrypt + upload a queued media file, returning the server media ref (queued-media flush). */
   uploadMedia?: (media: NonNullable<OutboxEntry['media']>) => Promise<MediaRef>;
   /**
@@ -390,12 +410,17 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   /**
    * Retires an entry that can never be sent, whatever is retried and however long is waited.
    *
-   * There are exactly two such causes and they are indistinguishable from here on: the group was
-   * deleted server-side, or this device was removed from it. Both leave the message undeliverable
-   * for good, so both take the same three steps - error status, the banner (never raised by a
-   * reaction or a read receipt, only by a user-visible send), and the row gone from the queue.
-   * `reason` is what separates them in the log, which is the only place the difference can still
-   * be read.
+   * There are exactly two such causes: the group was deleted server-side, or this device was
+   * removed from it. Both leave the message undeliverable for good, so both take the same three
+   * steps - error status, the banner (never raised by a reaction or a read receipt, only by a
+   * user-visible send), and the row gone from the queue.
+   *
+   * THEY STOPPED BEING INDISTINGUISHABLE AT THE POINT THEY STOPPED BEING RECORDED THE SAME WAY. An
+   * eviction is a fact about THIS DEVICE's membership and it has one disposition wherever it is
+   * learnt ({@link recordEviction}) - including the notice in the thread, which is what tells the
+   * user why the message they wrote will never go. A deletion is a fact about the GROUP, learnt by
+   * everyone, and its own handler owns it; the hook here is the backstop for the race the outbox
+   * alone can see.
    */
   async function failPermanently(
     entry: OutboxEntry,
@@ -413,7 +438,23 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         (entry.kind === 'control' ? ' (control: nothing the user wrote is lost)' : '')
     );
     patchStatus(entry.id, 'error');
-    if (entry.kind !== 'control') deps.markDeletedRemotely?.(terminalId);
+    if (entry.kind !== 'control') {
+      if (cause === 'group-deleted') {
+        deps.markDeletedRemotely?.(terminalId);
+      } else {
+        // `evicted` was read from `isGroupActive` before the wire was touched; `evicted-late` from
+        // the server's own refusal, which means the commit never arrived. One disposition, and the
+        // evidence is what separates them in the log.
+        await recordEviction({
+          conversations: deps.conversations,
+          groupId: terminalId,
+          evidence: cause === 'evicted' ? 'membership-check' : 'outbound-refusal',
+          saveConversation: deps.saveConversation,
+          addMessageToChat: deps.addMessageToChat,
+          log,
+        });
+      }
+    }
     await storage?.deleteOutboxEntry(entry.id).catch(() => {});
     logMlsMetric({
       kind: 'outbox_permanent_error',

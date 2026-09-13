@@ -11,6 +11,33 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - being removed from a conversation is recorded once, and it survives the reload
+
+A client finds out it has been removed from a group six ways, at five places: the Remove commit it
+applies, the exclusion its author announces, an inbound frame refused as evicted, a membership check
+made before a send or on opening the conversation, a send the server refuses, and the delivery
+service answering that this device is not a member. What is owed once the fact is known is the same
+every time, and every one of the five wrote it out by hand.
+
+**The one the user met.** The check that runs on opening a conversation learnt the removal from the
+authoritative local state - and wrote it down nowhere. A notice in the thread, a red line under the
+composer, a thirty-second entry in a memory cache: all gone on reload. The conversation came back
+looking live, the app asked the server for a roster it is not entitled to and was refused, the
+repair machinery did not know to stand down, and the whole thing was re-learnt the next time the
+conversation was opened. For ever.
+
+The other four each dropped a different half. Two retired the conversation and told the user
+nothing, so the thread simply stopped working with no explanation in it. The outbox - which is where
+a message the user has WRITTEN dies - recorded the removal on a hook it shared with "this group was
+deleted", which is a different fact about a different thing, and left neither a notice nor anything
+durable behind.
+
+There is now one record: the conversation is retired, durably; the user is told once, in the thread;
+and one line names HOW the client found out. That last part is not decoration - two of the six mean
+the client learnt it by failing, having written and encrypted a message to discover what a frame it
+had already received said plainly. Those two are worded so that no rule written to forgive the
+normal case can ever quietly forgive them.
+
 ### Fixed - a device waiting to be let back in was forgotten by the queue built to remember it
 
 A phone that has lost its encryption state asks the other members of a conversation to let it back
