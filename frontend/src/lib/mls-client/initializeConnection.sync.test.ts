@@ -22,8 +22,8 @@ function forgetPair() {
   const forgetGroup = vi.fn();
   return {
     forgetGroup,
-    forgetDistributionGroupById: vi.fn((groupId: string) => {
-      forgetGroup(groupId);
+    forgetDistributionGroupById: vi.fn(async (groupId: string) => {
+      forgetGroup(groupId, 0);
       return true;
     }),
   };
@@ -199,7 +199,7 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
       log,
     });
 
-    expect(mls.forgetGroup).toHaveBeenCalledWith('g-orphan');
+    expect(mls.forgetGroup).toHaveBeenCalledWith('g-orphan', 0);
     expect(mls.forgetGroup).not.toHaveBeenCalledWith('g-live');
   });
 

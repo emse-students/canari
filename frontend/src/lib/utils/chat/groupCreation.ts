@@ -13,6 +13,7 @@ import { requestReAdd } from '$lib/utils/chat/recovery';
 import { findActiveDirectGroupForPeer } from '$lib/utils/chat/groupSyncEligibility';
 import { isRawId } from '$lib/utils/chat/conversations';
 import { isBlockedWith } from '$lib/users/blocks';
+import { dropGroupState } from './dropGroupState';
 import { holdsGroupState } from './groupUsability';
 
 /** Dependencies injected into all group-creation and conversation-management helpers. */
@@ -714,11 +715,11 @@ export async function startNewConversation(
 
     // Clean up local MLS state (epoch may have advanced after addMembersBulk)
     if (groupId) {
-      try {
-        mlsService.forgetGroup(groupId, 0);
-      } catch {
-        // Non-blocking
-      }
+      await dropGroupState(mlsService, groupId, {
+        reason: 'the conversation could not be created',
+        checkpoint: 'awaited',
+        log,
+      });
     }
 
     // Best-effort: clean up the orphan remote group to avoid server-side litter

@@ -29,7 +29,7 @@ describe('deleteGroupAndBroadcast - the server failure', () => {
     });
 
     await expect(deleteGroupAndBroadcast({ mlsService, ...args })).rejects.toThrow();
-    expect(mlsService.forgetGroup).toHaveBeenCalledWith(G);
+    expect(mlsService.forgetGroup).toHaveBeenCalledWith(G, 0);
     expect(mlsService.persistCheckpoint).toHaveBeenCalled();
   });
 
@@ -57,6 +57,6 @@ describe('leaveGroupAndBroadcast - the server failure', () => {
 
     await expect(leaveGroupAndBroadcast({ mlsService, ...args })).rejects.toBe(boom);
     // The local half still happened: this device is out whatever the server managed.
-    expect(mlsService.forgetGroup).toHaveBeenCalledWith(G);
+    expect(mlsService.forgetGroup).toHaveBeenCalledWith(G, 0);
   });
 });

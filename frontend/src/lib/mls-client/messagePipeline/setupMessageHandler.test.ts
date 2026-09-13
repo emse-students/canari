@@ -504,7 +504,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     const ok = await onMsg('peer', new Uint8Array([1]), groupId, true, undefined);
 
     expect(ok).toBe(true);
-    expect(mls.forgetGroup).toHaveBeenCalledWith(groupId);
+    expect(mls.forgetGroup).toHaveBeenCalledWith(groupId, 0);
     expect(mls.processWelcome).toHaveBeenCalled();
   });
 
@@ -711,7 +711,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
 
     // No clock was advanced between the frame and these assertions.
     expect(ok1).toBe(true);
-    expect(mls.forgetGroup).toHaveBeenCalledWith(gid);
+    expect(mls.forgetGroup).toHaveBeenCalledWith(gid, 0);
     expect(vi.mocked(requestReAdd)).toHaveBeenCalledWith(gid, expect.anything());
     vi.useRealTimers();
   });
@@ -759,7 +759,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
 
     vi.advanceTimersByTime(31_000);
     await onMsg('peer', new Uint8Array([1]), gid, false, undefined, false);
-    expect(mls.forgetGroup).toHaveBeenCalledWith(gid);
+    expect(mls.forgetGroup).toHaveBeenCalledWith(gid, 0);
     expect(vi.mocked(requestReAdd)).toHaveBeenCalledWith(gid, expect.anything());
     vi.useRealTimers();
   });
@@ -798,7 +798,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     // welcome_request on the FIRST frame, with no timer advanced.
     const ok1 = await onMsg('peer', new Uint8Array([1]), gid, false, undefined, false);
     expect(ok1).toBe(true);
-    expect(mls.forgetGroup).toHaveBeenCalledWith(gid);
+    expect(mls.forgetGroup).toHaveBeenCalledWith(gid, 0);
     expect(vi.mocked(requestReAdd)).toHaveBeenCalledWith(gid, expect.anything());
     vi.useRealTimers();
   });
@@ -879,7 +879,7 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     const ok = await onMsg('peer', new Uint8Array([1]), gid, false, undefined, false);
     expect(ok).toBe(true);
     expect(mls.fetchCommitsSince).not.toHaveBeenCalled();
-    expect(mls.forgetGroup).toHaveBeenCalledWith(gid);
+    expect(mls.forgetGroup).toHaveBeenCalledWith(gid, 0);
     expect(vi.mocked(requestReAdd)).toHaveBeenCalledWith(gid, expect.anything());
   });
 });

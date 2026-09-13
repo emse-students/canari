@@ -10,6 +10,7 @@ import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { applyReaction, mergeReactions } from '$lib/utils/chat/messageReactions';
 import { editSupersedes } from '$lib/utils/chat/editPrecedence';
 import { purgeConversation, retireConversation } from '$lib/utils/chat/conversations';
+import { dropGroupState } from '$lib/utils/chat/dropGroupState';
 import {
   digestIdentity,
   noteProbeReceived,
@@ -50,7 +51,6 @@ export interface SystemEventContext extends MessageHandlerDeps {
   /** Normalised (lowercase) sender user id. */
   senderNorm: string;
   /** Persist MLS state to storage immediately (used when group membership changes). */
-  persistMlsStateNow: () => void;
   /** Queue metadata for messages received via the offline delivery queue. */
   deliveryMeta?: IncomingDeliveryMeta;
 }
@@ -153,7 +153,6 @@ export async function handleSystemEvent(
     convo,
     convoKey,
     senderNorm,
-    persistMlsStateNow,
     deliveryMeta,
   } = ctx;
 
@@ -531,12 +530,13 @@ export async function handleSystemEvent(
       // local conversation as `removed`. The user reads the history behind a banner and deletes it
       // manually - which dismisses it on ALL their devices. A silent purge here dropped the
       // conversation everywhere with no visible trace.
-      try {
-        mlsService.forgetGroup(convo.id);
-      } catch {
-        /* non-blocking */
-      }
-      persistMlsStateNow();
+      // Deferred, which is what `persistMlsStateNow` did here: the pipeline's persister coalesces,
+      // and the conversation row saying `removed` is written durably by `retireConversation` below.
+      await dropGroupState(mlsService, convo.id, {
+        reason: 'we were removed from the group',
+        checkpoint: 'deferred',
+        log,
+      });
       await addMessageToChat('system', m.chat_system_removed_from_group(), convoKey, {
         isSystem: true,
       });
@@ -584,12 +584,11 @@ export async function handleSystemEvent(
   if (event === 'groupDeleted') {
     const getName = await resolveDisplayNames([senderNorm]);
     const senderName = getName(senderNorm);
-    try {
-      mlsService.forgetGroup(convo.id);
-    } catch {
-      /* non-blocking */
-    }
-    persistMlsStateNow();
+    await dropGroupState(mlsService, convo.id, {
+      reason: 'the group was deleted by a member',
+      checkpoint: 'deferred',
+      log,
+    });
 
     if (senderNorm === userId) {
       // Deletion performed by us on another device: remove immediately

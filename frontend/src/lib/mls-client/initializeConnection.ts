@@ -4,6 +4,7 @@ import { DeviceLimitReachedError } from './mlsDeliveryApi';
 import { getIsTabLeader } from './tabLeader';
 import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
+import { dropGroupState } from '$lib/utils/chat/dropGroupState';
 import {
   forgetMlsGroupIfPresent,
   persistMlsStateAfterMutation,
@@ -221,7 +222,13 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
     // Group deleted server-side (tombstone) -> purge WASM state and notify the UI.
     if (g.deletedAt) {
       if (localGroups.has(g.groupId)) {
-        mlsService.forgetGroup(g.groupId);
+        // Deferred: the sync walks every group and its own checkpoint follows the loop, so awaiting
+        // one encrypted save per deleted group would serialise the whole connection behind them.
+        await dropGroupState(mlsService, g.groupId, {
+          reason: 'deleted server-side',
+          checkpoint: 'deferred',
+          log,
+        });
         stateMutated = true;
         log(`[SYNC] WASM removed (group deleted): ${g.groupId.slice(0, 8)}…`);
       }
@@ -293,7 +300,7 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
       // THROUGH THE SHARED HELPER, so this sweep and discovery's drop the same two halves. Forgetting
       // the tree alone would leave `isDistributionGroup` answering true for a group that is gone,
       // and this very loop spares whatever that predicate names.
-      if (!forgetMlsGroupIfPresent(mlsService, localId)) continue;
+      if (!(await forgetMlsGroupIfPresent(mlsService, localId))) continue;
       stateMutated = true;
       log(`[SYNC] WASM removed (${fate.reason}): ${localId.slice(0, 8)}…`);
     }
