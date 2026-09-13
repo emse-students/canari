@@ -1259,6 +1259,25 @@ reads the record the deployment writes on the machine itself rather than the out
 that was supposed to write it - which is the same answer right up until a deployment succeeds and
 fails to record itself, and that case is one of the seven the check is tested against.
 
+### Fixed - a document an association published stayed invisible to the people meant to read it
+
+An association can mark a document in its vault as public, which is how it hands its statutes or
+the minutes of a general assembly to the school staff authorised to read them. The page those
+reviewers open, `/documents`, listed **nothing** - and had listed nothing since it opened, for
+every association, while showing the association's own side as published.
+
+The documents are encrypted, and the small piece of bookkeeping that lets the server rebuild a
+reading key was written by the app in one notation and looked for by the server in another: the
+app's notation changed in July, for an unrelated display reason, and the server was not changed
+with it. Anything published after that date could not be recognised, so the page withheld it in
+silence. Nothing was lost or exposed - the documents were always intact, and the reviewer page
+simply could not name them. All three documents published on the platform are now listed.
+
+The same mismatch had quietly switched off an unrelated safety check: a document its owner had
+locked with a password could be marked public, which is meaningless - nobody, including the
+reviewers, can open it without the password, which the servers never receive. Both halves are
+repaired together, and a document in that state is now refused twice over.
+
 ### Security - the social feed was readable by anyone, with no account at all
 
 The list of posts, the search, a single post and its linked agenda entry answered **any request**,

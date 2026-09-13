@@ -800,6 +800,34 @@ The link-preview pipeline, the SSRF guard, the favicon cascade and the undici se
   [testing-methodology](testing-methodology.md)
 - **A HAND-WRITTEN COPY OF A GENERATED CONTRACT IS A CLAIM THAT COMPILES WHETHER OR NOT IT IS TRUE - DERIVE THE SLICE, NEVER RESTATE IT.** `mintKeyPackages` is type-checked against a local `KeyPackageMinter` interface and nothing else, because both call sites hold the client as `any` (`loadAndInitWasm` returns `Promise<any>`). That interface declared `existing_last_resort_key_package(nowSecs: number)`; the generated binding takes a `bigint`, since wasm-bindgen marshals Rust's `u64` through `BigInt.asUintN` and `ToBigInt` throws a TypeError on ANY Number, integral or not. So every web key-package publication threw from #458 until 2026-09-11, worker and main-thread fallback alike because both mint in that one helper, and no web client published a single key package - found by reading a user's console export, never by a gate. **Where an `any` at the call site makes a local interface the ONLY description of a foreign contract, that interface is load-bearing and must be `Pick`ed from the generated type**, so a signature moving is a compile error rather than a runtime `TypeError`. Verified by restoring the Number: `bun run check` goes from 0 to 1 error. Two corollaries. **A unit test that mocks the foreign side re-asserts the lie** - this one asserted `Number.isInteger` on the clock, demanding exactly the type the binding refuses, so the mock's parameter type is part of the contract and must match the generated one. **And a fallback reached for the reason the primary path failed is not a fallback**: the worker path and its main-thread rescue both called the same helper, so the rescue could only ever fail identically. [mls-wasm](frontend/mls-wasm.md#why-it-is-not-committed)
 - **A TEST FIXTURE SHORTER THAN EVERY REAL VALUE CANNOT FAIL A LENGTH BOUND.** `notifyHistoryRequest` capped a member key at 128 characters; a real one is 147 for a browser and 149 for the phone, so the exclusion list silently excluded nobody and a whole termination argument - *each step of the walk removes one member* - was inert in production. Thirteen tests covered that endpoint and every one of them used `ua:da`. **Where a bound is a LENGTH, the fixture must be the shape the system actually issues, and the test asserts the length before it asserts the behaviour.** The same reading applies to any bound on a value's size, count or depth. And the number itself came from `MAX_HISTORY_EXCLUSIONS` two lines above: **two limits that look alike and count different things is how a wrong one survives review** - one bounded how MANY keys, the other how LONG one is. [history-reconciliation](protocols/history-reconciliation.md)
+- **A COSMETIC CHANGE TO A PERSISTED FORMAT IS A PROTOCOL CHANGE, AND THE OTHER LANGUAGE'S READER
+  DOES NOT COMPILE AGAINST IT.** The document vault stores its HKDF salt as a marker at the head of
+  `description`, written by the frontend and read by BOTH sides. The frontend moved that marker from
+  `[s:...]` to `(s:...)` on 2026-07-24 so Tailwind's JIT scanner would stop reading the brackets as
+  an arbitrary CSS property class - a display fix, touching no key material, breaking one seam - and
+  the server's parser stayed. `/documents` then listed nothing at all, for every association, for
+  seven weeks; the whole production population (3 of 3 public documents) fell through the same
+  branch. **Before changing the spelling of anything that reaches a database, enumerate the readers,
+  and put the format's two implementations in one file each with a header naming the other.**
+  A third copy is the signal to reconsider the shared package that [libs](libs.md) deliberately
+  deleted.
+- **TWO READERS OF ONE FORMAT CAN FAIL IN OPPOSITE DIRECTIONS, AND THE CLOSED ONE HIDES THE OPEN
+  ONE.** The same bracket-only mistake sat in two predicates. `parseCekSalt` failed CLOSED - a
+  document nobody could see. `hasPasswordMarker` failed OPEN - `updateDocument`'s refusal *"a
+  password-protected document cannot be made public"* stopped refusing anything, and was invisible
+  only because the first predicate then skipped the row at read time. **So repairing the fail-closed
+  half UNMASKS the fail-open half**, and a fix that ships alone ships a hole. Ask of any parser you
+  are about to widen: what else reads this format, and which direction does each one fail in? Both
+  move in one commit, and the read side refuses the dangerous state defensively too, because a write
+  guard that was once dead may already have let a row through - check, and say so: here prod carried
+  none.
+- **A LISTING THAT WITHHOLDS A ROW BY SKIPPING IT HAS AN EMPTY PAGE FOR A SYMPTOM, NOT AN ERROR.**
+  Three silent `continue`s dropped documents their associations had deliberately published, and the
+  measurement that found it was one `GROUP BY` on the marker column - available from the first day.
+  A branch that withholds what a user asked to publish LOGS, and names the row and the reason.
+  And the gate is not a parser test: pin the READER against the literal strings the WRITER emits, then
+  pin the seam above it, so a service that stops calling the parser is caught too.
+  [social-service](services/social-service.md#the-document-vaults-markers-are-parsed-in-two-languages-and-they-disagreed-for-seven-weeks)
  -> [development](development.md)
 
 Every unchecked seam - Tauri command names, plugin ACLs, `push_context.json`, `mlsWorkerProtocol.ts`,
