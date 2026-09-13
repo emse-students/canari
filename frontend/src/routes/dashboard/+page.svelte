@@ -20,7 +20,8 @@
   import { goto } from '$app/navigation';
   import { clearAuth } from '$lib/stores/auth';
   import { isGlobalAdmin } from '$lib/stores/user';
-  import { listMyAssociations, getReviewerAccess } from '$lib/associations/api';
+  import { getReviewerAccess } from '$lib/associations/api';
+  import { adminScopeLabels, ensureMayOpenAdmin } from '$lib/admin/access';
   import { themeStore } from '$lib/stores/themeStore.svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -67,7 +68,9 @@
   ]);
 
   let showAdminSection = $state(false);
-  let isAdmin = $derived(isGlobalAdmin());
+  // The heading, the card label and the sentence under it, chosen together - see
+  // `adminScopeLabels`. A reader who can only moderate an agenda is not offered "Administration".
+  const scope = $derived(adminScopeLabels(isGlobalAdmin()));
   /** True when the user may review associations' public documents (school/MDE staff, admins, BDE). */
   let hasReviewerAccess = $state(false);
 
@@ -76,16 +79,9 @@
     void getReviewerAccess()
       .then((v) => (hasReviewerAccess = v))
       .catch(() => (hasReviewerAccess = false));
-    if (isGlobalAdmin()) {
-      showAdminSection = true;
-      return;
-    }
-    try {
-      const mine = await listMyAssociations();
-      showAdminSection = mine.some((a) => a.isAdmin);
-    } catch {
-      showAdminSection = false;
-    }
+    // The SAME predicate `/admin` admits on. Offering the card on `mine.some((a) => a.isAdmin)`
+    // alone left a BDE content moderator with a console they could reach by URL and never find.
+    showAdminSection = await ensureMayOpenAdmin();
   });
 
   async function handleLogout() {
@@ -220,22 +216,20 @@
   {/if}
 
   <!-- Administration (admins d'association et admins globaux) -->
-  {#if showAdminSection || isAdmin}
+  {#if showAdminSection}
     <section class="mb-8">
       <h2 class="text-text-muted mb-3 text-xs font-semibold tracking-widest uppercase">
-        {m.dashboard_admin_heading()}
+        {scope.title()}
       </h2>
       <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <a
           href="/admin"
           class="border-cn-border hover:border-cn-yellow flex flex-col items-center gap-2 rounded-2xl border bg-(--cn-surface) p-4 transition-colors hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))]"
-          title={m.dashboard_admin_generic_label()}
+          title={scope.title()}
         >
           <Shield size={22} class="text-text-muted" />
-          <span class="text-text-main text-sm font-medium">{m.dashboard_admin_generic_label()}</span
-          >
-          <span class="text-text-muted text-center text-xs">{m.dashboard_admin_generic_desc()}</span
-          >
+          <span class="text-text-main text-sm font-medium">{scope.title()}</span>
+          <span class="text-text-muted text-center text-xs">{scope.description()}</span>
         </a>
       </div>
     </section>

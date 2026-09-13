@@ -7243,11 +7243,12 @@ already suspected. Until that scan runs, this is a slope rather than a diagnosis
 sits at P3 beside the two prod hosts above rather than being called fixed. **Ask the user before
 deleting anything that is not a build cache.**
 
-## The agenda, the admin console and four modals - eleven items from the user, 2026-09-12
+## The agenda, the admin console and four modals - items from the user, 2026-09-12
 
-Handed over in one message (*"en vrac quelques items a faire quand tu peux"*). Each was traced to
-its code before being written here, so what follows is the WORK, not the question. One of them is
-a defect rather than wording: any association admin can publish a school-wide holiday band.
+Handed over in one message of eleven (*"en vrac quelques items a faire quand tu peux"*). Each was
+traced to its code before being written here, so what follows is the WORK, not the question - and
+only what is LEFT of it, entries being deleted as they ship. One of those remaining is a defect
+rather than wording: any association admin can publish a school-wide holiday band.
 
 ### P2 - "Pause / vacances" is offered to every proposer and gated nowhere
 
@@ -7298,22 +7299,6 @@ id and stays, but it stays in ONE place.
 rendered verbatim by both modals through `depositError` / `formError`. Part of the 218 places
 counted under Localisation above, and fixed the same way: a typed error the client maps to a
 Paraglide message.
-
-### P3 - "Administration" is the name of a page that moderates one agenda
-
-`/admin` is reachable by any association admin (`routes/admin/+layout.svelte:60-68`), and that is
-deliberate: it is where "Agenda en attente" lives. The server agrees and enforces - the pending
-listing accepts an association admin, `canValidate` comes back false for them, and
-`validateCalendarEvent` / `rejectCalendarEvent` refuse anyone who is not BDE or global admin
-(`associations.controller.ts:670-711`). **So there is no access-control defect here**; there is a
-NAME that promises a platform console and delivers one read-only queue.
-
-**The work.** The dashboard card and the page title say what the reader can actually do. The
-description already does (`admin_associations_description` = "Moderation de l'agenda de vos
-associations.") - it is the heading above it that lies, so the heading follows the description
-rather than the description being questioned. While there: the dashboard shows the card on
-`mine.some(a => a.isAdmin)` while the layout also admits `isContentModerator()`, so a content
-moderator who administers no association can reach `/admin` and is never offered the way in.
 
 ### P3 - two permission labels both say "paiements" and neither names its flag
 
