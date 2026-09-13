@@ -29,6 +29,7 @@
   import CalendarEventDetailModal from '$lib/components/calendar/CalendarEventDetailModal.svelte';
   import CalendarSubscribeModal from '$lib/components/calendar/CalendarSubscribeModal.svelte';
   import CoOwnerPicker from '$lib/components/calendar/CoOwnerPicker.svelte';
+  import AssociationOptions from '$lib/components/associations/AssociationOptions.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import { portal } from '$lib/actions/portal';
@@ -81,6 +82,9 @@
   async function loadAssociations() {
     try {
       const list = await listAssociations();
+      // Sorted for `associations[0]`, the default deposit target - NOT for the two selects, whose
+      // order is `AssociationOptions`. A default that moved with the API response order would be
+      // a different association on two loads of the same page.
       associations = [...list].sort((a, b) => a.name.localeCompare(b.name, 'fr'));
     } catch {
       associations = [];
@@ -477,9 +481,7 @@
           onchange={onFilterSelectChange}
         >
           <option value="">{m.calendar_filter_all()}</option>
-          {#each associations as a (a.id)}
-            <option value={a.id}>{a.name}</option>
-          {/each}
+          <AssociationOptions {associations} />
         </select>
       </label>
     {/snippet}
@@ -649,9 +651,7 @@
               bind:value={depositTargetAssocId}
               class="border-cn-border text-text-main w-full rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm"
             >
-              {#each associations as a (a.id)}
-                <option value={a.id}>{a.name}</option>
-              {/each}
+              <AssociationOptions {associations} />
             </select>
           </div>
         {/if}

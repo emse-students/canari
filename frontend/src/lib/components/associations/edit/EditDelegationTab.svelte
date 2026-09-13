@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import AssociationOptions from '$lib/components/associations/AssociationOptions.svelte';
   import {
     listAssociations,
     getPaymentDelegation,
@@ -264,9 +265,7 @@
               class="border-cn-border w-full rounded-xl border bg-(--cn-surface) px-3 py-2.5 text-sm"
             >
               <option value="">{m.asso_deleg_select_placeholder()}</option>
-              {#each parentCandidates as candidate (candidate.id)}
-                <option value={candidate.id}>{candidate.name}</option>
-              {/each}
+              <AssociationOptions associations={parentCandidates} />
             </select>
           </div>
           <button
