@@ -49,7 +49,7 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     clearPendingCommit: vi.fn().mockResolvedValue(undefined),
     mergePendingCommit: vi.fn().mockResolvedValue(undefined),
     exportRatchetTree: vi.fn().mockResolvedValue(new Uint8Array([1])),
-    refreshGroupInfo: vi.fn().mockResolvedValue(undefined),
+    refreshGroupInfo: vi.fn().mockResolvedValue(null),
     // The REAL method, not a stand-in: it IS the entrance under test.
     catchUpOnRefusedCommit: (
       BaseMlsService.prototype as unknown as {

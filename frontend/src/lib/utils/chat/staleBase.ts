@@ -1,17 +1,19 @@
 /**
  * THE PUBLISHED EXTERNAL-JOIN BASE, AND WHO REPAIRS IT WHEN IT FALLS BEHIND.
  *
- * WHAT IS BROKEN, IN THE CODE'S OWN WORDS. `runCommitTransaction` ends with
- * `void this.refreshGroupInfo(groupId)` under a comment that reads *"FIRE-AND-FORGET, AND WHAT IT
- * COSTS IS NOT NOTHING. This is the ONLY thing that mints a base, so losing it strands the group's
- * published base one epoch behind - permanently"*. The defect was documented and accepted, and the
- * repair it pointed at (`republishStaleBase`) runs for DISTRIBUTION groups only.
+ * WHAT IS BROKEN, AND FOR WHICH COMMITS. `runCommitTransaction` ends with
+ * `void this.refreshGroupInfo(groupId)`, and for a STAGED add or remove that call is the only thing
+ * that mints the successor base: the commit is unapplied at submit time, so the device cannot carry
+ * the new epoch's base inside the submission the way an external join does. Lose it and the
+ * published base stays one epoch behind for ever. (This paragraph used to quote that comment as
+ * *"the ONLY thing that mints a base"* flatly; the comment itself was corrected in #571, and the
+ * distinction it drew is the one that decides whether a group can fall behind at all.)
  *
- * **THE MEASUREMENT SAYS THE COMMENT IS RIGHT.** Production, 2026-09-04: four of the forty-three
- * groups holding a base were stale, and every single one by **exactly one epoch** - which is the
- * signature of one lost follow-up, not of drift. Two had been stale since 2026-08-30, with three
- * devices sitting `pending` on them, unable to join for five days. Three of the four are
- * conversations, so the existing repair could never have reached them.
+ * **THE MEASUREMENT SAYS SO.** Production, 2026-09-04: four of the forty-three groups holding a base
+ * were stale, and every single one by **exactly one epoch** - which is the signature of one lost
+ * follow-up, not of drift. Two had been stale since 2026-08-30, with three devices sitting `pending`
+ * on them, unable to join for five days. Three of the four are conversations, so the existing repair
+ * could never have reached them.
  *
  * WHY THIS IS A REPAIR AND NOT A FALLBACK. The write that advances the epoch is durable and
  * transactional; the write that lets everyone ELSE reach that epoch is a best-effort follow-up. This
@@ -41,6 +43,14 @@
  * N cannot mint a base for a group at N+1, and publishing one would be replacing a stale base with
  * another stale base. That is a distinct verdict here, and it is logged, because a run in which every
  * holder is behind is a group nobody can repair and that is worth seeing.
+ *
+ * **AND THE CHECK IS A GUESS, WHERE THE SERVER HOLDS THE ANSWER.** `putGroupInfo` is strictly
+ * monotonic and reports `stored: false` for a base that was not newer, which #571 threaded out of
+ * the one publisher - so "did my base land" is answered authoritatively, for free, on every publish.
+ * `classifyBase` is kept for what it is good at, deciding whether to spend a round trip at all on
+ * every group of every connection, and {@link publishAndReport} is the ONE place that answer is
+ * read. Two callers reach it: this module's steady-state repair, and
+ * {@link answerBaseRefreshRequest} for a device locked out right now.
  */
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 
@@ -129,6 +139,109 @@ export async function republishBaseIfStale(
     `[BASE] ${short}... the published base is at epoch ${verdict.baseEpoch} while the group is at ` +
       `${verdict.activeEpoch} - republishing from the tree this device holds`
   );
-  await mlsService.refreshGroupInfo(row.groupId);
+  await publishAndReport(mlsService, row.groupId, '[BASE]', log);
   return verdict;
+}
+
+/**
+ * PUBLISHES THIS DEVICE'S BASE AND REPORTS WHAT THE SERVER DID WITH IT - the one reading of the one
+ * publisher's answer.
+ *
+ * #571 made `publishCurrentBase` the single publisher and threaded its answer out of
+ * `refreshGroupInfo`; what was left was two callers deciding separately what to do with it, and only
+ * one of them doing anything. {@link republishBaseIfStale} discarded it entirely - a repair that
+ * logged *republishing from the tree this device holds* and then never said whether the tree was
+ * taken - while the `base_refresh_request` responder read it. **The asymmetry is the duplicate**:
+ * one question, one answer already computed, and two places entitled to describe it.
+ *
+ * The three answers are three lines and the TAG is the context. `[BASE]` is a holder healing the
+ * steady state on its own read; `[BASE_REFRESH]` is a holder answering a device that cannot get in
+ * at all. Nothing else differs, so nothing else is written twice - a second wording for one answer
+ * is how two callers come to disagree about what happened.
+ */
+async function publishAndReport(
+  mlsService: IMlsService,
+  groupId: string,
+  tag: '[BASE]' | '[BASE_REFRESH]',
+  log: (message: string) => void
+): Promise<{ stored: boolean; baseEpoch: number } | null> {
+  const short = groupId.slice(0, 8);
+  const published = await mlsService.refreshGroupInfo(groupId);
+  if (published === null) {
+    // A publish that never landed proves NOTHING about the base - it is neither of the two below,
+    // and reading it as the refusal is what turns a dropped packet into "nobody can repair this".
+    log(`${tag} ${short}... the republish did not land - the base is exactly as stale as it was`);
+  } else if (published.stored) {
+    // THE EPOCH IT PUBLISHED, NOT THE ONE IT IS AT NOW - a later `getEpoch` answers a different
+    // question, and reporting it here names a base that was never stored.
+    log(
+      `${tag} ${short}... the server took it - the base now describes epoch ${published.baseEpoch}`
+    );
+  } else {
+    log(
+      `${tag} ${short}... the server KEPT the base it had - this device offered epoch ` +
+        `${published.baseEpoch}, which is not newer: either another holder repaired it first, or ` +
+        `no holder that has connected can`
+    );
+  }
+  return published;
+}
+
+/** What answering a `base_refresh_request` came to. `null` is a publish that never landed. */
+export type BaseRefreshAnswer =
+  | { stored: boolean; baseEpoch: number }
+  | null
+  /** Nothing was offered: this device holds no active MLS state for the group. */
+  | 'no-local-state';
+
+/**
+ * Answers a `base_refresh_request` - a device that cannot external-join `groupId` at all has asked
+ * this member to republish its base.
+ *
+ * **THE SIBLING OF {@link republishBaseIfStale}, AND NOT A VARIANT OF IT.** That one heals the
+ * steady state on a holder's ordinary read, without anybody asking; this one makes the repair
+ * immediate for a device refused RIGHT NOW. They cannot be one function: this is handed a group id
+ * and nothing else, where {@link classifyBase} needs the group's `activeEpoch` to decide whether a
+ * publish is worth a round trip. What they share is {@link publishAndReport}.
+ *
+ * A DEVICE ASKING FOR A BASE REFRESH CANNOT GET IN AT ALL, so this is answered before anything else
+ * and logged at a level that accuses. The published base names an epoch the group has left; nothing
+ * but a member's publish can move it, and only a staged commit's follow-up otherwise does - so on a
+ * quiet conversation a stale base is permanent. Measured on production 2026-09-04: four groups
+ * stale, all by exactly one epoch, two of them since 2026-08-30 with three devices sitting
+ * `pending` on them.
+ *
+ * WHAT THIS IS NOT: it is not an Add. Nothing here mutates the tree, takes the group's add lock or
+ * changes an epoch - the publish exports what this device already holds. That is the whole reason
+ * the requester asks for THIS rather than for a Welcome.
+ *
+ * A RESPONDER WHOSE OWN TREE IS BEHIND CANNOT HELP, AND DOES NOT HAVE TO CHECK BEFOREHAND, BECAUSE
+ * THE SERVER TELLS IT AFTERWARDS. The publish is monotonic - a base whose epoch is not above the
+ * stored one is ignored - so a behind device cannot make the base worse, and the requester's next
+ * ask is forwarded to a randomly re-elected member.
+ *
+ * **IT LIVES HERE AND NOT IN `sessionAuth` BECAUSE A RESPONDER NOTHING CAN CALL IS A RESPONDER
+ * NOTHING CAN DRIVE.** It was the half of this pair with no coverage of any kind. Never throws: it
+ * is invoked from a WebSocket message handler, where a rejection belongs to no group at all.
+ */
+export async function answerBaseRefreshRequest(
+  mlsService: IMlsService,
+  groupId: string,
+  log: (message: string) => void
+): Promise<BaseRefreshAnswer> {
+  const short = groupId.slice(0, 8);
+  try {
+    if (!(await mlsService.isGroupActive(groupId))) {
+      // Not a fault of the requester's, and not silent: this device was elected and holds no usable
+      // state for the group, so the ask has to reach somebody else.
+      log(
+        `[BASE_REFRESH] ${short}... this device holds no active MLS state for it - cannot mint a base`
+      );
+      return 'no-local-state';
+    }
+    return await publishAndReport(mlsService, groupId, '[BASE_REFRESH]', log);
+  } catch (e) {
+    log(`[BASE_REFRESH] ${short}... refresh failed: ${String(e).slice(0, 120)}`);
+    return null;
+  }
 }

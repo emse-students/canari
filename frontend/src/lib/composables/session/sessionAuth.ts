@@ -87,6 +87,7 @@ import {
   deriveConversationIdentity,
   markConversationDeletedRemotely,
 } from '$lib/utils/chat/conversations';
+import { answerBaseRefreshRequest } from '$lib/utils/chat/staleBase';
 import {
   registerOutbox,
   unregisterOutbox,
@@ -1106,40 +1107,18 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     // or changes an epoch - `refreshGroupInfo` exports what this device already holds and publishes
     // it. That is the whole reason the requester asks for THIS rather than for a Welcome.
     //
-    // A RESPONDER WHOSE OWN TREE IS BEHIND CANNOT HELP, AND DOES NOT HAVE TO CHECK. The publish is
-    // monotonic server-side - a lower `baseEpoch` is ignored - so a behind device cannot make the
-    // base worse, and the requester's next ask is forwarded to a randomly re-elected member. The
-    // epoch this device published at is logged so the two outcomes stay distinguishable.
+    // THE ANSWER ITSELF IS IN `staleBase.ts`, NEXT TO THE REPAIR IT IS THE SIBLING OF - and the
+    // reasoning it carried moved with it, along with the reading of what the server did, which the
+    // steady-state repair was discarding while this one read it. What is left here is the wiring and
+    // the one thing only this scope knows: WHO asked. A responder buried in this file could not be
+    // driven by a test, and it was the half of the pair with no coverage at all.
     mlsService.onBaseRefreshRequest(
       async (requesterUserId: string, requesterDeviceId: string, groupId: string) => {
-        const short = groupId.slice(0, 8);
         cb.log(
-          `[BASE_REFRESH] ${short}... asked by ${requesterUserId.slice(0, 8)}:${requesterDeviceId.slice(0, 12)}` +
+          `[BASE_REFRESH] ${groupId.slice(0, 8)}... asked by ${requesterUserId.slice(0, 8)}:${requesterDeviceId.slice(0, 12)}` +
             ` - a device cannot external-join this group`
         );
-        try {
-          const mls = ctx.ensureMls();
-          if (!(await mls.isGroupActive(groupId))) {
-            // Not a fault of the requester's, and not silent: this device was elected and holds no
-            // usable state for the group, so the ask has to reach somebody else.
-            cb.log(
-              `[BASE_REFRESH] ${short}... this device holds no active MLS state for it - cannot mint a base`
-            );
-            return;
-          }
-          const published = await mls.refreshGroupInfo(groupId);
-          // THE EPOCH IT PUBLISHED, NOT THE ONE IT IS AT NOW. This used to read `getEpoch` again
-          // afterwards, which is a different question and can answer a number this line then
-          // reported as published.
-          cb.log(
-            published === null
-              ? `[BASE_REFRESH] ${short}... the republish failed - the asker is still locked out`
-              : `[BASE_REFRESH] ${short}... republished at epoch ${published.baseEpoch}` +
-                  (published.stored ? '' : ' - the server already holds a base at or past it')
-          );
-        } catch (e) {
-          cb.log(`[BASE_REFRESH] ${short}... refresh failed: ${String(e).slice(0, 120)}`);
-        }
+        await answerBaseRefreshRequest(ctx.ensureMls(), groupId, cb.log);
       }
     );
 
