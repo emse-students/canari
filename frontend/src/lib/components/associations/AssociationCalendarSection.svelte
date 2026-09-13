@@ -13,7 +13,6 @@
     aggregatedCalendarFeedIcsAbsoluteUrl,
     icsSubscriptionRangeISO,
     type AssociationCalendarEvent,
-    type AssociationCalendarEventKind,
     type AssociationCalendarFeedEvent,
     type AssociationLinkCandidates,
   } from '$lib/associations/api';
@@ -27,26 +26,25 @@
   import CalendarEventDetailModal from '$lib/components/calendar/CalendarEventDetailModal.svelte';
   import CalendarSubscribeModal from '$lib/components/calendar/CalendarSubscribeModal.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
-  import { portal } from '$lib/actions/portal';
   import {
     ChevronLeft,
     ChevronRight,
     CalendarPlus,
     Pencil,
     Trash2,
-    Link2,
     CalendarSync,
     Download,
     Check,
-    ImagePlus,
-    X,
   } from '@lucide/svelte';
-  import Input from '$lib/components/ui/Input.svelte';
-  import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
-  import CoOwnerPicker from '$lib/components/calendar/CoOwnerPicker.svelte';
-  import { SvelteDate } from 'svelte/reactivity';
+  import EventFormModal from '$lib/components/calendar/EventFormModal.svelte';
+  import {
+    blankEventFormValues,
+    eventFormValuesFrom,
+    toCreatePayload,
+    toUpdatePayload,
+    type EventFormValues,
+  } from '$lib/calendar/eventForm';
   import { pushHistoryOverlay, closeHistoryOverlayFromUi } from '$lib/utils/historyOverlayStack';
-  import { calendarErrorMessage } from '$lib/calendar/calendarErrors';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
 
@@ -106,21 +104,18 @@
     }
   });
   let editingId = $state<string | null>(null);
-  let formTitle = $state('');
-  /** `event` (a card) or `break` (a full-day background band for vacations / no-course days). */
-  let formKind = $state<AssociationCalendarEventKind>('event');
-  let formDescription = $state('');
-  /** datetime-local strings */
-  let formStart = $state('');
-  let formEnd = $state('');
-  let saving = $state(false);
-  let formError = $state('');
+  let formValues = $state<EventFormValues>(blankEventFormValues());
   let linkCandidates = $state<AssociationLinkCandidates | null>(null);
-  /** Selected form ID for modal (empty = none). */
-  let formLinkedFormId = $state('');
   /** Current poster image URL for the event being edited (null = none). */
   let formImageUrl = $state<string | null>(null);
   let uploadingImage = $state(false);
+
+  /**
+   * What this surface may DECIDE, which is the only thing that ever differed between the two event
+   * forms. A band speaks for the SCHOOL, so it needs the authority that speaks for it; a linked form
+   * is this association's own, so it needs the right to edit this association.
+   */
+  const capabilities = $derived({ canSetKind: canDeclareBreak, canLinkForm: canEdit });
 
   let showSubscribeModal = $state(false);
 
@@ -253,9 +248,6 @@
     )
   );
 
-  /** IDs of co-owner associations selected for the current form. */
-  let formCoOwnerIds = $state<string[]>([]);
-
   function openEventDetail(ev: AssociationCalendarFeedEvent) {
     detailEvent = ev;
     detailModalOpen = true;
@@ -282,65 +274,43 @@
 
   async function openCreate() {
     editingId = null;
-    formTitle = '';
-    formKind = 'event';
-    formDescription = '';
-    formLinkedFormId = '';
-    formCoOwnerIds = [];
+    // The target is this association, and saying so is what keeps it out of its own co-owner list.
+    formValues = { ...blankEventFormValues(), targetAssociationId: associationId };
     formImageUrl = null;
-    const now = new SvelteDate();
-    now.setMinutes(0, 0, 0);
-    formStart = toDatetimeLocalValue(now.toISOString());
-    formEnd = '';
-    formError = '';
     modalOpen = true;
     await ensureLinkCandidates();
   }
 
   async function openEdit(ev: AssociationCalendarEvent) {
     editingId = ev.id;
-    formTitle = ev.title;
-    formKind = ev.kind ?? 'event';
-    formDescription = ev.description ?? '';
-    formStart = toDatetimeLocalValue(ev.startsAt);
-    formEnd = ev.endsAt ? toDatetimeLocalValue(ev.endsAt) : '';
-    formLinkedFormId = ev.linkedFormId ?? '';
-    formCoOwnerIds = (ev.coOwners ?? []).map((co) => co.associationId);
+    formValues = eventFormValuesFrom(ev);
     formImageUrl = ev.imageUrl ?? null;
-    formError = '';
     modalOpen = true;
     await ensureLinkCandidates();
   }
 
-  async function handleImageUpload(e: Event) {
+  // The poster's two endpoints RETHROW: the modal owns the error line these write to, and a caller
+  // that swallowed the refusal here would leave that line empty while the poster stayed unchanged.
+  async function uploadPoster(file: File) {
     if (!editingId) return;
-    const input = e.target as HTMLInputElement;
-    const file = input.files?.[0];
-    if (!file) return;
     uploadingImage = true;
-    formError = '';
     try {
       const updated = await uploadCalendarEventImage(associationId, editingId, file);
       formImageUrl = updated.imageUrl ?? null;
-      // Also refresh the list so the card shows the new image
+      // The cards below carry the poster too, so the month is reloaded rather than patched.
       await loadMonth();
-    } catch (err) {
-      formError = m.asso_calendar_image_upload_error();
     } finally {
       uploadingImage = false;
-      input.value = '';
     }
   }
 
-  async function handleImageRemove() {
+  async function removePoster() {
     if (!editingId) return;
     uploadingImage = true;
     try {
       await deleteCalendarEventImage(associationId, editingId);
       formImageUrl = null;
       await loadMonth();
-    } catch (err) {
-      formError = m.common_delete_error();
     } finally {
       uploadingImage = false;
     }
@@ -363,50 +333,22 @@
     dismissEventModal(false);
   }
 
-  async function submitForm() {
-    if (!formTitle.trim() || !formStart) {
-      formError = m.asso_calendar_error_title_required();
-      return;
+  /**
+   * The endpoint, which is the ONE thing the two event surfaces genuinely disagree about. Validation,
+   * the saving flag and the sentence a refusal reads as all belong to the modal.
+   */
+  async function submitEvent(values: EventFormValues) {
+    if (editingId) {
+      await updateAssociationCalendarEvent(
+        associationId,
+        editingId,
+        toUpdatePayload(values, capabilities)
+      );
+    } else {
+      await createAssociationCalendarEvent(associationId, toCreatePayload(values, capabilities));
     }
-    const startIso = new Date(formStart).toISOString();
-    const endIso = formEnd.trim() ? new Date(formEnd).toISOString() : undefined;
-    saving = true;
-    formError = '';
-    try {
-      if (editingId) {
-        await updateAssociationCalendarEvent(associationId, editingId, {
-          title: formTitle.trim(),
-          kind: formKind,
-          description: formDescription.trim() || undefined,
-          startsAt: startIso,
-          endsAt: endIso,
-          linkedFormId: formLinkedFormId.trim() || null,
-          coOwnerIds: formCoOwnerIds,
-        });
-      } else {
-        await createAssociationCalendarEvent(associationId, {
-          title: formTitle.trim(),
-          kind: formKind,
-          description: formDescription.trim() || undefined,
-          startsAt: startIso,
-          endsAt: endIso,
-          ...(formLinkedFormId.trim() ? { linkedFormId: formLinkedFormId.trim() } : {}),
-          coOwnerIds: formCoOwnerIds,
-        });
-        dismissEventModal(false);
-        await loadMonth();
-        saving = false;
-        return;
-      }
-      dismissEventModal(false);
-      await loadMonth();
-    } catch (e) {
-      // Was `common_save_error()` for every failure, which told the reader something went wrong and
-      // never which of the three date rules they broke.
-      formError = calendarErrorMessage(e, m.common_save_error);
-    } finally {
-      saving = false;
-    }
+    dismissEventModal(false);
+    await loadMonth();
   }
 
   async function removeEvent(id: string) {
@@ -634,203 +576,25 @@
   {/if}
 </div>
 
-{#if modalOpen}
-  <div use:portal>
-    <div
-      data-keyboard-aware-overlay
-      class="z-(--z-modal) flex items-end justify-center bg-black/40 sm:items-center"
-      role="presentation"
-      onclick={(e) => e.target === e.currentTarget && closeModal()}
-    >
-      <div
-        class="keyboard-aware-modal-panel border-cn-border max-h-[90vh] w-full max-w-lg space-y-4 overflow-y-auto rounded-t-3xl border bg-(--cn-surface) p-6 shadow-xl sm:rounded-2xl"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="cal-modal-title"
-      >
-        <h3 id="cal-modal-title" class="text-text-main text-lg font-bold">
-          {editingId ? m.asso_calendar_modal_edit_title() : m.asso_calendar_modal_create_title()}
-        </h3>
-        {#if !editingId}
-          <p class="text-text-muted text-xs">
-            {m.asso_calendar_modal_pending_note()}
-          </p>
-        {/if}
-        <Input label={m.asso_calendar_event_title_label()} bind:value={formTitle} />
-
-        <!--
-          Entry kind: normal event card vs full-day background band (break / vacation). Offered
-          only to a viewer the server would accept - everybody else proposes an `event`, which is
-          the value the form already holds, so an ordinary edit resends it unchanged and passes.
-        -->
-        {#if canDeclareBreak}
-          <div>
-            <span class="text-text-main mb-1 ml-1 block text-sm font-bold"
-              >{m.asso_calendar_event_kind_label()}</span
-            >
-            <div class="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onclick={() => (formKind = 'event')}
-                class="rounded-xl border px-3 py-2 text-sm font-semibold transition-colors {formKind ===
-                'event'
-                  ? 'border-cn-yellow bg-cn-yellow/10 text-cn-dark'
-                  : 'border-cn-border text-text-muted hover:bg-cn-bg'}"
-              >
-                {m.asso_calendar_event_kind_event()}
-              </button>
-              <button
-                type="button"
-                onclick={() => (formKind = 'break')}
-                class="rounded-xl border px-3 py-2 text-sm font-semibold transition-colors {formKind ===
-                'break'
-                  ? 'border-cn-yellow bg-cn-yellow/10 text-cn-dark'
-                  : 'border-cn-border text-text-muted hover:bg-cn-bg'}"
-              >
-                {m.asso_calendar_event_kind_break()}
-              </button>
-            </div>
-            {#if formKind === 'break'}
-              <p class="text-text-muted mt-1 ml-1 text-xs">
-                {m.asso_calendar_event_kind_break_hint()}
-              </p>
-            {/if}
-          </div>
-        {/if}
-
-        <div class="grid gap-4 sm:grid-cols-2">
-          <div>
-            <label class="text-text-main mb-1 ml-1 block text-sm font-bold" for="ev-start"
-              >{m.asso_calendar_event_start_label()}</label
-            >
-            <input
-              id="ev-start"
-              type="datetime-local"
-              bind:value={formStart}
-              class="border-cn-border text-text-main w-full rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm"
-            />
-          </div>
-          <div>
-            <label class="text-text-main mb-1 ml-1 block text-sm font-bold" for="ev-end"
-              >{m.asso_calendar_event_end_label()}</label
-            >
-            <input
-              id="ev-end"
-              type="datetime-local"
-              bind:value={formEnd}
-              class="border-cn-border text-text-main w-full rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm"
-            />
-          </div>
-        </div>
-        <div>
-          <p class="text-text-main mb-1 ml-1 block text-sm font-bold">
-            {m.asso_calendar_event_description_label()}
-          </p>
-          <MarkdownComposerField
-            bind:value={formDescription}
-            placeholder={m.calendar_deposit_placeholder()}
-            minHeight="100px"
-          />
-        </div>
-        <!-- Poster image - only available when editing an existing event -->
-        {#if editingId}
-          <div class="space-y-2">
-            <p class="text-text-main ml-1 text-sm font-bold">
-              {m.asso_calendar_event_poster_label()}
-            </p>
-            {#if formImageUrl}
-              <div class="border-cn-border relative overflow-hidden rounded-xl border">
-                <img
-                  src={formImageUrl}
-                  alt={m.asso_calendar_poster_alt()}
-                  class="max-h-48 w-full object-cover"
-                  loading="lazy"
-                />
-                <button
-                  type="button"
-                  onclick={handleImageRemove}
-                  disabled={uploadingImage}
-                  class="ui-icon-button absolute top-2 right-2 rounded-full bg-black/60 text-white hover:bg-black/80"
-                  title={m.asso_calendar_poster_remove_title()}
-                >
-                  <X size={14} />
-                </button>
-              </div>
-            {:else}
-              <label
-                class="border-cn-border bg-cn-bg text-text-muted hover:border-cn-yellow/50 flex cursor-pointer items-center gap-2 rounded-xl border-2 border-dashed px-4 py-3 text-sm transition-colors {uploadingImage
-                  ? 'pointer-events-none opacity-50'
-                  : ''}"
-              >
-                <ImagePlus size={18} class="text-text-muted/60 shrink-0" />
-                {uploadingImage
-                  ? m.asso_calendar_poster_uploading()
-                  : m.asso_calendar_poster_add_label()}
-                <input
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp"
-                  class="sr-only"
-                  onchange={handleImageUpload}
-                />
-              </label>
-            {/if}
-          </div>
-        {:else}
-          <p class="text-text-muted text-xs">
-            {m.asso_calendar_poster_after_save_note()}
-          </p>
-        {/if}
-        <!-- Co-owner associations picker -->
-        <CoOwnerPicker bind:selectedIds={formCoOwnerIds} excludeId={associationId} />
-        {#if canEdit && linkCandidates}
-          <div class="border-cn-border/70 bg-cn-bg/30 space-y-3 rounded-xl border p-3">
-            <p
-              class="text-text-muted flex items-center gap-1 text-xs font-bold tracking-wide uppercase"
-            >
-              <Link2 size={14} />
-              {m.asso_calendar_link_form_label()}
-            </p>
-            <div>
-              <label class="text-text-main mb-1 block text-xs font-semibold" for="cal-link-form"
-                >{m.asso_calendar_form_label()}</label
-              >
-              <select
-                id="cal-link-form"
-                bind:value={formLinkedFormId}
-                class="border-cn-border text-text-main w-full rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm"
-              >
-                <option value="">{m.asso_calendar_link_form_none_option()}</option>
-                {#each linkCandidates.forms as f (f.id)}
-                  <option value={f.id}>{f.title}</option>
-                {/each}
-              </select>
-            </div>
-          </div>
-        {/if}
-        {#if formError}
-          <p class="text-red-err text-sm">{formError}</p>
-        {/if}
-        <div class="flex flex-wrap justify-end gap-2 pt-2">
-          <button
-            type="button"
-            onclick={closeModal}
-            class="border-cn-border hover:bg-cn-bg rounded-xl border px-4 py-2 text-sm font-semibold"
-          >
-            {m.common_cancel_button()}
-          </button>
-          <button
-            type="button"
-            onclick={submitForm}
-            disabled={saving}
-            class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
-          >
-            {saving ? m.asso_calendar_saving_label() : m.common_save_button()}
-          </button>
-        </div>
-      </div>
-    </div>
-  </div>
-{/if}
+<EventFormModal
+  open={modalOpen}
+  heading={editingId ? m.asso_calendar_modal_edit_title() : m.asso_calendar_modal_create_title()}
+  note={editingId ? null : m.asso_calendar_modal_pending_note()}
+  editing={!!editingId}
+  bind:values={formValues}
+  {capabilities}
+  linkableForms={linkCandidates?.forms ?? null}
+  poster={{
+    url: formImageUrl,
+    uploading: uploadingImage,
+    onUpload: uploadPoster,
+    onRemove: removePoster,
+  }}
+  submitLabel={m.common_save_button()}
+  savingLabel={m.asso_calendar_saving_label()}
+  onSubmit={submitEvent}
+  onClose={closeModal}
+/>
 
 <CalendarSubscribeModal
   open={showSubscribeModal}
