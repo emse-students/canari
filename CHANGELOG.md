@@ -11,6 +11,35 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - four event modals become one form, and what each surface may decide becomes a prop
+
+"Proposer un evenement" and "Modifier l'evenement" on an association's page, "Deposer un evenement"
+and "Modifier l'evenement" on the global agenda: two implementations of the same form under three
+names, 840 and 732 lines declaring the same six fields twice - and **neither could do what the other
+could**. The agenda's pair could not set the entry kind, attach a poster or link a registration
+form; the association's pair could not file an event under another association.
+
+What differed was never the form. It was which fields each surface is entitled to DECIDE, and that
+is a capability rather than a component, so `EventFormModal.svelte` takes it as a prop:
+`canSetKind`, `canLinkForm`, `canTargetAnotherAssociation`. The three headings are a prop too.
+
+**A field a surface cannot see is now never written**, which is the half that matters rather than
+the line count. `linkedFormId: null` on an update DETACHES a registration form, and the merged form
+holds `''` on a surface that never offered the input - so a naive fusion would have silently cleared
+a link the association's own page had set, on every edit made from the agenda. `toCreatePayload` and
+`toUpdatePayload` take the capabilities for exactly that reason, every capability defaults to the
+narrowest answer, and the spec pins each omission by name.
+
+Two smaller duplications went with it: the `datetime-local` conversion both pages carried verbatim,
+and four message keys (`calendar_deposit_title_label` and its three siblings) that were word-for-word
+copies, in both languages, of labels the association page already had. The agenda's save failures
+also reach the same error mapper the association page got, so a date refusal names the rule that was
+broken instead of falling back to "une erreur est survenue".
+
+The caller keeps the one thing the two surfaces genuinely disagree about: the endpoint. A global
+admin posts on the target association, a BDE validator posts through their own BDE association with
+`targetAssocId`, and an event never changes owner, so an update always addresses the owning one.
+
 ### Fixed - a content moderator could reach the admin console only by typing the URL
 
 Two screens asked who may open `/admin` and gave two answers. The layout admitted an association

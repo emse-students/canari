@@ -7214,8 +7214,9 @@ and gave that endpoint its codes. **Thirteen trees are guarded.**
 **The raw count is an upper bound and always will be**: the predicate is a grep, so it counts the
 docblocks that QUOTE the shape in order to explain it - two of the 195 are the mapper's own
 documentation. The guard strips comments before matching, which is why it is the guard and not the
-grep that decides whether a tree is clean. What is left is chat (`lib/utils/chat`), graine, `routes/admin` (11 files), and the
-worker/`mls-client`/`services` layers, where most sites are dev-facing logs rather than screens.
+grep that decides whether a tree is clean. What is left is chat (`lib/utils/chat`), graine,
+`routes/admin` (11 files), and the worker/`mls-client`/`services` layers, where most sites are
+dev-facing logs rather than screens.
 
 **A tree is added only once every file under it answers**, which is why they arrive in batches: a
 guard owning half a directory is one a new file walks past. The CODES are the separate, still-open
@@ -7270,45 +7271,9 @@ deleting anything that is not a build cache.**
 
 Handed over in one message of eleven (*"en vrac quelques items a faire quand tu peux"*). Each was
 traced to its code before being written here, so what follows is the WORK, not the question - and
-only what is LEFT of it, entries being deleted as they ship. The one item that was a defect rather
-than wording - any association admin publishing a school-wide holiday band - is fixed; what remains
-is naming and structure.
-
-### P3 - four event modals, two implementations, and neither can do what the other can
-
-| Modal | Where | Fields it has |
-| --- | --- | --- |
-| "Proposer un evenement" | `AssociationCalendarSection.svelte` | title, kind, description, start, end, poster image (edit only), linked form, co-owners |
-| "Modifier l'evenement" | `AssociationCalendarSection.svelte` | the same eight |
-| "Deposer un evenement" | `routes/calendar/+page.svelte` | title, description, start, end, co-owners, target association |
-| "Modifier l'evenement" | `routes/calendar/+page.svelte` | title, description, start, end, co-owners |
-
-The agenda's pair cannot set `kind`, attach a poster or link a form - deliberately, per the comment
-at `+page.svelte:348`, because those are "only editable from the association's own page". The
-association's pair cannot target another association. The two are 728 and 824 lines of parallel
-state with the same six fields declared twice.
-
-**The work.** ONE component owning every field, with capability props deciding which are rendered
-(`canTargetAnotherAssociation`, `canSetKind`) rather than two components deciding by existing. The
-title is a prop too: "Proposer", "Deposer" and "Modifier" are the same form under three names. The
-poster's "only when editing" restriction is a consequence of the upload endpoint needing an event
-id and stays, but it stays in ONE place.
-
-### P3 - "Administration" is the name of a page that moderates one agenda
-
-`/admin` is reachable by any association admin (`routes/admin/+layout.svelte:60-68`), and that is
-deliberate: it is where "Agenda en attente" lives. The server agrees and enforces - the pending
-listing accepts an association admin, `canValidate` comes back false for them, and
-`validateCalendarEvent` / `rejectCalendarEvent` refuse anyone who is not BDE or global admin
-(`associations.controller.ts:670-711`). **So there is no access-control defect here**; there is a
-NAME that promises a platform console and delivers one read-only queue.
-
-**The work.** The dashboard card and the page title say what the reader can actually do. The
-description already does (`admin_associations_description` = "Moderation de l'agenda de vos
-associations.") - it is the heading above it that lies, so the heading follows the description
-rather than the description being questioned. While there: the dashboard shows the card on
-`mine.some(a => a.isAdmin)` while the layout also admits `isContentModerator()`, so a content
-moderator who administers no association can reach `/admin` and is never offered the way in.
+only what is LEFT of it, entries being deleted as they ship. Ten of the eleven have shipped,
+the defect among them - any association admin publishing a school-wide holiday band - included.
+What remains is one wording item, and this section goes with it.
 
 ### P3 - two permission labels both say "paiements" and neither names its flag
 

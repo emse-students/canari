@@ -25,13 +25,49 @@ Used inside the association detail view (`/associations/:id`). It:
 - Shows events in a timeline or month view.
 - For admins: inline form to create new events (`POST /api/associations/:id/events`).
 
-## Event creation
+## The event form - ONE component, and capabilities decide the rest
 
-Events are created via `POST /api/associations/:id/events` with:
-- Title, description, start/end datetime, location
-- Optional: capacity limit, registration form link
+Four modals ("Proposer", "Modifier" on an association's page; "Deposer", "Modifier" on the global
+agenda) were two implementations of the same form under three names, 840 and 732 lines declaring the
+same six fields twice - and neither could do what the other could. They are now one component,
+`$lib/components/calendar/EventFormModal.svelte`, over one module, `$lib/calendar/eventForm.ts`.
 
-Association admins can create events; a validation queue may apply depending on the platform configuration.
+**What differed was never the form. It was which fields each surface may DECIDE**, so that is a
+prop:
+
+| Capability | Granted to | Effect when unset |
+| --- | --- | --- |
+| `canSetKind` | the association page, for a BDE or global admin (`canDeclareBreak`) | the `event`/`break` toggle is not rendered AND `kind` is not written to the payload |
+| `canLinkForm` | the association page, for an editor of that association (`canEdit`) | the registration-form select is not rendered AND `linkedFormId` is not written |
+| `canTargetAnotherAssociation` | the global agenda | the "on behalf of" select is not rendered AND the co-owner picker excludes the seeded owner |
+
+**A field a surface cannot see is never written, and that is the point rather than a nicety.**
+`linkedFormId: null` on an update DETACHES a registration form: the agenda's form holds `''` because
+it has no such input, so writing it from there would silently clear a link the association's own page
+had set. `toCreatePayload` / `toUpdatePayload` take the capabilities for exactly this reason, and
+`eventForm.test.ts` pins it. Every capability defaults to the NARROWEST answer, so a new call site
+that forgets a flag renders the plain form rather than quietly offering a right.
+
+The component owns the form: its values, its validation, the `saving` flag, the error line, and the
+mapping of a refusal to a sentence (`calendarErrors.ts` - the date rules arrive as CODES, never as
+the server's English). **The CALLER owns the endpoint**, which is the one thing the two surfaces
+genuinely disagree about:
+
+| Surface | Create | Update |
+| --- | --- | --- |
+| `AssociationCalendarSection` | `POST /api/associations/:id/events` on itself | `PATCH` on itself |
+| `/calendar` (global admin) | `POST` on the target association | `PATCH` on the OWNING association |
+| `/calendar` (BDE validator) | `POST` on their own BDE association, with `targetAssocId` | `PATCH` on the OWNING association |
+
+An event never changes owner, so the update URL is the owning association on both surfaces.
+
+The poster is offered only while EDITING, because the upload endpoint addresses an existing row.
+That is a consequence of the endpoint rather than a policy, and it lives in the component rather than
+being re-derived by each surface. Its two endpoints RETHROW into the modal's error line, since the
+component that owns a line owns everything that can fill it.
+
+Creation is a PROPOSAL on the association page (a BDE validation queue applies) and is
+auto-validated when a global admin or a BDE validator deposits from `/calendar`.
 
 ## Entry kind: event vs break
 
