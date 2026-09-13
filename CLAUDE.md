@@ -259,8 +259,7 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
 10. **UX/RENDERING - A FULL GRAPHICAL PASS IS OWED (user, 2026-09-13): every page, at 100 %, on a
     phone width too.** Four things seen on the way are filed with a read diagnosis each, two of them
     P2. Also open: Noto Color Emoji, and the server's English prose reaching a French reader - a TREE
-    COUNT, not a file count: seven member-facing trees plus the agenda are closed and guarded by
-    `serverProse.test.ts`; chat, graine, `routes/admin` and the worker layers are not
+    count `serverProse.test.ts` settles by running, never a number quoted here, which went stale
     ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md) section 17).
 11. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
     commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
