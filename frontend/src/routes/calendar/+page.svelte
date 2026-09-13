@@ -574,7 +574,6 @@
               {selectedDay}
               events={sortedEvents}
               onEventClick={openEventDetail}
-              onClearSelection={() => (selectedDay = null)}
             />
           {/if}
         </div>
