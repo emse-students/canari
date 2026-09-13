@@ -1,4 +1,4 @@
-import { ensureCommunityDistributionGroup } from './distributionGroup';
+import { ensureCommunityDistributionGroup, enterPrivateSalonGroup } from './distributionGroup';
 import { ChannelApiError } from '$lib/services/ChannelService';
 import { setGraineRuntime } from './runtime';
 import { workspaceScope } from '$lib/mls-client/distributionScope';
@@ -735,5 +735,138 @@ describe('ensureCommunityDistributionGroup - a published base the group has outr
     await run(mls, channels);
 
     expect(mls.refreshGroupInfo).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * G-D1 - FIVE CALL SITES, ONE JOIN, AND THREE COPIES OF THE PRECONDITION.
+ *
+ * The audit row read "`ensureDistributionGroupFor`, 5 call sites, deduplicated only by an in-flight
+ * map". **The call sites were never the duplicate.** `ensureDistributionGroupFor` is one
+ * implementation and the in-flight map is a deliberate coalescer with a production trace behind it -
+ * two calls one second apart on one gesture, both creating and publishing epoch 0, the second then
+ * reading its own sibling's half-finished work as an eviction and forgetting the tree it had just
+ * built. A count of call sites is not a count of implementations.
+ *
+ * **What WAS written three times is the precondition around it**, in the three moments a private
+ * salon is entered: the workspace walk, a salon joined in-session, a salon just created. Copies
+ * drift, and these had:
+ *
+ *  - one entry logging through `console.info`, so a salon joined in-session left nothing in the log
+ *    every other GRAINE line lands in;
+ *  - only ONE of the three saying anything when it DECLINED to enter - and that line is what a
+ *    stale-tree diagnosis reads, because its absence is supposed to mean "the walk did not run".
+ *
+ * `enterPrivateSalonGroup` is the one entrance. `viewerHasAccess` is the single thing that genuinely
+ * differs between the moments, so it is the single parameter that carries it.
+ */
+describe('a private salon is entered one way, and declining says so (G-D1)', () => {
+  const enter = (
+    channels: unknown,
+    log: (m: string) => void,
+    opts: {
+      isPrivate?: boolean;
+      viewerHasAccess?: boolean;
+      ensureMls?: () => unknown;
+    } = {}
+  ) =>
+    enterPrivateSalonGroup(channels as never, 'ws-123456', 'chan-abcdef', {
+      isPrivate: opts.isPrivate ?? true,
+      viewerHasAccess: opts.viewerHasAccess ?? true,
+      ensureMls: (opts.ensureMls ?? (() => makeMls())) as never,
+      log,
+    });
+
+  it("enters the salon's OWN group, not its community's", async () => {
+    const channels = makeChannels();
+    const mls = makeMls();
+
+    await expect(enter(channels, () => {}, { ensureMls: () => mls })).resolves.toBe(true);
+
+    // The scope is built here now, from the two ids, so a caller cannot hand it the wrong one.
+    expect(channels.getDistributionGroup).toHaveBeenCalledTimes(1);
+    expect(mls.registerDistributionGroup).toHaveBeenCalled();
+  });
+
+  it('a PUBLIC salon is not entered and is not narrated - its seeds ride the community group', async () => {
+    const lines: string[] = [];
+    const channels = makeChannels();
+
+    await expect(enter(channels, (m) => lines.push(m), { isPrivate: false })).resolves.toBe(false);
+
+    expect(channels.getDistributionGroup).not.toHaveBeenCalled();
+    // Every public salon of every community would otherwise print a line on every hydration.
+    expect(lines).toEqual([]);
+  });
+
+  const DECLINED = [
+    {
+      name: 'the viewer only SEES the salon - an admin who has not joined',
+      // An MLS client IS present: the refusal is the server's answer about this viewer, and reading
+      // it as the one below would send a diagnosis at the load order instead of at the roster.
+      viewerHasAccess: false,
+      hasMls: true,
+      because: 'no access to it',
+    },
+    {
+      name: 'this load has no MLS client at all',
+      viewerHasAccess: true,
+      hasMls: false,
+      because: 'no MLS client on this load',
+    },
+  ];
+
+  it('drives two distinct refusals, not one written twice', () => {
+    expect(
+      new Set(DECLINED.map((d) => `${String(d.viewerHasAccess)}/${String(d.hasMls)}`)).size
+    ).toBe(DECLINED.length);
+  });
+
+  for (const declined of DECLINED) {
+    it(`says WHICH refusal it was: ${declined.name}`, async () => {
+      const lines: string[] = [];
+      const channels = makeChannels();
+
+      await expect(
+        enterPrivateSalonGroup(channels as never, 'ws-123456', 'chan-abcdef', {
+          isPrivate: true,
+          viewerHasAccess: declined.viewerHasAccess,
+          ensureMls: declined.hasMls ? ((() => makeMls()) as never) : undefined,
+          log: (m) => lines.push(m),
+        })
+      ).resolves.toBe(false);
+
+      // A SKIP IS INDISTINGUISHABLE FROM A WALK THAT NEVER RAN unless it is written down, and the
+      // two causes are read in opposite directions: a wrong `viewerHasAccess` is a server bug, a
+      // missing MLS client is a load-order one.
+      const out = lines.join(' | ');
+      expect(out).toContain('not entered');
+      expect(out).toContain('chan-abc');
+      expect(out).toContain(declined.because);
+      expect(channels.getDistributionGroup).not.toHaveBeenCalled();
+    });
+  }
+
+  it('every moment that enters a salon goes through this entrance, into a real log', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const src = readFileSync(
+      join(process.cwd(), 'src', 'lib', 'composables', 'useChannelWorkspaces.svelte.ts'),
+      'utf8'
+    );
+
+    // Three moments, one entrance. A fourth that reaches the generic join directly is a fourth copy
+    // of the precondition, which is the defect itself.
+    expect(src.split('enterPrivateSalonGroup(').length - 1).toBe(3);
+    expect(src).not.toContain('ensureDistributionGroupFor');
+
+    // AND THE THIRD MOMENT LANDS IN THE SESSION LOG. It is the one with no context object to hand,
+    // it reached for `console.info`, and its caller is the only thing that can pass the real log.
+    const caller = readFileSync(
+      join(process.cwd(), 'src', 'lib', 'components', 'layout', 'ChatBackgroundService.svelte'),
+      'utf8'
+    );
+    const call = caller.slice(caller.indexOf('.registerJoinedChannel('));
+    expect(call.slice(0, call.indexOf(')'))).toContain('appendLog');
   });
 });

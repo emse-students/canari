@@ -709,7 +709,8 @@
               event.channelId,
               workspace.workspaceDbId,
               isPrivate,
-              globalSession.ensureMls
+              globalSession.ensureMls,
+              appendLog
             )
             .catch((e) =>
               appendLog(

@@ -21,7 +21,6 @@ import {
   registerCommunityHistoryVisibility,
 } from '$lib/utils/graine/runtime';
 import type { GraineHistoryVisibility } from '$lib/crypto/graineConstants';
-import { channelScope } from '$lib/mls-client/distributionScope';
 import { buildConversationRow } from '$lib/utils/chat/conversations';
 import { currentUserId } from '$lib/stores/userState.svelte';
 import { applyChannelReactionFrame, getChannelReactions } from '$lib/stores/reactionStore.svelte';
@@ -37,7 +36,7 @@ import { notifyReaction } from '$lib/utils/chat/reactionNotify';
 import { describeCommunityRefusal } from '$lib/utils/chat/communityErrors';
 import {
   ensureCommunityDistributionGroup,
-  ensureDistributionGroupFor,
+  enterPrivateSalonGroup,
 } from '$lib/utils/graine/distributionGroup';
 import { forgetCommunityGraine } from '$lib/utils/graine/forget';
 
@@ -255,30 +254,16 @@ export function useChannelWorkspaces() {
         // sealed to - the community for a public salon, the salon itself for a private one.
         registerChannelWorkspace(actualId, workspaceId, isPrivate);
 
-        // A PRIVATE SALON HAS ITS OWN GROUP, and this is where this device enters it. Skipped when
-        // the viewer only SEES the salon (an admin who has not joined): the route would refuse
-        // them its GroupInfo, which is exactly what makes that roster finite.
-        if (isPrivate && channel.viewerHasAccess !== false && ctx.ensureMls) {
-          const mls = await ctx.ensureMls();
-          await ensureDistributionGroupFor(
-            mls,
-            service,
-            channelScope(workspaceId, actualId),
-            ctx.log
-          );
-        } else if (isPrivate) {
-          // A SKIP HERE IS INDISTINGUISHABLE FROM A WALK THAT NEVER RAN, and that cost a diagnosis.
-          // WP-REGRANT-2's peer held a stale tree for a salon it was entitled to, was reloaded, and
-          // then put no question to the server for 97 seconds - and nothing said whether this loop
-          // had skipped that salon or never reached it. The two readings are opposite (a wrong
-          // `viewerHasAccess` against a walk that did not run), and this line is what separates them.
-          ctx.log(
-            `[GRAINE] private salon ${actualId.slice(0, 8)} of ${workspaceId.slice(0, 8)} not entered: ` +
-              (ctx.ensureMls
-                ? 'the server says this viewer has no access to it, so its GroupInfo would be refused'
-                : 'no MLS client on this load')
-          );
-        }
+        // A PRIVATE SALON HAS ITS OWN GROUP, and this is one of the three moments this device
+        // enters it. This is the only one that meets a salon the viewer may merely SEE, so it is the
+        // only one that passes anything but `true` - see `enterPrivateSalonGroup` for why declining
+        // has to be as loud as entering.
+        await enterPrivateSalonGroup(service, workspaceId, actualId, {
+          isPrivate,
+          viewerHasAccess: channel.viewerHasAccess !== false,
+          ensureMls: ctx.ensureMls,
+          log: ctx.log,
+        });
 
         const channelConversationId = `channel_${actualId}`;
         if (!validChannelConversationIds.includes(channelConversationId)) {
@@ -627,7 +612,8 @@ export function useChannelWorkspaces() {
     channelId: string,
     workspaceId: string,
     isPrivate: boolean,
-    ensureMls?: () => IMlsService | Promise<IMlsService>
+    ensureMls?: () => IMlsService | Promise<IMlsService>,
+    log: (message: string) => void = () => {}
   ): Promise<void> {
     if (!channelId || !workspaceId) return;
     registerChannelWorkspace(channelId, workspaceId, isPrivate);
@@ -635,11 +621,18 @@ export function useChannelWorkspaces() {
     // A PRIVATE SALON JOINED IN-SESSION NEEDS ITS GROUP BEFORE THE FIRST SEND, exactly as one
     // loaded at startup does, and nothing else would fetch it until the next full reload - the
     // same window this function was written to close for the channel-to-community map.
-    if (!isPrivate || !ensureMls) return;
-    const mls = await ensureMls();
-    await ensureDistributionGroupFor(mls, service, channelScope(workspaceId, channelId), (m) =>
-      console.info(m)
-    );
+    //
+    // THE LOG IS A PARAMETER BECAUSE IT USED TO BE `console.info`. This is the one of the three
+    // entries with no `ChannelWorkspaceContext` to hand, and reaching for the console meant a salon
+    // joined in-session left nothing in the log every other GRAINE line lands in - including the
+    // declined-salon line a stale-tree diagnosis reads.
+    await enterPrivateSalonGroup(service, workspaceId, channelId, {
+      isPrivate,
+      // Having just joined IS the access; nothing here can be a salon the viewer merely sees.
+      viewerHasAccess: true,
+      ensureMls,
+      log,
+    });
   }
 
   // ---------- API operations ----------
@@ -841,15 +834,13 @@ export function useChannelWorkspaces() {
 
       // The salon was created private, so social-service has already minted its group; this device
       // is the one that initialises the MLS state on it, and it must do so before the first send.
-      if (isPrivate && ctx.ensureMls) {
-        const mls = await ctx.ensureMls();
-        await ensureDistributionGroupFor(
-          mls,
-          service,
-          channelScope(workspaceId, actualId),
-          ctx.log
-        );
-      }
+      // Creating it IS the access.
+      await enterPrivateSalonGroup(service, workspaceId, actualId, {
+        isPrivate,
+        viewerHasAccess: true,
+        ensureMls: ctx.ensureMls,
+        log: ctx.log,
+      });
 
       const sidebarWorkspace = channelWorkspaces.find((w) => w.workspaceDbId === workspaceId);
       if (sidebarWorkspace) {
