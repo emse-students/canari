@@ -156,8 +156,15 @@ first read as "only an awaited checkpoint on the send path can hold it". **That 
 and the measurement below is what refuted it**: awaiting costs 1.7 s per message on a phone, which is
 not a trade worth making. The invariant does not in fact require the state to be durable at send
 time - only that a state restored behind it be RECOGNISED and repaired, which is a counter and a burn
-rather than a disk write. `BaseMlsService.checkpointAfterSend` therefore keeps its non-awaiting
-default on both platforms.
+rather than a disk write. The outbound checkpoint in `BaseMlsService.emitFrame` therefore does not
+await, on either platform.
+
+**AND THE SEAM THAT WAS KEPT FOR THE AWAIT IS GONE (2026-09-13).** `checkpointAfterSend` was left as
+a `protected` hook so native could override it and await; its docblock said native already did. No
+override was ever written, `git log -S` over `TauriMlsService.ts` returns nothing, and by the
+reading above none is owed - so the hook was deleted and the call inlined. What the seam was
+guarding is now asserted where it actually lives: `BaseMlsService.sendSeam.test.ts` pins that the
+ledger write happens BEFORE the POST, which nothing pinned until then.
 
 **THE MEASUREMENT REFUTES THE OBVIOUS FIX, AND FOUND A DIFFERENT DEFECT INSTEAD.** The split log
 priced a native checkpoint at **3.7 s, of which `saveState` alone is 1.7 s** (1683 / 1690 / 1761 ms

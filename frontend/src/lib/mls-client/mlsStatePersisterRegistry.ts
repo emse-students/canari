@@ -21,26 +21,31 @@ export function unregisterMlsStatePersister(): void {
 }
 
 /**
- * Checkpoints MLS ratchet state after outbound traffic. Coalesced, but never deferred.
+ * Checkpoints MLS ratchet state after outbound traffic. Coalesced, and BEST-EFFORT.
  *
- * THIS MUST HIT DISK, and the reason is not performance hygiene - it is correctness. Encrypting a
- * message advances the sending ratchet, and the moment that message is on the wire the PEER has
- * consumed that generation. If the advance lives only in RAM and the page goes away before a
- * checkpoint, the next load restores a ratchet BEHIND the one already used: the next message is
- * encrypted at a generation the peer has already seen, the peer raises `SecretReuseError`,
- * classifies it as a duplicate and silently drops it. The message is lost with no error anywhere.
+ * WHAT IT IS FOR. Encrypting a message advances the sending ratchet, and the moment that message
+ * is on the wire the PEER has consumed that generation. If the advance lives only in RAM and the
+ * page goes away before a checkpoint, the next load restores a ratchet BEHIND the one already
+ * used: the next message is encrypted at a generation the peer has already seen, the peer raises
+ * `SecretReuseError`, classifies it as a duplicate and silently drops it.
  *
  * Measured on prod 2026-08-06, deterministically: reload 300 ms after a send and the next message
  * dies (twice, at generations 118 and 120); reload 20 s after and it arrives in 694 ms. Forwarding
  * looked guilty only because opening a fresh session reloads the page - 4 losses out of 4.
  *
- * The `pagehide` / `visibilitychange` hooks in `mlsStatePersisterLifecycle` cannot cover this: they
- * can only start an async save (`saveState` is a worker round trip, then IndexedDB) and the
- * document is torn down long before it lands. An unload hook is a best-effort extra, never the
- * guarantee. The guarantee has to be here, at the point the ratchet moved.
+ * WHAT IT IS NOT. This docblock used to say the guarantee lived here, "never deferred", while the
+ * body below queued the write on a microtask and returned `void` - so nothing could await it and
+ * nothing did, on either platform. The claim outlived the design: the window is closed by the SEND
+ * LEDGER (`sendRatchetLedger`), a synchronous `localStorage` write taken before the frame goes on
+ * the wire and burnt by `reconcileSendRatchets` on the next `init`. That is the guarantee, and it
+ * needs no await on the send path - which is why there is none, and why adding one would only put
+ * a 1.7 s checkpoint on the latency of every message.
  *
- * `persistNow` still merges same-tick calls and stays deferred during a bulk ingest, so a burst of
- * sends costs one checkpoint, not one per message.
+ * So this call SHORTENS the window rather than closing it, which is worth having: a checkpoint
+ * that lands means no generation to burn at all. `persistNow` merges same-tick calls and stays
+ * deferred during a bulk ingest, so a burst of sends costs one checkpoint, not one per message.
+ *
+ * @see docs/wiki/protocols/mls-desync-prevention.md section 8
  */
 export function scheduleOutboundMlsPersist(): void {
   activePersister?.persistNow();
