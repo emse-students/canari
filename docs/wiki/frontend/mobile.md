@@ -1306,6 +1306,55 @@ The receiving side still accepts the legacy `read_receipt` and converts it throu
 `watermarkAfterReading` - that shim is for clients older than this change, and is dated in
 [legacy-compatibility](../legacy-compatibility.md). Nothing in this repo sends one any more.
 
+## A device's identity survived only a successful network call
+
+`deviceId` is not a preference. The MLS credential is `userId:deviceId`, so losing it does not
+degrade a feature - it makes the client a DIFFERENT device, orphaning the leaf it holds in every
+group's ratchet tree and forcing a re-enrolment no peer asked for. Every re-enrolment costs a key
+package, fifty prekeys, a Welcome per group and a leaf that nothing ever reclaims.
+
+It lives in `localStorage` under `mls_device_id_<userId>`, which an Android WebView evicts under
+storage pressure and a reinstall clears outright. Its only durable copy was `push_context.json` -
+and until 2026-09-12 nothing wrote that file for the sake of identity. It was written exclusively
+by `store_push_context`, which needs **three** things that have nothing to do with who this device
+is:
+
+| Precondition | Where it is | What its failure did |
+|---|---|---|
+| an auth-token refresh already back from the network | `getToken().then(...)`, the JS call site | the whole chain never ran; `.catch(() => {})` left no line |
+| a non-empty derived device key | `if (deviceKeyB64.length > 0)`, same call site | biometric-mode login skipped the write entirely |
+| a platform-keystore write that succeeds | `store_push_context` returns `Err` **before** `fs::write` | the JSON was never reached, so identity died with the keystore |
+
+Each of them failing quietly minted a new device. **Production, 2026-09-12: 138 of 361 accounts
+carry ONE device NAME under several `deviceId`s** - 40% of iOS accounts and 38% of Android, against
+12% Windows and 9% macOS. The gap is mobile, which is exactly where WebView eviction happens, and
+it was not an iOS defect: that hypothesis was tested against this population and refuted.
+
+**The mirror is now a step of resolution itself.** `BaseMlsService.resolveDeviceId` calls
+`persistDeviceIdNatively` - a no-op on the web, `store_device_identity` under Tauri - from the one
+place that knows the id, with no precondition at all. It runs on **every** resolution and not only
+on a mint, because that is what repairs the estate already affected: a device whose id sits in
+`localStorage` but whose file was never written looks perfectly healthy and is one eviction away
+from the same loss, and its next sign-in is the only chance to fix it.
+
+Three properties the command owes, each asserted in `pushContextFields.test.ts`:
+
+- **It patches two keys, it does not rewrite the file** - the same posture as
+  `set_push_context_locale`, so a device-key refresh and an identity write cannot clobber each
+  other.
+- **It CREATES the file when absent**, which is where it differs from the locale writer and is the
+  entire point: a lone locale is a context no reader can use, but a lone identity is exactly what
+  `load_push_context` hands back to `restoreDeviceIdFromNative`. The three background readers
+  (`MlsContextLoader.loadPushContext`, the Swift NSE's, the ObjC one) all require a non-empty
+  `baseUrl` and return nil without it, so a partial file reads to them exactly as an absent one.
+- **It drops `pushToken` when the user changes.** Despite its name that field is the AUTH BEARER
+  token; left beside a new `userId` it would let a background fetch authenticate as the account
+  that just signed out. The old whole-file rewrite made this impossible by construction, and a
+  merge writer has to state it.
+
+It depends on no device key and no keystore, and re-coupling it to either is the regression the
+guard test exists to catch.
+
 ## The push secret has two homes, and the file is always the newer one
 
 `POST /mls/push/register` mints a fresh `rawSecret` on **every** call and overwrites the stored hash,
@@ -1356,6 +1405,7 @@ CONFIGURATION** — and every parity defect found since has been exactly that. A
 | App Link **paths** | the same three files | Generated from one list, already guarded |
 | Custom URL scheme | `AndroidManifest.xml` (per host), `Info.plist` `CFBundleURLTypes` (per scheme) | Equivalent by construction: iOS claims the scheme, so all five hosts follow |
 | `push_context.json` fields | Rust writer, three native readers | `pushContextFields.test.ts` |
+| `push_context.json` **identity** fields | `store_device_identity` - a SECOND writer, with no precondition | `pushContextFields.test.ts`; see [above](#a-devices-identity-survived-only-a-successful-network-call) |
 | FCM manifest entries | `AndroidManifest.xml` | `androidFcmManifest.test.ts` (Android-only by nature) |
 | Cookie-jar durability | `commands/cookies.rs` | Android-only **by API**, not by decision — iOS has no flush to call and has never been observed. `check P` |
 | Server CORS allowlist | `apps/*-service/src/cors-origins.ts`, `ALLOW_ORIGIN` in `serve-prod.yml` | Named the Android origins ONLY. Broke iOS login outright - see below. One module per service now, with a test naming each platform's origin individually |
