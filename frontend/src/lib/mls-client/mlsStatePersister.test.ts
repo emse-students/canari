@@ -104,10 +104,15 @@ describe('createMlsStatePersister', () => {
     await new Promise((r) => setTimeout(r, 50));
   });
 
-  it('scheduleOutboundMlsPersist checkpoints to disk - a rewound ratchet loses the next message', async () => {
+  // The 50 ms wait IS the finding, so it is named rather than tolerated: the write is queued on a
+  // microtask and the call returns `void`, so no caller can await it and none does. This shortens
+  // the window in which a reload would restore a ratchet behind the frames already sent; what
+  // CLOSES that window is the send ledger, asserted in `BaseMlsService.sendSeam.test.ts`.
+  it('scheduleOutboundMlsPersist reaches disk EVENTUALLY, on a microtask nobody awaits', async () => {
     const { persistCheckpoint, persister } = makePersister();
     registerMlsStatePersister(persister);
-    scheduleOutboundMlsPersist();
+    expect(scheduleOutboundMlsPersist()).toBeUndefined();
+    expect(persistCheckpoint).not.toHaveBeenCalled();
     await new Promise((r) => setTimeout(r, 50));
     expect(persistCheckpoint).toHaveBeenCalledTimes(1);
   });

@@ -9,6 +9,23 @@ vi.mock('$lib/mls-client/mlsStatePersisterRegistry', () => ({
   flushActiveMlsStateEncrypted: vi.fn(),
 }));
 
+/**
+ * The ledger is mocked to TRACE, not to be silenced: where its write lands in the order is the
+ * whole of the guarantee this file pins, so it has to appear in the same sequence as the encrypt
+ * and the post rather than be asserted separately afterwards.
+ */
+const ledgerTrace: string[] = [];
+vi.mock('$lib/mls-client/sendRatchetLedger', () => ({
+  MAX_BURN_GENERATIONS: 2000,
+  commitPersisted: vi.fn(),
+  noteFrameEmitted: () => {
+    ledgerTrace.push('ledger');
+  },
+  pendingSendGenerations: () => [],
+  resetSendRatchetLedger: vi.fn(),
+  snapshotEmitted: () => ({}),
+}));
+
 import { BaseMlsService } from './BaseMlsService';
 import { DELIVERY } from '$lib/mls-client/frameDelivery';
 
@@ -34,6 +51,7 @@ abstract class SendSeamHarness extends BaseMlsService {
     (this as unknown as { delivery: unknown }).delivery = {
       postApplicationMessage: async () => {
         this.trace.push('post');
+        ledgerTrace.push('post');
       },
     };
   }
@@ -65,7 +83,10 @@ abstract class SendSeamHarness extends BaseMlsService {
 const FakeMlsService = SendSeamHarness as unknown as new () => SendSeamHarness;
 
 describe('BaseMlsService.sendMessage - the one seam every send passes through', () => {
-  beforeEach(() => scheduleOutboundMlsPersist.mockClear());
+  beforeEach(() => {
+    scheduleOutboundMlsPersist.mockClear();
+    ledgerTrace.length = 0;
+  });
 
   it('checkpoints the ratchet advance, without the caller asking', async () => {
     const svc = new FakeMlsService();
@@ -98,6 +119,28 @@ describe('BaseMlsService.sendMessage - the one seam every send passes through', 
     svc.closeCatchUp();
     await inFlight;
     expect(svc.encryptCalls).toBe(1);
+  });
+
+  /**
+   * THE CHECKPOINT IS NOT THE GUARANTEE, AND THIS IS.
+   *
+   * `scheduleOutboundMlsPersist` above only SHORTENS the window: it marks the state dirty and
+   * queues the write on a microtask, so a page torn down inside it restores an `mls.bin` behind
+   * frames that have already left. What closes the window is the send ledger - a synchronous
+   * `localStorage` write, taken the instant the ratchet moves and BEFORE the frame goes on the
+   * wire, which `reconcileSendRatchets` reads on the next `init` and burns.
+   *
+   * So the order is the assertion, and only this order works. Recording after the POST leaves
+   * every failed POST as a silent under-count, which is the direction that re-issues a spent
+   * generation - the exact fault measured on the phone on 2026-08-14, twice.
+   *
+   * Nothing pinned it until now, which is how a docblock came to promise the guarantee lived in an
+   * awaited native checkpoint that was never written and is not needed.
+   */
+  it('records the frame in the send ledger BEFORE it posts - that, not the checkpoint, is the guarantee', async () => {
+    const svc = new FakeMlsService();
+    await svc.sendMessage('g1', new Uint8Array([9]));
+    expect(ledgerTrace).toEqual(['ledger', 'post']);
   });
 
   it('defaults to the visible delivery when a caller passes none', async () => {
