@@ -1372,6 +1372,43 @@ invariant - covered only the group path. The rule about a comment citing a prece
 comment citing a SIBLING FUNCTION just as hard: the guarding test now asserts the order on both
 paths.
 
+### A `welcome_request` has a third outcome, and only one of its two entrances knew it (R-D9, 2026-09-13)
+
+A device that has lost its MLS state asks the group's members to re-add it. The member that answers
+must already hold a READY conversation for that group - it cannot invite anyone into a group it is
+still joining itself - so `handleWelcomeRequest` has a third outcome beside served and refused:
+**not yet**. It signals it through an `onNotReady` callback, and the only correct thing to do with it
+is to remember the asker and serve them the moment the group becomes ready.
+
+**That is a policy, and it was written at ONE of the two entrances.** The socket entrance passed an
+`onNotReady` that pushed the asker onto `ctx.deferredWelcomeRequests`; `onGroupReady`'s drain of that
+same queue passed none - and deleted the key before serving - so an asker who came back *not yet* on
+the drain fell into a `?.()` on an absent callback and vanished, silently, with the queue already
+emptied.
+
+**The drain reaching a group that is still not ready is a state the code produces, not a
+hypothetical.** "Ready" there is the MLS group becoming sendable, which is not the same event as this
+device's conversation row reaching `active`: of `setupMessageHandler`'s two fire points, the
+redelivered-Welcome path sets the row first *if a row exists*, and the ordinary join path does not.
+Nothing re-derived a dropped asker; only their own 60-second retry brought them back, and the log
+said nothing at all.
+
+The two entrances differ in exactly one thing - WHERE the ask came from - and everything else they
+had in common was written twice, as two hand-built nine-field parameter objects. Both now call
+`serveWelcomeRequest` in `welcomeRequestQueue.ts`, which holds the deferral, the log and the failure
+report; the drain is `drainDeferredWelcomeRequests`, which **re-defers by the same path it drains
+through**, so a group that is still not ready keeps its askers.
+
+Two things came with the collapse. A failure is now REPORTED at both entrances - the drain used to
+`.catch(() => {})` it - because an asker on the other side is locked out of a group they belong to
+for as long as it is wrong. And the queue **deduplicates on `(userId, deviceId)`**: a refused device
+re-asks every 60 seconds, and each ask landing while the group is not ready used to add another copy
+of the same waiter, so the drain served one device N times and the post-Welcome cooldown absorbed
+them one by one. The queue records WHO is waiting, and a device waiting twice is one waiter.
+
+A table drives both entrances over the same not-ready group and the same failure, and a source check
+refuses a third entrance that builds its own parameters.
+
 ### A DM has two keys, depending on which side created it
 
 `conversations` is keyed by `groupId` for a DM created on this device, and by the PEER'S USER ID for

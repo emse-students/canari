@@ -11,6 +11,23 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a device waiting to be let back in was forgotten by the queue built to remember it
+
+A phone that has lost its encryption state asks the other members of a conversation to let it back
+in. The member that answers has to be fully in the conversation itself, so when it is not - it is
+still joining, or it has just been handed the group and has not finished setting it up - it puts the
+asker on a list and serves them the moment it is ready.
+
+**Draining that list did not put anyone back on it.** The list was emptied first, and if the group
+turned out to be a moment too early after all, the asker was dropped with nothing written down and
+no line in the log. Nothing noticed; the phone on the other side simply stayed locked out until its
+own retry a minute later, and if it was unlucky again, another minute after that.
+
+Both ways of answering now go through the same code, so an asker who is still too early goes back on
+the list instead of off it. A failure to serve one is reported rather than swallowed, and a device
+that has asked several times while waiting counts as one waiter rather than one per ask - it used to
+be re-added once per ask, each attempt waiting out the previous one's cooldown.
+
 ### Fixed - a channel was never a channel, and hydrating a community emptied the one you were reading
 
 A conversation row carries a type - direct, group, or channel - and thirteen different places in the
