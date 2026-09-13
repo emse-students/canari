@@ -28,6 +28,7 @@ import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import type { Response } from 'express';
 import { sanitizeQueryValue, sanitizeOptionalQueryValue } from '../utils/sanitize';
+import { acquireAddLock, releaseAddLock } from '../utils/add-lock';
 import { MessagingService } from '../services/messaging.service';
 
 /**
@@ -482,18 +483,17 @@ export class PushController {
     const groupId = sanitizeQueryValue(body.groupId ?? '', 'groupId');
     await this.verifyPushSecretAuth(authHeader, userId, deviceId);
 
-    const lockKey = `mls:addlock:${groupId}`;
-    const lockOwner = `${userId}:${deviceId}`;
-    const result = await this.redis.set(lockKey, lockOwner, 'EX', 15, 'NX');
-    this.logger.log(
-      `[ADD_LOCK_PUSH] group=${groupId} owner=${lockOwner} acquired=${result === 'OK'}`
+    const acquired = await acquireAddLock(
+      this.redis,
+      this.logger,
+      { groupId, userId, deviceId },
+      'push'
     );
-    return { acquired: result === 'OK' };
+    return { acquired };
   }
 
   /**
-   * Releases the distributed add-lock for a group.
-   * Uses a Lua script to atomically verify ownership before deleting.
+   * Releases the distributed add-lock for a group, if this device still holds it.
    * Auth: PushSecret (no JWT).
    */
   @Delete('mls/push/release-add-lock')
@@ -506,18 +506,13 @@ export class PushController {
     const groupId = sanitizeQueryValue(body.groupId ?? '', 'groupId');
     await this.verifyPushSecretAuth(authHeader, userId, deviceId);
 
-    const lockKey = `mls:addlock:${groupId}`;
-    const lockOwner = `${userId}:${deviceId}`;
-    const released = await this.redis.eval(
-      `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end`,
-      1,
-      lockKey,
-      lockOwner
+    const released = await releaseAddLock(
+      this.redis,
+      this.logger,
+      { groupId, userId, deviceId },
+      'push'
     );
-    this.logger.log(
-      `[RELEASE_LOCK_PUSH] group=${groupId} owner=${lockOwner} released=${released === 1}`
-    );
-    return { released: released === 1 };
+    return { released };
   }
 
   /**

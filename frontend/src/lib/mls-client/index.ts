@@ -71,7 +71,6 @@ export {
 } from './mlsDeliveryHttp';
 export {
   MlsDeliveryApi,
-  MLS_ADD_LOCK_TTL_MS,
   type MlsDeliveryApiOptions,
   type MlsDeliveryFetch,
 } from './mlsDeliveryApi';

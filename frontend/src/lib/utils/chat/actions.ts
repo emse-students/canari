@@ -177,8 +177,8 @@ export async function processPendingInvitations(params: {
       continue;
     }
 
-    // Acquire distributed lock to prevent concurrent Add commits (default TTL = worst case
-    // mobile: bulk add + Argon2 + commit + Welcomes, cf. MLS_ADD_LOCK_TTL_MS / H1).
+    // Acquire distributed lock to prevent concurrent Add commits (the server's ADD_LOCK_TTL_SEC
+    // covers the worst case mobile: bulk add + Argon2 + commit + Welcomes, H1).
     const lockAcquired = await mlsService.acquireAddLock(groupId).catch(() => false);
     if (!lockAcquired) {
       log(`[PENDING] Group ${groupId}: lock held by another device - skip`);

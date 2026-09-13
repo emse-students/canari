@@ -8,14 +8,6 @@ import { toBase64, fromBase64 } from '$lib/utils/hex';
 export type MlsDeliveryFetch = typeof fetch;
 
 /**
- * Add-lock TTL (cross-device serialization of add commits). Sized on the real worst-case mobile
- * path: bulk add + state persist (~5-8 s) + validated commit + the Welcome loop, which easily
- * exceeds the original 10 s -> the lock expired mid-operation -> two devices committed in parallel
- * -> epoch fork on the successor (H1). [[H1]]
- */
-export const MLS_ADD_LOCK_TTL_MS = 30_000;
-
-/**
  * How long one pending page may stay COMPLETELY SILENT before it is abandoned.
  *
  * Not a budget for the page: {@link fetchJsonUnderProgressDeadline} re-arms it on the response head
@@ -747,13 +739,18 @@ export class MlsDeliveryApi {
   /**
    * Acquires a distributed Redis lock to serialise concurrent `addMember` commits on `groupId`.
    * Returns `false` if another device already holds the lock (caller should abort or retry).
+   *
+   * How long the lock lives is the SERVER's to decide (`ADD_LOCK_TTL_SEC`, sized on this client's
+   * own worst case: bulk add + state persist + validated commit + the Welcome loop, H1). This used
+   * to send a `ttlMs` no caller ever varied, and the background push door - which has no such
+   * field - took the same lock for half as long.
    */
-  async acquireAddLock(groupId: string, ttlMs = MLS_ADD_LOCK_TTL_MS): Promise<boolean> {
+  async acquireAddLock(groupId: string): Promise<boolean> {
     try {
       const res = await this.f(`${this.historyUrl}/api/mls/add-lock`, {
         method: 'POST',
         headers: await this.auth({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ groupId, deviceId: this.deviceId, ttlMs }),
+        body: JSON.stringify({ groupId, deviceId: this.deviceId }),
       });
       if (!res.ok) return false;
       const data = await res.json();

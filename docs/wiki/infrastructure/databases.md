@@ -145,7 +145,7 @@ Redis is used for three distinct purposes:
 |---|---|---|
 | `group:members:{groupId}` | Set | Active device members for a group (for welcome forward) |
 | `pending_welcomes:{userId}` | List | WS frames queued while device is offline |
-| `add-lock:{groupId}` | String | Distributed add-lock (1s TTL) |
+| `mls:addlock:{groupId}` | String | Distributed add-lock, one holder per group (`ADD_LOCK_TTL_SEC`, 30 s) |
 
 Redis is **not persisted** (no AOF/RDB in the default config). Presence and pending frames are ephemeral; history streams are the durable record.
 

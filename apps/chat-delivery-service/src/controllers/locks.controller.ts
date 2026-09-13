@@ -2,8 +2,16 @@ import { Controller, Post, Delete, Body, Headers, Inject, UseGuards, Logger } fr
 import Redis from 'ioredis';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { sanitizeQueryValue } from '../utils/sanitize';
+import { acquireAddLock, releaseAddLock } from '../utils/add-lock';
 
-/** Distributed Redis locks for MLS add operations to prevent concurrent commits. */
+/**
+ * The JWT-guarded door to the MLS add-lock, which serialises add commits on a group.
+ *
+ * The lock itself - its key, its owner, its lifetime and its ownership-checked release - is
+ * [`utils/add-lock.ts`](../utils/add-lock.ts), shared with the PushSecret door in
+ * `push.controller.ts`. Nothing about the lock is decided here: a second implementation is how the
+ * two doors came to disagree about how long it lives.
+ */
 @Controller()
 @UseGuards(HeaderAuthGuard)
 export class LocksController {
@@ -12,30 +20,26 @@ export class LocksController {
   constructor(@Inject('REDIS_CLIENT') private readonly redis: Redis) {}
 
   @Post('mls/add-lock')
-  /** Acquires a distributed Redis lock for a group to prevent concurrent MLS commits. */
+  /** Acquires the group's add-lock for the calling device. */
   async acquireAddLock(
     @Body()
-    body: { groupId: string; deviceId: string; ttlMs?: number },
+    body: { groupId: string; deviceId: string },
     @Headers('x-user-id') userIdRaw?: string
   ) {
     const userId = sanitizeQueryValue(userIdRaw ?? '', 'x-user-id');
     const groupId = sanitizeQueryValue(body.groupId, 'groupId');
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
-    // Clamp to 60 s max: covers the worst-case mobile path (bulk add + state persist + commit +
-    // Welcomes) without letting one crashed device block another indefinitely (H1).
-    const ttlSec = Math.max(1, Math.min(60, Math.round((body.ttlMs ?? 30_000) / 1000)));
-    // Redis SET NX EX: acquires the lock only if the key does not yet exist.
-    const lockKey = `mls:addlock:${groupId}`;
-    const lockOwner = `${userId}:${deviceId}`;
-    const result = await this.redis.set(lockKey, lockOwner, 'EX', ttlSec, 'NX');
-    this.logger.log(
-      `[ADD_LOCK] group=${groupId} owner=${lockOwner} acquired=${result === 'OK'} ttl=${ttlSec}s`
+    const acquired = await acquireAddLock(
+      this.redis,
+      this.logger,
+      { groupId, userId, deviceId },
+      'jwt'
     );
-    return { acquired: result === 'OK' };
+    return { acquired };
   }
 
   @Delete('mls/add-lock')
-  /** Releases a previously acquired add-lock for a group. */
+  /** Releases the group's add-lock, if this device still holds it. */
   async releaseAddLock(
     @Body() body: { groupId: string; deviceId: string },
     @Headers('x-user-id') userIdRaw?: string
@@ -43,19 +47,12 @@ export class LocksController {
     const userId = sanitizeQueryValue(userIdRaw ?? '', 'x-user-id');
     const groupId = sanitizeQueryValue(body.groupId, 'groupId');
     const deviceId = sanitizeQueryValue(body.deviceId, 'deviceId');
-    const lockKey = `mls:addlock:${groupId}`;
-    const lockOwner = `${userId}:${deviceId}`;
-    // Atomic Lua script: releases the lock only if this device still holds it.
-    // Separate GET + DEL would be a race condition (another device could interleave).
-    const released = await this.redis.eval(
-      `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end`,
-      1,
-      lockKey,
-      lockOwner
+    const released = await releaseAddLock(
+      this.redis,
+      this.logger,
+      { groupId, userId, deviceId },
+      'jwt'
     );
-    this.logger.log(
-      `[RELEASE_LOCK] group=${groupId} owner=${lockOwner} released=${released === 1}`
-    );
-    return { released: released === 1 };
+    return { released };
   }
 }
