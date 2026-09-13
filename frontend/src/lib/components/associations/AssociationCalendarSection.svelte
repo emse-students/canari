@@ -56,6 +56,13 @@
     associationName?: string;
     associationLogoUrl?: string | null;
     canEdit?: boolean;
+    /**
+     * Whether the viewer may declare a school-wide `break` band. A band is a statement about the
+     * SCHOOL, not about this association, so the control belongs to the authority that speaks for
+     * it - the server refuses `kind` from anyone else (`assertMayDecideKind`), and offering a
+     * field the API will refuse is how a control comes to look broken rather than forbidden.
+     */
+    canDeclareBreak?: boolean;
     /** Hex color of this association for calendar cell gradient (e.g. "#e83e8c"). */
     associationColor?: string | null;
   }
@@ -66,6 +73,7 @@
     associationName = '',
     associationLogoUrl = null,
     canEdit = false,
+    canDeclareBreak = false,
     associationColor = null,
   }: Props = $props();
 
@@ -647,39 +655,45 @@
         {/if}
         <Input label={m.asso_calendar_event_title_label()} bind:value={formTitle} />
 
-        <!-- Entry kind: normal event card vs full-day background band (break / vacation). -->
-        <div>
-          <span class="text-text-main mb-1 ml-1 block text-sm font-bold"
-            >{m.asso_calendar_event_kind_label()}</span
-          >
-          <div class="grid grid-cols-2 gap-2">
-            <button
-              type="button"
-              onclick={() => (formKind = 'event')}
-              class="rounded-xl border px-3 py-2 text-sm font-semibold transition-colors {formKind ===
-              'event'
-                ? 'border-cn-yellow bg-cn-yellow/10 text-cn-dark'
-                : 'border-cn-border text-text-muted hover:bg-cn-bg'}"
+        <!--
+          Entry kind: normal event card vs full-day background band (break / vacation). Offered
+          only to a viewer the server would accept - everybody else proposes an `event`, which is
+          the value the form already holds, so an ordinary edit resends it unchanged and passes.
+        -->
+        {#if canDeclareBreak}
+          <div>
+            <span class="text-text-main mb-1 ml-1 block text-sm font-bold"
+              >{m.asso_calendar_event_kind_label()}</span
             >
-              {m.asso_calendar_event_kind_event()}
-            </button>
-            <button
-              type="button"
-              onclick={() => (formKind = 'break')}
-              class="rounded-xl border px-3 py-2 text-sm font-semibold transition-colors {formKind ===
-              'break'
-                ? 'border-cn-yellow bg-cn-yellow/10 text-cn-dark'
-                : 'border-cn-border text-text-muted hover:bg-cn-bg'}"
-            >
-              {m.asso_calendar_event_kind_break()}
-            </button>
+            <div class="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onclick={() => (formKind = 'event')}
+                class="rounded-xl border px-3 py-2 text-sm font-semibold transition-colors {formKind ===
+                'event'
+                  ? 'border-cn-yellow bg-cn-yellow/10 text-cn-dark'
+                  : 'border-cn-border text-text-muted hover:bg-cn-bg'}"
+              >
+                {m.asso_calendar_event_kind_event()}
+              </button>
+              <button
+                type="button"
+                onclick={() => (formKind = 'break')}
+                class="rounded-xl border px-3 py-2 text-sm font-semibold transition-colors {formKind ===
+                'break'
+                  ? 'border-cn-yellow bg-cn-yellow/10 text-cn-dark'
+                  : 'border-cn-border text-text-muted hover:bg-cn-bg'}"
+              >
+                {m.asso_calendar_event_kind_break()}
+              </button>
+            </div>
+            {#if formKind === 'break'}
+              <p class="text-text-muted mt-1 ml-1 text-xs">
+                {m.asso_calendar_event_kind_break_hint()}
+              </p>
+            {/if}
           </div>
-          {#if formKind === 'break'}
-            <p class="text-text-muted mt-1 ml-1 text-xs">
-              {m.asso_calendar_event_kind_break_hint()}
-            </p>
-          {/if}
-        </div>
+        {/if}
 
         <div class="grid gap-4 sm:grid-cols-2">
           <div>

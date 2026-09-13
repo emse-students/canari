@@ -57,6 +57,24 @@ export function setAssociationSuperAdmin(value: boolean): void {
   _isAssocSuperAdmin = value;
 }
 
+let _isEventValidator = $state<boolean>(false);
+
+/**
+ * Returns `true` when the current user may validate calendar events platform-wide: a member of a
+ * BDE association holding `VALIDATE_EVENTS`. Mirrors the server's `isUserBdeAdmin`.
+ *
+ * Populated lazily by `ensureMyAssociations()`, from the same one answer as the two flags around
+ * it - a second probe over the same endpoint would drift the moment one is force-refreshed.
+ */
+export function eventValidatorState(): boolean {
+  return _isEventValidator;
+}
+
+/** Updates the reactive event-validator flag. */
+export function setEventValidator(value: boolean): void {
+  _isEventValidator = value;
+}
+
 let _isContentModerator = $state<boolean>(false);
 
 /**

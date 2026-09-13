@@ -1,7 +1,11 @@
 import { apiFetch } from '$lib/utils/apiFetch';
 import { getToken } from '$lib/stores/auth';
 import { coreUrl, socialUrl } from '$lib/utils/apiUrl';
-import { setAssociationSuperAdmin, setContentModerator } from '$lib/stores/userState.svelte';
+import {
+  setAssociationSuperAdmin,
+  setContentModerator,
+  setEventValidator,
+} from '$lib/stores/userState.svelte';
 import { downloadDecryptedFile } from '$lib/utils/fileDownload';
 // Type-only: `carte/publish` transitively imports this module, so a value import would cycle.
 import type { PublishedCarte } from '$lib/carte/publish';
@@ -672,12 +676,14 @@ export async function ensureMyAssociations(force = false): Promise<Association[]
       .then((assos) => {
         setAssociationSuperAdmin(holdsBdeFlag(assos, AssociationPermissionFlag.MANAGE_ASSO));
         setContentModerator(holdsBdeFlag(assos, AssociationPermissionFlag.MODERATE));
+        setEventValidator(holdsBdeFlag(assos, AssociationPermissionFlag.VALIDATE_EVENTS));
         return assos;
       })
       .catch((err) => {
         console.error('[associations] membership probe failed, every BDE flag denied', err);
         setAssociationSuperAdmin(false);
         setContentModerator(false);
+        setEventValidator(false);
         return [];
       });
   }

@@ -222,6 +222,27 @@ the prop is gone too), the search placeholder, and the `Retirer {name}` aria-lab
 Four message keys naming the two group headings per call site collapsed into `asso_select_group_assos`
 and `asso_select_group_lists`, which is now where those two words are written.
 
+### Fixed - any association could publish a school-wide holiday band
+
+`kind` was a free field on both calendar write paths. `event` renders as a card on the owning
+association's row; `break` renders as a full-day background band across the WHOLE school's calendar.
+Any member holding `PROPOSE_EVENT` could send `kind: 'break'` and have the school told there are no
+courses this week - a statement about the school, made by somebody who does not speak for it.
+Proposing one has no meaning, and validating one is the wrong question to put to a BDE.
+
+Only a caller who may validate now decides an entry's kind, refused server-side on create AND on
+update, with the radio rendered only for that caller. **The gate is on the value CHANGING, not on
+the field being SENT**: the modal submits every field it renders, so an ordinary edit resends the
+entry's existing `kind` on every save, and refusing a field that was merely present would have
+refused every edit a non-BDE makes. It guards both directions - turning a BDE's band back into an
+association card rewrites the same statement.
+
+The BDE's route to creating one is the owning association's page, which is where the control now
+lives and the only place it ever was: the `/calendar` deposit modal omits `kind` on purpose.
+
+The client mirror is a third BDE-derived flag published by the membership probe that already runs,
+from the same one answer as the super-admin and moderator tiers, and a failed probe denies all three
+rather than leaving them as they were.
 
 ### Removed - the two buttons that left the day view by landing on an empty box
 

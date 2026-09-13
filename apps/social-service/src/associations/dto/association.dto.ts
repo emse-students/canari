@@ -317,7 +317,11 @@ export class CreateAssociationCalendarEventDto {
   @IsOptional()
   endsAt?: string;
 
-  /** Visual kind: `event` (default, a card) or `break` (a full-day background band). */
+  /**
+   * Visual kind: `event` (default, a card) or `break` (a full-day background band across the
+   * whole school's calendar). **`break` is refused for a caller who may not validate** - see
+   * `assertMayDecideKind`.
+   */
   @IsOptional()
   @IsEnum(AssociationCalendarEventKind)
   kind?: AssociationCalendarEventKind;
@@ -363,7 +367,11 @@ export class UpdateAssociationCalendarEventDto {
   @IsOptional()
   endsAt?: string;
 
-  /** Visual kind: `event` (a card) or `break` (a full-day background band). */
+  /**
+   * Visual kind: `event` (a card) or `break` (a full-day background band across the whole
+   * school's calendar). Resending the value the entry already has is always allowed; CHANGING it
+   * is refused for a caller who may not validate - see `assertMayDecideKind`.
+   */
   @IsOptional()
   @IsEnum(AssociationCalendarEventKind)
   kind?: AssociationCalendarEventKind;

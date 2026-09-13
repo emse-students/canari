@@ -8,7 +8,7 @@
     unfollowAssociation,
     getAssociationFollowStatus,
     hasPermissionFlag,
-    ensureAssociationSuperAdmin,
+    ensureMyAssociations,
     AssociationPermissionFlag,
     listAssociationProducts,
     listAssociationPartnerships,
@@ -23,7 +23,12 @@
   import { CARD_GRID } from '$lib/components/layout/cardGrid';
   import { productFallbackIcon } from '$lib/utils/cardIcons';
   import { generateAvatarColor } from '$lib/utils/avatar';
-  import { currentUserId, isGlobalAdmin, isAssociationSuperAdmin } from '$lib/stores/user';
+  import {
+    currentUserId,
+    isGlobalAdmin,
+    isAssociationSuperAdmin,
+    isEventValidator,
+  } from '$lib/stores/user';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import {
     Bell,
@@ -81,6 +86,12 @@
       (!!myMembership &&
         hasPermissionFlag(myMembership.permissions ?? 0, AssociationPermissionFlag.PROPOSE_EVENT))
   );
+  /**
+   * Whether the current user may declare a school-wide `break` band. The client mirror of the
+   * server's `assertMayDecideKind`: a band is a statement about the school, so the control belongs
+   * to the authority that speaks for it, and nobody else is offered a field the API will refuse.
+   */
+  let canDeclareBreak = $derived(isGlobalAdmin() || isEventValidator());
 
   let following = $state(false);
   let followLoading = $state(false);
@@ -94,9 +105,10 @@
   async function loadData() {
     loading = true;
     error = '';
-    // Resolve cross-association super-admin status so the management entry appears
-    // on associations the user does not belong to.
-    void ensureAssociationSuperAdmin();
+    // Resolve the BDE-derived flags so the management entry appears on associations the user
+    // does not belong to, and so the school-wide `break` control appears for a validator. One
+    // probe publishes all of them.
+    void ensureMyAssociations();
     try {
       const loaded = await getAssociationBySlug(slug);
       // Enforce canonical URL: lists live under /lists, associations under /associations.
@@ -367,6 +379,7 @@
           associationName={asso.name}
           associationLogoUrl={asso.logoUrl}
           canEdit={canProposeEvent}
+          {canDeclareBreak}
           associationColor={asso.color ?? null}
         />
       </div>

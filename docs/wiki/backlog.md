@@ -7264,31 +7264,9 @@ deleting anything that is not a build cache.**
 
 Handed over in one message of eleven (*"en vrac quelques items a faire quand tu peux"*). Each was
 traced to its code before being written here, so what follows is the WORK, not the question - and
-only what is LEFT of it, entries being deleted as they ship. One of those remaining is a defect
-rather than wording: any association admin can publish a school-wide holiday band.
-
-### P2 - "Pause / vacances" is offered to every proposer and gated nowhere
-
-`kind` is a free field. `AssociationCalendarSection.svelte:651-680` offers the `break` radio to any
-member holding `PROPOSE_EVENT`, and `createCalendarEvent` / `updateCalendarEvent` accept
-`dto.kind` with no check at all. A `break` renders as a full-day background band across the whole
-school's calendar - it is a statement about the school, not about an association, so proposing one
-has no meaning and validating one is the wrong question to ask a BDE.
-
-**The work, and the user ARBITRATED the open half of it on 2026-09-13.** `kind: break` becomes a
-BDE/global-admin-only value, refused server-side for any other caller on both create AND update.
-
-The question that was open was the BDE's own door, since today there is none: the `/calendar`
-"Deposer un evenement" modal does not offer `kind` either
-(`frontend/src/routes/calendar/+page.svelte:348`, which omits it on purpose). Three doors were put
-to the user - the association page, the `/calendar` modal, or a dedicated `/admin` screen - and the
-answer is **the association page**: the radio STAYS in "Proposer un evenement" and is rendered only
-for a BDE or global admin, so the BDE creates its break from its own page. No new screen, no new
-field in a modal the fusion below is going to rebuild anyway; the change is one condition on the
-radio and one refusal on the server.
-
-**Not to be re-opened into a dedicated screen or a `/calendar` field** without the user saying so:
-both were offered and both were declined.
+only what is LEFT of it, entries being deleted as they ship. The one item that was a defect rather
+than wording - any association admin publishing a school-wide holiday band - is fixed; what remains
+is naming and structure.
 
 ### P3 - four event modals, two implementations, and neither can do what the other can
 
