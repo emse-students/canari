@@ -26,6 +26,14 @@ both BDE tiers as a side effect. It is awaited rather than probed in the backgro
 decides a REDIRECT: a background probe bounces the very user it was meant to admit whenever it loses
 the race.
 
+**WHO MAY OPEN `/admin` IS ONE PREDICATE, `ensureMayOpenAdmin()` in `lib/admin/access.ts`.** It was
+two, and they disagreed: the layout admitted an association admin OR a content moderator, while the
+dashboard offered the tile on `mine.some((a) => a.isAdmin)` alone and used `listMyAssociations()`,
+which publishes no flag. A BDE content moderator holding no association admin role could therefore
+reach the console by typing the URL and was never shown the way in - **a right nobody can find is a
+right nobody has**, which is the same failure the `/admin/moderation` paragraph below records, one
+layer out. `access.test.ts` pins the four answers, that case named.
+
 ## Routes, and who reaches them
 
 | Route | Section | Who |
@@ -42,9 +50,27 @@ the race.
 | `/admin/cercle` | Cercle top-up product | Platform admin |
 | `/admin/storage` | Storage usage | Platform admin |
 
-**The way in is the dashboard's "Administration" tile**, shown to anyone holding at least one
-association flag (so every moderator sees it), plus a direct link to `/admin/agenda` from the
-calendar. Nothing else links into this tree.
+**The way in is the dashboard's tile**, shown on exactly the predicate the layout admits on, plus a
+direct link to `/admin/agenda` from the calendar. Nothing else links into this tree.
+
+**AND IT IS NOT CALLED "ADMINISTRATION" FOR EVERYONE.** For anyone who is not a platform admin,
+`/admin` is where "Agenda en attente" lives and nothing more - the server agrees and enforces it:
+the pending listing accepts an association admin, `canValidate` comes back false for them, and
+validate/reject refuse anyone who is not BDE or platform admin. There was never an access defect in
+that name, only a promise of a platform console that the page does not deliver.
+
+`adminScopeLabels(isGlobalAdmin())` returns the heading **and** the sentence under it, together,
+from one predicate - a heading and its subtitle that branch separately are two places to change and
+one to forget. The description was already truthful ("Moderation de l'agenda de vos associations"),
+so the heading follows the description rather than the description being questioned. The same pair
+titles the dashboard tile, which is why `dashboard_admin_heading`, `dashboard_admin_generic_label`
+and `dashboard_admin_generic_desc` are gone: three keys saying "Administration" where two already
+said the truth.
+
+For a BDE super-admin the non-global wording **under-promises** - they also hold the reviewer grants
+and the cartography, both named by the "Communaute" group in the nav. That is deliberate:
+under-promising is not the defect being fixed, and splitting a third tier is a question the user has
+not been asked.
 
 **A tier without its screen is a right nobody can exercise.** `/admin/moderation` was gated on
 `isGlobalAdmin()` in three places at once - the nav item, the home card and the page's own redirect -

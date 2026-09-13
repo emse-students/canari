@@ -5,7 +5,7 @@
   import { page } from '$app/state';
   import type { Component } from 'svelte';
   import { isGlobalAdmin, isAssociationSuperAdmin, isContentModerator } from '$lib/stores/user';
-  import { ensureMyAssociations } from '$lib/associations/api';
+  import { adminScopeLabels, ensureMayOpenAdmin } from '$lib/admin/access';
   import AdminNavGroup from '$lib/components/admin/AdminNavGroup.svelte';
   import {
     Shield,
@@ -40,31 +40,30 @@
 
   let ready = $state(false);
   let isGlobalAdminUser = $state(false);
-  let isAssociationAdmin = $state(false);
   let isSuperAdminUser = $state(false);
   let isModeratorUser = $state(false);
 
   const path = $derived(page.url.pathname);
+  // The heading and the sentence under it, chosen together - see `adminScopeLabels`.
+  const scope = $derived(adminScopeLabels(isGlobalAdminUser));
 
   onMount(async () => {
+    // The SAME predicate the dashboard offers the card on, so the door and the way in cannot
+    // disagree again. It awaits the membership probe, which publishes both BDE tiers as a side
+    // effect - the redirect must decide on a resolved value, since a background probe would bounce
+    // a moderator to the dashboard whenever it lost the race.
+    const mayOpen = await ensureMayOpenAdmin();
     isGlobalAdminUser = isGlobalAdmin();
     if (isGlobalAdminUser) {
       // A platform administrator holds every tier by definition; nothing to ask anyone.
-      isAssociationAdmin = true;
       isSuperAdminUser = true;
       isModeratorUser = true;
-      ready = true;
-      return;
+    } else {
+      isSuperAdminUser = isAssociationSuperAdmin();
+      isModeratorUser = isContentModerator();
     }
-    // ONE membership request answers all three: it publishes both BDE tiers as a side effect, and
-    // the redirect below must decide on a resolved value - a background probe would bounce a
-    // moderator to the dashboard whenever it lost the race.
-    const mine = await ensureMyAssociations();
-    isAssociationAdmin = mine.some((a) => a.isAdmin);
-    isSuperAdminUser = isAssociationSuperAdmin();
-    isModeratorUser = isContentModerator();
     ready = true;
-    if (!isAssociationAdmin && !isModeratorUser) {
+    if (!mayOpen) {
       void goto('/dashboard', { replaceState: true });
     }
   });
@@ -165,18 +164,12 @@
         <Shield size={22} />
       </span>
       <div>
-        <h1 class="text-text-main text-xl font-bold tracking-tight">{m.admin_title()}</h1>
-        <p class="text-text-muted mt-0.5 text-sm">
-          {#if isGlobalAdminUser}
-            {m.admin_global_description()}
-          {:else}
-            {m.admin_associations_description()}
-          {/if}
-        </p>
+        <h1 class="text-text-main text-xl font-bold tracking-tight">{scope.title()}</h1>
+        <p class="text-text-muted mt-0.5 text-sm">{scope.description()}</p>
       </div>
     </header>
 
-    <nav class="flex gap-2 overflow-x-auto pb-1" aria-label={m.admin_title()} data-swipe-nav-ignore>
+    <nav class="flex gap-2 overflow-x-auto pb-1" aria-label={scope.title()} data-swipe-nav-ignore>
       <a
         href="/admin"
         class="shrink-0 rounded-xl px-4 py-2 text-sm font-bold transition-colors

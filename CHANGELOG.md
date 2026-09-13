@@ -11,6 +11,33 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a content moderator could reach the admin console only by typing the URL
+
+Two screens asked who may open `/admin` and gave two answers. The layout admitted an association
+admin **or** a content moderator; the dashboard offered the tile on `mine.some((a) => a.isAdmin)`
+alone, through `listMyAssociations()`, which publishes no BDE flag at all. A BDE content moderator
+holding no association admin role fell between them: the console let them in, and nothing ever
+showed them it existed. **A right nobody can find is a right nobody has** - the same failure
+`/admin/moderation` had one layer in, and the wiki had meanwhile recorded the tile as "shown to
+anyone holding at least one association flag (so every moderator sees it)", which was not true.
+
+`ensureMayOpenAdmin()` is now the one predicate both call, over the membership probe that publishes
+the flags rather than the plain listing that does not.
+
+### Changed - the admin console stops calling itself "Administration" at a reader who moderates one agenda
+
+For anyone who is not a platform admin, `/admin` is where "Agenda en attente" lives and nothing
+more, and the server enforces exactly that: the pending listing accepts an association admin,
+`canValidate` comes back false for them, and validate/reject refuse anyone who is not BDE or
+platform admin. There was no access defect in the name - only a promise of a platform console the
+page does not deliver.
+
+The description was already truthful ("Moderation de l'agenda de vos associations"), so the heading
+follows the description rather than the description being questioned. Both now come from one call,
+`adminScopeLabels()`, and title the dashboard tile too: a heading and its subtitle that branch
+separately are two places to change and one to forget. Three message keys that said
+"Administration" where two already said the truth are deleted.
+
 ### Changed - the event co-host picker stops calling itself a partnership
 
 "Associations partenaires (optionnel)" named a relationship the control never asks for. The picker
