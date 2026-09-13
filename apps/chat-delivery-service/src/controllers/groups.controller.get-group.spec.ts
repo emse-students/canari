@@ -7,6 +7,7 @@ import { Group } from '../entities/group.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
+import { MessagingService } from '../services/messaging.service';
 
 /**
  * `GET /mls/groups/:groupId` IS THE FIRST CALL OF EVERY RECOVERY PASS, and what it answers decides
@@ -48,6 +49,9 @@ describe('GroupsController.getGroup - the two epochs travel with the row', () =>
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: {} },
         { provide: getRepositoryToken(MlsGroupInfo), useValue: groupInfoRepo },
         { provide: 'REDIS_CLIENT', useValue: {} },
+        // `createGroup` enrols the creator through the ONE `pending -> active` writer since
+        // 2026-09-13, so the controller depends on it. Nothing here reads a group by creating one.
+        { provide: MessagingService, useValue: {} },
       ],
     })
       .overrideGuard(HeaderAuthGuard)

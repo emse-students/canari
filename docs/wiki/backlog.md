@@ -88,7 +88,6 @@ a real collapse, not a test that fails on divergence):
 
 | Item | What is duplicated | Count | The part that bites |
 | --- | --- | --- | --- |
-| `S-D1` | `pending -> active` on a device membership | 5 paths, 3 writers | THREE gate behaviours: `activateDeviceMembership` warns and returns, `updateInvitationStatus` throws, and `createGroup` has **no addressability gate at all** |
 | `S-D2` | `ABSENT\|active -> pending` | 5 writers + 3 inserts | they disagree on `kickedAt` and on the Redis SREM; `sendWelcome` *resets `kickedAt` to null* |
 | `S-D6` | base publication onto one `putGroupInfo` | 3 writers | |
 | `S-D8` | group tombstone | 3 routes | |

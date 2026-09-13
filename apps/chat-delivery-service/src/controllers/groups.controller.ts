@@ -24,7 +24,8 @@ import {
   deleteGroupRedisKeys,
   totalGroupOwnedRows,
 } from '../utils/group-purge';
-import { sanitizeQueryValue } from '../utils/sanitize';
+import { sanitizeIdentityValue, sanitizeQueryValue } from '../utils/sanitize';
+import { MessagingService } from '../services/messaging.service';
 
 /** MLS group lifecycle: create, read, rename, delete, and epoch management. */
 @Controller()
@@ -37,7 +38,8 @@ export class GroupsController {
     private deviceGroupRepo: Repository<DeviceGroupMembership>,
     @InjectRepository(MlsGroupInfo)
     private groupInfoRepo: Repository<MlsGroupInfo>,
-    @Inject('REDIS_CLIENT') private readonly redis: Redis
+    @Inject('REDIS_CLIENT') private readonly redis: Redis,
+    private readonly messagingService: MessagingService
   ) {}
 
   private makeTraceId(scope: string): string {
@@ -46,12 +48,51 @@ export class GroupsController {
 
   @UseGuards(HeaderAuthGuard)
   @Post('mls/groups')
-  /** Creates a new MLS group record on the server. */
+  /**
+   * Creates a new MLS group record on the server, and enrols the creator's device in it.
+   *
+   * **THE ENROLMENT IS A `pending -> active` TRANSITION LIKE ANY OTHER, AND IT USED TO BE THE ONE
+   * THAT ASKED NOTHING.** It wrote `status: 'active'` straight to the repository: no addressability
+   * gate, so a revoked or key-package-less device enrolled itself in a group it had just made
+   * (WP-GHOST-1, which the other two paths refuse); and no identity check, so the client's
+   * unresolved-identity placeholder could be stored as a real member - the 2026-08-27 defect
+   * `updateInvitationStatus` was hardened against, reachable here the whole time.
+   *
+   * **The gate runs BEFORE the group row is written.** A refusal after it would leave a group with
+   * no members at all, which is an orphan someone else has to purge; refusing first leaves nothing
+   * behind. The endpoint can therefore answer 400, which is what the status endpoint already
+   * answers for the same condition.
+   *
+   * `redeliverMissed: false`: the group was created this instant, so there is no pending window and
+   * nothing was missed.
+   */
   async createGroup(
     @Body()
     body: { name: string; createdBy: string; isGroup?: boolean; creatorDeviceId?: string }
   ) {
     const traceId = this.makeTraceId('create-grp');
+    // A group with no creator device enrols nobody - there is no membership to gate, and the
+    // creator reaches it through the ordinary invitation path like any other device.
+    const enrolling = Boolean(body.createdBy && body.creatorDeviceId);
+    const safeCreatorId = enrolling ? sanitizeIdentityValue(body.createdBy, 'createdBy') : '';
+    const safeCreatorDeviceId = enrolling
+      ? sanitizeIdentityValue(body.creatorDeviceId, 'creatorDeviceId')
+      : '';
+
+    if (enrolling) {
+      const addressable = await this.messagingService.deviceAddressability(
+        safeCreatorId,
+        safeCreatorDeviceId
+      );
+      if (!addressable.ok) {
+        this.logger.warn(
+          `[CREATE_GROUP][${traceId}] REFUSED device=${safeCreatorId}:${safeCreatorDeviceId}` +
+            ` reason=${addressable.reason} - no group row was written`
+        );
+        throw new BadRequestException(`Device is not addressable: ${addressable.reason}`);
+      }
+    }
+
     const groupId = crypto.randomUUID();
     this.logger.log(
       `[CREATE_GROUP][${traceId}] name="${body.name}" createdBy=${body.createdBy} isGroup=${body.isGroup ?? true} creatorDevice=${body.creatorDeviceId ?? 'none'} groupId=${groupId}`
@@ -63,20 +104,20 @@ export class GroupsController {
     });
     await this.groupRepo.save(newGroup);
 
-    // Mark the creator's device as active (they created the group locally, no Welcome needed)
-    if (body.createdBy && body.creatorDeviceId) {
-      const creatorMembership = this.deviceGroupRepo.create({
-        userId: body.createdBy,
-        deviceId: body.creatorDeviceId,
+    // The creator made the group locally, so no Welcome is owed - but the row and the routing set
+    // are written by the ONE writer, so they cannot disagree with the other two doors again.
+    if (enrolling) {
+      const outcome = await this.messagingService.activateDeviceMembership(
+        safeCreatorId,
+        safeCreatorDeviceId,
         groupId,
-        status: 'active' as const,
-      });
-      await this.deviceGroupRepo.save(creatorMembership);
-      this.logger.log(`[CREATE_GROUP][${traceId}] creator membership set to active`);
-      await this.redis.sadd(
-        `group:members:${groupId}`,
-        `${body.createdBy}:${body.creatorDeviceId}`
+        { redeliverMissed: false, tag: 'CREATE_GROUP' }
       );
+      // The gate above already answered this, so a refusal here means the device was revoked in
+      // the microseconds since - a real race, and the group it just made is now memberless.
+      if (!outcome.ok) {
+        throw new BadRequestException(`Device is not addressable: ${outcome.reason}`);
+      }
     }
 
     this.logger.log(`[CREATE_GROUP][${traceId}] DONE groupId=${groupId}`);
