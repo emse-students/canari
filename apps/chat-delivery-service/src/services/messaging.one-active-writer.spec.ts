@@ -187,6 +187,7 @@ describe('the INVITATION_STATUS door', () => {
   let controller: InvitationsController;
   const messaging = {
     activateDeviceMembership: jest.fn().mockResolvedValue({ ok: true }),
+    deactivateDeviceMembership: jest.fn().mockResolvedValue(undefined),
     deviceAddressability: jest.fn().mockResolvedValue({ ok: true }),
   };
   const deviceGroupRepo = {
@@ -259,25 +260,18 @@ describe('the INVITATION_STATUS door', () => {
     await expect(promote()).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  it('writes the DEMOTION itself - it is a different question and stays local', async () => {
-    deviceGroupRepo.findOne.mockResolvedValue({
-      userId: 'u1',
-      deviceId: 'd1',
-      groupId: 'g1',
-      status: 'active',
-      kickedAt: new Date('2026-09-01T10:18:38Z'),
-    });
-
+  it('does NOT reach the promotion writer on a demotion - the two directions are separate', async () => {
     await controller.updateInvitationStatus(
       { deviceId: 'd1', userId: 'u1', groupId: 'g1', status: 'pending' },
       'u1',
       'false'
     );
 
+    // What the demotion DOES is the sibling suite's subject: it was written locally here until
+    // 2026-09-13, and called no `srem`, so it left the device routable. It now goes through
+    // `deactivateDeviceMembership`, and `messaging.one-pending-writer.spec.ts` asserts that.
     expect(messaging.activateDeviceMembership).not.toHaveBeenCalled();
-    expect(deviceGroupRepo.save).toHaveBeenCalledWith(
-      expect.objectContaining({ status: 'pending' })
-    );
+    expect(deviceGroupRepo.save).not.toHaveBeenCalled();
   });
 });
 

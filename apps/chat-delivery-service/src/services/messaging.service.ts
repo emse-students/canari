@@ -1963,6 +1963,84 @@ export class MessagingService {
   }
 
   /**
+   * THE ONE WRITER OF `pending`, AND THE ONE THING THAT REMOVES FROM THE REDIS ROUTING SET.
+   *
+   * The mirror of {@link activateDeviceMembership}, and it was NOT one until 2026-09-13. Four paths
+   * performed the `-> pending` transition and they split on the one thing that has a consequence:
+   *
+   * | Path | Redis SREM | `kickedAt` | Inserts if absent |
+   * | --- | --- | --- | --- |
+   * | `kickStaleDevice` | written | set | no |
+   * | `kickStaleUser` | **never written** | set | no |
+   * | `detectStaleDevices` (cron) | written | left as is | no |
+   * | `updateInvitationStatus` demotion | **never written** | left as is | yes |
+   *
+   * THE TWO MISSING SREMS ARE NOT A RACE THAT HEALS. Nothing in this service ever removes an extra
+   * entry from `group:members:{groupId}`: the SEND reconciliation only `sadd`s the rows it finds
+   * active, so an entry naming a device that is no longer active survives every message the group
+   * sends. The gateway ELECTS the answerer of a `welcome_request` and a `history_request` from that
+   * set, so `kickStaleUser` - whose whole purpose is that a member just removed those leaves from
+   * the tree - left every one of them electable to serve a Welcome for a group they can no longer
+   * open. It is silent, because a routing set that is merely TOO LARGE is not empty and no election
+   * door reloads it, and it lasts until `cleanupStalePendingInvitations` deletes the row: up to
+   * `STALE_PENDING_INVITATION_MS` (`retention.constants.ts`), fourteen days.
+   *
+   * `kickedAt` IS NOT PART OF THAT DIVERGENCE, and the audit was wrong to list it. The column
+   * answers one question - *is this row waiting on a re-add that a kick promised?* - and each of the
+   * four writes it the way that question requires: the kicks set it because a member removed the
+   * leaf and owes an Add, the cron and the self-reported demotion leave it because nobody removed
+   * anything and nothing is owed. So it is not fused away, it is made EXPLICIT: `removedFromTreeAt`
+   * is required, every caller answers it, and no caller can be silent by omission the way
+   * `kickStaleUser` was silent about the SREM.
+   *
+   * `removedFromTreeAt` is the instant a member removed this device's leaf, or `null` when none
+   * did. `null` LEAVES THE COLUMN AS IT STANDS - it never clears it, because a demotion promises no
+   * Add and a row demoted after a kick is still a row a kick left behind. Clearing is the
+   * promotion's job and {@link activateDeviceMembership} is where it happens. Callers demoting a
+   * batch of devices reset by ONE Remove commit pass ONE instant for the whole batch, which is why
+   * this takes a `Date` rather than reading the clock itself.
+   *
+   * NOTHING IS REFUSED HERE, and the asymmetry with the promotion is deliberate: a demotion must
+   * always remain possible. It grants no reachability, promises no Add, and moves the row towards
+   * cleanup rather than away from it - there is no state of the device that makes doing it wrong.
+   *
+   * Idempotent: upsert on the unique constraint (deviceId, groupId).
+   */
+  async deactivateDeviceMembership(
+    userId: string,
+    deviceId: string,
+    groupId: string,
+    {
+      removedFromTreeAt,
+      tag = 'MEMBERSHIP_PENDING',
+    }: { removedFromTreeAt: Date | null; tag?: string }
+  ): Promise<void> {
+    // `kickedAt` is in the written columns ONLY when a kick is being recorded: TypeORM builds the
+    // `DO UPDATE SET` list from the keys of this object, so omitting it is what leaves an existing
+    // value alone. Spelling `kickedAt: null` here would erase the evidence of a kick on every
+    // cron demotion, which is the opposite of what the column is for.
+    await this.deviceGroupRepo.upsert(
+      {
+        userId,
+        deviceId,
+        groupId,
+        status: 'pending' as const,
+        ...(removedFromTreeAt ? { kickedAt: removedFromTreeAt } : {}),
+      },
+      { conflictPaths: ['deviceId', 'groupId'] }
+    );
+
+    // UNCONDITIONAL, and that is the whole fusion: the row now says the device cannot decrypt this
+    // group, so the gateway must stop routing to it and stop electing it in the same write.
+    await this.redis.srem(`group:members:${groupId}`, `${userId}:${deviceId}`).catch(() => {});
+
+    this.logger.log(
+      `[${tag}] group=${groupId} device=${userId}:${deviceId}` +
+        `${removedFromTreeAt ? ' kicked' : ''}`
+    );
+  }
+
+  /**
    * Re-delivers to a device that just became `active` the visible application messages sent
    * during its activation window (when it was `pending`, thus excluded from recipients and
    * never notified). Source: the `history:{groupId}` stream, filtered on the `silent` field each

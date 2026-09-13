@@ -375,11 +375,14 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         continue;
       }
       // Reset to pending - the device will need to receive a new Welcome.
-      member.status = 'pending';
-      await this.deviceGroupRepo.save(member);
-      await this.redis.srem(
-        `group:members:${member.groupId}`,
-        `${member.userId}:${member.deviceId}`
+      // `removedFromTreeAt: null`: nothing removed this device's leaf, it simply stopped
+      // republishing a KeyPackage. Recording a kick here would make the hourly stranded report
+      // accuse a member of an Add nobody ever promised.
+      await this.messagingService.deactivateDeviceMembership(
+        member.userId,
+        member.deviceId,
+        member.groupId,
+        { removedFromTreeAt: null, tag: 'CRON_STALE_DEVICE' }
       );
       reset++;
       // `lastUpdate` is reported because it is EVIDENCE, not because it decided anything: when a

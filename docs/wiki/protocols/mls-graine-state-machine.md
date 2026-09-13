@@ -247,26 +247,35 @@ stateDiagram-v2
     state "active - holds a leaf, routable, addressable" as active
     state "ABSENT ROW - there is no third state" as gone
 
-    [*] --> pending: invite accepted, invitations.controller.ts:188
-    [*] --> active: the founder's own device, groups.controller.ts:72
-    [*] --> pending: a new device of an existing member, devices.controller.ts:275
-    [*] --> pending: sendWelcome queues one, messaging.service.ts:1785
+    [*] --> pending: ENROLMENT - a seat for a device never in this tree
+    [*] --> active: the founder's own device, via activateDeviceMembership
 
-    pending --> active: activateDeviceMembership, messaging.service.ts:1853
-    pending --> active: POST mls/invitations/status, invitations.controller.ts:486
-    pending --> active: POST mls/push/membership-active, push.controller.ts:455
-    pending --> active: the external joiner promotes its own seat, recovery.ts:494
-
-    active --> pending: kick-stale-user, kickedAt set, invitations.controller.ts:519
-    active --> pending: kick-stale-device, kickedAt set, invitations.controller.ts:569
-    active --> pending: detectStaleDevices, no KeyPackage under 90 d, app.controller.ts:363
-    active --> pending: sendWelcome, unconditional - SEE SECTION 10, messaging.service.ts:1785
+    pending --> active: activateDeviceMembership - the ONE writer, and it sadds
+    active --> pending: deactivateDeviceMembership - the ONE writer, and it srems
 
     pending --> gone: 14 d stale, scheduled purge, app.controller.ts:802
     pending --> gone: DELETE mls/device-memberships, invitations.controller.ts:592
     active --> gone: member removed, group purged, or device deleted
     gone --> [*]
 ```
+
+**TWO TRANSITIONS, TWO WRITERS, AND EACH OWNS ITS SIDE OF THE REDIS SET.** That is the shape since
+2026-09-13; until then this diagram had nine transition edges, because nine call sites wrote the
+column and no two of them agreed. What reaches each writer is a DOOR, and a door decides nothing
+about the row - only what a refusal owes its caller, and what to answer for `removedFromTreeAt`:
+
+| Transition | The one writer | Doors that reach it |
+| --- | --- | --- |
+| `pending -> active` | `activateDeviceMembership`, `messaging.service.ts` | the commit fan-out; `POST mls/invitations/status`; `POST mls/push/membership-active`; `createGroup`; the external-joiner promotion (`internal.controller.ts`) |
+| `-> pending` | `deactivateDeviceMembership`, `messaging.service.ts` | `mls/kick-stale-user`; `mls/kick-stale-device`; `POST mls/invitations/status` demotion; `detectStaleDevices` (cron) |
+
+**ENROLMENT IS NOT A DEMOTION AND DOES NOT GO THROUGH THAT WRITER.** `registerDevice`
+(`devices.controller.ts`), `addGroupMember` (`members.controller.ts`) and `sendWelcome`
+(`messaging.service.ts`) insert a `pending` row for a device that has never been in this group's
+tree: there is nothing to remove from a routing set it was never in, and all three use
+`ON CONFLICT` clauses that leave an existing `active` row alone. `sendWelcome` also clears
+`kickedAt` - the Welcome is the proof the Add a kick promised actually landed - and it must never
+write `status`, which it did unconditionally until 2026-09-12 (P1-2 below).
 
 **THE ENUM HAS EXACTLY TWO VALUES** - `'pending' | 'active'`, since
 `001_device_group_status_enum.sql`. There is no soft delete on this table, so a removal is an ABSENT
@@ -416,7 +425,7 @@ duplicate**, and the justification is quoted so it can be argued with rather tha
 | D6 | Enter rung 2 | setupMessageHandler.ts:967 (read side), `recoverForkedGroup` (recovery.ts:697, write side), the watchdog's stuck-gap net (sessionWatchdogs.ts:134), `generation-gap` (setupMessageHandler.ts:991) | Yes. BaseMlsService.ts:2620: *"THE LADDER HAD EXACTLY ONE ENTRANCE, AND IT WAS THE READ SIDE"* - the write side was added deliberately | **TENABLE.** Four symptoms, one destructive action, and all four route through `forgetGroup` plus the section-2 door chooser. |
 | D7 | Answer a `welcome_request` | foreground `handleWelcomeRequest` (actions.ts:750), background `POST mls/push/send-welcome-and-commit` (push.controller.ts:569) | Yes. push.controller.ts:604 calls the background path *"the single chokepoint for the background (push) re-add path - its foreground counterpart enforces the same check client-side in handleWelcomeRequest"* | **NOT TENABLE AS SHIPPED.** The justification is sound and the implementation broke it: the background half has been returning 400 since `proto` became mandatory. P1-1. |
 | D8 | Hold a message back | `!isGroupHealthy` returns retry (outbox.ts:462), `isInEpochGap` inside `canSendInGroup` (groupUsability.ts:61), `epochSendBarrier.ts` | Yes. groupUsability.ts:58: it *"was written inline in the session layer as `isGroupHealthy` and had exactly one caller; the second caller would have re-derived it, and two facts are easy to compose wrongly"* | **TENABLE.** The extraction is the fix; what is left is the composed predicate and its two named halves. |
-| D9 | Two rosters for one group | SQL `dm_device_group_memberships`, Redis `group:members:<groupId>` | `device-group-membership.entity.ts`, since 2026-09-12 | **TENABLE, AND NOW WRITTEN DOWN.** SQL decides the fan-out, Redis decides live routing - different questions, one writer each. The invariant was unstated, which is how P1-2 shipped; it is now in the entity docblock and asserted by `messaging.welcome-membership.spec.ts`. P2-4 done. |
+| D9 | Two rosters for one group | SQL `dm_device_group_memberships`, Redis `group:members:<groupId>` | `device-group-membership.entity.ts`, since 2026-09-12 | **TENABLE, AND NOW TRUE.** SQL decides the fan-out, Redis decides live routing - different questions, one writer each. Written down 2026-09-12 and **FALSE ON BOTH HALVES when written**: nine call sites moved `status` and only two of them wrote the matching Redis side. Enforced 2026-09-13 by the two fused writers, `activateDeviceMembership` (`sadd`) and `deactivateDeviceMembership` (`srem`). P2-4 done. |
 | D10 | Forget a group | `forgetGroup` reached from six distinct sites in `BaseMlsService` alone, plus rung 2, plus both sweeps | No | **TENABLE.** One WASM primitive with many reasons to call it. The duplicated CONCERN is D5's, not this one's. |
 
 ---
@@ -546,7 +555,7 @@ it, and the only thing a server can contribute is to say which conversations are
 - ~~**P2-1. Delete `bootstrap_dead_conversation`**~~ **DONE 2026-09-12.** The command, its module, its `use` and its registration are gone; `ForegroundCritical` and `write_mls_state_blob` each keep other callers and stay. `force_create_group` did NOT - it kept a WASM export and an `MlsManager` method, but no production caller above them, and it was deleted with `drop_group` on 2026-09-12 ([mls-desync-prevention](mls-desync-prevention.md#6-client---there-is-one-way-to-create-a-group-and-it-recovers-orphans-itself)).
 - **P2-2. Collapse D5**, the two group sweeps, into one predicate with one implementation. The twin cost the same fix twice.
 - **P2-3. Graine has no wiki page**, for roughly forty code files. `channel-encryption.md` is the protocol; the seeds, the sessions, the repair walk, the roster reconcile and the retention sweep have no reference page.
-- ~~**P2-4. State the SQL/Redis roster invariant** (D9) where a reader will find it, and assert it in a test.~~ **DONE 2026-09-12, with P1-2** - the invariant is in the `DeviceGroupMembership` docblock (one writer for `status`, one for the routing set, and `sendWelcome` is neither) and asserted by `messaging.welcome-membership.spec.ts`. Two rosters with no written invariant is how P1-2 shipped.
+- ~~**P2-4. State the SQL/Redis roster invariant** (D9) where a reader will find it, and assert it in a test.~~ **DONE 2026-09-12, with P1-2** - the invariant is in the `DeviceGroupMembership` docblock (one writer for `status`, one for the routing set, and `sendWelcome` is neither) and asserted by `messaging.welcome-membership.spec.ts`. Two rosters with no written invariant is how P1-2 shipped. **AND WRITING IT DOWN DID NOT MAKE IT TRUE**: three paths wrote `active` and four wrote `pending`, half of them touching no routing set at all, for the day the sentence stood as an assertion. S-D1 and S-D2 fused them on 2026-09-13; `messaging.one-active-writer.spec.ts` and `messaging.one-pending-writer.spec.ts` are what now hold it. A stated invariant with no single writer behind it is a comment, and this is the second time that lesson was paid for on this table.
 - **P2-5. Give the held outbox entry a terminal state** (DE5), or a report naming entries held beyond a threshold. A message held for ever looks, from the outside, exactly like one delivered.
 
 ### P3 - hygiene

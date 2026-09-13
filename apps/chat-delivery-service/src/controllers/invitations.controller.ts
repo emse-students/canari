@@ -471,31 +471,16 @@ export class InvitationsController {
       return { status: 'active' as const };
     }
 
-    // The demotion, which is a different question and stays here: it must always remain possible,
-    // it promises no Add, and it is a step towards cleanup rather than away from it.
-    let membership = await this.deviceGroupRepo.findOne({
-      where: { deviceId: safeDeviceId, groupId: safeGroupId },
+    // THE DEMOTION GOES THROUGH THE OTHER ONE WRITER. Written here, it wrote the row and called no
+    // `srem`, so a device self-reporting that it can no longer open this group stayed in
+    // `group:members:{groupId}` - routable and electable to serve a Welcome it cannot produce.
+    // `removedFromTreeAt: null` because nobody removed this device's leaf: it is reporting its own
+    // state, no member owes it an Add, and `kickedAt` must keep whatever it already said.
+    await this.messagingService.deactivateDeviceMembership(safeUserId, safeDeviceId, safeGroupId, {
+      removedFromTreeAt: null,
+      tag: 'INVITATION_STATUS',
     });
-
-    if (!membership) {
-      membership = this.deviceGroupRepo.create({
-        deviceId: safeDeviceId,
-        userId: safeUserId,
-        groupId: safeGroupId,
-        status: body.status,
-      });
-    } else {
-      membership.status = body.status;
-    }
-    // `kickedAt` is deliberately NOT cleared: a demotion promises no Add, so a row demoted after a
-    // kick is still a row a kick left behind. Clearing it is the promotion's job, and the promotion
-    // is no longer written here.
-
-    await this.deviceGroupRepo.save(membership);
-    this.logger.log(
-      `[INVITATION_STATUS] device=${safeDeviceId} user=${safeUserId} group=${safeGroupId} newStatus=${body.status}`
-    );
-    return { status: membership.status };
+    return { status: 'pending' as const };
   }
 
   /**
@@ -520,16 +505,23 @@ export class InvitationsController {
       where: { userId: safeUserId, groupId: safeGroupId },
     });
 
+    // ONE instant for the whole batch, because ONE Remove commit is what reset all of them - which
+    // is why the shared writer takes the instant instead of reading the clock per device.
     const kickedAt = new Date();
     for (const m of memberships) {
-      m.status = 'pending';
-      // Same reason as `kickStaleDevice`: one instant for the whole batch, because one Remove
-      // commit is what reset all of them.
-      m.kickedAt = kickedAt;
+      // THIS LOOP USED TO SET THE TWO COLUMNS ITSELF AND CALL NO `srem`, and its sibling
+      // `kickStaleDevice` fifty lines below did. So kicking a whole user's devices left every one
+      // of them in `group:members:{groupId}` - routable and, worse, ELECTABLE to answer a
+      // `welcome_request` for a group whose leaf the caller had just removed - for up to the
+      // fourteen days it takes `cleanupStalePendingInvitations` to delete the row. Nothing
+      // reconciles an entry AWAY, so it was permanent until then and silent throughout.
+      await this.messagingService.deactivateDeviceMembership(m.userId, m.deviceId, m.groupId, {
+        removedFromTreeAt: kickedAt,
+        tag: 'KICK_USER',
+      });
     }
 
     if (memberships.length > 0) {
-      await this.deviceGroupRepo.save(memberships);
       this.logger.log(
         `[KICK] Reset ${memberships.length} device(s) of user ${safeUserId} in group ${safeGroupId} to pending`
       );
@@ -572,16 +564,15 @@ export class InvitationsController {
       return { status: 'not_found', affected: 0 };
     }
 
-    membership.status = 'pending';
-    // THE ROW NOW SAYS WHY IT IS PENDING. Without this, the hourly stranded report sees the same
-    // footprint as a device whose KeyPackage was skipped and never entered the tree at all - two
-    // opposite causes wanting opposite fixes. The caller has just removed this device's leaf and
-    // owes it an Add; when that Add throws, its failure is swallowed on the answering device, and
-    // this column is the only thing left that can name the loss server-side.
-    membership.kickedAt = new Date();
-    await this.deviceGroupRepo.save(membership);
-
-    await this.redis.srem(`group:members:${safeGroupId}`, `${safeUserId}:${safeDeviceId}`);
+    // THE ROW NOW SAYS WHY IT IS PENDING. Without `removedFromTreeAt`, the hourly stranded report
+    // sees the same footprint as a device whose KeyPackage was skipped and never entered the tree
+    // at all - two opposite causes wanting opposite fixes. The caller has just removed this
+    // device's leaf and owes it an Add; when that Add throws, its failure is swallowed on the
+    // answering device, and `kickedAt` is the only thing left that can name the loss server-side.
+    await this.messagingService.deactivateDeviceMembership(safeUserId, safeDeviceId, safeGroupId, {
+      removedFromTreeAt: new Date(),
+      tag: 'KICK_DEVICE',
+    });
 
     this.logger.log(
       `[KICK] Reset device ${safeDeviceId} of user ${safeUserId} in group ${safeGroupId} to pending`
