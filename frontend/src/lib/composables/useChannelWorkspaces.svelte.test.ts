@@ -53,7 +53,10 @@ const ensureCommunityDistributionGroup = vi.fn().mockResolvedValue(true);
 vi.mock('$lib/utils/graine/distributionGroup', () => ({
   ensureCommunityDistributionGroup: (...args: unknown[]) =>
     ensureCommunityDistributionGroup(...args),
-  ensureDistributionGroupFor: vi.fn().mockResolvedValue(true),
+  // The one entrance a private salon is entered through, at all three moments. Its own contract -
+  // that declining is as loud as entering - is driven in `distributionGroup.test.ts`; here it only
+  // has to succeed so the walk around it keeps going.
+  enterPrivateSalonGroup: vi.fn().mockResolvedValue(true),
 }));
 
 import { useChannelWorkspaces, type ChannelWorkspaceContext } from './useChannelWorkspaces.svelte';

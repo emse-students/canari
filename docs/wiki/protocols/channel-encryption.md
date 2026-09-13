@@ -1817,6 +1817,41 @@ Four tests hold it: two concurrent callers produce one read, one join and one re
 caller that waited SAYS it waited, so it is not indistinguishable from the one that worked; nothing
 survives the call; and a rejection is shared without poisoning the next attempt.
 
+#### The sequel: the call was already one, the PRECONDITION was three (G-D1, 2026-09-13)
+
+The audit row read *"`ensureDistributionGroupFor`, 5 call sites, deduplicated only by an in-flight
+map"* - and read that way it is refuted by the section above. One implementation, one coalescer,
+five inlets: **a count of call sites is not a count of implementations**, and naming what fusing them
+would DELETE answers "a call", which is nothing.
+
+**What WAS written three times is the precondition around it.** A private salon is entered in three
+moments - the workspace walk, a salon joined in-session, a salon just created - and each carried its
+own copy of *is it private, does this viewer have access, is there an MLS client, and what do I say
+if not*. Copies drift, and these two had:
+
+- **one entry logging through `console.info`.** The in-session join is the one of the three with no
+  `ChannelWorkspaceContext` to hand, so it reached for the console - and a salon joined in-session
+  left nothing in the log every other GRAINE line lands in.
+- **only ONE of the three saying anything when it DECLINED.** That line is what a stale-tree
+  diagnosis reads: WP-REGRANT-2's peer held a stale tree for a salon it was entitled to, was
+  reloaded, and put no question to the server for 97 seconds, and nothing said whether the walk had
+  SKIPPED that salon or never reached it. The two readings are opposite - a wrong `viewerHasAccess`
+  is a server bug, a walk that did not run is a load-order one - and the absence of the line means
+  "the walk did not run" only if every declining moment emits it.
+
+`enterPrivateSalonGroup` is now the one entrance, in `distributionGroup.ts` beside the generic join.
+`viewerHasAccess` is the single thing that genuinely differs between the three moments, so it is the
+single parameter that carries it: the walk passes `channel.viewerHasAccess !== false`, because it is
+the only one that meets a salon the viewer may merely SEE; joining and creating both ARE the access,
+and pass `true`. A public salon returns false in silence - its seeds ride the community's group, and
+narrating every public salon of every community on every hydration is the noise rule's own example.
+`registerJoinedChannel` took a `log` parameter to lose the console, and `ChatBackgroundService`
+hands it `appendLog`.
+
+The spec pins the count: exactly three `enterPrivateSalonGroup(` in the composable and no
+`ensureDistributionGroupFor` at all, because **a fourth moment reaching the generic join directly is
+a fourth copy of the precondition, which is the defect itself.**
+
 ### Nobody owned the base every joiner depends on - FIXED 2026-08-26
 
 Found by COMM-8, on production 2026-08-25: a web client submitted the same external commit to the

@@ -92,7 +92,6 @@ a real collapse, not a test that fails on divergence):
 | `R-D6` | where eviction is learnt | **5** | audit said 3 |
 | `R-D9` | "re-add the requester" | 2 entrances, 1 responder | the deferred-drain entrance passes no `onNotReady`, so a still-not-ready group is dropped rather than re-deferred |
 | `R-D10` | `no_peer_online` recorded | 2 ways | only one is discharged by a presence edge; `noRepairerAt`/`lastReAddAt` are not |
-| `G-D1` | `ensureDistributionGroupFor` | 5 call sites | deduplicated only by an in-flight map |
 | `G-D9` | rotation reasons | 4 -> 1 outcome | the reason survives only in a log line |
 | `D1`, `D3`, `D4`, `D5`, `D9`, `D10`, `D12`, `D13` | see the MLS client sweep | 2-3 each | `D3` is three forget+rejoin escalations for ONE condition |
 | `G-D2`-`G-D8`, `G-D10`, `G-D13`, `G-D14` | Graine entry points | 2 each | `G-D6` (requester fail-open / answerer fail-closed) is deliberate and stays |

@@ -45,7 +45,7 @@ vi.mock('$lib/stores/auth', () => ({
 vi.mock('$lib/stores/toast.svelte', () => ({ showToast: vi.fn() }));
 vi.mock('$lib/utils/graine/distributionGroup', () => ({
   ensureCommunityDistributionGroup: vi.fn().mockResolvedValue(true),
-  ensureDistributionGroupFor: vi.fn().mockResolvedValue(true),
+  enterPrivateSalonGroup: vi.fn().mockResolvedValue(true),
 }));
 
 const listUserWorkspaces = vi.hoisted(() => vi.fn());

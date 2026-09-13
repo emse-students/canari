@@ -1,6 +1,7 @@
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import { republishBaseIfStale } from '$lib/utils/chat/staleBase';
 import {
+  channelScope,
   scopeLabel,
   workspaceScope,
   type DistributionScope,
@@ -325,6 +326,65 @@ async function republishStaleBase(
   await republishBaseIfStale(mlsService, ref, (message) =>
     log(`[GRAINE] ${scopeLabel(scope)}: ${message}`)
   );
+}
+
+/**
+ * Enters `channelId`'s own distribution group when it is a PRIVATE salon, and says so when it does
+ * not - the one way a salon is entered, from all three moments that reach it.
+ *
+ * **THE CALL IS ONE FUNCTION ALREADY; WHAT WAS WRITTEN THREE TIMES IS WHAT SURROUNDS IT.**
+ * `ensureDistributionGroupFor` is a single implementation with a single in-flight coalescer, so the
+ * three call sites in `useChannelWorkspaces` were never three joins - they were three copies of the
+ * PRECONDITION, and copies drift. One of them logged through `console.info` instead of the session
+ * log, so a salon joined in-session left no trace where every other GRAINE line lands; and only one
+ * of them said anything when it declined to enter, which is the line a diagnosis needs.
+ *
+ * `viewerHasAccess` is the one thing that genuinely differs between the moments. The workspace walk
+ * sees salons the viewer may only SEE - an admin who has not joined - and entering one would ask for
+ * a GroupInfo the route refuses, which is exactly what keeps that roster finite. Joining a salon and
+ * creating one both imply access, and pass `true`.
+ *
+ * **A SKIP IS INDISTINGUISHABLE FROM A WALK THAT NEVER RAN, and that cost a diagnosis.**
+ * WP-REGRANT-2's peer held a stale tree for a salon it was entitled to, was reloaded, and then put
+ * no question to the server for 97 seconds - and nothing said whether the walk had skipped that
+ * salon or never reached it. The two readings are opposite (a wrong `viewerHasAccess` against a walk
+ * that did not run), and the line below is what separates them. It is emitted for every declined
+ * private salon, from every moment, which is what makes its ABSENCE mean "the walk did not run".
+ *
+ * @returns true when this device holds the salon's group afterwards; false when it was not entered,
+ *   for any of the reasons named in the log.
+ */
+export async function enterPrivateSalonGroup(
+  channelService: ChannelService,
+  workspaceId: string,
+  channelId: string,
+  opts: {
+    isPrivate: boolean;
+    viewerHasAccess: boolean;
+    ensureMls?: () => IMlsService | Promise<IMlsService>;
+    log: (message: string) => void;
+  }
+): Promise<boolean> {
+  // A public salon's seeds travel on the community's group, which a different call already entered.
+  if (!opts.isPrivate) return false;
+
+  if (opts.viewerHasAccess && opts.ensureMls) {
+    const mls = await opts.ensureMls();
+    return ensureDistributionGroupFor(
+      mls,
+      channelService,
+      channelScope(workspaceId, channelId),
+      opts.log
+    );
+  }
+
+  opts.log(
+    `[GRAINE] private salon ${channelId.slice(0, 8)} of ${workspaceId.slice(0, 8)} not entered: ` +
+      (opts.ensureMls
+        ? 'the server says this viewer has no access to it, so its GroupInfo would be refused'
+        : 'no MLS client on this load')
+  );
+  return false;
 }
 
 /** {@link ensureDistributionGroupFor} for a whole community. */

@@ -307,6 +307,18 @@ Deep links, system events, rosters and the channel/DM asymmetry are on those two
   and a trigger answers "now"** - only the offline promotion knows the second. Both comments that
   had reasoned about this were false, which is how a refutable claim survives:
   [chat](frontend/modules/chat.md#eight-sites-raise-a-flush-and-there-is-one-flusher-r-d8-refuted-2026-09-13)
+- **WHEN THE CALL IS ALREADY ONE, LOOK AT WHAT SURROUNDS IT - THE DUPLICATE IS THE PRECONDITION.**
+  The corollary above answers "there is nothing to fuse" and stops, which is half an answer. Three
+  moments entered a private salon's distribution group through ONE join function behind ONE
+  coalescer, and each wrote its own copy of *is it private, has this viewer access, is there an MLS
+  client, and what do I say if not*. The copies had drifted exactly where drift is invisible: one
+  logged through `console.info`, so that moment left nothing in the session log, and only one of the
+  three said anything when it DECLINED. **A skip is indistinguishable from a pass that never ran
+  unless it is written down**, and the absence of that line means "it never ran" only if EVERY
+  declining moment emits it - one silent copy makes the whole signal unreadable. Fuse the
+  precondition into one entrance whose parameters are the things that genuinely differ, and let the
+  spec assert the COUNT of entrances, because the next copy is the defect returning:
+  [channel-encryption](protocols/channel-encryption.md#the-sequel-the-call-was-already-one-the-precondition-was-three-g-d1-2026-09-13)
 - **A RECORD THAT EXISTS ONLY TO BE REMOVED MUST NOT BE ABLE TO REFUSE ITS OWN REPLACEMENT.** A
   `removed` conversation is a tombstone - deleted by a peer, an exclusion, or a local deletion the
   server has not answered - and it stays in the store until a MANUAL deletion, so it is present and
