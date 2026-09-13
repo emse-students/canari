@@ -521,7 +521,7 @@ export interface IMlsService {
   registerMember(groupId: string, userId: string): Promise<void>;
   /** Acquires a distributed Redis lock to prevent concurrent MLS commits on the same group.
    *  Returns true if acquired, false if another device already holds the lock. */
-  acquireAddLock(groupId: string, ttlMs?: number): Promise<boolean>;
+  acquireAddLock(groupId: string): Promise<boolean>;
   /** Releases the lock acquired via acquireAddLock. */
   releaseAddLock(groupId: string): Promise<void>;
   /**

@@ -48,6 +48,12 @@ only a member holding the tree can mint a base, so there is nothing for a reset 
 ### 3. Server - add-member races
 
 - **`POST/DELETE /api/mls/add-lock`** — Redis lock **`mls:addlock:{groupId}`** so only one inviter runs **add member + Welcome** at a time for that group. Used from **`processPendingInvitations`** and discovery re-bootstrap.
+  **THE LOCK HAS TWO DOORS AND ONE IMPLEMENTATION** (`utils/add-lock.ts`): this JWT route, and
+  `mls/push/acquire-add-lock` for the Android background service, which cannot mint a JWT. The
+  key, the `userId:deviceId` owner, the `ADD_LOCK_TTL_SEC` lifetime and the ownership-checked
+  release are decided there and nowhere else. **The lifetime is not the caller's to choose** -
+  it used to be a `ttlMs` on the JWT body that no caller ever varied, while the push door
+  hard-coded half of it, which put the SHORTER lock on the SLOWER path.
 
 ### 4. Client - one staged commit regime (ADD + REMOVE)
 

@@ -11,6 +11,29 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - one add-lock, two doors, and the shorter lock was on the slower path
+
+The MLS add-lock serialises "add member + Welcome" so two devices cannot commit into the same
+epoch. It has two doors: `POST/DELETE mls/add-lock` for a JWT-bearing client, and
+`mls/push/acquire-add-lock` for the Android background service, which cannot mint a JWT. Both wrote
+the same Redis key, with the same `userId:deviceId` owner, through the same ownership-checked
+release - written out twice - and they disagreed about how long the lock lives. The JWT door read a
+`ttlMs` from the body, clamped it to 1-60 s and got 30 s, the only value any caller ever sent. The
+push door had no such field and hard-coded **15 s**.
+
+The 30 s was measured: 10 s expired mid-operation and forked the epoch on the successor (H1), and
+what it was sized against was the mobile worst case - bulk add + state persist + validated commit +
+the Welcome loop. That is exactly the work the background service does, so the door running the
+slowest path held the shortest lock, which is the direction that makes a lock expire under its
+holder. Its log line did not even print the TTL it used.
+
+One implementation now, `utils/add-lock.ts`: the key, the owner, the lifetime and the release live
+there and both doors call it. The lifetime is a server constant rather than a request field - a
+lifetime the caller may ask for is a lifetime the two doors can disagree about - so `ttlMs` is gone
+from the wire and from the three client layers that threaded it through without a single call site
+ever setting it. The log is now one line, `[ADD_LOCK] ... ttl=30s via=jwt|push`, which also puts the
+push door's locks in front of the harness classifier that `[ADD_LOCK_PUSH]` had never matched.
+
 ### Added - a gate on the documentation, because two merges have now shipped something nobody wrote
 
 `bun run check` reads TypeScript and Svelte. The documentation - where this project keeps its queue,

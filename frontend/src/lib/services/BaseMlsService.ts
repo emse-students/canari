@@ -6,7 +6,7 @@ import type {
   BulkIngestPhase,
   BulkIngestObserver,
 } from '$lib/mls-client';
-import { MlsDeliveryApi, resolveMlsPublicUrls, MLS_ADD_LOCK_TTL_MS } from '$lib/mls-client';
+import { MlsDeliveryApi, resolveMlsPublicUrls } from '$lib/mls-client';
 import {
   type MlsDecryptSession,
   createSequentialDecryptSession,
@@ -2206,8 +2206,8 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.updateDeviceMetadata(userId, deviceId, metadata);
   }
 
-  async acquireAddLock(groupId: string, ttlMs = MLS_ADD_LOCK_TTL_MS): Promise<boolean> {
-    return this.delivery.acquireAddLock(groupId, ttlMs);
+  async acquireAddLock(groupId: string): Promise<boolean> {
+    return this.delivery.acquireAddLock(groupId);
   }
 
   async releaseAddLock(groupId: string): Promise<void> {

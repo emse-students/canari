@@ -959,7 +959,7 @@ const NOTABLE = [
   /^\[PENDING\] Group \S+ deleted or absent from server - cleaning up invitations$/,
   // THE ADD LOCK HELD BY THE OTHER DEVICE. Two clients swept the same group at once and one of them
   // stood down rather than racing a second Add commit into the same epoch - which is the lock doing
-  // precisely its job (MLS_ADD_LOCK_TTL_MS). Self-limiting: the loser's next sweep finds the work
+  // precisely its job (ADD_LOCK_TTL_SEC). Self-limiting: the loser's next sweep finds the work
   // done. `notable` because in a two-client rig it names a real concurrency, and a check that
   // invited nobody should not be seeing it at all. Landed in `unexplained` on GRP-4, pass 3 of 5,
   // 2026-08-25.

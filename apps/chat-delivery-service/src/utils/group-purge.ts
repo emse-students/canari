@@ -107,8 +107,9 @@ export async function deleteGroupOwnedRows(
  * whose group is gone, which `cleanupOrphanedRedisGroups` already collects, whereas the reverse
  * order would strip a live group's history if the transaction then rolled back.
  *
- * `mls:addlock:` and `mls:commitlock:` are NOT here: both are written with an `EX` TTL (60 s and
- * 5 s), so they collect themselves and a purge naming them would only pretend to be doing work.
+ * `mls:addlock:` and `mls:commitlock:` are NOT here: both are written with an `EX` TTL
+ * (`ADD_LOCK_TTL_SEC` and 5 s), so they collect themselves and a purge naming them would only
+ * pretend to be doing work.
  */
 export async function deleteGroupRedisKeys(redis: Redis, groupIds: string[]): Promise<void> {
   if (groupIds.length === 0) return;

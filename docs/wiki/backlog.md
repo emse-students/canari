@@ -92,7 +92,6 @@ a real collapse, not a test that fails on divergence):
 | `S-D8` | group tombstone | 3 routes | |
 | `S-D10` | orphan-group purge | 3 call sites | |
 | `S-D5` | commit replay | 2 routes | the PushSecret route silently coerces a missing/negative `sinceEpoch` to 0 where the JWT route rejects it |
-| `S-D4` | add-lock TTL | 2 policies | clamped 1-60 s vs hard-coded 15 s |
 | `S-D7` | send | 2 routes | |
 | `D8` | checkpoint | 4 routes, 3 guarantees | see the P1 above |
 | `G-D11` | ways `holdsGroupState` becomes false | **6 sites** | audit said 2 |
