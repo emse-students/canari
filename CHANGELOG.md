@@ -11,6 +11,22 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - the association and promo-list cards show the whole name, and wear the association's colour
+
+The wall of cards on "Associations" and on "Listes" cut every name off at one line, mid-word, with no
+way to read the rest - on a wall of proper nouns, where the end of the name is often the part that
+tells two apart. It also cut descriptions at a fixed height that did not match the height of a line,
+so the last line was sliced through the middle and left the tops of its letters showing.
+
+Names now wrap over as many as three lines and descriptions stop cleanly after three, with an
+ellipsis. Each card carries a bar in its association's own colour - the colour already used on the
+calendar and on the Carte de la Vie Asso, with the same automatic colour as before for an association
+that has not chosen one - and lights up in that colour when pointed at. Member counts line up along
+the bottom of a row instead of floating at different heights.
+
+The two pages drew this card five times between them, and every copy had the same two faults. There
+is now one card, so the next change to it is one change.
+
 ### Fixed - the reaction bar ran off the side of the window on a short message
 
 Hovering a message offers six quick reactions, in a pill that opens next to it. The pill has a fixed
@@ -25,6 +41,7 @@ does now, against the same edge and with the same preference: the pill still ope
 wherever it fits, and only swings to the other side when it genuinely does not.
 
 The overflow menu behind the `...` is the same pill in a different shape and was fixed with it.
+
 
 ### Fixed - being removed from a conversation is recorded once, and it survives the reload
 

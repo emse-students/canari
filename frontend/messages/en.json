@@ -2360,6 +2360,8 @@
   "assoc_list_archived_heading": "Former associations ({count})",
   "assoc_member_count_one": "{count} member",
   "assoc_member_count_many": "{count} members",
+  "assoc_list_promo_badge": "List {promo}",
+  "assoc_list_type_badge": "List",
   "assoc_list_member_badge": "Member",
   "assoc_list_archived_badge": "Archived",
   "directory_heading": "Directory",

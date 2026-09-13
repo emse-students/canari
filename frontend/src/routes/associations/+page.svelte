@@ -11,8 +11,7 @@
     type Association,
   } from '$lib/associations/api';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
-  import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
-  import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
+  import AssociationTile from '$lib/components/associations/AssociationTile.svelte';
   import { ChevronDown, ListChecks } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -99,31 +98,7 @@
           <h2 class="text-text-main mb-3 text-base font-bold">{m.assoc_list_mine_heading()}</h2>
           <div class={CARD_GRID}>
             {#each myAssociations as asso (asso.id)}
-              <a
-                href={memberHref(asso)}
-                class="border-cn-border block rounded-2xl border bg-(--cn-surface) p-5 transition-shadow hover:shadow-md"
-              >
-                <div class="flex items-start gap-3">
-                  <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="lg" />
-                  <div class="min-w-0 flex-1">
-                    <h3 class="text-text-main truncate font-bold">{asso.name}</h3>
-                    {#if asso.type === 'list'}
-                      <span
-                        class="text-cn-dark bg-cn-dark/10 rounded-full px-2 py-0.5 text-xs font-semibold"
-                      >
-                        Liste{asso.promo ? ` ${asso.promo}` : ''}
-                      </span>
-                    {/if}
-                    {#if asso.role}
-                      <span
-                        class="text-cn-dark bg-cn-yellow/20 rounded-full px-2 py-0.5 text-xs font-semibold"
-                      >
-                        {asso.role}
-                      </span>
-                    {/if}
-                  </div>
-                </div>
-              </a>
+              <AssociationTile association={asso} href={memberHref(asso)} isMember />
             {/each}
           </div>
         </section>
@@ -143,34 +118,11 @@
         {:else}
           <div class={CARD_GRID}>
             {#each activeAssociations as asso (asso.id)}
-              <a
+              <AssociationTile
+                association={asso}
                 href="/associations/{asso.slug}"
-                class="border-cn-border block rounded-2xl border bg-(--cn-surface) p-5 transition-shadow hover:shadow-md"
-              >
-                <div class="flex items-start gap-3">
-                  <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="lg" />
-                  <div class="min-w-0 flex-1">
-                    <h3 class="text-text-main truncate font-bold">{asso.name}</h3>
-                    {#if asso.description?.trim()}
-                      <div
-                        class="text-text-muted mt-0.5 max-h-[2.75rem] overflow-hidden [&_.post-markdown]:text-sm [&_.post-markdown]:leading-snug [&_.post-markdown_p]:m-0 [&_.post-markdown_p+p]:mt-0"
-                      >
-                        <ProfileBioMarkdown source={asso.description} compact />
-                      </div>
-                    {/if}
-                    <p class="text-text-muted mt-1 text-xs">
-                      {(asso.memberCount ?? 0) !== 1
-                        ? m.assoc_member_count_many({ count: asso.memberCount ?? 0 })
-                        : m.assoc_member_count_one({ count: asso.memberCount ?? 0 })}
-                      {#if myIds.has(asso.id)}
-                        <span class="text-cn-dark ml-1 font-semibold"
-                          >&#183; {m.assoc_list_member_badge()}</span
-                        >
-                      {/if}
-                    </p>
-                  </div>
-                </div>
-              </a>
+                isMember={myIds.has(asso.id)}
+              />
             {/each}
           </div>
         {/if}
@@ -194,25 +146,7 @@
           {#if showArchived}
             <div class="mt-3 {CARD_GRID}">
               {#each archivedAssociations as asso (asso.id)}
-                <a
-                  href="/associations/{asso.slug}"
-                  class="border-cn-border bg-cn-surface block rounded-2xl border p-5 opacity-75 transition-all hover:opacity-100 hover:shadow-md"
-                >
-                  <div class="flex items-start gap-3">
-                    <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="lg" />
-                    <div class="min-w-0 flex-1">
-                      <h3 class="text-text-main truncate font-bold">{asso.name}</h3>
-                      <p class="text-text-muted mt-1 text-xs">
-                        {(asso.memberCount ?? 0) !== 1
-                          ? m.assoc_member_count_many({ count: asso.memberCount ?? 0 })
-                          : m.assoc_member_count_one({ count: asso.memberCount ?? 0 })}
-                        <span class="ml-1 font-semibold"
-                          >&#183; {m.assoc_list_archived_badge()}</span
-                        >
-                      </p>
-                    </div>
-                  </div>
-                </a>
+                <AssociationTile association={asso} href="/associations/{asso.slug}" />
               {/each}
             </div>
           {/if}

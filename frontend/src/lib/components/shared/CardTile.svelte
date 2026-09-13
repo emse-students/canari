@@ -10,8 +10,15 @@
      * these as `/api/media/public/<id>`, which reaches no API from a Tauri origin.
      */
     iconUrl?: string | null;
-    /** Lucide (or compatible) icon component rendered when no custom `iconUrl` is set. */
-    fallbackIcon: Component;
+    /**
+     * Lucide (or compatible) icon component rendered when no custom `iconUrl` is set.
+     *
+     * OPTIONAL, AND OMITTING IT DROPS THE HEADER ROW ENTIRELY rather than leaving an empty frame.
+     * A caller that carries its own identity mark in `children` - an association's avatar, which
+     * falls back to initials and not to an icon - wants the accent bar, the elevation and the
+     * hover outline without a second logo floating above them.
+     */
+    fallbackIcon?: Component;
     /**
      * Accent color (hex or HSL) tinting the card's top edge, its badge and its hover outline -
      * callers resolve this from the owning association's `color`, falling back to
@@ -86,26 +93,30 @@
     ITS top-right corner (the shop grid puts the price there). In normal flow it overlaps nothing
     by construction, at the price of the row's height, and a logo looks like a logo.
   -->
-  <div class="flex items-start gap-3 px-4 pt-4">
-    {#if trimmedBadge}
-      <span
-        class="text-2xs rounded-full bg-(--tile-accent) px-2.5 py-0.5 font-bold tracking-wide text-(--tile-accent-ink) uppercase"
-      >
-        {trimmedBadge}
-      </span>
-    {/if}
-    <div
-      class="border-cn-border bg-cn-surface-alt ml-auto flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border p-1.5"
-    >
-      {#if resolvedIconUrl}
-        <!-- Decorative: the caller renders the name this logo stands for as text in `children`,
-             and an alt here could only be a literal, which Paraglide forbids. -->
-        <img src={resolvedIconUrl} alt="" class="h-full w-full object-contain" />
-      {:else}
-        <FallbackIcon size={20} class="text-text-muted" />
+  {#if trimmedBadge || resolvedIconUrl || FallbackIcon}
+    <div class="flex items-start gap-3 px-4 pt-4">
+      {#if trimmedBadge}
+        <span
+          class="text-2xs rounded-full bg-(--tile-accent) px-2.5 py-0.5 font-bold tracking-wide text-(--tile-accent-ink) uppercase"
+        >
+          {trimmedBadge}
+        </span>
+      {/if}
+      {#if resolvedIconUrl || FallbackIcon}
+        <div
+          class="border-cn-border bg-cn-surface-alt ml-auto flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border p-1.5"
+        >
+          {#if resolvedIconUrl}
+            <!-- Decorative: the caller renders the name this logo stands for as text in `children`,
+                 and an alt here could only be a literal, which Paraglide forbids. -->
+            <img src={resolvedIconUrl} alt="" class="h-full w-full object-contain" />
+          {:else if FallbackIcon}
+            <FallbackIcon size={20} class="text-text-muted" />
+          {/if}
+        </div>
       {/if}
     </div>
-  </div>
+  {/if}
 
   <!--
     `flex-1` (not `h-full`): the header above is a sibling taking real space in normal flow, not
