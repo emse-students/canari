@@ -382,14 +382,17 @@ export async function logout(): Promise<void>;
 ```typescript
 // types/index.ts
 interface Conversation {
-  id: string;             // MLS groupId
+  id: string;             // MLS groupId, or `channel_<id>` for a channel
   name: string;
   contactName: string;    // normalized contact identifier
   messages: ChatMessage[];
-  isReady: boolean;       // MLS group ready (Welcome received)
+  lifecycle: 'active' | 'pending' | 'removed';  // NOT `isReady`, gone since the lifecycle collapse
+  mlsStateHex: string | null;
+  unreadCount?: number;
   conversationType?: 'direct' | 'group' | 'channel';
   directPeerId?: string;
   imageMediaId?: string | null;
+  lastMessageAt?: number;
 }
 
 interface ChatMessage {
@@ -403,6 +406,45 @@ interface ChatMessage {
   reactions?: MessageReaction[];
 }
 ```
+
+### A conversation row has ONE builder, and the site decides only the lifecycle and the identity
+
+`buildConversationRow` ([`utils/chat/conversations.ts`](../../../frontend/src/lib/utils/chat/conversations.ts))
+is the only place a `Conversation` is constructed. Thirteen places built it by hand - boot restore,
+server discovery, the Welcome handler's early placeholder and its finished row, the
+`onWelcomeProcessed` fallback, group creation, DM creation, the existing-server-DM path, the FCM
+in-memory merge, three channel builders in `useChannelWorkspaces` and one in `ChatBackgroundService`.
+The type has twelve fields; what all thirteen agreed on was `messages: []` and `mlsStateHex: null`.
+
+**`conversationType: 'channel'` was declared, read, and never written.** All four channel builders
+left it undefined, so every reader's `conversationType ?? 'group'` classified a channel as a group.
+That is not cosmetic: the sidebar tile's `#` branch could not render, and "add members", "rename" and
+"set an avatar" are each gated on `!== 'group'` - the comment on the first of them says *"DMs and
+channels cannot be invaded"*, and channels could. The id settles it in the builder, for every site at
+once.
+
+The two things a site genuinely decides travel as data:
+
+| What the site decides | Why it differs |
+| --- | --- |
+| `lifecycle` | a discovery placeholder is `pending` because no Welcome has landed; a group this device just created is `active` because it holds the state |
+| `identity` | the server's `isGroup`, a peer parsed out of the group name, the contact the user typed, or a channel's name - four sources for one answer |
+
+Everything else - the defaults, the channel verdict, and what an existing row already carries - is
+the same everywhere, so it is written once. **Passing `existing` is not a convenience**: six sites
+read the row they were replacing for ONE field and rebuilt around it, and one of them reset
+`messages` to `[]` on every community hydration, which is a channel going blank in front of someone
+reading it.
+
+An optional is either carried or ABSENT, never written as `undefined`, so a reader checking
+`'imageMediaId' in convo` and one reading `convo.imageMediaId ?? null` see the same row. `null` is a
+site SAYING there is no avatar, and it is carried rather than coalesced away.
+
+`buildConversationRow.onePolicy.test.ts` drives nine real entry points over one table and asserts
+what landed in the map, because a site that keeps its own object literal is exactly what a test of
+the shared function walks past. The two sites no unit test can reach - the `onWelcomeProcessed`
+callback wired inside `sessionAuth`, and a Svelte component's event handler - are covered by a source
+check in the same file, which is also what catches a fourteenth builder.
 
 ## i18n (Paraglide)
 

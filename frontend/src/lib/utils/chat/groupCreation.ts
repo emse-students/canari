@@ -11,7 +11,7 @@ import type { SvelteMap } from 'svelte/reactivity';
 import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
 import { requestReAdd } from '$lib/utils/chat/recovery';
 import { findActiveDirectGroupForPeer } from '$lib/utils/chat/groupSyncEligibility';
-import { isRawId } from '$lib/utils/chat/conversations';
+import { buildConversationRow, isRawId } from '$lib/utils/chat/conversations';
 import { isBlockedWith } from '$lib/users/blocks';
 import { holdsGroupState } from './groupUsability';
 
@@ -214,15 +214,18 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
       );
     }
 
-    conversations.set(conversationKey, {
-      id: groupId,
-      contactName: groupDisplayName,
-      name: groupDisplayName, // preserve original casing for display
-      messages: [],
-      lifecycle: 'active',
-      mlsStateHex: null,
-      conversationType: 'group',
-    });
+    conversations.set(
+      conversationKey,
+      buildConversationRow({
+        id: groupId,
+        lifecycle: 'active',
+        identity: {
+          conversationType: 'group',
+          contactName: groupDisplayName,
+          displayName: groupDisplayName, // preserve original casing for display
+        },
+      })
+    );
     selectConversation(conversationKey);
     await saveConversation(conversationKey);
     log(`[OK] Group "${groupDisplayName}" created.`);
@@ -540,16 +543,17 @@ export async function startNewConversation(
 
       const ensureDirectConvo = async (convoKey: string, ready: boolean) => {
         const existing = conversations.get(convoKey);
-        const base: Conversation = {
+        const base: Conversation = buildConversationRow({
           id: convoKey,
-          contactName: contact,
-          name: contact,
-          messages: existing?.messages ?? [],
           lifecycle: ready ? 'active' : 'pending',
-          mlsStateHex: null,
-          conversationType: 'direct',
-          directPeerId: contact,
-        };
+          identity: {
+            conversationType: 'direct',
+            contactName: contact,
+            displayName: contact,
+            directPeerId: contact,
+          },
+          existing,
+        });
         if (existing) {
           const fixName = isRawId(existing.name) || isRawId(existing.contactName ?? '');
           conversations.set(convoKey, {
@@ -693,16 +697,19 @@ export async function startNewConversation(
     // Published `active` in one write, never `pending` first: there is no reader left that could
     // see the intermediate state, and a row that is only ever written once cannot lose a race
     // against a concurrent writer of the same field.
-    conversations.set(conversationKey, {
-      id: groupId,
-      contactName: contact,
-      name: contact,
-      messages: [],
-      lifecycle: 'active',
-      mlsStateHex: null,
-      conversationType: 'direct',
-      directPeerId: contact,
-    });
+    conversations.set(
+      conversationKey,
+      buildConversationRow({
+        id: groupId,
+        lifecycle: 'active',
+        identity: {
+          conversationType: 'direct',
+          contactName: contact,
+          displayName: contact,
+          directPeerId: contact,
+        },
+      })
+    );
     maybeSelect(conversationKey);
     saveConversation(conversationKey);
     log(`[OK] Secure channel established with ${contact}.`);

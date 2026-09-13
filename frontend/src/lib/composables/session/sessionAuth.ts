@@ -82,7 +82,11 @@ import {
   handleHistoryRequest,
   processPendingInvitations,
 } from '$lib/utils/chat/actions';
-import { markConversationDeletedRemotely } from '$lib/utils/chat/conversations';
+import {
+  buildConversationRow,
+  deriveConversationIdentity,
+  markConversationDeletedRemotely,
+} from '$lib/utils/chat/conversations';
 import {
   registerOutbox,
   unregisterOutbox,
@@ -1023,16 +1027,18 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
         if (groupId) {
           cb.log(`[SYNC] Welcome processed for ${groupId}, refreshing...`);
           if (!cb.conversations.has(groupId)) {
-            cb.conversations.set(groupId, {
-              id: groupId,
-              contactName: groupId,
-              name: groupId,
-              messages: [],
-              lifecycle: 'active',
-              mlsStateHex: null,
-              unreadCount: 0,
-              conversationType: 'group',
-            });
+            // THE ENVELOPE'S GROUP ID, WHICH IS NOT ALWAYS THE JOINED ONE - that difference is the
+            // only reason this branch exists, and it used to answer it with the worst row of the
+            // thirteen: the raw id as the display name, and `group` asserted whatever the id said.
+            // There is nothing here but the id, so the id is what the identity is read from.
+            cb.conversations.set(
+              groupId,
+              buildConversationRow({
+                id: groupId,
+                lifecycle: 'active',
+                identity: deriveConversationIdentity(groupId, ctx.getUserId(), groupId),
+              })
+            );
             await cb.saveConversation(groupId);
             await cb
               .loadAndRestoreConversations()

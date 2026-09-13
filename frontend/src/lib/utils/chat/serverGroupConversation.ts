@@ -1,6 +1,6 @@
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { Conversation } from '$lib/types';
-import { canRepresentThePeer, resolveDirectPeerId } from './conversations';
+import { buildConversationRow, canRepresentThePeer, resolveDirectPeerId } from './conversations';
 import { holdsGroupState } from './groupUsability';
 
 /**
@@ -148,17 +148,22 @@ export async function ensureConversationForServerGroup(
   // live: mark it active so the UI leaves the "syncing" placeholder state without a reload.
   // Otherwise it stays pending until the Welcome is processed.
   const joinedLocally = holdsGroupState(mlsService, groupId);
-  conversations.set(key, {
-    id: groupId,
-    contactName: displayName,
-    name: displayName,
-    messages: [],
-    lifecycle: joinedLocally ? 'active' : 'pending',
-    mlsStateHex: null,
-    conversationType: group.isGroup ? 'group' : 'direct',
-    imageMediaId: group.imageMediaId ?? null,
-    ...(directPeer ? { directPeerId: directPeer } : {}),
-  });
+  // The server's own `isGroup` is the identity here: this row is built FROM the roster entry, so
+  // there is nothing to parse out of a name.
+  conversations.set(
+    key,
+    buildConversationRow({
+      id: groupId,
+      lifecycle: joinedLocally ? 'active' : 'pending',
+      identity: {
+        conversationType: group.isGroup ? 'group' : 'direct',
+        contactName: displayName,
+        displayName,
+        ...(directPeer ? { directPeerId: directPeer } : {}),
+      },
+      imageMediaId: group.imageMediaId ?? null,
+    })
+  );
   if (saveConversation) {
     try {
       await saveConversation(key);

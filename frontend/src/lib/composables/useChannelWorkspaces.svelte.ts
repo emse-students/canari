@@ -22,6 +22,7 @@ import {
 } from '$lib/utils/graine/runtime';
 import type { GraineHistoryVisibility } from '$lib/crypto/graineConstants';
 import { channelScope } from '$lib/mls-client/distributionScope';
+import { buildConversationRow } from '$lib/utils/chat/conversations';
 import { currentUserId } from '$lib/stores/userState.svelte';
 import { applyChannelReactionFrame, getChannelReactions } from '$lib/stores/reactionStore.svelte';
 import {
@@ -296,16 +297,15 @@ export function useChannelWorkspaces() {
         // join is reachable, and the join is what turns it into a conversation.
         if (channel.viewerHasAccess === false) continue;
 
-        const existing = ctx.conversations.get(channelConversationId);
-        ctx.conversations.set(channelConversationId, {
-          contactName: channelConversationId,
-          name: channel.name,
-          id: channelConversationId,
-          messages: existing?.messages ?? [],
-          lifecycle: 'active',
-          mlsStateHex: null,
-          ...(existing?.unreadCount !== undefined ? { unreadCount: existing.unreadCount } : {}),
-        });
+        ctx.conversations.set(
+          channelConversationId,
+          buildConversationRow({
+            id: channelConversationId,
+            lifecycle: 'active',
+            identity: { contactName: channelConversationId, displayName: channel.name },
+            existing: ctx.conversations.get(channelConversationId),
+          })
+        );
       }
     }
 
@@ -766,18 +766,19 @@ export function useChannelWorkspaces() {
             name: channel.name,
             isPrivate: channel.visibility === 'private',
           });
-          const existingEws = ctx.conversations.get(channelConversationId);
-          ctx.conversations.set(channelConversationId, {
-            contactName: channelConversationId,
-            name: channel.name,
-            id: channelConversationId,
-            messages: [],
-            lifecycle: 'active',
-            mlsStateHex: null,
-            ...(existingEws?.unreadCount !== undefined
-              ? { unreadCount: existingEws.unreadCount }
-              : {}),
-          });
+          // `messages: []` USED TO BE WRITTEN HERE UNCONDITIONALLY, over a row this same statement
+          // had just read for its unread count. Hydrating the workspace emptied a channel the user
+          // was reading. The builder preserves what the existing row carries, which is the whole
+          // reason the existing row is passed rather than picked apart.
+          ctx.conversations.set(
+            channelConversationId,
+            buildConversationRow({
+              id: channelConversationId,
+              lifecycle: 'active',
+              identity: { contactName: channelConversationId, displayName: channel.name },
+              existing: ctx.conversations.get(channelConversationId),
+            })
+          );
         }
       } catch {
         // Non-fatal: channels will load on next full refresh
@@ -861,14 +862,14 @@ export function useChannelWorkspaces() {
 
       selectedChannelConversationId = channelId;
 
-      ctx.conversations.set(channelId, {
-        contactName: channelId,
-        name: normalizedChannelName,
-        id: channelId,
-        messages: [],
-        lifecycle: 'active',
-        mlsStateHex: null,
-      });
+      ctx.conversations.set(
+        channelId,
+        buildConversationRow({
+          id: channelId,
+          lifecycle: 'active',
+          identity: { contactName: channelId, displayName: normalizedChannelName },
+        })
+      );
       await ctx.saveConversation(channelId);
       ctx.selectConversation(channelId);
       ctx.log(`Channel created: #${normalizedChannelName} (${visibility})`);
