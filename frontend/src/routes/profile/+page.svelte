@@ -13,6 +13,7 @@
     type SkyEntourage,
   } from '$lib/profile/api';
   import ProfileAssociationsSection from '$lib/components/profile/ProfileAssociationsSection.svelte';
+  import ProfileSubscriptionsSection from '$lib/components/profile/ProfileSubscriptionsSection.svelte';
   import ProfileNotepadSection from '$lib/components/profile/ProfileNotepadSection.svelte';
   import ProfileRoleHistorySection from '$lib/components/profile/ProfileRoleHistorySection.svelte';
   import ProfileParrainageSection from '$lib/components/profile/ProfileParrainageSection.svelte';
@@ -309,6 +310,9 @@
         </div>
         <ProfileAssociationsSection {memberships} loading={membershipsLoading} />
       </div>
+
+      <!-- Cotisations and purchases: the memberships the reader HOLDS, beside the ones they list. -->
+      <ProfileSubscriptionsSection />
 
       <!-- Associative career -->
       <div

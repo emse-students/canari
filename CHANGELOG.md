@@ -142,6 +142,16 @@ row is written - a refusal after it would leave a memberless group for someone e
 defects.
 
 
+### Changed - "Cotisations et achats" moved from Settings to the profile
+
+The section listing the memberships a reader holds was mounted in Settings and named
+`SettingsSubscriptionsSection`, while its heading, subtitle, empty state and link all read
+`profile_*`: the strings were written for the profile and the component was hung in the wrong place.
+
+Settings is where a reader changes how the app behaves. A list of what they have paid for is
+something they ARE, so it now sits directly under the associations they belong to, and the file is
+named for where it lives.
+
 ### Changed - nine association pickers, nine answers to the same question, now one
 
 Nine controls let a user choose an association, and each decided for itself whether lists were shown

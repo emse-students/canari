@@ -1,3 +1,12 @@
+<!--
+  COTISATIONS AND PURCHASES, ON THE PROFILE, WHERE EVERY ONE OF ITS STRINGS ALREADY SAID IT WAS.
+
+  It was mounted in Settings and named `SettingsSubscriptionsSection`, while its heading, subtitle,
+  empty state and link all read `profile_*` - the strings were written for the profile and the
+  component was hung in the wrong place. Settings is where a reader changes how the app behaves; a
+  list of the memberships they hold is something they ARE, and it sits beside the associations they
+  belong to rather than beside the theme switch.
+-->
 <script lang="ts">
   import { onMount } from 'svelte';
   import { Tag, ShoppingBag, ChevronRight, LoaderCircle } from '@lucide/svelte';
