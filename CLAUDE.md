@@ -240,8 +240,8 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    ([backlog](docs/wiki/backlog.md)).
 6. **THE MLS AUDIT: DUPLICATE PATHS TO FUSE AND AVAILABILITY DEAD ENDS TO GIVE AN EXIT** - counts
    re-derived against `main` 2026-09-12 and EIGHT came back larger than the audit claimed, so
-   **work to the swept numbers, never the audit's**. P1 open: the send checkpoint's native override
-   is documented and was never written. **FIVE CONVERSATIONS REST ON ONE HOLDER, ONE HAS NONE** -
+   **work to the swept numbers, never the audit's**. D8 is REFUTED, not to be re-opened: the send
+   ledger holds the invariant. **FIVE CONVERSATIONS REST ON ONE HOLDER, ONE HAS NONE** -
    the hourly report says so and repairs nothing because nothing can.
    [backlog](docs/wiki/backlog.md), [triage](docs/wiki/protocols/mls-graine-state-machine.md#10-triage---what-is-worth-a-pull-request).
 7. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - ONE merge mechanism

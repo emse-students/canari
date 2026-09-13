@@ -11,6 +11,37 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Removed - a seam kept open for a native await that was never owed, and three docblocks that promised it
+
+`BaseMlsService.checkpointAfterSend` was a `protected` hook whose docblock stated an invariant -
+*`mls.bin` is never behind a frame that has already left the device* - and then said *"Native
+overrides this - see `TauriMlsService`"*. **No override was ever written.** `git log -S` over
+`TauriMlsService.ts` returns nothing, and the commit that introduced the hook says so itself: it was
+"the seam for the half that is still open".
+
+The half was not open. The invariant is held, on both platforms, by the SEND LEDGER
+(`sendRatchetLedger`): a synchronous `localStorage` write taken the instant the ratchet moves and
+BEFORE the frame goes on the wire, read back by `reconcileSendRatchets` on the next `init`, which
+burns the deficit through `skip_send_generations`. Tauri command and WASM export both present, and
+the reconcile runs inside the promise every caller of `init` already awaits, so nothing can send
+past it. `docs/wiki/protocols/mls-desync-prevention.md` section 8 had this right since August -
+*"a counter and a burn rather than a disk write"* - and the code's own comments had not caught up.
+
+So the hook is deleted and its call inlined, and the two docblocks that contradicted the design are
+corrected. The sharpest was on `scheduleOutboundMlsPersist`: *"THIS MUST HIT DISK ... Coalesced, but
+never deferred ... The guarantee has to be here"*, above a body that queues the write on a
+microtask and returns `void`. Nothing could await it and nothing did. It now says what it is - a
+best-effort call that SHORTENS the window, while the ledger closes it.
+
+**The risk this closes is a fix nobody needed.** A reader taking the docblock at its word would have
+wired the missing native override and put an awaited checkpoint on the latency of every message -
+1.7 s per send on the phone in August, 17 s on a 19.5 MB `mls.bin` in September.
+
+Nothing pinned the ordering that does hold the invariant, so `BaseMlsService.sendSeam.test.ts` now
+asserts the ledger write lands BEFORE the POST - falsified by moving it after, which is the
+direction that under-counts a failed POST and re-issues a spent generation.
+
+
 ### Removed - two MLS entry points nothing called, one of which could only destroy a conversation
 
 `forceCreateGroup` and `dropGroup` were each a complete vertical stack - a TS interface declaration,

@@ -76,38 +76,6 @@ else holds, a console owned by the user, or hardware that does not exist.
 
 ## Open defects, in severity order
 
-### P1 - the send checkpoint has a seam, and the native side never filled it
-
-`BaseMlsService.checkpointAfterSend` carries a docblock that states an invariant and names the
-incident behind it: **`mls.bin` is never behind a frame that has already left the device**. The
-failure it describes was measured on the phone on 2026-08-14, twice, on a fleet with nothing else
-happening to it - a client sends, is reloaded before the checkpoint lands, drains its durable outbox
-against a state read back from disk that is BEHIND the sends the previous session made, and the
-peers refuse those frames with `SecretReuseError`, correctly reporting that the sender's ratchet
-rewound.
-
-The docblock then says: *"The DEFAULT does not await, and that is web's answer on purpose ... Native
-overrides this - see `TauriMlsService`."*
-
-**There is no override.** `checkpointAfterSend` has exactly two occurrences in the whole tree, both
-in `BaseMlsService.ts` - the call and the default. `git log -S` over `TauriMlsService.ts` returns
-nothing: one never existed. The commit that introduced the method says so itself (`f391c1991`,
-"`checkpointAfterSend` is added as the seam for the half that is still open"), so this is a designed
-fix that was never wired, not a regression. The guard the docblock relies on (`liveMutations`) is
-per-page-session while the outbox is durable, which is precisely why the native await was owed.
-
-So on the one platform where the fault was actually observed, the stated invariant does not hold.
-
-**This is one of four checkpoint routes carrying three different durability guarantees** (audit item
-D8), and the only one whose documentation and behaviour disagree:
-
-| Route | Guarantee |
-|---|---|
-| `persistCheckpoint()` | durable before return, or it throws |
-| `persistMlsStructuralCheckpoint({mlsService})` | same, with a fallback |
-| `persistMlsStructuralCheckpoint()` (no argument) | durable **only if a persister is registered**; otherwise writes nothing and returns `false` |
-| `checkpointAfterSend()` | never awaited; deferred to a microtask, and suppressed outright while `bulkIngestDepth > 0` |
-
 ### The MLS audit items that are still real, with their verified counts (swept 2026-09-12)
 
 **These numbers are the swept ones, not the audit's.** The audit was written by reading the source,
@@ -5764,8 +5732,8 @@ The send-side one is still unexplained and still owed a measurement - and it now
 from the phone, because the branch this entry offered has been spent on the wrong ratchet.
 
 **AND THE 19.5 MB `mls.bin` IS WHAT MAKES IT LIKELY RATHER THAN THEORETICAL** - the two entries above
-are one defect seen from two ends. `checkpointAfterSend` deliberately does not await, which was the
-right call at the measured 1.5 s it cost in August. On this device the same checkpoint now costs
+are one defect seen from two ends. The outbound checkpoint in `emitFrame` deliberately does not
+await, which was the right call at the measured 1.5 s it cost in August. On this device the same checkpoint now costs
 **17.1 / 17.1 / 19.7 seconds**. So between a send and its state reaching disk there is a window of
 up to twenty seconds in which any death of the process - `am kill`, an OOM, a reinstall, the user
 swiping the app away - restores an `mls.bin` behind frames that have already left. The window was
