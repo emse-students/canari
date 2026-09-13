@@ -90,7 +90,6 @@ a real collapse, not a test that fails on divergence):
 | --- | --- | --- | --- |
 | `D8` | checkpoint | 4 routes, 3 guarantees | see the P1 above |
 | `R-D6` | where eviction is learnt | **5** | audit said 3 |
-| `R-D9` | "re-add the requester" | 2 entrances, 1 responder | the deferred-drain entrance passes no `onNotReady`, so a still-not-ready group is dropped rather than re-deferred |
 | `R-D10` | `no_peer_online` recorded | 2 ways | only one is discharged by a presence edge; `noRepairerAt`/`lastReAddAt` are not |
 | `G-D1` | `ensureDistributionGroupFor` | 5 call sites | deduplicated only by an in-flight map |
 | `G-D9` | rotation reasons | 4 -> 1 outcome | the reason survives only in a log line |

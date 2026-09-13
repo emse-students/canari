@@ -77,11 +77,12 @@ import { mergeFcmMessagesIntoConversations } from '$lib/utils/chat/fcmMemoryMerg
 import { appendLog } from '$lib/stores/globalChatSingleton.svelte';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { isLikelyPrivateBrowsing } from '$lib/utils/isLikelyPrivateBrowsing';
+import { handleHistoryRequest, processPendingInvitations } from '$lib/utils/chat/actions';
 import {
-  handleWelcomeRequest,
-  handleHistoryRequest,
-  processPendingInvitations,
-} from '$lib/utils/chat/actions';
+  drainDeferredWelcomeRequests,
+  serveWelcomeRequest,
+  type WelcomeRequestContext,
+} from '$lib/utils/chat/welcomeRequestQueue';
 import {
   buildConversationRow,
   deriveConversationIdentity,
@@ -211,6 +212,29 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
         height: media.height,
       });
     },
+  };
+}
+
+/**
+ * Everything serving a `welcome_request` needs - the SAME object at both entrances.
+ *
+ * A device that lost its MLS state asks to be re-added, and this session answers from the socket
+ * and again when a group it was waiting on becomes ready. The two moments differ in WHERE the ask
+ * came from and in nothing else, so they are one call with one deferral policy; what that policy is,
+ * and why a drain must be able to re-defer, is on {@link serveWelcomeRequest}.
+ */
+export function makeWelcomeRequestContext(
+  ctx: SessionContext,
+  cb: ChatSessionCallbacks
+): WelcomeRequestContext {
+  return {
+    mlsService: ctx.ensureMls(),
+    storage: ctx.getStorage(),
+    userId: ctx.getUserId(),
+    deviceKeyB64: ctx.getDeviceKey(),
+    conversations: cb.conversations,
+    log: cb.log,
+    deferred: ctx.deferredWelcomeRequests,
   };
 }
 
@@ -857,23 +881,10 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
           // the outbox to deliver pending messages and refresh their status.
           flushOutbox();
           void applyOutboxPendingStatuses();
-          const deferred = ctx.deferredWelcomeRequests.get(readyGroupId);
-          if (deferred?.length) {
-            ctx.deferredWelcomeRequests.delete(readyGroupId);
-            for (const req of deferred) {
-              handleWelcomeRequest({
-                mlsService: ctx.ensureMls(),
-                storage: ctx.getStorage(),
-                userId: ctx.getUserId(),
-                deviceKeyB64: ctx.getDeviceKey(),
-                conversations: cb.conversations,
-                log: cb.log,
-                requesterUserId: req.requesterUserId,
-                requesterDeviceId: req.requesterDeviceId,
-                groupId: readyGroupId,
-              }).catch(() => {});
-            }
-          }
+          // The askers this group kept waiting. Served through the SAME path the socket uses, so
+          // one that is still too early is put back on the queue rather than dropped: "ready" here
+          // is the MLS group becoming sendable, which is not yet this device's conversation row.
+          void drainDeferredWelcomeRequests(makeWelcomeRequestContext(ctx, cb), readyGroupId);
           if (t !== null) clearTimeout(t);
           t = setTimeout(() => {
             t = null;
@@ -1127,29 +1138,11 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
         cb.log(
           `[SYNC] welcome_request received from ${requesterUserId}:${requesterDeviceId} for ${groupId}`
         );
-        try {
-          await handleWelcomeRequest({
-            mlsService: ctx.ensureMls(),
-            storage: ctx.getStorage(),
-            userId: ctx.getUserId(),
-            deviceKeyB64: ctx.getDeviceKey(),
-            conversations: cb.conversations,
-            log: cb.log,
-            requesterUserId,
-            requesterDeviceId,
-            groupId,
-            onNotReady: (terminalGroupId) => {
-              const list = ctx.deferredWelcomeRequests.get(terminalGroupId) ?? [];
-              list.push({ requesterUserId, requesterDeviceId });
-              ctx.deferredWelcomeRequests.set(terminalGroupId, list);
-              cb.log(`[WELCOME_REQ] ${terminalGroupId.slice(0, 8)}... not ready yet - deferred`);
-            },
-          });
-        } catch (e) {
-          cb.log(
-            `[WARN] Echec handleWelcomeRequest: ${e instanceof Error ? e.message : String(e)}`
-          );
-        }
+        await serveWelcomeRequest(
+          makeWelcomeRequestContext(ctx, cb),
+          { requesterUserId, requesterDeviceId },
+          groupId
+        );
       }
     );
 
