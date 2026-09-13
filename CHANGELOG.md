@@ -11,6 +11,48 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a device that processed its Welcome in the foreground was `active` and unreachable
+
+`dm_device_group_memberships` is the truth about who is in a group; `group:members:{groupId}` is the
+Redis set the gateway actually routes on. The entity docblock has said, in bold, that
+`activateDeviceMembership` is the only thing that writes `active` and the only writer of that set.
+**It was not true**, and the two other writers disagreed with it and with each other:
+
+| Path | Addressability gate | Redis routing set | `kickedAt` | Missed-message replay |
+| --- | --- | --- | --- | --- |
+| `activateDeviceMembership` | warn and return | written | cleared | yes |
+| `updateInvitationStatus` | THROW | **never written** | cleared | **no** |
+| `createGroup` | **none at all** | written | left unset | n/a |
+
+The middle row is the one that cost something. A device that processed its Welcome in the
+FOREGROUND took that endpoint, got a truthful `active` row, and was never added to the routing set.
+The gateway could not forward to it and could not elect it to answer a `welcome_request` or a
+`history_request` - **silently**, because an INCOMPLETE routing set is not an empty one, and the
+reload at each election door only fires on an EMPTY set. It also never replayed the messages sent
+while the device was `pending`, so the notifications missed during that window were missed for good.
+
+The repair came on the group's next SEND, whose reconciliation adds every live member the set is
+missing. That is a witness, never a fix: until a message happened to be sent, the device was
+unreachable - and the reconciliation's own comment justified itself by a Redis that ran without a
+volume until 2026-08-12, a cause that had been fixed, sitting over a live writer that had not.
+
+`createGroup` is WP-GHOST-1 with no gate at all: a revoked or key-package-less device enrolled
+itself `active` in a group it had just made, which is the exact shape the other two refuse. It also
+never validated the identities it stored, so the client's unresolved-identity placeholder - the
+2026-08-27 defect that put `userId = 'unknown'` into a real conversation and that
+`updateInvitationStatus` was hardened against - reached this door untouched the whole time.
+
+All three are fused onto `activateDeviceMembership`. What legitimately differs between callers is
+what a REFUSAL owes the client, so it returns the reason rather than throwing it: the foreground
+endpoint turns it into a 400, the background seams log and carry on. The line is written inside the
+method under the caller's own tag, so no caller can swallow it. `createGroup` gates BEFORE the group
+row is written - a refusal after it would leave a memberless group for someone else to purge.
+
+`messaging.one-active-writer.spec.ts` pins the writer's own behaviour and each door's delegation -
+16 cases, six of them run red against the previous controllers, including all three `createGroup`
+defects.
+
+
 ### Changed - nine association pickers, nine answers to the same question, now one
 
 Nine controls let a user choose an association, and each decided for itself whether lists were shown
