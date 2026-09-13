@@ -30,7 +30,11 @@ import {
 } from '$lib/utils/chat/pendingGroupExits';
 import { m } from '$lib/paraglide/messages';
 import { saveUserLocally, clearUserLocally, currentUserId, isGlobalAdmin } from '$lib/stores/user';
-import { recoverRosterDisagreement, requestReAdd } from '$lib/utils/chat/recovery';
+import {
+  forgetProvenDeadEnds,
+  recoverRosterDisagreement,
+  requestReAdd,
+} from '$lib/utils/chat/recovery';
 import {
   answerAfterMailboxDrained,
   reconcileGroup,
@@ -1185,6 +1189,10 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       const mls = ctx.ensureMls();
       cb.log('[HISTORY_RECONCILE] a peer came back online - retrying what nobody could answer');
       void retryDeferredReconciliations(mls, mls.getLocalGroups(), cb.log);
+      // THE SAME EDGE, THE OTHER RECORD OF THE SAME ANSWER. A group whose base nobody was online to
+      // republish is locked out until somebody is, and this is the moment somebody is - see
+      // `forgetProvenDeadEnds` for why waiting on the epochs alone rests on the far side's build.
+      forgetProvenDeadEnds(cb.log);
     });
 
     mlsService.onHistoryRequest(

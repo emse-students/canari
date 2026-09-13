@@ -1956,6 +1956,46 @@ three server answers and asserts that neither claims something the server refuse
 it in the same words; the two cases only the responder has - it holds no active MLS state, and it
 must never throw into the WebSocket handler that called it - are pinned beside them.
 
+#### The locked-out device's half: one `no_peer_online`, two records, one edge (R-D10, 2026-09-13)
+
+The sections above are the HOLDER's half. This is the other end: a device that cannot external-join
+because the published base is behind, and that asks a member to republish it.
+
+`base-refresh-request` answers `no_peer_online` when the server read the roster and found nobody
+online to forward to. **That verdict has to be remembered, and remembering it is what stopped a
+storm**: measured on production 2026-09-12, group `4f87267a` was asked once a minute for at least
+twenty-seven consecutive minutes - four HTTP calls a pass - and the server answered
+`NO_PEER_ONLINE members=1` to every one. Its only other member had not connected since 2026-08-03.
+Three groups on that estate had been in the state since 2026-08-29, 08-30 and 08-31: thirteen days,
+not a transient.
+
+So `recovery.ts` records it in `noRepairerAt`, keyed by the pair of epochs it was proved against -
+`${baseEpoch}/${activeEpoch}` - and the dead end ends when either number moves. **The value is the
+proof, which is why it is not a boolean**: a flag would need a clock to expire it, and termination
+here comes from a proof.
+
+**The premise under that was false about the one event the verdict is made of.** The record's doc
+said nothing about the answer could change while both epochs stood still. But the set the server
+looked at is the set of members who are ONLINE, and a member connecting changes it with neither
+number moving. What actually rescued the group was a fact on the OTHER device: `initializeConnection`
+republishes a stale base for every group that device holds, so a returning holder moves `baseEpoch`
+itself, and the next pass here sees a different pair. That repair shipped 2026-09-04,
+`minClientVersion` does not require it, and a republish that fails is logged and nothing more. **An
+exit that rests on what the far side is running is not an exit.**
+
+`no_peer_online` is ONE answer and this client writes it down TWICE - here as a proof about a pair of
+epochs, and in `historyReconcile` as a deferred reconciliation. They are not one map and should not
+be: one is a termination proof, the other a note that an ask never went out. What they share is the
+EDGE that negates the answer, and `onPeersCameOnline` reached only the second. It now discharges both
+(`forgetProvenDeadEnds`), in the same callback, for the same reason: the server said nobody was
+online, and somebody just came online.
+
+Two details the spec pins. The THROTTLE is not discharged with the record - `lastReAddAt` answers
+*how often may this device ask*, which no peer's arrival changes, and clearing it would let a
+presence flap turn every locked-out group into a pass per edge. And the discharge says how many
+groups it un-stuck, or says nothing at all: the edge fires every ten seconds, and a line its reader
+learns to skip is the one that hides the next defect.
+
 ### The joiner's own commit was what stranded the next one - FIXED 2026-08-26
 
 The section above fixed the READER. COMM-22 found the same lockout one turn deeper, and the reason it

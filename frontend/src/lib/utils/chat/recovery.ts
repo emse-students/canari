@@ -54,8 +54,20 @@ const lastReAddAt = new Map<string, number>();
  * **THE QUESTION WAS ANSWERED, AND ASKING IT AGAIN IS NOT A RETRY.** A group whose published base
  * is behind its active epoch can only be repaired by a member holding the tree, and
  * `base-refresh-request` answers `no_peer_online` when the server looked at the roster and found
- * none. Nothing about that answer can change while both numbers stand still: the same request
- * re-elects from the same empty set, and the same external join is refused by the same gate.
+ * none. While both numbers stand still the same external join is refused by the same gate, so
+ * re-running the pass costs four HTTP calls and learns nothing.
+ *
+ * **BUT THE SET IS THE SET OF MEMBERS WHO ARE ONLINE, AND A MEMBER CONNECTING CHANGES IT WITH
+ * NEITHER NUMBER MOVING.** This doc used to say nothing about that answer could change while the
+ * pair stood still, and that was false about the one event the verdict is made of. What makes the
+ * epochs a sufficient exit in practice is a SECOND fact, on the other device: `initializeConnection`
+ * republishes a stale base for every group that device holds, so a returning holder repairs the
+ * base itself and moves `baseEpoch` before this device asks anything. **That fact is not this
+ * device's to guarantee** - it shipped on 2026-09-04, `minClientVersion` does not require it, and a
+ * republish that fails is logged and nothing more. An exit that rests on what the far side is
+ * running is not an exit. So the peer-return edge discharges these records too
+ * ({@link forgetProvenDeadEnds}), for the same reason and through the same seam as the deferred
+ * reconciliations: the server said nobody was online, and somebody just came online.
  *
  * Measured on production 2026-09-12, and it is the whole reason this map exists: group `4f87267a`
  * was asked once a minute for at least twenty-seven consecutive minutes - four HTTP calls a pass -
@@ -93,6 +105,41 @@ function epochPair(input: { baseEpoch?: number | null; activeEpoch?: number }): 
 export function resetReAddCooldowns(): void {
   lastReAddAt.clear();
   noRepairerAt.clear();
+}
+
+/**
+ * Forgets every "nobody could repair this" verdict, because somebody came online.
+ *
+ * **THE EDGE THAT NEGATES THE VERDICT, APPLIED TO BOTH RECORDS THAT HOLD ONE.** `no_peer_online` is
+ * one server answer - it read the roster and found nobody to forward to - and this device writes it
+ * down twice: here, keyed by the epoch pair it was proved against, and in `historyReconcile` as a
+ * deferred reconciliation. Only the second was discharged when a peer returned, so a locked-out
+ * group waited for one of its two numbers to move, which needs the returning member to run a repair
+ * this device cannot require of it. They are different records - one is a proof about a pair of
+ * epochs, the other a note that an ask never went out - and they are not one map. What they share is
+ * the EDGE, and an edge honoured by one of two records is how a session-long dead end survives.
+ *
+ * It clears the whole map rather than the groups of the users named by the edge: presence is
+ * per-USER and this record is per-GROUP, and the membership that would join them is the roster this
+ * device cannot read while it is locked out. The cost of being generous is bounded by the throttle
+ * the caller left armed - one attempt per group per {@link RECOVERY_TIMEOUT_MS}, whatever asks.
+ *
+ * `lastReAddAt` is deliberately NOT cleared with it: the throttle answers "how often may this device
+ * ask", which no peer's arrival changes, and clearing it would let a presence flap turn every
+ * locked-out group into a pass per edge.
+ */
+export function forgetProvenDeadEnds(log: (msg: string) => void): void {
+  if (noRepairerAt.size === 0) return;
+  log(
+    `[READD] a peer came back online - ${noRepairerAt.size} group(s) recorded as unrepairable will ` +
+      `be asked again on the next pass`
+  );
+  noRepairerAt.clear();
+}
+
+/** The groups recorded as having no reachable repairer, and the pair each was proved against. */
+export function provenDeadEnds(): Array<[string, string]> {
+  return [...noRepairerAt];
 }
 
 /**
