@@ -11,6 +11,25 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a Welcome published to a frozen phone was never followed by anything
+
+`sendMessage` and `sendWelcome` both persist a row and then hand it to a device: publish on
+`chat:messages` if the device is online, push over FCM if it is not. They wrote that out twice, and
+only the first armed the deferred fallback.
+
+That fallback is the whole answer to a frozen Android app. The kernel keeps the TCP connection and
+the presence key alive, so the server believes the device is reachable and publishes into a socket
+no process is reading. For a message it costs one notification. For a WELCOME it costs the join: the
+device stays outside the group, and the next message push then fails to decrypt with "Groupe
+introuvable" and shows a generic "Nouveau message de X" - which is the consequence `sendWelcome`
+already spelled out, in the branch three lines below the one that did not apply it.
+
+The two envelopes had drifted too, exactly where a request body differs from a queued row: the
+Welcome's carried no `isCommit`, no `createdAt`, and a `senderDeviceId` written as an empty literal.
+`deliverQueuedFrame` is now the only way a frame leaves this service, and it builds the envelope
+from the row. The deferred timer is also unreferenced, so a pending fallback can no longer be the
+reason a process refuses to exit.
+
 ### Changed - an orphan group is repaired in one way, from wherever it is found
 
 A group with no row in `dm_groups` that still owns rows or Redis keys is a deletion that did not
