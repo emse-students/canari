@@ -2000,6 +2000,46 @@ export class MessagingService {
    * online the joiner simply retries later - missing pre-join history is not urgent, so there is no
    * durable FCM wake.
    */
+  /**
+   * The devices this group can route to, reading the CACHE and reloading it from the TRUTH.
+   *
+   * `group:members:<id>` is a Redis set the gateway routes on; `device_group_memberships` is what
+   * actually says who is in the group. The set is empty after a restart or a flush while the group
+   * is full of people, and an election run off it reports `no_peer_online` about a conversation
+   * nobody has left - so an empty set is re-read from the rows and written back.
+   *
+   * THREE DOORS NEEDED THIS AND EACH CARRIED ITS OWN COPY - history, base refresh and welcome, the
+   * same eleven lines three times, differing only in whether they said anything. Two were silent,
+   * which is how a Redis losing every routing set could repopulate itself twice with no line
+   * anywhere. A cache miss costing a table scan and rewriting shared routing state is the visible
+   * end of something upstream, so it ACCUSES, under the caller's own tag so the line says which
+   * door paid for it.
+   *
+   * An empty TABLE is not a miss and writes nothing: there is no evidence the cache is wrong, and
+   * `sadd` with no members is an error rather than a no-op.
+   *
+   * The `SEND` path's repair is deliberately NOT this: it reconciles a populated set against the
+   * LIVE members and adds what is missing, which answers a different question.
+   */
+  private async routableMembers(groupId: string, traceId: string, tag: string): Promise<string[]> {
+    const cached = await this.redis.smembers(`group:members:${groupId}`);
+    if (cached.length > 0) return cached;
+
+    const rows = await this.deviceGroupRepo.find({
+      where: { groupId, status: 'active' as const },
+    });
+    if (rows.length === 0) return cached;
+
+    const members = rows.map((m) => `${m.userId}:${m.deviceId}`);
+    await this.redis.sadd(`group:members:${groupId}`, ...members);
+    this.logger.warn(
+      `[${tag}][${traceId}] MEMBERS_CACHE_RELOADED group=${groupId} members=${members.length}` +
+        ` - the gateway routing set was empty for a group with active devices, so it was rebuilt` +
+        ` from the rows; anything routed on it before this point reached nobody`
+    );
+    return members;
+  }
+
   async notifyHistoryRequest(
     authUserIdRaw: string | undefined,
     body: NotifyHistoryRequestBody
@@ -2039,17 +2079,8 @@ export class MessagingService {
       rawExclude.slice(0, MAX_HISTORY_EXCLUSIONS).map((k) => k.toLowerCase())
     );
 
-    let members: string[] = await this.redis.smembers(`group:members:${groupId}`);
+    const members = await this.routableMembers(groupId, traceId, 'HISTORY_REQ');
     const senderKey = `${requesterUserId}:${requesterDeviceId}`;
-    if (members.length === 0) {
-      const dbMembers = await this.deviceGroupRepo.find({
-        where: { groupId, status: 'active' as const },
-      });
-      if (dbMembers.length > 0) {
-        members = dbMembers.map((m) => `${m.userId}:${m.deviceId}`);
-        await this.redis.sadd(`group:members:${groupId}`, ...members);
-      }
-    }
 
     // The election and nothing else. WHAT the requester wants - a state key, a digest, a range of
     // older messages - travels inside MLS, where this service cannot read it, and the responder
@@ -2205,20 +2236,8 @@ export class MessagingService {
     const requesterDeviceId = sanitizeQueryValue(body.requesterDeviceId, 'requesterDeviceId');
     this.assertRequesterMatchesCaller(authUserIdRaw, requesterUserId, traceId, 'BASE_REFRESH');
 
-    let members: string[] = await this.redis.smembers(`group:members:${groupId}`);
+    const members = await this.routableMembers(groupId, traceId, 'BASE_REFRESH');
     const senderKey = `${requesterUserId}:${requesterDeviceId}`;
-    // The Redis routing set is a cache and is empty after a restart or a flush; the rows are the
-    // truth. Without this a request lands on an empty member list and reports `no_peer_online`
-    // about a group full of people.
-    if (members.length === 0) {
-      const dbMembers = await this.deviceGroupRepo.find({
-        where: { groupId, status: 'active' as const },
-      });
-      if (dbMembers.length > 0) {
-        members = dbMembers.map((m) => `${m.userId}:${m.deviceId}`);
-        await this.redis.sadd(`group:members:${groupId}`, ...members);
-      }
-    }
 
     const notification = JSON.stringify({
       type: 'base_refresh_request',
@@ -2288,27 +2307,8 @@ export class MessagingService {
     // and since SMEMBERS returns an unordered set each call can pick a different
     // peer, causing multiple devices to concurrently commit an add for the same
     // invitation.
-    let members: string[] = await this.redis.smembers(`group:members:${groupId}`);
+    const members = await this.routableMembers(groupId, traceId, 'WELCOME_REQ');
     const senderKey = `${requesterUserId}:${requesterDeviceId}`;
-
-    // Redis routing set is a cache: it can be empty after a service restart or
-    // Redis flush even though active devices exist in the DB.
-    // Fall back to the DB and repopulate the cache so routing is restored.
-    if (members.length === 0) {
-      this.logger.log(
-        `[WELCOME_REQ][${traceId}] REDIS_EMPTY - falling back to DB for group=${groupId}`
-      );
-      const dbMembers = await this.deviceGroupRepo.find({
-        where: { groupId, status: 'active' as const },
-      });
-      if (dbMembers.length > 0) {
-        members = dbMembers.map((m) => `${m.userId}:${m.deviceId}`);
-        await this.redis.sadd(`group:members:${groupId}`, ...members);
-        this.logger.log(
-          `[WELCOME_REQ][${traceId}] DB_FALLBACK found=${dbMembers.length} repopulated Redis cache`
-        );
-      }
-    }
 
     this.logger.log(
       `[WELCOME_REQ][${traceId}] START group=${groupId} requester=${senderKey} members=${members.length}`

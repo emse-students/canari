@@ -11,6 +11,30 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a lost gateway routing set repopulated itself silently at two of the three doors that rebuild it
+
+`group:members:<id>` is a Redis set the gateway routes on; `device_group_memberships` is what
+actually says who is in a group. The set is empty after a restart or a flush while the group is full
+of people, and an election run off it reports `no_peer_online` about a conversation nobody has left.
+
+Three entry points reload it - `notifyHistoryRequest`, `notifyBaseRefreshRequest` and
+`notifyWelcomeRequest` - and each carried its own copy of the same eleven lines, differing only in
+whether they said anything. **Two were silent.** So a Redis losing every routing set repopulated
+itself twice with no line anywhere and once with two, and the reader of the third block's log had no
+way to know the other two had happened.
+
+Fused to ONE implementation, `routableMembers`, which reloads, refills and ACCUSES - under the
+caller's own tag, so the line says which door paid for the miss and that anything routed before it
+reached nobody. An empty TABLE is still not a miss and writes nothing: there is no evidence the
+cache is wrong, and `sadd` with no members is an error rather than a no-op.
+
+The `SEND` path's cache repair is deliberately NOT part of this: it reconciles a POPULATED set
+against the live members and adds what is missing, which answers a different question.
+
+`messaging.routing-set-refill.spec.ts` asserts all five behaviours on all three doors - fifteen
+cases, run red first, three failing on exactly the log the silent blocks never wrote.
+
+
 ### Removed - a seam kept open for a native await that was never owed, and three docblocks that promised it
 
 `BaseMlsService.checkpointAfterSend` was a `protected` hook whose docblock stated an invariant -
