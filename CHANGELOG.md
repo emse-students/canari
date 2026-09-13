@@ -11,6 +11,26 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - an association's page was cut off on a phone, and five pages were each their own width
+
+The name at the top of an association's page was drawn on a single line that could not be scrolled,
+so on a phone most of it simply was not there: measured at a 375px screen, the title had 98 pixels
+of room for a name needing 573. The avatar and the two buttons beside it both refused to shrink, and
+the name was given whatever was left over. The header now wraps - the buttons take their own line on
+a narrow screen - and a long name runs onto a second line instead of being cut.
+
+The page was also narrower than the rest of the app and had been since it was written, because it
+declared a width of its own instead of taking one of the three the app defines. It now uses the same
+one the admin pages use, which is wider, and the description keeps the reading width so that
+widening the page does not turn a paragraph into 150-character lines.
+
+Three other pages were doing the same thing - the form filler and the two invitation pages - each
+at a width belonging to no scale. A sweep four days earlier had checked all 52 addresses in the app
+and found none of these, because none of them keeps its width at its address: an association's
+page is eight lines that hand the work to a shared component, and that is where the number was. The
+check that runs before every release now looks for the shape rather than the address, so a page
+cannot invent a width again.
+
 ### Changed - a partnership card wears the partner's own colour
 
 A wall of partnerships all carried the same stripe - the club's colour, repeated eight times - which
@@ -23,6 +43,7 @@ something that is absent. So white, black, grey and transparent are all refused 
 being nudged into something usable: a card whose logo has no colour of its own keeps the club's,
 exactly as before. The colour that is found is also brightened or darkened into the range the rest of
 the app uses, so it stays visible in both the light and the dark theme.
+
 
 ### Fixed - the GIF picker opened inside a post card instead of over the page
 

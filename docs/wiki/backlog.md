@@ -5350,22 +5350,18 @@ Related but NOT the same item: in-conversation (chat) search is the entry above;
 social feed. MiGallery's `fuzzyScore`/`fuzzySearch` is the reference implementation the standing
 search requirement points at.
 
-## The graphical pass - every page at 100 %, and what the user saw on the way (user, 2026-09-13)
+## The graphical pass - every page at 100 % (user, 2026-09-13)
 
 **The mandate, verbatim:** *"il faudra (re)faire une passe graphique aussi (tester toutes les pages,
 voir si tout s'affiche bien a 100%...)"*. Every page, at 100 % zoom, and on a phone width - not a
-sample. What is below is what the user happened to see and has not shipped yet; it is not the scope,
-it is the evidence that the scope is real. **The two P2s are gone because they SHIPPED** (the quick
-bar, the GIF picker), and their stories are in `CHANGELOG.md` - this page carries what is left. **The scale to work to is
-[design-reference](frontend/design-reference.md) - seven `--text-*` steps and FOUR radii - and no
-raw hex or px enters any of these.**
+sample. **The scale to work to is [design-reference](frontend/design-reference.md) - seven
+`--text-*` steps and FOUR radii - and no raw hex or px enters any of these.**
 
-**One fact these four share, and it decides three of them:** an association already HAS a colour.
-`Association.color` is a nullable hex on the DTO (`frontend/src/lib/associations/api.ts`), documented
-as *"Hex color for calendar display... Null -> frontend uses generateAvatarColor fallback"* - so
-there is both a stored colour and a deterministic fallback for every association that has none. It is
-used for the calendar and nowhere else. Nothing needs to be invented or migrated to colour the
-association surfaces.
+**ALL FOUR of the things the user happened to see on the way have SHIPPED** - the reaction bar, the
+GIF picker, the association tiles, and the association page's width with the partnership accent that
+came with it. Their stories are in `CHANGELOG.md`; they were never the scope, only the evidence that
+the scope is real, and **the pass itself is still owed**. What is below is what the sweeps THOSE
+fixes ran turned up and did not close.
 
 ### P3 - three modal overlays are one implementation written three times, and six z-index spellings sit beside them (swept 2026-09-13)
 

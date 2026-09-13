@@ -1139,6 +1139,17 @@
   "asso_tab_shop": "Shop",
   "asso_tab_partnerships": "Partnerships",
   "asso_promo_label": "Class of {promo}",
+  "asso_header_member_count": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} member",
+        "countPlural=other": "{count} members"
+      }
+    }
+  ],
+  "asso_sections_nav_label": "Sections",
   "asso_member_count_association": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],

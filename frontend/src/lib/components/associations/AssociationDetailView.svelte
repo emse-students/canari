@@ -18,6 +18,8 @@
     type PartnershipCard,
   } from '$lib/associations/api';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
+  import PageContainer from '$lib/components/layout/PageContainer.svelte';
+  import { PAGE_WIDTHS } from '$lib/components/layout/pageWidth';
   import PartnershipCardList from '$lib/components/shop/PartnershipCardList.svelte';
   import CardTile from '$lib/components/shared/CardTile.svelte';
   import { CARD_GRID } from '$lib/components/layout/cardGrid';
@@ -187,7 +189,22 @@
   }
 </script>
 
-<div class="mx-auto max-w-4xl space-y-8 px-4 py-6 sm:px-6">
+<!--
+  THE PAGE COLUMN IS DECLARED, NOT INVENTED. This was `mx-auto max-w-4xl` - 896px, a FOURTH width
+  outside the three in `pageWidth.ts`, and the same number `admin/+layout.svelte` was caught
+  carrying on 2026-09-10. The 52-route sweep that found that one could not find this one: it read
+  ROUTES, and `/associations/[slug]` and `/lists/[slug]` are eight-line files that render THIS
+  component, so the width was one level below everything the sweep looked at. A count of routes is
+  not a count of page columns.
+
+  `tool` and not `reading` or `grid`, and the page is genuinely mixed: `about` is prose, `members`
+  is a column of full-width rows (prose-shaped, the same reading `/directory` got), while `shop` and
+  `partnerships` are card walls. 1024px is the shape `pageWidth.ts` describes for exactly that - a
+  surface whose controls do not fit a reading measure - and it is what the admin pages became from
+  this identical 896. The prose inside is capped to the reading measure by its own container, so
+  widening the page does not lengthen a line of text.
+-->
+<PageContainer width="tool" class="space-y-8">
   <a
     href={basePath}
     class="text-text-muted hover:text-text-main inline-flex items-center gap-2 text-sm transition-colors"
@@ -208,7 +225,17 @@
     </div>
   {:else if asso}
     <div class="border-cn-border bg-cn-surface rounded-2xl border p-6 shadow-sm">
-      <div class="flex items-start gap-4">
+      <!--
+        THE HEADER WRAPS, AND THE NAME IS NO LONGER CUT. Three children sat in one non-wrapping row
+        - an avatar and an action group both `shrink-0`, with `min-w-0 flex-1` between them - so on
+        a phone the name got whatever was left, and `truncate` then hid the overflow. That is the
+        same defect the association TILES had, in the page that exists to show the name.
+
+        `flex-wrap` with the action group pushed to its own line below `sm` gives the name the full
+        width before anything is dropped, and the `truncate` goes with it: a long name wraps onto a
+        second line instead of ending in an ellipsis.
+      -->
+      <div class="flex flex-wrap items-start gap-4">
         <div class="flex shrink-0 gap-2">
           <AssociationAvatar name={asso.name} logoUrl={asso.logoUrl} size="lg" />
           {#if kind === 'list' && asso.logoMediaId2}
@@ -219,8 +246,8 @@
             />
           {/if}
         </div>
-        <div class="min-w-0 flex-1">
-          <h1 class="text-text-main truncate text-xl font-bold tracking-tight">
+        <div class="min-w-0 flex-1 basis-64">
+          <h1 class="text-text-main text-xl font-bold tracking-tight [overflow-wrap:anywhere]">
             {asso.name}{#if kind === 'list' && asso.name2}<span class="text-text-muted font-bold">
                 &amp; {asso.name2}</span
               >{/if}
@@ -229,16 +256,17 @@
             {#if kind === 'list' && asso.parentName}<span class="text-text-main font-semibold"
                 >{asso.parentName}</span
               > ·
-            {/if}@{asso.slug} · {asso.memberCount ?? members.length} membre{(asso.memberCount ??
-              members.length) !== 1
-              ? 's'
-              : ''}
+            {/if}@{asso.slug} · {m.asso_header_member_count({
+              count: asso.memberCount ?? members.length,
+            })}
             {#if kind === 'list' && asso.promo}
               · {m.list_campaigns_heading({ year: asso.promo })}
             {/if}
           </p>
         </div>
-        <div class="flex shrink-0 flex-col items-stretch gap-2 sm:flex-row sm:items-center">
+        <div
+          class="flex w-full shrink-0 flex-col items-stretch gap-2 sm:w-auto sm:flex-row sm:items-center"
+        >
           {#if userId}
             <button
               type="button"
@@ -276,7 +304,7 @@
 
     <nav
       class="border-cn-border/80 bg-cn-bg sticky top-0 z-30 -mx-4 border-y px-4 py-3 sm:mx-0 sm:rounded-2xl sm:border"
-      aria-label="Sections"
+      aria-label={m.asso_sections_nav_label()}
     >
       <div class="flex gap-2 overflow-x-auto pb-1" data-swipe-nav-ignore>
         <button
@@ -344,14 +372,23 @@
     {#if activeSection === 'about'}
       <div class="border-cn-border bg-cn-surface space-y-4 rounded-2xl border p-6 shadow-sm">
         <h2 class="text-text-main text-lg font-bold tracking-tight">{m.asso_tab_about()}</h2>
-        {#if asso.description?.trim()}
-          <ProfileBioMarkdown source={asso.description} class="text-sm" />
-        {/if}
-        {#if asso.bioMarkdown?.trim()}
-          <ProfileBioMarkdown source={asso.bioMarkdown} />
-        {:else if !asso.description?.trim()}
-          <p class="text-text-muted text-sm">{m.asso_no_description()}</p>
-        {/if}
+        <!--
+          THE PROSE KEEPS THE READING MEASURE THE PAGE GAVE UP. Widening the column to `tool` is
+          right for the walls and wrong for a paragraph: 1024px less the card's padding is about 150
+          characters a line, roughly double what `pageWidth.ts` calls the feed's measure. The cap is
+          on the container so every block inside it - both bios and the empty-state line - shares
+          one left edge and one length.
+        -->
+        <div class="{PAGE_WIDTHS.reading} space-y-4">
+          {#if asso.description?.trim()}
+            <ProfileBioMarkdown source={asso.description} class="text-sm" />
+          {/if}
+          {#if asso.bioMarkdown?.trim()}
+            <ProfileBioMarkdown source={asso.bioMarkdown} />
+          {:else if !asso.description?.trim()}
+            <p class="text-text-muted text-sm">{m.asso_no_description()}</p>
+          {/if}
+        </div>
         {#if asso.contactEmail?.trim()}
           <a
             href="mailto:{asso.contactEmail}"
@@ -514,4 +551,4 @@
       </div>
     {/if}
   {/if}
-</div>
+</PageContainer>

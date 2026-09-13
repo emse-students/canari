@@ -6,6 +6,7 @@
   import { currentUserId } from '$lib/stores/user';
   import { Users, LoaderCircle, CircleAlert, Check } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import PageContainer from '$lib/components/layout/PageContainer.svelte';
 
   const token = $derived((page.params as Record<string, string>).token);
 
@@ -48,9 +49,16 @@
 
 <svelte:head><title>{m.group_join_page_title()}</title></svelte:head>
 
-<div class="mx-auto max-w-md px-4 py-10">
+<!--
+  THE PAGE IS A DECLARED SHAPE AND THE CARD OWNS ITS OWN WIDTH. This was `mx-auto max-w-md` on the
+  page itself - 448px, a width no scale declares - which is the page column being written by hand.
+  The 448 was never wrong FOR THE CARD: a one-decision interstitial should not run the width of a
+  catalogue. So the number moved onto the card, where it is a card measurement, and the page takes
+  the same column and the same vertical rhythm as every other route.
+-->
+<PageContainer>
   <div
-    class="border-cn-border space-y-5 rounded-2xl border bg-(--cn-surface) p-8 text-center shadow-sm"
+    class="border-cn-border mx-auto max-w-md space-y-5 rounded-2xl border bg-(--cn-surface) p-8 text-center shadow-sm"
   >
     {#if loading}
       <div class="flex justify-center py-6">
@@ -108,4 +116,4 @@
       >
     {/if}
   </div>
-</div>
+</PageContainer>
