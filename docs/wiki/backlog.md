@@ -7267,25 +7267,6 @@ already suspected. Until that scan runs, this is a slope rather than a diagnosis
 sits at P3 beside the two prod hosts above rather than being called fixed. **Ask the user before
 deleting anything that is not a build cache.**
 
-## The agenda, the admin console and four modals - items from the user, 2026-09-12
-
-Handed over in one message of eleven (*"en vrac quelques items a faire quand tu peux"*). Each was
-traced to its code before being written here, so what follows is the WORK, not the question - and
-only what is LEFT of it, entries being deleted as they ship. Ten of the eleven have shipped,
-the defect among them - any association admin publishing a school-wide holiday band - included.
-What remains is one wording item, and this section goes with it.
-
-### P3 - two permission labels both say "paiements" and neither names its flag
-
-| Flag | Label today | What it actually gates |
-| --- | --- | --- |
-| `MANAGE_PRODUCTS` | "Gerer les paiements (boutique)" | create/edit/delete boutique products, AND the cotisation configuration (`associations.controller.ts:462`, `:490`), AND the listing that includes inactive products (`:1015`) |
-| `MANAGE_STRIPE_CONNECT` | "Gerer les paiements en ligne" | start or resume Stripe Connect onboarding - pointing the association's payouts at a bank account |
-
-Neither is about taking a payment. The first is the catalogue and the cotisations; the second is
-the bank account. Reword both to name the thing, and keep the provider out of the label the way the
-payout estimate already does.
-
 ## Post-campaign projects - decided, not scheduled
 
 ### Separating ICM and ISMIN - two schools on one deployment (user, 2026-09-05)

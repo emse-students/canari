@@ -95,6 +95,42 @@ describe('the translation files', () => {
     expect(offenders).toEqual([]);
   });
 
+  it('never quotes a permission label that no longer exists, in either locale', () => {
+    // "Demandez a un responsable disposant de l'acces << Gerer les produits >>" named a permission
+    // the members editor has never offered: the real label read "Gerer les paiements (boutique)".
+    // A reader following that sentence looks for a checkbox that is not there, and nothing in the
+    // build connects a sentence to the label it quotes.
+    //
+    // The French half is checkable because the quotation is DELIMITED. The English half has no
+    // delimiter, so it is checked indirectly and more strictly: whatever flag the French sentence
+    // names, the English sentence for the SAME key must contain that flag's English label. That is
+    // the drift this guard exists for - a label reworded in one locale's sentence and not the
+    // other's.
+    const fr = load('fr');
+    const en = load('en');
+    const flagKeys = Object.keys(fr).filter((k) => k.startsWith('asso_flag_'));
+    const frLabelToKey = new Map(flagKeys.map((k) => [patternsOf(fr[k])[0], k]));
+
+    const problems: string[] = [];
+    for (const [key, value] of Object.entries(fr)) {
+      for (const pattern of patternsOf(value)) {
+        for (const [, quoted] of pattern.matchAll(/l'accès\s+«\s*([^»]+?)\s*»/g)) {
+          const flagKey = frLabelToKey.get(quoted);
+          if (!flagKey) {
+            problems.push(`fr:${key} quotes "${quoted}", which is no asso_flag_* label`);
+            continue;
+          }
+          const enLabel = patternsOf(en[flagKey])[0];
+          const enSentence = patternsOf(en[key] ?? '').join(' ');
+          if (!enSentence.includes(enLabel)) {
+            problems.push(`en:${key} does not name "${enLabel}" (${flagKey})`);
+          }
+        }
+      }
+    }
+    expect(problems).toEqual([]);
+  });
+
   it('gives every variant of a message the same input variables, so no branch drops one', () => {
     // A counter whose `other` branch forgot `{count}` renders "messages non lus" with no number,
     // and only in the plural - the branch a developer testing with one item never sees.

@@ -227,6 +227,25 @@ Settings is where a reader changes how the app behaves. A list of what they have
 something they ARE, so it now sits directly under the associations they belong to, and the file is
 named for where it lives.
 
+### Changed - two permission labels said "paiements" and neither was about taking one
+
+`MANAGE_PRODUCTS` read *"Gerer les paiements (boutique)"* and `MANAGE_STRIPE_CONNECT` read *"Gerer
+les paiements en ligne"*, so the members editor offered two nearly identical checkboxes and named
+what neither of them does. The first gates the boutique catalogue **and** the cotisation
+configuration; the second points the association's payouts at a bank account.
+
+They now read **"Gerer la boutique et les cotisations"** and **"Gerer le compte bancaire"**, with the
+provider kept out of the label the way the payout estimate already does. The message key follows the
+flag it belongs to: `asso_flag_manage_payments` is `asso_flag_manage_stripe_connect`.
+
+**And a sentence was already pointing at a label that never existed.** The cotisation screen told a
+reader without the right to *"demander a un responsable disposant de l'acces « Gerer les produits »"*
+- a permission the editor has never offered under that name, so following the instruction meant
+hunting for a checkbox that is not there. Both sentences that quote a permission now quote the real
+one, and `paraglideMessages.test.ts` holds them to it in both locales: the French quotation is
+delimited and must match an `asso_flag_*` label, and the English sentence for the same key must name
+that flag's English label - which is the drift a reword in one locale causes in the other.
+
 ### Fixed - the agenda's date refusals spoke English at a French reader, or said nothing useful
 
 `endsAt must be after startsAt` was thrown with nothing but that sentence, and the global agenda's

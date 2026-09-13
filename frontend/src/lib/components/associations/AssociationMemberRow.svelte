@@ -51,7 +51,7 @@
       },
       {
         flag: AssociationPermissionFlag.MANAGE_STRIPE_CONNECT,
-        label: m.asso_flag_manage_payments(),
+        label: m.asso_flag_manage_stripe_connect(),
       },
       { flag: AssociationPermissionFlag.VALIDATE_EVENTS, label: m.asso_flag_validate_events() },
       { flag: AssociationPermissionFlag.MANAGE_ASSO, label: m.asso_flag_manage_asso() },
