@@ -6,6 +6,7 @@
   import { goto } from '$app/navigation';
   import Input from '$lib/components/ui/Input.svelte';
   import Textarea from '$lib/components/ui/Textarea.svelte';
+  import AssociationOptions from '$lib/components/associations/AssociationOptions.svelte';
   import { m } from '$lib/paraglide/messages';
   import { slugify } from '$lib/utils/textFold';
 
@@ -93,9 +94,7 @@
         class="border-cn-border text-text-main focus:border-cn-yellow w-full rounded-2xl border-2 bg-(--cn-surface) px-4 py-3 text-base outline-none"
       >
         <option value="">{m.list_new_parent_none()}</option>
-        {#each associations as a (a.id)}
-          <option value={a.id}>{a.name}</option>
-        {/each}
+        <AssociationOptions {associations} />
       </select>
     </div>
 

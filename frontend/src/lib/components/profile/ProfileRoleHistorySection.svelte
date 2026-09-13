@@ -6,7 +6,7 @@
     type UserRoleHistoryRow,
   } from '$lib/profile/api';
   import { listAssociations, type Association } from '$lib/associations/api';
-  import { groupAssociationsForSelect, listOptionLabel } from '$lib/associations/selectGroups';
+  import AssociationOptions from '$lib/components/associations/AssociationOptions.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import { Plus, Trash2 } from '@lucide/svelte';
@@ -31,10 +31,6 @@
   let formRoleTitle = $state('');
   let formStartYear = $state<number | ''>('');
   let formEndYear = $state<number | ''>('');
-
-  const grouped = $derived(groupAssociationsForSelect(associations));
-  const assoOptions = $derived(grouped.assos);
-  const listOptions = $derived(grouped.lists);
 
   async function ensureAssociations() {
     if (associations.length > 0) return;
@@ -163,7 +159,7 @@
         <div class="grid gap-3 sm:grid-cols-2">
           <div class="sm:col-span-2">
             <label for="rh-asso" class="text-text-muted mb-1 block text-xs font-semibold"
-              >{m.profile_role_history_asso_group()}</label
+              >{m.asso_select_group_assos()}</label
             >
             <select
               id="rh-asso"
@@ -171,20 +167,7 @@
               class="border-cn-border w-full rounded-xl border bg-(--cn-surface) px-3 py-2 text-sm"
             >
               <option value="">{m.profile_role_history_choose_asso()}</option>
-              {#if assoOptions.length > 0}
-                <optgroup label={m.profile_role_history_asso_group()}>
-                  {#each assoOptions as a (a.id)}
-                    <option value={a.id}>{a.name}</option>
-                  {/each}
-                </optgroup>
-              {/if}
-              {#if listOptions.length > 0}
-                <optgroup label={m.profile_role_history_list_group()}>
-                  {#each listOptions as a (a.id)}
-                    <option value={a.id}>{listOptionLabel(a)}</option>
-                  {/each}
-                </optgroup>
-              {/if}
+              <AssociationOptions {associations} />
             </select>
           </div>
           <div class="sm:col-span-2">

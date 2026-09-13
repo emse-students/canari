@@ -11,6 +11,47 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - nine association pickers, nine answers to the same question, now one
+
+Nine controls let a user choose an association, and each decided for itself whether lists were shown
+beside associations, in what order, and under what heading. Two grouped and sorted them; six
+rendered one flat run with promo lists mixed in among the clubs - three of those sorting the FETCH
+rather than the options, so the order was an accident of where the array happened to be reused; and
+one sorted nothing at all. The same estate therefore read differently depending on which door the
+reader came through, and a promo list could sit between two clubs with nothing saying it was a list
+(user: *"je ne vois pas toutes les associations ... associations et listes sont melangees"*).
+
+`AssociationOptions.svelte` now renders the `<optgroup>` pairs for all eight `<select>` sites over
+the `groupAssociationsForSelect` helper that was already the shared answer and had two callers out
+of nine. It renders the OPTIONS only, never the `<select>`: a composer, a filter bar and a settings
+form style their control differently and that is a legitimate difference. An empty group renders
+nothing, so the four callers that fetch `listAssociations('association')` - a list's parent, the
+Cercle's billing target - keep exactly the markup they had, with no flag to pass.
+
+The ninth, `CoOwnerPicker`, is a multi-select over its own dropdown, so `<optgroup>` has no meaning
+there; it reads the same helper and renders the two groups as headed sections.
+
+Two follow-ons fell out of the sweep. `admin/cercle` sorted its fetch with a bare `localeCompare`
+whose only two readers are `find` calls - deleted, the picker owns the order. `calendar` keeps its
+fetch sort because `associations[0]` is the default deposit target, and a default that moved with
+the API response order would be a different association on two loads of the same page; the comment
+now says so.
+
+### Fixed - the partner picker showed twelve associations and the estate is larger than twelve
+
+`CoOwnerPicker` rendered `candidates.slice(0, 12)` inside a `max-h-48 overflow-y-auto` box. The cap
+predates the scroll box and every row past the twelfth was unreachable by browsing; worse, the
+search narrowed the list and the cap then cut whatever the search had left, so a name matching too
+many others could not be reached either way. The cap is gone - the box scrolls, which is what it was
+already dressed to do.
+
+Its three raw French literals went to Paraglide in the same pass: the section heading (a `label`
+prop defaulting to `'Associations partenaires (optionnel)'` that neither call site ever passed, so
+the prop is gone too), the search placeholder, and the `Retirer {name}` aria-label on each chip.
+Four message keys naming the two group headings per call site collapsed into `asso_select_group_assos`
+and `asso_select_group_lists`, which is now where those two words are written.
+
+
 ### Removed - the two buttons that left the day view by landing on an empty box
 
 The day panel rendered a "Tout le mois" link beside the day's heading and a "Choisir un autre jour"

@@ -7270,7 +7270,7 @@ what gives it one.
 
 ### P2 - "Associations partenaires (optionnel)" is every association on the platform
 
-`CoOwnerPicker.svelte:25-38` calls `listAssociations()` and filters on the search box, the primary
+`CoOwnerPicker.svelte` calls `listAssociations()` and filters on the search box, the primary
 owner and what is already selected. Nothing else conditions it: no partnership, no shared member,
 no consent from the association being named. So an event can declare any association on the estate
 as its partner, and that association's name and colour then ride on a card it never agreed to.
@@ -7279,13 +7279,8 @@ as its partner, and that association's name and colour then ride on a card it ne
 (a) any association, which is what ships today and should then say so in the label, (b) an
 association the author is also a member of, or (c) any association, but the co-ownership starts
 `pending` and the named association confirms it. The label is wrong under (a) as much as under the
-others, so it moves either way.
-
-### P3 - the co-owner picker's label is a raw French literal
-
-`frontend/src/lib/components/calendar/CoOwnerPicker.svelte:18` defaults `label` to the string
-`'Associations partenaires (optionnel)'`, and neither of its two call sites passes one. A
-user-visible string outside Paraglide, in a component, rendered to every locale.
+others, so it moves either way - and the wording is now one key, `asso_calendar_co_owner_label`,
+so whichever answer wins is a reword in two message files rather than a hunt through components.
 
 ### P3 - four event modals, two implementations, and neither can do what the other can
 

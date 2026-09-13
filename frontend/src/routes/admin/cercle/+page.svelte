@@ -18,6 +18,7 @@
   import { Wallet, TriangleAlert, RefreshCw, CircleCheck, Trash2 } from '@lucide/svelte';
   import StripeNetPayoutHint from '$lib/components/payments/StripeNetPayoutHint.svelte';
   import { m } from '$lib/paraglide/messages';
+  import AssociationOptions from '$lib/components/associations/AssociationOptions.svelte';
   import { getLocale } from '$lib/paraglide/runtime';
 
   /** Beneficiary preselected on arrival: in practice a Cercle balance belongs to Le Cercle. */
@@ -64,9 +65,9 @@
     error = '';
     console.log('[ADMIN][CERCLE] loading beneficiary associations');
     try {
-      associations = (await listAssociations('association')).sort((a, b) =>
-        a.name.localeCompare(b.name)
-      );
+      // Unsorted on purpose: the only two readers are `find` calls, and the picker below owns the
+      // order for every association select in the app.
+      associations = await listAssociations('association');
       selectedAssoId = associations.find((a) => a.slug === CERCLE_SLUG)?.id ?? '';
       if (selectedAssoId) await loadProduct();
     } catch (e) {
@@ -271,9 +272,7 @@
           class="border-cn-border text-text-main focus:ring-cn-yellow/40 w-full max-w-md rounded-xl border bg-transparent px-3 py-2 text-sm focus:ring-2 focus:outline-none"
         >
           <option value="">{m.admin_cercle_asso_placeholder()}</option>
-          {#each associations as assoc (assoc.id)}
-            <option value={assoc.id}>{assoc.name}</option>
-          {/each}
+          <AssociationOptions {associations} />
         </select>
       </div>
     {/if}

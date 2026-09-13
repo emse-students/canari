@@ -13,6 +13,7 @@
   import { Check } from '@lucide/svelte';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import { m } from '$lib/paraglide/messages';
+  import AssociationOptions from '$lib/components/associations/AssociationOptions.svelte';
   import AssociationLogoCropper from '$lib/components/associations/AssociationLogoCropper.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
@@ -216,9 +217,7 @@
         class="border-cn-border bg-cn-bg/30 text-text-main w-full rounded-xl border px-4 py-2.5 text-sm"
       >
         <option value="">{m.list_new_parent_none()}</option>
-        {#each parentOptions as opt (opt.id)}
-          <option value={opt.id}>{opt.name}</option>
-        {/each}
+        <AssociationOptions associations={parentOptions} />
       </select>
     </div>
   {/if}
