@@ -103,8 +103,9 @@
         if (token === loadToken) extrasLoading = false;
       }
     } catch (err) {
+      Log.d('profile.load failed', err);
       if (token !== loadToken) return;
-      error = err instanceof Error ? err.message : m.profile_public_load_error();
+      error = m.profile_public_load_error();
     } finally {
       if (token === loadToken) loading = false;
     }
@@ -213,7 +214,7 @@
       }
     } catch (err) {
       Log.d('profile.handleBlockToggle failed', err);
-      error = err instanceof Error ? err.message : m.common_generic_error_label();
+      error = m.common_generic_error_label();
     } finally {
       blockLoading = false;
     }
@@ -232,7 +233,7 @@
         actionMessage = m.profile_already_reported();
       } else {
         Log.d('profile.submitUserReport failed', err);
-        error = err instanceof Error ? err.message : m.post_unable_to_report();
+        error = m.post_unable_to_report();
       }
     } finally {
       reportSubmitting = false;

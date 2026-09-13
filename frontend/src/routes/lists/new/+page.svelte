@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Log } from '$lib/utils/Log';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
@@ -52,7 +53,8 @@
       });
       await goto(`/lists/${list.slug}`);
     } catch (err) {
-      error = err instanceof Error ? err.message : m.list_new_error_fallback();
+      Log.d('handleSubmit failed', err);
+      error = m.list_new_error_fallback();
     } finally {
       submitting = false;
     }

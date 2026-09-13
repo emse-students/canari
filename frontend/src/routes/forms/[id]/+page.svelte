@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Log } from '$lib/utils/Log';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
@@ -161,7 +162,8 @@
         await navigateExternal(result.url);
       }
     } catch (err: unknown) {
-      showToast(err instanceof Error ? err.message : m.form_card_registration_error());
+      Log.d('handleSaveCard failed', err);
+      showToast(m.form_card_registration_error());
     } finally {
       savingCard = false;
     }

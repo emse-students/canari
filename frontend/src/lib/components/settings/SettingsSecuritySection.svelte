@@ -58,7 +58,7 @@
         if (!biometricEnabled) showToast(m.auth_biometric_no_fingerprint_android(), 'info');
       }
     } catch (e) {
-      appendLog(`[BIOMETRIC] Toggle failed: ${e instanceof Error ? e.message : String(e)}`);
+      appendLog(`[BIOMETRIC] Toggle failed: ${String(e)}`);
     } finally {
       biometricBusy = false;
     }

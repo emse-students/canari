@@ -5,7 +5,7 @@ import { join, relative } from 'node:path';
 import { withoutAnyComments } from '$lib/styles/markupSources';
 
 /**
- * NO SCREEN IN THE SHOP OR ASSOCIATIONS TREES MAY RENDER THE SERVER'S OWN SENTENCE.
+ * NO MEMBER-FACING SCREEN MAY RENDER THE SERVER'S OWN SENTENCE.
  *
  * `socialApiError.test.ts` holds this for ONE component, because that component is where a student
  * met it: *"En passant, 'No codes left for this partnership' est non traduite."* The census that
@@ -26,21 +26,41 @@ import { withoutAnyComments } from '$lib/styles/markupSources';
 
 const ROOT = process.cwd();
 
-/** The trees this guard owns. Others follow endpoint by endpoint; see `docs/wiki/backlog.md`. */
+/**
+ * The trees this guard owns. Others follow tree by tree; see `docs/wiki/backlog.md`.
+ *
+ * A tree is added only once every file under it answers, which is why they arrive in batches
+ * rather than one file at a time: a guard that owns half a directory is one a new file walks past.
+ */
 const TREES = [
   'src/lib/components/associations',
   'src/lib/components/shop',
   'src/routes/associations',
   'src/routes/shop',
+  'src/lib/components/posts',
+  'src/lib/components/settings',
+  'src/routes/posts',
+  'src/routes/profile',
+  'src/routes/lists',
+  'src/routes/documents',
+  'src/routes/forms',
 ];
 
 /**
  * Files still permitted to render a server sentence, each with the reason it cannot yet be closed.
  *
- * Deliberately empty. It exists so the next endpoint-by-endpoint pass has somewhere honest to park
- * a site it cannot finish, rather than deleting this guard to get a commit through.
+ * It exists so a pass has somewhere honest to park a site it cannot finish, rather than deleting
+ * this guard to get a commit through. An entry that stops offending FAILS, so nothing rots here.
  */
-const ALLOWED: Record<string, string> = {};
+const ALLOWED: Record<string, string> = {
+  'src/lib/components/settings/SettingsSecuritySection.svelte':
+    'The PIN-change error is the one `.message` in these trees that is NOT the server talking: ' +
+    '`changePinImpl` throws `new Error(m.auth_pin_change_current_incorrect())`, so the text is ' +
+    'already French. Deleting the preference here would REPLACE a correct sentence with a vaguer ' +
+    'one. It is a message carrying a distinction instead of a code, which is the same rule one ' +
+    'step earlier, and the typed errors that close it belong to the P1 PIN-vs-corrupt-state item ' +
+    '(docs/wiki/backlog.md) - written 2026-09-08, unshipped, and not to be forked here.',
+};
 
 /** Every `.svelte` and `.ts` file under `dir`, recursively. */
 function sourcesUnder(dir: string): string[] {
@@ -62,7 +82,7 @@ const SERVER_PROSE = /instanceof Error\s*\?\s*[A-Za-z_$][\w$]*\.message/;
 
 const files = TREES.flatMap(sourcesUnder).map((p) => relative('.', p).replace(/\\/g, '/'));
 
-describe('the shop and associations trees never render a server sentence', () => {
+describe('no member-facing tree renders a server sentence', () => {
   it('is looking at the trees it thinks it is', () => {
     // A path typo would make every assertion below vacuously true, which is the failure mode of
     // every source-level guard - and a FLOOR on the total would not catch it, because three
@@ -73,6 +93,8 @@ describe('the shop and associations trees never render a server sentence', () =>
     }
     expect(files).toContain('src/lib/components/associations/edit/EditCotisationsTab.svelte');
     expect(files).toContain('src/routes/shop/+page.svelte');
+    expect(files).toContain('src/lib/components/posts/PostCard.svelte');
+    expect(files).toContain('src/routes/lists/[slug]/edit/+page.svelte');
   });
 
   it.each(files.map((f) => [f]))('%s', (file) => {

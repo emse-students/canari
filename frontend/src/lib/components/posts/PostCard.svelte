@@ -217,7 +217,8 @@
       });
       localPost = { ...localPost, polls: updatedPolls };
     } catch (err) {
-      errorMessage = err instanceof Error ? err.message : m.post_unable_to_vote();
+      Log.d('PostCard.submitVote failed', err);
+      errorMessage = m.post_unable_to_vote();
     }
   }
 
@@ -227,7 +228,8 @@
     try {
       await assertNotMuted();
     } catch (err) {
-      errorMessage = err instanceof Error ? err.message : m.post_action_not_allowed();
+      Log.d('handleReaction failed', err);
+      errorMessage = m.post_action_not_allowed();
       return;
     }
 
@@ -246,8 +248,9 @@
         : await addReaction(localPost.id, reactionType);
       localPost = { ...localPost, reactions: result.reactions };
     } catch (err) {
+      Log.d('handleReaction failed', err);
       localPost = { ...localPost, reactions: prevReactions };
-      errorMessage = err instanceof Error ? err.message : m.post_reaction_error();
+      errorMessage = m.post_reaction_error();
     }
   }
 
@@ -268,7 +271,8 @@
       await deletePostApi(localPost.id);
       onDelete?.();
     } catch (err) {
-      errorMessage = err instanceof Error ? err.message : m.post_unable_to_delete_post();
+      Log.d('handleDeletePost failed', err);
+      errorMessage = m.post_unable_to_delete_post();
     }
   }
 
@@ -297,7 +301,8 @@
       localPost = { ...localPost, comments: [...(localPost.comments ?? []), result.comment] };
       commentText = '';
     } catch (err) {
-      errorMessage = err instanceof Error ? err.message : m.post_unable_to_comment();
+      Log.d('handleAddComment failed', err);
+      errorMessage = m.post_unable_to_comment();
     } finally {
       submittingComment = false;
     }
@@ -325,7 +330,8 @@
         comments: (localPost.comments ?? []).map((c) => (c.id === commentId ? result.comment : c)),
       };
     } catch (err) {
-      errorMessage = err instanceof Error ? err.message : m.post_unable_to_edit_comment();
+      Log.d('handleEditComment failed', err);
+      errorMessage = m.post_unable_to_edit_comment();
     }
   }
 
@@ -340,7 +346,8 @@
         ),
       };
     } catch (err) {
-      errorMessage = err instanceof Error ? err.message : m.post_unable_to_delete_comment();
+      Log.d('handleDeleteComment failed', err);
+      errorMessage = m.post_unable_to_delete_comment();
     }
   }
 
@@ -352,7 +359,8 @@
       localPost = { ...localPost, pinned: res.pinned };
       actionMessage = res.pinned ? m.post_epingle() : m.post_unpinned();
     } catch (err) {
-      errorMessage = err instanceof Error ? err.message : m.post_unable_to_toggle_pin();
+      Log.d('togglePin failed', err);
+      errorMessage = m.post_unable_to_toggle_pin();
     }
   }
 
@@ -378,7 +386,7 @@
       return;
     }
     Log.d('PostCard.reportFailed', err);
-    errorMessage = err instanceof Error ? err.message : m.post_unable_to_report();
+    errorMessage = m.post_unable_to_report();
   }
 
   /** Opens the reason dialog for a comment. Same four reasons a post offers. */

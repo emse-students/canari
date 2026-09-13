@@ -7185,18 +7185,35 @@ throw. Deleting the preference is the whole fix, and it needs no endpoint to cha
 The raw literals were **two violations in one line** - the server's English when the throw was an
 `Error`, and an untranslated inline literal when it was not.
 
-**`src/lib/associations/serverProse.test.ts` is the tree-wide guard and its allowlist is EMPTY.** It
-walks all four trees, fails any file whose code (comments stripped, so the rule stays documentable
-beside itself) still matches `instanceof Error ? x.message`, and asserts per-tree that it found
-files at all - a floor on the total would not catch a path typo, because three healthy trees clear
-any floor the fourth one's absence leaves. An allowlist entry that stops offending fails too.
+**`src/lib/associations/serverProse.test.ts` is the tree-wide guard.** It walks every tree it owns,
+fails any file whose code (comments stripped, so the rule stays documentable beside itself) still
+matches `instanceof Error ? x.message`, and asserts per-tree that it found files at all - a floor on
+the total would not catch a path typo, because the healthy trees clear any floor a missing one
+leaves. An allowlist entry that stops offending fails too.
 
-**WHAT IS LEFT, AND THE COUNT WAS RE-MEASURED RATHER THAN CARRIED FORWARD.** The 185 above came from
-one predicate; a broader one over `frontend/src` finds **288** occurrences of the ternary, of which
-~118 assign to an error state a screen renders and 15 sit inside a `Log`/`console` call and are
-correctly dev-facing. **218 remain outside the two trees closed here** - chat (`lib/utils/chat`, 13
-files), graine (7), settings, posts, admin. Each is the same deletion, and each new tree extends
-`TREES` in the guard rather than needing a new file. The CODES are the separate, still-open half.
+**ITS ALLOWLIST IS NO LONGER EMPTY, AND THE ONE ENTRY IS THE INTERESTING CASE.**
+`SettingsSecuritySection.svelte` renders `.message` from a PIN change, and that message is not the
+server talking: `changePinImpl` throws `new Error(m.auth_pin_change_current_incorrect())`, so the
+text is already French and deleting the preference would replace a precise sentence with a vaguer
+one. It is the SAME rule one step earlier - a distinction carried in prose instead of a code - and
+the typed errors that close it belong to the P1 PIN-vs-corrupt-state item, written 2026-09-08 and
+unshipped. **The census cannot be swept blind because of cases like this one**: the predicate finds
+the shape, not the provenance, and provenance is the whole question.
+
+**WHAT IS LEFT, AND THE COUNT IS RE-MEASURED EVERY PASS RATHER THAN DECREMENTED.** The 185 above
+came from one predicate; a broader one over `frontend/src` finds ~288 occurrences of the ternary, of
+which only some assign to an error state a screen renders - the rest sit inside a `Log`/`console`
+call and are correctly dev-facing.
+
+**196 remain, down from 223** (same predicate, both ends measured on this branch's base,
+2026-09-13). The member-facing pass closed 27 across `components/posts`, `components/settings`,
+`routes/posts`, `routes/profile`, `routes/lists`, `routes/documents` and `routes/forms`, all seven
+now guarded. What is left is chat (`lib/utils/chat`), graine, `routes/admin` (11 files), and the
+worker/`mls-client`/`services` layers, where most sites are dev-facing logs rather than screens.
+
+**A tree is added only once every file under it answers**, which is why they arrive in batches: a
+guard owning half a directory is one a new file walks past. The CODES are the separate, still-open
+half.
 
 ## Infrastructure
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Log } from '$lib/utils/Log';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
@@ -85,7 +86,7 @@
       console.log(`[Reviewer] Download complete: ${doc.name}`);
     } catch (e) {
       console.error('[Reviewer] Download error:', e);
-      error = e instanceof Error ? e.message : m.common_generic_error_label();
+      error = m.common_generic_error_label();
     } finally {
       downloadingId = null;
     }
@@ -99,7 +100,8 @@
       // Auto-expand when only a handful of associations are present.
       if (groups.length <= 3) for (const g of groups) expanded.add(g.associationId);
     } catch (e) {
-      error = e instanceof Error ? e.message : m.common_load_error();
+      Log.d('reviewerDocuments.load failed', e);
+      error = m.common_load_error();
     } finally {
       loading = false;
     }

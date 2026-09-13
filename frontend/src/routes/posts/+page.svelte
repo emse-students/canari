@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Log } from '$lib/utils/Log';
   import { onMount } from 'svelte';
   import { pullToRefresh } from '$lib/actions/pullToRefresh';
   import { page } from '$app/state';
@@ -213,7 +214,8 @@
       postsOverride = await listPosts(buildListOptions(0));
       hasMore = (postsOverride?.length ?? 0) >= PAGE_SIZE;
     } catch (err) {
-      errorMessage = err instanceof Error ? err.message : m.posts_load_error_title();
+      Log.d('refreshPosts failed', err);
+      errorMessage = m.posts_load_error_title();
     } finally {
       loading = false;
     }

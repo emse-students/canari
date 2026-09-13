@@ -85,8 +85,8 @@
         await goto(`/lists/${encodeURIComponent(slug)}`);
         return;
       }
-    } catch (err) {
-      error = err instanceof Error ? err.message : 'Liste introuvable';
+    } catch {
+      error = m.list_edit_load_error();
     } finally {
       loading = false;
     }

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Log } from '$lib/utils/Log';
   import { onMount } from 'svelte';
   import { CreditCard, Plus, Trash2, LoaderCircle, CircleAlert, CircleCheck } from '@lucide/svelte';
   import { slide } from 'svelte/transition';
@@ -58,7 +59,8 @@
         await navigateExternal(result.url);
       }
     } catch (err) {
-      paymentError = err instanceof Error ? err.message : m.profile_payment_setup_error();
+      Log.d('handleSetupPayment failed', err);
+      paymentError = m.profile_payment_setup_error();
       paymentSetupLoading = false;
     }
   }
@@ -75,7 +77,8 @@
       await deletePaymentMethod(id);
       paymentMethods = paymentMethods.filter((pm) => pm.id !== id);
     } catch (err) {
-      paymentError = err instanceof Error ? err.message : m.profile_payment_delete_error_fallback();
+      Log.d('handleDeletePaymentMethod failed', err);
+      paymentError = m.profile_payment_delete_error_fallback();
     }
   }
 

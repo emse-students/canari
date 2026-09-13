@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Log } from '$lib/utils/Log';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { CARD_GRID } from '$lib/components/layout/cardGrid';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
@@ -32,7 +33,8 @@
       lists = all;
       myAssociations = mine;
     } catch (err) {
-      error = err instanceof Error ? err.message : m.list_load_error_fallback();
+      Log.d('lists.load failed', err);
+      error = m.list_load_error_fallback();
     } finally {
       loading = false;
     }
