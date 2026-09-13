@@ -76,6 +76,25 @@ describe('the translation files', () => {
     }).toEqual({ missingFromEn: [], missingFromFr: [] });
   });
 
+  it('keeps the co-host picker out of the partnership vocabulary', () => {
+    // Two unrelated features, one word. In this app a "partenariat" is a discount an outside
+    // business offers students (`asso_partnership_*`, its own screen and its own table). The event
+    // co-host picker asks no association for anything - it offers the whole estate, names whoever is
+    // chosen, and tells them nothing - which the user ARBITRATED as the model to keep. So the label
+    // may not borrow the word: it would promise an agreement that is never sought, and collide with
+    // a feature that really does seek one.
+    const offenders: string[] = [];
+    for (const locale of LOCALES) {
+      for (const [key, value] of Object.entries(load(locale))) {
+        if (!key.startsWith('asso_calendar_co_owner')) continue;
+        if (patternsOf(value).some((p) => /partenaire|partnership|partner/i.test(p))) {
+          offenders.push(`${locale}:${key}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
   it('gives every variant of a message the same input variables, so no branch drops one', () => {
     // A counter whose `other` branch forgot `{count}` renders "messages non lus" with no number,
     // and only in the plural - the branch a developer testing with one item never sees.

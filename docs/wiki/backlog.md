@@ -7248,9 +7248,8 @@ deleting anything that is not a build cache.**
 ## The agenda, the admin console and four modals - eleven items from the user, 2026-09-12
 
 Handed over in one message (*"en vrac quelques items a faire quand tu peux"*). Each was traced to
-its code before being written here, so what follows is the WORK, not the question. Two of them
-are defects rather than wording: any association admin can publish a school-wide holiday band, and
-the partner picker offers every association on the platform.
+its code before being written here, so what follows is the WORK, not the question. One of them is
+a defect rather than wording: any association admin can publish a school-wide holiday band.
 
 ### P2 - "Pause / vacances" is offered to every proposer and gated nowhere
 
@@ -7274,31 +7273,6 @@ radio and one refusal on the server.
 
 **Not to be re-opened into a dedicated screen or a `/calendar` field** without the user saying so:
 both were offered and both were declined.
-
-### P3 - "Associations partenaires" promises a partnership the picker never asks for
-
-`CoOwnerPicker.svelte` calls `listAssociations()` and filters on the search box, the primary
-owner and what is already selected. Nothing else conditions it: no partnership, no shared member,
-no consent from the association being named. So an event can name any association on the estate,
-and that association's name and colour then ride on a card it was never asked about - which the
-arbitration below ACCEPTS as the model, and is exactly why the label may not call it a partnership.
-
-**ARBITRATED 2026-09-13, AND IT IS WHY THIS IS NOW A P3.** Three models were put to the user -
-(a) any association, with a label that says so; (b) only an association the author is a member of;
-(c) any association, but the co-ownership starts `pending` and the named association confirms it.
-The answer is **(a)**.
-
-So there is no consent mechanism to build and no list to narrow: what ships is what was wanted, and
-the defect is that the LABEL over-promises. A name in this field is a MENTION, not an agreement, and
-the wording must stop implying otherwise.
-
-**The work is a reword of one key**, `asso_calendar_co_owner_label`, in `fr.json` and `en.json` -
-the literal became a key in #552, so this is two lines rather than a hunt through components. The
-French must not say "partenaires", which is also the word the commercial partner-discount feature
-owns (`asso_partnership_*`), so the two cannot share it.
-
-**(b) and (c) are declined, not deferred.** Neither is to be re-opened as "the proper fix" without
-the user reversing this.
 
 ### P3 - four event modals, two implementations, and neither can do what the other can
 
