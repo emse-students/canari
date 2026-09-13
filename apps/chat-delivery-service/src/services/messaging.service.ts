@@ -669,11 +669,17 @@ export class MessagingService {
     const DELAY_MS = 10_000;
     // setTimeout expects () => void; extract the async work into a separate
     // method to satisfy @typescript-eslint/no-misused-promises.
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       void this.runDeferredPush(queued, traceId, groupId, senderId, silent).catch((e) =>
         this.logger.warn(`[PUSH_DEFERRED][${traceId}] deferred push error: ${e}`)
       );
     }, DELAY_MS);
+    // UNREFERENCED, because this timer must never be the reason a process stays alive. In the
+    // service the HTTP server holds the loop open, so the delay elapses exactly as before; at
+    // shutdown the pending fallback is simply dropped, which is the guarantee this path already
+    // makes - the row is durable and the device's next pull redelivers it. Referenced, it kept a
+    // test runner alive for ten seconds after every online delivery.
+    timer.unref();
   }
 
   private async runDeferredPush(
@@ -694,6 +700,99 @@ export class MessagingService {
       `[PUSH_DEFERRED][${traceId}] queuedId=${queued.id} still unACKed after 10 s → FCM fallback`
     );
     await this.sendFcmForQueued(queued, `${traceId}-def`, groupId, senderId, silent);
+  }
+
+  /** The presence key for one DEVICE. The gateway writes it on connect and lets it expire. */
+  private presenceKey(userId: string, deviceId: string): string {
+    return `user:online:${userId}:${deviceId}`;
+  }
+
+  /**
+   * HANDS ONE QUEUED ROW TO ONE DEVICE, AND IT IS THE ONLY WAY A FRAME LEAVES THIS SERVICE.
+   *
+   * Online: publish the envelope on `chat:messages` for the gateway to route, then arm the deferred
+   * FCM fallback. Offline: push straight away. Both branches are best-effort - the row is already
+   * durable, and its next pull redelivers it - so neither is awaited by the caller's caller.
+   *
+   * THE ENVELOPE IS BUILT FROM THE ROW, not from the request that produced it, because the row is
+   * the thing being delivered. The two send routes each built their own from their own body and
+   * diverged exactly where a body differs from a row: the Welcome's envelope carried no `isCommit`,
+   * no `createdAt` and an empty `senderDeviceId` written as a literal.
+   *
+   * **AND ONE OF THEM NEVER ARMED THE FALLBACK.** The deferred push exists because `online` can be
+   * TRUE for an Android app that is frozen: the kernel keeps the TCP connection, the presence key
+   * stays fresh, and the WebSocket frame is delivered to a process that cannot act on it. For an
+   * ordinary message that costs one notification. For a WELCOME it costs the join - the device never
+   * processes it, stays outside the group, and the next message push fails to decrypt with "Groupe
+   * introuvable" - and `sendWelcome` published and stopped there. The fallback is not a policy of
+   * the send route; it is a property of delivering anything to a device this server believes is
+   * reachable.
+   *
+   * @param queued the persisted row, which carries every field the envelope needs
+   * @param online whether the target device is reachable NOW; asked once by the caller, which can
+   *   batch that question across a fan-out
+   * @param silent no visible notification - true for every handshake frame
+   * @param pushable false only for a TRANSPORT frame, whose rendezvous expires in 60 s: waking a
+   *   device to hand it an expired exchange is worse than not waking it
+   * @returns true when the frame went out in realtime
+   */
+  private async deliverQueuedFrame(
+    queued: QueuedMessage,
+    {
+      tag,
+      traceId,
+      online,
+      silent,
+      pushable,
+    }: { tag: string; traceId: string; online: boolean; silent: boolean; pushable: boolean }
+  ): Promise<boolean> {
+    const groupId = queued.groupId ?? '';
+    const senderId = queued.senderId ?? '';
+    this.logger.log(
+      `[${tag}][${traceId}] recipient=${queued.recipientId}:${queued.deviceId} ` +
+        `online=${online} queuedId=${queued.id}`
+    );
+
+    if (!online) {
+      // Fire-and-forget: the row is persisted, and blocking on FCM (2-5 s per device) would stall
+      // the sender's request. Every swallowed branch logs - that is all a lost push leaves behind.
+      if (pushable) {
+        void this.sendFcmForQueued(queued, traceId, groupId, senderId, silent).catch((e) =>
+          this.logger.warn(`[PUSH_SEND][${traceId}] async FCM error queuedId=${queued.id}: ${e}`)
+        );
+      }
+      return false;
+    }
+
+    await this.redis.publish(
+      'chat:messages',
+      JSON.stringify({
+        recipientId: queued.recipientId,
+        deviceId: queued.deviceId,
+        senderId,
+        senderDeviceId: queued.senderDeviceId ?? '',
+        groupId,
+        isWelcome: queued.isWelcome ?? false,
+        isCommit: queued.isCommit ?? false,
+        // Only a Welcome carries one; `JSON.stringify` drops the key when it is undefined, which is
+        // what every other frame published before this was one function.
+        ratchetTree: queued.ratchetTree,
+        proto: queued.proto ?? queued.content ?? '',
+        // Without this id a frame processed in realtime cannot be ACKed, so the durable row
+        // survives and the next pull redelivers it - destructively, for a Welcome.
+        queuedMessageId: queued.id,
+        createdAt: queued.createdAt.toISOString(),
+      })
+    );
+    this.logger.log(
+      `[${tag}][${traceId}] PUBLISHED recipient=${queued.recipientId}:${queued.deviceId} ` +
+        `queuedId=${queued.id}`
+    );
+
+    if (pushable) {
+      this.scheduleDeferredPush(queued, traceId, groupId, senderId, silent);
+    }
+    return true;
   }
 
   /**
@@ -965,7 +1064,12 @@ export class MessagingService {
     const online = new Map<string, boolean>();
     for (const queued of ops) {
       const k = `${queued.recipientId}:${queued.deviceId}`;
-      if (!online.has(k)) online.set(k, !!(await this.redis.exists(`user:online:${k}`)));
+      if (!online.has(k)) {
+        online.set(
+          k,
+          !!(await this.redis.exists(this.presenceKey(queued.recipientId, queued.deviceId)))
+        );
+      }
     }
 
     // A TRANSPORT frame is addressed to whoever is online NOW, and to nobody else.
@@ -1114,74 +1218,25 @@ export class MessagingService {
       }
     }
 
-    // 2. Best-effort real-time delivery for online recipients
+    // 2. Best-effort real-time delivery for online recipients, through the one delivery.
+    //
+    // A handshake frame is always silent: the app processes it without telling anybody. `pushable`
+    // is `durable`, which is false only for a TRANSPORT frame - and the offline branch is then
+    // unreachable anyway, because the filter above kept only online recipients. Passing it rather
+    // than relying on that keeps the two facts independent.
+    const silent = body.isCommit || body.isWelcome ? true : (body.silent ?? false);
     for (const queued of toDeliver) {
-      // Reuses the answer taken above rather than asking Redis a second time. A device that went
-      // offline in between is covered the same way it always was: the row survives and its next
-      // pull redelivers it.
-      const isOnline = online.get(`${queued.recipientId}:${queued.deviceId}`) === true;
-      this.logger.log(
-        `[SEND][${traceId}] recipient=${queued.recipientId}:${queued.deviceId} online=${isOnline} queuedId=${queued.id}`
-      );
-      if (isOnline) {
-        const envelope = JSON.stringify({
-          recipientId: queued.recipientId,
-          deviceId: queued.deviceId,
-          senderId: body.senderId ?? '',
-          senderDeviceId: body.senderDeviceId ?? '',
-          groupId: body.groupId ?? '',
-          isWelcome: body.isWelcome ?? false,
-          isCommit: body.isCommit ?? false,
-          proto: queued.proto ?? queued.content ?? '',
-          queuedMessageId: queued.id,
-          createdAt: queued.createdAt.toISOString(),
-        });
-        await this.redis.publish('chat:messages', envelope);
-        sentCount++;
-        this.logger.log(
-          `[SEND][${traceId}] PUBLISHED recipient=${queued.recipientId}:${queued.deviceId} queuedId=${queued.id}`
-        );
-
-        // Deferred FCM fallback: Android keeps the WebSocket TCP connection alive
-        // even when the app is in the background, so `isOnline` can be true while
-        // the app can no longer process WebSocket frames. If the queued message is
-        // still unACKed after DEFERRED_PUSH_DELAY_MS, the WebSocket delivery failed
-        // silently → fall back to FCM so the user still gets a notification.
-        // Welcome packages use a silent push (no visible notification) so the
-        // app can process the MLS welcome without spamming the user.
-        //
-        // NOT for a transport frame. The fallback exists to deliver something LATER that is still
-        // worth having; a rendezvous half is worth nothing after 60 s, so the push would wake the
-        // device to hand it an expired exchange. The Redis PUBLISH above is the whole delivery
-        // mechanism for this class, and missing it costs one deferred repair, not a message.
-        if (durable) {
-          this.scheduleDeferredPush(
-            queued,
-            traceId,
-            body.groupId ?? '',
-            body.senderId ?? '',
-            body.isCommit || body.isWelcome ? true : (body.silent ?? false)
-          );
-        }
-      } else {
-        // Offline recipient: FCM push (silent for commits/welcomes).
-        // Fire-and-forget: the message is already persisted; blocking on FCM
-        // (often 2-5 s per device) would stall POST /send for the sender.
-        //
-        // Unreachable for a transport frame - the filter above kept only online recipients - and
-        // guarded anyway, so that changing the filter cannot quietly restore the push.
-        if (durable) {
-          void this.sendFcmForQueued(
-            queued,
-            traceId,
-            body.groupId ?? '',
-            body.senderId ?? '',
-            body.isCommit || body.isWelcome ? true : (body.silent ?? false)
-          ).catch((e) =>
-            this.logger.warn(`[PUSH_SEND][${traceId}] async FCM error queuedId=${queued.id}: ${e}`)
-          );
-        }
-      }
+      // Reuses the presence answer taken above rather than asking Redis a second time. A device
+      // that went offline in between is covered the same way it always was: the row survives and
+      // its next pull redelivers it.
+      const delivered = await this.deliverQueuedFrame(queued, {
+        tag: 'SEND',
+        traceId,
+        online: online.get(`${queued.recipientId}:${queued.deviceId}`) === true,
+        silent,
+        pushable: durable,
+      });
+      if (delivered) sentCount++;
     }
 
     // The count REPORTED is the count actually written, not the count considered - a transport frame
@@ -1767,47 +1822,24 @@ export class MessagingService {
       `[WELCOME][${traceId}] QUEUED id=${queuedWelcome.id} recipient=${deviceInfo.userId}:${targetDeviceId} group=${safeGroupId}`
     );
 
-    // Real-time push via Gateway when the target device is currently online.
-    const redisKey = `user:online:${deviceInfo.userId}:${targetDeviceId}`;
-    const isOnline = await this.redis.exists(redisKey);
-    this.logger.log(`[WELCOME][${traceId}] PRESENCE key=${redisKey} online=${!!isOnline}`);
-    if (isOnline) {
-      const ciphertext = Buffer.from(body.welcomePayload, 'base64');
-      const envelope = JSON.stringify({
-        recipientId: deviceInfo.userId,
-        deviceId: targetDeviceId,
-        senderId: senderUserId,
-        senderDeviceId: '',
-        groupId: safeGroupId,
-        isWelcome: true,
-        ratchetTree: body.ratchetTreePayload,
-        proto: ciphertext.toString('base64'),
-        // Without this id, a Welcome processed in realtime cannot be ACKed by the client:
-        // the durable row survives and the next pull (e.g. restart) redelivers it, causing
-        // a destructive NoMatchingKeyPackage reprocessing. Propagating it enables immediate
-        // ACK -> queue deletion -> no redelivery.
-        queuedMessageId: queuedWelcome.id,
-      });
-      this.logger.log(
-        `[WELCOME][${traceId}] REALTIME_PUBLISH key=${redisKey} envelopeLen=${envelope.length}`
-      );
-      await this.redis.publish('chat:messages', envelope);
-      this.logger.log(
-        `[WELCOME][${traceId}] REALTIME_PUBLISHED key=${redisKey} queuedId=${queuedWelcome.id}`
-      );
-    } else {
-      // Device offline (app killed): the realtime WS path can't reach it, so push
-      // the Welcome over FCM. Without this the recipient is never woken for the
-      // Welcome and stays unjoined - the subsequent message push then fails to
-      // decrypt ("Groupe introuvable") and shows a generic "Nouveau message de X".
-      // Routed by data.isWelcome=true to the Android background welcome receiver,
-      // which joins the group; the queue row is reconciled idempotently on next
-      // foreground pull (group already in WASM → ACK, no re-processing).
-      this.logger.log(
-        `[WELCOME][${traceId}] OFFLINE_PUSH key=${redisKey} queuedId=${queuedWelcome.id}`
-      );
-      await this.sendFcmForQueued(queuedWelcome, traceId, safeGroupId, senderUserId, true);
-    }
+    // Delivered through the one delivery, exactly like an application frame.
+    //
+    // A Welcome is always SILENT - it is routed by `data.isWelcome=true` to the Android background
+    // receiver, which joins the group without telling the user - and always PUSHABLE: a device that
+    // is never woken for it stays outside the group, and the next message push then fails to
+    // decrypt with "Groupe introuvable" and shows a generic "Nouveau message de X".
+    //
+    // `pushable` also arms the deferred fallback this route did not have. A frozen Android app
+    // reads as online, so the Welcome was published into a socket nobody was reading and nothing
+    // followed it: the device stayed unjoined until its next foreground pull.
+    const isOnline = await this.redis.exists(this.presenceKey(deviceInfo.userId, targetDeviceId));
+    await this.deliverQueuedFrame(queuedWelcome, {
+      tag: 'WELCOME',
+      traceId,
+      online: !!isOnline,
+      silent: true,
+      pushable: true,
+    });
 
     // Ensure a DeviceGroupMembership row EXISTS, and never demote one that is already active.
     // INSERT ... ON CONFLICT guarantees record creation even when no prior invitation existed
@@ -2253,7 +2285,7 @@ export class MessagingService {
       if (member === senderKey) continue;
       const [memberUserId, memberDeviceId] = member.split(':');
       if (!memberUserId || !memberDeviceId) continue;
-      const isOnline = await this.redis.exists(`user:online:${memberUserId}:${memberDeviceId}`);
+      const isOnline = await this.redis.exists(this.presenceKey(memberUserId, memberDeviceId));
       if (isOnline && excluded.has(member.toLowerCase())) {
         excludedOnline++;
         continue;
@@ -2393,7 +2425,7 @@ export class MessagingService {
       if (member === senderKey) continue;
       const [memberUserId, memberDeviceId] = member.split(':');
       if (!memberUserId || !memberDeviceId) continue;
-      if (!(await this.redis.exists(`user:online:${memberUserId}:${memberDeviceId}`))) continue;
+      if (!(await this.redis.exists(this.presenceKey(memberUserId, memberDeviceId)))) continue;
       await this.redis.publish(
         'chat:messages',
         JSON.stringify({
@@ -2468,7 +2500,7 @@ export class MessagingService {
         );
         continue;
       }
-      const onlineKey = `user:online:${memberUserId}:${memberDeviceId}`;
+      const onlineKey = this.presenceKey(memberUserId, memberDeviceId);
       const isOnline = await this.redis.exists(onlineKey);
       this.logger.log(`[WELCOME_REQ][${traceId}] Candidate=${member} online=${!!isOnline}`);
       if (isOnline) {

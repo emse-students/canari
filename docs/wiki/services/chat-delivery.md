@@ -39,6 +39,33 @@ The chat-delivery-service is the MLS API layer. It:
 | 24h | Purge stale push tokens (> 90 days) |
 | 24h | Purge stale pending invitations (> 30 days) |
 
+### One way a frame is delivered
+
+Two routes put a frame in the queue - `POST mls/send` and `POST mls/welcome` - and both then hand
+the row to a device. `deliverQueuedFrame` is the only thing that does so: publish the envelope on
+`chat:messages` for the gateway to route if the device is online, push over FCM if it is not, and
+arm the deferred fallback either way.
+
+**The envelope is built from the ROW, not from the request that produced it**, because the row is
+what is being delivered. The two routes each built their own from their own body until 2026-09-13,
+and diverged exactly where a body differs from a row: the Welcome's envelope carried no `isCommit`,
+no `createdAt`, and a `senderDeviceId` written as an empty literal.
+
+**And `sendWelcome` never armed the deferred fallback.** That fallback answers a frozen Android app:
+the kernel keeps the TCP connection and the presence key alive, so the server believes the device is
+reachable and publishes into a socket no process is reading. For a message that costs one
+notification. For a Welcome it costs the join - the device stays outside the group, and the next
+message push then fails to decrypt with "Groupe introuvable", which is the consequence `sendWelcome`
+already spelled out in the branch three lines below.
+
+`pushable` is false for exactly one class: a TRANSPORT frame, whose rendezvous expires in 60 s
+(`DIGEST_TTL_MS`). Waking a device to hand it an expired exchange is worse than not waking it.
+`silent` is true for every handshake frame, so the background receiver acts without ringing.
+
+`queuedDelivery.onePolicy.spec.ts` drives both ROUTES over one table - a route that publishes its
+own envelope is what a test of the shared function would walk past - and asserts the same envelope
+key set from both, the fallback armed from both, and the FCM visibility each owes.
+
 ### What a group owns, and the one list that says so
 
 A group's rows live in **seven** tables, and `GROUP_OWNED_TABLES`
