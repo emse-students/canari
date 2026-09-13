@@ -11,6 +11,27 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - an orphan group is repaired in one way, from wherever it is found
+
+A group with no row in `dm_groups` that still owns rows or Redis keys is a deletion that did not
+finish, and three paths meet it: a frame fetch, a history read, and a sweep that goes looking. The
+first two called `purgeOrphanGroups`. The sweep was two jobs with two answers, and both of its
+halves were shorter than the repair they stood in for - a 24 h pass joining two of the six owned
+tables, and a 6 h pass that scanned `group:members:*` and, for an absent group, deleted THAT KEY and
+nothing else.
+
+The second is the one that bit. `group:members:<id>` was also the only key through which that group
+could still be reached in Redis, so the `history:` stream it left behind was permanent: no tombstone
+for the 90-day reaper, no membership row for the other sweep, no key left for this one. The repair
+destroyed the evidence of the residue it left. A group whose members had already gone but whose
+commit log, stored base or invites had not was invisible to both.
+
+The two lists that say what a group owns - six tables and three Redis key shapes - are now read
+twice each: to delete, and to discover. One sweep, `cleanupOrphanGroups`, finds by both routes and
+hands every candidate to `purgeOrphanGroups`, which is the only thing that removes anything. The
+spec drives all three PATHS over one table, because a path that deletes a key itself is exactly what
+a test of the shared function walks past.
+
 ### Changed - a group ends in three places, and now it ends the same way in all three
 
 `DELETE mls/groups/:groupId`, the internal retirement of a scope's distribution group, and the DM

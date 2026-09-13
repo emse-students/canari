@@ -34,19 +34,19 @@ The chat-delivery-service is the MLS API layer. It:
 | 1h | Full GC of stale device entries |
 | 1h | Report queue depth (observation only, deletes nothing) |
 | 1h | Report stranded pending device memberships (observation only, deletes nothing) |
-| 6h | Clean orphaned Redis `group:members:*` keys |
+| 6h | Purge orphan groups: everything owned by a group with no row in `dm_groups` |
 | 24h | Purge soft-deleted groups (> 90 days old), with everything they own |
 | 24h | Purge stale push tokens (> 90 days) |
-| 24h | Purge orphaned member rows (and the rest of what those groups own) |
 | 24h | Purge stale pending invitations (> 30 days) |
 
 ### What a group owns, and the one list that says so
 
-A group's rows live in **seven** tables, and `deleteGroupOwnedRows`
+A group's rows live in **seven** tables, and `GROUP_OWNED_TABLES`
 ([`utils/group-purge.ts`](../../../apps/chat-delivery-service/src/utils/group-purge.ts)) is the only
 definition of that set: `queued_message`, `dm_group_members`, `dm_device_group_memberships`,
-`mls_commit_log`, `mls_group_info`, `group_invites`, `dm_user_dismissed_groups`. Plus three Redis
-keys through `deleteGroupRedisKeys`: `history:`, `group:members:`, `pending_welcome:`. The MLS locks
+`mls_commit_log`, `mls_group_info`, `group_invites` - plus `dm_user_dismissed_groups`, which
+`deleteGroupOwnedRows` takes only on a HARD delete. Plus three Redis key shapes in
+`GROUP_REDIS_KEY_PREFIXES`: `history:`, `group:members:`, `pending_welcome:`. The MLS locks
 (`mls:addlock:`, `mls:commitlock:`) are **not** in it, and deliberately: both are written with an
 `EX` TTL, so they collect themselves.
 
@@ -58,10 +58,15 @@ id and, for the one route that owns a scope, a flag releasing it. `groupEnds.one
 drives all three ROUTES over one table rather than the function, because a route that keeps its own
 pair of statements is exactly what the function cannot see.
 
+**REMOVING THE RESIDUE AND FINDING IT ARE THE SAME TWO LISTS, READ TWICE.** `deleteGroupOwnedRows`
+and `deleteGroupRedisKeys` walk them to delete; `findOrphanGroupIds` and `scanGroupRedisKeyOwners`
+walk them to ask which groups still own something with no `dm_groups` row left. Those were four
+hand-written lists until 2026-09-13 and two of them were short - see the orphan sweep below.
+
 **Five call sites, and until 2026-08-21 only the two collectors were among them.** This page used to
 say "both ways a group ends call it" and name the 90-day tombstone reaper
 (`cleanupSoftDeletedGroups`) and the orphan sweep (`purgeOrphanGroups`, reached from
-`cleanupOrphanedMemberRows`) - which are the two things that COLLECT a group, not the ways one ends.
+`cleanupOrphanGroups`) - which are the two things that COLLECT a group, not the ways one ends.
 The three routes that actually end a group each still carried a hand-written shorter list, or none at
 all:
 
@@ -84,6 +89,38 @@ before the fix: `mls_group_info` 21 orphan rows of 69 (30%), `mls_commit_log` 29
 `queued_message` 220, `group_invites` 3 of 4 - each naming a `groupId` absent from `dm_groups`.
 `mls_commit_log` at least ages out through `pruneExpiredCommitLog`; **`mls_group_info` had no
 collector of any kind**, so those rows were permanent.
+
+### The orphan sweep: two discoveries, one repair
+
+A group with no row in `dm_groups` that still owns rows or Redis keys is a deletion that did not
+finish. **One function repairs it - `purgeOrphanGroups` - and three paths reach it**: a frame fetch
+and a history read repair the ids in front of them, and `cleanupOrphanGroups` (6 h) goes looking.
+
+Until 2026-09-13 there were two sweeps and two answers, and both halves were short:
+
+| The sweep | How it looked | What it did |
+|---|---|---|
+| `cleanupOrphanedMemberRows` (24h) | a hand-written UNION over **2** of the 6 owned tables | `purgeOrphanGroups` - the full repair |
+| `cleanupOrphanedRedisGroups` (6h) | `SCAN group:members:*`, **1** of the 3 key shapes | `DEL` on that key, and nothing else |
+
+The second is the one that bites, and it is worse than an incomplete repair: `group:members:<id>`
+was the only key through which an orphan could still be reached in Redis, so deleting it stranded
+the `history:` stream **for ever**. No tombstone for the 90-day reaper, no membership row for the
+other sweep, no key left for this one - the repair destroyed the evidence of the residue it left.
+A group whose members were already gone but whose commit log, stored base or invites were not was
+invisible to both.
+
+Now both halves only FIND, from the two lists above, and hand every candidate to the one repair.
+The Redis half returns **owners, not orphans** - live groups included - because deciding presence
+there would be a second copy of the read `purgeOrphanGroups` already does; candidates go over in
+chunks so one `IN (...)` never carries the estate. `dm_user_dismissed_groups` is swept but is
+deliberately **not** a discovery source: a dismissal is a fact about a PERSON that may outlive the
+group. `queued_message.groupId` is nullable, so the join excludes nulls explicitly - a system frame
+belongs to no group and would otherwise be reported as an orphan with a null id.
+
+`orphanGroups.onePolicy.spec.ts` drives all three PATHS over one table rather than asserting on
+`purgeOrphanGroups`: a path that deletes a key or a row itself is exactly what a test of the shared
+function walks past, and that is how these came apart.
 
 What made it invisible for so long is worth keeping: `dm_group_members` and
 `dm_device_group_memberships` measured **zero** orphans. That is not health, it is the diagnosis.
