@@ -70,6 +70,21 @@ Nothing is dead: every flag has at least one call site. Re-measure the table rat
 - one pass over the `@SetMetadata` decorators and one over `AssociationPermissionFlag.` references
 in `apps/social-service/src` reproduces it in seconds.
 
+**THE CHECKBOX A MEMBER SEES IS NOT THE COLUMN ABOVE, AND TWO OF THEM NAMED THE WRONG THING.**
+`AssociationMemberRow` renders one `asso_flag_*` label per flag. `MANAGE_PRODUCTS` read "Gerer les
+paiements (boutique)" and `MANAGE_STRIPE_CONNECT` read "Gerer les paiements en ligne" - two nearly
+identical checkboxes, and neither is about taking a payment: the first is the catalogue AND the
+cotisation settings (see its row above), the second is the bank account the payouts land in. They
+now read "Gerer la boutique et les cotisations" and "Gerer le compte bancaire", and the key follows
+the flag (`asso_flag_manage_stripe_connect`).
+
+**A message that tells a reader to go and ask someone holding a permission must quote a label that
+EXISTS.** The cotisation screen named "Gerer les produits", which the editor has never offered, so
+the instruction sent readers hunting for a checkbox that is not there. `paraglideMessages.test.ts`
+now holds every `l'acces « X »` in the French file to the set of real labels, and requires the
+English sentence for the same key to name that flag's English label - the drift a reword in one
+locale causes in the other.
+
 ## A right the client cannot compute: the capabilities served on a post
 
 A post published in an association's name has its `authorId` **deleted from every response** - the
