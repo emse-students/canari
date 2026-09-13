@@ -5,6 +5,7 @@ import { GroupMember } from '../entities/group-member.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
+import { Group } from '../entities/group.entity';
 import { GroupInvite } from '../entities/group-invite.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 
@@ -67,12 +68,8 @@ export function totalGroupOwnedRows(counts: GroupOwnedRowCounts): number {
  *   per-user dismissal markers are then left alone, and `dismissals` comes back 0
  * @returns how many rows each table gave up
  */
-export async function deleteGroupOwnedRows(
-  manager: EntityManager,
-  groupIds: string[],
-  { groupRowSurvives = false }: { groupRowSurvives?: boolean } = {}
-): Promise<GroupOwnedRowCounts> {
-  const empty: GroupOwnedRowCounts = {
+function noRowsRemoved(): GroupOwnedRowCounts {
+  return {
     queuedMessages: 0,
     members: 0,
     deviceMemberships: 0,
@@ -81,7 +78,14 @@ export async function deleteGroupOwnedRows(
     invites: 0,
     dismissals: 0,
   };
-  if (groupIds.length === 0) return empty;
+}
+
+export async function deleteGroupOwnedRows(
+  manager: EntityManager,
+  groupIds: string[],
+  { groupRowSurvives = false }: { groupRowSurvives?: boolean } = {}
+): Promise<GroupOwnedRowCounts> {
+  if (groupIds.length === 0) return noRowsRemoved();
 
   const where = { groupId: In(groupIds) };
 
@@ -111,6 +115,61 @@ export async function deleteGroupOwnedRows(
  * (`ADD_LOCK_TTL_SEC` and 5 s), so they collect themselves and a purge naming them would only
  * pretend to be doing work.
  */
+/**
+ * ENDS THE GIVEN GROUPS: the tombstone, everything they own, and their Redis keys - ONE unit of
+ * work, and the only way a group ends.
+ *
+ * Three routes ended a group and each wrote this sequence out: the user-facing
+ * `DELETE mls/groups/:groupId`, the internal retirement of a scope's distribution group, and the
+ * DM half of an account deletion. They agreed on the hard part - {@link deleteGroupOwnedRows} is
+ * already the one definition of what a group owns - and what stayed copied was the ORDER and the
+ * FLAGS around it, which is exactly what drifted: both internal routes once wrote the tombstone
+ * with no sweep at all, and because the row deliberately survives, the orphan sweep - which only
+ * finds groups with NO row - could never collect what they left. It was permanent until the 90-day
+ * reaper. Measured on prod 2026-08-21: seven `queued_message` rows redelivered on every connection
+ * for five hours, each a frame the device could neither decrypt nor ACK.
+ *
+ * `groupRowSurvives` is not a parameter here, and that is the point: this function IS the soft
+ * delete, the tombstone is what lets a lagging device OBSERVE the deletion rather than infer it,
+ * and the per-user dismissal markers are facts about people that outlive it.
+ *
+ * The Redis keys go after the transaction commits, for the reason {@link deleteGroupRedisKeys}
+ * gives: a crash between the two leaves keys whose group is gone, which the orphan sweep collects,
+ * where the reverse order would strip a live group's history if the transaction rolled back.
+ *
+ * @param manager a NON-transactional manager - this opens the transaction itself
+ * @param groupIds the groups to end; empty is a no-op
+ * @param releaseDistributionScope also clears `distributionWorkspaceId` / `distributionChannelId`.
+ *   The scope columns carry a partial unique index that does NOT exclude tombstones, so a retired
+ *   distribution group left holding its scope is handed back by the reuse read - turning a salon
+ *   public and private again returned the group it had just retired, tombstone and all.
+ * @returns how many rows each table gave up, for the caller's log line
+ */
+export async function tombstoneGroups(
+  manager: EntityManager,
+  redis: Redis,
+  groupIds: string[],
+  { releaseDistributionScope = false }: { releaseDistributionScope?: boolean } = {}
+): Promise<GroupOwnedRowCounts> {
+  if (groupIds.length === 0) return noRowsRemoved();
+
+  const counts = await manager.transaction(async (tx) => {
+    await tx.getRepository(Group).update(
+      { id: In(groupIds) },
+      {
+        deletedAt: new Date(),
+        ...(releaseDistributionScope
+          ? { distributionWorkspaceId: null, distributionChannelId: null }
+          : {}),
+      }
+    );
+    // SOFT, always: the tombstone stays, so the per-user dismissal markers stay with it.
+    return deleteGroupOwnedRows(tx, groupIds, { groupRowSurvives: true });
+  });
+  await deleteGroupRedisKeys(redis, groupIds);
+  return counts;
+}
+
 export async function deleteGroupRedisKeys(redis: Redis, groupIds: string[]): Promise<void> {
   if (groupIds.length === 0) return;
 

@@ -27,11 +27,7 @@ import { PinVerifier } from '../entities/pin-verifier.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { GroupInvite } from '../entities/group-invite.entity';
 import { resolveGroupInvitePreview } from '../utils/group-invite';
-import {
-  deleteGroupOwnedRows,
-  deleteGroupRedisKeys,
-  totalGroupOwnedRows,
-} from '../utils/group-purge';
+import { tombstoneGroups, totalGroupOwnedRows } from '../utils/group-purge';
 import { MessagingService } from '../services/messaging.service';
 import { RETENTION_WINDOW_MS } from '../retention.constants';
 
@@ -462,35 +458,22 @@ export class InternalController {
       return { deleted: false };
     }
 
-    // THE SCOPE IS RELEASED WITH THE SAME WRITE, and that is what makes a salon re-privatisable.
-    // The scope columns carry a partial unique index that does NOT exclude tombstones, and
-    // `deletedAt` is a plain column rather than a `@DeleteDateColumn`, so a tombstone left holding
-    // its scope is found by the reuse read above: turning a salon public and private again handed
-    // it back the group it had just retired, tombstone and all - a group `cleanupSoftDeletedGroups`
-    // is counting down to reap. Clearing the scope makes the row an ordinary dead group, reaped on
-    // the same schedule, and leaves the scope genuinely unoccupied.
+    // A GROUP THAT ENDS HERE ENDS THE SAME WAY IT ENDS EVERYWHERE ELSE - {@link tombstoneGroups} -
+    // and this route's one difference travels as a flag rather than as a second implementation.
+    // This route used to write the tombstone alone, sweeping nothing: no members, no device
+    // memberships, no queued frames, no Redis keys, permanent until the 90-day reaper because the
+    // orphan sweep only finds groups with NO row. Measured on prod 2026-08-21: seven
+    // `queued_message` rows for W1's own device, addressed to a community distribution group
+    // tombstoned five hours earlier and redelivered on every connection since, each one a frame the
+    // device can neither decrypt nor ACK.
     //
-    // AND WHAT THE GROUP OWNS GOES WITH IT, in the same unit of work. This route used to write the
-    // tombstone alone, sweeping nothing: no members, no device memberships, no queued frames, no
-    // Redis keys. Because the row survives as a tombstone the orphan sweep can never collect what
-    // it left - that sweep only finds groups with NO row - so the residue was permanent until the
-    // 90-day reaper. Measured on prod 2026-08-21: seven `queued_message` rows for W1's own device,
-    // addressed to a community distribution group this route had tombstoned five hours earlier and
-    // redelivered on every connection since, each one a frame the device can neither decrypt nor
-    // ACK. A group that ends here ends the same way it ends everywhere else.
-    const counts = await this.groupRepo.manager.transaction(async (manager) => {
-      await manager
-        .getRepository(Group)
-        .update(
-          { id: group.id },
-          { deletedAt: new Date(), distributionWorkspaceId: null, distributionChannelId: null }
-        );
-      // SOFT: the tombstone stays. A distribution group carries no dismissal markers anyway - it is
-      // never a conversation - but the flag is passed rather than reasoned about, because the day it
-      // becomes wrong is the day somebody changes what a distribution group is.
-      return deleteGroupOwnedRows(manager, [group.id], { groupRowSurvives: true });
+    // THE SCOPE IS RELEASED WITH THE SAME WRITE, and that is what makes a salon re-privatisable: the
+    // scope columns carry a partial unique index that does NOT exclude tombstones, so a tombstone
+    // left holding its scope is found by the reuse read above, handing a re-privatised salon back
+    // the group it had just retired.
+    const counts = await tombstoneGroups(this.groupRepo.manager, this.redis, [group.id], {
+      releaseDistributionScope: true,
     });
-    await deleteGroupRedisKeys(this.redis, [group.id]);
     this.logger.log(
       `[DISTRIBUTION_GROUP] deleted scope=${label} group=${group.id} - scope released, ` +
         `${totalGroupOwnedRows(counts)} row(s) purged: ${JSON.stringify(counts)}`
@@ -557,22 +540,16 @@ export class InternalController {
       const multiGroups = groups.filter((g) => g.isGroup);
 
       // ── DMs: delete the entire group ─────────────────────────────────────
-      // ONE UNIT OF WORK FOR EVERY DM AT ONCE, through the allowlist that DEFINES what a group
-      // owns. This branch used to name three tables by hand and left `mls_commit_log`,
-      // `mls_group_info`, `group_invites` and `user_dismissed_groups` behind; the tombstone rows
-      // survive on purpose, so the orphan sweep - which only finds groups with no row - could never
-      // collect them. Batched rather than one transaction per DM: `Promise.all` over transactions
-      // opens N connections to do what one statement per table does.
+      // ONE UNIT OF WORK FOR EVERY DM AT ONCE, through {@link tombstoneGroups}. This branch used to
+      // name three tables by hand and left `mls_commit_log`, `mls_group_info`, `group_invites` and
+      // `user_dismissed_groups` behind; the tombstone rows survive on purpose, so the orphan sweep -
+      // which only finds groups with no row - could never collect them. Batched rather than one
+      // transaction per DM: `Promise.all` over transactions opens N connections to do what one
+      // statement per table does. The tombstones are what let the OTHER party's device detect the
+      // deletion rather than infer it, and that party's dismissal markers are their own fact.
       if (dmGroups.length > 0) {
         const dmIds = dmGroups.map((g) => g.id);
-        const counts = await this.groupRepo.manager.transaction(async (manager) => {
-          // The tombstone is what lets a device detect the deletion rather than infer it.
-          await manager.getRepository(Group).update({ id: In(dmIds) }, { deletedAt: new Date() });
-          // SOFT: the tombstones stay, so the OTHER party's dismissal markers stay too. This branch
-          // deletes one user's account; a marker written by the peer is that peer's fact.
-          return deleteGroupOwnedRows(manager, dmIds, { groupRowSurvives: true });
-        });
-        await deleteGroupRedisKeys(this.redis, dmIds);
+        const counts = await tombstoneGroups(this.groupRepo.manager, this.redis, dmIds);
         this.logger.log(
           `[INTERNAL_DELETE] ${dmIds.length} DM(s) deleted, ` +
             `${totalGroupOwnedRows(counts)} row(s) purged: ${JSON.stringify(counts)} - ` +

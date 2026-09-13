@@ -19,11 +19,7 @@ import { Group } from '../entities/group.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
-import {
-  deleteGroupOwnedRows,
-  deleteGroupRedisKeys,
-  totalGroupOwnedRows,
-} from '../utils/group-purge';
+import { tombstoneGroups, totalGroupOwnedRows } from '../utils/group-purge';
 import { sanitizeIdentityValue, sanitizeQueryValue } from '../utils/sanitize';
 import { MessagingService } from '../services/messaging.service';
 
@@ -192,26 +188,16 @@ export class GroupsController {
   /**
    * Soft-deletes a group, then hard-deletes everything it owns.
    *
-   * THE TOMBSTONE AND THE RESIDUE GO IN ONE UNIT OF WORK, through the allowlist that DEFINES what a
-   * group owns ({@link deleteGroupOwnedRows}). This route used to name four tables by hand and left
-   * `mls_commit_log`, `mls_group_info`, `group_invites` and `user_dismissed_groups` behind - and
-   * because the row deliberately SURVIVES as a tombstone, the orphan sweep could never collect them:
-   * it only finds groups with no row at all, so what a soft-delete leaks is permanent until the
-   * 90-day reaper. A hand-written list here is a second definition of ownership that will drift from
-   * the first one, and it did.
-   *
-   * The Redis keys go after the commit, for the reason {@link deleteGroupRedisKeys} gives.
+   * THE WHOLE ACT IS {@link tombstoneGroups}, the one way a group ends. This route used to write the
+   * tombstone, the sweep and the Redis pass itself - as did both internal routes - and a sequence
+   * written three times is a sequence that drifts: it once named four tables by hand and left
+   * `mls_commit_log`, `mls_group_info`, `group_invites` and `user_dismissed_groups` behind, which
+   * the orphan sweep can never collect because the row deliberately SURVIVES as a tombstone.
    */
   async deleteGroup(@Param('groupId') groupId: string) {
     const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
 
-    const counts = await this.groupRepo.manager.transaction(async (manager) => {
-      await manager.getRepository(Group).update({ id: safeGroupId }, { deletedAt: new Date() });
-      // SOFT: the tombstone stays, so the per-user dismissal markers stay with it - see
-      // `deleteGroupOwnedRows`. They are facts about people, not about this group.
-      return deleteGroupOwnedRows(manager, [safeGroupId], { groupRowSurvives: true });
-    });
-    await deleteGroupRedisKeys(this.redis, [safeGroupId]);
+    const counts = await tombstoneGroups(this.groupRepo.manager, this.redis, [safeGroupId]);
 
     this.logger.log(
       `[DELETE_GROUP] ${safeGroupId.slice(0, 8)}… soft-deleted, ` +

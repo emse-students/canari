@@ -1,6 +1,7 @@
 /// <reference types="jest" />
 
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { In } from 'typeorm';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { InternalController } from './internal.controller';
@@ -377,8 +378,11 @@ describe('InternalController - the community distribution group', () => {
       expect(await controller.deleteDistributionGroup('workspace', WORKSPACE, SECRET)).toEqual({
         deleted: true,
       });
+      // `In([id])` rather than the bare id: one group and many end the same way, through
+      // `tombstoneGroups`, and the shape of the clause is that function's business - what this case
+      // is about is that the scope columns are cleared with the tombstone, in one write.
       expect(groupRepo.update).toHaveBeenCalledWith(
-        { id: 'g-1' },
+        { id: In(['g-1']) },
         { deletedAt: expect.any(Date), distributionWorkspaceId: null, distributionChannelId: null }
       );
     });
