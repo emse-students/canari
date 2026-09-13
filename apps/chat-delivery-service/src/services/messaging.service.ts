@@ -2653,6 +2653,11 @@ export class MessagingService {
    * ghost history. Soft-deleted groups keep their tombstone row and are therefore never purged
    * here (the 90-day cron reclaims them, through that same function).
    *
+   * THIS IS THE ONLY PLACE THAT REPAIRS AN ORPHAN. Three callers reach it - a frame fetch, a
+   * history read, and the 6 h sweep - and none of them removes anything itself. The sweep used to:
+   * its Redis half deleted `group:members:` by hand, which left the `history:` stream behind and
+   * took away the only key through which that group could still be found.
+   *
    * No transaction here, and that is not an oversight: the group row is ALREADY gone, so there is
    * no window this could open. The reaper, which still has one to delete, does use one.
    *

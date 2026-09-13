@@ -27,6 +27,8 @@ import { activeRevocationCutoff } from './utils/revocation';
 import {
   deleteGroupOwnedRows,
   deleteGroupRedisKeys,
+  findOrphanGroupIds,
+  scanGroupRedisKeyOwners,
   totalGroupOwnedRows,
 } from './utils/group-purge';
 import { MessagingService } from './services/messaging.service';
@@ -41,11 +43,10 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   private staleDeviceInterval: ReturnType<typeof setInterval>;
   private cleanupMessagesInterval: ReturnType<typeof setInterval>;
   private cleanupStaleDevicesInterval: ReturnType<typeof setInterval>;
-  private cleanupOrphanedRedisGroupsInterval: ReturnType<typeof setInterval>;
+  private cleanupOrphanGroupsInterval: ReturnType<typeof setInterval>;
   private commitLogPruneInterval: ReturnType<typeof setInterval>;
   private softDeletedGroupsCleanupInterval: ReturnType<typeof setInterval>;
   private cleanupStalePushTokensInterval: ReturnType<typeof setInterval>;
-  private cleanupOrphanedMemberRowsInterval: ReturnType<typeof setInterval>;
   private cleanupStalePendingInvitationsInterval: ReturnType<typeof setInterval>;
   private cleanupExpiredRevocationsInterval: ReturnType<typeof setInterval>;
   private reportQueueDepthInterval: ReturnType<typeof setInterval>;
@@ -64,6 +65,13 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
 
   /** Grace period before the boot-time GC sweep, so it never competes with the boot path. */
   private static readonly INITIAL_SWEEP_DELAY_MS = 60_000;
+
+  /**
+   * How many group ids one orphan-purge call carries. The Redis half of the discovery names every
+   * group that owns a key - the live ones included, deliberately - so without a chunk one
+   * `IN (...)` would grow with the estate.
+   */
+  private static readonly ORPHAN_PURGE_CHUNK = 500;
 
   constructor(
     @InjectRepository(QueuedMessage)
@@ -143,10 +151,11 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
         .catch((e) => this.logger.error('[CRON] pruneExpiredCommitLog failed', e));
     }, ONE_HOUR);
 
-    // Cleanup orphaned Redis group:members:* keys with no matching DB group
-    this.cleanupOrphanedRedisGroupsInterval = setInterval(() => {
-      void this.cleanupOrphanedRedisGroups().catch((e) =>
-        this.logger.error('[CRON] cleanupOrphanedRedisGroups failed', e)
+    // Collect every group absent from dm_groups that still owns something - rows, Redis keys or
+    // both. Two discoveries, ONE repair; see cleanupOrphanGroups.
+    this.cleanupOrphanGroupsInterval = setInterval(() => {
+      void this.cleanupOrphanGroups().catch((e) =>
+        this.logger.error('[CRON] cleanupOrphanGroups failed', e)
       );
     }, 6 * ONE_HOUR);
 
@@ -161,15 +170,6 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     this.cleanupStalePushTokensInterval = setInterval(() => {
       void this.cleanupStalePushTokens().catch((e) =>
         this.logger.error('[CRON] cleanupStalePushTokens failed', e)
-      );
-    }, 24 * ONE_HOUR);
-
-    // Purge "ghost" groups: membership rows referencing a group absent from
-    // dm_groups (incomplete/legacy deletion). No other cron catches these, so
-    // they would accumulate forever - this guarantees bounded growth.
-    this.cleanupOrphanedMemberRowsInterval = setInterval(() => {
-      void this.cleanupOrphanedMemberRows().catch((e) =>
-        this.logger.error('[CRON] cleanupOrphanedMemberRows failed', e)
       );
     }, 24 * ONE_HOUR);
 
@@ -232,9 +232,9 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       '[CRON] Stale device detection (1h), message cleanup (1h), ' +
         'stale device GC (1h), queue depth report (1h), stranded membership report (1h), ' +
         'stale external-join base report (1h), ' +
-        'orphaned Redis groups cleanup (6h), ' +
+        'orphan group purge (6h), ' +
         'soft-deleted groups purge (24h), stale push tokens purge (24h), ' +
-        'orphaned member rows purge (24h), stale pending invitations purge (24h), ' +
+        'stale pending invitations purge (24h), ' +
         'expired device revocations purge (24h) scheduled'
     );
 
@@ -257,10 +257,9 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       ['detectStaleDevices', () => this.detectStaleDevices()],
       ['cleanupExpiredQueuedMessages', () => this.cleanupExpiredQueuedMessages()],
       ['cleanupStaleDevices', () => this.cleanupStaleDevices()],
-      ['cleanupOrphanedRedisGroups', () => this.cleanupOrphanedRedisGroups()],
+      ['cleanupOrphanGroups', () => this.cleanupOrphanGroups()],
       ['cleanupSoftDeletedGroups', () => this.cleanupSoftDeletedGroups()],
       ['cleanupStalePushTokens', () => this.cleanupStalePushTokens()],
-      ['cleanupOrphanedMemberRows', () => this.cleanupOrphanedMemberRows()],
       ['cleanupStalePendingInvitations', () => this.cleanupStalePendingInvitations()],
       ['cleanupExpiredRevocations', () => this.cleanupExpiredRevocations()],
       ['pruneExpiredCommitLog', () => this.messagingService.pruneExpiredCommitLog()],
@@ -311,11 +310,10 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     clearInterval(this.staleDeviceInterval);
     clearInterval(this.cleanupMessagesInterval);
     clearInterval(this.cleanupStaleDevicesInterval);
-    clearInterval(this.cleanupOrphanedRedisGroupsInterval);
+    clearInterval(this.cleanupOrphanGroupsInterval);
     clearInterval(this.commitLogPruneInterval);
     clearInterval(this.softDeletedGroupsCleanupInterval);
     clearInterval(this.cleanupStalePushTokensInterval);
-    clearInterval(this.cleanupOrphanedMemberRowsInterval);
     clearInterval(this.cleanupStalePendingInvitationsInterval);
     clearInterval(this.cleanupExpiredRevocationsInterval);
     clearInterval(this.reportQueueDepthInterval);
@@ -1011,71 +1009,45 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * Cleanup orphaned Redis `group:members:*` keys that reference groups
-   * no longer present in the database. Uses SCAN to avoid blocking Redis.
-   */
-  private async cleanupOrphanedRedisGroups() {
-    const orphanedKeys: string[] = [];
-    let cursor = '0';
-
-    do {
-      const [nextCursor, keys] = await this.redis.scan(
-        cursor,
-        'MATCH',
-        'group:members:*',
-        'COUNT',
-        100
-      );
-      cursor = nextCursor;
-
-      if (keys.length === 0) continue;
-
-      const groupIds = keys.map((k) => k.replace('group:members:', ''));
-      const existingGroups = await this.groupRepo.find({
-        where: { id: In(groupIds) },
-        select: { id: true },
-      });
-      const existingIds = new Set(existingGroups.map((g) => g.id));
-
-      for (let i = 0; i < keys.length; i++) {
-        if (!existingIds.has(groupIds[i])) {
-          orphanedKeys.push(keys[i]);
-        }
-      }
-    } while (cursor !== '0');
-
-    if (orphanedKeys.length > 0) {
-      await this.redis.del(...orphanedKeys);
-      this.logger.log(`[CRON] cleanupOrphanedRedisGroups: deleted ${orphanedKeys.length} key(s)`);
-    }
-  }
-
-  /**
-   * Purge "ghost" groups: membership rows (dm_group_members / dm_device_group_memberships)
-   * referencing a group absent from dm_groups.
+   * Collects the groups that no longer have a row in `dm_groups` and still own something.
    *
-   * The normal lifecycle (soft-delete -> tombstone -> cleanupSoftDeletedGroups) removes
-   * these rows together with the group. But a group deleted via an abnormal/legacy path
-   * (partial hard-delete) leaves orphaned memberships that no other cron catches and that
-   * would accumulate indefinitely. Full purge (DB rows + Redis history:/group:members:/
-   * pending_welcome: keys) is delegated to MessagingService.purgeOrphanGroups to avoid
-   * duplicating the logic.
+   * TWO DISCOVERIES, ONE REPAIR, and it used to be two of each. A "ghost group" sweep joined two
+   * membership tables and called {@link MessagingService.purgeOrphanGroups}; a separate Redis sweep
+   * scanned `group:members:*` and, for a group absent from `dm_groups`, deleted THAT KEY BY HAND.
+   * The second was a shorter answer to the same question, and it made the residue it left
+   * undiscoverable: the `history:` stream stayed, and the key that had been the only way to reach
+   * it was gone. Nothing would name that group again - no tombstone for the 90-day reaper, no
+   * membership row for the ghost sweep, no key for the key sweep.
+   *
+   * Both halves now only FIND. `findOrphanGroupIds` asks every table in the allowlist, not the two
+   * it used to name, and `scanGroupRedisKeyOwners` every key shape the purge deletes. What is done
+   * about a group is decided in exactly one place, {@link MessagingService.purgeOrphanGroups},
+   * which is also what the two request-driven callers use - so a frame fetch, a history read and
+   * this cron repair an orphan identically.
+   *
+   * The Redis half returns OWNERS rather than orphans, live groups included: deciding presence
+   * here would be a second copy of the purge's own read. They are handed over in chunks so one
+   * `IN (...)` never carries the whole estate.
+   *
+   * Every 6 h - the tighter of the two cadences it replaces, because residue is only ever repaired
+   * when somebody looks for it.
    */
-  private async cleanupOrphanedMemberRows() {
-    const orphanRows: { groupId: string }[] = await this.groupRepo.query(
-      `SELECT DISTINCT m."groupId" FROM dm_group_members m
-         LEFT JOIN dm_groups g ON g.id = m."groupId"
-        WHERE g.id IS NULL
-       UNION
-       SELECT DISTINCT d."groupId" FROM dm_device_group_memberships d
-         LEFT JOIN dm_groups g ON g.id = d."groupId"
-        WHERE g.id IS NULL`
+  private async cleanupOrphanGroups() {
+    const fromRows = await findOrphanGroupIds(this.groupRepo.manager);
+    const fromRedis = await scanGroupRedisKeyOwners(this.redis);
+    const candidates = [...new Set([...fromRows, ...fromRedis])];
+    if (candidates.length === 0) return;
+
+    let purged = 0;
+    for (let i = 0; i < candidates.length; i += AppController.ORPHAN_PURGE_CHUNK) {
+      const chunk = candidates.slice(i, i + AppController.ORPHAN_PURGE_CHUNK);
+      const { deliverable, tombstoned } = await this.messagingService.purgeOrphanGroups(chunk);
+      purged += chunk.length - deliverable.size - tombstoned.size;
+    }
+
+    this.logger.log(
+      `[CRON] cleanupOrphanGroups: ${candidates.length} candidate(s) ` +
+        `(${fromRows.length} by row, ${fromRedis.size} by key), ${purged} absent and purged`
     );
-
-    const orphanIds = orphanRows.map((r) => r.groupId);
-    if (orphanIds.length === 0) return;
-
-    await this.messagingService.purgeOrphanGroups(orphanIds);
-    this.logger.log(`[CRON] cleanupOrphanedMemberRows: swept ${orphanIds.length} ghost group(s)`);
   }
 }

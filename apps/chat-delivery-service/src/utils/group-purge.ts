@@ -1,4 +1,4 @@
-import { EntityManager, In } from 'typeorm';
+import { EntityManager, In, type EntityTarget, type ObjectLiteral } from 'typeorm';
 import type Redis from 'ioredis';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { GroupMember } from '../entities/group-member.entity';
@@ -11,6 +11,17 @@ import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 
 /** How many Redis keys one `DEL` carries, so a large reap never spreads one huge argument list. */
 const REDIS_DEL_CHUNK = 500;
+
+/** Keys per `SCAN` round trip. Redis treats it as a hint, so this only bounds the round trips. */
+const REDIS_SCAN_COUNT = 500;
+
+/**
+ * The column every owned table joins to `dm_groups` on. One name, because every entity in the
+ * allowlist declares the property `groupId` and this repository uses TypeORM's default naming, so
+ * the column is spelt the same in all of them. A rename would fail loudly on the next sweep rather
+ * than quietly return nothing.
+ */
+const GROUP_ID_COLUMN = 'groupId';
 
 /** Per-table row counts removed by {@link deleteGroupOwnedRows}, for the caller's log line. */
 export type GroupOwnedRowCounts = {
@@ -29,9 +40,48 @@ export function totalGroupOwnedRows(counts: GroupOwnedRowCounts): number {
 }
 
 /**
- * Deletes every database row the given groups own.
+ * THE DEFINITION OF "WHAT A GROUP OWNS", AND THE ONLY ONE.
  *
- * THIS LIST IS THE DEFINITION OF "WHAT A GROUP OWNS", and it is an ALLOWLIST: seven tables named
+ * IT IS ONE ARRAY BECAUSE REMOVING THE RESIDUE AND FINDING IT ARE THE SAME LIST READ TWICE.
+ * {@link deleteGroupOwnedRows} walks it to delete; {@link findOrphanGroupIds} walks it to ask which
+ * groups still own something while their `dm_groups` row is gone. Those were two hand-written
+ * lists, the second two tables long, so a group whose only residue was a commit log or a stored
+ * base was invisible to the sweep built to collect exactly that. As one array they cannot drift: a
+ * table added here is swept AND discovered, or it is in neither.
+ *
+ * The count key travels with the entity, so the per-table report is the same list as well.
+ * `dm_user_dismissed_groups` is deliberately absent - it is swept only by a HARD delete, and is
+ * never a way to FIND a group; see {@link deleteGroupOwnedRows}.
+ */
+const GROUP_OWNED_TABLES: readonly {
+  readonly count: keyof GroupOwnedRowCounts;
+  readonly entity: EntityTarget<ObjectLiteral>;
+}[] = [
+  { count: 'queuedMessages', entity: QueuedMessage },
+  { count: 'members', entity: GroupMember },
+  { count: 'deviceMemberships', entity: DeviceGroupMembership },
+  { count: 'commitLog', entity: MlsCommitLog },
+  { count: 'groupInfo', entity: MlsGroupInfo },
+  { count: 'invites', entity: GroupInvite },
+];
+
+/** A {@link GroupOwnedRowCounts} where nothing was removed - the answer to an empty id list. */
+function noRowsRemoved(): GroupOwnedRowCounts {
+  return {
+    queuedMessages: 0,
+    members: 0,
+    deviceMemberships: 0,
+    commitLog: 0,
+    groupInfo: 0,
+    invites: 0,
+    dismissals: 0,
+  };
+}
+
+/**
+ * Deletes every database row the given groups own, from {@link GROUP_OWNED_TABLES}.
+ *
+ * {@link GROUP_OWNED_TABLES} plus `dm_user_dismissed_groups` is an ALLOWLIST: seven tables named
  * one by one, checkable against `src/entities/` (every entity carrying a `groupId` is here). It
  * exists because the two places that end a group each carried their own shorter list, and both
  * were wrong in the same direction - measured on prod 2026-08-18, 21 of 69 `mls_group_info` rows,
@@ -68,53 +118,64 @@ export function totalGroupOwnedRows(counts: GroupOwnedRowCounts): number {
  *   per-user dismissal markers are then left alone, and `dismissals` comes back 0
  * @returns how many rows each table gave up
  */
-function noRowsRemoved(): GroupOwnedRowCounts {
-  return {
-    queuedMessages: 0,
-    members: 0,
-    deviceMemberships: 0,
-    commitLog: 0,
-    groupInfo: 0,
-    invites: 0,
-    dismissals: 0,
-  };
-}
-
 export async function deleteGroupOwnedRows(
   manager: EntityManager,
   groupIds: string[],
   { groupRowSurvives = false }: { groupRowSurvives?: boolean } = {}
 ): Promise<GroupOwnedRowCounts> {
-  if (groupIds.length === 0) return noRowsRemoved();
+  const counts = noRowsRemoved();
+  if (groupIds.length === 0) return counts;
 
-  const where = { groupId: In(groupIds) };
+  const where = { [GROUP_ID_COLUMN]: In(groupIds) };
 
-  return {
-    queuedMessages: (await manager.getRepository(QueuedMessage).delete(where)).affected ?? 0,
-    members: (await manager.getRepository(GroupMember).delete(where)).affected ?? 0,
-    deviceMemberships:
-      (await manager.getRepository(DeviceGroupMembership).delete(where)).affected ?? 0,
-    commitLog: (await manager.getRepository(MlsCommitLog).delete(where)).affected ?? 0,
-    groupInfo: (await manager.getRepository(MlsGroupInfo).delete(where)).affected ?? 0,
-    invites: (await manager.getRepository(GroupInvite).delete(where)).affected ?? 0,
-    dismissals: groupRowSurvives
-      ? 0
-      : ((await manager.getRepository(UserDismissedGroup).delete(where)).affected ?? 0),
-  };
+  for (const { count, entity } of GROUP_OWNED_TABLES) {
+    counts[count] = (await manager.getRepository(entity).delete(where)).affected ?? 0;
+  }
+  if (!groupRowSurvives) {
+    counts.dismissals =
+      (await manager.getRepository(UserDismissedGroup).delete(where)).affected ?? 0;
+  }
+  return counts;
 }
 
 /**
- * Deletes the Redis keys the given groups own: `history:`, `group:members:` and `pending_welcome:`.
+ * Group ids that own rows in {@link GROUP_OWNED_TABLES} while their `dm_groups` row is gone - the
+ * residue of a deletion that did not finish.
  *
- * Separate from {@link deleteGroupOwnedRows} because Redis cannot join the SQL transaction, so the
- * caller runs this AFTER the commit. That order is deliberate: a crash between the two leaves keys
- * whose group is gone, which `cleanupOrphanedRedisGroups` already collects, whereas the reverse
- * order would strip a live group's history if the transaction then rolled back.
+ * ONE `SELECT` PER TABLE IN THE ALLOWLIST, generated from it. This used to be a hand-written union
+ * over two of them, `dm_group_members` and `dm_device_group_memberships`, which is a second, much
+ * shorter definition of what a group leaves behind: a group whose members had already gone but
+ * whose commit log, stored base, invites or queued frames had not was invisible to the one sweep
+ * built to collect precisely that, and stayed invisible for ever - an absent group has no
+ * tombstone, so the 90-day reaper never reaches it either.
  *
- * `mls:addlock:` and `mls:commitlock:` are NOT here: both are written with an `EX` TTL
- * (`ADD_LOCK_TTL_SEC` and 5 s), so they collect themselves and a purge naming them would only
- * pretend to be doing work.
+ * TOMBSTONES ARE NOT ORPHANS. The join is on presence alone, so a soft-deleted group - which still
+ * has its row - is never named here; its residue is the reaper's, and collecting it from this
+ * sweep would hide the delete path that left it (see `fetchMessages`).
+ *
+ * `queued_message.groupId` IS NULLABLE, and a system frame addressed to no group at all would
+ * otherwise satisfy "no matching row in `dm_groups`" and be reported as an orphan with a null id.
+ * Excluded explicitly rather than filtered afterwards, because the filter would have to know which
+ * tables can hold a null.
+ *
+ * Table names come from the entity metadata rather than from literals, so this query says exactly
+ * what {@link deleteGroupOwnedRows} deletes from.
  */
+export async function findOrphanGroupIds(manager: EntityManager): Promise<string[]> {
+  const groupTable = manager.getRepository(Group).metadata.tableName;
+  const sql = GROUP_OWNED_TABLES.map(({ entity }) => {
+    const table = manager.getRepository(entity).metadata.tableName;
+    return (
+      `SELECT DISTINCT t."${GROUP_ID_COLUMN}" AS "${GROUP_ID_COLUMN}" FROM "${table}" t ` +
+      `LEFT JOIN "${groupTable}" g ON g.id = t."${GROUP_ID_COLUMN}" ` +
+      `WHERE g.id IS NULL AND t."${GROUP_ID_COLUMN}" IS NOT NULL`
+    );
+  }).join('\nUNION\n');
+
+  const rows: { groupId: string }[] = await manager.query(sql);
+  return rows.map((r) => r.groupId);
+}
+
 /**
  * ENDS THE GIVEN GROUPS: the tombstone, everything they own, and their Redis keys - ONE unit of
  * work, and the only way a group ends.
@@ -170,16 +231,78 @@ export async function tombstoneGroups(
   return counts;
 }
 
+/**
+ * THE REDIS KEYS A GROUP OWNS, as prefixes - the second half of "what a group owns", and the only
+ * list of it. {@link deleteGroupRedisKeys} removes them and {@link scanGroupRedisKeyOwners}
+ * discovers groups through them, so a shape added here is swept AND discovered.
+ *
+ * It was two lists, and the shorter one was the sweep's: `cleanupOrphanedRedisGroups` scanned
+ * `group:members:*`, and for a group absent from `dm_groups` deleted THAT KEY ALONE - leaving the
+ * `history:` stream, and deleting the only key through which that stream was still reachable. The
+ * repair destroyed the evidence of the residue it left, so nothing would ever name that group
+ * again: no tombstone for the reaper, no membership row for the row sweep, no key for the key
+ * sweep. Permanent, silently.
+ *
+ * `pending_welcome_notify:` is NOT here: it is keyed by USER, not by group.
+ */
+export const GROUP_REDIS_KEY_PREFIXES = ['history:', 'group:members:', 'pending_welcome:'] as const;
+
+/** Every Redis key the given group owns, one per shape in {@link GROUP_REDIS_KEY_PREFIXES}. */
+export function groupRedisKeys(groupId: string): string[] {
+  return GROUP_REDIS_KEY_PREFIXES.map((prefix) => `${prefix}${groupId}`);
+}
+
+/**
+ * Deletes the Redis keys the given groups own, one per shape in
+ * {@link GROUP_REDIS_KEY_PREFIXES}.
+ *
+ * Separate from {@link deleteGroupOwnedRows} because Redis cannot join the SQL transaction, so the
+ * caller runs this AFTER the commit. That order is deliberate: a crash between the two leaves keys
+ * whose group is gone, which the orphan sweep collects, whereas the reverse
+ * order would strip a live group's history if the transaction then rolled back.
+ *
+ * `mls:addlock:` and `mls:commitlock:` are NOT here: both are written with an `EX` TTL
+ * (`ADD_LOCK_TTL_SEC` and 5 s), so they collect themselves and a purge naming them would only
+ * pretend to be doing work.
+ */
 export async function deleteGroupRedisKeys(redis: Redis, groupIds: string[]): Promise<void> {
   if (groupIds.length === 0) return;
 
-  const keys = groupIds.flatMap((id) => [
-    `history:${id}`,
-    `group:members:${id}`,
-    `pending_welcome:${id}`,
-  ]);
+  const keys = groupIds.flatMap(groupRedisKeys);
 
   for (let i = 0; i < keys.length; i += REDIS_DEL_CHUNK) {
     await redis.del(...keys.slice(i, i + REDIS_DEL_CHUNK));
   }
+}
+
+/**
+ * Every group id that owns at least one Redis key, found by scanning the shapes above.
+ *
+ * Returns OWNERS, not orphans: whether a group still has a `dm_groups` row is a question for the
+ * database, and answering it here would put a second copy of "is this group gone" beside the one in
+ * `purgeOrphanGroups`. The caller hands the whole set to that one purge, which keeps the live ones
+ * and takes everything the absent ones own.
+ *
+ * `SCAN` rather than `KEYS`, so a large keyspace is walked without blocking Redis, and a key seen
+ * twice across two rounds costs nothing because the result is a set.
+ */
+export async function scanGroupRedisKeyOwners(redis: Redis): Promise<Set<string>> {
+  const owners = new Set<string>();
+
+  for (const prefix of GROUP_REDIS_KEY_PREFIXES) {
+    let cursor = '0';
+    do {
+      const [next, keys] = await redis.scan(
+        cursor,
+        'MATCH',
+        `${prefix}*`,
+        'COUNT',
+        REDIS_SCAN_COUNT
+      );
+      cursor = next;
+      for (const key of keys) owners.add(key.slice(prefix.length));
+    } while (cursor !== '0');
+  }
+
+  return owners;
 }
