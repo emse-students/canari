@@ -672,6 +672,33 @@ having at least been visible before. The association's own admins get
 `notifyAssocAdminsOfEventAction(..., 'pending')`, which is the sixth key in `PushContentKey`
 (`event_pending`) and therefore owes a string in all six native tables
 ([mobile](../frontend/mobile.md)).
+### A school-wide break is not an association's to declare
+
+`kind` was a free field. `event` renders as a card on the owning association's row; `break` renders
+as a full-day background band across the WHOLE school's calendar. Any member holding `PROPOSE_EVENT`
+could send `kind: 'break'`, and both write paths accepted it with no check at all - so an
+association could publish "there are no courses this week" about a school it does not speak for.
+Proposing one has no meaning, and validating one is the wrong question to put to a BDE.
+
+`assertMayDecideKind` now guards both write paths, and **the gate is on the VALUE CHANGING, not on
+the field being SENT**: the modal submits every field it renders, so an ordinary edit resends the
+entry's existing `kind` on every save, and refusing a field that was merely present would refuse
+every edit a non-BDE makes. On the create path there is nothing to resend, so the comparison is
+against `event`. It guards BOTH directions deliberately - turning a BDE's band back into an
+association card rewrites the same school-wide statement, and one rule with no hole beats two rules
+with one.
+
+**The BDE's own route to making one is the association page, and that is the only one there is.**
+The `/calendar` deposit modal omits `kind` on purpose, so a band is created from the owning
+association's "Proposer un evenement" modal, where the radio is now rendered only for a caller the
+server would accept.
+
+The client mirror is a third BDE-derived flag, `isEventValidator()`, published by
+`ensureMyAssociations` from the SAME one answer as the super-admin and moderator tiers - a second
+probe over the same endpoint would drift the moment one is force-refreshed and the other is not. A
+failed probe denies all three rather than leaving them as they were: a screen offering a control the
+API will refuse is the shape this repo has already paid for once. Pinned by
+`associations.service.break-is-bde-only.spec.ts` and `membershipProbe.test.ts`.
 
 ## Redis events published
 

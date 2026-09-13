@@ -91,6 +91,36 @@ function toMillis(value: Date | string | null): number | null {
   return Number.isNaN(d.getTime()) ? null : d.getTime();
 }
 
+/**
+ * Refuses an entry KIND that the caller is not the authority for.
+ *
+ * A `break` renders as a full-day background band across the WHOLE school's calendar. It is a
+ * statement about the school - "there are no courses this week" - not about an association, so
+ * proposing one has no meaning and validating one is the wrong question to put to a BDE. `kind` was
+ * a free field: any member holding `PROPOSE_EVENT` could publish a school-wide holiday band, and
+ * both write paths accepted `dto.kind` with no check at all.
+ *
+ * **The gate is on the VALUE CHANGING, not on the field being SENT.** Both event modals submit
+ * every field they render, so an ordinary edit resends the event's existing `kind` on every save;
+ * refusing a field that was merely present would refuse every edit a non-BDE makes. `current` is
+ * therefore the kind the entry already has - `event` on the create path, where there is nothing to
+ * resend.
+ *
+ * It guards BOTH directions deliberately. Turning a BDE's holiday band back into an association
+ * card rewrites the same school-wide statement, and one rule with no hole is worth more than two
+ * rules with one.
+ *
+ * The message is never rendered: both modals map any failure to their own Paraglide string.
+ */
+function assertMayDecideKind(
+  next: AssociationCalendarEventKind,
+  current: AssociationCalendarEventKind,
+  mayValidate: boolean | undefined
+): void {
+  if (next === current || mayValidate) return;
+  throw new ForbiddenException('Only the BDE decides whether an entry is a school-wide break');
+}
+
 /** CRUD, logo management, membership, and Stripe helpers for student associations. */
 @Injectable()
 export class AssociationsService {
@@ -1554,6 +1584,9 @@ ${rejectionReason}`
       throw new BadRequestException('endsAt must be after startsAt');
     }
 
+    const kind = dto.kind ?? AssociationCalendarEventKind.Event;
+    assertMayDecideKind(kind, AssociationCalendarEventKind.Event, canValidate);
+
     const linkedFormId = dto.linkedFormId ?? null;
     if (linkedFormId) await this.assertFormBelongsToAssociation(linkedFormId, targetId);
     await this.detachLinksBeforeCreate(linkedFormId);
@@ -1566,7 +1599,7 @@ ${rejectionReason}`
       startsAt,
       endsAt,
       createdBy: userId,
-      kind: dto.kind ?? AssociationCalendarEventKind.Event,
+      kind,
       linkedFormId,
       status: canValidate
         ? AssociationCalendarEventStatus.Validated
@@ -1604,6 +1637,9 @@ ${rejectionReason}`
     await this.findById(associationId);
     const ev = await this.findCalendarEventForAssociation(eventId, associationId, canCrossAsso);
     if (!ev) throw new NotFoundException('Event not found');
+
+    // Before any mutation: a refusal must leave the entity as it was found.
+    if (dto.kind !== undefined) assertMayDecideKind(dto.kind, ev.kind, canCrossAsso);
 
     // READ BEFORE WRITING. What returns a validated event to the queue is a date that actually
     // MOVED, never a `startsAt` that merely appeared in the DTO: both modals submit every field
