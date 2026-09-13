@@ -11,6 +11,22 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Added - a gate on the documentation, because two merges have now shipped something nobody wrote
+
+`bun run check` reads TypeScript and Svelte. The documentation - where this project keeps its queue,
+its decisions and its history - was read by nothing, so a bad three-way merge in it was caught by a
+human noticing or not caught. Both failure modes had already happened: conflict markers reached a
+pull request when a resolver script's assertion failed and the commit on the next line ran anyway,
+and a backlog entry deleted the day it shipped was resurrected by one rebase and then duplicated by
+the next.
+
+Git is right to do that - "they deleted entry A, we deleted entry B" in adjacent text is a union -
+which is why the answer is a gate rather than more care. `docsMergeArtefacts.test.ts` asserts no
+conflict marker in any tracked `.md`, and no heading twice in `backlog.md`, whose entries are
+written once by hand and deleted the day they ship. The duplicate is the half that matters: a marker
+is obvious, where a resurrected entry reads as work still owed and sends the next reader to redo
+something already done.
+
 ### Changed - four event modals become one form, and what each surface may decide becomes a prop
 
 "Proposer un evenement" and "Modifier l'evenement" on an association's page, "Deposer un evenement"
