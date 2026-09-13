@@ -107,12 +107,29 @@
    * cannot.
    */
   let placement = $state<'above' | 'below' | null>(null);
+  /**
+   * Which way the popover grows: `inward` is over the message, the reference below, and `outward`
+   * is the mirror kept for the case inward does not fit.
+   *
+   * **INWARD IS A DIRECTION, NOT A GUARANTEE OF ROOM, AND A SHORT MESSAGE IS WHERE IT RUNS OUT.**
+   * The popover's width is fixed - six emojis and a button - and the message's is not. Growing
+   * inward over a bubble NARROWER than the popover overshoots it and carries on past the far edge
+   * of the scroller, which clips on this axis exactly as it does on the other one. An own `Coucou`
+   * is the whole reproduction: its strip sits a hundred pixels left of a bubble that is itself
+   * against the right edge, so a 280px pill pinned there has nowhere to go but off the window.
+   *
+   * Measured the same way as the vertical axis, against the same clipper, with the same tie-break:
+   * keep the reference unless the mirror is genuinely roomier, so a thread too narrow for either
+   * side does not flip to an equally clipped placement.
+   */
+  let grow = $state<'inward' | 'outward' | null>(null);
   let anchorEl = $state<HTMLDivElement | undefined>();
   let popoverEl = $state<HTMLDivElement | undefined>();
 
   $effect(() => {
     if (!quickOpen && !menuOpen) {
       placement = null;
+      grow = null;
       return;
     }
     const popover = popoverEl;
@@ -132,6 +149,19 @@
     // Above unless it does not fit AND below is roomier - so a thread too short for either side
     // keeps the reference's placement instead of flipping to an equally clipped one.
     placement = roomAbove >= needed || roomAbove >= bounds.bottom - box.bottom ? 'above' : 'below';
+
+    // THE OTHER AXIS, AND IT IS MEASURED FROM THE STRIP because the popover is the strip's child:
+    // its `left-0`/`right-0` pin to the strip's edges, not to the bubble's. Measuring the bubble
+    // here would be right by accident on a long message and wrong on the short one this exists for.
+    const strip = popover.parentElement;
+    if (!strip) return;
+    const stripBox = strip.getBoundingClientRect();
+    const width = popover.offsetWidth;
+    // `inward` is over the message: rightward from the strip's left edge for an own message, whose
+    // strip sits in the LEFT gutter, and leftward from its right edge for a peer's.
+    const roomInward = isOwn ? bounds.right - stripBox.left : stripBox.right - bounds.left;
+    const roomOutward = isOwn ? stripBox.right - bounds.left : bounds.right - stripBox.left;
+    grow = roomInward >= width || roomInward >= roomOutward ? 'inward' : 'outward';
   });
 
   /** The two anchoring classes, plus the one frame before the measurement exists. */
@@ -141,6 +171,18 @@
       : placement === 'below'
         ? 'top-full mt-2'
         : 'bottom-full mb-2'
+  );
+
+  /**
+   * The horizontal anchor, written once for both popovers.
+   *
+   * It was `isOwn ? 'left-0' : 'right-0'` at each of the two call sites - the direction with no
+   * measurement behind it, which is what let a short message push the pill off the window. `null`
+   * is the unmeasured frame and keeps the reference, since `placementClass` already holds the
+   * popover invisible for it.
+   */
+  const growClass = $derived(
+    grow === 'outward' ? (isOwn ? 'right-0' : 'left-0') : isOwn ? 'left-0' : 'right-0'
   );
 </script>
 
@@ -258,9 +300,7 @@
     {#if quickOpen && onReact}
       <div
         bind:this={popoverEl}
-        class="bg-cn-popover pointer-events-auto absolute z-20 {placementClass} flex flex-row items-center gap-0.5 rounded-2xl px-3 py-2 shadow-lg {isOwn
-          ? 'left-0'
-          : 'right-0'}"
+        class="bg-cn-popover pointer-events-auto absolute z-20 {placementClass} {growClass} flex flex-row items-center gap-0.5 rounded-2xl px-3 py-2 shadow-lg"
         role="group"
         aria-label={m.msg_react_label()}
       >
@@ -303,9 +343,7 @@
     {#if menuOpen}
       <div
         bind:this={popoverEl}
-        class="bg-cn-popover pointer-events-auto absolute z-20 {placementClass} flex min-w-44 flex-col rounded-xl py-1 shadow-lg {isOwn
-          ? 'left-0'
-          : 'right-0'}"
+        class="bg-cn-popover pointer-events-auto absolute z-20 {placementClass} {growClass} flex min-w-44 flex-col rounded-xl py-1 shadow-lg"
         role="menu"
       >
         {#if onForward}

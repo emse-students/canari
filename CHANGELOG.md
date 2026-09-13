@@ -11,6 +11,21 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - the reaction bar ran off the side of the window on a short message
+
+Hovering a message offers six quick reactions, in a pill that opens next to it. The pill has a fixed
+width and a message does not, so on a message shorter than the pill - a `Coucou`, an `ok`, a single
+emoji - it overshot the message it was opening over and carried on past the edge of the thread,
+which cuts off whatever crosses it. The shorter the message, the more of the pill was gone; a long
+message hid the problem completely, which is why it looked like it only happened sometimes.
+
+The app already worked out how much room there was ABOVE a message before opening the pill upward,
+and had done since the same thing happened vertically. It never asked the same question sideways. It
+does now, against the same edge and with the same preference: the pill still opens over the message
+wherever it fits, and only swings to the other side when it genuinely does not.
+
+The overflow menu behind the `...` is the same pill in a different shape and was fixed with it.
+
 ### Fixed - being removed from a conversation is recorded once, and it survives the reload
 
 A client finds out it has been removed from a group six ways, at five places: the Remove commit it
@@ -37,6 +52,7 @@ and one line names HOW the client found out. That last part is not decoration - 
 the client learnt it by failing, having written and encrypted a message to discover what a frame it
 had already received said plainly. Those two are worded so that no rule written to forgive the
 normal case can ever quietly forgive them.
+
 
 ### Fixed - a device waiting to be let back in was forgotten by the queue built to remember it
 

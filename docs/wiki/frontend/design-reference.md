@@ -344,13 +344,33 @@ The earlier fix (2026-08-15) had moved the strip ABOVE the bubble precisely to s
 being laid into the sidebar, where a click on a reaction switched conversation. Three 28px circles
 plus a 4px offset is 88px against a gutter that is at least 30% of the pane at `md` and up, so the
 overflow condition that forced that move cannot recur at this width - and the popovers extend
-INWARD over the bubble, so they are bounded by the pane rather than by the bubble.
+INWARD over the bubble.
 
-**Anchor the popovers to the bubble, not to the strip.** Positioning them against the strip put the
-reaction pill 292px into the empty gutter, visually attached to nothing. The component's root is now
-an `absolute inset-0` box over the bubble wrapper: `right-full` puts the strip in the gutter,
-`bottom-full right-0` puts a popover above the bubble aligned to its outer edge. One positioning
-context, and it is the bubble.
+**They are the STRIP's children, and that reversed a sentence this page carried for a day.** The
+first attempt (2026-09-08) anchored them to the strip and laid the reaction pill 292px into the empty
+gutter, so this page said "anchor them to the bubble, not to the strip" - and the diagnosis was
+wrong. What put the pill in the gutter was keeping the BUBBLE's side while changing the anchor: the
+strip sits on the side away from the message, so a popover hung off it has to MIRROR and grow back
+inward. With the side mirrored, the strip is the right anchor and has been since 2026-09-09 - it is
+what puts the pill under the smiley that opens it, which is where the user asked for it. The root is
+an `absolute inset-0` box over the bubble wrapper; `right-full` puts the strip in the gutter, and the
+popovers pin to the strip's inner edge.
+
+**"Bounded by the pane" is what this page used to claim next, and NOTHING MEASURED IT** (fixed
+2026-09-13). Growing inward is a direction, not a promise of room: the popover's width is fixed - six
+emojis and the button that opens the full picker - and the message's is not, so a bubble NARROWER
+than the popover is overshot and the pill carries on past the far edge of the scroller. `overflow-y:
+auto` computes `overflow-x` to `auto` as well, so that edge clips exactly as the top one does. The
+user reported it on 2026-09-13 as a reaction bar running off the window on a short message, and asked
+whether it was a z-index - the same question the vertical version of this defect provoked, with the
+same answer: **a z-index is the wrong question about a box that is off-screen.** Their own control
+case said so, since the full emoji panel is a different component and places correctly.
+
+The fix is the measurement the vertical axis already had, on the other axis, against the same clipper
+and with the same tie-break - prefer inward, mirror only when inward does not fit and the mirror is
+roomier, keep inward when neither fits. **It is measured from the STRIP and not from the bubble**,
+because the popovers pin to the strip's edges; measuring the bubble is right by accident on a long
+message and wrong on the short one the rule exists for, and a test drives exactly that.
 
 ### One scrollbar, and the feature query that makes it work
 
