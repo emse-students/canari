@@ -147,6 +147,10 @@ type FlushOutcome = 'sent' | 'retry' | 'error' | 'skip';
  * Creates the outbox controller. The flusher re-encodes the proto against the current epoch at
  * send time (so epoch changes are transparent), is idempotent on the stable messageId (a re-send
  * after a crash is deduplicated by the receiver), and never sends into an unhealthy group.
+ *
+ * It has ONE flusher, `runFlush`, and every trigger - the five wired below and the three outside
+ * this module - reaches it. Which they are and why the three outside cannot be folded in is on
+ * {@link flushOutbox}.
  */
 export function createOutbox(deps: OutboxDeps): OutboxController {
   const { conversations, storage, mlsService, deviceKeyB64, log, canFlush } = deps;
@@ -854,7 +858,38 @@ export function getOutbox(): OutboxController | null {
   return active;
 }
 
-/** Trigger a flush on the active controller (no-op when none). */
+/**
+ * Trigger a flush on the active controller (no-op when none).
+ *
+ * **EIGHT SITES RAISE A FLUSH AND THERE IS ONE FLUSHER - A SWEEP COUNTING SITES WILL FLAG THIS
+ * AGAIN.** It was flagged once, as a duplicate path ("6 triggers, 8 sites"), and REFUTED on
+ * 2026-09-13 on every axis. The refutation is written here rather than deleted with the row,
+ * because the count that raised it is accurate and says nothing.
+ *
+ * Every one of them funnels into `runFlush`, which is where all the gates live and the only place
+ * they live: the tab election, the leader gate, `connectivity.isOffline`, `canFlush`, and the
+ * `flushing`/`rerun` coalescer. There is no second flusher to fuse this with. FIVE sites are
+ * internal wake-ups, each bound to the one condition it is the seam for - `connectivity.onReconnect`,
+ * `visibilitychange`, a follower tab's `outbox_flush_request`, the backoff timer, and `enqueue`.
+ * THREE are external moments nothing inside this module can observe:
+ *
+ * | Site | The moment, and why nothing in here sees it |
+ * | --- | --- |
+ * | `promoteOfflineSession` step 4 | a session unlocked offline now has a token AND a socket |
+ * | `sessionAuth`'s `onGroupReady` | one GROUP became sendable; the network never changed |
+ * | `sessionAuth` after `initializeConnection` | login finished, which is not a reconnection |
+ *
+ * **THE FUSION THAT LOOKS OBVIOUS IS A REGRESSION, AND IT IS THE FIRST THING ANYONE WILL REACH
+ * FOR.** `connectivity.onReconnect` binds a flush to `isOffline` clearing, so binding one to
+ * `canFlush` opening reads as the same move - and it would fire at `promoteOfflineSession`'s step 1,
+ * where the token is set, THREE steps before `initializeConnection` gives it a socket. Every entry
+ * would burn an attempt and a longer backoff on a send that never had a chance, which is the exact
+ * defect `canFlush` was added to prevent. **A gate answers "may I send", a trigger answers "now",
+ * and only the promotion knows the second.**
+ *
+ * `outbox.test.ts` drives all five internal triggers plus this one over a single table, and a
+ * source check pins the three external sites, so a fourth has to be argued for rather than added.
+ */
 export function flushOutbox(): void {
   void active?.flush();
 }

@@ -1266,8 +1266,13 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       }
       finishStartupCatchupBench(cb.log);
 
-      // Connection established and groups reconciled: drain the outbox (covers reconnection,
-      // which re-runs initializeConnection).
+      // Connection established and groups reconciled: drain the outbox. THIS IS LOGIN, AND THE
+      // PARENTHESIS THAT USED TO BE HERE - "covers reconnection, which re-runs
+      // initializeConnection" - WAS FALSE. `initializeConnection` has exactly two call sites, this
+      // one and the offline promotion, and each runs once per session; a reconnect goes through
+      // `attemptReconnectImpl`, which never calls it. Reconnection is covered inside the outbox by
+      // `connectivity.onReconnect`, and believing otherwise makes this line look redundant and
+      // that path look uncovered - both wrong, in opposite directions.
       flushOutbox();
 
       // Same moment, and NOT covered by the reconnect listener: an app killed while offline comes

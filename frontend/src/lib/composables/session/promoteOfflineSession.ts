@@ -118,9 +118,17 @@ async function runPromotion(
     // it from here now that a real token exists.
   }
 
-  // 4. Only NOW may the outbox drain. Its own `online` listener would have fired before step 1,
-  //    with an empty token: every send would have failed and burnt an attempt on the entry it was
-  //    trying to save. Ordering this after the connection is the whole point.
+  // 4. Only NOW may the outbox drain, and this line is the ONLY thing that can say so. The
+  //    justification here used to be that the outbox's own `online` listener would have fired
+  //    before step 1 and failed every send against an empty token - which the `canFlush` gate
+  //    (`!isOfflineSession()`) has made impossible since: it is shut until step 1, so nothing the
+  //    outbox hears for itself could have drained it.
+  //
+  //    The real reason for the ordering is that step 1 OPENS that gate without being the moment to
+  //    send. A token is not a socket, and `initializeConnection` at step 3 is the socket. Binding
+  //    the flush to the gate - the obvious move, since `connectivity.onReconnect` binds one to
+  //    `isOffline` clearing - fires it three steps early, against a connection that does not exist
+  //    yet, and burns an attempt and a longer backoff on every entry.
   flushOutbox();
   await applyOutboxPendingStatuses().catch(() => {});
 

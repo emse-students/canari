@@ -295,6 +295,17 @@ Deep links, system events, rosters and the channel/DM asymmetry are on those two
 
 ## Outbound delivery -> [chat](frontend/modules/chat.md), [history-reconciliation](protocols/history-reconciliation.md), [chat-delivery](services/chat-delivery.md), [mobile](frontend/mobile.md)
 
+- **A COUNT OF CALL SITES IS NOT A COUNT OF IMPLEMENTATIONS, AND ONLY THE SECOND IS A DUPLICATE
+  PATH.** The outbox was flagged as "6 triggers, 8 sites" and refuted on every axis: all eight reach
+  ONE `runFlush` holding every gate, five are internal wake-ups each bound to the condition it is the
+  seam for, and three are external moments the module cannot observe. Nothing was duplicated - the
+  sweep had counted a funnel's inlets. **Before fusing N sites, name what would be DELETED; if the
+  answer is "a call", there is nothing to fuse.** And the fusion that looked obvious was a
+  REGRESSION: binding the flush to `canFlush` opening, mirroring the one that binds it to `isOffline`
+  clearing, fires it three steps before the connection exists, because **a gate answers "may I send"
+  and a trigger answers "now"** - only the offline promotion knows the second. Both comments that
+  had reasoned about this were false, which is how a refutable claim survives:
+  [chat](frontend/modules/chat.md#eight-sites-raise-a-flush-and-there-is-one-flusher-r-d8-refuted-2026-09-13)
 - **A RECORD THAT EXISTS ONLY TO BE REMOVED MUST NOT BE ABLE TO REFUSE ITS OWN REPLACEMENT.** A
   `removed` conversation is a tombstone - deleted by a peer, an exclusion, or a local deletion the
   server has not answered - and it stays in the store until a MANUAL deletion, so it is present and

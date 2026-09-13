@@ -17,7 +17,9 @@ const tabOutboxMock = vi.hoisted(() => ({
   requestLeaderOutboxFlush: vi.fn(),
   publishOutboxEntrySent: vi.fn(),
   publishOutboxEntryCancelled: vi.fn(),
-  subscribeTabOutboxEvents: vi.fn(() => () => {}),
+  // The handler is named in the signature rather than dropped: a flush trigger arrives through
+  // this subscription, so the R-D8 trigger table has to read it back out of `mock.calls`.
+  subscribeTabOutboxEvents: vi.fn((_handler: (event: TabOutboxEvent) => void) => () => {}),
 }));
 // Only the leadership answer is overridden: this module is pulled in transitively by the session
 // singleton, which registers the promotion/demotion handlers at import time.
@@ -1163,5 +1165,232 @@ describe('outbox cancellation', () => {
     await outbox.flush();
 
     expect(mlsService.sendMessage).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * R-D8 - THE TRIGGER TABLE, PINNED, BECAUSE THE COUNT THAT RAISED IT IS ACCURATE.
+ *
+ * Eight sites raise a flush and there is ONE flusher. That was flagged as a duplicate path and
+ * refuted on every axis: all eight reach `runFlush`, which is where all the gates live, so "is
+ * there a second flusher" is a question this block answers instead of a claim in a comment. The
+ * reasoning, and why folding the three external sites in would be a regression, is on
+ * `flushOutbox`'s docblock - whoever counts call sites next lands on one or the other before they
+ * find eight things to fuse.
+ *
+ * Each row raises its trigger THE WAY ITS SITE DOES and nothing else - no `outbox.flush()` standing
+ * in for an event - because a table that pokes the shared function proves only that the shared
+ * function works, which was never in doubt. What each row asserts twice is that the SAME gate
+ * decides: shut, the trigger sends nothing and costs the entry no attempt; open, that same trigger
+ * drains. The backoff timer is the one trigger that cannot be a row - raising it needs a send that
+ * has already failed, which needs the gate open - so it gets both halves in its own two cases.
+ */
+describe('outbox flush triggers - one flusher, and one gate for all of them (R-D8)', () => {
+  interface TriggerSite {
+    name: string;
+    /** Raise the flush exactly the way this site does, and do nothing else. */
+    run: (outbox: ReturnType<typeof createOutbox>) => Promise<void>;
+  }
+
+  /** The handler `createOutbox` registered on the cross-tab channel, for the follower's request. */
+  function tabHandler(): (event: TabOutboxEvent) => void {
+    const call = tabOutboxMock.subscribeTabOutboxEvents.mock.calls.at(-1);
+    if (!call) throw new Error('the outbox registered no cross-tab subscriber');
+    return call[0];
+  }
+
+  const SITES: TriggerSite[] = [
+    {
+      name: 'connectivity.onReconnect',
+      run: async () => {
+        connectivity.notifyServerUnreachable();
+        connectivity.notifyServerReachable();
+        await outboxIdle();
+      },
+    },
+    {
+      name: 'visibilitychange, the tab coming back',
+      run: async () => {
+        document.dispatchEvent(new Event('visibilitychange'));
+        await outboxIdle();
+      },
+    },
+    {
+      name: "a follower tab's outbox_flush_request",
+      run: async () => {
+        tabHandler()({ type: 'outbox_flush_request' });
+        await outboxIdle();
+      },
+    },
+    {
+      name: 'enqueue - the send that is being made right now',
+      run: async (outbox) => {
+        await outbox.enqueue(textEntry('m1', 'g1', 100));
+        await outboxIdle();
+      },
+    },
+    {
+      name: 'flushOutbox() - the three external sites, which share this one door',
+      run: async (outbox) => {
+        await outbox.flush();
+      },
+    },
+  ];
+
+  beforeEach(() => {
+    connectivity.reset();
+    isTabLeaderMock.mockReturnValue(true);
+    tabOutboxMock.subscribeTabOutboxEvents.mockClear();
+    tabOutboxMock.requestLeaderOutboxFlush.mockClear();
+  });
+
+  it('drives five distinct triggers, not one of them written five times', () => {
+    expect(new Set(SITES.map((s) => s.run.toString())).size).toBe(SITES.length);
+  });
+
+  for (const site of SITES) {
+    it(`${site.name} reaches the one flusher, and is refused by the one gate`, async () => {
+      let ready = false;
+      const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+      const mlsService = makeMls();
+      const outbox = createOutbox(makeDeps({ mlsService, storage, canFlush: () => ready }));
+
+      await site.run(outbox);
+      // Not merely "nothing was sent": the entry must come out of a refused trigger untouched, or
+      // a trigger that fires while the session cannot send makes the queue slower rather than
+      // faster - which is the whole reason the gate exists.
+      expect(mlsService.sendMessage).not.toHaveBeenCalled();
+      expect(storage._map.get('m1')!.attempts).toBe(0);
+
+      ready = true;
+      await site.run(outbox);
+      expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+      expect(storage._map.size).toBe(0);
+
+      outbox.dispose();
+    });
+  }
+
+  it('a visibilitychange to HIDDEN raises nothing - the trigger is the tab coming BACK', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls();
+    const outbox = createOutbox(makeDeps({ mlsService, storage }));
+    const original = Object.getOwnPropertyDescriptor(document, 'visibilityState');
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+    try {
+      document.dispatchEvent(new Event('visibilitychange'));
+      await outboxIdle();
+      expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    } finally {
+      if (original) Object.defineProperty(document, 'visibilityState', original);
+      outbox.dispose();
+    }
+  });
+
+  it('a follower receiving outbox_flush_request drops it instead of bouncing it back', async () => {
+    isTabLeaderMock.mockReturnValue(false);
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls();
+    const outbox = createOutbox(makeDeps({ mlsService, storage }));
+
+    tabHandler()({ type: 'outbox_flush_request' });
+    await outboxIdle();
+
+    // The request is the leader's to serve. A follower that answered it by re-broadcasting would
+    // put two tabs in a loop that ends only when one of them wins an election.
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(tabOutboxMock.requestLeaderOutboxFlush).not.toHaveBeenCalled();
+    outbox.dispose();
+  });
+
+  it('the backoff timer re-attempts on its own, with no other event', async () => {
+    vi.useFakeTimers();
+    let failing = true;
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls({
+      send: async () => {
+        if (failing) throw new Error('transient');
+      },
+    });
+    const outbox = createOutbox(makeDeps({ mlsService, storage }));
+    try {
+      await outbox.flush();
+      expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+      expect(storage._map.get('m1')!.attempts).toBe(1);
+
+      failing = false;
+      // The first backoff step is 2 s. Nothing else happens: no reconnect, no visibility change,
+      // no enqueue - the timer is a trigger in its own right and has to reach `runFlush` alone.
+      await vi.advanceTimersByTimeAsync(2_500);
+
+      expect(mlsService.sendMessage).toHaveBeenCalledTimes(2);
+      expect(storage._map.size).toBe(0);
+    } finally {
+      outbox.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it('and the backoff timer is refused by the same gate as every other trigger', async () => {
+    vi.useFakeTimers();
+    let ready = true;
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls({
+      send: async () => {
+        throw new Error('transient');
+      },
+    });
+    const outbox = createOutbox(makeDeps({ mlsService, storage, canFlush: () => ready }));
+    try {
+      await outbox.flush();
+      expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+
+      // The session stops being able to send between the failure and the retry - exactly what a
+      // logout-then-offline-unlock does. The timer must not be the one trigger that gets through.
+      ready = false;
+      await vi.advanceTimersByTimeAsync(2_500);
+
+      expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+      expect(storage._map.get('m1')!.attempts).toBe(1);
+    } finally {
+      outbox.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it('exactly three sites outside this module raise a flush, and they are the three named ones', async () => {
+    const { readdirSync, readFileSync } = await import('node:fs');
+    const { join, relative, sep } = await import('node:path');
+    const root = join(process.cwd(), 'src');
+    const found: Record<string, number> = {};
+    const walk = (dir: string): void => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, e.name);
+        if (e.isDirectory()) {
+          if (e.name === 'paraglide' || e.name === 'wasm' || e.name === 'proto') continue;
+          walk(full);
+          continue;
+        }
+        if (!/\.(ts|svelte)$/.test(e.name) || /\.(test|spec)\.ts$/.test(e.name)) continue;
+        const rel = relative(root, full).split(sep).join('/');
+        if (rel === 'lib/utils/chat/outbox.ts') continue;
+        // The parentheses matter: bare `flushOutbox` matches the import line too. The second arm
+        // is the other door into the same flush, which a new site would reach for once the first
+        // one started failing here.
+        const calls =
+          readFileSync(full, 'utf8').match(/\bflushOutbox\(\)|getOutbox\(\)[^\n]*\.flush\(\)/g) ??
+          [];
+        if (calls.length) found[rel] = calls.length;
+      }
+    };
+    walk(root);
+
+    // A fourth external trigger is not forbidden; it has to be ARGUED FOR, which is what failing
+    // here asks of whoever adds one - name the moment nothing inside the outbox can observe, or
+    // bind it to the condition inside the outbox that already means it.
+    expect(found, 'a new site raises a flush from outside the outbox').toEqual({
+      'lib/composables/session/promoteOfflineSession.ts': 1,
+      'lib/composables/session/sessionAuth.ts': 2,
+    });
   });
 });

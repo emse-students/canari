@@ -90,7 +90,6 @@ a real collapse, not a test that fails on divergence):
 | --- | --- | --- | --- |
 | `D8` | checkpoint | 4 routes, 3 guarantees | see the P1 above |
 | `R-D6` | where eviction is learnt | **5** | audit said 3 |
-| `R-D8` | outbox flush triggers | **6 triggers, 8 sites** | audit said 5 |
 | `R-D3` | stale-base repair | 2 mechanisms | the responder (`sessionAuth.ts:1107-1130`) gates on `isGroupActive` and never calls `classifyBase` |
 | `R-D9` | "re-add the requester" | 2 entrances, 1 responder | the deferred-drain entrance passes no `onNotReady`, so a still-not-ready group is dropped rather than re-deferred |
 | `R-D10` | `no_peer_online` recorded | 2 ways | only one is discharged by a presence edge; `noRepairerAt`/`lastReAddAt` are not |
