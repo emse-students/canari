@@ -7275,27 +7275,45 @@ member holding `PROPOSE_EVENT`, and `createCalendarEvent` / `updateCalendarEvent
 school's calendar - it is a statement about the school, not about an association, so proposing one
 has no meaning and validating one is the wrong question to ask a BDE.
 
-**The work.** `kind: break` becomes a BDE/global-admin-only value, refused server-side for any
-other caller on both create and update, and the radio disappears from the propose modal for
-everyone else. The BDE's own route to creating one is then the answer to the user's question
-*"comment fait-il d'ailleurs ?"*: today there is none - the `/calendar` "Deposer un evenement"
-modal does not offer `kind` either (`frontend/src/routes/calendar/+page.svelte:348`, which omits it
-on purpose), so a break can only be made from the owning association's page. The fusion below is
-what gives it one.
+**The work, and the user ARBITRATED the open half of it on 2026-09-13.** `kind: break` becomes a
+BDE/global-admin-only value, refused server-side for any other caller on both create AND update.
 
-### P2 - "Associations partenaires (optionnel)" is every association on the platform
+The question that was open was the BDE's own door, since today there is none: the `/calendar`
+"Deposer un evenement" modal does not offer `kind` either
+(`frontend/src/routes/calendar/+page.svelte:348`, which omits it on purpose). Three doors were put
+to the user - the association page, the `/calendar` modal, or a dedicated `/admin` screen - and the
+answer is **the association page**: the radio STAYS in "Proposer un evenement" and is rendered only
+for a BDE or global admin, so the BDE creates its break from its own page. No new screen, no new
+field in a modal the fusion below is going to rebuild anyway; the change is one condition on the
+radio and one refusal on the server.
+
+**Not to be re-opened into a dedicated screen or a `/calendar` field** without the user saying so:
+both were offered and both were declined.
+
+### P3 - "Associations partenaires" promises a partnership the picker never asks for
 
 `CoOwnerPicker.svelte` calls `listAssociations()` and filters on the search box, the primary
 owner and what is already selected. Nothing else conditions it: no partnership, no shared member,
-no consent from the association being named. So an event can declare any association on the estate
-as its partner, and that association's name and colour then ride on a card it never agreed to.
+no consent from the association being named. So an event can name any association on the estate,
+and that association's name and colour then ride on a card it was never asked about - which the
+arbitration below ACCEPTS as the model, and is exactly why the label may not call it a partnership.
 
-**The work.** Decide what a co-owner IS before narrowing the list - the honest options are
-(a) any association, which is what ships today and should then say so in the label, (b) an
-association the author is also a member of, or (c) any association, but the co-ownership starts
-`pending` and the named association confirms it. The label is wrong under (a) as much as under the
-others, so it moves either way - and the wording is now one key, `asso_calendar_co_owner_label`,
-so whichever answer wins is a reword in two message files rather than a hunt through components.
+**ARBITRATED 2026-09-13, AND IT IS WHY THIS IS NOW A P3.** Three models were put to the user -
+(a) any association, with a label that says so; (b) only an association the author is a member of;
+(c) any association, but the co-ownership starts `pending` and the named association confirms it.
+The answer is **(a)**.
+
+So there is no consent mechanism to build and no list to narrow: what ships is what was wanted, and
+the defect is that the LABEL over-promises. A name in this field is a MENTION, not an agreement, and
+the wording must stop implying otherwise.
+
+**The work is a reword of one key**, `asso_calendar_co_owner_label`, in `fr.json` and `en.json` -
+the literal became a key in #552, so this is two lines rather than a hunt through components. The
+French must not say "partenaires", which is also the word the commercial partner-discount feature
+owns (`asso_partnership_*`), so the two cannot share it.
+
+**(b) and (c) are declined, not deferred.** Neither is to be re-opened as "the proper fix" without
+the user reversing this.
 
 ### P3 - four event modals, two implementations, and neither can do what the other can
 
