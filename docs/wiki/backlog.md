@@ -7362,14 +7362,6 @@ payout estimate already does.
 wants it under the profile. Moving the section is the work; the heading string
 (`profile_subs_heading`) already reads as a profile heading.
 
-### P3 - "Tout le mois"
-
-`CalendarDayEventsPanel.svelte:84`. It is not a label - it is the BUTTON that clears the day
-selection and returns the panel to the whole month, rendered only when `onClearSelection` is
-passed. Deleting the text deletes the only way back, so the work is to replace the affordance, not
-to remove it: either an X on the day header, or a second click on the selected day. **Which one is
-the user's call.**
-
 ## Post-campaign projects - decided, not scheduled
 
 ### Separating ICM and ISMIN - two schools on one deployment (user, 2026-09-05)
