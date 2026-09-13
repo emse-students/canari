@@ -29,6 +29,49 @@ unrelated features sharing the word is how a reader learns the wrong thing about
 The label is now "Co-organisateurs" / "Co-hosts", with a hint saying what the field actually does:
 any association can be added, its name and colour will appear on the event, and it is not asked
 first. `paraglideMessages.test.ts` holds the two vocabularies apart so the word cannot come back.
+### Fixed - kicking a user left every one of their devices routable, for fourteen days
+
+The other half of the same invariant, and the same shape of defect. Four paths moved a device
+membership back to `pending`, and two of them never removed the device from
+`group:members:{groupId}`:
+
+| Path | Redis SREM | `kickedAt` | Inserts if absent |
+| --- | --- | --- | --- |
+| `kickStaleDevice` | written | set | no |
+| `kickStaleUser` | **never written** | set | no |
+| `detectStaleDevices` (cron) | written | left as is | no |
+| `updateInvitationStatus` demotion | **never written** | left as is | yes |
+
+`kickStaleUser` and `kickStaleDevice` are fifty lines apart in the same file and do the same thing
+to a different number of rows; only the second one remembered. So a member removing another user's
+stale leaves - which is the whole purpose of that endpoint - left every one of those devices in the
+gateway's routing set, marked `pending` in SQL and routable in Redis at the same time.
+
+**Nothing heals that.** The reconciliation on the SEND path only `sadd`s the members it finds
+active; no code in the service removes an entry that should not be there. And it is invisible: a
+routing set that is merely TOO LARGE is not an empty one, so no election door reloads it. The
+gateway ELECTS the answerer of a `welcome_request` and a `history_request` from that set, so a
+device whose leaf had just been removed could be picked to serve a Welcome for a group it can no
+longer open - and the requester waits on an answer that cannot come. It lasted until
+`cleanupStalePendingInvitations` deleted the row: fourteen days.
+
+The four are fused onto `deactivateDeviceMembership`, the mirror of the promotion writer, which
+owns the `srem` unconditionally. Nothing is refused there and the asymmetry is deliberate: a
+demotion grants no reachability, promises no Add and moves the row towards cleanup, so there is no
+state of the device that makes doing it wrong.
+
+**`kickedAt` was NOT part of the divergence, and the audit was wrong to say it was.** The column
+answers one question - is this row waiting on a re-add that a kick promised? - and all four wrote it
+the way that question requires: the kicks set it because a member removed the leaf and owes an Add,
+the cron and the self-reported demotion leave it because nobody removed anything. So it is not fused
+away, it is made explicit. `removedFromTreeAt` is a REQUIRED argument, every door answers it, and no
+door can be silent by omission - which is exactly how `kickStaleUser` came to be silent about the
+`srem`.
+
+`messaging.one-pending-writer.spec.ts` pins the writer and the three doors; the marker cases in
+`invitations.controller.kick-marker.spec.ts` follow the column one layer down and pin the answer
+each door gives. Both run red against the previous controllers.
+
 
 ### Fixed - a device that processed its Welcome in the foreground was `active` and unreachable
 

@@ -26,16 +26,24 @@ export type DeviceGroupStatus = 'pending' | 'active';
  *    restart, TTL expiry). The gateway reads that Redis set to forward messages and
  *    `welcome_request` frames to online devices.
  *
- * 2. **Invitation state machine** - A row is created as `pending` by `addGroupMember` for every
- *    active device of a user. **`activateDeviceMembership` is the ONLY thing that writes `active`,
- *    and it is the only writer of the Redis routing set.** That sentence was here, in bold, while
- *    two other paths wrote `active` anyway - the foreground status endpoint, which wrote no routing
- *    set at all, and group creation, which asked for no addressability. Both were fused onto it on
- *    2026-09-13 and the sentence is now enforced rather than asserted; the table of what they
- *    disagreed on is on `activateDeviceMembership` itself. `sendWelcome` merely guarantees the row
- *    exists and clears `kickedAt`; it does not promote, and it must never demote - it wrote
- *    `'pending'` unconditionally until 2026-09-12, which knocked already-active devices out of the
- *    fan-out. `invitations.controller` exposes the pending list to clients.
+ * 2. **Invitation state machine** - `status` HAS EXACTLY TWO WRITERS, ONE PER DIRECTION, AND EACH
+ *    OWNS THE SIDE OF THE REDIS ROUTING SET THAT MATCHES IT: `activateDeviceMembership` writes
+ *    `active` and the `sadd`, `deactivateDeviceMembership` writes `pending` and the `srem`. Both
+ *    sentences were here as assertions and BOTH WERE FALSE until 2026-09-13. Two other paths wrote
+ *    `active` - the foreground status endpoint, which wrote no routing set at all, and group
+ *    creation, which asked for no addressability. Four wrote `pending`, and two of those four
+ *    called no `srem`, so a demoted device stayed reachable and ELECTABLE to answer a
+ *    `welcome_request` for a group it could no longer open - for the fourteen days it takes the
+ *    stale-pending cron to delete the row, because nothing reconciles an extra entry away. The
+ *    tables of what each set disagreed on are on the two methods themselves.
+ *
+ *    Two paths still INSERT a `pending` row and are not demotions: `registerDevice` and
+ *    `addGroupMember` enrol a device that has never been in this group's tree, so there is nothing
+ *    to remove from a routing set it was never in, and `orIgnore` leaves an existing `active` row
+ *    alone. `sendWelcome` likewise only guarantees the row exists and clears `kickedAt`; it does
+ *    not promote, and it must never demote - it wrote `'pending'` unconditionally until 2026-09-12,
+ *    which knocked already-active devices out of the fan-out. `invitations.controller` exposes the
+ *    pending list to clients.
  *
  * 3. **Device lifecycle cleanup** - When a device is deleted, ALL its rows here are
  *    removed, which removes it from every group's routing set. This is intentional, but
@@ -87,11 +95,14 @@ export class DeviceGroupMembership {
    * being swallowed on a phone). `reportStrandedDeviceMemberships` could name the population and not
    * the cause; this is the evidence it was missing.
    *
-   * WRITTEN BY THE EVENTS THAT CHANGE THE ANSWER, and by nothing else. Set by the two kick endpoints
-   * (`kickStaleDevice`, `kickStaleUser`), the only things that reset a live membership. Cleared when
-   * a Welcome is queued for the device - the proof the re-add landed - and by either path that marks
-   * it `active`. NOT cleared by a demotion to `pending`, which is a step towards cleanup and
-   * promises no Add.
+   * WRITTEN BY THE EVENTS THAT CHANGE THE ANSWER, and by nothing else. It reaches this column
+   * through `deactivateDeviceMembership`'s `removedFromTreeAt`, which every demotion must answer:
+   * an instant from the two kick endpoints (`kickStaleDevice`, `kickStaleUser`), the only things
+   * that reset a live membership, and `null` from the cron and the self-reported demotion, neither
+   * of which removed anything. `null` LEAVES THE COLUMN AS IT STANDS rather than clearing it - a
+   * demotion is a step towards cleanup and promises no Add, so a row demoted after a kick is still
+   * a row a kick left behind. Cleared when a Welcome is queued for the device - the proof the
+   * re-add landed - and by the one path that marks it `active`.
    */
   @Column({ type: 'timestamptz', nullable: true })
   kickedAt: Date | null;

@@ -26,10 +26,19 @@ import { MessagingService } from '../services/messaging.service';
  * kick that forgot to stamp the row is not a visible bug: the report simply counts zero for ever
  * and reads as health, which is the exact failure mode this repository refuses elsewhere. Same for
  * the clearing: leave it set and every SUCCESSFUL kick-and-re-add is reported as a failed one.
+ *
+ * SINCE 2026-09-13 THE COLUMN IS WRITTEN ONE LAYER DOWN, and these cases follow it there. Neither
+ * direction of `status` is written by this controller any more: `activateDeviceMembership` and
+ * `deactivateDeviceMembership` are the two writers, and the second takes `removedFromTreeAt` -
+ * REQUIRED, so every door states whether a member removed the leaf instead of leaving it to be
+ * inferred from an omission. So what each case pins is the ANSWER this door gives to that
+ * question, which is the same discriminator asserted where the door is now responsible for it.
+ * That the writer turns the answer into the column is asserted in
+ * `services/messaging.one-pending-writer.spec.ts`, once, where the upsert is.
  */
 describe('InvitationsController - the kick marker', () => {
   let controller: InvitationsController;
-  let messaging: { activateDeviceMembership: jest.Mock };
+  let messaging: { activateDeviceMembership: jest.Mock; deactivateDeviceMembership: jest.Mock };
   let log: jest.SpyInstance;
 
   const deviceGroupRepo = { findOne: jest.fn(), find: jest.fn(), save: jest.fn() };
@@ -62,8 +71,12 @@ describe('InvitationsController - the kick marker', () => {
     ...overrides,
   });
 
-  /** What `save` was actually handed - the assertion subject of every case here. */
-  const saved = () => deviceGroupRepo.save.mock.calls[0][0];
+  /** What the demotion writer was handed on call `n` - the assertion subject of every case here. */
+  const demotion = (n = 0) =>
+    messaging.deactivateDeviceMembership.mock.calls[n][3] as {
+      removedFromTreeAt: Date | null;
+      tag: string;
+    };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -90,6 +103,7 @@ describe('InvitationsController - the kick marker', () => {
           useValue: {
             deviceAddressability: jest.fn().mockResolvedValue({ ok: true }),
             activateDeviceMembership: jest.fn().mockResolvedValue({ ok: true }),
+            deactivateDeviceMembership: jest.fn().mockResolvedValue(undefined),
           },
         },
       ],
@@ -112,9 +126,8 @@ describe('InvitationsController - the kick marker', () => {
       'false'
     );
 
-    expect(saved().status).toBe('pending');
-    expect(saved().kickedAt).toBeInstanceOf(Date);
-    expect((saved().kickedAt as Date).getTime()).toBeGreaterThanOrEqual(before);
+    expect(demotion().removedFromTreeAt).toBeInstanceOf(Date);
+    expect((demotion().removedFromTreeAt as Date).getTime()).toBeGreaterThanOrEqual(before);
   });
 
   it('stamps every device of a user with ONE instant, because one Remove reset them all', async () => {
@@ -126,10 +139,9 @@ describe('InvitationsController - the kick marker', () => {
 
     await controller.kickStaleUser({ userId: TARGET, groupId: GROUP }, CALLER, 'false');
 
-    const rows = saved() as Array<{ status: string; kickedAt: Date }>;
-    expect(rows).toHaveLength(3);
-    expect(rows.every((r) => r.status === 'pending')).toBe(true);
-    expect(new Set(rows.map((r) => r.kickedAt.getTime())).size).toBe(1);
+    expect(messaging.deactivateDeviceMembership).toHaveBeenCalledTimes(3);
+    const instants = [0, 1, 2].map((n) => (demotion(n).removedFromTreeAt as Date).getTime());
+    expect(new Set(instants).size).toBe(1);
   });
 
   it('hands the promotion to the ONE writer, which is what clears the marker', async () => {
@@ -157,12 +169,14 @@ describe('InvitationsController - the kick marker', () => {
     expect(answer).toEqual({ status: 'active' });
   });
 
-  it('a DEMOTION does not clear it: cleanup promises no Add', async () => {
+  it('a DEMOTION answers NO KICK, which is what leaves the marker standing', async () => {
     // `updateInvitationStatus` documents the demotion as a step towards cleanup. A row demoted
     // after a kick is still a row a kick left behind, and forgetting that would lose the only
-    // record that an Add was ever owed.
-    const kickedAt = new Date('2026-09-01T10:18:38Z');
-    deviceGroupRepo.findOne.mockResolvedValue(membership({ status: 'active', kickedAt }));
+    // record that an Add was ever owed. `null` is therefore not "clear it" but "nobody removed
+    // this leaf, so leave the column as it stands" - the writer keeps that promise.
+    deviceGroupRepo.findOne.mockResolvedValue(
+      membership({ status: 'active', kickedAt: new Date('2026-09-01T10:18:38Z') })
+    );
 
     await controller.updateInvitationStatus(
       { deviceId: DEVICE, userId: TARGET, groupId: GROUP, status: 'pending' },
@@ -170,8 +184,7 @@ describe('InvitationsController - the kick marker', () => {
       'false'
     );
 
-    expect(saved().status).toBe('pending');
-    expect(saved().kickedAt).toBe(kickedAt);
+    expect(demotion()).toEqual({ removedFromTreeAt: null, tag: 'INVITATION_STATUS' });
   });
 
   it('writes nothing at all when there is no row to kick', async () => {
@@ -184,6 +197,6 @@ describe('InvitationsController - the kick marker', () => {
     );
 
     expect(answer).toEqual({ status: 'not_found', affected: 0 });
-    expect(deviceGroupRepo.save).not.toHaveBeenCalled();
+    expect(messaging.deactivateDeviceMembership).not.toHaveBeenCalled();
   });
 });

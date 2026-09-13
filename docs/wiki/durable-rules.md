@@ -755,6 +755,32 @@ The link-preview pipeline, the SSRF guard, the favicon cascade and the undici se
 
 ## Contracts the compiler does not check
 
+- **A STATED INVARIANT WITH NO SINGLE WRITER BEHIND IT IS A COMMENT, AND WRITING IT IN BOLD DOES NOT
+  MAKE IT TRUE.** `DeviceGroupMembership`'s docblock said, in bold, that `activateDeviceMembership`
+  was the only thing that wrote `active` and the only writer of the Redis routing set. It was added
+  on 2026-09-12 as the fix for a defect that had shipped for want of it - and it was FALSE ON BOTH
+  HALVES on the day it was written: three paths wrote `active` and four wrote `pending`, and half of
+  them wrote no routing set at all. Both directions were fused onto one writer each on 2026-09-13
+  (S-D1, S-D2), and only then did the sentence become an enforcement. **So when a review turns up an
+  invariant worth stating, the same change must leave exactly one writer able to break it** - and
+  the audit of who writes it is the deliverable, not the sentence. Two corollaries paid for here.
+  **Enumerate the writers of the COLUMN, not the callers of the method that ought to own it**: every
+  divergent path was found by grepping the literal value written, never by following the API.
+  **And an audit's list of what diverges is itself a hypothesis** - S-D2's said the paths disagreed
+  on `kickedAt`, and they did not: each wrote it the way that column's own definition requires, and
+  fusing that difference away would have destroyed the discriminator a whole report partitions on.
+  What a sweep confirms is fused; what it refutes is written down as refuted.
+  [mls-graine-state-machine](protocols/mls-graine-state-machine.md#5-the-servers-per-device-membership---two-values-and-a-marker)
+- **AN INCOMPLETE CACHE IS NOT AN EMPTY ONE, AND NEITHER IS AN OVER-FULL ONE.** `group:members:<id>`
+  is reloaded from the rows only when it is EMPTY, so every door that checks emptiness is blind to a
+  set that is merely wrong. A missing entry made an `active` device unroutable and unelectable; an
+  extra entry left a device whose leaf had just been removed electable to answer a `welcome_request`
+  it cannot serve, for the fourteen days until the stale-pending purge deleted the row - because the
+  SEND reconciliation only ever `sadd`s, so nothing in the service removes an entry that should not
+  be there. **A reconciliation that repairs in one direction is not a reconciliation**, and a cache
+  whose repair trigger is a cheap sentinel value must have its writers be correct rather than its
+  readers be forgiving. [chat-delivery](services/chat-delivery.md)
+
 - **IDENTIFY A SUBJECT BY THE KEY THE SYSTEM DECIDES BY, NEVER BY THE ONE A HUMAN READS.** A display
   name is not a login is not a subject, and only the last one appears in a `WHERE` clause or a token.
   On 2026-09-09 an `association_members` grant matched by `displayName` hit five rows belonging to an
