@@ -700,6 +700,41 @@ failed probe denies all three rather than leaving them as they were: a screen of
 API will refuse is the shape this repo has already paid for once. Pinned by
 `associations.service.break-is-bde-only.spec.ts` and `membershipProbe.test.ts`.
 
+### A date refusal names WHICH rule was broken, as a code
+
+The three date checks - a start that will not parse, an end that will not parse, an end before its
+start - threw `BadRequestException` carrying nothing but an English sentence. `endsAt must be after
+startsAt` is the one a user actually meets, and the global agenda's deposit modal rendered it
+verbatim: `e instanceof Error ? e.message : <fallback>` picks the server's text every time the call
+reaches the server at all, so the localized half was dead code and a French reader met English
+mid-form. The association page's modal had the opposite failure - one generic "Impossible
+d'enregistrer" for all three, so the reader was told something went wrong and never which rule they
+broke.
+
+This is the standing rule about never branching on an error MESSAGE, applied one step earlier: the
+distinction is classified AT THE THROW, as `CALENDAR_ERROR_CODES`, the same shape
+`PARTNERSHIP_ERROR_CODES` already uses in `partnerships.service.ts`. `calendarDateRefusal(code,
+message)` builds the `{ code, message }` body; `request()` in `frontend/src/lib/associations/api.ts`
+already parses it and throws `SocialApiError(message, code)`.
+
+**Three codes and not one, because they are three different mistakes and a reader can only fix the
+one they made.** `associations.service.calendar-date-codes.spec.ts` pins six cases and not three,
+because create and update check the same three things in two different places - which is exactly how
+one of them comes to drift. The update's END_BEFORE_START case sends only `endsAt`, so the
+comparison is against the STORED start, the case a DTO-only check would miss.
+
+**Both modals translate through ONE mapper** (`frontend/src/lib/calendar/calendarErrors.ts`), because
+they call the same two endpoints and a second copy is how one of them comes to translate a code the
+other does not. Its load-bearing behaviour is the fallback: **a code nobody has translated yet reads
+as the generic line, never as the server's English.** Translating the three known codes fixes three
+sentences; refusing to print `.message` is what stops the fourth.
+
+The agenda's two OTHER `.message` renders were load failures, closed by deleting the preference - the
+fallback each line already declared was the right answer. With those gone `/calendar` and
+`lib/components/calendar` have none, so both join `TREES` in
+`frontend/src/lib/associations/serverProse.test.ts`, the guard that owns this rule. That is what
+stops the next one: the guard is extended by a tree, never by an allowlist entry.
+
 ## Redis events published
 
 The social-service publishes to `chat:channel_events`:

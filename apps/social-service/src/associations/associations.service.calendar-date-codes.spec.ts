@@ -84,9 +84,12 @@ async function codeOf(run: () => Promise<unknown>): Promise<string | undefined> 
   try {
     await run();
   } catch (e) {
-    expect(e).toBeInstanceOf(BadRequestException);
-    const body = (e as BadRequestException).getResponse();
-    return (body as { code?: string }).code;
+    // A plain `throw` rather than an `expect`: an assertion inside a catch is one the runner cannot
+    // tell from a branch that never ran, which is the whole point of the trailing throw below.
+    if (!(e instanceof BadRequestException)) {
+      throw new Error(`expected a BadRequestException, got ${String(e)}`);
+    }
+    return (e.getResponse() as { code?: string }).code;
   }
   throw new Error('expected a refusal, and nothing was thrown');
 }

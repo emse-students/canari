@@ -7205,10 +7205,16 @@ came from one predicate; a broader one over `frontend/src` finds ~288 occurrence
 which only some assign to an error state a screen renders - the rest sit inside a `Log`/`console`
 call and are correctly dev-facing.
 
-**196 remain, down from 223** (same predicate, both ends measured on this branch's base,
-2026-09-13). The member-facing pass closed 27 across `components/posts`, `components/settings`,
-`routes/posts`, `routes/profile`, `routes/lists`, `routes/documents` and `routes/forms`, all seven
-now guarded. What is left is chat (`lib/utils/chat`), graine, `routes/admin` (11 files), and the
+**195 remain, down from 223** (same predicate, both ends measured on this branch's
+base, 2026-09-13). The member-facing pass closed 27 across `components/posts`,
+`components/settings`, `routes/posts`, `routes/profile`, `routes/lists`, `routes/documents` and
+`routes/forms`; the agenda pass closed the last three in `components/calendar` and `routes/calendar`
+and gave that endpoint its codes. **Thirteen trees are guarded.**
+
+**The raw count is an upper bound and always will be**: the predicate is a grep, so it counts the
+docblocks that QUOTE the shape in order to explain it - two of the 195 are the mapper's own
+documentation. The guard strips comments before matching, which is why it is the guard and not the
+grep that decides whether a tree is clean. What is left is chat (`lib/utils/chat`), graine, `routes/admin` (11 files), and the
 worker/`mls-client`/`services` layers, where most sites are dev-facing logs rather than screens.
 
 **A tree is added only once every file under it answers**, which is why they arrive in batches: a
