@@ -41,10 +41,18 @@ function mountAt({
   bubbleTop,
   popoverHeight,
   isOwn = false,
+  bubbleLeft = 0,
+  bubbleRight = 400,
+  popoverWidth = 0,
 }: {
   bubbleTop: number;
   popoverHeight: number;
   isOwn?: boolean;
+  /** The bubble's own span inside a scroller running 0 -> 800. A SHORT bubble is a narrow one. */
+  bubbleLeft?: number;
+  bubbleRight?: number;
+  /** What the popover measures once rendered. Zero - happy-dom's default - means "always fits". */
+  popoverWidth?: number;
 }) {
   const scroller = document.createElement('div');
   scroller.className = 'chat-messages-scroll';
@@ -64,13 +72,30 @@ function mountAt({
       return {
         top: bubbleTop,
         bottom: bubbleTop + 40,
-        left: 0,
-        right: 400,
-        width: 400,
+        left: bubbleLeft,
+        right: bubbleRight,
+        width: bubbleRight - bubbleLeft,
         height: 40,
       } as DOMRect;
     }
+    // THE STRIP, which is what the horizontal decision is measured from - the popovers are its
+    // children and pin to ITS edges. It hangs in the gutter on the side away from the message:
+    // `right-full` (so its right edge is the bubble's left) for an own message, `left-full` for a
+    // peer's. STRIP_W is the three icons; the number does not matter, its SIDE does.
+    if (this.hasAttribute('data-message-toolbar')) {
+      const STRIP_W = 100;
+      const [left, right] = isOwn
+        ? [bubbleLeft - STRIP_W, bubbleLeft]
+        : [bubbleRight, bubbleRight + STRIP_W];
+      return { top: bubbleTop, bottom: bubbleTop + 40, left, right, width: STRIP_W } as DOMRect;
+    }
     return origRect.call(this);
+  });
+  Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+    configurable: true,
+    get() {
+      return popoverWidth;
+    },
   });
   Object.defineProperty(HTMLElement.prototype, 'offsetHeight', {
     configurable: true,
@@ -205,5 +230,101 @@ describe('MessageBubbleToolbar - which way a popover grows from the strip', () =
 
     expect(strip).not.toBeNull();
     expect(strip!.contains(menu)).toBe(true);
+  });
+});
+
+/**
+ * INWARD IS A DIRECTION, NOT A PROMISE OF ROOM - AND A SHORT MESSAGE IS WHERE IT RUNS OUT.
+ *
+ * The block above pins that a popover grows back INWARD over the message, which is right and was
+ * paid for twice. What it does not say is how far inward there IS. The popover's width is fixed -
+ * six emojis and the button that opens the full picker - and the message's is not, so growing
+ * inward over a bubble NARROWER than the popover overshoots the bubble and carries on past the far
+ * edge of the scroller. `overflow-y: auto` computes `overflow-x` to `auto` as well, so that edge
+ * clips exactly as the top one does, and the result is the user's report of 2026-09-13: the
+ * reaction bar on a short message runs off the window, while the full emoji panel - a different
+ * component - places correctly.
+ *
+ * The reproduction is arithmetic, which is why it is here and not on a screenshot. An own `Coucou`
+ * at 700..780 in an 800-wide scroller puts its strip at 600..700; a 280px pill pinned to the
+ * strip's left edge ends at 880, which is 80px outside. A LONG own message hides it - the strip
+ * moves left and the same pill fits - which is exactly why the report said "message court".
+ *
+ * The rule is the vertical one on the other axis, against the same clipper, with the same tie-break.
+ */
+describe('MessageBubbleToolbar - a popover that cannot grow inward grows the other way', () => {
+  /** An own message pinned to the right of the scroller, 80px wide - the reported case. */
+  const shortOwn = (popoverWidth: number) =>
+    mountAt({
+      bubbleTop: 600,
+      popoverHeight: 152,
+      isOwn: true,
+      bubbleLeft: 700,
+      bubbleRight: 780,
+      popoverWidth,
+    });
+
+  it('MIRRORS on a short OWN message, because inward would end past the right edge', () => {
+    // Strip at 600..700, so inward leaves 800-600 = 200 and the pill needs 280.
+    const menu = openMenu(shortOwn(280));
+
+    expect(menu.className).toContain('right-0');
+    expect(menu.className).not.toContain('left-0');
+  });
+
+  it('keeps the reference on the SAME message when the popover is narrow enough to fit', () => {
+    // The mirror must be driven by room and by nothing else: same bubble, smaller pill.
+    const menu = openMenu(shortOwn(150));
+
+    expect(menu.className).toContain('left-0');
+    expect(menu.className).not.toContain('right-0');
+  });
+
+  it('MIRRORS on a short PEER message, which is the same defect on the other side', () => {
+    // Strip at 80..180, so inward - leftward from 180 - leaves 180 and the pill needs 280.
+    const menu = openMenu(
+      mountAt({
+        bubbleTop: 600,
+        popoverHeight: 152,
+        isOwn: false,
+        bubbleLeft: 0,
+        bubbleRight: 80,
+        popoverWidth: 280,
+      })
+    );
+
+    expect(menu.className).toContain('left-0');
+    expect(menu.className).not.toContain('right-0');
+  });
+
+  it('keeps the reference when NEITHER side fits, rather than flipping to an equally clipped one', () => {
+    // A pill wider than the whole scroller. Inward leaves 200, outward leaves 700-0 = 700 for an
+    // own message... so this is the case that must NOT be decided by "does it fit" alone: a bubble
+    // in the MIDDLE, where the two sides are equal and the reference has to win.
+    const menu = openMenu(
+      mountAt({
+        bubbleTop: 600,
+        popoverHeight: 152,
+        isOwn: true,
+        bubbleLeft: 450,
+        bubbleRight: 550,
+        popoverWidth: 900,
+      })
+    );
+
+    // Inward leaves 800-350 = 450, outward leaves 450-0 = 450. Neither fits 900 and neither is
+    // roomier, so the placement the rest of the file pins is the one that survives.
+    expect(menu.className).toContain('left-0');
+  });
+
+  it('both popovers take the same anchor, so the menu cannot drift from the pill', () => {
+    // They are two elements with one rule. The quick bar is opened by its own trigger; what is
+    // pinned here is that the class the menu carries is the class the measurement produced.
+    const root = shortOwn(280);
+    const menu = openMenu(root);
+    const anchored = menu.className.includes('right-0');
+
+    expect(anchored, 'the overflow menu mirrors on a short own message').toBe(true);
+    expect(menu.className.includes('left-0')).toBe(false);
   });
 });
