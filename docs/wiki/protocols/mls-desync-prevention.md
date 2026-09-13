@@ -145,6 +145,47 @@ save would cost one per failed attempt.
 caller really uses - because a path that keeps its own `forgetGroup` never reaches the shared
 function, and no test of the shared function can see it.
 
+### 6ter. Client - an eviction is learnt five ways and recorded once
+
+The sibling of 6bis, one rung out: that one is the single way this device stops HOLDING a group,
+this one is the single way it records that it is no longer IN one.
+`recordEviction` ([`utils/chat/eviction.ts`](../../../frontend/src/lib/utils/chat/eviction.ts)) is
+that record.
+
+A client can find out six ways, at five sites - a Remove commit it applies, the exclusion its author
+announces, an inbound frame refused as `evicted`, a membership check before a send or on selecting
+the conversation, a send the server refuses, and `NotAGroupMemberError`. What is OWED once the fact
+is known is the same every time, and every site wrote it out by hand:
+
+| Site | Retired the row | Told the user |
+| --- | --- | --- |
+| the commit applied, and the frame refused as evicted | yes | no |
+| the exclusion announced by its author | yes | yes |
+| the outbox, before its send and after the refusal | yes, on a hook shared with a group DELETION | no |
+| the membership check on selection, and the server's own refusal | **no** | yes |
+
+The last row is the one the user meets. `verifyCurrentUserMembership` runs on every conversation
+selection, learnt the eviction from the authoritative local state, and wrote it NOWHERE: a notice in
+the thread, `sendError` on the composer and a thirty-second entry in `membershipCache`, all of which
+die with the page. The row stayed `active`, so the next load asked the members-only endpoint for its
+roster again (the 403 of GRP-3 and GRP-6, from a third door), the re-add guards did not know to stand
+down, and the fact had to be re-learnt on the next selection, for ever.
+
+**The evidence is the only thing a site decides, and two of the six are MISSES.** `outbound-refusal`
+and `server-refusal` mean the Remove commit never reached this device, so a message was written,
+encrypted and refused to learn what a frame already stated. The line those two produce is worded so
+it cannot wear the healthy shape - it never says `Removed from ...` - which is what stops any rule
+written for the healthy path from forgiving them, in the campaign watcher or anywhere else.
+
+**Dropping the local MLS state is NOT part of this**, and the separation is deliberate: that is
+`dropGroupState` (6bis), an evicted group's tree is what still opens the frames of the epochs this
+device WAS a member for, and forgetting it is what makes a later frame stop classifying as `evicted`
+at all. The row is what refuses the send, the roster, the re-add and the welcome_request. Two axes,
+one implementation each; `memberRemoved` is simply a site that legitimately does both.
+
+`recordEviction.onePolicy.test.ts` drives the six evidences over one table, through the five real
+entry points, for the same reason 6bis does.
+
 ### 7. Client - persistence write-if-newer (Web/IndexedDB)
 
 - **Monotonic snapshot version** (**`utils/hex.ts`**) — the encrypted MLS checkpoint is written under a **write-if-newer** guard. Every serialized snapshot is tagged (`tagMlsSnapshot`) with an increasing version at the synchronous capture moment; the version rides with the bytes via a `WeakMap` (`propagateMlsSnapshotVersion` across the plain→encrypted step) so the off-thread Argon2 encryption cannot reorder it. **`saveMlsStateEncrypted`** does an IDB read-modify-write and refuses any blob whose version is not strictly newer than the stored **`MLS_STATE_VERSION_KEY`**. This stops a slow encrypted flush (`mlsStatePersister`, worker Argon2) from overwriting a fresher concurrent write (`generateKeyPackage`, main-thread Argon2) — which would silently regress the persisted epoch on the next reload. The in-memory counter is reseeded from the stored version at load (`seedMlsSnapshotSeq`) so a fresh session never emits a version below what is already on disk. Only a plain integer is stored — no groupId/epoch at rest, so privacy is unchanged. Web-only: Tauri persists to the filesystem under its own `mls_bin_write_lock`.

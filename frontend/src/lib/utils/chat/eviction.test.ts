@@ -23,7 +23,7 @@ function deps(
     mlsService: { isGroupActive: vi.fn(active) },
     conversations,
     groupId: 'g1',
-    userId: 'u1',
+    evidence: 'remove-commit' as const,
     saveConversation: vi.fn(async () => {}),
     log,
   };
@@ -137,7 +137,7 @@ describe('readLocalMembership - three answers, and the third is the point', () =
       },
       conversations: new Map([['g1', convo('g1')]]),
       groupId: 'g1',
-      userId: 'u1',
+      evidence: 'remove-commit',
       saveConversation: vi.fn(async () => {}),
       log,
     });
@@ -163,7 +163,7 @@ describe('membershipIsDurablyLost - the guard on the members-only endpoint', () 
       mlsService: { isGroupActive: vi.fn(async () => false) },
       conversations,
       groupId: 'g1',
-      userId: 'u1',
+      evidence: 'remove-commit',
       saveConversation: vi.fn(async () => {}),
       log: vi.fn(),
     });

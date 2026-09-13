@@ -71,7 +71,7 @@ stateDiagram-v2
     NO_REPAIRER --> NOT_READY: either epoch moved
     NO_REPAIRER --> NO_REPAIRER: same pair, no network call made
 
-    EVICTED --> RETIRED: retireIfEvicted
+    EVICTED --> RETIRED: recordEviction, from any of six evidences
     RETIRED --> [*]
 ```
 

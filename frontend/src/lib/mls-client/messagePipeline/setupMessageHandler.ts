@@ -792,7 +792,15 @@ async function handleKnownGroup({
       // out by SENDING: the outbox saw a healthy group, encrypted, was refused, read the refusal as
       // transient and retried it up the whole backoff ladder - learning by failing what the frame
       // it had just applied already stated.
-      await retireIfEvicted({ mlsService, conversations, groupId, userId, saveConversation, log });
+      await retireIfEvicted({
+        mlsService,
+        conversations,
+        groupId,
+        evidence: 'remove-commit',
+        saveConversation,
+        addMessageToChat,
+        log,
+      });
     } else {
       statePersister.scheduleDeferred();
     }
@@ -931,7 +939,15 @@ async function handleKnownGroup({
       log(
         `[MLS] Frame for ${convoKey.slice(0, 8)}… arrived after eviction - ACKed, no repair owed`
       );
-      await retireIfEvicted({ mlsService, conversations, groupId, userId, saveConversation, log });
+      await retireIfEvicted({
+        mlsService,
+        conversations,
+        groupId,
+        evidence: 'inbound-frame',
+        saveConversation,
+        addMessageToChat,
+        log,
+      });
       return true;
     }
     if (kind === 'oom') {

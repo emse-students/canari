@@ -11,6 +11,7 @@ import { applyReaction, mergeReactions } from '$lib/utils/chat/messageReactions'
 import { editSupersedes } from '$lib/utils/chat/editPrecedence';
 import { purgeConversation, retireConversation } from '$lib/utils/chat/conversations';
 import { dropGroupState } from '$lib/utils/chat/dropGroupState';
+import { recordEviction } from '$lib/utils/chat/eviction';
 import {
   digestIdentity,
   noteProbeReceived,
@@ -531,20 +532,22 @@ export async function handleSystemEvent(
       // manually - which dismisses it on ALL their devices. A silent purge here dropped the
       // conversation everywhere with no visible trace.
       // Deferred, which is what `persistMlsStateNow` did here: the pipeline's persister coalesces,
-      // and the conversation row saying `removed` is written durably by `retireConversation` below.
+      // and the conversation row saying `removed` is written durably by `recordEviction` below.
       await dropGroupState(mlsService, convo.id, {
         reason: 'we were removed from the group',
         checkpoint: 'deferred',
         log,
       });
-      await addMessageToChat('system', m.chat_system_removed_from_group(), convoKey, {
-        isSystem: true,
-      });
-      await retireConversation({
+      // THE ANNOUNCEMENT IS ONE OF SIX EVIDENCES, NOT A SEPARATE ENDING. The retire and the notice
+      // used to be written out here, and they were the only pair of the five learning sites that
+      // did both - which is why the other four each lacked one half.
+      await recordEviction({
         conversations,
-        key: convoKey,
         groupId: convo.id,
+        evidence: 'system-event',
         saveConversation,
+        addMessageToChat,
+        log,
       });
       log(`[INFO] Excluded from group "${convoKey}" by ${getName(senderNorm)} - marked removed`);
     } else {

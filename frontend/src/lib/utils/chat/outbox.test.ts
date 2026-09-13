@@ -683,7 +683,12 @@ describe('outbox flusher', () => {
     // And the Remove commit is authoritative, so no repair is attempted: an evicted group is a
     // correct group we are not in, never a broken one.
     expect(requestReAdd).not.toHaveBeenCalled();
-    expect(markDeletedRemotely).toHaveBeenCalledWith('g1');
+    // AN EVICTION IS RECORDED, NOT MERELY BANNERED. `markDeletedRemotely` is the group-DELETION
+    // backstop and it was carrying this too, which is why the row read as live again after a
+    // reload and the user was never told why their message died. The disposition is one function
+    // now (`recordEviction`), and the row is its durable half.
+    expect(markDeletedRemotely).not.toHaveBeenCalled();
+    expect(conversations.get('g1')!.lifecycle).toBe('removed');
     expect(storage._map.has('m1')).toBe(false);
     expect(conversations.get('g1')!.messages[0].status).toBe('error');
   });
@@ -770,7 +775,8 @@ describe('outbox flusher', () => {
     await outbox.flush();
 
     expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
-    expect(markDeletedRemotely).toHaveBeenCalledWith('g1');
+    expect(markDeletedRemotely).not.toHaveBeenCalled();
+    expect(conversations.get('g1')!.lifecycle).toBe('removed');
     expect(storage._map.has('m1')).toBe(false);
     expect(conversations.get('g1')!.messages[0].status).toBe('error');
   });

@@ -493,16 +493,22 @@ const STATE_CHANGE = [
   /^\[UI\] Local conversation removed \(\S+\)$/,
   /^\[DISCOVERY\] \d+ server group\(s\) missing locally: /,
   /^\[DISCOVERY\] Placeholder ".*" created\.$/,
-  // AN EVICTION, LEARNT FROM THE COMMIT THAT STATED IT. `[EVICT] Removed from ...` and the Rust WARN
-  // behind it are the mechanism WORKING: a Remove commit named this device, and the client retired
-  // the conversation on the spot instead of discovering it later by having a send refused. Real
-  // changes to what the client holds, so they are reported; not defects, so they do not break
+  // AN EVICTION, LEARNT FROM A FACT THAT STATED IT. `[EVICT] Removed from ...` and the Rust WARN
+  // behind it are the mechanism WORKING: something authoritative named this device, and the client
+  // retired the conversation on the spot instead of discovering it later by having a send refused.
+  // Real changes to what the client holds, so they are reported; not defects, so they do not break
   // `clean`. GRP-3 and GRP-8 produce them by design, on the removed peer.
   //
-  // Deliberately NOT written as an `^\[EVICT\]` prefix. The third line that module can emit says
-  // membership could not be READ after a commit, which is the branch that HIDES an eviction and
-  // leaves the refused send to find it - it stays unexplained, and a prefix rule would silence it.
-  /^\[EVICT\] Removed from [0-9a-f]{8}… by a Remove commit - conversation retired$/,
+  // FOUR CLAUSES, NOT ONE, AND THEY ARE ENUMERATED RATHER THAN GLOBBED. The disposition is a single
+  // function now (`recordEviction`), and the clause is the EVIDENCE it was given - the commit
+  // itself, the exclusion its author announced, a frame that arrived after it, or a membership
+  // check reading a commit already applied. All four are the fact arriving on time. The other two
+  // evidences are the fact arriving LATE, they are worded so they cannot match this shape at all,
+  // and they must stay unexplained.
+  //
+  // Deliberately NOT written as an `^\[EVICT\]` prefix, for the same reason: the branch that HIDES
+  // an eviction says membership could not be READ, and a prefix rule would silence it.
+  /^\[EVICT\] Removed from [0-9a-f]{8}… by (an exclusion its author announced|a Remove commit (a frame for the group arrived after|this device had already applied)|a Remove commit) - conversation retired$/,
   // THE DEPARTURE STATED BEFORE IT IS PERFORMED, on every leave and every delete. The conversation
   // used to be purged at the END of `exitGroupAndCleanup`, so for the whole span of the server call,
   // the WASM forget and the persist behind it, a group this device had irrevocably given up still
