@@ -11,6 +11,27 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - a group ends in three places, and now it ends the same way in all three
+
+`DELETE mls/groups/:groupId`, the internal retirement of a scope's distribution group, and the DM
+half of an account deletion each wrote the ending out for itself: the tombstone, the sweep of
+everything the group owns, the Redis keys, in that order, with the flag that keeps the per-user
+dismissal markers.
+
+They already agreed on the hard part - `deleteGroupOwnedRows` has been the one definition of what a
+group owns since 2026-08-18 - and what stayed copied is what drifted. Two of the three once wrote
+the tombstone and swept NOTHING, and because the row deliberately survives so a lagging device can
+observe the deletion, the orphan sweep could never collect the residue: that sweep only finds groups
+with no row at all. It was permanent until the 90-day reaper.
+
+`tombstoneGroups` is now the way a group ends: one transaction for the tombstone and the sweep, the
+Redis keys after it commits, and `groupRowSurvives` not a parameter at all because this function IS
+the soft delete. The one real difference travels as a flag - the distribution retirement releases
+its scope columns with the same write, which is what makes a salon re-privatisable.
+
+The spec drives all three ROUTES over one table, not the shared function: a route that keeps its own
+update-and-delete pair is precisely what a test of the function would walk past.
+
 ### Fixed - one add-lock, two doors, and the shorter lock was on the slower path
 
 The MLS add-lock serialises "add member + Welcome" so two devices cannot commit into the same

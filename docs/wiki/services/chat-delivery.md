@@ -50,6 +50,14 @@ keys through `deleteGroupRedisKeys`: `history:`, `group:members:`, `pending_welc
 (`mls:addlock:`, `mls:commitlock:`) are **not** in it, and deliberately: both are written with an
 `EX` TTL, so they collect themselves.
 
+**AND ONE FUNCTION IS THE WAY A GROUP ENDS: `tombstoneGroups`.** The allowlist settled WHAT a group
+owns; the sequence around it - tombstone, sweep, Redis keys, in that order, and the soft-delete flag
+that keeps the dismissal markers - was still written out by each of the three routes that end a
+group, which is how two of them came to write a tombstone and sweep nothing. They now pass a group
+id and, for the one route that owns a scope, a flag releasing it. `groupEnds.onePolicy.spec.ts`
+drives all three ROUTES over one table rather than the function, because a route that keeps its own
+pair of statements is exactly what the function cannot see.
+
 **Five call sites, and until 2026-08-21 only the two collectors were among them.** This page used to
 say "both ways a group ends call it" and name the 90-day tombstone reaper
 (`cleanupSoftDeletedGroups`) and the orphan sweep (`purgeOrphanGroups`, reached from
@@ -57,7 +65,7 @@ say "both ways a group ends call it" and name the 90-day tombstone reaper
 The three routes that actually end a group each still carried a hand-written shorter list, or none at
 all:
 
-| Where a group ends | What it swept before | Missing |
+| Where a group ends (all three now call `tombstoneGroups`) | What it swept before | Missing |
 |---|---|---|
 | `DELETE /api/mls/groups/:id` (`groups.controller`) | 4 tables, 2 Redis keys | `mls_commit_log`, `mls_group_info`, `group_invites`, `dm_user_dismissed_groups`, `pending_welcome:` |
 | `DELETE /api/internal/users/:id`, DM branch | 3 tables, 2 Redis keys | the same five |

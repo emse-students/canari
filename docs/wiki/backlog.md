@@ -89,7 +89,6 @@ a real collapse, not a test that fails on divergence):
 | Item | What is duplicated | Count | The part that bites |
 | --- | --- | --- | --- |
 | `S-D6` | base publication onto one `putGroupInfo` | 3 writers | |
-| `S-D8` | group tombstone | 3 routes | |
 | `S-D10` | orphan-group purge | 3 call sites | |
 | `S-D7` | send | 2 routes | |
 | `D8` | checkpoint | 4 routes, 3 guarantees | see the P1 above |
