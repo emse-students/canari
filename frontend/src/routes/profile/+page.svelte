@@ -1,8 +1,14 @@
 <script lang="ts">
+  import { Log } from '$lib/utils/Log';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { fetchMyProfile, updateMyProfile, type UserProfile } from '$lib/stores/user';
+  import {
+    fetchMyProfile,
+    updateMyProfile,
+    UserProfileFetchError,
+    type UserProfile,
+  } from '$lib/stores/user';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import {
     fetchUserMemberships,
@@ -66,12 +72,17 @@
       bioInput = profile.bio || '';
       void loadProfileExtras(profile.id);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : m.profile_load_error_fallback();
-      if (msg.toLowerCase().includes('session') || msg.includes('401')) {
+      Log.d('profile.load failed', err);
+      // A STATUS CODE IS AN ANSWER, AND THIS ONE WAS ALREADY BEING HANDED OVER. The redirect used
+      // to fire on `msg.includes('401')` over the thrown SENTENCE - so it depended on the server's
+      // English wording, and deleting that wording would have silently deleted the redirect with
+      // it. `fetchMyProfile` has thrown `UserProfileFetchError(res.status)` all along; reading the
+      // status is the same decision made from what is known rather than from prose.
+      if (err instanceof UserProfileFetchError && err.status === 401) {
         await goto('/login?returnTo=/profile', { replaceState: true });
         return;
       }
-      error = msg;
+      error = m.profile_load_error_fallback();
     } finally {
       loading = false;
     }
@@ -121,7 +132,8 @@
       profile = await updateMyProfile({ bio: bioInput });
       editingBio = false;
     } catch (err) {
-      error = err instanceof Error ? err.message : m.profile_bio_save_error_fallback();
+      Log.d('profile.saveBio failed', err);
+      error = m.profile_bio_save_error_fallback();
     } finally {
       saving = false;
     }

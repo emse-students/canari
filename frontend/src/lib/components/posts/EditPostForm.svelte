@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Log } from '$lib/utils/Log';
   import {
     Image,
     FileText,
@@ -263,7 +264,8 @@
       newFilePreviews.forEach((url) => URL.revokeObjectURL(url));
       onSaved(updated);
     } catch (err) {
-      errorMessage = err instanceof Error ? err.message : m.post_edit_save_error();
+      Log.d('submitEdit failed', err);
+      errorMessage = m.post_edit_save_error();
     } finally {
       saving = false;
     }

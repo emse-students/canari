@@ -2427,6 +2427,7 @@
   "list_subtitle": "Les listes de promotion de la communauté",
   "list_new_create_btn": "Créer une liste",
   "list_load_error_fallback": "Impossible de charger les listes",
+  "list_edit_load_error": "Impossible de charger la liste",
   "list_empty_title": "Aucune liste",
   "list_empty_desc": "Les listes de promotion apparaîtront ici.",
   "list_archived_heading": "Anciennes listes ({count})",

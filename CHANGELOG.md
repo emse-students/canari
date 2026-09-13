@@ -38,6 +38,36 @@ follows the description rather than the description being questioned. Both now c
 separately are two places to change and one to forget. Three message keys that said
 "Administration" where two already said the truth are deleted.
 
+### Fixed - twenty-seven member-facing screens stop showing the reader an English developer string
+
+Posts, the profile, the lists, the reviewer documents, the forms and the settings all carried
+`err instanceof Error ? err.message : <localized fallback>`. The thrown text is not even the
+server's prose in most of these: `stores/user.ts` throws `Failed to update profile (500)` and the
+post service `post-service 403: ...`, so a French reader met an untranslated English string built by
+our own client, and the localized half of every one of those lines was dead code.
+
+The fallback each site already declared is the right answer, so the fix is deleting the preference -
+but **not into silence**. Every catch that lost its only use of the error now logs it: the detail is
+dev-facing and belongs in `Log.d`, and the reader gets the sentence written for them. A best-effort
+path that swallows its cause leaves nothing behind at all, which is worse than the defect.
+
+Two sites were not deletions. `routes/lists/[slug]/edit` had a raw French literal as its fallback -
+two violations in one line - and now has a key. And **`SettingsSecuritySection` keeps its
+`.message` on purpose**, because a PIN-change failure is thrown by our own client carrying
+`m.auth_pin_change_current_incorrect()`: the text is already French, and deleting the preference
+would replace a precise sentence with a vaguer one. It is parked in the guard's allowlist with the
+reason, and the allowlist entry FAILS if the file ever stops offending, so it cannot rot.
+
+Seven more trees join `serverProse.test.ts`. 196 sites remain across `frontend/src`, down from 223.
+
+### Fixed - the profile sent you to the login page by looking for "401" inside an error sentence
+
+`fetchMyProfile` throws `UserProfileFetchError(res.status)` and always has. The profile screen
+ignored it and tested `msg.toLowerCase().includes('session') || msg.includes('401')` against the
+thrown SENTENCE - so the redirect depended on the server's English wording, and the localisation
+sweep above would have silently deleted the redirect along with the prose it keyed on. It reads the
+status now: a status code is an answer, and this one was already being handed over.
+
 ### Changed - the event co-host picker stops calling itself a partnership
 
 "Associations partenaires (optionnel)" named a relationship the control never asks for. The picker

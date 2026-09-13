@@ -2406,6 +2406,7 @@
   "list_subtitle": "The community's class lists",
   "list_new_create_btn": "Create a list",
   "list_load_error_fallback": "Failed to load lists",
+  "list_edit_load_error": "Failed to load the list",
   "list_empty_title": "No list",
   "list_empty_desc": "Class lists will appear here.",
   "list_archived_heading": "Former lists ({count})",

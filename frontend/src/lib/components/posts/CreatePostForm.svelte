@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Log } from '$lib/utils/Log';
   import {
     Image,
     FileText,
@@ -359,7 +360,8 @@
       selectedLinkedCalendarEventId = '';
       onPostCreated();
     } catch (err) {
-      errorMessage = err instanceof Error ? err.message : m.post_create_publish_error();
+      Log.d('publishPost failed', err);
+      errorMessage = m.post_create_publish_error();
     } finally {
       publishing = false;
     }

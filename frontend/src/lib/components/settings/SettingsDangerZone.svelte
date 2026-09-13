@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Log } from '$lib/utils/Log';
   import { goto } from '$app/navigation';
   import { Trash2, LoaderCircle, CircleAlert } from '@lucide/svelte';
   import { slide } from 'svelte/transition';
@@ -24,7 +25,8 @@
       await clearAuth();
       await goto('/login', { replaceState: true });
     } catch (err) {
-      deletionError = err instanceof Error ? err.message : m.profile_delete_error_fallback();
+      Log.d('handleDeleteAccount failed', err);
+      deletionError = m.profile_delete_error_fallback();
       deleting = false;
     }
   }
