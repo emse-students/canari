@@ -108,67 +108,63 @@ D8), and the only one whose documentation and behaviour disagree:
 | `persistMlsStructuralCheckpoint()` (no argument) | durable **only if a persister is registered**; otherwise writes nothing and returns `false` |
 | `checkpointAfterSend()` | never awaited; deferred to a microtask, and suppressed outright while `bulkIngestDepth > 0` |
 
-### The 2026-09-12 audit sweep - what survived verification, and what did not
+### The MLS audit items that are still real, with their verified counts (swept 2026-09-12)
 
-An audit of four subsystems produced **99 items** (49 duplicate paths, 50 dead ends). It was written
-by reading the source, so every item was a hypothesis about the code rather than a measurement of
-it - and the server half of it has since been measured against production, while the client half was
-re-verified against `main` on 2026-09-12. **Both halves moved.** The sweep is recorded here because
-re-deriving it costs four subsystem-wide searches, and because four of its items had already gone
-false within a single day the previous time.
+**These numbers are the swept ones, not the audit's.** The audit was written by reading the source,
+so each item was a hypothesis; the counts below were re-derived against `main`, and eight of them
+came back LARGER than claimed. Every item the sweep killed has been deleted from this list rather
+than recorded - what shipped is in `CHANGELOG.md`.
 
-**Twenty items are false or already shipped.** `G-D12` (only one epoch source feeds rotation now;
-the server's `activeEpoch` reaches `classifyBase` alone). `G-E13` (closed: `unsettledDistributionGroups`
-holds a group across its creation, so a seed can no longer be minted against one that then loses the
-publish race). `R-D1` (the `minEpoch` asymmetry between the 30 s reactive path and the 45 s watchdog
-is gone - no caller anywhere passes a non-zero `minEpoch`). `R-D4` (mis-stated: it is a paired clear
-of **two different stores** across five sites, not a double-clear of one). `R-E2` (the re-add
-suspension does NOT renew its window - it resets from the FIRST attempt and lifts itself after 3 min).
-`R-E7` and `R-E10` (both fixed: a deferral for a group that left WASM is deleted rather than retried,
-and the unacked-frame tally gained three discharging events in place of its 15-second timer).
-`S-D3` (the two deletion routes are no longer byte-identical). `D6` (one call site remains). `D2`,
-`D7`, `DE1` (deleted 2026-09-12 - see CHANGELOG). `DE6`/`R-E6` (refuted and fixed by the live-device
-cap). `S-D11` (fixed 2026-09-12). `S-E4`, `S-E6`, `S-E8`, `S-E9`, `S-E11` (measured on production:
-zero population each).
+**Duplicate paths to fuse** (the user's decision, verbatim: *"Fusionner vers une implementation"* -
+a real collapse, not a test that fails on divergence):
 
-**Eight items are WORSE than the audit stated**, and a fix written to the audit's numbers would have
-missed part of each:
+| Item | What is duplicated | Count | The part that bites |
+| --- | --- | --- | --- |
+| `S-D1` | `pending -> active` on a device membership | 5 paths, 3 writers | THREE gate behaviours: `activateDeviceMembership` warns and returns, `updateInvitationStatus` throws, and `createGroup` has **no addressability gate at all** |
+| `S-D2` | `ABSENT\|active -> pending` | 5 writers + 3 inserts | they disagree on `kickedAt` and on the Redis SREM; `sendWelcome` *resets `kickedAt` to null* |
+| `S-D9` | Redis routing-set refill from the rows | 3 identical blocks | `messaging.service.ts:2045`, `:2213`, `:2297`. A fourth site (`:838`) is a different mechanism and stays |
+| `S-D6` | base publication onto one `putGroupInfo` | 3 writers | |
+| `S-D8` | group tombstone | 3 routes | |
+| `S-D10` | orphan-group purge | 3 call sites | |
+| `S-D5` | commit replay | 2 routes | the PushSecret route silently coerces a missing/negative `sinceEpoch` to 0 where the JWT route rejects it |
+| `S-D4` | add-lock TTL | 2 policies | clamped 1-60 s vs hard-coded 15 s |
+| `S-D7` | send | 2 routes | |
+| `D8` | checkpoint | 4 routes, 3 guarantees | see the P1 above |
+| `G-D11` | ways `holdsGroupState` becomes false | **6 sites** | audit said 2 |
+| `R-D6` | where eviction is learnt | **5** | audit said 3 |
+| `R-D7` | conversation-row builders | **4** | audit said 2 |
+| `R-D8` | outbox flush triggers | **6 triggers, 8 sites** | audit said 5 |
+| `R-D3` | stale-base repair | 2 mechanisms | the responder (`sessionAuth.ts:1107-1130`) gates on `isGroupActive` and never calls `classifyBase` |
+| `R-D9` | "re-add the requester" | 2 entrances, 1 responder | the deferred-drain entrance passes no `onNotReady`, so a still-not-ready group is dropped rather than re-deferred |
+| `R-D10` | `no_peer_online` recorded | 2 ways | only one is discharged by a presence edge; `noRepairerAt`/`lastReAddAt` are not |
+| `G-D1` | `ensureDistributionGroupFor` | 5 call sites | deduplicated only by an in-flight map |
+| `G-D9` | rotation reasons | 4 -> 1 outcome | the reason survives only in a log line |
+| `D1`, `D3`, `D4`, `D5`, `D9`, `D10`, `D12`, `D13` | see the MLS client sweep | 2-3 each | `D3` is three forget+rejoin escalations for ONE condition |
+| `G-D2`-`G-D8`, `G-D10`, `G-D13`, `G-D14` | Graine entry points | 2 each | `G-D6` (requester fail-open / answerer fail-closed) is deliberate and stays |
 
-| Item | Audit | Verified |
-|---|---|---|
-| `S-D1` | 4 writers, 2 gate behaviours | 5 paths, 3 writers, **3** behaviours - and `createGroup` has **no** addressability gate at all |
-| `S-D2` | 4 writers | 5, plus 3 `ABSENT -> pending` inserts; `sendWelcome` *resets `kickedAt` to null* |
-| `D8` | 4 routes, 3 guarantees | confirmed, **and** the documentation promises a native override that never existed (see the P1 above) |
-| `G-D11` | 2 ways | 6 sites |
-| `R-D6` | 3 places | 5 |
-| `R-D7` | 2 builders | 4 |
-| `R-D8` | 5 triggers | 6 triggers, 8 call sites |
-| `DE12` | handler exists, producer does not | the producers exist now and are **dormant** - no write path frames a `Framed::V1` blob, so the handler is still unreachable |
+**Availability dead ends - every one needs an exit that EXISTS** (the user, 2026-09-12: *"on ne peut
+pas demander a un utilisateur de sortir de l'impasse lui-meme. La sortie de l'impasse doit exister
+pour garantir la disponibilite"*, scoped the same day to availability rather than deliberate
+refusals):
 
-**Seven items called dead ends have an exit the audit did not find**: `G-E5` (the roster walk
-re-arms from an empty decline set on the next `noteMissingSeed`, so reopening the salon restarts it),
-`G-E9`, `G-E14` (two), `R-E5`, `R-E8`, `DE4`, `DE9` (on the replay path only - the live path still
-ACKs and drops).
-
-**Sixteen are availability dead ends and are the work.** The user's rule, verbatim 2026-09-12: *"on
-ne peut pas demander a un utilisateur de sortir de l'impasse lui-meme. La sortie de l'impasse doit
-exister pour garantir la disponibilite"* - scoped, on the same day, to **availability** dead ends
-rather than deliberate refusals. Those with a measured population are on this page already (18
-commit-log holes across 11 of 58 groups, all exactly one epoch wide; 30 stranded `pending` seats, all
-`never added`; 1 unrepairable group). Those still to be sized: `R-E3` (`ROSTER_DISAGREE` with an
-outbox that has no attempt ceiling), `R-E4` (an `isGroupHealthy` hold that increments no counter and
-writes no `nextAttemptAt`), `R-E8` (exit-owed limbo - a group both invisible and un-recoverable while
-the server never answers), `R-E9`, `R-E11`, `R-E1`/`DE2` (`NO_REPAIRER`, left only by the epoch pair
-moving), `DE7`, `DE10` (an undecodable payload is never enqueued, so it can never be ACKed - the code
-names the 90-day retention window as its only terminator), `DE13` (leaving stages no Remove for the
-leaver's own leaf), `G-E1`, `G-E2`/`DE11`, `G-E6`, `G-E10`.
-
-**Five are deliberate refusals and are explicitly NOT to be "fixed"**, under the same scoping: `DE8`
-(a revoked device's leaf is permanent - that is MLS security, not a defect), `G-E8`
-(`historyVisibility === 'joined'` is the feature), `S-E2` (`deletedAt`), `G-E4`
-(`GraineBelowFirstIndexError`, which does have an exit via a seed at a lower `firstIndex`), and
-`past-epoch-application`, which `history.ts` deliberately does not count as a loss.
-
+| Item | The state | Population |
+| --- | --- | --- |
+| `S-E1`/`DE4` | a commit-log hole | **18 holes, 11 of 58 groups, every one exactly ONE epoch wide** |
+| `S-E5` | a `pending` seat nobody honours | **30**, all `never added`, zero carry `kickedAt` |
+| `S-E3`/`G-E3`/`DE3` | stale base, every holder behind | **1 group** |
+| `S-E7` | `latestKeyRotationPayload` | **NULL in 58 of 58** - the column is dead |
+| `R-E3` | `ROSTER_DISAGREE` | outbox has no attempt ceiling; `sender-not-active` is neither permanent disposition |
+| `R-E4` | an `isGroupHealthy` hold | returns `retry` without incrementing `attempts` or writing `nextAttemptAt` |
+| `R-E8` | exit-owed limbo | the group is invisible **and** un-recoverable while the server never answers; no counter, no expiry |
+| `R-E1`/`DE2` | `NO_REPAIRER` | left only by the epoch pair moving - which needs the holder that is absent |
+| `R-E9`, `R-E11` | peer-unresolved; `readWelcomeOwed() === null` | retried for ever, no counter |
+| `DE7` | `MLS_LOCAL_STATE_UNDECRYPTABLE` | the only route offered requires the OLD PIN |
+| `DE10` | an undecodable payload | never enqueued, so never ACK-able; the code names the 90-day retention window as its only terminator |
+| `DE13` | leaving a conversation | nothing stages a Remove for the leaver's own leaf |
+| `G-E1`, `G-E2`/`DE11` | no distribution group for a scope; 403 on one | log and `return false`, no retry |
+| `G-E6` | `historyAsked` set when nobody could be asked | cleared only by the community leaving the device, or a restart |
+| `G-E10` | `forgetCommunityGraine` with no runtime | warns, returns 0; seeds and joined groups stay |
+| `S-E10` | base-refresh answering `no_peer_online` | persists nothing at all |
 
 ### P2 - five conversations rest on ONE holder and one has none, and the report can only say so (measured on production 2026-09-12)
 
