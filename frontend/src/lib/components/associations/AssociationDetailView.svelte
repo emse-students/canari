@@ -19,7 +19,7 @@
   } from '$lib/associations/api';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
-  import { PAGE_WIDTHS } from '$lib/components/layout/pageWidth';
+  import { PAGE_WIDTHS, type PageWidth } from '$lib/components/layout/pageWidth';
   import PartnershipCardList from '$lib/components/shop/PartnershipCardList.svelte';
   import CardTile from '$lib/components/shared/CardTile.svelte';
   import { CARD_GRID } from '$lib/components/layout/cardGrid';
@@ -98,6 +98,25 @@
   let following = $state(false);
   let followLoading = $state(false);
   let activeSection = $state<'about' | 'calendar' | 'members' | 'shop' | 'partnerships'>('about');
+
+  /**
+   * THE WIDTH FOLLOWS THE SECTION, BECAUSE THIS PAGE IS FIVE PAGES BEHIND A TAB BAR.
+   *
+   * It was one `tool` column for all five, chosen as the compromise of a "genuinely mixed" page -
+   * and a compromise width is one that fits none of them: `shop` and `partnerships` are the same
+   * card walls `/shop` and `/associations` draw at `grid`, and `calendar` is a MONTH, which is the
+   * example `pageWidth.ts` gives for `grid`. Capping them at 1024px did not shorten anything, it
+   * just drew fewer columns (user, 2026-09-14: *"les pages doivent utiliser l'espace disponible.
+   * Donc si on a besoin de la largeur, on prend la largeur"*).
+   *
+   * `about` and `members` stay `tool`: one is prose, the other a column of full-width rows, and
+   * neither has a second column to put in the space.
+   */
+  const sectionWidth = $derived<PageWidth>(
+    activeSection === 'calendar' || activeSection === 'shop' || activeSection === 'partnerships'
+      ? 'grid'
+      : 'tool'
+  );
   let products = $state<AssociationProduct[]>([]);
   let partnerships = $state<PartnershipCard[]>([]);
   let shopCustomAmounts = $state<Record<string, number>>({});
@@ -197,14 +216,12 @@
   component, so the width was one level below everything the sweep looked at. A count of routes is
   not a count of page columns.
 
-  `tool` and not `reading` or `grid`, and the page is genuinely mixed: `about` is prose, `members`
-  is a column of full-width rows (prose-shaped, the same reading `/directory` got), while `shop` and
-  `partnerships` are card walls. 1024px is the shape `pageWidth.ts` describes for exactly that - a
-  surface whose controls do not fit a reading measure - and it is what the admin pages became from
-  this identical 896. The prose inside is capped to the reading measure by its own container, so
-  widening the page does not lengthen a line of text.
+  Which of the three it is now follows the TAB, and the reasoning is on `sectionWidth` above: the
+  page is five pages behind a tab bar and a single column fitted none of them. The prose inside is
+  capped to the reading measure by its own container, so widening the page never lengthens a line
+  of text - which is why the widening is free and the capping was not.
 -->
-<PageContainer width="tool" class="space-y-8">
+<PageContainer width={sectionWidth} class="space-y-8">
   <a
     href={basePath}
     class="text-text-muted hover:text-text-main inline-flex items-center gap-2 text-sm transition-colors"

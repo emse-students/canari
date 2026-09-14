@@ -1348,11 +1348,17 @@ because a width does not have to live in a route:
 of call sites is not a count of implementations: the sweep counted the things it could enumerate,
 and the defect lived in what that enumeration was a proxy FOR.
 
-**What each became.** `AssociationDetailView` is `width="tool"` - the identical 896 the eleven admin
-pages carried, becoming the identical 1024 they became. The page is genuinely mixed (`about` prose,
-`members` a column of full-width rows, `shop` and `partnerships` card walls), which is the shape
-`pageWidth.ts` describes for `tool`; the about text then carries `PAGE_WIDTHS.reading` itself, so
-widening the page does not lengthen a line. `forms/[id]` is `width="reading"` and its sticky bar
+**What each became.** `AssociationDetailView` took `width="tool"` - the identical 896 the eleven
+admin pages carried, becoming the identical 1024 they became - and **that single column lasted until
+2026-09-14, when the mixture that justified it was read the other way**: a page that is prose on one
+tab and a card wall on the next has no one right width, and a compromise fits neither half. It now
+picks per ACTIVE TAB - `grid` for `calendar` (a month, `pageWidth.ts`'s own example for `grid`),
+`shop` and `partnerships` (the same card walls `/shop` and `/associations` draw at `grid`), `tool`
+for `about` and `members`. Capping the card walls at 1024 never shortened anything, it drew fewer
+columns; and the calendar tab could not hold `/calendar`'s 360px rail until it had the width (user:
+*"les pages doivent utiliser l'espace disponible. Donc si on a besoin de la largeur, on prend la
+largeur"* - [calendar](modules/calendar.md)). The about text carries `PAGE_WIDTHS.reading` itself,
+so widening the page never lengthens a line - which is what makes the widening free. `forms/[id]` is `width="reading"` and its sticky bar
 takes the same constant rather than a second copy of the number. The join pages are
 `PageContainer`s whose CARD keeps the 448 - that number was never wrong for a card, only for a page.
 
