@@ -61,8 +61,22 @@
   }
 </script>
 
+<!--
+  A STRIP, NOT A ROW. This drew its own bordered band under the action bar - 49 px on A1 (Mi 9T,
+  436 x 945 CSS px) measured 2026-09-14, to carry a single badge reading one emoji and the digit 1.
+  Facebook puts the same tally at the right edge of the action bar itself and owns no row for it, so
+  this now renders inside `PostActions` and keeps only what is its own: the badges, and the "who
+  reacted" tooltip below.
+
+  `flex-nowrap` because it shares a 44 px line: badges past the card's width are clipped rather than
+  wrapped, which is what keeps the bar one line high whatever the post collected.
+
+  A reader's own reaction is marked by a TINT, not by a bright ring around the pill. The ring was a
+  second outline inside a card that already has one, and it sat beside a button now showing that same
+  emoji - two loud signals for one fact, which is what made the badge read as an alert.
+-->
 {#if Object.keys(reactionCounts).length > 0}
-  <div class="border-cn-border/40 flex flex-wrap gap-2 border-b px-5 py-2">
+  <div class="flex min-w-0 flex-nowrap items-center gap-1.5 overflow-hidden">
     {#each Object.entries(reactionCounts) as [reactionType, count] (reactionType)}
       {@const reaction = reactionList.find((r) => r.type === reactionType)}
       <button
@@ -70,9 +84,9 @@
         onclick={() => onReactionClick(reactionType)}
         onmouseenter={(e) => onBadgeEnter(reactionType, e.currentTarget as HTMLElement)}
         onmouseleave={scheduleHide}
-        class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 transition-all {userReaction ===
+        class="inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-1 transition-all {userReaction ===
         reactionType
-          ? 'bg-cn-yellow/20 ring-cn-yellow ring-1'
+          ? 'bg-cn-yellow/15'
           : 'hover:bg-cn-yellow/10 bg-(--cn-surface)'}"
         title={reaction?.type}
       >

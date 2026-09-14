@@ -11,6 +11,33 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - chaque publication payait deux rangees et un composeur avant d'en montrer une autre
+
+Mesure sur un Mi 9T (436 x 945 pixels), le 14 septembre 2026 : une carte de publication depensait
+272 pixels en decor avant le moindre mot - 68 pour l'en-tete, 65 pour la barre "J'adore /
+Commenter", 49 pour la rangee des reactions juste en dessous, et 90 pour un champ de commentaire
+affiche au repos dans *chaque* carte. Facebook, ouvert sur le meme telephone la meme minute, en
+depense 110 : un en-tete de 64 pixels, et **une** rangee de 44 qui porte a la fois les boutons et
+les reactions, celles-ci calees a droite a l'interieur (x920-1050 sur 1080). Il n'existe aucune
+rangee de reactions separee.
+
+La rangee des reactions rejoint donc la barre d'actions au lieu de s'installer dessous, et les mots
+"J'adore" et "Commenter" disparaissent : Facebook n'en affiche aucun, l'emoji choisi par le lecteur
+nomme sa propre reaction mieux que son nom ne le faisait, et les deux libelles restent sur
+`aria-label` et `title` ou un lecteur d'ecran comme un survol les atteignent toujours. Resultat
+mesure sur le meme telephone : barre 65 -> 45 pixels, rangee de reactions 49 -> 0, carte 540 -> 472.
+Les deux boutons passent au passage de 36-40 a 44 pixels de zone tactile, ce que la hauteur de la
+rangee payait deja.
+
+### Changed - l'etat "j'ai reagi" criait deux fois au seul endroit ou la publication devait parler
+
+Le bouton de reaction peignait un pave ambre de 45 x 44 derriere l'emoji, et la pastille de compte a
+cote s'entourait d'un anneau ambre vif pour la meme raison. Les deux disaient ce que l'emoji disait
+deja : un lecteur qui a reagi voit *son* emoji la ou se trouvait le sourire neutre. Deux signaux
+forts pour un seul fait, c'est ce qui faisait lire la pastille comme une alerte plutot que comme un
+compte - meme reproche que le halo de la pastille "Epingle". Le pave disparait, l'anneau devient un
+simple fond teinte.
+
 ### Changed - chaque carte du fil portait un champ de commentaire vide, ouvert en permanence
 
 Une publication sans commentaire affichait quand meme le composeur au repos : avatar, "Soyez le
