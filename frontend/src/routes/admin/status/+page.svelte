@@ -99,10 +99,6 @@
   }
 </script>
 
-<svelte:head>
-  <title>{m.admin_status_page_title()}</title>
-</svelte:head>
-
 {#snippet deviceTable(rows: DeviceEntry[])}
   {#if rows.length === 0}
     <p class="text-text-muted text-sm">{m.admin_status_no_devices()}</p>

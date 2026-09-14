@@ -47,8 +47,6 @@
   }
 </script>
 
-<svelte:head><title>{m.group_join_page_title()}</title></svelte:head>
-
 <!--
   THE PAGE IS A DECLARED SHAPE AND THE CARD OWNS ITS OWN WIDTH. This was `mx-auto max-w-md` on the
   page itself - 448px, a width no scale declares - which is the page column being written by hand.

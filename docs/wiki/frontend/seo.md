@@ -34,6 +34,37 @@ which fires even with `ssr = false`, since it operates on the shell, not on a re
 `renderHead.test.ts` asserts both literals still exist in `app.html`. Nothing type-checks a string
 substitution, so a renamed marker would turn the whole feature into a silent no-op.
 
+### One thing names a page, and one list says whether it is public
+
+`resolveSeoForPath()` answers for **every** path, and both halves of that were false until
+2026-09-14.
+
+**Twenty of the forty static routes had no name.** They fell through to `SITE.defaultTitle`, so
+thirteen admin pages, `/settings`, `/profile`, `/events`, `/directory`, `/lists`, `/documents` and
+`/account/purchases` all opened a tab reading "Canari - Mines Saint-Etienne". Ten OTHER pages had
+each worked around that by rendering a `<svelte:head><title>` of their own - which WINS over the one
+`SeoHead` renders, while `og:title` and `twitter:title` keep the layout's. So a page that fixed its
+own title broke its own preview: `/legal/cgu` served a document titled "Conditions Generales
+d'Utilisation" whose `og:title` said "Conditions generales d'utilisation", because the two spellings
+lived in two files that had drifted.
+
+`PAGE_TITLES` in `resolve.ts` is now the one owner, and every entry is a reference to the message
+the page already displays as its heading - so a page's name exists exactly once in the app. Admin
+pages compose `seo_admin_page_title` over the section name, because `/admin/associations` and
+`/associations` otherwise read identically in a tab.
+
+**"Not for the public" was three lists that disagreed.** `PRIVATE_PREFIXES` here, the `Disallow:`
+block in `routes/robots.txt/+server.ts`, and `PUBLIC_SITEMAP_ENTRIES`. robots spelled `/profile/`
+and `/admin/` with a trailing slash, which leaves `/profile` and `/admin` themselves crawlable;
+neither list had heard of `/directory`, the student directory. `PRIVATE_PREFIXES` is now the single
+source and robots writes its `Disallow:` lines from it. `/api/` is the one line robots still states
+itself, because it is not a page.
+
+`seoTitles.test.ts` holds all of it, against the **derived** route set so a page added tomorrow is
+asked the same question: every static route resolves a title that is not the default (`/` and
+`/app-shell` excepted, each with the sentence saying why), no `.svelte` file but `SeoHead` renders a
+`<title>`, and nothing is in both the sitemap and the private list.
+
 ### Where the data comes from
 
 `src/lib/seo/serverSeo.ts` starts from `resolveSeoForPath()` — the same baseline the client uses —
@@ -137,8 +168,9 @@ tells a crawler nothing about the content. It merges the static routes with:
 Both halves run in parallel and are allowed to come back empty — a short sitemap is worth serving,
 a 500 is not.
 
-`/robots.txt` stays prerendered (it has no data to fetch) and disallows every private prefix, the
-invite tokens, and `/app-shell`.
+`/robots.txt` stays prerendered (it has no data to fetch) and **writes its `Disallow:` block from
+`PRIVATE_PREFIXES`** rather than restating it - see the section above for what the second copy cost.
+The `Allow:` lines mirror the sitemap, and `seoTitles.test.ts` asserts no path is in both.
 
 ## When the SSR container is down
 

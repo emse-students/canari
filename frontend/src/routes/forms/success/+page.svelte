@@ -34,10 +34,6 @@
   });
 </script>
 
-<svelte:head>
-  <title>{m.form_success_title()}</title>
-</svelte:head>
-
 <div class="flex min-h-screen items-center justify-center px-4">
   <div class="w-full max-w-md space-y-6 text-center">
     {#if status === 'loading'}
