@@ -55,6 +55,17 @@
     onRefresh?: () => void;
     /** Called immediately after the post has been deleted so the parent can remove the card. */
     onDelete?: () => void;
+    /**
+     * Whether the comment section starts open.
+     *
+     * FALSE IN A FEED, TRUE ON A POST'S OWN PAGE, and the distinction is the reader's intent. The
+     * composer is no longer drawn at rest (it cost 90 px in every card, see `PostComments`), so a
+     * card that starts closed shows none - correct for a feed being scrolled past, wrong for
+     * `/posts/[postId]`, which a reader reached by following a link to THAT post and where the
+     * comments are most of what they came for. Facebook opens the section on a post's own page for
+     * the same reason.
+     */
+    commentsOpen?: boolean;
   }
 
   let {
@@ -63,6 +74,7 @@
     authToken = '',
     onRefresh: _onRefresh,
     onDelete,
+    commentsOpen = false,
   }: Props = $props();
 
   // Local mutable copy - updated directly after interactions to avoid a full list reload.
@@ -81,7 +93,10 @@
     }
   });
   let commentText = $state('');
-  let showComments = $state(false);
+  // `untrack` states what the prop IS: an initial value, read once. The card owns the open/closed
+  // state from then on - a parent that flipped the prop later would otherwise fight the reader's
+  // own taps on the comment button.
+  let showComments = $state(untrack(() => commentsOpen));
   let submittingComment = $state(false);
   let showReactionPicker = $state(false);
 

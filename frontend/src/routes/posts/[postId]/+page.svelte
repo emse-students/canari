@@ -56,7 +56,17 @@
   </PageHeader>
 
   {#if data.post}
-    <PostCard post={data.post} currentUserId={userId} {authToken} onDelete={() => goto('/posts')} />
+    <!--
+      `commentsOpen` because this page IS the post: a reader who followed a link to it came for the
+      thread, not to scroll past it. In the feed the section stays closed behind the comment button.
+    -->
+    <PostCard
+      post={data.post}
+      currentUserId={userId}
+      {authToken}
+      commentsOpen
+      onDelete={() => goto('/posts')}
+    />
   {:else}
     <div
       class="border-cn-border bg-cn-surface rounded-3xl border border-dashed px-6 py-16 text-center"
