@@ -290,9 +290,12 @@ export async function removeMemberAndBroadcast(params: {
  *  3. Forgets the group locally to avoid leaving an orphan leaf in
  *     getLocalGroups() that would trigger phantom recovery attempts.
  *
- * Unlike `removeMemberAndBroadcast`, this function does not generate an MLS remove commit:
- * the member's leaf remains in others' trees until the next commit, but they no longer
- * receive messages (server-side).
+ * Unlike `removeMemberAndBroadcast`, this function generates no MLS remove commit, and it cannot:
+ * a departing member is exactly the party that may not commit its own eviction. So the leaf stays
+ * in every remaining member's tree - holding key material for a conversation its owner has walked
+ * out of - and only a REMAINING member can collect it. `removeStrayLeaves` is that collector, run
+ * by every holder on every connection off the same loop as the stale-base repair; the server-side
+ * half below is immediate and needs no client.
  *
  * STEP 2'S FAILURE LEAVES THIS FUNCTION TOO - the same seam as `deleteGroupAndBroadcast`, which
  * carries the reasoning. The local exit is unconditional and completes first; whether the server

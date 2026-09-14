@@ -47,6 +47,21 @@ Your app now asks that one question again every minute, and only that one - the 
 still skipped while nothing can have changed. The moment any member is connected, the conversation
 repairs itself and opens.
 
+### Fixed - someone who left a conversation was still, cryptographically, in it
+
+When you leave a conversation, your app tells the others, removes you from the server so nothing is
+ever sent to you again, and forgets the conversation. What it cannot do is take your place out of
+the shared encryption state: that is one thing the person leaving is not allowed to do for
+themselves - only someone staying can.
+
+Nobody did. Your place stayed in everyone's copy of the conversation, indefinitely, holding keys for
+messages you had walked away from. Communities already had the repair; ordinary conversations and
+groups did not.
+
+Now every member fixes it on their next connection, using the same comparison communities use: the
+list of people entitled to read the conversation against the list of places in it. Anything with no
+one behind it is removed. Nothing is announced twice - the person leaving already said so.
+
 
 ### Fixed - a conversation that failed to be created left a permanent, empty trace of itself
 

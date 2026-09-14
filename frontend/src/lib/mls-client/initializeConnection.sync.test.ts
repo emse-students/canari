@@ -29,6 +29,52 @@ function forgetPair() {
   };
 }
 
+describe('syncConnectionAfterWsOpen - a departed leaf is collected by a holder', () => {
+  /**
+   * The sweep is the one read every device already makes on every connection, and this is the
+   * second repair only a HOLDER can perform - the sibling of the stale-base republish beside it.
+   * The unit cases live in `strayLeaves.test.ts`; this one pins that the loop reaches them and that
+   * the eviction is checkpointed, which is what stops the removed leaf coming back on the next load.
+   */
+  it('removes a departed leaf from a group it holds, and persists the new epoch', async () => {
+    const removeMember = vi.fn().mockResolvedValue(undefined);
+    const mls = {
+      generateKeyPackage: vi.fn().mockResolvedValue(undefined),
+      reconcilePublishedKeyPackages: vi.fn().mockResolvedValue(undefined),
+      getUserGroups: vi
+        .fn()
+        .mockResolvedValue([{ groupId: 'g-live', name: 'Live', isGroup: true }]),
+      getLocalGroups: vi.fn().mockReturnValue(['g-live']),
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['u1:dev-1', 'gone:web-7']),
+      getGroupUserMembers: vi.fn().mockResolvedValue([{ userId: 'u1' }]),
+      removeMember,
+      getEpoch: vi.fn().mockReturnValue(9),
+      ...forgetPair(),
+      saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
+      persistCheckpoint: vi.fn().mockResolvedValue(undefined),
+      getDeviceId: vi.fn().mockReturnValue('dev-1'),
+      isDistributionGroup: vi.fn().mockReturnValue(false),
+      waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
+    };
+    const log = vi.fn();
+
+    await syncConnectionAfterWsOpen({
+      mlsService: mls as any,
+      userId: 'u1',
+      deviceKeyB64: 'pin1',
+      processDeviceInvitationsLocally: vi.fn().mockResolvedValue(undefined),
+      onGroupMissing: vi.fn().mockResolvedValue(undefined),
+      log,
+    });
+
+    expect(removeMember).toHaveBeenCalledExactlyOnceWith('g-live', ['gone']);
+    // An epoch that only ever existed in memory is an epoch the next load walks back into, and the
+    // removed leaf would come back with it.
+    expect(mls.persistCheckpoint).toHaveBeenCalled();
+    expect(mls.forgetGroup).not.toHaveBeenCalled();
+  });
+});
+
 describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
   // No fake timers here any more: the 500 ms sleep this used to advance past is gone, replaced by
   // `waitForMessageQueueIdle`. Advancing a clock that nothing reads would only hide a real one.
