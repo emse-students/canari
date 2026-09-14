@@ -372,6 +372,38 @@ roomier, keep inward when neither fits. **It is measured from the STRIP and not 
 because the popovers pin to the strip's edges; measuring the bubble is right by accident on a long
 message and wrong on the short one the rule exists for, and a test drives exactly that.
 
+### `fixed` means the viewport only while no ancestor claims it (2026-09-13)
+
+A non-`none` `transform` - and `filter`, `backdrop-filter`, `perspective`, `contain`, and
+`will-change` of any of them - makes an element the containing block for every `position: fixed`
+DESCENDANT. A full-bleed overlay left in the component tree therefore does not cover the viewport;
+it covers whichever ancestor happens to be transformed at that moment.
+
+`GifPickerModal` is ONE component opened from the chat composer and from a post's comment box, and it
+misbehaved in exactly one of them. `PostCard`'s card carries `hover:-translate-y-0.5`, so while the
+pointer was over the card, the picker and its scrim were confined to the card's rectangle.
+
+**Measured in a browser, 2026-09-13**, on a 400x200 stand-in card: the overlay reads `1265x400` at
+`(0,0)` with no transform and `400x200` at `(109,99)` with `translateY(-2px)` - the card exactly -
+and returns to the viewport the moment the transform goes.
+
+Two things follow that a static read would miss. It is INTERMITTENT on a desktop, because the
+containing block appears and disappears with the pointer, and the 300ms `transition-all` keeps the
+transform non-`none` on the way out. And it is WORSE ON TOUCH, because `:hover` sticks after a tap
+until something else is tapped - so on a phone the card holds the transform for as long as the
+overlay is open, which is how the user reported it (*"notamment sur mobile"*).
+
+**The fix is `use:portal`, never removing the transform.** The lift is a deliberate affordance on
+every feed card; the overlay is what is in the wrong place. The repo already refused this shape for
+ANCHORED panels - `fixedPopover.test.ts` fails a viewport-positioned panel left in the tree and names
+this precise cause - and a `fixed inset-0` overlay is the same fact in a different spelling.
+
+**Eleven other components declare `fixed inset-0` and stay in the tree, and they are NOT one thing**
+(swept 2026-09-13, list in [backlog](../backlog.md)): five are a SCRIM behind a drawer, two are an
+invisible outside-click CATCHER, and three are a modal CONTAINER. Only the third is a duplicate, and
+it is a real one - `PollComposerModal`'s root class is character-for-character the picker's. The
+guard shipped here is scoped to what is proven: anything the posts tree opens.
+
 ### One scrollbar, and the feature query that makes it work
 
 There were **seven** definitions of the same scrollbar: `.chat-scrollbar` in `app.css` and
