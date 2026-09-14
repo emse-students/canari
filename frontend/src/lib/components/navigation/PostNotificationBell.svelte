@@ -39,9 +39,9 @@
   href="/notifications"
   title={m.nav_notifications_label()}
   aria-label={m.nav_notifications_label()}
-  class="text-text-muted hover:text-text hover:bg-cn-surface relative flex h-9 w-9 items-center justify-center rounded-full transition-colors"
+  class="text-text-muted hover:text-text hover:bg-cn-surface relative flex h-11 w-11 items-center justify-center rounded-full transition-colors"
 >
-  <Bell size={18} strokeWidth={2} />
+  <Bell size={24} strokeWidth={2} />
   {#if postNotifStore.unread > 0}
     <span
       class="text-2xs absolute -top-0.5 -right-0.5 flex h-[1.1rem] min-w-[1.1rem] items-center justify-center rounded-full bg-red-500 px-0.5 font-bold text-white"
