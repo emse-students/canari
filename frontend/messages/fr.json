@@ -873,7 +873,7 @@
   "moderation_resolved_header_label": "Traités / Ignorés - {count}",
   "moderation_preview_full_label": "Aperçu complet de la publication",
   "moderation_preview_full_short_label": "Aperçu complet",
-  "moderation_copy_id_label": "Copier l'ID",
+  "admin_copy_id_label": "Copier l'ID",
   "moderation_open_post_label": "Ouvrir la publication",
   "moderation_preview_post_label": "Aperçu de la publication",
   "moderation_open_post_with_comment_label": "Ouvrir le post contenant ce commentaire",

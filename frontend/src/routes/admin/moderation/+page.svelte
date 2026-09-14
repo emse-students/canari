@@ -40,6 +40,7 @@
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
   import { m } from '$lib/paraglide/messages';
+  import { copyId } from '$lib/utils/copyId';
   import { getLocale } from '$lib/paraglide/runtime';
 
   type Tab = 'reports' | 'hidden' | 'muted';
@@ -290,10 +291,6 @@
     }
   }
 
-  function copyId(id: string) {
-    void navigator.clipboard.writeText(id);
-  }
-
   function formatDate(iso: string): string {
     const locale = getLocale() === 'en' ? 'en-US' : 'fr-FR';
     return new Date(iso).toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' });
@@ -503,9 +500,9 @@
             <!-- ID + navigation -->
             <div class="mb-3 flex items-center gap-2">
               <button
-                onclick={() => copyId(report.contentId)}
+                onclick={() => void copyId(report.contentId)}
                 class="text-text-muted/50 hover:text-text-muted text-2xs flex items-center gap-1 font-mono transition-colors"
-                title={m.moderation_copy_id_label()}
+                title={m.admin_copy_id_label()}
               >
                 {report.contentId.slice(0, 8)}…
                 <Copy size={10} />
@@ -773,9 +770,9 @@
               {m.moderation_pending_reports_count_label({ count: post.pendingReportCount })}
             </span>
             <button
-              onclick={() => copyId(post.id)}
+              onclick={() => void copyId(post.id)}
               class="text-text-muted/50 hover:text-text-muted text-2xs flex items-center gap-1 font-mono transition-colors"
-              title={m.moderation_copy_id_label()}
+              title={m.admin_copy_id_label()}
             >
               {post.id.slice(0, 12)}…
               <Copy size={10} />

@@ -11,6 +11,17 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - an identifier in the admin pages was cut short with no way to read it
+
+Three places showed a full account or content identifier and then cut it off: the admin user list,
+the moderation post preview, and the list the preview opens from. On a phone the user list showed 40
+of the 64 characters, and the missing part could not be read, selected or copied - which mattered
+most on that page, because its own search box matches against exactly that identifier.
+
+They now show a short prefix and put the whole value on the clipboard when tapped, which is what the
+moderation page had always done. Nothing is cut at any screen width, and the identifier an
+administrator wants to paste into a search is one tap away instead of being unreachable.
+
 ### Fixed - an association page went blank when one of its events belonged to somebody else
 
 Opening `https://canari-emse.fr/associations/mitv` showed nothing but the crash screen. The month
@@ -30,7 +41,6 @@ name, colour and logo instead of the club's own. Owner and co-owners are built i
 grid, the day panel and the event dialog, and every list of them is keyed on the association id: a
 name is a label two associations may share, and a key that can repeat is a crash rather than a
 mis-painted logo.
-
 
 ### Fixed - your own name was cut short at the top of your profile
 
