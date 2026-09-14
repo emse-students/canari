@@ -1628,38 +1628,37 @@ owed.**
 **0.14.15 also carries `48d31eaa` itself**, which is owed regardless of calls: it is why an iPad
 could not obtain an FCM token either, and therefore received no message notification of any kind.
 
-### Where the three channels actually are, 2026-09-04, and the ONE call that is missing
+### Where the three channels actually are - READ THEM, NEVER READ THIS
 
-**READ THIS BEFORE PLANNING A RELEASE.** Two stables were published on 2026-09-04 and NEITHER
-reached production, because the production estate is gated on both stores taking the version. The
-state is not guessable from any version number:
+**THIS SECTION NAMES NO VERSION, DELIBERATELY, AND IT USED TO.** It carried a `2026-09-04` snapshot
+table of the three channels, and every row of it was false within ten days while still reading as
+current - which is the third time a paragraph in this file has gone stale that way. A channel's
+state is not derivable from any version number and it is not derivable from this repository either:
+two of the three are edited by a machine outside it, and one of those is edited by a human at Apple.
+**So the state is MEASURED, each half by its own command:**
 
-| | version | how it got there |
-| --- | --- | --- |
-| production web | `0.16.1` | the `production` job was `skipped` in both runs - it needs `android` AND `ios` green |
-| Google Play `production` | `0.16.2` | committed by the `0.16.2` run; `0.16.3`'s Play job was also green |
-| App Store | **nothing published** | version `0.16.3` exists, holds build `1600399` and its notes, and sits UN-SUBMITTED in review submission `575c5bbb` |
+| | what settles it |
+| --- | --- |
+| production web | `curl -s https://canari-emse.fr/api/version` |
+| dev web | `curl -s https://dev.canari-emse.fr/api/version` |
+| Google Play | `bun tools/play-vitals/vitals.mjs` - the `production` track line |
+| App Store | the `App Store / Build iOS IPA` job of that release's `release.yml` run, plus App Store Connect for whether Apple has since APPROVED what was submitted |
 
-**The only request never made is `PATCH /v1/reviewSubmissions/575c5bbb {submitted: true}`.**
-Everything before it succeeded on the `0.16.3` run: the prepared-and-forgotten `0.16.1` slot was
-renamed, the build attached, the notes written. The item POST then answered 409, for the reason in
-the entry under `[Unreleased]` in `CHANGELOG.md` - a check that compared a JSON:API linkage its own
-request had not asked for, and so read `undefined` for every item.
+**THE LAST ROW IS THE ONE THAT CANNOT BE CLOSED FROM HERE.** A green iOS job means the version was
+created, the build attached and the submission submitted - it means the REQUEST succeeded, never
+that the app is published. Apple's review sits between the two and nothing in this repository can
+see it.
 
-**WHY A RE-RUN OF THE `v0.16.3` iOS JOB DOES NOT FINISH IT, and why the reason people reach for is
-the wrong one.** The duplicate TestFlight upload is NOT the obstacle: `ios.yml` reads
-`ITMS-4238 / Redundant Binary Upload` as success precisely so that *Re-run failed jobs* works, which
-is what the section above this one is about. The obstacle is that **the tag carries the code**: a
-re-run checks out `v0.16.3`, which predates the fix, and replays the same 409. So the next stable is
-what completes this - the corrected script finds the `0.16.3` slot under a different name, renames
-it, and this time does not re-add the item.
+**PRODUCTION IS GATED ON BOTH STORES, which is why a stable can be fully green and still not
+deploy.** The `production` job needs `android` AND `ios` green; two stables in a row were published
+on 2026-09-04 and neither reached production for exactly this reason. That is the fact worth
+carrying - the defects behind those two are in `CHANGELOG.md`, where a shipped defect's story lives.
 
-**Two version numbers were spent on two defects that no gate here could have caught**, and each was
-invisible for one reason: the App Store submission is the only part of the release that talks to
-a system whose state a human edits. `0.16.2` died on a version prepared and never submitted;
-`0.16.3` died on the check for whether that version was already in a submission. Both are fixed and
-both are asserted, but *the assertions are about decisions, not about Apple* - the next release is
-still the first real test of either.
+**A RE-RUN OF AN OLD TAG CANNOT CARRY A FIX, AND THE REASON PEOPLE REACH FOR IS THE WRONG ONE.** The
+duplicate TestFlight upload is not the obstacle: `ios.yml` reads `ITMS-4238 / Redundant Binary
+Upload` as success precisely so that *Re-run failed jobs* works. The obstacle is that **the tag
+carries the code** - a re-run checks out the old tag, which predates the fix, and replays the same
+failure. The next stable is what completes it.
 
 ## Reading live state out of a running WebView, over adb
 
