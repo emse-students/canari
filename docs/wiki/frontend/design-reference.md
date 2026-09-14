@@ -879,6 +879,29 @@ offending token and every available rung. It also fails on a ladder declared out
 exactly that on the first run), on two rungs sharing a value, and on any scrim that is not strictly
 under the panel it dims.
 
+### The cutoff that a full-viewport overlay escapes, and the dialog that opened under a toast
+
+**"Below 60, nothing was touched" is right about a `z-10` inside a card and wrong about anything
+`fixed inset-0`.** The boundary above is stated correctly - *whether the element can be on screen at
+the same time as something from another component* - but the gate implements it as a NUMBER, and a
+full-viewport overlay is on screen with everything by construction whatever its number is.
+
+Measured 2026-09-14, sweeping the seven hand-written modal containers: `routes/admin/agenda`'s reject
+dialog carried a raw `z-50`. That is not a rung - it sits between `--z-page-overlay` (40) and
+`--z-toast` (60) - so the dialog opened UNDERNEATH a toast and below every other modal on the page.
+`layerLadder.test.ts` never saw it, because 50 is under the cutoff.
+
+Nobody chose that. It is what a number picked in isolation does, and the fix is to remove the choice
+rather than to police it: `ModalOverlay` takes a layer NAME (`sheet` / `modal` / `critical`) and
+holds the three class literals itself. The literals have to be literals - Tailwind scans source text,
+so `z-(--z-${layer})` compiles to nothing and the modal sits at `auto` - and that is exactly what
+makes the CALLER able to be dynamic while the scanner stays static.
+
+**Five full-viewport overlays still carry a raw number below the cutoff** (`BiometricBottomSheet`,
+`BiometricEnrollSheet`, `FormBuilder`, `FormQuestionsSection`, `routes/admin/carte/[id]`). They are
+not modal containers - a drawer scrim, two outside-click catchers and a full-page editor - so they
+are a separate row in `backlog.md` rather than a thing to fold in here.
+
 ### The thing a ladder cannot fix
 
 **A rung is only comparable inside its own stacking context, and `will-change: transform` makes one
