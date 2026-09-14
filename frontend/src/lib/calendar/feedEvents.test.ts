@@ -14,6 +14,7 @@ import {
   formatEventTimeRange,
   eventAccentColor,
   eventOwners,
+  eventOwnersLabel,
 } from './feedEvents';
 
 /** Local-time ISO, so the test says the same thing wherever it runs. */
@@ -189,5 +190,31 @@ describe('eventOwners', () => {
 
   it('is the owner alone when nothing is co-owned', () => {
     expect(eventOwners(event({ coOwners: [] })).map((o) => o.associationId)).toEqual(['a1']);
+  });
+});
+
+describe('eventOwnersLabel', () => {
+  const shared = event({
+    associationId: 'corpo-id',
+    associationName: 'Corpo',
+    coOwners: [
+      { associationId: 'mitv-id', name: 'MiTV', slug: 'mitv', color: null, logoUrl: null },
+    ],
+  });
+
+  it('names every association running the event, owner first', () => {
+    expect(eventOwnersLabel(shared)).toBe('Corpo + MiTV');
+  });
+
+  it('still names both on the page of one of them - that it is shared is the point', () => {
+    expect(eventOwnersLabel(shared, 'mitv-id')).toBe('Corpo + MiTV');
+    expect(eventOwnersLabel(shared, 'corpo-id')).toBe('Corpo + MiTV');
+  });
+
+  it('says nothing only when the page owns the event alone', () => {
+    const solo = event({ associationId: 'mitv-id', associationName: 'MiTV', coOwners: [] });
+    expect(eventOwnersLabel(solo, 'mitv-id')).toBe('');
+    expect(eventOwnersLabel(solo, 'corpo-id')).toBe('MiTV');
+    expect(eventOwnersLabel(solo)).toBe('MiTV');
   });
 });

@@ -25,6 +25,22 @@ Used inside the association detail view (`/associations/:id`). It:
 - Shows events in a timeline or month view.
 - For admins: inline form to create new events (`POST /api/associations/:id/events`).
 
+### ONE AGENDA, TWO SHAPES, AND THE SAME PREDICATE PICKS THEM
+
+Both agenda surfaces answer `isScheduleAgendaViewport()` (`viewport.ts`, Tailwind `md`, WIDTH alone -
+seven columns is a question about room, so a touch laptop keeps the grid):
+
+| | below `md` | at or above `md` |
+| --- | --- | --- |
+| `/calendar` | `CalendarScheduleList`, no grid | 360px rail (nav, filter, export, day panel) + `MonthCalendarGridRich` |
+| `AssociationCalendarSection` | `CalendarScheduleList`, no grid | month nav, grid, day panel under it |
+
+The association's section drew the grid at EVERY width until 2026-09-14 - 48px a day on a 390px
+phone - because the 2026-09-09 phone rule and the 2026-09-10 rail were written for `/calendar` and
+nothing carried them across. The phone half is now shared. **The rail is not**, and that is a width
+question rather than an oversight: `/calendar` is a `grid` page (1600px), the association page is
+`tool` (1024px), and a 360px rail inside 1024 leaves the month 91px a day where it has 146 today.
+
 ### THE PAGE IS NOT THE OWNER OF EVERYTHING IT LISTS
 
 `GET /api/associations/:id/events` returns the events that association **co-owns** as well as the

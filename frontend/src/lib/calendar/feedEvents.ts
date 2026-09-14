@@ -122,6 +122,27 @@ export function eventOwners(event: AssociationCalendarFeedEvent): EventOwnerIden
 }
 
 /**
+ * Who a row says the event belongs to: EVERY association on it, owner first, joined for display.
+ *
+ * An event may be run by several associations at once and a row that names one of them is telling
+ * half the truth - the grid paints a band per owner, so a list row that named only the first
+ * disagreed with the cell right above it.
+ *
+ * `ownAssociationId` is the association whose OWN agenda this is, when there is one. The only thing
+ * it suppresses is pure repetition: an event that association owns ALONE, on its own page, where
+ * the name is already the page title. A co-owned event still names everybody, including the page
+ * itself - that an event is shared is exactly what the row has to say.
+ */
+export function eventOwnersLabel(
+  event: AssociationCalendarFeedEvent,
+  ownAssociationId?: string | null
+): string {
+  const owners = eventOwners(event);
+  if (owners.length === 1 && owners[0].associationId === ownAssociationId) return '';
+  return owners.map((owner) => owner.name).join(' + ');
+}
+
+/**
  * The association's colour, or a stable one derived from its id when it has not set one.
  *
  * The calendar's named entry point, kept because two components and a test call it - but the
