@@ -187,10 +187,16 @@
       </div>
     {:else if profile}
       <!-- Profile header -->
+      <!--
+        A COLUMN ON A PHONE, A ROW FROM `sm` - the shape `profile/[id]` has carried all along, and
+        the reason this header is the one that clipped. As a row at every width, a 390px screen
+        spent 96px on the avatar, 40px on two gaps and ~39px on the settings link, leaving the NAME
+        183px; `truncate` then cut it. Stacked, the name gets the whole column and wraps instead.
+      -->
       <div
-        class="animate-in fade-in slide-in-from-bottom-4 flex items-center gap-5 duration-500 sm:gap-6"
+        class="animate-in fade-in slide-in-from-bottom-4 flex flex-col gap-5 duration-500 sm:flex-row sm:items-center sm:gap-6"
       >
-        <div class="relative h-24 w-24 shrink-0 sm:h-28 sm:w-28">
+        <div class="relative h-24 w-24 shrink-0 self-start sm:h-28 sm:w-28 sm:self-auto">
           <div
             class="h-full w-full overflow-hidden rounded-full shadow-lg ring-4 ring-white/50 dark:ring-black/20"
           >
@@ -210,7 +216,7 @@
           </button>
         </div>
         <div class="min-w-0 flex-1">
-          <h1 class="text-text-main mb-1 truncate text-2xl font-bold tracking-tight sm:text-3xl">
+          <h1 class="text-text-main mb-1 text-2xl font-bold tracking-tight sm:text-3xl">
             {displayFallbackName}
           </h1>
           <ProfileMinesweeperBadge userId={profile.id} />
@@ -226,7 +232,7 @@
         <a
           href="/settings"
           title={m.settings_page_title()}
-          class="text-text-muted hover:text-cn-dark focus-visible:ring-cn-yellow inline-flex items-center gap-1.5 self-start rounded-xl px-3 py-1.5 text-xs font-bold transition-all outline-none hover:bg-black/5 focus-visible:ring-2 active:scale-95 dark:hover:bg-white/10"
+          class="text-text-muted hover:text-cn-dark focus-visible:ring-cn-yellow inline-flex shrink-0 items-center gap-1.5 self-start rounded-xl px-3 py-1.5 text-xs font-bold transition-all outline-none hover:bg-black/5 focus-visible:ring-2 active:scale-95 dark:hover:bg-white/10"
         >
           <SlidersHorizontal size={15} strokeWidth={2.5} />
           <span class="hidden sm:inline">{m.settings_page_title()}</span>

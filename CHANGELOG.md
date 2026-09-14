@@ -11,6 +11,20 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - your own name was cut short at the top of your profile
+
+On a phone, opening your profile showed your name cut short with an ellipsis. It was not a
+long-name problem: the header laid the avatar, the name and the settings link on a single row at
+every screen width, which on a 390px phone left the name 183px whatever it said.
+
+The public profile page - the one you see when you open somebody else's - had already been built to
+stack on a phone and never had the defect. The same header existed twice, and only one of the two
+was ever fixed.
+
+Your profile now stacks the same way below tablet width: the name gets the whole width and wraps
+onto a second line rather than being cut. A page never truncates its own title anywhere in the app,
+and a test now says so, because a title is the one piece of text with nothing to tap through to.
+
 ### Fixed - selecting a tab at the bottom of the screen cut off its own name
 
 The bar at the bottom of the phone app splits the screen into four, and the label of the selected
