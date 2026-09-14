@@ -336,6 +336,39 @@ carried the same false clause and was corrected; the comment is section 10's P3-
 ([staleBase.ts:74](../../../frontend/src/lib/utils/chat/staleBase.ts)). The third and fourth exist so
 a device whose OWN tree is behind does not publish a base worse than the one already there.
 
+### `STALE --> STALE` was reached by three conversations, and the exit was a ONE-OFF (2026-09-14)
+
+**THE SELF-LOOP IS REAL AND IT WAS OCCUPIED.** Three groups sat in `NO_REPAIRER` since 2026-08-29,
+08-30 and 08-31: base exactly one epoch behind, and the commit at `activeEpoch - 1` ABSENT from
+`mls_commit_log` - the pre-2026-09-04 defect, when the advance and the log row were not one
+transaction. `IDX_mls_commit_log_group_epoch` is UNIQUE on `(groupId, baseEpoch)`, so nothing could
+ever refill it, and no device lacking that commit could replay its way to the current epoch.
+
+**WHO WAS ACTUALLY STUCK IS NOT WHO THE QUEUE DEPTH SAID.** 357 messages were queued across the
+three, which read as 357 undelivered messages; 307 of them are protocol commits and 5 are Welcomes,
+leaving 45 application messages. **Every device holding a queue was an abandoned `web-*` profile** -
+no session, no push token, last enrolment in July or August - while the same people's live `tauri-*`
+devices, seen 2026-09-10 to 09-14, held `active` seats with an EMPTY queue. Nobody was waiting for
+those 45 messages. The real harm was the other end: on one group two devices that signed in THAT DAY
+sat `pending` and could not enter, because the stored GroupInfo was perfectly usable and merely
+LABELLED behind.
+
+**So the exit was to realign the label, not to mint anything.** `activeEpoch` was lowered onto the
+published `baseEpoch`, under a guard requiring all three of: a base behind `activeEpoch`, that base
+sitting exactly on `activeEpoch - 1`, and no commit recorded at `activeEpoch - 1`. Run read-only
+first: 3 groups matched and **0 stale groups escaped the guard**, so it covered the population in
+both directions. Applied in one transaction that aborted itself unless exactly 3 rows matched.
+Afterwards every one of the 57 live groups publishes a base naming its own current epoch. The
+absent head commit also guarantees no collision with the UNIQUE index when a commit next builds on
+that base.
+
+**IT IS DELIBERATELY NOT A MECHANISM** (the user, 2026-09-14, choosing a one-off reconciliation
+gated on proof over wiring the same guard into the hourly job). The cost is stated rather than
+hidden: **if a group reaches this state again, nothing repairs it** - the hourly witness will say
+so, and a human decides again. That is tenable only because the defect that produced it was fixed on
+2026-09-04; a recurrence is evidence the fix is incomplete, and would be the argument for the
+standing mechanism this decision declined.
+
 ---
 
 ## 7. Graine - a salon is not an MLS group
