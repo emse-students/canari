@@ -11,6 +11,26 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - au-dela de vingt et une reactions, les suivantes disparaissaient sans laisser de trace
+
+La rangee de reactions sous un message etait enfermee dans une boite de 88 pixels de haut qui coupait
+tout ce qui depassait. Le contenu, lui, grandit avec le nombre d'emojis differents. Mesure sur un
+Mi 9T a 436 pixels, en clonant des pastilles dans la rangee reelle : a trente-sept reactions le
+contenu mesurait 184 pixels, vingt et une pastilles etaient dessinees, et seize n'existaient
+simplement pas a l'ecran.
+
+Rien ne le signalait, et c'est ce qui rend ce defaut particulier : pas de pastille coupee en deux
+qui aurait trahi le pli, pas de "+16", et une boite qui masque plutot qu'elle ne fait defiler, donc
+aucun moyen d'aller voir. Un plafond assume affiche ce qu'il a coupe ; celui-ci n'affichait rien.
+Les boutons etaient bien tous dans la page - c'est exactement ce qu'un test unitaire aurait verifie.
+
+Le nombre n'avait jamais ete decide non plus : 4,75rem sans un mot d'explication, puis 5,5rem au
+detour d'un commit qui parlait de la visionneuse media. Il est donc retire plutot que reajuste. Une
+rangee qui revient a la ligne est honnete a tous les comptes, ne demande aucun etat, et n'invente
+aucun seuil. Un message portant quarante reactions differentes est grand, et etre grand est la
+verite a son sujet.
+
+
 ### Fixed - sur telephone, la page des notifications n'etait atteignable par aucun lien
 
 La cloche de l'en-tete mobile ouvrait un panneau de 320 pixels colle au bord droit, qui flottait

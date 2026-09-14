@@ -49,8 +49,21 @@
 </script>
 
 {#if Object.keys(groupedReactions).length > 0}
+  <!--
+    NOTHING IS CLIPPED HERE, AND THAT USED TO BE FALSE IN SILENCE.
+    This row carried `max-h-[5.5rem] overflow-hidden`: 88px of box for content that grows with the
+    number of DISTINCT emoji on a message. Measured on A1 (Mi 9T, 436 x 945) on 2026-09-14 by
+    injecting chips into the live row: at 37 distinct reactions the content stood 184px and the box
+    still 88, so 21 chips were drawn and SIXTEEN simply did not exist on screen - no half-cut chip
+    betraying the fold, no "+16", no scroll. A deliberate cap shows a count; this one showed nothing,
+    which is how it survived unnoticed.
+    The number was never a decision either: it was `4.75rem` with no comment, and became `5.5rem`
+    inside a commit about the media lightbox. So it is removed rather than tuned - a wrapping row is
+    honest at every count, needs no state, and invents no threshold. A message with forty distinct
+    reactions is tall, and being tall is the truth about it.
+  -->
   <div
-    class="mt-1 flex max-h-[5.5rem] w-full max-w-[min(100%,38rem)] flex-wrap content-start gap-1.5 overflow-hidden px-1 pt-0.5 pb-2 {isOwn
+    class="mt-1 flex w-full max-w-[min(100%,38rem)] flex-wrap content-start gap-1.5 px-1 pt-0.5 pb-2 {isOwn
       ? 'justify-end'
       : 'justify-start'}"
     role="group"
