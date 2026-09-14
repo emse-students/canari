@@ -315,9 +315,13 @@ describe('ChannelService - the community distribution group', () => {
 
       // `stored: false` is the monotonic rule refusing to regress the base epoch - a legitimate
       // outcome the caller must see rather than a failure.
+      //
+      // `publisherActive: true` FROM AN ANSWER THAT DID NOT MENTION IT, for the reason `activeEpoch`
+      // falls back to the base: a delivery build older than 2026-09-14 sends no such field, and it
+      // must read as "nothing known to be wrong" rather than as a refusal that never happened.
       expect(
         await service.publishDistributionGroupInfoForMember(WORKSPACE, USER, 'Z2k=', 2, 'web-1')
-      ).toEqual({ stored: false });
+      ).toEqual({ stored: false, publisherActive: true });
       expect(String(fetchSpy.mock.calls[0][0])).toContain(
         `/api/internal/mls/distribution-groups/workspace/${WORKSPACE}/group-info`
       );
@@ -330,6 +334,27 @@ describe('ChannelService - the community distribution group', () => {
         userId: USER,
         deviceId: 'web-1',
       });
+    });
+
+    // THE OTHER HALF OF THE SAME CALL, AND IT WAS SILENT. Publishing also puts this device into the
+    // group's delivery roster, and delivery can refuse that on its own - a revoked device, or one
+    // holding no key package, is never routed to. Until 2026-09-14 the refusal was dropped on the
+    // far side and this function returned `stored` alone, so a publisher that may be the ONLY
+    // device able to serve the group's first Welcome could be left out of its roster with nothing
+    // said anywhere a reader would look.
+    it('carries a refused roster write back, without confusing it with the store', async () => {
+      const { service, workspaceRepo, memberRepo } = makeService();
+      workspaceRepo.findOne.mockResolvedValue({ id: WORKSPACE });
+      memberRepo.findOne.mockResolvedValue({ workspaceId: WORKSPACE, userId: USER });
+      global.fetch = answerWith({
+        stored: true,
+        publisherActive: false,
+      }) as unknown as typeof fetch;
+
+      // The two disagree on purpose: the GroupInfo IS stored, and only the roster half failed.
+      expect(
+        await service.publishDistributionGroupInfoForMember(WORKSPACE, USER, 'Z2k=', 2, 'web-1')
+      ).toEqual({ stored: true, publisherActive: false });
     });
   });
 

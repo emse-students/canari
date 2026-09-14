@@ -165,22 +165,34 @@ export async function readDistributionGroup(
   };
 }
 
-/** Publishes a new GroupInfo for a scope's distribution group. Monotonic on the far side. */
+/**
+ * Publishes a new GroupInfo for a scope's distribution group. Monotonic on the far side.
+ *
+ * **TWO FACTS COME BACK, NOT ONE.** The same call also puts the publishing device into the group's
+ * delivery roster, and that half can be refused on its own - a revoked device, or one with no key
+ * package, is not routed to. It used to be refused silently: delivery dropped the outcome and this
+ * returned `stored` alone, so a publisher that was the group's ONLY possible Welcome server could
+ * be excluded from it with nothing said anywhere a reader would look.
+ *
+ * `publisherActive` defaults to TRUE when the field is absent, for the same reason `activeEpoch`
+ * above falls back to the base: an older delivery build that does not send it must read as "nothing
+ * known to be wrong", never as a refusal that never happened.
+ */
 export async function publishDistributionGroupInfo(
   secret: string,
   scope: DistributionScope,
   groupInfo: string,
   baseEpoch: number,
   publisher: { userId: string; deviceId: string }
-): Promise<{ stored: boolean }> {
+): Promise<{ stored: boolean; publisherActive: boolean }> {
   const payload = (await callDelivery(
     secret,
     'DISTRIBUTION_GROUP',
     `internal/mls/distribution-groups/${seg(scope)}/group-info`,
     { method: 'POST', body: { groupInfo, baseEpoch, ...publisher } }
-  )) as { stored?: unknown } | null;
+  )) as { stored?: unknown; publisherActive?: unknown } | null;
 
-  return { stored: payload?.stored === true };
+  return { stored: payload?.stored === true, publisherActive: payload?.publisherActive !== false };
 }
 
 /**

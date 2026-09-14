@@ -47,15 +47,36 @@ export const UNRESOLVED_IDENTITY_VALUES: readonly string[] = ['unknown', 'pendin
  *
  * READ paths keep `sanitizeQueryValue`: asking about a placeholder is harmless and answers
  * nothing, and refusing it there would only move a 404 to a 400.
+ *
+ * **"FOR EVERY WRITING PATH" IS A CLAIM ABOUT DOORS, AND THE DOORS DID NOT ALL HONOUR IT.** Measured
+ * 2026-09-14: of the four HTTP paths that reach `activateDeviceMembership`, group creation and the
+ * status endpoint called this; the background push door sanitized SHAPE only, and the distribution
+ * publisher sanitized nothing at all - it checked the two fields were truthy and handed them
+ * straight to the writer. So the sentence above was true of the function and false of the system,
+ * for the same reason and the second time: a value check every caller must REMEMBER is not a check.
+ * It is now also made at the writer, through {@link isUnresolvedIdentity}, which is where it cannot
+ * be forgotten. This function stays because a door that can refuse the REQUEST should refuse it
+ * there - a 400 naming the field beats an outcome the caller has to read.
  */
 export function sanitizeIdentityValue(value: unknown, fieldName: string): string {
   const sanitized = sanitizeQueryValue(value, fieldName);
-  if (UNRESOLVED_IDENTITY_VALUES.includes(sanitized)) {
+  if (isUnresolvedIdentity(sanitized)) {
     throw new BadRequestException(
       `${fieldName} is the client's unresolved-identity placeholder ('${sanitized}') and cannot be stored`
     );
   }
   return sanitized;
+}
+
+/**
+ * Whether `value` is one of the client's own "this identity has not resolved yet" literals.
+ *
+ * The predicate half of {@link sanitizeIdentityValue}, for the caller that must not throw: the one
+ * writer of an `active` membership answers a refusal with an {@link ActivationOutcome}, and every
+ * one of its doors already reads one.
+ */
+export function isUnresolvedIdentity(value: string): boolean {
+  return UNRESOLVED_IDENTITY_VALUES.includes(value);
 }
 
 /**

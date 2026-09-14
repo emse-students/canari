@@ -417,7 +417,51 @@ duplicate**, and the justification is quoted so it can be argued with rather tha
 
 | # | The one thing | The paths | Justified in writing? | Verdict |
 | --- | --- | --- | --- | --- |
-| D1 | Promote a membership to `active` | `activateDeviceMembership` (messaging.service.ts:1853), `POST mls/invitations/status` (invitations.controller.ts:486), `POST mls/push/membership-active` (push.controller.ts:455), the external joiner's own call (recovery.ts:494) | Partly. recovery.ts:494: *"the Welcome path promotes the row and the inviter's path promotes it; this path never did, and it is the path this commit makes reachable, so it owes the same write"* | **TENABLE, BADLY SHAPED.** Four writers of one column, three of them HTTP routes. The justification defends adding the fourth CALL, not keeping four ROUTES. One route with three callers is the same fix with one seam. |
+| D1 | Promote a membership to `active` | `activateDeviceMembership` (the one writer), and four doors: `POST mls/groups`, `POST mls/invitations/status`, `POST mls/push/membership-active`, `POST .../group-info`; plus the commit fan-out | n/a since 2026-09-14 | **CLOSED 2026-09-14, AND NOT THE WAY THIS ROW PRESCRIBED** - see the paragraph under this table. The routes were never the duplication; the CHECK each door had to remember was. Two of four doors did not sanitize the identity and two of five dropped the writer's refusal, one of them answering `{status:'active'}` on it. |
+**D1 CLOSED BY MOVING THE INVARIANT, NOT BY MERGING THE DOORS (2026-09-14).** The row above asked
+for one route with three callers. Measuring the four doors first says that is wrong, and the reason
+is the thing a file-count hides: they are not four spellings of one request.
+
+| Door | Authenticated by | Reached from | What it owes its caller on a refusal |
+| --- | --- | --- | --- |
+| `POST mls/groups` | JWT session | the app | a 400: the group it just made is memberless |
+| `POST mls/invitations/status` | JWT session | the app, foreground | a 400: a user is waiting |
+| `POST mls/push/membership-active` | PushSecret | the NATIVE background handler, which has no session | a 400: the only reader logs the HTTP code |
+| `POST .../group-info` | internal service secret | social-service | not a 400 - its GroupInfo really was stored |
+
+One route serving those would accept three authentication mechanisms and hand the internal publisher
+a door it must not have. **The duplication was never the route. It was the CHECK each door had to
+remember**, and this is the second time that lesson is paid for on this table (see P2-4).
+
+**What the sweep actually found, four divergences across five callers:**
+
+| | identity checked | writer's refusal honoured | `tag` |
+| --- | --- | --- | --- |
+| `POST mls/groups` | yes | throws | `CREATE_GROUP` |
+| `POST mls/invitations/status` | yes | throws | `INVITATION_STATUS` |
+| `POST mls/push/membership-active` | **shape only** | **dropped, and answered `{status:'active'}`** | default |
+| `POST .../group-info` | **not at all** - two truthiness checks | **dropped** | default |
+| the commit fan-out | n/a, sender is verified | carries on, warn logged | default |
+
+The third row is the one that bites. `activateDeviceMembership` refuses a revoked or
+key-package-less device (WP-GHOST-1) and returns the reason; that door returned success anyway, so a
+device the server had just decided never to route to was told it was a member - and the Android and
+iOS handlers, which log only the status code, saw `200`. **An ignored outcome is a gap; a false one
+is a lie**, and no log line anywhere said otherwise.
+
+The fourth row is the 2026-08-27 placeholder defect with a second road: `sanitizeIdentityValue`'s
+own docblock claimed the check runs *"for every writing path"*, and that door handed both identity
+fields to the writer without even the shape allowlist.
+
+**The fix is that the one writer holds the check.** `activateDeviceMembership` and its mirror refuse
+an unresolved-identity placeholder themselves, before the addressability gate - which cannot see it,
+because a placeholder that registered a KeyPackage is addressable. `ActivationRefusal` gains
+`unresolved_identity`, a typed member rather than prose. The doors keep `sanitizeIdentityValue`
+where they can refuse the REQUEST, because a 400 naming the field beats an outcome a caller must
+read. The publisher door carries `publisherActive` back to social-service instead of throwing, since
+its GroupInfo really was stored - and social-service logs a line that ACCUSES when it is false,
+because that publisher may be the only device able to serve the group's first Welcome.
+
 | D2 | Mint an external-join base | the `refreshGroupInfo` follow-up, `validateCommit`'s in-transaction `putGroupInfo` (messaging.service.ts) | Yes, since S-D6 | **NOT A DUPLICATE, AND THE COMMENT THAT DENIED IT IS FIXED.** The two cover disjoint cases: staged commits export nothing, carried commits export their own successor. What WAS duplicated is who reads the (blob, epoch) pair - three client paths, one of them atomic - fused onto `publishCurrentBase`. |
 | D3 | Repair a stale base | `republishBaseIfStale` on connection (initializeConnection.ts:261), `republishStaleBase` for distribution groups (distributionGroup.ts:248), `base_refresh_request` honoured by a holder (messaging.controller.ts:137) | Yes. staleBase.ts:8 says the shared classifier exists because the repair it was extracted from *"runs for DISTRIBUTION groups only"* | **TENABLE.** One classifier, three trigger points, no second policy. Factorisation working as intended. |
 | D4 | Decide a group needs recovery | nine call sites of `requestReAdd` - sessionAuth.ts:155/:183/:226, sessionConnection.ts:152, sessionWatchdogs.ts:155, useConversations.svelte.ts:1006, setupMessageHandler.ts:114, actions.ts:169, groupCreation.ts:582, outbox.ts:467 | Yes, by construction: the seam owns the throttle and the not-ready marker, so callers are triggers rather than policies | **TENABLE.** One seam, one cadence, nine reasons to ring it - the design the watchdog docblock argues for at length. |
@@ -574,5 +618,11 @@ it, and the only thing a server can contribute is to say which conversations are
 
 ### P3 - hygiene
 
-- **P3-2.** D1's four routes writing one column. One route, three callers.
+- ~~**P3-2.** D1's four routes writing one column. One route, three callers.~~ **DONE 2026-09-14,
+  BY REFUTING THE PRESCRIPTION.** Measured against `main` before touching anything, and "one route"
+  is the wrong shape: the four doors differ in AUTHENTICATION - a JWT session, a PushSecret held by
+  a native handler the WebView cannot reach, an internal service secret - and in what each owes its
+  caller. One route accepting three authentication mechanisms is a fallback path with a different
+  name, and it would hand the internal publisher a door it must not have. What WAS duplicated is
+  the check every door had to remember, and remembering is not a mechanism. Detail below.
 - **P3-3.** This page is the first mermaid in `docs/`. If more follow, the convention is the one here: `stateDiagram-v2`, and a `file:line` on every transition.

@@ -90,7 +90,7 @@ a real collapse, not a test that fails on divergence):
 | --- | --- | --- | --- |
 | `D8` | checkpoint | 4 routes, 3 guarantees | see the P1 above |
 | `G-D9` | rotation reasons | 4 -> 1 outcome | the reason survives only in a log line |
-| `D1`, `D3`, `D4`, `D9`, `D10`, `D12`, `D13` | see the MLS client sweep | 2-3 each | `D3` is three forget+rejoin escalations for ONE condition. **`D5` is gone, fused 2026-09-14** - and it was four divergences rather than one duplicate, one of them destructive |
+| `D3`, `D4`, `D9`, `D10`, `D12`, `D13` | see the MLS client sweep | 2-3 each | `D3` is three forget+rejoin escalations for ONE condition. **`D5` is gone, fused 2026-09-14** - and it was four divergences rather than one duplicate, one of them destructive. **`D1` is gone 2026-09-14, by REFUTING its own prescription**: the four doors differ in authentication, so "one route" would be a fallback path; what was duplicated was the check each door had to remember, and it now lives in the one writer |
 | `G-D2`-`G-D8`, `G-D10`, `G-D13`, `G-D14` | Graine entry points | 2 each | `G-D6` (requester fail-open / answerer fail-closed) is deliberate and stays |
 
 **Availability dead ends - every one needs an exit that EXISTS** (the user, 2026-09-12: *"on ne peut

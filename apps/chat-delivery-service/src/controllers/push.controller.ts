@@ -27,7 +27,12 @@ import { GroupMember } from '../entities/group-member.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import type { Response } from 'express';
-import { sanitizeEpoch, sanitizeQueryValue, sanitizeOptionalQueryValue } from '../utils/sanitize';
+import {
+  sanitizeEpoch,
+  sanitizeIdentityValue,
+  sanitizeQueryValue,
+  sanitizeOptionalQueryValue,
+} from '../utils/sanitize';
 import { acquireAddLock, releaseAddLock } from '../utils/add-lock';
 import { MessagingService } from '../services/messaging.service';
 
@@ -452,18 +457,38 @@ export class PushController {
    * `invitations/status` endpoint, so without this the device stays `pending` and the recipient
    * resolution (`status='active'`) excludes it - it never receives realtime/push messages (FCM1).
    * Auth: PushSecret (no JWT).
+   *
+   * IT ANSWERED `{ status: 'active' }` WHATEVER THE WRITER SAID. The one writer refuses a revoked
+   * or key-package-less device (WP-GHOST-1) and returns the reason; this door dropped the outcome
+   * on the floor and reported success, so a device the server had just refused to route to was told
+   * it was a member - and the caller, which logs only the HTTP code, saw a 200. Its sibling door
+   * (`invitations/status`) has thrown on the same refusal since the fusion; this is the same
+   * statement to the same kind of caller, so it makes it the same way.
    */
   @Post('mls/push/membership-active')
   async markMembershipActivePush(
     @Headers('authorization') authHeader: string,
     @Body() body: { userId: string; deviceId: string; groupId: string }
   ) {
-    const userId = sanitizeQueryValue(body.userId ?? '', 'userId');
-    const deviceId = sanitizeQueryValue(body.deviceId ?? '', 'deviceId');
+    // `sanitizeIdentityValue` for the two that get STORED: this door creates an `active`
+    // membership from nothing, which is the shape of the 2026-08-27 placeholder defect, and it
+    // sanitized shape only.
+    const userId = sanitizeIdentityValue(body.userId ?? '', 'userId');
+    const deviceId = sanitizeIdentityValue(body.deviceId ?? '', 'deviceId');
     const groupId = sanitizeQueryValue(body.groupId ?? '', 'groupId');
     await this.verifyPushSecretAuth(authHeader, userId, deviceId);
 
-    await this.messagingService.activateDeviceMembership(userId, deviceId, groupId);
+    const outcome = await this.messagingService.activateDeviceMembership(
+      userId,
+      deviceId,
+      groupId,
+      {
+        tag: 'MEMBERSHIP_ACTIVE_PUSH',
+      }
+    );
+    if (!outcome.ok) {
+      throw new BadRequestException(`Device is not addressable: ${outcome.reason}`);
+    }
     return { status: 'active' };
   }
 

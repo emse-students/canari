@@ -100,7 +100,7 @@ describe('InternalController - the community distribution group', () => {
     messagingService = {
       readGroupInfo: jest.fn().mockResolvedValue(null),
       putGroupInfo: jest.fn().mockResolvedValue({ stored: true }),
-      activateDeviceMembership: jest.fn().mockResolvedValue(undefined),
+      activateDeviceMembership: jest.fn().mockResolvedValue({ ok: true }),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -288,7 +288,7 @@ describe('InternalController - the community distribution group', () => {
         deviceId: PUBLISHER.deviceId,
       });
 
-      expect(got).toEqual({ stored: true });
+      expect(got).toEqual({ stored: true, publisherActive: true });
       expect(messagingService.putGroupInfo).toHaveBeenCalledWith('g-1', 'Z2k=', 7);
     });
 
@@ -314,8 +314,47 @@ describe('InternalController - the community distribution group', () => {
         PUBLISHER.userId,
         PUBLISHER.deviceId,
         'g-1',
-        { redeliverMissed: false }
+        { redeliverMissed: false, tag: 'DISTRIBUTION_PUBLISHER' }
       );
+    });
+
+    // THE REFUSAL USED TO GO NOWHERE. The writer can refuse this device - revoked, or holding no
+    // key package - and this door dropped the outcome, so a publisher excluded from the roster of
+    // the group it had just made looked exactly like one that joined it. That publisher may be the
+    // only device able to serve the group's first Welcome, so "nobody said anything" is the whole
+    // cost: the group has no server and no reader learns why.
+    it('carries the roster refusal in the answer, without claiming the GroupInfo failed', async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'g-1' });
+      messagingService.activateDeviceMembership.mockResolvedValue({ ok: false, reason: 'revoked' });
+
+      const got = await controller.publishDistributionGroupInfo('workspace', WORKSPACE, SECRET, {
+        groupInfo: 'Z2k=',
+        baseEpoch: 7,
+        userId: PUBLISHER.userId,
+        deviceId: PUBLISHER.deviceId,
+      });
+
+      // BOTH halves, and they disagree on purpose: the store happened, the roster write did not.
+      // A throw here would report a failure that did not occur and invite a retry of finished work.
+      expect(got).toEqual({ stored: true, publisherActive: false });
+      expect(messagingService.putGroupInfo).toHaveBeenCalled();
+    });
+
+    // This door handed both fields to the one writer untouched - not even the shape allowlist every
+    // other door applies - so the 2026-08-27 placeholder had a second road to a membership row.
+    it("refuses the client's unresolved-identity placeholder, which it did not even shape-check", async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'g-1' });
+
+      await expect(
+        controller.publishDistributionGroupInfo('workspace', WORKSPACE, SECRET, {
+          groupInfo: 'Z2k=',
+          baseEpoch: 7,
+          userId: 'unknown',
+          deviceId: PUBLISHER.deviceId,
+        })
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      expect(messagingService.activateDeviceMembership).not.toHaveBeenCalled();
     });
 
     it('refuses a body missing either field', async () => {
