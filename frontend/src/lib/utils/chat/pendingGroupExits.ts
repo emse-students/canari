@@ -155,6 +155,33 @@ export async function pendingGroupExitIds(
   }
 }
 
+/**
+ * HOW LONG THIS EXIT HAS BEEN OWED, which is the one fact the kept-row lines could not carry.
+ *
+ * `requestedAt` has been written since this store existed and was read for ORDERING only, so a row
+ * the link dropped a minute ago and a row a reachable server has refused on every reconnect for a
+ * week produced the identical line. Those two call for opposite actions - wait, and go and find out
+ * why - and the drain is the only place that sees both the decision's age and its outcome.
+ *
+ * NOT A COUNTER AND NOT AN EXPIRY. Nothing here decides anything from this number: the row is still
+ * removed only by an answer, because termination comes from a proof. It is evidence for the reader,
+ * which is what separates a mechanism that is merely correct from one that can be FOUND when it
+ * stops being correct.
+ *
+ * Coarse on purpose - one unit, no decimals. The question it answers is "minutes or weeks", and a
+ * precise duration in a line printed on every reconnect is precision nobody reads.
+ */
+export function owedFor(requestedAt: number, now = Date.now()): string {
+  const ms = Math.max(0, now - requestedAt);
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const min = Math.floor(s / 60);
+  if (min < 60) return `${min}min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+}
+
 /** One replayed exit, as the drain reports it. */
 export type DrainOutcome = {
   groupId: string;
@@ -174,6 +201,13 @@ export type DrainOutcome = {
  * A ROW IS NEVER DROPPED FOR FAILING. There is no attempt counter and no expiry: a delete the server
  * has not answered is still owed a week later, and a row deleted "after N tries" would be this
  * defect wearing a budget. The one thing that removes a row is an answer.
+ *
+ * **AND "STILL OWED A WEEK LATER" IS NOW SOMETHING A READER CAN SEE.** Every line that keeps a row
+ * carries how long it has been owed ({@link owedFor}), and the header line carries the oldest. That
+ * is evidence and not a budget - nothing decides anything from the number - but without it the one
+ * state this design deliberately allows, an exit owed indefinitely, was indistinguishable from a
+ * link that flapped a minute ago, on a device whose log nobody reads until somebody asks why a
+ * conversation vanished.
  */
 let draining = false;
 
@@ -208,7 +242,12 @@ export async function drainPendingGroupExits(params: {
       return [];
     }
     if (owed.length === 0) return [];
-    log(`[EXIT] replaying ${owed.length} exit(s) the server never answered`);
+    // THE OLDEST, because the rows are sorted oldest-first and one number decides whether this line
+    // is routine. A reconnect replaying three exits from thirty seconds ago is a link that flapped;
+    // the same line naming nine days is a defect that has been surviving every reconnect since.
+    log(
+      `[EXIT] replaying ${owed.length} exit(s) the server never answered - oldest owed for ${owedFor(owed[0].requestedAt)}`
+    );
 
     const outcomes: DrainOutcome[] = [];
     for (const entry of owed) {
@@ -243,11 +282,14 @@ export async function drainPendingGroupExits(params: {
         // KEPT, AND THE TWO REASONS ARE LOGGED SEPARATELY, because they call for different actions:
         // no answer means try again when the link is back, while a refusal with a status means the
         // server is up and something is wrong with the request or with it.
+        const age = owedFor(entry.requestedAt);
         if (failure === 'unreachable') {
-          log(`[EXIT] ${short}... ${entry.kind} still unreachable - kept, will retry on reconnect`);
+          log(
+            `[EXIT] ${short}... ${entry.kind} still unreachable - kept, will retry on reconnect (owed for ${age})`
+          );
         } else {
           log(
-            `[EXIT] ${short}... ${entry.kind} REFUSED by a reachable server (${String(e)}) - kept`
+            `[EXIT] ${short}... ${entry.kind} REFUSED by a reachable server (${String(e)}) - kept (owed for ${age})`
           );
         }
         outcomes.push({ groupId: entry.groupId, kind: entry.kind, result: 'kept' });

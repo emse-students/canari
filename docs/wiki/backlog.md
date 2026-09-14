@@ -102,7 +102,6 @@ refusals):
 | `S-E3`/`G-E3`/`DE3` | stale base, every holder behind | **1 group** |
 | `R-E3` | `ROSTER_DISAGREE` | outbox has no attempt ceiling; `sender-not-active` is neither permanent disposition |
 | `R-E4` | an `isGroupHealthy` hold | returns `retry` without incrementing `attempts` or writing `nextAttemptAt` |
-| `R-E8` | exit-owed limbo | the group is invisible **and** un-recoverable while the server never answers; no counter, no expiry |
 | `R-E1`/`DE2` | `NO_REPAIRER` | left only by the epoch pair moving - which needs the holder that is absent. **Population 0, re-read 2026-09-14**: the one group counted here had no MEMBERS, a failed creation rather than a dead end (fixed 2026-09-14) |
 | `R-E9`, `R-E11` | peer-unresolved; `readWelcomeOwed() === null` | retried for ever, no counter |
 | `DE7` | `MLS_LOCAL_STATE_UNDECRYPTABLE` | the only route offered requires the OLD PIN |
