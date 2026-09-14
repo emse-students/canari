@@ -12,18 +12,16 @@
     focusDate: Date;
     selectedDay: number | null;
     events: AssociationCalendarFeedEvent[];
-    /** When true, hides association name on each row (single-association agenda). */
-    hideAssociationName?: boolean;
+    /**
+     * The association whose own agenda this is, if any: its rows drop the name and logo it would
+     * only repeat. A row it merely CO-OWNS belongs to someone else and still names its owner -
+     * the page is not the owner of everything it lists.
+     */
+    ownAssociationId?: string | null;
     onEventClick: (ev: AssociationCalendarFeedEvent) => void;
   }
 
-  let {
-    focusDate,
-    selectedDay,
-    events,
-    hideAssociationName = false,
-    onEventClick,
-  }: Props = $props();
+  let { focusDate, selectedDay, events, ownAssociationId = null, onEventClick }: Props = $props();
 
   // Which day an event occupies, and how its time reads, are shared with the phone's schedule list:
   // two copies of "does this multi-day event cover this day" is two chances to disagree.
@@ -80,13 +78,13 @@
               style="background:{accent};"
               aria-hidden="true"
             ></span>
-            {#if logoSrc && !hideAssociationName}
+            {#if logoSrc && ev.associationId !== ownAssociationId}
               <img src={logoSrc} alt="" class="h-8 w-8 shrink-0 rounded-full object-cover" />
             {/if}
             <div class="min-w-0 flex-1">
               <p class="text-text-main truncate text-sm font-bold">{ev.title}</p>
               <p class="text-text-muted mt-0.5 truncate text-xs">
-                {#if !hideAssociationName}
+                {#if ev.associationId !== ownAssociationId}
                   <span class="font-semibold">{ev.associationName}</span>
                   <span class="mx-1">·</span>
                 {/if}

@@ -413,11 +413,8 @@
         <AssociationCalendarSection
           associationId={asso.id}
           associationSlug={asso.slug}
-          associationName={asso.name}
-          associationLogoUrl={asso.logoUrl}
           canEdit={canProposeEvent}
           {canDeclareBreak}
-          associationColor={asso.color ?? null}
         />
       </div>
     {:else if activeSection === 'members'}

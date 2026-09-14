@@ -11,6 +11,27 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - an association page went blank when one of its events belonged to somebody else
+
+Opening `https://canari-emse.fr/associations/mitv` showed nothing but the crash screen. The month
+loaded, the events came back, and the page died rendering them.
+
+An association's agenda lists the events it OWNS and the events it merely CO-OWNS - and the page
+named itself the owner of every row it received. On an event owned by another association, MiTV
+therefore appeared twice on the same event: once as the owner, once as the co-owner. The calendar
+grid paints one band per association and keyed those bands on the association NAME, so two bands
+claimed the same key, and Svelte answered that the only way it can - by throwing. One co-owned
+event took the entire page down, and only for the co-owner: the same event on the global agenda,
+where the owner has always travelled with the event, has always been fine.
+
+The owner now travels with the event on `GET /api/associations/:id/events` too, exactly as it does
+on the aggregated feed, so no page has to guess. An event a club co-owns now shows its real owner's
+name, colour and logo instead of the club's own. Owner and co-owners are built in ONE place for the
+grid, the day panel and the event dialog, and every list of them is keyed on the association id: a
+name is a label two associations may share, and a key that can repeat is a crash rather than a
+mis-painted logo.
+
+
 ### Fixed - your own name was cut short at the top of your profile
 
 On a phone, opening your profile showed your name cut short with an ellipsis. It was not a

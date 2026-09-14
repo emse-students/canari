@@ -1032,7 +1032,11 @@ export class AssociationsService {
     }
   }
 
-  /** Lists calendar events for an association, optionally bounded by `from` / `to` ISO timestamps. */
+  /**
+   * Lists calendar events for an association, optionally bounded by `from` / `to` ISO timestamps.
+   * Includes events the association only CO-OWNS, so every row carries its OWN owner identity
+   * (name / slug / colour / logo) - the same four fields the aggregated feed returns.
+   */
   async listCalendarEvents(
     associationId: string,
     fromIso?: string,
@@ -1065,7 +1069,38 @@ export class AssociationsService {
     }
     const rows = await qb.getMany();
     const coOwnerMap = await this.batchLoadCoOwners(rows.map((r) => r.id));
-    return rows.map((e) => this.serializeCalendarEvent(e, coOwnerMap.get(e.id) ?? []));
+    const ownerById = await this.batchLoadEventOwners(rows.map((r) => r.associationId));
+    return rows.map((e) => {
+      const owner = ownerById.get(e.associationId);
+      return {
+        ...this.serializeCalendarEvent(e, coOwnerMap.get(e.id) ?? []),
+        associationName: owner?.name ?? '',
+        associationSlug: owner?.slug ?? '',
+        associationColor: owner?.color ?? null,
+        associationLogoUrl: owner?.logoUrl ?? null,
+      };
+    });
+  }
+
+  /**
+   * Owner identity for a set of events, keyed by association id.
+   *
+   * THE CALLER'S ASSOCIATION IS NOT THE EVENT'S OWNER. `listCalendarEvents` returns events the
+   * association CO-OWNS as well as its own, so the caller cannot stamp itself onto every row -
+   * doing so named one association twice on the same event (owner slot + co-owner slot) and the
+   * calendar grid, keyed on that identity, threw `each_key_duplicate` and took the whole page
+   * down. The owner travels with the event, exactly as it does on the aggregated feed.
+   */
+  private async batchLoadEventOwners(
+    associationIds: string[]
+  ): Promise<Map<string, Pick<Association, 'id' | 'name' | 'slug' | 'color' | 'logoUrl'>>> {
+    const unique = [...new Set(associationIds)];
+    if (unique.length === 0) return new Map();
+    const owners = await this.assoRepo.find({
+      where: { id: In(unique) },
+      select: { id: true, name: true, slug: true, color: true, logoUrl: true },
+    });
+    return new Map(owners.map((a) => [a.id, a]));
   }
 
   /** Max span for aggregated calendar queries (abuse guard). */
