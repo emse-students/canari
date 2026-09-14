@@ -179,7 +179,7 @@ client that still called it - `bootstrap_dead_conversation` - is deleted with it
 
 **The base is MONOTONIC**: `putGroupInfo` refuses a regression with `existing.baseEpoch >= baseEpoch`
 - note `>=`, not `>` - and returns `{ stored: false }` rather than throwing
-([messaging.service.ts:1507](../../../apps/chat-delivery-service/src/services/messaging.service.ts)).
+(`putGroupInfo`, [messaging.service.ts](../../../apps/chat-delivery-service/src/services/messaging.service.ts)).
 That returned boolean is what the distribution-group first-publish race reads as its verdict.
 
 ---
@@ -223,7 +223,7 @@ failed attempt keeps the clock, because the next frame may well succeed.
 
 **Four cadences, each answering a different question**
 ([sessionWatchdogs.ts](../../../frontend/src/lib/composables/session/sessionWatchdogs.ts),
-[recovery.ts:22](../../../frontend/src/lib/utils/chat/recovery.ts)):
+`RECOVERY_TIMEOUT_MS` in [recovery.ts](../../../frontend/src/lib/utils/chat/recovery.ts)):
 
 | Constant | Value | What it is for |
 | --- | --- | --- |
@@ -235,7 +235,7 @@ failed attempt keeps the clock, because the next frame may well succeed.
 
 `isReAddDue` exists so the sweep can decline to ask a question already answered, without silencing a
 REACTIVE caller - which carries new information, and the rate that arrives at is worth measuring
-([recovery.ts:783](../../../frontend/src/lib/utils/chat/recovery.ts)).
+(`askAMemberToReAddUs`, [recovery.ts](../../../frontend/src/lib/utils/chat/recovery.ts)).
 
 ---
 
@@ -285,17 +285,17 @@ on ([app.controller.ts:542-543](../../../apps/chat-delivery-service/src/app.cont
 
 **The row decides who gets the message.** `sendMessage` resolves recipients with
 `WHERE status = 'active'`
-([messaging.service.ts:757](../../../apps/chat-delivery-service/src/services/messaging.service.ts)),
+([messaging.service.ts](../../../apps/chat-delivery-service/src/services/messaging.service.ts)),
 narrowed again by "has a static KeyPackage" - a device with none does not exist server-side, and
 queueing for it is storage nothing will ever collect (WP-GHOST-1). The SENDER is checked too: a
 `pending` sender is refused `sender_not_active`, because a device holding no leaf encrypts nothing
 anyone can open
-([messaging.service.ts:742](../../../apps/chat-delivery-service/src/services/messaging.service.ts)).
+(the same `sendMessage`, [messaging.service.ts](../../../apps/chat-delivery-service/src/services/messaging.service.ts)).
 
-**Redis `group:members:<groupId>` is a SECOND roster**, written beside the SQL one at
-[messaging.service.ts:1858](../../../apps/chat-delivery-service/src/services/messaging.service.ts)
-and [:1800](../../../apps/chat-delivery-service/src/services/messaging.service.ts). SQL decides the
-fan-out; Redis decides live routing. They are written by the same two functions and can still
+**Redis `group:members:<groupId>` is a SECOND roster**, written beside the SQL one by
+`sendWelcome` and `sendMessage`, and OWNED by `activateDeviceMembership` - which is the code's own
+comment, not a reading of it ([messaging.service.ts](../../../apps/chat-delivery-service/src/services/messaging.service.ts)).
+SQL decides the fan-out; Redis decides live routing. They can still
 disagree - section 10 has the case where they provably do.
 
 ---
@@ -320,20 +320,33 @@ stateDiagram-v2
 ```
 
 **The strict gate turns a stale base into a lockout.** `externalJoin` refuses one BEFORE the round
-trip ([BaseMlsService.ts:3033](../../../frontend/src/lib/services/BaseMlsService.ts)): a base behind
+trip (`externalJoin`, [BaseMlsService.ts](../../../frontend/src/lib/services/BaseMlsService.ts)): a base behind
 the epoch is refused by the gate with certainty, and only a member holding the tree can mint a new
 one. Never learn by failing what a fact could have told you.
 
-**Two minters, not one, and a code comment still says otherwise.**
-[BaseMlsService.ts:2609](../../../frontend/src/lib/services/BaseMlsService.ts) reads *"This is the
-ONLY thing that mints a base"*. It is the only minter for an ORDINARY staged add or remove, which is
-unapplied at submit time and has nothing to export. A commit that CARRIES a `groupInfo` - every
-external join does - has its base written by `validateCommit` inside the same transaction. The wiki
-carried the same false clause and was corrected; the comment is section 10's P3-1.
+**Two minters, not one.** `refreshGroupInfo` is the only minter for an ORDINARY staged add or
+remove, which is unapplied at submit time and has nothing to export. A commit that CARRIES a
+`groupInfo` - every external join does - has its base written by `validateCommit` inside the same
+transaction. **That distinction is what decides whether a group can fall behind at all, and exactly
+one place in the code draws it**:
+[staleBase.ts](../../../frontend/src/lib/utils/chat/staleBase.ts), the repair's own docblock. The
+two other comments on the subject -
+[IMlsService.ts](../../../frontend/src/lib/mls-client/IMlsService.ts) beside `baseEpoch` and
+[members.controller.ts](../../../apps/chat-delivery-service/src/controllers/members.controller.ts)
+on the server - say only that the publish is a best-effort follow-up, which is true from where each
+of them stands and is the half that matters there.
+
+**This paragraph used to end "and a code comment still says otherwise", citing
+`BaseMlsService.ts:2609` - and both halves had gone false.** The comment was corrected in #571, and
+the line number moved with the file; a reader following it landed in `runCommitTransaction`'s
+round-trip, which is not what was being discussed. **A `file:line` is only evidence while the file
+holds still**, which is why this page's own P3-3 asks for one on every transition and why they are
+re-read rather than trusted: the pointer that survives a refactor is the SYMBOL. That was the whole
+of triage item P3-1, so it is closed here rather than carried.
 
 **`classifyBase` is the one classifier**, with five verdicts - `no-base-published`, `current`,
 `server-did-not-say`, `this-device-is-behind-too`, `republish`
-([staleBase.ts:74](../../../frontend/src/lib/utils/chat/staleBase.ts)). The third and fourth exist so
+([staleBase.ts](../../../frontend/src/lib/utils/chat/staleBase.ts)). The third and fourth exist so
 a device whose OWN tree is behind does not publish a base worse than the one already there.
 
 ### `STALE --> STALE` was reached by three conversations, and the exit was a ONE-OFF (2026-09-14)
@@ -376,7 +389,7 @@ standing mechanism this decision declined.
 **The distinction the whole design rests on.** A salon's messages are sealed under a per-sender
 SEED, and MLS is the courier that carries that seed to the people entitled to it - nothing more. The
 server has never held a salon key. `isChannelConversationId` keeps the two apart and is checked at
-every MLS seam ([channelCrypto.ts:182](../../../frontend/src/lib/utils/chat/channelCrypto.ts)).
+every MLS seam ([channelCrypto.ts](../../../frontend/src/lib/utils/chat/channelCrypto.ts)).
 
 ```mermaid
 stateDiagram-v2
@@ -409,7 +422,7 @@ stateDiagram-v2
 ```
 
 **DISTRIBUTE BEFORE PERSIST, NEVER THE REVERSE**
-([sessionManager.ts:106](../../../frontend/src/lib/utils/graine/sessionManager.ts)). Persisting first
+(`reserveOutboundSlot`, [sessionManager.ts](../../../frontend/src/lib/utils/graine/sessionManager.ts)). Persisting first
 and failing to distribute leaves a seed in hand that will be reused - every message under it
 unreadable by everyone including its own author, permanently. Distributing first means a failure
 leaves the seed nowhere: the send fails, and the next attempt mints again.
@@ -436,7 +449,7 @@ arriving, or on the roster being exhausted
 **The roster asked is the roster that HOLDS the seed.** On a private salon that is the salon's own
 members: asking the community's would elect an answerer who cannot even see the request, since it
 travels on the salon's own group
-([repair.ts:180](../../../frontend/src/lib/utils/graine/repair.ts)).
+(`resolveRepairTargets`, [repair.ts](../../../frontend/src/lib/utils/graine/repair.ts)).
 
 **Graine has no wiki page of its own** and `channel-encryption.md` is the de-facto one for roughly
 forty code files. That is section 10's P2-3.
@@ -896,4 +909,18 @@ it, and the only thing a server can contribute is to say which conversations are
   caller. One route accepting three authentication mechanisms is a fallback path with a different
   name, and it would hand the internal publisher a door it must not have. What WAS duplicated is
   the check every door had to remember, and remembering is not a mechanism. Detail below.
-- **P3-3.** This page is the first mermaid in `docs/`. If more follow, the convention is the one here: `stateDiagram-v2`, and a `file:line` on every transition.
+- ~~**P3-3.** This page is the first mermaid in `docs/`. If more follow, the convention is the one
+  here: `stateDiagram-v2`, and a `file:line` on every transition.~~ **AMENDED 2026-09-14, BY
+  MEASURING WHAT THE CONVENTION PRODUCED.** `stateDiagram-v2` stands. **The `file:line` half does
+  not**: all eleven of this page's line numbers were re-read against `main`, and **four were wrong** -
+  `messaging.service.ts:757` landed in `deliverQueuedFrame` while the sentence was about
+  `sendMessage` (off by 1100 lines), `:742` landed in `presenceKey`, `:1507` in `getCommitsSince`
+  while the `{ stored: false }` it described is in `putGroupInfo`, and `BaseMlsService.ts:3033`
+  landed on `refreshGroupInfo` - the minter the section above it discusses - while its own sentence
+  was about `externalJoin`. A fifth, P3-1's, had been fixed in #571 and its number moved with the
+  file.
+  **None of that fails anything.** A line number stays inside the file, so it keeps resolving and
+  keeps looking right; it just stops pointing at what was meant, and the reader who follows it
+  learns something false about code that is correct. **So the convention is now `file` plus the
+  SYMBOL** - a name a rename has to touch every caller to change, and one a reader can search for
+  when it does move. Every pointer on this page was converted.
