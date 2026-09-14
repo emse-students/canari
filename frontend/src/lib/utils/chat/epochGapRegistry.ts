@@ -53,6 +53,28 @@ export function anyEpochGapArmed(): boolean {
   return epochGapSince.size > 0;
 }
 
+/**
+ * Every group whose gap has been open for longer than `olderThanMs`, oldest first.
+ *
+ * THE ESCALATOR MUST WALK THE REGISTRY, AND IT USED TO WALK A LIST BUILT FOR ANOTHER QUESTION. The
+ * sync watchdog took its stuck-gap decision inside a loop over conversations plus the not-ready
+ * registry - the set it needs for RE-ADDS - so a group in neither was marked here and never looked
+ * at again. A Graine key-distribution group is exactly that: it is no conversation (the pipeline
+ * branches on `isDistributionGroup` BEFORE both of the sites that clear a gap), and it is never
+ * not-ready (it is joined by external commit, not by a Welcome). Its only way in is a refused
+ * commit, and it had no way out at all short of a reload.
+ *
+ * So the set to iterate is this one. What to DO with each entry still depends on the group, and
+ * that decision stays with the caller: the two kinds do not share a ladder.
+ */
+export function stuckEpochGaps(olderThanMs: number, now: number = Date.now()): string[] {
+  const stuck: Array<[string, number]> = [];
+  for (const [groupId, since] of epochGapSince) {
+    if (now - since > olderThanMs) stuck.push([groupId, since]);
+  }
+  return stuck.sort((a, b) => a[1] - b[1]).map(([groupId]) => groupId);
+}
+
 /** True if the group is currently in an unresolved epoch gap (therefore not sendable). */
 export function isInEpochGap(groupId: string): boolean {
   return epochGapSince.has(groupId);

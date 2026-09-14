@@ -28,6 +28,24 @@ The check now asks the question that actually decides it, which the server can a
 three conversations are reported for what they are, and the repair they need is now a known,
 named piece of work instead of an unnoticed one.
 
+### Fixed - a community could stop receiving its keys, with nothing able to notice
+
+Communities and private salons carry their encryption keys on a separate, invisible channel of their
+own. When your app tidies that channel up - removing someone who has left the community - it can be
+told it is out of date and must catch up first. It marks the channel as needing repair and hands the
+job to the background task that fixes exactly this.
+
+**That task was looking somewhere else.** It went through your conversations, and this channel is
+not a conversation; it is the one thing in the app that is neither. So the mark was set and never
+read: nothing repaired the channel, and nothing cleared the mark either, which also kept a
+five-second background check awake for the rest of the session instead of letting it go quiet.
+
+The repair now works from the list of things actually waiting for it, and it knows the difference
+between a conversation and a key channel - the two are rejoined in completely different ways, and
+the conversation's method would have deleted the key channel outright, taking every key stored on it
+with it. The mark is also cleared the moment the channel catches up on its own, which is what
+happens in the ordinary case.
+
 
 ### Fixed - a device could sit in a conversation's member list for ever, receiving nothing
 

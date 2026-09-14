@@ -19,6 +19,10 @@ const clearGroupNotReady = vi.fn();
 const enumerateNotReadyGroups = vi.fn<() => string[]>(() => []);
 /** A real registry, small enough to keep honest: a cleared gap must actually stop being armed. */
 const gaps = new Map<string, number>();
+const isDistributionGroup = vi.fn((_id: string) => false);
+const externalJoin = vi.fn(async (_id: string) => ({ joined: true }) as Record<string, unknown>);
+const persistCheckpoint = vi.fn(async () => {});
+const dropGroupState = vi.fn(async () => {});
 
 vi.mock('$lib/utils/chat/connection', () => ({ getIsTabLeader: () => getIsTabLeader() }));
 vi.mock('$lib/utils/chat/recovery', () => ({
@@ -32,12 +36,22 @@ vi.mock('$lib/utils/chat/notReadyRegistry', () => ({
   enumerateNotReadyGroups: () => enumerateNotReadyGroups(),
 }));
 vi.mock('$lib/utils/chat/epochGapRegistry', () => ({
-  getEpochGapSince: (id: string) => gaps.get(id),
   clearEpochGap: (id: string) => void gaps.delete(id),
   anyEpochGapArmed: () => gaps.size > 0,
+  stuckEpochGaps: (olderThanMs: number, now: number) =>
+    [...gaps.entries()]
+      .filter(([, since]) => now - since > olderThanMs)
+      .sort((a, b) => a[1] - b[1])
+      .map(([id]) => id),
+}));
+vi.mock('$lib/utils/chat/dropGroupState', () => ({
+  dropGroupState: (...a: unknown[]) => dropGroupState(...(a as [])),
 }));
 vi.mock('./sessionAuth', () => ({
-  makeRecoveryDeps: () => ({ userId: 'u1', mlsService: { getLocalGroups } }),
+  makeRecoveryDeps: () => ({
+    userId: 'u1',
+    mlsService: { getLocalGroups, isDistributionGroup, externalJoin, persistCheckpoint },
+  }),
 }));
 
 const { startSyncWatchdogImpl } = await import('./sessionWatchdogs');
@@ -63,6 +77,8 @@ describe('startSyncWatchdogImpl - what a quiet tab costs', () => {
     getLocalGroups.mockReturnValue([]);
     isReAddDue.mockReturnValue(true);
     gaps.clear();
+    isDistributionGroup.mockReturnValue(false);
+    externalJoin.mockResolvedValue({ joined: true });
     enumerateNotReadyGroups.mockReturnValue([]);
   });
   afterEach(() => {
@@ -127,6 +143,105 @@ describe('startSyncWatchdogImpl - what a quiet tab costs', () => {
     expect(gaps.has('g1')).toBe(false);
     // Nothing is armed any more and no sweep is owed, so the two later ticks cost nothing.
     expect(getLocalGroups).toHaveBeenCalledTimes(1);
+  });
+
+  it('reaches a stuck group that is in NO conversation - the defect this net had', async () => {
+    // THE REGISTRY IS THE SET THAT NEEDS THE NET, and the candidate loop is built for another
+    // question entirely. A Graine distribution group is in no conversation and in no not-ready
+    // registry, so deciding this inside that loop meant a refused commit put it in the gap registry
+    // and nothing ever took it out - no exit at all, short of a reload.
+    const { ctx, cb } = harness([]);
+    getLocalGroups.mockReturnValue(['dg1']);
+    isDistributionGroup.mockReturnValue(true);
+    gaps.set('dg1', Date.now() - 46_000);
+    startSyncWatchdogImpl(ctx, cb);
+
+    vi.advanceTimersByTime(TICK_MS);
+    await vi.waitFor(() => expect(externalJoin).toHaveBeenCalledWith('dg1'));
+
+    expect(gaps.has('dg1')).toBe(false);
+  });
+
+  it('never hands a distribution group the conversation ladder, which would purge it', async () => {
+    // `requestReAdd` asks `getGroupMeta`, a distribution group has no `dm_groups` row, and the
+    // answer CONFIRMED ABSENT purges it as a phantom - a community losing every seed it holds on
+    // the strength of a question that was never about it.
+    const { ctx, cb } = harness([]);
+    getLocalGroups.mockReturnValue(['dg1']);
+    isDistributionGroup.mockReturnValue(true);
+    gaps.set('dg1', Date.now() - 46_000);
+    startSyncWatchdogImpl(ctx, cb);
+
+    vi.advanceTimersByTime(TICK_MS);
+    await vi.waitFor(() => expect(dropGroupState).toHaveBeenCalledTimes(1));
+
+    expect(recoverForkedGroup).not.toHaveBeenCalled();
+    expect(requestReAdd).not.toHaveBeenCalled();
+  });
+
+  it('checkpoints a re-joined distribution group, so the next load does not restore the frozen tree', async () => {
+    const { ctx, cb } = harness([]);
+    getLocalGroups.mockReturnValue(['dg1']);
+    isDistributionGroup.mockReturnValue(true);
+    gaps.set('dg1', Date.now() - 46_000);
+    startSyncWatchdogImpl(ctx, cb);
+
+    vi.advanceTimersByTime(TICK_MS);
+    await vi.waitFor(() => expect(persistCheckpoint).toHaveBeenCalledTimes(1));
+  });
+
+  it('names the reason a re-join no device of ours can repair', async () => {
+    externalJoin.mockResolvedValue({
+      joined: false,
+      reason: 'stale_base',
+      baseEpoch: 4,
+      serverEpoch: 9,
+    });
+    const { ctx, cb } = harness([]);
+    getLocalGroups.mockReturnValue(['dg1']);
+    isDistributionGroup.mockReturnValue(true);
+    gaps.set('dg1', Date.now() - 46_000);
+    startSyncWatchdogImpl(ctx, cb);
+
+    vi.advanceTimersByTime(TICK_MS);
+
+    await vi.waitFor(() => {
+      const said = vi
+        .mocked(cb.log)
+        .mock.calls.map((c: unknown[]) => String(c[0]))
+        .join(' | ');
+      expect(said).toContain('stale_base');
+      expect(said).toContain('epoch 4');
+    });
+    expect(persistCheckpoint).not.toHaveBeenCalled();
+  });
+
+  it('clears the mark before the ladder runs, so a throwing escalation cannot re-fire every tick', async () => {
+    externalJoin.mockRejectedValue(new Error('offline'));
+    const { ctx, cb } = harness([]);
+    getLocalGroups.mockReturnValue(['dg1']);
+    isDistributionGroup.mockReturnValue(true);
+    gaps.set('dg1', Date.now() - 46_000);
+    startSyncWatchdogImpl(ctx, cb);
+
+    vi.advanceTimersByTime(TICK_MS * 4);
+    await vi.waitFor(() => expect(externalJoin).toHaveBeenCalledTimes(1));
+    expect(gaps.has('dg1')).toBe(false);
+  });
+
+  it('leaves a marked group this device holds nothing for to the candidate loop', () => {
+    // A gap is a claim about HELD state lagging. A device holding nothing has no epoch to be
+    // behind, and `requestReAdd` is what owns its recovery.
+    const { ctx, cb } = harness([{ id: 'g1' }]);
+    getLocalGroups.mockReturnValue([]);
+    gaps.set('g1', Date.now() - 46_000);
+    startSyncWatchdogImpl(ctx, cb);
+
+    vi.advanceTimersByTime(TICK_MS);
+
+    expect(recoverForkedGroup).not.toHaveBeenCalled();
+    expect(externalJoin).not.toHaveBeenCalled();
+    expect(requestReAdd).toHaveBeenCalledTimes(1);
   });
 
   it('declines to ask a question the seam has already answered', () => {

@@ -619,6 +619,43 @@ purge's docstring had been claiming for it. Backfilled from `createdAt`, which r
 thirty-two-day seat on the next hourly run. The hourly stranded report reads it too - same question,
 same seats, and it was making the same mistake.
 
+**AND `S-E1`/`DE4` WAS AN ESCALATOR WALKING A LIST BUILT FOR A DIFFERENT QUESTION** - the audit's
+*"a commit-log hole"*, re-measured and closed 2026-09-14.
+
+**The hole itself is dormant and its two exits work.** Measured on production 2026-09-14: 18 holes
+across 11 of 58 groups, every one exactly ONE epoch wide, the newest 2026-09-08 - with 638 commits
+logged since that date and not one new hole, 3623 in total. The READ side already exits immediately:
+`attemptCommitReplay` answers `gapAt`, `setupMessageHandler` reads that as *rung 1 can never finish*
+and drops the state on the spot rather than after `EPOCH_GAP_ESCALATION_MS`, the fix the 2026-09-02
+incident bought. The WRITE side marks the group in `epochGapRegistry` and leaves rung 2 to the sync
+watchdog, deliberately: `catchUpOnRefusedCommit` runs inside `runUnderMlsLock`, which is
+**explicitly non-reentrant**, so escalating there would deadlock the whole MLS client rather than
+repair anything.
+
+**THE DEAD END WAS IN THE DELEGATION, AND ONLY FOR ONE KIND OF GROUP.** The watchdog took its
+stuck-gap decision inside its candidate loop, whose set is conversations plus the not-ready registry
+- what a RE-ADD needs. A Graine key-distribution group is in neither, by construction: it is no
+conversation, and it is joined by external commit rather than by a Welcome. It also reaches no other
+exit, because the pipeline branches on `isDistributionGroup` BEFORE both of the sites that call
+`clearEpochGap`. So a refused commit - `reconcileDistributionGroupRoster` removing departed members
+is the ordinary way in - marked the group and nothing ever unmarked it: no clearer, no escalator,
+and `anyEpochGapArmed` true for the rest of the session, which is exactly the cost
+`dropGroupState`'s own docblock names ("keeps the sync watchdog on its fine tick").
+
+Two changes, one statement. `routeDistributionFrame` clears the gap when a commit applies, the
+symmetry `handleKnownGroup` has had all along - and only on a commit, since an application message
+that decrypts proves nothing about the epoch. And the stuck-gap net now walks the REGISTRY, which is
+the set that needs it, instead of a list assembled for re-adds.
+
+**THE TWO KINDS DO NOT SHARE A LADDER, AND THAT IS WHY THE DISCRIMINATOR IS CARRIED RATHER THAN
+DISCOVERED.** Handing a distribution group to `recoverForkedGroup` would be worse than doing
+nothing: `requestReAdd` asks `getGroupMeta`, a distribution group has no `dm_groups` row, and the
+CONFIRMED ABSENT that comes back purges it as a phantom - a community losing every seed it holds on
+the strength of a question that was never about it. So the watchdog reads `isDistributionGroup`,
+which the service already knows, and gives that group the ladder the Graine loader already uses for
+a stale tree: drop the state, external-join at the current epoch, checkpoint. `stale_base` is named
+in the log because it is the one outcome no device of ours can repair.
+
 **AND THAT SECOND PAIR OF CODES IS TWO CORRECT DISPOSITIONS, NOT A DEAD END** - the audit's
 `G-E1`/`G-E2`/`DE11`, *"no distribution group for a scope; 403 on one: log and `return false`, no
 retry"*, swept 2026-09-14.
