@@ -1423,6 +1423,12 @@ function. Eleven, then twelve, then thirteen.
 
 ## 19. Selecting a tab was what stopped its name fitting
 
+> **SUPERSEDED THE SAME DAY, AND KEPT FOR WHAT IT EXPLAINS.** The bar stopped drawing text on
+> 2026-09-14 (section 23), so this cell budget constrains nothing, `shortLabel` is gone from
+> `AppPlace` and `bottomNavLabels.test.ts` is now `bottomNavNames.test.ts`. What survives is the
+> reasoning: this is the measurement that proved a four-cell bar cannot hold a name at the type
+> floor, which is half of why the labels went.
+
 **A bottom-bar cell is a quarter of the window, and it is the narrowest measure in the app.** The
 bar draws the four `mobileNav` places, so the cell is `width / 4`: 97.5px at 390, 93.8px at 375, and
 **90px at 360** - one of the commonest Android widths, and narrower than the 375px this page
@@ -1453,8 +1459,8 @@ expanded sidebar rail is `21rem` (336px), where "Tableau de bord" is the right n
 So `AppPlace` carries a second one: `shortLabel`, identical to `label` for every place whose name
 already fits, and "Tableau" (44.1px) for the dashboard. Nothing else changed name.
 
-**The guard is a CHARACTER budget, and it says so.** happy-dom lays nothing out, so
-`bottomNavLabels.test.ts` converts at the rate the table above gives - 90.2px over 15 characters is
+**The guard was a CHARACTER budget, and it said so.** happy-dom lays nothing out, so
+`bottomNavLabels.test.ts` converted at the rate the table above gives - 90.2px over 15 characters is
 6.01px each, and the widest sample is 6.70px - and caps a short label at **12 characters**, which is
 80.4px at the pessimistic rate against a 90px cell. It runs in **both locales**, because a
 translation is exactly how a name nobody measured gets in. Raising the number needs a new
@@ -1560,7 +1566,8 @@ and the French string beside it that fits (173.6px); it is now "Soyez le premier
 the app can meet, 320 included**.
 
 **THE CHARACTER BUDGET, AND WHY SECTION 19's RULE DOES NOT TRANSFER.** happy-dom lays nothing out,
-so `commentPlaceholders.test.ts` converts px to characters the way `bottomNavLabels.test.ts` does.
+so `commentPlaceholders.test.ts` converts px to characters the way `bottomNavLabels.test.ts` did
+(retired with the labels; see section 19's banner).
 Section 19 takes the widest per-character rate of any sample; here that is `Add a comment...` at
 8.44px each - fourteen characters in which one ellipsis and one capital dominate - and applying it
 forbids `Ajouter un commentaire...`, which fits with 17px to spare. **Take the rate from the
@@ -1635,3 +1642,96 @@ screen. MSYS rewrites an absolute POSIX path handed to `adb shell` (`/sdcard/x` 
 Windows-style destination. A first dump caught only the composer, the stories bar and one header -
 the action bar was below the fold - so the feed has to be scrolled until a bar is fully on screen
 before the dump is worth anything.
+
+## 23. The two bars - Instagram measured on the same phone, and the size that became the reference
+
+From the user, 2026-09-14: *"Je viens de t'installer instagram pour que tu puisses observer les
+elements et leurs tailles aussi. Notamment la barre de navigation en bas : pas de texte, des logos
+reconnaissables, un petit point pour la notification"*, and then: *"Pour la barre du haut et celle
+du bas, les tailles peuvent devenir des references (des boutons ni trop gros ni trop petits)"*.
+
+So this section is not only a comparison. **It is where the app's chrome scale is written down.**
+
+### The reference, in three numbers
+
+| | value | why it is that number |
+| --- | --- | --- |
+| **Glyph** | **24px** | Instagram draws 59 real px in both bars on A1 (dpr 2.475) = 23.8 CSS. Canari already drew 24 in the bottom bar and 18-20 in the top one; 24 is now both. |
+| **Touch target** | **44px minimum** | The smallest dimension of any Instagram control: its bottom tab is 87 x 48, its top-bar controls are 36-48 wide but the full 56 tall. 44 is the floor a control may not go under. |
+| **Bar height** | **56 top, 48 bottom** (+ the safe-area inset) | Measured below. Both are Instagram's to within half a pixel. |
+
+A control smaller than 44 is not "compact", it is a control the thumb misses; a glyph larger than 24
+in a 56px bar is a bar that shouts. Neither number is a preference, and neither may move without a
+new dump beside it.
+
+### What was read, and how
+
+A1 (Mi 9T), 436 x 945 CSS px, dpr 2.475, screen 1080 x 2340 real px - so **real px / 2.475 = CSS
+px**. Instagram via `uiautomator`, Canari via CDP on port 9333, on 2026-09-14, in the same minute.
+
+**The top bar.**
+
+| | Instagram | Canari, before | Canari, now |
+| --- | --- | --- | --- |
+| status inset above it | 84 real = 33.9 | 34 | 34 |
+| bar | 138 real = **55.8** | **56** | 56 |
+| control box | 89 x 138 / 119 x 138 = 36 x 56, 48 x 56 | **36 x 36** | **44 x 44** |
+| glyph | 59 real = **23.8** | **20**, and the bell **18** | **24** |
+| avatar | - (Instagram keeps none here) | **24 x 24**, the whole button | **32**, centred in a 44 box |
+| unread mark | 23 x 27 real = 9 x 11, at the glyph's top-right | a 17.6px counter, same corner | unchanged |
+
+The height was already right and every control inside it was small: four tap targets at 36, one of
+them a bare 24px avatar that WAS its own button, and a bell glyph at 18 next to two at 20. Three
+sizes for one row of peers.
+
+**The bottom bar.** Instagram's five tabs carry a `content-desc` and **not one `TextView`**.
+
+| | Instagram | Canari, before | Canari, now |
+| --- | --- | --- | --- |
+| bar's own box | 118 real = **47.7** | **64** | **48** |
+| + safe-area inset | 59 real = 23.8 | 25 | 25 |
+| tab | 216 x 118 real = 87 x 48 | 109 x 64 | 109 x 48 |
+| glyph | 59 real = **23.8** | **24** | 24 |
+| text under the glyph | **none** | 10px at the `text-2xs` floor | **none** |
+| unread mark | **10 real = 4 CSS**, a bare dot centred under the glyph | 10px + a 2px white ring = 14 | **6px**, no ring, under the glyph |
+| profile tab image | 74 real = 29.9 | n/a (Canari draws four places, not five) | n/a |
+
+**The glyph was already right, so the 16px is the label row and nothing else** - a third of the bar,
+on every screen of the app, spent on four words.
+
+### The three things the dump settles
+
+**A name that is not drawn is still owed.** `sr-only` keeps each tab's accessible name, so a screen
+reader loses nothing; and because no 90px cell has to hold it any more, the name is the FULL one.
+"Tableau de bord", not "Tableau" - which is `shortLabel`, added hours earlier for exactly that cell
+(section 19) and now deleted from `AppPlace`, from all eight places and from `messages/*.json`.
+`bottomNavLabels.test.ts` became `bottomNavNames.test.ts`: the old budget constrained a width
+nothing occupies, the new test asserts the thing that IS now invisible - a name, non-empty, in every
+locale.
+
+**The dot's ring was load-bearing only where the dot was.** A red disc at a glyph's top-right
+overlaps the glyph, so it needed a 2px white ring to stay legible - 14px of decoration for a
+one-bit fact. The label row vacated the space under the glyph, which is where Instagram puts its
+own, and in clear air the dot separates itself. 6px, no ring.
+
+**The active underline had nothing left to say.** `h-1 w-8` of amber with an 8px glow, pinned to a
+bottom edge now 16px closer to the glyph, repeating what the amber tint and the 2.5 stroke on the
+glyph already carry. Instagram marks its active tab with the glyph alone.
+
+### Deliberately NOT copied
+
+**The glyphs themselves.** Instagram's bar is home / reels / messages / search / avatar; Canari's is
+feed / communities / chat / dashboard, drawn with Lucide's `Newspaper`, `Users`, `MessageCircle`,
+`LayoutDashboard`. Whether `Newspaper` reads as "the page you land on" the way a house glyph would
+is a product question about what the app's home IS, not a sizing one, and it is not settled by a
+dump. **Left open for the user.**
+
+**The fifth tab.** Instagram's avatar tab is its profile; Canari's profile is in the top bar, where
+Instagram has a create button instead. Two different places to put the same two controls, and the
+measurement says nothing about which is right.
+
+**HOW THE INSTAGRAM SIDE WAS TAKEN.** As section 22's Facebook dump - `MSYS_NO_PATHCONV=1` for both
+`adb shell uiautomator dump` and the `adb pull`, a Windows-style destination. One trap beyond it:
+**launching another app steals the foreground and drops the Canari webview's CDP bridge**, so the
+Canari half has to be re-armed (`bun pin.mjs --device A1`) after the Instagram half is taken, never
+before.

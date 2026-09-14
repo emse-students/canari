@@ -43,17 +43,17 @@
         href="/posts?compose=1"
         title={m.posts_publish_button()}
         aria-label={m.posts_publish_button()}
-        class="text-text-muted hover:text-text hover:bg-cn-surface flex h-9 w-9 items-center justify-center rounded-full transition-colors"
+        class="text-text-muted hover:text-text hover:bg-cn-surface flex h-11 w-11 items-center justify-center rounded-full transition-colors"
       >
-        <Plus size={20} strokeWidth={2.5} />
+        <Plus size={24} strokeWidth={2.5} />
       </a>
       <a
         href="/posts?search=1"
         title={m.posts_search_placeholder()}
         aria-label={m.posts_search_placeholder()}
-        class="text-text-muted hover:text-text hover:bg-cn-surface flex h-9 w-9 items-center justify-center rounded-full transition-colors"
+        class="text-text-muted hover:text-text hover:bg-cn-surface flex h-11 w-11 items-center justify-center rounded-full transition-colors"
       >
-        <Search size={20} strokeWidth={2.5} />
+        <Search size={24} strokeWidth={2.5} />
       </a>
       <PostNotificationBell />
       {#if globalSession.userId}
@@ -62,9 +62,9 @@
           onclick={() => goto('/profile')}
           title={m.nav_my_profile_title()}
           aria-label={m.nav_my_profile_label()}
-          class="ml-0.5 rounded-2xl ring-2 ring-transparent transition-all duration-200 hover:ring-amber-400"
+          class="flex h-11 w-11 items-center justify-center rounded-2xl ring-2 ring-transparent transition-all duration-200 hover:ring-amber-400"
         >
-          <Avatar userId={globalSession.userId} size="sm" />
+          <Avatar userId={globalSession.userId} size="md" />
         </button>
       {/if}
     {/if}

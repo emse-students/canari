@@ -11,6 +11,28 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - la barre du bas n'affiche plus de texte, et les deux barres prennent une taille de reference
+
+Les quatre onglets du bas portaient leur nom sous l'icone. Mesure sur un Mi 9T le meme jour,
+Instagram n'en affiche aucun : ses cinq onglets ont un nom pour les lecteurs d'ecran et pas une
+seule ligne de texte a l'ecran. La barre passe donc de 64 a 48 pixels de haut - un tiers de moins,
+sur chaque ecran de l'application - et les noms ne sont pas supprimes mais rendus invisibles : un
+lecteur d'ecran les annonce toujours, et en entier maintenant qu'aucune case de 90 pixels ne doit
+les contenir ("Tableau de bord", et non plus "Tableau").
+
+La pastille de message non lu descend sous l'icone, la ou Instagram place la sienne. Au coin de
+l'icone elle la chevauchait et avait besoin d'un anneau blanc pour rester lisible : 14 pixels pour
+dire une seule chose. A l'air libre elle se detache toute seule, et fait 6 pixels.
+
+Dans la barre du haut, les commandes etaient trop petites : quatre cibles de 36 pixels, dont une
+photo de profil de 24 qui etait a elle seule le bouton, et une cloche de 18 a cote de deux icones de
+20. Trois tailles pour une meme rangee. Elles font maintenant 44 pixels avec une icone de 24, ce que
+mesure la barre d'Instagram.
+
+Ces tailles deviennent la reference de l'application : **icone 24, cible tactile 44 minimum, barre
+de 56 en haut et 48 en bas**. Elles sont ecrites avec leur mesure dans
+`docs/wiki/frontend/design-reference.md`, section 23.
+
 ### Changed - la photo, le nom et la formation etaient colles au bord gauche de la page profil
 
 Empilee sur un telephone, la photo de 96 pixels se trouvait contre le bord d'une carte de 404, le
