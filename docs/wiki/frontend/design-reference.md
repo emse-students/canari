@@ -1457,3 +1457,47 @@ measurement written beside it.
 **Below 360px the bar still relies on `truncate`**, and that is deliberate rather than unnoticed:
 "Communautes" wants 80.1px against a 320px cell of 80. 320px is an iPhone SE (2016); this page's
 reference is 375.
+
+## 20. The truncation census - 131 clips, and the one place none may be
+
+From the user, 2026-09-14: *"si dans une utilisation normale il y a des choses tronquees, c'est
+qu'il faudrait revoir la mise en page"*. Swept the same day: **115 `truncate` and 16 `line-clamp`
+across 66 components**. They are not one defect, and treating them as one would either forgive the
+real one or churn sixty files. Three categories, each with its own answer.
+
+| Category | Count | Verdict |
+| --- | --- | --- |
+| A page's own `<h1>` | 2 | **Never acceptable** - fixed 2026-09-14, guard added |
+| A heading in a bar or card with actions beside it on one line (`<h2>`) | 4 | Correct as it stands; wrapping moves the actions |
+| A list row, a preview, a filename, a poll option | ~125 | Correct; the full value is one tap away |
+
+**THE `<h1>` RULE, AND WHY IT IS THE ONLY ONE WORTH A GUARD.** A page title names the page the
+reader is already on, so there is nothing to tap through to - and the page has a whole column to
+give it, so the text WRAPS: one more line, nothing clipped. The two offenders were **the same
+header written twice**:
+
+| | shape | what the name got at 390px |
+| --- | --- | --- |
+| `profile/[id]` | `flex flex-col gap-5 sm:flex-row` | the whole column |
+| `profile` | `flex items-center gap-5` at every width | **183px** - 96px avatar, 40px of gaps, ~39px of settings link |
+
+One had been fixed and the other never was. Nothing was wrong at either site on its own, and only a
+reader holding both files could see it - the same shape as section 18's thirteen accent
+derivations. `/profile` now stacks below `sm` like its sibling, and neither carries `truncate`.
+
+`pageTitleNotClipped.test.ts` holds it, with **no allowlist**: an `<h1>` may not carry `truncate` or
+`line-clamp`, anywhere under `src`. It reads the class attribute with whitespace collapsed, for the
+reason `pageColumn.test.ts` does.
+
+**WHY `<h2>` IS DELIBERATELY NOT ASSERTED.** All four remaining are a heading sharing one line with
+controls: the conversation name in `ChatHeader`, the workspace name in the sidebar's sticky header,
+the panel title in `ConversationSidePanel`, and a form's title in a card of the `/forms` grid. A
+heading that wraps there pushes the controls down, so the bar changes height whenever the selection
+changes - a worse behaviour than a clipped name, and one the reader meets on every conversation
+switch rather than once. **None of the three bars exposes the full name on hover**, which is the
+open half of this: a `title` is no answer on a touch screen, and the honest one is that the full
+name is on the screen the header belongs to. Recorded rather than fixed.
+
+**The bottom bar's clipped tab label is NOT in this census**, and has its own section: nothing there
+was `truncate`d by choice - the label fit until the active state made it bold, so it is a width
+defect rather than a clipping decision.

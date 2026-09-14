@@ -277,7 +277,7 @@
         </div>
 
         <div class="min-w-0 flex-1">
-          <h1 class="text-text-main mb-1 truncate text-2xl font-bold tracking-tight sm:text-3xl">
+          <h1 class="text-text-main mb-1 text-2xl font-bold tracking-tight sm:text-3xl">
             {displayFallbackName}
           </h1>
           <ProfileMinesweeperBadge userId={profile.id} />
