@@ -32,7 +32,14 @@
   );
 </script>
 
-<div class="flex items-center gap-3.5 bg-transparent px-5 py-4">
+<!--
+  `min-w-0 flex-1` BECAUSE THE ACTION ROW IS THIS HEADER'S SIBLING, NOT ITS OVERLAY.
+  `PostCard` lays the two out side by side, so the width left for the name is whatever the buttons
+  do not take - which is the only correct answer when the button COUNT varies from one (a reader:
+  share) to five (a manager who can also pin, edit, delete and report). Without `min-w-0` a flex
+  item refuses to shrink below its content and the `truncate` below never fires.
+-->
+<div class="flex min-w-0 flex-1 items-center gap-3.5 bg-transparent px-5 py-4">
   {#if post.association}
     <a
       href={associationHref}
