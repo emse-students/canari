@@ -10,7 +10,6 @@ import {
   sendHistoryRangeBundle,
   historyStateKeyFor,
   persistMlsStateAfterMutation,
-  forgetMlsGroupIfPresent,
   purgeLocalConversationRecord,
   kickStaleLeaf,
   isGroupActiveOnServer,
@@ -29,9 +28,9 @@ import { retireConversation } from '$lib/utils/chat/conversations';
 import {
   classifyServerStatus,
   decideAbsentGroupFate,
-  reconcileAbsentLocalGroup,
   type GroupServerStatus,
 } from '$lib/utils/chat/groupLifecycle';
+import { forgetGroupsAbsentFromServer, readGroupSweepSnapshot } from '$lib/utils/chat/groupSweep';
 import { saveBlobAs } from '$lib/utils/fileDownload';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 
@@ -404,48 +403,12 @@ export async function discoverMissingGroups(params: {
 
   // ── Phase 1: Create placeholders for server groups not present locally ────
 
-  let serverGroups: {
-    groupId: string;
-    name: string;
-    isGroup: boolean;
-    imageMediaId?: string | null;
-    deletedAt?: string | null;
-  }[] = [];
-  let serverFetchSucceeded = false;
-  /**
-   * THE LOCAL SET IS CAPTURED BEFORE THE SERVER LIST, AND THE ORDER IS THE WHOLE POINT.
-   *
-   * The purge below destroys the MLS tree of any local group the server did not list, so it is only
-   * sound for groups that already existed when the server was asked. Reading the local set AFTER the
-   * fetch - which is what this did - puts every group created DURING the fetch into the comparison
-   * against a snapshot that could not possibly contain it, and the sweep then deletes the only copy
-   * of a group that is seconds old. It is not a rare window: `getDismissedGroups` is awaited between
-   * the two reads as well.
-   *
-   * MEASURED, NOT REASONED. On 2026-08-30 a group was created at 22:31:31.905 and forgotten by its
-   * creator inside the same second - `[MLS] forgetGroup 50799ae8… (absent from server)` - and prod
-   * still holds the row, `deletedAt` null. Five seconds later the same device asked the server
-   * directly and was told the group is there, then refused its own re-entry with
-   * `no_base_published`, because the base it would have external-joined was the state it had just
-   * deleted. Every other member is left counted by the server and unable to open it.
-   *
-   * `initializeConnection` has taken both reads at one instant since WP-GRAINE-1 and says so where
-   * it does it; this is the second copy of that decision, which had the guard against an unreliable
-   * LIST and not the one against a list that is merely OLDER than what it is compared to.
-   *
-   * Capturing early can only ever SPARE a group - one that became absent during the fetch is simply
-   * swept on the next pass - so the change cannot destroy anything this did not already destroy.
-   */
-  const localGroupsWhenTheServerWasAsked = mlsService.getLocalGroups();
-  try {
-    serverGroups = await mlsService.getUserGroups(userId);
-    serverFetchSucceeded = true;
-  } catch {
-    // Continue to Phase 2 even if server fetch fails - there may be pending placeholders
-  }
-
-  // Some backends can transiently return duplicates; keep first occurrence by groupId.
-  const uniqueServerGroups = Array.from(new Map(serverGroups.map((g) => [g.groupId, g])).values());
+  // THE LOCAL SET AND THE SERVER LIST COME FROM ONE SEAM, in the one order that is sound, with one
+  // verdict on whether absence from the list may be believed. Both were written out here and in
+  // `initializeConnection`, and the two copies disagreed on four points - including the guard that
+  // refuses an empty list, which this side did not have. See `groupSweep.ts`.
+  const snapshot = await readGroupSweepSnapshot(mlsService, userId, log);
+  const uniqueServerGroups = snapshot.serverGroups;
 
   // Active groups only: exclude soft-deleted tombstones (kept server-side for the 90-day
   // recovery window but never re-created as local placeholders).
@@ -455,29 +418,14 @@ export async function discoverMissingGroups(params: {
   // Phase 1 - MLS WASM: drop OpenMLS trees for groupIds absent from the server.
   // Phase 2 - UI/IndexedDB: drop conversation rows (may exist without WASM state).
   // Only when getUserGroups succeeded (never purge on transient network errors).
-  if (serverFetchSucceeded) {
-    const serverGroupIds = new Set(uniqueServerGroups.map((g) => g.groupId));
+  if (snapshot.fetchOk) {
+    const serverGroupIds = snapshot.serverGroupIds;
     // Groups dismissed by THIS user (manual deletion/leave on one device): must be purged
     // on ALL their devices (rules 3 & 5), not shown with the banner.
     // Best-effort (`[]` on error -> never purge on doubt).
     const dismissedGroupIds = new Set(await mlsService.getDismissedGroups().catch(() => []));
-    let mlsMutated = false;
 
-    // Absence from `getUserGroups` is a reason to ASK, never a reason to destroy: that list answers
-    // for conversations, and a community's key-distribution group is excluded from it by
-    // construction. See `reconcileAbsentLocalGroup` - the same decision `initializeConnection`
-    // takes, in one place, because two copies of it diverging is what WP-GRAINE-1 was.
-    for (const groupId of localGroupsWhenTheServerWasAsked) {
-      if (isChannelConversationId(groupId)) continue;
-      if (serverGroupIds.has(groupId)) continue;
-      const fate = await reconcileAbsentLocalGroup(mlsService, groupId);
-      if (fate.action === 'keep') {
-        log(`[DISCOVERY] MLS state kept for ${groupId.slice(0, 8)}… - ${fate.reason}`);
-        continue;
-      }
-      if (await forgetMlsGroupIfPresent(mlsService, groupId, log)) mlsMutated = true;
-    }
-    if (mlsMutated) {
+    if (await forgetGroupsAbsentFromServer(mlsService, snapshot, log)) {
       await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
     }
 
