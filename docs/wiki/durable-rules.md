@@ -1609,3 +1609,24 @@ Environment and tooling traps that belong to no one subsystem. Each cost a run.
   measure of a deletion is not the grep that preceded it but the build that follows it, and a
   warning surfacing there is a continuation of the same task rather than a pre-existing one. The
   same shape applies to a deleted route, a deleted entity and a deleted feature flag.
+
+- **GIT BASH REWRITES A LEADING-SLASH ARGUMENT INTO A WINDOWS PATH, AND THE PROGRAM RECEIVING IT
+  CANNOT TELL.** `bun sweep.mjs --route /posts` arrives at the script as
+  `C:/Program Files/Git/posts` - MSYS path conversion, applied to any argument that looks like a
+  POSIX path, silently. On 2026-09-14 that mangled argument was resolved by a WebView into
+  `c:/Program%20Files/Git/posts`, a scheme with no `//` authority, which `http::Uri` refuses and
+  wry's Android IPC `unwrap()`s - **aborting the whole app, three times, before the argument was
+  read**. An hour went into the app before the instrument was suspected. **Pass such an argument as
+  `MSYS_NO_PATHCONV=1 bun ... --route /posts`, or run it from PowerShell** - and when a tool starts
+  behaving impossibly under Git Bash, print the argument the program actually received before
+  reasoning about anything downstream of it. The defect the accident found is real and separate: a
+  boundary that cannot unwind owes a `Result`, not an `unwrap`
+  ([backlog](backlog.md#p1---a-uri-httpuri-cannot-parse-aborts-the-whole-app-and-nothing-can-catch-it-found-2026-09-14-on-a1)).
+
+- **AN EMPTY SCREEN MEASURED ON THE WRONG ESTATE IS NOT A MEASUREMENT.** The test population - the
+  accounts, their conversations, their history - lives on the LOCAL estate. A client pointed at
+  `dev` has none of it, so "no conversations" and "the contact search returns nothing" are the
+  expected reading there, and filing either as a defect would be filing the estate. **Before a
+  client result about ABSENCE is believed, state which backend the client is talking to, measured
+  from its own requests rather than inferred from the build's name.** A release APK carries the dev
+  origin; a debug one carries `localhost:8081` through the reverse tunnel.

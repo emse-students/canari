@@ -5,6 +5,13 @@
  *   bun sweep.mjs --device W1        # the same sweep in a desktop browser
  *   bun sweep.mjs --route /calendar  # one route, repeatable while fixing it
  *
+ * **`--route` UNDER GIT BASH NEEDS `MSYS_NO_PATHCONV=1`.** MSYS rewrites a leading-slash argument
+ * into a Windows path, so `--route /posts` arrives as `C:/Program Files/Git/posts`, which the DOM
+ * resolves to `c:/Program%20Files/Git/posts` - a scheme `http::Uri` refuses, which ABORTS THE APP
+ * (backlog: "a URI `http::Uri` cannot parse ABORTS THE WHOLE APP"). Nothing here is wrong when that
+ * happens and neither is the app's routing; the argument never survived the shell. A full sweep
+ * passes no route and is unaffected.
+ *
  * ## Why this is a script and not a paragraph
  *
  * The 2026-09-14 route sweep was run by hand, in Chrome, with a device-metrics override, and it
