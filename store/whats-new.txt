@@ -1,5 +1,7 @@
-version: 0.17.3
+version: 0.18.0
 
-Un appareil qui ne pouvait plus ouvrir une conversation redemandait de l'aide toutes les minutes, indéfiniment, même quand le serveur avait déjà répondu que personne n'était joignable pour la réparer. Il attend maintenant qu'un membre capable de le faire revienne.
+Les associations : chaque tuile porte la couleur de l'association et son nom en entier, et la page d'une association se lit enfin sur un téléphone sans texte coupé. Une fiche de partenariat prend la couleur du partenaire.
 
-L'application interrogeait le serveur douze fois par minute au sujet de conversations dont elle avait déjà la réponse. Moins de requêtes réseau, rien de changé à l'écran.
+La barre de réactions ne déborde plus de l'écran sur un message court, et le sélecteur de GIF s'ouvre par-dessus la page au lieu de s'ouvrir dans une carte.
+
+Vingt-sept écrans montraient encore de l'anglais à un lecteur français. Ils parlent français.
