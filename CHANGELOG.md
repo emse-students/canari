@@ -11,6 +11,18 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - the comment box cut its own invitation on every phone
+
+Under a post nobody had commented on yet, the comment box read "Soyez le premier a commente..." -
+the invitation to write the first comment did not fit the box it was printed in. It was cut on
+every phone, by a little at 390 pixels wide and by a lot at 360, and a placeholder is the one piece
+of text there is no way to see in full: it disappears the moment you start typing.
+
+The box is as wide as it can be - the avatar, the send button and the padding beside it are already
+at their minimum - so the sentence is what changed. It now reads "Soyez le premier...", which fits
+on every screen the app runs on, and a test measures the three comment placeholders against the
+room the box actually has, in both languages.
+
 ### Changed - un événement n'est plus jamais validé automatiquement
 
 Un événement créé par un administrateur du BDE ou par un administrateur système était publié

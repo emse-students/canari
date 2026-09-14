@@ -5391,28 +5391,36 @@ the scope is real, and **the pass itself is still owed**. Everything the sweeps 
 turned up has since closed too - the last of it was the layer gate's blind spot, shipped
 2026-09-14.
 
-**THE PASS ITSELF STARTED ON 2026-09-14, AND WHAT IS LEFT IS THE LIST BELOW.** It has already
-produced two defects, both truncation and both invisible at desktop width: a bottom-tab label that
-fitted until selecting it made it bold, and a profile header that clipped the reader's own name.
-Both are fixed and in review, which is not the same as shipped. Two further notes taken on the way did NOT survive being measured - the avatar 404 and the
-`apple-mobile-web-app-capable` warning - and the evidence against them is in
-[design-reference](frontend/design-reference.md) section 16 rather than here, so that neither is
-re-derived.
+**THE ROUTE SWEEP IS DONE (2026-09-14), AND WHAT IS LEFT IS BELOW IT.** Every route the app has was
+opened and measured with the same instrument: at 390px, and at 1280 and 1920 for the "100 %" half.
+**Nothing scrolls sideways and no element exceeds the viewport, at any of the three widths** - the
+13 `/admin/*` routes, the three `/legal/*` pages (signed out as well as signed in), `/login` in an
+isolated context, `/calendar` and `/calendar/export`, `/associations/*`, `/posts` and a post,
+`/lists` and a list, `/forms` and a form, `/communities`, `/chat` with a conversation open, and
+every other top-level page.
 
-**Still unswept, and this is the remaining scope:**
+It produced four defects, all truncation and all invisible at desktop width: a bottom-tab label
+that fitted until selecting it made it bold; a profile header that clipped the reader's own name;
+an account id shown where it could be neither read nor copied; and a comment box that cut its own
+invitation. The first three are shipped or merged, the fourth is in review. Three notes taken on
+the way did NOT survive being measured - the avatar 404, the `apple-mobile-web-app-capable`
+warning, and `/calendar/export`'s clamped event title, which is a fixed-size poster cell whose
+height `fitEventText` computes. The evidence against all three is in
+[design-reference](frontend/design-reference.md) sections 16 and 21, so that none is re-derived.
 
-- **`/admin/*` - 13 routes, none opened.** The user authorised making the test account an admin on
-  dev for exactly this. It is the largest untouched block.
-- `/legal/*` at phone width; `/calendar/export`; `/posts/[postId]`; `/forms/[id]`; `/communities`
-  with real data rather than an empty state.
-- `/associations/[slug]` is **half swept** (2026-09-14): the page column and the `calendar` tab are
-  done - the tab now picks its own width and the agenda draws the same two shapes as `/calendar`
-  ([calendar](frontend/modules/calendar.md)) - and `about`, `members`, `shop` and `partnerships`
-  have still not been opened at phone width.
-- **The open half of the truncation census**: none of the three truncated `<h2>` bars - `ChatHeader`,
-  the sidebar sticky header, `ConversationSidePanel` - exposes the full name anywhere, and a `title`
-  attribute is not an answer on a touch screen. The census and the per-site verdicts are in
-  [design-reference](frontend/design-reference.md).
+**The truncation census's open half is CLOSED by measurement, not by a fix**: of its three `<h2>`
+bars only `ChatHeader` clips in practice, five conversations in eight at a ceiling near eleven
+characters - and the settings button in that same bar opens a panel showing the full name
+unclipped, so the census's own rule is satisfied. The arithmetic, and the two changes that would
+turn it into a defect, are in [design-reference](frontend/design-reference.md) section 20.
+
+**What the sweep could NOT reach, and is the remaining scope:**
+
+- **A community with many channels, or long ones.** `/communities` was measured against the estate's
+  one community with one channel, which exercises no width.
+- **Real hardware.** All of the above is Chrome with a device-metrics override; the phone and the
+  iPhone render their own way, and three of three iOS defects were invisible to every gate here
+  ([device-verification](device-verification.md)).
 
 ## Composer and reactions
 

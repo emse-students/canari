@@ -621,7 +621,7 @@
   "post_cancel_reply_label": "Annuler la réponse",
   "post_reply_placeholder": "Écrivez votre réponse…",
   "post_comment_placeholder": "Ajouter un commentaire…",
-  "post_first_comment_placeholder": "Soyez le premier à commenter…",
+  "post_first_comment_placeholder": "Soyez le premier…",
   "post_remove_image_label": "Supprimer l'image",
   "post_send_comment_label": "Envoyer le commentaire",
   "post_missing_auth_token": "Jeton d'authentification manquant",

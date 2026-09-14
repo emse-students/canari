@@ -1500,10 +1500,70 @@ controls: the conversation name in `ChatHeader`, the workspace name in the sideb
 the panel title in `ConversationSidePanel`, and a form's title in a card of the `/forms` grid. A
 heading that wraps there pushes the controls down, so the bar changes height whenever the selection
 changes - a worse behaviour than a clipped name, and one the reader meets on every conversation
-switch rather than once. **None of the three bars exposes the full name on hover**, which is the
+switch rather than once. **None of the three bars exposes the full name on hover**, which was the
 open half of this: a `title` is no answer on a touch screen, and the honest one is that the full
-name is on the screen the header belongs to. Recorded rather than fixed.
+name is on the screen the header belongs to.
+
+**THAT OPEN HALF IS CLOSED, BY MEASUREMENT RATHER THAN BY A FIX (2026-09-14).** `ChatHeader` was
+opened on eight real conversations at 390px, and it is the only one of the three that clips in
+practice - the sidebar's sticky header and `ConversationSidePanel`'s title did not, with real data
+at phone width. The header's arithmetic is exact and leaves the name whatever the others do not
+take:
+
+| the bar's four children at 390px | width |
+| --- | --- |
+| back (phone only) | 32px |
+| avatar | 40px |
+| **the name, the only child that yields** | **118px** |
+| the actions, `shrink-0` | 140px |
+
+plus `px-3` either side and three `gap-3`s. So **a name is cut above about eleven characters, and
+five of the eight clipped** - by 9 to 26px. The three actions are 44px each because that is the
+touch-target floor, and the cluster can hold six once calls revive, at which point the name has
+nothing left; the `md:hidden` back button is itself a 44px target inside a `w-8` box, so it already
+overhangs its own gap by 12px.
+
+**It stays as it is because the census's own rule is satisfied, and that was checked rather than
+assumed**: the settings button sitting in that same bar opens a panel whose first line is the
+conversation name, rendered at 248px against the 144px it wanted - **unclipped, one tap away**. A
+name that has somewhere to be read in full is a list affordance, not a defect. What would make it
+one is a fourth action or a name shown nowhere else, and both are now measurable.
 
 **The bottom bar's clipped tab label is NOT in this census**, and has its own section: nothing there
 was `truncate`d by choice - the label fit until the active state made it bold, so it is a width
 defect rather than a clipping decision.
+
+## 21. The comment box cut the one sentence with nothing behind it
+
+**A placeholder is the only text in the app with nothing to tap through to.** A list row that
+clips is fine because the row opens; a heading that clips is fine when the same name is on the
+screen the button beside it opens (section 20). A placeholder has neither: it is replaced by what
+the reader types, so a clipped one is never read in full by anybody.
+
+The comment composer's editor is the only flexible child of its row, and everything beside it is
+fixed - a 24px avatar, a 10px gap, 14px of pill padding either side, the 44px send target with its
+4px margin, and the card's own padding. Measured on the local estate at five widths, 2026-09-14,
+the relation is exactly linear: **the editor gets `viewport - 184px`.**
+
+| viewport | editor | `Soyez le premier a commenter...` (215px) | `Ajouter un commentaire...` (173.6px) |
+| --- | --- | --- | --- |
+| 430 | 246px | fits | fits |
+| 390 | 206px | **cut by 9px** | fits |
+| 375 (the reference) | **191px** | **cut by 24px** | fits, by 17px |
+| 360 | 176px | **cut by 39px** | fits, by 2.4px |
+| 320 | 136px | cut by 79px | cut by 37.6px |
+
+**The layout could not pay for it.** Dropping the pill's `px-3.5` to `px-3` and the row's `gap-2.5`
+to `gap-2` returns 6px of the 24 the reference is short, and 44px is the floor for the send button.
+One string in one locale was roughly a quarter longer than both its English counterpart (169.9px)
+and the French string beside it that fits (173.6px); it is now "Soyez le premier...", 122.7px, which fits **at every width
+the app can meet, 320 included**.
+
+**THE CHARACTER BUDGET, AND WHY SECTION 19's RULE DOES NOT TRANSFER.** happy-dom lays nothing out,
+so `commentPlaceholders.test.ts` converts px to characters the way `bottomNavLabels.test.ts` does.
+Section 19 takes the widest per-character rate of any sample; here that is `Add a comment...` at
+8.44px each - fourteen characters in which one ellipsis and one capital dominate - and applying it
+forbids `Ajouter un commentaire...`, which fits with 17px to spare. **Take the rate from the
+strings long enough for the cap to bind.** Among samples of twenty characters or more the widest
+is 7.55px each, and 191px over 7.55 is 25.3, so the cap is **25 characters**, in both locales,
+leaving the longest string that passes 2px of room.
