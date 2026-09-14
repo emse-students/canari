@@ -1224,3 +1224,46 @@ every height from 4 to 200px at both floors the clamp never asks for more height
 bar and the desktop's rail - and the phone's branch is byte-for-byte what it was. Copying them
 would be two month navigations able to disagree about what `prevMonth` resets, in a component
 that already sets `selectedDay = null` from three places.
+
+### 17.10 The five columns the sweep could not see, and the guard that can (2026-09-14)
+
+17.2 measured 52 routes and was right about all 52. **Five page columns were still hand-written**,
+because a width does not have to live in a route:
+
+| Where | What it wrote | Why 17.2 missed it |
+| --- | --- | --- |
+| `AssociationDetailView` | `mx-auto max-w-4xl` = **896px** | a COMPONENT. `/associations/[slug]` and `/lists/[slug]` are eight-line files that render it, so the width sat one level below every file the sweep opened - and it reached TWO route families at once, exactly like the `admin/+layout.svelte` ancestor case |
+| `forms/[id]` | `mx-auto max-w-2xl` = **672px** | eight pixels off the reading measure. Nothing looks wrong at 8px |
+| `forms/[id]`, sticky bar | the same literal again | it is rendered OUTSIDE the column so it can stick, so the alignment is restated - and restating the value is what lets two numbers drift |
+| `c/join/[token]`, `g/join/[token]` | `mx-auto max-w-md` = **448px** | two byte-identical files, and neither reads as a page |
+
+**A COUNT OF ROUTES IS NOT A COUNT OF PAGE COLUMNS.** Same shape as the standing rule that a count
+of call sites is not a count of implementations: the sweep counted the things it could enumerate,
+and the defect lived in what that enumeration was a proxy FOR.
+
+**What each became.** `AssociationDetailView` is `width="tool"` - the identical 896 the eleven admin
+pages carried, becoming the identical 1024 they became. The page is genuinely mixed (`about` prose,
+`members` a column of full-width rows, `shop` and `partnerships` card walls), which is the shape
+`pageWidth.ts` describes for `tool`; the about text then carries `PAGE_WIDTHS.reading` itself, so
+widening the page does not lengthen a line. `forms/[id]` is `width="reading"` and its sticky bar
+takes the same constant rather than a second copy of the number. The join pages are
+`PageContainer`s whose CARD keeps the 448 - that number was never wrong for a card, only for a page.
+
+**The header was cutting the name off, and the measurement is brutal.** Measured at 375px against
+the app's own compiled CSS: the `truncate`d `h1` had a **98px** box for content needing **573px** -
+83 % of an association's name gone - because avatar and actions were both `shrink-0` in a row that
+never wrapped, and `min-w-0 flex-1` handed the name what was left. With `flex-wrap`, `basis-64` and
+the actions taking their own line below `sm`, the same name draws **325px over two lines with
+nothing clipped**, and the card goes 122px -> 260px. That is the user's *"sur mobile, la plupart des
+textes sont coupes"*: the same defect the association TILES had, in the page that exists to show
+a name.
+
+**The guard is `pageColumn.test.ts`, and it is a NUMBER rather than a list.** `mx-auto` plus a
+max-width of **640px or more** is a page column, whatever the file calls it. 640 sits just under
+`reading` (680) and just under the `max-w-2xl` (672) that `forms/[id]` had, so nothing can park
+beside the scale; below it nothing is asserted, which is what lets the join cards keep their 448
+without an exemption list. It collapses whitespace across the whole file before matching, because a
+class attribute that spans lines is how the 2026-09-13 overlay sweep left two components unread.
+
+Every value here was read off the running app, not off the Tailwind docs: `max-w-4xl` 896,
+`max-w-5xl` 1024, `max-w-[42.5rem]` 680, `max-w-2xl` 672, `max-w-md` 448.

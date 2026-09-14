@@ -51,6 +51,8 @@
   import { publicAppUrl } from '$lib/utils/publicAppUrl';
   import QrCodeModal from '$lib/components/shared/QrCodeModal.svelte';
   import { m } from '$lib/paraglide/messages';
+  import PageContainer from '$lib/components/layout/PageContainer.svelte';
+  import { PAGE_WIDTHS } from '$lib/components/layout/pageWidth';
   import { getLocale } from '$lib/paraglide/runtime';
 
   const formId = $derived(page.params.id);
@@ -653,7 +655,13 @@
   />
 {/if}
 
-<div class="mx-auto max-w-2xl p-4 pt-6">
+<!--
+  THE PAGE COLUMN IS DECLARED. This was `mx-auto max-w-2xl` - 672px, eight pixels off the reading
+  measure and belonging to no scale, which is the same thing `/legal/*` was carrying when the width
+  sweep reached it. A form being filled in is a column of prose with inputs in it, so it takes the
+  measure the feed sets rather than one this page chose for itself.
+-->
+<PageContainer width="reading">
   <!-- Back + Share -->
   <div class="mb-6 flex items-center justify-between">
     <button
@@ -1159,7 +1167,7 @@
       </div>
     {/if}
   {/if}
-</div>
+</PageContainer>
 
 <!-- ── Submit bar: sits at the end by default, sticks for good once earned ── -->
 {#if form && !loading}
@@ -1180,8 +1188,15 @@
        `position: sticky` never leaves the document flow the way `fixed` does, so the browser
        already reserves this bar's own natural spot on its own - reaching the true bottom always
        settles it back there, right after the last question, for free. -->
+  <!--
+    THE STICKY BAR LINES UP WITH THE COLUMN ABOVE IT, and takes its width from the same declaration
+    rather than repeating a number. It cannot simply live INSIDE the column: it is rendered outside
+    it so that it can stick to the viewport, so the alignment has to be restated - but restating the
+    VALUE is what let the two drift apart in the first place. The padding matches `PageContainer`'s
+    at every breakpoint for the same reason.
+  -->
   <div
-    class="keyboard-aware-bottom mx-auto max-w-2xl px-4 pb-3 {reachedEnd
+    class="keyboard-aware-bottom mx-auto {PAGE_WIDTHS.reading} px-4 pb-3 md:px-8 {reachedEnd
       ? 'sticky bottom-0 z-50 md:pb-5'
       : ''}"
   >
