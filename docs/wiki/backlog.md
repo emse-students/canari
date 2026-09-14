@@ -5389,9 +5389,26 @@ GIF picker, the association tiles, and the association page's width with the par
 came with it. Their stories are in `CHANGELOG.md`; they were never the scope, only the evidence that
 the scope is real, and **the pass itself is still owed**. Everything the sweeps THOSE fixes ran
 turned up has since closed too - the last of it was the layer gate's blind spot, shipped
-2026-09-14 - so this section is now the mandate and nothing else. **Do not read that as progress on
-it:** not one page has been opened at 100 % and at a phone width for this pass. The findings are
-gone because they were fixed, not because anybody looked.
+2026-09-14.
+
+**THE PASS ITSELF STARTED ON 2026-09-14, AND WHAT IS LEFT IS THE LIST BELOW.** It has already
+produced two defects, both truncation and both invisible at desktop width: a bottom-tab label that
+fitted until selecting it made it bold, and a profile header that clipped the reader's own name.
+Both are fixed and in review, which is not the same as shipped. Two further notes taken on the way did NOT survive being measured - the avatar 404 and the
+`apple-mobile-web-app-capable` warning - and the evidence against them is in
+[design-reference](frontend/design-reference.md) section 16 rather than here, so that neither is
+re-derived.
+
+**Still unswept, and this is the remaining scope:**
+
+- **`/admin/*` - 13 routes, none opened.** The user authorised making the test account an admin on
+  dev for exactly this. It is the largest untouched block.
+- `/legal/*` at phone width; `/calendar/export`; `/associations/[slug]`; `/posts/[postId]`;
+  `/forms/[id]`; `/communities` with real data rather than an empty state.
+- **The open half of the truncation census**: none of the three truncated `<h2>` bars - `ChatHeader`,
+  the sidebar sticky header, `ConversationSidePanel` - exposes the full name anywhere, and a `title`
+  attribute is not an answer on a touch screen. The census and the per-site verdicts are in
+  [design-reference](frontend/design-reference.md).
 
 ## Composer and reactions
 

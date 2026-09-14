@@ -996,6 +996,35 @@ report blamed was already gone, and deleting it was NOT sufficient on its own: w
 the section still measured 973px inside 417. `min-h-0 w-full flex-auto` is what sizes correctly, and
 the reason is in the component's own comment.
 
+### Two more, from the graphical pass itself (2026-09-14)
+
+Both were written down on the way through as defects to fix, and **neither survived being measured**.
+They are here because the next reader of a network panel or a DevTools Issues tab will reach for the
+same two conclusions, and the evidence against them is cheap to record and expensive to re-derive.
+
+**A face with no photo does NOT cost a request per load.** The note said `GET /api/users/<id>/avatar`
+404s on every page load and that the client should have learnt it from the user payload instead.
+Measured on the local estate: the endpoint answers `404` with `Content-Length: 0` and
+`Cache-Control: public, max-age=600`, and the browser honours it. Three `fetch`es in one document
+gave `transferSize` 300, then **0**, then **0**; after a full reload, **0** again, in 1 ms, with no
+network request at all. So the cost is one bodyless 404 per face per ten minutes per device, which
+is the freshness policy the endpoint was deliberately given - an avatar can appear in MiGallery at
+any moment, and core-service cannot know that it has without asking.
+
+Carrying a `hasAvatar` flag on the user payload would not remove those requests; it would MOVE them,
+from a lazy per-face `fetch` the client can cache to a per-user upstream call made while a list is
+being assembled, and it would make the user payload fail when MiGallery does. **The discriminator
+this rule asks for has to be known to the layer that would carry it, and here it is not.**
+
+**Chromium does not warn about `apple-mobile-web-app-capable`.** The note said a deprecation warning
+was logged on every load and that `mobile-web-app-capable` should be added beside it. Measured on
+Chrome 153 against the served page (the tag IS in the markup): one console message on a cold load,
+`Initialised in WEB mode (WASM)`, and nothing under `warn`, `error`, `verbose` or `issue`. There is
+also **no web app manifest in this repository**, so the standard spelling would install nothing and
+declare nothing - the Apple tag is the whole of "added to the home screen, this opens without
+Safari's chrome", and it is the only one of the two any engine here reads. Adding the second name
+would have put an inert tag in the source to silence a line that is not printed.
+
 **`MIN_USEFUL_HEIGHT` exceeding the room on the chosen side is not a fault.** A panel smaller than
 it shows a header and a clipped first row, so the height is KEPT and the panel is moved instead.
 What it may never exceed is the viewport, and that IS enforced. Both are pinned in
