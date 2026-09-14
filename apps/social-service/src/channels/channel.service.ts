@@ -1166,7 +1166,7 @@ export class ChannelService {
     groupInfo: string,
     baseEpoch: number,
     deviceId: string
-  ): Promise<{ stored: boolean }> {
+  ): Promise<{ stored: boolean; publisherActive: boolean }> {
     await this.assertWorkspaceMember(workspaceId, userId);
 
     const result = await publishDistributionGroupInfo(
@@ -1177,8 +1177,14 @@ export class ChannelService {
       { userId, deviceId }
     );
     this.logger.log(
-      `[DISTRIBUTION_GROUP] published workspace=${workspaceId} user=${userId.slice(0, 8)} epoch=${baseEpoch} stored=${result.stored}`
+      `[DISTRIBUTION_GROUP] published workspace=${workspaceId} user=${userId.slice(0, 8)} epoch=${baseEpoch} stored=${result.stored} publisherActive=${result.publisherActive}`
     );
+    if (!result.publisherActive) {
+      // ACCUSES, because this device may be the only one that can serve this group's first Welcome.
+      this.logger.warn(
+        `[DISTRIBUTION_GROUP] publisher NOT routable workspace=${workspaceId} user=${userId.slice(0, 8)} device=${deviceId.slice(0, 12)}`
+      );
+    }
     return result;
   }
 
@@ -1340,7 +1346,7 @@ export class ChannelService {
     groupInfo: string,
     baseEpoch: number,
     deviceId: string
-  ): Promise<{ stored: boolean }> {
+  ): Promise<{ stored: boolean; publisherActive: boolean }> {
     await this.assertPrivateChannelReader(channelId, userId);
 
     const result = await publishDistributionGroupInfo(
@@ -1351,8 +1357,13 @@ export class ChannelService {
       { userId, deviceId }
     );
     this.logger.log(
-      `[CHANNEL_GRAINE] published channel=${channelId} user=${userId.slice(0, 8)} epoch=${baseEpoch} stored=${result.stored}`
+      `[CHANNEL_GRAINE] published channel=${channelId} user=${userId.slice(0, 8)} epoch=${baseEpoch} stored=${result.stored} publisherActive=${result.publisherActive}`
     );
+    if (!result.publisherActive) {
+      this.logger.warn(
+        `[CHANNEL_GRAINE] publisher NOT routable channel=${channelId} user=${userId.slice(0, 8)} device=${deviceId.slice(0, 12)}`
+      );
+    }
     return result;
   }
 

@@ -27,6 +27,7 @@ import { PinVerifier } from '../entities/pin-verifier.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { GroupInvite } from '../entities/group-invite.entity';
 import { resolveGroupInvitePreview } from '../utils/group-invite';
+import { sanitizeIdentityValue } from '../utils/sanitize';
 import { tombstoneGroups, totalGroupOwnedRows } from '../utils/group-purge';
 import { MessagingService } from '../services/messaging.service';
 import { RETENTION_WINDOW_MS } from '../retention.constants';
@@ -327,7 +328,7 @@ export class InternalController {
     @Param('scopeId') scopeId: string,
     @Headers('x-internal-secret') headerSecret: string,
     @Body() body: { groupInfo?: string; baseEpoch?: number; userId?: string; deviceId?: string }
-  ): Promise<{ stored: boolean }> {
+  ): Promise<{ stored: boolean; publisherActive: boolean }> {
     this.assertInternalSecret(headerSecret);
     if (typeof body?.groupInfo !== 'string' || !Number.isFinite(body?.baseEpoch)) {
       throw new BadRequestException('groupInfo (base64) and baseEpoch are required');
@@ -335,6 +336,11 @@ export class InternalController {
     if (!body?.userId || !body?.deviceId) {
       throw new BadRequestException('userId and deviceId are required');
     }
+    // STORED AS A MEMBERSHIP BELOW, so they are sanitized as identities rather than checked for
+    // truthiness. This door handed both fields to the one writer untouched - not even the shape
+    // allowlist every other door applies.
+    const publisherUserId = sanitizeIdentityValue(body.userId, 'userId');
+    const publisherDeviceId = sanitizeIdentityValue(body.deviceId, 'deviceId');
     const where = this.distributionWhere(this.assertDistributionScope(scope), scopeId);
     const label = `${scope}:${scopeId}`;
 
@@ -363,15 +369,27 @@ export class InternalController {
     // upsert underneath makes a repeat free. `redeliverMissed: false` for the same reason the
     // external-join path passes it - the device holds the group at the CURRENT epoch, so there is
     // nothing earlier it could decrypt and a replay would be undecryptable frames and blank pushes.
-    await this.messagingService.activateDeviceMembership(body.userId, body.deviceId, group.id, {
-      redeliverMissed: false,
-    });
+    // THE REFUSAL IS CARRIED, NOT THROWN AND NOT DROPPED. The GroupInfo is already stored above, so
+    // a 400 here would report a failure that did not happen and invite a retry of work that
+    // succeeded. But dropping it is what this door did, and the refusal matters more here than at
+    // most doors: the publisher is the only device that can serve this group's first Welcome, so
+    // one the writer will not route to leaves the group with nobody to answer - the 2026-08-20
+    // defect above, reached by a different road. So it goes back in the answer, the way this
+    // endpoint's siblings carry their counts, and `tag` puts this door's name on the warn line.
+    const outcome = await this.messagingService.activateDeviceMembership(
+      publisherUserId,
+      publisherDeviceId,
+      group.id,
+      { redeliverMissed: false, tag: 'DISTRIBUTION_PUBLISHER' }
+    );
 
     this.logger.log(
       `[DISTRIBUTION_GROUP] group-info scope=${label} group=${group.id} epoch=${body.baseEpoch} ` +
-        `stored=${result.stored} publisher=${body.userId.slice(0, 8)}:${body.deviceId.slice(0, 12)}`
+        `stored=${result.stored} publisherActive=${outcome.ok}` +
+        `${outcome.ok ? '' : ` (${outcome.reason})`} ` +
+        `publisher=${publisherUserId.slice(0, 8)}:${publisherDeviceId.slice(0, 12)}`
     );
-    return result;
+    return { ...result, publisherActive: outcome.ok };
   }
 
   /**

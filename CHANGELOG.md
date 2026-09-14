@@ -11,6 +11,28 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a device the server had refused to deliver to was told it was a member
+
+When the app joins a conversation from a notification while it is closed, the phone's own
+background code tells the server "I am in, you can deliver to me". The server is allowed to say no
+to that - a device its owner has deleted, or one missing the key it would need, must never be
+delivered to - and it says so, in its log, correctly.
+
+**It then replied that the device was a member anyway.** The phone had no way to know otherwise: it
+records the reply and nothing else. So a device that would never receive a message believed it
+would, and no report anywhere contradicted it.
+
+Four different places in the server can mark a device as a member, and checking them all turned up
+the same shape twice more. One of them stored whatever identity it was handed, including the
+placeholder the app uses before it knows who it is - the same value that, in August, was recorded as
+a member of a real conversation. Another silently dropped the refusal when publishing a community's
+encryption key, which matters more than it sounds: the publishing device is sometimes the only one
+able to let the next member in, so a refused one leaves a group with nobody to answer.
+
+The check that stops all three now lives in the single place that writes the membership, instead of
+being something each of the four had to remember. Three of them refuse properly; the fourth reports
+the refusal to the service that asked, which now logs it as a problem rather than discarding it.
+
 ### Fixed - one empty answer from the server could have erased every conversation's keys on a device
 
 Two places in the app compare "the groups this device holds" against "the groups the server says you

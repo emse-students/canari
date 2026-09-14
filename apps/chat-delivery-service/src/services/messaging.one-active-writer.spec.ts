@@ -164,6 +164,36 @@ describe('the ONE writer of an active membership', () => {
     expect(warn.mock.calls.map((c) => String(c[0])).join('\n')).toContain('REFUSED');
   });
 
+  // TWO OF THE FOUR DOORS DID NOT SANITIZE THE IDENTITY, so the check is here, where there is one
+  // of it. `deviceAddressability` cannot answer this question: a placeholder that registered a
+  // KeyPackage is addressable, which is precisely how `userId='unknown'`, `deviceId='pending'`
+  // became an ACTIVE member of a real conversation on 2026-08-27.
+  it.each([
+    ['userId', 'unknown', 'd1'],
+    ['deviceId', 'u1', 'pending'],
+  ])("refuses the client's unresolved-identity placeholder in %s", async (field, u, d) => {
+    const outcome = await service.activateDeviceMembership(u, d, 'g1');
+
+    expect(outcome).toEqual({ ok: false, reason: 'unresolved_identity' });
+    expect(deviceGroupRepo.upsert).not.toHaveBeenCalled();
+    expect(redis.sadd).not.toHaveBeenCalled();
+
+    const line = warn.mock.calls.map((c) => String(c[0])).find((l) => l.includes('REFUSED'));
+    expect(line).toContain('unresolved_identity');
+    expect(line).toContain(`field=${field}`);
+  });
+
+  // It is refused BEFORE the addressability gate, and the gate is why: that gate is a database
+  // round trip asking whether a device is reachable, and a value that names no device has no
+  // answer there worth spending. A typed reason rather than a message, because nothing in this
+  // codebase branches on prose.
+  it('refuses the placeholder without asking the database whether it is addressable', async () => {
+    await service.activateDeviceMembership('unknown', 'pending', 'g1');
+
+    expect(revokedDeviceRepo.findOne).not.toHaveBeenCalled();
+    expect(keyPackageRepo.findOne).not.toHaveBeenCalled();
+  });
+
   it('replays nothing when told the device joined at the current epoch', async () => {
     deviceGroupRepo.findOne.mockResolvedValue({ status: 'pending', createdAt: new Date() });
 

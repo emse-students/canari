@@ -47,6 +47,7 @@ import {
   sanitizeOptionalQueryValue,
   sanitizeStringIdList,
   assertCallerOwnsUserId,
+  isUnresolvedIdentity,
 } from '../utils/sanitize';
 import {
   HISTORY_STREAM_MAXLEN,
@@ -230,18 +231,30 @@ export interface NotifyHistoryRequestBody extends NotifyWelcomeRequestBody {
 /**
  * Why a device may not be given an `active` routing membership.
  *
- * Same two conditions `getPendingInvitations` refuses an invitation on, because a device good
- * enough to be MESSAGED must be at least as valid as one good enough to be INVITED (WP-GHOST-1).
+ * The first two are the conditions `getPendingInvitations` refuses an invitation on, because a
+ * device good enough to be MESSAGED must be at least as valid as one good enough to be INVITED
+ * (WP-GHOST-1). The third is not about the device at all: it is the value failing to name one, and
+ * it lives here rather than at each door because two of the four doors did not check it.
  */
-export type ActivationRefusal = 'revoked' | 'no_key_package';
+export type ActivationRefusal = 'revoked' | 'no_key_package' | 'unresolved_identity';
 
 /**
  * The result of {@link MessagingService.activateDeviceMembership}.
  *
- * Carried out rather than thrown because the three callers owe their client different things: the
- * foreground status endpoint answers a 400, the background push and commit seams have no user to
- * tell and carry on. The log line is written inside the method either way, so a caller that ignores
- * this still leaves the refusal on the record.
+ * Carried out rather than thrown because the callers owe their client different things, and what
+ * each owes was NOT what each did until 2026-09-14 - two of the five simply dropped it:
+ *
+ * | Caller | What it owes its client | What it does |
+ * | --- | --- | --- |
+ * | `POST mls/invitations/status` | a user is waiting | 400 naming the reason |
+ * | `POST mls/groups` (create) | the group it just made is memberless | 400 naming the reason |
+ * | `POST mls/push/membership-active` | a native handler that logs the code | 400 naming the reason |
+ * | `POST .../group-info` (publisher) | the GroupInfo IS stored; only this half failed | `publisherActive: false` in the answer |
+ * | the commit fan-out | nobody to tell; the sender's own send succeeds | carries on, warn logged |
+ *
+ * The log line is written inside the method either way, so a caller that ignores this still leaves
+ * the refusal on the record. The third row used to answer `{ status: 'active' }` on a refusal,
+ * which is not an ignored outcome but a false one.
  *
  * A discriminated union would say this better, but this package compiles with
  * `strictNullChecks: false`, under which `if (!outcome.ok)` does not narrow one - so the shape that
@@ -1941,6 +1954,25 @@ export class MessagingService {
       tag = 'MEMBERSHIP_ACTIVE',
     }: { redeliverMissed?: boolean; tag?: string } = {}
   ): Promise<ActivationOutcome> {
+    // A NON-IDENTITY IS REFUSED HERE, BECAUSE THE GATE BELOW CANNOT SEE IT AND TWO DOORS DID NOT
+    // LOOK. `deviceAddressability` asks whether this pair is reachable; a placeholder that
+    // registered a KeyPackage answers yes, which is exactly how `userId='unknown'`,
+    // `deviceId='pending'` became an ACTIVE member of a real conversation on 2026-08-27. Two of the
+    // four doors sanitized the identity and two did not, so the check belongs where there is one of
+    // it. A refusal, not a throw: this method answers its callers with an outcome.
+    for (const [field, value] of [
+      ['userId', userId],
+      ['deviceId', deviceId],
+    ] as const) {
+      if (isUnresolvedIdentity(value)) {
+        this.logger.warn(
+          `[${tag}] REFUSED group=${groupId} device=${userId}:${deviceId} ` +
+            `reason=unresolved_identity field=${field} value=${value}`
+        );
+        return { ok: false, reason: 'unresolved_identity' };
+      }
+    }
+
     // A revoked or key-package-less device must never be routed to (WP-GHOST-1). This path is
     // reached by the commit fan-out - where the device activating itself is the COMMIT SENDER, so
     // without this a device its owner explicitly deleted would re-enrol itself in every group it
@@ -2047,6 +2079,23 @@ export class MessagingService {
       tag = 'MEMBERSHIP_PENDING',
     }: { removedFromTreeAt: Date | null; tag?: string }
   ): Promise<void> {
+    // THE MIRROR UPSERTS TOO, SO IT CREATES THE SAME ROW FOR THE SAME NON-IDENTITY. Demoting a
+    // placeholder grants nothing and costs nothing, which is exactly why this is a silent return
+    // rather than a throw: there is no device behind the value to tell, and no caller of this
+    // best-effort path has a user to tell either. What it prevents is the row existing at all.
+    for (const [field, value] of [
+      ['userId', userId],
+      ['deviceId', deviceId],
+    ] as const) {
+      if (isUnresolvedIdentity(value)) {
+        this.logger.warn(
+          `[${tag}] REFUSED group=${groupId} device=${userId}:${deviceId} ` +
+            `reason=${field} is the client's unresolved-identity placeholder ('${value}')`
+        );
+        return;
+      }
+    }
+
     // `kickedAt` is in the written columns ONLY when a kick is being recorded: TypeORM builds the
     // `DO UPDATE SET` list from the keys of this object, so omitting it is what leaves an existing
     // value alone. Spelling `kickedAt: null` here would erase the evidence of a kick on every
