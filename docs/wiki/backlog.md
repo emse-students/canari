@@ -286,6 +286,14 @@ rollback does the same thing to a real user.
 2. Once that reader is the floor everywhere (`minClientVersion` is the lever), flip the writer. The
    classification becomes real at that moment and not before.
 
+**AND THE USER SET THAT DATE, 2026-09-14: the floor goes up at the 0.18.0 STABLE**, once both stores
+have taken the version - which is the same condition the production deploy already waits on, so it
+is one gate rather than a new one. The reader shipped 2026-09-08 and has been behaviourally inert
+since; step 2 is the one-line writer flip plus the `minClientVersion` bump, and the two causes of
+`MLS_LOCAL_STATE_UNDECRYPTABLE` stop being indistinguishable in the field from that moment. The cost
+is stated and accepted: a client older than 0.18.0 is refused. This also unblocks `DE7`, whose only
+route out currently requires the OLD PIN.
+
 **THE HEADER GOES AT THE STATE LAYER, NEVER IN `security::encrypt_blob`.** That function is shared
 with `mls-wasm/src/pin_crypto.rs`, which seals the PIN-protected BACKUP files, and with the
 pre-v0.11.0 legacy reader in `src-tauri/src/commands/mls.rs`. Changing it would silently change the
