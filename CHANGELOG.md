@@ -51,6 +51,10 @@ publication sans commentaire, le champ dit toujours "Soyez le premier...". Les c
 et de tri ne sont plus dessines dans ce cas non plus - ils parlent d'une liste, et "Masquer les
 commentaires" nommait quelque chose qui n'etait pas a l'ecran.
 
+Une exception, et c'est l'intention du lecteur qui la decide : sur la page d'une publication
+(`/posts/[postId]`), atteinte en suivant un lien vers *cette* publication, la section s'ouvre
+d'emblee. Dans le fil on fait defiler, sur cette page on vient lire le fil de discussion.
+
 ### Changed - le fil social passait les deux tiers de l'ecran a se presenter avant de montrer un post
 
 Sur telephone, ouvrir le fil donnait, dans l'ordre : l'en-tete de l'application, le titre "Fil
