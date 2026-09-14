@@ -4,6 +4,11 @@
 # adapter-node. L'artifact compilé est téléchargé dans frontend/build/ avant que
 # cette image soit construite.
 # NE PAS rebuilder ici : le secret ne serait pas disponible dans ce contexte.
+# Et `--build` sur ce service NE RECONSTRUIT RIEN : cette image n'est qu'une COPY
+# de `frontend/build`, donc Docker rend l'image de la derniere fois que quelqu'un
+# a produit l'artefact, sans rien dire. `make local-frontend` est le seul chemin
+# qui rafraichit les deux images ; le detail et la mesure sont dans
+# Dockerfile.frontend-ssr, qui porte exactement le meme piege.
 #
 # adapter-node produit build/client (les assets), build/prerendered (robots.txt,
 # sitemap.xml, .well-known/) et un serveur Node. Nginx sert les deux premiers

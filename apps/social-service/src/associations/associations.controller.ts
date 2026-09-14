@@ -256,7 +256,7 @@ export class AssociationsController {
   ) {
     const rows = await this.service.listAggregatedCalendarFeed(from, to, associationId);
     const body = buildAggregatedCalendarIcs(rows, {
-      frontendBaseUrl: process.env.FRONTEND_URL || 'http://localhost:1420',
+      frontendBaseUrl: process.env.FRONTEND_URL || 'http://localhost',
     });
     res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
     res.setHeader('Cache-Control', 'public, max-age=120');

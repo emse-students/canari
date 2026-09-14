@@ -211,7 +211,10 @@ HEADER
   # The backticks are MARKDOWN in the comment this writes into the generated .env, not a
   # command substitution - single quotes are exactly what keeps them literal.
   # shellcheck disable=SC2016
-  printf '# Created as `canari-local`, redirect URIs on http://localhost:1420. Production'"'"'s client\n'
+  printf '# Created as `canari-local`, redirect URIs on http://localhost:8081 - the nginx
+'
+  printf '# entry the estate is served on, which is where the callback lands. Production'"'"'s client
+'
   printf '# is deliberately NOT reused: a page served from localhost must not be able to obtain\n'
   printf '# production tokens under production'"'"'s own client id.\n'
   printf 'AUTHENTIK_CLIENT_ID=%s\n' "${CANARI_LOCAL_OIDC_CLIENT_ID:-}"
@@ -226,7 +229,23 @@ HEADER
 # with those.
 DOMAIN=localhost
 ALLOW_ORIGIN=*
-FRONTEND_URL=http://localhost:1420
+
+# IT IS 8081, THE NGINX ENTRY - AND THAT IS A STATEMENT ABOUT THE SERVICES, NOT ABOUT THE FRONTEND.
+#
+# The SERVICES read this to build the links a HUMAN follows: the Stripe return, the Lydia callback,
+# a form link, a product link, the aggregated calendar feed. They run in the local stack whichever
+# frontend is in use, so their one value has to name a frontend that is ALWAYS there - and 8081 is.
+# 1420, the Vite dev server, answers only while somebody has `bun run dev` open, and the phone
+# cannot reach it at all: `a1apk.mjs` maps 8081 with `adb reverse` and nothing maps the other. A
+# link to 8081 works for a developer on the dev server too; the reverse is not true.
+#
+# `VITE_FRONTEND_URL` BELOW IS THE OTHER CONSUMER AND KEEPS 1420 DELIBERATELY. That variable is read
+# by `publicAppOrigin()` inside the BUNDLE, and this file generates `frontend/.env`, which is the
+# dev server's own environment - where 1420 is the right answer. The stack's build overrides it:
+# `make local-frontend` passes `VITE_FRONTEND_URL=http://localhost:8081` on the build command line,
+# after GRP-4 measured a group invite coming out as `http://localhost:1420/g/join/<token>` on
+# 2026-09-05. One variable, two consumers, two right answers, each set by its own consumer.
+FRONTEND_URL=http://localhost:8081
 NODE_ENV=development
 ENABLE_DEV_ROUTES=true
 RUST_LOG=chat_gateway=debug,tower_http=debug

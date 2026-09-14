@@ -5,6 +5,18 @@
 # built. DO NOT rebuild here: the VITE_* secrets are not available in this
 # context.
 #
+# THE CONSEQUENCE, AND IT IS SILENT: `docker compose up -d --build frontend-ssr`
+# rebuilds NOTHING you changed. All this image contains is a COPY of
+# `frontend/build`, so Docker caches on that directory's hash and hands back the
+# image built the last time somebody produced the artifact - days old, with no
+# error and no warning. Measured 2026-09-14: a `--build` of this service and of
+# `frontend` returned an image three days old, and the estate went on serving a
+# `<head>` computed by pre-merge code while the page looked entirely current. It
+# cost a wrong conclusion about a shipped fix, before the image date was read.
+# `make local-frontend` is the ONLY path that refreshes this: it runs the
+# SvelteKit build first, asserts the artifact has the web shape, and only then
+# rebuilds the two images.
+#
 # This container is NOT the public entry point: nginx (the `frontend` image)
 # remains the only one exposing a port. It serves HTML navigations only - the
 # assets are served by nginx out of the same artifact.
