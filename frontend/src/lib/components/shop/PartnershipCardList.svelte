@@ -9,15 +9,52 @@
   import CardTile from '$lib/components/shared/CardTile.svelte';
   import { CARD_GRID } from '$lib/components/layout/cardGrid';
   import { PARTNERSHIP_FALLBACK_ICON } from '$lib/utils/cardIcons';
+  import { loadLogoAccent } from '$lib/utils/logoAccent';
+  import { apiAssetUrl } from '$lib/utils/apiUrl';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
     cards: PartnershipCard[];
-    /** Accent color applied to every card - see `CardTile`'s `accentColor` doc. */
+    /**
+     * The FALLBACK accent, applied to any card whose logo has no usable colour of its own - see
+     * `CardTile`'s `accentColor` doc. Callers pass the owning association's colour.
+     */
     accentColor?: string | null;
   }
 
   let { cards, accentColor }: Props = $props();
+
+  /**
+   * The accent each card's own logo is wearing, keyed by logo URL, filled in as they decode.
+   *
+   * The user asked for this and named the trap in the same sentence (2026-09-13): *"utiliser la
+   * couleur du logo importe (attention au fond blanc des fois) comme couleur d'accentuation, en
+   * gardant la couleur de l'asso comme fallback"*. A partner's mark is its identity far more than
+   * the club hosting the offer is, and a wall of eight partnerships all wearing one hue said nothing
+   * about any of them.
+   *
+   * **AN ABSENT ENTRY AND A REFUSED ONE ARE THE SAME ANSWER HERE, deliberately**: both mean "use the
+   * association's colour", which is exactly what every card wore before this existed. So there is no
+   * loading state, no flicker to manage and nothing to fail - a card is drawn correctly from its
+   * first frame and may quietly become more itself a moment later.
+   */
+  let logoAccents = $state<Record<string, string>>({});
+
+  $effect(() => {
+    for (const card of cards) {
+      if (!card.iconUrl) continue;
+      const url = apiAssetUrl(card.iconUrl);
+      if (url in logoAccents) continue;
+      void loadLogoAccent(url).then((accent) => {
+        if (accent) logoAccents = { ...logoAccents, [url]: accent };
+      });
+    }
+  });
+
+  /** This card's own accent, or the association's. */
+  function accentFor(card: PartnershipCard): string | null | undefined {
+    return (card.iconUrl ? logoAccents[apiAssetUrl(card.iconUrl)] : undefined) ?? accentColor;
+  }
 
   let claimResults = $state<Record<string, PartnershipClaimResult>>({});
   let claimErrors = $state<Record<string, string>>({});
@@ -75,7 +112,7 @@
       <CardTile
         iconUrl={card.iconUrl}
         fallbackIcon={PARTNERSHIP_FALLBACK_ICON}
-        {accentColor}
+        accentColor={accentFor(card)}
         badgeText={card.badgeText}
       >
         <div class="flex h-full flex-col gap-3 p-5">

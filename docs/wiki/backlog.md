@@ -5367,26 +5367,6 @@ there is both a stored colour and a deterministic fallback for every association
 used for the calendar and nowhere else. Nothing needs to be invented or migrated to colour the
 association surfaces.
 
-### P3 - the association page is narrow, and on a phone most of its text is cut (user, 2026-09-13)
-
-*"Le fait que la page d'une association soit plutot etroite (encore plus sur mobile, ou la plupart des
-textes sont coupes) : on peut aerer, redimensionner pour homogeneiser les pages etc."* Observed on
-`/associations/bde`: the card column is far narrower than the viewport it sits in, and the
-Partenariats grid clips its own copy.
-
-**HOMOGENEITY IS THE ASK, so the deliverable is one width decision, not four pages nudged.** The
-association page, its tabs (`A propos`, `Agenda`, `Membres`, `Partenariats`) and the list page are
-the same surface and must share the same container. Route:
-`frontend/src/routes/associations/[slug]/+page.svelte`.
-
-**The partnership cards get their accent from the LOGO, with the association's colour as fallback**
-(the user: *"il pourrait etre pertinent d'utiliser la couleur du logo importe (attention au fond
-blanc des fois) comme couleur d'accentuation, en gardant la couleur de l'asso comme fallback"*). The
-warning is the substance: half the partner logos are artwork on a white plate, so a naive dominant
-colour returns white and the accent disappears. Whatever extracts it must REFUSE a near-white or
-near-grey answer and fall through to `Association.color` - and that refusal is the part a test pins,
-because a white accent is invisible rather than wrong-looking, and nobody reports it.
-
 ### P3 - three modal overlays are one implementation written three times, and six z-index spellings sit beside them (swept 2026-09-13)
 
 Turned up by the guard shipped with the GIF-picker fix. Twelve components declare a `fixed inset-0`
@@ -5415,6 +5395,27 @@ which is the same rule as no raw hex and no raw px.
 file-level scan but their class attribute spans lines, so the root was never read. Check them before
 counting them.
 
+
+### P3 - one association accent is spelled eleven times, in two families that disagree (swept 2026-09-14)
+
+Turned up while wiring the partnership accent. `Association.color` with a `generateAvatarColor`
+fallback is derived at **eleven** sites, and they are not one duplicate but two - **seeded
+differently**, so the same association gets one fallback hue on a card and a DIFFERENT one in the
+calendar:
+
+| Family | Seed | Sites |
+| --- | --- | --- |
+| card accent | `name` | `AssociationDetailView`, `AssociationTile`, `EditBoutiqueTab`, `EditPartnershipsTab`, `routes/shop` (x2) |
+| calendar accent | `id`, through `toHex(...)` | `feedEvents`, `MonthCalendarGridRich` (x2), `calendarExport` (x2), `routes/admin/agenda` |
+| a third spelling | `id`, with `?.trim() ||` rather than `??` | `carte/generator` |
+
+**The seed disagreement is the defect and the count is only how it hid.** An association with no
+colour set is one colour on `/associations` and another in `/calendar`, which reads as two clubs. The
+`??` versus `|| trim()` split is a second, smaller one: `??` keeps an empty string as a colour.
+
+One `associationAccent(asso)` and one `associationEventAccent(event)`, both over one seed, with a
+test that the two families agree for the same association. `toHex` stays where the consumer needs
+hex (the PDF and the calendar sheet both do).
 
 ## Composer and reactions
 

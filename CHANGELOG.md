@@ -11,6 +11,19 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - a partnership card wears the partner's own colour
+
+A wall of partnerships all carried the same stripe - the club's colour, repeated eight times - which
+said nothing about any of the partners. Each card now takes its colour from the logo the partner
+uploaded, so a card looks like the brand it is offering.
+
+Half of those logos are drawings on a white background, and the most common colour in such a file is
+white. A white stripe is not a stripe that looks wrong; it is one nobody can see, and nobody reports
+something that is absent. So white, black, grey and transparent are all refused outright rather than
+being nudged into something usable: a card whose logo has no colour of its own keeps the club's,
+exactly as before. The colour that is found is also brightened or darkened into the range the rest of
+the app uses, so it stays visible in both the light and the dark theme.
+
 ### Fixed - the GIF picker opened inside a post card instead of over the page
 
 Picking a GIF from a post's comment box put the picker somewhere strange: squeezed into the card, cut
@@ -25,6 +38,7 @@ opened from the chat composer, where nothing above it moves, was always fine.
 It is now rendered outside the card entirely, so it covers the window wherever it is opened from. The
 card keeps its lift. The dark shade behind the picker is gone as well - a click outside it still
 closes it.
+
 
 ### Fixed - a conversation nobody could repair stayed shut after the person who could came back
 
