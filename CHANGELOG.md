@@ -31,6 +31,11 @@ grid, the day panel and the event dialog, and every list of them is keyed on the
 name is a label two associations may share, and a key that can repeat is a crash rather than a
 mis-painted logo.
 
+A row in an agenda list now names **every** association running the event - "Corpo + MiTV" - rather
+than the first one only, so it agrees with the cell above it, which has always painted one band per
+association. The only name suppressed is the one the page already carries in its own title: an event
+an association runs alone, on its own page.
+
 
 ### Fixed - your own name was cut short at the top of your profile
 

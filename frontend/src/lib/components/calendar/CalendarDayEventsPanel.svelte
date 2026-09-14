@@ -5,6 +5,7 @@
     formatEventTimeRange,
   } from '$lib/calendar/feedEvents';
   import { associationLogoSrc, type AssociationCalendarFeedEvent } from '$lib/associations/api';
+  import { eventOwnersLabel } from '$lib/calendar/feedEvents';
   import { ChevronRight, CalendarDays } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -67,6 +68,7 @@
       {#each dayEvents as ev (ev.id)}
         {@const accent = eventAccentColor(ev)}
         {@const logoSrc = associationLogoSrc(ev.associationLogoUrl)}
+        {@const owners = eventOwnersLabel(ev, ownAssociationId)}
         <li>
           <button
             type="button"
@@ -78,14 +80,14 @@
               style="background:{accent};"
               aria-hidden="true"
             ></span>
-            {#if logoSrc && ev.associationId !== ownAssociationId}
+            {#if logoSrc && owners}
               <img src={logoSrc} alt="" class="h-8 w-8 shrink-0 rounded-full object-cover" />
             {/if}
             <div class="min-w-0 flex-1">
               <p class="text-text-main truncate text-sm font-bold">{ev.title}</p>
               <p class="text-text-muted mt-0.5 truncate text-xs">
-                {#if ev.associationId !== ownAssociationId}
-                  <span class="font-semibold">{ev.associationName}</span>
+                {#if owners}
+                  <span class="font-semibold">{owners}</span>
                   <span class="mx-1">·</span>
                 {/if}
                 {formatEventTimeRange(ev)}
