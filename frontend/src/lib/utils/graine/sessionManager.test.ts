@@ -3,7 +3,7 @@ import { byNewestSession } from '$lib/db/graineCodec';
 import { GRAINE_ROTATE_AFTER_MESSAGES, GRAINE_ROTATE_AFTER_MS } from '$lib/crypto/graineConstants';
 import { GraineInputError } from '$lib/crypto/graine';
 import {
-  graineRotationReason,
+  shouldRotateGraineSession,
   reserveOutboundSlot,
   type GraineOutboundDeps,
 } from './sessionManager';
@@ -70,29 +70,31 @@ describe('when a session may seal another message', () => {
   const at = { distributionEpoch: 4, now: NOW };
 
   it('keeps a fresh session minted under the current roster', () => {
-    expect(graineRotationReason(session(), at)).toBeNull();
+    expect(shouldRotateGraineSession(session(), at)).toBe(false);
   });
 
-  it('reports every cause by name, not by a yes', () => {
-    expect(graineRotationReason(null, at)).toBe('no-session');
-    expect(graineRotationReason(session({ distributionEpoch: 3 }), at)).toBe('roster');
-    expect(graineRotationReason(session({ sentCount: GRAINE_ROTATE_AFTER_MESSAGES }), at)).toBe(
-      'message-count'
-    );
-    expect(graineRotationReason(session({ createdAt: NOW - GRAINE_ROTATE_AFTER_MS }), at)).toBe(
-      'age'
-    );
+  it('rotates for each of the three causes, one at a time', () => {
+    expect(shouldRotateGraineSession(null, at)).toBe(true);
+    expect(shouldRotateGraineSession(session({ distributionEpoch: 3 }), at)).toBe(true);
+    expect(
+      shouldRotateGraineSession(session({ sentCount: GRAINE_ROTATE_AFTER_MESSAGES }), at)
+    ).toBe(true);
+    expect(
+      shouldRotateGraineSession(session({ createdAt: NOW - GRAINE_ROTATE_AFTER_MS }), at)
+    ).toBe(true);
   });
 
   it('rotates a session that predates the epoch column rather than trusting it', () => {
     // `undefined` is not "epoch 0" and not "still fine": it is a session minted under a roster
     // nobody wrote down, which is exactly the case rotation exists for.
-    expect(graineRotationReason(session({ distributionEpoch: undefined }), at)).toBe('roster');
+    expect(shouldRotateGraineSession(session({ distributionEpoch: undefined }), at)).toBe(true);
   });
 
-  it('puts the roster ahead of the counters, so a departure is never reported as wear', () => {
-    const stale = session({ distributionEpoch: 3, sentCount: GRAINE_ROTATE_AFTER_MESSAGES });
-    expect(graineRotationReason(stale, at)).toBe('roster');
+  it('rotates on a stale roster ALONE, with both counters nowhere near their thresholds', () => {
+    // The structural trigger has to stand on its own: a departure must rotate the session of a
+    // sender who has sent one message today, or leaving a community changes nothing for them.
+    const stale = session({ distributionEpoch: 3, sentCount: 1, createdAt: NOW });
+    expect(shouldRotateGraineSession(stale, at)).toBe(true);
   });
 });
 

@@ -121,6 +121,17 @@ forgetting.
 
 The last two cost only their bytes in the bundle. Values are Matrix's, which are field-proven.
 
+**This table is where the three triggers are distinguished, and the only place.** The client's
+`shouldRotateGraineSession` answers yes or no. It carried WHICH of the three fired as a typed value
+until 2026-09-14 - `'no-session' | 'message-count' | 'age' | 'roster'` - and the sweep that removed it
+found the value had no runtime consumer at all: nothing branched on it, the one string interpolating
+it went to `console.info`, and nothing in this product captures a browser console into a durable log,
+a report or an upload. A distinction nothing can read is a distinction nothing can act on, and it
+read as a signal that existed. **If the rate of roster rotations should ever be watched - it is the
+one that says a departure took a seed out of circulation - that needs a counter reaching somewhere a
+human looks, not a return type**; the value would be the easy half of that work, and re-adding it is
+a three-line change.
+
 ### 4.3 The transport: one MLS distribution group per community
 
 Two facts, both checked 2026-08-17, rule out the alternatives: `mls-wasm` exposes **no HPKE**

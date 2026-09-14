@@ -8,7 +8,7 @@ import { holdsGroupState } from '$lib/utils/chat/groupUsability';
  * Making a departure move the community's distribution-group epoch.
  *
  * WHAT WAS MISSING. Graine rotates a session when the distribution group's epoch changes
- * ({@link graineRotationReason} returns `roster`), and its own doc states the premise: "every
+ * ({@link shouldRotateGraineSession} says yes), and its own doc states the premise: "every
  * membership change commits to the community's distribution group and advances its epoch". Nothing
  * implemented that. A member left, their leaf stayed in the tree, the epoch did not move, the next
  * sender reused the session they already held - so a departed member's seed still opened every
