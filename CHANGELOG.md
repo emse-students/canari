@@ -11,6 +11,24 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - three frozen conversations were being reported as merely waiting
+
+A conversation that nobody new can enter is watched for by an hourly check on the server, which
+sorts what it finds into two piles: conversations waiting for one of their members to come back and
+fix it on their own - which happens by itself - and conversations nobody can ever fix, which need
+somebody to look.
+
+**It was sorting on the wrong thing.** It asked whether the server still had anyone to deliver to,
+which says nothing about whether that person's app still holds the keys needed to do the repair. All
+three affected conversations on the live server had people it could deliver to, so all three were
+filed as "waiting" - and they had been waiting since the end of August, with 357 messages sitting
+undelivered in them and their members signing in every day.
+
+The check now asks the question that actually decides it, which the server can answer for itself. The
+three conversations are reported for what they are, and the repair they need is now a known,
+named piece of work instead of an unnoticed one.
+
+
 ### Fixed - a device could sit in a conversation's member list for ever, receiving nothing
 
 When you are invited to a conversation on a new device, the server writes you a seat straight away

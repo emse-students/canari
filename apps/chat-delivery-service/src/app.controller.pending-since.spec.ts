@@ -12,6 +12,7 @@ import { DeviceGroupMembership } from './entities/device-group-membership.entity
 import { RevokedDevice } from './entities/revoked-device.entity';
 import { PushToken } from './entities/push-token.entity';
 import { MlsGroupInfo } from './entities/mls-group-info.entity';
+import { MlsCommitLog } from './entities/mls-commit-log.entity';
 import { MessagingService } from './services/messaging.service';
 import { STALE_PENDING_INVITATION_MS, STRANDED_PENDING_MEMBERSHIP_MS } from './retention.constants';
 
@@ -88,6 +89,7 @@ describe('AppController - the seat clocks read pendingSince, never updatedAt', (
         { provide: getRepositoryToken(RevokedDevice), useValue: emptyRepo() },
         { provide: getRepositoryToken(PushToken), useValue: emptyRepo() },
         { provide: getRepositoryToken(MlsGroupInfo), useValue: emptyRepo() },
+        { provide: getRepositoryToken(MlsCommitLog), useValue: emptyRepo() },
         { provide: 'REDIS_CLIENT', useValue: { srem: jest.fn(), keys: jest.fn() } },
         { provide: MessagingService, useValue: { purgeDeviceFootprint: jest.fn() } },
       ],

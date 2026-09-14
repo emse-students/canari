@@ -13,6 +13,7 @@ import { DeviceGroupMembership } from './entities/device-group-membership.entity
 import { RevokedDevice } from './entities/revoked-device.entity';
 import { PushToken } from './entities/push-token.entity';
 import { MlsGroupInfo } from './entities/mls-group-info.entity';
+import { MlsCommitLog } from './entities/mls-commit-log.entity';
 import { MessagingService } from './services/messaging.service';
 
 /**
@@ -100,6 +101,7 @@ describe('AppController - cleanupSoftDeletedGroups', () => {
         { provide: getRepositoryToken(RevokedDevice), useValue: emptyRepo() },
         { provide: getRepositoryToken(PushToken), useValue: emptyRepo() },
         { provide: getRepositoryToken(MlsGroupInfo), useValue: emptyRepo() },
+        { provide: getRepositoryToken(MlsCommitLog), useValue: emptyRepo() },
         { provide: 'REDIS_CLIENT', useValue: redis },
         { provide: MessagingService, useValue: { purgeOrphanGroups: jest.fn() } },
       ],

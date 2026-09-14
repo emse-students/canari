@@ -12,6 +12,7 @@ import { DeviceGroupMembership } from './entities/device-group-membership.entity
 import { RevokedDevice } from './entities/revoked-device.entity';
 import { PushToken } from './entities/push-token.entity';
 import { MlsGroupInfo } from './entities/mls-group-info.entity';
+import { MlsCommitLog } from './entities/mls-commit-log.entity';
 import { MessagingService } from './services/messaging.service';
 
 /**
@@ -27,10 +28,19 @@ import { MessagingService } from './services/messaging.service';
  * population was counted the same way on 2026-09-04.
  *
  * WHAT IS PINNED HERE IS THE PARTITION, not the SQL - a mocked repository never parses a query, so
- * the builder's output is only ever verified against a real Postgres. What a mock CAN prove is that
- * a group still holding an ACTIVE device membership is reported as waiting for that member, while
- * one holding none is reported as permanently shut. The two send their reader to opposite places
- * and the rows cannot tell them apart on their own.
+ * the builder's output is only ever verified against a real Postgres. What a mock CAN prove is
+ * WHICH FACT the partition reads, and that is the whole of what was wrong with it.
+ *
+ * It used to split on whether any device held an `active` device membership. That is a ROUTING
+ * status - this server will deliver to that device - read as a cryptographic one. Measured on
+ * production 2026-09-14: all three stale-base groups hold 1, 5 and 9 active memberships, so every
+ * one of them was reported as "waiting for a member to return", and all three had been waiting
+ * since the end of August with 357 messages queued in them undelivered.
+ *
+ * The fact that IS about the tree is the commit row at `activeEpoch - 1`. Present, and any device
+ * at the base's epoch replays it and republishes. Absent, and the head advance was accepted without
+ * being recorded - the pre-2026-09-04 defect - and `IDX_mls_commit_log_group_epoch` being UNIQUE
+ * means nothing can ever refill it.
  */
 describe('AppController - reportStaleExternalJoinBases', () => {
   let controller: AppController;
@@ -48,6 +58,13 @@ describe('AppController - reportStaleExternalJoinBases', () => {
     getRawMany: jest.fn(),
   };
   const groupInfoRepo = { createQueryBuilder: jest.fn(() => staleBuilder) };
+  const headBuilder = {
+    select: jest.fn().mockReturnThis(),
+    where: jest.fn().mockReturnThis(),
+    andWhere: jest.fn().mockReturnThis(),
+    getRawMany: jest.fn(),
+  };
+  const commitLogRepo = { createQueryBuilder: jest.fn(() => headBuilder) };
   const deviceGroupRepo = { find: jest.fn(), delete: jest.fn(), createQueryBuilder: jest.fn() };
 
   const emptyRepo = () => ({
@@ -80,6 +97,7 @@ describe('AppController - reportStaleExternalJoinBases', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     deviceGroupRepo.find.mockResolvedValue([]);
+    headBuilder.getRawMany.mockResolvedValue([]);
     const module: TestingModule = await Test.createTestingModule({
       controllers: [AppController],
       providers: [
@@ -91,6 +109,7 @@ describe('AppController - reportStaleExternalJoinBases', () => {
         { provide: getRepositoryToken(RevokedDevice), useValue: emptyRepo() },
         { provide: getRepositoryToken(PushToken), useValue: emptyRepo() },
         { provide: getRepositoryToken(MlsGroupInfo), useValue: groupInfoRepo },
+        { provide: getRepositoryToken(MlsCommitLog), useValue: commitLogRepo },
         { provide: 'REDIS_CLIENT', useValue: { srem: jest.fn(), keys: jest.fn() } },
         { provide: MessagingService, useValue: { purgeDeviceFootprint: jest.fn() } },
       ],
@@ -126,6 +145,7 @@ describe('AppController - reportStaleExternalJoinBases', () => {
       membership('4f87267a', 'pending'),
       membership('4f87267a', 'pending'),
     ]);
+    headBuilder.getRawMany.mockResolvedValue([{ groupId: '4f87267a' }]);
 
     await run();
 
@@ -133,24 +153,67 @@ describe('AppController - reportStaleExternalJoinBases', () => {
     expect(line).toContain('1 group(s)');
     expect(line).toContain('2 device(s)');
     expect(line).toContain('4f87267a(283/284, 13d)');
-    // A member still holds the tree, so this one is waiting rather than dead.
+    // The head commit is recorded, so a device at the base's epoch can replay to the current one.
     expect(error).not.toHaveBeenCalled();
   });
 
-  it('accuses separately when NO active membership is left, because nobody can ever repair it', async () => {
+  it('accuses separately when the HEAD COMMIT IS ABSENT, because no replay can ever reach the epoch', async () => {
     staleBuilder.getRawMany.mockResolvedValue([behind('g-waiting', 2), behind('g-dead', 40)]);
     deviceGroupRepo.find.mockResolvedValue([
       membership('g-waiting', 'active'),
       membership('g-dead', 'pending'),
     ]);
+    headBuilder.getRawMany.mockResolvedValue([{ groupId: 'g-waiting' }]);
 
     await run();
 
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('2 group(s)'));
     const accusation = error.mock.calls[0][0] as string;
-    expect(accusation).toContain('1 of them have NO active device membership');
+    expect(accusation).toContain('1 of them have NO recorded commit at their own head epoch');
     expect(accusation).toContain('g-dead');
-    // And it names ONLY that half - a group with a member to wait for is not shut permanently.
+    // And it names ONLY that half - a group whose head commit is on record is genuinely waiting.
     expect(accusation).not.toContain('g-waiting');
+  });
+
+  it('calls a group SHUT even while it holds active memberships - the measured production shape', async () => {
+    // THE DEFECT, PINNED. All three production groups on 2026-09-14 held active memberships (1, 5
+    // and 9 of them) and had no head commit, so the old partition called every one of them
+    // "waiting" while nothing could ever repair them.
+    staleBuilder.getRawMany.mockResolvedValue([behind('4f87267a', 15)]);
+    deviceGroupRepo.find.mockResolvedValue([
+      membership('4f87267a', 'active'),
+      membership('4f87267a', 'active'),
+    ]);
+    headBuilder.getRawMany.mockResolvedValue([]);
+
+    await run();
+
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('4f87267a'));
+    expect(error.mock.calls[0][0]).toContain('shut, not waiting');
+  });
+
+  it('calls a group WAITING even with no active membership, when its head commit is on record', async () => {
+    // The mirror image, and it is why the old column could not stand in for this one: a group every
+    // device has been kicked out of is still enterable the moment one of them comes back and
+    // replays, because the commit it needs exists.
+    staleBuilder.getRawMany.mockResolvedValue([behind('g-kicked', 3)]);
+    deviceGroupRepo.find.mockResolvedValue([membership('g-kicked', 'pending')]);
+    headBuilder.getRawMany.mockResolvedValue([{ groupId: 'g-kicked' }]);
+
+    await run();
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('g-kicked'));
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it('reads the commit log only for the groups that are actually stale', async () => {
+    staleBuilder.getRawMany.mockResolvedValue([behind('g-1', 1), behind('g-2', 1)]);
+    headBuilder.getRawMany.mockResolvedValue([]);
+
+    await run();
+
+    expect(headBuilder.where).toHaveBeenCalledWith(expect.stringContaining('IN (:...groupIds)'), {
+      groupIds: ['g-1', 'g-2'],
+    });
   });
 });
