@@ -1606,6 +1606,17 @@ each sibling on its own middle whatever its height, which is what the uniform ca
 by accident. The one-line field's height floor stays where it was; it now decides only that the
 placeholder sits on the same line as the real text, which is the defect it was actually written for.
 
+### Fixed - every payment path in social-service was refusing with a 401 it never showed the user
+
+`resolvePaymentTarget` - the resolver `AssociationsService` and `ProductsService` call before any
+checkout, boutique purchase or delegation lookup - fetches the active provider from core-service
+over the Docker network directly (`http://core-service:3012/api/payments/provider`), never through
+nginx, so the call can never carry an `X-User-Id`. That route carried `@UseGuards(NginxAuthGuard)`
+regardless, which rejected every one of those calls with `Missing X-User-Id header - ensure the
+request passes through nginx auth.` even though the endpoint returns global platform config
+(`'stripe' | 'lydia'`) with no per-user meaning at all - exactly what the wiki's own routing table
+already documented as `Auth: none`. The guard is removed; nothing else on the route changes.
+
 ## [0.17.0] - 2026-09-11
 
 ### Fixed - one idiom for removing comments had six copies, and the extraction meant to end that was never enforced

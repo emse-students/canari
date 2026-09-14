@@ -80,6 +80,10 @@ const PUBLIC_BY_INTENT = [
     why: 'Stripe calls it, so it can carry no session - it is authorized by the stripe-signature HMAC and refuses an unsigned body with 503 in production',
   },
   {
+    route: 'GET /payments/provider',
+    why: "global platform config ('stripe' | 'lydia'), never user-specific; social-service's resolvePaymentTarget (every checkout/purchase/delegation path) calls it directly over the Docker network, which never goes through nginx and so can never carry an x-user-id - a guard here 401ed all of them (2026-09-14)",
+  },
+  {
     route: 'GET /channels/health',
     why: 'liveness',
   },
