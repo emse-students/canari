@@ -11,6 +11,19 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - chaque carte du fil portait un champ de commentaire vide, ouvert en permanence
+
+Une publication sans commentaire affichait quand meme le composeur au repos : avatar, "Soyez le
+premier..." et bouton d'envoi. Mesure sur un Mi 9T (436 x 945 pixels) le 14 septembre 2026 : 90
+pixels par carte, soit environ 360 pixels de champs vides entre les quatre publications visibles sur
+un telephone. Facebook n'en dessine aucun - son icone de commentaire ouvre le composeur, ce que le
+bouton de cette carte faisait deja.
+
+Le composeur n'apparait donc plus qu'a la demande. L'invitation est conservee : ouvert sur une
+publication sans commentaire, le champ dit toujours "Soyez le premier...". Les controles d'affichage
+et de tri ne sont plus dessines dans ce cas non plus - ils parlent d'une liste, et "Masquer les
+commentaires" nommait quelque chose qui n'etait pas a l'ecran.
+
 ### Changed - le fil social passait les deux tiers de l'ecran a se presenter avant de montrer un post
 
 Sur telephone, ouvrir le fil donnait, dans l'ordre : l'en-tete de l'application, le titre "Fil

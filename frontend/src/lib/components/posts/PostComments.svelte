@@ -508,53 +508,71 @@
   </div>
 {/snippet}
 
+<!--
+  NOTHING IS DRAWN FOR A POST NOBODY HAS COMMENTED ON, and that used to cost 90 px per card.
+
+  An `{:else}` branch here rendered the composer at rest in EVERY card - avatar, "Soyez le premier..."
+  and a send button - measured on A1 (Mi 9T, 436 x 945 CSS px) on 2026-09-14. Four posts visible on a
+  phone meant 360 px of empty input fields between them. Facebook draws none: its comment icon opens
+  the composer, which is what this card's own comment button already does.
+
+  So `showComments` is now the only thing that opens it, and the placeholder still says "be the
+  first" when the post has no comments - the invitation was worth keeping, the permanent field was
+  not.
+-->
 {#if comments.length > 0 || showComments}
   <div
     class="border-t border-black/5 bg-white/30 px-4 py-4 sm:px-5 dark:border-white/10 dark:bg-black/10"
   >
-    <!-- Controls: show/hide + sort. -->
-    <div class="mb-2 flex items-center justify-between gap-2">
-      <div>
-        {#if topLevelComments.length > PREVIEW_COUNT && !showComments}
-          <button
-            type="button"
-            onclick={onToggleComments}
-            class="text-text-muted hover:text-text-main text-2xs flex items-center gap-1.5 rounded-lg px-2 py-1 font-bold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
-          >
-            <ChevronDown size={16} strokeWidth={2.5} />
-            {m.post_show_comments_label({ count: topLevelComments.length })}
-          </button>
-        {:else if showComments}
-          <button
-            type="button"
-            onclick={onToggleComments}
-            class="text-text-muted hover:text-text-main text-2xs flex items-center gap-1.5 rounded-lg px-2 py-1 font-bold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
-          >
-            <ChevronUp size={16} strokeWidth={2.5} />
-            {m.post_hide_comments_label()}
-          </button>
-        {/if}
-      </div>
-
-      <!-- Tri -->
-      {#if topLevelComments.length > 1}
-        <div class="flex items-center gap-1">
-          <ArrowUpDown size={12} class="text-text-muted opacity-60" />
-          {#each [['recent', m.post_sort_recent_label()], ['oldest', m.post_sort_oldest_label()], ['liked', m.post_sort_liked_label()]] as const as [mode, label] (mode)}
+    <!--
+      Controls: show/hide + sort. Both are about a LIST, so neither is drawn for a post with no
+      comments - opened from zero, this section is a composer and "Masquer les commentaires" would
+      name something that is not on screen.
+    -->
+    {#if topLevelComments.length > 0}
+      <div class="mb-2 flex items-center justify-between gap-2">
+        <div>
+          {#if topLevelComments.length > PREVIEW_COUNT && !showComments}
             <button
               type="button"
-              onclick={() => (sortMode = mode)}
-              class="text-2xs rounded-full px-2 py-0.5 font-bold transition-colors {sortMode ===
-              mode
-                ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
-                : 'text-text-muted hover:text-text-main'}"
+              onclick={onToggleComments}
+              class="text-text-muted hover:text-text-main text-2xs flex items-center gap-1.5 rounded-lg px-2 py-1 font-bold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
             >
-              {label}
+              <ChevronDown size={16} strokeWidth={2.5} />
+              {m.post_show_comments_label({ count: topLevelComments.length })}
             </button>
-          {/each}
+          {:else if showComments}
+            <button
+              type="button"
+              onclick={onToggleComments}
+              class="text-text-muted hover:text-text-main text-2xs flex items-center gap-1.5 rounded-lg px-2 py-1 font-bold transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+            >
+              <ChevronUp size={16} strokeWidth={2.5} />
+              {m.post_hide_comments_label()}
+            </button>
+          {/if}
         </div>
-      {/if}
-    </div>
+
+        <!-- Tri -->
+        {#if topLevelComments.length > 1}
+          <div class="flex items-center gap-1">
+            <ArrowUpDown size={12} class="text-text-muted opacity-60" />
+            {#each [['recent', m.post_sort_recent_label()], ['oldest', m.post_sort_oldest_label()], ['liked', m.post_sort_liked_label()]] as const as [mode, label] (mode)}
+              <button
+                type="button"
+                onclick={() => (sortMode = mode)}
+                class="text-2xs rounded-full px-2 py-0.5 font-bold transition-colors {sortMode ===
+                mode
+                  ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
+                  : 'text-text-muted hover:text-text-main'}"
+              >
+                {label}
+              </button>
+            {/each}
+          </div>
+        {/if}
+      </div>
+    {/if}
 
     <!-- Comment list. -->
     <div class="mb-4 space-y-1">
@@ -595,15 +613,13 @@
         </div>
       {/if}
       {@render commentInputRow(
-        replyingToId ? m.post_reply_placeholder() : m.post_comment_placeholder()
+        replyingToId
+          ? m.post_reply_placeholder()
+          : comments.length === 0
+            ? m.post_first_comment_placeholder()
+            : m.post_comment_placeholder()
       )}
     </div>
-  </div>
-{:else}
-  <div
-    class="border-t border-black/5 bg-white/30 px-4 py-4 sm:px-5 dark:border-white/10 dark:bg-black/10"
-  >
-    {@render commentInputRow(m.post_first_comment_placeholder())}
   </div>
 {/if}
 

@@ -26,6 +26,9 @@ import { getLocale, locales, overwriteGetLocale } from '$lib/paraglide/runtime';
  * layout cannot pay for it: trimming the pill's padding and the row's gap to their next step down
  * returns 6px of the 24 needed at the reference, and the 44px send target is a floor.
  *
+ * That box no longer stands open in every card - it is drawn when the reader taps the comment
+ * button - but the budget is unchanged: it is the width of the row, not how often the row appears.
+ *
  * **THE BUDGET IS IN CHARACTERS BECAUSE A TEST CANNOT MEASURE TEXT** - happy-dom lays nothing out,
  * so the same conversion section 19 makes is made here. **Its rule does not transfer, and that is
  * worth knowing**: section 19 takes the widest per-character rate of any sample, which here is
