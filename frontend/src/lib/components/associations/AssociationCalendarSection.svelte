@@ -435,25 +435,27 @@
     </div>
   </div>
 
-  <div class="flex items-center justify-between gap-2">
-    <button
-      type="button"
-      onclick={prevMonth}
-      class="ui-icon-button border-cn-border text-text-main hover:bg-cn-bg rounded-xl border transition-colors"
-      aria-label={m.asso_calendar_prev_month_label()}
-    >
-      <ChevronLeft size={20} />
-    </button>
-    <p class="text-text-main flex-1 text-center text-base font-bold capitalize">{titleMonth}</p>
-    <button
-      type="button"
-      onclick={nextMonth}
-      class="ui-icon-button border-cn-border text-text-main hover:bg-cn-bg rounded-xl border transition-colors"
-      aria-label={m.asso_calendar_next_month_label()}
-    >
-      <ChevronRight size={20} />
-    </button>
-  </div>
+  {#snippet monthNav()}
+    <div class="flex items-center justify-between gap-2">
+      <button
+        type="button"
+        onclick={prevMonth}
+        class="ui-icon-button border-cn-border text-text-main hover:bg-cn-bg rounded-xl border transition-colors"
+        aria-label={m.asso_calendar_prev_month_label()}
+      >
+        <ChevronLeft size={20} />
+      </button>
+      <p class="text-text-main flex-1 text-center text-base font-bold capitalize">{titleMonth}</p>
+      <button
+        type="button"
+        onclick={nextMonth}
+        class="ui-icon-button border-cn-border text-text-main hover:bg-cn-bg rounded-xl border transition-colors"
+        aria-label={m.asso_calendar_next_month_label()}
+      >
+        <ChevronRight size={20} />
+      </button>
+    </div>
+  {/snippet}
 
   {#if loadError}
     <div class="border-red-err/30 bg-red-err/10 text-red-err rounded-xl border px-4 py-3 text-sm">
@@ -468,6 +470,8 @@
          while the global one had been a schedule list since 2026-09-09. `CalendarScheduleList`
          takes the month out of the events themselves, so there is no selected day to carry and no
          day panel to place. -->
+    {@render monthNav()}
+
     <CalendarScheduleList
       {focusDate}
       events={feedEvents}
@@ -476,15 +480,40 @@
       onEventClick={openEventDetail}
     />
   {:else}
-    <MonthCalendarGridRich {focusDate} events={feedEvents} {loading} bind:selectedDay />
+    <!-- AND THE DESKTOP GETS `/calendar`'S SHAPE, FOR THE SAME REASON THE PHONE GOT ITS LIST: ONE
+         AGENDA MAY HAVE TWO SHAPES, NEVER FOUR. The rail and its 360px track are copied from
+         `/calendar` deliberately, down to `minmax(0,1fr)` - a track written `1fr` is
+         `minmax(auto,1fr)` and may not shrink below the seven-column grid's min-content width,
+         which is what made this page's sibling overflow its column.
 
-    <CalendarDayEventsPanel
-      {focusDate}
-      {selectedDay}
-      events={feedEvents}
-      ownAssociationId={associationId}
-      onEventClick={openEventDetail}
-    />
+         What made the rail possible here is the tab's width, not a new idea about layout: this
+         section used to be stacked because it lived in a 1024px `tool` column, where a 360px rail
+         left 640px for a month - 91px a day. The tab is `grid` (1600px) since 2026-09-14 (user:
+         *"les pages doivent utiliser l'espace disponible. Donc si on a besoin de la largeur, on
+         prend la largeur"*), so the rail costs the month nothing it could not spare. -->
+    <div class="grid grid-cols-1 items-start gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
+      <div
+        class="border-cn-border bg-cn-surface space-y-5 rounded-2xl border p-5 shadow-sm lg:sticky lg:top-4"
+      >
+        {@render monthNav()}
+
+        <hr class="border-cn-border/60" />
+
+        <!-- The day you clicked belongs BESIDE the month you clicked it in. The panel draws its
+             own "pick a day" state, so the rail never collapses as you navigate. -->
+        <CalendarDayEventsPanel
+          {focusDate}
+          {selectedDay}
+          events={feedEvents}
+          ownAssociationId={associationId}
+          onEventClick={openEventDetail}
+        />
+      </div>
+
+      <div class="min-w-0">
+        <MonthCalendarGridRich {focusDate} events={feedEvents} {loading} bind:selectedDay />
+      </div>
+    </div>
   {/if}
 
   <CalendarEventDetailModal

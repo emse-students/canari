@@ -11,6 +11,23 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - an association's page used a fifth of the screen it had
+
+Every tab of an association's page was drawn in the same 1024-pixel column: the text, the member
+list, the shop, the partnerships and the calendar. Three of those are not text. On a wide screen the
+shop and the partnerships drew fewer cards per row than the same cards get on `/shop`, and the
+calendar - a month, seven columns wide - was the worst served of all, with the day you clicked
+pushed below the month instead of beside it.
+
+The width now follows the tab. The shop, the partnerships and the calendar take the full page like
+every other grid in the app; the text and the member list keep the narrower column, because neither
+has anything to put in the space. Reading length is unchanged - the prose caps itself.
+
+The calendar tab gained what the width was blocking: the same left-hand rail the main agenda has
+had, carrying the month navigation and the selected day, with the month taking the rest. The two
+agendas now draw the same two shapes - a list on a phone, a rail and a month on a screen - instead
+of one shape each.
+
 ### Fixed - an association's agenda was a seven-column grid on a phone
 
 The global agenda has drawn a schedule list instead of a month grid on a narrow screen since

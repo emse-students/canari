@@ -33,13 +33,23 @@ seven columns is a question about room, so a touch laptop keeps the grid):
 | | below `md` | at or above `md` |
 | --- | --- | --- |
 | `/calendar` | `CalendarScheduleList`, no grid | 360px rail (nav, filter, export, day panel) + `MonthCalendarGridRich` |
-| `AssociationCalendarSection` | `CalendarScheduleList`, no grid | month nav, grid, day panel under it |
+| `AssociationCalendarSection` | `CalendarScheduleList`, no grid | 360px rail (nav, day panel) + `MonthCalendarGridRich` |
 
 The association's section drew the grid at EVERY width until 2026-09-14 - 48px a day on a 390px
 phone - because the 2026-09-09 phone rule and the 2026-09-10 rail were written for `/calendar` and
-nothing carried them across. The phone half is now shared. **The rail is not**, and that is a width
-question rather than an oversight: `/calendar` is a `grid` page (1600px), the association page is
-`tool` (1024px), and a 360px rail inside 1024 leaves the month 91px a day where it has 146 today.
+nothing carried them across. **Both halves are shared now**, and the rail needed a width before it
+needed markup: the association page was `tool` (1024px), where a 360px rail leaves the month 91px a
+day. `AssociationDetailView` therefore picks its `PageContainer` width from the ACTIVE TAB - `grid`
+for `calendar`, `shop` and `partnerships`, `tool` for `about` and `members` - so the calendar tab
+has the same 1600px `/calendar` has, and the rail costs the month nothing (user, 2026-09-14: *"les
+pages doivent utiliser l'espace disponible. Donc si on a besoin de la largeur, on prend la
+largeur"*).
+
+The rail's two differences from `/calendar`'s are absences, not variants: no association filter (the
+page IS the filter) and no export block (the section's own header carries subscribe/export). The
+track is `lg:grid-cols-[360px_minmax(0,1fr)]` in both, `minmax(0,1fr)` rather than `1fr` for the
+reason written at `/calendar`'s copy - `1fr` is `minmax(auto,1fr)`, and `auto` will not shrink below
+the seven-column grid's min-content width.
 
 ### THE PAGE IS NOT THE OWNER OF EVERYTHING IT LISTS
 
