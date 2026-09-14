@@ -12,9 +12,16 @@ store** meet.
 
 ## Where it runs, and what may never leave it
 
-**TARGET IS THE LOCAL ESTATE** (`http://localhost:1420`), since 2026-09-03. Dedicated accounts,
+**TARGET IS THE LOCAL ESTATE** (`http://localhost:8081`), since 2026-09-03. Dedicated accounts,
 a database restored from a full production dump, and a stack whose nginx is the same single entry
 point production has.
+
+**It is `8081` and never `1420`, and this page said `1420` until 2026-09-14.** Both answer on this
+workstation and they are two different stacks: `1420` is the Vite dev server, one process proxying
+to the services, while `8081` is `canari-local-nginx-1` - the single entry point named in the
+sentence above. The rig reasons about the DEPLOYED shape, and the phone cannot reach anything else:
+`a1apk.mjs` maps this port with `adb reverse`. The live `names.mjs` has spelt `8081` throughout;
+what carried `1420` was this line and the `names.example.mjs` template a fresh machine copies.
 
 **What moving off production bought, and it is more than convenience.** Three things the campaign
 had lived with are simply gone. A run could be voided by a deploy landing under it - three
@@ -139,9 +146,11 @@ Decided with the user, not to be re-litigated.
   `auth.controller.ts` emits `Secure; SameSite=None` in production and flips to `SameSite=Lax`
   without `Secure` as soon as `ALLOW_INSECURE_COOKIES=true`, which is what local runs with
   (decision 11 of the [workflow migration](workflow-migration.md), a documented reservation and not
-  a defect - plain HTTP has no `Secure` cookie to send). On a stack where the frontend is
-  `localhost:1420` and core is behind nginx on `localhost:8081`, `SameSite=Lax` is enough, because a
-  differing PORT is still same-site. **So a row whose question is about CROSS-SITE cookie behaviour
+  a defect - plain HTTP has no `Secure` cookie to send). The rig loads the frontend from the same
+  `localhost:8081` nginx that fronts core, so the cookie is SAME-ORIGIN here and `SameSite` decides
+  nothing at all - and it would still be enough on the dev-server topology (`localhost:1420` in
+  front of the same nginx), because a differing PORT is still same-site. Either way the local run
+  never exercises the production policy. **So a row whose question is about CROSS-SITE cookie behaviour
   measures something else here** - the session rows, anything about a cookie surviving a
   third-party context, anything comparing the web credential with the `X-Canari-Refresh` header the
   Tauri clients carry instead. Such a row is not `SKIPPED` and it is not silently believed: it
