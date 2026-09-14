@@ -85,6 +85,59 @@ describe('the layer ladder', () => {
     expect(sheet).toBeGreaterThan(banner);
   });
 
+  /**
+   * Every class attribute in the markup, whitespace collapsed, so an attribute that spans lines is
+   * still read as one value. Two components were missed by a line-oriented sweep on 2026-09-13 for
+   * exactly that reason.
+   */
+  function classValues(): { file: string; value: string }[] {
+    const out: { file: string; value: string }[] = [];
+    for (const file of svelteFiles(join(src, 'lib')).concat(svelteFiles(join(src, 'routes')))) {
+      const flat = withoutComments(readFileSync(file, 'utf8')).replace(/\s+/g, ' ');
+      for (const match of flat.matchAll(/class=(?:"([^"]*)"|\{([^}]*)\})/g)) {
+        out.push({ file: relative(src, file), value: match[1] ?? match[2] ?? '' });
+      }
+    }
+    return out;
+  }
+
+  it('is reading the class attributes it thinks it is', () => {
+    // The branch below asserts an ABSENCE, so a regex that stopped matching would pass forever.
+    const values = classValues();
+
+    expect(values.length).toBeGreaterThan(500);
+    expect(
+      values.filter((v) => /\bfixed\b/.test(v.value) && /\binset-0\b/.test(v.value)).length
+    ).toBeGreaterThan(5);
+  });
+
+  it('lets no FULL-VIEWPORT overlay carry a literal number, whatever the number is', () => {
+    // THIS IS A SECOND BRANCH RATHER THAN A LOWER FLOOR, and the reason is the floor's own
+    // justification. 60 is correct for a `z-10` ordering two children of a card: below it an
+    // element competes only with its own siblings, so naming it would imply it can be compared
+    // with a modal. `fixed inset-0` breaks that argument completely - such an element is on screen
+    // with everything by construction, so its number IS comparable with every other component's,
+    // whatever it happens to be.
+    //
+    // MEASURED, on 2026-09-14: `routes/admin/agenda` sat at `z-50` - between `--z-page-overlay`
+    // (40) and `--z-toast` (60) - and its reject dialog opened UNDERNEATH a toast, with this file
+    // green. Four more full-viewport overlays carried a raw number on the same day. Lowering the
+    // floor to catch them would condemn every local `z-10` in the tree; this branch condemns
+    // exactly the case the floor's reasoning excludes.
+    const offenders: string[] = [];
+    for (const { file, value } of classValues()) {
+      if (!/\bfixed\b/.test(value) || !/\binset-0\b/.test(value)) continue;
+      for (const z of value.matchAll(/\bz-\[?(\d+)\]?/g)) offenders.push(`${file}: ${z[0]}`);
+    }
+
+    expect(
+      offenders,
+      `A full-viewport overlay is comparable with every other layer, so it takes a rung by NAME - z-(--z-<rung>). Rungs: ${ladder
+        .map((r) => r.name)
+        .join(', ')}`
+    ).toEqual([]);
+  });
+
   it('has no window-scale z-index written as a number anywhere in the markup', () => {
     const offenders: string[] = [];
     for (const file of svelteFiles(join(src, 'lib')).concat(svelteFiles(join(src, 'routes')))) {

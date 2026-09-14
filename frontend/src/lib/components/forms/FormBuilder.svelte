@@ -249,14 +249,14 @@
         {#if showTypePicker}
           <div
             role="presentation"
-            class="fixed inset-0 z-40"
+            class="fixed inset-0 z-(--z-popover-scrim)"
             onclick={() => (showTypePicker = false)}
             onkeydown={(e) => {
               if (e.key === 'Escape') showTypePicker = false;
             }}
           ></div>
           <div
-            class="border-cn-border absolute top-full right-0 left-0 z-50 mt-1 rounded-2xl border-2 bg-(--cn-surface) p-2 shadow-xl"
+            class="border-cn-border absolute top-full right-0 left-0 z-(--z-popover) mt-1 rounded-2xl border-2 bg-(--cn-surface) p-2 shadow-xl"
           >
             <div class="grid grid-cols-2 gap-1">
               {#each QUESTION_TYPES as qt (qt.value)}

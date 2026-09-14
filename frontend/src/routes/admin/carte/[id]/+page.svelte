@@ -127,6 +127,13 @@
   // ── Full-page editing ─────────────────────────────────────────────────────────
   // An in-app overlay (fixed inset-0) that fills the browser window while keeping its chrome - NOT
   // the Fullscreen API, which hides the whole browser interface.
+  //
+  // ITS RUNG IS `--z-page-overlay`, AND THAT IS A SENTENCE ABOUT WHAT IT IS: a page's own surface
+  // expanded to the window, not a claim against the window. Everything ambient or interruptive
+  // stays over it - a toast (60) reporting the autosave, the banner column (120), any sheet or
+  // modal opened from here - which is also what the raw `z-50` did, so nothing a user can see
+  // changes. What changes is that the number is no longer comparable with nothing: at 50 it sat
+  // between two rungs, in the same gap that put the agenda admin's reject dialog under a toast.
   let isFullPage = $state(false);
 
   /** Toggles the in-app full-page overlay so authoring can use the whole window. */
@@ -510,7 +517,7 @@
 
       <div
         class="grid gap-4 {canEdit ? 'lg:grid-cols-[minmax(0,1fr)_300px]' : ''} {isFullPage
-          ? 'bg-cn-bg fixed inset-0 z-50 overflow-auto p-5'
+          ? 'bg-cn-bg fixed inset-0 z-(--z-page-overlay) overflow-auto p-5'
           : ''}"
       >
         <!-- Poster preview column: a zoom toolbar above a scrollable, fit-height stage. -->

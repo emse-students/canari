@@ -153,9 +153,12 @@
     {#if showTypePicker}
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <div class="fixed inset-0 z-40" onclick={() => (showTypePicker = false)}></div>
       <div
-        class="border-cn-border absolute right-0 bottom-full left-0 z-50 mb-2 rounded-2xl border-2 bg-(--cn-surface) p-3 shadow-xl"
+        class="fixed inset-0 z-(--z-popover-scrim)"
+        onclick={() => (showTypePicker = false)}
+      ></div>
+      <div
+        class="border-cn-border absolute right-0 bottom-full left-0 z-(--z-popover) mb-2 rounded-2xl border-2 bg-(--cn-surface) p-3 shadow-xl"
       >
         <p class="text-text-muted text-2xs mb-2.5 ml-1 font-bold tracking-wider uppercase">
           {m.form_question_type_picker_label()}
