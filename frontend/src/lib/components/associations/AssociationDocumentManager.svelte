@@ -40,7 +40,7 @@
     Info,
   } from '@lucide/svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
-  import { portal } from '$lib/actions/portal';
+  import ModalOverlay from '$lib/components/shared/ModalOverlay.svelte';
   import Input from '$lib/components/ui/Input.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import { downloadDecryptedFile } from '$lib/utils/fileDownload';
@@ -582,158 +582,134 @@
   {/if}
 </div>
 
-{#if uploadModalOpen}
-  <div use:portal>
-    <div
-      class="fixed inset-0 z-(--z-modal) flex items-end justify-center bg-black/40 p-4 sm:items-center"
-      role="presentation"
-      onclick={(e) => e.target === e.currentTarget && (uploadModalOpen = false)}
-    >
-      <div
-        class="border-cn-border w-full max-w-md space-y-4 rounded-t-3xl border bg-(--cn-surface) p-6 shadow-xl sm:rounded-2xl"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="upload-modal-title"
-      >
-        <h3 id="upload-modal-title" class="text-text-main text-lg font-bold">
-          {m.asso_doc_upload_modal_title()}
-        </h3>
-        <p class="text-text-muted truncate text-sm">{pendingFile?.name}</p>
-        <div class="space-y-1.5">
-          <Input
-            label={m.asso_doc_password_label()}
-            type="password"
-            bind:value={uploadPassword}
-            placeholder={m.asso_doc_password_placeholder()}
-          />
-          <p class="text-text-muted text-xs">
-            {m.asso_doc_password_warning()}
-          </p>
-        </div>
-        <div class="flex flex-wrap justify-end gap-2 pt-1">
-          <button
-            type="button"
-            onclick={() => (uploadModalOpen = false)}
-            class="border-cn-border hover:bg-cn-bg rounded-xl border px-4 py-2 text-sm font-semibold"
-          >
-            {m.common_cancel_button()}
-          </button>
-          <button
-            type="button"
-            onclick={confirmUpload}
-            class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold"
-          >
-            {m.asso_doc_upload_confirm_button()}
-          </button>
-        </div>
-      </div>
+<ModalOverlay
+  open={uploadModalOpen}
+  onClose={() => (uploadModalOpen = false)}
+  label={m.asso_doc_upload_modal_title()}
+  panelClass="border-cn-border w-full max-w-md space-y-4 rounded-t-3xl border bg-(--cn-surface) p-6 shadow-xl sm:rounded-2xl"
+>
+  {#if uploadModalOpen}
+    <h3 id="upload-modal-title" class="text-text-main text-lg font-bold">
+      {m.asso_doc_upload_modal_title()}
+    </h3>
+    <p class="text-text-muted truncate text-sm">{pendingFile?.name}</p>
+    <div class="space-y-1.5">
+      <Input
+        label={m.asso_doc_password_label()}
+        type="password"
+        bind:value={uploadPassword}
+        placeholder={m.asso_doc_password_placeholder()}
+      />
+      <p class="text-text-muted text-xs">
+        {m.asso_doc_password_warning()}
+      </p>
     </div>
-  </div>
-{/if}
+    <div class="flex flex-wrap justify-end gap-2 pt-1">
+      <button
+        type="button"
+        onclick={() => (uploadModalOpen = false)}
+        class="border-cn-border hover:bg-cn-bg rounded-xl border px-4 py-2 text-sm font-semibold"
+      >
+        {m.common_cancel_button()}
+      </button>
+      <button
+        type="button"
+        onclick={confirmUpload}
+        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold"
+      >
+        {m.asso_doc_upload_confirm_button()}
+      </button>
+    </div>
+  {/if}
+</ModalOverlay>
 
-{#if pwPromptDoc}
-  <div use:portal>
-    <div
-      class="fixed inset-0 z-(--z-modal) flex items-end justify-center bg-black/40 p-4 sm:items-center"
-      role="presentation"
-      onclick={(e) => e.target === e.currentTarget && !pwPromptBusy && (pwPromptDoc = null)}
+<ModalOverlay
+  open={!!pwPromptDoc}
+  onClose={() => !pwPromptBusy && (pwPromptDoc = null)}
+  label={m.asso_doc_protected_title()}
+  panelClass="border-cn-border w-full max-w-md space-y-4 rounded-t-3xl border bg-(--cn-surface) p-6 shadow-xl sm:rounded-2xl"
+>
+  {#if pwPromptDoc}
+    <h3 id="pw-prompt-title" class="text-text-main flex items-center gap-2 text-lg font-bold">
+      <Lock size={18} class="text-amber-warn" />
+      {m.asso_doc_protected_title()}
+    </h3>
+    <p class="text-text-muted truncate text-sm">{pwPromptDoc.name}</p>
+    <form
+      onsubmit={(e) => {
+        e.preventDefault();
+        void submitPwPrompt();
+      }}
+      class="space-y-3"
     >
-      <div
-        class="border-cn-border w-full max-w-md space-y-4 rounded-t-3xl border bg-(--cn-surface) p-6 shadow-xl sm:rounded-2xl"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="pw-prompt-title"
-      >
-        <h3 id="pw-prompt-title" class="text-text-main flex items-center gap-2 text-lg font-bold">
-          <Lock size={18} class="text-amber-warn" />
-          {m.asso_doc_protected_title()}
-        </h3>
-        <p class="text-text-muted truncate text-sm">{pwPromptDoc.name}</p>
-        <form
-          onsubmit={(e) => {
-            e.preventDefault();
-            void submitPwPrompt();
-          }}
-          class="space-y-3"
+      <Input label={m.common_password_label()} type="password" bind:value={pwPromptValue} />
+      {#if pwPromptError}
+        <p class="text-red-err text-sm">{pwPromptError}</p>
+      {/if}
+      <div class="flex flex-wrap justify-end gap-2 pt-1">
+        <button
+          type="button"
+          onclick={() => (pwPromptDoc = null)}
+          disabled={pwPromptBusy}
+          class="border-cn-border hover:bg-cn-bg rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-50"
         >
-          <Input label={m.common_password_label()} type="password" bind:value={pwPromptValue} />
-          {#if pwPromptError}
-            <p class="text-red-err text-sm">{pwPromptError}</p>
-          {/if}
-          <div class="flex flex-wrap justify-end gap-2 pt-1">
-            <button
-              type="button"
-              onclick={() => (pwPromptDoc = null)}
-              disabled={pwPromptBusy}
-              class="border-cn-border hover:bg-cn-bg rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-50"
-            >
-              {m.common_cancel_button()}
-            </button>
-            <button
-              type="submit"
-              disabled={pwPromptBusy || !pwPromptValue}
-              class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
-            >
-              {pwPromptBusy ? m.asso_doc_decrypting() : m.asso_doc_open_button()}
-            </button>
-          </div>
-        </form>
+          {m.common_cancel_button()}
+        </button>
+        <button
+          type="submit"
+          disabled={pwPromptBusy || !pwPromptValue}
+          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
+        >
+          {pwPromptBusy ? m.asso_doc_decrypting() : m.asso_doc_open_button()}
+        </button>
       </div>
-    </div>
-  </div>
-{/if}
+    </form>
+  {/if}
+</ModalOverlay>
 
-{#if renameDoc}
-  <div use:portal>
-    <div
-      class="fixed inset-0 z-(--z-modal) flex items-end justify-center bg-black/40 p-4 sm:items-center"
-      role="presentation"
-      onclick={(e) => e.target === e.currentTarget && !renameBusy && (renameDoc = null)}
+<ModalOverlay
+  open={!!renameDoc}
+  onClose={() => !renameBusy && (renameDoc = null)}
+  label={m.asso_doc_rename_title()}
+  panelClass="border-cn-border w-full max-w-md space-y-4 rounded-t-3xl border bg-(--cn-surface) p-6 shadow-xl sm:rounded-2xl"
+>
+  {#if renameDoc}
+    <h3 id="rename-doc-title" class="text-text-main flex items-center gap-2 text-lg font-bold">
+      <Pencil size={18} class="text-cn-dark" />
+      {m.asso_doc_rename_title()}
+    </h3>
+    <form
+      onsubmit={(e) => {
+        e.preventDefault();
+        void submitRename();
+      }}
+      class="space-y-3"
     >
-      <div
-        class="border-cn-border w-full max-w-md space-y-4 rounded-t-3xl border bg-(--cn-surface) p-6 shadow-xl sm:rounded-2xl"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="rename-doc-title"
-      >
-        <h3 id="rename-doc-title" class="text-text-main flex items-center gap-2 text-lg font-bold">
-          <Pencil size={18} class="text-cn-dark" />
-          {m.asso_doc_rename_title()}
-        </h3>
-        <form
-          onsubmit={(e) => {
-            e.preventDefault();
-            void submitRename();
-          }}
-          class="space-y-3"
+      <Input
+        label={m.asso_doc_rename_label()}
+        bind:value={renameValue}
+        placeholder={m.asso_doc_rename_placeholder()}
+      />
+      {#if renameError}
+        <p class="text-red-err text-sm">{renameError}</p>
+      {/if}
+      <div class="flex flex-wrap justify-end gap-2 pt-1">
+        <button
+          type="button"
+          onclick={() => (renameDoc = null)}
+          disabled={renameBusy}
+          class="border-cn-border hover:bg-cn-bg rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-50"
         >
-          <Input
-            label={m.asso_doc_rename_label()}
-            bind:value={renameValue}
-            placeholder={m.asso_doc_rename_placeholder()}
-          />
-          {#if renameError}
-            <p class="text-red-err text-sm">{renameError}</p>
-          {/if}
-          <div class="flex flex-wrap justify-end gap-2 pt-1">
-            <button
-              type="button"
-              onclick={() => (renameDoc = null)}
-              disabled={renameBusy}
-              class="border-cn-border hover:bg-cn-bg rounded-xl border px-4 py-2 text-sm font-semibold disabled:opacity-50"
-            >
-              {m.common_cancel_button()}
-            </button>
-            <button
-              type="submit"
-              disabled={renameBusy || !renameValue.trim()}
-              class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
-            >
-              {renameBusy ? m.common_saving_label() : m.common_save_button()}
-            </button>
-          </div>
-        </form>
+          {m.common_cancel_button()}
+        </button>
+        <button
+          type="submit"
+          disabled={renameBusy || !renameValue.trim()}
+          class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2 text-sm font-bold disabled:opacity-50"
+        >
+          {renameBusy ? m.common_saving_label() : m.common_save_button()}
+        </button>
       </div>
-    </div>
-  </div>
-{/if}
+    </form>
+  {/if}
+</ModalOverlay>

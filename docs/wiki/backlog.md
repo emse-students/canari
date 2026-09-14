@@ -5363,29 +5363,34 @@ came with it. Their stories are in `CHANGELOG.md`; they were never the scope, on
 the scope is real, and **the pass itself is still owed**. What is below is what the sweeps THOSE
 fixes ran turned up and did not close.
 
-### P3 - three modal overlays are one implementation written three times, and six z-index spellings sit beside them (swept 2026-09-13)
+### P3 - a full-viewport overlay escapes the layer gate's cutoff, and five still carry a raw number (swept 2026-09-14)
 
-Turned up by the guard shipped with the GIF-picker fix. Twelve components declare a `fixed inset-0`
-overlay; eleven were left in the tree, where a transformed ancestor can claim them
-([design-reference](frontend/design-reference.md)). **They are not one thing, and merging them would
-be the call-sites error in CSS** - so this row is only the part that IS a duplicate.
+**The modal-container half of this row SHIPPED** - seven containers, not the three the row claimed:
+`AssociationDocumentManager` holds three byte-identical copies in one file and `ConfirmDialog`, the
+most complete of them, was not on the list at all. What is left is the second finding, and the sweep
+sharpened it into something better than "six spellings".
 
-| Kind | Files | What it is |
-| --- | --- | --- |
-| scrim behind a drawer | `BiometricBottomSheet`, `BiometricEnrollSheet`, `ConversationSidePanel` (`xl:hidden`), `AppSidebar` (`md:block`, offset by the top bar), `Sidebar` (`md:hidden`) | a dim layer, responsive, and one is not even full-bleed |
-| outside-click catcher | `FormBuilder`, `FormQuestionsSection` (`z-40`, no background) | an invisible target that closes a dropdown |
-| **modal container** | `PollComposerModal`, `routes/admin/agenda`, and `GifPickerModal` (now portalled) | **the duplicate** |
+`layerLadder.test.ts` fails on a literal `z-*` of **60 or more**, and
+[design-reference](frontend/design-reference.md) justifies the cutoff correctly: below 60 an element
+competes only with its own siblings. **That reasoning does not survive `fixed inset-0`.** A
+full-viewport overlay is on screen with everything by construction, so its number is comparable with
+every other component's whatever it is - which is how `routes/admin/agenda` sat at `z-50`, under
+`--z-toast` (60), and opened its reject dialog beneath a toast with the gate green.
 
-**`PollComposerModal`'s root class is character-for-character the picker's** -
-`pointer-events-auto fixed inset-0 z-(--z-sheet) flex items-end justify-center sm:items-center` -
-which means it carries the same defect wherever it is opened from a transformed ancestor. One
-`ModalOverlay` component, portalled, with the z-token baked in, and the guard widened from the posts
-subtree to "nobody hand-rolls a modal container".
+**The five that remain, each a different KIND, which is why none of them is a `ModalOverlay`:**
 
-**A second finding, and it is separate**: z-index is spelled SIX ways across those files - `z-50`,
-`z-40`, `z-(--z-sheet)`, `z-(--z-nav-scrim)`, `z-(--z-side-panel-scrim)`, `z-(--z-nav-drawer-scrim)`.
-`design-reference` carries a token table, so `z-50` and `z-40` are raw numbers where a token exists,
-which is the same rule as no raw hex and no raw px.
+| File | Raw | What it is | The rung it probably wants |
+| --- | --- | --- | --- |
+| `BiometricBottomSheet` | `z-50` x2 | scrim + bottom sheet, siblings | `--z-sheet` |
+| `BiometricEnrollSheet` | `z-50` x2 | the same shape | `--z-sheet` |
+| `FormQuestionsSection` | `z-40` catcher, `z-50` picker | outside-click catcher under a dropdown | `--z-popover-scrim` / `--z-popover`, the pair designed for exactly this |
+| `FormBuilder` | `z-40` | the same catcher | `--z-popover-scrim` |
+| `routes/admin/carte/[id]` | `z-50` | a CONDITIONAL full-page editing surface (`isFullPage`) | wants a look on screen - at 50 it is under toast, banner and sheet |
+
+**The deliverable is the GATE, not the five edits**: `layerLadder.test.ts` should fail on any literal
+`z-*` on an element that also carries `fixed inset-0`, independently of the cutoff, because that is
+precisely the case the cutoff's own justification excludes. The last row wants a browser before its
+rung is chosen - raising a full-page editor from 50 to a real rung changes what may cover it.
 
 **Two names on the list are unconfirmed**: `CallOverlay` and `routes/admin/carte/[id]` matched the
 file-level scan but their class attribute spans lines, so the root was never read. Check them before

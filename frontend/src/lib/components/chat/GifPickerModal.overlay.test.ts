@@ -44,8 +44,19 @@ const code = (body: string) => withoutAnyComments(body);
 /** Declares a full-viewport overlay: `fixed inset-0` in a class attribute. */
 const declaresOverlay = (body: string) => /class="[^"]*\bfixed inset-0\b/.test(body);
 
-/** The ACTION, as an attribute in markup - never the word in a comment. */
-const isPortalled = (body: string) => /\buse:portal\b/.test(code(body));
+/**
+ * The ACTION, as an attribute in markup - never the word in a comment - OR `<ModalOverlay>`, which
+ * applies it unconditionally.
+ *
+ * **FOLLOWING THE PROPERTY ACROSS A COMPONENT BOUNDARY IS ONLY HONEST BECAUSE THE TEST BELOW PINS
+ * THE OTHER SIDE.** When the seven hand-written modal containers were fused, this check went red
+ * while the property it exists for was MORE true than before: the picker no longer spells
+ * `use:portal` because its overlay does, for every modal in the app at once. A guard anchored to
+ * the implementation rather than to the property fails exactly then - on the change that fixes the
+ * whole class of defect - which is the moment it is likeliest to be deleted instead of followed.
+ */
+const isPortalled = (body: string) =>
+  /\buse:portal\b/.test(code(body)) || /<ModalOverlay\b/.test(code(body));
 
 describe('a transformed ancestor claims a `fixed` descendant', () => {
   it('is what happened, and it is arithmetic rather than a memory', () => {
@@ -75,10 +86,15 @@ describe('an overlay opened from a POST is portalled, because that tree provably
   /**
    * SCOPED TO THE SUBTREE WHERE THE ANCESTOR IS PROVEN, and deliberately not wider.
    *
-   * Eleven other components declare `fixed inset-0` and stay in the tree. That is a real finding
-   * and it is filed with this list in `backlog.md` - but portalling a node changes where its events
-   * bubble, so twelve at once is a blind change, not a fix. What is asserted here is the case with
-   * a measured transformed ancestor: anything the posts tree opens.
+   * This was scoped to the posts subtree while the picker was the only thing fixed, because
+   * portalling a node changes where its events bubble and twelve at once would have been a blind
+   * change. Seven of those have since been fused into `ModalOverlay`, which portals all of them -
+   * so the scope stays as it is not because the rest are unfixed but because THIS is the case with
+   * a MEASURED transformed ancestor. The others are covered by construction, not by proof.
+   *
+   * What still declares `fixed inset-0` by hand is a different KIND: `FullScreenViewer` and
+   * `CallOverlay` are full-page surfaces rather than modals, and a nav or side-panel scrim is
+   * anchored to its nav on purpose.
    *
    * Read as SOURCE because the defect is invisible from the component - it depends entirely on what
    * is above the call site, so no test that mounts the component alone can ever see it.
@@ -113,10 +129,25 @@ describe('an overlay opened from a POST is portalled, because that tree provably
     const body = readFileSync(join(dir, 'lib/components/chat/GifPickerModal.svelte'), 'utf8');
 
     expect(isPortalled(body), 'the portal ACTION, not the word in the docblock').toBe(true);
-    // THE SCRIM WENT, THE TARGET DID NOT (user: "pas besoin de fond fonce"). Dropping the button
-    // with the dimming is what would actually cost something - the overlay is how a click outside
-    // the panel reaches `onClose`.
+    // THE SCRIM WENT, THE TARGET DID NOT (user: "pas besoin de fond fonce"). Dropping the plate
+    // with the dimming is what would actually cost something - it is how a click outside the panel
+    // reaches `onClose`, and on a phone there is no Escape key to fall back on. `scrim={false}` is
+    // the colour going; the plate stays.
     expect(code(body)).not.toContain('bg-black/45');
-    expect(code(body)).toContain('onclick={onClose}');
+    expect(code(body)).toContain('scrim={false}');
+    // Either spelling - Svelte shorthands `onClose={onClose}` to `{onClose}` and the formatter
+    // applies it, so pinning the long form would be pinning the formatter.
+    expect(code(body)).toMatch(/<ModalOverlay[^>]*(\{onClose\}|onClose=\{onClose\})/);
+  });
+
+  it('ModalOverlay portals unconditionally, which is the other half of following the property', () => {
+    const overlay = readFileSync(join(dir, 'lib/components/shared/ModalOverlay.svelte'), 'utf8');
+
+    expect(/\buse:portal\b/.test(code(overlay)), 'the ACTION, not the docblock').toBe(true);
+    // AND NO PROP TURNS IT OFF. A portal a caller may decline is a portal a caller WILL decline -
+    // `PollComposerModal` is the proof: it carried this exact defect, unmet, the whole time the GIF
+    // picker's copy of it was being reported. There is a `scrim` prop because a scrim is a LOOK;
+    // there is no `portal` prop because a portal is a correctness property.
+    expect(code(overlay)).not.toMatch(/portal\s*[?&]|\{#if[^}]*\bportal\b/i);
   });
 });

@@ -14,6 +14,7 @@
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { contrastColor, toHex } from '$lib/utils/color';
   import { m } from '$lib/paraglide/messages';
+  import ModalOverlay from '$lib/components/shared/ModalOverlay.svelte';
   import { getLocale } from '$lib/paraglide/runtime';
   import { associationAccentHex } from '$lib/associations/accent';
 
@@ -253,53 +254,58 @@
   onClose={() => (previewEvent = null)}
 />
 
-<!-- Reject modal -->
-{#if rejectTarget}
-  <div
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-    role="dialog"
-    aria-modal="true"
-  >
-    <div class="dark:bg-cn-surface w-full max-w-md space-y-4 rounded-2xl bg-white p-6 shadow-xl">
-      <h3 class="text-text-main text-base font-bold">
-        {m.admin_agenda_reject_modal_title({ title: rejectTarget.title })}
-      </h3>
-      <p class="text-text-muted text-sm">
-        {m.admin_agenda_reject_modal_desc()}
-      </p>
-      <div class="space-y-1.5">
-        <span class="text-text-muted text-xs font-semibold tracking-wide uppercase"
-          >{m.admin_agenda_reject_reason_label()}</span
-        >
-        <Textarea
-          bind:value={rejectReason}
-          rows={3}
-          maxlength={1000}
-          placeholder={m.admin_agenda_reject_reason_placeholder()}
-        />
-      </div>
-      <div class="flex justify-end gap-2">
-        <button
-          type="button"
-          onclick={() => {
-            rejectTarget = null;
-          }}
-          class="border-cn-border hover:bg-cn-bg rounded-xl border px-4 py-2 text-sm font-semibold"
-        >
-          {m.common_cancel_button()}
-        </button>
-        <button
-          type="button"
-          onclick={confirmReject}
-          disabled={rejecting}
-          class="border-amber-warn/40 text-amber-warn hover:bg-amber-warn/10 inline-flex items-center gap-1.5 rounded-xl border px-4 py-2 text-sm font-bold disabled:opacity-50"
-        >
-          <X size={14} />
-          {rejecting
-            ? m.admin_agenda_reject_confirm_progress()
-            : m.admin_agenda_reject_confirm_button()}
-        </button>
-      </div>
+<!--
+  Reject modal. It was the worst of the seven this component fused: a raw `z-50` that is not a rung
+  of the ladder in `app.css` - it sits between `--z-page-overlay` (40) and `--z-toast` (60), so this
+  dialog opened UNDERNEATH a toast - no portal, no Escape, no outside-click, and a panel painted
+  `bg-white` by hand instead of the surface token.
+-->
+<ModalOverlay
+  open={!!rejectTarget}
+  onClose={() => (rejectTarget = null)}
+  label={m.admin_agenda_reject_modal_title({ title: rejectTarget?.title ?? '' })}
+  role="alertdialog"
+  panelClass="w-full max-w-md space-y-4 rounded-2xl bg-(--cn-surface) p-6 shadow-xl"
+>
+  {#if rejectTarget}
+    <h3 class="text-text-main text-base font-bold">
+      {m.admin_agenda_reject_modal_title({ title: rejectTarget.title })}
+    </h3>
+    <p class="text-text-muted text-sm">
+      {m.admin_agenda_reject_modal_desc()}
+    </p>
+    <div class="space-y-1.5">
+      <span class="text-text-muted text-xs font-semibold tracking-wide uppercase"
+        >{m.admin_agenda_reject_reason_label()}</span
+      >
+      <Textarea
+        bind:value={rejectReason}
+        rows={3}
+        maxlength={1000}
+        placeholder={m.admin_agenda_reject_reason_placeholder()}
+      />
     </div>
-  </div>
-{/if}
+    <div class="flex justify-end gap-2">
+      <button
+        type="button"
+        onclick={() => {
+          rejectTarget = null;
+        }}
+        class="border-cn-border hover:bg-cn-bg rounded-xl border px-4 py-2 text-sm font-semibold"
+      >
+        {m.common_cancel_button()}
+      </button>
+      <button
+        type="button"
+        onclick={confirmReject}
+        disabled={rejecting}
+        class="border-amber-warn/40 text-amber-warn hover:bg-amber-warn/10 inline-flex items-center gap-1.5 rounded-xl border px-4 py-2 text-sm font-bold disabled:opacity-50"
+      >
+        <X size={14} />
+        {rejecting
+          ? m.admin_agenda_reject_confirm_progress()
+          : m.admin_agenda_reject_confirm_button()}
+      </button>
+    </div>
+  {/if}
+</ModalOverlay>

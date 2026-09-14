@@ -11,6 +11,23 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a dialog in the agenda admin opened underneath the toast, and a picker was one bad card away from misbehaving
+
+Seven places in the app drew "a panel floating over a dimmed page", each written out by hand, and no
+two of them agreed on what that means. They look identical when you open one on a computer, which is
+why the differences survived.
+
+The reject dialog in the agenda admin screen was stacked at a height that is not one of the app's
+defined layers - it happened to fall below notifications, so a toast appearing while it was open
+covered it. The poll composer was built the same way the GIF picker was before last night's fix: it
+works today only because of where it happens to be opened from, and would have misbehaved the moment
+it was opened from anywhere else. Only one of the seven closed on Escape, and only that same one kept
+its buttons clear of the home indicator on a phone.
+
+All seven now share one implementation, so every modal in the app closes on Escape, closes on a click
+beside it, keeps clear of the home indicator, sits at a named layer rather than a number somebody
+picked, and is attached to the page itself rather than to whatever happens to be around it.
+
 ### Fixed - an association with no colour of its own wore two different ones
 
 An association that has never picked a colour is given one, derived from something stable so that it
@@ -27,6 +44,7 @@ now one derivation and the twelve others call it.
 It is keyed on the ID, because a name changes the day a club renames itself - and on that day the
 old code gave it a new colour, silently, on half the screens only. A colour saved as an empty string
 is also treated as "not chosen" now; it used to be treated as a colour, which drew nothing at all.
+
 
 ### Fixed - an association's page was cut off on a phone, and five pages were each their own width
 
