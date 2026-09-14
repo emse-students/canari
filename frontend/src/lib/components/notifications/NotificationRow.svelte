@@ -27,13 +27,11 @@
      * indistinguishable. The caller passes a snapshot taken before that call.
      */
     unread: boolean;
-    /** Tighter geometry for the bell dropdown, which is 320px wide rather than a full column. */
-    compact?: boolean;
     /** Called when the row is activated. */
     onOpen: () => void;
   }
 
-  let { notif, unread, compact = false, onOpen }: Props = $props();
+  let { notif, unread, onOpen }: Props = $props();
 
   /** Bumped once async name resolution completes, to re-render resolved mentions. */
   let resolveVersion = $state(0);
@@ -121,17 +119,18 @@
                   : 'bg-green-600 text-white'
   );
 
-  const avatarBox = $derived(compact ? 'h-10 w-10' : 'h-14 w-14');
-  const badgeBox = $derived(compact ? 'h-5 w-5' : 'h-7 w-7');
-  const glyph = $derived(compact ? 12 : 15);
+  // ONE GEOMETRY, BECAUSE THERE IS ONE SURFACE. These were `compact ? a : b`, and `compact` was
+  // passed by exactly one caller: the 320px bell dropdown, deleted on 2026-09-14 when the bell
+  // became a link to this page. A second shape nothing asks for is a second shape nobody checks.
+  const avatarBox = 'h-14 w-14';
+  const badgeBox = 'h-7 w-7';
+  const glyph = 15;
 </script>
 
 <button
   type="button"
   onclick={onOpen}
-  class="flex w-full items-start gap-3 rounded-lg text-left transition-colors hover:bg-black/5 dark:hover:bg-white/10 {compact
-    ? 'px-3 py-2.5'
-    : 'px-2 py-2.5'}"
+  class="flex w-full items-start gap-3 rounded-lg px-2 py-2.5 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/10"
 >
   <!--
     Actor avatar with the type badge punched out of its lower-right corner. The ring is the row's
@@ -177,11 +176,7 @@
       reference paints the whole line one colour and leans on weight 600 for the names, so what the
       colour carries is "have I seen this" and nothing else.
     -->
-    <p
-      class="text-sm leading-snug {unread ? 'text-text-main' : 'text-text-muted'} {compact
-        ? 'line-clamp-2'
-        : ''}"
-    >
+    <p class="text-sm leading-snug {unread ? 'text-text-main' : 'text-text-muted'}">
       <span class="font-semibold">{notif.actorName || m.notif_actor_unknown()}</span>
       {#if notif.type === 'reaction'}
         {m.notif_reaction_text()}

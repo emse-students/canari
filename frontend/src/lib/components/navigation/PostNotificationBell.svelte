@@ -1,38 +1,33 @@
 <script lang="ts">
   import { Bell } from '@lucide/svelte';
   import { onMount } from 'svelte';
-  import { portal } from '$lib/actions/portal';
-  import { goto } from '$app/navigation';
   import { createPausableInterval } from '$lib/utils/backgroundPausableInterval';
   import { postNotifStore } from '$lib/stores/postNotifStore.svelte';
-  import NotificationRow from '$lib/components/notifications/NotificationRow.svelte';
-  import type { PostNotification } from '$lib/posts/api';
-  import { notificationHref } from '$lib/posts/notificationTarget';
   import { m } from '$lib/paraglide/messages';
 
-  let open = $state(false);
-
-  /**
-   * What was unread when the dropdown opened, held for as long as it stays open.
+  /*
+   * THE BELL IS A LINK TO `/notifications`, AND IT USED TO BE THE ONLY THING STANDING IN FRONT OF IT.
    *
-   * Same reason as the notifications page: opening marks everything read, so a row drawn from
-   * `notif.read` loses its accent in the frame after it appears and the reader never sees which
-   * ones were new.
+   * This component has exactly one caller - `MobileHeader`, which is `md:hidden` - so the 320 px
+   * right-anchored dropdown it used to open existed ONLY on a phone, where it is the least suited.
+   * Desktop never had it: `AppSidebar` draws every `APP_PLACES` entry including `notifications`, and
+   * that entry goes to the route.
+   *
+   * `notifications` is `mobileNav: false`, so the bottom bar does not draw it either. Measured on A1
+   * (Mi 9T, 436 x 945) on 2026-09-14: exactly ONE anchor to `/notifications` existed in the mobile
+   * document, the sidebar's, with a 0 x 0 box because its container is `display: none` at that
+   * width. **The route was unreachable by any link on the one platform that had the dropdown**, and
+   * the dropdown offered no way through to it.
+   *
+   * The page is also strictly the better screen, which is what makes deleting the dropdown a
+   * simplification rather than a trade: it loads 50 rather than a default page, groups by date band,
+   * filters all/unread, and holds the "what was unread when I opened this" snapshot so the accents
+   * survive the read receipt. The dropdown re-implemented a thinner version of the last of those and
+   * none of the rest.
+   *
+   * What stays here is the only thing the header owes: the unread COUNT, and the poll that keeps it
+   * honest while the user is on some other page.
    */
-  let unreadAtOpen = $state<ReadonlySet<string>>(new Set());
-
-  async function toggle() {
-    open = !open;
-    if (open) {
-      unreadAtOpen = new Set(postNotifStore.notifications.filter((n) => !n.read).map((n) => n.id));
-      await postNotifStore.markAllRead();
-    }
-  }
-
-  function openNotification(notif: PostNotification) {
-    open = false;
-    void goto(notificationHref(notif));
-  }
 
   onMount(() => {
     void postNotifStore.load();
@@ -40,59 +35,18 @@
   });
 </script>
 
-<div class="relative">
-  <button
-    type="button"
-    onclick={toggle}
-    title={m.nav_notifications_label()}
-    aria-label={m.nav_notifications_label()}
-    class="text-text-muted hover:text-text hover:bg-cn-surface relative flex h-9 w-9 items-center justify-center rounded-full transition-colors"
-  >
-    <Bell size={18} strokeWidth={2} />
-    {#if postNotifStore.unread > 0}
-      <span
-        class="text-2xs absolute -top-0.5 -right-0.5 flex h-[1.1rem] min-w-[1.1rem] items-center justify-center rounded-full bg-red-500 px-0.5 font-bold text-white"
-      >
-        {postNotifStore.unread > 9 ? '9+' : postNotifStore.unread}
-      </span>
-    {/if}
-  </button>
-
-  {#if open}
-    <div
-      use:portal
-      role="presentation"
-      class="fixed inset-0 z-(--z-popover-scrim)"
-      onclick={() => (open = false)}
-    ></div>
-
-    <div
-      use:portal
-      class="border-cn-border bg-cn-surface fixed top-[calc(env(safe-area-inset-top,0px)+3.5rem)] right-4 z-(--z-popover) w-80 overflow-hidden rounded-xl border shadow-2xl"
+<a
+  href="/notifications"
+  title={m.nav_notifications_label()}
+  aria-label={m.nav_notifications_label()}
+  class="text-text-muted hover:text-text hover:bg-cn-surface relative flex h-9 w-9 items-center justify-center rounded-full transition-colors"
+>
+  <Bell size={18} strokeWidth={2} />
+  {#if postNotifStore.unread > 0}
+    <span
+      class="text-2xs absolute -top-0.5 -right-0.5 flex h-[1.1rem] min-w-[1.1rem] items-center justify-center rounded-full bg-red-500 px-0.5 font-bold text-white"
     >
-      <div class="border-cn-border flex items-center justify-between border-b px-4 py-3">
-        <span class="text-sm font-semibold">{m.notif_bell_heading()}</span>
-        {#if postNotifStore.notifications.some((n) => !n.read)}
-          <span class="text-text-muted text-xs">{m.notif_bell_mark_read()}</span>
-        {/if}
-      </div>
-
-      {#if postNotifStore.notifications.length === 0}
-        <p class="text-text-muted px-4 py-6 text-center text-sm">{m.notif_bell_empty()}</p>
-      {:else}
-        <ul class="max-h-96 overflow-y-auto p-1">
-          {#each postNotifStore.notifications as notif (notif.id)}
-            <li>
-              <NotificationRow
-                {notif}
-                unread={unreadAtOpen.has(notif.id)}
-                compact
-                onOpen={() => openNotification(notif)}
-              />
-            </li>
-          {/each}
-        </ul>
-      {/if}
-    </div>
+      {postNotifStore.unread > 9 ? '9+' : postNotifStore.unread}
+    </span>
   {/if}
-</div>
+</a>

@@ -11,6 +11,26 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - sur telephone, la page des notifications n'etait atteignable par aucun lien
+
+La cloche de l'en-tete mobile ouvrait un panneau de 320 pixels colle au bord droit, qui flottait
+au-dessus de la page et n'offrait aucun passage vers la vraie page des notifications. Cette page
+existe pourtant, complete : elle charge cinquante notifications au lieu d'une page par defaut, les
+regroupe par bandes de date, propose un filtre tout / non lus, et retient ce qui etait non lu a
+l'ouverture pour que les accents survivent a l'accuse de lecture.
+
+Elle etait simplement injoignable. La barre du bas ne dessine que quatre entrees et celle-ci n'en
+fait pas partie ; la barre laterale, qui les dessine toutes, n'existe qu'a partir d'une tablette.
+Mesure sur un Mi 9T a 436 pixels : un seul lien vers cette page se trouvait dans le document, celui
+de la barre laterale, avec une boite de 0 sur 0 parce que son conteneur est masque a cette largeur.
+
+Le panneau est supprime plutot que corrige : il n'avait qu'un seul appelant, l'en-tete mobile, donc
+il n'existait que sur telephone - l'ordinateur, lui, a toujours ouvert la page. La cloche est
+devenue un lien vers cette page, et garde ce que l'en-tete doit vraiment : le compte de non-lus et
+le rafraichissement qui le tient juste. Cent quatorze lignes deviennent trente-quatre, trois textes
+traduits et une variante d'affichage que plus personne ne demandait disparaissent avec.
+
+
 ### Fixed - le panneau d'emojis se refermait au premier doigt posé dessus
 
 Sur un message, le bouton « + » ouvre le panneau complet des emojis : un champ de recherche, neuf

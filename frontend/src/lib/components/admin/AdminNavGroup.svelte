@@ -85,12 +85,16 @@
     <ChevronDown size={14} class="transition-transform {open ? 'rotate-180' : ''}" />
   </button>
   {#if open}
-    <!-- Full-screen invisible backdrop, below the panel: closes on any outside click, matching
-         PostNotificationBell. This was once the ONLY option - a portalled panel is not a DOM
-         descendant of this wrapper, so composedPath() read every click inside it as "outside" -
-         and since 2026-09-14 clickOutside follows a portal to where the node was written, so it
-         would work here too. The backdrop stays because it is also what swallows the click that
-         dismisses the panel, which a guard alone does not do. -->
+    <!-- Full-screen invisible backdrop, below the panel: closes on any outside click. This was
+         once the ONLY option - a portalled panel is not a DOM descendant of this wrapper, so
+         composedPath() read every click inside it as "outside" - and since 2026-09-14 clickOutside
+         follows a portal to where the node was written, so it would work here too. The backdrop
+         stays because it is also what swallows the click that dismisses the panel, which a guard
+         alone does not do.
+         It used to say "matching PostNotificationBell". That component had the same shape and no
+         longer has any: its dropdown was deleted the same day, because it existed only on a phone
+         and stood in front of the /notifications page instead of leading to it. A comment naming a
+         sibling is a comment the sibling's deletion makes false. -->
     <div
       use:portal
       role="presentation"
