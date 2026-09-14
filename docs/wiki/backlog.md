@@ -5391,28 +5391,6 @@ which is the same rule as no raw hex and no raw px.
 file-level scan but their class attribute spans lines, so the root was never read. Check them before
 counting them.
 
-
-### P3 - one association accent is spelled eleven times, in two families that disagree (swept 2026-09-14)
-
-Turned up while wiring the partnership accent. `Association.color` with a `generateAvatarColor`
-fallback is derived at **eleven** sites, and they are not one duplicate but two - **seeded
-differently**, so the same association gets one fallback hue on a card and a DIFFERENT one in the
-calendar:
-
-| Family | Seed | Sites |
-| --- | --- | --- |
-| card accent | `name` | `AssociationDetailView`, `AssociationTile`, `EditBoutiqueTab`, `EditPartnershipsTab`, `routes/shop` (x2) |
-| calendar accent | `id`, through `toHex(...)` | `feedEvents`, `MonthCalendarGridRich` (x2), `calendarExport` (x2), `routes/admin/agenda` |
-| a third spelling | `id`, with `?.trim() ||` rather than `??` | `carte/generator` |
-
-**The seed disagreement is the defect and the count is only how it hid.** An association with no
-colour set is one colour on `/associations` and another in `/calendar`, which reads as two clubs. The
-`??` versus `|| trim()` split is a second, smaller one: `??` keeps an empty string as a colour.
-
-One `associationAccent(asso)` and one `associationEventAccent(event)`, both over one seed, with a
-test that the two families agree for the same association. `toHex` stays where the consumer needs
-hex (the PDF and the calendar sheet both do).
-
 ## Composer and reactions
 
 ### P2 - the app draws emoji with the platform's font, and must draw ONE bundled font everywhere (decided 2026-08-23)
