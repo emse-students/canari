@@ -516,7 +516,9 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   private async reportStrandedDeviceMemberships() {
     const cutoff = new Date(Date.now() - STRANDED_PENDING_MEMBERSHIP_MS);
     const pending = await this.deviceGroupRepo.find({
-      where: { status: 'pending', updatedAt: LessThan(cutoff) },
+      // `pendingSince`, NOT `updatedAt` - see the column. This clock asks how long the seat has
+      // been waiting, and `updatedAt` answers when somebody else last wrote the row.
+      where: { status: 'pending', pendingSince: LessThan(cutoff) },
     });
     if (pending.length === 0) {
       this.logger.log(
@@ -900,15 +902,21 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
    * how long the durable trigger/fallback is kept on the inviter side. `active` rows and
    * `dm_group_members` are never touched.
    *
-   * Filters on `updatedAt` (not `createdAt`): a device that was once `active` and then put back
-   * to `pending` by {@link detectStaleDevices} thus gets a fresh grace window from its last state
-   * transition, aligned with the existing freshness semantics.
+   * **FILTERS ON `pendingSince`, AND FOR TWELVE DAYS IT FILTERED ON `updatedAt` INSTEAD.** The
+   * intent was right and is unchanged - a device once `active` and then put back to `pending` by
+   * {@link detectStaleDevices} gets a fresh grace window from its last state transition - but
+   * `updatedAt` does not carry that. It is a TypeORM `@UpdateDateColumn`: it moves for every write,
+   * and the writers are other people's clients. `detectStaleDevices` carries the rule twenty lines
+   * up, won by WP-GHOST-1 on this same table: a liveness clock must be written by the thing whose
+   * liveness it measures. Measured on production 2026-09-14 - 91 pending seats, this purge holding
+   * 90 of them inside its window, and ONE created 32 days earlier whose `updatedAt` was two days
+   * old. Its window had been reset by a write it had no part in, so it could never expire.
    */
   private async cleanupStalePendingInvitations() {
     const expiry = new Date(Date.now() - STALE_PENDING_INVITATION_MS);
 
     const stale = await this.deviceGroupRepo.find({
-      where: { status: 'pending', updatedAt: LessThan(expiry) },
+      where: { status: 'pending', pendingSince: LessThan(expiry) },
     });
 
     if (stale.length === 0) return;

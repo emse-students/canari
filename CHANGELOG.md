@@ -11,6 +11,23 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a device could sit in a conversation's member list for ever, receiving nothing
+
+When you are invited to a conversation on a new device, the server writes you a seat straight away
+and the keys follow. If the keys never arrive - an invitation that half-failed, a phone that went
+away mid-join - the seat is meant to be cleaned up two weeks later, after which the device simply
+re-joins by itself the next time it connects.
+
+The clean-up was measuring the wrong thing: not how long the seat had been waiting, but when the row
+was last touched by *anyone*, including other people's apps going about their business. A seat that
+kept being brushed past that way had its two weeks restarted every time, and could never expire. One
+such seat had been waiting thirty-two days.
+
+The wait is now timed from the moment it actually starts, so a seat nobody honours expires on
+schedule and the device recovers on its own. The hourly health report was reading the same wrong
+clock and now reads the right one.
+
+
 ### Fixed - a conversation that failed to be created left a permanent, empty trace of itself
 
 Creating a conversation is two steps on the server: write it down, then put you in it. The second

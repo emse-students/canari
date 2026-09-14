@@ -131,6 +131,35 @@ describe('the ONE writer of a pending membership', () => {
     expect(deviceGroupRepo.upsert.mock.calls[0][0]).not.toHaveProperty('kickedAt');
   });
 
+  it('RESTARTS the seat clock, because a demotion restarts the wait', async () => {
+    // The fresh grace window the purge always intended a demoted device to have, and could not
+    // give it: `cleanupStalePendingInvitations` was reading `updatedAt`, which somebody else's
+    // write moves. `pendingSince` is written here and by the column default, and nowhere else -
+    // unlike `kickedAt`, it is unconditional, because both branches of this call put the row in
+    // `pending` right now.
+    const before = Date.now();
+    await service.deactivateDeviceMembership('u1', 'd1', 'g1', { removedFromTreeAt: null });
+    const after = Date.now();
+
+    const written = deviceGroupRepo.upsert.mock.calls[0][0] as { pendingSince: Date };
+    expect(written.pendingSince).toBeInstanceOf(Date);
+    expect(written.pendingSince.getTime()).toBeGreaterThanOrEqual(before);
+    expect(written.pendingSince.getTime()).toBeLessThanOrEqual(after);
+  });
+
+  it('restarts it on a KICK too - the device is waiting on a re-add either way', async () => {
+    await service.deactivateDeviceMembership('u1', 'd1', 'g1', { removedFromTreeAt: new Date(0) });
+
+    const written = deviceGroupRepo.upsert.mock.calls[0][0] as {
+      pendingSince: Date;
+      kickedAt: Date;
+    };
+    // The two clocks answer different questions and must not be confused: one says when the wait
+    // started, the other whether a kick promised an Add.
+    expect(written.kickedAt).toEqual(new Date(0));
+    expect(written.pendingSince.getTime()).toBeGreaterThan(0);
+  });
+
   it('completes even when Redis throws - the row is the truth and a demotion must always land', async () => {
     redis.srem.mockRejectedValueOnce(new Error('connection lost'));
 
