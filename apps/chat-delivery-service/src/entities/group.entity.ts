@@ -58,20 +58,10 @@ export class Group {
   @Column({ type: 'uuid', nullable: true, default: null })
   distributionChannelId?: string | null;
 
-  /** Monotonically increasing counter incremented on each manual key rotation,
-   *  allowing clients to distinguish key rotation epochs from normal commits. */
-  @Column({ default: 1 })
-  keyVersion: number;
-
   /** Current MLS epoch number for this group; incremented by every Commit message.
    *  Used by `validateCommit` to gate commits against the expected base epoch. */
   @Column({ default: 0 })
   activeEpoch: number;
-
-  /** JSONB snapshot of the most recent key-rotation Commit payload, kept so that
-   *  devices coming online after the rotation can reconstruct the new epoch state. */
-  @Column({ type: 'jsonb', nullable: true })
-  latestKeyRotationPayload: any;
 
   /** Soft-delete timestamp. Null = active. Set on explicit deletion.
    *  The row is intentionally kept as a tombstone so devices can detect the transition. */

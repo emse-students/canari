@@ -1,0 +1,25 @@
+-- THE MANUAL KEY ROTATION THAT WAS NEVER BUILT LEFT TWO COLUMNS BEHIND, AND NOTHING EVER WROTE
+-- EITHER OF THEM.
+--
+-- `keyVersion` was "a monotonically increasing counter incremented on each manual key rotation, so
+-- clients can distinguish key-rotation epochs from normal commits", and `latestKeyRotationPayload` a
+-- "JSONB snapshot of the most recent key-rotation Commit payload, kept so that devices coming online
+-- after the rotation can reconstruct the new epoch state". Both describe a feature the product does
+-- not have: rotation in this system is an ordinary MLS commit, `activeEpoch` is the number clients
+-- actually read, and no route, service or client has ever set either column.
+--
+-- MEASURED ON PRODUCTION 2026-09-14, over every row rather than the live ones: 1490 groups, 1432 of
+-- them tombstoned. `latestKeyRotationPayload` is NULL in 1490 of 1490. `keyVersion` is 1 - its
+-- default - in 1490 of 1490. Nothing is lost here because nothing was ever stored.
+--
+-- THE SECOND HALF IS A CORRECTION. A 2026-09-12 sweep recorded `keyVersion` as "at its default
+-- NOWHERE" and concluded one column was dead and the other live. The reading was inverted: it is at
+-- its default everywhere, and the pair is dead together. A predicate read the wrong way survives
+-- exactly as long as nobody re-runs it.
+--
+-- Dropped rather than left nullable, for the reason `041_drop_server_channel_keys.sql` gives: while
+-- a column exists a future read path can reach for it, and a counter nothing increments is a counter
+-- the next reader will believe. `IF EXISTS` because a database bootstrapped by the ORM outside
+-- production may never have carried them.
+ALTER TABLE dm_groups DROP COLUMN IF EXISTS "keyVersion";
+ALTER TABLE dm_groups DROP COLUMN IF EXISTS "latestKeyRotationPayload";
