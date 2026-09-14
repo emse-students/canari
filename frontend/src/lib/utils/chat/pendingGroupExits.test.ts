@@ -6,6 +6,7 @@ import {
   classifyExitFailure,
   clearPendingGroupExit,
   drainPendingGroupExits,
+  owedFor,
   flushPendingGroupExits,
   pendingGroupExitIds,
   recordPendingGroupExit,
@@ -47,6 +48,7 @@ function makeMls(over: Partial<IMlsService> = {}) {
 const G1 = '11111111-1111-4111-8111-111111111111';
 const G2 = '22222222-2222-4222-8222-222222222222';
 const NET = new TypeError('Failed to fetch');
+const DAY = 24 * 60 * 60 * 1000;
 
 beforeEach(() => {
   resetDrainGuardForTests();
@@ -125,6 +127,33 @@ describe('recording and reading what is owed', () => {
   });
 });
 
+/**
+ * THE ONE STATE THIS DESIGN DELIBERATELY ALLOWS IS AN EXIT OWED INDEFINITELY, and until these tests
+ * nothing could tell that state from a link that flapped a second ago.
+ *
+ * There is no counter and no expiry, on purpose: a row deleted "after N tries" would be the DEL-10
+ * defect wearing a budget. What follows from that is that the age is the ONLY evidence separating
+ * "wait, the link is down" from "a reachable server has refused this on every reconnect for a week,
+ * and somebody has to go and find out why". `requestedAt` has been written since this store existed
+ * and was read for ordering alone.
+ *
+ * `owedFor` takes `now` as an argument so nothing here asserts a wall clock.
+ */
+describe('how long an exit has been owed', () => {
+  const T = 1_700_000_000_000;
+
+  it('answers in one coarse unit, because the question is minutes or weeks', () => {
+    expect(owedFor(T, T + 41_000)).toBe('41s');
+    expect(owedFor(T, T + 12 * 60_000)).toBe('12min');
+    expect(owedFor(T, T + 3 * 60 * 60_000)).toBe('3h');
+    expect(owedFor(T, T + 9 * DAY)).toBe('9d');
+  });
+
+  it('never reads negative, so a clock that moved backwards cannot print nonsense', () => {
+    expect(owedFor(T, T - 60_000)).toBe('0s');
+  });
+});
+
 describe('drainPendingGroupExits', () => {
   it('replays a delete and clears the row on the answer', async () => {
     const storage = makeStorage([{ groupId: G1, kind: 'delete', requestedAt: 1 }]);
@@ -180,6 +209,53 @@ describe('drainPendingGroupExits', () => {
 
   // The re-entrancy safety net: a second pass over an already-landed call asks for a group that is
   // gone, and the 404 that comes back is what finally clears the row.
+  it('says how long a refused exit has been owed, which is what makes the limbo findable', async () => {
+    const lines: string[] = [];
+    // Nine days of reconnects, every one of them answered with a refusal. Before this, the line was
+    // character-for-character the same as the one a link flapping for a second produces.
+    const storage = makeStorage([
+      { groupId: G1, kind: 'leave', requestedAt: Date.now() - 9 * DAY },
+    ]);
+    const mlsService = makeMls({
+      removeMemberFromServer: vi.fn(async () => {
+        throw new GroupExitRefusedError(G1, 500, 'leave');
+      }),
+    });
+
+    await drainPendingGroupExits({
+      storage,
+      mlsService,
+      userId: 'u1',
+      log: (m) => lines.push(m),
+    });
+
+    expect(lines.join('\n')).toContain('owed for 9d');
+    // The header line too: the oldest is the aggregate a reader needs before any per-row detail.
+    expect(lines[0]).toContain('oldest owed for 9d');
+  });
+
+  it('says it for an unreachable one just the same - the two differ in cause, not in age', async () => {
+    const lines: string[] = [];
+    const storage = makeStorage([
+      { groupId: G1, kind: 'delete', requestedAt: Date.now() - 3 * DAY },
+    ]);
+    const mlsService = makeMls({
+      deleteGroupOnServer: vi.fn(async () => {
+        throw NET;
+      }),
+    });
+
+    await drainPendingGroupExits({
+      storage,
+      mlsService,
+      userId: 'u1',
+      log: (m) => lines.push(m),
+    });
+
+    expect(lines.join('\n')).toContain('still unreachable');
+    expect(lines.join('\n')).toContain('owed for 3d');
+  });
+
   it('clears the row when the server says the group is already gone', async () => {
     const storage = makeStorage([{ groupId: G1, kind: 'delete', requestedAt: 1 }]);
     const mlsService = makeMls({
