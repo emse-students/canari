@@ -70,6 +70,10 @@
 
   `flex-nowrap` because it shares a 44 px line: badges past the card's width are clipped rather than
   wrapped, which is what keeps the bar one line high whatever the post collected.
+
+  A reader's own reaction is marked by a TINT, not by a bright ring around the pill. The ring was a
+  second outline inside a card that already has one, and it sat beside a button now showing that same
+  emoji - two loud signals for one fact, which is what made the badge read as an alert.
 -->
 {#if Object.keys(reactionCounts).length > 0}
   <div class="flex min-w-0 flex-nowrap items-center gap-1.5 overflow-hidden">
@@ -82,7 +86,7 @@
         onmouseleave={scheduleHide}
         class="inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-1 transition-all {userReaction ===
         reactionType
-          ? 'bg-cn-yellow/20 ring-cn-yellow ring-1'
+          ? 'bg-cn-yellow/15'
           : 'hover:bg-cn-yellow/10 bg-(--cn-surface)'}"
         title={reaction?.type}
       >

@@ -38,7 +38,14 @@
     reactionSummary,
   }: Props = $props();
 
-  /** One shape for both controls, so the row reads as a pair rather than two sizes. */
+  /**
+   * One shape for both controls, so the row reads as a pair rather than two sizes.
+   *
+   * The reacted state paints NO background. It used to fill an amber box behind the glyph, which on
+   * a dark theme is a 45 x 44 slab of colour saying what the glyph beside it already said: a reader
+   * who has reacted sees THEIR emoji there instead of the neutral smiley, and a second signal for
+   * the same fact only competes with the post.
+   */
   const ACTION =
     'flex h-11 items-center gap-1.5 rounded-lg px-3 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500';
 </script>
@@ -70,9 +77,7 @@
   <button
     type="button"
     onclick={onToggleReactionPicker}
-    class="{ACTION} {userReaction
-      ? 'bg-cn-yellow/15 text-cn-dark'
-      : 'text-text-muted hover:bg-(--cn-surface)'}"
+    class="{ACTION} text-text-muted hover:bg-(--cn-surface)"
     aria-label={m.post_reacter()}
     title={m.post_reacter()}
     aria-expanded={showReactionPicker}
