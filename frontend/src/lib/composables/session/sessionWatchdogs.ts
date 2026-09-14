@@ -10,11 +10,8 @@ import {
 } from '$lib/utils/chat/recovery';
 import { clearGroupNotReady, enumerateNotReadyGroups } from '$lib/utils/chat/notReadyRegistry';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
-import {
-  getEpochGapSince,
-  clearEpochGap,
-  anyEpochGapArmed,
-} from '$lib/utils/chat/epochGapRegistry';
+import { clearEpochGap, anyEpochGapArmed, stuckEpochGaps } from '$lib/utils/chat/epochGapRegistry';
+import { dropGroupState } from '$lib/utils/chat/dropGroupState';
 import { getIsTabLeader } from '$lib/utils/chat/connection';
 import type { SessionContext, ChatSessionCallbacks } from './sessionTypes';
 import { makeRecoveryDeps } from './sessionAuth';
@@ -52,6 +49,76 @@ const WATCHDOG_TICK_MS = 5_000;
  * served at once, which is the half of the design this constant does not touch.
  */
 const RECOVERY_SWEEP_MS = 5 * 60_000;
+
+/**
+ * Forces a group out of a gap it has been sitting in for {@link STUCK_EPOCH_GAP_MS}, by the ladder
+ * its own kind has. Fire-and-forget: the tick owns a cadence, never an outcome.
+ *
+ * **THE TWO KINDS DO NOT SHARE A LADDER, AND HANDING ONE THE OTHER'S IS WORSE THAN DOING NOTHING.**
+ * A conversation is re-entered by being re-added - `recoverForkedGroup` drops the forked tree and
+ * `requestReAdd` asks a member for a Welcome, or serves itself an external commit. A key
+ * distribution group is entered by external commit ONLY, and it has no `dm_groups` row: handed to
+ * `requestReAdd`, its `getGroupMeta` returns null, `getGroupServerStatus` answers CONFIRMED ABSENT,
+ * and the group is purged as a phantom - a community losing every seed it holds, on the strength of
+ * a question that was never about it. So the discriminator is carried here, from where it is
+ * already known, rather than learnt by failing downstream.
+ *
+ * The mark is cleared BEFORE either ladder runs, and by this function rather than inside them:
+ * both paths drop the state, `dropGroupState` clears the gap on its own, and an escalation that
+ * throws before reaching it would otherwise re-fire on every tick for the rest of the session.
+ */
+function escalateStuckGap(
+  groupId: string,
+  deps: ReturnType<typeof makeRecoveryDeps>,
+  log: (msg: string) => void
+): void {
+  const short = groupId.slice(0, 8);
+  const mlsService = deps.mlsService;
+  clearEpochGap(groupId);
+
+  if (!mlsService.isDistributionGroup(groupId)) {
+    log(
+      `[SYNC_WATCHDOG] Group ${short}... epoch gap stuck >${STUCK_EPOCH_GAP_MS / 1000}s - forget + welcome_request`
+    );
+    recoverForkedGroup(groupId, deps).catch((e: unknown) =>
+      log(`[SYNC_WATCHDOG] gap recovery failed for ${groupId}: ${String(e)}`)
+    );
+    return;
+  }
+
+  log(
+    `[SYNC_WATCHDOG] distribution group ${short}... epoch gap stuck >${STUCK_EPOCH_GAP_MS / 1000}s - forget + external re-join`
+  );
+  void (async () => {
+    // THE DROP IS WHAT MAKES THE RE-JOIN REACHABLE, and it is the same reason the Graine loader
+    // forgets before rejoining a stale group: `ensureDistributionGroup` returns early for a group
+    // this device already holds, which is precisely the state being repaired here.
+    await dropGroupState(mlsService, groupId, {
+      reason: 'the distribution group is frozen behind its own epoch and no frame can catch it up',
+      checkpoint: 'awaited',
+      log,
+    });
+    const outcome = await mlsService.externalJoin(groupId);
+    if (outcome.joined) {
+      await mlsService.persistCheckpoint();
+      log(
+        `[SYNC_WATCHDOG] distribution group ${short}... re-joined at the current epoch - its seeds are readable again`
+      );
+      return;
+    }
+    // NAMED, BECAUSE ONE OF THE REASONS IS NOT THIS DEVICE'S TO REPAIR. `stale_base` needs a member
+    // that still HOLDS the tree to republish it; the others are transient and the next tick, which
+    // finds the group no longer held, hands it to the candidate loop below.
+    log(
+      `[SYNC_WATCHDOG] distribution group ${short}... could not be re-joined (${outcome.reason})` +
+        (outcome.reason === 'stale_base'
+          ? ` - the published base is at epoch ${outcome.baseEpoch} while the group is at ${outcome.serverEpoch}`
+          : '')
+    );
+  })().catch((e: unknown) =>
+    log(`[SYNC_WATCHDOG] distribution re-join failed for ${short}...: ${String(e).slice(0, 120)}`)
+  );
+}
 
 /**
  * Starts the universal watchdog, the SINGLE owner of the re-add cadence. It drives recovery for
@@ -93,6 +160,26 @@ export function startSyncWatchdogImpl(ctx: SessionContext, cb: ChatSessionCallba
     const localGroups = new SvelteSet(recoveryDeps.mlsService.getLocalGroups());
     if (sweeping) lastSweepAt = now;
 
+    // ── The stuck-gap net, driven by the REGISTRY ────────────────────────────
+    //
+    // IT USED TO BE DECIDED INSIDE THE CANDIDATE LOOP BELOW, AND THAT LOOP IS BUILT FOR A DIFFERENT
+    // QUESTION. Its set is conversations plus the not-ready registry - what a RE-ADD needs - so a
+    // group in neither was marked in the gap registry and never looked at again. That is not a
+    // corner: a Graine key-distribution group is in neither by construction, and it is the one kind
+    // of group that reaches no other exit either, the pipeline branching on `isDistributionGroup`
+    // before both of the sites that clear a gap. A refused commit put it in, and nothing short of a
+    // reload took it out.
+    //
+    // So the net walks the registry, which is the set that actually needs it, and each entry takes
+    // the ladder its own kind has. Oldest first, so a tick that throws on one still reaches the
+    // others in the order they went stuck.
+    for (const id of stuckEpochGaps(STUCK_EPOCH_GAP_MS, now)) {
+      // A gap is a claim about HELD state lagging behind the group's epoch. A device holding
+      // nothing has no epoch to be behind, and the candidate loop below already owns its recovery.
+      if (!localGroups.has(id)) continue;
+      escalateStuckGap(id, recoveryDeps, cb.log);
+    }
+
     // Union of candidate groups: live conversations + not-ready registry (covers pre-conversation
     // unknown groups). A single set so each group is evaluated once per poll.
     //
@@ -126,19 +213,6 @@ export function startSyncWatchdogImpl(ctx: SessionContext, cb: ChatSessionCallba
         if (sweeping) {
           clearGroupNotReady(recoveryDeps.userId, id);
           cancelReAdd(id);
-        }
-        // Safety net for a stuck epoch gap: the group is in WASM but frozen behind the current
-        // epoch, and no incoming frame/commit is coming to escalate or resolve it. Force the
-        // forget + re-Welcome so the outbox (gated on !isInEpochGap) unfreezes.
-        const gapSince = getEpochGapSince(id);
-        if (gapSince !== undefined && now - gapSince > STUCK_EPOCH_GAP_MS) {
-          cb.log(
-            `[SYNC_WATCHDOG] Group ${id.slice(0, 8)}... epoch gap stuck >${STUCK_EPOCH_GAP_MS / 1000}s - forget + welcome_request`
-          );
-          clearEpochGap(id);
-          recoverForkedGroup(id, recoveryDeps).catch((e: unknown) =>
-            cb.log(`[SYNC_WATCHDOG] gap recovery failed for ${id}: ${String(e)}`)
-          );
         }
         continue;
       }

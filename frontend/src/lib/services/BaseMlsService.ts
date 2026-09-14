@@ -2927,7 +2927,18 @@ export abstract class BaseMlsService implements IMlsService {
 
     // A commit: MLS state advanced and there is nothing to hand over. Acknowledged, because
     // replaying it would only be refused.
-    if (!plaintext) return true;
+    //
+    // AND IT IS WHAT CLOSES A GAP, exactly as it is for a conversation (`handleKnownGroup` clears
+    // the registry on the same fact). This branch did not, and this group reaches no other clearer:
+    // the pipeline routes it here BEFORE the two sites that call `clearEpochGap`, so a mark left by
+    // a refused commit stood for the rest of the session over state that had long since caught up -
+    // holding `anyEpochGapArmed` true, which is what keeps the sync watchdog on its fine tick.
+    // Only a commit may do this: an application message that decrypts proves nothing about the
+    // epoch, which is why the conversation side clears on `isCommit` and not on a successful read.
+    if (!plaintext) {
+      clearEpochGap(groupId);
+      return true;
+    }
 
     const handler = this.distributionFrameHandler;
     if (!handler) {

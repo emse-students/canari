@@ -10,6 +10,11 @@ import {
   workspaceScope,
   type DistributionScope,
 } from '$lib/mls-client/distributionScope';
+import {
+  markEpochGap,
+  isInEpochGap,
+  resetEpochGapRegistry,
+} from '$lib/utils/chat/epochGapRegistry';
 
 /**
  * A Graine key-distribution group on the client (WP-22) - a community's, or a private salon's.
@@ -332,6 +337,35 @@ describe('routing a frame that arrived on the group', () => {
     // A commit advanced the MLS state and carries no payload. Replaying it would only be refused.
     expect(await route(ctx, 'g-1', 'peer', new Uint8Array([1]))).toBe(true);
     expect(ctx.distributionFrameHandler).not.toHaveBeenCalled();
+  });
+
+  it('clears an epoch gap when a commit applies, the only exit this group has', async () => {
+    // THE MARK HAD NO CLEARER AND NO ESCALATOR. A refused commit (`catchUpOnRefusedCommit`) is the
+    // only thing that can put this group in the gap registry, and the pipeline branches here BEFORE
+    // both of the sites that call `clearEpochGap` - so the mark stood for the rest of the session
+    // over state that had long since caught up, holding `anyEpochGapArmed` true and the sync
+    // watchdog on its five-second tick with it.
+    resetEpochGapRegistry();
+    markEpochGap('g-1');
+    const ctx = registered({ processIncomingMessage: vi.fn().mockResolvedValue(null) });
+
+    expect(await route(ctx, 'g-1', 'peer', new Uint8Array([1]))).toBe(true);
+
+    expect(isInEpochGap('g-1')).toBe(false);
+  });
+
+  it('leaves the mark alone for a frame that merely DECRYPTS', async () => {
+    // An application message that opens proves nothing about the epoch - typically a peer on the
+    // same stale branch. Only a commit moves the group, which is why the conversation side clears
+    // on `isCommit` and not on a successful read.
+    resetEpochGapRegistry();
+    markEpochGap('g-1');
+    const ctx = registered();
+
+    expect(await route(ctx, 'g-1', 'peer', new Uint8Array([1]))).toBe(true);
+
+    expect(isInEpochGap('g-1')).toBe(true);
+    resetEpochGapRegistry();
   });
 
   it('does NOT acknowledge a frame it cannot decrypt yet', async () => {
