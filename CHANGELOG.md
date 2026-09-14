@@ -11,6 +11,24 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - one empty answer from the server could have erased every conversation's keys on a device
+
+Two places in the app compare "the groups this device holds" against "the groups the server says you
+are in", and delete the local encryption state of anything the server did not name. One of them
+refused to act on an answer that came back EMPTY while the device was holding conversations, on the
+grounds that an account with live conversations always has rows on the server - so an empty answer is
+a glitch, not news. The other did not have that check, although a comment in the first said it did.
+
+A single empty response, of the kind a server restart can produce, would have made that second sweep
+delete the keys for every conversation on the device. Nothing would have been lost permanently - the
+app re-joins conversations it has been thrown out of - but the user would have watched every
+conversation go blank and come back over minutes, and any message that arrived in between would have
+needed to be asked for again.
+
+Both now run the same code, which also fixes three smaller disagreements between them: a repeated
+entry from the server is collapsed the same way on both sides, a failed request is logged on both
+rather than silently swallowed on one, and a deletion always says WHY it happened.
+
 ### Fixed - a dialog in the agenda admin opened underneath the toast, and a picker was one bad card away from misbehaving
 
 Seven places in the app drew "a panel floating over a dimmed page", each written out by hand, and no
@@ -27,6 +45,7 @@ its buttons clear of the home indicator on a phone.
 All seven now share one implementation, so every modal in the app closes on Escape, closes on a click
 beside it, keeps clear of the home indicator, sits at a named layer rather than a number somebody
 picked, and is attached to the page itself rather than to whatever happens to be around it.
+
 
 ### Fixed - an association with no colour of its own wore two different ones
 

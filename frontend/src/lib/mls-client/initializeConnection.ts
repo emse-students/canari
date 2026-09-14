@@ -1,15 +1,12 @@
-import type { IMlsService, UserGroupRow } from './IMlsService';
+import type { IMlsService } from './IMlsService';
 import { republishBaseIfStale } from '$lib/utils/chat/staleBase';
 import { DeviceLimitReachedError } from './mlsDeliveryApi';
 import { getIsTabLeader } from './tabLeader';
 import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
 import { dropGroupState } from '$lib/utils/chat/dropGroupState';
-import {
-  forgetMlsGroupIfPresent,
-  persistMlsStateAfterMutation,
-} from '$lib/utils/chat/groupActions';
-import { reconcileAbsentLocalGroup } from '$lib/utils/chat/groupLifecycle';
+import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
+import { forgetGroupsAbsentFromServer, readGroupSweepSnapshot } from '$lib/utils/chat/groupSweep';
 import {
   connectionSweepDecision,
   groupsOwingAudit,
@@ -168,57 +165,18 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
     }
   }
 
-  // THE LOCAL SET IS CAPTURED BEFORE THE SERVER LIST, AND THE ORDER IS THE WHOLE POINT.
+  // 2. Groupes du serveur, and the local set that will be compared against them.
   //
-  // Step 3 below destroys the MLS tree of any local group the server did not list. That is only
-  // sound for groups that already existed when the server was asked: reading the local set AFTER
-  // the awaited fetch - which is what this did - puts every group created DURING the fetch into a
-  // comparison against a snapshot that could not possibly contain it, and the sweep then deletes
-  // the only copy of a group that is milliseconds old.
-  //
-  // MEASURED, NOT REASONED, on 2026-08-30 by HEAL-REVOKE-7. One clock, the creator's own console:
-  // `create_group: 8868be1c` at 44.572, `add_members_bulk` at 44.830, then this very sweep at
-  // 44.863 - `forget_group: 8868be1c, min_epoch=0`, logged as `[SYNC] WASM removed (conversation
-  // row held with no membership left)` - the reason string was renamed on 2026-08-31 to state
-  // what that branch actually reduces, so grep `groupLifecycle.ts`, not this quote. 31 ms later
-  // the creator could no longer find its own
-  // group, and it answered `welcome_request` with `Group not found` for the next twenty minutes,
-  // to two different devices. The group is alive on prod with its creator `active` and every other
-  // device stuck `pending`, joinable by nobody.
-  //
-  // THE COMMENT THAT USED TO BE HERE CLAIMED THIS WAS ALREADY TRUE - "the `localGroups` snapshot
-  // captured at the start of the function (same instant as `serverIds`)" - and the code did the
-  // opposite, which is why the first audit of this defect cleared this site by reading the prose.
-  // The twin in `actions.ts` was fixed hours earlier and carries the same note.
-  //
-  // Capturing early can only ever SPARE a group - one that became absent during the fetch is
-  // simply swept on the next pass - so this cannot destroy anything the old order did not.
-  const localGroups = new Set(mlsService.getLocalGroups());
-
-  // 2. Groupes du serveur
-  let groups: UserGroupRow[] = [];
-  // `getUserGroups` throws on HTTP errors (502/503/timeout during a CD redeploy).
-  // Distinguish "fetch failed" from "0 real groups" to NEVER purge WASM state
-  // based on a transient empty list - otherwise all groups would be forgotten,
-  // every conversation would become not-ready and SYNC_WATCHDOG would re-add them all.
-  let serverFetchOk = false;
-  try {
-    groups = await mlsService.getUserGroups(userId);
-    serverFetchOk = true;
-  } catch (e) {
-    log(`[SYNC] Failed to fetch user groups: ${e}`);
-    console.error('[SYNC] Failed to fetch user groups:', e);
-    // Continue anyway to process device invitations.
-  }
+  // ONE SEAM READS BOTH, because the ORDER between them is load-bearing and a caller stating it is
+  // a caller that can get it wrong - which both sweeps did, and both were fixed separately hours
+  // apart on 2026-08-30. `groupSweep.ts` carries the measurement and the other three ways these two
+  // copies had drifted. A failed fetch is not thrown: the device invitations below still run.
+  const snapshot = await readGroupSweepSnapshot(mlsService, userId, log);
+  const { localGroups } = snapshot;
 
   let stateMutated = false;
 
-  // All group IDs known to the server (used to purge WASM orphans in step 3).
-  const serverIds = new Set<string>();
-
-  for (const g of groups) {
-    serverIds.add(g.groupId);
-
+  for (const g of snapshot.serverGroups) {
     // Group deleted server-side (tombstone) -> purge WASM state and notify the UI.
     if (g.deletedAt) {
       if (localGroups.has(g.groupId)) {
@@ -270,45 +228,10 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
     );
   }
 
-  // 3. Purge WASM state for groups no longer known to the server.
-  // Uses the `localGroups` snapshot captured BEFORE the server list was fetched, which is what
-  // makes the comparison sound - see the note at that capture. It also keeps the older guarantee
-  // it was written for: a group joined during the async operations in step 2 is not in the
-  // snapshot either, so it cannot be purged here.
-  //
-  // ABSENCE FROM THE LIST IS A REASON TO ASK, NEVER A REASON TO DESTROY. `getUserGroups` answers
-  // for CONVERSATIONS, and a community's Graine key-distribution group is excluded from it by
-  // construction - so this loop forgot it on every connection and checkpointed the loss, leaving
-  // nobody able to send in any community (WP-GRAINE-1, prod 2026-08-19). `reconcileAbsentLocalGroup`
-  // reads the `dm_groups` row, which is the only thing that knows which kind of group this is.
-  //
-  // Anti-purge-storm guard: NEVER purge if the server list is unreliable.
-  //  - `serverFetchOk` false: getUserGroups failed (server unavailable during
-  //    a redeploy) → serverIds is empty, all groups would be forgotten.
-  //  - empty list while we hold local groups: almost certainly a transient empty
-  //    response (an account with active MLS trees always has dm_group_members rows
-  //    server-side). Same guard as discoverMissingGroups.
-  const serverListReliable = serverFetchOk && (groups.length > 0 || localGroups.size === 0);
-  if (serverListReliable) {
-    for (const localId of localGroups) {
-      if (serverIds.has(localId)) continue;
-      const fate = await reconcileAbsentLocalGroup(mlsService, localId);
-      if (fate.action === 'keep') {
-        log(`[SYNC] WASM kept ${localId.slice(0, 8)}… - ${fate.reason}`);
-        continue;
-      }
-      // THROUGH THE SHARED HELPER, so this sweep and discovery's drop the same two halves. Forgetting
-      // the tree alone would leave `isDistributionGroup` answering true for a group that is gone,
-      // and this very loop spares whatever that predicate names.
-      if (!(await forgetMlsGroupIfPresent(mlsService, localId))) continue;
-      stateMutated = true;
-      log(`[SYNC] WASM removed (${fate.reason}): ${localId.slice(0, 8)}…`);
-    }
-  } else if (localGroups.size > 0) {
-    log(
-      `[SYNC] WASM purge skipped - server list unreliable (fetchOk=${serverFetchOk}, ${groups.length} group(s))`
-    );
-  }
+  // 3. Purge WASM state for groups no longer known to the server - the same call discovery makes,
+  // over the same snapshot, with the same guard and the same log vocabulary. The guard used to live
+  // here and NOT in discovery, while a comment here asserted that it did; that divergence is `D5`.
+  if (await forgetGroupsAbsentFromServer(mlsService, snapshot, log)) stateMutated = true;
 
   if (stateMutated) {
     await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);

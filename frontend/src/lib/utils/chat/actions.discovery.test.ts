@@ -367,8 +367,13 @@ describe('discoverMissingGroups orphan cleanup', () => {
 
   it('forgets phantom MLS group even without UI conversation row', async () => {
     const conversations = new Map<string, Conversation>();
+    // THE SERVER LIST IS NOT EMPTY, AND IT USED TO BE. This test says "a local tree with no
+    // conversation row is still swept", and it reached for `[]` as the shortest way to make
+    // `phantom-mls` absent from it - which also made the list unusable as evidence under the guard
+    // `initializeConnection` had all along and this side did not (D5). A live group it is not about
+    // keeps the list believable and leaves the assertion measuring what it is named for.
     const mlsService = makeMls({
-      getUserGroups: vi.fn().mockResolvedValue([]),
+      getUserGroups: vi.fn().mockResolvedValue([{ groupId: 'live-elsewhere', name: 'x' }]),
       getLocalGroups: vi.fn().mockReturnValue(['phantom-mls']),
     });
 
@@ -384,6 +389,37 @@ describe('discoverMissingGroups orphan cleanup', () => {
     // The forget has to reach disk, whatever "disk" means on this platform - which is exactly why
     // the assertion is on the checkpoint and not on `saveState`, whose result web still has to store.
     expect(mlsService.persistCheckpoint).toHaveBeenCalledWith();
+  });
+
+  it('purges nothing when the list is EMPTY while this device holds trees', async () => {
+    // The guard `initializeConnection` has had since WP-GRAINE-1, which this sweep did not: an
+    // account holding active MLS trees always has `dm_group_members` rows server-side, and leaving
+    // or deleting a group drops the local tree in the same breath - so "empty list, local trees" is
+    // a transient answer and never a state a user can reach. Before the fusion this purged every
+    // group the device held, one `getGroupServerStatus` at a time, and each of those answers said
+    // `dm_groups row alive` - a reason whose own words cite a precondition the caller had not
+    // established.
+    const conversations = new Map<string, Conversation>();
+    const mlsService = makeMls({
+      getUserGroups: vi.fn().mockResolvedValue([]),
+      getLocalGroups: vi.fn().mockReturnValue(['held-1', 'held-2']),
+      // The server is perfectly able to answer about each group - which is what makes this
+      // dangerous rather than merely useless. A live row with no distribution scope is a `forget`.
+      getGroupServerStatus: vi.fn().mockResolvedValue({ groupId: 'x', deletedAt: null }),
+    });
+    const log = vi.fn();
+
+    await discoverMissingGroups({
+      mlsService,
+      userId: 'user-a',
+      deviceKeyB64: '1234',
+      conversations,
+      log,
+    });
+
+    expect(mlsService.getGroupServerStatus).not.toHaveBeenCalled();
+    expect(mlsService.forgetGroup).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('WASM purge skipped'));
   });
 
   it('does not purge when server fetch failed', async () => {

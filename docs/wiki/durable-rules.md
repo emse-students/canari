@@ -793,6 +793,19 @@ The link-preview pipeline, the SSRF guard, the favicon cascade and the undici se
 
 ## Contracts the compiler does not check
 
+- **A COMMENT SAYING "THE TWIN DOES THE SAME" IS THE ONE CLAIM THAT MUST BE A TEST.** Two group
+  sweeps compared the same two lists, and `initializeConnection` documented its anti-purge guard as
+  *"Same guard as discoverMissingGroups"* - false on the day it was written, and still false a month
+  later, because prose about ANOTHER file is the one kind of assertion nothing executes. The twin had
+  no guard at all: one empty `200` from `getUserGroups` would have made it forget every MLS tree the
+  device held, one confidently-worded `dm_groups row alive, naming no distribution scope, absent from
+  our group list` at a time - a reason citing a precondition its caller had never established. Three
+  smaller divergences rode along, all invisible for the same reason. **When two sites really do owe
+  the same behaviour, the fix is not a test that they AGREE - it is to leave one of them nothing to
+  agree about**, and the guard then asserts the shape that cannot come back: the destructive decision
+  has exactly one caller, and neither sweep fetches the list it would compare against.
+  [D5 / P2-2](protocols/mls-graine-state-machine.md#10-triage---what-is-worth-a-pull-request)
+
 - **A FIELD NOTHING WRITES IS A FIELD EVERY READER GUESSES, AND THEY WILL ALL GUESS THE SAME WRONG
   THING.** `Conversation.conversationType` has allowed `'channel'` for as long as channels have
   existed, and not one of the THIRTEEN places that built a conversation row ever wrote it - so every
