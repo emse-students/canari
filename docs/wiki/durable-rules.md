@@ -793,6 +793,24 @@ The link-preview pipeline, the SSRF guard, the favicon cascade and the undici se
 
 ## Contracts the compiler does not check
 
+### AN OPEN ITEM WHOSE SUBSTANCE HAS NEVER BEEN IN THE REPOSITORY IS NOT AN OPEN ITEM
+
+`CLAUDE.md` says the repository is the only reference and that nothing may exist solely in a chat
+history. The failure mode that rule prevents is not a lost file - it is a queue entry that LOOKS
+actionable and is not.
+
+Measured 2026-09-14: the duplicate-paths table carried eleven `G-D*` numbers. Searching every commit
+on every branch found those numbers on exactly one line - the backlog row listing them. The audit
+that assigned them lived outside the repo and only its numbering was carried in. They had sat there
+through several sweeps, each of which skipped them because there was nothing to read, and the row
+also named two `D*` numbers (`D12`, `D13`) for a table that stops at `D10`.
+
+**So when an item is carried forward as a bare identifier, the identifier is not the item.** Either
+write the substance in the same commit that adds the row, or re-derive the QUESTION and measure it -
+and if the question turns out to be closed, delete the row and say what closed it. A number that
+means something only to whoever typed it is indistinguishable, to every later reader, from a number
+that means nothing.
+
 - **A COMMENT SAYING "THE TWIN DOES THE SAME" IS THE ONE CLAIM THAT MUST BE A TEST.** Two group
   sweeps compared the same two lists, and `initializeConnection` documented its anti-purge guard as
   *"Same guard as discoverMissingGroups"* - false on the day it was written, and still false a month

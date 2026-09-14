@@ -88,10 +88,15 @@ a real collapse, not a test that fails on divergence):
 
 | Item | What is duplicated | Count | The part that bites |
 | --- | --- | --- | --- |
-| `D8` | checkpoint | 4 routes, 3 guarantees | see the P1 above |
-| `G-D9` | rotation reasons | 4 -> 1 outcome | the reason survives only in a log line |
-| `D3`, `D4`, `D9`, `D10`, `D12`, `D13` | see the MLS client sweep | 2-3 each | `D3` is three forget+rejoin escalations for ONE condition. **`D5` is gone, fused 2026-09-14** - and it was four divergences rather than one duplicate, one of them destructive. **`D1` is gone 2026-09-14, by REFUTING its own prescription**: the four doors differ in authentication, so "one route" would be a fallback path; what was duplicated was the check each door had to remember, and it now lives in the one writer |
-| `G-D2`-`G-D8`, `G-D10`, `G-D13`, `G-D14` | Graine entry points | 2 each | `G-D6` (requester fail-open / answerer fail-closed) is deliberate and stays |
+| `G-D9` | rotation reasons | 4 -> 1 outcome | the reason survives only in a log line, and **nothing reads it** - diagnosed, and the fix needs a product decision rather than a measurement |
+
+**ONE ROW IS LEFT.** Five on 2026-09-14 and four were artifacts - two items shipped, three
+carried TENABLE verdicts re-measured the same day, two numbers named rows that do not exist,
+and eleven `G-D*` numbers had never been defined in this repository at all. What each one was
+and what closed it is on
+[the triage page](protocols/mls-graine-state-machine.md#8-several-paths-to-one-thing---the-duplicates),
+where the sweep's reasoning lives; the rule it cost is in
+[durable-rules](durable-rules.md#an-open-item-whose-substance-has-never-been-in-the-repository-is-not-an-open-item).
 
 **Availability dead ends - every one needs an exit that EXISTS** (the user, 2026-09-12: *"on ne peut
 pas demander a un utilisateur de sortir de l'impasse lui-meme. La sortie de l'impasse doit exister
