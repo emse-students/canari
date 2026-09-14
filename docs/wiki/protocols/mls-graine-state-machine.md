@@ -611,6 +611,18 @@ question the join asks. It is logged at a level that accuses - reaching it means
 that selected the scope and this route disagree - and it deliberately does not drop the tree,
 because dropping key material on one answer is a destructive repair needing its own evidence.
 
+**AND THE AUDIT'S OWN `DE10` - "an undecodable payload is never ACK-able, and the 90-day retention
+window is its only terminator" - IS FALSE AGAINST `main` (2026-09-14).** Every path that meets bytes
+the decoder refuses acknowledges them: an app payload in `setupMessageHandler` returns `true`, a
+distribution frame in `frameHandler` returns normally, which is how `BaseMlsService` is told to
+acknowledge, and the channel-event decoder is on a live socket with no queue behind it at all.
+
+**What was true is that nothing asserted any of it**, and the two dispositions are one `return` -
+or one `throw` - apart. A future edit moving either would turn one bad frame into a permanent
+redelivery loop whose only symptom is a backlog that never shrinks, which reads from the server
+exactly like a device with nothing to do. Three tests now hold it, falsified by making each path
+withhold the ACK.
+
 
 | # | The dead end | How it is reached | Terminal by design? |
 | --- | --- | --- | --- |
