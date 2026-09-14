@@ -152,7 +152,7 @@
 </script>
 
 <div
-  class="relative flex w-full min-w-[200px] items-center gap-3.5 rounded-2xl border border-black/5 bg-black/5 px-3.5 py-3 transition-colors sm:min-w-[240px] dark:border-white/10 dark:bg-white/10"
+  class="relative flex w-full min-w-0 items-center gap-3.5 rounded-2xl border border-black/5 bg-black/5 px-3.5 py-3 transition-colors dark:border-white/10 dark:bg-white/10"
 >
   <audio
     bind:this={audioEl}
@@ -255,9 +255,17 @@
           {/each}
         </div>
       </div>
-      <div class="text-2xs flex items-center justify-between font-bold opacity-70">
-        <span>{formatTime(currentTime)}</span>
-        <span>{formatTime(duration)}</span>
+      <!--
+        `gap-3` AND `shrink-0`, so the two stamps can never merge. `justify-between` alone pushes
+        them apart when there is room and lets them meet when there is not, which is how "0:00" and
+        "0:01" came to read as one number. The gap is a floor the flexbox must honour, and
+        `tabular-nums` stops the elapsed side from twitching as its digits change width.
+      -->
+      <div
+        class="text-2xs flex items-center justify-between gap-3 font-bold tabular-nums opacity-70"
+      >
+        <span class="shrink-0">{formatTime(currentTime)}</span>
+        <span class="shrink-0">{formatTime(duration)}</span>
       </div>
     </div>
   {/if}

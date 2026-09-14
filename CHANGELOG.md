@@ -11,6 +11,21 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - un message vocal tenait dans 200 pixels alors que la bulle lui en offrait 351
+
+Le lecteur audio ne demandait qu'une largeur minimale, sans largeur : dans une bulle qui s'ajuste a
+son contenu, un minimum EST la largeur. Mesure sur un Mi 9T le 14 septembre 2026, la bulle pouvait
+aller jusqu'a 351 pixels et le lecteur en prenait 200, dont 174 pour le bouton lecture, les deux
+commandes de droite et les marges. Il restait 26 pixels a la ligne des minutages, qui en demandent
+54 : "0:00" et "0:01" se touchaient et se lisaient comme un seul nombre (signale par
+l'utilisateur).
+
+Le lecteur demande maintenant 320 pixels et ne depasse jamais la bulle : la colonne centrale passe
+de 26 a 146 pixels, l'onde sonore devient lisible et les deux minutages ont 92 pixels entre eux. Sur
+un ecran plus etroit, la bulle le ramene a sa propre largeur. Les deux minutages ne peuvent plus se
+rejoindre quelle que soit la place - ils gardent un ecart minimal - et les chiffres ne tressautent
+plus pendant la lecture.
+
 ### Changed - la photo, le nom et la formation etaient colles au bord gauche de la page profil
 
 Empilee sur un telephone, la photo de 96 pixels se trouvait contre le bord d'une carte de 404, le
