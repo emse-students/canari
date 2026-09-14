@@ -507,6 +507,47 @@ describe('outbox flusher', () => {
     expect(mlsService.sendMessage).not.toHaveBeenCalled();
     expect(requestReAdd).toHaveBeenCalledWith('g1');
     expect(storage._map.has('m1')).toBe(true);
+    // THE HOLD OWES A CLOCK AND A COUNTER, and this branch wrote neither until 2026-09-14 - which
+    // is why the assertions above stopped at `has('m1')`. `attempts` is the only durable record of
+    // how long a message has been held, and nothing can grow a terminal disposition on a counter
+    // that does not count.
+    expect(storage._map.get('m1')?.status).toBe('pending');
+    expect(storage._map.get('m1')?.attempts).toBe(1);
+    expect(storage._map.get('m1')?.nextAttemptAt).toBeGreaterThan(Date.now());
+  });
+
+  /**
+   * THE ENTRY HAD NO WAKE-UP OF ITS OWN, which is the half a count alone would not have shown.
+   *
+   * `scheduleBackoff` wakes the flush at the earliest `nextAttemptAt` pending. An entry that never
+   * writes one contributes nothing to that list, so it was retried only when something unrelated
+   * happened to flush - a reconnection, a tab becoming visible, another message being enqueued. On
+   * a device where none of those happens, a message held on an unhealthy group sat for the life of
+   * the install with nothing scheduled to look at it again.
+   *
+   * Asserted through the re-add rather than through the timer, because the re-add is the observable
+   * consequence: a second flush inside the backoff window must not ask again. **And asking less
+   * often costs nothing** - `requestReAdd` throttles to one attempt per `RECOVERY_TIMEOUT_MS`
+   * (60 s), which is exactly where this backoff caps, so every suppressed call here is one the
+   * recovery seam was going to refuse anyway. The first four steps (2 s, 5 s, 15 s, 30 s) are
+   * FASTER than that throttle, so the repair is never delayed by this.
+   */
+  it('holds the entry on its own clock: a second flush inside the window does not ask again', async () => {
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls();
+    const requestReAdd = vi.fn().mockResolvedValue(undefined);
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['m1'])]]);
+    const outbox = createOutbox(
+      makeDeps({ mlsService, storage, conversations, requestReAdd, isGroupHealthy: () => false })
+    );
+
+    await outbox.flush();
+    await outbox.flush();
+
+    expect(requestReAdd).toHaveBeenCalledTimes(1);
+    // The count did not move either: a skipped flush is not an attempt, and counting it would make
+    // any future ceiling a function of how often the device happens to wake up.
+    expect(storage._map.get('m1')?.attempts).toBe(1);
   });
 
   it('marks a deleted-group entry as a permanent error', async () => {

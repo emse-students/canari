@@ -465,6 +465,56 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     return 'error';
   }
 
+  /**
+   * Keep an entry pending and back it off DURABLY - the one writer of a retry disposition.
+   *
+   * **Two arms reach a retry and only one of them wrote anything.** The catch arm below incremented
+   * `attempts` and wrote `nextAttemptAt`; the health gate above returned `'retry'` and wrote
+   * neither. Those two fields are not bookkeeping, and losing them is not a smaller version of the
+   * same behaviour:
+   *
+   * - **`nextAttemptAt` is the entry's OWN clock.** `scheduleBackoff` wakes the flush at the
+   *   earliest one pending, and an entry that never writes one contributes nothing to that list -
+   *   so it was never retried on its own account, only when something unrelated happened to flush.
+   *   A message held on an unhealthy group was therefore waiting on an event nobody owed it.
+   * - **`attempts` is the only durable record of how long this has been going on.** A ceiling, a
+   *   report, or a user-visible "this is not getting through" all have to read it, and it stayed at
+   *   zero for exactly the entries that would need one. The held case has no terminal disposition
+   *   yet - `group-deleted` and `evicted` are the only two, and a group nobody can repair is
+   *   neither - and it cannot grow one on top of a counter that does not count.
+   *
+   * **The happy path does not pay for the backoff.** A group becoming sendable is not something
+   * this module can observe, so it has its own trigger: `sessionAuth`'s `onGroupReady` calls
+   * `flushOutbox()` the moment a Welcome or an external join completes. The backoff below is what
+   * happens when the repair does NOT land, which is the only case that was unbounded.
+   */
+  async function holdForRetry(
+    entry: OutboxEntry,
+    describe: (attempts: number) => string
+  ): Promise<FlushOutcome> {
+    patchStatus(entry.id, 'pending');
+    const attempts = entry.attempts + 1;
+    await storage
+      ?.updateOutboxEntry(
+        entry.id,
+        {
+          status: 'pending',
+          attempts,
+          lastAttemptAt: Date.now(),
+          nextAttemptAt: Date.now() + backoffFor(attempts),
+        },
+        deviceKeyB64
+      )
+      // Losing this write loses the backoff with it, so the entry is retried at full speed.
+      .catch((err) =>
+        log(`[OUTBOX] ${entry.id.slice(0, 8)}… backoff not persisted: ${String(err)}`)
+      );
+    // ONE LINE PER HELD ENTRY, and the caller writes it because only the caller knows what is
+    // being waited on. A second line here would be the one its reader learns to skip.
+    log(describe(attempts));
+    return 'retry';
+  }
+
   /** Flush a single entry. Returns the outcome so the loop can schedule backoff/chaining. */
   async function flushOne(entry: OutboxEntry): Promise<FlushOutcome> {
     // Withdrawn after this flush read its snapshot of the queue. The row is already gone, so this
@@ -505,15 +555,19 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // Logged because this branch holds a message back indefinitely while reporting nothing: a
     // conversation stuck here looks, from the outside, exactly like a message that was delivered.
     if (!deps.isGroupHealthy(terminalId)) {
-      log(
-        `[OUTBOX] ${entry.id.slice(0, 8)}… held: group ${terminalId.slice(0, 8)}… not sendable, requesting re-add`
-      );
       await deps
         .requestReAdd(terminalId)
         .catch((e) =>
           log(`[OUTBOX] Re-add request for ${terminalId.slice(0, 8)}… failed: ${String(e)}`)
         );
-      return 'retry';
+      // Through `holdForRetry`, which is what this branch did not do: it returned `'retry'` having
+      // written nothing, so the entry had neither a clock of its own nor a count of how long it had
+      // been held. See that function for what each of the two fields actually decides.
+      return holdForRetry(
+        entry,
+        (attempts) =>
+          `[OUTBOX] ${entry.id.slice(0, 8)}… held: group ${terminalId.slice(0, 8)}… not sendable, re-add requested (attempt ${attempts})`
+      );
     }
 
     // EVICTED: the other permanent failure, and the reason this is a QUESTION rather than a caught
@@ -644,35 +698,18 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       }
       // Keep pending, back off. The message is never lost - that is true of both arms that reach
       // here, and it is the only thing they share.
-      patchStatus(entry.id, 'pending');
-      const attempts = entry.attempts + 1;
-      await storage
-        ?.updateOutboxEntry(
-          entry.id,
-          {
-            status: 'pending',
-            attempts,
-            lastAttemptAt: Date.now(),
-            nextAttemptAt: Date.now() + backoffFor(attempts),
-          },
-          deviceKeyB64
-        )
-        // Losing this write loses the backoff with it, so the entry is retried at full speed.
-        .catch((err) =>
-          log(`[OUTBOX] ${entry.id.slice(0, 8)}… backoff not persisted: ${String(err)}`)
-        );
-      // A LINE ITS READER LEARNS TO SKIP HIDES THE NEXT DEFECT, so the two arms that reach here do
-      // not share a sentence. `sender-not-active` is not transient by any reading - the server has
-      // refused this device's leaf and will refuse it identically until the repair above lands - and
-      // reporting it as "transient failure (attempt 23)" is what let eight stuck messages read as
-      // ordinary network noise for two and a half hours. What is retried here is the MESSAGE; what
-      // is being waited on is the REPAIR, and the line now says which.
-      log(
+      //
+      // A LINE ITS READER LEARNS TO SKIP HIDES THE NEXT DEFECT, so the two arms do not share a
+      // sentence. `sender-not-active` is not transient by any reading - the server has refused this
+      // device's leaf and will refuse it identically until the repair above lands - and reporting it
+      // as "transient failure (attempt 23)" is what let eight stuck messages read as ordinary
+      // network noise for two and a half hours. What is retried here is the MESSAGE; what is being
+      // waited on is the REPAIR, and the line says which.
+      return holdForRetry(entry, (attempts) =>
         kind === 'sender-not-active'
           ? `[OUTBOX] ${entry.id.slice(0, 8)}… held for the roster repair of ${terminalId.slice(0, 8)}… (attempt ${attempts}) - not a transient failure: the server refuses this device's leaf until it is re-admitted`
           : `[OUTBOX] ${entry.id.slice(0, 8)}… transient failure (attempt ${attempts}): ${String(e).slice(0, 80)}`
       );
-      return 'retry';
     }
   }
 
