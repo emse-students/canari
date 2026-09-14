@@ -576,9 +576,10 @@ export class AssociationsController {
   // ── Calendar (PROPOSE_EVENT flag) ─────────────────────────────────────────
 
   /**
-   * Creates a calendar event for the association.
-   * BDE admins and global admins: validated immediately, may target another association via `targetAssocId`.
-   * Regular admins with PROPOSE_EVENT: goes into pending queue.
+   * Creates a calendar event for the association. IT GOES INTO THE PENDING QUEUE, WHOEVER ASKS -
+   * a BDE admin and a global admin included (user, 2026-09-14). What the validator grant still
+   * buys here is reach, not a verdict: `targetAssocId` may name another association, and `kind`
+   * may be `break`. See `createCalendarEvent` in the service.
    */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.PROPOSE_EVENT)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)

@@ -1657,8 +1657,20 @@ ${rejectionReason}`
   }
 
   /**
-   * Creates a calendar event for the association.
-   * BDE admins and global admins: event is immediately validated + may target another association.
+   * Creates a calendar event for the association - ALWAYS `pending`, whoever asks.
+   *
+   * NO CREATION PATH VALIDATES (user, 2026-09-14: *"Un evenement ne doit jamais etre valide
+   * automatiquement, il doit aller en pending, y compris par un admin systeme ou un admin BDE"*).
+   * Until then a BDE admin or a global admin wrote `validated` here, on the spot, which made a
+   * validation a property of WHO TYPED rather than a decision anybody took: the queue only ever
+   * held the events of members who happened not to hold the grant, and the one screen that reviews
+   * the school's agenda could not see what its own managers had put on it. Validating is now
+   * exactly one thing - `validateCalendarEvent` - and it is always a separate, deliberate act.
+   *
+   * THE VALIDATOR GRANT STILL DECIDES TWO OTHER THINGS AND THEY ARE NOT THIS ONE: creating on
+   * behalf of another association (`targetAssocId`), and declaring a `break`, the school-wide band
+   * `assertMayDecideKind` reserves. Hence `isValidator` rather than `canValidate` - the holder may
+   * validate, later, through the method that does it.
    */
   async createCalendarEvent(
     associationId: string,
@@ -1666,9 +1678,9 @@ ${rejectionReason}`
     userId: string,
     callerOpts?: { isGlobalAdmin?: boolean; isBde?: boolean }
   ) {
-    const canValidate = callerOpts?.isGlobalAdmin || callerOpts?.isBde;
+    const isValidator = callerOpts?.isGlobalAdmin || callerOpts?.isBde;
     // BDE / global admin may create on behalf of another association
-    const targetId = canValidate && dto.targetAssocId ? dto.targetAssocId : associationId;
+    const targetId = isValidator && dto.targetAssocId ? dto.targetAssocId : associationId;
     await this.findById(targetId);
     const startsAt = new Date(dto.startsAt);
     const endsAt = dto.endsAt ? new Date(dto.endsAt) : null;
@@ -1686,13 +1698,12 @@ ${rejectionReason}`
     }
 
     const kind = dto.kind ?? AssociationCalendarEventKind.Event;
-    assertMayDecideKind(kind, AssociationCalendarEventKind.Event, canValidate);
+    assertMayDecideKind(kind, AssociationCalendarEventKind.Event, isValidator);
 
     const linkedFormId = dto.linkedFormId ?? null;
     if (linkedFormId) await this.assertFormBelongsToAssociation(linkedFormId, targetId);
     await this.detachLinksBeforeCreate(linkedFormId);
 
-    const now = new Date();
     const row = this.calendarRepo.create({
       associationId: targetId,
       title: dto.title.trim(),
@@ -1702,25 +1713,28 @@ ${rejectionReason}`
       createdBy: userId,
       kind,
       linkedFormId,
-      status: canValidate
-        ? AssociationCalendarEventStatus.Validated
-        : AssociationCalendarEventStatus.Pending,
-      validatedAt: canValidate ? now : null,
-      validatedBy: canValidate ? userId : null,
+      // The three validation columns are written in ONE place, and this is not it. Spelling
+      // `null` here rather than leaving them to the entity default is deliberate: a default is
+      // what happens when nobody said, and this row says.
+      status: AssociationCalendarEventStatus.Pending,
+      validatedAt: null,
+      validatedBy: null,
     });
     const saved = await this.calendarRepo.save(row);
     const coOwners = await this.syncCoOwners(saved.id, targetId, dto.coOwnerIds ?? []);
     this.logger.debug(
       `Event created: ${sanitizeLog(saved.id)} for asso ${sanitizeLog(targetId)} by ${sanitizeLog(userId)} (status=${sanitizeLog(saved.status)}, coOwners=${coOwners.length})`
     );
-    // Notify asso admins when BDE creates an event on their behalf...
-    if (canValidate && targetId !== associationId) {
-      void this.notifyAssocAdminsOfEventAction(targetId, userId, saved.title, 'validated');
-    }
-    // ...and, the other way round, tell the calendar managers that one is waiting for them.
-    if (saved.status === AssociationCalendarEventStatus.Pending) {
-      void this.notifyEventValidatorsOfProposal(targetId, userId, saved.title);
-    }
+    // EVERY creation is a proposal, so the calendar managers are told about every one - there is
+    // no longer a branch here, because there is no longer a creation that skips the queue.
+    //
+    // The association the event LANDS on is told by the transition that actually publishes it
+    // (`validateCalendarEvent`) or refuses it (`rejectCalendarEvent`), not from here. Announcing a
+    // cross-association creation as `validated` was true only while creating and validating were
+    // the same act; repeating it now would be a notification about a publication that has not
+    // happened, and adding a second one at creation would make a cross-asso deposit the only event
+    // in the system that notifies its owner twice.
+    void this.notifyEventValidatorsOfProposal(targetId, userId, saved.title);
     return this.serializeCalendarEvent(saved, coOwners);
   }
 
@@ -1794,23 +1808,22 @@ ${rejectionReason}`
      * BDE reasoned about when it said yes, and demoting on those would turn every typo into a
      * queue item and teach the validators to approve without reading.
      *
-     * A caller who can validate RE-VALIDATES IN PLACE rather than demoting: they are the authority
-     * the demotion would route to, so sending them their own request is a queue item nobody needs.
-     * The stamp still moves, because `validatedAt` must answer "when was THIS shape approved".
+     * AND IT HAS NO EXCEPTION FOR THE AUTHORITY ITSELF - user, 2026-09-14: *"Un evenement ne doit
+     * jamais etre valide automatiquement, il doit aller en pending, y compris par un admin systeme
+     * ou un admin BDE"*. A caller who can validate used to RE-VALIDATE IN PLACE here, on the
+     * argument that they are the authority the demotion would route to. That argument re-opened by
+     * a second door exactly what the creation path had just closed: a BDE admin could propose,
+     * validate, then move the date, and the event stayed on the public agenda carrying a stamp
+     * nobody read the new shape to earn. Pressing Validate again costs one click and is the only
+     * thing that makes the stamp mean anything.
      */
     const datesMoved =
       toMillis(ev.startsAt) !== previousStartsAt || toMillis(ev.endsAt) !== previousEndsAt;
-    let demoted = false;
-    if (wasValidated && datesMoved) {
-      if (canCrossAsso) {
-        ev.validatedAt = new Date();
-        ev.validatedBy = callerOpts?.callerUserId ?? ev.validatedBy;
-      } else {
-        ev.status = AssociationCalendarEventStatus.Pending;
-        ev.validatedAt = null;
-        ev.validatedBy = null;
-        demoted = true;
-      }
+    const demoted = wasValidated && datesMoved;
+    if (demoted) {
+      ev.status = AssociationCalendarEventStatus.Pending;
+      ev.validatedAt = null;
+      ev.validatedBy = null;
     }
 
     if (dto.linkedFormId !== undefined) {

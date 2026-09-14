@@ -280,11 +280,13 @@
   }
 
   // ── Event deposit (global admins + BDE validators) ────────────────────────
-  // These users can auto-validate events. A global admin posts directly on the
-  // chosen association; a BDE validator posts via their BDE association and
-  // redirects with `targetAssocId`.
+  // What these users can do is deposit an event on ANY association's calendar - not publish one.
+  // Since 2026-09-14 no creation path validates, theirs included, so a deposit lands in the same
+  // pending queue every proposal does and the badge above counts it. A global admin posts directly
+  // on the chosen association; a BDE validator posts via their BDE association and redirects with
+  // `targetAssocId`.
 
-  /** Whether the current user may deposit an auto-validated event for any association. */
+  /** Whether the current user may deposit an event on any association's calendar. */
   let canDepositEvent = $state(false);
   /** BDE association id (with VALIDATE_EVENTS) used as the URL :id for non-global-admins. */
   let depositAuthorityAssoId = $state('');
@@ -395,8 +397,8 @@
         toUpdatePayload(values, capabilities)
       );
     } else {
-      // Global admin: posts directly on the target association (auto-validated server-side).
-      // BDE validator: posts through their BDE association with targetAssocId toward the target.
+      // Global admin: posts directly on the target association. BDE validator: posts through
+      // their BDE association with targetAssocId toward the target. Both land `pending`.
       const urlAssocId = isGlobalAdmin() ? target : depositAuthorityAssoId;
       await createAssociationCalendarEvent(urlAssocId, {
         ...toCreatePayload(values, capabilities),
@@ -646,15 +648,15 @@
   heading={editingEventId ? m.asso_calendar_modal_edit_title() : m.calendar_deposit_modal_title()}
   note={editingEventId
     ? m.calendar_edit_owner_note({ association: editingOwnerName })
-    : m.calendar_deposit_immediate_note()}
+    : m.calendar_deposit_pending_note()}
   editing={!!editingEventId}
   bind:values={depositValues}
   {capabilities}
   {associations}
   linkableForms={linkCandidates}
   poster={poster.controls}
-  submitLabel={editingEventId ? m.common_save_button() : m.calendar_deposit_publish()}
-  savingLabel={editingEventId ? m.asso_calendar_saving_label() : m.calendar_deposit_publishing()}
+  submitLabel={editingEventId ? m.common_save_button() : m.calendar_deposit_submit()}
+  savingLabel={editingEventId ? m.asso_calendar_saving_label() : m.calendar_deposit_submitting()}
   onSubmit={submitEvent}
   onClose={() => (depositModalOpen = false)}
 />

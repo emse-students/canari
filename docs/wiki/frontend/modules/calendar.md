@@ -135,8 +135,13 @@ That is a consequence of the endpoint rather than a policy, and it lives in the 
 being re-derived by each surface. Its two endpoints RETHROW into the modal's error line, since the
 component that owns a line owns everything that can fill it.
 
-Creation is a PROPOSAL on the association page (a BDE validation queue applies) and is
-auto-validated when a global admin or a BDE validator deposits from `/calendar`.
+**Creation is a PROPOSAL on both surfaces, and there is no caller for whom it is not** - a BDE
+validator and a global admin depositing from `/calendar` land in the same queue every member's
+proposal does (user, 2026-09-14). The deposit modal says so (`calendar_deposit_pending_note`) and
+its button reads *Envoyer pour validation* rather than *Publier*; the badge on the `/admin/agenda`
+link counts what is waiting, the deposit included. What `/calendar` still decides that the
+association's page does not is WHO an event belongs to. The server side is
+[social-service](../../services/social-service.md#nothing-is-validated-by-the-act-of-creating-it).
 
 ## Entry kind: event vs break
 
