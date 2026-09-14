@@ -315,6 +315,9 @@ describe('the CREATE_GROUP door', () => {
     create: jest.fn().mockImplementation((e: unknown) => e),
     save: jest.fn().mockImplementation(async (e: unknown) => e),
     findOne: jest.fn().mockResolvedValue(null),
+    // The undo. A creation that writes the row and then fails to enrol its creator used to leave a
+    // member-less group nothing anywhere collects - measured on production 2026-09-14, population 1.
+    delete: jest.fn().mockResolvedValue({ affected: 1 }),
   };
 
   const BODY = { name: 'Amis', createdBy: 'u1', creatorDeviceId: 'd1' };
@@ -364,6 +367,59 @@ describe('the CREATE_GROUP door', () => {
     await expect(controller.createGroup(BODY)).rejects.toBeInstanceOf(BadRequestException);
     expect(groupRepo.save).not.toHaveBeenCalled();
     expect(messaging.activateDeviceMembership).not.toHaveBeenCalled();
+  });
+
+  /**
+   * THE ASSERTION ABOVE STOPPED EXACTLY WHERE THE HOLE STARTED. It covers the refusal BEFORE the
+   * row is written, which is the one the route was designed around. Two ways to fail AFTER it had
+   * no test at all, and both leave a `dm_groups` row with no members, no commits, no published base
+   * and no queued frames.
+   *
+   * **Nothing collects that row.** `findOrphanGroupIds` asks which groups still own rows while
+   * their `dm_groups` row is GONE - the mirror of this case, and blind to it. So it is permanent,
+   * and it counts as a live group in every query that counts them: this is how the one on
+   * production was reported on 2026-09-12 as "a group nobody can repair", when in fact nobody was
+   * ever in it.
+   */
+  it('discards the row when the enrolment REFUSES after it was written', async () => {
+    messaging.activateDeviceMembership.mockResolvedValue({ ok: false, reason: 'revoked' });
+
+    await expect(controller.createGroup(BODY)).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(groupRepo.save).toHaveBeenCalled();
+    expect(groupRepo.delete).toHaveBeenCalledWith({
+      id: (groupRepo.save.mock.calls[0][0] as { id: string }).id,
+    });
+  });
+
+  it('discards the row when the enrolment THROWS - the half production actually took', async () => {
+    // A refusal is a race measured in microseconds. A database or Redis failure inside the enrolment
+    // is an ordinary outage, and it left the row behind in exactly the same state.
+    messaging.activateDeviceMembership.mockRejectedValue(new Error('connection terminated'));
+
+    await expect(controller.createGroup(BODY)).rejects.toThrow('connection terminated');
+
+    expect(groupRepo.save).toHaveBeenCalled();
+    expect(groupRepo.delete).toHaveBeenCalledWith({
+      id: (groupRepo.save.mock.calls[0][0] as { id: string }).id,
+    });
+  });
+
+  it('passes the ORIGINAL failure on even when the discard itself fails', async () => {
+    // The discard is housekeeping. Letting its own error replace the refusal would tell the caller
+    // the wrong thing went wrong, and the row it failed to remove is then permanent - which is what
+    // its ERROR line is for.
+    messaging.activateDeviceMembership.mockResolvedValue({ ok: false, reason: 'revoked' });
+    groupRepo.delete.mockRejectedValue(new Error('delete failed'));
+
+    await expect(controller.createGroup(BODY)).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('keeps the row on the happy path, which is the whole point of it', async () => {
+    await controller.createGroup(BODY);
+
+    expect(groupRepo.save).toHaveBeenCalled();
+    expect(groupRepo.delete).not.toHaveBeenCalled();
   });
 
   it("refuses the client's unresolved-identity placeholder - the 2026-08-27 defect reached this door too", async () => {
