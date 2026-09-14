@@ -85,6 +85,11 @@ beforeEach(() => {
     mlsService: {
       sendMessage,
       distributionGroupFor: () => 'dist-group',
+      // The history ask versions "nobody to ask" on the distribution epoch, so the mock has to be
+      // able to answer one. Fixed here: this file measures the purge, not the roster.
+      getLocalGroups: () => ['dist-group'],
+      isDistributionBaseSettled: () => true,
+      getEpoch: () => 3,
       distributionScopes: () => scopes,
       forgetDistributionGroup,
       saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
@@ -154,6 +159,9 @@ describe('forgetCommunityGraine', () => {
       mlsService: {
         sendMessage,
         distributionGroupFor: () => 'dist-group',
+        getLocalGroups: () => ['dist-group'],
+        isDistributionBaseSettled: () => true,
+        getEpoch: () => 3,
         distributionScopes: () => scopes,
         forgetDistributionGroup,
         saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),

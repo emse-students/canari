@@ -1496,6 +1496,22 @@ joining a private salon already holds the community's seeds, so the ask would sh
 would still be missing the salon's past. What recovers that is the per-message repair of §4, which
 asks a NAMED holder for the exact sessions a message needs - and that path is salon-aware.
 
+**AND "NOBODY TO ASK" IS VERSIONED ON THE ROSTER, not filed as an ask (FIXED 2026-09-14).** The ask
+runs on every ordinary trigger, including the already-in-the-group branch of
+`ensureDistributionGroupFor`, whose own comment says why: *"a device that joined while its answerer
+was offline would never ask again if the ask lived only on the joining branch"*. `historyAsked`
+defeated exactly that. It is the set of communities this session HAS asked, and the branch that
+found nobody to ask added to it - recording a request that never went out, and making the skip last
+the session. The only things clearing it were the community leaving the device and a restart, the
+second being the user getting themselves out of an impasse.
+
+It is keyed on the distribution epoch instead. Both halves of "nobody to ask" - a second member, a
+second device of ours on the group - are membership, every membership change commits to the
+distribution group and advances its epoch, so the epoch IS the version of that answer. A pass that
+finds the same epoch returns before the roster read and writes no line; a pass after the epoch moved
+asks again. The measured case: a phone joining while the laptop holding the seeds is offline, then
+the laptop coming online and joining - which is itself the commit that moves the epoch.
+
 ### Found while writing this: a discriminator dropped in transit
 
 `GroupMeta.distributionWorkspaceId` has been documented since WP-22 as "the discriminator a

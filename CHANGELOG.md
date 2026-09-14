@@ -31,6 +31,21 @@ on the server is zero.**
 The two steps are now one: a creation that fails to put you in the conversation removes what it
 wrote before reporting the failure, which is unchanged and still reaches you.
 
+### Fixed - a community could stay empty until the app was restarted
+
+When you join a community, your device asks the others for the messages you are entitled to see.
+If nobody is reachable at that moment - you are the only member so far, or your other device is
+offline - there is nobody to ask, and the app said so and stopped.
+
+**It then never asked again for as long as the app stayed open.** The attempt that never happened
+was filed as one that had, so when your laptop came online and joined, the phone in your hand went
+on showing an empty community. The only ways out were leaving the community or restarting the app,
+which is not an exit anybody should have to find.
+
+The app now remembers WHICH set of people it found nobody in, and asks again as soon as that set
+changes - which is exactly when there is somebody new to ask. While nothing has changed it still
+says nothing and asks nothing, so a screen you open ten times costs one question, not ten.
+
 ## [0.18.0] - 2026-09-14
 
 ### Fixed - a device the server had refused to deliver to was told it was a member
