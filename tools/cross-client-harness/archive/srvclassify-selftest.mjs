@@ -22,7 +22,6 @@
 // `srvReport` reaches production, so it cannot be the thing under test here. What IS under test is
 // everything that decides its answer offline: `shapeOf`, and the rule lists themselves. The bucket
 // arithmetic around them is exercised on a real window by `run.mjs`, once per pass.
-import { readFileSync } from 'node:fs';
 import {
   namesOnlyOthers,
   settleFirstLooks,
@@ -803,24 +802,13 @@ check('with no subjects, nothing is foreign', namesOnlyOthers('[MOD] by=afc13486
  * than none: it converts an open question into a settled one. The bytes on disk are the only place
  * this is visible, so that is what is read.
  */
-// NO REGEX HERE ON PURPOSE. A character class spelling out C0 is exactly what `no-control-regex`
-// forbids, and silencing that rule to write this one would be the wrong trade: the lint is right
-// that a control character in a pattern is almost always an accident - which is the whole subject
-// of this guard. Tab, newline and carriage return are the three that belong in a source file.
-const hasControlChar = (text) =>
-  [...text].some((c) => {
-    const n = c.charCodeAt(0);
-    return n < 0x20 && n !== 9 && n !== 10 && n !== 13;
-  });
-for (const file of ['srvlog.mjs', 'watch.mjs']) {
-  const text = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
-  const bad = text
-    .split('\n')
-    .map((line, i) => ({ line, n: i + 1 }))
-    .filter(({ line }) => hasControlChar(line));
-  check(`${file} carries no control character - a rule holding one is dead and silent`, bad.length === 0, true);
-  for (const { line, n } of bad) console.log(`    ${file}:${n} ${JSON.stringify(line.trim().slice(0, 120))}`);
-}
+// THE ASSERTION ITSELF MOVED, AND WIDENED, on 2026-09-13.
+// It named two files - these two, the ones that had been burnt - and the same defect then appeared
+// three more times outside it, twice inside a frontend suite of 3900 tests that ran green
+// throughout. A list of subjects is a list somebody will add to without telling the gate, which is
+// this file's own standing lesson arriving from the other direction. The replacement enumerates
+// nothing and reads what git would keep, which covers these two and 2284 others:
+// `.github/scripts/tests/control-characters.test.mjs`.
 
 // THE RULE THAT PROMPTED THE GUARD ABOVE, PINNED ON BOTH SIDES OF THE NUMBER THAT CARRIES THE
 // FINDING. `stranded` counts the memberships the server holds that the DEVICE cannot serve itself

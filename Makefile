@@ -351,6 +351,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/shellcheck-scope.test.mjs
 	@bun .github/scripts/tests/auth-request-coverage.test.mjs
 	@bun .github/scripts/tests/claude-md-cap.test.mjs
+	@bun .github/scripts/tests/control-characters.test.mjs
 	@bun .github/scripts/tests/executable-bit.test.mjs
 	@bash .github/scripts/tests/android-unit-tests.test.sh
 	@bun tools/app-store/submit.test.mjs

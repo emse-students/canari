@@ -72,7 +72,7 @@ describe('AndroidManifest FCM registration (anti-régression)', () => {
     // regeneration from quietly re-adding it. The match is on the TAG, not the string: the comment
     // that replaced it still names the permission, and a `toContain` would pass on that comment -
     // which is exactly the false green this rewrite exists to prevent.
-    const permissionTags = manifest.match(/<uses-permission[^>]*\/>/g) ?? [];
+    const permissionTags = manifest.match(/<uses-permission\s[^>]*\/>/g) ?? [];
     expect(permissionTags.some((t) => t.includes('USE_FULL_SCREEN_INTENT'))).toBe(false);
     // The ring CHANNELS stay declared: the Kotlin is untouched, only its entry point is gated, and
     // the channels must survive the hold so a revival needs no notification-settings migration.

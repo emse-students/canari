@@ -44,7 +44,7 @@
  *
  * **A gate that enumerates its subjects is only as good as the enumeration**, and this one was
  * written from the sites that existed when it was written. `spawn` is now in the alternation, and
- * the `` is what keeps `respawn(` out of it. The lesson is the rule's own: a list of spellings is
+ * the `\b` is what keeps `respawn(` out of it. The lesson is the rule's own: a list of spellings is
  * a list somebody will add to without telling it.
  *
  * WHY A STYLE RULE AND NOT A RESOLUTION CHECK. Resolving each site the way the process would means

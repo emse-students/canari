@@ -50,7 +50,7 @@ const STATE_KEY_HEX_CHARS = 16;
  * absent field has to have a written-down default rather than an incidental one.
  */
 function canonicalReaction(r: MessageReaction): string {
-  return `${r.userId?.toLowerCase() ?? ''}${r.emoji ?? ''}${r.at ?? 0}${r.removed ? 1 : 0}`;
+  return `${r.userId?.toLowerCase() ?? ''}\x01${r.emoji ?? ''}\x01${r.at ?? 0}\x01${r.removed ? 1 : 0}`;
 }
 
 /**
@@ -71,8 +71,8 @@ export function canonicalMessageState(m: StoredMessage): string {
     // different states, and `isEdited` alone cannot tell them apart. A message edited by a client
     // too old to send the time contributes its flag and no time, which is what it actually knows.
     m.isEdited ? (m.editedAt ?? 1) : 0,
-    reactions.join(''),
-  ].join('');
+    reactions.join('\x02'),
+  ].join('\x03');
 }
 
 /**
