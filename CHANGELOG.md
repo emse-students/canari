@@ -11,6 +11,21 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - selecting a tab at the bottom of the screen cut off its own name
+
+The bar at the bottom of the phone app splits the screen into four, and the label of the selected
+tab is drawn in bold. Bold text is wider - so "Tableau de bord" fitted its quarter of the screen
+right up until it was chosen, and then read "Tableau de bo...". It was short by less than a
+pixel on a 390px phone, and by more on every narrower one.
+
+The tab now reads "Tableau", and the side padding that was taking 8 of the 90 pixels a label has on
+a common Android screen is gone. Every name in the bar now fits, unselected and selected, on every
+phone 360 pixels wide or more. The full name is unchanged everywhere it has room - the sidebar on a
+computer still reads "Tableau de bord".
+
+A screen-reader listening to the unread dot on the messages tab was also read a sentence in French
+regardless of the language chosen; it now follows the app's language like everything else.
+
 ### Fixed - a fresh machine would have run the test campaign against the wrong stack
 
 The template a new workstation copies to set up the cross-client test rig named the development
