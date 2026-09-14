@@ -1,9 +1,9 @@
-version: 0.18.0
+version: 0.18.1
 
-Les associations : chaque tuile porte la couleur et le nom complet de l'association, et sa page se lit enfin sur un téléphone sans texte coupé.
+L'agenda : un événement part toujours en validation, même déposé par le BDE ou un administrateur. Déplacer la date d'un événement validé le renvoie en attente.
 
-La barre de réactions ne déborde plus sur un message court, et le sélecteur de GIF s'ouvre par-dessus la page au lieu d'une carte.
+Les pages d'association prennent toute la largeur de l'écran, et leur agenda se lit sur un téléphone.
 
-Vingt-sept écrans montraient encore de l'anglais à un lecteur français. Ils parlent français.
+Plus rien n'est coupé : votre nom en haut de votre profil, l'onglet choisi en bas de l'écran, l'invitation à commenter.
 
-Une conversation ou une communauté bloquée se répare maintenant toute seule, sans redémarrer l'application.
+Un bandeau d'information ne recouvre plus l'en-tête de l'application.
