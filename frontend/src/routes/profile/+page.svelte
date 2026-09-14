@@ -192,11 +192,24 @@
         the reason this header is the one that clipped. As a row at every width, a 390px screen
         spent 96px on the avatar, 40px on two gaps and ~39px on the settings link, leaving the NAME
         183px; `truncate` then cut it. Stacked, the name gets the whole column and wraps instead.
+
+        THE STACKED COLUMN IS CENTRED (user, 2026-09-14: *"tu pourrais centrer la photo, la
+        formation et le nom sur la page profile"*). Left-aligned, a 96px avatar sat against the edge
+        of a 404px card with the rest of the row empty, and the name, the badge and the formation
+        chip each started at a different apparent margin because each is a different width. Centred,
+        one axis runs through all four and the block reads as one identity rather than four stacked
+        fragments.
+
+        THE SETTINGS LINK CENTRES WITH THEM even though the user named only three, because it is the
+        fourth thing in the same column: pinning it `self-start` under a centred block would leave a
+        lone left-aligned pill and undo the axis the other three just gained. From `sm` up nothing
+        moves - the row puts it back at the far right, where it belongs beside a name that no longer
+        has to share the width.
       -->
       <div
-        class="animate-in fade-in slide-in-from-bottom-4 flex flex-col gap-5 duration-500 sm:flex-row sm:items-center sm:gap-6"
+        class="animate-in fade-in slide-in-from-bottom-4 flex flex-col items-center gap-5 duration-500 sm:flex-row sm:items-center sm:gap-6"
       >
-        <div class="relative h-24 w-24 shrink-0 self-start sm:h-28 sm:w-28 sm:self-auto">
+        <div class="relative h-24 w-24 shrink-0 sm:h-28 sm:w-28">
           <div
             class="h-full w-full overflow-hidden rounded-full shadow-lg ring-4 ring-white/50 dark:ring-black/20"
           >
@@ -215,7 +228,7 @@
             <Camera size={15} strokeWidth={2.5} />
           </button>
         </div>
-        <div class="min-w-0 flex-1">
+        <div class="min-w-0 flex-1 text-center sm:text-left">
           <h1 class="text-text-main mb-1 text-2xl font-bold tracking-tight sm:text-3xl">
             {displayFallbackName}
           </h1>
@@ -232,7 +245,7 @@
         <a
           href="/settings"
           title={m.settings_page_title()}
-          class="text-text-muted hover:text-cn-dark focus-visible:ring-cn-yellow inline-flex shrink-0 items-center gap-1.5 self-start rounded-xl px-3 py-1.5 text-xs font-bold transition-all outline-none hover:bg-black/5 focus-visible:ring-2 active:scale-95 dark:hover:bg-white/10"
+          class="text-text-muted hover:text-cn-dark focus-visible:ring-cn-yellow inline-flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold transition-all outline-none hover:bg-black/5 focus-visible:ring-2 active:scale-95 sm:self-start dark:hover:bg-white/10"
         >
           <SlidersHorizontal size={15} strokeWidth={2.5} />
           <span class="hidden sm:inline">{m.settings_page_title()}</span>

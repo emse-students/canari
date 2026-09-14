@@ -22,6 +22,53 @@ ils promettaient des choses que la route ne savait pas faire - un "+" sur Discus
 Ils ne sont donc dessines que sur la zone `/posts`. La page d'une publication en fait partie, et les
 deux liens ramenent d'eux-memes au fil. Les autres onglets gardent la marque et la photo de profil.
 La page des notifications reste joignable depuis l'onglet auquel elle appartient.
+### Changed - le trombone et le bouton GIF n'avaient pas la meme taille, et le composeur avait un fond de trop
+
+Les commandes de la barre de saisie partagent une boite de 44 pixels sur telephone et 38 sur
+ordinateur. Le bouton GIF ne la portait pas : il n'avait aucune boite, seulement son texte et son
+cercle, et se voyait plus petit que le trombone juste a cote (signale par l'utilisateur). Il prend
+la meme boite que ses voisins.
+
+Le fond de la barre de saisie disparait. C'etait une carte dessinee derriere une rangee dont le
+champ de texte porte deja son propre fond, un cran en dessous, au-dessus d'un fil qui en porte un
+troisieme : trois surfaces pour un seul message. La regle generale que cela pose est ecrite dans
+`docs/wiki/durable-rules.md` : deux choses superposees aux teintes proches, soit l'une devient
+transparente, soit le contraste augmente. L'ombre qui accompagnait ce fond part avec lui - elle
+servait a decoller une surface du fil, et il n'y a plus de surface. Le survol d'un fichier
+depose, lui, peint maintenant une teinte a l'interieur de l'arrondi, la ou il ne faisait que poser
+un halo autour d'une boite devenue invisible.
+
+### Changed - la photo, le nom et la formation etaient colles au bord gauche de la page profil
+
+Empilee sur un telephone, la photo de 96 pixels se trouvait contre le bord d'une carte de 404, le
+reste de la ligne vide, et le nom, le badge et la pastille de formation commencaient chacun a une
+marge apparente differente parce que chacun a une largeur differente. Les trois sont maintenant
+centres sur un meme axe - mesure sur un Mi 9T : 218 pixels pour les trois, sur 436.
+
+Le lien vers les reglages et, sur le profil de quelqu'un d'autre, les boutons suivre et message se
+centrent avec eux : ils sont la suite de la meme colonne, et en laisser un cale a gauche sous un bloc
+centre annulerait l'axe que les trois autres viennent de gagner. Le profil d'une autre personne recoit
+le meme traitement que le votre : c'est le meme ecran avec d'autres boutons. A partir d'une tablette,
+rien ne bouge.
+
+### Fixed - l'instrument de la passe graphique prenait un defilement volontaire pour un debordement
+
+`sweep.mjs` mesure chaque page de l'application sur un vrai telephone et signale ce qui depasse de
+l'ecran. Sur les trente-six routes balayees a 436 pixels, il en declarait douze en faute - dont dix
+etaient la meme chose, et cette chose n'etait pas un defaut : la barre d'onglets de la console
+d'administration est un ruban que l'on fait glisser du doigt, donc ses pastilles sortent de l'ecran
+par construction. La bonne question n'est pas "est-ce que ca depasse" mais "est-ce que le lecteur
+peut atteindre la fin", et la reponse tient dans un ancetre qui defile. Un rapport dont les cinq
+sixiemes sont du bruit est un rapport que plus personne ne lit.
+
+Il ignorait aussi tout ce qu'un composant web dessine : la recherche s'arretait a la racine fantome,
+donc le panneau d'emojis - cent quatre-vingt-dix boutons, un champ de recherche, neuf categories -
+etait exclu de chaque "rien n'est tronque" jamais imprime, sans que la sortie le dise.
+
+L'instrument descend desormais dans chaque racine fantome et nomme celles qu'il a visitees, classe
+ce qui depasse selon qu'un ancetre defile ou non, et imprime les rubans a part - accessibles au
+doigt, mais dignes d'un coup d'oeil humain sur leur lisibilite. Un instrument qui saute un sous-arbre
+en silence vaut moins que celui qui refuse de le mesurer.
 
 ### Fixed - le halo retire de la pastille "Epingle" vivait toujours sur sa jumelle "Nouveau"
 

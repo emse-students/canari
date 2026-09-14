@@ -266,17 +266,21 @@
         </div>
       </div>
     {:else if profile}
-      <!-- Public profile header -->
+      <!--
+        Public profile header. SAME SHAPE AS `/profile`, DELIBERATELY - a column on a phone, a row
+        from `sm`, and the stacked column centred. Someone else's profile and your own are the same
+        screen with different buttons, and centring only one of them would have made them two.
+      -->
       <div
-        class="animate-in fade-in slide-in-from-bottom-4 flex flex-col gap-5 duration-500 sm:flex-row sm:items-center sm:gap-6"
+        class="animate-in fade-in slide-in-from-bottom-4 flex flex-col items-center gap-5 duration-500 sm:flex-row sm:items-center sm:gap-6"
       >
         <div
-          class="relative h-24 w-24 shrink-0 self-start overflow-hidden rounded-full shadow-lg ring-4 ring-white/50 sm:self-auto dark:ring-black/20"
+          class="relative h-24 w-24 shrink-0 overflow-hidden rounded-full shadow-lg ring-4 ring-white/50 dark:ring-black/20"
         >
           <Avatar userId={profile.id} fill shape="circle" />
         </div>
 
-        <div class="min-w-0 flex-1">
+        <div class="min-w-0 flex-1 text-center sm:text-left">
           <h1 class="text-text-main mb-1 text-2xl font-bold tracking-tight sm:text-3xl">
             {displayFallbackName}
           </h1>
@@ -292,7 +296,7 @@
         </div>
 
         <!-- Actions -->
-        <div class="mt-2 flex shrink-0 flex-col gap-2 sm:mt-0 sm:flex-row">
+        <div class="mt-2 flex w-full shrink-0 flex-col gap-2 sm:mt-0 sm:w-auto sm:flex-row">
           <button
             onclick={handleFollowToggle}
             disabled={followLoading}
