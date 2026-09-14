@@ -230,17 +230,21 @@ HEADER
 DOMAIN=localhost
 ALLOW_ORIGIN=*
 
-# IT IS 8081, THE NGINX ENTRY - NEVER 1420, THE VITE DEV SERVER.
+# IT IS 8081, THE NGINX ENTRY - AND THAT IS A STATEMENT ABOUT THE SERVICES, NOT ABOUT THE FRONTEND.
 #
-# This is the origin every link the services build for a HUMAN is made of: the Stripe return, the
-# Lydia callback, a form link, a product link, the aggregated calendar feed. 1420 is the dev server,
-# which runs only while a developer has `bun run dev` open and which the phone cannot reach at all -
-# `a1apk.mjs` maps 8081 with `adb reverse` and nothing maps the other. So a local estate built this
-# way handed out links to a server that was usually not running, and the mistake did not fail
-# loudly: on a workstation both ports often answer.
+# The SERVICES read this to build the links a HUMAN follows: the Stripe return, the Lydia callback,
+# a form link, a product link, the aggregated calendar feed. They run in the local stack whichever
+# frontend is in use, so their one value has to name a frontend that is ALWAYS there - and 8081 is.
+# 1420, the Vite dev server, answers only while somebody has `bun run dev` open, and the phone
+# cannot reach it at all: `a1apk.mjs` maps 8081 with `adb reverse` and nothing maps the other. A
+# link to 8081 works for a developer on the dev server too; the reverse is not true.
 #
-# The same value is baked into the frontend BUNDLE through VITE_FRONTEND_URL below, so it also
-# decides what a "copy link" button puts on the clipboard.
+# `VITE_FRONTEND_URL` BELOW IS THE OTHER CONSUMER AND KEEPS 1420 DELIBERATELY. That variable is read
+# by `publicAppOrigin()` inside the BUNDLE, and this file generates `frontend/.env`, which is the
+# dev server's own environment - where 1420 is the right answer. The stack's build overrides it:
+# `make local-frontend` passes `VITE_FRONTEND_URL=http://localhost:8081` on the build command line,
+# after GRP-4 measured a group invite coming out as `http://localhost:1420/g/join/<token>` on
+# 2026-09-05. One variable, two consumers, two right answers, each set by its own consumer.
 FRONTEND_URL=http://localhost:8081
 NODE_ENV=development
 ENABLE_DEV_ROUTES=true
@@ -301,7 +305,7 @@ cat >"$FRONTEND_ENV" <<FRONTEND
 # Short on purpose: vite.config.js proxies every /api/* route to the local service, so the six
 # VITE_*_URL variables are unnecessary here and their absence is what keeps the dev server
 # same-origin with the API.
-VITE_FRONTEND_URL=http://localhost:8081
+VITE_FRONTEND_URL=http://localhost:1420
 VITE_AUTHENTIK_URL=$(value_of AUTHENTIK_BASE_URL)
 VITE_AUTHENTIK_CLIENT_ID=${CANARI_LOCAL_OIDC_CLIENT_ID:-}
 VITE_ENABLE_DEV_ROUTES=true
