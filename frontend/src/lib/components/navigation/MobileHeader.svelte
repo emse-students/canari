@@ -42,6 +42,12 @@
   they are drawn on the `/posts` area only, because that is the only place any of them means
   anything (see `onPosts`). What is left on every other tab is the brand and the avatar.
 
+  THE BOX IS `.ui-icon-button`'S, NOT THIS FILE'S. The three controls used to type `h-11 w-11` each,
+  which is the shared 44px touch box spelt out three times - and `iconButtonScale.test.ts` fails a
+  button that declares a box under its own name, because a fourth size is how the last four got in.
+  This header is `md:hidden`, so the class is only ever its 44px touch form here; the round corner,
+  the ring and the hover tint stay local because those are this header's, not the scale's.
+
   BOTH ARE LINKS, NOT STORE WRITES. `/posts?compose=1` and `/posts?search=1` are commands the feed
   page obeys and then strips from the URL. A link needs no shared state between a header component
   and a page, and it is right-clickable, middle-clickable and reloadable because it is a real
@@ -64,17 +70,17 @@
           href="/posts?compose=1"
           title={m.posts_publish_button()}
           aria-label={m.posts_publish_button()}
-          class="text-text-muted hover:text-text hover:bg-cn-surface flex h-9 w-9 items-center justify-center rounded-full transition-colors"
+          class="ui-icon-button text-text-muted hover:text-text hover:bg-cn-surface rounded-full"
         >
-          <Plus size={20} strokeWidth={2.5} />
+          <Plus size={24} strokeWidth={2.5} />
         </a>
         <a
           href="/posts?search=1"
           title={m.posts_search_placeholder()}
           aria-label={m.posts_search_placeholder()}
-          class="text-text-muted hover:text-text hover:bg-cn-surface flex h-9 w-9 items-center justify-center rounded-full transition-colors"
+          class="ui-icon-button text-text-muted hover:text-text hover:bg-cn-surface rounded-full"
         >
-          <Search size={20} strokeWidth={2.5} />
+          <Search size={24} strokeWidth={2.5} />
         </a>
         <PostNotificationBell />
       {/if}
@@ -84,9 +90,9 @@
           onclick={() => goto('/profile')}
           title={m.nav_my_profile_title()}
           aria-label={m.nav_my_profile_label()}
-          class="ml-0.5 rounded-2xl ring-2 ring-transparent transition-all duration-200 hover:ring-amber-400"
+          class="ui-icon-button rounded-2xl ring-2 ring-transparent transition-all duration-200 hover:ring-amber-400"
         >
-          <Avatar userId={globalSession.userId} size="sm" />
+          <Avatar userId={globalSession.userId} size="md" />
         </button>
       {/if}
     {/if}
