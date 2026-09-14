@@ -1,9 +1,9 @@
 version: 0.18.1
 
-L'agenda : un événement part toujours en validation, même déposé par le BDE ou un administrateur. Déplacer la date d'un événement validé le renvoie en attente.
+Le fil social tient une publication de plus par écran : les icônes qui recouvraient le nom de l'association sont regroupées, réactions et commentaires tiennent sur une ligne, publier et chercher sont dans l'en-tête.
 
-Les pages d'association prennent toute la largeur de l'écran, et leur agenda se lit sur un téléphone.
+L'agenda : tout événement part en validation, même déposé par le BDE ou un administrateur, et déplacer sa date le renvoie en attente.
 
-Plus rien n'est coupé : votre nom en haut de votre profil, l'onglet choisi en bas de l'écran, l'invitation à commenter.
+Les pages d'association prennent toute la largeur de l'écran, agenda compris.
 
-Un bandeau d'information ne recouvre plus l'en-tête de l'application.
+Plus rien n'est coupé, et un bandeau ne masque plus l'en-tête.
