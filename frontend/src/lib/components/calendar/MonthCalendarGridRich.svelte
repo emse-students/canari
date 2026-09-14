@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { generateAvatarColor, getInitials } from '$lib/utils/avatar';
+  import { getInitials } from '$lib/utils/avatar';
   import { contrastColor, toHex } from '$lib/utils/color';
   import { associationLogoSrc, type AssociationCalendarFeedEvent } from '$lib/associations/api';
   import {
@@ -10,6 +10,7 @@
   } from '$lib/utils/calendarExport';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
+  import { associationAccentHex } from '$lib/associations/accent';
 
   let {
     focusDate,
@@ -107,10 +108,12 @@
 
   /** Returns all hex colors for the event: primary first, then co-owners. */
   function eventColors(ev: AssociationCalendarFeedEvent): string[] {
-    const primary = toHex(ev.associationColor ?? generateAvatarColor(ev.associationId));
+    const primary = associationAccentHex({ id: ev.associationId, color: ev.associationColor });
     return [
       primary,
-      ...(ev.coOwners ?? []).map((co) => toHex(co.color ?? generateAvatarColor(co.associationId))),
+      ...(ev.coOwners ?? []).map((co) =>
+        associationAccentHex({ id: co.associationId, color: co.color })
+      ),
     ];
   }
 

@@ -11,6 +11,23 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - an association with no colour of its own wore two different ones
+
+An association that has never picked a colour is given one, derived from something stable so that it
+is the same colour every time. It was not: its card in the association list and its events in the
+calendar were drawn from two different derivations, one keyed on the association's NAME and the
+other on its ID, so the same club appeared in two unrelated hues depending on which screen you were
+looking at. It reads as two clubs.
+
+Thirteen places in the app worked this out for themselves, and the count is the whole reason it
+survived: every one of those thirteen lines is obviously correct where it stands, and nobody
+compares thirteen lines scattered across a card, a calendar, a shop, an export and a map. There is
+now one derivation and the twelve others call it.
+
+It is keyed on the ID, because a name changes the day a club renames itself - and on that day the
+old code gave it a new colour, silently, on half the screens only. A colour saved as an empty string
+is also treated as "not chosen" now; it used to be treated as a colour, which drew nothing at all.
+
 ### Fixed - an association's page was cut off on a phone, and five pages were each their own width
 
 The name at the top of an association's page was drawn on a single line that could not be scrolled,
@@ -30,6 +47,7 @@ and found none of these, because none of them keeps its width at its address: an
 page is eight lines that hand the work to a shared component, and that is where the number was. The
 check that runs before every release now looks for the shape rather than the address, so a page
 cannot invent a width again.
+
 
 ### Changed - a partnership card wears the partner's own colour
 

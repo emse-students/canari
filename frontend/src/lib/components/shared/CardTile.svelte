@@ -20,9 +20,9 @@
      */
     fallbackIcon?: Component;
     /**
-     * Accent color (hex or HSL) tinting the card's top edge, its badge and its hover outline -
-     * callers resolve this from the owning association's `color`, falling back to
-     * `generateAvatarColor` when unset, so every card always gets a distinguishing hue.
+     * Accent color (hex or HSL) tinting the card's top edge, its badge and its hover outline.
+     * Callers resolve it through `associationAccent` in `associations/accent.ts`, the ONE
+     * derivation, so every card gets a distinguishing hue and one association gets one hue.
      */
     accentColor?: string | null;
     /** Short decorative label (e.g. "Nouveau", "-20%") shown as a pill in the header row; omitted when empty. */

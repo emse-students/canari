@@ -1,5 +1,5 @@
-import { generateAvatarColor } from '$lib/utils/avatar';
 import type { Association, AssociationCategory, AssociationMember } from '$lib/associations/api';
+import { associationAccent } from '$lib/associations/accent';
 
 /**
  * The persisted poster layout ("project.layout"). Stores the chrome (background) plus the
@@ -161,7 +161,7 @@ export function buildPosterModel(
     return {
       assoId: a.id,
       name: a.name,
-      color: a.color?.trim() || generateAvatarColor(a.id),
+      color: associationAccent(a),
       logoUrl: a.logoUrl ?? null,
       president,
       bureau,

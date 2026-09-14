@@ -28,7 +28,7 @@
   import { CARD_GRID } from '$lib/components/layout/cardGrid';
   import PartnershipEditor from './PartnershipEditor.svelte';
   import { PARTNERSHIP_FALLBACK_ICON } from '$lib/utils/cardIcons';
-  import { generateAvatarColor } from '$lib/utils/avatar';
+  import { associationAccent } from '$lib/associations/accent';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -38,7 +38,7 @@
   let { asso }: Props = $props();
 
   /** Card accent color - the association's own, or a deterministic fallback when unset. */
-  const cardAccentColor = $derived(asso.color ?? generateAvatarColor(asso.name));
+  const cardAccentColor = $derived(associationAccent(asso));
 
   let cards = $state<ManagedPartnershipCard[]>([]);
   let cardsLoading = $state(false);

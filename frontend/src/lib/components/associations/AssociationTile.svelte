@@ -25,7 +25,7 @@
    * `cardGrid.ts` sized its 15rem minimum with "an association's colour bar" explicitly in the budget
    * - a bar that was never drawn. `CardTile` already implements exactly that accent (the top bar, the
    * hover outline, a `contrastColor`ed badge), so this is a call, not a re-implementation, and the
-   * fallback is the one the rest of the app already spells: `generateAvatarColor(name)`.
+   * fallback is the one the rest of the app already spells - see `associations/accent.ts`.
    *
    * The avatar stays beside the name rather than going into `CardTile`'s header frame, which is why
    * that header is now optional: `AssociationAvatar` falls back to INITIALS, and an association with
@@ -35,7 +35,7 @@
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import CardTile from '$lib/components/shared/CardTile.svelte';
   import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
-  import { generateAvatarColor } from '$lib/utils/avatar';
+  import { associationAccent } from '$lib/associations/accent';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -50,10 +50,12 @@
   let { association, href, isMember = false }: Props = $props();
 
   /**
-   * The accent, and the fallback is not a default - it is the same answer the calendar, the
-   * trombinoscope and the shop already give, so one association is one hue across the whole app.
+   * The accent, from the ONE derivation - which is what this comment used to CLAIM and was wrong
+   * about: it said the fallback was "the same answer the calendar, the trombinoscope and the shop
+   * already give" while seeding on `name` where all three seed on `id`. An association with no
+   * colour set was one hue here and another in the calendar. See `associations/accent.ts`.
    */
-  const accent = $derived(association.color ?? generateAvatarColor(association.name));
+  const accent = $derived(associationAccent(association));
   const description = $derived(association.description?.trim() ?? '');
   const memberCount = $derived(association.memberCount ?? 0);
   /** A list's promo, shown as a pill; `promo` is null on a regular association. */

@@ -29,7 +29,7 @@
   import { fetchFormations, type FormationOption } from '$lib/pricing/criteriaOptions';
   import { fetchCotisationOptions, type MembershipTier } from '$lib/associations/api';
   import { productFallbackIcon } from '$lib/utils/cardIcons';
-  import { generateAvatarColor } from '$lib/utils/avatar';
+  import { associationAccent } from '$lib/associations/accent';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -45,7 +45,7 @@
   let { asso, onlinePaymentsReady, payoutAccountPending, canManageStripeConnect }: Props = $props();
 
   /** Card accent color - the association's own, or a deterministic fallback when unset. */
-  const cardAccentColor = $derived(asso.color ?? generateAvatarColor(asso.name));
+  const cardAccentColor = $derived(associationAccent(asso));
 
   let products = $state<AssociationProduct[]>([]);
   let productsLoading = $state(false);
