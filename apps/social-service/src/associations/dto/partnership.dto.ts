@@ -27,8 +27,14 @@ export class CreatePartnershipCardDto {
   @MaxLength(200)
   title: string;
 
+  /**
+   * Markdown, rendered by `ProfileBioMarkdown` on the card. Capped at the same 2000 the association
+   * description uses: this was the one field of the form with NO length while `title` had 200 and
+   * `link` 500, and it reaches a `text` column, so nothing downstream would have stopped it either.
+   */
   @IsString()
   @IsOptional()
+  @MaxLength(2000)
   description?: string;
 
   @IsUrl()
@@ -81,8 +87,14 @@ export class UpdatePartnershipCardDto {
   @IsOptional()
   title?: string;
 
+  /**
+   * Markdown, rendered by `ProfileBioMarkdown` on the card. Capped at the same 2000 the association
+   * description uses: this was the one field of the form with NO length while `title` had 200 and
+   * `link` 500, and it reaches a `text` column, so nothing downstream would have stopped it either.
+   */
   @IsString()
   @IsOptional()
+  @MaxLength(2000)
   description?: string;
 
   @IsUrl()
