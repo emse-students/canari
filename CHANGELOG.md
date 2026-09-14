@@ -11,6 +11,18 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - les trois controles du fil suivaient le lecteur sur tous les autres onglets
+
+Le "+", la loupe et la cloche parlent de publications et de rien d'autre : le "+" publie une
+publication, la loupe cherche dans le fil, et la cloche compte les notifications de publications (les
+discussions portent leurs propres marques de non-lu sur leur onglet). Dessines sur toutes les routes,
+ils promettaient des choses que la route ne savait pas faire - un "+" sur Discussions n'y publie rien
+(utilisateur : *"ca n'a pas de sens sur les autres onglets non ?"*).
+
+Ils ne sont donc dessines que sur la zone `/posts`. La page d'une publication en fait partie, et les
+deux liens ramenent d'eux-memes au fil. Les autres onglets gardent la marque et la photo de profil.
+La page des notifications reste joignable depuis l'onglet auquel elle appartient.
+
 ### Fixed - le halo retire de la pastille "Epingle" vivait toujours sur sa jumelle "Nouveau"
 
 Le fil accroche deux pastilles identiques au coin des cartes : "EPINGLE" et "NOUVEAU". Elles etaient
