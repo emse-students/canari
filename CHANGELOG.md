@@ -25,6 +25,21 @@ de 26 a 146 pixels, l'onde sonore devient lisible et les deux minutages ont 92 p
 un ecran plus etroit, la bulle le ramene a sa propre largeur. Les deux minutages ne peuvent plus se
 rejoindre quelle que soit la place - ils gardent un ecart minimal - et les chiffres ne tressautent
 plus pendant la lecture.
+### Changed - le trombone et le bouton GIF n'avaient pas la meme taille, et le composeur avait un fond de trop
+
+Les commandes de la barre de saisie partagent une boite de 44 pixels sur telephone et 38 sur
+ordinateur. Le bouton GIF ne la portait pas : il n'avait aucune boite, seulement son texte et son
+cercle, et se voyait plus petit que le trombone juste a cote (signale par l'utilisateur). Il prend
+la meme boite que ses voisins.
+
+Le fond de la barre de saisie disparait. C'etait une carte dessinee derriere une rangee dont le
+champ de texte porte deja son propre fond, un cran en dessous, au-dessus d'un fil qui en porte un
+troisieme : trois surfaces pour un seul message. La regle generale que cela pose est ecrite dans
+`docs/wiki/durable-rules.md` : deux choses superposees aux teintes proches, soit l'une devient
+transparente, soit le contraste augmente. L'ombre qui accompagnait ce fond part avec lui - elle
+servait a decoller une surface du fil, et il n'y a plus de surface. Le survol d'un fichier
+depose, lui, peint maintenant une teinte a l'interieur de l'arrondi, la ou il ne faisait que poser
+un halo autour d'une boite devenue invisible.
 
 ### Changed - la photo, le nom et la formation etaient colles au bord gauche de la page profil
 

@@ -1006,13 +1006,14 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   background: transparent;
 }
 
-/* THE COMPOSER BAND. Measured on the reference: its icon buttons sit as bare 36px circles and the
-   only thing carrying a fill is the text field - a 36px pill at radius 20px on the control surface,
-   with no container border, fill or shadow around the row at all. Canari had that row wrapped in a
-   BORDERED, filled, shadowed box, which read as a heavy slab rather than a place to type.
-   What is kept from the reference is the bare icons and the pill; what deliberately diverges is the
-   container, which stays filled and is generously rounded (user, 2026-09-08) so it matches Canari's
-   own floating panels instead of sitting among them as a square-cornered strip. */
+/* THE COMPOSER BAND. Measured on the reference: its icon buttons sit as bare circles and the only
+   thing carrying a fill is the text field - a pill on the control surface, with no container
+   border, fill or shadow around the row at all. Canari had that row wrapped in a BORDERED, filled,
+   shadowed box, which read as a heavy slab rather than a place to type. The border and the shadow
+   went on 2026-09-08; the fill was kept then, on the grounds that a rounded card matched Canari's
+   own floating panels. IT WENT ON 2026-09-14 (user: *"tu peux d'ailleurs enlever - sur tout
+   support"*), so the row now matches the reference exactly: nothing behind it but the field's own
+   pill. The radius survives because the drag-over state still paints inside it. */
 /* THE CONVERSATION SIDE PANEL, in its DRAWER form - the shape below `xl`, where there is no width
    for a second column. The desktop form is in the 1280px block below, which turns the fixed box
    back into an ordinary flex sibling. Written base-first, so a viewport matching no query still
@@ -1037,20 +1038,22 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   display: flex;
   max-width: 100%;
   /* CENTER, NOT `flex-end` (measured 2026-09-11). `flex-end` was tuned so the text field's bottom
-     landed level with the `.ui-icon-button` siblings' bottom, at their fixed 44px/38px box - but the
-     GIF toggle (`.chat-composer-icon-button` alone, no `.ui-icon-button`) sits shorter than that box,
-     so its bottom-aligned content read as sunk relative to the other icons. `center` aligns every
-     sibling on its own middle regardless of height, which is correct for a row mixing box heights
-     and was already true for the uniform ones. */
+     landed level with the controls' bottom, which only holds while every sibling is the same
+     height. The field is not: it grows to five lines. `center` aligns each sibling on its own
+     middle whatever its height, which is right for both states.
+     THE SECOND REASON IS GONE AND IS NOT WHY THIS STAYS: the GIF toggle used to carry
+     `.chat-composer-icon-button` ALONE, with no `.ui-icon-button`, so it had no box at all and sat
+     shorter than the paperclip beside it (user, 2026-09-14: the two "n'ont pas l'air de tailles
+     egales"). It takes the shared box now, so the controls are uniform again. */
   align-items: center;
   gap: 0.5rem;
   padding: 0;
   border: none;
-  /* ROUNDED, LIKE THE REST (user, 2026-09-08). The reference gives its composer row no container at
-     all, but a bare row inside Canari's own floating panels read as a square-cornered slab against
-     everything else; a rounded card holding the pill is the shape that matches the shell. */
+  /* NO FILL OF ITS OWN (user, 2026-09-14). It was `--cn-surface-alt`, a card drawn behind the row
+     so the row would not read as a square-cornered slab - but the field inside already carries its
+     own fill one step below it, so the band was a second surface saying nothing the field did not.
+     The radius stays because `is-dragover` below is what now paints here, and it needs a shape. */
   border-radius: 1.5rem;
-  background: var(--cn-surface-alt);
   transition:
     box-shadow 180ms ease,
     border-color 180ms ease,
@@ -1058,16 +1061,14 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
     transform 180ms ease;
 }
 
-/* The one shadow kept anywhere: it is what makes the band read as FLOATING over the thread rather
-   than as a strip cut out of it, which is the whole point of rounding it. `border-color` used to be
-   set here too, on a rule whose border is `none` - dead the moment the border went. */
-[data-theme='dark'] .chat-composer-panel {
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
-}
-
+/* DROPPING A FILE IS THE ONLY THING THAT PAINTS THIS BAND, and it has to paint something: with the
+   background gone, the amber glow that used to mark a drag hovered around an invisible box, and the
+   `border-color` beside it had been dead since the border went. A tint inside the radius is the one
+   form that still reads. The dark-theme drop shadow went with the fill for the same reason - it
+   existed to lift a SURFACE off the thread, and there is no longer a surface to lift. */
 .chat-composer-panel.is-dragover {
-  border-color: color-mix(in srgb, var(--cn-yellow) 70%, transparent);
-  box-shadow: 0 0 20px rgba(245, 158, 11, 0.2);
+  background: color-mix(in srgb, var(--cn-yellow) 12%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--cn-yellow) 60%, transparent);
 }
 
 /* THE BOX COMES FROM `.ui-icon-button`, WHICH THIS ROW IS WHERE IT WAS LEARNED. 44px on a phone

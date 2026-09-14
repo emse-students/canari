@@ -807,7 +807,7 @@
             onclick={() => (showGifPicker = true)}
             title={m.chat_send_gif_title()}
             aria-label={m.chat_send_gif_label()}
-            class="chat-composer-icon-button text-2xs font-bold tracking-tight"
+            class="ui-icon-button chat-composer-icon-button text-2xs font-bold tracking-tight"
           >
             GIF
           </button>
