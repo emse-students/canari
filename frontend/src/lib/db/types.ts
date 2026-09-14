@@ -294,6 +294,16 @@ export interface IStorage {
    */
   close(): Promise<void>;
 
+  /**
+   * Whether the underlying connection is currently open.
+   *
+   * Exists so a CACHE of storage handles can tell a live one from a closed one. `close()` is
+   * reachable from the wipe path, and a cache that cannot see that would hand a later caller a
+   * handle whose connection is gone - every call on it failing for a reason the caller could not
+   * name. The fact is one both implementations already hold; this only exposes it.
+   */
+  readonly isOpen: boolean;
+
   // Conversations (stored as plaintext metadata)
 
   /** Upsert a conversation metadata row (create or overwrite). */

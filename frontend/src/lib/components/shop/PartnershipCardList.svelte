@@ -7,6 +7,7 @@
   } from '$lib/associations/api';
   import { ExternalLink } from '@lucide/svelte';
   import CardTile from '$lib/components/shared/CardTile.svelte';
+  import ProfileBioMarkdown from '$lib/components/profile/ProfileBioMarkdown.svelte';
   import { CARD_GRID } from '$lib/components/layout/cardGrid';
   import { PARTNERSHIP_FALLBACK_ICON } from '$lib/utils/cardIcons';
   import { loadLogoAccent } from '$lib/utils/logoAccent';
@@ -130,7 +131,16 @@
               {/if}
             </div>
             {#if card.description}
-              <p class="text-text-muted mt-0.5 text-xs">{card.description}</p>
+              <!--
+                `compact`, like every other description shown beside the name it describes: a real
+                headline-sized `# Titre` here would outrank the partner's own title, which is the
+                one piece of text this card exists to show.
+              -->
+              <div
+                class="text-text-muted mt-0.5 [&_.post-markdown]:text-xs [&_.post-markdown]:leading-snug [&_.post-markdown_p]:m-0 [&_.post-markdown_p+p]:mt-1.5"
+              >
+                <ProfileBioMarkdown source={card.description} compact />
+              </div>
             {/if}
             {#if card.link}
               <a

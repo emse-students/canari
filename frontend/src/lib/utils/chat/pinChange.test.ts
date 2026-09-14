@@ -24,6 +24,7 @@ function makeEncryptedStorage(): IStorage & {
   return {
     rows,
     graineRows,
+    isOpen: true,
     init: vi.fn().mockResolvedValue(undefined),
     close: vi.fn().mockResolvedValue(undefined),
     saveConversation: vi.fn().mockResolvedValue(undefined),

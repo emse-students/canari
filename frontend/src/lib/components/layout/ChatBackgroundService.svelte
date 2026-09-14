@@ -1129,10 +1129,15 @@
               biometricCancelled = false;
               showBiometricSheet = true;
 
-              // Leave a short delay so the user can interact with the BiometricBottomSheet
-              // (choosing "Use my PIN"). If onSkip fires during that delay, biometricCancelled
-              // flips to true and we skip the OS biometric prompt.
-              await new Promise((resolve) => setTimeout(resolve, 250));
+              // THE WINDOW THIS TIMER PROTECTED WAS ONE NOBODY COULD USE. A 250 ms sleep sat here
+              // so a tap on the sheet's "use my PIN" could land before the OS prompt was raised -
+              // but nobody reads a sheet and decides in a quarter of a second, so the delay was
+              // paid by every cold launch and spent by none. Choosing the PIN once the OS prompt
+              // is up works and always did: cancelling it is the documented route to the PIN modal
+              // (see the catch in biometricLoginImpl), and it is the route real users already take.
+              //
+              // The check below stays - it costs nothing and answers a fact rather than a clock:
+              // a skip that has ALREADY happened must not be overridden by a prompt.
               if (biometricCancelled) {
                 showBiometricSheet = false;
               } else {
