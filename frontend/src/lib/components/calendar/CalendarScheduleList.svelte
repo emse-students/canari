@@ -22,6 +22,7 @@
   import { isToday } from '$lib/utils/dates';
   import {
     eventAccentColor,
+    eventOwnersLabel,
     formatEventTimeRange,
     groupMonthEventsByDay,
   } from '$lib/calendar/feedEvents';
@@ -36,7 +37,11 @@
     /** True while the feed is still being fetched. */
     loading?: boolean;
     /** Hides the association name on each row (a single-association agenda). */
-    hideAssociationName?: boolean;
+    /**
+     * The association whose own agenda this is, if any - its solo events drop the name the page
+     * already carries. A shared event still names every association running it.
+     */
+    ownAssociationId?: string | null;
     onEventClick: (event: AssociationCalendarFeedEvent) => void;
   }
 
@@ -44,7 +49,7 @@
     focusDate,
     events,
     loading = false,
-    hideAssociationName = false,
+    ownAssociationId = null,
     onEventClick,
   }: Props = $props();
 
@@ -93,6 +98,7 @@
           <ul class="min-w-0 flex-1 space-y-0.5">
             {#each group.events as event (event.id)}
               {@const logoSrc = associationLogoSrc(event.associationLogoUrl)}
+              {@const owners = eventOwnersLabel(event, ownAssociationId)}
               <li>
                 <button
                   type="button"
@@ -110,7 +116,7 @@
                     >
                     <span class="text-text-muted mt-0.5 flex items-center gap-1.5 text-xs">
                       <span class="shrink-0 font-medium">{formatEventTimeRange(event)}</span>
-                      {#if !hideAssociationName}
+                      {#if owners}
                         <span aria-hidden="true">&#183;</span>
                         {#if logoSrc}
                           <img
@@ -119,7 +125,7 @@
                             class="h-3.5 w-3.5 shrink-0 rounded-full object-cover"
                           />
                         {/if}
-                        <span class="truncate">{event.associationName}</span>
+                        <span class="truncate">{owners}</span>
                       {/if}
                     </span>
                   </span>
