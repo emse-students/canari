@@ -15,6 +15,7 @@
   } from '$lib/posts/api';
   import CreatePostForm from '$lib/components/posts/CreatePostForm.svelte';
   import PostCard from '$lib/components/posts/PostCard.svelte';
+  import PostCornerBadge from '$lib/components/posts/PostCornerBadge.svelte';
   import ScheduledPostsPanel from '$lib/components/posts/ScheduledPostsPanel.svelte';
   import ConversationsMiniPanel from '$lib/components/posts/ConversationsMiniPanel.svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
@@ -570,11 +571,7 @@
           {#each resolvedPosts as post (post.id)}
             <div class="relative" use:markPostSeen={post}>
               {#if isNew(post)}
-                <span
-                  class="text-cn-ink text-2xs absolute -top-2 left-4 z-10 rounded-full bg-amber-500 px-2 py-0.5 font-bold tracking-widest uppercase shadow-md shadow-amber-500/30"
-                >
-                  {m.posts_badge_new()}
-                </span>
+                <PostCornerBadge label={m.posts_badge_new()} />
               {/if}
               <PostCard
                 {post}
