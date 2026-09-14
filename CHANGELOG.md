@@ -11,6 +11,31 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - l'empreinte mettait plus de quatre secondes a etre demandee au lancement
+
+Sur un Pixel 6a, 4,2 a 4,6 secondes s'ecoulaient entre le lancement et l'apparition de la demande
+d'empreinte, mesurees sur trois demarrages a froid en Wi-Fi (signale par l'utilisateur). La fenetre
+native, elle, s'affiche en 165 millisecondes : l'attente etait entierement dans la WebView, et elle
+etait sequentielle.
+
+Deux causes partent ici, et une troisieme est traitee separement.
+
+`getStorage` n'avait aucune memoire : chaque appel construisait une base et rejouait son
+ouverture, ses PRAGMA et l'integralite de ses CREATE TABLE et CREATE INDEX. Un lancement a froid
+l'appelait deux fois - une fois pour le panneau des conversations, une fois depuis le flux de
+connexion - et payait cette sequence deux fois, la seconde SUR LE CHEMIN DE LA DEMANDE D'EMPREINTE.
+La fabrique partage desormais une poignee ouverte par utilisateur. Un cache de poignees n'est sur
+que s'il sait distinguer une vivante d'une fermee, parce que `close()` est atteignable depuis
+l'effacement d'un appareil revoque : la poignee repond maintenant `isOpen`, un fait que les deux
+implementations detenaient deja sans l'exposer, et une ouverture ratee n'est jamais retenue comme
+telle.
+
+Un `setTimeout` de 250 millisecondes precedait la demande du systeme, pour laisser le temps de
+choisir "utiliser mon code PIN" sur la feuille du bas. Personne ne lit une feuille et ne decide en
+un quart de seconde : le delai etait paye par chaque lancement et depense par aucun. Choisir le PIN
+une fois la demande du systeme affichee fonctionne et a toujours fonctionne - l'annuler est la route
+documentee vers le clavier PIN, et c'est celle que les utilisateurs prennent deja.
+
 ### Changed - le trombone et le bouton GIF n'avaient pas la meme taille, et le composeur avait un fond de trop
 
 Les commandes de la barre de saisie partagent une boite de 44 pixels sur telephone et 38 sur
