@@ -11,6 +11,35 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - le fil social passait les deux tiers de l'ecran a se presenter avant de montrer un post
+
+Sur telephone, ouvrir le fil donnait, dans l'ordre : l'en-tete de l'application, le titre "Fil
+social", le sous-titre "Partage, sondages et evenements", un bouton "Publier", un champ de recherche
+permanent, puis les trois filtres. Mesure sur un Mi 9T (436 x 945 pixels) : la premiere publication
+commencait au deux tiers de la hauteur, et une seule tenait a l'ecran.
+
+Les deux controles sont montes dans l'en-tete de l'application, a cote de la cloche : un "+" pour
+publier, une loupe pour chercher. Ils y coutent zero pixel de page, fonctionnent depuis n'importe
+quelle route au lieu de la seule page du fil, et ce sont de vrais liens - `/posts?compose=1` et
+`/posts?search=1` - que la page execute puis efface de l'URL. Un lien n'a besoin d'aucun etat
+partage entre un en-tete present partout et une page presente a un seul endroit.
+
+Ce qui restait n'etait que de la prose : un titre que la barre du bas met deja en evidence, et un
+sous-titre qui decrivait la page a quelqu'un qui la regardait. Les deux disparaissent sous `md`
+(utilisateur : *"C'est un reseau social, pas besoin de blablater autant"*) ; a partir de `md`
+l'en-tete de page reste tel quel, car la barre laterale est alors la seule chose qui nomme la page.
+
+Resultat, meme telephone, meme route : la premiere publication commence au sixieme de la hauteur, et
+deux tiennent a l'ecran. L'en-tete de l'application a aussi cesse de centrer son logo avec une boite
+vide de largeur devinee - le logo est a gauche, les controles a droite, ce qui accepte un troisieme
+bouton sans arithmetique.
+
+Deux details corriges au passage : les trois pastilles de filtre etaient le meme bouton ecrit trois
+fois, et le champ de recherche affichait deux croix - la sienne, et celle que le moteur ajoute
+d'office a un champ de type `search`, en bleu systeme. La seconde est masquee la ou l'application
+dessine la sienne, et seulement la : les deux autres champs de recherche de l'application n'ont que
+celle du moteur.
+
 ### Fixed - cinq boutons recouvraient le nom de l'association en tete de chaque publication
 
 En tete de carte, la rangee partager / epingler / modifier / supprimer / signaler etait posee en
