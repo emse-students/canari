@@ -470,7 +470,54 @@ because that publisher may be the only device able to serve the group's first We
 | D7 | Answer a `welcome_request` | foreground `handleWelcomeRequest` (actions.ts:750), background `POST mls/push/send-welcome-and-commit` (push.controller.ts:569) | Yes. push.controller.ts:604 calls the background path *"the single chokepoint for the background (push) re-add path - its foreground counterpart enforces the same check client-side in handleWelcomeRequest"* | **NOT TENABLE AS SHIPPED.** The justification is sound and the implementation broke it: the background half has been returning 400 since `proto` became mandatory. P1-1. |
 | D8 | Hold a message back | `!isGroupHealthy` returns retry (outbox.ts:462), `isInEpochGap` inside `canSendInGroup` (groupUsability.ts:61), `epochSendBarrier.ts` | Yes. groupUsability.ts:58: it *"was written inline in the session layer as `isGroupHealthy` and had exactly one caller; the second caller would have re-derived it, and two facts are easy to compose wrongly"* | **TENABLE.** The extraction is the fix; what is left is the composed predicate and its two named halves. |
 | D9 | Two rosters for one group | SQL `dm_device_group_memberships`, Redis `group:members:<groupId>` | `device-group-membership.entity.ts`, since 2026-09-12 | **TENABLE, AND NOW TRUE.** SQL decides the fan-out, Redis decides live routing - different questions, one writer each. Written down 2026-09-12 and **FALSE ON BOTH HALVES when written**: nine call sites moved `status` and only two of them wrote the matching Redis side. Enforced 2026-09-13 by the two fused writers, `activateDeviceMembership` (`sadd`) and `deactivateDeviceMembership` (`srem`). P2-4 done. |
-| D10 | Forget a group | `forgetGroup` reached from six distinct sites in `BaseMlsService` alone, plus rung 2, plus both sweeps | No | **TENABLE.** One WASM primitive with many reasons to call it. The duplicated CONCERN is D5's, not this one's. |
+| D10 | Forget a group | `forgetGroup` declared once (`IMlsService`), implemented per platform (Tauri/Web), and reached from **one** place in app code: `dropGroupState.ts` | No | **TENABLE, AND TIGHTER THAN THIS ROW EVER CLAIMED.** Re-measured 2026-09-14: the "six distinct sites" are gone - every reason to forget a group now goes through `dropGroupState`, which is the seam. One WASM primitive, one caller, two platform bodies. The duplicated CONCERN was D5's, and D5 shipped. |
+
+### What closed the rest of the duplicate half (swept 2026-09-14)
+
+The backlog's duplicate-paths table went from five rows to one on 2026-09-14. Two rows shipped; the
+other three were artifacts, and an artifact that is merely deleted comes back, so each is recorded
+here with what settled it.
+
+**`D3`, `D4`, `D10` - TENABLE, and re-measured rather than re-quoted.** A verdict written against a
+tree is a claim about that tree, so all three were run again against `main`:
+
+| | Claimed | Measured 2026-09-14 |
+| --- | --- | --- |
+| `D3` | one classifier, three trigger points | holds - `republishStaleBase` (`distributionGroup.ts`) is a nine-line wrapper whose body is `republishBaseIfStale`, the one implementation in `staleBase.ts` |
+| `D4` | one seam, nine reasons to ring it | holds - `requestReAdd` has exactly ONE definition (`recovery.ts:266`) behind its call sites, and it owns the throttle |
+| `D10` | six distinct sites in `BaseMlsService`, plus rung 2, plus both sweeps | **tighter than claimed** - `forgetGroup` is declared once, implemented per platform, and reached from ONE place in app code: `dropGroupState.ts` |
+
+`D9` closed separately as P2-4 on 2026-09-13.
+
+**`D12` and `D13` name rows that do not exist.** This table is `D1`-`D10`. Nothing has ever carried
+those two numbers.
+
+**`D8`'s backlog row pointed at "the P1 above", and no P1 preceded it** - the section above it is the
+user's own "owed to you" table. `D8` and `R-D8` are recorded as REFUTED in `CLAUDE.md`: the send
+ledger holds one invariant, and one `runFlush` holds the outbox's eight flush sites. Not to be
+re-opened.
+
+**`G-D2`-`G-D8`, `G-D10`, `G-D13`, `G-D14` HAVE NEVER BEEN DEFINED IN THIS REPOSITORY.** Searched
+across every commit on every branch: the only line those eleven numbers have ever appeared on is the
+backlog row that listed them. The audit that assigned them lived outside the repo and only its
+numbering was carried in, so nobody holding the repo could act on them - which is exactly what
+`CLAUDE.md`'s "this repository is the only reference" exists to prevent. The rule that cost is in
+[durable-rules](../durable-rules.md#an-open-item-whose-substance-has-never-been-in-the-repository-is-not-an-open-item).
+
+Deleting eleven numbers is not the same as answering them, so the QUESTION they named - *"Graine
+entry points, 2 each"* - was measured instead, and it is closed:
+
+- `enterPrivateSalonGroup` and `ensureCommunityDistributionGroup` are two moments, not two
+  implementations: both delegate to the one `ensureDistributionGroupFor`. That convergence IS `G-D1`,
+  which shipped 2026-09-13 - *"five call sites, one join, and three copies of the precondition"*.
+- The three `forget*` paths work at three different scopes - a community purge
+  (`forget.ts`), a workspace's in-memory maps and a session seed cache (`runtime.ts`) - and the
+  counterpart relation is documented at each. `forgetGraineSeedCache` overlaps
+  `forgetWorkspaceGraineState` by one loop, deliberately and with the reason written down.
+
+What that does NOT establish is that Graine holds no other duplication; it establishes that the
+entry points, which is what the row named, are one. A future claim about this module has to arrive
+with its own measurement rather than with a number.
 
 ---
 
