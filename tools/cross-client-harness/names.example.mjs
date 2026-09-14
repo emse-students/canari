@@ -49,6 +49,15 @@ export const PEER_NAME = "<peer display name>";
  * zero. A count of occurrences is not a measurement of coupling. Since 2026-09-03 the campaign
  * targets the LOCAL estate.
  *
+ * **IT IS `8081`, THE NGINX ENTRY - NEVER `1420`, THE VITE DEV SERVER.** They are two different
+ * stacks that both answer, which is why the wrong one does not fail loudly: 1420 is one process
+ * proxying to the services, 8081 is the single public entry point production also has
+ * (`infrastructure/local`, `canari-local-nginx-1`). The rig reasons about the deployed shape, and
+ * three of its modules already spell 8081 for reasons 1420 cannot satisfy - `a1apk.mjs` maps this
+ * port with `adb reverse` so the PHONE can reach the estate at all, `pin.mjs` reads the CSP for it,
+ * and `device.mjs` matches the tab by it. This template said 1420 until 2026-09-14, so a machine
+ * set up from it ran the campaign against a stack the phone could not join.
+ *
  * Navigation used to be written `location.origin + '/chat'`, which reads as harmless and is not: on
  * a freshly opened tab the document is `about:blank`, whose origin is the STRING "null", so the
  * result is not a URL and the navigation throws `Failed to set the 'href' property on 'Location'`.
@@ -56,7 +65,7 @@ export const PEER_NAME = "<peer display name>";
  * starts there - so anything that recovers a client must not depend on the client already being
  * somewhere.
  */
-export const SITE = "http://localhost:1420";
+export const SITE = "http://localhost:8081";
 
 /**
  * Devtools ports. The Chrome profiles ARE the devices; A1 is an adb forward.

@@ -11,6 +11,17 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a fresh machine would have run the test campaign against the wrong stack
+
+The template a new workstation copies to set up the cross-client test rig named the development
+server rather than the deployed local stack. Both answer on a developer's machine, so the mistake
+would not have failed loudly - but the phone cannot reach the development server at all, and the
+whole point of that stack is that it is fronted by the same single entry point production has. The
+campaign page carried the same wrong address at the top.
+
+Nothing that has already run was affected: the live configuration on the machine the campaign runs
+on has always named the right one. What was wrong was the template and the documentation.
+
 ### Fixed - half the app's pages had no name in the browser tab
 
 Twenty of the app's forty pages opened a tab reading "Canari - Mines Saint-Etienne", the site's
