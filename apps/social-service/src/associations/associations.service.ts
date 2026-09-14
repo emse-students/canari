@@ -113,6 +113,21 @@ function toMillis(value: Date | string | null): number | null {
  *
  * The message is never rendered: both modals map any failure to their own Paraglide string.
  */
+/**
+ * The tier a caller writing to an existing event was established at, by the controller's single
+ * `assertMayWriteEvent`. BDE admins and global admins act across associations; everybody else was
+ * checked against the association in the URL and may act only on events it owns or co-owns.
+ */
+export interface EventWriteTier {
+  isGlobalAdmin: boolean;
+  isBde: boolean;
+}
+
+/** Whether a tier reaches events outside the association named in the URL. */
+function mayCrossAsso(tier: EventWriteTier): boolean {
+  return tier.isGlobalAdmin || tier.isBde;
+}
+
 function assertMayDecideKind(
   next: AssociationCalendarEventKind,
   current: AssociationCalendarEventKind,
@@ -535,7 +550,8 @@ export class AssociationsService {
     associationId: string,
     eventId: string,
     file: { buffer: Buffer; mimetype: string; size: number },
-    authorization: string | undefined
+    authorization: string | undefined,
+    tier: EventWriteTier
   ) {
     await this.findById(associationId);
     const bearer = this.requireBearer(authorization);
@@ -547,7 +563,14 @@ export class AssociationsService {
       throw new BadRequestException('Image must be JPEG, PNG, or WebP');
     }
 
-    const ev = await this.calendarRepo.findOne({ where: { id: eventId, associationId } });
+    // OWNER OR CO-OWNER, through the finder every other write on an event goes through: an
+    // association co-running an event holds the same edit rights, so refusing it the poster alone
+    // would be a right that exists everywhere but here.
+    const ev = await this.findCalendarEventForAssociation(
+      eventId,
+      associationId,
+      mayCrossAsso(tier)
+    );
     if (!ev) throw new NotFoundException('Event not found');
     const oldMediaId = ev.imageMediaId;
 
@@ -564,8 +587,17 @@ export class AssociationsService {
   }
 
   /** Removes the poster image from a calendar event. */
-  async clearEventImage(associationId: string, eventId: string, authorization: string | undefined) {
-    const ev = await this.calendarRepo.findOne({ where: { id: eventId, associationId } });
+  async clearEventImage(
+    associationId: string,
+    eventId: string,
+    authorization: string | undefined,
+    tier: EventWriteTier
+  ) {
+    const ev = await this.findCalendarEventForAssociation(
+      eventId,
+      associationId,
+      mayCrossAsso(tier)
+    );
     if (!ev) throw new NotFoundException('Event not found');
     const oldMediaId = ev.imageMediaId;
     await this.calendarRepo.update(eventId, { imageMediaId: null, imageUrl: null });
