@@ -206,7 +206,10 @@ describe('startSyncWatchdogImpl - what a quiet tab costs', () => {
     vi.advanceTimersByTime(TICK_MS);
 
     await vi.waitFor(() => {
-      const said = cb.log.mock.calls.map((c) => String(c[0])).join(' | ');
+      const said = vi
+        .mocked(cb.log)
+        .mock.calls.map((c: unknown[]) => String(c[0]))
+        .join(' | ');
       expect(said).toContain('stale_base');
       expect(said).toContain('epoch 4');
     });
