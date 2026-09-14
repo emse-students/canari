@@ -49,6 +49,7 @@ the rule in [durable-rules](durable-rules.md). Delete the line once the measurem
 | a security advisory now has an ACTOR at all | `automated-security-fixes` was `{"enabled":false}` while alerts were on, and the `cargo` ecosystem limits `production-dependencies` to patch - so `serde_with` 3.19.0 -> 3.21.0 (GHSA-7gcf-g7xr-8hxj, medium, `frontend/src-tauri/Cargo.lock`) could be reported and never fixed by anything. Enabled 2026-09-02, and it fired within the minute - **onto a THIRD refusal nobody knew about**, the update job failing on a manifest cargo cannot parse (P1 below). So **this row cannot close on alert 210**: it closes on the first security pull request Dependabot opens for ANY directory, and 210 itself waits on the P1 |
 | the auto-merge ceiling refuses a major | **half taken.** The workflow is enabled again and its shipped loop body was replayed over all 33 open Dependabot PRs: 26 merge, 6 refuse, and the 6 collapse to the two gates below. What replay cannot show is the workflow REFUSING in its own run log, because no major has opened since - so the row stays until a real one does, logging `REFUSED` and staying open |
 | a proposed event now tells the association's calendar managers | **ANSWERED ON THE Mi 9T, 2026-09-09 - both halves.** Shade in 2 271 ms with the app backgrounded, in-app row rendered, two `event_proposed` rows written to both BDE validators, event left `pending`. The precondition was narrower than this row had guessed - the validator grant must be on the **BDE** (`a.isBDE = true`) and the proposer must hold `PROPOSE_EVENT` on a NON-BDE association, or their event is validated on the spot and never becomes a proposal - and both grants name their account by its OIDC **subject**, never a display name. Reading the notification instead of counting it found two defects, both fixed: the agenda's five resource pairs had shipped with their ACCENTS STRIPPED, and the two FORM pairs were still English on the legacy side. A test now compares the server's legacy sentence with the Android resource for every key. ([device-verification](device-verification.md#the-layout-pass-of-2026-09-09-and-the-sixth-check-that-ran-later-the-same-day)) |
+| launch to fingerprint prompt on Android, 4.2 - 4.6 s before the fix | HARDWARE, and **a pre-release build**: the APK embeds the frontend, so no deploy reaches it. Re-attach CDP to the release WebView (`adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>`), navigate `http://tauri.localhost/` and read the offset of `BiometricService/handleAuthenticate` in `logcat`. Three causes are fixed - the double SQLite schema bootstrap and the 250 ms timer (#655), the awaited `GET /api/version` - and the fourth is deliberately NOT ([the revocation round trip](#p3---a-revocation-round-trip-sits-in-front-of-the-fingerprint-prompt-and-moving-it-is-reverted-not-to-be-re-opened-measured-on-the-pixel-6a-2026-09-15)), so the target is a visible drop and not zero |
 | the five products the boutique never sold are buyable | **ONE MANUAL FLIP IS OWED, and it is the user's** (2026-08-31). `activationWithheld` releases a product when payments BECOME ready, and BDE's Stripe onboarding completed long ago - no event will ever fire for it, which is the correct behaviour for an allowlist and the reason a per-tier on-sale switch now exists. So: open `/associations/bde/edit`, Cotisations tab, tick **En vente** on the 170 EUR tier, then buy nothing and simply confirm it appears in `/shop`. The other four associations have no payment account at all, so their products are correctly withheld and release themselves when one arrives - what closes THAT half is the next association to finish onboarding, whose products must go on sale with nobody touching them |
 
 ---
@@ -650,6 +651,36 @@ less than the icon does. **Whichever survives should be the only one**, and a te
 chip renders its name once would keep it that way.
 
 **Blocked on nothing** - local estate, and it reproduces on any attachment.
+
+---
+### P3 - a revocation round trip sits in front of the fingerprint prompt, and moving it is REVERTED, not to be re-opened (measured on the Pixel 6a, 2026-09-15)
+
+Launch to BiometricPrompt on the Pixel 6a was **4.2 - 4.6 s**, measured by attaching CDP to the
+release WebView (`adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>`) and correlating
+the timeline with `BiometricService/handleAuthenticate` in `logcat`. Three of the four causes are
+fixed: the double SQLite schema bootstrap and the 250 ms fixed timer (#655), and the awaited
+`GET /api/version` (this PR). **The fourth is `isDeviceRevoked`, and it stays.**
+
+`sessionAuth.ts` asks the server whether this device has been revoked BEFORE anything prompts. It
+is one round trip in front of the unlock and it looks exactly like the version probe - so the same
+fix was written for it, and then **reverted** (`git checkout HEAD -- sessionAuth.ts`, 2026-09-15).
+
+*Why it is not the same.* The version probe's verdict is enforced afterwards by an overlay, so
+reading the cache loses nothing. The revocation verdict's consequence is a **local wipe**, and the
+check preceding the prompt is what makes that wipe happen **unattended**: a lost or stolen device
+wipes itself at the next launch whether or not anybody passes the fingerprint. Move the await behind
+`init()` and the wipe becomes conditional on a prompt a thief never answers - the one population the
+mechanism exists for. **A faster launch is not worth that, and this is not to be re-opened without
+a design that wipes without a prompt.**
+
+*What was also rejected, and why it is the wrong shape.* Deferring the ~45 feed requests (24
+profiles, avatars, link previews, forms) that the launch fires ahead of the biometric attempt. They
+delay the prompt only through main-thread contention, which the three fixes above already resolve by
+raising the prompt before the feed is under way; and the only place to gate them is the SvelteKit
+route `load`, which would change the web client for no durable gain.
+
+**Blocked on hardware** - the APK embeds the frontend (`frontendDist: "../build"`), so confirming
+the three fixes needs a pre-release build. Re-measure with the same CDP attach.
 
 ---
 ### P3 - `cleanup.mjs` sweeps groups but not the delivery queue, and 13 275 rows have accumulated (measured 2026-09-08)

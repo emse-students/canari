@@ -11,6 +11,26 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - l'empreinte n'attend plus un aller-retour reseau qui ne decidait rien
+
+Au lancement de l'application mobile, la demande d'empreinte arrivait 4,2 a 4,6 secondes apres
+l'ouverture (mesure sur Pixel 6a, signale par l'utilisateur : *"le fait que l'empreinte mette du
+temps a etre demandee apres le lancement, ca c'est plus genant"*). Une partie de cette attente
+etait un appel a `GET /api/version` place devant le clavier PIN et devant la demande d'empreinte.
+
+Cet appel ne produisait pas le verdict : le magasin de version l'hydrate deja depuis les metadonnees
+serveur en cache, de maniere synchrone, au chargement du module - et il lance son propre
+rafraichissement au meme endroit. L'attente n'achetait donc qu'une reponse plus fraiche, au prix
+d'un aller-retour. Sur une liaison degradee le prix n'est pas petit : la sonde porte une echelle de
+reprise de 3 x 8 secondes plus une attente progressive, soit jusqu'a environ 26 secondes devant
+l'utilisateur, pour finir par repondre depuis ce meme cache.
+
+Le verdict est desormais lu au lieu d'etre attendu. Rien n'est affaibli : un verdict qui BLOQUE
+refuse toujours l'invite, et un rafraichissement qui arrive ensuite sur une reponse bloquante n'est
+pas perdu - `PlatformGateOverlay`, monte dans la mise en page racine, derive du meme magasin et se
+leve par-dessus ce que la session a atteint. Le bouton de connexion, lui, continue d'attendre la
+sonde : c'est le seul endroit ou attendre est correct, et un test le verifie dans les deux sens.
+
 ### Fixed - l'empreinte mettait plus de quatre secondes a etre demandee au lancement
 
 Sur un Pixel 6a, 4,2 a 4,6 secondes s'ecoulaient entre le lancement et l'apparition de la demande
