@@ -7,6 +7,7 @@ import { m } from '$lib/paraglide/messages';
 import { dropGroupState } from '$lib/utils/chat/dropGroupState';
 import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
 import { forgetGroupsAbsentFromServer, readGroupSweepSnapshot } from '$lib/utils/chat/groupSweep';
+import { removeStrayLeaves } from '$lib/utils/chat/strayLeaves';
 import {
   connectionSweepDecision,
   groupsOwingAudit,
@@ -226,6 +227,19 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
     await republishBaseIfStale(mlsService, g, log).catch((e) =>
       log(`[BASE] ${g.groupId.slice(0, 8)}… republish check failed: ${String(e).slice(0, 120)}`)
     );
+
+    // AND THE SECOND THING ONLY A HOLDER CAN DO: EVICT A LEAF ITS OWNER WALKED AWAY FROM.
+    //
+    // Leaving stages no Remove for the leaver's own leaf and cannot - a departing member is exactly
+    // the party that may not commit its own eviction - so the leaf stays in every remaining tree,
+    // holding key material for a conversation its owner has left. The repair existed for
+    // distribution groups only, the same sentence the branch above carries. See `strayLeaves.ts`
+    // for the diff, the cost it pays and why nothing is broadcast.
+    const evicted = await removeStrayLeaves(mlsService, g.groupId, userId, log).catch((e) => {
+      log(`[STRAY] ${g.groupId.slice(0, 8)}… reconciliation failed: ${String(e).slice(0, 120)}`);
+      return [];
+    });
+    if (evicted.length > 0) stateMutated = true;
   }
 
   // 3. Purge WASM state for groups no longer known to the server - the same call discovery makes,

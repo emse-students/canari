@@ -681,6 +681,32 @@ the record so the next pass runs whole. One HTTP call per minute per locked-out 
 four the record was built to save and the zero exits it left. `initializeConnection`'s republish and
 the presence edge are both faster when they fire and neither is what makes this terminate.
 
+**AND `DE13` WAS THE SAME DEFECT ONE SCOPE OVER, WITH ITS REPAIR ALREADY WRITTEN** - the audit's
+*"leaving a conversation stages no Remove for the leaver's own leaf"*, closed 2026-09-14.
+
+`leaveGroupAndBroadcast` announces `memberLeft`, drops the server registry rows and forgets its own
+state. It stages no Remove commit and it CANNOT: a departing member is exactly the party that may
+not commit its own eviction. The leaf therefore stays in every remaining member's tree, holding key
+material for a conversation its owner has walked out of, and nothing collected it. The only consumer
+of `memberLeft` renders a system bubble.
+
+**The mechanism existed, for communities only.** `reconcileDistributionGroupRoster` is exactly this
+repair for a community's distribution group, and its docblock carries the whole design: why a
+durable DIFF rather than a departure EVENT (*"a departure notice reaches only the devices that are
+online when it fires, and only one of them may commit"*), why the roster is the authority on who MAY
+read while the tree records who CAN, and why a fetch that threw is not an empty roster. The pure
+half, `diffRosterAgainstTree`, was already exported. `strayLeaves.ts` imports it and writes only the
+two reads that differ - `getGroupMemberIdentities` against `getGroupUserMembers` - so there is one
+diff in the repository, not two.
+
+It runs in `initializeConnection`'s held-group branch, beside `republishBaseIfStale`, which is the
+same sentence: that repair *"existed for distribution groups only, and three of those four are
+conversations"*. The cost is one roster read per held group per connection, paid deliberately - the
+epochs the stale-base repair needs already travel on the group list, a roster does not, and no
+weaker discriminator is honest: a member count matches for a group that lost one member and gained
+another, which is precisely a tree with a stray in it. Nothing is broadcast, because the leaver
+already said so.
+
 
 | # | The dead end | How it is reached | Terminal by design? |
 | --- | --- | --- | --- |
