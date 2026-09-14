@@ -20,8 +20,9 @@
     icsSubscriptionRangeISO,
     type AssociationCalendarFeedEvent,
     type Association,
+    ensureAssociationSuperAdmin,
   } from '$lib/associations/api';
-  import { isGlobalAdmin } from '$lib/stores/user';
+  import { isGlobalAdmin, isAssociationSuperAdmin } from '$lib/stores/user';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import Card from '$lib/components/ui/Card.svelte';
   import MonthCalendarGridRich from '$lib/components/calendar/MonthCalendarGridRich.svelte';
@@ -161,10 +162,23 @@
     filterAssociationId = page.url.searchParams.get('association')?.trim() ?? '';
     await loadAssociations();
     await loadMonth();
+    /**
+     * THE PDF TOOL IS ADMIN-ONLY, SO THE LINK TO IT IS TOO (user, 2026-09-14). A link that leads to
+     * a page which immediately sends the reader back is a dead end offered on purpose, and this is
+     * the SAME predicate `/calendar/export` gates on - system admin, or a BDE super-admin - which
+     * is narrower than `canModerateAgenda` just below: an ordinary association admin moderates the
+     * agenda and does not build the school's PDF.
+     */
+    canExportPdf = isGlobalAdmin() || isAssociationSuperAdmin();
+
     if (isGlobalAdmin()) {
       canModerateAgenda = true;
       canDepositEvent = true;
+      canExportPdf = true;
     } else {
+      if (!canExportPdf) {
+        canExportPdf = await ensureAssociationSuperAdmin().catch(() => false);
+      }
       try {
         const mine = await listMyAssociations();
         canModerateAgenda = mine.some((a) => a.isAdmin);
@@ -233,6 +247,7 @@
   }
 
   let canModerateAgenda = $state(false);
+  let canExportPdf = $state(false);
   let pendingCount = $state(0);
   let selectedDay = $state<number | null>(null);
   let detailEvent = $state<AssociationCalendarFeedEvent | null>(null);
@@ -515,13 +530,15 @@
     {/snippet}
 
     {#snippet exportActions()}
-      <a
-        href={exportHref}
-        class="border-cn-border text-text-main hover:bg-cn-bg inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border bg-(--cn-surface) px-4 py-2.5 text-sm font-bold transition-colors"
-      >
-        <FileDown size={18} />
-        {m.calendar_export_pdf()}
-      </a>
+      {#if canExportPdf}
+        <a
+          href={exportHref}
+          class="border-cn-border text-text-main hover:bg-cn-bg inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border bg-(--cn-surface) px-4 py-2.5 text-sm font-bold transition-colors"
+        >
+          <FileDown size={18} />
+          {m.calendar_export_pdf()}
+        </a>
+      {/if}
       <button
         type="button"
         onclick={() => (showSubscribeModal = true)}
