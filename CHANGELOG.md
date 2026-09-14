@@ -11,6 +11,20 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - l'export PDF de l'agenda est reserve aux administrateurs, et ses trois themes disparaissent
+
+Construire le PDF de l'agenda n'est plus ouvert a tout le monde : il faut etre administrateur
+systeme ou administrateur BDE (demande de l'utilisateur). Le lien depuis l'agenda suit la meme
+regle - un lien vers une page qui vous renvoie aussitot est un cul-de-sac offert volontairement -
+et c'est une regle plus etroite que la moderation de l'agenda, qu'un simple administrateur
+d'association exerce deja sans avoir a fabriquer le PDF de l'ecole. Le mois affiche, lui, reste le
+meme fil public que l'agenda : ce qui disparait est un outil, pas une donnee.
+
+Les trois themes "Rentree", "Canari sombre" et "Minimal" sont supprimes. "Minimal" etait exactement
+les reglages par defaut et etait selectionne au chargement : deux tiers du selecteur proposaient un
+choix que personne n'avait demande, le dernier tiers reproduisait l'etat deja affiche. Les reglages
+fins du volet "Avance" restent le seul endroit ou l'on compose une apparence, et le bouton de remise
+a zero revient au seul point de depart qui subsiste.
 ### Changed - le trombone et le bouton GIF n'avaient pas la meme taille, et le composeur avait un fond de trop
 
 Les commandes de la barre de saisie partagent une boite de 44 pixels sur telephone et 38 sur
