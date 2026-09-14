@@ -90,7 +90,60 @@
     };
   }
 
+  /** The feed's three modes, in the order they are drawn. The pill itself is written once. */
+  const FEED_TABS: { feed: PostFeed; label: () => string }[] = [
+    { feed: 'associations', label: m.posts_tab_associations },
+    { feed: 'followed', label: m.posts_tab_followed },
+    { feed: 'all', label: m.posts_tab_all },
+  ];
+
   let showCreateModal = $state(false);
+
+  /**
+   * `?compose=1` AND `?search=1` ARE COMMANDS, NOT STATE MIRRORS.
+   *
+   * The phone's app header publishes and searches from every page, and it does both with a LINK -
+   * there is no store to write into from outside this route. So each parameter performs its action
+   * and is stripped in the same tick, with `replaceState` so no history entry carries it: a reload,
+   * a share or a back gesture then lands on the feed rather than on a modal or a search box the
+   * reader did not ask for twice.
+   */
+  $effect(() => {
+    const params = page.url.searchParams;
+    const compose = params.get('compose') === '1';
+    const search = params.get('search') === '1';
+    if (!compose && !search) return;
+
+    if (compose) showCreateModal = true;
+    if (search) {
+      searchOpen = true;
+      // The glyph's whole purpose is to reach the field, so arriving there is part of the gesture.
+      queueMicrotask(() => searchInput?.focus());
+    }
+
+    const u = new URL(page.url);
+    u.searchParams.delete('compose');
+    u.searchParams.delete('search');
+    void goto(u, { replaceState: true, noScroll: true, keepFocus: true });
+  });
+
+  /**
+   * Whether the phone shows the search field. It is ALWAYS shown from `md` up.
+   *
+   * The field was a permanent 66 px row on a 945 px screen, for a control most visits never use -
+   * measured against the feed's own chrome on A1, which spent more height on heading, publish button
+   * and search than on the first post. It is now behind the app header's magnifier, which is where
+   * Facebook keeps its own, read on this phone the same day. Nothing moved further away: it was one
+   * tap from the top of this page and it is one tap from the top of every page.
+   */
+  let searchOpen = $state(false);
+  let searchInput = $state<HTMLInputElement | null>(null);
+
+  /** Closes the field and drops whatever it was filtering by, which are one gesture. */
+  function closeSearch() {
+    searchOpen = false;
+    clearSearch();
+  }
 
   let searchQuery = $state('');
   let searchResults = $state<PostEntity[] | null>(null);
@@ -316,32 +369,55 @@
     <ConversationsMiniPanel />
   {/snippet}
 
-  <PageHeader title={m.posts_page_title()} subtitle={m.posts_page_subtitle()}>
-    {#snippet actions()}
-      <Button onclick={() => (showCreateModal = true)} class="!rounded-xl !px-4 !py-2 !text-sm">
-        <SquarePen size={16} class="mr-1" />
-        {m.posts_publish_button()}
-      </Button>
-    {/snippet}
-  </PageHeader>
+  <!--
+    NO PAGE HEADING ON A PHONE (user, 2026-09-14: *"ce genre d'en-tete sert-il a quelque chose meme ?
+    Pourquoi un titre et un sous titre ? C'est un reseau social, pas besoin de blablater autant"*).
 
-  <!-- Barre de recherche -->
-  <div class="relative mb-5">
+    "Fil social / Partage, sondages et evenements" named a page the bottom bar already highlights and
+    described content that says the same thing by existing, and the heading carried the publish
+    button and the search field under it. Together they took roughly the top two thirds of a 945 px
+    screen before the first post. The two controls moved into the app header, where they cost no page
+    height and work from every route; what was left to hide is the prose.
+
+    It stays from `md` up, unchanged. There the sidebar is the only thing naming the page, a 2xl title
+    costs nothing in a 1280 px column, and `PageHeader` is the convention all 34 routes share - which
+    is worth keeping wherever it is not actively in the way.
+  -->
+  <div class="hidden md:block">
+    <PageHeader title={m.posts_page_title()}>
+      {#snippet actions()}
+        <Button onclick={() => (showCreateModal = true)} class="rounded-xl! px-4! py-2! text-sm!">
+          <SquarePen size={16} class="mr-1" />
+          {m.posts_publish_button()}
+        </Button>
+      {/snippet}
+    </PageHeader>
+  </div>
+
+  <!-- Barre de recherche - masquee derriere la loupe sur telephone, toujours visible des `md`. -->
+  <div id="posts-search" class="relative mb-5 {searchOpen ? '' : 'hidden md:block'}">
     <Search
       size={16}
       class="text-text-muted pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2"
     />
     <input
+      bind:this={searchInput}
       type="search"
       value={searchQuery}
       oninput={onSearchInput}
       placeholder={m.posts_search_placeholder()}
-      class="border-cn-border text-text-main placeholder:text-text-muted/70 bg-cn-surface w-full rounded-2xl border py-2.5 pr-10 pl-10 text-sm font-medium transition-all outline-none focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/20"
+      class="ui-search-own-clear border-cn-border text-text-main placeholder:text-text-muted/70 bg-cn-surface w-full rounded-2xl border py-2.5 pr-10 pl-10 text-sm font-medium transition-all outline-none focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/20"
     />
-    {#if searchQuery}
+    <!--
+      ONE BUTTON FOR TWO WIDTHS, because the two gestures are the same gesture. From `md` up the
+      field is permanent, so this appears with a query and clears it. Below `md` the field only
+      exists while it is open, so it is always there and closes it - and closing drops the query,
+      since a hidden field still filtering the feed is a filter with no visible cause.
+    -->
+    {#if searchQuery || searchOpen}
       <button
         type="button"
-        onclick={clearSearch}
+        onclick={closeSearch}
         class="text-text-muted hover:text-text-main absolute top-1/2 right-3 -translate-y-1/2 transition-colors"
         aria-label={m.common_clear_aria()}
       >
@@ -350,38 +426,27 @@
     {/if}
   </div>
 
-  <!-- Feed mode -->
-  <div class="mb-5 flex flex-wrap gap-2" class:hidden={!!searchQuery}>
-    <button
-      type="button"
-      onclick={() => navigateFeed('associations')}
-      class="rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors {activeFeed ===
-      'associations'
-        ? 'text-text-main border-amber-500/40 bg-amber-500/15'
-        : 'border-cn-border text-text-muted hover:text-text-main'}"
-    >
-      {m.posts_tab_associations()}
-    </button>
-    <button
-      type="button"
-      onclick={() => navigateFeed('followed')}
-      class="rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors {activeFeed ===
-      'followed'
-        ? 'text-text-main border-amber-500/40 bg-amber-500/15'
-        : 'border-cn-border text-text-muted hover:text-text-main'}"
-    >
-      {m.posts_tab_followed()}
-    </button>
-    <button
-      type="button"
-      onclick={() => navigateFeed('all')}
-      class="rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors {activeFeed ===
-      'all'
-        ? 'text-text-main border-amber-500/40 bg-amber-500/15'
-        : 'border-cn-border text-text-muted hover:text-text-main'}"
-    >
-      {m.posts_tab_all()}
-    </button>
+  <!--
+    ONE BUTTON, THREE TIMES, IS ONE BUTTON. These were three copies of the same twelve lines
+    differing only in feed key and label, so a change to the pill - the state colours, the padding,
+    an aria attribute - had to be made three times or made wrong twice.
+  -->
+  <div class="mb-5 flex flex-wrap items-center gap-2">
+    <div class="flex flex-wrap gap-2" class:hidden={!!searchQuery}>
+      {#each FEED_TABS as tab (tab.feed)}
+        <button
+          type="button"
+          onclick={() => navigateFeed(tab.feed)}
+          aria-pressed={activeFeed === tab.feed}
+          class="rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors {activeFeed ===
+          tab.feed
+            ? 'text-text-main border-amber-500/40 bg-amber-500/15'
+            : 'border-cn-border text-text-muted hover:text-text-main'}"
+        >
+          {tab.label()}
+        </button>
+      {/each}
+    </div>
   </div>
 
   {#if scheduledPosts.length > 0}

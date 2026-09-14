@@ -647,6 +647,18 @@ h6,
     opacity: 0.4;
     cursor: not-allowed;
   }
+
+  /* A SEARCH FIELD THAT DRAWS ITS OWN CLEAR CONTROL, AND THEREFORE MUST NOT ALSO SHOW THE ENGINE'S.
+     `input[type=search]` gets a `::-webkit-search-cancel-button` for free, and on the Android
+     WebView it renders as a system-blue cross - measured on A1 on 2026-09-14, sitting beside the
+     feed's own amber-muted one, two crosses in one 403 px row doing the same thing in two visual
+     languages. It is OPT-IN rather than a global reset because the other two search fields in this
+     app, `/directory` and `/admin/users`, draw no cross of their own: hiding the engine's there
+     would take away the only way they have to clear. */
+  .ui-search-own-clear::-webkit-search-cancel-button {
+    -webkit-appearance: none;
+    appearance: none;
+  }
 }
 
 /**
