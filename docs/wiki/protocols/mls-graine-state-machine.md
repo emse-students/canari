@@ -531,7 +531,7 @@ claims in the audit that produced this page did not survive the query.
 
 | Claim | What production says | Verdict |
 | --- | --- | --- |
-| DE1/DE2 - a group nobody can repair | **1 of 58**: no published base at all AND no active holder. Three more sit exactly ONE epoch behind, which is a commit that just landed, not a dead end | **REAL, population 1** |
+| DE1/DE2 - a group nobody can repair | **0 of 58, re-read 2026-09-14.** The one group counted here on 2026-09-12 has **zero seats**, zero commits, no base and no queued frames: nobody is locked out of it because nobody was ever in it. Three more sit exactly ONE epoch behind, which is a commit that just landed, not a dead end | **REFUTED at this population - and the row was a DIFFERENT defect** |
 | DE8 - a `pending` seat nobody honours | 91 pending rows, **30** past the one-hour window with no queued Welcome, **all 30 classified `never added`** (zero `kickedAt`), oldest 10 days, **0** past the 14-day purge | **REAL, and already reported hourly and swept** |
 | DE9 - a commit-log hole | **18 holes across 11 of 58 groups**, and **every single one is exactly ONE epoch wide** - including epoch 121. Two groups have no commits logged at all | **REAL, 19% of live groups** |
 | A tombstoned group still carrying live state | 1432 tombstoned groups: **0** with an active membership, **0** with a queued message | **REFUTED - tombstoning is clean** |
@@ -539,6 +539,20 @@ claims in the audit that produced this page did not survive the query.
 | `revoked_device` rows outliving their device | 240 rows, oldest 2026-06-14: **0** whose device still holds a key package | **REFUTED - revocation purges what it bans** |
 | `keyVersion` / `latestKeyRotationPayload` at defaults | `keyVersion`: **0 of 58** at default. `latestKeyRotationPayload`: **58 of 58 NULL** | **HALF REFUTED - the second column is dead** |
 | `pending_welcome_notify:{userId}` leaking in Redis | 5 keys, **every one carrying a TTL** (6 h to 22 h). 57 `group:members` sets for 58 live groups | **REFUTED - in-flight state, not a leak** |
+
+**AND THE ONE GROUP NOBODY COULD REPAIR WAS A GROUP NOBODY WAS IN.** Re-reading it two days later
+answered a question the first pass never asked: how many MEMBERS does it have. None - no seats, no
+commits, no published base, no queued frames, created 2026-09-11 and never updated since. It is a
+`POST mls/groups` that wrote its row and then failed to enrol its creator, which is the outcome that
+route's own docblock says it avoids by gating BEFORE the write; the gate is real, and two ways to
+fail AFTER it were not covered. Made atomic 2026-09-14.
+
+**Nothing would ever have collected it.** `findOrphanGroupIds` asks which groups still own rows while
+their `dm_groups` row is GONE - the exact mirror of a group row with nothing under it, and therefore
+structurally blind to it. So it was permanent, and it counted as a live group in every query that
+counts them, which is how an empty artifact was reported as the product's one unrecoverable
+conversation. **A population of one is a population worth opening rather than counting**: the
+predicate was right about the columns it read and wrong about what the row was.
 
 **The single-epoch width of every commit-log hole is the finding worth keeping.** Eighteen holes and
 not one of them spans two epochs says these are individual commits that failed to be logged, not
@@ -557,7 +571,7 @@ no longer lose the publish race (`unsettledDistributionGroups` holds it across c
 | # | The dead end | How it is reached | Terminal by design? |
 | --- | --- | --- | --- |
 | DE1 | **`NO_REPAIRER`** - the published base is stale and the server answers `no_peer_online` | `externalJoin` returns `stale_base`, then `sendBaseRefreshRequest` answers `noPeerOnline` (recovery.ts:565-577) | **NO, AND IT IS NOW COUNTED.** It is left only when an epoch moves, which needs a holder online - the very thing that is absent. Correctly detected, correctly logged, no exit. `reportSingleHolderGroups` names the population one step from it, hourly (P1-3, 2026-09-12). |
-| DE2 | **A group whose tree NO member holds any longer** | every holder lost its state; the base is stale or absent | **YES, AND IT CANNOT BE OTHERWISE.** Every entry into a group in RFC 9420 - Welcome, external commit, ReInit, subgroup branching, external proposals - requires a party holding the group secrets. This server holds only ciphertext. A server-side resurrection would be a backdoor, which is why the spec has none. **It is not hypothetical: one live group on production was in this state on 2026-09-12**, and `reportSingleHolderGroups` now names it hourly at ERROR. |
+| DE2 | **A group whose tree NO member holds any longer** | every holder lost its state; the base is stale or absent | **YES, AND IT CANNOT BE OTHERWISE.** Every entry into a group in RFC 9420 - Welcome, external commit, ReInit, subgroup branching, external proposals - requires a party holding the group secrets. This server holds only ciphertext. A server-side resurrection would be a backdoor, which is why the spec has none. **No production population, and the one candidate was not one.** The group counted at zero holders on 2026-09-12 was re-read on 2026-09-14 and has zero MEMBERS - a creation that failed after writing its row, not a group whose tree was lost. `reportSingleHolderGroups` names any future one hourly at ERROR. |
 | DE3 | ~~**`bootstrap_dead_conversation`**~~ | ~~nothing reaches it~~ | **DELETED 2026-09-12 (P2-1).** It POSTed to `claim-bootstrap` then `reset-epoch`, both routes long gone, and no frontend caller ever invoked it. It was also the last thing in the product claiming DE2 is recoverable, which is the reason it is gone rather than merely unregistered. |
 | DE4 | ~~**The background re-add returns 400**~~ | ~~`POST mls/push/send-welcome-and-commit` called `validateCommit` with no `proto`, which the guard at messaging.service.ts refuses~~ | **FIXED 2026-09-12 (P1-1).** The route now hands `proto: body.commitPayload` to `validateCommit`, and `baseEpoch` is required rather than optional - the optional branch broadcast without validating, which is the hole the guard exists to close. Covered by `push.controller.welcome-commit.spec.ts`, which this route did not have. |
 | DE5 | **An outbox entry held for ever** | `!isGroupHealthy` returns `retry` with no attempt ceiling (outbox.ts:462) | **NO.** The two permanent failures are `group-deleted` and `evicted`; a group in `NO_REPAIRER` is neither, so the entry retries for the life of the install. P2-5. |
@@ -626,7 +640,7 @@ decided the predicate's shape. Of **58 live groups**:
 
 | Holders (distinct users with an `active` device) | Groups | |
 | --- | --- | --- |
-| 0 | 1 | already DE2 |
+| 0 | 1 | **NOT DE2 - re-read 2026-09-14 and it has no members at all**, a failed creation rather than a locked-out conversation |
 | 1 | 9 | one uninstall from DE2 |
 | 2 or more | 48 | |
 

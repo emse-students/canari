@@ -11,6 +11,26 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a conversation that failed to be created left a permanent, empty trace of itself
+
+Creating a conversation is two steps on the server: write it down, then put you in it. The second
+step can fail - the device you are creating it from can be revoked in the instant between the two,
+and the database or the cache behind it can simply be unavailable.
+
+**When it did, the first step stayed.** What was left was a conversation with nobody in it: no
+members, no messages, nothing that could ever be sent to it, and no way for anyone to open it or
+even see it. Nothing anywhere collected it either - the routine that cleans up after deleted
+conversations looks for the opposite shape, leftovers whose conversation is gone - so it stayed for
+good, and every count of live conversations included it.
+
+That is not only untidy. One of these was read, on 2026-09-12, as the product's single conversation
+that nobody could ever recover - the worst thing this system can say about itself. Opening it two
+days later showed it had never had a single member. **The real count of unrecoverable conversations
+on the server is zero.**
+
+The two steps are now one: a creation that fails to put you in the conversation removes what it
+wrote before reporting the failure, which is unchanged and still reaches you.
+
 ## [0.18.0] - 2026-09-14
 
 ### Fixed - a device the server had refused to deliver to was told it was a member

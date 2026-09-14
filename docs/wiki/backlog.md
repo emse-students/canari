@@ -112,7 +112,7 @@ refusals):
 | `R-E3` | `ROSTER_DISAGREE` | outbox has no attempt ceiling; `sender-not-active` is neither permanent disposition |
 | `R-E4` | an `isGroupHealthy` hold | returns `retry` without incrementing `attempts` or writing `nextAttemptAt` |
 | `R-E8` | exit-owed limbo | the group is invisible **and** un-recoverable while the server never answers; no counter, no expiry |
-| `R-E1`/`DE2` | `NO_REPAIRER` | left only by the epoch pair moving - which needs the holder that is absent |
+| `R-E1`/`DE2` | `NO_REPAIRER` | left only by the epoch pair moving - which needs the holder that is absent. **Population 0, re-read 2026-09-14**: the one group counted here had no MEMBERS, a failed creation rather than a dead end (fixed 2026-09-14) |
 | `R-E9`, `R-E11` | peer-unresolved; `readWelcomeOwed() === null` | retried for ever, no counter |
 | `DE7` | `MLS_LOCAL_STATE_UNDECRYPTABLE` | the only route offered requires the OLD PIN |
 | `DE10` | an undecodable payload | never enqueued, so never ACK-able; the code names the 90-day retention window as its only terminator |
@@ -129,6 +129,13 @@ or more, counting a holder as a DISTINCT USER holding an `active` device members
 have fewer than two rows in `dm_group_members` and are one-person groups or orphans rather than
 conversations; the five that remain are real, and one of them is a DM at **epoch 284 with six
 devices sitting `pending` on it**, four of them created the day of the measurement.
+
+**AND THE ZERO-HOLDER GROUP WAS NOT ONE, which only opening it could have said (2026-09-14).** It has
+no seats at all - no members, no commits, no published base, no queued frames - so nobody is locked
+out of it. It is a `POST mls/groups` whose row was written and whose creator never enrolled, made
+atomic the same day; `findOrphanGroupIds` is structurally blind to that shape, so it was permanent
+and counted as a live group everywhere. **The DE2 population on production is 0.** The five
+one-holder conversations are untouched by this and remain the whole of what is open below.
 
 **What shipped.** `reportSingleHolderGroups`, hourly, beside the other three reports - WARN at one
 holder, ERROR at zero, with the pending count beside each because a pending device is the cheapest
