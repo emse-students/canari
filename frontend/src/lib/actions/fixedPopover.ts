@@ -84,7 +84,23 @@ export function computeFixedPopoverPosition(
   let top = side === 'bottom' ? anchorRect.bottom + offset : anchorRect.top - offset - height;
   top = Math.max(margin, Math.min(top, window.innerHeight - margin - height));
 
-  let left = options.alignEnd ? anchorRect.right - panelWidth : anchorRect.left;
+  // A PANEL THAT FILLS THE SCREEN HAS NO SIDE TO BE ON, SO IT IS CENTRED RATHER THAN ANCHORED.
+  // Edge alignment says "this belongs to that": it only says anything while the panel is narrow
+  // enough for its position to be a CHOICE. Both conditions below are that sentence, measured -
+  // the panel is wider than the thing it points at, so aligning their edges points at nothing, and
+  // it covers more than half the viewport, so there is no room left to express a side. Measured on
+  // the Mi 9T at 436px (2026-09-14): the reaction picker is 352px against a 291px bubble, and
+  // anchoring put it at 54px with 30px left over on the other side - visibly off-centre, which is
+  // exactly what the user reported. Centring gives 42 and 42.
+  // Nothing changes on a wide window, and that is checkable rather than hoped: at 1280px the same
+  // panel is 352px against a 640px half, so the second condition is false and the anchor decides,
+  // as it did before.
+  const fillsTheScreen = panelWidth > window.innerWidth / 2 && panelWidth > anchorRect.width;
+  let left = fillsTheScreen
+    ? (window.innerWidth - panelWidth) / 2
+    : options.alignEnd
+      ? anchorRect.right - panelWidth
+      : anchorRect.left;
   left = Math.max(margin, Math.min(left, window.innerWidth - panelWidth - margin));
 
   return { top, left, maxHeight, side, width: panelWidth };

@@ -86,9 +86,11 @@
   </button>
   {#if open}
     <!-- Full-screen invisible backdrop, below the panel: closes on any outside click, matching
-         PostNotificationBell rather than clickOutside - the panel no longer being a DOM descendant
-         of this wrapper once portalled, composedPath() would treat every click inside it as
-         "outside" too. -->
+         PostNotificationBell. This was once the ONLY option - a portalled panel is not a DOM
+         descendant of this wrapper, so composedPath() read every click inside it as "outside" -
+         and since 2026-09-14 clickOutside follows a portal to where the node was written, so it
+         would work here too. The backdrop stays because it is also what swallows the click that
+         dismisses the panel, which a guard alone does not do. -->
     <div
       use:portal
       role="presentation"

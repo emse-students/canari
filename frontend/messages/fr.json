@@ -534,7 +534,6 @@
   "msg_go_to_quoted_message_label": "Aller au message cité",
   "msg_edit_placeholder": "Modifier le message…",
   "msg_edit_keyboard_hint": "Échap pour annuler - Ctrl+Entrée pour valider",
-  "msg_react_to_message_label": "Réagir au message",
   "msg_max_reactions_label": "Maximum de {max} réactions différentes sur ce message.",
   "msg_recent_reactions_label": "Récents",
   "msg_reactions_label": "Réactions au message",

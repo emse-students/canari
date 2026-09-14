@@ -11,6 +11,35 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - le panneau d'emojis se refermait au premier doigt posé dessus
+
+Sur un message, le bouton « + » ouvre le panneau complet des emojis : un champ de recherche, neuf
+catégories, un sélecteur de teinte de peau. Toucher n'importe lequel de ces trois éléments refermait
+le panneau sans rien faire. Choisir un emoji de la première catégorie fonctionnait - et seulement
+parce que le composant envoyait son événement sur le même clic, une image avant que le panneau ne
+soit démonté. En pratique le panneau était réduit à ce qu'on voyait en l'ouvrant : pas de recherche,
+pas de changement de catégorie, pas de teinte.
+
+La cause n'était pas dans le panneau. Le garde qui ferme au clic extérieur est posé sur le message,
+et le panneau avait été déplacé à la racine du document en septembre pour corriger sa position -
+il n'était donc plus un descendant du message, et chaque clic à l'intérieur se lisait comme un clic
+dehors. Un composant de l'administration avait déjà rencontré ce piège et l'avait contourné en
+expliquant pourquoi en commentaire ; une règle écrite à un seul endroit est une règle que le suivant
+casse, alors elle est passée dans le mécanisme : un panneau déplacé se souvient d'où il a été écrit,
+et « dedans » veut de nouveau dire dedans.
+
+Deux choses viennent avec. Le panneau se ferme maintenant explicitement quand on choisit un emoji,
+ce que seul le défaut faisait jusqu'ici. Et sur un téléphone il s'affiche centré : large de 352
+pixels sur un écran de 436, il était calé sur le bord gauche de la bulle et laissait 54 pixels d'un
+côté contre 30 de l'autre. Un panneau plus large que ce qu'il désigne ne désigne plus rien en
+alignant ses bords. Rien ne change sur un écran large, et un test le vérifie plutôt que de l'espérer.
+
+### Removed - le titre « Réagir au message »
+
+Le panneau d'emojis s'annonçait par une ligne de titre. Elle coûtait de la hauteur sur l'écran qui
+en a le moins, et ne disait rien qu'ouvrir un panneau d'emojis depuis un bouton de réaction sur un
+message ne dise déjà.
+
 ### Fixed - the comment box cut its own invitation on every phone
 
 Under a post nobody had commented on yet, the comment box read "Soyez le premier a commente..." -

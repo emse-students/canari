@@ -5437,7 +5437,78 @@ turn it into a defect, are in [design-reference](frontend/design-reference.md) s
   CDP - A1, W1, or an iPhone once one is inspectable - so the sweep is repeatable rather than
   retyped. It found the P1 below on its first run.
 
-### P1 - A URI wry cannot parse ABORTS THE WHOLE APP, and nothing can catch it (found 2026-09-14 on A1)
+### The guided hardware session, 2026-09-14 - what a real phone actually showed
+
+**Device A1**, Mi 9T, LineageOS 23.2 / Android 11, arm64, density 396 -> **436 x 945 CSS px**. The
+build was the **0.18.1 tester artifact** (release, versionCode 1800101), and its backend is
+**`https://dev.canari-emse.fr`** - measured from the client's own request origins, not inferred from
+the build's name. **A release APK cannot install over a debug one** (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`),
+so installing it uninstalled the debug build, wiped `mls.bin`, and the device re-enrolled as brand
+new.
+
+**THE ESTATE DECIDES WHAT EMPTINESS MEANS, AND THIS SESSION'S DEVICE WAS ON THE WRONG ONE.** The test
+population - the accounts the harness drives, their conversations, their history - lives on the
+**LOCAL** estate, which is what the rig has targeted since 2026-09-03. A phone pointed at `dev` has
+neither those accounts nor any MLS state of its own, so **`/chat` showing "Aucune discussion" there
+is the expected reading of a new device on an estate with nothing in it, not a defect.** The same
+holds for the "Nouvelle discussion" dialog, which rendered **no result list at all** for an empty
+query, for `a` and for `e` - three runs, the field cleared between each so a stale query could not be
+blamed. That measurement is **suspended, not filed**: it is only worth anything re-run against the
+local estate, where a directory with people in it exists.
+
+**The encryption-PIN screen does not fit the screens it will meet** (user, 2026-09-14: *"l'ecran du
+pin de chiffrement est tres grand et charge, il ne s'affichera pas bien sur beaucoup d'ecrans"*).
+Measured before typing the PIN, because typing destroys the evidence: the content stands **901 px**
+tall against the **945 px** this phone offers - it fits here, with 44 px to spare, and that margin is
+the whole finding. A shorter phone loses it outright, and **a tablet in landscape has 800 px**, which
+is 101 px short. Tablets are the case that matters because they are the ones that can rotate at all.
+
+**Phones cannot be put in landscape, and that is deliberate** - the lock is in Kotlin, not the
+manifest: `MainActivity.kt:47-53` sets `SCREEN_ORIENTATION_PORTRAIT` when the resource boolean
+`R.bool.canari_lock_portrait` is true, and leaves `SCREEN_ORIENTATION_UNSPECIFIED` otherwise, so a
+tablet keeps its rotation. `android:screenOrientation` takes one literal value and cannot serve both,
+which is why a resource qualifier carries it. **A manifest grep answers this question with silence** -
+it was grepped, found nothing, and the lock was still there.
+
+### P2 - the long-press sheet covers the message it acts on, and `sweep.mjs` cannot see inside a web component (measured 2026-09-14 on A1)
+
+Four findings from the same guided session, each with the measurement that would settle it. None is
+fixed; the reaction picker's own two defects that WERE fixed are in `CHANGELOG.md`.
+
+**THE SHEET IS ANCHORED TO THE BOTTOM OF THE SCREEN AND THE THREAD DOES NOT MOVE**, so any message
+in the bottom band is hidden by the sheet acting on it. Measured: the bubble at `731-767`, the
+sheet's reaction strip starting at `749` - **18 of the bubble's 37 px covered, its lower half,
+through the middle of its single line of text**. The rule is `[data-keyboard-aware-actions]` in
+`app.css`, `bottom: max(1rem, safe-area + 1rem)` under `.mobile-convo-open`, and it is right for a
+sheet; what is missing is that the selected message is not lifted clear of it. WhatsApp and
+Messenger both raise the message above the sheet and dim the rest. The fix is deterministic and
+needs no clock: on open, measure the sheet's top and the bubble's bottom and scroll the difference.
+**Do not fix it by moving the sheet** - it is where a thumb is.
+
+**A REACTION IS DRAWN AS A CHIP BETWEEN TWO BUBBLES WITH NOTHING SAYING WHOSE IT IS.** Seen on the
+same screen: a heart sits alone, left-aligned, between the message it decorates and the next one,
+and a reader cannot tell which of the two it belongs to. NOT YET MEASURED - what would settle it is
+the chip's box against both neighbours' boxes, and whether any border, offset or overlap ties it to
+one. Filed so it is not lost, not filed as a defect.
+
+**TWO THINGS ASK FOR THE NOTIFICATION PERMISSION AT ONCE, AND ONE OF THEM BLOCKS THE APP.** On first
+launch after an install, Android's own permission dialog opens over the WebView while the in-app
+banner *"Activez les notifications pour etre prevenu des nouveaux messages"* is showing at the
+bottom of the same screen. The native dialog takes every touch until it is answered, which is
+correct for a native dialog and is exactly why nothing else should be asking at the same moment.
+**And it is worth knowing how this presented**: with the dialog up, the WebView stopped repainting
+but kept answering CDP, so the DOM said one thing and the screen showed another - an instrument
+reading the DOM would have reported a working app. A screenshot is what separated them.
+
+**`sweep.mjs` DOES NOT SEE INSIDE A WEB COMPONENT, AND EVERY "NOTHING IS CLIPPED" IT HAS EVER
+PRINTED EXCLUDES ONE WITHOUT SAYING SO.** Its probe walks `document.querySelectorAll('*')`, which
+stops at a shadow root. `<emoji-picker>` is the one in this app - 190 buttons, a search field, nine
+category tabs and a scrolling grid, none of which the route sweep has ever measured. The fix is in
+the probe: descend into `element.shadowRoot` when there is one, and say in the output which subtrees
+were entered, so the exclusion is visible rather than silent. Until then the graphical pass's scope
+is "everything except what a library renders for us", and that sentence belongs in its results.
+
+### P1 - a URI `http::Uri` cannot parse ABORTS THE WHOLE APP, and nothing can catch it (found 2026-09-14 on A1)
 
 Measured on A1, build `7fea1bb42` (0.18.0, code 1800099), LineageOS 23.2 / Android 11, arm64:
 
@@ -5449,25 +5520,53 @@ panic in a function that cannot unwind
   #00 abort                             <- signal 6 (SIGABRT)
 ```
 
-**An `unwrap()` inside an `extern "C"` frame is not a crash that a boundary can contain.** The panic
-cannot unwind through the JNI frame, so Rust aborts the process: the activity is force-finished, the
-sandboxed renderer dies with it, and the user watches the app vanish. There is no JS error, no
-`svelte:boundary`, and nothing in `CHANGELOG.md` could have predicted it - the Rust half ships on
-compilation, and this path compiles perfectly.
+The line is `(ipc.handler)(Request::builder().uri(url).body(body).unwrap())`. **An `unwrap()` inside
+an `extern "C"` frame is not a failure a boundary can contain**: the panic cannot unwind through the
+JNI frame, so Rust aborts the process - the activity is force-finished, the sandboxed renderer dies
+with it, and the user watches the app vanish. There is no JS error, no `svelte:boundary`, and
+nothing any gate here compiles for.
 
-**What is PROVEN**: a client-side navigation driven by an injected anchor reaches it every time, on
-`/posts`, `/calendar` and `/settings` alike - three for three. **What is NOT proven, and decides the
-severity**: whether an ordinary tap on an ordinary link reaches the same line. It cannot be common
-or the app would be unusable, so the live question is which URI shape wry refuses and who can
-produce it. Two different fixes hang on that answer, and taking the wrong one fixes nothing:
+**The `url` is not the IPC's own.** `Ipc.postMessage` passes `webViewClient.currentUrl`
+(`gen/android/.../Ipc.kt`), which `RustWebViewClient.onPageStarted` sets to whatever the WebView last
+STARTED loading. So the crash is not in the message: **any IPC at all aborts the app once the
+WebView has started loading a URL `http::Uri` refuses**, and the next IPC is never far away.
 
-- If only the synthetic navigation produces it, the defect is still real but it is **wry aborting
-  instead of refusing a request** - the boundary owes a `Result`, not an `unwrap`.
-- If a reachable user path produces it, it is a shipping P1 on top of that.
+**What was measured, each one its own run on the phone:**
 
-**Do not "fix" this by making the sweep navigate differently.** The instrument found a line that
-aborts the process on bad input; changing the instrument would hide it, which is the whole failure
-mode this page exists to prevent.
+| Navigation | Result |
+| --- | --- |
+| A real tap on the bottom bar (`adb shell input tap`, coordinates read from the DOM) | ALIVE, routed |
+| `location.href = '/settings'` - a hard navigation | ALIVE, loaded |
+| An injected anchor to an app route | ALIVE, routed |
+| A path containing a space - the DOM percent-encodes it to `/a%20b` | ALIVE, routed |
+| `mailto:` and `tel:` - handed to Android by `shouldOverrideUrlLoading`, page unchanged | ALIVE |
+| `c:/Program%20Files/Git/posts` - a scheme with no `//` authority that nothing hands off | **DEAD, every time** |
+
+So the trigger is narrow and real: **a scheme Android does not take off our hands and `http::Uri`
+will not parse.** `http::Uri` accepts origin-form, authority-form and `scheme://authority/path`; a
+`scheme:/path` with no authority is none of those. The common user-content schemes are safe because
+`shouldOverrideUrlLoading` gives them to the OS before the WebView ever starts loading them.
+
+**How it was found, recorded because the accident is instructive.** Git Bash converts a leading-slash
+argument into a Windows path, so `bun sweep.mjs --route /posts` reached the script as
+`C:/Program Files/Git/posts`, which the DOM resolved to `c:/Program%20Files/Git/posts`. The
+instrument was never wrong and neither was the app's routing - **an MSYS argument produced a URL no
+product code would**, and it killed the app three times before the argument was read. `sweep.mjs`
+with no `--route` was never affected. Run it as `MSYS_NO_PATHCONV=1 bun sweep.mjs --route /posts`,
+or from PowerShell.
+
+**What is still open, and it is the only thing that decides priority:** whether any path a USER can
+take produces such a URL. Nothing found so far does. Two consequences, and they are independent:
+
+- **The abort is a defect whatever the answer**, and it is upstream: a boundary that cannot unwind
+  owes a `Result`, not an `unwrap`. Fixing it here means either a wry version that does so, or
+  refusing the navigation before the WebView starts it - the app owning which URLs its own WebView
+  may load, which is the architectural half.
+- **If a reachable user path exists, it is a shipping P1 and a denial of service**: content that
+  carries such a link would kill the app of anyone who taps it.
+
+**Do not "fix" this by changing the instrument.** It found a line that aborts the process on bad
+input; changing how the sweep navigates would hide it.
 
 ## Composer and reactions
 

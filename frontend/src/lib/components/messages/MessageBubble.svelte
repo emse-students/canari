@@ -772,7 +772,16 @@
       {isOwn}
       anchor={bubbleAnchor}
       existingReactionEmojis={Object.keys(groupedReactions)}
-      onEmojiSelect={(emoji) => onReact?.(messageId, emoji)}
+      onEmojiSelect={(emoji) => {
+        // CHOOSING CLOSES THE PANEL, AND IT HAS TO BE SAID HERE NOW.
+        // It used to happen by accident: the panel is portalled, so the click that chose an emoji
+        // was read as "outside" by the guard on this element and dismissed it. That guard is fixed,
+        // which takes the accident away - a picker that stayed open after a reaction would be the
+        // fix's own regression.
+        onReact?.(messageId, emoji);
+        emojiPickerOrigin = null;
+        showMobileActions = false;
+      }}
     />
 
     {#if showQuickReactions && onReact}
