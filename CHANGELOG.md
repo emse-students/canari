@@ -11,6 +11,21 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - la description d'un partenariat perdait ses sauts de ligne et ses tirets
+
+Un partenaire avait redige son offre avec des retours a la ligne et des tirets ; la carte affichait
+un seul paragraphe d'un seul tenant (remonte a l'utilisateur). La description etait inseree telle
+quelle dans un paragraphe HTML, ou un retour a la ligne ne vaut rien.
+
+L'application avait deja les deux moities de la reponse, ce champ ne s'en servait pas : la saisie
+passe a l'editeur markdown utilise pour la description d'une association, un evenement ou une
+publication, et la carte le rend comme elle. Sauts de ligne, listes, gras et liens sont conserves.
+Les titres restent a la taille du texte courant : sur une carte, un titre pleine taille passerait
+devant le nom du partenaire, qui est la seule chose que cette carte existe pour montrer.
+
+La description est desormais limitee a 2000 caracteres, comme celle d'une association. C'etait le
+seul champ de ce formulaire sans aucune limite, alors que le titre en a 200 et le lien 500.
+
 ### Fixed - un message vocal tenait dans 200 pixels alors que la bulle lui en offrait 351
 
 Le lecteur audio ne demandait qu'une largeur minimale, sans largeur : dans une bulle qui s'ajuste a

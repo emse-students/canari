@@ -1684,6 +1684,7 @@
   "asso_partnership_form_title": "Nouveau partenariat",
   "asso_partnership_title_label": "Titre",
   "asso_partnership_description_label": "Description",
+  "asso_partnership_description_placeholder": "Ce que le partenaire propose. Les sauts de ligne, les listes et le gras sont conserves.",
   "asso_partnership_link_label": "Lien",
   "asso_partnership_link_placeholder": "https://site-du-partenaire.com",
   "asso_partnership_mode_label": "Comment les élèves le réclament",

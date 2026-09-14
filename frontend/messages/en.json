@@ -1663,6 +1663,7 @@
   "asso_partnership_form_title": "New partnership",
   "asso_partnership_title_label": "Title",
   "asso_partnership_description_label": "Description",
+  "asso_partnership_description_placeholder": "What the partner offers. Line breaks, lists and bold are preserved.",
   "asso_partnership_link_label": "Link",
   "asso_partnership_link_placeholder": "https://partner-site.com",
   "asso_partnership_mode_label": "How students claim it",

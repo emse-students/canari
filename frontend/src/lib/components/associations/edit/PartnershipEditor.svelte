@@ -37,6 +37,7 @@
     type PartnershipClaimRow,
   } from '$lib/associations/api';
   import Textarea from '$lib/components/ui/Textarea.svelte';
+  import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
   import CardIconEditor from '$lib/components/shared/CardIconEditor.svelte';
   import { PARTNERSHIP_FALLBACK_ICON } from '$lib/utils/cardIcons';
   import { m } from '$lib/paraglide/messages';
@@ -228,12 +229,29 @@
     />
   </div>
 
-  <Textarea
-    id="partnership-description"
-    bind:value={description}
-    rows={2}
-    label={m.asso_partnership_description_label()}
-  />
+  <!--
+    MARKDOWN, NOT A BARE TEXTAREA (user, 2026-09-14). A partner wrote their offer with line breaks
+    and dashes and the card showed one run-on paragraph: the description was interpolated straight
+    into a `<p>`, where HTML collapses every newline. The app already has both halves of the answer
+    and this field was simply not using them - `MarkdownComposerField` here, `ProfileBioMarkdown`
+    on the card, which is exactly the pair an association's own description uses.
+
+    `maxlength` is 2000, the same cap as that description, and the DTO carries it too: `description`
+    was the one field of this form with no length at all while title had 200 and link 500.
+  -->
+  <div class="space-y-1">
+    <span class="text-text-muted block text-xs font-semibold"
+      >{m.asso_partnership_description_label()}</span
+    >
+    <MarkdownComposerField
+      bind:value={description}
+      maxlength={2000}
+      minHeight="72px"
+      class="border-cn-border bg-cn-bg/30 overflow-hidden rounded-xl border"
+      editorClass="min-h-[72px] w-full px-3 py-2 text-sm text-text-main leading-relaxed"
+      placeholder={m.asso_partnership_description_placeholder()}
+    />
+  </div>
 
   <div class="space-y-1">
     <label for="partnership-link" class="text-text-muted text-xs font-semibold"
