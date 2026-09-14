@@ -16,7 +16,7 @@
   } from '$lib/posts/api';
   import { Log } from '$lib/utils/Log';
   import { createReport, ModerationApiError } from '$lib/moderation/api';
-  import { reportReasons, type ReportReason } from '$lib/moderation/reasons';
+  import type { ReportReason } from '$lib/moderation/reasons';
   import ReportReasonDialog from '$lib/components/moderation/ReportReasonDialog.svelte';
   import { assertNotMuted } from '$lib/moderation/muteCheck';
   import { getForm, checkSubmission } from '$lib/forms/api';
@@ -28,7 +28,7 @@
   import PostPolls from './PostPolls.svelte';
   import PostForms from './PostForms.svelte';
   import PostComments from './PostComments.svelte';
-  import PostOverlayControls from './PostOverlayControls.svelte';
+  import PostActionsMenu from './PostActionsMenu.svelte';
   import PostFeedback from './PostFeedback.svelte';
   import EditPostForm from './EditPostForm.svelte';
   import { Pin, CalendarCheck } from '@lucide/svelte';
@@ -364,9 +364,8 @@
     }
   }
 
-  const REPORT_REASONS = $derived(reportReasons());
-  let reportOpen = $state(false);
-  let reportReason = $state('');
+  /** Whether the post's own report dialog is open. A comment's is keyed by the comment instead. */
+  let reportingPost = $state(false);
   let reportSubmitting = $state(false);
 
   /** The comment awaiting a reason in the report dialog, or null when the dialog is closed. */
@@ -415,59 +414,66 @@
     }
   }
 
-  /** Submits the selected report reason for the post itself. */
-  async function submitReport() {
-    if (!reportReason) return;
+  /** Submits the chosen reason for the post itself, through the same dialog a comment uses. */
+  async function submitReport(reason: ReportReason) {
     reportSubmitting = true;
     try {
-      const value = REPORT_REASONS.find((r) => r.label === reportReason)?.value ?? 'other';
-      await createReport('post', localPost.id, value, undefined, localPost.authorId ?? null);
+      await createReport('post', localPost.id, reason, undefined, localPost.authorId ?? null);
       actionMessage = m.post_signalement_merci();
     } catch (err) {
       reportFailed(err, m.post_already_reported());
     } finally {
-      reportOpen = false;
-      reportReason = '';
+      reportingPost = false;
       reportSubmitting = false;
     }
   }
 </script>
 
 <div class="relative mb-6">
+  <!--
+    NO GLOW. The badge carried `shadow-md shadow-amber-500/30` - an amber halo bleeding onto the
+    card behind it, and the only one of its kind on this surface. A colour-tinted shadow says
+    "this is lit"; every other chip, pill and card here says depth with a neutral shadow or with
+    none. One element speaking a different visual language reads as an accident, which is what it
+    looked like on the phone.
+  -->
   {#if localPost.pinned}
     <span
-      class="text-cn-ink text-2xs pointer-events-none absolute -top-2 left-4 z-10 inline-flex items-center gap-1 rounded-full bg-amber-500 px-2 py-0.5 font-bold tracking-widest uppercase shadow-md shadow-amber-500/30"
+      class="text-cn-ink text-2xs pointer-events-none absolute -top-2 left-4 z-10 inline-flex items-center gap-1 rounded-full bg-amber-500 px-2 py-0.5 font-bold tracking-widest uppercase"
     >
       <Pin size={10} strokeWidth={3} />
       {m.post_pinned()}
     </span>
   {/if}
   <Card
-    class="group/card bg-cn-surface border border-black/5 !p-0 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl dark:border-white/10"
+    class="group/card bg-cn-surface border border-black/5 p-0! transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl dark:border-white/10"
   >
-    <div class="relative">
+    <!--
+      THE MENU SHARES THE HEADER'S LINE; FIVE BUTTONS USED TO FLOAT OVER IT.
+      This was `<div class="relative">` with the action row absolutely positioned `top-3 right-3` on
+      top of `PostHeader`, whose name column is `flex-1` and therefore ran the full width of the card
+      - underneath the buttons. Measured on A1 (Mi 9T, 436 x 945 CSS px) on 2026-09-14: the share
+      icon's box (x 187-201) sat inside the association link "BDE - Bureau des Eleves" (x 83-229),
+      14 x 8 px of overlap, on EVERY card in the feed. The `truncate` on that column could not help -
+      it truncates at the column's width, and the column extended to the card's edge.
+
+      Laying the row out beside the header instead fixed the overlap and exposed the real defect: the
+      five 44 px targets then took 248 px of a 403 px card and the name was cut to "BDE - Bu...". The
+      count is what was wrong, so `PostActionsMenu` collapses them into one overflow button and the
+      name gets the rest - at every width, for every reader, whether they may do one thing or five.
+    -->
+    <div class="flex items-start">
       <PostHeader post={localPost} />
-      <PostOverlayControls
+      <PostActionsMenu
         pinned={localPost.pinned ?? false}
         {canManage}
         {canPin}
         {canReport}
         isLoggedIn={!!currentUserId}
-        {reportOpen}
-        {reportReason}
-        {reportSubmitting}
-        reportReasons={REPORT_REASONS.map((r) => r.label)}
         onTogglePin={togglePin}
         onStartEdit={startEditPost}
         onDelete={handleDeletePost}
-        onToggleReport={(open) => {
-          reportOpen = open;
-          if (!open) reportReason = '';
-        }}
-        onReportReasonChange={(r) => {
-          reportReason = r;
-        }}
-        onSubmitReport={submitReport}
+        onReport={() => (reportingPost = true)}
         postId={localPost.id}
       />
     </div>
@@ -578,7 +584,11 @@
   </Card>
 </div>
 
-<!-- A comment is reported through the same four reasons a post is, and the same dialog. -->
+<!--
+  A comment and a post are reported through the same four reasons AND the same dialog, and until
+  2026-09-14 the second half of that sentence was false: the post had its own 52 px-wide popover of
+  radio buttons inside the header's action row, a second implementation of everything below.
+-->
 <ReportReasonDialog
   open={!!commentBeingReported}
   title={m.report_comment_dialog_title()}
@@ -586,4 +596,13 @@
   submitting={reportSubmitting}
   onSubmit={submitCommentReport}
   onClose={() => (commentBeingReported = null)}
+/>
+
+<ReportReasonDialog
+  open={reportingPost}
+  title={m.post_report_post_title()}
+  targetPreview={localPost.markdown}
+  submitting={reportSubmitting}
+  onSubmit={submitReport}
+  onClose={() => (reportingPost = false)}
 />

@@ -11,6 +11,33 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - cinq boutons recouvraient le nom de l'association en tete de chaque publication
+
+En tete de carte, la rangee partager / epingler / modifier / supprimer / signaler etait posee en
+absolu par-dessus l'en-tete, dont la colonne du nom s'etend jusqu'au bord de la carte. Mesure sur un
+Mi 9T a 436 pixels : l'icone de partage occupait la bande x 187-201, a l'interieur du lien
+"BDE - Bureau des Eleves" qui va de 83 a 229. Quatorze pixels sur huit, sur chaque publication du
+fil. Le truncate de cette colonne ne pouvait rien : il coupe a la largeur de la colonne, et la
+colonne passait sous les boutons.
+
+Poser la rangee a cote de l'en-tete plutot qu'au-dessus supprime le recouvrement et decouvre le vrai
+defaut : cinq cibles tactiles de 44 pixels prennent alors 248 pixels d'une carte qui en fait 403, et
+le nom tombe a "BDE - Bu...". Aucune largeur ne partage cinq boutons et un nom lisible sur un
+telephone - c'est le nombre qui etait faux. Une marge reservee n'aurait pas mieux marche non plus :
+selon ce que le lecteur a le droit de faire, la rangee compte entre un et cinq boutons.
+
+Les cinq sont donc devenus un seul bouton de debordement, et le nom recupere le reste. Le fil de
+Facebook, lu sur ce meme telephone, n'en porte que deux, et ses noms de page se tronquent aussi :
+tronquer n'est pas le defaut, tronquer a huit caracteres l'est.
+
+Au passage, le signalement d'une publication cesse d'avoir sa propre implementation. C'etaient
+quatre boutons radio et un envoi ecrits deux fois, dont une version large de 52 pixels sur telephone,
+alors que la carte montait deja ReportReasonDialog pour les commentaires. Un commentaire et une
+publication se signalent maintenant par la meme boite, ce que le commentaire du code affirmait deja.
+
+La pastille EPINGLE perd son halo ambre. C'etait la seule ombre teintee de la surface, et elle bavait
+sur la carte : partout ailleurs la profondeur se dit avec une ombre neutre ou avec rien.
+
 ### Fixed - au-dela de vingt et une reactions, les suivantes disparaissaient sans laisser de trace
 
 La rangee de reactions sous un message etait enfermee dans une boite de 88 pixels de haut qui coupait
