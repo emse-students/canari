@@ -672,6 +672,44 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     );
   });
 
+  /**
+   * AN UNDECODABLE PAYLOAD IS ACKNOWLEDGED, AND THAT IS THE ONLY DISPOSITION THAT TERMINATES.
+   *
+   * `false` from this handler keeps the row in `queued_message` so it is replayed once the group or
+   * the conversation is back - right for a frame that is merely EARLY. Bytes the decoder refuses are
+   * not early: they will be refused on the hundredth delivery exactly as on the first, so withholding
+   * the ACK would re-fetch the same row on every reconnect for the ninety days of the retention
+   * window, and the retention sweep would be the only thing that ever ended it.
+   *
+   * It returns `true`. Nothing asserted that until now, which is the gap worth closing rather than
+   * the behaviour: the difference between the two dispositions is one `return`, and a future edit
+   * moving it would produce a permanent redelivery loop whose only symptom is a backlog that never
+   * shrinks - indistinguishable, from the server, from a device that simply has nothing to do.
+   */
+  it('ACKS an undecodable payload rather than leaving it to be re-fetched for ninety days', async () => {
+    vi.mocked(codec.decodeAppMessage).mockReturnValueOnce(null);
+    const deps = baseDeps();
+    const mls = deps.mlsService as any;
+    mls.processIncomingMessage = vi.fn().mockResolvedValue(new Uint8Array([9, 9]));
+    mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
+    setupMessageHandler(deps as any);
+    const onMsg = mls.onMessage.mock.calls[0][0] as (
+      a: string,
+      b: Uint8Array,
+      c?: string,
+      d?: boolean,
+      e?: Uint8Array,
+      f?: boolean
+    ) => Promise<boolean>;
+
+    const ok = await onMsg('peer', new Uint8Array([1]), groupId, false, undefined, false);
+
+    // ACKed, and nothing rendered: the frame is dropped on purpose, because no redelivery of the
+    // same bytes could ever produce a message.
+    expect(ok).toBe(true);
+    expect(deps.addMessageToChat).not.toHaveBeenCalled();
+  });
+
   it('epoch gap web (WASM) with the commits pruned → forget + requestReAdd AT ONCE', async () => {
     // `belowFloor` is a PROOF that no later attempt can succeed, so the 30 s wait this test used to
     // assert bought nothing: a frozen outbox, one wasted round trip per arriving frame, and every

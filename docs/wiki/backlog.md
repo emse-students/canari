@@ -106,7 +106,6 @@ refusals):
 | `R-E1`/`DE2` | `NO_REPAIRER` | left only by the epoch pair moving - which needs the holder that is absent. **Population 0, re-read 2026-09-14**: the one group counted here had no MEMBERS, a failed creation rather than a dead end (fixed 2026-09-14) |
 | `R-E9`, `R-E11` | peer-unresolved; `readWelcomeOwed() === null` | retried for ever, no counter |
 | `DE7` | `MLS_LOCAL_STATE_UNDECRYPTABLE` | the only route offered requires the OLD PIN |
-| `DE10` | an undecodable payload | never enqueued, so never ACK-able; the code names the 90-day retention window as its only terminator |
 | `DE13` | leaving a conversation | nothing stages a Remove for the leaver's own leaf |
 | `G-E6` | `historyAsked` set when nobody could be asked | cleared only by the community leaving the device, or a restart |
 | `G-E10` | `forgetCommunityGraine` with no runtime | warns, returns 0; seeds and joined groups stay |
