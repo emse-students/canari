@@ -45,6 +45,12 @@
     type EventFormValues,
   } from '$lib/calendar/eventForm';
   import { pushHistoryOverlay, closeHistoryOverlayFromUi } from '$lib/utils/historyOverlayStack';
+  import CalendarScheduleList from '$lib/components/calendar/CalendarScheduleList.svelte';
+  import {
+    SCHEDULE_AGENDA_QUERY,
+    isScheduleAgendaViewport,
+    onViewportChange,
+  } from '$lib/utils/viewport';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
 
@@ -193,6 +199,17 @@
   }
 
   onMount(loadMonth);
+
+  /**
+   * A PHONE GETS A SCHEDULE LIST INSTEAD OF THE MONTH GRID - the same rule as `/calendar`, read
+   * from the same predicate. Kept in step with rotations rather than fixed at mount: one window
+   * can be both, and a device turned sideways must get the grid back.
+   */
+  let scheduleLayout = $state(false);
+  onMount(() => {
+    scheduleLayout = isScheduleAgendaViewport();
+    return onViewportChange(SCHEDULE_AGENDA_QUERY, (narrow) => (scheduleLayout = narrow));
+  });
 
   function prevMonth() {
     selectedDay = null;
@@ -444,15 +461,31 @@
     </div>
   {/if}
 
-  <MonthCalendarGridRich {focusDate} events={feedEvents} {loading} bind:selectedDay />
+  {#if scheduleLayout}
+    <!-- THE PHONE GETS THE SAME ANSWER AS `/calendar`, AND HAD NONE AT ALL. Seven columns of 48px
+         say which days exist and nothing about what is on them, and this section drew that grid on
+         every screen: the association's agenda was unreadable on the device most people open it on,
+         while the global one had been a schedule list since 2026-09-09. `CalendarScheduleList`
+         takes the month out of the events themselves, so there is no selected day to carry and no
+         day panel to place. -->
+    <CalendarScheduleList
+      {focusDate}
+      events={feedEvents}
+      {loading}
+      ownAssociationId={associationId}
+      onEventClick={openEventDetail}
+    />
+  {:else}
+    <MonthCalendarGridRich {focusDate} events={feedEvents} {loading} bind:selectedDay />
 
-  <CalendarDayEventsPanel
-    {focusDate}
-    {selectedDay}
-    events={feedEvents}
-    ownAssociationId={associationId}
-    onEventClick={openEventDetail}
-  />
+    <CalendarDayEventsPanel
+      {focusDate}
+      {selectedDay}
+      events={feedEvents}
+      ownAssociationId={associationId}
+      onEventClick={openEventDetail}
+    />
+  {/if}
 
   <CalendarEventDetailModal
     open={detailModalOpen}

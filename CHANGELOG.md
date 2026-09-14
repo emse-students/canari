@@ -11,6 +11,17 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - an association's agenda was a seven-column grid on a phone
+
+The global agenda has drawn a schedule list instead of a month grid on a narrow screen since
+September: seven columns of 48 pixels say which days exist and nothing about what is on them. The
+agenda inside an association's page never got that, and drew the grid at every width - so the club
+calendar was at its least readable on the device most people open it on.
+
+It now uses the same list, decided by the same predicate, and returns to the grid when the phone is
+turned sideways. Nothing changes on a computer.
+
+
 ### Fixed - anybody signed in could change the poster on anybody's event
 
 The two endpoints behind an event's poster - the upload and the removal - checked only that the
