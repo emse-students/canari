@@ -5416,11 +5416,58 @@ turn it into a defect, are in [design-reference](frontend/design-reference.md) s
 
 **What the sweep could NOT reach, and is the remaining scope:**
 
-- **A community with many channels, or long ones.** `/communities` was measured against the estate's
-  one community with one channel, which exercises no width.
+- **A community with many channels. The LONG-NAME half is answered (2026-09-14), by injection, and
+  it holds.** The estate has one channel per workspace, so the width was exercised by writing a
+  56-character name (`annonces-generales-et-tres-importantes-de-la-rentree-2026`) into the sidebar's
+  twelve text leaves through the DOM and re-measuring: at 1280 all twelve clip with an ellipsis, at
+  390 none of them does, and **at neither width does anything exceed its container or make the
+  document scroll sideways** - `scrollWidth - clientWidth` is 0 before AND after the injection, both
+  widths. The 390 result is the one the probe cannot read alone: "nothing clipped and nothing was
+  over-wide" is what a sidebar the phone layout does not render looks like too. What settles it is
+  the second surface measured the same way at 390, where six of eight leaves clipped; the two that
+  did not are an icon box carrying no text and one `text-sm font-medium` label, and neither was
+  over-wide. **So a long channel name truncates and never widens the page.** What a real
+  many-channel community would add on top of that is VERTICAL length - a list that scrolls - which
+  this probe did not exercise, and injection proves the LAYOUT holds, never that real data is shaped
+  this way.
 - **Real hardware.** All of the above is Chrome with a device-metrics override; the phone and the
   iPhone render their own way, and three of three iOS defects were invisible to every gate here
-  ([device-verification](device-verification.md)).
+  ([device-verification](device-verification.md)). **The instrument now exists**:
+  `tools/cross-client-harness/sweep.mjs` runs the same three measurements against a real client over
+  CDP - A1, W1, or an iPhone once one is inspectable - so the sweep is repeatable rather than
+  retyped. It found the P1 below on its first run.
+
+### P1 - A URI wry cannot parse ABORTS THE WHOLE APP, and nothing can catch it (found 2026-09-14 on A1)
+
+Measured on A1, build `7fea1bb42` (0.18.0, code 1800099), LineageOS 23.2 / Android 11, arm64:
+
+```
+thread '<unnamed>' panicked at wry-0.55.1/src/android/binding.rs:397:62:
+called `Result::unwrap()` on an `Err` value: http::Error(InvalidUri(InvalidFormat))
+panic in a function that cannot unwind
+  #10 Java_fr_emse_canari_Rust_ipc      <- thread JavaBridge
+  #00 abort                             <- signal 6 (SIGABRT)
+```
+
+**An `unwrap()` inside an `extern "C"` frame is not a crash that a boundary can contain.** The panic
+cannot unwind through the JNI frame, so Rust aborts the process: the activity is force-finished, the
+sandboxed renderer dies with it, and the user watches the app vanish. There is no JS error, no
+`svelte:boundary`, and nothing in `CHANGELOG.md` could have predicted it - the Rust half ships on
+compilation, and this path compiles perfectly.
+
+**What is PROVEN**: a client-side navigation driven by an injected anchor reaches it every time, on
+`/posts`, `/calendar` and `/settings` alike - three for three. **What is NOT proven, and decides the
+severity**: whether an ordinary tap on an ordinary link reaches the same line. It cannot be common
+or the app would be unusable, so the live question is which URI shape wry refuses and who can
+produce it. Two different fixes hang on that answer, and taking the wrong one fixes nothing:
+
+- If only the synthetic navigation produces it, the defect is still real but it is **wry aborting
+  instead of refusing a request** - the boundary owes a `Result`, not an `unwrap`.
+- If a reachable user path produces it, it is a shipping P1 on top of that.
+
+**Do not "fix" this by making the sweep navigate differently.** The instrument found a line that
+aborts the process on bad input; changing the instrument would hide it, which is the whole failure
+mode this page exists to prevent.
 
 ## Composer and reactions
 
