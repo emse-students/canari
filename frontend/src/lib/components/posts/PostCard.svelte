@@ -29,6 +29,7 @@
   import PostForms from './PostForms.svelte';
   import PostComments from './PostComments.svelte';
   import PostActionsMenu from './PostActionsMenu.svelte';
+  import PostCornerBadge from './PostCornerBadge.svelte';
   import PostFeedback from './PostFeedback.svelte';
   import EditPostForm from './EditPostForm.svelte';
   import { Pin, CalendarCheck } from '@lucide/svelte';
@@ -430,20 +431,10 @@
 </script>
 
 <div class="relative mb-6">
-  <!--
-    NO GLOW. The badge carried `shadow-md shadow-amber-500/30` - an amber halo bleeding onto the
-    card behind it, and the only one of its kind on this surface. A colour-tinted shadow says
-    "this is lit"; every other chip, pill and card here says depth with a neutral shadow or with
-    none. One element speaking a different visual language reads as an accident, which is what it
-    looked like on the phone.
-  -->
   {#if localPost.pinned}
-    <span
-      class="text-cn-ink text-2xs pointer-events-none absolute -top-2 left-4 z-10 inline-flex items-center gap-1 rounded-full bg-amber-500 px-2 py-0.5 font-bold tracking-widest uppercase"
-    >
-      <Pin size={10} strokeWidth={3} />
-      {m.post_pinned()}
-    </span>
+    <PostCornerBadge label={m.post_pinned()}>
+      {#snippet icon()}<Pin size={10} strokeWidth={3} />{/snippet}
+    </PostCornerBadge>
   {/if}
   <Card
     class="group/card bg-cn-surface border border-black/5 p-0! transition-all duration-300 hover:-translate-y-0.5 hover:shadow-xl dark:border-white/10"

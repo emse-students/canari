@@ -11,6 +11,19 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - le halo retire de la pastille "Epingle" vivait toujours sur sa jumelle "Nouveau"
+
+Le fil accroche deux pastilles identiques au coin des cartes : "EPINGLE" et "NOUVEAU". Elles etaient
+ecrites deux fois, a deux endroits, et n'ont diverge qu'au moment ou l'une a ete corrigee : le halo
+ambre (`shadow-md shadow-amber-500/30`) a ete retire de "EPINGLE" parce qu'une ombre teintee etait la
+seule de son espece sur cette surface, et "NOUVEAU" l'a garde. Un lecteur voyait donc le defaut
+corrige sur une publication et vivant sur la suivante.
+
+Les deux sont la meme chose - une etiquette accrochee au coin d'une carte - donc elles sont
+desormais un seul composant, et la prochaine retouche ne pourra plus n'atteindre que la moitie du
+fil. Les ombres ambrees ailleurs dans l'application sont sur des boutons ambres, ou la teinte est
+celle du bouton lui-meme : elles restent.
+
 ### Changed - chaque publication payait deux rangees et un composeur avant d'en montrer une autre
 
 Mesure sur un Mi 9T (436 x 945 pixels), le 14 septembre 2026 : une carte de publication depensait
