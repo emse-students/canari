@@ -11,6 +11,19 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - la photo, le nom et la formation etaient colles au bord gauche de la page profil
+
+Empilee sur un telephone, la photo de 96 pixels se trouvait contre le bord d'une carte de 404, le
+reste de la ligne vide, et le nom, le badge et la pastille de formation commencaient chacun a une
+marge apparente differente parce que chacun a une largeur differente. Les trois sont maintenant
+centres sur un meme axe - mesure sur un Mi 9T : 218 pixels pour les trois, sur 436.
+
+Le lien vers les reglages et, sur le profil de quelqu'un d'autre, les boutons suivre et message se
+centrent avec eux : ils sont la suite de la meme colonne, et en laisser un cale a gauche sous un bloc
+centre annulerait l'axe que les trois autres viennent de gagner. Le profil d'une autre personne recoit
+le meme traitement que le votre : c'est le meme ecran avec d'autres boutons. A partir d'une tablette,
+rien ne bouge.
+
 ### Fixed - l'instrument de la passe graphique prenait un defilement volontaire pour un debordement
 
 `sweep.mjs` mesure chaque page de l'application sur un vrai telephone et signale ce qui depasse de
