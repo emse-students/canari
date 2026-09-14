@@ -98,7 +98,7 @@ refusals):
 | Item | The state | Population |
 | --- | --- | --- |
 | `S-E1`/`DE4` | a commit-log hole | **18 holes, 11 of 58 groups, every one exactly ONE epoch wide** |
-| `S-E3`/`G-E3`/`DE3` | stale base, every holder behind | **1 group** |
+| `S-E3`/`G-E3`/`DE3` | stale base, every holder behind | **3 groups, re-measured 2026-09-14** - and all three are shut, not waiting: the commit at `activeEpoch - 1` is ABSENT in every one, so no device can replay its way to the current epoch. Frozen since 2026-08-29/30/31 with 357 messages queued in them. The WITNESS is fixed (2026-09-14); the EXIT is not, and the only candidate is reconciling `activeEpoch` down to the last epoch the log can reconstruct |
 | an outbox entry with no terminal state | the two permanent dispositions are `group-deleted` and `evicted`; a group nobody can repair is **neither**, so a held entry stays pending for the life of the install | **the counter it would need now exists** (2026-09-14); what is missing is the PROOF a terminal disposition may be taken on, and a clock is not one |
 | `R-E1`/`DE2` | `NO_REPAIRER` | left only by the epoch pair moving - which needs the holder that is absent. **Population 0, re-read 2026-09-14**: the one group counted here had no MEMBERS, a failed creation rather than a dead end (fixed 2026-09-14) |
 | `R-E9`, `R-E11` | peer-unresolved; `readWelcomeOwed() === null` | retried for ever, no counter |

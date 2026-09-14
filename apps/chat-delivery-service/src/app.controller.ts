@@ -9,6 +9,7 @@ import { DeviceGroupMembership } from './entities/device-group-membership.entity
 import { RevokedDevice } from './entities/revoked-device.entity';
 import { PushToken } from './entities/push-token.entity';
 import { MlsGroupInfo } from './entities/mls-group-info.entity';
+import { MlsCommitLog } from './entities/mls-commit-log.entity';
 import Redis from 'ioredis';
 import { initializeApp, getApps, cert, type ServiceAccount } from 'firebase-admin/app';
 import {
@@ -89,6 +90,8 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     private pushTokenRepo: Repository<PushToken>,
     @InjectRepository(MlsGroupInfo)
     private groupInfoRepo: Repository<MlsGroupInfo>,
+    @InjectRepository(MlsCommitLog)
+    private commitLogRepo: Repository<MlsCommitLog>,
     @Inject('REDIS_CLIENT') private readonly redis: Redis,
     private readonly messagingService: MessagingService
   ) {}
@@ -658,22 +661,52 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    // Who could repair each one, and who is waiting on it. Both read from the same table in one
-    // query: `active` is a member that holds the tree and will republish on its next connection,
-    // `pending` is a device that has been given a seat and cannot take it while the base is behind.
+    // Who is waiting on each one. `pending` is a device that has been given a seat and cannot take
+    // it while the base is behind - a routing fact, and routing is the question this column answers.
     const groupIds = stale.map((r) => r.groupId);
     const memberships = await this.deviceGroupRepo.find({
       select: { groupId: true, status: true },
       where: { groupId: In(groupIds) },
     });
-    const activeOf = new Map<string, number>();
     const pendingOf = new Map<string, number>();
     for (const m of memberships) {
-      const bucket = m.status === 'active' ? activeOf : pendingOf;
-      bucket.set(m.groupId, (bucket.get(m.groupId) ?? 0) + 1);
+      if (m.status !== 'active') pendingOf.set(m.groupId, (pendingOf.get(m.groupId) ?? 0) + 1);
     }
 
-    const unrepairable = stale.filter((r) => (activeOf.get(r.groupId) ?? 0) === 0);
+    // THE PARTITION IS READ FROM THE COMMIT LOG, BECAUSE `active` NEVER ANSWERED THIS QUESTION.
+    //
+    // It used to split on whether ANY device held an `active` membership, on the reasoning that
+    // such a device holds the tree and will republish on its next connection. `active` is a
+    // ROUTING status - it says this server will deliver to that device - and it was being read as
+    // a cryptographic one. The two come apart exactly here, and a column is only evidence for the
+    // question it was written to answer.
+    //
+    // The evidence that IS about the tree is in the log. A base at `activeEpoch - 1` is repairable
+    // by anyone who can reach `activeEpoch`, and the commit that gets there is the row keyed
+    // `baseEpoch = activeEpoch - 1`. If that row EXISTS, any device at the base's epoch replays it
+    // and republishes: the group really is waiting for a member to come back. If it is ABSENT, the
+    // head advance was accepted and never recorded - the pre-2026-09-04 defect, when the advance
+    // and the log row were not one transaction - and `IDX_mls_commit_log_group_epoch` being UNIQUE
+    // means nothing can ever refill it. No device that lacks that commit can reach the current
+    // epoch, by replay or otherwise, so only a device that applied it live can republish, and it is
+    // the one thing no server-side column records.
+    //
+    // MEASURED ON PRODUCTION 2026-09-14, AND IT IS THE WHOLE POPULATION. Three groups publish a
+    // stale base; all three are one epoch behind; all three hold 1, 5 and 9 `active` memberships,
+    // so the old partition called every one of them "waiting"; and in all three the commit at
+    // `activeEpoch - 1` is ABSENT. They have been waiting since 2026-08-29, 08-30 and 08-31, their
+    // members sign in daily, and 357 messages sit queued in them undelivered.
+    const headCommits = await this.commitLogRepo
+      .createQueryBuilder('c')
+      .select('c."groupId"', 'groupId')
+      .where('c."groupId" IN (:...groupIds)', { groupIds })
+      .andWhere(
+        'c."baseEpoch" IN (SELECT g."activeEpoch" - 1 FROM dm_groups g WHERE g.id = c."groupId")'
+      )
+      .getRawMany<{ groupId: string }>();
+    const headRecorded = new Set(headCommits.map((r) => r.groupId));
+
+    const unrepairable = stale.filter((r) => !headRecorded.has(r.groupId));
     const lockedOut = stale.reduce((n, r) => n + (pendingOf.get(r.groupId) ?? 0), 0);
     const ageDays = (at: Date) =>
       Math.floor((Date.now() - new Date(at).getTime()) / (24 * 60 * 60 * 1000));
@@ -698,9 +731,9 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       // anywhere holds an active membership on these groups, so no republish is possible from any
       // client, and the base will stay behind for as long as the rows exist. Nothing else names it.
       this.logger.error(
-        `[CRON] reportStaleExternalJoinBases: ${unrepairable.length} of them have NO active device ` +
-          `membership at all - no client can mint a base for them, so they are shut permanently ` +
-          `rather than waiting for a member to return. Oldest ` +
+        `[CRON] reportStaleExternalJoinBases: ${unrepairable.length} of them have NO recorded commit ` +
+          `at their own head epoch, so no device can replay its way to the current epoch and only ` +
+          `one that applied that commit live could republish - they are shut, not waiting. Oldest ` +
           `${Math.min(unrepairable.length, STALE_BASE_REPORT_TOP_N)}: ${name(unrepairable)}`
       );
     }

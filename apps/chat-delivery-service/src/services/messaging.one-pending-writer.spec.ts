@@ -347,6 +347,7 @@ describe('the CRON door', () => {
         { provide: getRepositoryToken(RevokedDevice), useValue: emptyRepo() },
         { provide: getRepositoryToken(PushToken), useValue: emptyRepo() },
         { provide: getRepositoryToken(MlsGroupInfo), useValue: emptyRepo() },
+        { provide: getRepositoryToken(MlsCommitLog), useValue: emptyRepo() },
         { provide: 'REDIS_CLIENT', useValue: redis },
         { provide: MessagingService, useValue: messaging },
       ],
