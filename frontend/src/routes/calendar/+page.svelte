@@ -9,6 +9,7 @@
     listAssociations,
     listPendingCalendarEvents,
     listMyAssociations,
+    listAssociationLinkCandidates,
     createAssociationCalendarEvent,
     updateAssociationCalendarEvent,
     deleteAssociationCalendarEvent,
@@ -45,6 +46,8 @@
     ShieldAlert,
     FileDown,
   } from '@lucide/svelte';
+  import { createEventPoster } from '$lib/calendar/eventPoster.svelte';
+  import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
   import {
@@ -297,7 +300,67 @@
    * poster are the association's own to decide, and a capability left unset is what keeps them out
    * of the payload rather than a comment asking the next reader to remember.
    */
-  const capabilities = { canTargetAnotherAssociation: true };
+  /**
+   * WHAT THIS SURFACE MAY DECIDE - and it was granting itself the least of the three.
+   *
+   * `canSetKind` follows `canDepositEvent`, which is exactly `mayValidate` on the server
+   * (`assertMayDecideKind`): a global admin or a BDE `VALIDATE_EVENTS` holder. Anyone else reaching
+   * this form is a proposer EDITING their own association's event, and the server would refuse the
+   * field - so it is not offered, rather than offered and refused.
+   *
+   * `canLinkForm` needs the forms of the TARGET association, and `GET :id/link-candidates` wants
+   * `PROPOSE_EVENT` on that association. That is knowable here, from the list already loaded, so
+   * the control appears only where the request would succeed instead of being sent to find out.
+   */
+  const capabilities = $derived({
+    canTargetAnotherAssociation: true,
+    canSetKind: canDepositEvent,
+    canLinkForm: mayLinkFormOn(depositValues.targetAssociationId),
+  });
+
+  /** Whether the viewer may list - and therefore link - the forms of `associationId`. */
+  function mayLinkFormOn(associationId: string): boolean {
+    if (!associationId) return false;
+    return isGlobalAdmin() || proposeAssocIds.has(associationId);
+  }
+
+  /**
+   * The target's forms, refetched when the target changes: the picker is per-association, and this
+   * surface is the one that can move an event from one association to another mid-form.
+   */
+  let linkCandidates = $state<{ id: string; title: string }[] | null>(null);
+  let linkCandidatesFor = $state('');
+
+  async function ensureLinkCandidates(associationId: string) {
+    if (linkCandidatesFor === associationId) return;
+    linkCandidatesFor = associationId;
+    linkCandidates = null;
+    if (!mayLinkFormOn(associationId)) return;
+    try {
+      const loaded = await listAssociationLinkCandidates(associationId);
+      if (linkCandidatesFor === associationId) linkCandidates = loaded.forms;
+    } catch (e) {
+      // The right was checked before the call, so a refusal here is the transport or a rule that
+      // moved - either way the picker is empty and the reason must not vanish with it.
+      Log.d('[calendar] link candidates failed', e);
+    }
+  }
+
+  // The target is chosen inside the modal, so the candidate list follows the VALUE rather than the
+  // opening: picking another association mid-form must repopulate the picker under it.
+  $effect(() => {
+    if (depositModalOpen) void ensureLinkCandidates(depositValues.targetAssociationId);
+  });
+
+  /**
+   * The poster, on the same terms as the association's own page. It addresses an existing row, so
+   * the owning association is the event's - `targetAssociationId` holds it while editing.
+   */
+  const poster = createEventPoster({
+    associationId: () => depositValues.targetAssociationId,
+    eventId: () => editingEventId,
+    onChanged: loadMonth,
+  });
 
   function openDeposit() {
     editingEventId = null;
@@ -306,6 +369,7 @@
       ...blankEventFormValues(),
       targetAssociationId: filterAssociationId || associations[0]?.id || '',
     };
+    poster.set(null);
     depositModalOpen = true;
   }
 
@@ -313,6 +377,7 @@
     editingEventId = ev.id;
     editingOwnerName = ev.associationName;
     depositValues = eventFormValuesFrom(ev);
+    poster.set(ev.imageUrl ?? null);
     depositModalOpen = true;
   }
 
@@ -586,6 +651,8 @@
   bind:values={depositValues}
   {capabilities}
   {associations}
+  linkableForms={linkCandidates}
+  poster={poster.controls}
   submitLabel={editingEventId ? m.common_save_button() : m.calendar_deposit_publish()}
   savingLabel={editingEventId ? m.asso_calendar_saving_label() : m.calendar_deposit_publishing()}
   onSubmit={submitEvent}

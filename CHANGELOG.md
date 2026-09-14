@@ -54,6 +54,24 @@ holding every other edit right on it.
 No evidence this was used: the control is not offered anywhere in the app, and reaching it needed
 both ids and a hand-made request.
 
+### Fixed - the poster, the registration form and the break toggle were missing from the global agenda
+
+The event form is one component used by two screens, but only one of them ever handed it everything
+it can draw. From the global agenda, an administrator could edit every field of an event except
+three: its poster, its linked registration form, and whether it is a school-wide break - while the
+same person, opening the same event from the association's own page, could do all three. The server
+had always accepted them from exactly that person.
+
+All three are now offered on both screens, each to whoever the API would actually accept them from:
+the break toggle to a BDE validator or a global admin, the registration form to whoever may list the
+target association's forms. The picker follows the association the event is being filed under, so
+changing it mid-form repopulates the list underneath.
+
+The poster's state and its two endpoints are now one implementation instead of one screen's private
+code, and a failed form lookup is logged on both screens rather than leaving an empty picker with no
+explanation anywhere.
+
+
 ### Fixed - an identifier in the admin pages was cut short with no way to read it
 
 Three places showed a full account or content identifier and then cut it off: the admin user list,
