@@ -13,6 +13,7 @@ import {
   groupMonthEventsByDay,
   formatEventTimeRange,
   eventAccentColor,
+  eventOwners,
 } from './feedEvents';
 
 /** Local-time ISO, so the test says the same thing wherever it runs. */
@@ -143,5 +144,50 @@ describe('eventAccentColor', () => {
 
     expect(first).toMatch(/^#[0-9a-f]{6}$/i);
     expect(eventAccentColor(ev)).toBe(first);
+  });
+});
+
+describe('eventOwners', () => {
+  /**
+   * THE CRASH THIS PINS. `/associations/mitv` asked for MiTV's month, got back an event MiTV only
+   * CO-OWNS, and the page stamped itself onto it as the owner - so MiTV stood in the owner slot and
+   * the co-owner slot of the same event. The grid keys its logo bands on that list, two entries
+   * collided, and Svelte threw `each_key_duplicate`: not a logo painted wrong, the whole page gone
+   * (production, 2026-09-14).
+   */
+  it('names the event OWNER first, then the co-owners', () => {
+    const owners = eventOwners(
+      event({
+        associationId: 'corpo-id',
+        associationName: 'Corpo',
+        associationSlug: 'corpo',
+        coOwners: [
+          { associationId: 'mitv-id', name: 'MiTV', slug: 'mitv', color: '#111', logoUrl: '/l' },
+        ],
+      })
+    );
+
+    expect(owners.map((o) => o.associationId)).toEqual(['corpo-id', 'mitv-id']);
+    expect(owners[0].name).toBe('Corpo');
+    expect(owners[1].logoUrl).toBe('/l');
+  });
+
+  it('gives every entry a distinct key even when two associations share a name', () => {
+    const owners = eventOwners(
+      event({
+        associationId: 'a-id',
+        associationName: 'Club',
+        coOwners: [
+          { associationId: 'b-id', name: 'Club', slug: 'club-2', color: null, logoUrl: null },
+        ],
+      })
+    );
+
+    const keys = owners.map((o) => o.associationId);
+    expect(new Set(keys).size).toBe(keys.length);
+  });
+
+  it('is the owner alone when nothing is co-owned', () => {
+    expect(eventOwners(event({ coOwners: [] })).map((o) => o.associationId)).toEqual(['a1']);
   });
 });

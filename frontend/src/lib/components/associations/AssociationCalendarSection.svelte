@@ -52,8 +52,6 @@
     associationId: string;
     /** Used in exported / subscribed ICS (`URL` field). */
     associationSlug?: string;
-    associationName?: string;
-    associationLogoUrl?: string | null;
     canEdit?: boolean;
     /**
      * Whether the viewer may declare a school-wide `break` band. A band is a statement about the
@@ -62,21 +60,16 @@
      * field the API will refuse is how a control comes to look broken rather than forbidden.
      */
     canDeclareBreak?: boolean;
-    /** Hex color of this association for calendar cell gradient (e.g. "#e83e8c"). */
-    associationColor?: string | null;
   }
 
   let {
     associationId,
     associationSlug,
-    associationName = '',
-    associationLogoUrl = null,
     canEdit = false,
     canDeclareBreak = false,
-    associationColor = null,
   }: Props = $props();
 
-  let events = $state<AssociationCalendarEvent[]>([]);
+  let events = $state<AssociationCalendarFeedEvent[]>([]);
   let loading = $state(true);
   let loadError = $state('');
   let focusDate = $state(new Date());
@@ -217,22 +210,13 @@
   const pendingEvents = $derived(events.filter((e) => e.status === 'pending'));
   const rejectedEvents = $derived(events.filter((e) => e.status === 'rejected'));
 
-  /** Maps association events to the feed shape expected by the rich calendar grid. */
-  function toFeedEvent(ev: AssociationCalendarEvent): AssociationCalendarFeedEvent {
-    return {
-      ...ev,
-      associationName,
-      associationSlug: associationSlug ?? '',
-      associationColor: associationColor ?? null,
-      associationLogoUrl: associationLogoUrl ?? null,
-    };
-  }
-
   // The calendar shows validated + pending events (pending rendered greyed-out via MonthCalendarGridRich),
   // never rejected ones (those only appear in the management section below).
-  const feedEvents = $derived(
-    events.filter((e) => (e.status ?? 'validated') !== 'rejected').map(toFeedEvent)
-  );
+  // THE OWNER TRAVELS WITH THE EVENT, AND THIS SECTION MUST NOT STAMP ITS OWN ASSOCIATION ONTO IT.
+  // The list includes events this association only CO-OWNS: naming itself the owner put it in both
+  // the owner slot and the co-owner slot of the same event, and the grid - keyed on that identity -
+  // threw `each_key_duplicate` and crashed the page (prod, 2026-09-14).
+  const feedEvents = $derived(events.filter((e) => (e.status ?? 'validated') !== 'rejected'));
 
   const sortedPendingEvents = $derived(
     [...pendingEvents].sort(
@@ -466,7 +450,7 @@
     {focusDate}
     {selectedDay}
     events={feedEvents}
-    hideAssociationName={true}
+    ownAssociationId={associationId}
     onEventClick={openEventDetail}
   />
 
@@ -474,7 +458,7 @@
     open={detailModalOpen}
     event={detailEvent}
     {canEdit}
-    showAssociation={false}
+    showAssociation={detailEvent !== null && detailEvent.associationId !== associationId}
     onClose={() => {
       detailModalOpen = false;
       detailEvent = null;

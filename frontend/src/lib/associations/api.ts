@@ -446,17 +446,21 @@ export async function listMembers(associationId: string): Promise<AssociationMem
   );
 }
 
+/**
+ * Events of an association, INCLUDING the ones it only co-owns - which is why every row carries its
+ * own owner identity and the caller must never stamp `associationId` onto them as the owner.
+ */
 export async function listAssociationCalendarEvents(
   associationId: string,
   opts?: { from?: string; to?: string; includePending?: boolean; includeRejected?: boolean }
-): Promise<AssociationCalendarEvent[]> {
+): Promise<AssociationCalendarFeedEvent[]> {
   const q = new URLSearchParams();
   if (opts?.from) q.set('from', opts.from);
   if (opts?.to) q.set('to', opts.to);
   if (opts?.includePending) q.set('includePending', 'true');
   if (opts?.includeRejected) q.set('includeRejected', 'true');
   const qs = q.toString();
-  return request<AssociationCalendarEvent[]>(
+  return request<AssociationCalendarFeedEvent[]>(
     `/api/associations/${encodeURIComponent(associationId)}/events${qs ? `?${qs}` : ''}`
   );
 }

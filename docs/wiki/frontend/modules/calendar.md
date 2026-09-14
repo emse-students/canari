@@ -25,6 +25,31 @@ Used inside the association detail view (`/associations/:id`). It:
 - Shows events in a timeline or month view.
 - For admins: inline form to create new events (`POST /api/associations/:id/events`).
 
+### THE PAGE IS NOT THE OWNER OF EVERYTHING IT LISTS
+
+`GET /api/associations/:id/events` returns the events that association **co-owns** as well as the
+ones it owns - the `WHERE` clause is `e.associationId = :id OR EXISTS (co-owner row)`. So "the
+association whose page this is" and "the association that owns this row" are two different facts,
+and **only the row may answer the second one**. The endpoint therefore returns `associationName`,
+`associationSlug`, `associationColor` and `associationLogoUrl` per event, the same four fields the
+aggregated feed has always returned; `listCalendarEvents` batch-loads them next to the co-owners.
+
+Until 2026-09-14 it did not, and `AssociationCalendarSection` filled them in from its own props. On
+a co-owner's page that named one association twice on the same event - owner slot and co-owner slot
+- and **`MonthCalendarGridRich` keyed its logo bands on the association NAME**, so the two entries
+collided and Svelte threw `each_key_duplicate`. That is not a mis-painted logo: the page died
+(production, `/associations/mitv`, one event owned by another club). The global agenda never had it,
+because there the owner has always travelled with the event.
+
+Owner + co-owners are now built once, by `eventOwners()` in `$lib/calendar/feedEvents.ts`, for the
+grid's bands, the day panel and the event dialog - and every list of them is keyed on
+`associationId`. **A name is a label two associations may share and a slug is a URL; neither is an
+identity, and a key that can repeat is a crash rather than a cosmetic slip.**
+
+The same fact decides what a row says: the day panel takes `ownAssociationId` (not a
+`hideAssociationName` boolean) and the dialog is told `showAssociation` per event, so a row the page
+merely co-owns still names, colours and badges its real owner.
+
 ## The event form - ONE component, and capabilities decide the rest
 
 Four modals ("Proposer", "Modifier" on an association's page; "Deposer", "Modifier" on the global

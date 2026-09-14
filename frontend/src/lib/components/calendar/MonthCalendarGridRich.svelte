@@ -11,6 +11,7 @@
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
   import { associationAccentHex } from '$lib/associations/accent';
+  import { eventOwners } from '$lib/calendar/feedEvents';
 
   let {
     focusDate,
@@ -108,27 +109,23 @@
 
   /** Returns all hex colors for the event: primary first, then co-owners. */
   function eventColors(ev: AssociationCalendarFeedEvent): string[] {
-    const primary = associationAccentHex({ id: ev.associationId, color: ev.associationColor });
-    return [
-      primary,
-      ...(ev.coOwners ?? []).map((co) =>
-        associationAccentHex({ id: co.associationId, color: co.color })
-      ),
-    ];
+    return eventOwners(ev).map((owner) =>
+      associationAccentHex({ id: owner.associationId, color: owner.color })
+    );
   }
 
-  /** Logos for the event: primary first, then co-owners (resolved src, or null → initials). */
-  function eventLogos(ev: AssociationCalendarFeedEvent): { src: string | null; name: string }[] {
-    return [
-      {
-        src: associationLogoSrc(ev.associationLogoUrl),
-        name: ev.associationName,
-      },
-      ...(ev.coOwners ?? []).map((co) => ({
-        src: associationLogoSrc(co.logoUrl ?? null),
-        name: co.name,
-      })),
-    ];
+  /**
+   * Logos for the event: primary first, then co-owners (resolved src, or null → initials).
+   * Index-aligned with `eventColors`, which is what lets one band list carry both.
+   */
+  function eventLogos(
+    ev: AssociationCalendarFeedEvent
+  ): { associationId: string; src: string | null; name: string }[] {
+    return eventOwners(ev).map((owner) => ({
+      associationId: owner.associationId,
+      src: associationLogoSrc(owner.logoUrl),
+      name: owner.name,
+    }));
   }
 
   /** Inline CSS background for an event block - solid or split-color gradient. */
@@ -342,7 +339,7 @@
                         style="height:62%;aspect-ratio:1;max-height:52px;opacity:0.22;left:50%;top:50%;transform:translate(-50%,-50%);"
                         aria-hidden="true"
                       >
-                        {#each logos as lg, i (lg.name)}
+                        {#each logos as lg, i (lg.associationId)}
                           <div
                             class="absolute top-0 h-full overflow-hidden"
                             style="left:{bands[i].leftPct}%;width:{bands[i].widthPct}%;"

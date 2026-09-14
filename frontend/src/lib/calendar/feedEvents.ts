@@ -78,6 +78,49 @@ export function groupMonthEventsByDay(
   return groups;
 }
 
+/** One association shown on an event - its owner, or one of its co-owners. */
+export interface EventOwnerIdentity {
+  /**
+   * THE IDENTITY, AND THE ONLY THING THIS LIST MAY BE KEYED ON. A name is a label two associations
+   * may share and a slug is a URL; keying the owner+co-owner list on either turned a repeated
+   * label into `each_key_duplicate`, which does not paint a logo wrong - it throws, and the page
+   * that was rendering it dies (prod, 2026-09-14).
+   */
+  associationId: string;
+  name: string;
+  slug: string;
+  /** Hex colour set on the association, or null → a stable one is derived from the id. */
+  color: string | null;
+  logoUrl: string | null;
+}
+
+/**
+ * Every association shown on an event: the OWNER first, then each co-owner, in display order.
+ *
+ * The owner is the event's own, never the page's. A per-association agenda lists the events that
+ * association co-owns as well as the ones it owns, so "the association whose page this is" and
+ * "the association that owns this event" are two different facts and only the row carries the
+ * second one.
+ */
+export function eventOwners(event: AssociationCalendarFeedEvent): EventOwnerIdentity[] {
+  return [
+    {
+      associationId: event.associationId,
+      name: event.associationName,
+      slug: event.associationSlug,
+      color: event.associationColor,
+      logoUrl: event.associationLogoUrl,
+    },
+    ...(event.coOwners ?? []).map((co) => ({
+      associationId: co.associationId,
+      name: co.name,
+      slug: co.slug,
+      color: co.color,
+      logoUrl: co.logoUrl,
+    })),
+  ];
+}
+
 /**
  * The association's colour, or a stable one derived from its id when it has not set one.
  *

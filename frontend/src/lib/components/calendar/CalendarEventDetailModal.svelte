@@ -4,6 +4,7 @@
   import AddEventToCalendarButton from '$lib/components/calendar/AddEventToCalendarButton.svelte';
   import { associationLogoSrc, type AssociationCalendarFeedEvent } from '$lib/associations/api';
   import type { AgendaExportEvent } from '$lib/calendar/agendaExport';
+  import { eventOwners, type EventOwnerIdentity } from '$lib/calendar/feedEvents';
   import { CalendarDays, ClipboardList, Pencil, Trash2 } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -31,14 +32,14 @@
     onDelete,
   }: Props = $props();
 
-  /** Owning association (unless suppressed) then co-owners, in display order. */
+  /**
+   * Owning association (unless suppressed) then co-owners, in display order - the same list the
+   * grid paints its bands from, so the two cannot disagree about who an event belongs to.
+   */
   const identityLinks = $derived.by(() => {
-    if (!event) return [] as { slug: string; name: string }[];
-    const links = showAssociation
-      ? [{ slug: event.associationSlug, name: event.associationName }]
-      : [];
-    for (const co of event.coOwners ?? []) links.push({ slug: co.slug, name: co.name });
-    return links;
+    if (!event) return [] as EventOwnerIdentity[];
+    const all = eventOwners(event);
+    return showAssociation ? all : all.slice(1);
   });
 
   function formatEventRange(ev: AssociationCalendarFeedEvent): string {
@@ -80,7 +81,7 @@
     <div class="space-y-4 text-sm">
       {#if identityLinks.length > 0}
         <p class="text-cn-dark/80 text-xs font-semibold tracking-wide uppercase">
-          {#each identityLinks as link, i (link.slug)}
+          {#each identityLinks as link, i (link.associationId)}
             {#if i > 0}<span class="text-text-muted"> · </span>{/if}
             <a href="/associations/{encodeURIComponent(link.slug)}" class="hover:underline">
               {link.name}
