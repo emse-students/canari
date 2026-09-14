@@ -1,6 +1,6 @@
+import { getClientAppVersion } from '$lib/utils/appVersion';
 import { isChannelEventFrame, isHeartbeatFrame } from '$lib/mls-client/channelEventTypes';
 import { invoke } from '@tauri-apps/api/core';
-import { getVersion } from '@tauri-apps/api/app';
 import { fetch } from '@tauri-apps/plugin-http';
 import NativeWebSocket, { type Message as WsMessage } from '@tauri-apps/plugin-websocket';
 import {
@@ -43,7 +43,6 @@ export class TauriMlsService extends BaseMlsService {
   private _epochByGroupId: Map<string, number> = new Map();
   /** In-flight Rust MLS mutations; drained before `saveState` so mls.bin matches `_knownGroups`. */
   private pendingRustMutations: Promise<unknown>[] = [];
-  private appVersionCache: string | null | undefined = undefined;
   // Device key kept in memory after init() to re-encrypt the MLS state after each
   // message without asking the user for the PIN again.
   private _deviceKeyB64 = '';
@@ -979,12 +978,12 @@ export class TauriMlsService extends BaseMlsService {
     const base64 = toBase64(keyPackageBytes);
     const storedName =
       localStorage.getItem(`device-name:${this.userId}:${this.deviceId}`) || undefined;
-    const deviceAppVersion = await this.getRuntimeAppVersion();
+    const deviceAppVersion = getClientAppVersion();
     await this.delivery.registerDeviceKeyPackage({
       keyPackageBase64: base64,
       deviceName: storedName,
       deviceOs: detectRuntimeDeviceOs('desktop'),
-      ...(deviceAppVersion ? { deviceAppVersion } : {}),
+      deviceAppVersion,
     });
   }
 
@@ -1036,19 +1035,5 @@ export class TauriMlsService extends BaseMlsService {
           .catch(() => {});
       })
     );
-  }
-
-  private async getRuntimeAppVersion(): Promise<string | undefined> {
-    if (this.appVersionCache !== undefined) {
-      return this.appVersionCache ?? undefined;
-    }
-    try {
-      const v = await getVersion();
-      this.appVersionCache = v?.trim() ? v.trim() : null;
-      return this.appVersionCache ?? undefined;
-    } catch {
-      this.appVersionCache = null;
-      return undefined;
-    }
   }
 }
