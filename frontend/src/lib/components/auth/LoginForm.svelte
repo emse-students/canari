@@ -36,8 +36,13 @@
   }: Props = $props();
 </script>
 
+<!-- `min-h-full`, NOT `min-h-dvh`: the height to fill is the one the SHELL was left, which is a
+     viewport minus whatever the window-scale banners took (`routes/+layout.svelte`). Asking for a
+     whole `dvh` inside a box that is deliberately shorter is a second, independent statement about
+     the same height, and it wins by exactly the banner's height - a page that cannot be scrolled to
+     the bottom on the one screen that has nothing to scroll. -->
 <div
-  class="flex min-h-dvh items-start justify-center overflow-y-auto bg-transparent px-4 py-10 pt-[max(2.5rem,env(safe-area-inset-top))] pb-[max(2.5rem,var(--safe-area-inset-bottom,0px))] md:items-center"
+  class="flex min-h-full items-start justify-center overflow-y-auto bg-transparent px-4 py-10 pt-[max(2.5rem,env(safe-area-inset-top))] pb-[max(2.5rem,var(--safe-area-inset-bottom,0px))] md:items-center"
   in:fade
 >
   <!--
