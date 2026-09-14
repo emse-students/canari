@@ -122,8 +122,17 @@ export class PaymentController {
     }
   }
 
-  /** Returns which payment provider is active, so the frontend can render the matching onboarding flow. */
-  @UseGuards(NginxAuthGuard)
+  /**
+   * Returns which payment provider is active, so the frontend can render the matching onboarding
+   * flow. Deliberately carries NO guard: the value is global platform config (`'stripe' |
+   * 'lydia'`), never user-specific or sensitive, and `AssociationsService`/`ProductsService` in
+   * social-service call it directly over the Docker network (`http://core-service:3012/...`) to
+   * resolve `resolvePaymentTarget` - a path that never goes through nginx and so can never carry an
+   * `X-User-Id`. `NginxAuthGuard` here rejected every one of those calls with 401 `Missing
+   * X-User-Id header` (observed in production, 2026-09-14), taking down `resolvePaymentTarget` -
+   * the resolver EVERY payment path in social-service depends on - even though nothing about this
+   * route needed a caller's identity in the first place.
+   */
   @Get('provider')
   async getActiveProvider() {
     return { provider: await this.paymentService.getActiveProviderId() };

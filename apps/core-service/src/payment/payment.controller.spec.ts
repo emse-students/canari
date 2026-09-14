@@ -79,15 +79,12 @@ describe('PaymentController - every money route is guarded', () => {
     return (Reflect.getMetadata(GUARD_METADATA, fn as object) as unknown[]) ?? [];
   }
 
-  it.each([
-    ['getActiveProvider'],
-    ['createOnboarding'],
-    ['createCheckout'],
-    ['verifySession'],
-    ['cancelSession'],
-  ])('%s runs NginxAuthGuard', (handler) => {
-    expect(guardsOn(handler)).toContain(NginxAuthGuard);
-  });
+  it.each([['createOnboarding'], ['createCheckout'], ['verifySession'], ['cancelSession']])(
+    '%s runs NginxAuthGuard',
+    (handler) => {
+      expect(guardsOn(handler)).toContain(NginxAuthGuard);
+    }
+  );
 });
 
 describe('PaymentController.createOnboarding - the check is not conditional on the field', () => {

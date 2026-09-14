@@ -232,7 +232,11 @@ created the account, so the two always agree on which provider actually issued t
 **2026-08-19: checkout routing is now provider-aware too.** `resolvePaymentTarget`
 (social-service's `payment-delegation.util.ts`) takes the active provider as a parameter and reads
 whichever column pair matches it; `AssociationsService`/`ProductsService` fetch it from
-`GET /api/payments/provider` before resolving and let a failure propagate rather than guess. A
+`GET /api/payments/provider` before resolving and let a failure propagate rather than guess. **That
+fetch is a direct Docker-network call** (`http://core-service:3012/...`), never through nginx, so it
+can never carry an `X-User-Id` - `NginxAuthGuard` was mistakenly added to this route at some point
+and 401'd every one of those calls in production (2026-09-14) until it was removed; the route needs
+none, per the table below, because the value is global config with no per-user meaning. A
 Lydia `request/do` payment is also confirmed server-side: `POST /api/payments/lydia-request-callback`
 verifies the signed `confirm_url`/`cancel_url`/`expire_url` callback and fans out to the same
 fulfillment Stripe's webhook uses, via an `order_ref` Canari encodes itself
