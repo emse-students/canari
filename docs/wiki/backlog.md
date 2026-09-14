@@ -108,7 +108,6 @@ refusals):
 | `DE7` | `MLS_LOCAL_STATE_UNDECRYPTABLE` | the only route offered requires the OLD PIN |
 | `DE10` | an undecodable payload | never enqueued, so never ACK-able; the code names the 90-day retention window as its only terminator |
 | `DE13` | leaving a conversation | nothing stages a Remove for the leaver's own leaf |
-| `G-E1`, `G-E2`/`DE11` | no distribution group for a scope; 403 on one | log and `return false`, no retry |
 | `G-E6` | `historyAsked` set when nobody could be asked | cleared only by the community leaving the device, or a restart |
 | `G-E10` | `forgetCommunityGraine` with no runtime | warns, returns 0; seeds and joined groups stay |
 | `S-E10` | base-refresh answering `no_peer_online` | persists nothing at all |

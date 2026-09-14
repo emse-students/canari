@@ -590,6 +590,27 @@ Two of this page's own entries moved in that sweep: the seed minted against an u
 no longer lose the publish race (`unsettledDistributionGroups` holds it across creation), and
 `SCOPE_HAS_NO_DISTRIBUTION_GROUP` is now two codes, `WORKSPACE_`- and `CHANNEL_`-prefixed.
 
+**AND THAT SECOND PAIR OF CODES IS TWO CORRECT DISPOSITIONS, NOT A DEAD END** - the audit's
+`G-E1`/`G-E2`/`DE11`, *"no distribution group for a scope; 403 on one: log and `return false`, no
+retry"*, swept 2026-09-14.
+
+A scope with no distribution group is UNREACHABLE BY CONSTRUCTION. `createWorkspace` mints the
+community's group and DELETES the community row when the mint fails; `createChannel` does the same
+for a private salon, rather than leaving one marked private with nowhere for its seeds to go. Both
+unwinds are asserted in `distribution-group.spec.ts`. Measured on production 2026-09-14: **5 of 5
+communities hold one, and 0 private salons exist.** If the state ever arose anyway, social-service
+logs it at ERROR naming the workspace, which is what makes it findable.
+
+So `return false` with no retry is right, and a retry would be wrong: no amount of re-asking mints a
+group whose creation belongs to another path, and a client minting its own would be a FALLBACK - the
+community's salons would then be encrypted under a group the server does not name.
+
+The 403 half is the same shape one layer along, and `distributionGroup.ts` already says so at
+length: the route authorizes on membership of the scope, so the refusal IS the answer to the
+question the join asks. It is logged at a level that accuses - reaching it means the channel DTO
+that selected the scope and this route disagree - and it deliberately does not drop the tree,
+because dropping key material on one answer is a destructive repair needing its own evidence.
+
 
 | # | The dead end | How it is reached | Terminal by design? |
 | --- | --- | --- | --- |
