@@ -111,7 +111,10 @@ supposed to notify an association's calendar managers ([#465]), and the phone's 
 calendar-validator grant on any association - the precondition is not ambient, and it is more
 specific than it first looked: the recipient query is `a.isBDE = true AND (permissions &
 VALIDATE_EVENTS)`, so the grant must be on **the BDE**, while the proposer needs `PROPOSE_EVENT` on
-a NON-BDE association or their event is validated on the spot and never becomes a proposal at all.
+a NON-BDE association. **That last clause stopped being true on 2026-09-14** - no creation path
+validates any more, whoever asks, so a proposal is now the only outcome and the precondition it
+described is gone ([social-service](services/social-service.md#nothing-is-validated-by-the-act-of-creating-it)).
+It is left here because the 2026-09-09 run was arranged around it.
 Both grants name their account by its OIDC SUBJECT (`subjectFor` in the harness's `accounts.mjs`),
 because the display name that was used for this on the morning of the same day granted the wrong
 user and produced a P1 ([testing-methodology](testing-methodology.md)).
@@ -150,6 +153,28 @@ composer's pending-attachment chip paints its filename TWICE
 it could not HOLD. `holdAndSlide` slides a distance rather than to a node - a threshold has no node
 to name - and `release: false` leaves the pointer down, without which `holding` and `locked` cannot
 be observed at all: both are gone by the time a release lands.
+
+## Putting the phone at a chosen CSS width - the four densities, measured
+
+**The Mi 9T is 436 CSS px at its own settings, and every phone breakpoint in this repo is written
+for 390, 375 or 360.** So a layout check on glass has to move the device to the width it is about
+to make a claim about, rather than make the claim at 436 and hope. The screen is 1080 physical
+px wide and Android's CSS scale is `density / 160`, so the width is `172800 / density` - and the
+four values that matter were **measured on the device**, not computed and trusted (2026-09-14,
+`window.innerWidth` read over CDP, app 0.16.6):
+
+| `adb shell wm density <n>` | `window.innerWidth` | what it is for |
+| --- | --- | --- |
+| 443 | **390** | the phone width every sweep in this repo uses |
+| 461 | **375** | the reference width the truncation budgets are derived at ([design-reference](frontend/design-reference.md)) |
+| 480 | **360** | the narrow end - where a string that merely fits at 390 is cut |
+| **396** | **436** | **A1's baseline. Restore it when you are done.** |
+
+`wm density` with no argument prints both the physical and the override, which is how you check you
+put it back. Two traps: the change **restarts the app**, so a devtools forward made before it points
+at a dead process - re-read `pidof fr.emse.canari` and forward again; and the socket is
+`localabstract:webview_devtools_remote_<pid>`, **not** `chrome_devtools_remote`, which answers
+nothing and looks like a dead WebView rather than a wrong name.
 
 ## Before you start
 
