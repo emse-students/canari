@@ -6,8 +6,9 @@
   import Card from '$lib/components/ui/Card.svelte';
   import { getPost, type PostEntity } from '$lib/posts/api';
   import { getToken } from '$lib/stores/auth';
-  import { LoaderCircle, FileX } from '@lucide/svelte';
+  import { LoaderCircle, FileX, Copy } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import { copyId } from '$lib/utils/copyId';
 
   interface Props {
     open: boolean;
@@ -75,13 +76,25 @@
         <p class="text-red-err text-sm">{error}</p>
       </div>
     {:else if post}
+      {@const postId = post.id}
       <Card class="border-cn-border/80 overflow-hidden shadow-sm">
         <PostHeader {post} />
         <PostContent {post} {authToken} fullContent />
       </Card>
-      <p class="text-text-muted/50 text-2xs mt-3 truncate px-1 font-mono" title={post.id}>
-        {post.id}
-      </p>
+      <!--
+        SHORTENED AND COPIED, like the list this modal opens from. Rendered whole under `truncate`
+        the id was cut at whatever the modal happened to be wide, and the hidden half could be
+        neither read nor selected; the `title` that carried it does not exist on a touch screen.
+      -->
+      <button
+        type="button"
+        onclick={() => void copyId(postId)}
+        class="text-text-muted/50 hover:text-text-muted text-2xs mt-3 flex items-center gap-1 px-1 font-mono transition-colors"
+        title={m.admin_copy_id_label()}
+      >
+        {postId.slice(0, 8)}…
+        <Copy size={10} />
+      </button>
     {/if}
   </div>
 </Modal>

@@ -1,13 +1,14 @@
 <script lang="ts">
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
-  import { Shield, RefreshCw } from '@lucide/svelte';
+  import { Shield, RefreshCw, Copy } from '@lucide/svelte';
   import { apiFetch } from '$lib/utils/apiFetch';
   import { coreUrl } from '$lib/utils/apiUrl';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { goto } from '$app/navigation';
   import { m } from '$lib/paraglide/messages';
   import { foldForSearch } from '$lib/utils/textFold';
+  import { copyId } from '$lib/utils/copyId';
 
   interface AdminUser {
     id: string;
@@ -134,7 +135,22 @@
               <p class="text-text-main truncate text-sm font-semibold">
                 {user.displayName ?? user.id}
               </p>
-              <p class="text-text-muted truncate font-mono text-xs">{user.id}</p>
+              <!--
+                SHORTENED AND COPIED, NEVER TRUNCATED - the shape `/admin/moderation` has carried
+                all along, and the reason this row was the one that clipped. A 64-hex id rendered
+                whole wants 457px of monospace; the row gives it 234px at 390px, so `truncate` cut
+                24 characters off and left them unreadable AND unselectable, on the one page whose
+                search box matches against that very id.
+              -->
+              <button
+                type="button"
+                onclick={() => void copyId(user.id)}
+                class="text-text-muted/70 hover:text-text-muted text-2xs flex items-center gap-1 font-mono transition-colors"
+                title={m.admin_copy_id_label()}
+              >
+                {user.id.slice(0, 8)}…
+                <Copy size={10} />
+              </button>
             </div>
           </div>
 

@@ -852,7 +852,7 @@
   "moderation_resolved_header_label": "Reviewed / Dismissed - {count}",
   "moderation_preview_full_label": "Full preview of the post",
   "moderation_preview_full_short_label": "Full preview",
-  "moderation_copy_id_label": "Copy ID",
+  "admin_copy_id_label": "Copy ID",
   "moderation_open_post_label": "Open the post",
   "moderation_preview_post_label": "Preview the post",
   "moderation_open_post_with_comment_label": "Open the post containing this comment",
