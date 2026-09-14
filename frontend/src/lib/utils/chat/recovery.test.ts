@@ -5,6 +5,8 @@ vi.mock('$lib/utils/hex', () => ({
 import {
   requestReAdd,
   cancelReAdd,
+  forgetProvenDeadEnds,
+  provenDeadEnds,
   RECOVERY_TIMEOUT_MS,
   recoverForkedGroup,
   recoverRosterDisagreement,
@@ -957,5 +959,117 @@ describe('isReAddDue - the cooldown, read instead of learnt by failing', () => {
     await requestReAdd('g1', deps);
 
     expect(deps.log).toHaveBeenCalledWith(expect.stringContaining('throttled'));
+  });
+});
+
+/**
+ * R-D10 - ONE SERVER ANSWER, TWO RECORDS, AND ONE EDGE THAT REACHED ONLY ONE OF THEM.
+ *
+ * `no_peer_online` is a single fact: the server read the roster and found nobody online to forward
+ * to. This device writes it down twice, and the two records are NOT one map - `noRepairerAt` is a
+ * proof keyed by the pair of epochs it was taken against, `historyReconcile`'s `deferred` is a note
+ * that an ask never went out. What they share is the EDGE that negates the answer, and only the
+ * second was discharged by it.
+ *
+ * **The premise that made that look safe was false.** The record's own doc said nothing about the
+ * answer could change while both epochs stood still - but the set it describes is the set of members
+ * who are ONLINE, and a member connecting changes it with neither number moving. What actually
+ * saved the group was a fact on the OTHER device: `initializeConnection` republishes a stale base
+ * for every group that device holds, so a returning holder moves `baseEpoch` itself. That shipped on
+ * 2026-09-04, `minClientVersion` does not require it, and a republish that fails is logged and
+ * nothing more. An exit that rests on what the far side is running is not an exit.
+ *
+ * Measured on production 2026-09-12: group `4f87267a` asked once a minute for twenty-seven
+ * consecutive minutes and the server answered `NO_PEER_ONLINE members=1` to every one - its only
+ * other member had not connected since 2026-08-03. The record is what stopped that storm, and this
+ * block is what makes sure it ends when that member finally arrives.
+ */
+describe('a peer coming back online discharges the proof that nobody could repair (R-D10)', () => {
+  let clock = Date.now();
+  beforeEach(() => {
+    clock = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => clock);
+  });
+  afterEach(() => {
+    vi.mocked(Date.now).mockRestore();
+  });
+
+  /** A device locked out of `g1` by a base one epoch behind, with nobody online to republish it. */
+  const lockedOut = () => {
+    const deps = makeDeps();
+    deps.mlsService.externalJoin = vi
+      .fn()
+      .mockResolvedValue({ joined: false, reason: 'stale_base', baseEpoch: 283, serverEpoch: 284 });
+    deps.mlsService.getGroupMeta = vi.fn().mockResolvedValue({
+      groupId: 'g1',
+      isGroup: true,
+      deletedAt: null,
+      baseEpoch: 283,
+      activeEpoch: 284,
+    });
+    deps.mlsService.sendBaseRefreshRequest = vi.fn().mockResolvedValue({ noPeerOnline: true });
+    return deps;
+  };
+
+  it('the ask goes out again on the next pass, with neither epoch moved', async () => {
+    const deps = lockedOut();
+    await requestReAdd('g1', deps);
+    expect(provenDeadEnds()).toEqual([['g1', '283/284']]);
+
+    // THE WHOLE DEFECT. Without this the group waits for a number to move, and the only thing that
+    // moves one is the returning member running a repair this device cannot require of it.
+    forgetProvenDeadEnds(deps.log);
+    clock += RECOVERY_TIMEOUT_MS + 1_000;
+    await requestReAdd('g1', deps);
+
+    expect(deps.mlsService.sendBaseRefreshRequest).toHaveBeenCalledTimes(2);
+    expect(provenDeadEnds()).toEqual([['g1', '283/284']]);
+  });
+
+  it('the THROTTLE is not discharged with it - a presence flap is not a licence to ask', async () => {
+    const deps = lockedOut();
+    await requestReAdd('g1', deps);
+
+    // Three edges inside one cooldown. The record goes each time; the pass does not.
+    forgetProvenDeadEnds(deps.log);
+    await requestReAdd('g1', deps);
+    forgetProvenDeadEnds(deps.log);
+    await requestReAdd('g1', deps);
+
+    // `lastReAddAt` answers "how often may this device ask", which no peer's arrival changes.
+    expect(deps.mlsService.sendBaseRefreshRequest).toHaveBeenCalledTimes(1);
+    expect(deps.mlsService.externalJoin).toHaveBeenCalledTimes(1);
+  });
+
+  it('says how many groups it just un-stuck, and nothing at all when there are none', async () => {
+    const lines: string[] = [];
+    const log = (m: string) => lines.push(m);
+
+    // A dead end that ends in silence is indistinguishable from one that was never entered - and an
+    // edge that fires every ten seconds must not narrate a map that is empty.
+    forgetProvenDeadEnds(log);
+    expect(lines).toEqual([]);
+
+    const deps = lockedOut();
+    await requestReAdd('g1', deps);
+    forgetProvenDeadEnds(log);
+
+    expect(lines.join(' | ')).toContain('a peer came back online - 1 group(s)');
+  });
+
+  it('sessionAuth discharges BOTH records of "nobody was online" on the one edge', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const src = readFileSync(
+      join(process.cwd(), 'src', 'lib', 'composables', 'session', 'sessionAuth.ts'),
+      'utf8'
+    );
+    const edge = src.slice(src.indexOf('onPeersCameOnline(() => {'));
+    const body = edge.slice(0, edge.indexOf('\n    });'));
+
+    // One answer, one edge. A record of it that this callback does not name is a session-long dead
+    // end waiting for a state change nothing on this device can cause.
+    expect(body).toContain('retryDeferredReconciliations(');
+    expect(body).toContain('forgetProvenDeadEnds(');
   });
 });

@@ -11,6 +11,23 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - a conversation nobody could repair stayed shut after the person who could came back
+
+When a conversation's entry key has fallen behind, a device that has lost its encryption state
+cannot get in on its own: it needs a member who still holds the conversation to be online and
+refresh that key. The server says plainly when nobody is, and this app writes that down so it stops
+asking four times a minute for the rest of the session - measured on one conversation for
+twenty-seven consecutive minutes, whose only other member had not opened the app since early August.
+
+**What it waited for to ask again was the conversation moving, and not the person arriving.** Those
+are different events. The one that makes the answer wrong is somebody coming online, and it was
+being ignored: what rescued the group in practice was a repair the returning device runs by itself,
+which only builds from September onwards and is not required of anyone.
+
+The moment a member comes back, every conversation recorded as unrepairable is asked again. The
+cadence that keeps it to one attempt a minute is untouched, so a flaky connection on the other side
+cannot turn this into a storm.
+
 ### Fixed - a test that could never fail, because it was looking for something no file contains
 
 One of the checks that runs before every release makes sure the Android app does not ask for a
@@ -29,6 +46,7 @@ frontend's own test suite, which ran green the whole time. That check now reads 
 repository rather than a list, including files not yet added, and a sweep of all 2287 of them turned
 up and repaired: one test that was passing vacuously, one that had quietly lost a third of what it
 looked for, and six places where working code was written in bytes nobody could read.
+
 
 ### Changed - the association and promo-list cards show the whole name, and wear the association's colour
 
