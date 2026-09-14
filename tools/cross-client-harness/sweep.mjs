@@ -99,6 +99,27 @@ const ROUTES = [
  *
  * It reports the CLASS of an offending element rather than a selector path: a Tailwind class list is
  * what a fix edits, and a path through six anonymous divs is not.
+ *
+ * ## Two blind spots it used to have, both measured on A1 on 2026-09-14
+ *
+ * **IT STOPPED AT A SHADOW ROOT AND SAID NOTHING.** `querySelectorAll` does not cross one, so
+ * `<emoji-picker>` - 190 buttons, a search field, nine category tabs and a scrolling grid - was
+ * excluded from every "nothing is clipped" this has ever printed. An instrument that skips a subtree
+ * silently is worse than one that refuses it, so the walk now descends into every open shadow root
+ * AND names the hosts it entered, in the output, so the scope of a green result is readable.
+ *
+ * **IT CALLED A HORIZONTAL SCROLLER AN OVERFLOW.** The admin console's tab strip is
+ * `flex gap-2 overflow-x-auto`: its chips extend past the viewport BY DESIGN and the user reaches
+ * them by swiping. Counting them made TEN of twelve "overflowing" routes noise, which is the number
+ * at which a report stops being read. "Does this stick out" is the wrong question; the right one is
+ * **can the user reach the end of it**, and the answer is an ancestor that scrolls. So an element
+ * past the edge is now classified by walking UP - through shadow boundaries too:
+ *
+ * - an ancestor scrolls horizontally  -> REACHABLE, reported as a reading, never a failure
+ * - nothing scrolls                   -> OVER, unreachable, and that is the defect this looks for
+ *
+ * The scroller is reported ONCE with how far its content runs, not once per child, because the
+ * finding is the strip rather than each chip on it.
  */
 const PROBE = `(function () {
   const de = document.documentElement;
@@ -106,22 +127,73 @@ const PROBE = `(function () {
   const overflow = de.scrollWidth - vw;
   const over = [];
   const clipped = [];
-  for (const el of document.querySelectorAll('body *')) {
+  const scrollers = new Map();
+  const shadowHosts = new Set();
+
+  const describe = (el) => ({
+    tag: el.tagName.toLowerCase(),
+    cls: (el.getAttribute('class') || '-').slice(0, 70),
+    text: (el.textContent || '').trim().slice(0, 40),
+  });
+
+  /** The parent, crossing a shadow boundary to the HOST rather than stopping at it. */
+  const up = (n) => {
+    if (n.parentElement) return n.parentElement;
+    const root = n.getRootNode();
+    return root && root.host ? root.host : null;
+  };
+
+  /** Every element under \`root\`, descending into every open shadow root on the way. */
+  function collect(root, out) {
+    for (const el of root.querySelectorAll('*')) {
+      out.push(el);
+      if (el.shadowRoot) {
+        shadowHosts.add(el.tagName.toLowerCase());
+        collect(el.shadowRoot, out);
+      }
+    }
+    return out;
+  }
+
+  /** The nearest ancestor the user can actually scroll sideways, or null if there is none. */
+  const scrollerAbove = (el) => {
+    for (let n = up(el); n; n = up(n)) {
+      const ov = getComputedStyle(n).overflowX;
+      if ((ov === 'auto' || ov === 'scroll') && n.scrollWidth > n.clientWidth + 1) return n;
+    }
+    return null;
+  };
+
+  for (const el of collect(document.body, [])) {
     const cs = getComputedStyle(el);
     if (cs.display === 'none' || cs.visibility === 'hidden') continue;
     const r = el.getBoundingClientRect();
     if (r.width === 0 && r.height === 0) continue;
+
     if (r.right > vw + 1 || r.left < -1) {
-      over.push({
-        tag: el.tagName.toLowerCase(),
-        cls: (el.getAttribute('class') || '-').slice(0, 70),
-        left: Math.round(r.left),
-        right: Math.round(r.right),
-        text: (el.textContent || '').trim().slice(0, 40),
-      });
+      const sc = scrollerAbove(el);
+      if (sc) {
+        if (!scrollers.has(sc)) {
+          scrollers.set(sc, Object.assign(describe(sc), {
+            shown: sc.clientWidth,
+            needed: sc.scrollWidth,
+          }));
+        }
+      } else {
+        over.push(Object.assign(describe(el), {
+          left: Math.round(r.left),
+          right: Math.round(r.right),
+        }));
+      }
     }
-    // Text clipped by its own box: only leaves, and only where the overflow is actually hidden.
-    if (el.children.length === 0 && el.scrollWidth > el.clientWidth + 1) {
+
+    // Text clipped by its own box: only leaves, only where the overflow is actually hidden, and
+    // never the VISUALLY HIDDEN pattern. \`sr-only\` is \`w-px h-px overflow-hidden\` by definition, so
+    // every screen-reader label matched this test perfectly - 43 of the 44 lines this list printed
+    // on 2026-09-14 were that, including 369 on /admin/users alone, which buried the one real
+    // truncation on /calendar. A box one pixel across is not a box a reader was ever meant to read.
+    const readable = el.clientWidth > 1 && el.clientHeight > 1;
+    if (readable && el.children.length === 0 && el.scrollWidth > el.clientWidth + 1) {
       if (cs.overflowX === 'hidden' || cs.textOverflow === 'ellipsis') {
         clipped.push({
           cls: (el.getAttribute('class') || '-').slice(0, 70),
@@ -132,6 +204,7 @@ const PROBE = `(function () {
       }
     }
   }
+
   return JSON.stringify({
     path: location.pathname,
     vw,
@@ -139,8 +212,11 @@ const PROBE = `(function () {
     // The deepest offender is the one worth naming: an ancestor is over-wide because its child is.
     over: over.slice(-6),
     overCount: over.length,
+    scrollers: [...scrollers.values()].slice(0, 6),
+    scrollerCount: scrollers.size,
     clipped: clipped.slice(0, 8),
     clippedCount: clipped.length,
+    shadowHosts: [...shadowHosts],
   });
 })()`;
 
@@ -219,7 +295,7 @@ async function main() {
     const bad = r.overflow > 0 || r.overCount > 0;
     const mark = bad ? 'OVER' : '    ';
     console.log(
-      `  ${route.padEnd(30)} ${mark} scroll=${r.overflow} over=${r.overCount} clipped=${r.clippedCount}`
+      `  ${route.padEnd(30)} ${mark} scroll=${r.overflow} over=${r.overCount} scrollers=${r.scrollerCount} clipped=${r.clippedCount}`
     );
     if (bad) {
       for (const o of r.over) {
@@ -234,6 +310,28 @@ async function main() {
   console.log(
     `\n[sweep] ${findings.length} route(s) at ${vw}px: ${over.length} overflowing, ${unreached.length} unreached`
   );
+
+  // WHAT THIS RUN COULD SEE, SAID OUT LOUD. A subtree an instrument skips makes its silence mean
+  // less than the reader thinks, so the hosts entered are named rather than assumed - and when
+  // there are none, that is itself the reading (a route drawing no web component).
+  const hosts = [...new Set(findings.flatMap((f) => f.shadowHosts || []))];
+  console.log(
+    `[sweep] shadow roots entered: ${hosts.length ? hosts.join(', ') : 'none on these routes'}`
+  );
+
+  // A STRIP THE USER CAN SWIPE IS NOT A DEFECT, AND IT IS NOT NOTHING EITHER. It is reported here,
+  // apart from the failures, because `overflow-x-auto` with no visible affordance is a judgement
+  // call a reader makes and a probe cannot.
+  const scrolling = findings.filter((f) => f.scrollerCount > 0);
+  if (scrolling.length) {
+    console.log(`\n[sweep] horizontal scrollers - reachable by swiping, judge the affordance:`);
+    for (const f of scrolling) {
+      for (const sc of f.scrollers) {
+        console.log(`  ${f.route.padEnd(24)} ${sc.shown}/${sc.needed}px  ${sc.tag}  "${sc.text}"`);
+      }
+    }
+  }
+
   // The clipped list is a READING, not a verdict - printed last so it is not mistaken for failures.
   const clipping = findings.filter((f) => f.clippedCount > 0);
   if (clipping.length) {

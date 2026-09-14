@@ -5470,7 +5470,7 @@ tablet keeps its rotation. `android:screenOrientation` takes one literal value a
 which is why a resource qualifier carries it. **A manifest grep answers this question with silence** -
 it was grepped, found nothing, and the lock was still there.
 
-### P2 - the long-press sheet covers the message it acts on, and `sweep.mjs` cannot see inside a web component (measured 2026-09-14 on A1)
+### P2 - the long-press sheet covers the message it acts on (measured 2026-09-14 on A1)
 
 Four findings from the same guided session, each with the measurement that would settle it. None is
 fixed; the reaction picker's own two defects that WERE fixed are in `CHANGELOG.md`.
@@ -5500,13 +5500,9 @@ correct for a native dialog and is exactly why nothing else should be asking at 
 but kept answering CDP, so the DOM said one thing and the screen showed another - an instrument
 reading the DOM would have reported a working app. A screenshot is what separated them.
 
-**`sweep.mjs` DOES NOT SEE INSIDE A WEB COMPONENT, AND EVERY "NOTHING IS CLIPPED" IT HAS EVER
-PRINTED EXCLUDES ONE WITHOUT SAYING SO.** Its probe walks `document.querySelectorAll('*')`, which
-stops at a shadow root. `<emoji-picker>` is the one in this app - 190 buttons, a search field, nine
-category tabs and a scrolling grid, none of which the route sweep has ever measured. The fix is in
-the probe: descend into `element.shadowRoot` when there is one, and say in the output which subtrees
-were entered, so the exclusion is visible rather than silent. Until then the graphical pass's scope
-is "everything except what a library renders for us", and that sentence belongs in its results.
+*(The instrument's two blind spots that were filed here - it never entered a shadow root, and it
+counted a horizontal scroller as an overflow - were fixed on 2026-09-14 and are in `CHANGELOG.md`.
+The remaining finding above is about the app.)*
 
 ### P1 - a URI `http::Uri` cannot parse ABORTS THE WHOLE APP, and nothing can catch it (found 2026-09-14 on A1)
 
@@ -5567,6 +5563,33 @@ take produces such a URL. Nothing found so far does. Two consequences, and they 
 
 **Do not "fix" this by changing the instrument.** It found a line that aborts the process on bad
 input; changing how the sweep navigates would hide it.
+
+**BOTH QUESTIONS ARE NOW ANSWERED, AND THE ANSWER IS THAT NEITHER HALF CAN BE ACTED ON TODAY**
+(measured 2026-09-14).
+
+*No user path reaches it.* Every href this app renders from user content comes through
+`messageDisplay.ts`, which emits `https://` and nothing else: the URL pattern matches `http(s)` only,
+and a bare domain is linked as `https://<domain>` from an exact-host whitelist. The two components
+that put a content-derived href on an anchor - `MessageTextBody` and `MessageMediaRenderer` - both
+pass that pipeline's output. So a crafted link cannot carry the scheme, and the entry stays a P1 by
+SEVERITY with no known trigger rather than a shipping denial of service. **What is worth knowing
+about `shouldOpenExternalHref` is the shape of its fall-through**: it returns true only for
+`http/https/mailto/tel/webcal`, so an unknown scheme is neither opened outside nor refused - it falls
+through to default navigation *inside* the WebView, which is exactly the fatal path. Nothing produces
+such an href today; that is a property of the renderers, not a guarantee of this function, so the
+architectural half below is still owed.
+
+*The upstream fix exists and is out of reach.* wry replaced the `unwrap()` with a `match` that logs
+and drops the request - commit `5ce72b0`, PR tauri-apps/wry#1772 - **released in `wry 0.56.1`**. It
+cannot be taken: `cargo update -p wry` moves nothing, because every stable `tauri-runtime-wry` pins
+`wry ^0.55` (2.9.x on `^0.53.4`, 2.10.x on `^0.54`, the whole 2.11 line on `^0.55`). The only
+published crate requiring `wry ^0.56` is `tauri-runtime-wry 3.0.0-alpha.0`, and **Tauri 3 exists as
+exactly one alpha, published 2026-09-13, with 452 downloads against 5.2 M for stable 2.11.5.** Moving
+the whole app onto a one-day-old alpha runtime to fix a crash with no product trigger trades a
+theoretical defect for a real risk, and is refused on those grounds rather than deferred for lack of
+time. **RE-CHECK ON EVERY TAURI RELEASE**: the day a stable `tauri-runtime-wry` requires `wry ^0.56`
+or later, this closes with a lockfile bump and nothing else. Separately and with no bearing on this,
+the pinned `tauri` here is `2.11.1` and the stable line has reached `2.11.5`.
 
 ## Composer and reactions
 
