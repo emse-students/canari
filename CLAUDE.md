@@ -238,11 +238,11 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    and the blob-header READER are done 2026-09-08 and unshipped; the WRITER cannot follow until that
    reader is the floor (`minClientVersion`), so the two causes are still not separated in the field
    ([backlog](docs/wiki/backlog.md)).
-6. **THE MLS AUDIT: THE DUPLICATE HALF IS ONE ROW NOW, THE DEAD ENDS ARE NOT** - counts re-derived
-   against `main` 2026-09-12, EIGHT larger than claimed, so **work to the swept numbers, never the
-   audit's**; and four of the five duplicate rows were artifacts, one family never defined here at
-   all. D8/R-D8 REFUTED, not to be re-opened. **FIVE CONVERSATIONS REST ON ONE HOLDER, ONE HAS
-   NONE** - the hourly report says so and repairs nothing because nothing can.
+6. **THE MLS AUDIT: THE DUPLICATE HALF IS CLOSED, THE DEAD ENDS ARE WHAT IS LEFT** - counts
+   re-derived against `main` 2026-09-12, EIGHT larger than claimed, so **work to the swept numbers,
+   never the audit's**; the table emptied 2026-09-14 - four of five rows artifacts, one family never
+   defined here, the last a distinction with no reader. D8/R-D8 REFUTED, not to be re-opened. **FIVE
+   CONVERSATIONS REST ON ONE HOLDER, ONE HAS NONE** - the hourly report says so and repairs nothing.
    [backlog](docs/wiki/backlog.md), [triage](docs/wiki/protocols/mls-graine-state-machine.md#10-triage---what-is-worth-a-pull-request).
 7. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - ONE merge mechanism
    and ONE arming point, asserted only by `bun tools/ecosystem-shape/shape.mjs`

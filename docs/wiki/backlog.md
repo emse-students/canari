@@ -83,20 +83,12 @@ so each item was a hypothesis; the counts below were re-derived against `main`, 
 came back LARGER than claimed. Every item the sweep killed has been deleted from this list rather
 than recorded - what shipped is in `CHANGELOG.md`.
 
-**Duplicate paths to fuse** (the user's decision, verbatim: *"Fusionner vers une implementation"* -
-a real collapse, not a test that fails on divergence):
-
-| Item | What is duplicated | Count | The part that bites |
-| --- | --- | --- | --- |
-| `G-D9` | rotation reasons | 4 -> 1 outcome | the reason survives only in a log line, and **nothing reads it** - diagnosed, and the fix needs a product decision rather than a measurement |
-
-**ONE ROW IS LEFT.** Five on 2026-09-14 and four were artifacts - two items shipped, three
-carried TENABLE verdicts re-measured the same day, two numbers named rows that do not exist,
-and eleven `G-D*` numbers had never been defined in this repository at all. What each one was
-and what closed it is on
-[the triage page](protocols/mls-graine-state-machine.md#8-several-paths-to-one-thing---the-duplicates),
-where the sweep's reasoning lives; the rule it cost is in
+The duplicate half of the audit is gone from this file: five rows on 2026-09-14 and none of them
+survived the day. Its account is on
+[the triage page](protocols/mls-graine-state-machine.md#8-several-paths-to-one-thing---the-duplicates)
+and the rule it cost is in
 [durable-rules](durable-rules.md#an-open-item-whose-substance-has-never-been-in-the-repository-is-not-an-open-item).
+**What follows is the whole of what is left of the audit.**
 
 **Availability dead ends - every one needs an exit that EXISTS** (the user, 2026-09-12: *"on ne peut
 pas demander a un utilisateur de sortir de l'impasse lui-meme. La sortie de l'impasse doit exister

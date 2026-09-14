@@ -519,6 +519,29 @@ What that does NOT establish is that Graine holds no other duplication; it estab
 entry points, which is what the row named, are one. A future claim about this module has to arrive
 with its own measurement rather than with a number.
 
+**`G-D9` - four rotation reasons for one outcome - CLOSED 2026-09-14 by DELETING the distinction,
+not by fusing anything.** The row read "4 -> 1 outcome", which sounds like four code paths to
+collapse. There were never four paths: `graineRotationReason` was one function with four returns,
+and every caller did the same thing with all four - `if (!reason)` reuse, else mint. So the
+question was not "which of these do we keep" but **"what reads the distinction at all"**, and the
+answer measured across the tree was: one `console.info`, one docblock sentence, and six assertions
+that existed only to pin the four names.
+
+Nothing in this product captures a browser console into a durable log, a report or an upload, so
+the reason reached no reader who was not already sitting in devtools when it fired. The docblock's
+claim that the `roster` RATE is the alarm for a departure taking a seed out of circulation is
+prose naming a mechanism that does not exist - which is the failure `CLAUDE.md` calls out directly:
+*a claim that something is watched must name the mechanism that would honour it*. The user's
+decision was *"si les 4 raisons ne changent aucun comportement et que personne ne les lira jamais,
+on arrete de les porter"*, and both halves of that condition measured true.
+
+`shouldRotateGraineSession` now returns a boolean. The three triggers and what each one buys are
+distinguished in
+[channel-encryption section 4.2](channel-encryption.md#42-rotation-does-not-delete-anything), where
+a human reads them and can act on them, and that page now also records what it would take to watch
+the roster rate if anyone ever should: a counter reaching somewhere a human looks, of which the
+return type was only the easy half.
+
 ---
 
 ## 9. Dead ends - a state with no way out

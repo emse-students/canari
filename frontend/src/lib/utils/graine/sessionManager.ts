@@ -55,22 +55,17 @@ export interface GraineOutboundSlot {
 }
 
 /**
- * Why the session in hand may not seal another message, or null when it may.
+ * Whether the session in hand may no longer seal another message.
  *
- * Pure, exported and named rather than inlined as a boolean: the four causes have four very
- * different meanings, and the one that matters - a roster that changed - is invisible in a
- * "should I rotate" that only answers yes.
- */
-export type GraineRotationReason = 'no-session' | 'message-count' | 'age' | 'roster';
-
-/**
- * Decides rotation from the session alone, given the group's current epoch and the time.
+ * Pure, exported and named rather than inlined: three different causes decide it, and every caller
+ * answering the question for itself would be a caller free to answer it differently - the two
+ * answers differ by exactly how long a departed member keeps reading.
  *
- * **`roster` is the structural one and the reason the epoch is stored at all.** Every membership
- * change commits to the community's distribution group and advances its epoch, so an epoch that no
- * longer matches means the set of people holding this seed is no longer the set of people entitled
- * to it. Compared with `!==` rather than `<`: any disagreement is a disagreement, and the safe
- * response to one we cannot explain is still to rotate.
+ * **The stale roster is the structural cause and the reason the epoch is stored at all.** Every
+ * membership change commits to the community's distribution group and advances its epoch, so an
+ * epoch that no longer matches means the set of people holding this seed is no longer the set of
+ * people entitled to it. Compared with `!==` rather than `<`: any disagreement is a disagreement,
+ * and the safe response to one we cannot explain is still to rotate.
  *
  * A session predating the column carries no epoch and is rotated for the same reason - "minted
  * under a roster nobody recorded" is not evidence of a roster that still holds.
@@ -79,16 +74,22 @@ export type GraineRotationReason = 'no-session' | 'message-count' | 'age' | 'ros
  * cost is one extra O(1) seed distribution, and the alternative - a durable "somebody LEFT" marker -
  * is state that has to be written by every device, kept until every session has cycled past it, and
  * is silently wrong the once it is missed.
+ *
+ * **This answers yes or no, and that is the whole question anything here asks.** It returned WHICH
+ * of the three fired until 2026-09-14; nothing branched on it, no durable log carried it and no
+ * report counted it, so the distinction existed only in the type. What each trigger buys is in
+ * `docs/wiki/protocols/channel-encryption.md` section 4.2, where a reader can act on it.
  */
-export function graineRotationReason(
+export function shouldRotateGraineSession(
   session: StoredGraineSession | null,
   at: { distributionEpoch: number; now: number }
-): GraineRotationReason | null {
-  if (!session) return 'no-session';
-  if (session.distributionEpoch !== at.distributionEpoch) return 'roster';
-  if ((session.sentCount ?? 0) >= GRAINE_ROTATE_AFTER_MESSAGES) return 'message-count';
-  if (at.now - session.createdAt >= GRAINE_ROTATE_AFTER_MS) return 'age';
-  return null;
+): boolean {
+  if (!session) return true;
+  return (
+    session.distributionEpoch !== at.distributionEpoch ||
+    (session.sentCount ?? 0) >= GRAINE_ROTATE_AFTER_MESSAGES ||
+    at.now - session.createdAt >= GRAINE_ROTATE_AFTER_MS
+  );
 }
 
 /**
@@ -147,9 +148,12 @@ async function reserve(
   //    its indices from a count this device never kept is two messages under one key.
   const current =
     sessions.find((s) => s.senderId === scope.senderId && s.sentCount !== undefined) ?? null;
-  const reason = graineRotationReason(current, { distributionEpoch: deps.distributionEpoch, now });
+  const rotate = shouldRotateGraineSession(current, {
+    distributionEpoch: deps.distributionEpoch,
+    now,
+  });
 
-  if (!reason && current) {
+  if (!rotate && current) {
     const index = current.firstIndex + (current.sentCount ?? 0);
     const updated: StoredGraineSession = { ...current, sentCount: (current.sentCount ?? 0) + 1 };
     await deps.storage.saveGraineSession(updated, deps.deviceKeyB64);
@@ -171,12 +175,13 @@ async function reserve(
   await deps.distribute(minted);
   const stored: StoredGraineSession = { ...minted, sentCount: 1 };
   await deps.storage.saveGraineSession(stored, deps.deviceKeyB64);
-  // Rare by design - once per 100 messages, per week, or per membership change - and the only
-  // record that a departure took a seed out of circulation. A rate that climbs means the epoch is
-  // moving for a reason nobody has looked at yet.
+  // Rare by design - once per 100 messages, per week, or per membership change - so a console full
+  // of these says the epoch is moving for a reason nobody has looked at yet. It does NOT say which
+  // of the three fired: that reached no durable log and no report, and a distinction nothing can
+  // read is a distinction nothing can act on.
   console.info(
     `[GRAINE] new outbound session ${minted.sessionId} for channel ${scope.channelId.slice(0, 8)} ` +
-      `at distribution epoch ${deps.distributionEpoch} (${reason})`
+      `at distribution epoch ${deps.distributionEpoch}`
   );
   return { session: stored, index: 0, minted: true };
 }
