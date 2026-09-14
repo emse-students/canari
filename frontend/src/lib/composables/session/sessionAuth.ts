@@ -307,8 +307,10 @@ export async function resetDeviceAsFreshImpl(
     console.warn('[SECURITY] could not clear the local database:', e);
   }
 
-  // The session's OWN handle, which is a different connection from the one just opened above.
-  // Dropping the reference does not close it, and an open connection defers any later delete.
+  // The session's OWN handle. `getStorage` shares one open store per user, so when the wipe targets
+  // the signed-in user this IS the handle closed just above and `close()` is idempotent - the call
+  // stays because the two are not the same fact: a wipe can target another user's store, and
+  // dropping a reference never closes a connection, which is what defers a later delete.
   try {
     await ctx.getStorage()?.close();
   } catch (e) {

@@ -114,6 +114,11 @@ export class IndexedDbStorage implements IStorage {
     this.dbName = `CanariDB_${userId}`;
   }
 
+  /** Whether the IndexedDB connection is open. See {@link IStorage.isOpen}. */
+  get isOpen(): boolean {
+    return this.db !== null;
+  }
+
   /** Open (or upgrade) the IndexedDB database and apply schema migrations up to version 6. */
   /**
    * Closes the connection so the database can be DELETED deterministically.

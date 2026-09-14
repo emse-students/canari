@@ -91,6 +91,11 @@ export class SqliteStorage implements IStorage {
     this.dbPath = `sqlite:canari_${userId}.db`;
   }
 
+  /** Whether the SQLite handle is open. See {@link IStorage.isOpen}. */
+  get isOpen(): boolean {
+    return this.db !== null;
+  }
+
   /** Open (or create) the SQLite database, enable WAL mode, create tables, and run migrations up to {@link SCHEMA_VERSION}. */
   /** Closes the SQLite handle. See {@link IStorage.close}. */
   async close(): Promise<void> {
