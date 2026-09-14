@@ -100,8 +100,7 @@ refusals):
 | `S-E1`/`DE4` | a commit-log hole | **18 holes, 11 of 58 groups, every one exactly ONE epoch wide** |
 | `S-E5` | a `pending` seat nobody honours | **30**, all `never added`, zero carry `kickedAt` |
 | `S-E3`/`G-E3`/`DE3` | stale base, every holder behind | **1 group** |
-| `R-E3` | `ROSTER_DISAGREE` | outbox has no attempt ceiling; `sender-not-active` is neither permanent disposition |
-| `R-E4` | an `isGroupHealthy` hold | returns `retry` without incrementing `attempts` or writing `nextAttemptAt` |
+| an outbox entry with no terminal state | the two permanent dispositions are `group-deleted` and `evicted`; a group nobody can repair is **neither**, so a held entry stays pending for the life of the install | **the counter it would need now exists** (2026-09-14); what is missing is the PROOF a terminal disposition may be taken on, and a clock is not one |
 | `R-E1`/`DE2` | `NO_REPAIRER` | left only by the epoch pair moving - which needs the holder that is absent. **Population 0, re-read 2026-09-14**: the one group counted here had no MEMBERS, a failed creation rather than a dead end (fixed 2026-09-14) |
 | `R-E9`, `R-E11` | peer-unresolved; `readWelcomeOwed() === null` | retried for ever, no counter |
 | `DE7` | `MLS_LOCAL_STATE_UNDECRYPTABLE` | the only route offered requires the OLD PIN |

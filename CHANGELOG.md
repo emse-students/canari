@@ -45,6 +45,23 @@ which is not an exit anybody should have to find.
 The app now remembers WHICH set of people it found nobody in, and asks again as soon as that set
 changes - which is exactly when there is somebody new to ask. While nothing has changed it still
 says nothing and asks nothing, so a screen you open ten times costs one question, not ten.
+### Fixed - a message waiting on a broken conversation could sit there until something else woke the app
+
+When a conversation cannot be sent into - the app has lost its place in it and is asking to be let
+back in - the message you wrote is kept and retried. That part worked.
+
+**What it was not doing was scheduling its own retry.** The queue wakes itself up at the earliest
+time any waiting message has asked for, and a message held this way never asked for one. So it was
+retried only when something unrelated happened: the network coming back, the app being brought to
+the front, another message being sent. On a phone where none of those happened, it waited.
+
+It also kept no count of how long it had been waiting, which is why nothing could ever say "this one
+is not getting through" - there was no number to say it about.
+
+Both are now written by the same piece of code that already wrote them for every other kind of
+failure, so there is one place that decides what waiting means. Nothing gets slower: a conversation
+that is repaired still sends immediately, and the retry cadence now matches exactly what the repair
+itself accepts, instead of asking far more often and being refused.
 
 ## [0.18.0] - 2026-09-14
 
