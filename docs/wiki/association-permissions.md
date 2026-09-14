@@ -59,7 +59,7 @@ elsewhere, which is exactly why the audit had to read call sites rather than cou
 | `MANAGE_MEMBERS` | 2 | 14 | members (add / rename / remove / reorder), the logo, `PATCH :id` itself, tags, cotisants and cotisation tiers, plus the exports. Also whether `listMembers` returns bitmasks at all, and whether a form may grant a cotisation tag |
 | `MANAGE_DOCUMENTS` | 3 | 8 | the private document vault (including `GET :id/vault-key`) and the association notes |
 | `MANAGE_FORMS` | 4 | 1 | `GET :id/forms`, plus `assertFormManager` on every form write and every submission read |
-| `VALIDATE_EVENTS` | 5 | 0 | BDE only. `isUserBdeAdmin` - validating, editing and deleting **any** association's events, and depositing a pre-validated one |
+| `VALIDATE_EVENTS` | 5 | 0 | BDE only. `isUserBdeAdmin` - validating, editing and deleting **any** association's events, and depositing one on any association's calendar. **It never validates by typing**: a deposit is a proposal like any other (2026-09-14) |
 | `MANAGE_ASSO` | 6 | 0 | BDE only. Creating an association AND **deleting one** (`DELETE :id`, widened from global-admin-only 2026-09-10), and **being the super-admin tier above** - so it grants nearly every other flag everywhere |
 | `MODERATE` | 7 | 0 | BDE only. `isContentModerator` - reports, mutes and comment deletion (`moderation.controller.ts`), plus editing, deleting and PINNING any post (`assertMayManage`, `pinPost`/`unpinPost`, and the `canManage` / `canPin` fields they are drawn from) |
 | `MANAGE_PRODUCTS` | 8 | 21 | the boutique, purchases and their exports, webhook failures, the whole payment-delegation tree, and the cotisation settings on `PATCH :id` |

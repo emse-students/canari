@@ -1,0 +1,20 @@
+-- An event is never validated by the act of creating it, so the column default cannot say it is.
+--
+-- Until 2026-09-14 `createCalendarEvent` wrote `validated` whenever the caller held the validator
+-- grant - a BDE admin, or a global admin - and the column default agreed with it. Both are wrong
+-- for the same reason: a validation became a property of WHO TYPED rather than a decision anybody
+-- took, so the queue only ever held the events of members who happened not to hold the grant, and
+-- the screen that reviews the school's agenda could not see what its own managers had put on it.
+-- The user's rule (2026-09-14) admits no exception: every event goes to `pending`, system admin and
+-- BDE admin included, and `validateCalendarEvent` is the one place a validation happens.
+--
+-- WHY THE DEFAULT IS WORTH A MIGRATION WHEN NO INSERT USES IT. The service names `status` on every
+-- insert, so this changes no behaviour today - it removes the unsafe half of the rule. A default
+-- reading `validated` publishes any future insert that forgets the column, school-wide and
+-- silently; a default reading `pending` makes that same omission visible in the queue instead.
+--
+-- NO ROW IS REWRITTEN, DELIBERATELY. An event already on the public agenda was validated under the
+-- rule in force when it was created, and demoting the agenda's history would empty the school's
+-- calendar and fill the BDE's queue with events that have already happened. The rule applies from
+-- here forward, which is what a default expresses and an UPDATE would not.
+ALTER TABLE association_calendar_events ALTER COLUMN status SET DEFAULT 'pending';

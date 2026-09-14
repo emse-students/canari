@@ -11,6 +11,25 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - un événement n'est plus jamais validé automatiquement
+
+Un événement créé par un administrateur du BDE ou par un administrateur système était publié
+immédiatement sur l'agenda de l'école, sans passer par la file d'attente. La validation dépendait
+donc de la personne qui l'avait saisi, pas d'une décision : la file ne contenait que les événements
+des membres qui, par hasard, n'avaient pas le droit de valider, et l'écran qui relit l'agenda de
+l'école ne voyait pas ce que ses propres gestionnaires y avaient déposé.
+
+Tout événement part désormais en attente de validation, sans exception - BDE et administrateur
+système compris. Valider reste possible tout de suite après, en un clic, mais c'est un geste à part.
+Le dépôt depuis l'agenda global le dit maintenant, et son bouton lit « Envoyer pour validation ».
+
+La même règle vaut quand on déplace la date d'un événement déjà validé : il repasse en attente pour
+tout le monde, alors qu'un administrateur gardait jusqu'ici la validation en place. Un oui portait
+sur une date ; changer la date dépense un accord qui n'a pas été donné.
+
+Les événements déjà publiés ne bougent pas : ils ont été validés sous la règle en vigueur au moment
+où ils ont été créés.
+
 ### Changed - an association's page used a fifth of the screen it had
 
 Every tab of an association's page was drawn in the same 1024-pixel column: the text, the member

@@ -693,6 +693,34 @@ membership in that club sees nothing. The global agenda (`/calendar`) gates per 
 server rule, which is the only place that validator can act - deriving its gate from the other
 surface instead of from the server would have kept the right unusable.
 
+### Nothing is validated by the act of creating it
+
+**Every event goes into the queue, whoever asks** - a BDE admin and a global admin included (user,
+2026-09-14: *"Un evenement ne doit jamais etre valide automatiquement, il doit aller en pending, y
+compris par un admin systeme ou un admin BDE"*). `createCalendarEvent` wrote `validated` on the spot
+whenever `isGlobalAdmin` or `isBde` was set, which made a validation a property of WHO TYPED rather
+than a decision anybody took: the queue held only the events of members who happened not to hold the
+grant, and `/admin/agenda` - the screen that reviews the school's agenda - could not see what its
+own managers had put on it.
+
+What the validator grant still buys on the create path is REACH, not a verdict: `targetAssocId` may
+name another association, and `kind` may be `break`. `validateCalendarEvent` is the one place a
+validation happens, and it is always a separate act. Pinned by
+`associations.service.never-auto-validates.spec.ts`, which has a case per caller shape because a
+rule with no exception is only proven by the cases that used to be exceptions.
+
+Two consequences worth knowing:
+
+- **A cross-association deposit no longer notifies the target at creation.** It used to, as
+  `event_validated`, which was true only while creating and validating were the same act. The
+  association hears from `validateCalendarEvent` or `rejectCalendarEvent` - once, when there is
+  something to hear - and the calendar managers hear about the proposal itself, as they do for every
+  other creation.
+- **The column default moved with the code** (migration 060). `createCalendarEvent` names `status`
+  on every insert, so the default decides nothing today; a default reading `validated` publishes any
+  future insert that forgets the column, school-wide and silently. No existing row is rewritten:
+  events already on the agenda were validated under the rule in force when they were created.
+
 ### A validation is spent on a DATE, so moving the date asks again
 
 `updateCalendarEvent` wrote seven columns and never `status`. An association admin could have an
@@ -713,10 +741,13 @@ A `validated` event whose `startsAt` or `endsAt` MOVES therefore returns to `pen
 - **Only the dates do it.** A title, a description or a linked form change nothing the BDE reasoned
   about when it said yes. A `pending` or `rejected` event is untouched: there is no validation to
   spend, and a second proposal notice for something already queued is noise.
-- **A caller who can validate re-validates in place.** `canCrossAsso` - the BDE/global-admin test
-  the create path already computes - means they ARE the authority the demotion would route to, so
-  sending them their own request is a queue item nobody needs. `validatedAt` still moves, because it
-  answers *when was THIS shape approved* rather than *when was some earlier shape approved*.
+- **And there is no exception for the authority itself.** A BDE or global-admin caller used to
+  re-validate in place, on the argument that they are the authority the demotion would route to.
+  That argument re-opened by a second door what the create path closes at the front - propose,
+  validate, move the date, and the event keeps a stamp nobody read the new shape to earn - so since
+  2026-09-14 every validated event whose dates move is demoted, whoever moved them. The caller is
+  notified like any other validator; `createNotifications` drops the actor, so nobody is pushed
+  their own request.
 
 **The demotion is not silent, and that is the half that makes it safe.** Without it the event leaves
 the public agenda for a queue nobody is told about - worse than the defect it replaces, the event

@@ -22,10 +22,13 @@ import {
  * **Only the dates do it.** A title, a description or a linked form change nothing the BDE reasoned
  * about when it said yes.
  *
- * **A caller who can validate re-validates in place.** They are the authority the demotion would
- * route to; sending them their own request is a queue item nobody needs. The stamp still moves,
- * because `validatedAt` must answer "when was THIS shape approved" rather than "when was some
- * earlier shape approved".
+ * **AND THERE IS NO EXCEPTION FOR THE AUTHORITY ITSELF.** A BDE or global-admin caller used to
+ * re-validate in place, on the argument that they are the authority the demotion would route to.
+ * That argument re-opened by a second door what `createCalendarEvent` closes at the front: propose,
+ * validate, then move the date, and the event keeps a stamp nobody read the new shape to earn.
+ * Since 2026-09-14 no path validates an event without somebody deciding it (user: *"Un evenement
+ * ne doit jamais etre valide automatiquement ... y compris par un admin systeme ou un admin BDE"*),
+ * so every validated event whose dates move is demoted and re-enters the queue, whoever moved them.
  *
  * The service's private collaborators are replaced rather than mocked through repositories: what is
  * under test is the status decision, and routing it through `findById`, `syncCoOwners` and
@@ -184,7 +187,7 @@ describe('updateCalendarEvent - a validated event asks again when its dates move
     expect(written(saved).validatedBy).toBe('bde-1');
   });
 
-  it('re-validates in place for a BDE caller instead of queueing them their own request', async () => {
+  it('demotes for a BDE caller too - the authority validates by deciding, never by typing', async () => {
     const { service, saved, notifiedValidators } = makeService({});
 
     await service.updateCalendarEvent(
@@ -194,13 +197,30 @@ describe('updateCalendarEvent - a validated event asks again when its dates move
       { isBde: true, callerUserId: 'bde-2' }
     );
 
-    expect(written(saved).status).toBe(AssociationCalendarEventStatus.Validated);
-    expect(written(saved).validatedBy).toBe('bde-2');
-    // `validatedAt` answers "when was THIS shape approved", so it moves with the dates.
-    expect((written(saved).validatedAt as Date).getTime()).toBeGreaterThan(
-      new Date('2026-09-01T09:00:00.000Z').getTime()
+    expect(written(saved).status).toBe(AssociationCalendarEventStatus.Pending);
+    // The stamp goes with the status: a pending row carrying a `validatedBy` reads as approved to
+    // anything joining on it.
+    expect(written(saved).validatedAt).toBeNull();
+    expect(written(saved).validatedBy).toBeNull();
+    // They are told like any other validator - `createNotifications` drops the actor, so the one
+    // who moved the dates is not pushed their own request.
+    expect(notifiedValidators).toHaveBeenCalled();
+  });
+
+  it('demotes for a global admin too - there is no system-level exception either', async () => {
+    const { service, saved, notifiedValidators } = makeService({});
+
+    await service.updateCalendarEvent(
+      'asso-1',
+      'ev-1',
+      { startsAt: '2026-10-02T18:00:00.000Z' } as never,
+      { isGlobalAdmin: true, callerUserId: 'root-1' }
     );
-    expect(notifiedValidators).not.toHaveBeenCalled();
+
+    expect(written(saved).status).toBe(AssociationCalendarEventStatus.Pending);
+    expect(written(saved).validatedAt).toBeNull();
+    expect(written(saved).validatedBy).toBeNull();
+    expect(notifiedValidators).toHaveBeenCalled();
   });
 
   it('does not touch a PENDING event, which has no validation to spend', async () => {

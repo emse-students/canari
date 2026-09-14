@@ -47,10 +47,19 @@ export class AssociationCalendarEvent {
   @Column({ type: 'varchar', length: 16, default: AssociationCalendarEventKind.Event })
   kind: AssociationCalendarEventKind;
 
+  /**
+   * THE DEFAULT IS THE UNSAFE HALF OF THE RULE, SO IT IS `pending` - migration 060.
+   *
+   * `createCalendarEvent` names this column on every insert, so the default decides nothing today.
+   * That is exactly why it mattered: a column whose default says `validated` publishes any future
+   * insert that forgets to name it, silently and school-wide, and the rule is that no event is ever
+   * validated without somebody deciding it (user, 2026-09-14). A default is what happens when
+   * nobody said - and when nobody said, an event is waiting.
+   */
   @Column({
     type: 'varchar',
     length: 16,
-    default: AssociationCalendarEventStatus.Validated,
+    default: AssociationCalendarEventStatus.Pending,
   })
   @Index()
   status: AssociationCalendarEventStatus;
