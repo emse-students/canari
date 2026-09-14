@@ -5416,8 +5416,20 @@ turn it into a defect, are in [design-reference](frontend/design-reference.md) s
 
 **What the sweep could NOT reach, and is the remaining scope:**
 
-- **A community with many channels, or long ones.** `/communities` was measured against the estate's
-  one community with one channel, which exercises no width.
+- **A community with many channels. The LONG-NAME half is answered (2026-09-14), by injection, and
+  it holds.** The estate has one channel per workspace, so the width was exercised by writing a
+  56-character name (`annonces-generales-et-tres-importantes-de-la-rentree-2026`) into the sidebar's
+  twelve text leaves through the DOM and re-measuring: at 1280 all twelve clip with an ellipsis, at
+  390 none of them does, and **at neither width does anything exceed its container or make the
+  document scroll sideways** - `scrollWidth - clientWidth` is 0 before AND after the injection, both
+  widths. The 390 result is the one the probe cannot read alone: "nothing clipped and nothing was
+  over-wide" is what a sidebar the phone layout does not render looks like too. What settles it is
+  the second surface measured the same way at 390, where six of eight leaves clipped; the two that
+  did not are an icon box carrying no text and one `text-sm font-medium` label, and neither was
+  over-wide. **So a long channel name truncates and never widens the page.** What a real
+  many-channel community would add on top of that is VERTICAL length - a list that scrolls - which
+  this probe did not exercise, and injection proves the LAYOUT holds, never that real data is shaped
+  this way.
 - **Real hardware.** All of the above is Chrome with a device-metrics override; the phone and the
   iPhone render their own way, and three of three iOS defects were invisible to every gate here
   ([device-verification](device-verification.md)).
