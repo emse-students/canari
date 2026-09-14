@@ -1,8 +1,9 @@
 <script lang="ts">
+  import type { Snippet } from 'svelte';
   import { MessageCircle, FaceSlightlySmiling } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
-  /** Props for the PostActions bar (reaction picker + comment button). */
+  /** Props for the PostActions bar (reaction picker + comment button + the reaction tally). */
   interface Props {
     /** The emoji type the current user has reacted with, or null if no reaction. */
     userReaction: string | null;
@@ -18,6 +19,12 @@
     commentCount?: number;
     /** Called when the user clicks the Comment button to toggle the comment section. */
     onCommentClick: () => void;
+    /**
+     * The tally of reactions already cast, rendered right-aligned on THIS row rather than on one of
+     * its own. The caller owns it because the caller owns the post's reaction state; this component
+     * only owns where it sits.
+     */
+    reactionSummary?: Snippet;
   }
 
   let {
@@ -28,61 +35,79 @@
     onReactionSelect,
     commentCount,
     onCommentClick,
+    reactionSummary,
   }: Props = $props();
+
+  /** One shape for both controls, so the row reads as a pair rather than two sizes. */
+  const ACTION =
+    'flex h-11 items-center gap-1.5 rounded-lg px-3 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-amber-500';
 </script>
 
 <!--
-  THE PICKER IS ANCHORED TO THE ROW, NOT TO THE BUTTON INSIDE IT, and that is the whole fix.
+  ONE ROW CARRIES BOTH THE CONTROLS AND THE TALLY, AND THAT IS A MEASUREMENT.
 
-  Measured on a 393px viewport, 2026-09-09, before this change: the popover's box ran from x=37 to
-  x=398 - **five pixels past the right edge of the screen** - because its cap was
-  `max-w-[min(100vw-2rem,32rem)]`, a width measured against the VIEWPORT while the element was
-  positioned against a button already 37px in. A cap that does not know where its element starts
-  cannot keep it on screen.
+  It used to be two rows plus two words. Read on A1 (Mi 9T, 436 x 945 CSS px) on 2026-09-14, a post
+  spent 65 px on this bar - two buttons labelled "J'adore" and "Commenter" - and another 49 px on a
+  separate bordered row below it holding nothing but the reaction badges. Facebook's own feed, read
+  on the same phone the same minute, spends 44 px on ALL of it: like / comment / send grouped hard
+  left as bare icons, each count INSIDE the button it belongs to, and the reaction faces pinned to
+  the right edge of that same 44 px row (x920-1050 of 1080). No tally row exists there at all.
 
-  Worse, the cap was not the binding constraint. The eight reactions came to **488px of content in a
-  359px box**: 129px - the last two, Canari and Marteau - reachable only by a horizontal scroll
-  nothing announced. Each one was 54.5 x 72px because it stacked its NAME under the emoji.
+  So the tally comes here as a snippet and the labels go: 114 px of chrome per post becomes 44, which
+  is a fifth of a phone screen given back for every post on it. The words are not lost - they are on
+  `aria-label` and `title`, where a screen reader and a pointer both still reach them, and the emoji
+  the reader actually chose is a better label for their own reaction than its name was.
 
-  So it follows the reference (user, 2026-09-09: *"barre de reaction trop large pour l'ecran voir
-  facebook (web & mobile)"*): one compact pill, emoji only, the name carried by `title` and
-  `aria-label` where a pointer and a screen reader can both reach it. `left-5 right-5` pins it to the
-  row's content box on a phone, so the eight share whatever width the card has and the bar can never
-  be wider than the thing it belongs to; from 640px up it shrinks back to its own content.
+  THE PICKER IS ANCHORED TO THE ROW, NOT TO THE BUTTON INSIDE IT, and that is a separate fix worth
+  keeping. Measured on a 393px viewport, 2026-09-09: the popover ran five pixels past the right edge
+  of the screen because its cap was `max-w-[min(100vw-2rem,32rem)]` - a width measured against the
+  VIEWPORT while the element was positioned against a button already 37px in. A cap that does not
+  know where its element starts cannot keep it on screen. `left-3 right-3` pins it to this row's
+  content box, so the eight share whatever width the card has and the bar can never be wider than the
+  thing it belongs to; from 640px up it shrinks back to its own content.
 -->
-<div class="border-cn-border/40 relative flex items-center gap-2 border-b px-5 py-3">
+<div class="border-cn-border/40 relative flex items-center gap-1 border-b px-3">
   <button
     type="button"
     onclick={onToggleReactionPicker}
-    class="flex items-center gap-1.5 rounded-lg px-3 py-2 transition-colors {userReaction
+    class="{ACTION} {userReaction
       ? 'bg-cn-yellow/15 text-cn-dark'
       : 'text-text-muted hover:bg-(--cn-surface)'}"
     aria-label={m.post_reacter()}
+    title={m.post_reacter()}
     aria-expanded={showReactionPicker}
   >
     {#if userReaction}
-      <span class="text-lg">{reactionList.find((r) => r.type === userReaction)?.emoji ?? '😊'}</span
+      <span class="text-lg" aria-hidden="true"
+        >{reactionList.find((r) => r.type === userReaction)?.emoji ?? '😊'}</span
       >
-      <span class="text-sm font-medium">{userReaction}</span>
     {:else}
       <FaceSlightlySmiling size={20} />
-      <span class="text-sm">{m.post_react()}</span>
     {/if}
   </button>
 
   <button
     type="button"
     onclick={onCommentClick}
-    class="text-text-muted flex items-center gap-1.5 rounded-lg px-3 py-2 transition-colors hover:bg-(--cn-surface)"
+    class="{ACTION} text-text-muted hover:bg-(--cn-surface)"
     aria-label={m.post_commenter()}
+    title={m.post_commenter()}
   >
     <MessageCircle size={20} />
-    <span class="text-sm">{commentCount ? commentCount : m.post_commenter()}</span>
+    {#if commentCount}
+      <span class="text-sm font-medium">{commentCount}</span>
+    {/if}
   </button>
+
+  {#if reactionSummary}
+    <div class="ml-auto flex min-w-0 items-center">
+      {@render reactionSummary()}
+    </div>
+  {/if}
 
   {#if showReactionPicker}
     <div
-      class="border-cn-border absolute right-5 bottom-full left-5 z-50 mb-2 flex items-center gap-0.5 rounded-full border bg-(--cn-surface) p-1 shadow-lg sm:right-auto sm:gap-1 sm:p-1.5"
+      class="border-cn-border absolute right-3 bottom-full left-3 z-50 mb-2 flex items-center gap-0.5 rounded-full border bg-(--cn-surface) p-1 shadow-lg sm:right-auto sm:gap-1 sm:p-1.5"
       role="group"
       aria-label={m.post_reacter()}
     >

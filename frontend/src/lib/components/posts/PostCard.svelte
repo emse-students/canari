@@ -514,6 +514,12 @@
       <PostContent post={localPost} {authToken} />
     {/if}
 
+    <!--
+      THE TALLY SITS ON THE ACTION BAR, NOT UNDER IT. `ReactionsDisplay` used to be the next sibling
+      and drew a second bordered row for it - 65 px of bar plus 49 px of tally on A1, where Facebook
+      spends 44 px on both together. Passing it as a snippet keeps its five props here, where the
+      post's reaction state already lives, while `PostActions` decides only where it sits.
+    -->
     <PostActions
       {userReaction}
       {showReactionPicker}
@@ -522,15 +528,17 @@
       onToggleReactionPicker={() => (showReactionPicker = !showReactionPicker)}
       onReactionSelect={handleReaction}
       onCommentClick={() => (showComments = !showComments)}
-    />
-
-    <ReactionsDisplay
-      {reactionCounts}
-      reactions={localPost.reactions ?? {}}
-      {userReaction}
-      reactionList={REACTIONS}
-      onReactionClick={handleReaction}
-    />
+    >
+      {#snippet reactionSummary()}
+        <ReactionsDisplay
+          {reactionCounts}
+          reactions={localPost.reactions ?? {}}
+          {userReaction}
+          reactionList={REACTIONS}
+          onReactionClick={handleReaction}
+        />
+      {/snippet}
+    </PostActions>
 
     <!--
       A post poll's deadline is a date its author picked, hours or days out, so comparing it to this
