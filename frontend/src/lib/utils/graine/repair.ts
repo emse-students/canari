@@ -9,7 +9,7 @@ import {
 import { ChannelService } from '$lib/services/ChannelService';
 import { requireGraineRuntime, scopeForChannel } from './runtime';
 import { historyFloorFor, withinHistoryFloor } from './historyBoundary';
-import { GraineDistributionUnavailableError } from './seedDistribution';
+import { distributionEpochFor, GraineDistributionUnavailableError } from './seedDistribution';
 
 /**
  * Asking for a seed this device does not hold (WP-33).
@@ -90,6 +90,27 @@ interface MissingSeed {
 
 /** Communities whose history has been asked for in this app session. Same lifetime, same reason. */
 const historyAsked = new Set<string>();
+
+/**
+ * Communities there was nobody to ask, and the distribution epoch at which that was true.
+ *
+ * **"Nobody to ask" is a statement about a ROSTER, and a roster has a version.** It used to be
+ * recorded in `historyAsked`, which is the set of communities this session has ASKED - so a request
+ * that was never sent was filed as one that was, and the skip became permanent for the session. The
+ * one thing that clears it is the community leaving the device or a restart, which is the user
+ * getting themselves out of an impasse.
+ *
+ * The cost was not hypothetical. A phone joining a community while the laptop holding its seeds is
+ * offline finds no second member and no second device of its own, files the community here, and the
+ * laptop then comes online and joins the group - and the phone shows an empty community until it is
+ * restarted, with the answerer sitting on the very group it is a member of.
+ *
+ * Every membership change commits to the distribution group and advances its epoch, and BOTH halves
+ * of the condition - another member, another device of ours on the group - are membership. So the
+ * epoch is exactly the version of the answer, and comparing it re-asks when the roster moves and
+ * only then: a load that changes nothing still costs no request and writes no line.
+ */
+const historyUnanswerableAt = new Map<string, number>();
 
 /** True while a flush is in flight, so the accumulator keeps filling instead of racing it. */
 let flushing = false;
@@ -432,6 +453,11 @@ function lowestOtherMember(
  * lied about; "I have not asked yet" is in memory, so a restart is free to ask again - the answerer
  * may simply have been offline. Neither is a clock.
  *
+ * **A THIRD OUTCOME IS NEITHER OF THOSE: there was nobody to ask.** No request went out, so nothing
+ * is outstanding, and filing it as "asked" is recording something that did not happen. It is keyed
+ * on the distribution epoch instead - see {@link historyUnanswerableAt} - so the next ordinary
+ * trigger re-asks once the roster has moved, and costs nothing while it has not.
+ *
  * Best-effort by construction: it is called from the join path and must never fail it. Every branch
  * says what it did, because the alternative symptom is a joiner staring at an empty salon.
  */
@@ -448,6 +474,13 @@ export async function requestCommunityHistory(workspaceId: string): Promise<void
   const groupId = mlsService.distributionGroupFor(scope);
   if (!groupId) throw new GraineDistributionUnavailableError(scope);
 
+  // Before the roster read below, which is a network call: a pass that finds the same epoch is a
+  // pass asking the same question of the same people, and it already has the answer. `null` is not
+  // an epoch and never matches one - a group this device cannot ride yet is not evidence about who
+  // is on it.
+  const epoch = distributionEpochFor(mlsService, scope);
+  if (epoch !== null && historyUnanswerableAt.get(workspaceId) === epoch) return;
+
   const roster = new Set(
     (await channels().listWorkspaceMembers(workspaceId)).map((m) => String(m.userId).toLowerCase())
   );
@@ -459,11 +492,15 @@ export async function requestCommunityHistory(workspaceId: string): Promise<void
   const answerer =
     lowestOtherMember(roster, userId) ?? ((await ownDevicesOnTheGroup(scope)) ? userId : null);
   if (!answerer) {
-    // Genuinely nobody: no second member, and no second device of ours on the group. Said once
-    // rather than retried on every load.
-    historyAsked.add(workspaceId);
+    // Genuinely nobody RIGHT NOW: no second member, and no second device of ours on the group. Said
+    // once per roster rather than retried on every load - and it is a roster this device does not
+    // control, so the next epoch gets its own answer.
+    if (epoch !== null) historyUnanswerableAt.set(workspaceId, epoch);
     console.info(
-      `[GRAINE] community ${workspaceId.slice(0, 8)} has no other member and no other device of ours to ask for history`
+      `[GRAINE] community ${workspaceId.slice(0, 8)} has no other member and no other device of ours to ask for history` +
+        (epoch === null
+          ? ' - and its distribution group is not ridable yet, so this is re-asked on the next pass'
+          : ` (distribution epoch ${epoch}) - re-asked when that epoch moves`)
     );
     return;
   }
@@ -478,6 +515,9 @@ export async function requestCommunityHistory(workspaceId: string): Promise<void
   );
   await mlsService.sendMessage(groupId, frame, undefined, DELIVERY.transport);
   historyAsked.add(workspaceId);
+  // A request IS outstanding now, and `historyAsked` is what says so. Leaving a stale epoch here
+  // would be a second thing claiming to decide the same question.
+  historyUnanswerableAt.delete(workspaceId);
   console.info(
     `[GRAINE] asked ${answerer} for the history of community ${workspaceId.slice(0, 8)}`
   );
@@ -547,6 +587,7 @@ export function forgetWorkspaceRepairState(
   sessionIds: readonly string[]
 ): void {
   historyAsked.delete(workspaceId);
+  historyUnanswerableAt.delete(workspaceId);
   for (const sessionId of sessionIds) forgetAskedSession(sessionId);
 }
 
@@ -557,5 +598,6 @@ export function resetGraineRepairState(): void {
   declined.clear();
   outstanding.clear();
   historyAsked.clear();
+  historyUnanswerableAt.clear();
   flushing = false;
 }

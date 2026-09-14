@@ -54,14 +54,22 @@ let heldSessions: StoredGraineSession[];
  * that IS about them says so by naming a second one.
  */
 let ownDevices: string[];
+/** The distribution group's epoch, which is the version of the roster the history ask reads. */
+let distributionEpoch: number;
 
 beforeEach(() => {
   resetGraineRepairState();
   const roster = [{ userId: 'Bob' }, { userId: 'alice' }, { userId: 'carol' }];
+  // CLEARED, NOT JUST RE-STUBBED. These two are module-level `vi.fn()`s, so their call lists were
+  // accumulating across the whole file - which means no test here could ever assert a call COUNT,
+  // and one that tried would read the previous tests' work as its own.
+  listMembers.mockClear();
+  listWorkspaceMembers.mockClear();
   listMembers.mockResolvedValue(roster);
   listWorkspaceMembers.mockResolvedValue(roster);
   heldSessions = [];
   ownDevices = ['device-1'];
+  distributionEpoch = 7;
   getDistributionGroup.mockImplementation(async () => ({
     groupId: 'dist-group',
     groupInfo: null,
@@ -79,6 +87,12 @@ beforeEach(() => {
       sendMessage,
       distributionGroupFor: () => 'dist-group',
       getDeviceId: () => 'device-1',
+      // The history ask reads the distribution epoch, because "nobody to ask" is an answer about a
+      // roster and the epoch is that roster's version. `distributionEpoch` is what a test moves to
+      // say the membership changed.
+      getLocalGroups: () => ['dist-group'],
+      isDistributionBaseSettled: () => true,
+      getEpoch: () => distributionEpoch,
     } as never,
   });
   registerChannelWorkspace('chan-1', 'ws-1', false);
@@ -248,6 +262,53 @@ describe('requestCommunityHistory (WP-34)', () => {
     // Nobody to ask and nothing to ask for: the only case where silence is the right answer.
     expect(sendMessage).not.toHaveBeenCalled();
     expect(info).toHaveBeenCalled();
+    info.mockRestore();
+  });
+
+  /**
+   * THE IMPASSE THIS PAIR EXISTS FOR. "Nobody to ask" was filed in the set of communities this
+   * session had ASKED, so a request that never went out was recorded as one that did, and the skip
+   * lasted the whole session. The only things clearing it were the community leaving the device and
+   * a restart - the second being the user getting themselves out, which is exactly what an exit is
+   * not allowed to be.
+   *
+   * The scenario is a phone joining a community while the laptop holding its seeds is offline. No
+   * second member, no second device of ours on the group, so nothing is asked. The laptop comes
+   * online and joins - which commits to the distribution group and advances its epoch - and the
+   * phone showed an empty community until it was restarted.
+   */
+  it('re-asks once the roster moves, having found nobody to ask', async () => {
+    listMembers.mockResolvedValue([{ userId: 'alice' }]);
+    listWorkspaceMembers.mockResolvedValue([{ userId: 'alice' }]);
+
+    await requestCommunityHistory('ws-1');
+    expect(sendMessage).not.toHaveBeenCalled();
+
+    // The laptop comes online and joins the distribution group: a membership change, so the epoch
+    // moves, and with it the only thing the previous answer was ever true of.
+    distributionEpoch = 8;
+    ownDevices = ['device-1', 'device-2'];
+
+    await requestCommunityHistory('ws-1');
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not re-ask while the roster has not moved, however many passes it gets', async () => {
+    listMembers.mockResolvedValue([{ userId: 'alice' }]);
+    listWorkspaceMembers.mockResolvedValue([{ userId: 'alice' }]);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await requestCommunityHistory('ws-1');
+    await requestCommunityHistory('ws-1');
+    await requestCommunityHistory('ws-1');
+
+    // ONE line and ONE roster read for the whole run: an ordinary trigger firing three times asks
+    // the same question of the same people, and a second line saying so is the line its reader
+    // learns to skip. This is the half the permanent flag was protecting, and it is kept.
+    expect(info).toHaveBeenCalledTimes(1);
+    expect(listWorkspaceMembers).toHaveBeenCalledTimes(1);
+    expect(sendMessage).not.toHaveBeenCalled();
     info.mockRestore();
   });
 });
