@@ -21,10 +21,6 @@
   ];
 </script>
 
-<svelte:head>
-  <title>{m.legal_privacy_title()} - Canari</title>
-</svelte:head>
-
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}

@@ -1,12 +1,28 @@
+import { PRIVATE_PREFIXES } from '$lib/seo/resolve';
 import { siteOrigin } from '$lib/seo/site';
 import type { RequestHandler } from './$types';
 
 /** Prerendered for static hosting (nginx serves `/robots.txt`). */
 export const prerender = true;
 
-/** Crawler rules for the public Canari web app. */
+/**
+ * Crawler rules for the public Canari web app.
+ *
+ * THE DISALLOW LIST IS NOT WRITTEN HERE. It is `PRIVATE_PREFIXES`, the same list that decides
+ * whether a page emits `noindex` - a page cannot be private to one and public to the other. This
+ * file held a second copy until 2026-09-14 and the two had drifted: `/profile/` and `/admin/` were
+ * spelled with a trailing slash, which leaves `/profile` and `/admin` themselves crawlable, and
+ * neither list had heard of `/directory`, the student directory.
+ *
+ * `/api/` is the one line that is still written here, because it is not a page: no route resolves
+ * SEO for it, so it has no business in a list about pages.
+ */
 export const GET: RequestHandler = () => {
   const origin = siteOrigin();
+  const disallow = [...PRIVATE_PREFIXES]
+    .sort()
+    .map((prefix) => `Disallow: ${prefix}`)
+    .join('\n');
   const body = `# Canari - https://canari-emse.fr
 User-agent: *
 Allow: /posts
@@ -16,24 +32,7 @@ Allow: /shop
 Allow: /forms/
 Allow: /legal/
 Disallow: /api/
-# The SPA shell nginx serves when the SSR container is unreachable. It is the app booting on
-# whatever URL was asked for, so it has no content and no canonical URL of its own.
-Disallow: /app-shell
-Disallow: /chat
-Disallow: /communities
-Disallow: /admin/
-Disallow: /dev/
-Disallow: /auth/
-Disallow: /dashboard
-Disallow: /profile/
-Disallow: /notifications
-Disallow: /account/
-Disallow: /login
-# One-time invite tokens. They now unfurl with the real community/group name, which is
-# what a shared link is for - but an unfurl is a preview to whoever holds the link, and an
-# index entry is a public listing of it.
-Disallow: /c/join/
-Disallow: /g/join/
+${disallow}
 
 Sitemap: ${origin}/sitemap.xml
 `;

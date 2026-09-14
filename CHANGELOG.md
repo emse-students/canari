@@ -11,6 +11,27 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - half the app's pages had no name in the browser tab
+
+Twenty of the app's forty pages opened a tab reading "Canari - Mines Saint-Etienne", the site's
+default name, instead of their own: every page of the admin console, but also Parametres, Mon
+profil, Annuaire, Listes, Evenements, Mes achats and Documents. With a handful of tabs open there
+was no way to tell one from another, and a bookmark saved the same name every time.
+
+Ten other pages had each been given a name by hand, which fixed the tab and broke the link preview:
+the name shown when the page is shared came from somewhere else and had drifted apart from it. The
+terms-of-use page was titled "Conditions Generales d'Utilisation" while the preview of that same
+page said "Conditions generales d'utilisation".
+
+Every page now takes its name from the heading it already displays, from one place, so the tab, the
+bookmark and the shared link always agree. A new page cannot ship without a name of its own.
+
+The list of pages kept out of search engines was corrected at the same time, and it was incomplete
+in a way worth naming: **the student directory was not on it.** Nothing was ever exposed - the
+directory shows nothing without a signed-in account - but its address could have been listed. That
+list is now written once and used everywhere, and it covers the directory, the settings, the lists,
+the events page and the documents page, none of which were on it before.
+
 ### Fixed - the notice at the top of the screen was sitting on the app's own header
 
 A notice across the top of the window - a scheduled-maintenance warning, or the message that says

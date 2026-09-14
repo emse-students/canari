@@ -14,10 +14,6 @@
   ];
 </script>
 
-<svelte:head>
-  <title>{m.legal_child_safety_title()} - Canari</title>
-</svelte:head>
-
 <LegalDocument
   title={m.legal_child_safety_title()}
   subtitle={m.legal_child_safety_subtitle()}

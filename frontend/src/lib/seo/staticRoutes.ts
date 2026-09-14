@@ -9,11 +9,14 @@
 /**
  * Every page path that a real `+page.svelte` owns.
  *
+ * Exported because `seoTitles.test.ts` asserts that every one of them resolves a title of its own,
+ * and a guard that re-derived the set would be guarding its own copy rather than the route tree.
+ *
  * DERIVED and not listed, so it cannot drift: a new static route joins it by existing. The glob is
  * resolved at build time, so nothing here costs anything at request time. Parameterised routes are
  * excluded by the `[` their directory name carries.
  */
-const STATIC_ROUTES: ReadonlySet<string> = new Set(
+export const STATIC_PAGE_ROUTES: ReadonlySet<string> = new Set(
   Object.keys(import.meta.glob('/src/routes/**/+page.svelte'))
     .filter((file) => !file.includes('['))
     .map((file) => file.slice('/src/routes'.length, -'/+page.svelte'.length) || '/')
@@ -35,5 +38,5 @@ export function normalizePath(pathname: string): string {
  * on every completed payment, measured on prod 2026-08-27.
  */
 export function isStaticPageRoute(pathname: string): boolean {
-  return STATIC_ROUTES.has(normalizePath(pathname));
+  return STATIC_PAGE_ROUTES.has(normalizePath(pathname));
 }

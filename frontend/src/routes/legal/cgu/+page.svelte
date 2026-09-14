@@ -25,10 +25,6 @@
   ];
 </script>
 
-<svelte:head>
-  <title>{m.legal_cgu_title()} - Canari</title>
-</svelte:head>
-
 <LegalDocument
   title={m.legal_cgu_title()}
   subtitle={m.legal_cgu_subtitle()}

@@ -72,10 +72,6 @@
   }
 </script>
 
-<svelte:head>
-  <title>{m.nav_notifications_label()} - Canari</title>
-</svelte:head>
-
 <!--
   THE LIST SITS ON THE PAGE GROUND, NOT ON A CARD.
 

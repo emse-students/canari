@@ -24,10 +24,6 @@
   });
 </script>
 
-<svelte:head>
-  <title>{m.form_cancel_title()}</title>
-</svelte:head>
-
 <div class="flex min-h-screen items-center justify-center px-4">
   <div class="w-full max-w-md space-y-6 text-center">
     <div class="flex justify-center">

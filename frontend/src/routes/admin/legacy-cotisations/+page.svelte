@@ -116,8 +116,6 @@
   ];
 </script>
 
-<svelte:head><title>{m.admin_legacy_page_title()}</title></svelte:head>
-
 {#if ready}
   <PageHeader title={m.admin_legacy_title()} subtitle={m.admin_legacy_subtitle()}>
     {#snippet actions()}
