@@ -188,7 +188,7 @@ All tables share the `auth_db` database host. Full schemas are in the service wi
 | `key_packages` | `userId`, `deviceId` (UNIQUE), `packageBase64` |
 | `one_time_key_packages` | pool of pre-keys per `(userId, deviceId)` |
 | `queued_message` | `recipientId`, `deviceId`, `proto`, `isWelcome`, `isCommit`, `groupId`, `type`, `ratchetTree` |
-| `dm_groups` | `id`, `isGroup`, `keyVersion`, `activeEpoch`, `latestKeyRotationPayload` |
+| `dm_groups` | `id`, `isGroup`, `activeEpoch` |
 | `dm_group_members` | `groupId`, `userId`, `role`, `leftAt` |
 | `dm_device_group_memberships` | `groupId`, `userId`, `deviceId`, `status` (pending/welcome_sent/welcome_received/stale), `lastEpochSeen` |
 | `push_tokens` | `userId`, `deviceId`, `token`, `platform` (fcm/apns) |

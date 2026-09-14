@@ -100,7 +100,6 @@ refusals):
 | `S-E1`/`DE4` | a commit-log hole | **18 holes, 11 of 58 groups, every one exactly ONE epoch wide** |
 | `S-E5` | a `pending` seat nobody honours | **30**, all `never added`, zero carry `kickedAt` |
 | `S-E3`/`G-E3`/`DE3` | stale base, every holder behind | **1 group** |
-| `S-E7` | `latestKeyRotationPayload` | **NULL in 58 of 58** - the column is dead |
 | `R-E3` | `ROSTER_DISAGREE` | outbox has no attempt ceiling; `sender-not-active` is neither permanent disposition |
 | `R-E4` | an `isGroupHealthy` hold | returns `retry` without incrementing `attempts` or writing `nextAttemptAt` |
 | `R-E8` | exit-owed limbo | the group is invisible **and** un-recoverable while the server never answers; no counter, no expiry |

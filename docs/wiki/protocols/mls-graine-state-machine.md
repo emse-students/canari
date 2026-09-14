@@ -560,7 +560,7 @@ claims in the audit that produced this page did not survive the query.
 | A tombstoned group still carrying live state | 1432 tombstoned groups: **0** with an active membership, **0** with a queued message | **REFUTED - tombstoning is clean** |
 | Legacy `queued_message.content` / `type` still in use | 5307 queued rows: **0** with legacy content, **0** without `proto` | **REFUTED - the columns are dead and droppable** |
 | `revoked_device` rows outliving their device | 240 rows, oldest 2026-06-14: **0** whose device still holds a key package | **REFUTED - revocation purges what it bans** |
-| `keyVersion` / `latestKeyRotationPayload` at defaults | `keyVersion`: **0 of 58** at default. `latestKeyRotationPayload`: **58 of 58 NULL** | **HALF REFUTED - the second column is dead** |
+| `keyVersion` / `latestKeyRotationPayload` at defaults | **Re-measured 2026-09-14 over ALL 1490 rows, tombstones included**: `latestKeyRotationPayload` NULL in 1490 of 1490, `keyVersion` at its default in 1490 of 1490. The first reading of the second column was INVERTED - it said "at its default nowhere" | **BOTH COLUMNS DEAD, and DROPPED 2026-09-14** |
 | `pending_welcome_notify:{userId}` leaking in Redis | 5 keys, **every one carrying a TTL** (6 h to 22 h). 57 `group:members` sets for 58 live groups | **REFUTED - in-flight state, not a leak** |
 
 **AND THE ONE GROUP NOBODY COULD REPAIR WAS A GROUP NOBODY WAS IN.** Re-reading it two days later
