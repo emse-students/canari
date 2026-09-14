@@ -1,3 +1,4 @@
+import { getClientAppVersion } from '$lib/utils/appVersion';
 import { createMlsCryptoWorkerSession } from '$lib/mls-client/mlsCryptoWorkerSession';
 import { encryptMlsStateOffThread } from '$lib/mls-client/mlsEncryptWorkerSession';
 import { wasmClientDecryptPage } from '$lib/mls-client/mlsBatchDecrypt';
@@ -1120,6 +1121,7 @@ export class WebMlsService extends BaseMlsService {
       keyPackageBase64: base64,
       deviceName: storedName,
       deviceOs: detectRuntimeDeviceOs(),
+      deviceAppVersion: getClientAppVersion(),
     });
   }
 

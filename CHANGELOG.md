@@ -11,6 +11,22 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - two thirds of phones never said which version they were running
+
+The app can require a minimum version and refuse to open below it. That is the only setting able to
+lock someone out entirely, and it is raised by hand - so whoever raises it needs to know what people
+are actually running.
+
+**Almost nobody was saying.** Of the mobile devices that enrolled in the month to 14 September, 168
+of 226 iPhones and 87 of 170 Android devices recorded no version at all, and every desktop browser
+recorded none either. Two different causes with the same effect: the web app never sent the
+information, and the phone app asked the system for it at the moment of sending - a question that
+comes back empty on iOS, so the platform with the biggest hole was the one that looked fine.
+
+Neither needed asking. The app has its own version built into it, so it now states that, identically
+everywhere, and it is the very number the minimum is compared against. The setting can be raised
+against real figures instead of a table that was empty for two devices in three.
+
 ### Fixed - three frozen conversations were being reported as merely waiting
 
 A conversation that nobody new can enter is watched for by an hourly check on the server, which

@@ -5,7 +5,6 @@ vi.mock('$lib/services/WebMlsService', () => ({ WebMlsService: class {} }));
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
 vi.mock('@tauri-apps/plugin-http', () => ({ fetch: vi.fn() }));
-vi.mock('@tauri-apps/api/app', () => ({ getVersion: vi.fn() }));
 vi.mock('@tauri-apps/plugin-websocket', () => ({ default: { connect: vi.fn() } }));
 
 import { TauriMlsService } from './TauriMlsService';

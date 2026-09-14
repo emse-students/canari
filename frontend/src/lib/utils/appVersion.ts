@@ -77,6 +77,24 @@ export function parseServerVersionInfo(data: unknown): ServerVersionInfo | null 
     maintenance: normalizeMaintenance(obj.maintenance),
   };
 }
+/**
+ * The version this device reports when it enrols.
+ *
+ * A BUILD-TIME FACT, ASKED WHERE IT IS KNOWN. This used to be `getVersion()` from
+ * `@tauri-apps/api/app` behind a cache, and on iOS it answered empty - so 168 of 226 iPhones
+ * active in the 30 days to 2026-09-14 had enrolled with no version at all, and `minClientVersion`
+ * is raised by hand against exactly this column. Nothing about a version needs a runtime round
+ * trip: the app EMBEDS this bundle (`frontendDist: "../build"`), so the bundle's own constant IS
+ * the app's version on every platform, and it cannot fail.
+ *
+ * IT IS ALSO THE VERSION THE GATE ACTUALLY COMPARES. `minClientVersion` is checked against
+ * `VITE_APP_VERSION`, which is what `getClientAppVersion()` returns; the native shell's version is
+ * a different string that merely happens to agree because one script writes both. Reporting the
+ * one the gate reads makes the column evidence about the decision it feeds - including the
+ * `0.0.0` this returns when the constant is absent, which is not a placeholder standing in for
+ * `unknown`: it is what the gate itself would compare, so a device recorded at `0.0.0` is
+ * precisely a device any floor will block.
+ */
 export function getClientAppVersion(): string {
   const v = import.meta.env.VITE_APP_VERSION?.trim();
   return v || '0.0.0';

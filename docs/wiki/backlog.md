@@ -2027,21 +2027,49 @@ sanitises it, and both client services accept it. Over the last 21 days, by `dev
 | macos | 12 | **0** |
 | linux | 6 | **0** |
 
-Two separate causes, and the population is what separates them. **The web never sends it at all**:
-`WebMlsService.publishKeyPackage` passes `deviceName` and `deviceOs` and stops there, while
-`TauriMlsService.publishKeyPackage` awaits `getRuntimeAppVersion()` and includes it - so windows,
-macos and linux read 0 out of 58 by construction, and that half is one line. **The iOS half is not
-that**: it goes through the Tauri path, which does send the field, and still 43 of 48 enrolments
-carry nothing - so `getRuntimeAppVersion()` is answering empty on that platform, which is a
-different defect and the one worth measuring before writing anything. Android's 22 missing rows say
-it is not purely iOS either.
+Two separate causes, and the population is what separated them - **both FIXED 2026-09-14**. The web
+never sent the field at all: `WebMlsService.publishKeyPackage` passed `deviceName` and `deviceOs` and
+stopped there, so windows, macos and linux read 0 by construction. The native half was not that - it
+went through the Tauri path, which DID send the field, by awaiting `getVersion()` from
+`@tauri-apps/api/app` at runtime, and that call answers empty on iOS. **The platform with the largest
+gap was the one that looked like it was reporting.**
 
-**Why this is worth more than a column being tidy: `minClientVersion` is raised BY HAND and is
-supposed to be reasoning about what devices actually run.** On the evidence above, the one table that
-records a device's build is empty for every desktop browser and for 90% of iPhones - so raising the
-floor is a decision taken against no data at all, which is exactly what
-[legacy-compatibility](legacy-compatibility.md) warns about from the other side. Found while checking
-the per-user device cap on a real account, not by a gate.
+**THE FIX WAS TO STOP ASKING AT RUNTIME FOR SOMETHING KNOWN AT BUILD TIME.** Both services now read
+`getClientAppVersion()`, the constant `vite.config.js` bakes from `frontend/package.json` - and the
+app EMBEDS this bundle (`frontendDist: "../build"`), so that constant IS the app's version on every
+platform and no round trip can fail. It is also, exactly, the string `minClientVersion` is compared
+against, where the native shell's version was a different string that merely happened to agree
+because one script writes both. `MlsService.enrolmentVersion.test.ts` pins the field at both origins.
+
+**WHY THIS BLOCKED A DECISION RATHER THAN BEING TIDINESS: `minClientVersion` is raised BY HAND, it
+is the only control that locks a user out of the app, and this is the one column recording what a
+device runs.** Measured on production 2026-09-14, devices whose latest enrolment falls in the
+previous 30 days:
+
+| `deviceOs` | devices | carrying a version | carrying none |
+| --- | --- | --- | --- |
+| ios | 226 | 58 | **168** |
+| android | 170 | 83 | **87** |
+| windows | 96 | 0 | **96** |
+| macos | 27 | 0 | **27** |
+| linux | 11 | 0 | **11** |
+
+**So raising the floor was a decision about 630 devices taken against 141 of them.** Among the 141
+that do state a version the picture is worse than the round numbers suggest: of the 151 mobile
+devices that enrolled in the 7 days to 2026-09-14, **91 are below `0.17.3`** - 42 of them iOS. A
+floor at `0.17.3` blocks 60% of the mobile devices active that week, and a floor at `0.18.0` blocks
+more; neither is the mild intermediate step it reads as. **The desktop rows are the one safe part
+and for a reason that is not the column**: a browser always runs the build the estate serves, so it
+cannot be behind whatever the column says.
+
+**WHAT IS STILL OWED BEFORE THE FLOOR MOVES.** The fix above only starts the recording; it says
+nothing about devices already enrolled, which re-report only when they next publish a key package.
+The floor should be raised on a re-measurement taken once the fixed clients have circulated, never
+on the table as it stands today - and the Android and iOS halves must be read separately, because
+Play already serves `0.18.0` while what the App Store serves cannot be read from this repository at
+all ([mobile](frontend/mobile.md#where-the-three-channels-actually-are---read-them-never-read-this)).
+
+Found while checking the per-user device cap on a real account, not by a gate.
 
 **A REAL ACCOUNT IS AT THE CAP, AND IT IS NOT A DEFECT - it is what the cap looks like from the
 inside.** `39b96d7e` holds 15/15 `key_package` rows: **14 `ios` between 2026-07-21 and today**, plus
