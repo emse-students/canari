@@ -301,21 +301,6 @@
 <a href="#main-content" class="skip-link">{m.layout_skip_to_content()}</a>
 
 <PlatformGateOverlay />
-<!-- ONE COLUMN FOR THE WINDOW-SCALE BANNERS. Both of these used to place themselves - `fixed top-0`
-     at 120 and `fixed top-safe-area` at 50 - so when both were up the maintenance notice simply
-     painted over the fatal MLS error, hiding the only message that says the messaging stack is
-     dead. Stacked in one flex column they queue instead, which is the lesson `ChatArea` had already
-     learnt for the conversation-scale pair. The column takes the `--z-banner` rung of the layer
-     ladder in `app.css`; a sheet the reader opened sits above it, deliberately. -->
-<div class="fixed inset-x-0 top-[env(safe-area-inset-top)] z-(--z-banner) flex flex-col">
-  <!-- FIRST, and it decides for itself whether to render. The others come and go; this one is a
-       property of the whole deployment, so a transient notice must not push it off screen. -->
-  <EnvironmentBanner />
-  {#if showMaintenanceAdminBanner}
-    <MaintenanceAdminBanner />
-  {/if}
-  <MlsFatalErrorBanner />
-</div>
 
 <div
   role="presentation"
@@ -323,64 +308,97 @@
   ontouchstart={handleTouchStart}
   ontouchend={handleTouchEnd}
   ontouchcancel={handleTouchCancel}
-  class="flex h-(--app-viewport-height,100dvh) w-screen overflow-hidden pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)]"
+  class="flex h-(--app-viewport-height,100dvh) w-screen flex-col overflow-hidden pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pl-[env(safe-area-inset-left)]"
 >
-  <svelte:boundary onerror={(e) => console.error('[ChatBackgroundService] crash recovered:', e)}>
-    <ChatBackgroundService />
-  </svelte:boundary>
+  <!-- ONE COLUMN FOR THE WINDOW-SCALE BANNERS. Both of these used to place themselves - `fixed top-0`
+       at 120 and `fixed top-safe-area` at 50 - so when both were up the maintenance notice simply
+       painted over the fatal MLS error, hiding the only message that says the messaging stack is
+       dead. Stacked in one flex column they queue instead, which is the lesson `ChatArea` had already
+       learnt for the conversation-scale pair. The column takes the `--z-banner` rung of the layer
+       ladder in `app.css`; a sheet the reader opened sits above it, deliberately.
 
-  <!-- Sidebar (navigation principale) -->
-  {#if !isLoginPage}
-    <AppSidebar />
-  {/if}
+       AND IT IS IN FLOW, WHICH IS THE HALF THAT WAS MISSING. The column was `fixed`, so it reserved
+       nothing and simply painted over whatever the top of the page happened to be - exactly the
+       defect `.mobile-nav-inset` in `app.css` records for the BottomNav at the other edge ("it
+       reserves nothing for itself, so whatever it covers is covered for good"). The thing it covered
+       is the app header, which is `sticky top-0` and therefore lands in the same band: measured on
+       dev 2026-09-14 at 1440px the banner was 44px tall and hid the header's top 44px, logo
+       included; at 390px it was 84px tall and hid the whole 56px mobile header, so the phone showed
+       no top bar at all. A row in the shell's own column cannot overlap it, at any width and for any
+       number of banners, with nothing measured and no variable to keep in step. -->
+  <div class="z-(--z-banner) flex shrink-0 flex-col">
+    <!-- FIRST, and it decides for itself whether to render. The others come and go; this one is a
+         property of the whole deployment, so a transient notice must not push it off screen. -->
+    <EnvironmentBanner />
+    {#if showMaintenanceAdminBanner}
+      <MaintenanceAdminBanner />
+    {/if}
+    <MlsFatalErrorBanner />
+  </div>
 
-  <!--
-    THE GUTTER IS DECIDED BY THE SAME PREDICATE AS THE SIDEBAR IT MAKES ROOM FOR. It was a constant
-    `md:pl-[6rem]` while `AppSidebar` above was already conditional, so `/login` and `/legal/*`
-    reserved 96px for a bar they do not render: the card centred 48px right of the viewport, while
-    the confirm dialog - portalled to the body and `fixed inset-0` - centred on the real middle, and
-    the two disagreed on screen. Measured on production 2026-09-12 at 1280px: card centre 685,
-    dialog centre 640. Two independent statements about one fact, with nothing comparing them.
-  -->
-  <div
-    class="relative z-10 flex flex-1 flex-col overflow-hidden {isLoginPage ? '' : 'md:pl-[6rem]'}"
-  >
-    <!-- Bandeau multi-onglets : pleine largeur, en haut du contenu (jamais dans la rangée sidebar). -->
-    <TabFollowerBanner />
-    <OfflineBanner />
-    {#if !isLoginPage && !isKeyboardOpen}
-      <Navbar />
-      {#if !isMobileConvoOpen}
-        <MobileHeader />
+  <!-- THE ROW THAT WAS THE SHELL. It takes what the banners leave, so the height chain
+       `app.css` documents above `.app-layout` still subtracts the status-bar inset exactly once -
+       the wrapper above owns `h-(--app-viewport-height,100dvh)` and its padding, and this only ever
+       divides what is left. `min-h-0` because a flex child's default `min-height:auto` refuses to
+       shrink below its content, which is what turns an overflowing chat list into a page scroll. -->
+  <div class="flex min-h-0 w-full flex-1">
+    <svelte:boundary onerror={(e) => console.error('[ChatBackgroundService] crash recovered:', e)}>
+      <ChatBackgroundService />
+    </svelte:boundary>
+
+    <!-- Sidebar (navigation principale) -->
+    {#if !isLoginPage}
+      <AppSidebar />
+    {/if}
+
+    <!--
+      THE GUTTER IS DECIDED BY THE SAME PREDICATE AS THE SIDEBAR IT MAKES ROOM FOR. It was a constant
+      `md:pl-[6rem]` while `AppSidebar` above was already conditional, so `/login` and `/legal/*`
+      reserved 96px for a bar they do not render: the card centred 48px right of the viewport, while
+      the confirm dialog - portalled to the body and `fixed inset-0` - centred on the real middle, and
+      the two disagreed on screen. Measured on production 2026-09-12 at 1280px: card centre 685,
+      dialog centre 640. Two independent statements about one fact, with nothing comparing them.
+    -->
+    <div
+      class="relative z-10 flex flex-1 flex-col overflow-hidden {isLoginPage ? '' : 'md:pl-[6rem]'}"
+    >
+      <!-- Bandeau multi-onglets : pleine largeur, en haut du contenu (jamais dans la rangée sidebar). -->
+      <TabFollowerBanner />
+      <OfflineBanner />
+      {#if !isLoginPage && !isKeyboardOpen}
+        <Navbar />
+        {#if !isMobileConvoOpen}
+          <MobileHeader />
+        {/if}
       {/if}
-    {/if}
 
-    <main id="main-content" class="relative flex-1 overflow-hidden">
-      <div
-        bind:this={pageScrollWrap}
-        class="page-scroll-wrap absolute inset-0 overflow-y-auto pb-[calc(4rem+var(--safe-area-inset-bottom,0px))] md:pb-0"
-      >
-        <svelte:boundary onerror={(e) => console.error('[Layout] page crash:', e)}>
-          {@render children?.()}
-          {#snippet failed(_error, reset)}
-            <div class="flex h-full flex-col items-center justify-center gap-4 p-8 text-center">
-              <p class="text-text-muted text-sm">{m.layout_error_boundary_message()}</p>
-              <button
-                type="button"
-                onclick={reset}
-                class="text-cn-ink rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold"
-              >
-                {m.common_retry_button()}
-              </button>
-            </div>
-          {/snippet}
-        </svelte:boundary>
-      </div>
-    </main>
+      <main id="main-content" class="relative flex-1 overflow-hidden">
+        <div
+          bind:this={pageScrollWrap}
+          class="page-scroll-wrap absolute inset-0 overflow-y-auto pb-[calc(4rem+var(--safe-area-inset-bottom,0px))] md:pb-0"
+        >
+          <svelte:boundary onerror={(e) => console.error('[Layout] page crash:', e)}>
+            {@render children?.()}
+            {#snippet failed(_error, reset)}
+              <div class="flex h-full flex-col items-center justify-center gap-4 p-8 text-center">
+                <p class="text-text-muted text-sm">{m.layout_error_boundary_message()}</p>
+                <button
+                  type="button"
+                  onclick={reset}
+                  class="text-cn-ink rounded-xl bg-amber-500 px-4 py-2 text-sm font-semibold"
+                >
+                  {m.common_retry_button()}
+                </button>
+              </div>
+            {/snippet}
+          </svelte:boundary>
+        </div>
+      </main>
 
-    {#if !isKeyboardOpen && !isLoginPage && !isMobileConvoOpen}
-      <BottomNav />
-    {/if}
+      {#if !isKeyboardOpen && !isLoginPage && !isMobileConvoOpen}
+        <BottomNav />
+      {/if}
+    </div>
   </div>
 
   <ToastContainer />

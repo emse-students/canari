@@ -11,6 +11,21 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - the notice at the top of the screen was sitting on the app's own header
+
+A notice across the top of the window - a scheduled-maintenance warning, or the message that says
+encryption has stopped working on this device - was drawn floating above the page rather than taking
+a place in it. Nothing below it moved out of the way, so it covered whatever happened to be at the
+top of the screen: the app's header.
+
+On a computer that hid the top 44 pixels of the header, the Canari logo included. **On a phone it
+hid the header outright** - all 56 pixels of it, so there was no top bar on screen at all while the
+notice was up. The longer the message, the more it covered, and the worst case is the one that
+matters: the more serious the problem being announced, the more of the app it hid.
+
+The notice now occupies a real row at the top of the window and everything else starts below it. It
+cannot overlap the page at any screen size or for any number of notices at once, and the app still
+fills exactly one screen with no new scrollbar.
 ### Fixed - three conversations nobody could enter were reopened
 
 Three conversations had been unenterable since the end of August. Each one advertises a sort of

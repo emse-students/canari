@@ -866,6 +866,31 @@ says `z-(--z-modal)`; twenty-six call sites were converted.
 **A sheet sits above the banner deliberately.** A banner is ambient; a sheet is what the reader just
 asked for.
 
+**AND A RUNG IS NOT A RESERVATION.** `--z-banner` says what the column paints OVER; it says nothing
+about what the column DISPLACES, and until 2026-09-14 the answer was nothing at all: the column was
+`fixed`, so it took no space and simply covered whatever the top of the page happened to be. What it
+covered is the app header, which is `sticky top-0` and therefore lands in exactly that band -
+measured on dev at 1440px the banner was 44px tall and hid the header's top 44px, the logo included;
+at 390px it was 84px tall and hid the whole 56px mobile header, so a phone showed no top bar at all.
+On production the environment banner never renders, but `MaintenanceAdminBanner` and
+`MlsFatalErrorBanner` share the column, so the same band went missing exactly when a reader most
+needed the header.
+
+The column is now a `shrink-0` row of the shell's own flex column in `routes/+layout.svelte`, and the
+sidebar-plus-content row below it is `flex-1 min-h-0`. A row cannot overlap its sibling, so this
+holds at any width and for any number of banners with nothing measured and no variable to keep in
+step - verified on the local estate at 390px and 1440px with zero, one and three banners up: the row
+begins exactly at the column's bottom every time, the shell stays exactly one viewport tall, and the
+page never gains a scrollbar. It is the same lesson `.mobile-nav-inset` in `app.css` already records
+for the BottomNav at the other edge, which was `fixed` for the same reason and covered content for
+the same reason.
+
+**A page that fills the shell asks for `min-h-full`, never `min-h-dvh`.** The height to fill is the
+one the shell was LEFT, which is a viewport minus the banners; a whole `dvh` inside a box that is
+deliberately shorter is a second, independent statement about one height, and it wins by exactly the
+banner's height. `LoginForm.svelte` carried that and would have gained a scrollbar of precisely that
+size on the one screen with nothing to scroll.
+
 **Below 60, nothing was touched.** A `z-10` ordering two children of one card competes only with its
 own siblings and is invisible to everything else; naming it here would imply it can be compared with
 a modal, which it cannot. The boundary is whether the element can be on screen at the same time as
