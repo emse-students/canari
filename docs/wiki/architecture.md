@@ -190,7 +190,7 @@ All tables share the `auth_db` database host. Full schemas are in the service wi
 | `queued_message` | `recipientId`, `deviceId`, `proto`, `isWelcome`, `isCommit`, `groupId`, `type`, `ratchetTree` |
 | `dm_groups` | `id`, `isGroup`, `activeEpoch` |
 | `dm_group_members` | `groupId`, `userId`, `role`, `leftAt` |
-| `dm_device_group_memberships` | `groupId`, `userId`, `deviceId`, `status` (pending/welcome_sent/welcome_received/stale), `lastEpochSeen` |
+| `dm_device_group_memberships` | `groupId`, `userId`, `deviceId`, `status` (pending/active), `kickedAt`, `pendingSince` |
 | `push_tokens` | `userId`, `deviceId`, `token`, `platform` (fcm/apns) |
 
 ### social-service

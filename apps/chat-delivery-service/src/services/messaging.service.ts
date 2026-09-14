@@ -2100,12 +2100,19 @@ export class MessagingService {
     // `DO UPDATE SET` list from the keys of this object, so omitting it is what leaves an existing
     // value alone. Spelling `kickedAt: null` here would erase the evidence of a kick on every
     // cron demotion, which is the opposite of what the column is for.
+    //
+    // `pendingSince` IS ALWAYS WRITTEN, and this is the one place that writes it after the insert.
+    // It is the instant this row entered `pending`, which is exactly now on both branches - a
+    // demotion restarts the wait, so it restarts the clock the purge and the hourly report read.
+    // That is the fresh grace window `cleanupStalePendingInvitations` always meant a demoted device
+    // to have, and could not give it: it was reading `updatedAt`, which somebody else's write moves.
     await this.deviceGroupRepo.upsert(
       {
         userId,
         deviceId,
         groupId,
         status: 'pending' as const,
+        pendingSince: new Date(),
         ...(removedFromTreeAt ? { kickedAt: removedFromTreeAt } : {}),
       },
       { conflictPaths: ['deviceId', 'groupId'] }

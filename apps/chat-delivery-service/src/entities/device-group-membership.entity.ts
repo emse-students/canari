@@ -107,6 +107,35 @@ export class DeviceGroupMembership {
   @Column({ type: 'timestamptz', nullable: true })
   kickedAt: Date | null;
 
+  /**
+   * When this row entered `pending`, written by the TRANSITION and by nothing else.
+   *
+   * **IT IS NOT `updatedAt`, AND THAT IS THE WHOLE POINT** - the same distinction {@link kickedAt}
+   * makes one column up, and the same one `detectStaleDevices` carries as a rule: `updatedAt` is a
+   * TypeORM `@UpdateDateColumn`, so it answers "when was this row last WRITTEN", and the writers
+   * are OTHER people's clients - a Welcome being queued, a peer confirming an invitation, the
+   * commit-path activation. WP-GHOST-1 refuted that premise on this very table when nine devices
+   * that no longer existed were kept `active` for ever by somebody else's four-second sync burst.
+   *
+   * **BOTH SEAT CLOCKS READ IT ANYWAY UNTIL 2026-09-14.** `cleanupStalePendingInvitations` and
+   * `reportStrandedDeviceMemberships` each asked how long a seat had been waiting and each read
+   * `updatedAt` for the answer. Measured on production that day: 91 pending seats, the 14-day purge
+   * holding 90 of them inside its window, and ONE created 32 days earlier whose `updatedAt` was two
+   * days old. Its grace window had been reset by a write it had no part in, and nothing in the
+   * schema could ever let it expire.
+   *
+   * **WRITTEN IN TWO PLACES, NEITHER OF WHICH A CALL SITE CAN FORGET.** The column defaults to
+   * `now()` in the database, so every insert carries it whichever of the five creation paths made
+   * the row - or a sixth added later. `deactivateDeviceMembership` sets it explicitly, which is
+   * what gives a device demoted from `active` the fresh grace window the purge always intended it
+   * to have. Nothing else touches it, so it means one thing.
+   *
+   * Only read while `status` is `pending`; on an `active` row it is the instant of the last
+   * demotion or of the insert, and answers no question anybody asks.
+   */
+  @Column({ type: 'timestamptz', default: () => 'now()' })
+  pendingSince: Date;
+
   @CreateDateColumn()
   createdAt: Date;
 

@@ -590,6 +590,35 @@ Two of this page's own entries moved in that sweep: the seed minted against an u
 no longer lose the publish race (`unsettledDistributionGroups` holds it across creation), and
 `SCOPE_HAS_NO_DISTRIBUTION_GROUP` is now two codes, `WORKSPACE_`- and `CHANNEL_`-prefixed.
 
+**AND `S-E5`'S PURGE WAS READING THE ONE COLUMN THIS TABLE HAD ALREADY FORBIDDEN IT** - the audit's
+*"a `pending` seat nobody honours"*, re-measured and closed 2026-09-14.
+
+The seat is bounded by design: `cleanupStalePendingInvitations` deletes a `pending` device-group row
+fourteen days after it stopped moving, and deleting it blocks no recovery - the device keeps its
+user-level `dm_group_members` row and rejoins through its queued Welcome or a `welcome_request`.
+
+**The bound held for 90 of 91 seats and could never hold for the ninety-first.** Measured on
+production 2026-09-14: 91 pending seats, none created after 09-12, the oldest `updatedAt` sitting
+exactly on the fourteen-day boundary - and ONE row created 32 days earlier whose `updatedAt` was two
+days old. The purge filtered on `updatedAt`, and `updatedAt` is a TypeORM `@UpdateDateColumn`: it
+moves for every write, and the writers are other people's clients - a Welcome being queued, a peer
+confirming an invitation, the commit-path activation. That seat's grace window restarted on somebody
+else's write, and would have restarted again.
+
+**THE RULE WAS ALREADY WRITTEN, TWENTY LINES ABOVE THE PURGE.** `detectStaleDevices` carries it
+verbatim, won by WP-GHOST-1 on this same table when nine devices that no longer existed were kept
+`active` for ever by a four-second sync burst that belonged to somebody else: *"a liveness clock must
+be written by the thing whose liveness it measures"*. `kickedAt`'s own docblock opens with the same
+distinction - *"IT IS NOT A SECOND `updatedAt`, AND THAT DISTINCTION IS THE WHOLE POINT"*. Both
+clocks that ask how long a seat has waited read `updatedAt` anyway.
+
+So the row now carries `pendingSince`, written by the transition and by nothing else: a `now()`
+default on insert, so no creation path can forget it, and an explicit write in
+`deactivateDeviceMembership`, which is what finally gives a demoted device the fresh window the
+purge's docstring had been claiming for it. Backfilled from `createdAt`, which retires the
+thirty-two-day seat on the next hourly run. The hourly stranded report reads it too - same question,
+same seats, and it was making the same mistake.
+
 **AND THAT SECOND PAIR OF CODES IS TWO CORRECT DISPOSITIONS, NOT A DEAD END** - the audit's
 `G-E1`/`G-E2`/`DE11`, *"no distribution group for a scope; 403 on one: log and `return false`, no
 retry"*, swept 2026-09-14.
