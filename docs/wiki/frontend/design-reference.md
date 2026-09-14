@@ -1267,3 +1267,43 @@ class attribute that spans lines is how the 2026-09-13 overlay sweep left two co
 
 Every value here was read off the running app, not off the Tailwind docs: `max-w-4xl` 896,
 `max-w-5xl` 1024, `max-w-[42.5rem]` 680, `max-w-2xl` 672, `max-w-md` 448.
+
+## 18. One association, one colour - the defect that was two right answers
+
+An association picks a colour, or it does not. When it does not, the app derives one so that it is
+at least STABLE. That derivation existed **thirteen times**, in two families that had been seeded
+differently, and the result was visible to any member: a club with no colour of its own was drawn in
+one hue on its tile in `/associations` and in a different hue on its events in `/calendar`.
+
+| Family | Seed | Sites |
+| --- | --- | --- |
+| card accent | `name` | `AssociationDetailView`, `AssociationTile`, `EditBoutiqueTab`, `EditPartnershipsTab`, `routes/shop` (x2) |
+| calendar accent | `id` | `feedEvents`, `MonthCalendarGridRich` (x2, the second is the co-owner line), `calendarExport` (x2, likewise), `routes/admin/agenda` |
+| a third spelling | `id`, with `?.trim() \|\|` rather than `??` | `carte/generator` |
+
+**Nothing was wrong at any single site.** Each of the thirteen expressions is obviously correct
+where it stands; the duplication is not the defect, it is the reason the defect was invisible. Only
+a reader holding two screens side by side could see it, and a reader holding two screens is not a
+test.
+
+**The seed is the `id`.** An id survives a rename; a name does not, so the `name` family repainted
+an association on the day it changed its title - silently, and only on the six screens that used it.
+The id was also already the majority (the calendar's six plus the carte, against the cards' six).
+
+**`color?.trim() ||`, never `color ??`.** `??` only rejects `null` and `undefined`, so an
+association whose colour was saved as an empty string kept `''` AS its colour and rendered
+`style="background: "` - not a fallback, an absent accent. One of the thirteen already had this
+right; twelve did not.
+
+**The guard is a TREE guard, and it has to be.** `lib/associations/accent.test.ts` unit-tests
+`associationAccent` and then walks `src/lib` and `src/routes` for a `generateAvatarColor` call
+sitting beside a `color` fallback - the shape, not the function, because `generateAvatarColor` keeps
+honest users (a member's avatar in the trombinoscope is seeded on a USER id). **A unit test of the
+shared helper would have passed on every single day the two families disagreed.** It reads `.ts` as
+well as `.svelte`: four of the thirteen sites were plain TypeScript, which is how the first sweep -
+markup only - came back with eleven.
+
+The count itself hid twice, and for the same reason both times: a sweep that counts FILES misses the
+co-owner maps, which derive the accent a second time one line below the primary, inside the same
+function. Eleven, then twelve, then thirteen.
+

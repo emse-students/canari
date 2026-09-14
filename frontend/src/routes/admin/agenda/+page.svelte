@@ -12,10 +12,10 @@
   import Textarea from '$lib/components/ui/Textarea.svelte';
   import CalendarEventDetailModal from '$lib/components/calendar/CalendarEventDetailModal.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
-  import { generateAvatarColor } from '$lib/utils/avatar';
   import { contrastColor, toHex } from '$lib/utils/color';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
+  import { associationAccentHex } from '$lib/associations/accent';
 
   let events = $state<AssociationCalendarFeedEvent[]>([]);
   let canValidate = $state(false);
@@ -33,7 +33,7 @@
 
   /** Resolved hex color of the event's primary association (for the date badge). */
   function eventColor(ev: AssociationCalendarFeedEvent): string {
-    return toHex(ev.associationColor ?? generateAvatarColor(ev.associationId));
+    return associationAccentHex({ id: ev.associationId, color: ev.associationColor });
   }
 
   async function load() {

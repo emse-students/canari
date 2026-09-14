@@ -1,5 +1,5 @@
-import { contrastColor, toHex } from './color';
-import { generateAvatarColor } from './avatar';
+import { contrastColor } from './color';
+import { associationAccentHex } from '$lib/associations/accent';
 import { exportSearchablePdf } from '$lib/pdf/searchableRaster';
 import { getLocale } from '$lib/paraglide/runtime';
 import { m } from '$lib/paraglide/messages';
@@ -131,10 +131,12 @@ const EVENT_BG_OPACITY = 82;
 
 /** Returns all hex colors for an event: primary first, then co-owners. */
 function eventHexColors(ev: AssociationCalendarFeedEvent): string[] {
-  const primary = toHex(ev.associationColor ?? generateAvatarColor(ev.associationId));
+  const primary = associationAccentHex({ id: ev.associationId, color: ev.associationColor });
   return [
     primary,
-    ...(ev.coOwners ?? []).map((co) => toHex(co.color ?? generateAvatarColor(co.associationId))),
+    ...(ev.coOwners ?? []).map((co) =>
+      associationAccentHex({ id: co.associationId, color: co.color })
+    ),
   ];
 }
 

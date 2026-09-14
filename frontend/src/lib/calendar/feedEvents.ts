@@ -1,6 +1,5 @@
-import { generateAvatarColor } from '$lib/utils/avatar';
-import { toHex } from '$lib/utils/color';
 import type { AssociationCalendarFeedEvent } from '$lib/associations/api';
+import { associationAccentHex } from '$lib/associations/accent';
 
 /**
  * WHAT A CALENDAR FEED EVENT LOOKS LIKE ON A ROW, IN ONE PLACE.
@@ -79,9 +78,15 @@ export function groupMonthEventsByDay(
   return groups;
 }
 
-/** The association's colour, or a stable one derived from its id when it has not set one. */
+/**
+ * The association's colour, or a stable one derived from its id when it has not set one.
+ *
+ * The calendar's named entry point, kept because two components and a test call it - but the
+ * derivation is `associations/accent.ts`, the only one, rather than a fourth copy of the same
+ * expression.
+ */
 export function eventAccentColor(event: AssociationCalendarFeedEvent): string {
-  return toHex(event.associationColor ?? generateAvatarColor(event.associationId));
+  return associationAccentHex({ id: event.associationId, color: event.associationColor });
 }
 
 function formatTime(iso: string): string {

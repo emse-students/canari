@@ -21,9 +21,9 @@
   import PartnershipCardList from '$lib/components/shop/PartnershipCardList.svelte';
   import CardTile from '$lib/components/shared/CardTile.svelte';
   import { productFallbackIcon } from '$lib/utils/cardIcons';
-  import { generateAvatarColor } from '$lib/utils/avatar';
   import { ShoppingBag, Handshake } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import { associationAccent } from '$lib/associations/accent';
 
   let products = $state<AssociationProduct[]>([]);
   let partnerships = $state<PartnershipCard[]>([]);
@@ -243,7 +243,7 @@
                     <CardTile
                       iconUrl={product.iconUrl}
                       fallbackIcon={productFallbackIcon(product.type)}
-                      accentColor={asso.color ?? generateAvatarColor(asso.name)}
+                      accentColor={associationAccent(asso)}
                       badgeText={product.badgeText}
                     >
                       <div class="flex flex-col gap-3 p-5">
@@ -392,7 +392,7 @@
 
               <PartnershipCardList
                 cards={assocPartnerships}
-                accentColor={asso.color ?? generateAvatarColor(asso.name)}
+                accentColor={associationAccent(asso)}
               />
             </section>
           {/if}

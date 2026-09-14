@@ -68,7 +68,12 @@ describe('the one tile keeps what the copies did not have', () => {
     // `Association.color` has fed the calendar and the Carte de la Vie Asso for months, and
     // `cardGrid.ts` sized its 15rem minimum with "an association's colour bar" in the budget. No
     // tile had ever drawn one.
-    expect(tile).toContain('association.color ?? generateAvatarColor(association.name)');
+    // Through the ONE derivation since 2026-09-14, and this assertion is why that mattered: it used
+    // to pin `association.color ?? generateAvatarColor(association.name)` - a spelling seeded on the
+    // NAME, where the calendar seeds on the ID. The test was green and the app showed one
+    // association two hues. See `lib/associations/accent.ts`.
+    expect(tile).toContain('associationAccent(association)');
+    expect(tile).not.toContain('generateAvatarColor');
     // Through CardTile, which already implements the accent - a call, never a second copy of it.
     expect(tile).toMatch(/<CardTile[\s\S]{0,120}accentColor=\{accent\}/);
   });

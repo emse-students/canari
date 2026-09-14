@@ -24,7 +24,7 @@
   import CardTile from '$lib/components/shared/CardTile.svelte';
   import { CARD_GRID } from '$lib/components/layout/cardGrid';
   import { productFallbackIcon } from '$lib/utils/cardIcons';
-  import { generateAvatarColor } from '$lib/utils/avatar';
+  import { associationAccent } from '$lib/associations/accent';
   import {
     currentUserId,
     isGlobalAdmin,
@@ -75,7 +75,7 @@
   let resolvedMemberNames = $state<Record<string, string>>({});
 
   /** Card accent color - the association's own, or a deterministic fallback when unset. */
-  let cardAccentColor = $derived(asso ? (asso.color ?? generateAvatarColor(asso.name)) : null);
+  let cardAccentColor = $derived(asso ? associationAccent(asso) : null);
 
   let userId = $derived(currentUserId());
   let myMembership = $derived(members.find((m) => m.userId === userId));
