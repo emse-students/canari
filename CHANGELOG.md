@@ -11,6 +11,21 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - anybody signed in could change the poster on anybody's event
+
+The two endpoints behind an event's poster - the upload and the removal - checked only that the
+caller was signed in. Their own documentation said a permission was required and no code said so,
+while the edit and delete routes beside them each spelled that check out by hand. So any account
+could put an image on any association's event, or delete the one that was there.
+
+The rule is now written once and all four routes call it: the right to change an event's poster is
+the right to edit the event - `PROPOSE_EVENT` on the association, or BDE / global admin. An
+association co-running an event can now manage its poster too, which it could not before despite
+holding every other edit right on it.
+
+No evidence this was used: the control is not offered anywhere in the app, and reaching it needed
+both ids and a hand-made request.
+
 ### Fixed - an identifier in the admin pages was cut short with no way to read it
 
 Three places showed a full account or content identifier and then cut it off: the admin user list,

@@ -205,3 +205,83 @@ describe('AssociationsController delete tier', () => {
     expect(service.remove).toHaveBeenCalledWith('asso1', 'user-42');
   });
 });
+
+/**
+ * THE TWO POSTER ROUTES ASKED NOBODY ANYTHING.
+ *
+ * `POST` and `DELETE :id/events/:eventId/image` carried `NginxAuthGuard` alone - proof that someone
+ * is signed in, and nothing else - while their own doc comments claimed a permission was required
+ * and the `PATCH` / `DELETE` beside them each spelled that check out by hand. So any account could
+ * put a poster on any association's event, or wipe one. These pin the rule on all four, and that it
+ * is ONE rule rather than four copies of it.
+ */
+describe('AssociationsController calendar event writes', () => {
+  function makeController(mayAct: boolean, isBde = false) {
+    const service = {
+      mayAct: jest.fn(() => Promise.resolve(mayAct)),
+      isUserBdeAdmin: jest.fn(() => Promise.resolve(isBde)),
+      updateCalendarEvent: jest.fn(() => Promise.resolve({ id: 'ev1' })),
+      deleteCalendarEvent: jest.fn(() => Promise.resolve({ ok: true })),
+      setEventImageFromUpload: jest.fn(() => Promise.resolve({ id: 'ev1' })),
+      clearEventImage: jest.fn(() => Promise.resolve({ id: 'ev1' })),
+    };
+    const controller = new AssociationsController(
+      service as unknown as AssociationsService,
+      {} as ProductsService,
+      {} as PartnershipsService,
+      {} as FollowsService,
+      {} as UserTagService,
+      {} as UserProfileService
+    );
+    return { controller, service };
+  }
+
+  const file = { buffer: Buffer.from('x'), mimetype: 'image/png', size: 3 } as never;
+
+  it('refuses a poster upload from a signed-in account with no right on the association', async () => {
+    const { controller, service } = makeController(false);
+    await expect(
+      controller.uploadEventImage('user1', undefined, 'asso1', 'ev1', file, 'Bearer t')
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(service.setEventImageFromUpload).not.toHaveBeenCalled();
+  });
+
+  it('refuses a poster deletion from the same account', async () => {
+    const { controller, service } = makeController(false);
+    await expect(
+      controller.deleteEventImage('user1', undefined, 'asso1', 'ev1', 'Bearer t')
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(service.clearEventImage).not.toHaveBeenCalled();
+  });
+
+  it('accepts a poster upload from a PROPOSE_EVENT holder, and says it may not cross associations', async () => {
+    const { controller, service } = makeController(true);
+    await controller.uploadEventImage('user1', undefined, 'asso1', 'ev1', file, 'Bearer t');
+    expect(service.setEventImageFromUpload).toHaveBeenCalledWith('asso1', 'ev1', file, 'Bearer t', {
+      isGlobalAdmin: false,
+      isBde: false,
+    });
+  });
+
+  it('lets a global admin through without consulting the association at all', async () => {
+    const { controller, service } = makeController(false);
+    await controller.deleteEventImage('user1', 'true', 'asso1', 'ev1', 'Bearer t');
+    expect(service.mayAct).not.toHaveBeenCalled();
+    expect(service.clearEventImage).toHaveBeenCalledWith('asso1', 'ev1', 'Bearer t', {
+      isGlobalAdmin: true,
+      isBde: false,
+    });
+  });
+
+  it('holds the same rule on the update and delete routes beside them', async () => {
+    const { controller, service } = makeController(false);
+    await expect(
+      controller.updateCalendarEvent('user1', undefined, 'asso1', 'ev1', {} as never)
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(
+      controller.deleteCalendarEvent('user1', undefined, 'asso1', 'ev1')
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(service.updateCalendarEvent).not.toHaveBeenCalled();
+    expect(service.deleteCalendarEvent).not.toHaveBeenCalled();
+  });
+});

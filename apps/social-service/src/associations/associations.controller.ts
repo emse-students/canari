@@ -595,6 +595,41 @@ export class AssociationsController {
   }
 
   /**
+   * THE ONE RULE FOR EVERY WRITE ON AN EXISTING EVENT - and two routes had none at all.
+   *
+   * `POST/DELETE :id/events/:eventId/image` carried `NginxAuthGuard` alone, which proves only that
+   * somebody is signed in. Their doc comments claimed "Requires MANAGE_EVENTS or global admin" and
+   * no code said so, so ANY account could put a poster on any association's event or wipe one -
+   * while the `PATCH` and `DELETE` beside them each spelled this check out by hand. A rule written
+   * twice is a rule the third route forgets: it is written ONCE here now, and the routes call it.
+   *
+   * Returns the tier it established, since the callers need it for the cross-association paths.
+   */
+  private async assertMayWriteEvent(
+    userId: string,
+    ga: string | undefined,
+    associationId: string
+  ): Promise<{ isGlobalAdmin: boolean; isBde: boolean }> {
+    const isGlobalAdmin = ga === 'true';
+    const isBde = isGlobalAdmin ? false : await this.service.isUserBdeAdmin(userId);
+    if (!isGlobalAdmin && !isBde) {
+      // Regular admin must be granted PROPOSE_EVENT on this association. Through `mayAct`, so a
+      // cross-association super-admin may act on an event in an association they administer - the
+      // guard on `POST :id/events` already lets them CREATE one there.
+      const hasPerm = await this.service.mayAct(
+        userId,
+        associationId,
+        AssociationPermissionFlag.PROPOSE_EVENT,
+        { isGlobalAdmin }
+      );
+      if (!hasPerm) {
+        throw new ForbiddenException('PROPOSE_EVENT flag or BDE admin required');
+      }
+    }
+    return { isGlobalAdmin, isBde };
+  }
+
+  /**
    * Updates a calendar event.
    * BDE admins and global admins may update events from any association.
    */
@@ -607,22 +642,7 @@ export class AssociationsController {
     @Param('eventId') eventId: string,
     @Body() dto: UpdateAssociationCalendarEventDto
   ) {
-    const isGlobalAdmin = ga === 'true';
-    const isBde = isGlobalAdmin ? false : await this.service.isUserBdeAdmin(userId);
-    if (!isGlobalAdmin && !isBde) {
-      // Regular admin must be granted PROPOSE_EVENT on this association. Through `mayAct`, so a
-      // cross-association super-admin may EDIT an event in an association they administer - the
-      // guard on `POST :id/events` already lets them CREATE one there.
-      const hasPerm = await this.service.mayAct(
-        userId,
-        id,
-        AssociationPermissionFlag.PROPOSE_EVENT,
-        { isGlobalAdmin }
-      );
-      if (!hasPerm) {
-        throw new ForbiddenException('PROPOSE_EVENT flag or BDE admin required');
-      }
-    }
+    const { isGlobalAdmin, isBde } = await this.assertMayWriteEvent(userId, ga, id);
     return this.service.updateCalendarEvent(id, eventId, dto, {
       isGlobalAdmin,
       isBde,
@@ -642,19 +662,7 @@ export class AssociationsController {
     @Param('id') id: string,
     @Param('eventId') eventId: string
   ) {
-    const isGlobalAdmin = ga === 'true';
-    const isBde = isGlobalAdmin ? false : await this.service.isUserBdeAdmin(userId);
-    if (!isGlobalAdmin && !isBde) {
-      const hasPerm = await this.service.mayAct(
-        userId,
-        id,
-        AssociationPermissionFlag.PROPOSE_EVENT,
-        { isGlobalAdmin }
-      );
-      if (!hasPerm) {
-        throw new ForbiddenException('PROPOSE_EVENT flag or BDE admin required');
-      }
-    }
+    const { isGlobalAdmin, isBde } = await this.assertMayWriteEvent(userId, ga, id);
     return this.service.deleteCalendarEvent(id, eventId, {
       isGlobalAdmin,
       isBde,
@@ -713,29 +721,41 @@ export class AssociationsController {
 
   // ── Calendar event image ─────────────────────────────────────────────────
 
-  /** Uploads a poster/banner image for a calendar event. Requires MANAGE_EVENTS or global admin. */
+  /**
+   * Uploads a poster/banner image for a calendar event. Same right as editing the event itself:
+   * PROPOSE_EVENT on the association, or BDE / global admin.
+   */
   @UseGuards(NginxAuthGuard)
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 8 * 1024 * 1024 } }))
   @Post(':id/events/:eventId/image')
-  uploadEventImage(
+  async uploadEventImage(
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga: string | undefined,
     @Param('id') id: string,
     @Param('eventId') eventId: string,
     @UploadedFile() file: Express.Multer.File,
     @Headers('authorization') authorization: string | undefined
   ) {
     if (!file) throw new BadRequestException('No file provided');
-    return this.service.setEventImageFromUpload(id, eventId, file, authorization);
+    const tier = await this.assertMayWriteEvent(userId, ga, id);
+    return this.service.setEventImageFromUpload(id, eventId, file, authorization, tier);
   }
 
-  /** Removes the poster image from a calendar event. Requires MANAGE_EVENTS or global admin. */
+  /**
+   * Removes the poster image from a calendar event. Same right as editing the event itself:
+   * PROPOSE_EVENT on the association, or BDE / global admin.
+   */
   @UseGuards(NginxAuthGuard)
   @Delete(':id/events/:eventId/image')
-  deleteEventImage(
+  async deleteEventImage(
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga: string | undefined,
     @Param('id') id: string,
     @Param('eventId') eventId: string,
     @Headers('authorization') authorization: string | undefined
   ) {
-    return this.service.clearEventImage(id, eventId, authorization);
+    const tier = await this.assertMayWriteEvent(userId, ga, id);
+    return this.service.clearEventImage(id, eventId, authorization, tier);
   }
 
   // ── Document vault (MANAGE_DOCUMENTS flag) ───────────────────────────────
