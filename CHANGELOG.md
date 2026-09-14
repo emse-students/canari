@@ -11,6 +11,8 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-09-14
+
 ### Fixed - a device the server had refused to deliver to was told it was a member
 
 When the app joins a conversation from a notification while it is closed, the phone's own
