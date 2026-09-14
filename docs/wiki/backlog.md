@@ -105,7 +105,6 @@ refusals):
 | `DE7` | `MLS_LOCAL_STATE_UNDECRYPTABLE` | the only route offered requires the OLD PIN |
 | `DE13` | leaving a conversation | nothing stages a Remove for the leaver's own leaf |
 | `G-E10` | `forgetCommunityGraine` with no runtime | warns, returns 0; seeds and joined groups stay |
-| `S-E10` | base-refresh answering `no_peer_online` | persists nothing at all |
 
 ### P2 - five conversations rest on ONE holder and one has none, and the report can only say so (measured on production 2026-09-12)
 

@@ -652,6 +652,35 @@ redelivery loop whose only symptom is a backlog that never shrinks, which reads 
 exactly like a device with nothing to do. Three tests now hold it, falsified by making each path
 withhold the ACK.
 
+**AND `S-E10` WAS TWO CORRECT DECISIONS THAT COMPOSED INTO NO EXIT AT ALL** - the audit's *"base
+refresh answering `no_peer_online` persists nothing"*, closed 2026-09-14.
+
+The server's `notifyBaseRefreshRequest` stores nothing for an offline member, and says why: *"a base
+refresh is idempotent and cheap, the requester re-asks on its own cadence as long as it still cannot
+join"*. That premise shipped 2026-09-04. On 2026-09-12 the client stopped re-asking: `noRepairerAt`
+records the refusal against the `baseEpoch/activeEpoch` pair it was proved at and skips the whole
+four-call pass while both stand. Each decision is right on its own; together they left the server
+storing nothing for a requester that no longer asks.
+
+**AND THE PAIR IS NOT EVIDENCE FOR THE QUESTION THE VERDICT ANSWERS.** The epochs say whether the
+GROUP moved; `no_peer_online` says whether any member DEVICE was reachable, and a member connecting
+changes that with neither number moving - this page's own rule, a column read for a question it was
+not written to answer. The record's docblock knew it and named a second exit: the peer-return edge,
+`forgetProvenDeadEnds`. **That edge cannot fire for the population measured.** It hangs off
+`onPeersCameOnline`, whose watchlist is assembled by three chat components - `ConversationTile` and
+`ChatHeader` subscribe only for a DIRECT conversation's peer, `ChannelMembersList` for an open
+channel's members - and `unwatchUsers` stops the poll outright when the set empties. A GROUP
+conversation puts nobody on that list, and the production case of 2026-09-12 was a group: `4f87267a`,
+`NO_PEER_ONLINE members=1` to twenty-seven consecutive minutes of asks, with three more groups in the
+same state since 2026-08-29, 08-30 and 08-31.
+
+The fix keeps the saving and restores the exit. Three of the four calls - the memberships, the
+conversation row and the join - really are decided by the pair and stay skipped; the fourth, the
+election, is re-asked on the ordinary 60 s cadence, and an election that finds somebody discharges
+the record so the next pass runs whole. One HTTP call per minute per locked-out group, against the
+four the record was built to save and the zero exits it left. `initializeConnection`'s republish and
+the presence edge are both faster when they fire and neither is what makes this terminate.
+
 
 | # | The dead end | How it is reached | Terminal by design? |
 | --- | --- | --- | --- |

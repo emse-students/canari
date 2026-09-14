@@ -694,7 +694,7 @@ describe('requestReAdd - a dead end the server already proved', () => {
       activeEpoch,
     });
 
-  it('stops re-asking once the server says no member is reachable', async () => {
+  it('stops re-running the pass once the server says no member is reachable', async () => {
     const deps = makeDeps();
     deps.mlsService.externalJoin = staleBase();
     deps.mlsService.getGroupMeta = metaAt(283, 284);
@@ -703,14 +703,81 @@ describe('requestReAdd - a dead end the server already proved', () => {
     await requestReAdd('g1', deps);
     expect(deps.mlsService.sendBaseRefreshRequest).toHaveBeenCalledTimes(1);
 
-    // The throttle alone would let the next pass through a minute later; the proof must not.
+    // The throttle alone would let the next pass through a minute later; the proof holds back the
+    // three calls the pair already decides.
     advanceClockPastThrottle();
     await requestReAdd('g1', deps);
 
-    expect(deps.mlsService.sendBaseRefreshRequest).toHaveBeenCalledTimes(1);
-    // And the pass ends on the ONE read it had already made, so nothing else is asked either.
     expect(deps.mlsService.externalJoin).toHaveBeenCalledTimes(1);
     expect(deps.mlsService.getDeviceMemberships).toHaveBeenCalledTimes(1);
+  });
+
+  it('KEEPS asking the one question the pair does not decide - who is online', async () => {
+    // The record is a verdict about the members who are REACHABLE. Both epochs can stand still
+    // while that set changes, so the election is re-asked on the ordinary cadence - one HTTP call,
+    // not the four a whole pass costs. The server's own handler assumes exactly this ask: it
+    // stores nothing for an offline member because "the requester re-asks on its own cadence".
+    const deps = makeDeps();
+    deps.mlsService.externalJoin = staleBase();
+    deps.mlsService.getGroupMeta = metaAt(283, 284);
+    deps.mlsService.sendBaseRefreshRequest = vi.fn().mockResolvedValue({ noPeerOnline: true });
+
+    await requestReAdd('g1', deps);
+    advanceClockPastThrottle();
+    await requestReAdd('g1', deps);
+    advanceClockPastThrottle();
+    await requestReAdd('g1', deps);
+
+    expect(deps.mlsService.sendBaseRefreshRequest).toHaveBeenCalledTimes(3);
+  });
+
+  it('lets the whole pass run again the moment a member is reachable, with no epoch moving', async () => {
+    // THE EXIT THIS RECORD WAS MISSING. The presence edge that used to be the only other way out
+    // is fired from a watchlist the chat UI assembles out of DIRECT conversations, so a GROUP -
+    // which is what production measured - never put anybody on it.
+    const lines: string[] = [];
+    const deps = makeDeps();
+    deps.log = (m: string) => lines.push(m);
+    deps.mlsService.externalJoin = staleBase();
+    deps.mlsService.getGroupMeta = metaAt(283, 284);
+    deps.mlsService.sendBaseRefreshRequest = vi.fn().mockResolvedValue({ noPeerOnline: true });
+
+    await requestReAdd('g1', deps);
+
+    // A member connects. Neither epoch has moved - it has not republished anything yet.
+    deps.mlsService.sendBaseRefreshRequest = vi
+      .fn()
+      .mockResolvedValue({ noPeerOnline: false, target: 'u:d' });
+    advanceClockPastThrottle();
+    await requestReAdd('g1', deps);
+    expect(lines.join(' | ')).toContain('a member is reachable again');
+
+    // The record is gone, so the next pass is a whole pass against the unchanged pair.
+    advanceClockPastThrottle();
+    await requestReAdd('g1', deps);
+    expect(deps.mlsService.externalJoin).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the record when the re-ask never reached the server', async () => {
+    // Silence proves nothing about who is reachable, and reading it as "somebody is" would send
+    // the whole pass back out on exactly the network conditions that dropped the packet.
+    const lines: string[] = [];
+    const deps = makeDeps();
+    deps.log = (m: string) => lines.push(m);
+    deps.mlsService.externalJoin = staleBase();
+    deps.mlsService.getGroupMeta = metaAt(283, 284);
+    deps.mlsService.sendBaseRefreshRequest = vi.fn().mockResolvedValue({ noPeerOnline: true });
+
+    await requestReAdd('g1', deps);
+
+    deps.mlsService.sendBaseRefreshRequest = vi.fn().mockRejectedValue(new Error('offline'));
+    advanceClockPastThrottle();
+    await requestReAdd('g1', deps);
+    advanceClockPastThrottle();
+    await requestReAdd('g1', deps);
+
+    expect(lines.join(' | ')).toContain('the dead end stands, nothing was learnt');
+    expect(deps.mlsService.externalJoin).toHaveBeenCalledTimes(1);
   });
 
   it('tries again the moment either epoch moves', async () => {
