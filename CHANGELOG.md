@@ -29,6 +29,25 @@ Both now run the same code, which also fixes three smaller disagreements between
 entry from the server is collapsed the same way on both sides, a failed request is logged on both
 rather than silently swallowed on one, and a deletion always says WHY it happened.
 
+### Fixed - five more panels picked their own height in the stack, and the check that should have caught them was looking at the wrong thing
+
+The check that keeps the app's layers in order refuses any hand-written stacking number of 60 or
+more, and the reason it stops at 60 is a good one: under that, a number is ordering two things inside
+one card, and those never meet anything from elsewhere on the screen.
+
+**That reasoning stops being true the moment a panel covers the whole window.** Something drawn over
+the entire screen is on screen with everything, so its number matters against everything, whatever
+the number happens to be. Which is exactly how the agenda admin's reject dialog - fixed last week -
+came to sit at 50 and open underneath a toast, with the check green the whole time.
+
+Lowering the cutoff was not the answer; it would have condemned every small, local number in the app
+for no reason. The check now asks a second question instead: does this thing cover the whole window,
+and did somebody write a bare number on it? Five panels did, and each is now on a named rung - the
+two fingerprint sheets use the shared panel component, the two form dropdowns and the invisible layer
+that closes them use the pair meant for dropdowns, and the map admin's full-page editor uses the rung
+for a page filling its own window. Nothing looks different; what changed is that none of these five
+can drift again without the check saying so.
+
 ### Fixed - a dialog in the agenda admin opened underneath the toast, and a picker was one bad card away from misbehaving
 
 Seven places in the app drew "a panel floating over a dimmed page", each written out by hand, and no

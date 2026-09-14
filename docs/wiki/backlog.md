@@ -5360,41 +5360,11 @@ sample. **The scale to work to is [design-reference](frontend/design-reference.m
 **ALL FOUR of the things the user happened to see on the way have SHIPPED** - the reaction bar, the
 GIF picker, the association tiles, and the association page's width with the partnership accent that
 came with it. Their stories are in `CHANGELOG.md`; they were never the scope, only the evidence that
-the scope is real, and **the pass itself is still owed**. What is below is what the sweeps THOSE
-fixes ran turned up and did not close.
-
-### P3 - a full-viewport overlay escapes the layer gate's cutoff, and five still carry a raw number (swept 2026-09-14)
-
-**The modal-container half of this row SHIPPED** - seven containers, not the three the row claimed:
-`AssociationDocumentManager` holds three byte-identical copies in one file and `ConfirmDialog`, the
-most complete of them, was not on the list at all. What is left is the second finding, and the sweep
-sharpened it into something better than "six spellings".
-
-`layerLadder.test.ts` fails on a literal `z-*` of **60 or more**, and
-[design-reference](frontend/design-reference.md) justifies the cutoff correctly: below 60 an element
-competes only with its own siblings. **That reasoning does not survive `fixed inset-0`.** A
-full-viewport overlay is on screen with everything by construction, so its number is comparable with
-every other component's whatever it is - which is how `routes/admin/agenda` sat at `z-50`, under
-`--z-toast` (60), and opened its reject dialog beneath a toast with the gate green.
-
-**The five that remain, each a different KIND, which is why none of them is a `ModalOverlay`:**
-
-| File | Raw | What it is | The rung it probably wants |
-| --- | --- | --- | --- |
-| `BiometricBottomSheet` | `z-50` x2 | scrim + bottom sheet, siblings | `--z-sheet` |
-| `BiometricEnrollSheet` | `z-50` x2 | the same shape | `--z-sheet` |
-| `FormQuestionsSection` | `z-40` catcher, `z-50` picker | outside-click catcher under a dropdown | `--z-popover-scrim` / `--z-popover`, the pair designed for exactly this |
-| `FormBuilder` | `z-40` | the same catcher | `--z-popover-scrim` |
-| `routes/admin/carte/[id]` | `z-50` | a CONDITIONAL full-page editing surface (`isFullPage`) | wants a look on screen - at 50 it is under toast, banner and sheet |
-
-**The deliverable is the GATE, not the five edits**: `layerLadder.test.ts` should fail on any literal
-`z-*` on an element that also carries `fixed inset-0`, independently of the cutoff, because that is
-precisely the case the cutoff's own justification excludes. The last row wants a browser before its
-rung is chosen - raising a full-page editor from 50 to a real rung changes what may cover it.
-
-**Two names on the list are unconfirmed**: `CallOverlay` and `routes/admin/carte/[id]` matched the
-file-level scan but their class attribute spans lines, so the root was never read. Check them before
-counting them.
+the scope is real, and **the pass itself is still owed**. Everything the sweeps THOSE fixes ran
+turned up has since closed too - the last of it was the layer gate's blind spot, shipped
+2026-09-14 - so this section is now the mandate and nothing else. **Do not read that as progress on
+it:** not one page has been opened at 100 % and at a phone width for this pass. The findings are
+gone because they were fixed, not because anybody looked.
 
 ## Composer and reactions
 

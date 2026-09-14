@@ -873,11 +873,20 @@ something from another component.
 
 ### What keeps it a ladder
 
-`src/lib/styles/layerLadder.test.ts`, five assertions, and the fifth is the one that matters: it
-fails on a literal `z-*` of 60 or more anywhere in the markup and the failure names the file, the
-offending token and every available rung. It also fails on a ladder declared out of order (it caught
-exactly that on the first run), on two rungs sharing a value, and on any scrim that is not strictly
-under the panel it dims.
+`src/lib/styles/layerLadder.test.ts`, and **two of its assertions condemn a raw number rather than
+one**, because one cutoff cannot express both halves of the boundary:
+
+- a literal `z-*` of **60 or more**, anywhere in the markup;
+- a literal `z-*` of **any value at all** on an element that also carries `fixed inset-0`.
+
+Either failure names the file, the offending token and every available rung. It also fails on a
+ladder declared out of order (it caught exactly that on the first run), on two rungs sharing a value,
+and on any scrim that is not strictly under the panel it dims.
+
+**The second branch asserts an ABSENCE, so a sibling test asserts the SWEEP still sees anything at
+all** - more than 500 class attributes read, more than five of them `fixed inset-0`. A regex that
+stopped matching would otherwise pass for ever, silently, which is the failure mode of every gate
+written as "there are none of these".
 
 ### The cutoff that a full-viewport overlay escapes, and the dialog that opened under a toast
 
@@ -897,10 +906,31 @@ holds the three class literals itself. The literals have to be literals - Tailwi
 so `z-(--z-${layer})` compiles to nothing and the modal sits at `auto` - and that is exactly what
 makes the CALLER able to be dynamic while the scanner stays static.
 
-**Five full-viewport overlays still carry a raw number below the cutoff** (`BiometricBottomSheet`,
-`BiometricEnrollSheet`, `FormBuilder`, `FormQuestionsSection`, `routes/admin/carte/[id]`). They are
-not modal containers - a drawer scrim, two outside-click catchers and a full-page editor - so they
-are a separate row in `backlog.md` rather than a thing to fold in here.
+**THE GATE IS THE FIX, AND THE FIVE EDITS ARE ONLY ITS FIRST OUTPUT.** Lowering the cutoff was
+never available: it would condemn every local `z-10` in the tree, which the paragraph above is right
+to leave alone. The second branch condemns exactly the case the cutoff's own justification excludes,
+and nothing else.
+
+The five it found on 2026-09-14, each a different KIND - which is why none of them was already a
+`ModalOverlay`, and why the fix is five different rungs rather than one:
+
+| File | Was | Became | Why that rung |
+| --- | --- | --- | --- |
+| `BiometricBottomSheet` | scrim + panel, both `z-50` | `ModalOverlay layer="sheet"` | a surface a gesture opened; the hand-rolled pair is gone with it |
+| `BiometricEnrollSheet` | the same shape | `ModalOverlay layer="sheet"` | the same |
+| `FormBuilder` | `z-40` catcher, `z-50` dropdown | `--z-popover-scrim` / `--z-popover` | the pair designed for exactly this |
+| `FormQuestionsSection` | `z-40` catcher, `z-50` picker | `--z-popover-scrim` / `--z-popover` | the same |
+| `routes/admin/carte/[id]` | `z-50` full-page editor | `--z-page-overlay` (40) | a page's own surface expanded to the window, not a claim against the window |
+
+**Both halves of a scrim/panel pair move together or the pair inverts.** The catcher is the half the
+gate names - it is the one carrying `fixed inset-0` - but it exists to sit one rung UNDER the
+dropdown it closes. Renaming only the catcher would have sent it from 40 to 190 and left the panel at
+50: a full-screen click target over the thing it dims, which is the `Sidebar` defect this ladder was
+written to end, reintroduced by the gate meant to prevent it.
+
+**`CallOverlay` was on the suspect list and is clean** - it already takes `--z-critical` on its
+`fixed inset-0` root. Its class attribute spans lines, which is why a line-oriented sweep could not
+say so; the gate collapses whitespace before reading, so it can.
 
 ### The thing a ladder cannot fix
 
