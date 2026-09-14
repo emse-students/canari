@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { FaceSlightlySmiling } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import { scale } from 'svelte/transition';
   import { bindFixedPopover } from '$lib/actions/fixedPopover';
@@ -257,13 +256,13 @@
     class="bg-cn-surface fixed z-(--z-popover) flex w-[min(92vw,22rem)] origin-(--popover-origin) flex-col overflow-hidden rounded-2xl border border-black/5 shadow-2xl shadow-black/10 dark:border-white/10 dark:shadow-black/40"
     style:--popover-origin={isOwn ? 'top right' : 'top left'}
   >
-    <!-- En-tête -->
-    <div
-      class="text-text-muted bg-cn-surface flex items-center gap-2 border-b border-black/5 px-4 py-3 text-xs font-semibold dark:border-white/10"
-    >
-      <FaceSlightlySmiling size={14} class="text-amber-500" />
-      {m.msg_react_to_message_label()}
-    </div>
+    <!--
+      NO TITLE ROW. A panel of emoji, opened from a reaction button, on a message: the user knows
+      what they are doing, and the sentence saying it cost a line of vertical space on the screen
+      that has the least of it (user, 2026-09-14: *"on peut enlever le texte 'Réagir au message' de
+      partout, ca sert a rien, on le sait"*). The one message the panel still has to say - that this
+      message cannot take another distinct reaction - is below, and it says something.
+    -->
     {#if reactionsAtLimit}
       <p
         class="text-2xs border-b border-amber-500/20 bg-amber-500/10 px-4 py-2 text-amber-700 dark:text-amber-400"

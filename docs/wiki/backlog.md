@@ -5470,6 +5470,44 @@ tablet keeps its rotation. `android:screenOrientation` takes one literal value a
 which is why a resource qualifier carries it. **A manifest grep answers this question with silence** -
 it was grepped, found nothing, and the lock was still there.
 
+### P2 - the long-press sheet covers the message it acts on, and `sweep.mjs` cannot see inside a web component (measured 2026-09-14 on A1)
+
+Four findings from the same guided session, each with the measurement that would settle it. None is
+fixed; the reaction picker's own two defects that WERE fixed are in `CHANGELOG.md`.
+
+**THE SHEET IS ANCHORED TO THE BOTTOM OF THE SCREEN AND THE THREAD DOES NOT MOVE**, so any message
+in the bottom band is hidden by the sheet acting on it. Measured: the bubble at `731-767`, the
+sheet's reaction strip starting at `749` - **18 of the bubble's 37 px covered, its lower half,
+through the middle of its single line of text**. The rule is `[data-keyboard-aware-actions]` in
+`app.css`, `bottom: max(1rem, safe-area + 1rem)` under `.mobile-convo-open`, and it is right for a
+sheet; what is missing is that the selected message is not lifted clear of it. WhatsApp and
+Messenger both raise the message above the sheet and dim the rest. The fix is deterministic and
+needs no clock: on open, measure the sheet's top and the bubble's bottom and scroll the difference.
+**Do not fix it by moving the sheet** - it is where a thumb is.
+
+**A REACTION IS DRAWN AS A CHIP BETWEEN TWO BUBBLES WITH NOTHING SAYING WHOSE IT IS.** Seen on the
+same screen: a heart sits alone, left-aligned, between the message it decorates and the next one,
+and a reader cannot tell which of the two it belongs to. NOT YET MEASURED - what would settle it is
+the chip's box against both neighbours' boxes, and whether any border, offset or overlap ties it to
+one. Filed so it is not lost, not filed as a defect.
+
+**TWO THINGS ASK FOR THE NOTIFICATION PERMISSION AT ONCE, AND ONE OF THEM BLOCKS THE APP.** On first
+launch after an install, Android's own permission dialog opens over the WebView while the in-app
+banner *"Activez les notifications pour etre prevenu des nouveaux messages"* is showing at the
+bottom of the same screen. The native dialog takes every touch until it is answered, which is
+correct for a native dialog and is exactly why nothing else should be asking at the same moment.
+**And it is worth knowing how this presented**: with the dialog up, the WebView stopped repainting
+but kept answering CDP, so the DOM said one thing and the screen showed another - an instrument
+reading the DOM would have reported a working app. A screenshot is what separated them.
+
+**`sweep.mjs` DOES NOT SEE INSIDE A WEB COMPONENT, AND EVERY "NOTHING IS CLIPPED" IT HAS EVER
+PRINTED EXCLUDES ONE WITHOUT SAYING SO.** Its probe walks `document.querySelectorAll('*')`, which
+stops at a shadow root. `<emoji-picker>` is the one in this app - 190 buttons, a search field, nine
+category tabs and a scrolling grid, none of which the route sweep has ever measured. The fix is in
+the probe: descend into `element.shadowRoot` when there is one, and say in the output which subtrees
+were entered, so the exclusion is visible rather than silent. Until then the graphical pass's scope
+is "everything except what a library renders for us", and that sentence belongs in its results.
+
 ### P1 - a URI `http::Uri` cannot parse ABORTS THE WHOLE APP, and nothing can catch it (found 2026-09-14 on A1)
 
 Measured on A1, build `7fea1bb42` (0.18.0, code 1800099), LineageOS 23.2 / Android 11, arm64:

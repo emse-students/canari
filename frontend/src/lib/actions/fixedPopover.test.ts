@@ -151,6 +151,78 @@ describe('computeFixedPopoverPosition', () => {
     expect(pos.top).toBe(128);
   });
 
+  /**
+   * A panel filling a phone screen is centred, because "beside the anchor" has stopped meaning
+   * anything: it is wider than what it points at, and wider than half the room it has. Measured on
+   * the Mi 9T at 436px, where the reaction picker sat at 54px with 30px left on the other side.
+   */
+  it('centres a panel that fills a narrow screen instead of aligning it to the anchor', () => {
+    vi.stubGlobal('innerWidth', 436);
+    const anchor = {
+      getBoundingClientRect: () => ({
+        top: 700,
+        bottom: 740,
+        left: 54,
+        right: 345,
+        width: 291,
+        height: 40,
+        x: 54,
+        y: 700,
+        toJSON: () => ({}),
+      }),
+    } as HTMLElement;
+    const panel = { offsetWidth: 352, offsetHeight: 400 } as HTMLElement;
+
+    const pos = computeFixedPopoverPosition(anchor, panel, {});
+    expect(pos.left).toBe(42);
+    expect(436 - pos.left - pos.width).toBe(42);
+  });
+
+  it('centres it whichever edge the caller asked to align, since neither edge is available', () => {
+    vi.stubGlobal('innerWidth', 436);
+    const anchor = {
+      getBoundingClientRect: () => ({
+        top: 700,
+        bottom: 740,
+        left: 54,
+        right: 345,
+        width: 291,
+        height: 40,
+        x: 54,
+        y: 700,
+        toJSON: () => ({}),
+      }),
+    } as HTMLElement;
+    const panel = { offsetWidth: 352, offsetHeight: 400 } as HTMLElement;
+
+    expect(computeFixedPopoverPosition(anchor, panel, { alignEnd: true }).left).toBe(42);
+  });
+
+  /**
+   * THE RULE MUST NOT REACH A DESKTOP, and this is the assertion rather than the hope: the same
+   * panel against the same anchor on a wide window is still placed by its anchor.
+   */
+  it('leaves a wide window anchored exactly as before', () => {
+    vi.stubGlobal('innerWidth', 1280);
+    const anchor = {
+      getBoundingClientRect: () => ({
+        top: 300,
+        bottom: 340,
+        left: 420,
+        right: 711,
+        width: 291,
+        height: 40,
+        x: 420,
+        y: 300,
+        toJSON: () => ({}),
+      }),
+    } as HTMLElement;
+    const panel = { offsetWidth: 352, offsetHeight: 400 } as HTMLElement;
+
+    expect(computeFixedPopoverPosition(anchor, panel, {}).left).toBe(420);
+    expect(computeFixedPopoverPosition(anchor, panel, { alignEnd: true }).left).toBe(711 - 352);
+  });
+
   it('clamps an anchor wider than the viewport', () => {
     const anchor = {
       getBoundingClientRect: () => ({
@@ -299,13 +371,17 @@ describe('an anchor with no box', () => {
 
   it('still positions against an anchor that is a line with no height', () => {
     // Not a width check: an inline anchor can legitimately measure 0 tall and still have a place.
+    // 40px, not the anchor's 50px: a 320px panel on a 400px viewport against a 120px anchor is the
+    // fills-the-screen case, so it is centred - (400 - 320) / 2. What this test pins is that a
+    // zero-HEIGHT anchor is laid out at all and draws no warning; which horizontal policy applies
+    // is decided, and asserted, in `computeFixedPopoverPosition` above.
     const panel = panelNode();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const unbind = bindFixedPopover(panel, { anchor: () => anchorWith(120, 0) });
 
     expect({ left: panel.style.left, warned: warn.mock.calls.length }).toEqual({
-      left: '50px',
+      left: '40px',
       warned: 0,
     });
     unbind();
