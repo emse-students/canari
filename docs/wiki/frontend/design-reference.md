@@ -1414,3 +1414,46 @@ The count itself hid twice, and for the same reason both times: a sweep that cou
 co-owner maps, which derive the accent a second time one line below the primary, inside the same
 function. Eleven, then twelve, then thirteen.
 
+
+## 19. Selecting a tab was what stopped its name fitting
+
+**A bottom-bar cell is a quarter of the window, and it is the narrowest measure in the app.** The
+bar draws the four `mobileNav` places, so the cell is `width / 4`: 97.5px at 390, 93.8px at 375, and
+**90px at 360** - one of the commonest Android widths, and narrower than the 375px this page
+measures everything else against.
+
+Measured at the `--text-2xs` floor (12px; section 3 says nothing goes below it) against the app's own
+compiled CSS, 2026-09-14:
+
+| label | 500 | 700 (active) | narrowest cell it fits |
+| --- | --- | --- | --- |
+| Feed | 26.3px | 26.8px | 108px |
+| Discussions | 63.8px | 65.2px | 261px |
+| Communautes | 78.3px | 80.1px | 321px |
+| **Tableau de bord** | 89.4px | **90.2px** | **361px** |
+
+**The active state is what pushed it over.** A selected tab goes from weight 500 to 700, and bold
+text is wider - so at 390px "Tableau de bord" had 89.5px of room and wanted 90.2px. It fit until it
+was chosen, and choosing it clipped it to "Tableau de bo...". **0.7px**, which is the shape of the
+defect rather than its size: the same label failed by 0.2px at 360px and by 10px at 320px.
+
+**The padding was taken from the only element short of room.** `px-1` on the anchor spent 8px of a
+90px cell on side padding the 24px icon never needed, and the label is the widest thing in the cell.
+It is gone; the label gets the cell.
+
+**That is not enough, and no layout on this page could be.** Even with the whole cell, 90.2px does
+not fit 90px. **One string was being asked to work at two widths that are not comparable** - the
+expanded sidebar rail is `21rem` (336px), where "Tableau de bord" is the right name and reads well.
+So `AppPlace` carries a second one: `shortLabel`, identical to `label` for every place whose name
+already fits, and "Tableau" (44.1px) for the dashboard. Nothing else changed name.
+
+**The guard is a CHARACTER budget, and it says so.** happy-dom lays nothing out, so
+`bottomNavLabels.test.ts` converts at the rate the table above gives - 90.2px over 15 characters is
+6.01px each, and the widest sample is 6.70px - and caps a short label at **12 characters**, which is
+80.4px at the pessimistic rate against a 90px cell. It runs in **both locales**, because a
+translation is exactly how a name nobody measured gets in. Raising the number needs a new
+measurement written beside it.
+
+**Below 360px the bar still relies on `truncate`**, and that is deliberate rather than unnoticed:
+"Communautes" wants 80.1px against a 320px cell of 80. 320px is an iPhone SE (2016); this page's
+reference is 375.
