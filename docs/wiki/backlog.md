@@ -5403,8 +5403,12 @@ re-derived.
 
 - **`/admin/*` - 13 routes, none opened.** The user authorised making the test account an admin on
   dev for exactly this. It is the largest untouched block.
-- `/legal/*` at phone width; `/calendar/export`; `/associations/[slug]`; `/posts/[postId]`;
-  `/forms/[id]`; `/communities` with real data rather than an empty state.
+- `/legal/*` at phone width; `/calendar/export`; `/posts/[postId]`; `/forms/[id]`; `/communities`
+  with real data rather than an empty state.
+- `/associations/[slug]` is **half swept** (2026-09-14): the page column and the `calendar` tab are
+  done - the tab now picks its own width and the agenda draws the same two shapes as `/calendar`
+  ([calendar](frontend/modules/calendar.md)) - and `about`, `members`, `shop` and `partnerships`
+  have still not been opened at phone width.
 - **The open half of the truncation census**: none of the three truncated `<h2>` bars - `ChatHeader`,
   the sidebar sticky header, `ConversationSidePanel` - exposes the full name anywhere, and a `title`
   attribute is not an answer on a touch screen. The census and the per-site verdicts are in
