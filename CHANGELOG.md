@@ -25,6 +25,56 @@ de 26 a 146 pixels, l'onde sonore devient lisible et les deux minutages ont 92 p
 un ecran plus etroit, la bulle le ramene a sa propre largeur. Les deux minutages ne peuvent plus se
 rejoindre quelle que soit la place - ils gardent un ecart minimal - et les chiffres ne tressautent
 plus pendant la lecture.
+
+### Changed - la barre du bas n'affiche plus de texte, et les deux barres prennent une taille de reference
+
+Les quatre onglets du bas portaient leur nom sous l'icone. Mesure sur un Mi 9T le meme jour,
+Instagram n'en affiche aucun : ses cinq onglets ont un nom pour les lecteurs d'ecran et pas une
+seule ligne de texte a l'ecran. La barre passe donc de 64 a 48 pixels de haut - un tiers de moins,
+sur chaque ecran de l'application - et les noms ne sont pas supprimes mais rendus invisibles : un
+lecteur d'ecran les annonce toujours, et en entier maintenant qu'aucune case de 90 pixels ne doit
+les contenir ("Tableau de bord", et non plus "Tableau").
+
+La pastille de message non lu descend sous l'icone, la ou Instagram place la sienne. Au coin de
+l'icone elle la chevauchait et avait besoin d'un anneau blanc pour rester lisible : 14 pixels pour
+dire une seule chose. A l'air libre elle se detache toute seule, et fait 6 pixels.
+
+Dans la barre du haut, les commandes etaient trop petites : quatre cibles de 36 pixels, dont une
+photo de profil de 24 qui etait a elle seule le bouton, et une cloche de 18 a cote de deux icones de
+20. Trois tailles pour une meme rangee. Elles font maintenant 44 pixels avec une icone de 24, ce que
+mesure la barre d'Instagram.
+
+Ces tailles deviennent la reference de l'application : **icone 24, cible tactile 44 minimum, barre
+de 56 en haut et 48 en bas**. Elles sont ecrites avec leur mesure dans
+`docs/wiki/frontend/design-reference.md`, section 23.
+
+### Changed - les trois controles du fil suivaient le lecteur sur tous les autres onglets
+
+Le "+", la loupe et la cloche parlent de publications et de rien d'autre : le "+" publie une
+publication, la loupe cherche dans le fil, et la cloche compte les notifications de publications (les
+discussions portent leurs propres marques de non-lu sur leur onglet). Dessines sur toutes les routes,
+ils promettaient des choses que la route ne savait pas faire - un "+" sur Discussions n'y publie rien
+(utilisateur : *"ca n'a pas de sens sur les autres onglets non ?"*).
+
+Ils ne sont donc dessines que sur la zone `/posts`. La page d'une publication en fait partie, et les
+deux liens ramenent d'eux-memes au fil. Les autres onglets gardent la marque et la photo de profil.
+La page des notifications reste joignable depuis l'onglet auquel elle appartient.
+
+### Changed - l'export PDF de l'agenda est reserve aux administrateurs, et ses trois themes disparaissent
+
+Construire le PDF de l'agenda n'est plus ouvert a tout le monde : il faut etre administrateur
+systeme ou administrateur BDE (demande de l'utilisateur). Le lien depuis l'agenda suit la meme
+regle - un lien vers une page qui vous renvoie aussitot est un cul-de-sac offert volontairement -
+et c'est une regle plus etroite que la moderation de l'agenda, qu'un simple administrateur
+d'association exerce deja sans avoir a fabriquer le PDF de l'ecole. Le mois affiche, lui, reste le
+meme fil public que l'agenda : ce qui disparait est un outil, pas une donnee.
+
+Les trois themes "Rentree", "Canari sombre" et "Minimal" sont supprimes. "Minimal" etait exactement
+les reglages par defaut et etait selectionne au chargement : deux tiers du selecteur proposaient un
+choix que personne n'avait demande, le dernier tiers reproduisait l'etat deja affiche. Les reglages
+fins du volet "Avance" restent le seul endroit ou l'on compose une apparence, et le bouton de remise
+a zero revient au seul point de depart qui subsiste.
+
 ### Changed - le trombone et le bouton GIF n'avaient pas la meme taille, et le composeur avait un fond de trop
 
 Les commandes de la barre de saisie partagent une boite de 44 pixels sur telephone et 38 sur
@@ -460,6 +510,7 @@ matters: the more serious the problem being announced, the more of the app it hi
 The notice now occupies a real row at the top of the window and everything else starts below it. It
 cannot overlap the page at any screen size or for any number of notices at once, and the app still
 fills exactly one screen with no new scrollbar.
+
 ### Fixed - three conversations nobody could enter were reopened
 
 Three conversations had been unenterable since the end of August. Each one advertises a sort of
@@ -616,6 +667,7 @@ which is not an exit anybody should have to find.
 The app now remembers WHICH set of people it found nobody in, and asks again as soon as that set
 changes - which is exactly when there is somebody new to ask. While nothing has changed it still
 says nothing and asks nothing, so a screen you open ten times costs one question, not ten.
+
 ### Fixed - a message waiting on a broken conversation could sit there until something else woke the app
 
 When a conversation cannot be sent into - the app has lost its place in it and is asking to be let
@@ -1032,6 +1084,7 @@ lifetime the caller may ask for is a lifetime the two doors can disagree about -
 from the wire and from the three client layers that threaded it through without a single call site
 ever setting it. The log is now one line, `[ADD_LOCK] ... ttl=30s via=jwt|push`, which also puts the
 push door's locks in front of the harness classifier that `[ADD_LOCK_PUSH]` had never matched.
+
 ### Fixed - a base published under an epoch it was not exported at owns that epoch for ever
 
 A group's external-join base is a PAIR: a GroupInfo blob, and the epoch it belongs to. Three client
@@ -1080,6 +1133,7 @@ conflict marker in any tracked `.md`, and no heading twice in `backlog.md`, whos
 written once by hand and deleted the day they ship. The duplicate is the half that matters: a marker
 is obvious, where a resurrected entry reads as work still owed and sends the next reader to redo
 something already done.
+
 ### Fixed - two commit-replay routes disagreed about what an epoch is, and one of them answered zero
 
 Commit replay is served twice: `GET mls/commits/:groupId` for a JWT-bearing client, and
@@ -1205,6 +1259,7 @@ unrelated features sharing the word is how a reader learns the wrong thing about
 The label is now "Co-organisateurs" / "Co-hosts", with a hint saying what the field actually does:
 any association can be added, its name and colour will appear on the event, and it is not asked
 first. `paraglideMessages.test.ts` holds the two vocabularies apart so the word cannot come back.
+
 ### Fixed - kicking a user left every one of their devices routable, for fourteen days
 
 The other half of the same invariant, and the same shape of defect. Four paths moved a device
@@ -1535,6 +1590,7 @@ removed as a fix.
 Three wiki paragraphs described them as live, one asserting `force_create_group` "keeps other
 callers"; it kept a WASM export and an `MlsManager` method, and no caller above them. All three are
 corrected.
+
 ### Fixed - a device's identity survived only a successful network call, and 138 accounts paid for it
 
 The MLS credential is `userId:deviceId`, so losing the id is not a lost preference - it makes the
@@ -2610,6 +2666,7 @@ codes is the next thing in the same place.
 The one field that still cannot change is HOW an offer is claimed, because codes people already
 took could not be carried across. Rather than hiding it, the form shows it with the reason and
 says what to do instead.
+
 ### Fixed - four things the security scanner was right about
 
 Internal. A static analyser had nineteen open findings against this code. Nine were about the
@@ -2837,6 +2894,7 @@ steps, because a wider container with no steps only makes each card bigger.
 Deliberately unchanged: the feed, a post, a profile, the notifications, the settings and the
 directory. The directory looked like a grid from its markup and is not - the three columns are its
 filter fields, and the results below are full-width rows.
+
 ### Fixed - a purge emptied the server and left the device holding the whole pool, and the reusable fallback was reminted on every connection
 
 Two thirds of a phone's MLS state was key material for a pool the protocol sizes at fifty, and the
@@ -3407,6 +3465,7 @@ One of my own changes was caught by the same method. The chevron is styled narro
 it stands for, but it also carries `.chat-composer-icon-button`, whose desktop rule sets `2.25rem`
 LATER in the file and therefore won the specificity tie - so folding the controls freed exactly 0px on
 desktop. Two classes fix it, and the measurement is what said so.
+
 ### Security - three HIGH denial-of-service advisories against `multer`, in all four NestJS services
 
 `bun audit` refused every one of the four service trees: `multer@2.2.0`, reached through
@@ -3690,6 +3749,7 @@ is tested now so that flip is one line rather than a design revisited later.
 `MlsError::StateSealedUnderAnotherKey` is checked before the cipher rather than inferred from a failed
 tag, and the classifier learns it as `rotated` in the same release - routed through `unknown` it would
 have printed "not typed by mls-core" about an error mls-core types.
+
 ### Fixed - a resume read the MLS keystore before it took the lock, so a mint that finished in between was erased
 
 Ten prekeys a phone had just minted and published were deleted from its own keystore by the resume
@@ -4490,6 +4550,7 @@ published packages are unrecognisable to the reloaded manager** - the `purged 50
 on a desktop. The byte-identity candidate for the same defect is refuted in the same pass: the
 delivery service stores and returns the published base64 verbatim, so the round trip cannot change a
 byte.
+
 ### Fixed
 
 - **Red triangles flashed between login screens on miconnect.** Confirmed by decoding a Firefox
@@ -4500,6 +4561,7 @@ byte.
   the card's height - before the stylesheet that normally sizes them applied. `custom-login.css`
   now bounds that icon to a normal size unconditionally, removing the race rather than hiding it:
   a genuine, persisting alert still renders, at its correct size.
+
 ### Fixed - a device whose notification permission is denied narrated three log lines per message, and one of them was false
 
 Measured on HEAL-REVOKE-9 (2026-09-07): **12 inbound messages produced 33 `[NOTIF]` lines** on a
@@ -11752,6 +11814,7 @@ of each entry is in [`docs/changelog-archive.md`](docs/changelog-archive.md)._
 - **A message helper reached back into the code that had loaded it, and which page you opened first decided whether that worked.** Adding the channel-reaction notification created a loop in the way the code loads itself: the piece that manages community channels asked for the messaging helpers, which - several steps later - asked for the piece that manages community channels. Loops like this do not fail on their own; they fail depending on which end is entered first, which is exactly the kind of behaviour that cannot be reproduced or explained. The notification call is now a small piece of its own, belonging to neither side
 
 - **A message arriving during the few seconds you were being added to a conversation could be lost outright, with nothing anywhere to say so.** Messages landing between the invitation and the moment the device can actually read that conversation are set aside and applied straight after. Three different things emptied that holding area without ever applying what was in it, and none of them logged a line: a second invitation for the same conversation - an ordinary event - replaced what was held with nothing; a failed invitation threw the messages away on the assumption the server would hand them over again, which is untrue of one delivered live; and an unrelated failure released the area early, applying the messages before the invitation that makes them readable. There is now a single way out, which always puts the messages back in the queue and always says what it did, and messages left with no invitation to release them are reported as a fault by name and count
+
 ### Security
 - **Anybody in a conversation could delete or rewrite anybody else's messages, on every device in it.** Editing and deleting works by sending the others a small instruction naming the message, and each device applied it by identifier alone, without ever asking whether the person sending the instruction was the one who wrote it. The check existed, but on the wrong side of the wire: the app only offers the buttons on your own messages, which decides what an honest device puts on the wire and nothing at all about what a dishonest one can. Each device now refuses an edit or a deletion that does not come from the message's author, compared against the identity the encryption layer itself authenticated. Found by audit, not in use
 - **The same hole reopened one layer down, on the copy the server keeps.** Refusing an edit or a deletion that does not come from the message's author was implemented where those instructions arrive live; there is a second way they arrive, a device replaying the conversation's stored copy, and that path had no check at all - it never needed one, because until this release nothing that changes a message was ever stored. Both paths now refuse a mutation from anyone but the author, and the replay path records who claimed it so the check can be made against the real author once the message itself is in place
