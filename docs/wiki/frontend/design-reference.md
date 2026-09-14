@@ -1567,3 +1567,71 @@ forbids `Ajouter un commentaire...`, which fits with 17px to spare. **Take the r
 strings long enough for the cap to bind.** Among samples of twenty characters or more the widest
 is 7.55px each, and 191px over 7.55 is 25.3, so the cap is **25 characters**, in both locales,
 leaving the longest string that passes 2px of room.
+
+## 22. The post card - Facebook's chrome measured on the same phone, and the 162px it gave back
+
+**THE REFERENCE, MEASURED 2026-09-14.** `com.facebook.katana` on A1 (Mi 9T, 1080 x 2340 real px,
+436 x 945 CSS px, dpr 2.477), read with `uiautomator dump` on a GROUP page rather than the home
+feed, because a group is the shape Canari's association feed actually is. Real px below; divide by
+2.477 for CSS px.
+
+| part | bounds (real px) | CSS px |
+| --- | --- | --- |
+| post header | y305-464 | **64 high** |
+| avatar | x30-129 | 40 |
+| name row | x149-956 | 326 wide |
+| meta row ("2 j - Groupe prive") | y393-422 | 12 high |
+| overflow `...` | x976-1080, y305-408 | **42 x 42**, flush to the screen edge |
+| post text (one line) | y464-519 | 22 |
+| photo | y519-1957 | 581 |
+| **action bar** | x30-1050, y1958-2067 | **44 high**, 412 wide |
+| like / comment / send | x30-140, x140-250, x250-360 | **44 each, grouped hard LEFT** |
+| reaction faces, one kind | x1000-1050 | 20, **right-aligned on that same row** |
+| reaction faces, three kinds | x920-1050 | 52, same row |
+| gap to the next card | y2067-2072 | 2 |
+
+**THREE FACTS THE DUMP SETTLES, none of them guessable from memory.**
+
+1. **There is no reaction row.** The tally is not under the bar, it is AT THE RIGHT END OF IT. One
+   44px line carries every control and every count a post has.
+2. **Counts live inside the button they belong to.** The like button was 110px wide on a post with
+   no count and 125px on one reading "12" - the digits sit at x95-125, inside the button's own box.
+3. **There is no comment composer at rest.** Nothing is drawn for a post nobody has commented on;
+   the comment icon opens it.
+
+The header carries exactly TWO controls, each ~42 CSS px, and page names truncate there too - which
+is the point already made in `PostActionsMenu`: truncation is not the defect, truncating to eight
+characters is.
+
+**CANARI, THE SAME PHONE, THE SAME MINUTE.** Measured over CDP on `/posts`, first card:
+
+| part | before | after | Facebook |
+| --- | --- | --- | --- |
+| header | 68 | 68 | 64 |
+| action bar | 65 | **45** | 44 |
+| reaction tally | 49 (own bordered row) | **0** (on the bar) | 0 |
+| comment composer at rest | 90 (every card) | **0** | 0 |
+| **chrome per post** | **272** | **113** | **110** |
+| card height, that post | 540 | 382 | - |
+
+**WHAT PAID FOR IT.** The bar dropped the words "J'adore" and "Commenter" - Facebook labels
+neither, and the emoji a reader chose names their own reaction better than its name did; both words
+survive on `aria-label` and `title`. `ReactionsDisplay` lost its bordered band and became a
+`flex-nowrap` strip rendered as a snippet inside the bar, so six kinds of reaction clip rather than
+growing the bar to two lines. The resting composer's `{:else}` branch went, `showComments` being the
+only thing that opens it now. Both controls grew from 36-40px to a full 44px target in the process,
+which the row height was already paying for.
+
+**WHAT IS DELIBERATELY NOT COPIED: the full-bleed card.** Facebook's cards run x0-1080 with a 2px
+separator; Canari's sit at x16-420 of 436, rounded, bordered. Escaping that would mean negative
+margins against `PageContainer` - **the one page column**, whose whole purpose (section 12) is to
+end per-page widths and paddings. The gain is 32px of text width; the cost is reintroducing exactly
+what that component exists to prevent. Not a close call, and not to be re-opened without a reason
+better than "Facebook does it".
+
+**HOW THE FACEBOOK SIDE WAS TAKEN, for anyone repeating it.** `uiautomator` cannot dump a locked
+screen. MSYS rewrites an absolute POSIX path handed to `adb shell` (`/sdcard/x` becomes
+`C:/Program Files/Git/sdcard/x`), so the dump needs `MSYS_NO_PATHCONV=1`, and `adb pull` needs a
+Windows-style destination. A first dump caught only the composer, the stories bar and one header -
+the action bar was below the fold - so the feed has to be scrolled until a bar is fully on screen
+before the dump is worth anything.
