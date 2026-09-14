@@ -27,6 +27,26 @@ The wait is now timed from the moment it actually starts, so a seat nobody honou
 schedule and the device recovers on its own. The hourly health report was reading the same wrong
 clock and now reads the right one.
 
+### Fixed - a conversation waiting for someone to come back stopped checking whether anyone had
+
+A conversation can end up in a state only one of its members can repair. Your app asks the server to
+pick one of them; if none of them is connected, the server answers "nobody is online" and does
+nothing else - by design, because the request is cheap and your app was expected to ask again a
+minute later.
+
+**It had stopped asking.** A change made two days earlier wrote that answer down and, quite
+reasonably, declined to repeat a whole round of work whose outcome was already known. But "nobody is
+online" is a fact about people, not about the conversation, and someone coming back changes it
+without changing anything the app was watching. There was a second way out - your app notices when
+someone comes online and tries again - except that it only ever watches the people in your one-to-one
+chats. **In a group, it watches nobody.** Group conversations were exactly the ones affected: one had
+been asking once a minute, for at least twenty-seven minutes, and three others had been waiting since
+the end of August.
+
+Your app now asks that one question again every minute, and only that one - the rest of the work is
+still skipped while nothing can have changed. The moment any member is connected, the conversation
+repairs itself and opens.
+
 
 ### Fixed - a conversation that failed to be created left a permanent, empty trace of itself
 

@@ -58,16 +58,18 @@ const lastReAddAt = new Map<string, number>();
  * re-running the pass costs four HTTP calls and learns nothing.
  *
  * **BUT THE SET IS THE SET OF MEMBERS WHO ARE ONLINE, AND A MEMBER CONNECTING CHANGES IT WITH
- * NEITHER NUMBER MOVING.** This doc used to say nothing about that answer could change while the
- * pair stood still, and that was false about the one event the verdict is made of. What makes the
- * epochs a sufficient exit in practice is a SECOND fact, on the other device: `initializeConnection`
- * republishes a stale base for every group that device holds, so a returning holder repairs the
- * base itself and moves `baseEpoch` before this device asks anything. **That fact is not this
- * device's to guarantee** - it shipped on 2026-09-04, `minClientVersion` does not require it, and a
- * republish that fails is logged and nothing more. An exit that rests on what the far side is
- * running is not an exit. So the peer-return edge discharges these records too
- * ({@link forgetProvenDeadEnds}), for the same reason and through the same seam as the deferred
- * reconciliations: the server said nobody was online, and somebody just came online.
+ * NEITHER NUMBER MOVING** - so the pair alone is a column read for a question it was not written to
+ * answer, and the pass re-asks the election itself on its ordinary cadence while a record stands
+ * ({@link reAskTheElection}). That is ONE HTTP call, not four: the memberships, the conversation row
+ * and the join are all decided by the pair, and only the election is not.
+ *
+ * Two other things end it and neither may be relied on alone. `initializeConnection` republishes a
+ * stale base for every group the returning device holds, which moves `baseEpoch` - but **that fact
+ * is not this device's to guarantee**: it shipped on 2026-09-04, `minClientVersion` does not require
+ * it, and a republish that fails is logged and nothing more. The peer-return edge discharges these
+ * records too ({@link forgetProvenDeadEnds}) - but its watchlist is assembled by the chat UI and a
+ * GROUP conversation puts nobody on it, which is precisely the shape measured below. Both are
+ * faster than the re-ask when they fire, and neither is what makes this terminate.
  *
  * Measured on production 2026-09-12, and it is the whole reason this map exists: group `4f87267a`
  * was asked once a minute for at least twenty-seven consecutive minutes - four HTTP calls a pass -
@@ -135,6 +137,54 @@ export function forgetProvenDeadEnds(log: (msg: string) => void): void {
       `be asked again on the next pass`
   );
   noRepairerAt.clear();
+}
+
+/**
+ * Re-asks the ONE question whose answer can have changed, for a group already recorded as having no
+ * reachable repairer.
+ *
+ * **THE VERDICT IS ABOUT WHO IS ONLINE, AND THE PAIR IS NOT EVIDENCE FOR THAT QUESTION.** The two
+ * epochs say whether the GROUP moved; the answer this record holds says whether any MEMBER DEVICE
+ * was reachable, and a member connecting changes it with neither number moving. Waiting only on the
+ * pair reads one column for a question it was never written to answer - so it needed a second exit,
+ * and the second exit was a presence EDGE ({@link forgetProvenDeadEnds}) fired from a store whose
+ * watchlist is assembled by the chat UI: `ConversationTile` and `ChatHeader` subscribe only for a
+ * DIRECT conversation's peer, `ChannelMembersList` for an open channel's members, and `unwatchUsers`
+ * stops the poll outright when the set empties. **A GROUP CONVERSATION PUTS NOBODY ON THAT LIST**,
+ * which is the shape of the population this record was built for: production 2026-09-12, group
+ * `4f87267a` answered `NO_PEER_ONLINE members=1` to twenty-seven consecutive minutes of asks, and
+ * three more groups had been in that state since 2026-08-29, 08-30 and 08-31.
+ *
+ * **THE SERVER'S OWN DESIGN ASSUMES THIS ASK.** `notifyBaseRefreshRequest` stores nothing for an
+ * offline member and says why: *"a base refresh is idempotent and cheap, the requester re-asks on
+ * its own cadence as long as it still cannot join"*. That premise shipped on 2026-09-04 and the
+ * record removed it on 2026-09-12 - two locally correct decisions that compose into no exit at all.
+ * This restores it, at ONE HTTP call per {@link RECOVERY_TIMEOUT_MS} per group rather than the four
+ * the full pass costs: the memberships, the conversation row and the join are all still decided by
+ * the pair, and only the election is not.
+ *
+ * A refusal leaves the record standing - nothing changed. An election that found somebody DISCHARGES
+ * it, so the next pass runs whole and the elected member's republish moves `baseEpoch` under it.
+ * A request that never reached the server proves nothing about who is reachable and discharges
+ * nothing, for the reason the `stale_base` branch gives its own catch.
+ */
+async function reAskTheElection(groupId: string, deps: RecoveryDeps): Promise<void> {
+  let asked;
+  try {
+    asked = await deps.mlsService.sendBaseRefreshRequest(groupId);
+  } catch (e) {
+    deps.log(
+      `[READD] ${groupId.slice(0, 8)}... re-ask of the base-refresh election did not reach the ` +
+        `server: ${String(e).slice(0, 120)} - the dead end stands, nothing was learnt`
+    );
+    return;
+  }
+  if (asked.noPeerOnline) return;
+  noRepairerAt.delete(groupId);
+  deps.log(
+    `[READD] ${groupId.slice(0, 8)}... a member is reachable again - the server elected ` +
+      `${asked.target ?? 'one'} to republish the base, so the next pass runs whole`
+  );
 }
 
 /** The groups recorded as having no reachable repairer, and the pair each was proved against. */
@@ -381,13 +431,16 @@ export async function requestReAdd(groupId: string, deps: RecoveryDeps): Promise
     return;
   }
 
-  // A DEAD END THE SERVER ALREADY PROVED, RE-READ RATHER THAN RE-ASKED.
+  // A DEAD END THE SERVER ALREADY PROVED - THREE OF THE FOUR ANSWERS ARE KNOWN, AND THE FOURTH IS
+  // THE ONLY ONE WORTH ASKING.
   //
   // The pass below costs four HTTP calls: the memberships, the conversation row, the join, and the
-  // base-refresh ask. Every one of them is decided by two numbers this pass has ALREADY read on the
-  // call above - and when a previous pass ended on `no_peer_online` against those same two numbers,
-  // all four answers are known before they are asked. See {@link noRepairerAt}: the record IS the
-  // pair, so it survives exactly as long as the state it describes.
+  // base-refresh ask. The first three are decided by two numbers this pass has ALREADY read on the
+  // call above, so while the pair stands they are known before they are asked. The fourth is NOT:
+  // it is an election over the members who are ONLINE, and a member connecting changes its answer
+  // with neither number moving. So the record skips the three and re-asks the one -
+  // {@link reAskTheElection}, which the server's own design assumes and which discharges the record
+  // the moment somebody is reachable. See {@link noRepairerAt} for the pair and what it does prove.
   //
   // THE THROTTLE IS STILL ARMED, AND THAT HALF IS NOT OPTIONAL. The watchdog invokes this seam
   // every five seconds; `getGroupMeta` above is what it costs to reach this line, so returning
@@ -399,6 +452,7 @@ export async function requestReAdd(groupId: string, deps: RecoveryDeps): Promise
   const proven = noRepairerAt.get(groupId);
   if (proven !== undefined && pair !== undefined && proven === pair) {
     lastReAddAt.set(groupId, now);
+    await reAskTheElection(groupId, deps);
     return;
   }
   if (proven !== undefined && proven !== pair) {
