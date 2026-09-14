@@ -817,7 +817,7 @@ jobs:
       # time a change actually triggered it. See `frontend/src-tauri/android-tests/
       # settings.gradle.kts` for the whole account.
       - name: Setup JDK
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
