@@ -78,9 +78,27 @@ prop:
 
 | Capability | Granted to | Effect when unset |
 | --- | --- | --- |
-| `canSetKind` | the association page, for a BDE or global admin (`canDeclareBreak`) | the `event`/`break` toggle is not rendered AND `kind` is not written to the payload |
-| `canLinkForm` | the association page, for an editor of that association (`canEdit`) | the registration-form select is not rendered AND `linkedFormId` is not written |
+| `canSetKind` | anyone the SERVER lets decide it: `canDeclareBreak` on the association page, `canDepositEvent` on the agenda - both are `mayValidate`, a BDE validator or a global admin | the `event`/`break` toggle is not rendered AND `kind` is not written to the payload |
+| `canLinkForm` | whoever may list the target's forms: `canEdit` on the association page, `isGlobalAdmin \|\| proposeAssocIds.has(target)` on the agenda | the registration-form select is not rendered AND `linkedFormId` is not written |
 | `canTargetAnotherAssociation` | the global agenda | the "on behalf of" select is not rendered AND the co-owner picker excludes the seeded owner |
+
+**THE COMPONENT WAS UNIFIED IN 2026-09; THE CALL SITES WERE NOT, UNTIL 2026-09-14.** The agenda
+passed one capability and neither `linkableForms` nor `poster`, so from `/calendar` a global admin
+could edit every field of an event except its kind, its registration form and its poster - and the
+server would have accepted all three from exactly that person (`assertMayDecideKind` gates `kind` on
+`mayValidate`, which is who `canDepositEvent` already is). A capability the API grants and no screen
+offers is a right reachable only by hand.
+
+Two mechanics make the agenda's version work, and neither exists on the association's page because
+neither has to: the form picker follows `values.targetAssociationId` rather than the page, since this
+is the only surface where the owning association can change mid-form; and `canLinkForm` is decided
+from the associations already loaded, because `GET :id/link-candidates` wants `PROPOSE_EVENT` on the
+TARGET - a fact known here, so the control is shown where the request would succeed instead of being
+sent to find out.
+
+The poster's state and its two endpoints are `$lib/calendar/eventPoster.svelte.ts`, shared: it reads
+the association and the event through getters at CALL time, which is what lets one implementation
+serve a surface whose target moves while the form is open.
 
 **A field a surface cannot see is never written, and that is the point rather than a nicety.**
 `linkedFormId: null` on an update DETACHES a registration form: the agenda's form holds `''` because

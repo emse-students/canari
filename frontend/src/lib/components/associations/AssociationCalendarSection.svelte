@@ -8,8 +8,6 @@
     deleteAssociationCalendarEvent,
     validateAssociationCalendarEvent,
     listAssociationLinkCandidates,
-    uploadCalendarEventImage,
-    deleteCalendarEventImage,
     aggregatedCalendarFeedIcsAbsoluteUrl,
     icsSubscriptionRangeISO,
     type AssociationCalendarEvent,
@@ -51,6 +49,8 @@
     isScheduleAgendaViewport,
     onViewportChange,
   } from '$lib/utils/viewport';
+  import { createEventPoster } from '$lib/calendar/eventPoster.svelte';
+  import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
 
@@ -105,9 +105,14 @@
   let editingId = $state<string | null>(null);
   let formValues = $state<EventFormValues>(blankEventFormValues());
   let linkCandidates = $state<AssociationLinkCandidates | null>(null);
-  /** Current poster image URL for the event being edited (null = none). */
-  let formImageUrl = $state<string | null>(null);
-  let uploadingImage = $state(false);
+  /** The poster of the event being edited - its state and its two endpoints, shared with the
+   *  global agenda so the same control behaves the same on both surfaces. */
+  const poster = createEventPoster({
+    associationId: () => associationId,
+    eventId: () => editingId,
+    // The cards below carry the poster too, so the month is reloaded rather than patched.
+    onChanged: loadMonth,
+  });
 
   /**
    * What this surface may DECIDE, which is the only thing that ever differed between the two event
@@ -156,7 +161,10 @@
     if (!canEdit) return;
     try {
       linkCandidates = await listAssociationLinkCandidates(associationId);
-    } catch {
+    } catch (e) {
+      // An empty picker is what the editor sees; without this line it is also all anyone would
+      // ever know about it.
+      Log.d('[asso-calendar] link candidates failed', e);
       linkCandidates = { forms: [] };
     }
   }
@@ -277,7 +285,7 @@
     editingId = null;
     // The target is this association, and saying so is what keeps it out of its own co-owner list.
     formValues = { ...blankEventFormValues(), targetAssociationId: associationId };
-    formImageUrl = null;
+    poster.set(null);
     modalOpen = true;
     await ensureLinkCandidates();
   }
@@ -285,36 +293,9 @@
   async function openEdit(ev: AssociationCalendarEvent) {
     editingId = ev.id;
     formValues = eventFormValuesFrom(ev);
-    formImageUrl = ev.imageUrl ?? null;
+    poster.set(ev.imageUrl ?? null);
     modalOpen = true;
     await ensureLinkCandidates();
-  }
-
-  // The poster's two endpoints RETHROW: the modal owns the error line these write to, and a caller
-  // that swallowed the refusal here would leave that line empty while the poster stayed unchanged.
-  async function uploadPoster(file: File) {
-    if (!editingId) return;
-    uploadingImage = true;
-    try {
-      const updated = await uploadCalendarEventImage(associationId, editingId, file);
-      formImageUrl = updated.imageUrl ?? null;
-      // The cards below carry the poster too, so the month is reloaded rather than patched.
-      await loadMonth();
-    } finally {
-      uploadingImage = false;
-    }
-  }
-
-  async function removePoster() {
-    if (!editingId) return;
-    uploadingImage = true;
-    try {
-      await deleteCalendarEventImage(associationId, editingId);
-      formImageUrl = null;
-      await loadMonth();
-    } finally {
-      uploadingImage = false;
-    }
   }
 
   function dismissEventModal(fromHistory = false) {
@@ -601,12 +582,7 @@
   bind:values={formValues}
   {capabilities}
   linkableForms={linkCandidates?.forms ?? null}
-  poster={{
-    url: formImageUrl,
-    uploading: uploadingImage,
-    onUpload: uploadPoster,
-    onRemove: removePoster,
-  }}
+  poster={poster.controls}
   submitLabel={m.common_save_button()}
   savingLabel={m.asso_calendar_saving_label()}
   onSubmit={submitEvent}
