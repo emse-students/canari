@@ -211,7 +211,10 @@ HEADER
   # The backticks are MARKDOWN in the comment this writes into the generated .env, not a
   # command substitution - single quotes are exactly what keeps them literal.
   # shellcheck disable=SC2016
-  printf '# Created as `canari-local`, redirect URIs on http://localhost:1420. Production'"'"'s client\n'
+  printf '# Created as `canari-local`, redirect URIs on http://localhost:8081 - the nginx
+'
+  printf '# entry the estate is served on, which is where the callback lands. Production'"'"'s client
+'
   printf '# is deliberately NOT reused: a page served from localhost must not be able to obtain\n'
   printf '# production tokens under production'"'"'s own client id.\n'
   printf 'AUTHENTIK_CLIENT_ID=%s\n' "${CANARI_LOCAL_OIDC_CLIENT_ID:-}"
@@ -226,7 +229,19 @@ HEADER
 # with those.
 DOMAIN=localhost
 ALLOW_ORIGIN=*
-FRONTEND_URL=http://localhost:1420
+
+# IT IS 8081, THE NGINX ENTRY - NEVER 1420, THE VITE DEV SERVER.
+#
+# This is the origin every link the services build for a HUMAN is made of: the Stripe return, the
+# Lydia callback, a form link, a product link, the aggregated calendar feed. 1420 is the dev server,
+# which runs only while a developer has `bun run dev` open and which the phone cannot reach at all -
+# `a1apk.mjs` maps 8081 with `adb reverse` and nothing maps the other. So a local estate built this
+# way handed out links to a server that was usually not running, and the mistake did not fail
+# loudly: on a workstation both ports often answer.
+#
+# The same value is baked into the frontend BUNDLE through VITE_FRONTEND_URL below, so it also
+# decides what a "copy link" button puts on the clipboard.
+FRONTEND_URL=http://localhost:8081
 NODE_ENV=development
 ENABLE_DEV_ROUTES=true
 RUST_LOG=chat_gateway=debug,tower_http=debug
@@ -286,7 +301,7 @@ cat >"$FRONTEND_ENV" <<FRONTEND
 # Short on purpose: vite.config.js proxies every /api/* route to the local service, so the six
 # VITE_*_URL variables are unnecessary here and their absence is what keeps the dev server
 # same-origin with the API.
-VITE_FRONTEND_URL=http://localhost:1420
+VITE_FRONTEND_URL=http://localhost:8081
 VITE_AUTHENTIK_URL=$(value_of AUTHENTIK_BASE_URL)
 VITE_AUTHENTIK_CLIENT_ID=${CANARI_LOCAL_OIDC_CLIENT_ID:-}
 VITE_ENABLE_DEV_ROUTES=true

@@ -130,7 +130,7 @@ services:
       # unprotected, so every non-production deployment has to say which it is.
       ALLOW_INSECURE_COOKIES: "true"
       # Vite SPA origin (PIN check MLS CORS); align with your dev URL (default SvelteKit port).
-      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:1420}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8081}
       POSTGRES_URL: postgres://admin:password@postgres:5432/auth_db
       REDIS_HOST: redis
       REDIS_PORT: "6379"
@@ -228,7 +228,7 @@ services:
       # no default: the value decides whether a credential crosses the network
       # unprotected, so every non-production deployment has to say which it is.
       ALLOW_INSECURE_COOKIES: "true"
-      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:1420}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8081}
       JWT_SECRET: ${JWT_SECRET}
       # Shared secret gating server-to-server DELETE /media/:id (social-service cleanup).
       INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
@@ -283,7 +283,7 @@ services:
       LYDIA_ENV: ${LYDIA_ENV:-homologation}
       LYDIA_PROVIDER_TOKEN: ${LYDIA_PROVIDER_TOKEN:-}
       LYDIA_PROVIDER_PRIVATE_TOKEN: ${LYDIA_PROVIDER_PRIVATE_TOKEN:-}
-      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:1420}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8081}
       FORM_URL: http://social-service:3014
       FORM_SERVICE_URL: http://social-service:3014
       INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
@@ -346,9 +346,9 @@ services:
       REDIS_URL: redis://redis:6379
       CHANNELS_ENCRYPTION_SECRET: ${CHANNELS_ENCRYPTION_SECRET:-dev-channel-secret-change-me}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
-      STRIPE_SUCCESS_URL: ${STRIPE_SUCCESS_URL:-http://localhost:1420/posts?registration=success}
-      STRIPE_CANCEL_URL: ${STRIPE_CANCEL_URL:-http://localhost:1420/posts?registration=cancel}
-      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:1420}
+      STRIPE_SUCCESS_URL: ${STRIPE_SUCCESS_URL:-http://localhost:8081/posts?registration=success}
+      STRIPE_CANCEL_URL: ${STRIPE_CANCEL_URL:-http://localhost:8081/posts?registration=cancel}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:8081}
       USER_SERVICE_URL: http://core-service:3012
       PAYMENT_SERVICE_URL: http://core-service:3012
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}

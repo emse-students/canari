@@ -17,7 +17,7 @@ describe('publicAppUrl', () => {
   // `publicAppOrigin()` prefers that variable over everything else, and these assertions are about
   // the FALLBACK - what the app does when it has no configured origin. The variable is empty on a
   // CI runner and NOT empty on a developer's machine any more: the local estate writes
-  // `frontend/.env` with `VITE_FRONTEND_URL=http://localhost:1420`, so three of these went red on
+  // `frontend/.env` with `VITE_FRONTEND_URL` naming the estate's own origin, so three of these went red on
   // every local run while staying green in CI. A test whose verdict depends on which machine ran
   // it is one people learn to ignore, which is the only thing worse than not having it.
   beforeEach(() => vi.stubEnv('VITE_FRONTEND_URL', ''));
