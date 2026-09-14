@@ -11,6 +11,24 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - three conversations nobody could enter were reopened
+
+Three conversations had been unenterable since the end of August. Each one advertises a sort of
+doorway that lets a member's new device join, and in all three that doorway was stamped with an
+older date than the conversation itself, so the app refused it every time. The doorway was
+perfectly good; only the stamp was wrong, and the step that should have corrected it had been lost
+by a defect fixed on 4 September - after these three were already stuck.
+
+They looked worse than they were, and they also looked better. The 357 messages waiting in them
+were mostly the app talking to itself: 45 were real messages, and every device still waiting for
+them was an old browser tab nobody uses any more - closed, signed out, replaced months ago by the
+phone app. **Nobody was waiting for those messages.** What was real is the other half: on one of
+the three, someone who had signed in that very morning simply could not get in.
+
+The stamps were corrected by hand, once, under a check that would only touch a conversation in
+exactly this state - and which was run first without changing anything, to confirm it matched those
+three and nothing else. Every conversation on the server now advertises a doorway that matches it.
+
 ### Fixed - two thirds of phones never said which version they were running
 
 The app can require a minimum version and refuse to open below it. That is the only setting able to
