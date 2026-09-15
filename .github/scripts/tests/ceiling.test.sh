@@ -156,16 +156,9 @@ for ref_case in   "dependabot/cargo/apps/chat-gateway/redis-1.7.0|cargo"   "depe
   fi
 done
 
-echo "wire formats and unrunnable paths (the version is not consulted):"
-expect_refused openmls "0.9.0" "a frame minted today must stay readable by the v0.14.14 clients in the fleet"
-expect_refused openmls_traits "0.6.0" "the openmls release train moves as one piece"
-expect_refused tls_codec "0.5.0" "it is the wire encoding itself"
-expect_refused hpke-rs-crypto "0.3.0" "the hpke-rs* arm covers the whole family"
+echo "unrunnable paths (the version is not consulted):"
 expect_refused webrtc-ice "0.20.3" "rung 15 CALL has no runner"
 expect_refused turn "0.9.0" "the relay path is unmeasured"
-# A patch is refused for these too, deliberately - unlike a datastore, their failure mode does not
-# depend on the version number at all, and asserting it keeps the two kinds of arm distinguishable.
-expect_refused openmls "0.8.2" "a wire format is unmeasured at every version, not only across a major"
 
 # -------------------------------------------------------------------------------------------------
 # What must KEEP merging on its own. Each of these left the table when its gate was written, and a
@@ -177,6 +170,20 @@ expect_allowed "@nestjs/core" "12.0.1"
 expect_allowed typeorm "1.1.0"             # released by `app-module.boot-spec.ts`, 2026-08-31
 expect_allowed argon2 "0.6.0"              # released by `cross_version_state.rs`, 2026-08-31
 expect_allowed aes-gcm "0.11.0"            # released by `cross_version_push.rs`
+# THE WIRE-FORMAT FAMILY, released by `mls-forward-compat.test.sh` on 2026-09-15. It had been
+# refused since this table was written, for the one direction no fixture can see: an old binary
+# reading a frame minted by the new one. That gate now checks `FIXTURE_VERSION` out into a worktree,
+# builds `frontend/mls-cross-version` against BOTH libraries and has them hold one conversation.
+#
+# THE WHOLE FAMILY LEAVES TOGETHER BECAUSE IT WAS REFUSED TOGETHER - the openmls release train moves
+# as one piece, and the gate exercises the train, not a crate. A patch is asserted beside a minor
+# for the same reason the refusal used to assert it: the failure mode never depended on the number.
+expect_allowed openmls "0.9.0"
+expect_allowed openmls "0.8.2"
+expect_allowed openmls_traits "0.6.0"
+expect_allowed tls_codec "0.5.0"
+expect_allowed hpke-rs-crypto "0.3.0"
+expect_allowed libcrux-kem "0.0.9"
 # A STATELESS image is allowed even across a major: adminer mounts no volume, so there is no old
 # data for a new version to refuse. This is the line that keeps the datastore arm about STATE rather
 # than about being a container.

@@ -220,13 +220,31 @@ gate_for_dependency() {
     # asserts BOTH directions. The forward half needed no old binary the way `openmls` does - an
     # AEAD is deterministic, so re-sealing the frozen plaintext under the frozen key and nonce must
     # reproduce the frozen bytes, and equal bytes are equal in both directions.
-    openmls | openmls_* | tls_codec | tls_codec_derive | hpke-rs* | libcrux*)
-      # A WIRE FORMAT IS READ BY OTHER DEVICES, ON OTHER VERSIONS, so both directions matter and a
-      # frozen fixture can only ever see one of them. `cross_version_state.rs` proves today's code
-      # opens a group and a frame minted by v0.14.14; nothing here proves a frame minted TODAY is
-      # readable by the v0.14.14 clients still in the fleet, and only an old binary could.
-      echo "the FORWARD half of a cross-version test. \`tests/cross_version_state.rs\` now covers the backward half - today opening what v0.14.14 wrote - but a wire format is read by OTHER devices on OTHER versions, and nothing here runs an old binary against a frame minted by the new one"
-      ;;
+    # `openmls`, `openmls_*`, `tls_codec`, `tls_codec_derive`, `hpke-rs*` AND `libcrux*` WERE
+    # REFUSED HERE UNTIL 2026-09-15, and the entry is gone because the test it named now exists.
+    # The refusal asked for "the FORWARD half of a cross-version test [...] nothing here runs an old
+    # binary against a frame minted by the new one". That is
+    # `.github/scripts/mls-forward-compat.sh`, a job of `ci.yml`.
+    #
+    # IT RUNS THE OLD BINARY, because for this family nothing cheaper can. `aes-gcm` left this table
+    # on determinism - re-sealing a frozen plaintext under a frozen key and nonce reproduces the
+    # frozen bytes, and equal bytes are equal in both directions - and an MLS frame has no such
+    # handle: it carries a random reuse guard, so today's code cannot reproduce a frozen ciphertext
+    # and there is nothing to compare. So the old tag is checked out into a worktree and built
+    # (~17 s), `frontend/mls-cross-version` is copied in and built there against the OLD library,
+    # and the two binaries hold one conversation through files: the old side opens the group and
+    # admits today's code by Welcome, today mints an application frame the old side must read, and
+    # the old side mints one today must read. Both directions, one group, asserted inside the
+    # process that decrypted rather than by a shell comparison.
+    #
+    # WHICH old version is not written there either - it is read from `FIXTURE_VERSION` in
+    # `frontend/mls-core/tests/cross_version/params.rs`, the constant the frozen fixtures are
+    # already stamped with, so the two halves of the cross-version story cannot come to disagree.
+    #
+    # WHAT IT DOES NOT COVER, so nobody mistakes its scope: one group, one epoch, one application
+    # frame each way. A change that breaks only a removal, an external join or a PSK would pass it.
+    # It is nonetheless the direction that had NO evidence at all, and the refusal it retires had
+    # been standing since this table was written.
 
     webrtc | webrtc-* | str0m | sdp | ice | turn | stun)
       echo "one relay-path call. The SFU has ten tests and not one of them touches the ICE stack; that is campaign rung 15 CALL, which has no runner yet"
