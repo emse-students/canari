@@ -3,8 +3,9 @@
  *
  * - Injects the Bearer token automatically.
  * - On a 401 response, attempts one silent token refresh and retries.
- * - On a second 401, clears auth state and rethrows so the caller can redirect.
+ * - On a second 401, throws `SessionExpiredError` so the caller can redirect.
  * - Never issues an anonymous request in place of an expired session (see below).
+ * - Never flattens a refusal into a sentence: what `refresh()` threw is what callers catch.
  */
 
 import { getToken, refresh, SessionExpiredError } from '$lib/stores/auth';
@@ -88,13 +89,26 @@ export async function apiFetch(url: string, init: ApiFetchOptions = {}): Promise
       headers['Authorization'] = `Bearer ${newToken}`;
       res = await trackedFetch(url, { ...init, headers });
       console.log(`[API] ← ${res.status} ${method} ${logUrl} (retry, ${Date.now() - t0}ms)`);
-    } catch {
-      console.warn(`[API] refresh failed on ${method} ${logUrl} - session expired`);
-      throw new Error('Session expirée - veuillez vous reconnecter.');
+    } catch (e) {
+      // RETHROWN AS IT CAME, because `refresh()` already answered the only question that matters
+      // and this frame used to destroy the answer. It separates three outcomes deliberately - a
+      // dead cookie (`SessionExpiredError`), a server that answered something else
+      // (`RefreshFailedError`, typically a 502 while a container restarts mid-deploy), and a
+      // transport failure that reached nobody - and every one of them left here as one untyped
+      // French sentence. A caller holding that sentence could tell "you are logged out" from "come
+      // back in ten seconds" only by matching prose, which is a distinction exactly one call site
+      // ever makes; the other call sites retried a dead session, or gave up on a live one.
+      const cause = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+      console.warn(`[API] refresh failed on ${method} ${logUrl} - ${cause}`);
+      throw e;
     }
     if (res.status === 401) {
+      // A FRESHLY MINTED access token was refused, so the session really is over - which is what
+      // `SessionExpiredError` means, and the only reason it was not thrown here is that this line
+      // predates the type. Saying it in prose left the logout paths (`ChatBackgroundService`,
+      // `sessionConnection`, `promoteOfflineSession`) unable to see the one case they exist for.
       console.warn(`[API] double 401 on ${method} ${logUrl} - session invalide`);
-      throw new Error('Session expirée - veuillez vous reconnecter.');
+      throw new SessionExpiredError();
     }
   }
 

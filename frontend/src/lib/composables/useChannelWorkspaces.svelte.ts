@@ -1,6 +1,7 @@
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { slugify } from '$lib/utils/textFold';
-import { ChannelService } from '$lib/services/ChannelService';
+import { ChannelApiError, ChannelService } from '$lib/services/ChannelService';
+import { RefreshFailedError, SessionExpiredError } from '$lib/stores/auth';
 import type { WorkspaceDto, ChannelDto } from '$lib/services/ChannelService';
 import type { IMlsService } from '$lib/mlsService';
 import type { AddMessageToChatOptions, Conversation } from '$lib/types';
@@ -182,30 +183,30 @@ export function useChannelWorkspaces() {
   const service = new ChannelService();
 
   /**
-   * Decides whether a workspace-load failure is worth retrying.
+   * Decides whether a workspace-load failure is worth retrying, from the error's TYPE.
    *
-   * Retryable: low-level network errors (a failed `fetch` throws a TypeError with no status at
-   * all) and HTTP 5xx - which also covers the Bad Gateway body ChannelService turns into a
-   * message, since `parseApiError` still reads the 502 out of it. Anything else, including a
-   * malformed payload, is a client-side fact that a second identical request cannot change.
+   * Retryable means one thing: NOBODY DECIDED ANYTHING. Either the request never reached an
+   * answer, or the answer was the server saying it is unwell - and a second identical request can
+   * change both. Everything else is a decision, and asking again gets the same one.
+   *
+   * IT USED TO BE A LIST OF WORDS - `fetch`, `network`, `timeout`, `abort`,
+   * `err_internet_disconnected` - plus a regex hunting a three-digit number in the response body
+   * to recover a status the throw had been holding all along: `ChannelApiError` has carried
+   * `status` since it was introduced and nothing here read it. The list was wrong in both
+   * directions. A refusal whose body happens to contain one of those words was retried three
+   * times against a server that had already decided, and a real 502 was retried for the accident
+   * that the regex found digits in its sentence rather than because anyone classified it.
    */
   function isRetryableLoadError(error: unknown): boolean {
-    const raw = error instanceof Error ? error.message : String(error);
-    const hay = raw.toLowerCase();
-
+    // The server answered. Only its own 5xx is worth asking again; a 4xx is a decision about us.
+    if (error instanceof ChannelApiError) return error.status >= 500;
+    // The refresh endpoint answered something that is not a verdict on the session - transient by
+    // construction, since 401 and 403 leave as `SessionExpiredError` instead.
+    if (error instanceof RefreshFailedError) return true;
+    // A `fetch` that reached nobody throws a TypeError; a request cancelled under it throws an
+    // AbortError. Neither carries a status, because neither got an answer.
     if (error instanceof TypeError) return true;
-    if (
-      hay.includes('fetch') ||
-      hay.includes('network') ||
-      hay.includes('timeout') ||
-      hay.includes('abort') ||
-      hay.includes('err_internet_disconnected')
-    ) {
-      return true;
-    }
-
-    const status = parseApiError(raw).status;
-    return status !== undefined && status >= 500;
+    return error instanceof DOMException && error.name === 'AbortError';
   }
 
   /**
@@ -348,69 +349,88 @@ export function useChannelWorkspaces() {
   }
 
   /**
-   * Extracts an HTTP status code, a stable refusal `code` and a human-readable detail from a raw
-   * API error body. Handles NestJS JSON error envelopes ({ statusCode, code, message }) and
-   * plain-text bodies, so callers can distinguish 401 (session) from 403 (permission) and surface
-   * the real reason.
+   * The human half of a NestJS JSON error envelope, or the body itself when it is not one.
+   *
+   * PARSING A DOCUMENTED ENVELOPE, not reading prose: `{ statusCode, code, message }` is the shape
+   * every service here answers a refusal with, and `message` is the sentence meant for a reader.
+   * What this returns is only ever SHOWN - nothing branches on it.
    */
-  function parseApiError(raw: string): { status?: number; code?: string; detail: string } {
+  function readErrorDetail(raw: string): string {
     try {
-      const body = JSON.parse(raw) as {
-        statusCode?: number;
-        code?: string;
-        message?: string | string[];
-        error?: string;
-      };
-      const detail = Array.isArray(body.message)
+      const body = JSON.parse(raw) as { message?: string | string[]; error?: string };
+      return Array.isArray(body.message)
         ? body.message.join(', ')
         : (body.message ?? body.error ?? raw);
-      return { status: body.statusCode, code: body.code, detail };
     } catch {
-      const match = raw.match(/\b(4\d\d|5\d\d)\b/);
-      return { status: match ? Number(match[1]) : undefined, detail: raw };
+      return raw;
     }
   }
 
   /**
-   * Maps a raw API error to a localized, user-facing message for `action`, surfaces it as an
+   * HTTP status, stable refusal `code` and human detail of a failed API call - read off the TYPE.
+   *
+   * `ChannelService.handleError` builds a {@link ChannelApiError} with the status and the code it
+   * has in hand, and this is where they are picked up again. What it replaced took a STRING: it
+   * re-parsed the body for the status, and when the body was not JSON it went looking for any
+   * three-digit number in the sentence. That found the 502 in `API Error 502` and it would equally
+   * have found the year in a date, the count in `403 members`, or nothing at all in a refusal
+   * phrased without digits - at which point every caller fell through to its generic arm and told
+   * the user the wrong thing about a refusal the server had named precisely.
+   *
+   * An error that is not one of ours carries no status, and says so by leaving it undefined rather
+   * than by having one guessed for it.
+   */
+  function classifyApiError(error: unknown): { status?: number; code?: string; detail: string } {
+    if (error instanceof ChannelApiError) {
+      return {
+        status: error.status,
+        code: error.code ?? undefined,
+        detail: readErrorDetail(error.message),
+      };
+    }
+    return { detail: readErrorDetail(error instanceof Error ? error.message : String(error)) };
+  }
+
+  /**
+   * Maps a failed API call to a localized, user-facing message for `action`, surfaces it as an
    * error toast (so users no longer need the debug log to see failures), and returns the same
    * string for `ctx.log`. A 403 is reported as insufficient permissions with the backend reason,
    * distinct from a 401 which is reported as an expired session.
+   *
+   * THE FIVE ARMS ARE DECIDED BY STATUS AND BY TYPE, never by the sentence. Each used to carry a
+   * second list of needles beside its status test - `unauthorized`, `token`, `403`, `forbidden`,
+   * `permission`, `already`, `network`, `fetch`, `injoignable` - matched against the status and
+   * the detail CONCATENATED, so a refusal that merely mentioned a permission was reported as one
+   * and `403` matched anything containing those three digits. It was there because the status was
+   * being guessed rather than read; now it is read, and the needles have nothing left to cover.
+   *
    * @param action Localized action label (e.g. `m.channel_action_community_image()`).
-   * @param error The caught error - an Error carrying the raw API body, or any thrown value.
+   * @param error The caught error - a {@link ChannelApiError} from any `ChannelService` call, or
+   *   anything else that reached the catch.
    * @param toast When false, skips the toast because the caller surfaces the error itself. Defaults to true.
    */
   function toUiActionError(action: string, error: unknown, toast = true): string {
-    const raw = error instanceof Error ? error.message : String(error);
-    const { status, code, detail } = parseApiError(raw);
+    const { status, code, detail } = classifyApiError(error);
 
-    // A typed refusal is answered from its code, before any of the prose matching below runs.
+    // A typed refusal is answered from its code, which is more precise than any status.
     const coded = describeCommunityRefusal(code);
     if (coded) {
       if (toast) showToast(coded, 'error');
       return coded;
     }
 
-    const hay = `${status ?? ''} ${detail}`.toLowerCase();
-
     let message: string;
-    if (status === 401 || hay.includes('unauthorized') || hay.includes('token')) {
+    if (status === 401 || error instanceof SessionExpiredError) {
       message = m.channel_action_error_session({ action });
-    } else if (
-      status === 403 ||
-      hay.includes('403') ||
-      hay.includes('forbidden') ||
-      hay.includes('permission')
-    ) {
+    } else if (status === 403) {
       message = m.channel_action_error_permission({ action, detail });
-    } else if (status === 409 || hay.includes('already')) {
+    } else if (status === 409) {
       message = m.channel_action_error_conflict({ action });
-    } else if (
-      (status !== undefined && status >= 500) ||
-      hay.includes('network') ||
-      hay.includes('fetch') ||
-      hay.includes('injoignable')
-    ) {
+    } else if (isRetryableLoadError(error)) {
+      // ONE PREDICATE, NOT TWO. "Worth retrying" and "say it is the network" are the same
+      // question - the server did not decide anything - and they were two hand-kept lists that
+      // agreed only while someone kept them agreeing. The load path already had to be right about
+      // it, so the toast reads its answer instead of re-deriving one.
       message = m.channel_action_error_network({ action });
     } else {
       message = m.channel_action_error_generic({ action, detail });
@@ -672,10 +692,12 @@ export function useChannelWorkspaces() {
           const message = error instanceof Error ? error.message : String(error);
           ctx.log(`[WORKSPACE-LOAD] attempt ${attempt + 1}/${attemptCount} failed: ${message}`);
 
-          const status = parseApiError(message).status;
-          // 401/403 are not transient: retrying them hammers the backend and the session still
-          // needs refreshing, so they exit on the first attempt like any non-retryable error.
-          const isFatal = status === 401 || status === 403 || !isRetryableLoadError(error);
+          // ONE QUESTION, ASKED ONCE. The 401/403 test that stood beside this call was not a
+          // second rule but a patch on the first one: while retryability was decided by hunting
+          // words in the body, a refusal whose text happened to say `network` was retried, so the
+          // two statuses that hurt most to retry had to be named again here. `isRetryableLoadError`
+          // now reads the status off the type, and 401 and 403 are simply not 5xx.
+          const isFatal = !isRetryableLoadError(error);
 
           // THE DELAY IS ALSO THE ANSWER TO "IS THERE ANOTHER ATTEMPT", so it is read ONCE.
           // `isLastAttempt` used to be a second derivation from the same array length, and the
