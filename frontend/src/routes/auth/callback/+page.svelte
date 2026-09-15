@@ -45,7 +45,7 @@
       console.debug('[callback] goto resolved');
     } catch (e: unknown) {
       console.error('[callback] error:', e);
-      error = e instanceof Error ? e.message : String(e);
+      error = m.auth_callback_exchange_failed();
     }
   });
 </script>

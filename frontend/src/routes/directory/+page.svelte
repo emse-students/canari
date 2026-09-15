@@ -51,7 +51,7 @@
       results = res.users;
       total = res.total;
     } catch (err) {
-      error = err instanceof Error ? err.message : m.directory_search_error_fallback();
+      error = m.directory_search_error_fallback();
       results = [];
       total = 0;
     } finally {

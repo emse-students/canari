@@ -49,7 +49,7 @@
       if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
       data = (await res.json()) as PurchasesResponse;
     } catch (err) {
-      error = err instanceof Error ? err.message : m.purchases_load_error_fallback();
+      error = m.purchases_load_error_fallback();
     } finally {
       loading = false;
     }

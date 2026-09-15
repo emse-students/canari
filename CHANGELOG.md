@@ -11,6 +11,26 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - cinq arbres de routes de plus ne montrent plus la phrase du serveur
+
+La balayage continue arbre par arbre, et ce sont les cinq que l'on rencontre **avant d'etre arrive
+quelque part** : les deux atterrissages d'invitation (`/c/join`, `/g/join`), l'historique d'achats,
+l'annuaire et le retour OIDC. Sept sites, dont six de la forme ordinaire - le `e instanceof Error ?
+e.message : <repli>` ou le repli declare etait deja la bonne reponse, donc la preference disparait
+et rien d'autre ne bouge.
+
+**Le septieme demandait un message plutot que la suppression d'une preference.** Le repli du retour
+OIDC etait `String(e)` : les DEUX moities de la ligne etaient donc intraduisibles, et supprimer la
+preference seule aurait laisse l'autre. C'est aussi la plus exposee des cinq - elle s'affiche dans
+la carte de connexion, pour quelqu'un qui n'a pas encore atteint l'application et ne peut rien
+faire d'autre - d'ou `auth_callback_exchange_failed`. Le `console.error('[callback] error:', e)`
+garde la cause reelle pour le diagnostic, donc refuser de l'afficher ne coute aucune information.
+
+Les cinq arbres rejoignent `serverProse.test.ts`, ce qui est la seule chose qui rend le balayage
+durable : un arbre n'y entre que quand tous ses fichiers repondent, sinon un nouveau fichier passe
+a cote du garde. Falsifie - en reintroduisant une seule preference, le garde rougit sur ce fichier
+precis et sur lui seul (1 echec, 93 verts).
+
 ### Fixed - le rig cliquait une barre d'actions qui n'existe plus depuis le 8 septembre
 
 SEARCH-3 est revenu `ERROR` sur une phrase qui ne laisse aucune ambiguite - *"no `Supprimer` action

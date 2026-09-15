@@ -2056,6 +2056,7 @@
   "auth_callback_denied": "Authentik a refusé la connexion : {reason}",
   "auth_callback_missing_params": "Paramètres manquants dans la redirection Authentik.",
   "auth_callback_error_title": "Échec de la connexion",
+  "auth_callback_exchange_failed": "La connexion n'a pas pu aboutir.",
   "auth_callback_retry": "Réessayer",
   "profile_loading": "Chargement du profil…",
   "profile_photo_change_label": "Changer la photo de profil",

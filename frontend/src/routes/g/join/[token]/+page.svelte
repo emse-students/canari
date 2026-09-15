@@ -28,7 +28,7 @@
     try {
       preview = await getGroupInvitePreview(token);
     } catch (e) {
-      error = e instanceof Error ? e.message : m.invite_not_found();
+      error = m.invite_not_found();
     } finally {
       loading = false;
     }
@@ -41,7 +41,7 @@
       await acceptGroupInvite(token);
       joined = true;
     } catch (e) {
-      error = e instanceof Error ? e.message : m.group_join_error_fallback();
+      error = m.group_join_error_fallback();
       joining = false;
     }
   }
