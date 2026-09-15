@@ -11,6 +11,8 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+## [0.18.3] - 2026-09-15
+
 ### Fixed - l'application bloquait 2,7 s au lancement sur un fichier que les deux cotes avaient deja
 
 Sur un Pixel 6a, l'empreinte etait demandee **4,4 a 5,4 s** apres le lancement. Les trois causes
