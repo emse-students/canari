@@ -73,6 +73,13 @@ describe('fcm_message_cache.ndjson contract (Android + iOS writers vs Rust reade
       'messageId',
       'senderId',
       'senderName',
+      // THE CONVERSATION'S NAME, AND NOT THE SENDER'S. Added 2026-09-15: the consumer builds a
+      // placeholder conversation row from this entry, and with no group name it labelled the row
+      // after whoever messaged first - so a two-person group sat in the sidebar under the other
+      // member's name, indistinguishable from the real DM with that person. Mandatory on both
+      // writers (empty string for a DM, which is the server's own contract), optional on the TS
+      // side because a file written by an older build outlives the update that fixed this.
+      'groupName',
       'content',
       'timestamp',
       'type',
@@ -138,6 +145,13 @@ describe('fcm_message_cache.ndjson contract (Android + iOS writers vs Rust reade
       'messageId',
       'senderId',
       'senderName',
+      // THE CONVERSATION'S NAME, AND NOT THE SENDER'S. Added 2026-09-15: the consumer builds a
+      // placeholder conversation row from this entry, and with no group name it labelled the row
+      // after whoever messaged first - so a two-person group sat in the sidebar under the other
+      // member's name, indistinguishable from the real DM with that person. Mandatory on both
+      // writers (empty string for a DM, which is the server's own contract), optional on the TS
+      // side because a file written by an older build outlives the update that fixed this.
+      'groupName',
       'content',
       'timestamp',
       'type',

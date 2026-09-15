@@ -233,6 +233,39 @@ sent in a *newer epoch* than the persisted state cannot be decrypted and correct
 the generic text. `decryptProtoWithCommits: success after catch-up` is the in-memory catch-up path
 succeeding. If a check fails, confirm which of the two you are looking at before filing anything.
 
+## C. The row a push creates carries the GROUP's name - owed on BOTH platforms
+
+**Proves** the half of the push cache no browser can reach. `consumeFcmCache` writes a placeholder
+conversation row beside the message - it must, the message has a foreign key to `conversations(id)` -
+and until 2026-09-15 it labelled that row with the SENDER. For a DM the two coincide; for a group it
+was whoever spoke first, and the label was never corrected afterwards, so a two-person group sat in
+the sidebar under the other member's name directly above the real DM with that same person.
+
+The decision is pinned deterministically (`pushConversationLabel.test.ts`, and
+`fcmCacheFields.test.ts` for the two native writers), so what is owed here is the one thing neither
+can see: that the group name really is in `data["groupName"]` on a delivered push, and really does
+reach the file.
+
+1. From the peer account, create a group with a distinctive name, and add this device to it.
+2. **Kill the app** - the cache path only runs when the app was not up to receive the frame.
+3. From the peer account, send one message into that group.
+4. Open the app and read the sidebar **before** the MLS sync finishes (the row is drawn from the
+   cache first - that is the whole point of the pre-injection).
+
+**Pass** = the row carries the GROUP's name. **FAIL** = it carries the sender's name, which is the
+defect, or the group id / "Groupe", which means `groupName` arrived empty and the server half is
+what to look at.
+
+**Where to look:** `adb logcat -s CanariFCM` for the delivered `data` map, then the app's own
+`[FCM_CACHE]` lines. A `[DISCOVERY] ... relabelled "<sender>" -> "<group>"` line afterwards is the
+REPAIR firing, which is a pass for the repair and means step 4 was read too late to see the cache
+label.
+
+**The repair has its own case, and it is the cheaper one to run:** rename the group from the peer
+account while this device is killed, then open the app. The rename is an MLS system message a killed
+device never sees, so only the discovery sweep can carry it - the same relabel line, and the sidebar
+showing the new name.
+
 ## D. PIN change, then repeat B
 
 **Proves** that rewriting the device key under the same alias leaves the background reader working -

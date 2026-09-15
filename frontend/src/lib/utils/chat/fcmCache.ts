@@ -27,11 +27,47 @@ interface FcmCacheEntry {
   messageId: string;
   senderId: string;
   senderName: string;
+  /**
+   * The GROUP's display name, copied straight from the push - empty for a DM, by the server's own
+   * contract (`PushMessageInput.groupName`: *"Resolved group name for group chats (empty for
+   * DMs)"*). It is therefore both the label AND the discriminator, which is why it does not travel
+   * beside an `isGroup` flag: the two would be one fact written twice.
+   *
+   * ABSENT, NOT EMPTY, ON A FILE WRITTEN BY AN OLDER NATIVE BUILD. The cache is a file on disk that
+   * outlives an app update, so an entry queued before 2026-09-15 has no such key at all - see
+   * {@link placeholderNameForPushEntry}, which is where that case is answered rather than here.
+   */
+  groupName?: string;
   content: string;
   timestamp: number;
   type: string;
   replyTo?: { id: string; senderId: string; preview: string } | null;
   mediaKind?: string | null;
+}
+
+/**
+ * The label a placeholder conversation row is given, from ONE push entry.
+ *
+ * **A SENDER'S NAME IS EVIDENCE ABOUT THE SENDER, NOT ABOUT THE CONVERSATION**, and until
+ * 2026-09-15 this row took it as both. For a DM the two coincide, which is why it looked right; for
+ * a GROUP it produced a row titled with whoever happened to message first. Measured on a two-person
+ * group: the sidebar then held two rows carrying the same person's name, one the DM and one the
+ * group, with nothing on either to tell them apart.
+ *
+ * **AND NOTHING EVER CORRECTED IT.** The docblock beside the write promised the Welcome would
+ * overwrite the label - true for a group this device is JOINING, and vacuous for one it is already
+ * in, which is every group a push can arrive for. A group's name is refreshed from the server by
+ * exactly one seam, `ensureConversationForServerGroup`, and that seam now repairs a row it finds
+ * already present instead of returning `existed` and leaving the label alone.
+ *
+ * The group id is the last resort, and it is deliberately NOT a name: `isRawId` recognises it and
+ * `resolveConversationListPresentation` renders "Groupe" rather than a uuid. Saying nothing is the
+ * honest answer when the push carried nothing.
+ */
+export function placeholderNameForPushEntry(
+  entry: Pick<FcmCacheEntry, 'groupId' | 'senderName' | 'groupName'>
+): string {
+  return entry.groupName?.trim() || entry.senderName.trim() || entry.groupId;
 }
 
 /**
@@ -103,11 +139,15 @@ export async function consumeFcmCache(
       // The message has an FK to conversations(id). If the group was just joined in the
       // background, its conversation row does not exist yet -> saveMessage fails
       // (SQLITE_CONSTRAINT_FOREIGNKEY, code 787) and the preview is lost. So first insert a
-      // non-destructive placeholder (INSERT OR IGNORE): the real sync (Welcome) then overwrites
-      // name/lifecycle via saveConversation (INSERT OR REPLACE). The sender name serves as a
-      // transient label; lifecycle 'pending' because the group is not synced yet.
+      // non-destructive placeholder (INSERT OR IGNORE); lifecycle 'pending' because the group is
+      // not synced yet.
+      //
+      // THE LABEL IS NOT TRANSIENT, WHICH IS WHY IT IS NO LONGER A GUESS. This comment used to say
+      // the sender's name served as a transient label that the Welcome would overwrite - and for a
+      // group this device is already a member of no Welcome is ever coming, so the guess was the
+      // name for good. {@link placeholderNameForPushEntry} carries what the push actually knew.
       const placeholder = {
-        name: entry.senderName || entry.groupId,
+        name: placeholderNameForPushEntry(entry),
         updatedAt: entry.timestamp,
       };
       await storage.mergeConversation({ id: entry.groupId, lifecycle: 'pending', ...placeholder });

@@ -1670,7 +1670,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
 
             if (decrypted != null) {
-                writeFcmCache(groupId, senderId, senderName, decrypted)
+                writeFcmCache(groupId, senderId, senderName, groupName, decrypted)
             }
 
             val avatarBitmap = if (senderId.isNotEmpty()) fetchAvatar(senderId) else null
@@ -2742,6 +2742,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     /**
      * Writes an entry to fcm_message_cache.ndjson so the app can
      * pre-inject the message into IndexedDB at boot (before the MLS sync).
+     * Carries [groupName] as well as [senderName]: the web consumer builds a conversation row from
+     * this entry, and the sender is not who the conversation is with. iOS twin:
+     * `NotificationService.writeFcmCache`.
      * The file is bounded to [MAX_FCM_CACHE_ENTRIES] lines to avoid unbounded
      * growth when the app stays closed for a long time and receives many notifications.
      */
@@ -2749,6 +2752,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         groupId: String,
         senderId: String,
         senderName: String,
+        groupName: String,
         msg: DecryptedMessage,
     ) {
         if (msg.messageId.isEmpty()) {
@@ -2760,6 +2764,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             put("messageId",  msg.messageId)
             put("senderId",   senderId)
             put("senderName", senderName)
+            // THE GROUP'S OWN NAME, CARRIED BECAUSE THE APP CANNOT INVENT IT. The web side writes a
+            // placeholder conversation row from this entry, and with no group name it labelled the
+            // row with the SENDER - so a two-person group sat in the sidebar under the other
+            // member's name, beside the real DM with that same person. Empty for a DM by the
+            // server's own contract, which is what makes it the discriminator as well as the label.
+            put("groupName",  groupName)
             put("content",    msg.text)
             put("timestamp",  msg.sentAt)
             put("type",       msg.type)
