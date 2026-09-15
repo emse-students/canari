@@ -940,7 +940,9 @@ Tauri serialises a `Vec<u8>` / `number[]` as a **JSON array of per-byte numbers*
 login path made two: Rust read the file, handed it to the WebView through `load_mls_state`, and the
 WebView handed the same bytes back through `initialiser_mls`, to the side they had come from.
 
-Measured on a Pixel 6a: **908 ms of main thread warm, and a single 2 731 ms block on a cold launch**.
+Measured on a Pixel 6a with `bun tools/cold-start/launch-trace.mjs --heartbeat`
+([tools/cold-start](../../../tools/cold-start/README.md)): **908 ms of main thread warm, and a single
+2 731 ms block on a cold launch**.
 The fingerprint prompt is raised by an `invoke`, so it sat in the queue behind that block and
 appeared **51 ms after it ended** - the prompt looked slow and was not. A 50 ms main-thread
 heartbeat found this; the resource timeline could not, because the work issues no request.

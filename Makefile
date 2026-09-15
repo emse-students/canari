@@ -370,6 +370,12 @@ test-ci-scripts: lint-ci-scripts
 # and no target here invoked Gradle, so its five assertions had never executed anywhere; the gate
 # that fixed THAT put the suite behind the `:app` module, which no runner can configure, so it was
 # skipped or refused every time until the suite moved to its own Kotlin/JVM project.
+# THE COLD-START INSTRUMENTS ARE LINTED HERE TOO, and they are the second thing in `tools/` that
+# `bun run lint` cannot reach. They run on HARDWARE and so have no self-test - but they are the only
+# record of how the launch is measured, and an instrument that had stopped parsing would be found
+# with a phone in hand, at the worst possible moment. Linting is the half that CAN run without one.
+# (A `#` at column 0 ENDS a recipe, which is why this paragraph is here and not beside its line:
+# put inside, it truncated the gate and `gate-selftest.mjs` correctly reported an empty one.)
 # It needs a JDK and NOTHING ELSE - no Android SDK, no ANDROID_HOME, no tauri toolchain. It stays
 # out of `make test` only because a JDK is not something every contributor here has installed;
 # `ci.yml` runs it on any change under `android-tests/` or `gen/android/`.
@@ -380,6 +386,7 @@ test-android:
 test-harness:
 	@echo "${BLUE}🧪 Harness self-tests…${RESET}"
 	@bunx oxlint -c tools/cross-client-harness/.oxlintrc.json --deny-warnings tools/cross-client-harness
+	@bunx oxlint -c .oxlintrc.json --deny-warnings tools/cold-start
 	@bun tools/cross-client-harness/inventory.mjs --check
 	@bun tools/cross-client-harness/archive/rawcheck.mjs
 	@bun tools/cross-client-harness/archive/classify-selftest.mjs
