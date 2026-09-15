@@ -143,9 +143,12 @@
       // the wrong store was also a store a revoked device kept.
       const storage = await getStorage(uid);
       const convos = await storage.getConversations();
+      // No `.sort()` here: `getConversations` answers most-recently-updated first, on both
+      // backends, and `db/conversationOrder.test.ts` pins it. This panel used to re-sort because the
+      // web backend did not keep that promise - which is fixed at the store, so the compensation
+      // went with it rather than being left as a second copy of the ordering rule.
       idbItems = convos
         .filter((meta) => !isChannelConversationId(meta.id))
-        .sort((a, b) => b.updatedAt - a.updatedAt)
         .slice(0, 20)
         .map((meta) => buildItemFromMeta(meta, uid));
       // IT DOES NOT CLOSE, DELIBERATELY, AND ADDING A `close()` HERE WOULD BREAK THE LIVE SESSION.

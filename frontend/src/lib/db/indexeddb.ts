@@ -349,7 +349,25 @@ export class IndexedDbStorage implements IStorage {
     };
   }
 
-  /** Return all stored conversation metadata rows (unordered - callers should sort). */
+  /**
+   * Return all stored conversation metadata rows, most recently updated first.
+   *
+   * THE INTERFACE SAYS "ORDERED BY RECENCY" AND THIS IMPLEMENTATION SAID "UNORDERED - CALLERS
+   * SHOULD SORT". Two implementations of one contract disagreed, and the disagreement was invisible
+   * because each platform only ever runs one of them: `SqliteStorage` answers
+   * `ORDER BY updated_at DESC`, so the Tauri clients always had it, while `getAll()` on an object
+   * store returns rows in KEY order - the conversation id, which is a group id and therefore
+   * arbitrary.
+   *
+   * It decides the order of the startup replay. Phase 2 of `restoreConversations` walks this list
+   * one conversation at a time (serialised, because the WASM client is not concurrency-safe), so
+   * the list IS the schedule: on the web the conversation somebody is about to open was as likely
+   * to be walked last as first, while on a phone it was always walked first. That is the same
+   * session behaving differently on two platforms for no reason anybody chose.
+   *
+   * Sorted here rather than at the caller so the contract is true of the STORE, which is where it
+   * is written down and where the other implementation already honours it.
+   */
   async getConversations(): Promise<ConversationMeta[]> {
     const db = this.ensureDb();
     return new Promise((resolve, reject) => {
@@ -359,6 +377,7 @@ export class IndexedDbStorage implements IStorage {
         const rows = (req.result as Array<ConversationMeta & { isReady?: boolean }>).map((r) =>
           this.rowToMeta(r)
         );
+        rows.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
         resolve(rows);
       };
       req.onerror = () => reject(req.error);
