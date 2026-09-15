@@ -249,6 +249,48 @@ iOS, the OS save panel on desktop). Two rules come with it:
 there they are unreachable by class name, and the failure only appears in the release build, which
 is the [first real Kotlin compile](../cicd.md).
 
+## The app owns which URLs its own WebView may load
+
+**A URL `http::Uri` cannot parse used to abort the whole process, and nothing on either side of the
+bridge could catch it.** Wry's Android client keeps the last URL the WebView STARTED loading
+(`RustWebViewClient.onPageStarted` sets `currentUrl`) and hands it to every subsequent IPC message
+as that request's URI - `Request::builder().uri(url).body(body).unwrap()`, wry-0.55.1
+`android/binding.rs:397`. `http::Uri` accepts origin-form, authority-form and
+`scheme://authority/path`, and nothing else, so a `scheme:/path` with no authority makes the builder
+error and that `unwrap()` panic. It panics inside `Java_fr_emse_canari_Rust_ipc`, an `extern "C"`
+frame, and a panic that cannot unwind is an abort: SIGABRT, the activity force-finished, the
+sandboxed renderer dead with it. No JS error, no `svelte:boundary`, nothing any gate here compiles
+for. Measured on A1 on 2026-09-14 (build `7fea1bb42`, LineageOS 23.2 / Android 11, arm64): the app
+vanished every time, and **what the IPC carried was irrelevant - once such a URL has been started,
+the NEXT IPC kills the app.**
+
+**So the navigation is refused before the WebView starts it.** `mobile::navigation::webview_may_load`
+is wired into the mobile window's `on_navigation` in `lib.rs`; returning `false` there makes
+Android's `shouldOverrideUrlLoading` return `true`, `onPageStarted` never fires, and `currentUrl`
+never becomes the value that kills the process. The predicate is the invariant itself - can
+`http::Uri` still parse this - rather than a scheme allowlist, because an allowlist would be a
+second hand-kept copy of a rule `http::Uri` already states. Everything the app legitimately loads
+passes: `http://tauri.localhost/...` (Android's asset loader), `tauri://localhost/...` (iOS), any
+`https://`, and `about:blank`, which is wry's own initial value. `blob:`, `data:` and `file:` are
+refused, and each of those would have aborted the app for the same reason - nothing here navigates
+to one, since a Tauri download goes through the native save dialog and an object URL behind an
+`<img>` reaches `shouldInterceptRequest`, never `shouldOverrideUrlLoading`.
+
+**Two things this does NOT claim.** It is not the upstream fix - a boundary that cannot unwind owes
+a `Result`, and `wry` 0.56.1 (tauri-apps/wry#1772) provides one, but every stable
+`tauri-runtime-wry` pins `wry ^0.55` and only `tauri-runtime-wry 3.0.0-alpha.0` asks for `^0.56`.
+And it is not airtight: `tauri-runtime-wry` parses the string into a `url::Url` before calling the
+handler and **allows the navigation outright when that parse fails** (`unwrap_or(true)`, its
+lib.rs:4898). `url::Url` accepts far more than `http::Uri` does - every case in the module's tests
+parses, the killer included - and Android always hands over an absolute `request.url.toString()`,
+so the residue is narrow. It is still a residue, and it closes with the `wry` bump, not here.
+
+**The JS side is intent, not the guarantee.** `shouldOpenExternalHref` returns true only for
+`http/https/mailto/tel/webcal`, so an unknown scheme is neither opened outside nor refused: it falls
+through to default navigation *inside* the WebView. Nothing renders such an href today - every href
+from user content goes through `messageDisplay.ts`, which emits `https://` only - but that is a
+property of the renderers, not of that function, which is exactly why the guarantee lives in Rust.
+
 ## What the app claims over `canari-emse.fr`
 
 Tapping an `https://canari-emse.fr/…` link on a phone with the app installed opens the **app**, not

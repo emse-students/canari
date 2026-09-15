@@ -5562,92 +5562,33 @@ reading the DOM would have reported a working app. A screenshot is what separate
 counted a horizontal scroller as an overflow - were fixed on 2026-09-14 and are in `CHANGELOG.md`.
 The remaining finding above is about the app.)*
 
-### P1 - a URI `http::Uri` cannot parse ABORTS THE WHOLE APP, and nothing can catch it (found 2026-09-14 on A1)
+### P2 - the wry bump that removes the abort, once a STABLE runtime asks for it (found 2026-09-14 on A1)
 
-Measured on A1, build `7fea1bb42` (0.18.0, code 1800099), LineageOS 23.2 / Android 11, arm64:
+**THE DEFECT IS CLOSED IN THIS APP AND THE ENTRY SURVIVES ONLY AS A RE-CHECK.** A URL `http::Uri`
+cannot parse used to abort the whole process from inside wry's Android JNI frame - SIGABRT, nothing
+on either side of the bridge able to catch it. Since 2026-09-15 the app refuses such a navigation
+before the WebView starts it (`mobile::navigation::webview_may_load`, wired to `on_navigation`), so
+`currentUrl` never becomes the fatal value. The measurement, the predicate and the residue it does
+NOT close are on
+[mobile](frontend/mobile.md#the-app-owns-which-urls-its-own-webview-may-load); the story is in
+`CHANGELOG.md`.
 
-```
-thread '<unnamed>' panicked at wry-0.55.1/src/android/binding.rs:397:62:
-called `Result::unwrap()` on an `Err` value: http::Error(InvalidUri(InvalidFormat))
-panic in a function that cannot unwind
-  #10 Java_fr_emse_canari_Rust_ipc      <- thread JavaBridge
-  #00 abort                             <- signal 6 (SIGABRT)
-```
+**WHAT IS LEFT IS ONE LOCKFILE BUMP, AND IT IS NOT AVAILABLE.** wry replaced the `unwrap()` with a
+`match` that logs and drops the request - commit `5ce72b0`, PR tauri-apps/wry#1772, released in
+`wry 0.56.1`. `cargo update -p wry` moves nothing: every stable `tauri-runtime-wry` pins `wry ^0.55`
+(2.9.x on `^0.53.4`, 2.10.x on `^0.54`, the whole 2.11 line on `^0.55`), and the only published
+crate requiring `^0.56` is `tauri-runtime-wry 3.0.0-alpha.0` - Tauri 3 exists as exactly one alpha,
+published 2026-09-13, 452 downloads against 5.2 M for stable 2.11.5. Moving the app onto a
+one-day-old alpha runtime is refused on those grounds, not deferred for lack of time.
+**RE-CHECK ON EVERY TAURI RELEASE**: the day a stable `tauri-runtime-wry` requires `wry ^0.56` or
+later, this closes with a lockfile bump and nothing else, and the `url::Url` residue closes with it.
+Separately and with no bearing on this, the pinned `tauri` here is `2.11.1` and the stable line has
+reached `2.11.5`.
 
-The line is `(ipc.handler)(Request::builder().uri(url).body(body).unwrap())`. **An `unwrap()` inside
-an `extern "C"` frame is not a failure a boundary can contain**: the panic cannot unwind through the
-JNI frame, so Rust aborts the process - the activity is force-finished, the sandboxed renderer dies
-with it, and the user watches the app vanish. There is no JS error, no `svelte:boundary`, and
-nothing any gate here compiles for.
-
-**The `url` is not the IPC's own.** `Ipc.postMessage` passes `webViewClient.currentUrl`
-(`gen/android/.../Ipc.kt`), which `RustWebViewClient.onPageStarted` sets to whatever the WebView last
-STARTED loading. So the crash is not in the message: **any IPC at all aborts the app once the
-WebView has started loading a URL `http::Uri` refuses**, and the next IPC is never far away.
-
-**What was measured, each one its own run on the phone:**
-
-| Navigation | Result |
-| --- | --- |
-| A real tap on the bottom bar (`adb shell input tap`, coordinates read from the DOM) | ALIVE, routed |
-| `location.href = '/settings'` - a hard navigation | ALIVE, loaded |
-| An injected anchor to an app route | ALIVE, routed |
-| A path containing a space - the DOM percent-encodes it to `/a%20b` | ALIVE, routed |
-| `mailto:` and `tel:` - handed to Android by `shouldOverrideUrlLoading`, page unchanged | ALIVE |
-| `c:/Program%20Files/Git/posts` - a scheme with no `//` authority that nothing hands off | **DEAD, every time** |
-
-So the trigger is narrow and real: **a scheme Android does not take off our hands and `http::Uri`
-will not parse.** `http::Uri` accepts origin-form, authority-form and `scheme://authority/path`; a
-`scheme:/path` with no authority is none of those. The common user-content schemes are safe because
-`shouldOverrideUrlLoading` gives them to the OS before the WebView ever starts loading them.
-
-**How it was found, recorded because the accident is instructive.** Git Bash converts a leading-slash
-argument into a Windows path, so `bun sweep.mjs --route /posts` reached the script as
-`C:/Program Files/Git/posts`, which the DOM resolved to `c:/Program%20Files/Git/posts`. The
-instrument was never wrong and neither was the app's routing - **an MSYS argument produced a URL no
-product code would**, and it killed the app three times before the argument was read. `sweep.mjs`
-with no `--route` was never affected. Run it as `MSYS_NO_PATHCONV=1 bun sweep.mjs --route /posts`,
-or from PowerShell.
-
-**What is still open, and it is the only thing that decides priority:** whether any path a USER can
-take produces such a URL. Nothing found so far does. Two consequences, and they are independent:
-
-- **The abort is a defect whatever the answer**, and it is upstream: a boundary that cannot unwind
-  owes a `Result`, not an `unwrap`. Fixing it here means either a wry version that does so, or
-  refusing the navigation before the WebView starts it - the app owning which URLs its own WebView
-  may load, which is the architectural half.
-- **If a reachable user path exists, it is a shipping P1 and a denial of service**: content that
-  carries such a link would kill the app of anyone who taps it.
-
-**Do not "fix" this by changing the instrument.** It found a line that aborts the process on bad
-input; changing how the sweep navigates would hide it.
-
-**BOTH QUESTIONS ARE NOW ANSWERED, AND THE ANSWER IS THAT NEITHER HALF CAN BE ACTED ON TODAY**
-(measured 2026-09-14).
-
-*No user path reaches it.* Every href this app renders from user content comes through
-`messageDisplay.ts`, which emits `https://` and nothing else: the URL pattern matches `http(s)` only,
-and a bare domain is linked as `https://<domain>` from an exact-host whitelist. The two components
-that put a content-derived href on an anchor - `MessageTextBody` and `MessageMediaRenderer` - both
-pass that pipeline's output. So a crafted link cannot carry the scheme, and the entry stays a P1 by
-SEVERITY with no known trigger rather than a shipping denial of service. **What is worth knowing
-about `shouldOpenExternalHref` is the shape of its fall-through**: it returns true only for
-`http/https/mailto/tel/webcal`, so an unknown scheme is neither opened outside nor refused - it falls
-through to default navigation *inside* the WebView, which is exactly the fatal path. Nothing produces
-such an href today; that is a property of the renderers, not a guarantee of this function, so the
-architectural half below is still owed.
-
-*The upstream fix exists and is out of reach.* wry replaced the `unwrap()` with a `match` that logs
-and drops the request - commit `5ce72b0`, PR tauri-apps/wry#1772 - **released in `wry 0.56.1`**. It
-cannot be taken: `cargo update -p wry` moves nothing, because every stable `tauri-runtime-wry` pins
-`wry ^0.55` (2.9.x on `^0.53.4`, 2.10.x on `^0.54`, the whole 2.11 line on `^0.55`). The only
-published crate requiring `wry ^0.56` is `tauri-runtime-wry 3.0.0-alpha.0`, and **Tauri 3 exists as
-exactly one alpha, published 2026-09-13, with 452 downloads against 5.2 M for stable 2.11.5.** Moving
-the whole app onto a one-day-old alpha runtime to fix a crash with no product trigger trades a
-theoretical defect for a real risk, and is refused on those grounds rather than deferred for lack of
-time. **RE-CHECK ON EVERY TAURI RELEASE**: the day a stable `tauri-runtime-wry` requires `wry ^0.56`
-or later, this closes with a lockfile bump and nothing else. Separately and with no bearing on this,
-the pinned `tauri` here is `2.11.1` and the stable line has reached `2.11.5`.
+**Do not "fix" the remaining question by changing the instrument.** `sweep.mjs` found a line that
+aborts the process on bad input; changing how it navigates would hide it. Run it as
+`MSYS_NO_PATHCONV=1 bun sweep.mjs --route /posts` - Git Bash rewrites a leading-slash argument into
+a Windows path, which is how the killer URL was produced in the first place.
 
 ## Composer and reactions
 
