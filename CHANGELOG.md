@@ -11,6 +11,24 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - le binaire WASM de 5,4 Mo etait telecharge deux fois a chaque premier chargement
+
+Mesure sur Firefox contre la production le 15/09/2026 : `assets/mls_wasm_bg.ZX5A_PDr.wasm` en
+**7 664 ms** et `workers/assets/mls_wasm_bg-ZX5A_PDr.wasm` en **8 782 ms**, les deux en vol en meme
+temps, pour **un seul fichier** - l'empreinte de contenu identique dans les deux noms en est la
+preuve.
+
+Vite construit chaque entree `?worker` dans une **seconde passe** de bundling, et SvelteKit donne a
+cette passe son propre repertoire d'actifs. Trois workers importent le chargeur WASM, donc le meme
+binaire etait ecrit deux fois sous deux URL - et deux URL sont deux entrees de cache, que le
+navigateur ne peut pas partager. La passe worker suit desormais le repertoire du bundle principal :
+meme nom, meme empreinte, un seul fichier ecrit, une seule URL. Le second `fetch` est un succes de
+cache.
+
+Le motif est **lu** sur le bundle principal et jamais recopie, et le build echoue si SvelteKit change
+de forme plutot que de laisser le doublon revenir en silence. `check-bundle-consistency.mjs` verifie
+en plus, sur l'artefact lui-meme, qu'aucun binaire WASM n'est ecrit deux fois.
+
 ### Changed - le rechargement reconstruisait dix-neuf fois tout l'etat MLS pour ne rien dechiffrer
 
 Mesure sur le client web le 15/09/2026 : a chaque rechargement, l'etat MLS complet - **6 694 960

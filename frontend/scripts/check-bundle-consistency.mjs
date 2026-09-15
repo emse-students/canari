@@ -32,7 +32,8 @@
  * Exits non-zero with what it found.
  */
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
-import { join, dirname, relative } from 'node:path';
+import { createHash } from 'node:crypto';
+import { join, dirname, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { writeSourceStamp } from './source-stamp.mjs';
@@ -150,11 +151,56 @@ if (existsSync(SERVER_DIR)) {
   serverNote = ', server agrees';
 }
 
+/**
+ * AND EVERY WASM BINARY IS WRITTEN EXACTLY ONCE.
+ *
+ * Vite builds each `?worker` entry in a SECOND rollup pass with its own asset directory, so a
+ * binary imported by both the app and a worker is emitted twice under two URLs - two cache entries
+ * for one file, which a cold load downloads twice in parallel. Measured on Firefox against
+ * production 2026-09-15: `mls_wasm_bg` fetched at `assets/` (7 664 ms) AND at `workers/assets/`
+ * (8 782 ms), same content hash, 5,4 Mo each. `oneWasmAsset()` in `vite.config.js` points the
+ * worker pass at the app bundle's directory so the two emits collapse into one file.
+ *
+ * That plugin depends on Vite's plugin ordering and on SvelteKit's output shape, neither of which
+ * this repository owns. Nothing about the duplicate is visible at runtime except a slow first load,
+ * which is exactly the kind of regression that comes back unnoticed - so the invariant is asserted
+ * here, on the artefact, rather than trusted to the config that produces it.
+ *
+ * `build/server/` is excluded for the same reason as above: SvelteKit's `ssrEmitAssets` writes its
+ * own copy of every asset there, and that copy is never served.
+ */
+const wasmFiles = [];
+for (const entry of readdirSync(BUILD_DIR, { withFileTypes: true, recursive: true })) {
+  if (!entry.isFile() || !entry.name.endsWith('.wasm')) continue;
+  const full = join(entry.parentPath ?? entry.path, entry.name);
+  if (full === SERVER_DIR || full.startsWith(SERVER_DIR + sep)) continue;
+  wasmFiles.push(full);
+}
+
+/** Groups the binaries by CONTENT, so two names for one file are what gets reported. */
+const wasmByContent = new Map();
+for (const file of wasmFiles) {
+  const digest = createHash('sha256').update(readFileSync(file)).digest('hex');
+  if (!wasmByContent.has(digest)) wasmByContent.set(digest, []);
+  wasmByContent.get(digest).push(relative(BUILD_DIR, file));
+}
+for (const [digest, copies] of wasmByContent) {
+  if (copies.length > 1) {
+    fail(
+      `one wasm binary is emitted ${copies.length} times, so a cold load downloads it ${copies.length} times:\n` +
+        copies.map((c) => `    ${c}`).join('\n') +
+        `\n  (sha256 ${digest.slice(0, 16)})\n` +
+        `  The worker rollup pass has stopped sharing the app bundle's asset directory - check\n` +
+        '  `oneWasmAsset()` in vite.config.js, and that it still runs AFTER sveltekit().'
+    );
+  }
+}
+
 // WHAT THIS ARTEFACT WAS MADE FROM, recorded here because this is the one place that already knows
 // the build's id and runs on every build. `source-stamp.mjs` says why a hash and not an mtime, and
 // what it costs to be without one.
 const { sha, files: sourceFiles } = writeSourceStamp(id);
 
 console.log(
-  `[bundle-check] build/ is consistent (${id}, ${files.length} files${serverNote}) from ${sourceFiles} source file(s), sha ${sha}`
+  `[bundle-check] build/ is consistent (${id}, ${files.length} files${serverNote}, ${wasmFiles.length} wasm) from ${sourceFiles} source file(s), sha ${sha}`
 );
