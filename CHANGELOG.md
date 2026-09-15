@@ -11,6 +11,8 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-09-15
+
 ### Changed - l'empreinte n'attend plus un aller-retour reseau qui ne decidait rien
 
 Au lancement de l'application mobile, la demande d'empreinte arrivait 4,2 a 4,6 secondes apres
