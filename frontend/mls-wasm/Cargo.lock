@@ -1225,7 +1225,7 @@ dependencies = [
 
 [[package]]
 name = "mls-core"
-version = "0.18.3"
+version = "0.18.4-alpha.1"
 dependencies = [
  "argon2",
  "base64",
@@ -1245,7 +1245,7 @@ dependencies = [
 
 [[package]]
 name = "mls-wasm"
-version = "0.18.3"
+version = "0.18.4-alpha.1"
 dependencies = [
  "console_error_panic_hook",
  "getrandom 0.2.17",
