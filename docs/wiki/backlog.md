@@ -580,18 +580,48 @@ fix, the `mls.bin` load. Nothing after `init()` is issued until all three have a
 `BiometricPrompt` is raised BY `init()`.
 
 So the reachable floor is `am start` -> `timeOrigin` (the WebView booting, not measured yet) plus one
-round trip. **Whether the second round trip can be overlapped is the open design question above**,
-and it is the same question as the latch: the revocation verdict must still be ENFORCED without a
-prompt, but nothing says the prompt must wait for the verdict - only that the wipe must not race a
-login that is already in flight.
+round trip.
 
-*One overlap is now worth deleting, and it was not before.* `isDeviceRevoked` above must stay in
-front of the prompt, but it need not be SERIAL with the rest of the login. Its latch,
-`ctx.setWipingRevokedDevice`, is read only at `loginImpl` **entry** (`sessionAuth.ts:434`) - so it
-excludes a login that has not started, and says nothing about one already in flight. Issuing the
-revocation probe alongside the work that precedes the prompt means exactly that case, and a race
-that would need a heal is a defect whatever it does in practice. **Delete the overlap first** - make
-the latch describe a login in flight - **or leave the round trip serial.**
+*THE OVERLAP QUESTION IS ANSWERED, 2026-09-15, AND THE ANSWER IS NO - NOT BY REORDERING.* This entry
+asked whether the second round trip could be overlapped with the first, and the paragraph that used
+to sit here proposed "issuing the revocation probe alongside the work that precedes the prompt".
+**That is impossible, and not for a reason about races.** The two are CAUSALLY SERIAL:
+`isDeviceRevoked` builds its headers with `MlsDeliveryApi.auth()` (`mlsDeliveryApi.ts:207`), which is
+`await this.getToken()` - the same `getToken` whose refresh IS round trip one - and the endpoint sits
+behind `/api/mls/`'s `auth_request`, whose `/api/auth/verify` reads **the Authorization Bearer header
+and nothing else** (`auth.controller.ts:691`, `check()`). The second request consumes the first's
+output at two independent layers, so issuing it "early" only makes it wait somewhere else. **Do not
+re-open this as a scheduling problem.**
+
+Three shapes remove it instead of racing it, and they are not equally good:
+
+1. **Overlap the probe with `init()` rather than with the refresh - the client-side one, and the only
+   one needing no server change.** The verdict gates the WIPE, not the PROMPT. Starting `init()` and
+   the probe together hides the whole round trip behind the biometric prompt. **Its precondition is
+   the latch, and that is the work**: `wipingRevokedDevice` is read at `loginImpl` ENTRY
+   (`sessionAuth.ts:430`), so it excludes a login that has not started and says nothing about one
+   already in flight - which is exactly the case this overlap creates. `wipeRevokedDevice` must await
+   or deterministically abort the in-flight login before its first delete, through a promise the
+   login exposes. **No timeout and no heal**: a race that reconciles afterwards is a defect whatever
+   it does in practice.
+2. **The refresh answers both questions.** The server already knows which device is asking -
+   `auth_sessions.deviceId` - and **5 of 5 sessions on the local copy of production are bound, none
+   unbound** (measured 2026-09-15). `bindCurrentSessionDevice`'s own docblock says the client binds
+   "once per app start, after unlock", so at refresh time the binding is the PREVIOUS start's and is
+   present. The cost belongs in the decision rather than in a footnote: `revoked_device` is owned
+   entirely by chat-delivery-service and core-service serves the refresh without touching any of it,
+   so this buys a ~130 ms phone round trip with an internal call on EVERY refresh. Its edge case is a
+   session opened by OIDC and never unlocked, which carries no binding - and a three-valued answer
+   sending that client back to the old path would be a second path kept alive for one case.
+3. **Give the probe its own credential.** Rejected on sight: widening what `/api/mls/` accepts, in
+   order to save a round trip, is the wrong thing to trade.
+
+**MEASURE BEFORE CHOOSING, and that is not a deferral - it is the same rule this entry was written
+under.** The refresh was 132 ms; the probe has never been timed on its own; and the `mls.bin` block
+that dominated everything is gone as of `v0.18.3`. If the remaining budget is not dominated by these
+two round trips, this is the wrong first target. `bun tools/cold-start/launch-trace.mjs --heartbeat`
+on the Pixel 6a is what says so - and it needs a build pointing at an environment where that device
+HAS a session, which is the coupling this file records separately.
 
 *The launch noise is now NAMED, and five sevenths of it is DISPOSITIONED ALREADY - do not "fix" it.*
 A cold start printed five `404` and two `415` console lines that nothing explained. The instrument
