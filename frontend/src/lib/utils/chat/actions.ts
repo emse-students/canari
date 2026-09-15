@@ -528,7 +528,20 @@ export async function discoverMissingGroups(params: {
   // ONE construction, shared with the recovery seam that joins a group. This loop used to build the
   // row itself, and the external-commit join took its row from HERE - two sweeps over the same
   // server list, each doing half the job, with no order between them.
-  for (const g of missing) {
+  //
+  // EVERY ACTIVE GROUP, NOT ONLY THE MISSING ONES, AND THAT IS THE WHOLE OF A DEFECT MEASURED ON
+  // 2026-09-15. This loop ran over `missing`, so the seam only ever saw groups with NO local row -
+  // for which it CREATES one, already correctly named. Its `existed` branch, and the label repair
+  // #693 put there, were therefore unreachable from the sweep that is supposed to run them: a
+  // device whose stored label was wrong had it silently corrected by the block below instead, which
+  // logged nothing. Measured by writing a wrong label straight into a device's store and reloading
+  // it with an observer attached: the label came back right, six other `[DISCOVERY]` lines were
+  // captured in the same window, and not one of them was the repair. Two mechanisms for one job,
+  // the reachable one mute and the one that speaks dead.
+  //
+  // The `existed` branch is a map scan and nothing else - no round trip, no MLS - so running it for
+  // every group costs a pass over a list this function has already fetched.
+  for (const g of activeServerGroups) {
     await ensureConversationForServerGroup(g, {
       mlsService,
       userId,
@@ -539,30 +552,20 @@ export async function discoverMissingGroups(params: {
     });
   }
 
-  // ── Seed group name + avatar from the server (source of truth) ───────────
-  // Both are re-seeded from getUserGroups on every discovery so a device that missed the
-  // one-shot `groupRenamed`/`groupImageChanged` MLS message (stuck in SYNC, offline, or
-  // joined late) still converges on the authoritative name/photo. Live changes still arrive
-  // via the MLS system message; this is the durable fallback. Groups only - DM names are
-  // peer-derived, never overwritten from the server row.
+  // ── Seed the group AVATAR from the server (source of truth) ───────────
+  // Re-seeded from getUserGroups on every discovery so a device that missed the one-shot
+  // `groupImageChanged` MLS message (stuck in SYNC, offline, or joined late) still converges on the
+  // authoritative photo. Live changes still arrive via the MLS system message; this is the durable
+  // fallback. THE NAME IS NO LONGER SEEDED HERE - `repairGroupLabel` owns it, one seam, and it says
+  // so in the log. Groups only, for the reason that function gives: a DM's server name is the
+  // canonical `self::peer` KEY, not a label.
   for (const g of activeServerGroups) {
     if (!g.isGroup) continue;
     const convo = conversations.get(g.groupId);
     if (!convo) continue;
     const nextImage = g.imageMediaId ?? null;
-    const serverName = g.name?.trim() ?? '';
-    // Only adopt a non-empty server name that actually differs, so we never clobber a good
-    // local name with an empty/placeholder server value.
-    const nameChanged = serverName !== '' && serverName !== convo.name;
-    const imageChanged = (convo.imageMediaId ?? null) !== nextImage;
-    if (nameChanged || imageChanged) {
-      conversations.set(g.groupId, {
-        ...convo,
-        ...(nameChanged ? { name: serverName } : {}),
-        ...(imageChanged ? { imageMediaId: nextImage } : {}),
-      });
-      // Persist so the resolved name survives the next reload (image stays server-seeded).
-      if (nameChanged) await saveConversation?.(g.groupId).catch(() => {});
+    if ((convo.imageMediaId ?? null) !== nextImage) {
+      conversations.set(g.groupId, { ...convo, imageMediaId: nextImage });
     }
   }
 }

@@ -194,6 +194,7 @@ describe('discoverMissingGroups orphan cleanup', () => {
       ],
     ]);
     const saveConversation = vi.fn().mockResolvedValue(undefined);
+    const log = vi.fn();
     const mlsService = makeMls({
       getUserGroups: vi
         .fn()
@@ -210,12 +211,105 @@ describe('discoverMissingGroups orphan cleanup', () => {
       conversations,
       deleteConversation: vi.fn().mockResolvedValue(undefined),
       saveConversation,
-      log: vi.fn(),
+      log,
     });
 
     expect(conversations.get('g1')?.name).toBe('Les ROOTz');
     expect(conversations.get('g1')?.imageMediaId).toBe('img-9');
     expect(saveConversation).toHaveBeenCalledWith('g1');
+
+    // AND IT SAYS SO. This is the assertion whose absence let the defect live: the behaviour above
+    // was correct and TESTED, so nothing was failing - it was just being done by a second, silent
+    // mechanism while the one carrying the log line sat on a branch the sweep never reached. A
+    // label changing under a reader who is looking at it must be findable afterwards.
+    const said = log.mock.calls.map((c) => String(c[0]));
+    expect(said.filter((l) => l.includes('relabelled'))).toHaveLength(1);
+    expect(said.join('\n')).toContain('relabelled "Groupe" -> "Les ROOTz"');
+  });
+
+  // CONTROL: a name that already agrees with the server must move nothing and say nothing. Without
+  // this, widening the repair to every active group (rather than only the missing ones) could log
+  // once per group per sweep - noise that would train its reader to skip the line above.
+  it('says nothing, and writes nothing, when the stored group name already agrees', async () => {
+    const conversations = new Map<string, Conversation>([
+      [
+        'g1',
+        {
+          id: 'g1',
+          contactName: 'Les ROOTz',
+          name: 'Les ROOTz',
+          messages: [],
+          lifecycle: 'active',
+          mlsStateHex: null,
+          conversationType: 'group',
+          imageMediaId: 'img-9',
+        },
+      ],
+    ]);
+    const saveConversation = vi.fn().mockResolvedValue(undefined);
+    const log = vi.fn();
+
+    await discoverMissingGroups({
+      mlsService: makeMls({
+        getUserGroups: vi
+          .fn()
+          .mockResolvedValue([
+            { groupId: 'g1', name: 'Les ROOTz', isGroup: true, imageMediaId: 'img-9' },
+          ]),
+        getLocalGroups: vi.fn().mockReturnValue(['g1']),
+      }),
+      userId: 'user-a',
+      deviceKeyB64: '1234',
+      conversations,
+      deleteConversation: vi.fn().mockResolvedValue(undefined),
+      saveConversation,
+      log,
+    });
+
+    expect(log.mock.calls.map((c) => String(c[0])).join('\n')).not.toContain('relabelled');
+    expect(saveConversation).not.toHaveBeenCalled();
+  });
+
+  // CONTROL: a DM whose stored label differs from the server row must NOT be relabelled. The
+  // server's name for a DM is the canonical `self::peer` KEY, so adopting it would put a pair of
+  // uuids in the sidebar where a first name belongs - the defect the `isGroup` guard exists for.
+  it('never relabels a DM from the server row', async () => {
+    const conversations = new Map<string, Conversation>([
+      [
+        'peer-b',
+        {
+          id: 'dm1',
+          contactName: 'peer-b',
+          name: 'Bernard',
+          messages: [],
+          lifecycle: 'active',
+          mlsStateHex: null,
+          conversationType: 'direct',
+          directPeerId: 'peer-b',
+          imageMediaId: null,
+        },
+      ],
+    ]);
+    const saveConversation = vi.fn().mockResolvedValue(undefined);
+    const log = vi.fn();
+
+    await discoverMissingGroups({
+      mlsService: makeMls({
+        getUserGroups: vi
+          .fn()
+          .mockResolvedValue([{ groupId: 'dm1', name: 'user-a::peer-b', isGroup: false }]),
+        getLocalGroups: vi.fn().mockReturnValue(['dm1']),
+      }),
+      userId: 'user-a',
+      deviceKeyB64: '1234',
+      conversations,
+      deleteConversation: vi.fn().mockResolvedValue(undefined),
+      saveConversation,
+      log,
+    });
+
+    expect(conversations.get('peer-b')?.name).toBe('Bernard');
+    expect(log.mock.calls.map((c) => String(c[0])).join('\n')).not.toContain('relabelled');
   });
 
   it("purge une conversation que l'utilisateur a dismissée (suppression/quitter manuel, regles 3/5)", async () => {

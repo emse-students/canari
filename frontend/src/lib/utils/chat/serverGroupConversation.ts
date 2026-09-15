@@ -97,14 +97,14 @@ export type EnsureConversationOutcome =
  * Silent when there is nothing to do, loud when there is: a label changing under a user who is
  * looking at it is exactly the kind of thing a reader must be able to find afterwards.
  */
-function repairGroupLabel(
+async function repairGroupLabel(
   key: string,
   convo: Conversation,
   group: ServerGroupRow,
   conversations: Map<string, Conversation>,
   saveConversation: ((key: string) => Promise<void>) | undefined,
   log: (msg: string) => void
-): void {
+): Promise<void> {
   if (!group.isGroup) return;
   const serverName = (group.name ?? '').trim();
   if (!serverName || serverName === convo.name) return;
@@ -112,7 +112,10 @@ function repairGroupLabel(
   log(
     `[DISCOVERY] ${groupIdShort(group.groupId)} relabelled "${convo.name}" -> "${serverName}" (the server is the authority on a group's name)`
   );
-  void saveConversation?.(key).catch(() => {});
+  // AWAITED, NOT FIRE-AND-FORGET. The block this replaced in `discoverMissingGroups` awaited its
+  // save, and a repair whose write may not have landed re-runs on the next sweep and logs again -
+  // a line that repeats is a line its reader learns to skip.
+  await saveConversation?.(key).catch(() => {});
 }
 
 /** The 8-character prefix every line in this file names a group by. */
@@ -136,7 +139,7 @@ export async function ensureConversationForServerGroup(
   // `mergeDirectConversationDuplicates` exists to clean up afterwards.
   const known = [...conversations.entries()].find(([, c]) => c.id === groupId);
   if (known) {
-    repairGroupLabel(known[0], known[1], group, conversations, saveConversation, log);
+    await repairGroupLabel(known[0], known[1], group, conversations, saveConversation, log);
     return 'existed';
   }
 
