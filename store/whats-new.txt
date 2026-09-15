@@ -1,5 +1,9 @@
-version: 0.18.3
+version: 0.18.4
 
-L'application s'ouvre nettement plus vite : elle ne recopie plus au demarrage un fichier qu'elle avait deja sous la main.
+Le demarrage est nettement plus rapide : l'application se connecte avant de relire vos conversations, ne redemande plus toute votre boite aux lettres a chaque fois, et les messages recus pendant le lancement arrivent tout de suite.
 
-Sur une carte de partenariat, le premier clic sur "Reclamer mon code" affiche bien le code au lieu d'un cadre vide.
+Dans le navigateur, les conversations reviennent dans le bon ordre : la plus recente en premier.
+
+Le selecteur d'emoji arrive dans la zone de saisie, sur ordinateur.
+
+Reprendre sa place dans une conversation n'affiche plus a tort un avis de retrait.
