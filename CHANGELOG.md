@@ -11,6 +11,33 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - le menu d'appui long recouvrait le message sur lequel il agit
+
+Un appui long sur un message situe en bas du fil ouvrait la feuille d'actions **par-dessus ce
+message**. Mesure sur A1 le 2026-09-14 : la bulle occupait `731-767`, la bande de reactions
+commencait a `749` - **18 des 37 px de la bulle caches, sa moitie basse, en plein milieu de son
+unique ligne de texte**. On appuyait sur un message et on ne pouvait plus le lire.
+
+**La feuille n'a pas bouge, c'est le fil qui bouge.** Elle est collee en bas parce que c'est la
+qu'est le pouce : sa position dit quelque chose, celle du fil ne dit rien. WhatsApp et Messenger
+remontent tous les deux le message au-dessus de la feuille.
+
+Deux choses rendaient le correctif evident moins evident qu'il n'y parait. D'abord, **la place doit
+exister avant qu'on puisse y defiler** : le message sur lequel on appuie en bas de l'ecran est
+generalement le dernier, donc le fil est deja a son maximum et `scrollTop += 26` ne fait
+strictement rien - le correctif evident est sans effet precisement dans le cas qui le motive. Le
+manque est donc emprunte en marge basse tant que la feuille est ouverte, et rendu a sa fermeture,
+ce qui remet aussi le fil ou il etait sans que rien n'ait a memoriser une position. Ensuite, **la
+feuille apparait par une transition de 220 ms**, donc son rectangle pendant ces frames est celui de
+la transformation et non celui du repos ; sa position finale est calculee a partir de la mise en
+page, que la transformation ne touche pas, plutot qu'en attendant la fin de l'animation - une
+horloge de plus.
+
+La remontee s'arrete au HAUT de la bulle : un message plus grand que la place disponible ne peut de
+toute facon pas etre montre en entier, et degager son bas ferait sortir sa premiere ligne de
+l'ecran - on echangerait la moitie dont le lecteur peut se passer contre celle qu'il est en train
+de lire.
+
 ### Fixed - deux choses demandaient la permission de notification en meme temps, et l'une bloquait l'application
 
 Au premier lancement apres une installation, la boite de dialogue de permission d'Android s'ouvrait

@@ -1735,3 +1735,63 @@ measurement says nothing about which is right.
 **launching another app steals the foreground and drops the Canari webview's CDP bridge**, so the
 Canari half has to be re-armed (`bun pin.mjs --device A1`) after the Instagram half is taken, never
 before.
+
+## 24. The long-press sheet covered the message it acts on, and the thread moved instead
+
+**Measured on A1 on 2026-09-14**, in the same guided session as sections 22 and 23. Long-press a
+message near the bottom of the thread and the action sheet opens over it: the bubble at `731-767`,
+the sheet's reaction strip starting at `749` - **18 of the bubble's 37 px covered, its lower half,
+straight through the middle of its single line of text**. The user presses a message and can no
+longer read the message they pressed.
+
+### Why the sheet is not what moves
+
+`[data-keyboard-aware-actions]` in `app.css` anchors it to the bottom of the screen,
+`bottom: max(1rem, safe-area + 1rem)` under `.mobile-convo-open`. That is right and it stays:
+**the sheet's position is a claim about where a thumb is, and the thread's is a claim about
+nothing.** WhatsApp and Messenger both raise the message above the sheet and dim the rest; the half
+that moves is the thread.
+
+### The three numbers, and the one that is not obvious
+
+`sheetClearance` in `frontend/src/lib/utils/chat/sheetClearance.ts` is the whole decision, and it is
+arithmetic on measurements a caller takes once at open - no clock, no animation frame, no retry.
+
+1. **The overlap.** `bubbleBottom + 8 - sheetTop`, the 8 being the gap that keeps the bubble off the
+   sheet's edge rather than flush against it. On A1: `767 + 8 - 749 = 26`.
+2. **The cap.** The lift stops when the bubble's TOP reaches the scroller's. A message taller than
+   the room above the sheet cannot be shown whole whatever anyone scrolls, and lifting it until its
+   bottom clears pushes its FIRST line off the top - trading the half a reader can do without for
+   the half they are reading.
+3. **The room, which has to exist first.** The message someone long-presses at the bottom of the
+   screen is usually the LAST one, so `.chat-messages-scroll` is already at its maximum and
+   `scrollTop += 26` does **nothing at all** - the obvious fix is a no-op in exactly the case that
+   motivates it. The deficit is borrowed as bottom padding on the scroller while the sheet is open
+   and returned when it closes, which is also what puts the thread back: nothing has to remember a
+   scroll position.
+
+### Reading the sheet's top without waiting for its transition
+
+The sheet flies in over 220 ms, so `getBoundingClientRect().top` on the frame it opens is wherever
+the transform has it, not where it comes to rest - a lift measured from that is short by whatever
+the transform has left to travel. Waiting for `transitionend` would put a clock back in.
+
+`sheetRestingTop(overlayBottom, bottomInset, sheetHeight)` takes three numbers a transform cannot
+touch: the portalled `inset-0` overlay's bottom edge, the sheet's computed `bottom` (an absolute
+length once resolved), and its `offsetHeight` (layout). On A1: `945 - 16 - 180 = 749`, the number
+the phone reported.
+
+### What the tests pin
+
+`sheetClearance.test.ts` holds the arithmetic on A1's own numbers, and
+`MessageMobileActions.clearance.svelte.test.ts` holds the wiring - that the sheet finds the scroller
+from the bubble it was handed, measures from layout, borrows before it scrolls, and gives the room
+back. Geometry in happy-dom is all zeroes, so every box is stubbed; that is the point, since the
+rule compares numbers no engine there can produce.
+
+**One environment fact the second file cost.** Closing the sheet plays an outro on two elements, and
+tearing the test down cancels whatever is still in flight. happy-dom creates `Animation.finished`
+EAGERLY and rejects it on `cancel()`; Svelte's `transitions.js` cancels the animation and never
+touches that promise, so in a browser nothing is ever unhandled. The rejection is the environment's,
+not the app's, and `src/test/adoptTransitionAnimations.ts` adopts it rather than changing anything
+the product does. A component test that plays an outro needs it; one that only plays intros does not.
