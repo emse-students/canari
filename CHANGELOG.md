@@ -11,6 +11,35 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - le plafond de dependances refusait une bibliotheque cliente, et ne pouvait pas lire sa propre porte de sortie
+
+Le gate `Dependency ceiling` repond a une seule question : ce depot a-t-il un test qui verrait cette
+mise a jour echouer ? Deux defauts le faisaient repondre faux, tous deux mesures le 2026-09-15 sur
+les pull requests ouvertes.
+
+**Un nom n'est pas unique d'un ecosysteme a l'autre.** Le bras "datastore" refuse un changement de
+version majeure parce que la panne qu'il previent est un repertoire de donnees qu'une nouvelle
+version refuse d'ouvrir - c'est la panne de production du 2026-09-01. Il choisissait sa cible sur le
+nom seul, or `redis` est a la fois une image dont la production monte un volume ET une crate cliente
+dont depend `apps/chat-gateway`. La #668 (`redis 1.6.0 -> 1.7.0`, cargo) etait donc refusee, en
+exigeant la preuve d'une montee de version sur disque - un test impossible a ecrire pour un client,
+qui ne detient aucun repertoire de donnees. C'est exactement la file que personne ne vide, que cette
+table a ete ecrite pour eviter. Dependabot ecrit l'ecosysteme dans la branche qu'il pousse
+(`dependabot/<ecosysteme>/<chemin>/<nom>`) : il est desormais lu la, puis passe au bras, qui ne
+s'applique plus qu'a une image. **L'absence d'ecosysteme reste un refus**, donc tout appelant qui ne
+sait pas conserve le comportement d'avant.
+
+**Le refus nommait un remede que la CI ne pouvait pas voir.** Il se termine en demandant de repeter
+la montee de version en dev et de l'inscrire dans `infrastructure/dev/version-gap.yml` avec
+`evidence: in_place_upgrade`. Ce fichier n'etait pas dans le `sparse-checkout` du job : en CI,
+`dev_proven_major` lisait un fichier absent et repondait vide. La repetition aurait donc ete faite
+et inscrite sans rien lever, et la #309 serait restee refusee sans plus aucun moyen de le dire. Le
+fichier est ajoute au `sparse-checkout`, et `ceiling.test.sh` refuse desormais de tourner sans lui -
+comme il le faisait deja pour `docker-compose.prod.yml`, parce que les deux doivent bouger ensemble.
+
+Verifie sur les quatre pull requests concernees : la #668 passe, la #309 reste refusee sur le bon
+motif, la #431 et la #665 restent refusees chacune sur le sien.
+
 ## [0.18.1] - 2026-09-15
 
 ### Changed - l'empreinte n'attend plus un aller-retour reseau qui ne decidait rien

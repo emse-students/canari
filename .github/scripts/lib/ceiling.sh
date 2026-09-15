@@ -28,9 +28,11 @@
 # make. A semver ceiling would have called that update unclassified and merged it exactly as this one
 # did. For a Docker tag the NAME is the only reliable discriminator there is.
 #
-# Usage: gate_for_dependency <name> [proposed-version]
+# Usage: gate_for_dependency <name> [proposed-version] [ecosystem]
 #          -> prints the missing gate, or nothing when the suite is evidence about this dependency.
-#             Always exits 0. The version is consulted ONLY by the datastore arm; see below.
+#             Always exits 0. The version and the ecosystem are consulted ONLY by the datastore arm;
+#             see below. An ABSENT ecosystem fails closed - the arm applies, which is the behaviour
+#             this table had before the argument existed.
 
 # The compose file that names the majors production is actually running. Overridable so the
 # self-tests can drive the comparison off fixtures rather than off today's pins.
@@ -86,6 +88,28 @@ third_party_stateful_images() {
   done <<EOF
 $(compose_stateful_images "${1:-$CEILING_PROD_COMPOSE}")
 EOF
+}
+
+# THE ECOSYSTEM DEPENDABOT IS UPDATING, READ OFF THE BRANCH IT PUSHED.
+#
+# IT EXISTS BECAUSE THE TABLE MATCHES ON A NAME AND A NAME IS NOT UNIQUE ACROSS ECOSYSTEMS. `redis`
+# is a Docker image production mounts a volume for, and it is ALSO a Rust client crate
+# `apps/chat-gateway` depends on. The datastore arm refused `redis 1.6.0 -> 1.7.0` (#668, measured
+# 2026-09-15) and told a client-library bump to prove an on-disk upgrade path - a test that cannot be
+# written for it, because a client holds no data directory. That is precisely the queue nobody drains
+# this table was written to avoid.
+#
+# Dependabot encodes the ecosystem in the branch it pushes: `dependabot/<ecosystem>/<path>/<name>`.
+# `cargo`, `docker`, `docker_compose`, `bun`, `github_actions`. It is the ecosystem's OWN statement of
+# what it is updating, which is why it is read rather than guessed from the version's shape.
+ceiling_ecosystem_from_ref() {
+  case "${1:-}" in
+    dependabot/*)
+      local rest="${1#dependabot/}"
+      printf '%s' "${rest%%/*}"
+      ;;
+    *) ;;
+  esac
 }
 
 # The declared major gap between dev and production, and what each gap has been PROVEN to
@@ -152,6 +176,18 @@ gate_for_dependency() {
     # does not name, an empty `dependency-version` - the update is refused. The cost of a false
     # refusal is one comment naming a test; the cost of a false pass was 33 minutes of downtime.
     postgres | redis | garage | dxflrs/garage)
+      # A NAME IS A DATASTORE ONLY WHEN IT IS AN IMAGE, and this arm is about a data directory on a
+      # volume. A Cargo crate called `redis` is a CLIENT: it holds nothing on disk, so the failure
+      # mode below cannot reach it and the test the refusal names cannot be written for it. Refusing
+      # it anyway is the queue nobody drains, and it happened - #668, measured 2026-09-15.
+      #
+      # AN UNKNOWN ECOSYSTEM STILL FAILS CLOSED. The argument is optional so that every existing
+      # caller keeps its behaviour exactly; only a caller that KNOWS the update is not a container
+      # releases the arm, which is the safe direction of this change.
+      case "${3:-}" in
+        '' | docker | docker_compose) ;;
+        *) return 0 ;;
+      esac
       __ceiling_current=$(prod_image_major "$1")
       __ceiling_proposed=$(printf '%s' "${2:-}" | sed -e 's/^v//' -e 's/[^0-9].*$//')
       if [ -n "$__ceiling_current" ] && [ -n "$__ceiling_proposed" ] &&

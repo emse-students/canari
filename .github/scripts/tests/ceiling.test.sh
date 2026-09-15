@@ -38,10 +38,24 @@ if [ ! -f "$compose" ]; then
   exit 1
 fi
 
+# THE ESCAPE HATCH MUST BE READABLE, AND IN CI IT WAS NOT. The datastore refusal ends by naming
+# `infrastructure/dev/version-gap.yml` as the way to retire itself - `dev_proven_major` reads it, and
+# an `evidence: in_place_upgrade` row there is what lifts the refusal. That file was outside the
+# `dependency-ceiling` job's `sparse-checkout`, so in CI `dev_proven_major` read an absent file and
+# answered empty: recording the rehearsal would have retired nothing, and #309 would have stayed
+# refused with no way left to say so. A refusal whose own documented remedy cannot be seen is the
+# queue nobody drains. Asserted here, beside the compose file, because the two move together.
+if [ ! -f "$CEILING_VERSION_GAP" ]; then
+  echo "FAIL $CEILING_VERSION_GAP is not in the tree, so the refusal below cannot read its own"
+  echo "     escape hatch and no rehearsal could ever retire it."
+  echo "     Add infrastructure/dev/version-gap.yml to the sparse-checkout list in .github/workflows/ci.yml."
+  exit 1
+fi
+
 # A dependency this repository must NOT merge unattended: the table has to name a gate for it.
 expect_refused() {
-  local name="$1" version="$2" why="$3" gate
-  gate=$(gate_for_dependency "$name" "$version")
+  local name="$1" version="$2" why="$3" ecosystem="${4:-}" gate
+  gate=$(gate_for_dependency "$name" "$version" "$ecosystem")
   if [ -n "$gate" ]; then
     echo "  ok   $name ${version:-(no version)} is refused"
   else
@@ -53,8 +67,8 @@ expect_refused() {
 # A dependency the check suite IS evidence about. Asserted so the table cannot quietly widen into a
 # blanket refusal, which would rebuild the queue nobody drains.
 expect_allowed() {
-  local name="$1" version="$2" gate
-  gate=$(gate_for_dependency "$name" "$version")
+  local name="$1" version="$2" ecosystem="${3:-}" gate
+  gate=$(gate_for_dependency "$name" "$version" "$ecosystem")
   if [ -z "$gate" ]; then
     echo "  ok   $name ${version:-(no version)} is allowed"
   else
@@ -116,6 +130,31 @@ expect_refused "dxflrs/garage" "v3.0.0" "garage holds the media store, and a maj
 # FAILING CLOSED IS THE POINT: a version nothing can parse must not read as "same major".
 expect_refused postgres "" "an absent version cannot be compared, so it must not pass"
 expect_refused postgres "latest" "an unparseable tag cannot be compared, so it must not pass"
+
+# A NAME IS NOT UNIQUE ACROSS ECOSYSTEMS, and the datastore arm is about a data directory. `redis`
+# is both an image production mounts a volume for and a Rust CLIENT crate `apps/chat-gateway`
+# depends on; the arm refused the crate (#668, measured 2026-09-15) and told a client library to
+# prove an on-disk upgrade path, which cannot be written for something that holds no disk.
+echo "the datastore arm is about an IMAGE, not about a name:"
+expect_allowed redis "1.7.0" cargo           # the client crate: it holds no data directory
+expect_allowed redis "9.0.0" cargo           # and a crate major is still the suite's business
+expect_refused redis "9-alpine" "the image still crosses a major that may rewrite the on-disk log" docker_compose
+expect_refused postgres "18-alpine" "this is the 2026-09-01 outage, and it arrived as a compose image" docker_compose
+# FAILING CLOSED ON AN UNKNOWN ECOSYSTEM is what makes the argument safe to add: a caller that does
+# not know still gets today's behaviour, so only a caller that KNOWS can release the arm.
+expect_refused postgres "18-alpine" "an absent ecosystem must not be read as permission" ""
+
+echo "the branch Dependabot pushed states its own ecosystem:"
+for ref_case in   "dependabot/cargo/apps/chat-gateway/redis-1.7.0|cargo"   "dependabot/docker_compose/infrastructure/postgres-18-alpine|docker_compose"   "dependabot/github_actions/actions/checkout-7|github_actions"   "fix/a-human-branch|"; do
+  ref="${ref_case%%|*}"; want="${ref_case##*|}"
+  got=$(ceiling_ecosystem_from_ref "$ref")
+  if [ "$got" = "$want" ]; then
+    echo "  ok   $ref -> '${got}'"
+  else
+    echo "  FAIL $ref read as '${got}', expected '${want}'"
+    failures=$((failures + 1))
+  fi
+done
 
 echo "wire formats and unrunnable paths (the version is not consulted):"
 expect_refused openmls "0.9.0" "a frame minted today must stay readable by the v0.14.14 clients in the fleet"
