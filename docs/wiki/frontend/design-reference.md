@@ -1955,3 +1955,18 @@ disclosure, where it scrolls.
 once the button left the form, and threw on a modal plainly on screen. It is now scoped to
 `[role="dialog"]` - the thing that OWNS the button rather than a nesting the layout may change - and
 `atoms.mjs` records the widened rule.
+
+### The sibling, measured rather than assumed
+
+`ChangePinModal` had the same shape, so it was measured rather than waved through: at 360 x 640 its
+form stood 567 px in a 510 px scrollport and the submit ended **69 px below the fold**. Milder, and
+NOT a softlock - this modal is dismissible and its close button is in the header, which never
+scrolls. **What made it worth the same treatment is the keyboard.** Every field here is a text input,
+so the on-screen keyboard is up whenever anyone uses this screen, and it takes far more than the
+69 px that were already missing. Same fix; the body falls to 499 px at 360 x 640 and the submit sits
+in the footer at all three sizes.
+
+**The two form ids are deliberately different** (`encryption-pin-form`, `change-pin-form`) and a test
+says so. The gate raises the change modal on the recover path, so both can be mounted at once, and
+two forms sharing an id would make every `form=` resolve to whichever the parser saw first - while
+still looking perfectly correct.

@@ -38,6 +38,13 @@ defiler : a 360 x 640 le contenu tombe de 928 a 762 px, a 393 x 945 de 907 a 741
 **302 ms**), parce qu'un bouton de validation hors de son formulaire ne fait rien du tout si
 l'association echoue.
 
+**Le meme correctif pour l'ecran voisin**, mesure plutot que suppose : `ChangePinModal` avait la meme
+forme et le meme defaut en plus doux - a 360 x 640, son bouton finissait **69 px sous la ligne de
+flottaison**. Ce n'est pas un blocage (cette modale se ferme, et sa croix est dans l'en-tete, qui ne
+defile pas) ; ce qui le rend aussi grave, c'est le clavier : tous ses champs sont des champs de
+texte, donc le clavier est ouvert chaque fois qu'on s'en sert, et il prend bien plus que les 69 px
+qui manquaient deja.
+
 ### Fixed - le menu d'appui long recouvrait le message sur lequel il agit
 
 Un appui long sur un message situe en bas du fil ouvrait la feuille d'actions **par-dessus ce

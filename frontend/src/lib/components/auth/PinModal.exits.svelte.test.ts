@@ -22,6 +22,7 @@ import { flushSync, mount, unmount } from 'svelte';
 import { initHistoryOverlayStack } from '$lib/utils/historyOverlayStack';
 import { m } from '$lib/paraglide/messages';
 import PinModal from './PinModal.svelte';
+import ChangePinModal from './ChangePinModal.svelte';
 
 const mounted: (() => void)[] = [];
 let stopHistoryStack: () => void;
@@ -133,5 +134,55 @@ describe('PinModal - the exits do not scroll', () => {
 
     const forgot = buttonLabelled(m.auth_pin_forgot())!;
     expect(scrollport()?.contains(forgot), 'the disclosure itself belongs in the body').toBe(true);
+  });
+});
+
+/**
+ * THE SIBLING, WHICH HAD THE SAME SHAPE AND A MILDER FORM OF THE SAME DEFECT.
+ *
+ * Measured on W3 the same day: at 360 x 640 the change-PIN form stood 567 px in a 510 px scrollport
+ * and its submit ended 69 px below the fold. It is not a softlock the way the gate was - this modal
+ * IS dismissible and its close button sits in the header, which never scrolls - so what makes it
+ * worth the same treatment is the keyboard. Every field here is a text input, so the on-screen
+ * keyboard is up whenever anyone uses this, and it takes far more than the 69 px already missing.
+ */
+describe('ChangePinModal - the submit does not scroll either', () => {
+  function raise(props: Record<string, unknown> = {}) {
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const app = mount(ChangePinModal, {
+      target,
+      props: { open: true, onSubmit: vi.fn(), onClose: vi.fn(), ...props },
+    });
+    mounted.push(() => void unmount(app));
+    flushSync();
+  }
+
+  it('keeps the submit out of the scrolling body and still names its form', () => {
+    raise();
+
+    const submit = document.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+    const form = document.querySelector<HTMLFormElement>('[role="dialog"] form')!;
+
+    expect(scrollport()?.contains(submit)).toBe(false);
+    expect(submit.getAttribute('form')).toBe(form.id);
+    expect(form.contains(submit)).toBe(false);
+  });
+
+  it('does not share a form id with the PIN gate', () => {
+    // The gate raises this modal on the recover path, so both can be mounted at once. Two forms
+    // sharing an id would make every `form=` resolve to whichever the parser saw first - and the
+    // wrong one would still LOOK right, which is the failure mode worth a test of its own.
+    raise();
+    const changeFormId = document.querySelector<HTMLFormElement>('[role="dialog"] form')!.id;
+
+    document.body.innerHTML = '';
+    while (mounted.length) mounted.pop()!();
+    raiseGate();
+    const gateFormId = document.querySelector<HTMLFormElement>('[role="dialog"] form')!.id;
+
+    expect(changeFormId).toBeTruthy();
+    expect(gateFormId).toBeTruthy();
+    expect(changeFormId).not.toBe(gateFormId);
   });
 });
