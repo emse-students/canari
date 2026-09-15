@@ -170,6 +170,15 @@ export function paneIs(cx, name) {
  * around: a check that assumed it did left the dialog up, and every later click then failed with
  * `no stable element` for a control plainly in the DOM. Each overlay ships its own button, so each
  * is closed by its own button.
+ *
+ * THE ORDER OF THE TESTS BELOW IS TOPMOST FIRST, AND THAT IS THE WHOLE CORRECTNESS OF IT. These
+ * overlays STACK: the member picker opens ON TOP of the group panel, so `Envoyer l'invitation` and
+ * `Quitter le groupe` are both in the DOM at once. Testing for the panel first names the layer
+ * UNDERNEATH, and `closeOverlays` then clicks a button the modal is covering - not hit-testable, so
+ * the click fails, the state never changes, and the loop runs out with "could not close the
+ * overlay". That cost three runs of `invite.mjs`, which is where this paragraph was written; it is
+ * here now because the private copy it described was deleted on 2026-09-15 for being a weaker
+ * duplicate of this function.
  */
 export function overlayOn(cx) {
   return evaluate(
@@ -192,9 +201,17 @@ export async function closeOverlays(cx) {
   for (let i = 0; i < 4; i++) {
     const state = await overlayOn(cx);
     if (state === 'none') return i === 0 ? 'already clear' : 'closed';
+    // THE PANEL'S CLOSE CONTROL IS THE SIDE PANEL'S, AND IT IS ADDRESSED BY ITS ACCESSIBLE NAME.
+    // This branch used to click `text=Fermer les paramètres du groupe`, a sentence #455 removed from
+    // the app when it folded four side panels into one `ConversationSidePanel` - so from that merge
+    // until 2026-09-15 it could never match, and `closeOverlays` could not close a group panel at
+    // all. The `.catch` below is why nobody noticed: a click that finds nothing and a click that had
+    // nothing to do are the same outcome here, and the only symptom is the throw four passes later.
+    // `selector-selftest.mjs` now refuses any UI string this repository clicks that the app does not
+    // ship. SCOPED to the panel, because `common_close_label` is also the GIF picker's.
     await realClick(
       cx,
-      state === 'group-panel' ? 'text=Fermer les paramètres du groupe' : 'text=Fermer'
+      state === 'group-panel' ? '.conversation-side-panel [aria-label="Fermer"]' : 'text=Fermer'
     ).catch(() => {});
     await sleep(1200);
   }

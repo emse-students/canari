@@ -53,6 +53,7 @@
  */
 import { APP_TAB, awaitGatewayConnected, clickAtPoint, client, evaluate, realClick, until } from '../chat.mjs';
 import { usernames } from '../accounts.mjs';
+import { closeOverlays } from '../groupnav.mjs';
 import { armCut, cutHard } from './net.mjs';
 import { mark, record } from '../results.mjs';
 import {
@@ -82,30 +83,14 @@ const W2 = await client(PORTS.W2, APP_TAB, { focus: false });
 const wa = await watch(W1, 'W1');
 const wb = await watch(W2, 'W2');
 
-/** Closes whatever overlay is open, by that overlay's own control. See `invite.mjs`. */
-const overlay = (cx) =>
-  evaluate(
-    cx,
-    `(function () {
-      var t = document.body.innerText;
-      if (document.querySelector('#new-group-name')) return 'new-conversation';
-      if (/Envoyer l'invitation/.test(t)) return 'add-member';
-      if (/Quitter le groupe/.test(t)) return 'group-panel';
-      return 'none';
-    })()`
-  );
-const settle = async (cx) => {
-  for (let i = 0; i < 4; i++) {
-    const state = await overlay(cx);
-    if (state === 'none') return;
-    await realClick(cx, state === 'group-panel' ? 'text=Fermer les paramètres du groupe' : 'text=Fermer').catch(
-      () => {}
-    );
-    await sleep(1200);
-  }
-  const left = await overlay(cx);
-  if (left !== 'none') throw new Error(`could not close the overlay, still on ${left}`);
-};
+/**
+ * Closes whatever overlay is open, by that overlay's own control - `groupnav.mjs`'s implementation.
+ *
+ * This was the THIRD copy of that loop, after `groupnav.mjs` and `invite.mjs`, and all three had
+ * drifted the same two ways: none knew about a new-conversation dialog without `#new-group-name`,
+ * and all three clicked a close control the app stopped shipping in #455. Deleted 2026-09-15.
+ */
+const settle = (cx) => closeOverlays(cx);
 
 /**
  * The group id of the conversation called `name`, read from the store that actually holds it.

@@ -16,6 +16,7 @@
  *   bun invite.mjs --port 9223 --probe       (report the panel, change nothing)
  */
 import { APP_TAB, clickAtPoint, client, evaluate, realClick, until } from './chat.mjs';
+import { closeOverlays, overlayOn } from './groupnav.mjs';
 import { PORTS, peerNameFor } from './names.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -36,40 +37,16 @@ if (!who) throw new Error(`--who is required: port ${port} is not one of ${Objec
 const probeOnly = process.argv.includes('--probe');
 
 /**
- * What is currently on screen, TOPMOST FIRST - and the order is the whole correctness of it.
+ * THE OVERLAY STATE MACHINE IS `groupnav.mjs`'s, and this file used to carry its own copy.
  *
- * These overlays STACK: the member picker opens on top of the group panel, so both "Envoyer
- * l'invitation" and "Quitter le groupe" are in the DOM at once. Testing for the panel first
- * therefore identifies the layer UNDERNEATH, and `settle` then clicks a close button that the
- * modal is covering - not hit-testable, so the click fails, the state never changes, and the loop
- * runs out with "could not close the overlay". Identify the layer that is actually on top.
+ * The copy drifted: it never grew the `Nouvelle discussion Contact Groupe` branch that `overlayOn`
+ * added for a dialog with no `#new-group-name` - which that copy would have read as no overlay at
+ * all - and it clicked a close control the app stopped shipping in #455. One implementation, so a
+ * repair reaches every caller. The stacking order this file discovered is documented on
+ * `overlayOn` itself.
  */
-const overlay = () =>
-  evaluate(
-    cx,
-    `(function () {
-      var t = document.body.innerText;
-      if (document.querySelector('#new-group-name')) return 'new-conversation';
-      if (/Envoyer l'invitation/.test(t)) return 'add-member';
-      if (/Quitter le groupe/.test(t)) return 'group-panel';
-      return 'none';
-    })()`
-  );
-
-/** Closes whatever is open, by that overlay's OWN control, until nothing is. */
-const settle = async () => {
-  for (let i = 0; i < 4; i++) {
-    const state = await overlay();
-    if (state === 'none') return state;
-    await realClick(cx, state === 'group-panel' ? 'text=Fermer les paramètres du groupe' : 'text=Fermer').catch(
-      () => {}
-    );
-    await sleep(1200);
-  }
-  const left = await overlay();
-  if (left !== 'none') throw new Error(`could not close the overlay, still on ${left}`);
-  return left;
-};
+const overlay = () => overlayOn(cx);
+const settle = () => closeOverlays(cx);
 
 const dump = async (stage) =>
   console.log(
