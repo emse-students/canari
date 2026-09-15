@@ -46,6 +46,9 @@ vi.mock('$lib/utils/chat/messageUtils', async (importOriginal) => {
 vi.mock('$lib/utils/chat/recovery', () => ({
   requestReAdd: vi.fn().mockResolvedValue(undefined),
   cancelReAdd: vi.fn(),
+  // Default `false`: the pipeline asks this about every Remove commit, and the suite's subject is
+  // the eviction path. The re-admission case has its own tests in `eviction.test.ts`.
+  reAddIsInFlight: vi.fn(() => false),
   resetReAddCooldowns: vi.fn(),
 }));
 
@@ -134,6 +137,32 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     expect(acked).toBe(true);
     expect(mls.isGroupActive).toHaveBeenCalledWith(groupId);
     expect(deps.conversations.get(groupId)!.lifecycle).toBe('removed');
+  });
+
+  it('does NOT retire when the Remove is the first half of a re-admission it asked for', async () => {
+    // THE PIPELINE MUST ASK, and a unit test of the policy cannot prove that it does. MLS cannot
+    // Welcome a leaf still in the tree, so the member answering a `welcome_request` removes us and
+    // adds us back - and this exact frame arrived on a production handset on 2026-09-15, three
+    // seconds before the Welcome, leaving a permanent "you were removed" notice in a conversation
+    // that worked.
+    const { reAddIsInFlight } = await import('$lib/utils/chat/recovery');
+    vi.mocked(reAddIsInFlight).mockReturnValue(true);
+
+    const deps = baseDeps();
+    const mls = deps.mlsService as any;
+    mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
+    mls.isGroupActive = vi.fn().mockResolvedValue(false);
+    setupMessageHandler(deps as any);
+    const cb = mls.onMessage.mock.calls[0][0];
+
+    const acked = await cb('peer', new Uint8Array([9, 9, 9]), groupId, false, undefined, true);
+
+    expect(acked).toBe(true);
+    expect(reAddIsInFlight).toHaveBeenCalledWith(groupId);
+    expect(deps.conversations.get(groupId)!.lifecycle).toBe('pending');
+    expect(deps.addMessageToChat).not.toHaveBeenCalled();
+
+    vi.mocked(reAddIsInFlight).mockReturnValue(false);
   });
 
   it('does not ask about membership on an application message', async () => {

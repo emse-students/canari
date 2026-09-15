@@ -158,6 +158,23 @@ Deep links, system events, rosters and the channel/DM asymmetry are on those two
 
 ## MLS membership and routing -> [mls-protocol](protocols/mls-protocol.md), [chat-delivery](services/chat-delivery.md)
 
+- **A RE-ADMISSION IS A REMOVE FOLLOWED BY AN ADD, SO THE ONE REMOVE COMMIT THAT MEANS THE OPPOSITE
+  OF AN EVICTION IS YOUR OWN.** MLS cannot Welcome a leaf still in the tree, so the member answering
+  a `welcome_request` removes the asker first. That Remove arrives alone and passes every test a
+  real exclusion passes - signed, ordered, made by an entitled member, and `isGroupActive` answers
+  `false` after it merges. Reading it as an eviction retired the conversation and wrote the
+  permanent "you were removed from this group" notice into the thread three seconds before the
+  Welcome made it false, and **nothing retracts a notice**: measured on a production handset
+  2026-09-15, where the user was still reading "vous ne pouvez plus envoyer ni recevoir" in a
+  conversation that worked, with the server showing both members active and `kickedAt` NULL.
+  **The frame cannot say which it is; the device that ASKED can**, and the fact was already in hand
+  and unread - `lastReAddAt` is written when the attempt commits and deleted by `cancelReAdd` when
+  the Welcome lands, so the ENTRY'S EXISTENCE (`reAddIsInFlight`), not its age, is the statement
+  "a re-admission is in flight". The age is the throttle, a clock, and it must not decide this.
+  The row becomes `pending`, never `removed`: `requestReAdd` returns early on `removed`, so writing
+  it during a re-admission ALSO stranded the group for good if the Welcome never came - the repair
+  could not be asked for twice. `chat`, `mls`
+
 - **A DEAD END THAT IS A DELIBERATE REFUSAL MUST NOT BE "FIXED", AND FIVE OF THEM HAVE ALREADY BEEN
   MISTAKEN FOR DEFECTS.** The standing rule is that a user must never be asked to leave an impasse
   by themselves, so an exit has to EXIST - but the user scoped it to AVAILABILITY impasses

@@ -8,6 +8,15 @@
  * written for: a group this device believes it is IN but cannot use (an epoch fork, a lost
  * Welcome). Eviction is not a broken state, it is a correct one we are not part of.
  *
+ * THE ONE REMOVE COMMIT THAT MEANS THE OPPOSITE IS OUR OWN. MLS cannot Welcome a leaf still in the
+ * tree, so the member answering a `welcome_request` removes us and adds us back - and the Remove
+ * half passes every test above, because it IS a signed, ordered statement by an entitled member.
+ * Read as an eviction it retires the conversation and posts the permanent notice three seconds
+ * before the Welcome makes it false, and nothing retracts a notice. The frame cannot say which it
+ * is; the device asking can, and `reAddIsInFlight` is that fact. `retireIfEvicted` reads it BEFORE
+ * recording anything - see {@link markAwaitingReAdmission} for why the row becomes `pending` rather
+ * than staying `active`. Observed on a production handset, 2026-09-15.
+ *
  * The fact is read from OpenMLS (`isGroupActive`), never mirrored into a flag of our own: the group
  * state is already durable, and a second copy can only ever be wrong in the direction that matters
  * - saying we are still a member of a group we were removed from.
@@ -46,7 +55,11 @@
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import { m } from '$lib/paraglide/messages';
 import type { AddMessageToChatOptions, Conversation } from '$lib/types';
-import { findConversationKeyByGroupId, retireConversation } from '$lib/utils/chat/conversations';
+import {
+  findConversationKeyByGroupId,
+  markAwaitingReAdmission,
+  retireConversation,
+} from '$lib/utils/chat/conversations';
 
 /**
  * How this device found out, and the ONLY thing the five learning sites legitimately differ in.
@@ -194,6 +207,18 @@ export interface EvictionCheckDeps extends Omit<RecordEvictionDeps, 'groupId' | 
    * hand and answer `false` on a group this device does not hold.
    */
   evidence: Extract<EvictionEvidence, 'remove-commit' | 'inbound-frame' | 'membership-check'>;
+  /**
+   * Whether this device has a re-admission of its own in flight for this group - read from
+   * `reAddIsInFlight`, which owns the fact.
+   *
+   * INJECTED RATHER THAN IMPORTED, because the two modules are on opposite sides of the recovery
+   * seam and the caller already holds both. It is the discriminator that separates the Remove half
+   * of our own repair from a removal somebody else decided, and without it the two are
+   * indistinguishable at this point: same frame, same signer, same merged state.
+   *
+   * Absent means `false`, which is the reading a caller that knows nothing about recovery wants.
+   */
+  reAddInFlight?: boolean;
 }
 
 /**
@@ -239,12 +264,26 @@ export async function readLocalMembership(deps: {
  * "evicted" to that would retire conversations this device simply had not loaded yet.
  */
 export async function retireIfEvicted(deps: EvictionCheckDeps): Promise<boolean> {
-  const { mlsService, groupId, evidence, log, ...rest } = deps;
+  const { mlsService, groupId, evidence, log, reAddInFlight, ...rest } = deps;
   // `null` is NOT an eviction: a membership query is not the point of the path this runs on, and the
   // send-path backstop in the outbox is what would find a missed eviction, one refused message
   // later. `readLocalMembership` owns the log for that branch.
   const active = await readLocalMembership({ mlsService, groupId, context: 'after a commit', log });
   if (active !== false) return false;
+
+  // OUR OWN REPAIR IS NOT NEWS ABOUT OUR MEMBERSHIP. A re-admission is a Remove and then an Add,
+  // and only the second half says what the pair meant - so a device that ASKED to be let back in
+  // already knows the Remove it is holding is the first half of the answer. Recording an eviction
+  // here writes a permanent notice into the thread that the Welcome falsifies seconds later, and
+  // nothing retracts it.
+  if (reAddInFlight) {
+    const key = findConversationKeyByGroupId(rest.conversations, groupId);
+    if (key) await markAwaitingReAdmission({ ...rest, key });
+    log(
+      `[EVICT] ${groupId.slice(0, 8)}… - Remove commit is the first half of the re-admission this device asked for, awaiting the Welcome`
+    );
+    return false;
+  }
 
   return recordEviction({ ...rest, groupId, evidence, log });
 }

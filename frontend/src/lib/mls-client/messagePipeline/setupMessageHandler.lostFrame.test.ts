@@ -20,6 +20,9 @@ vi.mock('$lib/utils/hex', () => ({
 vi.mock('$lib/utils/chat/recovery', () => ({
   requestReAdd: vi.fn().mockResolvedValue(undefined),
   cancelReAdd: vi.fn(),
+  // Default `false`: the pipeline asks this about every Remove commit, and the suite's subject is
+  // the eviction path. The re-admission case has its own tests in `eviction.test.ts`.
+  reAddIsInFlight: vi.fn(() => false),
   resetReAddCooldowns: vi.fn(),
 }));
 

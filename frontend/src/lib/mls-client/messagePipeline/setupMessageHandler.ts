@@ -7,7 +7,12 @@ import {
 import { decodeAppMessage } from '$lib/proto/codec';
 import { appMsgToEnvelope, normalizeMessageId } from '$lib/utils/chat/messageUtils';
 import { applyReaction } from '$lib/utils/chat/messageReactions';
-import { requestReAdd, cancelReAdd, resetReAddCooldowns } from '$lib/utils/chat/recovery';
+import {
+  requestReAdd,
+  cancelReAdd,
+  reAddIsInFlight,
+  resetReAddCooldowns,
+} from '$lib/utils/chat/recovery';
 import {
   markEpochGap,
   clearEpochGap,
@@ -797,6 +802,7 @@ async function handleKnownGroup({
         conversations,
         groupId,
         evidence: 'remove-commit',
+        reAddInFlight: reAddIsInFlight(groupId),
         saveConversation,
         addMessageToChat,
         log,
@@ -944,6 +950,7 @@ async function handleKnownGroup({
         conversations,
         groupId,
         evidence: 'inbound-frame',
+        reAddInFlight: reAddIsInFlight(groupId),
         saveConversation,
         addMessageToChat,
         log,

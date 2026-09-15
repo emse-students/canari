@@ -187,3 +187,72 @@ describe('membershipIsDurablyLost - the guard on the members-only endpoint', () 
     expect(membershipIsDurablyLost(undefined)).toBe(false);
   });
 });
+
+/**
+ * THE REMOVE HALF OF OUR OWN RE-ADMISSION IS NOT AN EVICTION.
+ *
+ * MLS cannot Welcome a leaf still in the tree, so the member answering a `welcome_request` removes
+ * us and adds us back. The Remove arrives alone and is indistinguishable from a real exclusion at
+ * the frame - same signer, same merged state, same `isGroupActive === false`. Read as one it wrote
+ * a PERMANENT notice into the thread that the Welcome falsified three seconds later, and nothing
+ * retracts a notice: measured on a production handset on 2026-09-15, where the user was still
+ * reading "vous ne pouvez plus envoyer ni recevoir" in a conversation that worked.
+ *
+ * The assertions are about what is NOT written, because that is what the user met: no `removed`,
+ * and above all no notice.
+ */
+describe('a Remove commit this device asked for is the first half of a re-admission', () => {
+  it('does not retire and does not post the notice while a re-add is in flight', async () => {
+    const conversations = new Map([['g1', convo('g1')]]);
+    const addMessageToChat = vi.fn(async () => {});
+    const d = { ...deps(async () => false, conversations), addMessageToChat, reAddInFlight: true };
+
+    expect(await retireIfEvicted(d)).toBe(false);
+    expect(conversations.get('g1')!.lifecycle).not.toBe('removed');
+    expect(addMessageToChat).not.toHaveBeenCalled();
+  });
+
+  it('records that it is waiting, rather than leaving the row claiming a usable group', async () => {
+    const conversations = new Map([['g1', convo('g1')]]);
+    const d = { ...deps(async () => false, conversations), reAddInFlight: true };
+
+    await retireIfEvicted(d);
+
+    // `pending` is what unblocks the retry: `requestReAdd` returns early on `removed`, so writing
+    // that during a re-admission stranded the group for good if the Welcome never arrived.
+    expect(conversations.get('g1')!.lifecycle).toBe('pending');
+    expect(d.saveConversation).toHaveBeenCalledWith('g1');
+  });
+
+  it('says in the log which of the two it decided, so the branch is never silent', async () => {
+    const log = vi.fn();
+    const conversations = new Map([['g1', convo('g1')]]);
+    await retireIfEvicted({
+      ...deps(async () => false, conversations, log),
+      reAddInFlight: true,
+    });
+
+    const lines = log.mock.calls.map((c) => String(c[0]));
+    expect(lines.some((l) => l.includes('re-admission'))).toBe(true);
+    // The eviction wording must NOT appear: the campaign's watcher reads it as a real removal.
+    expect(lines.some((l) => l.includes('Removed from'))).toBe(false);
+  });
+
+  it('still retires a removal this device never asked for', async () => {
+    const conversations = new Map([['g1', convo('g1')]]);
+    const d = { ...deps(async () => false, conversations), reAddInFlight: false };
+
+    expect(await retireIfEvicted(d)).toBe(true);
+    expect(conversations.get('g1')!.lifecycle).toBe('removed');
+  });
+
+  it('leaves a real exclusion already recorded alone, whatever is in flight', async () => {
+    // A re-add in flight is not evidence against an eviction a different, authoritative path
+    // already wrote down - it must not be walked back to `pending`.
+    const conversations = new Map([['g1', convo('g1', 'removed')]]);
+    const d = { ...deps(async () => false, conversations), reAddInFlight: true };
+
+    expect(await retireIfEvicted(d)).toBe(false);
+    expect(conversations.get('g1')!.lifecycle).toBe('removed');
+  });
+});
