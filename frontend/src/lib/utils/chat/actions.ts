@@ -234,8 +234,30 @@ export async function processPendingInvitations(params: {
             log,
           });
           if (alreadyALeaf === true) {
+            // AND THE ROW IS RETIRED, NOT JUST SKIPPED. Skipping answered this sync and left the
+            // `pending` row exactly as it found it, so every member of the group re-derived the
+            // same answer on every sync, for ever: production held 104 pending rows across 47
+            // groups on 2026-09-15, 98 of them older than a day and 19 thirteen days old, and one
+            // client's own startup trace spent 25 of its 31 invitations printing this line.
+            //
+            // The server has authorised this vouch since the endpoint was written - its docblock
+            // says a member confirming a fulfilled invitation "adds no new authority; it only
+            // stops getPendingInvitations from re-serving a device provably already in the tree
+            // every sync" - and no caller was ever written for it. The authority argument holds
+            // here specifically: this same local tree read is ALREADY trusted for the more
+            // dangerous decision, which is not to Add. Vouching risks nothing the skip does not.
+            //
+            // Best-effort and re-driven: a failure leaves the row pending and the next sync says
+            // this again, which is exactly today's behaviour.
+            mlsService
+              .updateInvitationStatus(inv.deviceId, inv.userId, groupId, 'active')
+              .catch((e: unknown) =>
+                log(
+                  `[PENDING] ${inv.deviceId} in tree for ${groupId} but the vouch failed: ${String(e).slice(0, 120)}`
+                )
+              );
             log(
-              `[PENDING] ${inv.deviceId} already in tree for ${groupId} - skip (will join via queued Welcome)`
+              `[PENDING] ${inv.deviceId} already in tree for ${groupId} - invitation fulfilled, vouching`
             );
             continue;
           }

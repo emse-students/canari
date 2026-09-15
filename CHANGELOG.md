@@ -11,6 +11,31 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - une invitation deja honoree revenait a chaque synchronisation, indefiniment
+
+Quand un appareil est ajoute a une conversation, le serveur garde une ligne « en attente » jusqu'a
+ce que quelqu'un confirme que l'ajout a bien eu lieu. Seul l'appareil invite le faisait, en traitant
+son message de bienvenue. S'il etait hors ligne a ce moment-la, la ligne ne disparaissait jamais :
+tous les autres membres du groupe la recevaient a chaque synchronisation, constataient que
+l'appareil etait deja dans l'arbre, ne faisaient rien, et recommencaient a la suivante.
+
+Mesure en production le 15/09/2026 : **104 lignes en attente sur 47 conversations et 55 appareils,
+dont 98 de plus d'un jour et 19 vieilles de treize jours**. Sur une trace de demarrage reelle, 25
+des 31 invitations recues ne servaient qu'a reconstater cela.
+
+Desormais, un membre qui lit lui-meme la presence de l'appareil dans l'arbre le certifie au serveur,
+ce que l'endpoint autorisait depuis sa creation sans que personne ne l'appelle jamais. La
+certification ne demande aucune confiance nouvelle : cette meme lecture decidait deja de ne PAS
+reajouter l'appareil, ce qui est la decision risquee des deux.
+
+**Une certification n'est toutefois pas une auto-declaration, et la difference se voit sur un
+point.** Un appareil qui se declare lui-meme actif annonce qu'il sait dechiffrer a partir de cet
+instant : le serveur lui rejoue alors les messages arrives pendant l'attente, pour qu'il recoive les
+notifications manquees. Un membre qui certifie pour autrui n'affirme que l'ajout - aucune date de
+dechiffrement. Rejouer treize jours a un appareil qui n'a peut-etre pas encore ouvert la
+conversation, ce serait jusqu'a cinquante trames indechiffrables et autant de notifications vides.
+Le rejeu reste donc reserve a celui qui peut le dater.
+
 ### Changed - vingt requetes pour une liste que le client tenait deja en entier
 
 Mesure sur le client web en production le 15/09/2026, sur un rechargement ordinaire : **vingt `GET
