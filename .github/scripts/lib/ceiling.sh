@@ -28,9 +28,11 @@
 # make. A semver ceiling would have called that update unclassified and merged it exactly as this one
 # did. For a Docker tag the NAME is the only reliable discriminator there is.
 #
-# Usage: gate_for_dependency <name> [proposed-version]
+# Usage: gate_for_dependency <name> [proposed-version] [ecosystem]
 #          -> prints the missing gate, or nothing when the suite is evidence about this dependency.
-#             Always exits 0. The version is consulted ONLY by the datastore arm; see below.
+#             Always exits 0. The version and the ecosystem are consulted ONLY by the datastore arm;
+#             see below. An ABSENT ecosystem fails closed - the arm applies, which is the behaviour
+#             this table had before the argument existed.
 
 # The compose file that names the majors production is actually running. Overridable so the
 # self-tests can drive the comparison off fixtures rather than off today's pins.
@@ -86,6 +88,28 @@ third_party_stateful_images() {
   done <<EOF
 $(compose_stateful_images "${1:-$CEILING_PROD_COMPOSE}")
 EOF
+}
+
+# THE ECOSYSTEM DEPENDABOT IS UPDATING, READ OFF THE BRANCH IT PUSHED.
+#
+# IT EXISTS BECAUSE THE TABLE MATCHES ON A NAME AND A NAME IS NOT UNIQUE ACROSS ECOSYSTEMS. `redis`
+# is a Docker image production mounts a volume for, and it is ALSO a Rust client crate
+# `apps/chat-gateway` depends on. The datastore arm refused `redis 1.6.0 -> 1.7.0` (#668, measured
+# 2026-09-15) and told a client-library bump to prove an on-disk upgrade path - a test that cannot be
+# written for it, because a client holds no data directory. That is precisely the queue nobody drains
+# this table was written to avoid.
+#
+# Dependabot encodes the ecosystem in the branch it pushes: `dependabot/<ecosystem>/<path>/<name>`.
+# `cargo`, `docker`, `docker_compose`, `bun`, `github_actions`. It is the ecosystem's OWN statement of
+# what it is updating, which is why it is read rather than guessed from the version's shape.
+ceiling_ecosystem_from_ref() {
+  case "${1:-}" in
+    dependabot/*)
+      local rest="${1#dependabot/}"
+      printf '%s' "${rest%%/*}"
+      ;;
+    *) ;;
+  esac
 }
 
 # The declared major gap between dev and production, and what each gap has been PROVEN to
@@ -152,6 +176,18 @@ gate_for_dependency() {
     # does not name, an empty `dependency-version` - the update is refused. The cost of a false
     # refusal is one comment naming a test; the cost of a false pass was 33 minutes of downtime.
     postgres | redis | garage | dxflrs/garage)
+      # A NAME IS A DATASTORE ONLY WHEN IT IS AN IMAGE, and this arm is about a data directory on a
+      # volume. A Cargo crate called `redis` is a CLIENT: it holds nothing on disk, so the failure
+      # mode below cannot reach it and the test the refusal names cannot be written for it. Refusing
+      # it anyway is the queue nobody drains, and it happened - #668, measured 2026-09-15.
+      #
+      # AN UNKNOWN ECOSYSTEM STILL FAILS CLOSED. The argument is optional so that every existing
+      # caller keeps its behaviour exactly; only a caller that KNOWS the update is not a container
+      # releases the arm, which is the safe direction of this change.
+      case "${3:-}" in
+        '' | docker | docker_compose) ;;
+        *) return 0 ;;
+      esac
       __ceiling_current=$(prod_image_major "$1")
       __ceiling_proposed=$(printf '%s' "${2:-}" | sed -e 's/^v//' -e 's/[^0-9].*$//')
       if [ -n "$__ceiling_current" ] && [ -n "$__ceiling_proposed" ] &&
@@ -196,20 +232,24 @@ gate_for_dependency() {
       echo "one relay-path call. The SFU has ten tests and not one of them touches the ICE stack; that is campaign rung 15 CALL, which has no runner yet"
       ;;
 
-    stripe)
-      # THE COMPILER ALREADY DOES HALF OF THIS, AND THE HALF IT DOES IS THE SAFE HALF. The SDK types
-      # `apiVersion` as the string LITERAL its release was cut against, and this service pins that
-      # value in one exported constant (`src/payment/stripe-api-version.ts`). So an SDK bump that
-      # still compiles cannot change which API the app talks to - the constant governs - and it
-      # merges on its own like anything else. An SDK bump that CROSSES an API version stops the
-      # tree compiling, in four files at once, which is exactly the coupling being made visible.
-      #
-      # What no gate here can answer is the other half: whether the app still reads what the new API
-      # sends. An API version decides webhook payload shapes and object fields, so crossing one is a
-      # decision about PAYMENTS, and today the only evidence is Stripe's changelog and somebody
-      # reading it. That is not a semver judgement this script can make.
-      echo "a test that pins this service's Stripe surface to FIXTURES per API version - the webhook events \`webhook.controller.ts\` handles and the fields \`stripe-payment-provider.ts\` and \`users.service.ts\` read - so that crossing an API version is PROVED rather than read in a changelog. The SDK's literal type already refuses a silent crossing: if this update stopped the tree compiling, \`STRIPE_API_VERSION\` and \`stripe\` have to move together, deliberately"
-      ;;
+    # `stripe` WAS REFUSED HERE UNTIL 2026-09-15, and the entry is gone because the test it named
+    # now exists. The refusal asked for "a test that pins this service's Stripe surface to FIXTURES
+    # per API version - the webhook events `webhook.controller.ts` handles and the fields
+    # `stripe-payment-provider.ts` and `users.service.ts` read". That is
+    # `apps/core-service/src/payment/stripe-surface.ts` plus its spec, and the two halves are in
+    # two files for a reason worth repeating here: the SDK's types are cut against ONE API version,
+    # so a `satisfies` against them IS the compiler reading the new schema - but `ts-jest` runs
+    # without diagnostics and `tsconfig.build.json` excludes the specs, so the pins only check
+    # anything as SOURCE. They are source. `nest build` fails on a field or an event that left the
+    # schema, in the same job that already fails when the API version literal moves, and the spec's
+    # signed fixtures fail on a payload shape that changed under a branch.
+    #
+    # WHAT REMAINS TRUE AND IS NOT A REASON TO PUT THIS BACK: no gate here can see a change in
+    # Stripe's BEHAVIOUR that keeps every shape. Stripe's own contract covers that half - since
+    # `2024-09-30.acacia` the monthly releases inside a release train are additive and only the
+    # version OPENING a train carries breaking changes - so crossing INTO a new train is a
+    # different act, and the thing that makes it visible is the literal in `stripe-api-version.ts`
+    # refusing to compile. A human still takes that decision; they no longer take it blind.
 
     # `@nestjs/*` WAS REFUSED HERE UNTIL 2026-08-31, and the entry is gone because the test it named
     # now exists and is green on all four services: `boot-nest-apps` builds the real `AppModule`

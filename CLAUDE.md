@@ -256,25 +256,25 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    empty screen still looks like a broken claim ([backlog](docs/wiki/backlog.md), [cotisations](docs/wiki/cotisations.md)).
 9. **BLOCKED ON HARDWARE** ([table](docs/wiki/backlog.md#owed-a-verification-and-nothing-else),
    [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
-10. **UX/RENDERING - THE GRAPHICAL PASS's ROUTE SWEEP IS DONE (2026-09-14): every route at 390, 1280
-    and 1920, nothing scrolling sideways, four truncation defects found and in `CHANGELOG.md`. WHAT
-    IT COULD NOT REACH IS WHAT IS LEFT** - REAL HARDWARE, all of it Chrome with an override; the
-    channel list's width half closed by injection. Also open: Noto Color Emoji, and server prose
-    in English reaching a French reader, a TREE count `serverProse.test.ts` settles ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md)).
-11. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
+10. **UX/RENDERING - THE ROUTE SWEEP IS DONE AND WHAT IT COULD NOT REACH IS WHAT IS LEFT**: REAL
+    HARDWARE, all of it Chrome with an override; the channel list's width half closed by injection;
+    Noto Color Emoji; server prose in English, a TREE count `serverProse.test.ts` settles ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md)).
+11. **P3 - THE COLD START ASKED FOR THE FINGERPRINT AFTER 4,4 s; THREE OF FOUR CAUSES SHIPPED
+    2026-09-15. THE FOURTH IS REVERTED, NOT OPEN** - reinstating it is the trap ([backlog](docs/wiki/backlog.md)).
+12. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
     commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
-12. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
+13. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
     and audit in [backlog](docs/wiki/backlog.md).
-13. **P1 - A DEVICE ASKS FOR A WELCOME FOR EVER AND THE MEMBER ANSWERING RESETS THE HEALING ROW** -
+14. **P1 - A DEVICE ASKS FOR A WELCOME FOR EVER AND THE MEMBER ANSWERING RESETS THE HEALING ROW** -
     five halves fixed 2026-09-04, **ONE PROD MEASUREMENT OWED**; read with its sibling P2
     ([backlog](docs/wiki/backlog.md)).
-14. **TWELVE MESSAGES DROPPED, PERMANENT COMMIT-LOG HOLE AT EPOCH 121** - four defects shipped in
+15. **TWELVE MESSAGES DROPPED, PERMANENT COMMIT-LOG HOLE AT EPOCH 121** - four defects shipped in
     `v0.15.0`'s ancestors; RESIDUE and the 13:10 arm open ([backlog](docs/wiki/backlog.md)).
-15. **`dev.canari-emse.fr` IS THE PRE-RELEASE TARGET**
+16. **`dev.canari-emse.fr` IS THE PRE-RELEASE TARGET**
     ([dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy). Two open: a dev
     deploy cannot tell a broken CHANGE from an unreachable REGISTRY, and prod's deploy job is still
     inlined shell where `deploy-dev` exercises the script ([backlog](docs/wiki/backlog.md)).
-16. **FROM THE USER: FIRST CONTACT, THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** The 2026-09-08
+17. **FROM THE USER: FIRST CONTACT, THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** The 2026-09-08
     PROD P1 is FIXED, UNSHIPPED, owing ONE hardware run nothing blocks. **A reaction to your OWN
     message must notify by push and NOTIF-15 asserts the opposite** ([backlog](docs/wiki/backlog.md)).
 

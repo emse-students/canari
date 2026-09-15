@@ -384,13 +384,29 @@
    * later having typed a secret for nothing (measured on W1, 2026-08-28).
    *
    * Named for the question rather than for one of its two answers, because it is now both.
+   *
+   * SYNCHRONOUS ON PURPOSE: both facts are already in memory, and the signature is what keeps a
+   * future caller from putting I/O back in front of the unlock.
    */
-  async function mayPromptForPin(): Promise<boolean> {
+  function mayPromptForPin(): boolean {
     if (isRefreshCredentialProvenDead()) {
       appendLog('[platform] PIN prompt declined - refresh credential already proven dead.');
       return false;
     }
-    await refreshAppVersionCheck();
+    // THE VERDICT IS ALREADY HERE, AND WAITING FOR A FRESHER ONE COST EVERY LAUNCH A ROUND TRIP.
+    //
+    // The probe below used to be awaited here. The store hydrates `lastCheck` from cached server
+    // metadata synchronously at import and fires its own refresh there, so that wait never
+    // produced the FIRST verdict - only a newer one - while `GET /api/version` sat in front of the
+    // unlock. On a degraded link that is not a small cost: the probe carries a retry ladder of
+    // 3 x 8 s timeouts plus backoff, so the fingerprint prompt could be held back ~26 s before
+    // answering from exactly the cache consulted below (Pixel 6a, 2026-09-15).
+    //
+    // Nothing is weakened by reading it now. A verdict that BLOCKS still refuses the prompt here,
+    // and a refresh that lands on a blocking answer afterwards is not lost: `PlatformGateOverlay`
+    // is mounted in the root layout and derives from this same store, so it raises itself over
+    // whatever the session has reached. The gate is the overlay; this call is the shortcut.
+    void refreshAppVersionCheck();
     if (shouldBlockSessionUnlock(isGlobalAdmin())) {
       appendLog('[platform] MLS unlock blocked (maintenance or minimum version gate)');
       return false;
@@ -400,7 +416,7 @@
 
   /** Opens the PIN modal for the given user, computing isFirstSetup from the server. */
   async function openPinModal(uid: string) {
-    if (!(await mayPromptForPin())) return;
+    if (!mayPromptForPin()) return;
     globalSession.userId = uid;
     isFirstPinSetup = await detectFirstPinSetup(uid);
     showPinModal = true;
@@ -1078,7 +1094,7 @@
     _loginInProgress = true;
     globalSession.isLoginInProgress = true;
     try {
-      if (!(await mayPromptForPin())) {
+      if (!mayPromptForPin()) {
         globalSession.isLoginInProgress = false;
         return;
       }
@@ -1113,10 +1129,15 @@
               biometricCancelled = false;
               showBiometricSheet = true;
 
-              // Leave a short delay so the user can interact with the BiometricBottomSheet
-              // (choosing "Use my PIN"). If onSkip fires during that delay, biometricCancelled
-              // flips to true and we skip the OS biometric prompt.
-              await new Promise((resolve) => setTimeout(resolve, 250));
+              // THE WINDOW THIS TIMER PROTECTED WAS ONE NOBODY COULD USE. A 250 ms sleep sat here
+              // so a tap on the sheet's "use my PIN" could land before the OS prompt was raised -
+              // but nobody reads a sheet and decides in a quarter of a second, so the delay was
+              // paid by every cold launch and spent by none. Choosing the PIN once the OS prompt
+              // is up works and always did: cancelling it is the documented route to the PIN modal
+              // (see the catch in biometricLoginImpl), and it is the route real users already take.
+              //
+              // The check below stays - it costs nothing and answers a fact rather than a clock:
+              // a skip that has ALREADY happened must not be overridden by a prompt.
               if (biometricCancelled) {
                 showBiometricSheet = false;
               } else {
@@ -1536,7 +1557,7 @@
     // in +layout.ts sees isLoginInProgress = true and skips fetchUserProfile.
     globalSession.isLoginInProgress = true;
 
-    if (!(await mayPromptForPin())) {
+    if (!mayPromptForPin()) {
       globalSession.isLoginInProgress = false;
       return;
     }
