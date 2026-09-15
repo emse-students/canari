@@ -8,6 +8,7 @@
     CloudUpload,
     LoaderCircle,
     ChartColumn,
+    SmilePlus,
   } from '@lucide/svelte';
   import PdfThumbnail from '$lib/components/shared/PdfThumbnail.svelte';
   import { untrack, tick, onMount, onDestroy } from 'svelte';
@@ -18,6 +19,8 @@
   import MentionComposerInput from '$lib/components/shared/MentionComposerInput.svelte';
   import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
   import GifPickerModal from './GifPickerModal.svelte';
+  import ComposerEmojiPicker from './ComposerEmojiPicker.svelte';
+  import { clickOutside } from '$lib/actions/clickOutside';
   import type { PendingMediaFile } from '$lib/media';
   import { mediaAspectStyle } from '$lib/utils/mediaLayout';
   import { isTauriRuntime } from '$lib/utils/openExternal';
@@ -123,6 +126,9 @@
   let showGifPicker = $state(false);
   /** GIF button is only shown when a KLIPY key is configured (Tenor closed; Giphy free tier too small). */
   const hasGifPicker = !!(import.meta.env as Record<string, string | undefined>).VITE_KLIPY_KEY;
+  let showEmojiPicker = $state(false);
+  /** Anchor for the emoji popover, and the boundary `clickOutside` closes it against. */
+  let emojiButtonEl = $state<HTMLElement | null>(null);
   let previewUrls = $state<Record<string, string>>({});
   /** Index into imageEntries of the currently open lightbox, or null when closed. */
   let lightboxIndex = $state<number | null>(null);
@@ -259,6 +265,34 @@
     controlsForcedOpen = false;
     if (value.trim().length > 0) pingTyping();
     else stopTyping();
+  }
+
+  /**
+   * Splices `emoji` into `messageText` at the caret, through the same funnel a keystroke uses
+   * (`handleMessageChange`), then restores focus and the caret just past what was inserted.
+   *
+   * `MentionComposerInput.value` is a controlled prop: the component's own effect re-renders its
+   * contenteditable DOM once `messageText` changes, but it does not know where the caret should
+   * land afterwards - only the caller does, since only the caller knows what was inserted and
+   * where. `tick()` waits for that re-render before `setSelectionRange` places it.
+   *
+   * Shift held is the "I'm picking several" gesture: the panel stays open and nothing is added
+   * after the emoji, so consecutive picks sit next to each other rather than a space apart. Either
+   * way the editor is refocused - a mouse pick should not leave the caret stranded in the panel.
+   */
+  async function insertEmoji(emoji: string, shiftKey: boolean) {
+    const inserted = shiftKey ? emoji : `${emoji} `;
+    const range = mentionComposer?.getSelectionRange() ?? {
+      start: messageText.length,
+      end: messageText.length,
+    };
+    const next = messageText.slice(0, range.start) + inserted + messageText.slice(range.end);
+    handleMessageChange(next);
+    await tick();
+    const caret = range.start + inserted.length;
+    mentionComposer?.setSelectionRange(caret);
+    mentionComposer?.focusEditor();
+    if (!shiftKey) showEmojiPicker = false;
   }
 
   onDestroy(stopTyping);
@@ -853,6 +887,49 @@
           onkeydown={handleComposerKeydown}
           onpaste={handlePaste}
         />
+
+        <!-- Emoji picker button - desktop only: a phone keyboard already has its own emoji panel,
+             and a coarse-pointer device is read the same way (see `isMobileViewport`). At the
+             right end of the text field rather than with the other controls, and NEVER behind
+             `controlsCollapsed`: an emoji is something a member reaches for mid-message, unlike
+             attaching a file or opening a poll. `shrink-0` matters here specifically - this is the
+             one icon button that sits beside a `flex-1` element that is actively growing. -->
+        {#if !isMobileViewport}
+          <div
+            class="shrink-0"
+            bind:this={emojiButtonEl}
+            use:clickOutside={{
+              enabled: showEmojiPicker,
+              callback: () => (showEmojiPicker = false),
+            }}
+          >
+            <button
+              type="button"
+              onclick={() => (showEmojiPicker = !showEmojiPicker)}
+              title={m.chat_emoji_picker_title()}
+              aria-label={m.chat_emoji_picker_label()}
+              class="ui-icon-button chat-composer-icon-button"
+            >
+              <SmilePlus size={20} strokeWidth={2} />
+            </button>
+
+            <!--
+              Rendered HERE, inside the same element `clickOutside` is bound to, even though
+              `use:portal` moves its actual panel to `document.body`: `containsThroughPortals`
+              recognises a portalled node as "inside" its ORIGIN parent - where it was written
+              before the move - not wherever it happens to sit in the template. Rendering the
+              picker as a distant sibling (e.g. beside `GifPickerModal`, further down this file)
+              would give it an origin outside this div, and every click on the picker's own
+              contents - its search box, its category tabs, an emoji - would then read as
+              "outside" and close the panel a frame before `onSelect` could act on it.
+            -->
+            <ComposerEmojiPicker
+              open={showEmojiPicker}
+              anchor={emojiButtonEl}
+              onSelect={(emoji, shiftKey) => void insertEmoji(emoji, shiftKey)}
+            />
+          </div>
+        {/if}
 
         <!-- Dynamic send button. -->
         <div class="shrink-0 pr-1">

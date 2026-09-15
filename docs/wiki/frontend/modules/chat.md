@@ -38,7 +38,38 @@ Conversation state lives in a `SvelteMap<string, Conversation>` local to the com
 | `MessageBubble.svelte` | Renders a single message with reply, reactions, status |
 | `ConversationMediaPanel.svelte` | Side panel showing shared media for a conversation |
 | `MessageEmojiPicker.svelte` | Emoji reaction picker (locale-aware FR/EN i18n) |
+| `ComposerEmojiPicker.svelte` | Emoji picker for the text input itself, desktop only |
 | `Sidebar.svelte` | Conversation list, community/workspace switcher. The community rail supports drag-and-drop reordering (`svelte-dnd-action`); order is optimistic locally then persisted via `ChannelService.reorderWorkspaces` |
+
+### The composer's own emoji picker, and what it shares with the reaction one
+
+`ComposerEmojiPicker.svelte` sits at the right end of `ChatComposer`'s text field, right before the
+send button - never behind `controlsCollapsed` (the button row that folds while typing), because
+picking an emoji is something a member reaches for mid-message, unlike attaching a file or opening
+a poll. Desktop only (`!isMobileViewport`): a phone keyboard already has its own panel.
+
+It reuses `MessageEmojiPicker.svelte`'s positioning mechanism (`bindFixedPopover`, portalled) rather
+than a centred modal - anchored to the button, and `computeFixedPopoverPosition` prefers whichever
+side has more room, which is ABOVE for a composer sitting at the bottom of the screen. The two
+pickers also now share `emojiPickerShared.ts`: the i18n objects (spread onto the library's own
+English defaults so a key the library adds later cannot crash the panel the way `skinToneLabel` once
+did), the FR/EN dataset resolver, and the recent-emoji list - one localStorage-backed history for
+both a reaction and a composed message.
+
+**Picking an emoji closes the panel, inserts it followed by a space, and refocuses the text field;
+holding Shift does neither** - the panel stays open and nothing is added after the emoji, so several
+picks in a row sit next to each other rather than reopening the panel each time. `emoji-click`'s own
+event carries no modifier-key information (it is the library's synthetic event, dispatched from
+code), so Shift is read from a separate CAPTURE-phase `click` listener on the same host element -
+capture runs before the library's own internal handling, which is in bubble/target phase deep in the
+shadow root.
+
+**The panel is rendered INSIDE the element `clickOutside` is bound to, not as a distant sibling.**
+`clickOutside`'s `containsThroughPortals` recognises a node moved by `use:portal` as "inside" its
+ORIGIN parent - where it was written before the move - never wherever it happens to sit once
+mounted. Rendering `<ComposerEmojiPicker>` far from the button (e.g. beside `GifPickerModal`) gives
+it an origin outside the anchor, and every click on the panel's own contents - its search box, a
+category tab, an emoji - then reads as "outside" and closes it a frame before the pick can register.
 
 ## Message pipeline
 

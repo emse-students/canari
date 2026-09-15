@@ -1,6 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { setLocale } from '$lib/paraglide/runtime';
+import { emojiPickerDataSource } from './emojiPickerShared';
 
 /**
  * THE EMOJI PICKER MUST NOT PHONE A CDN, AND THE SET IT OFFERS MUST BE A COMMITTED FACT.
@@ -27,30 +29,41 @@ import { resolve } from 'node:path';
 const here = import.meta.dirname;
 const frontendRoot = resolve(here, '../../../..');
 
-const PICKER = resolve(here, 'MessageEmojiPicker.svelte');
+// Every mount point of `<emoji-picker>` in the app - both must resolve `data-source` through the
+// same shared, tested function rather than inlining their own copy of the CDN-vs-local decision.
+const PICKERS = [
+  resolve(here, 'MessageEmojiPicker.svelte'),
+  resolve(here, '../chat/ComposerEmojiPicker.svelte'),
+];
 const DATASETS = [
   { locale: 'en', served: 'emoji-data-en.json', packaged: 'en/emojibase/data.json' },
   { locale: 'fr', served: 'emoji-data-fr.json', packaged: 'fr/emojibase/data.json' },
 ];
 
 describe('the emoji picker serves its own data', () => {
-  it('never leaves data-source unset, on either locale', () => {
-    const src = readFileSync(PICKER, 'utf8');
-    const attr = src.match(/data-source=\{([^}]*)\}/);
-    expect(attr, 'no `data-source` attribute on the emoji-picker element').not.toBeNull();
+  beforeEach(() => setLocale('fr', { reload: false }));
 
+  it('never leaves data-source unset, on either locale', () => {
     // `undefined` is the whole defect: it is not "no data source", it is the library's default,
     // and the library's default is a CDN. Any expression that can evaluate to it fails here.
-    expect(attr?.[1]).not.toContain('undefined');
-    // Nor may it name a remote one directly, which is the same outcome written out loud.
-    expect(attr?.[1]).not.toMatch(/https?:|cdn/i);
-    // One root-relative dataset per locale branch, and nothing else that looks like a path.
-    const literals = [...(attr?.[1].matchAll(/'([^']*)'/g) ?? [])].map((m) => m[1]);
-    const paths = literals.filter((v) => v.includes('/'));
-    expect(paths, 'expected one local dataset path per locale branch').toHaveLength(
-      DATASETS.length
-    );
-    for (const value of paths) expect(value).toMatch(/^\/emoji-data-[a-z-]+\.json$/);
+    for (const locale of ['fr', 'en'] as const) {
+      setLocale(locale, { reload: false });
+      const src = emojiPickerDataSource();
+      expect(src).not.toBeUndefined();
+      // Nor may it name a remote one directly, which is the same outcome written out loud.
+      expect(src).not.toMatch(/https?:|cdn/i);
+      expect(src).toMatch(/^\/emoji-data-[a-z-]+\.json$/);
+    }
+  });
+
+  it('every emoji-picker mount calls the shared resolver, not its own inline expression', () => {
+    for (const file of PICKERS) {
+      const src = readFileSync(file, 'utf8');
+      expect(
+        src,
+        `${file} must set data-source={emojiPickerDataSource()} rather than inlining its own logic`
+      ).toMatch(/data-source=\{emojiPickerDataSource\(\)\}/);
+    }
   });
 
   it('pins the dataset package to an exact version, not a range', () => {

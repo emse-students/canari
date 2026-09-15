@@ -11,6 +11,34 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Added - un selecteur d'emoji rejoint le composeur, sur ordinateur
+
+Jusqu'ici le seul selecteur d'emoji de l'application etait celui des reactions
+(`MessageEmojiPicker.svelte`) - composer un message avec un emoji demandait donc le clavier du
+systeme. Un bouton rejoint desormais l'extremite droite du champ de texte, juste avant l'envoi -
+**jamais derriere le chevron qui replie les autres controles pendant la frappe** (`controlsCollapsed`) :
+contrairement a joindre un fichier ou ouvrir un sondage, un emoji est quelque chose qu'on va chercher
+en plein milieu d'un message. Reserve a l'ordinateur (`!isMobileViewport`) : un clavier de telephone a
+deja son propre panneau.
+
+Le panneau s'ouvre juste au-dessus du composeur plutot qu'au centre de l'ecran, ancre au bouton par
+le meme mecanisme que le selecteur de reaction (`bindFixedPopover`) - qui prefere deja le cote avec
+le plus de place, et il y en a bien plus au-dessus d'un composeur colle en bas de l'ecran qu'en
+dessous. Cliquer un emoji ferme le panneau, l'insere suivi d'une espace et rend le focus au champ de
+texte ; **maintenir Majuscule** laisse le panneau ouvert et n'ajoute pas l'espace, pour enchainer
+plusieurs emoji sans le rouvrir - `emoji-click` ne porte aucune information sur les touches
+maintenues, donc l'etat de Majuscule est capture separement, en phase de capture, avant que la
+bibliotheque ne traite le clic et ne l'emette.
+
+**La logique partagee avec le selecteur de reaction est maintenant a un seul endroit**
+(`emojiPickerShared.ts`) : les objets de traduction, le contournement du bug ou une cle manquante
+faisait planter le panneau, la resolution du jeu de donnees FR/EN et les emoji recents - un pick sur
+l'un alimente desormais la meme liste que l'autre. **Le panneau est rendu a l'interieur de l'element
+sur lequel `clickOutside` est branche**, et pas plus loin dans le fichier a cote de `GifPickerModal` :
+`containsThroughPortals` ne reconnait un noeud deporte par `use:portal` comme "a l'interieur" que par
+rapport a son parent D'ORIGINE, avant le deplacement - le rendre ailleurs aurait ferme le panneau des
+le premier clic sur son propre champ de recherche.
+
 ### Fixed - l'auto-merge n'armait jamais une pull request ouverte par un membre a l'appartenance privee
 
 Signale par l'utilisateur : *"arm auto merge always skips for my PRs"*. `arm-auto-merge.yml` decidait
