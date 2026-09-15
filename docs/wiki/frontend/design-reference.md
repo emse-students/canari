@@ -1833,3 +1833,49 @@ EAGERLY and rejects it on `cancel()`; Svelte's `transitions.js` cancels the anim
 touches that promise, so in a browser nothing is ever unhandled. The rejection is the environment's,
 not the app's, and `src/test/adoptTransitionAnimations.ts` adopts it rather than changing anything
 the product does. A component test that plays an outro needs it; one that only plays intros does not.
+
+## 25. Whose is that reaction? The chip was measured, and the tie is there
+
+Filed during the 2026-09-14 guided session on A1, alongside the three findings of section 24, with
+its own verdict deliberately withheld: *"a heart sits alone, left-aligned, between the message it
+decorates and the next one, and a reader cannot tell which of the two it belongs to. NOT YET
+MEASURED - what would settle it is the chip's box against both neighbours' boxes, and whether any
+border, offset or overlap ties it to one."*
+
+It was measured on 2026-09-15, W1 at 393x945, on a 52-row thread carrying one reaction.
+**The tie exists, it is authored rather than accidental, and the finding does not survive as filed** -
+but the margin is thin enough to be worth writing down rather than simply deleting.
+
+### The three ties, and the number behind each
+
+| Tie | Measured | Where it comes from |
+| --- | --- | --- |
+| Vertical proximity, 2:1 | 6 px to its own bubble, 12 px to the next row | `mt-1` + `pt-0.5` above, `pb-2` below, on the row in `MessageReactions.svelte` |
+| Side alignment | chip left 58, own bubble left 54 | `justify-{start,end}` driven by `isOwn`, `px-1` inset |
+| Fill against the bubble | chip `rgb(255,255,255)`, peer bubble `rgb(228,230,235)` | `bg-cn-surface` + `shadow-sm` |
+
+The proximity is the load-bearing one, and it is exact rather than approximate: `mt-1` is 4 px and
+`pt-0.5` is 2 px, which is the 6 above; `pb-2` is 8 px and two consecutive bubbles in a grouped run
+sit 4 px apart, which is the 12 below. **A reader is not asked to judge a ratio, they are asked to
+judge 6 against 12**, and the closer of the two is always the message the chip decorates.
+
+### Why the margin is still thin
+
+**Four pixels is all the contrast the proximity has to work against.** Consecutive bubbles in a
+grouped run are 4 px apart, so the 12 px below the chip is 8 px of padding plus that gap. Break the
+run - a timestamp, a day separator, a sender change - and the number below grows; keep it, and 6
+against 12 is the whole of it.
+
+**The border carries none of the load, and the visible one is the wrong variant.** The chip the
+report was looking at is the one the CURRENT USER cast, which is amber
+(`oklab(0.769 0.0640531 0.176752 / 0.3)` at 1 px) - the most visible variant there is, and the one
+least likely to be mistaken. A reaction cast by SOMEONE ELSE draws `border-black/5`, which resolves
+to `oklab(0 0 0 / 0.05)`: present in the computed style, invisible on screen. So on the common case
+the separation is fill and shadow only, measured by cloning the live chip and swapping its classes -
+the technique the component's own comment records.
+
+**What is NOT there is any overlap.** Messenger and WhatsApp both tuck the chip INTO the bubble's
+bottom edge, which makes the ownership structural rather than metric. This app sets `marginTop: 0px`
+and stacks the chip below, so the only ownership signal is distance. Adopting the overlap idiom is a
+product decision with a measured margin of 6 px against 12, and it belongs to the user rather than
+to a sweep.
