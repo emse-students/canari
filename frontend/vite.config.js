@@ -89,11 +89,17 @@ function protobufPatch() {
  * so the same three lines written directly in `defineConfig` are overwritten by
  * `vite-plugin-sveltekit-compile` and do nothing at all - measured here, with a full build.
  *
+ * `apply: 'build'` is too, for the opposite reason. The dev server serves workers as modules and
+ * emits no asset at all, so there is no duplicate to collapse and no `build.rollupOptions.output`
+ * to read - and the throw below, which is right during a build, then fires on `svelte-check` and on
+ * `vite dev` instead. It did: 10 files, every one of them unrelated to wasm.
+ *
  * @returns {import('vite').Plugin}
  */
 function oneWasmAsset() {
   return {
     name: 'one-wasm-asset',
+    apply: 'build',
     config: {
       order: 'post',
       handler(config) {
