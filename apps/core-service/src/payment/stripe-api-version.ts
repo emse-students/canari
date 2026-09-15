@@ -18,4 +18,4 @@ import type Stripe from 'stripe';
  * webhook payload shapes and object fields. Bump `stripe` and this constant together, deliberately,
  * and read Stripe's changelog for the versions crossed.
  */
-export const STRIPE_API_VERSION = '2026-06-24.dahlia' satisfies Stripe.StripeConfig['apiVersion'];
+export const STRIPE_API_VERSION = '2026-08-26.dahlia' satisfies Stripe.StripeConfig['apiVersion'];

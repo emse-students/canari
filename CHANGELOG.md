@@ -11,6 +11,32 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - stripe 22.3.2 -> 22.6.2, et la version d'API franchie avec
+
+La montee du SDK et le literal de `stripe-api-version.ts` sont COUPLES par construction : les types
+de stripe-node sont tailles pour une version d'API, donc `22.6.2` fait cesser de compiler
+`'2026-06-24.dahlia'`. Le couplage a produit exactement quatre erreurs, et elles sont le mecanisme,
+pas un obstacle :
+
+    stripe-api-version.ts:21    TS1360  Type '"2026-06-24.dahlia"' does not satisfy the expected type '"2026-08-26.dahlia"'
+    stripe-payment-provider.ts:26  TS2322
+    webhook.controller.ts:64      TS2322
+    users.service.ts:423          TS2322
+
+La version passe donc a `2026-08-26.dahlia`, deliberement. Ce qui est franchi a ete lu : les deux
+versions sont dans le train `dahlia`, ouvert par `2026-03-25.dahlia`, et le contrat de versionnage
+de Stripe dit que les publications mensuelles a l'interieur d'un train sont additives. La seule
+modification des versions franchies qui touche un objet lu ici ajoute quatre codes d'erreur
+(`authentication_failure`, `expired_payment_method`, `incorrect_postal_code`,
+`payment_method_restricted`) a `PaymentIntent.last_payment_error` - **aucun code de ce depot ne
+branche sur un code d'erreur Stripe**, verifie.
+
+Et c'est la premiere fois que la surface epinglee au commit precedent fait son travail : `nest
+build` a recompile les huit listes de `stripe-surface.ts` contre le schema de la NOUVELLE version -
+les cinq types d'evenement webhook traites et les champs lus sur `Checkout.Session`,
+`PaymentIntent`, `Account`, `Balance`, `PaymentMethod` et `PaymentMethod.Card` existent tous
+encore - et les 235 tests du service passent, dont les douze fixtures signees.
+
 ### Added - la surface Stripe est epinglee, pour que franchir une version d'API soit prouve
 
 Le plafond de dependances refusait `stripe` en nommant le test qui le retirerait : *"un test qui
