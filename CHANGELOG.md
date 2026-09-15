@@ -11,6 +11,8 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+## [0.18.4] - 2026-09-15
+
 ### Fixed - une invitation deja honoree revenait a chaque synchronisation, indefiniment
 
 Quand un appareil est ajoute a une conversation, le serveur garde une ligne « en attente » jusqu'a
