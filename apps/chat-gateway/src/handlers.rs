@@ -21,6 +21,53 @@ use crate::ws_dispatch::{
     WsConn, WsFrame, handle_disconnect, handle_typing, handle_welcome_request,
 };
 
+// ── How a socket ENDED ───────────────────────────────────────────────
+
+/// What an error ending the receive loop MEANS, which is the only thing that can decide the level
+/// of the line recording it.
+#[derive(Debug, PartialEq, Eq)]
+enum SocketEnd {
+    /// The ordinary end of a web session. A browser that reloads, navigates away or is killed
+    /// sends no close frame, so the socket simply resets - the impolite twin of `Message::Close`,
+    /// and recorded beside it at the same level so the two can be counted as one event.
+    Goodbye,
+    /// Anything else. Deliberately everything else: the predicate is exactly as wide as the
+    /// measurement below and not one variant wider, so a family nobody has seen arrives as the
+    /// only ERROR line on the box rather than hiding inside a name that was widened to fit it.
+    Fault,
+    /// The error under axum's is not a `tungstenite::Error` at all, so nothing here could read it.
+    /// **This is a SIGNAL, never a path** - it can only happen if a future axum bump stops
+    /// unifying with this crate's direct `tokio-tungstenite` dependency, at which point every
+    /// goodbye silently becomes a fault again. It is therefore logged at a level that ACCUSES and
+    /// names its own cause.
+    Unreadable,
+}
+
+/// Decide whether a receive-loop error is the ordinary end of a web session or a real fault.
+///
+/// **THE FIX IS A CLASSIFICATION, NOT A DEMOTION.** `axum` boxes the `tungstenite::Error` exactly
+/// once, so `source()` hands back the real type and `ResetWithoutClosingHandshake` is a VARIANT
+/// rather than prose - which is the only reason this is allowed to change a level at all.
+///
+/// MEASURED ON PRODUCTION 2026-09-15, over 7 days of `infrastructure-chat-gateway-1`: **32 of 32**
+/// ERROR lines were this one family, across 10 distinct users, out of 2680 lines total. The polite
+/// version of the same event - `Message::Close` - fired 3 times. So the gateway's ERROR channel
+/// carried exactly one thing and that thing was people closing tabs: a genuine fault would have
+/// been one line among 33, and nobody would have looked. That measurement is the argument; the
+/// line count on a developer estate is not, and was explicitly not trusted for this.
+fn classify_socket_error(err: &axum::Error) -> SocketEnd {
+    use std::error::Error as _;
+    use tokio_tungstenite::tungstenite::{Error as WsError, error::ProtocolError};
+
+    let Some(ws) = err.source().and_then(|s| s.downcast_ref::<WsError>()) else {
+        return SocketEnd::Unreadable;
+    };
+    match ws {
+        WsError::Protocol(ProtocolError::ResetWithoutClosingHandshake) => SocketEnd::Goodbye,
+        _ => SocketEnd::Fault,
+    }
+}
+
 // ── Cookie helper ─────────────────────────────────────────────────────────
 
 /// Extract the value of a named cookie from the `Cookie` HTTP header.
@@ -526,7 +573,23 @@ async fn handle_socket(
                         break;
                     }
                     Err(e) => {
-                        tracing::error!("WebSocket Error from {}: {}", user_id, e);
+                        match classify_socket_error(&e) {
+                            // Beside `Client closed connection` above, at the SAME level: the two
+                            // lines are one event - a session ended - differing only in whether the
+                            // client was polite enough to say so. Splitting them across levels
+                            // would re-create, one rung down, exactly the defect this fixes.
+                            SocketEnd::Goodbye => {
+                                tracing::info!("Client went away without a closing handshake")
+                            }
+                            SocketEnd::Fault => {
+                                tracing::error!("WebSocket Error from {}: {}", user_id, e);
+                            }
+                            SocketEnd::Unreadable => tracing::error!(
+                                "WebSocket Error from {} COULD NOT BE CLASSIFIED - the error under                                  axum's is not a tungstenite::Error, so this crate's direct                                  tokio-tungstenite dependency no longer unifies with axum's and                                  every ordinary goodbye is being reported here as a fault: {}",
+                                user_id,
+                                e
+                            ),
+                        }
                         break;
                     }
                     _ => {}
@@ -660,4 +723,57 @@ async fn log_routing_diagnostics(
             member_status.join(", ")
         }
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SocketEnd, classify_socket_error};
+    use tokio_tungstenite::tungstenite::{Error as WsError, error::ProtocolError};
+
+    /// Everything below reached `tracing::error!` before 2026-09-15, which is what made the
+    /// gateway's ERROR channel say nothing: the ONE case that is not a defect outnumbered the rest
+    /// 32 to 0 on production over a week. Three of these four assertions are therefore the fix and
+    /// the fourth is the control.
+    fn end_of(err: WsError) -> SocketEnd {
+        classify_socket_error(&axum::Error::new(err))
+    }
+
+    #[test]
+    fn a_reset_with_no_handshake_is_somebody_closing_a_tab() {
+        assert_eq!(
+            end_of(WsError::Protocol(
+                ProtocolError::ResetWithoutClosingHandshake
+            )),
+            SocketEnd::Goodbye
+        );
+    }
+
+    #[test]
+    fn the_control_a_real_protocol_fault_is_still_a_fault() {
+        // Same `Protocol` wrapper as the case above, so this pins that the discriminator is the
+        // VARIANT and not merely "it was a protocol error".
+        assert_eq!(
+            end_of(WsError::Protocol(ProtocolError::UnmaskedFrameFromClient)),
+            SocketEnd::Fault
+        );
+    }
+
+    #[test]
+    fn the_tempting_widening_is_refused_connection_closed_stays_a_fault() {
+        // `ConnectionClosed` reads like a goodbye and is the obvious second variant to fold in.
+        // It is NOT folded in, because it was not among the 32 lines measured: a predicate widened
+        // to cover a case nobody has observed cannot later report that case. If it does start
+        // appearing it will be the only ERROR line on the box, which is the whole point.
+        assert_eq!(end_of(WsError::ConnectionClosed), SocketEnd::Fault);
+        assert_eq!(end_of(WsError::AlreadyClosed), SocketEnd::Fault);
+    }
+
+    #[test]
+    fn an_error_that_is_not_a_tungstenite_error_accuses_rather_than_guesses() {
+        // The shape a future axum bump would produce if it stopped unifying with this crate's
+        // direct `tokio-tungstenite`. It must NOT read as a goodbye: silently reclassifying every
+        // session end as normal is strictly worse than the noise this change removes.
+        let foreign = axum::Error::new(std::io::Error::other("not a websocket error"));
+        assert_eq!(classify_socket_error(&foreign), SocketEnd::Unreadable);
+    }
 }

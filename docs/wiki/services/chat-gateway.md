@@ -71,6 +71,58 @@ If the JWT is invalid or absent, the connection is rejected with code `4401`.
 5. Drain `pending_welcomes:{userId}` (Redis list of WS frames queued while offline).
 6. Spawn `ws_read_loop` (client frames) and `ws_write_loop` (mpsc -> WS).
 
+## How a socket ENDED, and why the LEVEL of the line depends on it
+
+The receive loop has three terminal arms and until 2026-09-15 one of them swallowed the other two:
+`Err(e) => error!("WebSocket Error from {user_id}: {e}")`, whatever `e` was. **A browser that
+reloads, navigates away or is killed sends no close frame** - the socket simply resets - so the
+single commonest way a web session ends was recorded at the level reserved for things that are
+wrong.
+
+**MEASURED ON PRODUCTION, 2026-09-15, 7 days of `infrastructure-chat-gateway-1`:**
+
+| | count |
+| --- | --- |
+| lines total | 2680 |
+| at ERROR | 32 |
+| of those, `Connection reset without closing handshake` | **32** (10 distinct users) |
+| `Client closed connection` (the polite twin, at `info!`) | 3 |
+
+So the gateway's ERROR channel carried exactly one thing, and that thing was people closing tabs. A
+genuine fault would have arrived as one line among 33 and nobody would have gone looking. The rig
+had already been forced to build a forgiveness list - `EXPECTED_ERRORS` in
+`tools/cross-client-harness/srvlog.mjs` - whose ONLY member was this line, so that every reload the
+campaign performs did not dirty its own window; that one-member list is most of the argument.
+
+**The fix is a classification, not a demotion**, which is the distinction
+[durable-rules](../durable-rules.md) draws when it forbids demoting a line. `axum` boxes the
+`tungstenite::Error` exactly once (`Error::new(err)` in its `Stream` impl), so `source()` plus
+`downcast_ref::<tungstenite::Error>()` hands back the real value and
+`ProtocolError::ResetWithoutClosingHandshake` is a VARIANT rather than prose. `classify_socket_error`
+in `handlers.rs` returns one of three outcomes:
+
+- **`Goodbye`** - that variant and nothing else. Logged `info!("Client went away without a closing
+  handshake")`, beside `Client closed connection` and at the SAME level: the two lines are one event
+  differing only in whether the client was polite, and splitting them across levels would re-create
+  the defect one rung down.
+- **`Fault`** - deliberately *everything* else, including `ConnectionClosed` and `AlreadyClosed`,
+  which read like goodbyes and are the tempting widening. They were not among the 32, and a
+  predicate widened to cover what nobody has observed can never afterwards report it. If one starts
+  appearing it will be the only ERROR line on the box, which is the point.
+- **`Unreadable`** - the error under axum's is not a `tungstenite::Error` at all. This can only
+  happen if a future `axum` bump stops unifying with this crate's direct `tokio-tungstenite`
+  dependency (both resolve to `0.29` today, one entry each in `Cargo.lock`), at which point every
+  goodbye silently becomes a fault again. It is therefore **a signal, never a path**: logged at
+  ERROR, naming that cause in the line itself.
+
+All four cases are pinned in `handlers.rs`'s test module, the `Fault` ones as controls.
+
+**WHAT READS DIFFERENTLY AFTERWARDS, named before the fix was written** (the rule
+[testing-methodology](../testing-methodology.md) states after a no-op shipped with a CHANGELOG entry
+promising a reduction that never happened): `WebSocket Error from ...` should fall from 32 per week
+to 0 on production, with the same traffic reappearing as the new `info!` line. The before-count above
+is the baseline; the after-count is owed once a release carries this.
+
 ## WebSocket message routing
 
 On each WebSocket connection, the gateway registers the user+device key (`userId:deviceId`) in the in-memory `connected_users` map (a `Mutex<HashMap<String, HashMap<String, Sender>>>`).

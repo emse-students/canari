@@ -49,6 +49,7 @@ the rule in [durable-rules](durable-rules.md). Delete the line once the measurem
 | the auto-merge ceiling refuses a major | **half taken.** The workflow is enabled again and its shipped loop body was replayed over all 33 open Dependabot PRs: 26 merge, 6 refuse, and the 6 collapse to the two gates below. What replay cannot show is the workflow REFUSING in its own run log, because no major has opened since - so the row stays until a real one does, logging `REFUSED` and staying open |
 | a proposed event now tells the association's calendar managers | **ANSWERED ON THE Mi 9T, 2026-09-09 - both halves.** Shade in 2 271 ms with the app backgrounded, in-app row rendered, two `event_proposed` rows written to both BDE validators, event left `pending`. The precondition was narrower than this row had guessed - the validator grant must be on the **BDE** (`a.isBDE = true`) and the proposer must hold `PROPOSE_EVENT` on a NON-BDE association, or their event is validated on the spot and never becomes a proposal - and both grants name their account by its OIDC **subject**, never a display name. Reading the notification instead of counting it found two defects, both fixed: the agenda's five resource pairs had shipped with their ACCENTS STRIPPED, and the two FORM pairs were still English on the legacy side. A test now compares the server's legacy sentence with the Android resource for every key. ([device-verification](device-verification.md#the-layout-pass-of-2026-09-09-and-the-sixth-check-that-ran-later-the-same-day)) |
 | launch to fingerprint prompt on Android, 4.2 - 4.6 s before the fix | HARDWARE, and **a pre-release build**: the APK embeds the frontend, so no deploy reaches it. Re-attach CDP to the release WebView (`adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>`), navigate `http://tauri.localhost/` and read the offset of `BiometricService/handleAuthenticate` in `logcat`. Three causes are fixed - the double SQLite schema bootstrap and the 250 ms timer (#655), the awaited `GET /api/version` - and the fourth is deliberately NOT ([the revocation round trip](#p3---a-revocation-round-trip-sits-in-front-of-the-fingerprint-prompt-and-moving-it-is-reverted-not-to-be-re-opened-measured-on-the-pixel-6a-2026-09-15)), so the target is a visible drop and not zero |
+| the gateway's ERROR channel means something again | after the next release that carries it, `docker logs --since 168h infrastructure-chat-gateway-1 | grep -c ERROR` on production must be **0**, against the 32 measured over the 7 days to 2026-09-15, with the same traffic reappearing as `info!("Client went away without a closing handshake")`. A non-zero count is not a regression - it is the first genuine fault this box has been able to report, and it must be read rather than forgiven. Delete `EXPECTED_ERRORS`' last member from `srvlog.mjs` once no estate the rig targets still serves a build from before the change ([chat-gateway](services/chat-gateway.md#how-a-socket-ended-and-why-the-level-of-the-line-depends-on-it)) |
 | the five products the boutique never sold are buyable | **ONE MANUAL FLIP IS OWED, and it is the user's** (2026-08-31). `activationWithheld` releases a product when payments BECOME ready, and BDE's Stripe onboarding completed long ago - no event will ever fire for it, which is the correct behaviour for an allowlist and the reason a per-tier on-sale switch now exists. So: open `/associations/bde/edit`, Cotisations tab, tick **En vente** on the 170 EUR tier, then buy nothing and simply confirm it appears in `/shop`. The other four associations have no payment account at all, so their products are correctly withheld and release themselves when one arrives - what closes THAT half is the next association to finish onboarding, whose products must go on sale with nobody touching them |
 
 ---
@@ -1896,33 +1897,6 @@ display name, and an ambiguous list is a refusal). What is left is the product q
 excluding self is one argument. **Whether it SHOULD be excluded is a judgement, not a bug** - some
 chat apps allow a self-mention as a way to bookmark a message - which is why this is a P3 and not a
 fix applied inline: it is the user's call.
-
-### P3 - the gateway logs a client that merely went away at ERROR, and a clean goodbye at INFO, so the level says nothing about whether anything is wrong (measured 2026-09-04)
-
-`handlers.rs:529` ends the receive loop with two arms and one of them is unconditional:
-`Ok(Message::Close(c))` logs `info!("Client closed connection")`, and `Err(e)` logs
-`error!("WebSocket Error from {user_id}: {e}")` whatever `e` is. **A browser that reloads,
-navigates away or is killed sends no close frame** - the socket resets - so the ordinary end of a
-web session is recorded at the same level as a genuine protocol fault.
-
-**Measured, and the cause is visible in the timestamps.** Three ERROR lines at `16:19:49.602`,
-`.603490` and `.603505` - three sockets dying inside a millisecond of each other, which is
-`make local-frontend` recreating the nginx container in front of them, not three clients
-misbehaving. The one `Client closed connection` line in the same window carries `code: 1001`
-("going away"), the polite version of the same event.
-
-**The fix is a classification, not a demotion**, which is the distinction
-[durable-rules](durable-rules.md) draws when it says never to demote a line: `axum` 0.8 surfaces the
-tungstenite error, so `ProtocolError::ResetWithoutClosingHandshake` is a TYPE and reading it is
-reading a discriminator rather than prose. A reset with no handshake from a web client is the
-expected end of a connection and belongs at `info!`/`debug!` beside the clean close; everything else
-stays `error!` and finally means something when it appears.
-
-**The rate here is NOT the rate that matters and must be measured before the name is believed.**
-This estate is idle apart from one operator, so three lines is all it produced; on production the
-line fires once per client that ever closes a tab without a handshake, and nobody has counted that.
-Measure it on the production gateway first - if it is the dominant ERROR line there, that alone is
-the argument.
 
 ### P3 - the dirt classifier fails a row on the OIDC callback that row performs on purpose (2026-08-28)
 
