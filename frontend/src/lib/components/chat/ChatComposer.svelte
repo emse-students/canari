@@ -908,7 +908,7 @@
               onclick={() => (showEmojiPicker = !showEmojiPicker)}
               title={m.chat_emoji_picker_title()}
               aria-label={m.chat_emoji_picker_label()}
-              class="ui-icon-button chat-composer-icon-button"
+              class="ui-icon-button chat-composer-icon-button chat-composer-emoji-button"
             >
               <SmilePlus size={20} strokeWidth={2} />
             </button>

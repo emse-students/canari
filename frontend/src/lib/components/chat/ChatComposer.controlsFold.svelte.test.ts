@@ -6,6 +6,11 @@
  * chevron's request for the whole message: press it and the four buttons stayed out for every
  * character typed afterwards.
  *
+ * THE EMOJI BUTTON IS A DELIBERATE EXCEPTION AND STAYS OUT OF THIS GROUP. Unlike attaching a file
+ * or opening a poll, reaching for an emoji happens mid-message, so it never folds - see
+ * `chat-composer-emoji-button` in `ChatComposer.svelte`, excluded from `groupButtons()` below the
+ * same way the chevron itself is.
+ *
  * On a phone that is the crowding the fold exists to remove, restored permanently by one tap - the
  * group is 4 x 52px of a ~358px row. The user asked for the opposite (2026-09-09: *"Taper sur le
  * clavier doit TOUJOURS replier joindre, GIF, micro, pas juste au premier caractere"*), so the
@@ -27,9 +32,16 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-/** The chevron shares the icon-button class, so "the folded group" is the buttons that are not it. */
+/**
+ * The chevron and the emoji button both share the icon-button class, so "the folded group" is
+ * every icon button that is neither - see the docblock above for why the emoji button is excluded.
+ */
 function groupButtons(): Element[] {
-  return [...document.querySelectorAll('.chat-composer-icon-button:not(.chat-composer-chevron)')];
+  return [
+    ...document.querySelectorAll(
+      '.chat-composer-icon-button:not(.chat-composer-chevron):not(.chat-composer-emoji-button)'
+    ),
+  ];
 }
 function chevron(): HTMLElement | null {
   return document.querySelector('.chat-composer-chevron');
