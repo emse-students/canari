@@ -1,9 +1,11 @@
 version: 0.18.1
 
-Le fil social tient une publication de plus par écran : les icônes qui recouvraient le nom de l'association sont regroupées, réactions et commentaires tiennent sur une ligne, publier et chercher sont dans l'en-tête.
+Le lancement est plus rapide : l'empreinte est demandée presque immédiatement.
 
-L'agenda : tout événement part en validation, même déposé par le BDE ou un administrateur, et déplacer sa date le renvoie en attente.
+La barre du bas n'affiche plus de texte : des icônes plus grandes, un point discret pour les nouveautés.
 
-Les pages d'association prennent toute la largeur de l'écran, agenda compris.
+Le fil social tient une publication de plus par écran ; publier et chercher sont dans l'en-tête.
 
-Plus rien n'est coupé, et un bandeau ne masque plus l'en-tête.
+Les messages vocaux, la barre de saisie et les pages d'association prennent enfin la place qu'il leur faut.
+
+L'agenda : tout événement part en validation, et déplacer sa date le renvoie en attente.
