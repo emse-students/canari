@@ -11,6 +11,34 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - "cet appareil n'existe pas" etait annonce comme "votre requete est mal formee"
+
+Deux reponses du service de distribution disaient 400 la ou elles voulaient dire 404 :
+`GET /api/mls/devices/:userId/:deviceId/key-package`, dont le commentaire promet pourtant *"only
+revoked / missing devices 404"*, et `PATCH .../metadata`, qui repondait `Device not found` avec le
+meme code. Dans les deux cas la requete etait parfaitement formee et la reponse est simplement que
+la ligne n'est pas la.
+
+**Ce n'est pas une question de politesse : dans ce fichier, le code PORTE un sens.** Soixante lignes
+plus haut, le refus du plafond d'appareils est deliberement un 400 avec `code:
+DEVICE_LIMIT_REACHED`, et son commentaire ecrit le contrat : un 400 a cet endroit est TERMINAL - le
+compte doit perdre un appareil avant de pouvoir en ajouter un - alors que les autres 400 et tous les
+5xx se rejouent, et **un client ne doit pas avoir a lire de la prose pour faire la difference**.
+Chaque sens supplementaire entasse dans 400 amincit cette classification. "Absent" a son propre
+code ; il l'utilise maintenant.
+
+**Rien ne change pour les clients d'aujourd'hui, et c'etait la condition pour toucher au statut.**
+Les deux seuls appelants sont dans `mlsDeliveryApi.ts` : celui du key-package rend `null` sur
+n'importe quel `!res.ok`, celui des metadonnees leve une `Error` qui ne fait que reciter le numero.
+Aucun des deux ne branche dessus. La recherche des autres appelants dans `apps/`, `tools/` et
+`src-tauri` n'a rien rendu.
+
+Le resolveur ne rend `null` que dans les deux cas que son propre commentaire nomme - appareil
+revoque, ou aucun KeyPackage enregistre -, donc les quatre cas du test couvrent les deux, plus la
+mise a jour de metadonnees sur un appareil inconnu, plus **un temoin** : un corps de metadonnees
+vide reste un 400, parce que celui-la est bien la faute de l'appelant. Les trois premiers echouent
+contre le code d'avant, le temoin passe des deux cotes.
+
 ### Fixed - la seule sortie de l'ecran de PIN pouvait se trouver hors de l'ecran
 
 Signale par l'utilisateur le 2026-09-14 : *"l'ecran du pin de chiffrement est tres grand et charge,

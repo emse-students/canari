@@ -9,6 +9,7 @@ import {
   Inject,
   Headers,
   BadRequestException,
+  NotFoundException,
   UseGuards,
   Logger,
   ForbiddenException,
@@ -405,7 +406,12 @@ export class DevicesController {
       where: { userId: safeUserId, deviceId: safeDeviceId },
     });
     if (!keyPackage) {
-      throw new BadRequestException('Device not found');
+      // 404, NOT 400: the request was well formed and the row is simply not there. The 400s in
+      // this controller all accuse the CALLER of sending something wrong (an empty body, a
+      // non-base64 key package, more than 200 ids), and one of them - the device cap - is
+      // TERMINAL where the others are retryable. A client that has to tell those apart without
+      // reading prose can only do it if "absent" never borrows their code.
+      throw new NotFoundException('Device not found');
     }
 
     if (deviceName !== undefined) keyPackage.deviceName = deviceName;
@@ -434,7 +440,10 @@ export class DevicesController {
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
     const keyPackage = await this.resolveKeyPackagePayloadForDevice(safeUserId, safeDeviceId);
     if (!keyPackage) {
-      throw new BadRequestException(`No key package for device ${safeUserId}:${safeDeviceId}`);
+      // The resolver returns null in exactly two cases, and the docblock above names both: the
+      // device is revoked, or it never registered a KeyPackage. Neither is a malformed request -
+      // see the sibling refusal in `updateDeviceMetadata` for why "absent" gets its own code here.
+      throw new NotFoundException(`No key package for device ${safeUserId}:${safeDeviceId}`);
     }
     const row = await this.keyPackageRepo.findOne({
       where: { userId: safeUserId, deviceId: safeDeviceId },
