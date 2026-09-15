@@ -11,6 +11,30 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - le selecteur d'emojis ne chargeait rien en anglais, et allait le chercher chez un tiers
+
+`emoji-picker-element` va chercher ses donnees a l'execution. Sans attribut `data-source` il
+interroge `cdn.jsdelivr.net/npm/emoji-picker-element-data@^1/en/emojibase/data.json`, et le
+composant demandait exactement cela sur la locale anglaise en passant `undefined` - une valeur qui
+se lit "pas de preference" et qui signifie "un tiers". La moitie francaise etait auto-hebergee
+depuis que la recherche avait besoin des mots-cles traduits, ce qui explique que personne n'ait
+rencontre l'autre : le selecteur marchait, dans la langue que cet etablissement lit.
+
+**Trois couts, et un quatrieme qui a ete mesure plutot que deduit.** L'IP de chaque membre partait
+chez un CDN a l'ouverture du selecteur ; le selecteur ne pouvait pas s'ouvrir hors ligne, donc pas
+du tout dans les applications mobiles ; `@^1` ne fixe rien, donc l'ensemble des emojis proposes
+pouvait changer sans commit. Et **la requete ne partait meme pas** : `connect-src` ne nomme aucun
+CDN. Depuis l'origine de l'application, sur l'estate en marche, Chrome repond `Connecting to
+'https://cdn.jsdelivr.net/...' violates the following Content Security Policy directive:
+"connect-src 'self' blob: wss: ws: ..." The action has been blocked.` **En anglais, le selecteur
+n'avait aucune donnee a afficher.**
+
+Les deux jeux de donnees sont desormais servis depuis `static/`, copies tels quels par
+`tools/emoji-data/sync.mjs` depuis `emoji-picker-element-data` epingle a une version EXACTE - un
+accent circonflexe rendrait l'ensemble propose a nouveau dependant de quelqu'un d'autre, un `bun
+install` a la fois. `emojiData.test.ts` verifie que l'attribut n'est jamais `undefined` ni distant,
+que l'epinglage n'est pas une plage, et que chaque fichier commite est identique OCTET POUR OCTET au
+paquet : une montee de version non resynchronisee ne peut donc pas passer.
 ### Fixed - une URL suffisait a faire disparaitre l'application, et rien ne pouvait la rattraper
 
 Le pont Android de wry conserve la derniere URL que la WebView a COMMENCE a charger et la remet a

@@ -44,6 +44,7 @@
         "@types/node": "^26.5.1",
         "@types/qrcode": "^1.5.6",
         "@vitest/coverage-v8": "^5.0.0",
+        "emoji-picker-element-data": "1.8.0",
         "fake-indexeddb": "^6.2.5",
         "happy-dom": "^20.14.3",
         "husky": "^9.1.7",
@@ -598,6 +599,8 @@
     "domutils": ["domutils@4.0.2", "", { "dependencies": { "dom-serializer": "^3.0.0", "domelementtype": "^3.0.0", "domhandler": "^6.0.0" } }, "sha512-qI4JLRKnSzqFqr7hAlS5xQDusBCjKSEG4t4+7aNrIQMHBcsC2TGEhuyABJdYkgSewL57PNLYEiibY2iPKhKpaA=="],
 
     "emoji-picker-element": ["emoji-picker-element@1.29.1", "", {}, "sha512-TOiHzu9Dqib3x4MwcAi3wi3RdyT4SoeB4b15AvH1ks4SBwTl7DeebhZ0d3x6dNi4XfNU7IGRZ7NBQllj0RqwrQ=="],
+
+    "emoji-picker-element-data": ["emoji-picker-element-data@1.8.0", "", {}, "sha512-VfRuRJNEDLS1JKlNS4olaqhjX5S1nnZ+ZHG73b/dV8QeZyi0yPruTPEE72EmF6XO3k/9hj3lybMIYMOYXb/57A=="],
 
     "emoji-regex": ["emoji-regex@8.0.0", "", {}, "sha512-MSjYzcWNOA0ewAHpz0MxpYFvwg6yjy1NG3xteoqz644VCo/RPgnr1/GGt+ic3iJTzQ8Eu3TdM14SawnVUmGE6A=="],
 
