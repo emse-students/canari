@@ -11,6 +11,27 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - une URL suffisait a faire disparaitre l'application, et rien ne pouvait la rattraper
+
+Le pont Android de wry conserve la derniere URL que la WebView a COMMENCE a charger et la remet a
+chaque message IPC comme URI de la requete, avec un `unwrap()` sur le `http::Uri` qu'il en
+construit. Or `http::Uri` n'accepte que trois formes, dont aucune n'est un `schema:/chemin` sans
+autorite - la construction echoue, et cet `unwrap()` panique **dans une frame `extern "C"`**. Une
+panique qui ne peut pas remonter est un abandon : SIGABRT, activite terminee de force, moteur de
+rendu emporte avec elle. Pas d'erreur JS, pas de `svelte:boundary`, rien qu'un `catch` de ce
+depot puisse atteindre. Mesure sur A1 le 2026-09-14 (build `7fea1bb42`, LineageOS 23.2 / Android
+11, arm64) : l'application disparaissait a chaque fois, et **le contenu du message n'y etait pour
+rien - une fois une telle URL demarree, l'IPC suivant, quel qu'il soit, tue l'application.**
+
+Le correctif amont existe (`wry` 0.56.1) et reste hors d'atteinte : tout `tauri-runtime-wry`
+stable epingle `wry ^0.55`. Attendre n'est pas une decision, et constater qu'aucun rendu actuel ne
+produit une telle URL n'en est pas une non plus - c'est une propriete des composants qui affichent
+les liens, pas une garantie. **L'application refuse donc la navigation avant que la WebView ne la
+demarre** (`mobile::navigation::webview_may_load`, branche sur `on_navigation`) : `onPageStarted`
+ne se declenche jamais, et l'URL fatale ne devient jamais celle que l'IPC relira. Le predicat est
+l'invariant lui-meme - `http::Uri` sait-il encore lire ceci - et non une liste de schemas, qui
+serait une seconde copie tenue a la main d'une regle que l'analyseur enonce deja.
+
 ### Fixed - un deploiement se lisait comme une deconnexion, et la liste des communautes abandonnait
 
 `refresh()` distingue soigneusement trois reponses : seuls un 401 et un 403 prouvent que le cookie

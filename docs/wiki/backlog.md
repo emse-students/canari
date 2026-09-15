@@ -5562,7 +5562,7 @@ reading the DOM would have reported a working app. A screenshot is what separate
 counted a horizontal scroller as an overflow - were fixed on 2026-09-14 and are in `CHANGELOG.md`.
 The remaining finding above is about the app.)*
 
-### P1 - a URI `http::Uri` cannot parse ABORTS THE WHOLE APP, and nothing can catch it (found 2026-09-14 on A1)
+### P2 - a URI `http::Uri` cannot parse ABORTED THE WHOLE APP - REFUSED AT THE NAVIGATION 2026-09-15, THE UPSTREAM HALF IS A RE-CHECK (found 2026-09-14 on A1)
 
 Measured on A1, build `7fea1bb42` (0.18.0, code 1800099), LineageOS 23.2 / Android 11, arm64:
 
@@ -5609,15 +5609,17 @@ product code would**, and it killed the app three times before the argument was 
 with no `--route` was never affected. Run it as `MSYS_NO_PATHCONV=1 bun sweep.mjs --route /posts`,
 or from PowerShell.
 
-**What is still open, and it is the only thing that decides priority:** whether any path a USER can
-take produces such a URL. Nothing found so far does. Two consequences, and they are independent:
+**THE QUESTION THAT DECIDED PRIORITY NO LONGER DECIDES ANYTHING** - it was whether a path a USER can
+take produces such a URL, and the answer stopped mattering on 2026-09-15 when the app started
+refusing the navigation outright. Two consequences, and they were independent:
 
 - **The abort is a defect whatever the answer**, and it is upstream: a boundary that cannot unwind
   owes a `Result`, not an `unwrap`. Fixing it here means either a wry version that does so, or
   refusing the navigation before the WebView starts it - the app owning which URLs its own WebView
-  may load, which is the architectural half.
+  may load, which is the architectural half. **CLOSED 2026-09-15.**
 - **If a reachable user path exists, it is a shipping P1 and a denial of service**: content that
-  carries such a link would kill the app of anyone who taps it.
+  carries such a link would kill the app of anyone who taps it. **No longer reachable by
+  construction**, which is why this entry is now a P2 and its remaining half is a re-check.
 
 **Do not "fix" this by changing the instrument.** It found a line that aborts the process on bad
 input; changing how the sweep navigates would hide it.
@@ -5634,8 +5636,23 @@ SEVERITY with no known trigger rather than a shipping denial of service. **What 
 about `shouldOpenExternalHref` is the shape of its fall-through**: it returns true only for
 `http/https/mailto/tel/webcal`, so an unknown scheme is neither opened outside nor refused - it falls
 through to default navigation *inside* the WebView, which is exactly the fatal path. Nothing produces
-such an href today; that is a property of the renderers, not a guarantee of this function, so the
-architectural half below is still owed.
+such an href today; that is a property of the renderers, not a guarantee of this function, **which is
+exactly why the guarantee was put in Rust instead of here** - see the closure below.
+
+**CLOSED 2026-09-15 - THE APP NOW OWNS WHICH URLS ITS OWN WEBVIEW MAY LOAD.**
+`mobile::navigation::webview_may_load` is wired into the mobile window's `on_navigation`
+(`src-tauri/src/lib.rs`); returning `false` there makes Android's `shouldOverrideUrlLoading` return
+`true`, so `onPageStarted` never fires and `currentUrl` never becomes the value that kills the
+process. **The predicate is the invariant itself** - can `http::Uri` still parse this - rather than a
+scheme allowlist, which would be a second hand-kept copy of a rule the parser already states; it
+also refuses `blob:`, `data:` and `file:`, each of which would have aborted the app for the same
+reason and none of which this app ever navigates to. **It is a floor, not a proof**:
+`tauri-runtime-wry` parses the string into a `url::Url` before calling the handler and allows the
+navigation outright when THAT parse fails (`unwrap_or(true)`, its lib.rs:4898), so a string both
+parsers refuse still gets through. Every case in the module's tests parses as a `url::Url` - the
+killer included - and Android always hands over an absolute `request.url.toString()`, so the residue
+is narrow; it closes with the bump below, not here. Reasoning and measurements:
+[mobile](frontend/mobile.md#the-app-owns-which-urls-its-own-webview-may-load).
 
 *The upstream fix exists and is out of reach.* wry replaced the `unwrap()` with a `match` that logs
 and drops the request - commit `5ce72b0`, PR tauri-apps/wry#1772 - **released in `wry 0.56.1`**. It
