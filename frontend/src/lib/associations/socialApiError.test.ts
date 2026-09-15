@@ -21,7 +21,11 @@ const SHOP_LIST = join(process.cwd(), 'src/lib/components/shop/PartnershipCardLi
 
 describe('SocialApiError', () => {
   it('carries the code beside the sentence', () => {
-    const e = new SocialApiError('No codes left for this partnership', 'PARTNERSHIP_NO_CODES_LEFT');
+    const e = new SocialApiError(
+      'No codes left for this partnership',
+      'PARTNERSHIP_NO_CODES_LEFT',
+      409
+    );
     expect(e.code).toBe('PARTNERSHIP_NO_CODES_LEFT');
     expect(e).toBeInstanceOf(Error);
   });
@@ -29,12 +33,21 @@ describe('SocialApiError', () => {
   // Two hundred call sites already catch `Error` from this module. Widening the thrown type must
   // not narrow what they catch, or a screen that handled a refusal stops handling it.
   it('is still an Error, so every existing catch still catches it', () => {
-    const e: unknown = new SocialApiError('boom', null);
+    const e: unknown = new SocialApiError('boom', null, 500);
     expect(e instanceof Error).toBe(true);
   });
 
   it('accepts a null code, because most refusals still carry none', () => {
-    expect(new SocialApiError('boom', null).code).toBeNull();
+    expect(new SocialApiError('boom', null, 500).code).toBeNull();
+  });
+
+  // THE STATUS IS WHY A CODELESS REFUSAL IS STILL DESCRIBABLE. A guard's bare `ForbiddenException`
+  // carries no code, so before the status was kept, "you may not do this" and "the server broke"
+  // arrived at a screen as the same thing: an Error with English in it and nothing to branch on.
+  it('carries the HTTP status, which is the discriminator a codeless refusal has left', () => {
+    expect(
+      new SocialApiError('Insufficient permissions in this association', null, 403).status
+    ).toBe(403);
   });
 });
 

@@ -377,7 +377,18 @@ export function associationLogoSrc(logoUrl: string | null | undefined): string |
 export class SocialApiError extends Error {
   constructor(
     message: string,
-    readonly code: string | null
+    readonly code: string | null,
+    /**
+     * The HTTP status the refusal carried.
+     *
+     * IT IS REQUIRED, BECAUSE IT WAS THROWN AWAY AND THAT COST A SCREEN ITS ONLY DISCRIMINATOR.
+     * `code` is null for most refusals - a guard's bare `ForbiddenException` carries none - so a
+     * caller holding one of these could not tell "you are not allowed" from "the server broke"
+     * from "the date is wrong", and every one of them read as the same generic line. The status is
+     * the coarse answer that is always present; the code is the precise one that usually is not.
+     * See {@link describeApiRefusal} for the sentence each becomes.
+     */
+    readonly status: number
   ) {
     super(message);
     this.name = 'SocialApiError';
@@ -413,7 +424,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     } catch {
       // Ignore JSON parse failure: message is the raw error text and there is no code to read
     }
-    throw new SocialApiError(message, code);
+    throw new SocialApiError(message, code, res.status);
   }
   // A successful response is not always JSON: DELETEs and void POSTs answer 204, or 200 with an
   // empty body. `res.json()` on those throws "unexpected end of data", turning a call that WORKED
