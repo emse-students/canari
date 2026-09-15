@@ -71,14 +71,13 @@ jobs:
     #     the trust boundary and not a formality: creating a branch here requires push access, so
     #     the author is somebody the repository already trusts. A pull request from a FORK is armed
     #     by nobody and merged by a human, which is the correct answer for code from outside.
-    #   * Dependabot BY NAME, because its `author_association` is not one of the three below and
-    #     never has been - it is the whole population this file was written to cover.
     #   * NOT a draft. A draft is a pull request whose author has said it is not ready.
+    #
+    # These two stay a job-level `if:` because they need no API call. WHO may be armed does now -
+    # see the step below for why `author_association` left this condition entirely.
     if: >
       github.event.pull_request.draft == false &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      (github.event.pull_request.user.login == 'dependabot[bot]' ||
-      contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association))
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - name: Mint the identity whose merge raises a push event
@@ -93,7 +92,51 @@ jobs:
           client-id: ${{ secrets.AUTOMERGE_APP_CLIENT_ID }}
           private-key: ${{ secrets.AUTOMERGE_APP_PRIVATE_KEY }}
 
+      # WHOSE PULL REQUESTS - PART TWO, AND WHY IT IS A STEP AND NOT PART OF THE `if:` ABOVE.
+      #
+      # `github.event.pull_request.author_association` is what this used to gate on: Dependabot by
+      # name, everyone else via `contains(["OWNER","MEMBER","COLLABORATOR"], author_association)`.
+      # It skipped EVERY pull request from a member whose organization membership is PRIVATE -
+      # measured on #709: `GET /pulls/709` answered `author_association: "MEMBER"` and
+      # `GET /collaborators/.../permission` answered `admin`, both queried seconds apart with a
+      # token that can see private membership, while the webhook payload this `if:` reads is
+      # computed WITHOUT that visibility and fell back to a value outside the three names - so a
+      # real admin's own pull request armed nobody, silently, every single time.
+      #
+      # The fix asks the question this job actually cares about - can this login push to THIS repo -
+      # directly, over the API, with the App's own token, rather than trusting a webhook field that
+      # depends on a privacy setting on the AUTHOR'S profile that has nothing to do with their
+      # access here.
+      - name: Decide whether this author may be armed
+        id: authz
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          set -euo pipefail
+
+          # Dependabot is never a collaborator and never will be - it is the whole population this
+          # escape hatch exists for, same as before. Kept as a GitHub expression (not `$AUTHOR` in
+          # shell) so the exact literal survives for anything that greps this file for it.
+          if [ "${{ github.event.pull_request.user.login == 'dependabot[bot]' }}" = 'true' ]; then
+            echo "armable=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          permission="$(gh api "repos/$REPO/collaborators/$AUTHOR/permission" --jq '.permission')"
+          case "$permission" in
+            admin | maintain | write)
+              echo "armable=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "$AUTHOR has '$permission' access to $REPO - not armed."
+              echo "armable=false" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+
       - name: Ask GitHub to merge it when the checks pass
+        if: steps.authz.outputs.armable == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           REPO: ${{ github.repository }}
