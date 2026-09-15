@@ -29,6 +29,21 @@ import {
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 
+/**
+ * The most ids one `GET /users/batch` may carry.
+ *
+ * It bounds the `IN (...)` that reaches Postgres, and it is a REFUSAL rather than a silent truncation
+ * - a caller that sends more gets told, instead of receiving an answer that quietly omits the rest
+ * and looks exactly like a page of deleted accounts. The client chunks to this same number, which is
+ * why it is stated here, where the refusal is.
+ *
+ * 100 covers every shape that exists, measured on production 2026-09-15: 421 accounts in all, the
+ * largest association roster 27, the largest DM group 2, and a conversation list ~20. The cap is
+ * therefore never reached today - it is here so that the day a screen asks for more, it asks in
+ * chunks rather than handing Postgres a list nobody bounded.
+ */
+const MAX_PROFILE_BATCH = 100;
+
 /** Controller handling user profile CRUD, search, and avatar proxy. */
 @Controller('users')
 export class UsersController {
@@ -97,6 +112,47 @@ export class UsersController {
   @Get('search')
   search(@Query('q') query: string, @Headers('x-user-id') currentUserId: string) {
     return this.usersService.search(query, currentUserId);
+  }
+
+  /**
+   * Public profiles for a comma-separated list of ids, in ONE request.
+   * Usage: `GET /users/batch?ids=<a>,<b>,<c>`
+   *
+   * WHY IT EXISTS: a chat reload resolved one name per conversation and issued one `GET /users/:id`
+   * for each. Measured on production 2026-09-15 from the client's own console: **20 requests for 20
+   * distinct ids**, 140-253 ms each (median 235). Nothing here is a new capability - every
+   * one of those ids was already readable, one at a time, by the same caller under the same guard.
+   *
+   * DECLARED BEFORE `:id`, because Nest matches in declaration order and `batch` would otherwise
+   * arrive as `id = "batch"` and 404 - which is the failure mode that looks like a missing user
+   * rather than a routing mistake.
+   *
+   * AN UNKNOWN ID IS ABSENT FROM THE ANSWER RATHER THAN AN ERROR: one deleted account may not
+   * refuse the nineteen live ones beside it. The client classifies the absence itself, exactly as it
+   * classifies the 404 from `:id`.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get('batch')
+  async findMany(@Query('ids') ids: string) {
+    // `ids` is TYPED string and Express can still hand over an array (`?ids=a&ids=b`) or an object
+    // (`?ids[x]=1`) - the same runtime type confusion `search` re-checks for, and for the same
+    // reason: the value flows into a SQL `IN (...)`.
+    if (typeof ids !== 'string')
+      throw new BadRequestException('ids must be a comma-separated list');
+    const requested = [
+      ...new Set(
+        ids
+          .split(',')
+          .map((id) => id.trim())
+          .filter(Boolean)
+      ),
+    ];
+    if (requested.length > MAX_PROFILE_BATCH) {
+      throw new BadRequestException(
+        `too many ids (${requested.length} > ${MAX_PROFILE_BATCH}) - split the request`
+      );
+    }
+    return { users: await this.usersService.findManyPublic(requested) };
   }
 
   /**

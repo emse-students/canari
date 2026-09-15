@@ -6,7 +6,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository, SelectQueryBuilder } from 'typeorm';
+import { DataSource, In, Repository, SelectQueryBuilder } from 'typeorm';
 import { randomBytes } from 'node:crypto';
 import axios from 'axios';
 import { User } from './entities/user.entity';
@@ -66,6 +66,24 @@ export class UsersService implements OnModuleInit {
       throw new NotFoundException(`User #${id} not found`);
     }
     return user;
+  }
+
+  /**
+   * The public profiles of `ids`, in ONE query, in no guaranteed order.
+   *
+   * AN ID THAT MATCHES NOTHING IS SIMPLY ABSENT FROM THE ANSWER, and that is the whole contract:
+   * `findOne` throws 404 for one missing user, which is the right shape when the caller asked about
+   * exactly one and can act on the refusal. A batch cannot borrow it - one deleted account would
+   * refuse the nineteen live ones beside it - so the caller reads absence per id and classifies it
+   * itself, exactly as it classifies a 404 today.
+   *
+   * The cap is the caller's problem to respect and this method's to state: the controller refuses a
+   * longer list rather than letting an unbounded `IN (...)` reach Postgres.
+   */
+  async findManyPublic(ids: string[]): Promise<PublicUserDto[]> {
+    if (ids.length === 0) return [];
+    const users = await this.userRepository.find({ where: { id: In(ids) } });
+    return users.map((user) => this.toPublicDto(user));
   }
 
   /** Merges the provided fields onto the user and persists the result. */

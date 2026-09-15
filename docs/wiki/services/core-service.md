@@ -114,6 +114,7 @@ there, so the guard would refuse every request. The refresh cookie rides along t
 |---|---|---|---|
 | GET | `/api/users/search?q=...` | JWT | Search users by id/displayName for autocomplete |
 | GET | `/api/users/directory` | JWT | Paginated directory with filters (promo, formation, association) |
+| GET | `/api/users/batch?ids=a,b,c` | JWT | Public profiles for up to 100 ids in ONE query ([why](#one-request-for-a-list-the-client-already-holds)) |
 | GET | `/api/users/:id/avatar` | JWT | Proxy the user's MiGallery photo ([three outcomes](#the-avatar-proxy)) |
 | POST | `/api/users` | global admin | Create user manually |
 | GET | `/api/users/me/notes` | JWT | Get caller's notepad ciphertext (+ `legacyNotes` once, pre-encryption) |
@@ -124,6 +125,37 @@ there, so the guard would refuse every request. The refresh cookie rides along t
 | DELETE | `/api/users/me` | JWT | Permanently delete account and all data across services |
 | GET | `/api/users/admin/list` | global admin | List all users with admin status |
 | PATCH | `/api/users/:id/admin` | global admin | Set/clear admin flag (cannot self-revoke) |
+
+#### One request for a list the client already holds
+
+`GET /api/users/batch?ids=<a>,<b>,<c>` answers the public profile of each id, and it exists because
+the client knew all of them at once and still asked one at a time. Measured on production
+2026-09-15, from the web client's own console on an ordinary reload: **20 `GET /api/users/:id` for
+20 distinct ids**, 140-253 ms each (median 235). Every one of those ids was already readable, singly,
+by the same caller under the same guard - the route adds no reach, only a plural.
+
+Three properties carry it, and each is asserted in `users.batch.spec.ts`:
+
+- **It is declared before `@Get(':id')`.** Nest matches in declaration order, so the other order
+  routes `batch` as `id = "batch"` and answers 404 - a routing mistake wearing the face of a missing
+  user.
+- **An unknown id is ABSENT from the answer, never an error.** One deleted account may not refuse
+  the nineteen live ones beside it, so the caller reads the absence and classifies it itself. The
+  store turns it back into the same `UserProfileFetchError(404)` the single-id route produced, which
+  is why `isAbsentUserError` and the whole display-name cache needed no change.
+- **A list longer than `MAX_PROFILE_BATCH` (100) is REFUSED, not truncated.** A silently shortened
+  answer is indistinguishable from a page of deleted accounts. 100 is above every shape that exists
+  (production 2026-09-15: 421 accounts, largest association roster 27, largest DM group 2), so the
+  refusal is unreachable today and the client chunks to the same number to keep it that way.
+
+**The client side is a coalescing WINDOW, not a timer** (`enqueueProfileFetch` in
+`frontend/src/lib/stores/user.ts`): everything asked for in one turn of the event loop leaves in one
+request, and the next turn is the next request. Nothing waits on a duration anybody could get wrong,
+and no call site changed - `fetchUserProfile` keeps its 30 s cache and its signature. What it is
+worth is bounded by how the callers actually mount: the same trace shows the 19 conversation tiles
+arriving in six bursts roughly 450 ms apart, each tile appearing as its own history replay finishes,
+so today this is 19 requests becoming 6. It becomes 1 when the tiles mount together, and needs no
+revisiting when they do.
 
 #### The avatar proxy
 
