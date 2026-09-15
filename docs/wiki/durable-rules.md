@@ -1631,7 +1631,7 @@ Environment and tooling traps that belong to no one subsystem. Each cost a run.
   behaving impossibly under Git Bash, print the argument the program actually received before
   reasoning about anything downstream of it. The defect the accident found is real and separate: a
   boundary that cannot unwind owes a `Result`, not an `unwrap`
-  ([backlog](backlog.md#p1---a-uri-httpuri-cannot-parse-aborts-the-whole-app-and-nothing-can-catch-it-found-2026-09-14-on-a1)).
+  ([backlog](backlog.md#p2---the-wry-bump-that-removes-the-abort-once-a-stable-runtime-asks-for-it-found-2026-09-14-on-a1)).
 
 - **AN EMPTY SCREEN MEASURED ON THE WRONG ESTATE IS NOT A MEASUREMENT.** The test population - the
   accounts, their conversations, their history - lives on the LOCAL estate. A client pointed at
