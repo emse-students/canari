@@ -7490,8 +7490,8 @@ came from one predicate; a broader one over `frontend/src` finds ~288 occurrence
 which only some assign to an error state a screen renders - the rest sit inside a `Log`/`console`
 call and are correctly dev-facing.
 
-**145 remain, down from 194 on this branch's base** (one predicate at both ends, measured rather
-than decremented - 2026-09-15; the delta is exactly the admin pass's 49).
+**125 remain, down from 194** (one predicate at both ends, measured rather than decremented -
+2026-09-15; the delta is exactly the 49 of the admin pass plus the 20 of the component pass).
 
 The member-facing pass closed 27 across `components/posts`, `components/settings`,
 `routes/posts`, `routes/profile`, `routes/lists`, `routes/documents` and `routes/forms`; the agenda
@@ -7499,7 +7499,10 @@ pass closed the last three in `components/calendar` and `routes/calendar` and ga
 codes; the landing pass closed seven across `routes/c`, `routes/g`, `routes/account`, `routes/auth`
 and `routes/directory` - the five trees a member meets BEFORE being anywhere yet; the admin pass
 closed 49 in ONE tree, thirteen of its fourteen files, every one of them with a Paraglide fallback
-already declared.
+already declared; the component pass closed 20 more across six subtrees of `lib/components` -
+channels, chat, moderation, profile, shared and sidebar - two of which were the DOUBLE violation,
+a raw French literal as the fallback ('Erreur lors du retrait.', 'Erreur'), so neither half of the
+line was translated whichever branch ran.
 
 **The landing pass found the case the sweep's shape does not cover.** `routes/auth/callback`
 declared `String(e)` as its fallback, so BOTH halves of that line were untranslatable and deleting
@@ -7515,19 +7518,14 @@ did six sites of the landing pass and twenty of the component pass. This guard c
 half - it reads one regex - which is why the two travel together rather than one of them arriving
 here as a queue item.
 
-**THE REMAINDER IS CLASSIFIED, NOT QUEUED. Every one of the 145, 2026-09-15:**
+**THE REMAINDER IS CLASSIFIED, NOT QUEUED. Every one of the 125, 2026-09-15:**
 
 | where the site sits | sites | what it means |
 | --- | --- | --- |
-| in or feeding a `Log.d` / `console.*` / `appendLog` call | 97 | CORRECT. A log is dev-facing; the server's own text is the useful half there |
+| in or feeding a `Log.d` / `console.*` / `appendLog` call | 96 | CORRECT. A log is dev-facing; the server's own text is the useful half there |
 | a docblock or test quoting the shape to explain it | 4 | the guard strips comments before matching, so it never sees these |
 | a Paraglide key BUILT to carry the raw text, as a parameter | 7 | the table below: deleting a preference does not touch it (an eighth site, `lib/utils/chat/messaging.ts`, carries it in a shape this predicate does not even match) |
-| assigned to an error state a screen renders, or an intermediate on the way to one | 37 | 20 are the component pass; 1 is the allowlisted PIN message; the other 16 are workers, composables and `mls-client`, read one at a time |
-
-**So the trees still OUTSIDE the guard are outside it for a reason**: `lib/utils/chat`, `graine`,
-the workers and `mls-client` are almost entirely logs, and adding them would fail correct code -
-the regex finds the SHAPE, never the destination. The raw count stays an upper bound for the same
-reason.
+| assigned to an error state a screen renders, or an intermediate on the way to one | 18 | 1 is the allowlisted PIN message; the other 17 are workers, composables, `mls-client` and `components/layout`, read one at a time |
 
 **WHAT THE COMPONENT PASS COULD NOT CLOSE IS A DIFFERENT SHAPE, AND DELETING A PREFERENCE DOES NOT
 TOUCH IT.** Eight sites hand the raw text to a Paraglide key BUILT to carry it, so the sentence is
@@ -7547,12 +7545,18 @@ Authentik's `error_description`, not this estate's.
 **It closes the way the calendar one did: a code at the throw, per endpoint, mapped once.** Until
 then the four trees holding these sites - `src/lib/components` (root), `components/layout`,
 `components/auth`, `lib/composables` - stay outside the guard, because a file it owns must answer
-in full. **And one of them is a rule violation on its own**: `MainChatPage.svelte:988` branches on
-`msg.includes('Groupe introuvable') || msg.includes('Group not found')` to decide which toast to
-show, which is the distinction-in-prose the durable rules forbid; it sits in the calling code
-`CALLS_ENABLED = false` holds off, and the five switches that revive calling are where it is owed.
+in full. **And one of the five is a rule violation on its own**: `MainChatPage.svelte:988` branches
+on `msg.includes('Groupe introuvable') || msg.includes('Group not found')` to decide which toast to
+show, which is the distinction-in-prose the durable rules forbid; it is inside the calling code
+that `CALLS_ENABLED = false` holds off, and the five switches that revive calling are where it is
+owed.
 
-**Nineteen trees are guarded**, and they are clean but for the one allowlisted file.
+**So the trees still OUTSIDE the guard are outside it for a reason**: `lib/utils/chat`, `graine`,
+the workers and `mls-client` are almost entirely logs, and adding them would fail correct code -
+the regex finds the SHAPE, never the destination. The raw count stays an upper bound for the same
+reason.
+
+**Twenty-five trees are guarded**, and they are clean but for the one allowlisted file.
 
 **A tree is added only once every file under it answers**, which is why they arrive in batches: a
 guard owning half a directory is one a new file walks past. The CODES are the separate, still-open

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Log } from '$lib/utils/Log';
   import {
     createMyRoleHistory,
     deleteMyRoleHistory,
@@ -69,7 +70,8 @@
       showForm = false;
       await props.onChanged?.();
     } catch (err) {
-      formError = err instanceof Error ? err.message : 'Erreur';
+      Log.d('roleHistory.handleSubmit failed', err);
+      formError = m.profile_role_history_save_error();
     } finally {
       saving = false;
     }

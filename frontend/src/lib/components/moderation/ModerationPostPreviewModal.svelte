@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Log } from '$lib/utils/Log';
   import { onMount } from 'svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import PostHeader from '$lib/components/posts/PostHeader.svelte';
@@ -28,7 +29,11 @@
       .then((t) => {
         authToken = t;
       })
-      .catch(() => {});
+      .catch((e: unknown) => {
+        // The media in the preview needs this token; without it the images stay blank, and a
+        // blank preview with a silent console is a moderation decision taken on nothing.
+        Log.d('moderationPreview.getToken failed', e);
+      });
   });
 
   $effect(() => {
@@ -47,8 +52,9 @@
         if (open && postId === id) post = loaded;
       })
       .catch((e) => {
+        Log.d('moderationPreview.getPost failed', e);
         if (open && postId === id) {
-          error = e instanceof Error ? e.message : m.moderation_load_post_error();
+          error = m.moderation_load_post_error();
         }
       })
       .finally(() => {

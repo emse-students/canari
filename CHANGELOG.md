@@ -11,6 +11,28 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - la conversation cessait de traduire ses erreurs, et l'icone disait "envoi" pour une suppression
+
+Vingt endroits dans six sous-arbres de `lib/components` - canaux, chat, moderation, profil,
+partages, barre laterale - affichaient la phrase du serveur a la place de la leur. **Deux etaient la
+double violation deja nommee par les passes precedentes** : un litteral francais brut en repli
+(`'Erreur lors du retrait.'`, `'Erreur'`), donc les DEUX moities de la ligne echappaient a la
+traduction. Chacune a recu une cle nommee pour l'operation qui a echoue, et l'editeur d'icone aussi
+: sa SUPPRESSION signalait `card_icon_upload_error`, c'est-a-dire un echec d'envoi pour un retrait.
+
+**Vingt des vingt-et-un `catch` concernes ne journalisaient rien** et journalisent desormais
+(`Log.d('communityAdmin.handleRemoveMember failed', e)`), meme regle et meme forme que la passe
+admin. Un `.catch(() => {})` vide est ferme au passage dans l'apercu de moderation : sans ce jeton
+les images de l'apercu restent blanches, et une decision de moderation prise sur un apercu vide
+avec une console muette n'est explicable par personne.
+
+**CE QUE CETTE PASSE NE POUVAIT PAS FERMER EST UNE AUTRE FORME, ET ELLE EST MESUREE.** Huit endroits
+passent le texte brut a une cle Paraglide FAITE pour le porter - `chat_send_error({ reason })`,
+`chat_forward_error({ reason })`, `chat_call_error({ msg })`, `auth_login_failed({ reason })` - donc
+supprimer une preference n'y change rien : la phrase est traduite, son sujet ne l'est pas. Elle se
+ferme comme celle de l'agenda, par un code au `throw`. Les quatre arbres qui les portent restent
+donc hors du garde, et le tableau est dans `docs/wiki/backlog.md`.
+
 ### Fixed - l'administration cessait de traduire ses erreurs, et n'en gardait aucune trace
 
 Quarante-neuf endroits dans treize des quatorze fichiers de `routes/admin` ecrivaient

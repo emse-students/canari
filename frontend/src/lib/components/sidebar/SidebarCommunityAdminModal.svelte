@@ -254,8 +254,9 @@
       });
       communityMembers = members.sort((a, b) => a.userId.localeCompare(b.userId));
     } catch (e) {
+      Log.d('communityAdmin.loadCommunityMembers failed', e);
       if (loadToken !== membersLoadToken) return;
-      membersError = e instanceof Error ? e.message : m.chat_community_load_members_error();
+      membersError = m.chat_community_load_members_error();
       communityMembers = [];
     } finally {
       if (loadToken === membersLoadToken) membersLoading = false;
@@ -289,7 +290,8 @@
       }
       globalChannels.setRolePermissions(perms);
     } catch (e) {
-      rolesError = e instanceof Error ? e.message : m.chat_community_load_members_error();
+      Log.d('communityAdmin.loadRolesAndPermissions failed', e);
+      rolesError = m.chat_community_load_members_error();
     } finally {
       rolesLoading = false;
     }
@@ -323,7 +325,8 @@
       // ordered path and nothing left to reconcile. A ledger merging the two would have been a
       // witness to the race, not a fix.
     } catch (e) {
-      rolesError = e instanceof Error ? e.message : m.common_save_error();
+      Log.d('communityAdmin.handleRolePermissionToggle failed', e);
+      rolesError = m.common_save_error();
     } finally {
       const updated = { ...roleSaving };
       delete updated[roleId];
@@ -344,7 +347,8 @@
       );
       await loadCommunityMembers();
     } catch (e) {
-      membersError = e instanceof Error ? e.message : m.common_save_error();
+      Log.d('communityAdmin.handleMemberRoleUpdate failed', e);
+      membersError = m.common_save_error();
     } finally {
       const updated = { ...memberRoleSaving };
       delete updated[userId];
@@ -368,10 +372,11 @@
       await channelService.kickFromWorkspace(workspaceDbId, userId);
       communityMembers = communityMembers.filter((mem) => mem.userId !== userId);
     } catch (e) {
+      Log.d('communityAdmin.handleRemoveMember failed', e);
       // Removing the last admin is refused with a code, which is what names the reason here - the
       // raw body would otherwise be printed at the user.
       const coded = e instanceof ChannelApiError ? describeCommunityRefusal(e.code) : null;
-      membersError = coded ?? (e instanceof Error ? e.message : m.common_save_error());
+      membersError = coded ?? m.common_save_error();
     } finally {
       const updated = { ...memberRemoving };
       delete updated[userId];
@@ -407,13 +412,13 @@
       setTimeout(() => (inviteStatus = ''), 4000);
       void loadCommunityMembers();
     } catch (e) {
+      Log.d('communityAdmin.handleGenerateInvitation failed', e);
       // CLASSIFIED BY CODE FIRST. `ChannelApiError.message` is the RAW response body, so the two
       // refusals that matter here - the invitee has never installed Canari, and the key service
       // could not be asked - used to reach the admin as an English backend sentence or a JSON
       // blob. They are different situations with different remedies and now say so.
       const coded = e instanceof ChannelApiError ? describeCommunityRefusal(e.code) : null;
-      inviteStatus =
-        coded ?? (e instanceof Error ? e.message : m.chat_community_key_distribution_error());
+      inviteStatus = coded ?? m.chat_community_key_distribution_error();
       inviteUserId = savedId;
       inviteRole = savedRole;
     } finally {
@@ -453,7 +458,8 @@
         // Clipboard may be blocked; the link stays visible for manual copy.
       }
     } catch (e) {
-      shareError = e instanceof Error ? e.message : m.chat_channel_invite_link_error();
+      Log.d('communityAdmin.loadShareLink failed', e);
+      shareError = m.chat_channel_invite_link_error();
     } finally {
       shareLoading = false;
     }
@@ -527,7 +533,8 @@
       const targetId = selectedWorkspace.workspaceDbId ?? selectedWorkspace.id;
       onUpdateWorkspaceImage?.(targetId, mediaId);
     } catch (e) {
-      imageUploadError = e instanceof Error ? e.message : m.chat_community_upload_error();
+      Log.d('communityAdmin.handleImageFileChange failed', e);
+      imageUploadError = m.chat_community_upload_error();
     } finally {
       imageUploading = false;
       input.value = '';
@@ -551,11 +558,12 @@
       historyVisibility = result.historyVisibility;
       Log.d('CHANNEL', `history visibility set to ${result.historyVisibility}`);
     } catch (e) {
+      Log.d('communityAdmin.saveHistoryVisibility failed', e);
       // Classified by the server's CODE, never by its sentence - the same contract every other
       // community refusal in this modal is read through.
       historyVisibilityError =
         describeCommunityRefusal(e instanceof ChannelApiError ? e.code : null) ??
-        (e instanceof Error ? e.message : String(e));
+        m.common_save_error();
     } finally {
       historyVisibilitySaving = false;
     }
