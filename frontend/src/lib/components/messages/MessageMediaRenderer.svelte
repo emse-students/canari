@@ -217,7 +217,19 @@
       <!-- ================= AUDIO ================= -->
     {:else if mediaRef.type === 'audio'}
       {#if blobUrl}
-        <div class="min-w-[200px] sm:min-w-[240px]">
+        <!--
+          THE BUBBLE HAS 351px ON A PHONE AND THIS ASKED FOR 200 (measured on A1, Mi 9T, 436 x 945
+          CSS px, 2026-09-14). A `min-w` with no `w` IS the width: the bubble shrink-wraps, so the
+          player landed at its floor and left 151px of the row unused. Inside that 200, the fixed
+          furniture takes 174 - a 44px play button and its 14px gap, two 36px controls and theirs,
+          and 28px of padding - which left the timestamp line 26px to draw two stamps needing 54.
+          They touched, and "0:00" beside "0:01" read as "0:000:01" (user, 2026-09-14).
+
+          `w-[20rem]` ASKS, `max-w-full` OBEYS THE BUBBLE. 320px gives the middle column 146px, so
+          the two stamps have 92px between them; where the bubble is narrower than that - 298px at a
+          375px window, 252px at 320px - the cap clamps it and nothing overflows.
+        -->
+        <div class="w-[20rem] max-w-full">
           <VoiceMessagePlayer
             src={blobUrl}
             onDownload={() => downloadBlob(blobUrl!, mediaRef.fileName ?? 'vocal.webm')}

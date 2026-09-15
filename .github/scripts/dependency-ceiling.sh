@@ -52,6 +52,11 @@ set -uo pipefail
 REPO="${REPO:-${GITHUB_REPOSITORY:-emse-students/canari}}"
 PR="${PR:-}"
 HEAD_SHA="${HEAD_SHA:-}"
+# THE BRANCH DEPENDABOT PUSHED, which is the only statement of WHICH ECOSYSTEM it is updating.
+# The trailer carries a name and a version and nothing else, and a name is not unique across
+# ecosystems - see `ceiling_ecosystem_from_ref`. Absent, every arm behaves exactly as it did
+# before this argument existed, which is what makes threading it through a safe change.
+HEAD_REF="${HEAD_REF:-}"
 
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=lib/ceiling.sh
@@ -60,7 +65,10 @@ HEAD_SHA="${HEAD_SHA:-}"
 [ -n "$PR" ]       || { printf 'PR is not set\n' >&2; exit 2; }
 [ -n "$HEAD_SHA" ] || { printf 'HEAD_SHA is not set\n' >&2; exit 2; }
 
+ecosystem="$(ceiling_ecosystem_from_ref "$HEAD_REF")"
+
 printf 'dependency ceiling - pull request #%s at %s\n' "$PR" "${HEAD_SHA:0:8}"
+printf 'ecosystem: %s (read off %s)\n' "${ecosystem:-unknown, so every arm applies}" "${HEAD_REF:-no branch given}"
 
 # EVERY COMMIT ON THE PULL REQUEST, NOT ONLY ITS HEAD - the block describes the PULL REQUEST.
 #
@@ -115,7 +123,9 @@ while IFS='|' read -r name type version; do
   # The VERSION is passed because one arm needs it: a datastore is refused only when the update
   # crosses the major production runs, a patch WITHIN a major being exactly what the digest pin
   # exists to let through.
-  gate="$(gate_for_dependency "$name" "$version")"
+  # The ECOSYSTEM is passed for that same arm: it is about a data directory on a volume, so it
+  # applies to an IMAGE and not to a client library that happens to share the name.
+  gate="$(gate_for_dependency "$name" "$version" "$ecosystem")"
 
   if [ -n "$gate" ]; then
     refused=$((refused + 1))
