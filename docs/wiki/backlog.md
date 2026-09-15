@@ -1859,25 +1859,6 @@ predicate of a rung that has not run yet in this campaign: `heal-w2.mjs` require
 fired, `classify-selftest.mjs` pins its bucket, and `chat-delivery.md` quotes it. Renaming it to
 what it can honestly claim - a recovery STARTED - moves the instrument and the subject in the same
 commit, before HEAL has produced a single verdict. It belongs in the same pass as the HEAL rung.
-### P3 - a device with no key package is refused with 400, and the endpoint's own docblock says 404 (found on HEAL-NEW-12's dirt, 2026-09-07)
-
-`GET /api/mls/devices/:userId/:deviceId/key-package` documents itself as "only revoked / missing
-devices 404" and then throws `BadRequestException` when `resolveKeyPackagePayloadForDevice` returns
-nothing (`devices.controller.ts`). A 400 accuses the CALLER of sending something malformed; the
-request was well formed and the answer is that the row is not there.
-
-**The code carries meaning in this file and that is why the mismatch matters.** Sixty lines above,
-the device-cap refusal is deliberately a 400 with `code: DEVICE_LIMIT_REACHED`, and its comment
-states the contract: *"a 400 here is TERMINAL (the account must lose a device first) while other
-400s and every 5xx are retryable, and a client must not tell those apart by reading prose"*. A bare
-400 for "no key package" sits on the retryable side of a line drawn by code alone.
-
-**It is not what makes HEAL-NEW-12 dirty, and swapping the status would not clean it.** The client
-returns `null` on any `!res.ok` (`mlsDeliveryApi.fetchDeviceKeyPackage`), so 400 and 404 are the
-same to it; the repeated GETs in that row's `badHttp` are a pending invitation naming a device that
-can never be served, which is the P1 above about a device asking for a Welcome for ever. This entry
-is the honesty of the answer, not the loop.
-
 ### P2 - an inviter that dies between sending a Welcome and registering the joiner leaves a member in the MLS tree with no server-side membership, and nothing repairs it (measured 2026-09-05)
 
 `groupCreation.ts` delivers Welcomes and THEN calls `registerMember` for each user whose Welcome was

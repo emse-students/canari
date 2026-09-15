@@ -785,6 +785,22 @@ All routes are under `/api/mls/*` or `/api/calls/*` and require `X-User-Id` (inj
 | DELETE | `/api/mls/devices/:userId/:deviceId/prekeys` | Purge all prekeys for a device |
 | DELETE | `/api/mls/devices/:userId/:deviceId` | Delete device and all its data |
 
+**WHAT A 400 MEANS HERE, AND WHY TWO OF THESE ROUTES STOPPED USING ONE (2026-09-15).** The device
+cap makes 400 a load-bearing code in this controller: `POST /api/mls/register-device` refuses an
+account over `MAX_DEVICES_PER_USER` with a 400 carrying `code: DEVICE_LIMIT_REACHED`, and that 400
+is **terminal** - no retry lifts it, the account has to lose a device first - where every 5xx and
+every other 400 is retryable. A client must be able to tell those apart without reading prose, so
+each extra meaning folded into 400 costs that classification something.
+
+Two routes were folding "the row is not there" into it. `GET .../key-package` did so against its own
+docblock, which promises *"only revoked / missing devices 404"*; `PATCH .../metadata` answered
+`Device not found` the same way. Both are `NotFoundException` now, which is the same rule the link
+preview cache states below for a different reason - **only an answer may be a 400** - applied to a
+request that was never malformed. The statuses are pinned by
+`devices.controller.not-found.spec.ts`, which carries the empty-metadata-body case as its control:
+that one IS the caller's fault and keeps its 400.
+
+
 ### Group management
 
 | Method | Path | Description |
