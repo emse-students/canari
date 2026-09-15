@@ -110,6 +110,25 @@ if [ -z "$parsed" ]; then
   exit 1
 fi
 
+# HOW THE UPDATE IS DESCRIBED TO WHOEVER READS THE REFUSAL. Nothing merges on this string - the
+# table decides, by NAME - but a reader decides what to LOOK AT with it, and Dependabot's
+# `update-type` names the semver FIELD that moved, which below 1.0 is not the same thing as
+# compatibility. Cargo and npm both give `0.x` a range of its own: `^0.17` does not match `0.20`.
+# So a bump reported here as "(minor)" can be a wholesale break, and one was - #431,
+# `webrtc 0.17.2 -> 0.20.5`, moved every module out of the facade crate, made `rtp_sender` private
+# and deleted `RTCPeerConnection::close`. The ceiling refused it for an unrelated and correct
+# reason; the label beside that refusal still said "minor".
+#
+# AN ABSENT TYPE IS NAMED TOO. Dependabot emits none for a Docker tag - `15-alpine -> 18-alpine` is
+# not a semver comparison it can make - so this line printed an empty `()` for the very update that
+# cost production 33 minutes, which reads as a field nobody filled in rather than as a fact.
+update_kind() { # <update-type> <proposed-version>
+  case "$2" in
+    0.*) if [ "$1" = "minor" ]; then printf 'minor, and BREAKING below 1.0'; return; fi ;;
+  esac
+  printf '%s' "${1:-unclassified}"
+}
+
 refused=0
 while IFS='|' read -r name type version; do
   [ -z "$name" ] && continue
@@ -129,9 +148,9 @@ while IFS='|' read -r name type version; do
 
   if [ -n "$gate" ]; then
     refused=$((refused + 1))
-    echo "::error title=No gate would see this fail::$name -> $version ($type): $gate"
+    echo "::error title=No gate would see this fail::$name -> $version ($(update_kind "$type" "$version")): $gate"
   else
-    printf '  ok      %s -> %s (%s) - the suite is evidence about this one\n' "$name" "$version" "$type"
+    printf '  ok      %s -> %s (%s) - the suite is evidence about this one\n' "$name" "$version" "$(update_kind "$type" "$version")"
   fi
 done <<< "$parsed"
 

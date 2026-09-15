@@ -116,6 +116,46 @@ check "still refuses a datastore crossing its major" 1 "$work/postgres.json" \
 check "refuses when the commits cannot be read at all" 1 "$work/empty.json" \
   "Could not read the commits of #423"
 
+# -- The LABEL beside the verdict, which is what a reader acts on ------------------------------
+# Below 1.0 Dependabot's `minor` is a COMPATIBILITY BREAK, because Cargo and npm both give `0.x` a
+# range of its own. #431 is the measured case: `webrtc 0.17.2 -> 0.20.5`, reported as "(minor)",
+# moved every module out of the facade crate. The refusal was right for its own reason; the word
+# beside it told the reader to expect a small change.
+cat > "$work/zerover.json" <<'FIXTURE'
+chore(deps): bump webrtc from 0.17.2 to 0.20.5
+
+updated-dependencies:
+- dependency-name: webrtc
+  dependency-version: 0.20.5
+  dependency-type: direct:production
+  update-type: version-update:semver-minor
+FIXTURE
+check "says a 0.x minor is breaking" 1 "$work/zerover.json"   "0.20.5 (minor, and BREAKING below 1.0)"
+
+# At or above 1.0 a minor is a minor, and saying otherwise would make the warning above worthless.
+cat > "$work/onepointx.json" <<'FIXTURE'
+chore(deps): bump webrtc from 1.17.2 to 1.20.5
+
+updated-dependencies:
+- dependency-name: webrtc
+  dependency-version: 1.20.5
+  dependency-type: direct:production
+  update-type: version-update:semver-minor
+FIXTURE
+check "leaves a 1.x minor alone" 1 "$work/onepointx.json"   "1.20.5 (minor)"
+
+cat > "$work/no-type.json" <<'FIXTURE'
+chore(deps): bump postgres from 15-alpine to 18-alpine
+
+updated-dependencies:
+- dependency-name: postgres
+  dependency-version: 18-alpine
+  dependency-type: direct:production
+FIXTURE
+# A Docker tag carries NO `update-type` - `15-alpine -> 18-alpine` is not a semver comparison
+# Dependabot can make - and an empty `()` reads as a field nobody filled in.
+check "names an absent update-type rather than printing nothing" 1 "$work/no-type.json"   "18-alpine (unclassified)"
+
 if [ "$failures" -ne 0 ]; then
   echo "$failures check(s) failed."
   exit 1
