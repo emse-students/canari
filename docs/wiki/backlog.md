@@ -627,32 +627,6 @@ correct for them, the same as every log here.
 **Blocked on nothing** - local estate, and it reproduces on any 4xx the API answers with prose.
 
 ---
-### P3 - a pending attachment's name is painted TWICE, 19px apart (observed on the Mi 9T, 2026-09-09)
-
-Found while verifying the voice-note gesture and **not caused by it**: the recorder's only output is
-a file, and this is the chip that every pending attachment gets, whatever produced it. A photo will
-do the same.
-
-Measured at 436px, both boxes 62px wide, in the same static flow:
-
-| | element | box | overflow | hidden |
-| --- | --- | --- | --- | --- |
-| inside the tile | `span.line-clamp-2` | `21,830 62x26` | `hidden` / `clip` | 0 |
-| under it | `div.truncate` | `21,849 62x14` | `hidden` / `ellipsis` | **70px of the name** |
-
-The span is 26px tall from y=830, so it runs to 856 and the div starts at 849: **they overlap by
-7px**, and the reader sees the same filename twice with the lower copy struck through the upper
-one's descenders. The two also disagree about how to shorten a name - one wraps to two lines, the
-other ellipsises - so the same string is abbreviated two different ways in one 62px column.
-
-**One of the two is redundant and the fix is to decide which**, not to nudge a margin. The tile
-already names the file; a caption under a 62px tile that hides 70 of its characters tells the reader
-less than the icon does. **Whichever survives should be the only one**, and a test asserting that a
-chip renders its name once would keep it that way.
-
-**Blocked on nothing** - local estate, and it reproduces on any attachment.
-
----
 ### P3 - a revocation round trip sits in front of the fingerprint prompt, and moving it is REVERTED, not to be re-opened (measured on the Pixel 6a, 2026-09-15)
 
 Launch to BiometricPrompt on the Pixel 6a was **4.2 - 4.6 s**, measured by attaching CDP to the
