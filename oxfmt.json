@@ -37,6 +37,7 @@
     "**/.env",
     "**/.env.local",
     "**/bun.lock",
+    "**/static/emoji-data-*.json",
     "**/package-lock.json"
   ]
 }

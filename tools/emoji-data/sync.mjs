@@ -27,6 +27,14 @@
  * nobody drains - the failure NAMES the single command that lifts it, and it is the same shape as
  * any other bump needing a source change.
  *
+ * AND THE FIRST THING THAT BROKE THE BYTE-IDENTITY WAS NOT A BUMP, IT WAS THE FORMATTER. `oxfmt`
+ * formats `.json`, the pre-commit hook sweeps the whole frontend, and it pretty-printed both
+ * datasets on the way in - 439662 bytes became 596686, and CI went red on a change that had been
+ * green locally a minute earlier. A vendored artefact is not source, so `oxfmt.json` now ignores
+ * the two datasets under `frontend/static/`, alongside the generated trees it already skipped. The
+ * cost of getting this wrong is not only the red gate: a formatter adds 36% to a file every member
+ * who opens the picker downloads.
+ *
  * Usage: bun tools/emoji-data/sync.mjs   (no arguments, no network - it reads node_modules)
  */
 import { copyFileSync, existsSync, statSync } from 'node:fs';

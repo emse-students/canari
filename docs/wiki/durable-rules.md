@@ -1640,3 +1640,16 @@ Environment and tooling traps that belong to no one subsystem. Each cost a run.
   client result about ABSENCE is believed, state which backend the client is talking to, measured
   from its own requests rather than inferred from the build's name.** A release APK carries the dev
   origin; a debug one carries `localhost:8081` through the reverse tunnel.
+
+- **A VENDORED ARTEFACT IS NOT SOURCE, AND THE COMMIT PATH WILL REWRITE IT IF NOBODY SAYS SO.** The
+  two emoji datasets are committed on purpose - a generated one could be forgotten by a pipeline and
+  ship a 404 - and they are asserted BYTE-IDENTICAL to an exactly pinned package. The first thing to
+  break that identity was not a bump: `oxfmt` formats `.json`, the pre-commit hook sweeps the whole
+  frontend, and it pretty-printed both files on their way into the commit. 439662 bytes became
+  596686, the working tree that had just been green went red in CI, and nothing in the diff
+  announced a formatter had done it. **Anything copied verbatim into this repository belongs in
+  `oxfmt.json`'s `ignorePatterns` in the same commit that copies it** - beside the generated trees
+  already there. Two things are worth separating here: the gate caught it because it compares BYTES
+  (a parsed comparison would have shrugged at a reformat, a hand-edit and a drifted package alike),
+  and the damage was never only the red gate - a formatter added 36% to a file every member who
+  opens the picker downloads. [frontend/architecture](frontend/architecture.md)

@@ -71,8 +71,12 @@ describe('the emoji picker serves its own data', () => {
         resolve(frontendRoot, 'node_modules/emoji-picker-element-data', packaged)
       );
       // Byte equality, not a parsed comparison: `tools/emoji-data/sync.mjs` copies the file, so
-      // anything else means the committed artefact was edited by hand or the package moved without
-      // a re-sync. Both are things a reader of this repository should be told about.
+      // anything else means the committed artefact was edited by hand, the package moved without a
+      // re-sync - or something rewrote it on its way into the commit, which is what actually
+      // happened first: `oxfmt` formats `.json`, the pre-commit hook sweeps the whole frontend, and
+      // it pretty-printed both datasets (+36% over the wire, for every member who opens the
+      // picker). `oxfmt.json` ignores them now. A parsed comparison would have shrugged at all
+      // three.
       expect(
         servedBytes.equals(packagedBytes),
         `static/${served} does not match the pinned package - run \`bun tools/emoji-data/sync.mjs\``
