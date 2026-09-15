@@ -61,6 +61,13 @@ export const SWIPE_NAV_QUERY = `${below(TAILWIND_XL)}, ${COARSE_POINTER_QUERY}`;
  */
 export const SCHEDULE_AGENDA_QUERY = below(TAILWIND_MD);
 
+/**
+ * The login page offers the store badges here rather than assuming a desktop browser (matches
+ * Tailwind `md`, width alone - a touch laptop with a narrow window is not a phone and gets no
+ * install prompt, which pointer-based `NARROW_CHAT_QUERY` would have given it).
+ */
+export const PHONE_VIEWPORT_QUERY = below(TAILWIND_MD);
+
 /** Whether `matchMedia` can be asked at all - it cannot under SSR, nor in a bare test environment. */
 function canQuery(): boolean {
   return typeof window !== 'undefined' && typeof window.matchMedia === 'function';
@@ -96,6 +103,11 @@ export function isSwipeNavViewport(): boolean {
 /** True where a month grid has no room and the agenda is a schedule list instead. */
 export function isScheduleAgendaViewport(): boolean {
   return matches(SCHEDULE_AGENDA_QUERY);
+}
+
+/** True on a phone-sized screen, where the login page offers the store badges. */
+export function isPhoneViewport(): boolean {
+  return matches(PHONE_VIEWPORT_QUERY);
 }
 
 /**

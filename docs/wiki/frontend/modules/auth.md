@@ -58,6 +58,23 @@ bundle that wires its handler, and there is no interval in which it is visible b
 | `/login` | Login page (OIDC button + optional dev form) |
 | `/auth/callback` | Receives OIDC auth code, completes login |
 
+**A phone-sized WEB visitor is offered the store badges.** `LoginPage` gates them on
+`isTauriRuntime()` being false (a native install already IS the app) and `isPhoneViewport()`
+(`PHONE_VIEWPORT_QUERY` in `frontend/src/lib/utils/viewport.ts`, width alone against Tailwind
+`md` - no `pointer: coarse`, so a touch laptop with a narrow window is not read as a phone).
+`LoginForm` links `PLAY_STORE_URL` / `APP_STORE_URL` (`appVersion.ts`, the same constants the
+in-app update prompt already uses) as plain anchors rather than through `openExternal()` - they
+are first-party constants, not attacker-reachable content, so the Safe Browsing round trip
+(`checkLinkSafety.ts`) would only add an unauthenticated 401 to the log for every visitor on the
+login page.
+
+Each anchor wraps the OFFICIAL badge artwork, fetched from Apple's and Google's own brand pages
+rather than redrawn by hand: `frontend/static/app-store-badge.svg` (developer.apple.com) and
+`google-play-badge.png` (play.google.com). Google's PNG ships 41px of transparent margin on
+every side that Apple's SVG does not; it is cropped to its real content so both badges share one
+visual height side by side (`h-10` on both `<img>` tags - a naive equal-height crop from the
+untouched PNG would have left Google's noticeably shorter).
+
 ## Auth store
 
 ```typescript
