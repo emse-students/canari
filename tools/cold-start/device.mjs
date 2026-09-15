@@ -66,3 +66,19 @@ export async function forwardDevtools(serial, port = 9222, attempts = 40) {
   }
   throw new Error('the app WebView never opened a devtools socket');
 }
+
+/**
+ * Whether the app's process is alive right now.
+ *
+ * `pidof` answers an empty string and exit 1 when nothing matches, which `adb()` turns into a
+ * throw - so the absence is caught here rather than at every call site. Used to separate a launch
+ * that DIED from one that merely never reached the prompt: the two produce the same missing
+ * bracket and want opposite next steps.
+ */
+export async function isRunning(serial) {
+  try {
+    return (await adb(serial, ['shell', 'pidof', PACKAGE])).length > 0;
+  } catch {
+    return false;
+  }
+}
