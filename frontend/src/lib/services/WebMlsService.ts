@@ -56,6 +56,24 @@ export class WebMlsService extends BaseMlsService {
   /** Feature flag for off-thread Argon2 encrypt on MLS checkpoints (enabled by default). */
   private readonly useEncryptWorker = import.meta.env.VITE_MLS_ENCRYPT_WORKER !== 'false';
 
+  /**
+   * `true` between `pagehide` and `pageshow` - the page is on its way out (or into the bfcache).
+   *
+   * A SOCKET THE BROWSER TORE DOWN BECAUSE THE PAGE IS LEAVING IS NOT A CONNECTION THAT WAS LOST.
+   * The two are indistinguishable at `onclose`: both arrive as code 1006 with no reason, so the
+   * handler warned and scheduled a reconnect for a document that no longer exists. Read on the
+   * user's own Firefox export of 2026-09-15, where `[WS] Disconnected. Code: 1006` and
+   * `Connection lost. Retrying in 1s...` are the first two lines of a RELOAD - emitted by the
+   * previous page's bundle, which is how they can be attributed at all.
+   *
+   * It is a FLAG SET BY AN EVENT, not a timer: `pagehide` fires before the socket is torn down, and
+   * the only thing it changes is that a close arriving after it is silent and schedules nothing.
+   */
+  private pageIsHiding = false;
+  /** Registered `pagehide`/`pageshow` listeners, removed together in {@link destroyPlatformResources}. */
+  private _pageHideHandler: (() => void) | null = null;
+  private _pageShowHandler: (() => void) | null = null;
+
   constructor() {
     super('web');
   }
@@ -354,6 +372,26 @@ export class WebMlsService extends BaseMlsService {
       window.addEventListener('online', this._onlineHandler);
     }
 
+    // THE PAGE LEAVING AND THE NETWORK DROPPING ARRIVE AT `onclose` AS THE SAME EVENT, so the
+    // discriminator is carried from where it is KNOWN. `pagehide` fires before the browser tears the
+    // socket down, and `pageshow` fires again when a bfcache restore brings the same document back -
+    // at which point the socket is gone for real and the reconnect is exactly what is wanted, so it
+    // is asked for here rather than left to the next visibility change.
+    if (!this._pageHideHandler && typeof window !== 'undefined') {
+      this._pageHideHandler = () => {
+        this.pageIsHiding = true;
+      };
+      this._pageShowHandler = () => {
+        this.pageIsHiding = false;
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+          console.log('[WS] page restored from the back/forward cache - reconnecting');
+          this.disconnectCallback?.();
+        }
+      };
+      window.addEventListener('pagehide', this._pageHideHandler);
+      window.addEventListener('pageshow', this._pageShowHandler);
+    }
+
     // Same-origin cookie often works; passing JWT in the query matches Tauri and
     // fixes upgrades where `canari_ws_token` is not forwarded (proxies, ITP).
     const wsUrl = this.baseUrl.replace(/^https?:/, (match) =>
@@ -414,6 +452,11 @@ export class WebMlsService extends BaseMlsService {
           );
         } else {
           this.clearHeartbeat();
+          // A close that follows `pagehide` is the browser tearing this document down. There is
+          // nothing to warn about and nobody left to reconnect for - `pageshow` reconnects if the
+          // document comes back from the bfcache, and a real navigation takes the whole client with
+          // it. Returning here is what removes the two opening lines of every reload's console.
+          if (this.pageIsHiding) return;
           console.warn(
             `[WS] Disconnected. Code: ${event.code}, Reason: ${event.reason || 'no reason'}`
           );
@@ -578,6 +621,14 @@ export class WebMlsService extends BaseMlsService {
     if (this.keyPackageWorker) {
       this.keyPackageWorker.terminate();
       this.keyPackageWorker = null;
+    }
+    if (this._pageHideHandler) {
+      window.removeEventListener('pagehide', this._pageHideHandler);
+      this._pageHideHandler = null;
+    }
+    if (this._pageShowHandler) {
+      window.removeEventListener('pageshow', this._pageShowHandler);
+      this._pageShowHandler = null;
     }
   }
 

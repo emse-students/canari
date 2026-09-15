@@ -929,6 +929,29 @@ so the 98 ms recovery is the client's own.
 predates offline unlock, which merely widens the window before the next server contact notices it.
 Revocation is still enforced on reconnect by the refresh answering 401 and by the gateway handshake.
 
+#### And what is NOT a reconnect: the page leaving
+
+A socket the browser tears down because the document is going away closes exactly like one the
+network dropped - **code 1006, no reason** - so `WebMlsService.onclose` did the same thing for both:
+`console.warn('[WS] Disconnected...')` and `disconnectCallback()`, which schedules a retry for a
+page that no longer exists.
+
+It is visible on the user's Firefox export of 2026-09-15, where `[WS] Disconnected. Code: 1006` and
+`Connection lost. Retrying in 1s...` are the **first two lines of the new page's console** - and are
+attributable at all only because the source column names the PREVIOUS page's bundle, retained across
+the navigation.
+
+The discriminator is carried from where it is known rather than guessed at the close:
+
+| event | what it sets | why |
+| --- | --- | --- |
+| `pagehide` | `pageIsHiding = true` | fires BEFORE the browser tears the socket down, so a close arriving after it is silent and schedules nothing |
+| `pageshow` | `pageIsHiding = false`, then reconnect if the socket is not open | a bfcache restore brings the same document back with a socket that really is gone, and nothing else would notice |
+
+A real navigation takes the whole client with it, so there is nothing to clean up on that path.
+Pinned by `WebMlsService.pageLifecycle.test.ts`, whose three cases are the three states the page can
+be in when a close arrives.
+
 ### Login failure codes
 
 `session/loginErrors.ts` defines `LoginFailure` with a machine-readable `LoginErrorCode`
