@@ -163,7 +163,6 @@ expect_refused tls_codec "0.5.0" "it is the wire encoding itself"
 expect_refused hpke-rs-crypto "0.3.0" "the hpke-rs* arm covers the whole family"
 expect_refused webrtc-ice "0.20.3" "rung 15 CALL has no runner"
 expect_refused turn "0.9.0" "the relay path is unmeasured"
-expect_refused stripe "22.6.0" "crossing an API version is a decision about payments"
 # A patch is refused for these too, deliberately - unlike a datastore, their failure mode does not
 # depend on the version number at all, and asserting it keeps the two kinds of arm distinguishable.
 expect_refused openmls "0.8.2" "a wire format is unmeasured at every version, not only across a major"
@@ -184,6 +183,12 @@ expect_allowed aes-gcm "0.11.0"            # released by `cross_version_push.rs`
 expect_allowed adminer "5.0.0"
 expect_allowed svelte "6.0.0"
 expect_allowed node "26-alpine"
+# `stripe` LEFT THE TABLE ON 2026-09-15, when the test its refusal named was written:
+# `apps/core-service/src/payment/stripe-surface.ts` pins every webhook event and every field
+# this service reads against the SDK types, which are cut against one API version, and the
+# spec beside it drives a signed fixture of each event through the production path.
+expect_allowed stripe "22.6.2"
+expect_allowed stripe "23.0.0"
 
 # The caller strips the quotes Dependabot puts around a scoped name before consulting the table; if
 # that ever regresses, `"@nestjs/common"` must not silently become an unmatched name. This asserts

@@ -232,20 +232,24 @@ gate_for_dependency() {
       echo "one relay-path call. The SFU has ten tests and not one of them touches the ICE stack; that is campaign rung 15 CALL, which has no runner yet"
       ;;
 
-    stripe)
-      # THE COMPILER ALREADY DOES HALF OF THIS, AND THE HALF IT DOES IS THE SAFE HALF. The SDK types
-      # `apiVersion` as the string LITERAL its release was cut against, and this service pins that
-      # value in one exported constant (`src/payment/stripe-api-version.ts`). So an SDK bump that
-      # still compiles cannot change which API the app talks to - the constant governs - and it
-      # merges on its own like anything else. An SDK bump that CROSSES an API version stops the
-      # tree compiling, in four files at once, which is exactly the coupling being made visible.
-      #
-      # What no gate here can answer is the other half: whether the app still reads what the new API
-      # sends. An API version decides webhook payload shapes and object fields, so crossing one is a
-      # decision about PAYMENTS, and today the only evidence is Stripe's changelog and somebody
-      # reading it. That is not a semver judgement this script can make.
-      echo "a test that pins this service's Stripe surface to FIXTURES per API version - the webhook events \`webhook.controller.ts\` handles and the fields \`stripe-payment-provider.ts\` and \`users.service.ts\` read - so that crossing an API version is PROVED rather than read in a changelog. The SDK's literal type already refuses a silent crossing: if this update stopped the tree compiling, \`STRIPE_API_VERSION\` and \`stripe\` have to move together, deliberately"
-      ;;
+    # `stripe` WAS REFUSED HERE UNTIL 2026-09-15, and the entry is gone because the test it named
+    # now exists. The refusal asked for "a test that pins this service's Stripe surface to FIXTURES
+    # per API version - the webhook events `webhook.controller.ts` handles and the fields
+    # `stripe-payment-provider.ts` and `users.service.ts` read". That is
+    # `apps/core-service/src/payment/stripe-surface.ts` plus its spec, and the two halves are in
+    # two files for a reason worth repeating here: the SDK's types are cut against ONE API version,
+    # so a `satisfies` against them IS the compiler reading the new schema - but `ts-jest` runs
+    # without diagnostics and `tsconfig.build.json` excludes the specs, so the pins only check
+    # anything as SOURCE. They are source. `nest build` fails on a field or an event that left the
+    # schema, in the same job that already fails when the API version literal moves, and the spec's
+    # signed fixtures fail on a payload shape that changed under a branch.
+    #
+    # WHAT REMAINS TRUE AND IS NOT A REASON TO PUT THIS BACK: no gate here can see a change in
+    # Stripe's BEHAVIOUR that keeps every shape. Stripe's own contract covers that half - since
+    # `2024-09-30.acacia` the monthly releases inside a release train are additive and only the
+    # version OPENING a train carries breaking changes - so crossing INTO a new train is a
+    # different act, and the thing that makes it visible is the literal in `stripe-api-version.ts`
+    # refusing to compile. A human still takes that decision; they no longer take it blind.
 
     # `@nestjs/*` WAS REFUSED HERE UNTIL 2026-08-31, and the entry is gone because the test it named
     # now exists and is green on all four services: `boot-nest-apps` builds the real `AppModule`
