@@ -781,6 +781,32 @@ const CASES = [
     '[20:23:56] [DISCOVERY] UI group "Equipe" kept - members unavailable (doubt)',
     'unexplained',
   ],
+  // A GROUP TAKING ITS NAME BACK FROM THE SERVER - the correction shipped by #693, pinned because
+  // the fix and the instrument that must not trip over it were written a commit apart. The line was
+  // unclassified for exactly that gap: it is a REAL change to what the client holds, so it belongs
+  // in `stateChanges` beside the placeholder it corrects, and it is not a defect, so it must not
+  // sit in `unexplained` and dirty every campaign run where a group is renamed.
+  [
+    'log',
+    '[20:23:56] [DISCOVERY] 642f389a... relabelled "Alice" -> "Promo 2027" (the server is the authority on a group\'s name)',
+    'stateChanges',
+  ],
+  // CONTROL, AND IT IS THE ONE THAT MATTERS: the same event with the reason re-worded. The pattern
+  // is anchored on the whole sentence on purpose - if someone edits the emitter's prose without
+  // editing the rule, the instrument stops recognising its own subject, and the campaign must learn
+  // that from `unexplained` rather than from a silently forgiven line.
+  [
+    'log',
+    '[20:23:56] [DISCOVERY] 642f389a... relabelled "Alice" -> "Promo 2027" (the server knows best)',
+    'unexplained',
+  ],
+  // CONTROL against widening the id to `.*`, which would let this rule swallow the three `kept - `
+  // lines above - two of which MUST stay unexplained.
+  [
+    'log',
+    '[20:23:56] [DISCOVERY] not-an-id... relabelled "Alice" -> "Promo 2027" (the server is the authority on a group\'s name)',
+    'unexplained',
+  ],
   // And the dismissal that ends that row's life, which READ-10 now performs itself.
   ['log', '[20:24:01] [DELETE_LOCAL] Local conversation deleted: 642f389a…', 'notable'],
   // THE TWO SIDES OF THE 2026-08-24 MEMBERSHIP FIX, pinned together because they are opposite kinds
