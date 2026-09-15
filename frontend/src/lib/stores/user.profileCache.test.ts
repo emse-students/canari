@@ -50,7 +50,11 @@ describe('fetchUserProfile', () => {
   it(
     'asks ONCE for a user the server says does not exist',
     async () => {
-      const apiFetch = vi.fn().mockResolvedValue({ ok: false, status: 404 });
+      // THE BATCH ROUTE ANSWERS 200 WITH THE ID SIMPLY ABSENT - one deleted account may not refuse
+      // the nineteen live ones beside it. "There is no such user" is therefore read from the answer
+      // rather than from its status, and the store turns it back into the same 404 every caller
+      // already classifies.
+      const apiFetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ users: [] }) });
       const mod = await load(apiFetch);
 
       await expect(mod.fetchUserProfile('gone')).rejects.toThrow();
@@ -95,7 +99,7 @@ describe('fetchUserProfile', () => {
   it(
     'carries the status as a field, so no caller reads it back out of a sentence',
     async () => {
-      const apiFetch = vi.fn().mockResolvedValue({ ok: false, status: 404 });
+      const apiFetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ users: [] }) });
       const mod = await load(apiFetch);
 
       const err = await mod.fetchUserProfile('gone').catch((e: unknown) => e);
@@ -118,6 +122,98 @@ describe('fetchUserProfile', () => {
       // Not every 404 in the app is this one: only a refusal typed at THIS throw counts.
       expect(mod.isAbsentUserError(new Error('404'))).toBe(false);
       expect(mod.isAbsentUserError(null)).toBe(false);
+    },
+    IMPORT_HEAVY_MS
+  );
+
+  /**
+   * THE COALESCER, AND THE ONE THING THAT MAKES IT A WINDOW RATHER THAN A CLOCK.
+   *
+   * Everything asked for in the same turn of the event loop travels in one request; the next turn is
+   * the next request. Both halves are pinned, because a coalescer that never closed its window would
+   * also pass the first assertion.
+   */
+  const profile = (id: string) => ({ id, firstName: null, lastName: null, displayName: id });
+
+  it(
+    'asks for everything wanted in the same turn in ONE request',
+    async () => {
+      const apiFetch = vi.fn().mockImplementation(async (url: string) => {
+        const ids = new URL(url).searchParams.get('ids')!.split(',');
+        return { ok: true, json: async () => ({ users: ids.map(profile) }) };
+      });
+      const mod = await load(apiFetch);
+
+      // No await between them: this is the shape the conversation tiles have - every row asks for
+      // its peer during the same flush.
+      const all = await Promise.all(['a', 'b', 'c'].map((id) => mod.fetchUserProfile(id)));
+
+      expect(all.map((p) => p.id)).toEqual(['a', 'b', 'c']);
+      expect(apiFetch).toHaveBeenCalledTimes(1);
+      expect(new URL(apiFetch.mock.calls[0][0] as string).searchParams.get('ids')).toBe('a,b,c');
+    },
+    IMPORT_HEAVY_MS
+  );
+
+  it(
+    'closes the window at the end of the turn, so a later caller is a second request',
+    async () => {
+      const apiFetch = vi.fn().mockImplementation(async (url: string) => {
+        const ids = new URL(url).searchParams.get('ids')!.split(',');
+        return { ok: true, json: async () => ({ users: ids.map(profile) }) };
+      });
+      const mod = await load(apiFetch);
+
+      await mod.fetchUserProfile('first');
+      await mod.fetchUserProfile('second');
+
+      expect(apiFetch).toHaveBeenCalledTimes(2);
+    },
+    IMPORT_HEAVY_MS
+  );
+
+  it(
+    'one id the server did not return does not refuse the others beside it',
+    async () => {
+      const apiFetch = vi.fn().mockImplementation(async (url: string) => {
+        const ids = new URL(url).searchParams.get('ids')!.split(',');
+        // The batch route omits what it cannot find rather than failing the request.
+        return {
+          ok: true,
+          json: async () => ({ users: ids.filter((i) => i !== 'gone').map(profile) }),
+        };
+      });
+      const mod = await load(apiFetch);
+
+      const [alive, missing] = await Promise.all([
+        mod.fetchUserProfile('alive'),
+        mod.fetchUserProfile('gone').catch((e: unknown) => e),
+      ]);
+
+      expect((alive as { id: string }).id).toBe('alive');
+      expect(mod.isAbsentUserError(missing)).toBe(true);
+      expect(apiFetch).toHaveBeenCalledTimes(1);
+    },
+    IMPORT_HEAVY_MS
+  );
+
+  it(
+    'chunks at the cap the server refuses past, so an unbounded list never reaches it',
+    async () => {
+      const apiFetch = vi.fn().mockImplementation(async (url: string) => {
+        const ids = new URL(url).searchParams.get('ids')!.split(',');
+        // The server's own bound (MAX_PROFILE_BATCH in users.controller.ts). A chunk longer than
+        // this would be REFUSED there, so the split is what keeps that refusal unreachable.
+        expect(ids.length).toBeLessThanOrEqual(100);
+        return { ok: true, json: async () => ({ users: ids.map(profile) }) };
+      });
+      const mod = await load(apiFetch);
+
+      const ids = Array.from({ length: 150 }, (_, i) => `u${i}`);
+      const all = await Promise.all(ids.map((id) => mod.fetchUserProfile(id)));
+
+      expect(all).toHaveLength(150);
+      expect(apiFetch).toHaveBeenCalledTimes(2);
     },
     IMPORT_HEAVY_MS
   );

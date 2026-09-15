@@ -122,18 +122,97 @@ export async function fetchMyProfile(): Promise<UserProfile> {
 /** In-flight / short-lived cache for user profiles. TTL: 30 s. Deduplicates simultaneous fetches. */
 const profileCache = new Map<string, { promise: Promise<UserProfile>; expiresAt: number }>();
 
+/**
+ * The most ids one `GET /api/users/batch` may carry. Mirrors `MAX_PROFILE_BATCH` in
+ * `apps/core-service/src/users/users.controller.ts`, which REFUSES a longer list - chunking here is
+ * what keeps that refusal unreachable, and a chunk is a request, never a truncation.
+ */
+const PROFILE_BATCH_MAX = 100;
+
+/** Callers waiting on the batch being assembled for the next microtask, keyed by id. */
+let pendingProfileBatch: Map<
+  string,
+  { resolve: (p: UserProfile) => void; reject: (e: unknown) => void }[]
+> | null = null;
+
+/**
+ * Issues one request per chunk of `ids` and settles every waiting caller from its answer.
+ *
+ * An id the server did not return is an ANSWER - that account does not exist - so it rejects with
+ * the same `UserProfileFetchError(404)` the single-id route produced, and every caller's existing
+ * classification (`isAbsentUserError`) keeps working unchanged. A transport failure rejects every
+ * id in the chunk with what actually went wrong, which is not an answer and is not cached.
+ */
+async function flushProfileBatch(
+  batch: Map<string, { resolve: (p: UserProfile) => void; reject: (e: unknown) => void }[]>
+): Promise<void> {
+  const ids = [...batch.keys()];
+  const chunks: string[][] = [];
+  for (let i = 0; i < ids.length; i += PROFILE_BATCH_MAX) {
+    chunks.push(ids.slice(i, i + PROFILE_BATCH_MAX));
+  }
+  // In parallel: a second chunk is a second request, never a second round trip waiting on the first.
+  await Promise.all(
+    chunks.map(async (chunk) => {
+      try {
+        const res = await apiFetch(
+          `${coreUrl()}/api/users/batch?ids=${chunk.map(encodeURIComponent).join(',')}`
+        );
+        if (!res.ok) throw new UserProfileFetchError(res.status);
+        const { users } = (await res.json()) as { users: UserProfile[] };
+        const byId = new Map(users.map((u) => [u.id, u]));
+        for (const id of chunk) {
+          const profile = byId.get(id);
+          for (const waiter of batch.get(id) ?? []) {
+            if (profile) waiter.resolve(profile);
+            else waiter.reject(new UserProfileFetchError(404));
+          }
+        }
+      } catch (e) {
+        for (const id of chunk) for (const waiter of batch.get(id) ?? []) waiter.reject(e);
+      }
+    })
+  );
+}
+
+/**
+ * Registers `userId` in the batch that goes out on the next microtask.
+ *
+ * ONE TURN OF THE EVENT LOOP IS THE WINDOW, and it is a window rather than a clock: everything
+ * asked for in the same turn travels together, and nothing waits on a duration anybody could get
+ * wrong. A longer window would coalesce more and would have to be justified in milliseconds against
+ * a latency nobody controls; this one is justified by the event loop and is exact.
+ *
+ * WHAT IT IS WORTH, MEASURED RATHER THAN ASSUMED. The production trace of 2026-09-15 shows 19
+ * conversation tiles each resolving its peer, and they do NOT all mount in one flush: the console
+ * emits them in six bursts of three-ish, roughly 450 ms apart, because a tile appears as its
+ * conversation's history replay finishes. So this alone turns 19 requests into 6, not into 1. It
+ * becomes 1 exactly when the tiles do mount together, which is what the startup work is moving
+ * towards - and the coalescer needs no revisiting when they do. No call site changes either way.
+ */
+function enqueueProfileFetch(userId: string): Promise<UserProfile> {
+  return new Promise<UserProfile>((resolve, reject) => {
+    if (!pendingProfileBatch) {
+      const batch = new Map<string, { resolve: typeof resolve; reject: typeof reject }[]>();
+      pendingProfileBatch = batch;
+      queueMicrotask(() => {
+        pendingProfileBatch = null;
+        void flushProfileBatch(batch);
+      });
+    }
+    const waiters = pendingProfileBatch.get(userId);
+    if (waiters) waiters.push({ resolve, reject });
+    else pendingProfileBatch.set(userId, [{ resolve, reject }]);
+  });
+}
+
 /** Fetches the public profile of another user by their Canari user ID. */
 export function fetchUserProfile(userId: string): Promise<UserProfile> {
   const now = Date.now();
   const cached = profileCache.get(userId);
   if (cached && cached.expiresAt > now) return cached.promise;
 
-  const promise = apiFetch(`${coreUrl()}/api/users/${encodeURIComponent(userId)}`).then(
-    async (res) => {
-      if (!res.ok) throw new UserProfileFetchError(res.status);
-      return (await res.json()) as UserProfile;
-    }
-  );
+  const promise = enqueueProfileFetch(userId);
 
   // Cache the promise so concurrent callers share the in-flight request.
   //

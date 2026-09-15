@@ -11,6 +11,27 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - vingt requetes pour une liste que le client tenait deja en entier
+
+Mesure sur le client web en production le 15/09/2026, sur un rechargement ordinaire : **vingt `GET
+/api/users/<id>` pour vingt identifiants distincts**, entre 140 et 253 ms chacune (mediane 235). Une
+par conversation, pour afficher le nom de l'interlocuteur - alors que la liste des conversations
+etait connue d'un seul tenant.
+
+Une route `GET /api/users/batch?ids=a,b,c` repond desormais a toute la liste en une requete. Elle
+n'ouvre aucun acces nouveau : chacun de ces profils etait deja lisible, un par un, par le meme
+appelant sous la meme garde. Un identifiant inconnu est simplement **absent** de la reponse au lieu
+de la faire echouer - un compte supprime n'a pas a refuser les dix-neuf comptes vivants a cote de
+lui - et une liste de plus de cent identifiants est **refusee** plutot que tronquee, une reponse
+amputee de sa fin etant indiscernable d'une page de comptes supprimes.
+
+Cote client, la fenetre de regroupement est **un tour de boucle d'evenements**, pas un delai : tout
+ce qui est demande dans le meme tour part ensemble, et le tour suivant est une autre requete. Rien
+n'attend une duree que quelqu'un pourrait mal choisir, et aucun appelant n'a change - le cache de
+trente secondes et la signature de `fetchUserProfile` sont intacts. Sur la trace mesuree, les
+dix-neuf vignettes de conversation arrivent en six bouffees espacees d'environ 450 ms, chacune
+apparaissant quand son propre rejeu d'historique se termine : dix-neuf requetes deviennent donc six
+aujourd'hui, et une seule le jour ou les vignettes s'affichent ensemble.
 ### Fixed - deux regles CSS invalides sur chaque page, fabriquees a partir des fichiers de test
 
 Firefox jette quatre avertissements CSS a chaque chargement de Canari. Deux d'entre eux viennent de
