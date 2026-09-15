@@ -44,7 +44,9 @@ function makeService(): ServiceInternals {
 }
 
 describe('TauriMlsService.reloadStateFromDisk - the resume that must not rewind a ratchet', () => {
-  beforeEach(() => invoke.mockReset());
+  beforeEach(() => {
+    invoke.mockReset();
+  });
 
   it('reloads when mls.bin holds every send this device has made', async () => {
     const svc = makeService();

@@ -35,7 +35,9 @@ function media(overrides: Partial<MediaBucketUsage> = {}): MediaBucketUsage {
 }
 
 describe('getBackendStorageUsage', () => {
-  beforeEach(() => fetchMock.mockReset());
+  beforeEach(() => {
+    fetchMock.mockReset();
+  });
 
   it('fetches the admin storage endpoint and returns the parsed breakdown', async () => {
     const body: BackendStorageUsage = {

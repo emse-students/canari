@@ -70,7 +70,9 @@ describe('systemNotificationsBlockedAnnounceOnce', () => {
     log = vi.spyOn(console, 'log').mockImplementation(() => {});
   });
 
-  afterEach(() => log.mockRestore());
+  afterEach(() => {
+    log.mockRestore();
+  });
 
   it('SAYS IT ONCE and then stays silent, however many messages arrive', () => {
     // The whole point. Before this seam a denied device printed three lines PER MESSAGE - 33 for 12

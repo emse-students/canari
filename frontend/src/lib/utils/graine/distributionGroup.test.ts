@@ -8,7 +8,9 @@ vi.mock('./rosterReconcile', () => ({
   reconcileDistributionGroupRoster: (...args: unknown[]) => reconcile(...args),
 }));
 
-beforeEach(() => reconcile.mockClear());
+beforeEach(() => {
+  reconcile.mockClear();
+});
 
 /**
  * The seam between the two services, on the client.

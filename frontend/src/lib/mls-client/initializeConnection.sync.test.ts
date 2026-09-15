@@ -353,7 +353,9 @@ describe('syncConnectionAfterWsOpen (a refused device is not a deferred one)', (
     waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
   });
 
-  beforeEach(() => showToastMock.mockClear());
+  beforeEach(() => {
+    showToastMock.mockClear();
+  });
 
   it('names the device cap as a refusal and tells the user, who is the only one who can lift it', async () => {
     const log = vi.fn();
