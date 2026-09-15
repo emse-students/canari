@@ -51,6 +51,47 @@ ever. Both await it now, and both report through `failLoginAttempt()`.
 not prerendered, so the button does not exist in HTML before JS runs: it is painted by the same
 bundle that wires its handler, and there is no interval in which it is visible but dead.
 
+### The order of the startup phases, and why the socket is now first
+
+`startSession` names its own spans - `beginStartupCatchupPhase(...)` in
+`session/sessionAuth.ts`, read back by `catchupBenchmark` - and that list IS the startup, in order:
+
+| Phase | What it does |
+|---|---|
+| `setup_handler` | registers the inbound pipeline, so nothing can arrive unhandled |
+| `open_gateway` | tab leadership, then `openGatewayConnection` - the socket |
+| `load_conversations` | the archive replay out of the local store, one conversation at a time |
+| `fcm_cache` | merges what a background notification decrypted while the app was dead |
+| `initialize_connection` | `syncConnectionAfterWsOpen` - KeyPackages, the group sweep, reconciliation |
+
+**Until 2026-09-15 `open_gateway` did not exist, and the socket opened in the LAST phase.** The
+user's production console shows `Initialised in WEB mode` at 22:24:17 and `[TAB] Leadership acquired
+(Web Locks)` at 22:24:39: twenty-two seconds - the whole replay - with no socket. Two things follow,
+and only the first is obvious.
+
+Nothing live could arrive for twenty-two seconds. And **every mailbox barrier re-pulled the whole
+mailbox.** `settleBarrier` (`BaseMlsService.ts`) may trust a previous pull only while
+`mailboxEmptiedByAPull && this.isWsOpen()`, and that second conjunct is correct, not the bug: with
+no socket the server can have queued a row since the pull and nothing would have pushed it. So with
+the socket closed the flag is worth nothing, and twenty conversations meant twenty HTTP round trips
+each answering `[PENDING] No pending MLS messages`.
+
+**Only the socket moved.** `openGatewayConnection` and `syncConnectionAfterWsOpen` were already two
+functions (`$lib/utils/chat/connection`) precisely because they answer to different preconditions:
+the first needs the inbound pipeline registered, which `setup_handler` has just finished; the second
+reasons about the conversations this device holds and must not run before they are loaded. Moving
+the pair would have had the group sweep reconcile against an empty map.
+
+**Opening the socket adds no concurrency the replay did not already have.** The barrier pulls frames
+and processes them during the restore today; what changes is that the barrier can now believe its
+own result. The offline branch skips `open_gateway` entirely rather than letting it fail - the
+attempt costs a timeout on a launch that already knows there is no network.
+
+The order is asserted by `session/startupOrder.test.ts`, deliberately a SOURCE test: the property is
+an order between two statements inside a function that takes a live MLS client, a storage backend, a
+device key and a gateway, so there is no seam to observe it through short of running a whole
+session. A crude test that can fail is worth more than an elegant one that does not exist.
+
 ## Routes
 
 | Route | Description |

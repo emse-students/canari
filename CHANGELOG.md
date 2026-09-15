@@ -32,6 +32,27 @@ trente secondes et la signature de `fetchUserProfile` sont intacts. Sur la trace
 dix-neuf vignettes de conversation arrivent en six bouffees espacees d'environ 450 ms, chacune
 apparaissant quand son propre rejeu d'historique se termine : dix-neuf requetes deviennent donc six
 aujourd'hui, et une seule le jour ou les vignettes s'affichent ensemble.
+
+### Changed - la socket s'ouvrait vingt-deux secondes apres le demarrage, et chaque barriere repartait donc chercher toute la boite aux lettres
+
+Mesure sur la console de production du 15/09/2026 : l'application annonce `Initialised in WEB mode` a
+22:24:17 et `[TAB] Leadership acquired (Web Locks)` a **22:24:39**, avec l'ouverture de la socket
+derriere. Pendant ces vingt-deux secondes - c'est-a-dire pendant tout le rejeu de l'archive - le
+client n'avait aucune connexion temps reel.
+
+La consequence la moins visible est la plus couteuse. La barriere de boite aux lettres n'a le droit
+de faire confiance a une recuperation deja faite que tant que la socket est ouverte, et cette
+condition est **juste** : sans socket, le serveur a pu mettre une ligne en attente depuis, et rien ne
+l'aurait poussee. Le defaut n'etait donc pas la condition, mais l'absence de socket : vingt
+conversations signifiaient vingt allers-retours HTTP, repondant chacun `[PENDING] No pending MLS
+messages`.
+
+L'ouverture de la socket passe donc **avant** la restauration des conversations, juste apres
+l'enregistrement du pipeline d'entree - qui est precisement la precondition deja ecrite a cet
+endroit. Seule la socket bouge : la publication des KeyPackages, le balayage des groupes et la
+reconciliation continuent de s'executer apres la restauration, parce que ces trois-la raisonnent sur
+les conversations que l'appareil detient.
+
 ### Fixed - deux regles CSS invalides sur chaque page, fabriquees a partir des fichiers de test
 
 Firefox jette quatre avertissements CSS a chaque chargement de Canari. Deux d'entre eux viennent de
