@@ -301,6 +301,24 @@ mensuelles a l'interieur d'un train sont additives et seule la version qui OUVRE
 des ruptures. Franchir vers un nouveau train reste donc un acte different, et ce qui le rend visible
 est le literal de `stripe-api-version.ts` qui refuse de compiler.
 
+### Added - la page de connexion propose l'App Store et Google Play a un visiteur sur telephone
+
+Un navigateur mobile qui ouvre `/login` tombe sur le meme ecran de connexion qu'un ordinateur,
+sans jamais se voir proposer l'application native - alors que les deux boutiques et leurs URLs
+existent deja dans le code, pour le flux de mise a jour de l'app elle-meme
+(`PLAY_STORE_URL`, `APP_STORE_URL` dans `appVersion.ts`).
+
+`LoginPage` decide desormais si le visiteur est un ecran de la taille d'un telephone
+(`PHONE_VIEWPORT_QUERY`, ajoutee a `viewport.ts` aux cotes des autres questions de largeur plutot
+que reecrite a la main - largeur seule, sans `pointer: coarse`, pour qu'un ordinateur portable
+tactile a fenetre etroite ne recoive pas l'invite) et jamais l'application elle-meme
+(`isTauriRuntime()`) : une installation native EST deja l'application. `LoginForm` affiche alors
+les badges officiels Apple et Google (`frontend/static/app-store-badge.svg`,
+`google-play-badge.png`, telecharges depuis leurs pages de marque respectives) sous les actions
+secondaires existantes - jamais une reconstruction maison d'un logo depose. Le PNG de Google porte
+41 px de marge transparente sur ses quatre bords, que le SVG d'Apple n'a pas ; recadre a son
+contenu reel pour que les deux badges partagent la meme hauteur visuelle a cote l'un de l'autre.
+
 ### Fixed - le plafond de dependances refusait une bibliotheque cliente, et ne pouvait pas lire sa propre porte de sortie
 
 Le gate `Dependency ceiling` repond a une seule question : ce depot a-t-il un test qui verrait cette

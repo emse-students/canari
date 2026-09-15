@@ -1,5 +1,6 @@
 <script lang="ts">
   import { fade, slide } from 'svelte/transition';
+  import { PLAY_STORE_URL, APP_STORE_URL } from '$lib/utils/appVersion';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -13,6 +14,8 @@
     maintenanceNotice?: string | null;
     /** When true, the login button is disabled (e.g. client below min version). */
     loginDisabled?: boolean;
+    /** True on a phone-sized web visit (never the native app): offers the store badges. */
+    showStoreBadges?: boolean;
     /** Called when the user clicks the main OIDC login button. */
     onLogin: () => void;
     /** Called when the user clicks the password test login button (store review). */
@@ -29,6 +32,7 @@
     biometricAvailable: _biometricAvailable,
     maintenanceNotice = null,
     loginDisabled = false,
+    showStoreBadges = false,
     isResetting = false,
     onLogin,
     onPasswordLogin,
@@ -136,6 +140,24 @@
           {m.auth_reset_device()}
         </button>
       </div>
+
+      {#if showStoreBadges}
+        <div class="border-cn-border mt-8 border-t pt-6" transition:slide>
+          <p class="text-text-muted mb-3 text-xs font-medium">{m.auth_get_app_prompt()}</p>
+          <div class="flex items-center justify-center gap-3">
+            <a href={APP_STORE_URL} target="_blank" rel="noopener noreferrer">
+              <img src="/app-store-badge.svg" alt={m.auth_app_store_button()} class="h-10 w-auto" />
+            </a>
+            <a href={PLAY_STORE_URL} target="_blank" rel="noopener noreferrer">
+              <img
+                src="/google-play-badge.png"
+                alt={m.auth_play_store_button()}
+                class="h-10 w-auto"
+              />
+            </a>
+          </div>
+        </div>
+      {/if}
 
       <div class="text-text-muted mt-6 flex justify-center gap-4 text-xs">
         <a href="/legal/privacy" class="hover:text-cn-yellow transition-colors"

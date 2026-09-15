@@ -10,6 +10,7 @@
   import { BiometricService } from '$lib/services/biometric';
   import LoginForm from './LoginForm.svelte';
   import { isTauriRuntime } from '$lib/utils/openExternal';
+  import { PHONE_VIEWPORT_QUERY, isPhoneViewport, onViewportChange } from '$lib/utils/viewport';
   import { resetThisDeviceOnRequest } from '$lib/utils/deviceReset';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { showToast } from '$lib/stores/toast.svelte';
@@ -26,6 +27,8 @@
   let biometricAvailable = $state(false);
   let isResetting = $state(false);
   let requestedReturnTo = '';
+  /** Store badges: a phone-sized WEB visitor, never the native app itself. */
+  let showStoreBadges = $state(false);
 
   const platformInfo = $derived(getAppVersionCheck());
   const loginDisabled = $derived(isBelowMinClientVersion());
@@ -242,6 +245,18 @@
       isResetting = false;
     }
   }
+
+  // A native install already IS the app; only a phone-sized web visitor is offered a store.
+  $effect(() => {
+    if (isTauriRuntime()) {
+      showStoreBadges = false;
+      return;
+    }
+    showStoreBadges = isPhoneViewport();
+    return onViewportChange(PHONE_VIEWPORT_QUERY, (narrow) => {
+      showStoreBadges = narrow;
+    });
+  });
 </script>
 
 <LoginForm
@@ -250,6 +265,7 @@
   {biometricAvailable}
   {maintenanceNotice}
   {loginDisabled}
+  {showStoreBadges}
   onLogin={handleLogin}
   onPasswordLogin={handlePasswordLogin}
   onReset={resetAll}
