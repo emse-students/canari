@@ -647,6 +647,19 @@ and is measured, never guessed at. **The instruments live in the repository now*
 ([tools/cold-start](../../tools/cold-start/README.md)) - they spent the day of their one useful
 measurement in a scratch directory, which is the same as nowhere.
 
+*What the correlated trace also shows, and it is the next thing to attack.* On that same run
+(`timeOrigin` 15:53:33.243), the login path reaches `init()` at **+1405 ms** and the page's first
+line prints at +225 ms. Between them sit TWO serial network round trips in front of the prompt, in
+this order: `getToken()` (the refresh, 132 ms measured) and `isDeviceRevoked` - plus, until this
+fix, the `mls.bin` load. Nothing after `init()` is issued until all three have answered, because the
+`BiometricPrompt` is raised BY `init()`.
+
+So the reachable floor is `am start` -> `timeOrigin` (the WebView booting, not measured yet) plus one
+round trip. **Whether the second round trip can be overlapped is the open design question above**,
+and it is the same question as the latch: the revocation verdict must still be ENFORCED without a
+prompt, but nothing says the prompt must wait for the verdict - only that the wipe must not race a
+login that is already in flight.
+
 *One overlap is now worth deleting, and it was not before.* `isDeviceRevoked` above must stay in
 front of the prompt, but it need not be SERIAL with the rest of the login. Its latch,
 `ctx.setWipingRevokedDevice`, is read only at `loginImpl` **entry** (`sessionAuth.ts:434`) - so it
