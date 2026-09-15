@@ -7525,7 +7525,7 @@ here as a queue item.
 | in or feeding a `Log.d` / `console.*` / `appendLog` call | 96 | CORRECT. A log is dev-facing; the server's own text is the useful half there |
 | a docblock or test quoting the shape to explain it | 4 | the guard strips comments before matching, so it never sees these |
 | a Paraglide key BUILT to carry the raw text, as a parameter | 7 | the table below: deleting a preference does not touch it (an eighth site, `lib/utils/chat/messaging.ts`, carries it in a shape this predicate does not even match) |
-| assigned to an error state a screen renders, or an intermediate on the way to one | 18 | 1 is the allowlisted PIN message; the other 17 are workers, composables, `mls-client` and `components/layout`, read one at a time |
+| assigned to an error state a screen renders, or an intermediate on the way to one | 18 | READ, one at a time, 2026-09-15: see below - none of them is a tree this sweep can still close |
 
 **WHAT THE COMPONENT PASS COULD NOT CLOSE IS A DIFFERENT SHAPE, AND DELETING A PREFERENCE DOES NOT
 TOUCH IT.** Eight sites hand the raw text to a Paraglide key BUILT to carry it, so the sentence is
@@ -7550,6 +7550,25 @@ on `msg.includes('Groupe introuvable') || msg.includes('Group not found')` to de
 show, which is the distinction-in-prose the durable rules forbid; it is inside the calling code
 that `CALLS_ENABLED = false` holds off, and the five switches that revive calling are where it is
 owed.
+
+**THE LAST EIGHTEEN WERE READ INDIVIDUALLY, AND NOT ONE IS AN ORDINARY SITE.** They are the reason
+this sweep has an end rather than a remainder:
+
+- **Four render an error the app itself THREW, already in French** - the PIN and login path
+  (`ChatBackgroundService.svelte` x2, `sessionAuth.ts:1339`, plus the allowlisted
+  `SettingsSecuritySection.svelte`). `sessionAuth` throws `new LoginFailure(code, m.auth_...())` and
+  `new Error(m.auth_pin_salt_unreachable())`: deleting the preference would REPLACE a precise
+  sentence with a vaguer one, which is the allowlist's whole argument. They close with the typed
+  errors of the P1 PIN-vs-corrupt-state item, not here. **One raw English literal hiding among them
+  WAS closed** - `'Login failed after recovery.'`, thrown into the recovery modal, now
+  `auth_pin_recovery_login_failed`.
+- **Two branch on the error's PROSE**, which is a different durable rule and a worse one:
+  `useChannelWorkspaces.ts:193` decides RETRYABILITY with `hay.includes('fetch') ||
+  hay.includes('network')`, and `sessionAuth.ts:638` compares the message against
+  `MLS_LOCAL_STATE_UNDECRYPTABLE`. A distinction carried in prose is one exactly one call site can
+  make; both want a type at the throw.
+- **The rest cross a boundary as DATA, not as a screen**: a worker's `postMessage({ detail })`
+  (x3), `mlsDecryptSession`'s per-message `{ ok: false, error }`, and log lines.
 
 **So the trees still OUTSIDE the guard are outside it for a reason**: `lib/utils/chat`, `graine`,
 the workers and `mls-client` are almost entirely logs, and adding them would fail correct code -

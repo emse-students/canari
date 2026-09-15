@@ -26,6 +26,12 @@ admin. Un `.catch(() => {})` vide est ferme au passage dans l'apercu de moderati
 les images de l'apercu restent blanches, et une decision de moderation prise sur un apercu vide
 avec une console muette n'est explicable par personne.
 
+**ET LA DERNIERE PHRASE ANGLAISE DU CHEMIN PIN EST TOMBEE AVEC** : `'Login failed after
+recovery.'` etait levee dans la fenetre de recuperation de PIN quand la session refusait sans dire
+pourquoi - la seule phrase non traduite que cet ecran pouvait montrer, tout le reste du chemin
+levant deja des messages francais (`new LoginFailure(code, m.auth_...())`). Elle devient
+`auth_pin_recovery_login_failed`.
+
 **CE QUE CETTE PASSE NE POUVAIT PAS FERMER EST UNE AUTRE FORME, ET ELLE EST MESUREE.** Huit endroits
 passent le texte brut a une cle Paraglide FAITE pour le porter - `chat_send_error({ reason })`,
 `chat_forward_error({ reason })`, `chat_call_error({ msg })`, `auth_login_failed({ reason })` - donc
