@@ -553,9 +553,14 @@ would need.**
    introduces is visible immediately (it did in fact hold production's deploys for the four hours
    the migration defects took to find, which is the mechanism working rather than failing).
 
-**What is left is not owed by the user at all**: whether a dev-only `workflow_dispatch` should exist,
-so that one push need not occupy both estates, is a design decision recorded in
-[backlog](../backlog.md#devcanari-emsefr-becomes-a-real-second-environment---decided-2026-08-17).
+**Nothing is left here, and the question that used to be is ANSWERED.** Whether a dev-only
+`workflow_dispatch` should exist "so that one push need not occupy both estates" was overtaken by the
+workflow migration: **a run deploys exactly one estate, decided by the RELEASE** - a `X.Y.Z-alpha.N`
+pre-release deploys dev and nothing else, a stable deploys production and nothing else, and a push
+deploys neither. The three deploy files - `build.yml`, `serve-dev.yml` and `serve-prod.yml` - are
+`workflow_call` libraries carrying no `workflow_dispatch` at all, deliberately: a dispatch is a
+second door onto one machine. Do not re-open it as a design question
+([backlog](../backlog.md#devcanari-emsefr---the-two-things-that-outlived-the-chantier)).
 
 **The dev OIDC client, and why it is not created here.** Authentik has one Canari application
 (provider `pk=1`, `default-provider-authorization-implicit-consent`, `sub_mode=hashed_user_id`, six

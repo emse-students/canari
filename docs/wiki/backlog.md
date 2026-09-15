@@ -69,6 +69,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | `DEPENDABOT_ALERTS_TOKEN` - a fine-grained token with **"Dependabot alerts: read"** on this repository. The nightly alerts job has NEVER passed: it declared `security-events: read`, which is code scanning, and Dependabot alerts have no `permissions:` key at all, so `GITHUB_TOKEN` cannot read them at any setting. The job now reads this secret when it exists and fails loudly when it does not - deliberately, because an alert list nobody reads looks exactly like an empty one | 1 token, 1 secret | `.github/scripts/dependabot-alerts-report.sh`, and the 403 it now names correctly |
 | App Store Connect: the 2.3.6 radio button | 1 click | [mobile](frontend/mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on) |
 | Lydia's credentials, which Lydia owes | blocked upstream | WP-LYDIA-1 |
+| **the dev mobile half: a Firebase project for `dev.canari-emse.fr` and a dev keystore, plus where that keystore is backed up.** No agent can do it - the Play service account holds only `androidpublisher`, not `serviceusage.services.enable`, so it can neither create a project nor turn an API on. Until then a pre-release APK points at dev with production's FCM sender | 1 console visit, 1 decision | [`dev.canari-emse.fr` - the chantier closed](#devcanari-emsefr---the-two-things-that-outlived-the-chantier) |
 | **an iPhone - ON ITS WAY, and the user intends the WHOLE campaign to be re-run on it** (user, 2026-09-10). **iOS is the only thing "hardware-blocked" still means** - the redundant push `data` map on both platforms, the shade acknowledgement, iOS window layout, and no iOS build reaching a device without a pre-release. This is a DATE, not a wall: write those rows so they are ready to run rather than deferring their design | hardware, arriving | [device-verification](device-verification.md) |
 | copy `canari-harness/` to the second machine to resume the campaign | 1 copy | [cross-client-campaign-resume](cross-client-campaign-resume.md) |
 | **three legacy rows excluded from the import, to add by hand if they should be cotisants** - one whose `Cotisation` cell is empty while its neighbours are filled, and two whose destroyed accents no directory entry resolves. Decided 2026-09-11: an import may not guess, and the three carry no tag until somebody says so | 1 decision, then 3 rows | [P2 - the legacy rows are loaded and NOT ONE claim has been observed](#p2---the-legacy-rows-are-loaded-on-both-estates-and-not-one-claim-has-been-observed-shipped-2026-09-11-v0171) |
@@ -395,82 +396,6 @@ and its five tests in `frontend/src/lib/utils/deviceKeyVault.ts` and its test fi
 
 ---
 
-### RESOLVED 2026-09-08 - the "zombie socket" was the row grading its own precondition, and one question survives it
-
-**FILED AS A P1 CANDIDATE THE SAME AFTERNOON, AND EVERY LOAD-BEARING CLAIM IN IT WAS WRONG.** It is
-kept rather than deleted because the way it was wrong is the finding: three logs existed the whole
-time that would have settled it in minutes, and none of them had been opened. What follows is what
-each one said.
-
-**THE SOCKET WAS NEVER A ZOMBIE. The gateway held it and wrote to it.**
-
-```
-13:50:30.807  New WebSocket connection ... Device=tauri-...-mtn445lg-25sy (conn_id=2703, 1 active)
-13:50:32.372  [PubSub] route kind=mls target=...:tauri-...-mtn445lg-25sy queuedId=875958e0-...
-13:50:32.372  [Gateway] Message directly routed to ...:tauri-...-mtn445lg-25sy
-```
-
-The delivery service agrees and goes further - it queued the message for every recipient, not only
-the reachable ones, and pushed to the one that was not:
-
-```
-[SEND][send-1f7491f4] QUEUED count=6
-[SEND][send-1f7491f4] recipient=...:tauri-...-mtn445lg-25sy online=false queuedId=9110ed23-...
-[PUSH_SEND][send-1f7491f4] FCM sent ... platform=android inlineProto=true bytes=659
-```
-
-and the phone drained its backlog and acknowledged it (`[ACK] requested=2 -> deleted=2`, then
-`deleted=1`), which this client does **only for rows it successfully handled** - `BaseMlsService.ts`
-refuses to acknowledge what it could not deliver. Transport, queue, push and acknowledgement all
-worked. The `4 pings without server response` line arrives AFTER the row backgrounds the app and
-describes a socket the client itself had just paused.
-
-**`make local-frontend` DID NOT RUN BEFORE THESE RUNS.** The entry asserted it "ran immediately
-before the first of these two". Measured: `canari-local-nginx-1` started `13:28:36Z`, the runs
-recorded at `13:41:17Z` and `13:52:06Z` - thirteen and twenty-three minutes later - and
-`canari-local-chat-gateway-1`, which terminates the WebSocket, had been up since **2026-09-04**. The
-alternative that made this a CANDIDATE rather than a P1 was false, and so was the P1 it was hedging.
-
-**WHAT ACTUALLY HAPPENED: the row measured a booting app and blamed the notification layer.** Its
-own docblock forbids exactly that sentence, and the delivery service dates the boot - thirteen
-seconds AFTER the warm-up was sent, the phone was still registering:
-
-```
-13:50:32  warm-up routed to the phone, acked
-13:50:45  [REGISTER_DEVICE] isNew=false pendingGroups=7
-13:50:45  [REGISTER_PREKEYS] count=6
-13:50:45  [USER_GROUPS] groups=7
-13:50:45  [INVITATIONS PENDING] START
-```
-
-Meanwhile the row's actual subject passed every clause it has: `notifiedInMs` **2206** and **2203**,
-inside the 10 s discriminator, with the body drawn - `itCarriedTheMessageAndNotJustASenderName` was
-never unmet. Both runs were recorded `FAIL`.
-
-**THE GRADING DEFECT, FIXED.** `notif.mjs` put four preconditions into the same array as its product
-clauses, where `unmet.length > 0` made every one of them a product verdict - while the comment on
-each said the opposite ("a RIG CLAUSE, not a product one", "the OS is cutting it", "different
-findings and must not share a verdict"). A failed precondition now yields `SETUP-FAILED` with
-`notMeasured` naming it. This is deliberately NOT the `baselineTooSlow` rule, which still lets a
-product failure win: a slow-but-arriving warm-up proves the app IS routing, so the other clauses
-were validly asked; a warm-up that never arrives proves nothing downstream was asked at all. The
-same conflation was in `k.mjs` (NOTIF-6c), whose `thePreconditionWasArmed` clause is labelled "NOT a
-product clause" where it is pushed and was graded `FAIL` anyway. Fixed identically.
-
-**AND THE ROW SWALLOWED THE PRECONDITION UNDER THAT ONE.** A1's `ensureChat` and `openConversation`
-were `.catch(() => null)` - no line, no field, `clean: true` - so "the DM never opened" and "the DM
-was open and nothing came" produced identical runs. They are now recorded in `a1SetupFaults`,
-announced on the console, and asserted as `theDmWasOpenOnThePhone`.
-
-**THAT QUESTION IS ANSWERED, AND IT WAS THE RIG.** The next run said so by construction, exactly as designed: `theDmWasOpenOnThePhone` unmet, and the sentence `.catch(() => null)` had been discarding all along - *"openConversation: 2 of 5 conversation tiles match the requested name on port 9333, so the row is AMBIGUOUS and none was opened."* A group deleted seven hours earlier was still in the phone's sidebar under the PEER's name, colliding with the DM. Cleared by hand (P2 below), the row was re-run and **every product clause passed**: `unmet []`, notified in 4 231 ms with the body drawn, the app alive, hidden, networked, and holding the message. So the 77-second silence was a conversation nobody had opened, not a message that vanished - and no product defect was ever in this. **What is left is the slow baseline**: the warm-up took 19 992 ms in the FOREGROUND, past the 10 s discriminator, so the row honestly records `SETUP-FAILED` rather than inventing a verdict. That is the blob P1 above, and it is the only thing now standing between NOTIF-1b and a measurement.
-
-**Recorded beside it, unchanged and unseparated**: `mls.bin` is **10 237 105 bytes** on this
-handset, the blob a checkpoint re-encrypts per message and the prekey-churn P1 above is what grows
-it. And `queued_message` holds **13 275 undrained rows** (12 051 web, 1 224 tauri) for dead test
-devices going back to 2026-08-05, which `cleanup.mjs` does not sweep.
----
-
-
 ### P2 - the legacy rows are LOADED on both estates, and NOT ONE claim has been observed (shipped 2026-09-11, v0.17.1)
 
 **1429 rows are staged on dev and on production** - 269 BDE, 1160 Cercle, applied through
@@ -733,12 +658,40 @@ Three costs, two of them paid that day:
   has already served it", and what it actually asserts is that the same COMMIT served dev, never the
   same BINARY: the stable is built again with a different backend URL frozen in.
 
-**The shape that fixes all three is a second package id** (`fr.emse.canari.dev` beside
-`fr.emse.canari`), installable side by side - the classic answer, and the one that would have let the
-2026-09-15 measurement run on the production app without touching it. It costs a second Play listing,
-a second FCM app entry and a signing config. **Not decided here**: the trade is the user's, and the
-alternative (a runtime switch) is a foot-gun in a production build unless it is gated to a debug
-artefact, which reintroduces the two artefacts it was meant to avoid.
+**DECIDED BY THE USER, 2026-09-15: a second package id**, `fr.emse.canari.dev` beside
+`fr.emse.canari`, installable side by side - the classic answer, and the one that would have let the
+2026-09-15 measurement run on the production app without touching it. *"Ca a l'air bien, mais je ne
+sais pas du tout comment mettre en place. Ajoute au backlog, on fera ca a l'occasion."* The runtime
+switch was considered and is NOT the shape: it is a foot-gun in a production build unless gated to a
+debug artefact, which reintroduces the two artefacts it was meant to avoid.
+
+**What it takes, measured against the tree rather than guessed.** The id is not one field: 38 sites
+across 16 files name `fr.emse.canari`, and the reason is that **the package id is ALSO the custom URL
+scheme** - `fr.emse.canari://callback` is the OIDC redirect and `fr.emse.canari://chat/{groupId}` the
+deep link (`hooks.client.ts`). So the work is, in order:
+
+1. **Derive the scheme from the identifier instead of spelling it.** One exported constant, read by
+   `hooks.client.ts`, `stores/auth.ts`, `utils/openExternal.ts`, `utils/stripeCallbacks.ts`,
+   `utils/appVersion.ts`, `mobile/appSiteAssociation.ts` and `src-tauri/src/mobile/navigation.rs`.
+   Six of the sixteen files are their own TESTS, which is what makes this safe to do first and worth
+   doing whatever is decided afterwards - it is the change that turns the id into a parameter.
+2. **A config overlay for the dev artefact.** `tauri.conf.json` carries `identifier` and
+   `bundle.android.versionCode`; Tauri merges a second config file, so the dev build is the same
+   sources with `identifier` and `productName` overridden (the launcher must show which is which).
+3. **A second FCM app entry**, keyed by package name in
+   `frontend/src-tauri/gen/android/app/google-services.json` - a Firebase console action, and the
+   file then carries both. Without it the dev build has no push at all.
+4. **A second Play listing** for `fr.emse.canari.dev`, and `android.yml` picks the artefact by
+   `release_kind()` rather than picking the TRACK. The keystore can be reused; nothing forces a
+   second signing identity.
+5. **The OIDC client must accept the new redirect URI** - `fr.emse.canari.dev://callback` added on
+   miconnect, or the dev build cannot log in at all. This is the step that silently blocks everything
+   after it, so do it before building anything.
+6. **`assetlinks.json` on the dev host** if App Links are wanted there; without it the dev build
+   keeps the custom scheme and loses https deep links only.
+
+The iOS half is the same shape (bundle identifier + a second App Store record) and is NOT required
+for the Android measurement that motivated this.
 
 Until then, the standing consequence is worth stating plainly, because it will waste a session
 again: **anything that must be measured against PRODUCTION state can only be measured on a STABLE**,
@@ -807,38 +760,43 @@ contradict "you are notified"; `canari_messages` rings like a message, which may
 reaction. A reaction that notifies is also a notification the reader cannot mute separately unless
 it gets a channel of its own. One line to the user settles it.
 
-### NOBODY IS TOLD ABOUT A POST - SHIPPED 2026-09-10, and what is left is the gate it revealed
+### P2 - THE RULE "IS THIS CALLER SIGNED IN" HAS THREE INDEPENDENT IMPLEMENTATIONS AND NOTHING ASSERTS THAT EVERY ROUTE CARRIES ONE (measured 2026-09-15)
 
-Reported as two asks in one breath: *"Les gens doivent avoir une notif pour tous les posts
-d'associations"* and *"Les gens doivent avoir une notif pour tous les posts de gens ou d'assos
-qu'ils suivent"*. Both are DONE - one sweeper with two recipient derivations, see `CHANGELOG.md`
-and `apps/social-service/src/posts/post-announce.scheduler.ts`, whose docblock is the design.
+`/api/presence` answered anybody who could name a user id until 2026-09-10, and the reason it
+survived is the reason this entry exists rather than a fix: **the edge looked like the gate.**
+Fifteen `location /api/*` blocks in `infrastructure/local/Dockerfile.frontend` carry `auth_request
+/internal/auth/verify` (count re-derived 2026-09-15; a wiki sentence said sixteen), and that
+sub-request answers **200 for a logged-OUT caller** carrying `x-logged-in: false`, which nginx
+treats as permission granted. It says WHO you are, never WHETHER you may pass. So the whole
+enforcement is in the handler, and a handler that forgets is invisible.
 
-**THE VOLUME QUESTION IS ANSWERED, AND IT WAS A MEASUREMENT RATHER THAN A DECISION.** This entry
-used to park "368 recipients per post" as a product question owed to the USER. That was the wrong
-denominator: what a reader experiences is notifications PER WEEK, and over the seventeen weeks to
-2026-09-10 the local copy of production carries **0.53 association posts a week** (9 of 120 posts,
-2026-05-13 to 2026-09-10) against **7.01 posts a week in total**. A personal post reaches **2.84
-followers on average** (25 edges over 17 followed users). So no digest and no per-association
-mute: at one announcement a fortnight, either would be a setting nobody would ever find, and both
-can be added later without touching the sweeper - the recipient derivation is two private methods.
-**Re-measure before believing this**: the predicate that named the last population is not the one
-that names the next, and one `GROUP BY` settles it.
+**Three copies of the same rule, under two different discriminators:**
 
-**`association_follows` IS DELIBERATELY NOT CONSULTED.** The first ask subsumes half of the
-second: if every association post reaches the whole feed audience, following an association adds
-nothing to what you are told. That table becomes the opt-in the day the first rule is narrowed,
-which is the one change that would give this sweeper a third derivation rather than a different
-one.
+| Where | Refuses on | Internal-token HMAC |
+| --- | --- | --- |
+| `core-service/src/common/guards/nginx-auth.guard.ts` | empty `x-user-id` | own copy, exported as `verifyInternalToken` |
+| `social-service/src/common/guards/nginx-auth.guard.ts` | empty `x-user-id` | **second copy**, imports nothing |
+| `chat-delivery-service/src/guards/header-auth.guard.ts` | `x-user-logged-in !== 'true'` | **third copy**, inline |
+| `chat-gateway/src/presence.rs:34` | empty `x-user-id` | none - Rust, no guard layer at all |
 
-#### What this left open - the FEED half is fixed, the POPULATION is not
+`verifyInternalToken` is exported and imported by **nobody** outside its own file. Two names for
+one guard is why a reader auditing "does everything have `NginxAuthGuard`" gets thirteen false
+positives in `chat-delivery-service`, all of which do carry `HeaderAuthGuard` per method.
 
-The feed gate shipped 2026-09-10: `FeedAudienceGuard` on the four read endpoints, one predicate
-(`IS_FEED_AUDIENCE_SQL`) built from the same `FEED_AUDIENCE_WHERE` the announcer uses, so the rule
-is still stated once per side. Verified on the running estate, not only by test - anonymous 401,
-ICM 200, admin 200, neither 403, on all four endpoints, where the first row had been 200 with post
-bodies.
+**WHAT IS ACTUALLY OPEN, AND IT IS A TEST RATHER THAN A REVIEW** (user: *"Je prefere blinder de
+test et faire les choses automatiquement qu'avoir une review humaine qui n'arrive jamais"*). A
+one-off audit answers today and rots tomorrow; the next route added is the next `/api/presence`.
+What closes this is an assertion that **every route reachable through an `auth_request` location
+refuses an unauthenticated caller**, derived from the routing table rather than from a list
+somebody maintains - the shape `chat-gateway/src/main.rs`'s own route tests already use, and the
+shape `serverProse.test.ts` uses to count a tree. Until it exists, the three copies should NOT be
+merged: collapsing them is the easy half and would remove the smell that is currently the only
+thing pointing at the missing assertion.
 
+**Do not re-open as an access-rule question.** Whether an authenticated user may ask presence about
+an ARBITRARY user id - rather than only people they share a conversation with - is a separate and
+larger question, parked deliberately in `presence.rs`'s docblock: the gateway does not know who
+shares what. This entry is only about the signed-in floor.
 ### P1 - a FIRST message from someone you have no conversation with notifies, decrypts, and then goes nowhere: the tap does not land and the conversation is invisible until the app is restarted (user, 2026-09-08, on PRODUCTION)
 
 Reported verbatim: *"Quelqu'un m'envoie un message alors que nous n'avons pas encore de discussion. Je
@@ -2003,57 +1961,21 @@ excluding self is one argument. **Whether it SHOULD be excluded is a judgement, 
 chat apps allow a self-mention as a way to bookmark a message - which is why this is a P3 and not a
 fix applied inline: it is the user's call.
 
-### P3 - the dirt classifier fails a row on the OIDC callback that row performs on purpose (2026-08-28)
+### P3 - the PIN form may still want a hidden username field, and the observation is now too old to work from (seen 2026-08-28, autocomplete fixed since)
 
-**Measured.** `healnew.mjs --row 0` recorded `FAIL` on `03d015fd` with **no unmet condition and no
-unobservable** - dirt only. Its seven `unexplained` lines: six ordinary `debug: [auth] core-service
-response status: 200` / `got access_token` / `handleOidcCallback complete` / `[callback] goto -> /`
-lines, and Chrome's accessibility hint that a password form wants a username field. The primitive
-succeeded; the classifier is what failed the row, and it did so on the one row whose whole job is to
-re-enrol a device through the IdP.
+The classifier half of this entry SHIPPED (2026-08-29 for HEAL-NEW, 2026-08-30 for HEAL-REVOKE) and
+its design - `withoutTheMintsOwnNoise`, the four per-OBSERVER lists, and why the wipe's own narration
+deliberately has no list - is in [the rig's README](../../tools/cross-client-harness/README.md), the
+only copy. Two lines it disposed of must NOT be re-opened: `History msg error: Group not found` is
+the amber probe clicking a SYNCING tile on purpose, and `[WS] Disconnected. Code: 1006` is a browser
+the row killed by construction.
 
-**The disposition is NOT to widen the classifier globally.** Those six lines are expected on a row
-that logs in and are the visible end of something upstream anywhere else - which is the noise rule
-exactly. The mechanism that already fits is `ignoringExpectedLog`, per row, naming them.
-
-**The accessibility hint is a separate, real, small finding**: the PIN field is a bare
-`type=password` with no username field in its form. It belongs with the P2 above, in the same pass.
-
-**IT RECURRED ON HEAL-NEW-15, `038c7e8d`, and that run is why the disposition above is now owed
-rather than merely correct.** It is the rung's FIRST verdict to have passed `gate()` at all, and the
-gate demoted it to `PASS-DIRTY` on three shapes, none of them the row's subject and all three the
-MINT's own signature: `POST /api/auth/refresh?clientVersion=0.14.12 -> 401` from a client that had
-just deleted every cookie it owned, which is the wipe working; the OIDC callback's `debug:` trail
-(`code length: 32`, `savedState present`, `redirectUri`, `got access_token`); and the purge's
-`[DevicePanel] Found/Deleting/Deleted`. **Every HEAL-NEW row will produce all three, every time**, so
-the per-row `ignoringExpectedLog` list is what stands between this rung and a wall of `PASS-DIRTY`
-verdicts that say nothing about the product. Name them per row, never widen the classifier.
-
-**SHIPPED FOR THE HEAL-NEW ROWS ON 2026-08-29, and only for them.** `healnew.mjs` carries
-`withoutTheMintsOwnNoise` - `ignoringExpectedRefusal` for the `POST /api/auth/refresh -> 401` and
-then `ignoringExpectedLog` for the OIDC trail and the purge's three lines, in that order, because
-`ignoringExpectedLog` recomputes `clean` over `badHttp` as it finds it. Every needle names a SUCCESS
-spelling - the status pinned to `200`, the state check to `matches: true`, and none of
-`[DevicePanel]`'s five `console.error`/`console.warn` spellings named at all - so a `500` from
-core-service, a mismatched OIDC state or a failed device deletion stays dirt.
-
-**CLOSED FOR THE HEAL-REVOKE ROWS TOO, and the claim that it was open was WRONG** (checked in the
-source 2026-08-30, after this file and `CLAUDE.md` had both carried "`healrevoke.mjs` ... has no such
-list" for two days). That runner ships FOUR lists, one per OBSERVER rather than one per row, which is
-the finer cut: `asAReturningDevice` forgives the OIDC trail and a cold client but not the panel it
-never drove; `asAFreshlyMintedDevice` adds the purge; `asTheWipedVictim` is the only one handed
-`AUTH_TEARDOWN_NARRATION`, because a session clearing itself is its subject and everyone else's
-finding; and `asTheActor` forgives NO refusal at all, so a `401` on `/api/auth/refresh` - the wipe
-working, on the victim - stays a finding on the one client that wiped nothing. The wipe's own three
-sentences are deliberately in no list: `NOTABLE` already claims them, so a list would forgive nothing
-and report three dry needles on every row of the rung.
-
-**Two lines from that run are explained and must NOT be re-opened.** `History msg error: Group not
-found: 642f389a...` is the amber probe's own doing - the row clicks a SYNCING tile on purpose, and a
-conversation with no MLS state is exactly a group the history reader cannot find. `[WS] Disconnected.
-Code: 1006` is a browser the row killed by construction.
-
-
+What survives is one accessibility hint Chrome printed beside them: a password form wants a username
+field. **Re-observe before working it.** The half that was clearly wrong is fixed - all four PIN
+inputs now carry the right `autocomplete` (`PinModal.svelte:276` switches `new-password` /
+`current-password` on `isFirstSetup`; `ChangePinModal.svelte` names all three) - so the line that
+remains, if any, is the password-manager association one, and nobody has seen it since. A hint
+quoted from a run three weeks old is not evidence that it still fires.
 
 ### P2 - iOS carries none of the window-layout work Android already has (user, 2026-08-28)
 
@@ -2792,194 +2714,60 @@ notification. It is not: that error belongs to a SILENT frame that was never goi
 anybody. The reason is one early return in the client, and it is worse than what was filed. The old
 account is kept below because the observations in it are all real - only the conclusion moved.
 
-## What actually happens, correlated across all three sources on ONE message
+## Background notifications on Android - what the 2026-09-05 investigation left open
 
-The phone was backgrounded with HOME (LIFE-2's premise, app alive), W2 sent one text message.
+Two long accounts lived here until 2026-09-15, one of them explicitly titled "whose conclusion does
+not stand" and carrying a struck-through sentence and two layers of correction. **The user-facing
+half is CLOSED on hardware** - LIFE-2 came back `PASS` / `"clean": true` on 2026-09-08 (6 359 ms
+with the FULL decrypted text, where it had been `afterMs: null` and an empty shade), and the story
+of the fix is in `CHANGELOG.md`. What follows is the two things that pass did not touch, and the
+defect entries below.
 
-```
-client   POST /api/mls/send  {"proto":"<348 chars>","silent":false,"durable":true}   <- the message
-client   POST /api/mls/send  {"proto":"<276 chars>","silent":true, "durable":true}   <- a mutation frame
+### P3 - a same-epoch refusal still costs a backend round trip and a worker enqueue, per message
 
-server   17:57:40 [SEND][send-cc0b716e] PUBLISHED recipient=<owner>:tauri-...       <- and NOTHING after it
-server   17:57:42 [SEND][send-2bf6df35] PUBLISHED recipient=<owner>:tauri-...
-server   17:57:52 [PUSH_DEFERRED][send-2bf6df35] still unACKed after 10 s -> FCM fallback
-server   17:57:52 [PUSH_SEND][send-2bf6df35-def] FCM sent ... platform=android
+The discriminator EXISTS and is thrown away one layer up. `mls-core` names it exactly -
+`DecryptErrorKind::SecretReuse`, a spent ratchet generation, distinct from an epoch gap - and
+`CanariFirebaseMessagingService.kt` collapses every failure into a single `PushDecrypt.Refused`
+(one `object`, reached from six sites). The ladder then answers with a commit catch-up whose own
+comment says it is for "an epoch gap (a commit arrived while the app was closed)". **For a
+same-epoch refusal a catch-up cannot help by construction** - the log says so itself, `catchup: no
+commit to catch up (epoch=12) -> fallback` - and it costs `fetchCommitsFromBackend` plus an
+`MlsBackgroundWorker` enqueue that does nothing but `background cleanup`, on every such message.
 
-phone    19:57:53 onMessageReceived: queuedMessageId=eaab3c04...   <- the MUTATION, not the message
-phone    19:57:53 thread: ... silent=true
-phone    19:57:57 Silent push decryption failed -> returning silently
+*Never learn by failing what a fact could have told you.* The fix is to carry the kind as a TYPE
+the whole way - `Refused` splitting into the case a catch-up can answer and the case it cannot -
+**never by matching the error text**, which is the rule this project already paid for.
 
-result   notifiedInMs=null, shade empty, and `A1 holds the message: 1`
-```
+### P3 - two notification id spaces in one namespace, so the overlap cannot merge into one banner
 
-**The visible message never became a push at all.** `scheduleDeferredPush` fires only for a message
-still unACKed after 10 s, and a backgrounded Android app keeps its WebSocket, receives the frame and
-ACKs it - so the server correctly sends nothing. The push that DID arrive was for the silent
-mutation frame beside it, which by definition raises no notification whatever it decrypts to.
+When a message is unACKed for 10 s AND the app is alive, both paths can now notify. They cannot
+merge, because they key per conversation and they key it DIFFERENTLY - measured 2026-09-05 by
+reading both:
 
-**And the client had already decided not to speak.** `notifyInbound` opened with:
-
-```ts
-// Native mobile (Android + iOS) posts its own OS notification from the background push handler,
-// so the JS layer must NOT also fire one - the user would get two.
-if (isMobileTauriRuntime()) return;
-```
-
-The premise holds only when there IS a push. For the ordinary backgrounded case there is none, the
-push handler never runs, and **nobody notifies at all**. The app has the message the whole time; the
-user is simply never told.
-
-**It also explains the pair this campaign had backwards.** **LIFE-8** (`am kill` - the user killing
-the app) measured a decrypted push in 4.7 s: a killed app cannot ACK, so the deferred push fires and
-the Kotlin handler notifies. *The phone in a pocket was the failing case and the phone the user had
-killed the passing one*, which the earlier account noticed and attributed to a spent ratchet
-generation. The generation is spent, and it is not why.
-
-**AND THE ROW FIRST CITED HERE WAS THE WRONG ONE - twice, by two different readers.** The original
-entry said *"LIFE-3, which KILLS the app, passes: a killed app has spent no generation, so its push
-decrypts and notifies"*, and the first correction of this entry repeated it. LIFE-3 **force-stops**,
-and `life.mjs` says why that is a different question: a force-stopped package sits in Android's
-STOPPED state and the framework cancels every FCM broadcast to it, so the row records
-`notification: {expected: false, afterMs: null}` and PASSES because nothing was owed. It is evidence
-about nothing here. Re-run 2026-09-05 20:24 to check this fix for a regression - `PASS-DIRTY`,
-unchanged - and that run is what caught the citation. **A row's verdict means what the row asserted,
-and "it passes" is not a mechanism.**
-
-**FIXED 2026-09-05**: the early return is gone. Native mobile now notifies on
-`visibilityState === 'hidden'` - not on "hidden or unfocused", which is the desktop rule: a WebView
-reporting no focus while its activity is on screen would interrupt somebody reading the message.
-Five tests pin both directions, and two of them fail if the early return comes back.
-
-**What is still owed, and it is the overlap rather than the defect.** When a message is unACKed for
-10 s AND the app is alive, both paths can now notify, and they cannot merge into one banner because
-they compute the notification id differently - see the table below. The window is narrow, the
-failure mode is one extra banner rather than a lost message, and it is strictly better than the
-silence it replaces. The id unification is the follow-up.
-
-## The older account, whose observations stand and whose conclusion does not
-
-On the phone, for every message:
-
-```
-E/openmls: Ciphertext generation out of bounds 433 / SecretReuseError
-E/mls_core::messaging: MLS decryption failed at exactly its own epoch, so no redelivery can help
-   group=2bd5add9 msg_epoch=12 group_epoch=12
-E/mines_app_lib::mobile::background: [PushBG] key-based: process_incoming_message Err(... same-epoch refusal ...)
-W/CanariFCM: decryptProto: ok=false -> decryption failed
-D/CanariFCM: fetchCommitsFromBackend: 0 commit(s) since epoch=12
-D/CanariFCM: catchup: no commit to catch up (epoch=12) -> fallback
-W/CanariFCM: Decryption failed -> MlsBackgroundWorker enqueued
-D/CanariWorker: doWork: background cleanup completed          <- 60 ms, and it decrypts nothing
-```
-
-**What the user sees**: `Nouveau message de <name>` with no preview. NOTIF-10 cuts the RADIOS rather
-than backgrounding the app, so the app is alive, decrypts over its socket when the radios return,
-and the push loses - `notifiedInMs: null` for all five messages there. That row is the one place
-this noise becomes a verdict, and the fix above is what should now carry it.
-
-**Why the generation is already consumed, from the server's own log.** The push is not
-unconditional: `[PUSH_DEFERRED] queuedId=... still unACKed after 10 s -> FCM fallback`, then
-`[PUSH_SEND] FCM sent`. So the server pushes only what the device has not ACKNOWLEDGED.
-
-The phone had DECRYPTED the message - spending the generation - and had not ACKED it, because its
-network was failing in exactly that window: `[OUTBOX] a461056f... transient failure (attempt 1..3):
-error sending request for url (http://localhost:8081/api/mls/send)`. Ten seconds later the server
-pushed a message the device already held, and the push could not decrypt it, because a ratchet
-generation can be spent once.
-
-**The notification falls into the gap between DECRYPTED and ACKNOWLEDGED**, and the ACK is being
-asked a question it was not written to answer: it says whether the SERVER's copy was collected, and
-it is read as whether the DEVICE needs telling. On a phone whose uplink is degraded - the ordinary
-case for a backgrounded app - those two come apart on every message.
-
-**LIFE-2 is the same defect and it is worse there.** Backgrounded via HOME (not killed), the shade
-held nothing but the USB notice, `notification.afterMs: null`, and the message took 95 s to appear.
-~~LIFE-3, which KILLS the app, passes: a killed app has spent no generation, so its push decrypts and
-notifies.~~ **Both halves of that sentence are wrong** - LIFE-3 FORCE-STOPS, which cancels FCM
-outright, so it expects no notification and passes because nothing was owed; and the row that does
-measure the killed case is LIFE-8 (`am kill`, a decrypted push in 4.7 s), where the reason is the
-missing ACK rather than an unspent generation. **A phone in a pocket is the failing case and a phone
-the user has killed is the passing one** - that part held, for a different reason than the one given
-here.
-
-**Three rules this sits on.** *A race that heals cleanly is still a defect* - and this one does not
-heal: the preview is gone for good. *A fallback is a signal, never a path* - this one is taken 100%
-of the time and leads to a worker that only runs `background cleanup`. *Never learn by failing what
-a fact could have told you* - `queuedMessageId` is in hand before the decrypt is attempted.
-
-**The discriminator already exists one layer down and is thrown away one layer up.** `mls_core`
-names this exactly - "same-epoch refusal", distinct from an epoch gap - and `CanariFirebaseMessaging-
-Service` collapses both into `decrypted == null`, then answers with a commit catch-up whose own
-comment says it is for "an epoch gap (a commit arrived while the app was closed)". For a same-epoch
-refusal the catch-up cannot help by construction, and it costs a backend round trip and a worker
-enqueue per message.
-
-**What a fix owes.** Two halves, and they are independent - the first stops the waste, the second
-restores the preview:
-
-1. Carry the kind to Kotlin as a TYPE - *never branch on an error message* - so a same-epoch refusal
-   stops costing a backend round trip and a worker enqueue per message, and can be answered from the
-   copy the device already holds.
-2. **When the JS layer is the path that decrypted, the preview must reach the notification the
-   platform already has.** `notifyInbound` excludes native mobile wholesale, on the ground that "the
-   background push handler posts its own" - true only when the push CAN decrypt, and by the ratchet
-   argument exactly one of the two ever can.
-
-**THE SHAPE FILED FOR (2) ON 2026-09-05 WAS WRONG, AND IT WOULD HAVE SHIPPED A SECOND NOTIFICATION.**
-It said the two sides "already key their notification per conversation (`stableNotifId` / tag
-`canari-<id>`), so the app's would REPLACE the contentless fallback". They key per conversation and
-they key it DIFFERENTLY - measured 2026-09-05 by reading both:
-
-| | how the id is computed | what else the notification carries |
+| | how the id is computed | what else it carries |
 | --- | --- | --- |
-| Kotlin, `CanariFirebaseMessagingService.getStableNotifId` | a **SharedPreferences counter from 1000**, one per `groupId`, `commit()`ed under a lock so two conversations cannot collide | `MessagingStyle`, the reply and mark-as-read actions, the channel, the group summary, the launcher badge |
+| Kotlin, `CanariFirebaseMessagingService.getStableNotifId` | a **SharedPreferences counter from 1000**, one per `groupId`, `commit()`ed under a lock so two conversations cannot collide | `MessagingStyle`, reply + mark-as-read actions, the channel, the group summary, the launcher badge |
 | JS, `useNotifications.stableNotifId` | `Math.abs(hash31(conversationId)) \|\| 1` | title and body |
 
-Two id spaces that coincide only by accident, in one `NotificationManager` namespace - so
-`sendNotification({ id })` from the WebView posts a NEW notification beside the contentless one,
-with no actions, no style, no summary and no badge. **Keying "per conversation" is not the same as
-keying on the SAME conversation key**, and the entry above read the first as the second.
+**Keying "per conversation" is not keying on the SAME conversation key**, and an earlier version of
+this entry read the first as the second - which would have shipped a SECOND banner beside the
+contentless one, with no actions, no style, no summary and no badge.
 
 **So the shape is a bridge, not a second surface.** The JS layer hands the decrypted preview to the
 native side - one Tauri command reaching the `showNotification` path that already exists (it is
-`private` in the service today, and it already suppresses itself when the app is in the foreground,
-which is the guard this call needs anyway). One notification surface on Android, keyed by the id the
-platform is already using, so a push that DID manage to decrypt and an app that decrypted the same
-message update one notification rather than racing to post two. **Idempotent by construction rather
-than by a check**, which is the only version of this worth shipping.
+`private` in the service today and already suppresses itself in the foreground, which is the guard
+this call needs anyway). One surface on Android, keyed by the id the platform is already using, so
+a push that DID decrypt and an app that decrypted the same message update one notification rather
+than racing to post two. **Idempotent by construction rather than by a check.**
 
-**Why none was written on 2026-09-05.** A rule rather than a budget: **a green gate is not a working
-system, and three of three iOS defects were invisible to every gate here.** Both halves change
-notification behaviour on a surface only hardware can judge, and **the phone went behind its
-credential lock screen mid-phase** (`deviceLocked=1`, `wm dismiss-keyguard` refused, no credential in
-the rig), so LIFE-6/7/8 never ran and nothing could be re-measured. A notification fix verified only
-by unit tests is exactly the shape that has cost this project three times. **The phone answered again
-later the same day**, so the blocking condition is lifted.
+Severity is P3 on purpose: the window is narrow and the failure is one extra banner, not a lost
+message. **Verified only on hardware** - three of three iOS defects were invisible to every gate
+here, and a notification fix pinned by unit tests alone has cost this project three times.
 
-**THE HARDWARE PASS IS DONE FOR THE CELL THIS ENTRY IS ABOUT, 2026-09-08.** An APK was built against
-the local estate and installed (`1600603`, source `edb9d7653`), and LIFE-2 - the exact premise, app
-alive and backgrounded with HOME - came back **`PASS`, `"clean": true`**:
+### The rows this says nothing about
 
-| | 2026-09-05, before the fix | 2026-09-08, on hardware |
-| --- | --- | --- |
-| `notification.afterMs` | `null` - shade empty | **6 359 ms, with the FULL decrypted text** |
-| the message in the conversation | present the whole time, unannounced | `count: 1` - the foreground path did not re-add what the notification stored |
-| the app's pid across the run | - | unchanged, so it really was alive and backgrounded |
-
-`fcmLinkMs: 4200`, so the push precondition was measured rather than assumed - the failure that cost
-four verdicts before. **The user-facing half of this P1 is therefore closed on the surface only
-hardware can judge**, which is the bar this class was given after three of three iOS defects went
-invisible to every gate here.
-
-**WHAT IS STILL OPEN IS THE WASTE AND THE OVERLAP, NEITHER OF WHICH LIFE-2 CAN SEE.** Half (1) above
-- carrying the same-epoch refusal to Kotlin as a TYPE - is untouched: a refusal that cannot be helped
-by a catch-up still costs a backend round trip and a worker enqueue per message. And the id
-unification (the table above) is still the follow-up: when a message is unACKed for 10 s AND the app
-is alive, both paths can notify and they cannot merge into one banner. The remaining rows are the
-salon cells in the COMMUNITY entry below, which LIFE-2 says nothing about - a salon is not the same
-key path.
-
-
+LIFE-2 measured a direct conversation. A salon is not the same key path, so the COMMUNITY cells
+below are still owed their own measurement.
 ### P2 - a COMMUNITY message is not decrypted in a background notification, and the KILLED case is unmeasured for both kinds (user, 2026-09-05)
 
 **Reported by the user, who has seen it**, and asked in the same breath for the question the campaign
@@ -3036,6 +2824,14 @@ two. All four need the phone, which is
 rows with the invitation question in
 [Communities and permissions](#communities-and-permissions): a notification that never arrives and a
 notification that arrives undecryptable are different failures, and only the logcat separates them.
+
+## MLS state, device healing and delivery - the defects the campaign measured
+
+These thirty-odd entries sat under a heading that named a superseded 2026-09-05 notification account,
+which is why the file read as unstructured: the heading described one investigation and the entries
+below it describe everything the cross-client campaign has found since 2026-08-26. Each is
+independent and carries its own measurement. Order inside this section is chronological rather than
+by severity - the queue in `CLAUDE.md` carries the priority.
 
 ### P2 - a history repair still costs THREE MINUTES on a large mailbox; only the LOSS half of it was fixed (measured on the local estate 2026-09-05)
 
@@ -5641,23 +5437,15 @@ a Windows path, which is how the killer URL was produced in the first place.
 
 ## Composer and reactions
 
-### Bundled emoji font - SHIPPED 2026-09-15, campaign rows still owed
+### Bundled emoji font - the ELEVEN campaign rows, which need real devices
 
-Decided by the user 2026-08-23, implemented in full: Canari bundles **Noto Color Emoji** (merged
-COLRv1+OT-SVG, `maximum_color`) and falls back to it on every font stack in the app and every
-export, and proves at build time that every offered emoji resolves to one glyph in the bundled
-font. The picker's own CDN leak (self-hosting the EN dataset) was a separate, already-closed fix
-(`tools/emoji-data/sync.mjs`, above) - this entry builds on it rather than repeating it. Provenance,
-the exact wiring, and why `emojiUnsupportedMessage` was NOT deleted are the whole of
-[emoji.md](frontend/emoji.md), the only copy - nothing about the decision or the implementation is
-restated here. What is left is the campaign rows below, which need real devices this repo does not
-have.
+The font itself shipped 2026-09-15 and nothing about it is open: provenance, the exact wiring and
+why `emojiUnsupportedMessage` was NOT deleted are the whole of [emoji.md](frontend/emoji.md), the
+only copy. What remains is below - rows for the **second campaign** (see that entry), listed here
+once and not restated there, asked for by the user on 2026-08-23. Every one names the evidence it
+rests on, because "the emoji looked fine" is not an observation.
 
-#### What a future campaign owes - asked for by the user on 2026-08-23
-
-These are rows for the **second campaign** (see that entry below); they are listed here, once, and are
-not restated there. Every one names the evidence it rests on, because "the emoji looked fine" is not
-an observation.
+#### What a future campaign owes
 
 1. **The bundled family actually resolved**, per platform, on W1, W2 and A1 - plus an iPhone when one
    exists. `document.fonts.check()` is necessary and not sufficient: it answers "loaded", not "used".
@@ -7582,333 +7370,51 @@ sequence, the PIN unlock and the Safari/mobile fallback, all of which have to be
 before the campaign would invalidate every verdict already taken, since the boot path is what half of
 them measure.
 
-### `dev.canari-emse.fr` becomes a real second environment - decided 2026-08-17
+### `dev.canari-emse.fr` - the two things that outlived the chantier
 
-Today it is a proxied CNAME onto the same tunnel as production - one environment wearing two names.
-The user wants trials to stop happening on prod, which is the right instinct: every reproduction is
-authorised on prod only because there is nowhere else, and each one leaves debris on a shared server
-that real members use.
+The environment is built, deployed and in daily use: it answered `0.18.3-alpha.2` (`dev.6a855e6`) on
+2026-09-15, served by its own estate. **All eight steps shipped 2026-09-01, all fourteen secrets
+exist, the `canari-dev` OIDC client is live on Authentik (`pk=10`), and the tunnel ingress was moved**
+- the last step by design, since moving it early would have turned a production hostname into a 502.
 
-**SCOPED WITH THE USER 2026-09-01 - the decisions below are TAKEN and are not to be re-litigated by a
-later session.** Where a decision went against the recommendation, the reason is recorded with it, so
-that reason is what a future session must argue with rather than the choice.
+**The DECISIONS are on [dev-environment](infrastructure/dev-environment.md), the only copy, and they
+are TAKEN - a later session argues with the reasons recorded there, not with the choices.** That page
+holds the isolation and the two host ports; the full unscrubbed copy of production (the user's call
+against the recommendation, *"le plus proche de la prod est mieux quand-meme"*) and its three
+mandatory strips; the declared one-major version gap; the one scoped decision this chantier reversed
+while building it (dev reads `DEV_<NAME>` and **never** the bare secret name, because GitHub falls
+back from an environment secret to the repository one - fail-OPEN, which would have run a second
+estate on production's own `JWT_SECRET`); and Cloudflare Access over web AND API with a service token
+for the harness. `deploy-env.test.sh` asserts that `deploy-dev` references no production secret by
+its bare name, so the reversal is pinned rather than remembered.
 
-> **This item holds the DECISIONS. How the environment is actually put together - the isolation, the
-> two host ports, the copy and its three strips, the declared version gap, the two variables that
-> identify a dev deployment - is on
-> [dev-environment](infrastructure/dev-environment.md), the only copy.** **ALL EIGHT STEPS HAVE
-> SHIPPED** (2026-09-01), the CD wiring included. **ALL FOURTEEN required secrets exist, the
-> `canari-dev` OIDC client is created on Authentik (`pk=10`), and `DEV_ENVIRONMENT_ENABLED` is
-> `true`** - all done 2026-09-02, the Authentik write only after the user said
-> *"Je valide tes requetes manuellement, vas-y"*, an unattended agent having been refused it first
-> and correctly. **ONE THING IS LEFT AND IT IS THE LAST STEP BY DESIGN: the tunnel INGRESS rule for
-> `dev.canari-emse.fr`, still pointing at `http://localhost:8080`** - production's frontend. Moved
-> before dev answers on `127.0.0.1:3080` it turns a name that serves production into a 502.
-> **A warning about the secrets themselves:** twelve were written with `gh secret set --body -`,
-> which stores a literal dash rather than reading stdin, and all twelve had to be rewritten - the
-> rule is in [durable-rules](durable-rules.md). That page's closing section is the map.
+**How a deploy is triggered is no longer part of this item at all.** The user's 2026-09-02 question
+(*"on peut toujours push sur dev non ?"*) was answered from the other end by the workflow migration:
+**a run deploys exactly one estate, decided by the RELEASE** - a `X.Y.Z-alpha.N` pre-release deploys
+dev and nothing else, a stable deploys production and nothing else, a push deploys neither. Both
+shapes proposed here are gone rather than chosen: the `dev` branch lived one day, and the three
+deploy files that replaced `deploy.yml` on 2026-09-07 - `build.yml`, `serve-dev.yml`,
+`serve-prod.yml` - are `workflow_call` libraries carrying no `workflow_dispatch` at all, a dispatch
+being a second door onto one machine.
 
-**CLOSED 2026-09-03, and by neither of the two shapes that had been proposed.** It was raised by
-the user on 2026-09-02 (*"on peut toujours push sur dev non ?"*) as: there is no way to deploy dev
-WITHOUT deploying production, because one trigger - a push to `main` - ran both estates in sequence.
-The workflow migration answered it from the other end. **A run deploys exactly one estate, and which
-one is decided by the RELEASE**: a `X.X.X-alpha.N` pre-release deploys dev and nothing else, a
-stable deploys production and nothing else, and a push deploys neither. Both shapes weighed here are
-gone rather than chosen - the `dev` branch existed for one day and was deleted, and `deploy.yml` has no
-`workflow_dispatch` at all, a dispatch being a second door onto the one machine. **Kept because the
-distinction it was written to preserve still holds**: the capability was absent because nobody had
-asked for it, not because it had been considered and rejected, and it arrived the day somebody
-asked.
+**TWO THINGS OUTLIVED THE CHANTIER.**
 
-**Shape.** Same machine as production (70 GB and 15 GiB free, measured), own compose project
-`canari-dev`, resource limits so a dev container cannot starve prod, running permanently. Own
-Postgres, own Redis **with** a `redis_data` volume, own Garage instance with its own keys, own RPC and
-admin secrets, and a bucket named `canari-media-dev`. ~~Secrets carried by a GitHub environment named
-`dev`, not by prefixed repo secrets.~~
+1. **P3 - the platform cannot declare payments DISABLED.** `platform_config.payment_provider` is
+   typed `'stripe' | 'lydia'` with no third value, so the copy leaves it alone - writing anything
+   else would contradict what the code asserts about the column. Dev therefore presents Stripe as
+   the live provider and fails on use, with no keys behind it. A `'none'` value, refused by the
+   DTO's `@IsIn` today, would let an environment say the truth: one line of enum and one migration.
+2. **Phase 2, mobile, is OWED TO THE USER and nothing here can do it.** The dev Firebase project -
+   the Play service account holds only `androidpublisher`, not `serviceusage.services.enable`, so it
+   can neither create a project nor turn an API on - and the dev keystore, plus a decision on where
+   that keystore is backed up. See the table at the top of this file.
 
-> **THIS ONE DECISION WAS REVERSED WHILE BUILDING IT, 2026-09-01, and the reversal is recorded here
-> rather than made quietly - it is the only scoped decision this chantier went against.** GitHub
-> resolves `secrets.FOO` inside a job declaring `environment: dev` in this order: the environment's
-> own secret, then the REPOSITORY secret. So an environment where somebody forgot one secret does not
-> fail - it silently inherits production's value for it. That is a fail-OPEN mechanism, and it is
-> precisely the defect the deleted `cd-dev.yml` shipped: it read the bare names and would have run a
-> second estate on production's own `JWT_SECRET`, making a token minted by either valid in the other.
->
-> Dev therefore reads `DEV_<NAME>` and **never** the bare name, so a missing dev secret is EMPTY and a
-> `required` row refuses the deploy before a container is touched - fail-CLOSED. The GitHub environment
-> still exists and `deploy-dev` still declares `environment: development`, for its deployment URL and
-> any protection rules; the two mechanisms do not conflict, because the job no longer depends on
-> environment scoping for isolation. The intent behind the original decision - dev secrets kept apart
-> from production's - is fully served; only the mechanism changed, for a reason that would otherwise
-> have re-created the exact hazard this environment exists to remove.
-
-**Data: a FULL copy of production, unscrubbed - the user's choice, against the recommendation.** The
-reason is usability: *"le plus proche de la prod est mieux quand-meme, sinon complique de se connecter
-et d'interagir dans de bonnes conditions"*. Two facts were put to the user first and did not change
-it: the server holds only ciphertext, so a copied conversation is **unreadable** on a fresh dev
-client - the MLS keys live on the device and the media CEK is client-generated - and login ease comes
-from the Authentik directory, not from the database. The copy therefore buys realistic users,
-communities, posts, forms, calendar and shop, and buys nothing at all for chat, the most-tested
-surface. **Three consequences are load-bearing and must be built into the copy procedure:** it
-TRUNCATES the push-token table (copied tokens belong to prod's FCM sender, so a dev sender rejects
-every one - safe, but it would log a failure per token, and noise is never acceptable), it CLEARS
-`stripe_customer_id` (live-mode ids are unknown to test-mode keys and fail with a misleading message),
-and it has a guard that categorically refuses the reverse direction. There is no mail transport
-anywhere in this repo, so copied addresses cannot be written to.
-
-**The copy runs as a workflow triggered by each minor release** - `bump-version.yml` fires it - which
-is also what "reset" means here: dev is re-copied from prod, not emptied. That gives the named
-starting point the user asked for in queue item 8, and makes a procedure that touches the production
-database a rehearsed one rather than a rare gesture.
-
-**Login: the same Authentik instance with a dedicated OIDC client, open to the whole directory** -
-also the user's choice over a testers group, for the same usability reason. Redirect URIs limited to
-`dev.canari-emse.fr`. JWT signing secrets are distinct from prod's, so a token minted by one
-environment is refused by the other, and that non-interchangeability is a test.
-
-**Exposure.** Web AND API behind Cloudflare Access on the existing admin group, because the earlier
-answer left a full production copy reachable by any directory account - the API is where the data is,
-so protecting only the web protected nothing. **The harness crosses Access with a service token**
-injected as `CF-Access-Client-Id` / `CF-Access-Client-Secret` headers, the user having required that
-*"lors de nos tests automatises, il faut que les instances des navigateurs puissent y acceder
-librement"*: an interactive SSO page cannot be crossed by an automated run, an egress-IP bypass
-breaks silently when the address changes, and a per-profile SSO session would add a non-scriptable
-step to the from-zero sequence beside SETUP-4's 2FA. No adminer in dev.
-
-**CORRECTION, 2026-09-01, on the MECHANISM and on when it may be built.** The line above said "by
-the Playwright context". **There is no Playwright in this repository at all** - measured:
-`newContext`, `launchPersistentContext`, `extraHTTPHeaders`, `connectOverCDP`, `chromium.launch` and
-`puppeteer` return nothing across `tools/cross-client-harness/*.mjs`. The harness drives real Chrome
-over raw CDP (`cdp.mjs`, 887 lines, a websocket per target), so the mechanism is
-`Network.setExtraHTTPHeaders` on each attached target after `Network.enable`, not a browser-context
-option.
-
-**And it is deliberately NOT built yet, which is a disposition rather than an omission.** There is no
-Access application, no dev environment and no service token, so the crossing cannot be exercised -
-and an arming path nobody can exercise is an untested code path inside the ONE instrument the whole
-campaign depends on, in a file whose profiles cost a re-enrolment and SETUP-4's 2FA to lose. The
-honest split is to build it in the session that can prove it crosses. What that session owes: read
-the pair from the environment, return no headers at all when unset (so today's behaviour is
-untouched), one `Network.setExtraHTTPHeaders` call at target attach, and one assertion in an existing
-`*-selftest.mjs` that an unset pair injects nothing.
-
-**Trigger: deployed from `main` on every push, with no `dev` branch at all.** One trigger, no possible
-divergence, and `WORK ON main` stays intact. **(SUPERSEDED 2026-09-03: nothing deploys on a push any
-more, and this estate is reached by publishing a `X.X.X-alpha.N` pre-release. The paragraph stays as
-the record of what was decided on 2026-08-17, and the sentence below about a failed dev migration
-blocking the prod deploy no longer describes anything - a run deploys one estate.)** Dev deploys BEFORE prod and **a failed dev migration
-blocks the prod deploy** - the most valuable gate this whole item buys, and it is free: dev runs the
-migration against a copy of prod's data, so a migration that breaks there would have broken prod.
-Accepted cost: dev never pre-validates a commit, it is where things are tried afterwards.
-
-**CD shape: ONE `deploy.yml` parameterised by environment**, not a second file - `cd-dev.yml` drifted to
-734 unusable lines in four months precisely because it was separate. Dev builds its own images
-(the images embed the frontend and therefore the domain), roughly doubling build time, accepted.
-
-**Version.** `bump-version.yml` stays the only writer. **DONE 2026-09-01, with one correction: the
-suffix is a SEPARATE FIELD, not part of `version`.** `/api/version` now returns `build`, fed by
-`DEPLOY_BUILD`; putting `+dev.<sha7>` inside `version` as first described would have broken the update
-path, because the frontend turns that field into a release tag and a GitHub download URL
-(`releaseTag`, `getReleaseApkDownloadUrl`), so a dev client would have been offered an update from
-`v0.14.15+dev.abc1234` - a 404. The permanent, non-dismissible **"test environment" banner** is built
-(`EnvironmentBanner.svelte`, driven by the build-time `VITE_DEPLOY_ENVIRONMENT`, unset meaning
-production so a missing variable never brands prod) - non-negotiable given the copy is
-indistinguishable from prod on screen. **Both variables are written by the pipeline as of 2026-09-01**:
-`build-frontend-dev` writes `VITE_DEPLOY_ENVIRONMENT=development` into the dev bundle, and
-`render-env.sh --build dev.<sha7>` writes `DEPLOY_BUILD` into dev's `.env` only - the manifest marks
-that row `skip` for production, so a tagged release keeps `build: null`. `minClientVersion` is per-environment by virtue of the separate
-database. A GitHub release does not build dev.
-
-**Dev is deliberately ONE MAJOR AHEAD, and a PROVEN gap lifts a ceiling.** ~~Postgres 18 starting in
-dev, on a data directory written by prod's 15, and serving `/api/version`, is exactly the test that the
-ceiling table demands.~~ **CORRECTED 2026-09-01 WHILE BUILDING IT, and this is the most important
-correction in this item: a green dev deploy is NOT that test.** The copy is `pg_dump` replayed into a
-cluster the new major initialised itself, from empty - a LOGICAL copy, which never touches a data
-directory written by the old major and therefore cannot fail the way production failed. It would have
-gone green on 18 while saying nothing about `pg_upgrade` or the 18+ move of the mount point from
-`/var/lib/postgresql/data` to `/var/lib/postgresql`, and the next `postgres` major would have
-auto-merged on it - the outage of 2026-09-01 re-armed behind a gate that reads as proof. So
-`infrastructure/dev/version-gap.yml` makes each row declare WHICH of four questions its gap answers
-(`none`, `fresh_cluster`, `logical_restore`, `in_place_upgrade`) and `lib/ceiling.sh` accepts only
-`in_place_upgrade`, with a non-empty `proof`, releasing exactly the major it was proven for. All three
-rows read `none` today, which is the honest state. What the dev environment buys on its own is a
-`logical_restore` - real, worth having, and lifting nothing. The
-[ceiling table](#p1---the-three-refusals-the-auto-merge-ceiling-makes-and-the-test-that-retires-each)
-is therefore retired by a rehearsal on a BINARY copy of prod's `PGDATA`, which is a separate piece of
-work and is not what deploying dev does. **The user's choice of a full copy is what makes this credible** - a synthetic seeder would
-have proved nothing about a real data directory - so the tension recorded earlier between "safe empty
-dev" and "dev that can lift a ceiling" is resolved in favour of the copy. The major gap between dev
-and prod is therefore EXPECTED and must be DECLARED in a file, with a test asserting the declared gap
-rather than asserting equality.
-
-**Mobile is phase 2, after the web environment actually serves something other than prod.** Then:
-`applicationId` `fr.emse.canari.dev`, `productName` `Canari Dev`, differentiated icon, side-by-side
-installation with prod, a **separate keystore** (a prod keystore leaked through a dev build is
-unrecoverable - Play refuses any key change), four `ANDROID_DEV_*` secrets, and the APK distributed as
-a GitHub artefact with **no Play listing** - a second listing would mean redoing content, data-safety
-and privacy-policy questionnaires for no gain. Three Android details are build-breaking or
-resolution-breaking if missed: `google-services.json` comes from a secret and the Gradle plugin
-validates the package name, so a prod file fails a dev build; the custom scheme `fr.emse.canari`
-(five hosts) must become `fr.emse.canari.dev` or two installed apps claim the same scheme; and the
-App Link on `https://canari-emse.fr` must be replaced by one on `dev.canari-emse.fr`, with prod's
-`assetlinks.json` never listing the dev fingerprint. **Dev gets its own Firebase project** - the user
-is creating it, since the Play service account holds only the `androidpublisher` scope and no
-`serviceusage.services.enable`, so it can neither create a project nor enable an API. iOS and desktop
-are out of scope.
-
-**Also decided:** the April clone at `/home/canari/canari-dev` is read for what `DEV_BRANCH_SETUP.md`
-still holds, that is folded into the dev wiki page, and the clone is then DELETED - blocking, before
-anything deploys there. `auth_db` is renamed during the PostgreSQL 18 window, rehearsed in dev first.
-Dev is excluded from `backup.sh` by a positive list. No TURN in dev while `CALLS_ENABLED = false`.
-`MIGALLERY_API_URL`, which the dev compose still defaults to the production `https://gallery.mitv.fr`,
-is cut. Cookie attributes are prod's - **DONE 2026-09-01, and it was worse than the plan assumed:**
-`isDev` was not merely domain-derived, it was decided per request from `Origin`/`Referer`, so outside
-production any caller claiming localhost got its own refresh credential without `Secure`. Now read
-once from `ALLOW_INSECURE_COOKIES`, no default, with `true` + `NODE_ENV=production` a startup error;
-and the rewritten dev compose had left `NODE_ENV` off all four NestJS services, which is exactly how
-a live HTTPS environment would have reached that branch - a derived test now forbids it
-([sessions](sessions.md#the-cookies-own-attributes-are-a-deployment-fact-not-a-per-request-one)). The
-refresh cookie stays host-only with no `domain:` attribute, which is what already keeps prod and dev
-from sharing it ([auth.controller.ts](../../apps/core-service/src/auth/auth.controller.ts)). The tunnel token readable
-in `ps aux` is a separate P2, deliberately not folded in here.
-
-**FOLDED IN FROM THE APRIL CLONE, which was then deleted 2026-09-01.** Its `DEV_BRANCH_SETUP.md`
-described a stack that no longer exists - MongoDB, Kafka and MinIO, none of which this repo runs - and
-a branch workflow (feature -> PR -> `dev` -> PR -> `main`) that the decisions above replace outright.
-Its "push" section recommended disabling the Husky hooks and cited a git setting that does not exist
-(`core.sharen`), which is reason enough not to archive it: it is a document that teaches the opposite
-of FACE THE BLOCKAGE. Both it and `DISPLAY_LOCATIONS.md` remain in `main`'s history (the clone sat at
-`5ce5ddc`, an ancestor of `main`), so deleting 24 MB of stale worktree lost nothing. **Four things
-survived and are inputs to phase 1:**
-
-- **The dev frontend's host port is `3080`**, which the current `docker-compose.dev.yml` port set does
-  not make obvious next to the service ports (5433, 6380, 3100, 3110-3114). It is what the tunnel must
-  route `dev.canari-emse.fr` to.
-- **The two-directory layout on one machine** - `/home/canari/canari` and `/home/canari/canari-dev` -
-  is what the April attempt already assumed, and it matches the decision taken above.
-- **Its nginx claim is WRONG and the correction matters.** It asserted that nginx needs vhost entries
-  for both `dev.canari-emse.fr` and `canari-emse.fr`. It does not: dev runs its OWN frontend container
-  and therefore its own nginx, so there are TWO instances and the tunnel picks between them by port
-  (prod `8888`, dev `3080`). Nothing about prod's nginx changes, which is the whole point of the
-  single-public-entry-point rule - a second environment must not edit the first one's entry point.
-- **It tagged dev images `dev`, a MUTABLE tag, and that now collides with a durable rule.** Since
-  2026-08-30 the containers production runs are identified by DIGEST, not by a tag. Whether dev may use
-  a mutable tag is a decision that has to be made deliberately rather than inherited from this
-  document: a mutable tag means a dev redeploy cannot be reproduced, which sits badly with the standing
-  demand that everything be deterministic and reproducible.
-
-**WHAT IS ACTUALLY BLOCKED, narrowed by measurement 2026-09-01 - it is ONE credential, not four.**
-
-- **CORRECTED 2026-09-01 BY MEASUREMENT: the blocker was never DNS.** There is **no DNS record to
-  create** - `dev.canari-emse.fr` already exists as a proxied CNAME onto the same tunnel as every other
-  hostname in the zone, and the tunnel's INGRESS is what maps a hostname to a local port. That ingress
-  routes `dev.canari-emse.fr` to `http://localhost:8080`, **the identical service production is on**,
-  which is the whole reason the dev name serves prod. **The single change the environment needs is that
-  one rule repointed to `http://localhost:3080`**, the dev frontend's host port. The operative
-  permission is therefore `Account -> Cloudflare Tunnel`, NOT `Zone -> DNS`; the pre-existing token
-  READS the tunnel configuration while the DNS-scoped token added for this work is refused with `1001`.
-  Whether that token holds `Edit` or only `Read` is deliberately UNMEASURED: the only way to test it is
-  to write to a live ingress object that `canari-emse.fr` rides, so a malformed PUT would take
-  production off the internet. The edit is made once dev exists, by GET, single-rule change, PUT, with
-  the original saved first. **The hostname-to-service map itself stays out of this PUBLIC repo** - it
-  names the admin hosts, and that exclusion was already a deliberate decision; it is in agent memory.
-- **The DNS permission, described here as it was believed before the measurement above, and still
-  worth having:** The stored token reads
-  zones (`/zones?name=` returns the id) but is refused on `/zones/{id}/dns_records` with `10000`, so it
-  holds `Zone:Zone:Read` and not `Zone:DNS`. **The permission needed appears only on a policy whose
-  RESOURCE is a zone**; a policy scoped to "entire account" offers `Account DNS Settings`, `DNS
-  Firewall`, `DNS View` and the Registrar groups, **none of which grant any right over DNS records** -
-  that mismatch is what made the first attempt look granted when it was not. Phase 1 needs
-  `Zone -> DNS -> Edit` on `canari-emse.fr`, plus, account-scoped, `Access: Apps and Policies -> Edit`
-  and `Access: Service Tokens -> Edit` for the Access application and the harness token. **Beware one
-  false negative:** `/user/tokens/verify` answers `Invalid API Token` for an ACCOUNT-owned token even
-  when it works, so that endpoint must never be used to judge one.
-- **Authentik is NOT blocked - the box can be driven from here** (user, 2026-09-01). The alias is
-  `ssh miconnect`, not `rootz-emse`, which is in no SSH config; Authentik 2026.8.0 runs as
-  `miconnect-server-1`, and `docker exec miconnect-server-1 ak shell -c '...'` executes against the
-  live models, verified by listing the five existing providers. **The `Canari` provider's settings were
-  read so the dev one is a faithful clone rather than a guess:** `client_type` confidential,
-  `sub_mode` `hashed_user_id`, `issuer_mode` **`per_provider`** - which is why a dev token cannot be
-  mistaken for a prod one - claims in the id token, validity 1 min / 5 min / 30 days, and **four custom
-  property mappings that must be carried over or dev logins lose fields prod has**: `Promotion`,
-  `Formation`, `First + Last Names`, `Personnel de l'ecole`, alongside the two default OpenID mappings.
-  Its six redirect URIs (`canari-emse.fr`, both `tauri.localhost` schemes, ports 1420/1421, and
-  `fr.emse.canari://callback`) are the template; the dev provider's are the same list rewritten onto
-  `dev.canari-emse.fr` and `fr.emse.canari.dev://callback`.
-- **Stripe is DROPPED from dev entirely** (user, 2026-09-01: *"oublie. Stripe ne sera pas accessible en
-  dev pour le moment, tant pis"*). No keys, no webhook endpoint, and the payment path is inert there.
-  The copy still CLEARS `stripe_customer_id`, for the same reason as before and now more strongly: with
-  no keys at all, a copied live-mode id could only ever produce a misleading failure.
-
-**THE COPY IS BUILT AND ITS GUARDS ARE TESTED (2026-09-01):**
-`infrastructure/dev/copy-prod-to-dev.sh`, with
-`.github/scripts/tests/dev-copy-guards.test.sh` holding it to its two properties. Three things came
-out of building it that the plan had wrong:
-
-- **It is SEVEN payment columns across four tables, not the one the plan named.** Measured on prod:
-  `users."stripeCustomerId"`, `associations."stripeAccountId"`, `associations."stripeOnboardingComplete"`,
-  `associations."lydiaAccountId"`, `associations."lydiaOnboardingComplete"`,
-  `purchase_records."stripePaymentIntentId"`, `submissions."stripeSessionId"`. Five associations hold a
-  real `stripeAccountId`; both Lydia columns are still empty, which is precisely why they are stripped
-  now rather than after WP-LYDIA-1 fills them. The two `*OnboardingComplete` columns are NOT NULL
-  booleans and are set `false`, not nulled. **The test DERIVES this list from the entity declarations**,
-  so a column added later fails the build until the copy strips it - proved by injecting a
-  `stripeInvoiceId` and watching 8 columns derive and the new one fail.
-- **The direction is enforced by Docker's own labels, not by a path.** The two compose projects are
-  `readonly` literals, containers are found by `com.docker.compose.project`, and the database user is
-  read from the container's own environment - so the script needs no compose file, no `.env` and no
-  path to be right. Every write goes through one function that RE-READS the target's label per call.
-  Verified on the box: the discovery finds `infrastructure-postgres-1` and reads `POSTGRES_USER=canari`,
-  and a `--dry-run` with no dev environment present refuses with
-  `no running 'postgres' container in project 'canari-dev'` before touching anything.
-- **`push_token` holds 70 rows on prod and no foreign key references it**, so the truncate is safe.
-
-**AND ONE GAP IT EXPOSED, small but real: the platform cannot declare payments DISABLED.**
-`platform_config.payment_provider` is typed `'stripe' | 'lydia'` with no third value, so the copy
-leaves it alone - writing anything else would contradict what the code asserts about the column. The
-consequence is that dev presents Stripe as the live provider and fails on use, with no keys behind it.
-A `'none'` value, refused by the DTO's `@IsIn` today, would let an environment say the truth. Worth
-one line of enum and one migration, and it is not urgent.
-
-**Phase 2 alone remains owed to the user:** the Firebase project (the Play service account holds only
-`androidpublisher` and no `serviceusage.services.enable`, so it can neither create a project nor turn
-an API on) and the dev keystore, plus a decision on where that keystore is backed up.
-
-**MEASURED 2026-09-01, before any of it is scoped - four facts, three of them worse than the note
-above assumed.**
-
-- **`dev.canari-emse.fr` is not merely an alias, it is a PUBLIC one.** It answers `200` and
-  `/api/version` returns `{"version":"0.14.15","minClientVersion":"0.14.0"}` - byte for byte what
-  `canari-emse.fr` returns, because it is the same containers. Anyone told "use the dev site" today
-  is typing into production, and the name is doing the opposite of its job.
-- **`/home/canari/canari-dev/` already exists, and it is a trap.** It is a clone stranded on a
-  `master` branch at `5ce5ddc` (2026-04-24), four months and one whole toolchain behind: it still
-  carries `.prettierrc`, `.prettierignore` and `.pre-commit-config.yaml`, none of which this repo has
-  used since the move to oxfmt. It also holds a `DEV_BRANCH_SETUP.md` that exists in NO commit of
-  this repository - a design document that lives only on the box, which is exactly the failure
-  `CLAUDE.md` forbids. Read it and fold what survives into this page, then delete the clone. The
-  hazard that used to accompany this - `cd-dev.yml` deploying into that directory on top of it - is
-  gone with the workflow, so what is left is purely to recover the document before the clone goes.
-- **`cd-dev.yml` was dormant, not missing - and is now DELETED (2026-09-01, `a8ac1828` is the last
-  commit holding it).** 734 lines, `on: push: branches: [dev]`, last run 2026-05-09, and the `dev`
-  branch does not exist on origin, so its trigger could never fire - but `workflow_dispatch` could,
-  and **it read the SAME secrets as production**, Garage keys and `FIREBASE_SERVICE_ACCOUNT_JSON`
-  included, with `docker-compose.dev.yml` then defaulting `GARAGE_BUCKET` to the same `canari-media`.
-  Its host ports were offset (5433, 6380, 3100, 3104, 3110-3114) so nothing collided, and its volumes
-  were separate by compose project - but `redis_data` was absent from its `volumes:` block entirely,
-  so a dev Redis would have kept the shared message log in a container filesystem. Waking it up as it
-  stood was how a test notification reaches a real phone, which is why the deletion was pulled forward
-  ahead of the CD unification rather than bundled with it. It was no loss as a reference: the dev arm
-  will be written from `deploy.yml`, which works, not from a file that never did.
-- **The box has room, so capacity is not a reason to host dev elsewhere:** 70 GB free of 125 GB, and
-  15 GiB of 16 GiB RAM available with the whole production estate running at ~800 MiB.
-
-**One thing found while measuring, unrelated to dev and owed a decision:** the tunnel runs as
-`cloudflared --no-autoupdate tunnel run --token <token>` under root, which means its ingress lives in
-the Cloudflare dashboard rather than in a file on the box - and **the token is visible in `ps aux` to
-every user on the machine.** A token-based tunnel also means a second environment's hostname is a
-dashboard change, not a repo change, so nothing in this repository would record it.
-
+**One thing found while measuring, unrelated to dev:** the tunnel is token-based rather than
+config-file-based, so its ingress lives in the Cloudflare dashboard rather than in a file on the box.
+A second environment's hostname is therefore a dashboard change, not a repo change, and **nothing in
+this repository would record it** - which is the half that matters here. The credential-handling
+question the same measurement raised was put to the user on 2026-09-14 and DISPOSED OF by them; it is
+deliberately not described in this public repository, and it is not an open item.
 ### A SECOND campaign, for everything that is not chat - asked for 2026-08-16
 
 **It is a second campaign, not more sections on this one** - the user's framing, and it settles a
