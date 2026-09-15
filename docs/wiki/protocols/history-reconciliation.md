@@ -1350,7 +1350,9 @@ agree frame for frame:
 It does not heal: the client stayed wedged until it was reloaded. **The order was right and the
 placement was wrong** - and both facts can be established with the mutex free, because pinning the
 head is one HTTP read that touches no MLS state and emptying the mailbox *is* letting the drain have
-the mutex. So the sequence is **pin, empty, open, read**, with the first two above the session.
+the mutex. So the sequence is **pin, empty, open, read**, with the first two above the session -
+and since 2026-09-15 the open moved DOWN again, past the read, to the first frame that needs it (the
+subsection two below).
 
 Two things came out of it that outlive the fix. The hazard was **already named in this codebase**,
 at `answerAfterMailboxDrained`, for the responder legs - which solve it the other way, by deferring
@@ -1363,6 +1365,31 @@ unrecoverable hang into a defect report.
 covers a consumer this client does not account for. What changes is that reaching it is now a
 finding rather than the normal path - so a `Duplicate delivery` line in any later capture is a
 defect report, and its arm finally distinguishes two causes that can both occur.
+
+###### And the session is opened by a frame, not by the walk - "pin, empty, read, and open only if there is anything to open"
+
+`createDecryptSession` is not a handle. On the web client it takes `save_state(undefined)` of the
+WHOLE MLS client, ships that snapshot to a freshly spawned worker and has the worker rebuild the
+entire client before the first page is offered; `finish` reads the advanced state back and reinstalls
+it. Measured on the web client 2026-09-15: **6 694 960 B per snapshot**, and a reload replays every
+conversation - **19 of them, ~127 MB** of serialise / transfer / rebuild before the first message is
+on screen.
+
+**None of it decrypted anything.** The walk's first act on every row is to ask whether the row is
+already accounted for - the seen-ciphertext set, this device's own `sender_device_id`, the frame
+fingerprint left by live delivery - and on a reload at the head there is nothing left. So the cost
+was paid for the POSSIBILITY of work, on the path where there is none.
+
+The session is therefore opened on the first frame that actually has to be decrypted
+(`session ??= await mlsService.createDecryptSession(id)`, immediately above the `decryptPage` call),
+and `session?.finish()` in the outer `finally` is unchanged - a walk that opened one still commits
+its ratchet exactly once, a walk that never needed one never takes the MLS mutex at all, which also
+lets live delivery keep draining while the archive is being paged.
+
+**This cannot move the barrier.** Pinning the head and emptying the mailbox stay where the deadlock
+above put them, above the loop with the mutex free; opening LATER than they do is the direction that
+was always safe. The disjointness argument is untouched: nothing above the pinned head is walked, and
+nothing below it is still in the mailbox when a row is processed.
 
 ###### The barrier also PULLS, and at boot it was reachable before anything could drain what it pulled
 

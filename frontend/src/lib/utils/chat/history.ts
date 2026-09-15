@@ -3,6 +3,7 @@ import { fromBase64 } from '$lib/utils/hex';
 import type { IStorage, StoredMessage } from '$lib/db';
 import type { ChatMessage, Conversation, MessageReaction, ReadWatermarks } from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
+import type { MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
 import type { MlsDecryptSession } from '$lib/mls-client/mlsDecryptSession';
 import {
   applyReplaySystemEvent,
@@ -700,10 +701,6 @@ export async function replayConversationHistory(params: {
     walkHead = pendingPrimedPage.head;
     await mlsService.waitForMessageQueueIdle('archive replay', null).catch(() => {});
 
-    // Paged decrypt session: the ratchet advances worker-side across pages and is committed
-    // to the live client once by session.finish() (run in the outer `finally`, always).
-    session = await mlsService.createDecryptSession(id);
-
     while (true) {
       let page: HistoryPage;
       if (pendingPrimedPage !== undefined) {
@@ -781,10 +778,34 @@ export async function replayConversationHistory(params: {
         pageDecryptWork.push({ msg, rowKey, bytes });
       }
 
-      const batchResults =
-        pageDecryptWork.length > 0
-          ? await session.decryptPage(pageDecryptWork.map((w) => w.bytes))
-          : [];
+      /**
+       * THE SESSION OPENS ON THE FIRST FRAME THAT NEEDS DECRYPTING, AND NOT ONE STATEMENT EARLIER.
+       *
+       * Opening one is not a cheap handle: `WebMlsService.createDecryptSession` takes
+       * `save_state(undefined)` of the WHOLE client, ships that snapshot to a freshly spawned
+       * worker, and the worker rebuilds the entire client from it before the first page is
+       * offered. Measured on the web client 2026-09-15: 6 694 960 B per snapshot, and a reload
+       * replays every conversation - 19 of them, so ~127 MB of serialise / transfer / rebuild.
+       *
+       * NONE OF IT DECRYPTED ANYTHING. A reload at the head walks exactly one page per
+       * conversation, every row of which is already answered by the seen-ciphertext set, by the
+       * own-device check or by the fingerprint check above - so `pageDecryptWork` is empty and
+       * the session that was opened three statements ago is closed again untouched. The cost was
+       * paid for the POSSIBILITY of work, on the overwhelmingly common path where there is none.
+       *
+       * Opened here it is paid for by a frame that exists. `session` is the same variable the
+       * outer `finally` closes, so a walk that opens one still commits its ratchet exactly once;
+       * a walk that never needs one never touches the MLS mutex at all, which also lets live
+       * delivery keep draining while the archive is being paged.
+       *
+       * IT MAY NOT MOVE ANY EARLIER THAN THE MAILBOX BARRIER, and it has not: the barrier is
+       * above, outside the loop, with the mutex still free - see the paragraph that pins the head.
+       */
+      let batchResults: MlsBatchProcessResult[] = [];
+      if (pageDecryptWork.length > 0) {
+        session ??= await mlsService.createDecryptSession(id);
+        batchResults = await session.decryptPage(pageDecryptWork.map((w) => w.bytes));
+      }
 
       /**
        * EVERY GENERATION THIS PAGE SPENDS IS SPENT AS OF THE LINE ABOVE - so the whole page is
