@@ -49,7 +49,7 @@ the rule in [durable-rules](durable-rules.md). Delete the line once the measurem
 | a security advisory now has an ACTOR at all | `automated-security-fixes` was `{"enabled":false}` while alerts were on, and the `cargo` ecosystem limits `production-dependencies` to patch - so `serde_with` 3.19.0 -> 3.21.0 (GHSA-7gcf-g7xr-8hxj, medium, `frontend/src-tauri/Cargo.lock`) could be reported and never fixed by anything. Enabled 2026-09-02, and it fired within the minute - **onto a THIRD refusal nobody knew about**, the update job failing on a manifest cargo cannot parse (P1 below). So **this row cannot close on alert 210**: it closes on the first security pull request Dependabot opens for ANY directory, and 210 itself waits on the P1 |
 | the auto-merge ceiling refuses a major | **half taken.** The workflow is enabled again and its shipped loop body was replayed over all 33 open Dependabot PRs: 26 merge, 6 refuse, and the 6 collapse to the two gates below. What replay cannot show is the workflow REFUSING in its own run log, because no major has opened since - so the row stays until a real one does, logging `REFUSED` and staying open |
 | a proposed event now tells the association's calendar managers | **ANSWERED ON THE Mi 9T, 2026-09-09 - both halves.** Shade in 2 271 ms with the app backgrounded, in-app row rendered, two `event_proposed` rows written to both BDE validators, event left `pending`. The precondition was narrower than this row had guessed - the validator grant must be on the **BDE** (`a.isBDE = true`) and the proposer must hold `PROPOSE_EVENT` on a NON-BDE association, or their event is validated on the spot and never becomes a proposal - and both grants name their account by its OIDC **subject**, never a display name. Reading the notification instead of counting it found two defects, both fixed: the agenda's five resource pairs had shipped with their ACCENTS STRIPPED, and the two FORM pairs were still English on the legacy side. A test now compares the server's legacy sentence with the Android resource for every key. ([device-verification](device-verification.md#the-layout-pass-of-2026-09-09-and-the-sixth-check-that-ran-later-the-same-day)) |
-| launch to fingerprint prompt on Android, 4.2 - 4.6 s before the fix | HARDWARE, and **a pre-release build**: the APK embeds the frontend, so no deploy reaches it. Re-attach CDP to the release WebView (`adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>`), navigate `http://tauri.localhost/` and read the offset of `BiometricService/handleAuthenticate` in `logcat`. Three causes are fixed - the double SQLite schema bootstrap and the 250 ms timer (#655), the awaited `GET /api/version` - and the fourth is deliberately NOT ([the revocation round trip](#p3---a-revocation-round-trip-sits-in-front-of-the-fingerprint-prompt-and-moving-it-is-reverted-not-to-be-re-opened-measured-on-the-pixel-6a-2026-09-15)), so the target is a visible drop and not zero |
+| launch to fingerprint prompt on Android, **4.9 - 5.7 s measured on `v0.18.1`** | HARDWARE, and **a build from this tree**: the APK embeds the frontend, so no deploy reaches it. Re-attach CDP to the release WebView (`adb forward tcp:9222 localabstract:webview_devtools_remote_<pid>`), navigate `http://tauri.localhost/`, read the offset of `BiometricService/handleAuthenticate` in `logcat`, and run `scratchpad/heartbeat.mjs` - **the 50 ms main-thread heartbeat is what named the cause, the network timeline could not**. Four causes fixed (double SQLite bootstrap + 250 ms timer #655, the awaited `GET /api/version`, and the 2 731 ms `mls.bin` bridge crossing), one deliberately NOT ([the revocation round trip](#p3---a-revocation-round-trip-sits-in-front-of-the-fingerprint-prompt-and-moving-it-is-reverted-not-to-be-re-opened-measured-on-the-pixel-6a-2026-09-15)). Target: **under 1 s all-in** (user, 2026-09-15), so this row closes on a NUMBER, never on a visible drop |
 | the gateway's ERROR channel means something again | after the next release that carries it, `docker logs --since 168h infrastructure-chat-gateway-1 | grep -c ERROR` on production must be **0**, against the 32 measured over the 7 days to 2026-09-15, with the same traffic reappearing as `info!("Client went away without a closing handshake")`. A non-zero count is not a regression - it is the first genuine fault this box has been able to report, and it must be read rather than forgiven. Delete `EXPECTED_ERRORS`' last member from `srvlog.mjs` once no estate the rig targets still serves a build from before the change ([chat-gateway](services/chat-gateway.md#how-a-socket-ended-and-why-the-level-of-the-line-depends-on-it)) |
 | the five products the boutique never sold are buyable | **ONE MANUAL FLIP IS OWED, and it is the user's** (2026-08-31). `activationWithheld` releases a product when payments BECOME ready, and BDE's Stripe onboarding completed long ago - no event will ever fire for it, which is the correct behaviour for an allowlist and the reason a per-tier on-sale switch now exists. So: open `/associations/bde/edit`, Cotisations tab, tick **En vente** on the 170 EUR tier, then buy nothing and simply confirm it appears in `/shop`. The other four associations have no payment account at all, so their products are correctly withheld and release themselves when one arrives - what closes THAT half is the next association to finish onboarding, whose products must go on sale with nobody touching them |
 
@@ -626,8 +626,32 @@ delay the prompt only through main-thread contention, which the three fixes abov
 raising the prompt before the feed is under way; and the only place to gate them is the SvelteKit
 route `load`, which would change the web client for no durable gain.
 
-**Blocked on hardware** - the APK embeds the frontend (`frontendDist: "../build"`), so confirming
-the three fixes needs a pre-release build. Re-measure with the same CDP attach.
+**"Blocked on hardware" WAS FALSE AND IT SAT HERE FOR A DAY.** Both fixes are ancestors of
+`v0.18.1`, which the Pixel 6a was already running - `git merge-base --is-ancestor` settles it in a
+second, and nobody asked. The re-measurement that this line was waiting for had been possible since
+the tag. **Before writing that a verification needs a build, name the build it needs and check
+whether it exists.**
+
+*What the re-measurement then found, 2026-09-15, and it was not a fourth cause.* Launch to prompt on
+the Pixel 6a running `v0.18.1`: **4.9 - 5.7 s over three cold starts**. The network finished at
+1.5 s. Airplane mode - which removes the network but NOT the ~45 requests - left 4.3 s, so the
+network bounds at ~1.2 s and cannot be the rest. A 50 ms heartbeat on the main thread then named it
+outright: **ONE block of 2 731 ms, ending 51 ms before the prompt**. The prompt was never slow; it
+was queued behind that block.
+
+The block is `mls.bin` crossing the Tauri bridge, and it is fixed - see the `[Unreleased]` CHANGELOG
+entry. **The remaining budget toward the user's target (under 1 s, 2026-09-15) has not been measured
+since**, and the next step is a build from this tree on the Pixel 6a with the same CDP attach plus
+`scratchpad/heartbeat.mjs`: if a second block appears, it is a new cause and is measured, never
+guessed at.
+
+*One overlap is now worth deleting, and it was not before.* `isDeviceRevoked` above must stay in
+front of the prompt, but it need not be SERIAL with the rest of the login. Its latch,
+`ctx.setWipingRevokedDevice`, is read only at `loginImpl` **entry** (`sessionAuth.ts:434`) - so it
+excludes a login that has not started, and says nothing about one already in flight. Issuing the
+revocation probe alongside the work that precedes the prompt means exactly that case, and a race
+that would need a heal is a defect whatever it does in practice. **Delete the overlap first** - make
+the latch describe a login in flight - **or leave the round trip serial.**
 
 ---
 ### P3 - `cleanup.mjs` sweeps groups but not the delivery queue, and 13 275 rows have accumulated (measured 2026-09-08)

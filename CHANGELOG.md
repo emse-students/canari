@@ -11,6 +11,35 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - l'application bloquait 2,7 s au lancement sur un fichier que les deux cotes avaient deja
+
+Sur un Pixel 6a, l'empreinte etait demandee **4,4 a 5,4 s** apres le lancement. Les trois causes
+corrigees en 0.18.2 n'en expliquaient qu'une partie : le reseau se terminait a 1,5 s, et couper la
+connexion entierement laissait encore 4,3 s. Une sonde qui bat toutes les 50 ms sur le fil principal
+a nomme le reste - **un seul blocage de 2 731 ms, termine 51 ms avant l'apparition du modal**. Le
+modal n'etait pas lent : il attendait son tour dans une file.
+
+Ce qui bloquait est `mls.bin`, l'etat MLS local, **8 131 838 octets sur un compte reel**. Il
+traversait le pont Tauri **deux fois** : Rust le lisait, le serialisait vers la WebView en tableau
+JSON d'octets - **29 074 883 caracteres**, mesures -, le JavaScript le reconvertissait en tableau et
+le renvoyait a Rust, d'ou il venait. 908 ms de fil principal a chaud, 2 731 ms a froid.
+
+**Le correctif n'est pas de paralleliser, c'est de supprimer le travail.** Rust ouvre desormais le
+fichier qu'il possede deja ; le frontend n'apprend plus que *l'existence* d'un etat, soit un appel
+`metadata()` et un nombre. Sur le web rien ne change : les octets vont d'IndexedDB au WASM dans le
+meme processus, sans pont a traverser.
+
+Une precaution etait due. Un `encrypted_state` absent voulait deja dire quelque chose - **premiere
+installation**, ce qui declenche un demarrage a neuf : rotation de l'identite de l'appareil et remise
+a zero du registre de cliquets d'envoi. "Il n'y a pas d'etat" et "l'etat est sur le disque, pas dans
+cet argument" sont deux faits differents et un tableau manquant ne peut pas porter les deux ;
+un drapeau explicite les separe des deux cotes du pont, et six tests fixent chaque branche
+destructrice - dont celle de la rotation, qui ne doit surtout pas relire le fichier qu'elle
+abandonne.
+
+Deux autres appels chargeaient le meme fichier entier pour en tirer **un booleen** (le lien de
+recuperation du PIN, l'import d'une sauvegarde). Ils demandent maintenant la taille.
+
 ## [0.18.2] - 2026-09-15
 
 ### Fixed - "vous n'avez pas les droits" et "le serveur est casse" etaient la meme phrase

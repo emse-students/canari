@@ -498,7 +498,12 @@ export abstract class BaseMlsService implements IMlsService {
    * fresh-start fallback, so callers can probe a candidate key non-destructively.
    * `this.userId` and `this.deviceId` must already be resolved.
    */
-  protected abstract loadStateWithKey(deviceKeyB64: string, state?: Uint8Array): Promise<void>;
+  protected abstract loadStateWithKey(
+    deviceKeyB64: string,
+    state?: Uint8Array,
+    /** Tauri only: the state exists and the native side is to read it - {@link MlsInitOptions}. */
+    stateOnDisk?: boolean
+  ): Promise<void>;
 
   /**
    * Forgot-PIN-elsewhere recovery: the account PIN was changed on another device, so this

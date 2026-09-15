@@ -321,8 +321,8 @@
       return;
     }
     try {
-      const { loadMlsState } = await import('$lib/utils/hex');
-      canRecoverPin = !!(await loadMlsState(uid));
+      const { hasMlsState } = await import('$lib/utils/hex');
+      canRecoverPin = await hasMlsState(uid);
     } catch {
       canRecoverPin = false;
     }

@@ -215,9 +215,14 @@ pub(crate) fn delete_mls_state(app: tauri::AppHandle) -> Result<(), String> {
 
 /// Reads {app_data_dir}/mls.bin and returns its encrypted contents.
 /// Returns None when the file does not exist (first install).
-/// Used at startup on mobile when localStorage is empty (WebView cleared).
-#[tauri::command]
-pub(crate) fn load_mls_state(app: tauri::AppHandle) -> Option<Vec<u8>> {
+///
+/// THE SHARED READER, AND THE REASON IT IS ONE. `initialiser_mls` needs these same bytes, and
+/// until 2026-09-15 it got them by having the FRONTEND read them through the command below and
+/// hand them straight back - 8 MB across the IPC bridge twice, as a JSON array of per-byte
+/// numbers. Measured on a Pixel 6a: 29 074 883 characters of JSON per crossing, 908 ms of main
+/// thread warm, and a 2 731 ms block on a cold launch that the fingerprint prompt waited out,
+/// because the prompt is raised by an `invoke` queued behind it. Two callers, one read, no bridge.
+pub(crate) fn read_mls_state_blob(app: &tauri::AppHandle) -> Option<Vec<u8>> {
     let data_dir = match app.path().app_data_dir() {
         Ok(d) => d,
         Err(e) => {
@@ -232,6 +237,42 @@ pub(crate) fn load_mls_state(app: tauri::AppHandle) -> Option<Vec<u8>> {
         Err(e) => {
             log::warn!("[MLS] read mls.bin: {e}");
             None
+        }
+    }
+}
+
+/// The frontend's view of the reader above.
+///
+/// STILL NEEDED, AND BY EXACTLY ONE FLOW: old-PIN recovery hands the blob to `recoverAndRekey`,
+/// which re-seals it in the frontend. The LOGIN path no longer calls it - see
+/// [`read_mls_state_blob`] for what that cost - and neither does anything that only wants to know
+/// whether a state exists, which is what [`mls_state_size`] answers.
+#[tauri::command]
+pub(crate) fn load_mls_state(app: tauri::AppHandle) -> Option<Vec<u8>> {
+    read_mls_state_blob(&app)
+}
+
+/// The SIZE of {app_data_dir}/mls.bin, 0 when there is none.
+///
+/// "Is there a saved state" is a question three call sites asked by loading the whole file: the
+/// login path, which then handed the bytes straight back to Rust, and two that only tested them
+/// for truthiness. It is one `metadata()` syscall, and a number that crosses the bridge as a
+/// number.
+#[tauri::command]
+pub(crate) fn mls_state_size(app: tauri::AppHandle) -> u64 {
+    let data_dir = match app.path().app_data_dir() {
+        Ok(d) => d,
+        Err(e) => {
+            log::warn!("[MLS] app_data_dir() failed: {e}");
+            return 0;
+        }
+    };
+    match std::fs::metadata(data_dir.join("mls.bin")) {
+        Ok(m) => m.len(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
+        Err(e) => {
+            log::warn!("[MLS] stat mls.bin: {e}");
+            0
         }
     }
 }
