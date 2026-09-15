@@ -40,6 +40,37 @@ abandonne.
 Deux autres appels chargeaient le meme fichier entier pour en tirer **un booleen** (le lien de
 recuperation du PIN, l'import d'une sauvegarde). Ils demandent maintenant la taille.
 
+### Fixed - le premier clic sur "Reclamer mon code" ne rendait aucun code, les suivants oui
+
+Sur une carte de partenariat a pool de codes, le premier clic consommait bien un code et repondait
+201 - **sans le code**. L'ecran affichait le panneau "votre code" vide. Le deuxieme clic et tous les
+suivants donnaient le bon code : ils sortent par le chemin idempotent, une lecture de repository,
+et ne repassent jamais par l'attribution. La difference n'etait donc pas dans l'ordonnancement du
+client, qui est strictement identique aux deux clics.
+
+Le journal nginx de production l'a nommee sans ouvrir une ligne de code : premiere reponse
+**20 octets**, soit exactement `{"mode":"code_pool"}`, contre 39 a chaque revisite. Le champ `code`
+etait absent du corps, pas perdu par l'ecran.
+
+Le driver Postgres de TypeORM repond a un `UPDATE` ou un `DELETE` par le couple
+`[lignes, nombreDeLignes]`, et seulement a un `SELECT` par les lignes elles-memes. Le service lisait
+`updated[0].code` : `updated[0]` etait le TABLEAU de lignes, et `.code` dessus vaut `undefined`. Le
+`SELECT ... FOR UPDATE SKIP LOCKED` juste au-dessus avait, lui, la bonne forme - ce qui rendait
+l'erreur invisible a la relecture.
+
+Les tests etaient verts parce que leurs doublures rendaient la forme d'un `SELECT` pour un `UPDATE`.
+Une doublure qui encode l'hypothese fausse ne se contente pas de manquer le defaut : elle affirme
+qu'il est correct. Les deux passent maintenant par un unique constructeur de couple, et les deux
+echouent sur l'ancien code.
+
+Deux consequences prises au passage. L'ecran **refuse** desormais un succes sans code au lieu de
+peindre un panneau vide : c'est une panne serveur, elle doit accuser. Et le meme malentendu faisait
+journaliser `rows=2` a la suppression de compte quel que soit le nombre de blocages effaces - 2
+etant la longueur du couple, un compte qui ne peut pas etre faux est un compte qui ne dit rien.
+
+Trois codes avaient ete attribues en production au moment du diagnostic ; les deux comptes concernes
+ont vu le leur au second clic, aucun code n'est perdu.
+
 ## [0.18.2] - 2026-09-15
 
 ### Fixed - "vous n'avez pas les droits" et "le serveur est casse" etaient la meme phrase

@@ -513,6 +513,34 @@ been written. The replacement gate is `user-id-column.spec.ts`, which reads the 
 metadata - no database needed - and fails on any user-id-shaped column typed `uuid` anywhere in the
 service, rather than pinning the one column that broke.
 
+### The claim that consumed a code and answered without it
+
+Once claiming could reach Postgres at all, it answered the FIRST claim of every `code_pool` card
+with `{"mode":"code_pool"}` and no `code` field, while consuming a pool row. Every later claim by the
+same student carried the code, because a revisit leaves through `findClaimedCode` - a repository
+read - and never re-enters the allocating transaction. On screen that reads as a scheduling bug in
+the client; the client is identical on both clicks.
+
+**TypeORM's Postgres driver answers an `UPDATE` or a `DELETE` with the tuple `[rows, rowCount]`, and
+only a `SELECT` with the rows themselves** (`PostgresQueryRunner.query`, its `case "UPDATE"` branch).
+`claimPoolCode` read `updated[0].code`, so `updated[0]` was the rows ARRAY and `.code` on it was
+`undefined`. The `SELECT ... FOR UPDATE SKIP LOCKED` immediately above is correctly shaped for that
+same reason, which is what made the pair look consistent.
+
+The measurement that named it is worth keeping, because no application log carried the defect at all:
+**nginx's `body_bytes_sent`**. The first claim answered `201` with **20 bytes** - exactly
+`{"mode":"code_pool"}` - and every revisit `201` with 39, the difference being `,"code":"XXXXXXXXX"`.
+A body size is evidence about a payload's shape, and it is already being recorded for every request.
+
+Two guards replace it. The service destructures the tuple and throws if the UPDATE matched no row -
+this transaction holds that row's lock, so an empty result is impossible rather than unlikely, and
+returning `undefined` for it is what reached the screen as a blank panel. And
+`partnerships.service.spec.ts` stubs every raw UPDATE through one `updateReturning` helper: both
+stubs previously returned a SELECT's shape, so the suite was green on precisely the call that was
+broken. *A double that encodes the wrong assumption does not miss a defect, it asserts the defect is
+correct.* The client half is in `frontend/src/lib/components/shop/PartnershipCardList.svelte`: a
+success carrying no code is now refused and logged rather than rendered as an empty code panel.
+
 ### An association row carries two secrets, and three reads spread it whole
 
 `GET /api/associations`, `/api/associations/:id` and `/api/associations/slug/:slug` sit under the

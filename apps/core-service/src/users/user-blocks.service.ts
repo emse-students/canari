@@ -158,13 +158,17 @@ export class UserBlocksService {
 
   /** Removes every block this account is party to, in both directions. Used by account deletion. */
   async deleteAllFor(userId: string): Promise<void> {
-    const removed = await this.blockRepo.manager.query(
-      `DELETE FROM user_blocks WHERE "blockerId" = $1 OR "blockedId" = $1 RETURNING id`,
+    // A TUPLE, NOT ROWS: TypeORM's Postgres driver answers a DELETE or an UPDATE with
+    // `[rows, rowCount]` and only a SELECT with the rows themselves, so `removed.length` was the
+    // tuple's own length - the constant 2, whatever this account was party to. A count that cannot
+    // be wrong is a count that says nothing, and the same misreading cost a student their
+    // partnership code (`PartnershipsService.claimPoolCode`). The count is the half this line
+    // wants, and it arrives whether or not the statement RETURNS anything - so it no longer does.
+    const [, removed]: [unknown[], number] = await this.blockRepo.manager.query(
+      `DELETE FROM user_blocks WHERE "blockerId" = $1 OR "blockedId" = $1`,
       [userId]
     );
-    this.logger.log(
-      `[deleteAllFor] user=${userId} rows=${Array.isArray(removed) ? removed.length : 0}`
-    );
+    this.logger.log(`[deleteAllFor] user=${userId} rows=${removed}`);
   }
 
   /** Asks social-service to drop both follow relationships between the two accounts. */

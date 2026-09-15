@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import type { Repository } from 'typeorm';
 import { UserBlocksService } from './user-blocks.service';
 import type { UserBlock } from './entities/user-block.entity';
@@ -142,6 +143,19 @@ describe('UserBlocksService', () => {
     await service.deleteAllFor('alice');
     const sql = blockRepo.manager.query.mock.calls[0][0] as string;
     expect(sql).toContain('"blockerId" = $1 OR "blockedId" = $1');
+  });
+
+  // The count this line reports was `removed.length` over the driver's `[rows, rowCount]` TUPLE,
+  // so it printed 2 for every account whatever it was party to - a figure that cannot be wrong is
+  // a figure that says nothing. Mocked in the shape Postgres really answers a DELETE with.
+  it('deleteAllFor logs the rows it really deleted, not the shape of the answer', async () => {
+    const logged = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    blockRepo.manager.query.mockResolvedValue([[], 7]);
+
+    await service.deleteAllFor('alice');
+
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining('rows=7'));
+    logged.mockRestore();
   });
 
   // Guards a claim made in the class docblock rather than a branch: nothing here reports a block to

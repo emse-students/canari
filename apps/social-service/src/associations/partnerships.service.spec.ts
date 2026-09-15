@@ -7,6 +7,20 @@ import { Association } from './entities/association.entity';
 import { ProductsService } from './products.service';
 import { AssociationsService } from './associations.service';
 
+/**
+ * WHAT AN `UPDATE ... RETURNING` REALLY ANSWERS, and the reason this suite was green while the
+ * first claim of every `code_pool` card shipped without a code.
+ *
+ * TypeORM's Postgres driver answers an UPDATE or a DELETE with the tuple `[rows, rowCount]`, and
+ * only a SELECT with the rows themselves. Both mocks below handed back the SELECT shape, so the
+ * service's `updated[0].code` read a code here and `undefined` in production - a mock that encodes
+ * the wrong assumption does not merely miss a defect, it asserts the defect is correct. Every
+ * UPDATE stubbed in this file goes through this helper so the shape is stated once.
+ */
+function updateReturning<T>(rows: T[]): [T[], number] {
+  return [rows, rows.length];
+}
+
 describe('PartnershipsService claiming, gating and mode validation', () => {
   function makeService() {
     const manager: any = {
@@ -93,10 +107,13 @@ describe('PartnershipsService claiming, gating and mode validation', () => {
         .mockResolvedValueOnce({ code: 'CODE1', claimedByUserId: 'user1' }); // revisit
       manager.query.mockImplementation((sql: string) => {
         if (sql.includes('FOR UPDATE SKIP LOCKED')) return Promise.resolve([{ id: 'code-row-1' }]);
-        if (sql.startsWith('UPDATE')) return Promise.resolve([{ code: 'CODE1' }]);
+        if (sql.startsWith('UPDATE')) return Promise.resolve(updateReturning([{ code: 'CODE1' }]));
         return Promise.resolve([]);
       });
 
+      // The FIRST half is the one that shipped broken: it read the UPDATE's tuple as rows and
+      // answered `{ mode: 'code_pool' }` with no code, while the revisit below - a repository read -
+      // carried one. An assertion on the revisit alone would still pass with that defect in place.
       const first = await service.claimCard('card1', 'user1');
       expect(first).toEqual({ mode: 'code_pool', code: 'CODE1' });
       expect(manager.transaction).toHaveBeenCalledTimes(1);
@@ -122,7 +139,7 @@ describe('PartnershipsService claiming, gating and mode validation', () => {
           const row = unclaimedRows.shift();
           return Promise.resolve(row ? [row] : []);
         }
-        if (sql.startsWith('UPDATE')) return Promise.resolve([{ code: 'CODE1' }]);
+        if (sql.startsWith('UPDATE')) return Promise.resolve(updateReturning([{ code: 'CODE1' }]));
         return Promise.resolve([]);
       });
 
