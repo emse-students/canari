@@ -5528,25 +5528,6 @@ tablet keeps its rotation. `android:screenOrientation` takes one literal value a
 which is why a resource qualifier carries it. **A manifest grep answers this question with silence** -
 it was grepped, found nothing, and the lock was still there.
 
-### P2 - a reaction chip between two bubbles says nothing about whose it is (seen 2026-09-14 on A1)
-
-From the same guided session. The three siblings it was filed with are fixed and live in
-`CHANGELOG.md`; this one is not, and it is NOT YET MEASURED.
-
-**A REACTION IS DRAWN AS A CHIP BETWEEN TWO BUBBLES WITH NOTHING SAYING WHOSE IT IS.** Seen on the
-same screen: a heart sits alone, left-aligned, between the message it decorates and the next one,
-and a reader cannot tell which of the two it belongs to. NOT YET MEASURED - what would settle it is
-the chip's box against both neighbours' boxes, and whether any border, offset or overlap ties it to
-one. Filed so it is not lost, not filed as a defect.
-
-*(Three findings that were filed with this one are fixed and live in `CHANGELOG.md`: the long-press
-sheet covering the message it acts on, fixed 2026-09-15 - the thread is lifted clear of it, and the
-room to lift into is borrowed and given back, on [design-reference](frontend/design-reference.md#24-the-long-press-sheet-covered-the-message-it-acts-on-and-the-thread-moved-instead);
-the two things asking for the notification permission at once - a toast and a 1200 ms sleep racing
-the native dialog the same code opened, fixed 2026-09-15; and the instrument's two blind spots, a
-shadow root it never entered and a horizontal scroller it counted as an overflow, fixed
-2026-09-14.)*
-
 ### P2 - the wry bump that removes the abort, once a STABLE runtime asks for it (found 2026-09-14 on A1)
 
 **THE DEFECT IS CLOSED IN THIS APP AND THE ENTRY SURVIVES ONLY AS A RE-CHECK.** A URL `http::Uri`
