@@ -1,11 +1,9 @@
-version: 0.18.1
+version: 0.18.2
 
-Le lancement est plus rapide : l'empreinte est demandée presque immédiatement.
+Les émojis s'affichent de la même façon partout, et un message qui n'en contient qu'un l'affiche en grand.
 
-La barre du bas n'affiche plus de texte : des icônes plus grandes, un point discret pour les nouveautés.
+Un groupe ne porte plus le nom de la première personne qui y a écrit, et un groupe renommé hors connexion prend enfin son nouveau nom.
 
-Le fil social tient une publication de plus par écran ; publier et chercher sont dans l'en-tête.
+Les messages d'erreur sont en français ; un refus de droits ne se lit plus comme une panne.
 
-Les messages vocaux, la barre de saisie et les pages d'association prennent enfin la place qu'il leur faut.
-
-L'agenda : tout événement part en validation, et déplacer sa date le renvoie en attente.
+Le menu d'appui long ne recouvre plus le message. L'écran du code PIN garde sa sortie visible. Une mise en ligne ne vous déconnecte plus.
