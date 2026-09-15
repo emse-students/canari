@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Log } from '$lib/utils/Log';
   import {
     Clock,
     Trash2,
@@ -118,7 +119,8 @@
       const mediaId = await mediaService.uploadRaw(file, token);
       onSetImage?.(mediaId);
     } catch (e) {
-      imageUploadError = e instanceof Error ? e.message : m.chat_group_image_upload_error();
+      Log.d('chatGroupPanel.handleImageFileChange failed', e);
+      imageUploadError = m.chat_group_image_upload_error();
     } finally {
       imageUploading = false;
       input.value = '';
@@ -152,7 +154,8 @@
         /* clipboard blocked; link shown for manual copy */
       }
     } catch (e) {
-      shareError = e instanceof Error ? e.message : m.chat_group_link_generation_error();
+      Log.d('chatGroupPanel.generateShareLink failed', e);
+      shareError = m.chat_group_link_generation_error();
     } finally {
       shareLoading = false;
     }

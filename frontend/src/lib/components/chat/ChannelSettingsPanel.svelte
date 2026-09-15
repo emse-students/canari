@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Log } from '$lib/utils/Log';
   import {
     Settings,
     Trash2,
@@ -147,7 +148,8 @@
       await loadMembers();
       accessLoaded = true;
     } catch (e) {
-      accessError = e instanceof Error ? e.message : m.chat_channel_access_load_error();
+      Log.d('channelSettings.loadChannelAccess failed', e);
+      accessError = m.chat_channel_access_load_error();
     } finally {
       accessLoading = false;
     }
@@ -161,7 +163,8 @@
       // access picker has to offer people who are not in the channel yet.
       channelMembers = await channelService.listMembers(selectedChannelId, 'workspace');
     } catch (e) {
-      membersError = e instanceof Error ? e.message : m.chat_channel_load_members_error();
+      Log.d('channelSettings.loadMembers failed', e);
+      membersError = m.chat_channel_load_members_error();
     } finally {
       membersLoading = false;
     }
@@ -189,7 +192,8 @@
         accessSaved = false;
       }, 2500);
     } catch (e) {
-      accessError = e instanceof Error ? e.message : m.chat_channel_access_save_error();
+      Log.d('channelSettings.saveChannelAccess failed', e);
+      accessError = m.chat_channel_access_save_error();
     } finally {
       accessSaving = false;
     }
@@ -220,7 +224,8 @@
       // Also remove from displayed member list
       channelMembers = channelMembers.filter((m) => m.userId !== userId);
     } catch (e) {
-      membersError = e instanceof Error ? e.message : 'Erreur lors du retrait.';
+      Log.d('channelSettings.handleRemoveMemberFromChannel failed', e);
+      membersError = m.chat_channel_remove_access_error();
     } finally {
       const updated = { ...memberRemoving };
       delete updated[userId];

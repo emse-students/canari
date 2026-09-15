@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Log } from '$lib/utils/Log';
   import { X, Plus, Trash2, ChartColumn } from '@lucide/svelte';
   import type { ChannelPollDraft } from '$lib/utils/chat/channelCrypto';
   import { m } from '$lib/paraglide/messages';
@@ -82,7 +83,8 @@
       reset();
       onClose();
     } catch (e) {
-      error = e instanceof Error ? e.message : m.channel_poll_create_error();
+      Log.d('poll.submit failed', e);
+      error = m.channel_poll_create_error();
     } finally {
       submitting = false;
     }

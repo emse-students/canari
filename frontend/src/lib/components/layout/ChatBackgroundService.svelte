@@ -350,7 +350,9 @@
         }
       );
       if (!globalSession.isLoggedIn) {
-        throw new Error(failMsg || 'Login failed after recovery.');
+        // The session reports its own refusal through `onLoginFailed`, already localized; the
+        // literal that used to stand here was the one English sentence this modal could show.
+        throw new Error(failMsg || m.auth_pin_recovery_login_failed());
       }
       showRecoverModal = false;
       showPinModal = false;

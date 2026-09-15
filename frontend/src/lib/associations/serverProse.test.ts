@@ -79,6 +79,24 @@ const TREES = [
   // sentence, and the cause is still recoverable. This guard cannot assert that half - it reads one
   // regex - which is exactly why the two belong in one commit rather than one of them in a backlog.
   'src/routes/admin',
+  // THE SIX COMPONENT SUBTREES A MEMBER MEETS INSIDE A CONVERSATION, added 2026-09-15. Twenty
+  // sites, and the directory is entered SUBTREE BY SUBTREE rather than at `src/lib/components`:
+  // its root and its `layout/` still hold the OTHER shape, a Paraglide key that TAKES the raw text
+  // as a parameter (`chat_send_error({ reason })`, `chat_call_error({ msg })`,
+  // `auth_login_failed({ reason })`). Deleting a preference does not close that one - the sentence
+  // is BUILT to carry the server's words - and it needs codes at the throw, so the eight sites are
+  // measured and parked in docs/wiki/backlog.md rather than half-done here.
+  //
+  // Two of the twenty were the double violation the earlier passes named: a raw French literal as
+  // the fallback ('Erreur lors du retrait.', 'Erreur'), untranslated in BOTH halves of the line.
+  // Each took a key named for the operation that failed, as did the icon REMOVAL that had been
+  // reporting an upload error. Twenty of the twenty-one catches did not log, and now do.
+  'src/lib/components/channels',
+  'src/lib/components/chat',
+  'src/lib/components/moderation',
+  'src/lib/components/profile',
+  'src/lib/components/shared',
+  'src/lib/components/sidebar',
 ];
 
 /**
@@ -134,6 +152,7 @@ describe('no member-facing tree renders a server sentence', () => {
     expect(files).toContain('src/routes/auth/callback/+page.svelte');
     expect(files).toContain('src/routes/directory/+page.svelte');
     expect(files).toContain('src/routes/admin/moderation/+page.svelte');
+    expect(files).toContain('src/lib/components/sidebar/SidebarCommunityAdminModal.svelte');
   });
 
   it.each(files.map((f) => [f]))('%s', (file) => {

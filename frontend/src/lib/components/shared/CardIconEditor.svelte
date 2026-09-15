@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Log } from '$lib/utils/Log';
   import type { Component } from 'svelte';
   import AssociationLogoCropper from '$lib/components/associations/AssociationLogoCropper.svelte';
   import { showConfirm } from '$lib/stores/confirm.svelte';
@@ -35,7 +36,8 @@
       await onUpload(file);
       showCropper = false;
     } catch (e) {
-      error = e instanceof Error ? e.message : m.card_icon_upload_error();
+      Log.d('cardIcon.handleExported failed', e);
+      error = m.card_icon_upload_error();
     } finally {
       busy = false;
     }
@@ -54,7 +56,8 @@
     try {
       await onRemove();
     } catch (e) {
-      error = e instanceof Error ? e.message : m.card_icon_upload_error();
+      Log.d('cardIcon.handleRemove failed', e);
+      error = m.card_icon_remove_error();
     } finally {
       busy = false;
     }
