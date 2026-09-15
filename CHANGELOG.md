@@ -11,6 +11,25 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - deux regles CSS invalides sur chaque page, fabriquees a partir des fichiers de test
+
+Firefox jette quatre avertissements CSS a chaque chargement de Canari. Deux d'entre eux viennent de
+nous, et de nulle part ailleurs que des **tests** :
+
+    .row-0          { grid-row: 0 }      <- de `messageIds: ['row-1']` dans ackRetry.test.ts
+    .max-w-[Nrem]   { max-width: Nrem }  <- d'une phrase dans le docblock de pageColumn.test.ts
+
+La detection automatique des sources de Tailwind lit tous les fichiers non ignores du projet. Une
+chaine de fixture et une phrase de commentaire ont donc la meme valeur qu'une classe ecrite dans un
+composant : les deux fabriquent une utilitaire. Sauf qu'une ligne de grille commence a 1 et que
+`Nrem` n'est pas une longueur, si bien que le navigateur abandonne les deux declarations - du CSS
+livre a chaque visiteur, qu'aucun element ne peut jamais porter.
+
+Les fichiers de test sont desormais exclus du scan (`@source not`), ce qui est la correction et non
+le contournement : renommer les deux chaines fautives aurait regle ces deux cas, pas les suivants, et
+rien n'aurait signale leur retour. Un fichier de test ne peut pas contenir une classe que
+l'application rend, par construction - il ne rend rien. La feuille de style passe de 217 081 a
+216 113 octets.
 ### Fixed - le binaire WASM de 5,4 Mo etait telecharge deux fois a chaque premier chargement
 
 Mesure sur Firefox contre la production le 15/09/2026 : `assets/mls_wasm_bg.ZX5A_PDr.wasm` en
