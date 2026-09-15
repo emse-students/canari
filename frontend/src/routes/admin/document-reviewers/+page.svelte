@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Log } from '$lib/utils/Log';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { isGlobalAdmin, isAssociationSuperAdmin } from '$lib/stores/user';
@@ -43,7 +44,8 @@
       reviewers = await listDocumentReviewers();
       resolveNames(reviewers.map((r) => r.userId));
     } catch (e) {
-      error = e instanceof Error ? e.message : m.common_load_error();
+      Log.d('admin.document-reviewers.load failed', e);
+      error = m.common_load_error();
     } finally {
       loading = false;
     }
@@ -62,7 +64,8 @@
       }
       newUserId = '';
     } catch (e) {
-      error = e instanceof Error ? e.message : m.common_generic_error_label();
+      Log.d('admin.document-reviewers.handleAdd failed', e);
+      error = m.common_generic_error_label();
     } finally {
       adding = false;
     }
@@ -83,7 +86,8 @@
       await removeDocumentReviewer(grant.userId);
       reviewers = reviewers.filter((r) => r.userId !== grant.userId);
     } catch (e) {
-      error = e instanceof Error ? e.message : m.common_delete_error();
+      Log.d('admin.document-reviewers.handleRemove failed', e);
+      error = m.common_delete_error();
     } finally {
       removingIds.delete(grant.userId);
     }

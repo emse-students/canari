@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Log } from '$lib/utils/Log';
   import { onMount } from 'svelte';
   import {
     listPendingCalendarEvents,
@@ -45,7 +46,8 @@
       events = res.events;
       canValidate = res.canValidate;
     } catch (e) {
-      error = e instanceof Error ? e.message : m.common_generic_error_label();
+      Log.d('admin.agenda.load failed', e);
+      error = m.common_generic_error_label();
       events = [];
     } finally {
       loading = false;
@@ -75,7 +77,8 @@
       await validateAssociationCalendarEvent(ev.associationId, ev.id);
       await load();
     } catch (e) {
-      error = e instanceof Error ? e.message : m.common_generic_error_label();
+      Log.d('admin.agenda.validate failed', e);
+      error = m.common_generic_error_label();
     } finally {
       actingId = null;
     }
@@ -98,7 +101,8 @@
       rejectTarget = null;
       await load();
     } catch (e) {
-      error = e instanceof Error ? e.message : m.common_generic_error_label();
+      Log.d('admin.agenda.confirmReject failed', e);
+      error = m.common_generic_error_label();
     } finally {
       rejecting = false;
     }
@@ -117,7 +121,8 @@
       await deleteAssociationCalendarEvent(ev.associationId, ev.id);
       await load();
     } catch (e) {
-      error = e instanceof Error ? e.message : m.common_generic_error_label();
+      Log.d('admin.agenda.remove failed', e);
+      error = m.common_generic_error_label();
     } finally {
       actingId = null;
     }

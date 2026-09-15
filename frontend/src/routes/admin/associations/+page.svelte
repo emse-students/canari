@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Log } from '$lib/utils/Log';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { isGlobalAdmin } from '$lib/stores/user';
@@ -31,7 +32,8 @@
     try {
       associations = await listAssociations();
     } catch (e) {
-      error = e instanceof Error ? e.message : m.admin_assoc_load_error();
+      Log.d('admin.associations.load failed', e);
+      error = m.admin_assoc_load_error();
     } finally {
       loading = false;
     }
@@ -46,9 +48,10 @@
     try {
       await updateAssociation(assoc.id, { isBDE: next });
     } catch (e) {
+      Log.d('admin.associations.toggleBde failed', e);
       // Revert on failure so the UI never lies about the persisted state.
       associations = associations.map((a) => (a.id === assoc.id ? { ...a, isBDE: previous } : a));
-      error = e instanceof Error ? e.message : m.admin_assoc_update_error({ name: assoc.name });
+      error = m.admin_assoc_update_error({ name: assoc.name });
     } finally {
       savingIds.delete(assoc.id);
     }

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Log } from '$lib/utils/Log';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
   import { Shield, RefreshCw, Copy } from '@lucide/svelte';
@@ -44,7 +45,8 @@
       if (!res.ok) throw new Error(m.admin_users_http_error_label({ status: res.status }));
       users = await res.json();
     } catch (e) {
-      error = e instanceof Error ? e.message : m.admin_users_load_error();
+      Log.d('admin.users.load failed', e);
+      error = m.admin_users_load_error();
     } finally {
       loading = false;
     }
@@ -69,9 +71,10 @@
         feedback = { ...feedback, [user.id]: '' };
       }, 2000);
     } catch (e) {
+      Log.d('admin.users.toggleAdmin failed', e);
       feedback = {
         ...feedback,
-        [user.id]: e instanceof Error ? e.message : m.common_generic_error_label(),
+        [user.id]: m.common_generic_error_label(),
       };
     } finally {
       saving = { ...saving, [user.id]: false };

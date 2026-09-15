@@ -72,7 +72,7 @@
       if (selectedAssoId) await loadProduct();
     } catch (e) {
       console.error('[ADMIN][CERCLE] failed to load associations', e);
-      error = e instanceof Error ? e.message : m.admin_cercle_load_assoc_error();
+      error = m.admin_cercle_load_assoc_error();
     } finally {
       loading = false;
     }
@@ -101,7 +101,7 @@
       );
     } catch (e) {
       console.error('[ADMIN][CERCLE] failed to load the top-up product', e);
-      error = e instanceof Error ? e.message : m.admin_cercle_load_error();
+      error = m.admin_cercle_load_error();
     }
   }
 
@@ -147,7 +147,7 @@
       saved = true;
     } catch (e) {
       console.error('[ADMIN][CERCLE] failed to save the top-up product', e);
-      error = e instanceof Error ? e.message : m.admin_cercle_generic_error();
+      error = m.admin_cercle_generic_error();
     } finally {
       saving = false;
     }
@@ -161,7 +161,7 @@
       product = await updateProduct(asso.id, product.id, { isActive: !product.isActive });
     } catch (e) {
       console.error('[ADMIN][CERCLE] failed to toggle the product', e);
-      error = e instanceof Error ? e.message : m.admin_cercle_generic_error();
+      error = m.admin_cercle_generic_error();
     }
   }
 
@@ -201,7 +201,7 @@
       webhookFailures = await listWebhookFailures(asso.id);
     } catch (e) {
       console.error('[ADMIN][CERCLE] failed to retry webhook delivery', e);
-      error = e instanceof Error ? e.message : m.admin_cercle_generic_error();
+      error = m.admin_cercle_generic_error();
     } finally {
       retryingDelivery = null;
     }
@@ -227,7 +227,7 @@
       webhookFailures = webhookFailures.filter((d) => d.id !== delivery.id);
     } catch (e) {
       console.error('[ADMIN][CERCLE] failed to delete webhook delivery', e);
-      error = e instanceof Error ? e.message : m.admin_cercle_generic_error();
+      error = m.admin_cercle_generic_error();
     } finally {
       deletingDelivery = null;
     }

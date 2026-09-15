@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Log } from '$lib/utils/Log';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { isGlobalAdmin } from '$lib/stores/user';
@@ -70,7 +71,8 @@
       annMinVersion = data?.minClientVersion ?? '';
       annMaxVersion = data?.maxClientVersion ?? '';
     } catch (e) {
-      announcementError = e instanceof Error ? e.message : m.admin_announcement_load_error();
+      Log.d('admin.platform.loadAnnouncement failed', e);
+      announcementError = m.admin_announcement_load_error();
     }
   }
 
@@ -108,7 +110,8 @@
       announcement = (await res.json()) as ActiveAnnouncement;
       announcementSaved = m.admin_announcement_published_label();
     } catch (e) {
-      announcementError = e instanceof Error ? e.message : m.admin_announcement_save_error();
+      Log.d('admin.platform.publishAnnouncement failed', e);
+      announcementError = m.admin_announcement_save_error();
     } finally {
       announcementSaving = false;
     }
@@ -134,7 +137,8 @@
       announcement = null;
       announcementSaved = m.admin_announcement_retired_label();
     } catch (e) {
-      announcementError = e instanceof Error ? e.message : m.admin_announcement_save_error();
+      Log.d('admin.platform.retireAnnouncement failed', e);
+      announcementError = m.admin_announcement_save_error();
     } finally {
       announcementSaving = false;
     }
@@ -153,7 +157,8 @@
       minClientVersion = data.minClientVersion;
       paymentProvider = data.paymentProvider;
     } catch (e) {
-      error = e instanceof Error ? e.message : m.admin_platform_load_error();
+      Log.d('admin.platform.loadConfig failed', e);
+      error = m.admin_platform_load_error();
     } finally {
       loading = false;
     }
@@ -186,7 +191,8 @@
       savedMessage = m.admin_platform_saved_label();
       void refreshAppVersionCheck();
     } catch (e) {
-      error = e instanceof Error ? e.message : m.admin_platform_save_error();
+      Log.d('admin.platform.saveConfig failed', e);
+      error = m.admin_platform_save_error();
     } finally {
       saving = false;
     }

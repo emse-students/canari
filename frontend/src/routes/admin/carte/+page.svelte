@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Log } from '$lib/utils/Log';
   import { onMount } from 'svelte';
   import { slugify } from '$lib/utils/textFold';
   import { isCoarsePointerDevice, onCoarsePointerChange } from '$lib/utils/pointerDevice';
@@ -47,7 +48,8 @@
         listPosterProjects(),
       ]);
     } catch (e) {
-      error = e instanceof Error ? e.message : m.common_load_error();
+      Log.d('admin.carte.load failed', e);
+      error = m.common_load_error();
     } finally {
       loading = false;
     }
@@ -68,7 +70,8 @@
       categories = [...categories, created];
       newCategoryLabel = '';
     } catch (e) {
-      error = e instanceof Error ? e.message : m.common_generic_error_label();
+      Log.d('admin.carte.handleAddCategory failed', e);
+      error = m.common_generic_error_label();
     } finally {
       addingCategory = false;
     }
@@ -83,7 +86,8 @@
       const updated = await updateAssociationCategory(cat.id, { label: trimmed });
       categories = categories.map((c) => (c.id === cat.id ? updated : c));
     } catch (e) {
-      error = e instanceof Error ? e.message : m.common_save_error();
+      Log.d('admin.carte.handleRenameCategory failed', e);
+      error = m.common_save_error();
     } finally {
       busyCategoryIds.delete(cat.id);
     }
@@ -103,7 +107,8 @@
       await deleteAssociationCategory(cat.id);
       categories = categories.filter((c) => c.id !== cat.id);
     } catch (e) {
-      error = e instanceof Error ? e.message : m.common_delete_error();
+      Log.d('admin.carte.handleDeleteCategory failed', e);
+      error = m.common_delete_error();
     } finally {
       busyCategoryIds.delete(cat.id);
     }
@@ -120,7 +125,8 @@
     try {
       categories = await reorderAssociationCategories(reordered.map((c) => c.id));
     } catch (e) {
-      error = e instanceof Error ? e.message : m.common_save_error();
+      Log.d('admin.carte.handleMoveCategory failed', e);
+      error = m.common_save_error();
       void load();
     }
   }
@@ -136,7 +142,8 @@
       newProjectName = '';
       void goto(`/admin/carte/${created.id}`);
     } catch (e) {
-      error = e instanceof Error ? e.message : m.common_generic_error_label();
+      Log.d('admin.carte.handleCreateProject failed', e);
+      error = m.common_generic_error_label();
     } finally {
       creatingProject = false;
     }
@@ -156,7 +163,8 @@
       await deletePosterProject(project.id);
       projects = projects.filter((p) => p.id !== project.id);
     } catch (e) {
-      error = e instanceof Error ? e.message : m.common_delete_error();
+      Log.d('admin.carte.handleDeleteProject failed', e);
+      error = m.common_delete_error();
     } finally {
       busyProjectIds.delete(project.id);
     }

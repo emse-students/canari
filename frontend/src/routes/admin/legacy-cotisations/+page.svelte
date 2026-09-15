@@ -48,7 +48,7 @@
       error = null;
     } catch (e) {
       console.error('[ADMIN][LEGACY] listing failed', e);
-      error = e instanceof Error ? e.message : m.common_generic_error_label();
+      error = m.common_generic_error_label();
     } finally {
       loading = false;
       loadingMore = false;
