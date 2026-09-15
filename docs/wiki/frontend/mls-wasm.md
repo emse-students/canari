@@ -263,6 +263,33 @@ make install         # a fresh clone: dependencies, svelte-kit sync, then genera
 hand. After a change to `frontend/mls-core/` or `frontend/mls-wasm/`, run `bun run wasm:build` before
 testing the frontend - `svelte-check` and Vitest both import the generated bindings.
 
+### One emit, because a `?worker` import is a second rollup pass
+
+Vite builds every `?worker` entry in its own bundling pass, and SvelteKit gives that pass its own
+asset directory: `_app/immutable/workers/assets/[name]-[hash][extname]`, where the app bundle uses
+`_app/immutable/assets/[name].[hash][extname]`. Three workers import `mlsWasmLoader`
+(`mlsCrypto`, `mlsEncrypt`, `mlsKeyPackage`), so `mls_wasm_bg.wasm` was written **twice**, under two
+URLs - and two URLs are two cache entries the browser cannot share.
+
+Measured on Firefox against production, 2026-09-15: `assets/mls_wasm_bg.ZX5A_PDr.wasm` in
+**7 664 ms** and `workers/assets/mls_wasm_bg-ZX5A_PDr.wasm` in **8 782 ms**, both in flight at once,
+5,4 Mo each. The identical content hash in the two names is the proof they are one file.
+
+`oneWasmAsset()` in `frontend/vite.config.js` points the worker pass at the app bundle's asset
+pattern, so both emits resolve to the same path: one file, one URL, and the worker's fetch is a cache
+hit. Three things about it are deliberate:
+
+- **the pattern is READ from `build.rollupOptions.output.assetFileNames`, never copied.** A literal
+  would be a second copy of a SvelteKit internal, silently wrong the day it changes - and silently is
+  the whole problem, since a wrong pattern just brings the duplicate back. The plugin throws if that
+  option is not a string rather than falling back to a guess.
+- **`order: 'post'` is load-bearing.** Vite merges each plugin's `config` result OVER the user
+  config, so the same three lines written directly in `defineConfig` are overwritten by
+  `vite-plugin-sveltekit-compile` and do nothing at all. Measured here, with a full build.
+- **the artefact is asserted, not the config.** `scripts/check-bundle-consistency.mjs` groups every
+  `.wasm` under `build/` by content and fails on any binary written more than once, because nothing
+  about the duplicate is visible at runtime except a slow first load.
+
 ### Why it is not committed
 
 It was, until 2026-08-18, and it went stale. Only `deploy.yml` and `cd-dev.yml` rebuilt it (the latter

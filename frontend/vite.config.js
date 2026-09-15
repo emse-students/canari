@@ -67,6 +67,53 @@ function protobufPatch() {
   };
 }
 
+/**
+ * Emits `mls_wasm_bg.wasm` ONCE, by pointing the worker pass at the app bundle's asset directory.
+ *
+ * Vite builds every `?worker` entry in a SECOND rollup pass, and SvelteKit gives that pass its own
+ * asset directory: `_app/immutable/workers/assets/[name]-[hash][extname]`, where the app bundle
+ * uses `_app/immutable/assets/[name].[hash][extname]`. Three workers import `mlsWasmLoader`, so the
+ * same 5,4 Mo binary was written twice under two URLs - and two URLs are two cache entries, so a
+ * cold load downloaded it twice, in parallel, before anything could decrypt. Measured on Firefox
+ * against production 2026-09-15: 7 664 ms for `assets/mls_wasm_bg.ZX5A_PDr.wasm` and 8 782 ms for
+ * `workers/assets/mls_wasm_bg-ZX5A_PDr.wasm`. The identical content hash is the proof they are one
+ * file.
+ *
+ * THE PATTERN IS READ FROM THE APP BUNDLE, NEVER COPIED. A literal here would be a second copy of
+ * a SvelteKit internal, silently wrong the day it changes - and "silently" is the whole problem,
+ * since a wrong pattern just brings the duplicate back. Reading it means the two emits are the same
+ * path by construction: same name, same content hash, one file, one URL, and the worker's fetch is
+ * a cache hit.
+ *
+ * `order: 'post'` is load-bearing. Vite merges each plugin's `config` result OVER the user config,
+ * so the same three lines written directly in `defineConfig` are overwritten by
+ * `vite-plugin-sveltekit-compile` and do nothing at all - measured here, with a full build.
+ *
+ * @returns {import('vite').Plugin}
+ */
+function oneWasmAsset() {
+  return {
+    name: 'one-wasm-asset',
+    config: {
+      order: 'post',
+      handler(config) {
+        const output = config.build?.rollupOptions?.output;
+        const appAssets = (Array.isArray(output) ? output[0] : output)?.assetFileNames;
+        if (typeof appAssets !== 'string') {
+          // FAIL, never fall back to a literal: a build that quietly keeps the two directories
+          // apart ships the duplicate download again, and nothing downstream would say so.
+          throw new Error(
+            '[one-wasm-asset] the app bundle has no string `build.rollupOptions.output.assetFileNames`' +
+              ' to follow - SvelteKit changed its output shape, so this plugin (and the single-emit' +
+              ' guarantee it carries) must be revisited rather than guessed at.'
+          );
+        }
+        return { worker: { rollupOptions: { output: { assetFileNames: appAssets } } } };
+      },
+    },
+  };
+}
+
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   define: {
@@ -85,6 +132,7 @@ export default defineConfig(async () => ({
       strategy: ['localStorage', 'preferredLanguage', 'baseLocale'],
     }),
     sveltekit(),
+    oneWasmAsset(),
     protobufPatch(),
   ],
 
