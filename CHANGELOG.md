@@ -70,6 +70,39 @@ fichier de cache ecrit par une version plus ancienne qui ne contient pas encore 
 conversation privee que la reparation ne doit pas toucher, et la reponse serveur qui ne dit rien du
 nom. Quatre des dix echouent contre le code d'avant ; les six autres passent des deux cotes.
 
+**Correction apportee par l'entree suivante** : la moitie "liste des groupes du serveur" decrite
+ci-dessus etait ecrite au bon endroit mais le balayage ne passait jamais par la. Ce qui recalait
+reellement l'etiquette etait un autre bloc, muet. Les deux sont desormais un seul.
+
+### Fixed - deux mecanismes pour renommer un groupe, celui qui parle ne tournait pas
+
+Verification du correctif precedent, sur un appareil reel : une etiquette fausse ecrite directement
+dans le magasin d'un client, puis rechargement avec un observateur deja attache - **l'etiquette est
+bien revenue juste, et pas une seule ligne ne l'a dit.** Six autres lignes `[DISCOVERY]` ont ete
+capturees dans la meme fenetre, ce qui prouve que l'observateur ecoutait et que le balayage a bien
+tourne.
+
+`discoverMissingGroups` faisait donc le travail deux fois. La reparation etiquetee et journalisee
+vivait dans le seam partage `ensureConversationForServerGroup`, appele dans une boucle sur les
+groupes **manquants** - ceux sans ligne locale, pour lesquels ce seam en CREE une, deja bien nommee.
+Sa branche `existed`, et la reparation qu'elle portait, etaient donc inatteignables depuis le
+balayage. Juste en dessous, une boucle "seed name + avatar" parcourait **tous** les groupes actifs et
+adoptait le nom du serveur en silence. Le mecanisme atteignable etait muet, celui qui parlait etait
+mort.
+
+Une seule reparation reste : la boucle partagee parcourt maintenant tous les groupes actifs - sa
+branche `existed` est un parcours de table, sans aller-retour reseau ni MLS -, et la boucle du
+dessous ne s'occupe plus que de la photo. L'ecriture est **attendue** et non lancee puis oubliee,
+comme le faisait le bloc supprime : une reparation dont l'ecriture n'a peut-etre pas atterri
+recommence au balayage suivant et rejournalise, et une ligne qui se repete est une ligne que son
+lecteur apprend a sauter.
+
+Le test qui couvrait deja ce comportement passait, et c'est exactement ce qui a laisse vivre le
+defaut : il verifiait le resultat et jamais le rapport. Il exige desormais la ligne, une seule fois
+et nommant les deux etiquettes, et il echoue contre le code d'avant. Deux temoins l'encadrent - un
+nom deja d'accord avec le serveur n'ecrit rien et ne dit rien, et une conversation privee n'est
+jamais renommee depuis la ligne serveur.
+
 ### Fixed - la passerelle criait a l'erreur chaque fois qu'un onglet se fermait
 
 Un navigateur qui se recharge, change de page ou se fait tuer n'envoie pas de trame de fermeture :

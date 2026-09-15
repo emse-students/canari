@@ -261,10 +261,16 @@ what to look at.
 REPAIR firing, which is a pass for the repair and means step 4 was read too late to see the cache
 label.
 
-**The repair has its own case, and it is the cheaper one to run:** rename the group from the peer
-account while this device is killed, then open the app. The rename is an MLS system message a killed
-device never sees, so only the discovery sweep can carry it - the same relabel line, and the sidebar
-showing the new name.
+**THE "CHEAPER CASE" DOES NOT EXIST, AND THIS PARAGRAPH USED TO CLAIM IT DID.** Renaming the group
+from the peer account while this device is away was offered here as a way to reach the repair without
+a push. It cannot: `groupRenamed` is a DURABLE frame, so the device that was away receives it on
+reconnect and applies the new name through route ONE. Discovery then finds the two names already
+equal and correctly says nothing. Measured 2026-09-15 on a web client - 371 console lines, zero
+relabel lines, the new name on screen in 1 ms. The seam is only reachable when the local label is
+wrong and no frame is coming to fix it, which is what a push placeholder leaves behind and is
+therefore the push case above. Reaching it deliberately means writing the wrong label straight into
+the device's own store, with an observer attached before the reload - a rig procedure, not a
+hardware check.
 
 ## D. PIN change, then repeat B
 
