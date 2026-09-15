@@ -38,6 +38,11 @@ toute facon pas etre montre en entier, et degager son bas ferait sortir sa premi
 l'ecran - on echangerait la moitie dont le lecteur peut se passer contre celle qu'il est en train
 de lire.
 
+Mesure apres correction, sur un vrai moteur, a 393x945 : le fil etait a son maximum (0 px de marge
+de defilement), la remontee de 172 px a donc ete entierement empruntee - la marge basse du fil passe
+de 64 a 236 px -, le bas de la bulle passe de 865 a 693 et la feuille se pose a 702. La bulle est
+degagee de 9 px, et tout revient a l'identique a la fermeture.
+
 ### Fixed - deux choses demandaient la permission de notification en meme temps, et l'une bloquait l'application
 
 Au premier lancement apres une installation, la boite de dialogue de permission d'Android s'ouvrait

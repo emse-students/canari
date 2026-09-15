@@ -1781,6 +1781,44 @@ touch: the portalled `inset-0` overlay's bottom edge, the sheet's computed `bott
 length once resolved), and its `offsetHeight` (layout). On A1: `945 - 16 - 180 = 749`, the number
 the phone reported.
 
+### Measured on a real engine, W1 at 393x945, 2026-09-15
+
+The arithmetic is unit-tested; this is the engine agreeing with it. One sample per animation frame,
+recorded from inside the page (a CDP sample always arrived after the sheet had started closing - see
+the instrument note below). The thread was at its maximum, `scrollHeight - scrollTop - clientHeight`
+= **0**, which is the case the borrowed room exists for.
+
+| frame | sheet | bubble bottom | sheet top | gap | `scrollTop` | scroller `padding-bottom` |
+| --- | --- | --- | --- | --- | --- | --- |
+| before | closed | 865 | - | - | 3022 | (none inline) |
+| open +0 | flying in | **693** | 725 | **+33** | **3194** | **236px** |
+| open +157 | at rest | 693 | 702 | **+9** | 3194 | 236px |
+| closing | outro | 865 | 701 -> 724 | -163 | 3022 | (none inline) |
+
+Three things are settled by that table.
+
+**The computed `bottom` really is a length.** `getComputedStyle(sheet).bottom` read `16px` against a
+source value of `calc(max(1rem, var(--safe-area-inset-bottom, 0px) + 1rem) + var(--keyboard-layout-inset-bottom, 0px))`.
+`945 - 16 - 228 = 701`, and the sheet's own rect settled at 701. The layout computation and the
+engine agree to the pixel.
+
+**And reading the rect instead would have been wrong by exactly the fly distance.** On the first
+frame the sheet is open, its `getBoundingClientRect().top` is **725**; at rest it is **701**. A lift
+measured from 725 would have been 24 px short - the bubble still covered, by less, which is the
+worst kind of wrong because it looks like a rounding error rather than a design fault.
+
+**The lift is entirely borrowed.** `865 + 8 - 701 = 172`, the scroller had 0 px of room, so all 172
+went into the padding: 64 px of its own becomes 236. `scrollTop` 3022 -> 3194 is the same 172, and
+the bubble's bottom moves 865 -> 693 - clear of a sheet whose top is 702, by 9 px. Closing returns
+every one of those numbers.
+
+**An instrument fact this cost two runs.** Emulated touch on a DESKTOP Chrome synthesises a click
+after the long press, and the portalled scrim takes it, so W1 dismisses the sheet ~200 ms after
+opening it. Nothing is wrong with the app - A1 holds it open, which is how it was measured there in
+the first place - but a CDP sample taken after `longPressBubble` returns always lands in the outro
+and reads as "the lift never happened". **Arm a recorder before the gesture when the window you are
+measuring is shorter than a round trip.**
+
 ### What the tests pin
 
 `sheetClearance.test.ts` holds the arithmetic on A1's own numbers, and
