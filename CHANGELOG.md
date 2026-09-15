@@ -78,6 +78,25 @@ endroit. Seule la socket bouge : la publication des KeyPackages, le balayage des
 reconciliation continuent de s'executer apres la restauration, parce que ces trois-la raisonnent sur
 les conversations que l'appareil detient.
 
+### Fixed - quitter la page etait signale comme une connexion perdue, et declenchait une reconnexion
+
+Quand le navigateur ferme la socket parce que la page s'en va, la fermeture est **exactement** celle
+d'un reseau qui tombe : code 1006, aucune raison. Le client faisait donc la meme chose dans les deux
+cas - un avertissement `[WS] Disconnected`, puis une reconnexion programmee pour un document qui
+n'existe deja plus.
+
+C'est lisible dans l'export Firefox du 15/09/2026 : `[WS] Disconnected. Code: 1006` et `Connection
+lost. Retrying in 1s...` sont les **deux premieres lignes de la console de la nouvelle page** - et
+elles ne sont attribuables que parce que la colonne source nomme le bundle de la page precedente.
+
+Le discriminant est desormais porte depuis l'endroit ou il est connu, pas devine a la fermeture :
+`pagehide` se declenche avant que la socket ne soit demontee, et une fermeture qui le suit est
+silencieuse et ne programme rien ; `pageshow` le leve et, si la socket n'est plus ouverte, demande la
+reconnexion - c'est le cas du retour par le cache avant/arriere, ou le document revient avec une
+socket reellement perdue et ou personne d'autre ne le remarquerait. Une vraie navigation, elle,
+emporte tout le client.
+
+
 ### Fixed - deux regles CSS invalides sur chaque page, fabriquees a partir des fichiers de test
 
 Firefox jette quatre avertissements CSS a chaque chargement de Canari. Deux d'entre eux viennent de
@@ -123,7 +142,6 @@ dechiffree pendant que le groupe avance de trois epoques devient **definitivemen
 Le plafond echangerait donc un travail borne au demarrage contre un risque non borne de perdre le
 message de quelqu'un. Le travail inutile, lui, a ete supprime la ou il etait reellement : les
 dix-neuf reconstructions du client MLS et le double telechargement du binaire WASM.
-
 ### Fixed - le binaire WASM de 5,4 Mo etait telecharge deux fois a chaque premier chargement
 
 Mesure sur Firefox contre la production le 15/09/2026 : `assets/mls_wasm_bg.ZX5A_PDr.wasm` en
