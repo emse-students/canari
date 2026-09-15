@@ -146,8 +146,12 @@ rows were deleted by an allowlist on the marker role and the marker title, and b
 zero memberships afterwards - an undeclared membership reattributes whatever the next run measures.
 
 **One thing the pass found that no report had asked about**, filed rather than fixed here: the
-composer's pending-attachment chip paints its filename TWICE
-([backlog](backlog.md#p3---a-pending-attachments-name-is-painted-twice-19px-apart-observed-on-the-mi-9t-2026-09-09)).
+composer's pending-attachment chip painted its filename TWICE - a `span.line-clamp-2` inside the tile
+and a `div.truncate` under it, overlapping by 7 px in a 62 px column and disagreeing about how to
+shorten the name. **Closed the same day by #470**, which left one name and the guard that keeps it
+that way (`ChatComposer.attachments.svelte.test.ts`, *"writes a plain file name exactly once, where
+it used to write it twice"*). The story is in `CHANGELOG.md`; the backlog entry is gone, because the
+backlog is only what is left to do.
 
 **And one instrument came out of it.** `cdp.mjs` could click and it could drag to another element;
 it could not HOLD. `holdAndSlide` slides a distance rather than to a node - a threshold has no node
