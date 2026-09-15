@@ -2209,6 +2209,39 @@ this entry exists**, and they cannot be enumerated by reading a diff - between 0
 crate reworked ICE gathering, DTLS and the RTP/RTCP interceptor chain, none of which this crate's
 types force it to acknowledge.
 
+**AND THE NEXT BUMP IS A PORT, NOT A BUMP - MEASURED 2026-09-15.** Dependabot #431 offers `webrtc`
+0.17.2 -> 0.20.5 and has sat red since 2026-09-07. The ceiling refuses it for the relay-path call,
+which is correct, but that refusal said by omission that the bump would otherwise be mechanical, and
+it would not. Reproduced locally (`cargo check` with `webrtc = "0.20.5"`, manifest restored
+afterwards): **26 errors, with the imports not even resolving.** The crate's root went from about
+twenty public modules to FIVE - `data_channel`, `media_stream`, `peer_connection`, `rtp_transceiver`,
+`runtime`, plus `error` - so all nineteen of `main.rs`'s `use webrtc::...` lines break: `webrtc::api`,
+`webrtc::ice`, `webrtc::ice_transport`, `webrtc::interceptor`, `webrtc::rtcp` and `webrtc::track` no
+longer exist.
+
+**0.20 is webrtc-rs re-founded as a thin async layer over the Sans-I/O [`rtc`](https://docs.rs/rtc)
+crate**, and the shape of the port is visible from its own documentation:
+
+| 0.17, what this SFU uses | 0.20 |
+| --- | --- |
+| `APIBuilder` + `MediaEngine` + `SettingEngine` + interceptor `Registry` | one `PeerConnectionBuilder` |
+| `RTCPeerConnection`, a struct | `PeerConnection`, a TRAIT, driven by a background `PeerConnectionDriver` |
+| `pc.on_track(Box::new(...))` and the other `on_*` closures | a `PeerConnectionEventHandler` trait you implement, async methods |
+| `webrtc::track::track_local` / `track_remote` | `media_stream::track_local` / `track_remote` |
+| tokio assumed | a `Runtime` trait; `runtime-tokio` is a default cargo FEATURE |
+
+Three names have no same-named replacement at all: `RTCRtpSender` (now the `RtpSender` trait),
+`RTPCodecType`, and `TrackLocalWriter`. `RTCPeerConnection` loses `close()` and `add_ice_candidate()`
+from its inherent surface. The rest of the types survive by name but move, mostly re-exported from
+`peer_connection` out of `rtc`.
+
+**This changes the ORDER of what is owed, not the verdict.** The call is still the gate, because a
+ported SFU that compiles is exactly the same nothing the current one is - six majors unplaced becomes
+nine majors unplaced. But whoever writes rung 15 CALL to retire the refusal should know they are
+retiring it against a crate this service has to be rewritten onto first, and should consider whether
+the port and the call belong in the same piece of work. The refusal text in
+`.github/scripts/lib/ceiling.sh` now says both.
+
 **What settles it is one call, and only one call.** Two peers, audio and video, over the SFU, with
 TURN configured as production configures it - the relay path specifically, because that is the path
 the `ErrNoTurnCredentials` change sits on and the path a STUN-only test never touches. Watch for: the
@@ -7226,7 +7259,7 @@ hourly sweep's own log - it prints what it merged, what it refused and what it h
 | ~~`chacha20poly1305`, `argon2`, `ciborium`~~ | ~~nothing opened a keystore written by the PREVIOUS version~~ | `tests/cross_version_state.rs` + the four frozen artefacts under `tests/fixtures/` | **CLOSED 2026-08-31.** An at-rest envelope is read by the device that SEALED it, so the backward direction is the whole question - measured by enumerating every `encrypt_blob` call site, all of them state persistence. Falsified by corrupting each fixture: all four tests go red |
 | ~~`openmls*`, `tls_codec*`, `hpke-rs*`, `libcrux*`~~ | ~~a WIRE format is read by OTHER devices on OTHER versions, so the forward direction exists and no frozen fixture can see it~~ | `.github/scripts/mls-forward-compat.sh` + `frontend/mls-cross-version`, its own `ci.yml` job | **CLOSED 2026-09-15.** No fixture could close it and none was written: an MLS frame carries a random reuse guard, so today cannot reproduce a frozen ciphertext the way `aes-gcm` did. THE OLD CODE IS RUN INSTEAD - `FIXTURE_VERSION` is checked out into a worktree, one driver depending on nothing but `mls-core` through a relative path is built against BOTH libraries, and the two binaries hold one conversation through files: old creates the group and admits today by Welcome, today mints a frame old must read, old mints one today must read. Falsified by flipping one byte of today's `send_message` output - the forward leg goes red and names itself. The earlier reading that this needed a NEW fixture was wrong: the conversation is built live, so the four frozen artefacts are untouched. **The code decision the compiler forced came with it**: openmls 0.9.0's `OwnPrivateMessage` now carries what 0.8.1 raised as the `CannotDecryptOwnMessage` ERROR, so the marker moved to the success arm and the string-matching arm was DELETED - 0.9.0 contains no such string, so it was a branch no input could reach. `OwnPendingCommit` is unreachable under `PURE_CIPHERTEXT` (measured) and is written as a signal, not a path |
 | ~~`aes-gcm` (0 PRs open)~~ | ~~it opens a channel push sealed by ANOTHER member's device (`decrypt_channel_message`), and src-tauri freezes nothing~~ | `src-tauri/src/mobile/cross_version_push.rs` + two frozen artefacts under `src-tauri/tests/fixtures/` | **CLOSED 2026-08-31.** Two fixtures rather than one, so a failure names its cause: a FIXED key accuses the AEAD, a Graine-DERIVED key accuses the HKDF. Falsified by flipping one ciphertext bit - the channel test goes red while the Graine one stays green. **Both directions are covered**, which is what let the arm be deleted rather than narrowed: an AEAD is deterministic, so re-sealing the frozen plaintext under the frozen key and nonce must reproduce the frozen bytes, and equal bytes are equal in both directions. A protocol that may ADD fields is not, which is why `openmls` stays refused. First test in src-tauri, in the crate rather than under `tests/` because `mod mobile` exists only under `cfg(test)` |
-| `webrtc` and the ICE crates (1 PR) | the SFU has ten tests and not one touches the ICE stack | one relay-path call - campaign rung 15 CALL, which has no runner | not started, and the SFU is already SIX majors unplaced (see its own P1 above) |
+| `webrtc` and the ICE crates (1 PR) | the SFU has ten tests and not one touches the ICE stack | one relay-path call - campaign rung 15 CALL, which has no runner | not started, and the SFU is already SIX majors unplaced (see its own P1 above). **AND THE OPEN PR IS A PORT, NOT A BUMP** - `webrtc` 0.20 is a rewrite onto the Sans-I/O `rtc` crate and gives 26 errors against this SFU, measured 2026-09-15, so the call comes after the port |
 | `stripe` (1 PR) | **half of it the compiler already sees, and that half is safe.** The SDK types `apiVersion` as the literal its release was cut against and this service pins that value in one constant, so a bump that still COMPILES cannot change which API the app talks to and merges like anything else. A bump that crosses an API version stops the tree compiling in four files at once. What no gate can answer is whether the app still READS what the new API sends - payload shapes and object fields are what an API version decides | fixtures per API version for this service's Stripe surface: the events `webhook.controller.ts` handles and the fields `stripe-payment-provider.ts` and `users.service.ts` read, so a crossing is proved rather than read in a changelog | open. **#304 (22.3.2 -> 22.6.0) is the live case**: it wants `2026-08-26.dahlia` where the constant says `2026-06-24.dahlia`, and CI is red on exactly those four files. Crossing it is a decision about PAYMENTS and therefore the USER's - see `apps/core-service/src/payment/stripe-api-version.ts`, which says so in its own docblock |
 
 **ONE FLAKE IS RECORDED HERE BECAUSE AN UNATTENDED MERGE IS EXACTLY WHAT A FLAKE BREAKS.**

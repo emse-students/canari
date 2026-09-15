@@ -246,8 +246,25 @@ gate_for_dependency() {
     # It is nonetheless the direction that had NO evidence at all, and the refusal it retires had
     # been standing since this table was written.
 
+    # A REFUSAL THAT NAMES A MISSING TEST SAYS, BY OMISSION, THAT EVERYTHING ELSE PASSES. For this
+    # family that stopped being true on 2026-09-15, and the second half is spelt out because a
+    # reader who writes rung 15 CALL to retire this refusal would otherwise discover it afterwards.
+    #
+    # `webrtc` 0.20 is not a version of the library this SFU was written against. Measured locally
+    # against #431 (`cargo check`, webrtc 0.20.5): 26 errors, and the imports do not even resolve -
+    # the crate's root went from ~20 public modules to FIVE (`data_channel`, `media_stream`,
+    # `peer_connection`, `rtp_transceiver`, `runtime`), so `webrtc::api`, `webrtc::ice`,
+    # `webrtc::ice_transport`, `webrtc::interceptor`, `webrtc::rtcp` and `webrtc::track` are all
+    # gone. 0.20 is a thin async layer over the Sans-I/O `rtc` crate: `PeerConnectionBuilder`
+    # replaces `APIBuilder` + `MediaEngine` + `SettingEngine` + the interceptor `Registry`,
+    # `PeerConnection` is a TRAIT driven by a background `PeerConnectionDriver`, the `on_*` closures
+    # become a `PeerConnectionEventHandler` you implement, and the async runtime is a cargo feature.
+    #
+    # So the order is a PORT, then the call - and the call is still what retires this refusal,
+    # because a ported SFU that compiles is the same nothing the current one is. The SFU's own P1 in
+    # `docs/wiki/backlog.md` carries the detail.
     webrtc | webrtc-* | str0m | sdp | ice | turn | stun)
-      echo "one relay-path call. The SFU has ten tests and not one of them touches the ICE stack; that is campaign rung 15 CALL, which has no runner yet"
+      echo "one relay-path call. The SFU has ten tests and not one of them touches the ICE stack; that is campaign rung 15 CALL, which has no runner yet. And for \`webrtc\` itself that call comes AFTER a port, not instead of one: 0.20 is a rewrite onto the Sans-I/O \`rtc\` crate and does not compile against this SFU (26 errors, measured 2026-09-15)"
       ;;
 
     # `stripe` WAS REFUSED HERE UNTIL 2026-09-15, and the entry is gone because the test it named
