@@ -188,7 +188,7 @@ Client-side, in-conversation, substring-only: no server index, no global search.
 
 | Id | What it asks | Needs | State |
 | --- | --- | --- | --- |
-| FWD-1 | Channel -> DM forward, the exact shape of the reported prod loss | `W1 W2` | `PASS` 2026-09-05 02:12 on 0.16.3, clean |
+| FWD-1 | Channel -> DM forward, the exact shape of the reported prod loss | `W1 W2` | `PASS` 2026-09-15 10:16 on fb3fddd2, clean - 105 ms, 1 copy; the run that PROVES `Transferer` reaches its action through the overflow menu |
 | FWD-2 | The same, 25 times in a loop - any single miss is the bug | `W1 W2` | `PASS` 2026-09-05 02:13 on 0.16.3, clean |
 | FWD-3 | Forward while the sender goes offline mid-send | `W1 W2` | `PASS` 2026-09-05 02:15 on 0.16.3, clean |
 | FWD-4 | Forward from A1, backgrounded 200 ms later | `+A1` | `PASS` 2026-09-05 02:15 on 0.16.3, clean |

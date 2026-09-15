@@ -33,7 +33,9 @@ trait vus d'un echec de recherche. Nommer les deux oblige les quatre autres a pr
 les porte vraiment.
 
 Mesure apres correction : SEARCH-3 `PASS` propre, `tombstoneApplied`, les deux actions du menu
-exercees (supprimer et modifier) dans la meme execution.
+exercees (supprimer et modifier) dans la meme execution. Et FWD-1 `PASS` propre - 105 ms, une seule
+copie - ce qui PROUVE la troisieme action du menu (`Transferer`) au lieu de la deduire : les trois
+runners FWD portaient bien le meme defaut.
 
 ### Verified - la recherche plie les accents, et le rig l'a enfin constate
 
