@@ -560,7 +560,7 @@ pre-release deploys dev and nothing else, a stable deploys production and nothin
 deploys neither. The three deploy files - `build.yml`, `serve-dev.yml` and `serve-prod.yml` - are
 `workflow_call` libraries carrying no `workflow_dispatch` at all, deliberately: a dispatch is a
 second door onto one machine. Do not re-open it as a design question
-([backlog](../backlog.md#devcanari-emsefr---the-chantier-closed-2026-09-03-two-small-things-outlived-it)).
+([backlog](../backlog.md#devcanari-emsefr---the-two-things-that-outlived-the-chantier)).
 
 **The dev OIDC client, and why it is not created here.** Authentik has one Canari application
 (provider `pk=1`, `default-provider-authorization-implicit-consent`, `sub_mode=hashed_user_id`, six
