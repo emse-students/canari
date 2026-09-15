@@ -493,6 +493,14 @@ const STATE_CHANGE = [
   /^\[UI\] Local conversation removed \(\S+\)$/,
   /^\[DISCOVERY\] \d+ server group\(s\) missing locally: /,
   /^\[DISCOVERY\] Placeholder ".*" created\.$/,
+  // A GROUP TAKING ITS NAME BACK FROM THE SERVER, added 2026-09-15 with the fix that writes it.
+  // A push creates a placeholder row before any Welcome lands, and it used to be labelled with
+  // whoever wrote the message - right for a DM by coincidence, wrong for a group, and permanent,
+  // because the only thing that could have corrected it returned early without looking. This is
+  // that correction firing. Like its two siblings above it is a REAL change to what the client
+  // holds, so it is reported rather than forgiven, and it is not a defect, so it does not break
+  // `clean`. It fires on any device that was offline while a group was renamed.
+  /^\[DISCOVERY\] [0-9a-f]{8}\.\.\. relabelled ".*" -> ".*" \(the server is the authority on a group's name\)$/,
   // AN EVICTION, LEARNT FROM A FACT THAT STATED IT. `[EVICT] Removed from ...` and the Rust WARN
   // behind it are the mechanism WORKING: something authoritative named this device, and the client
   // retired the conversation on the spot instead of discovering it later by having a send refused.
