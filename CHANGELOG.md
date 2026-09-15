@@ -11,6 +11,37 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Added - la surface Stripe est epinglee, pour que franchir une version d'API soit prouve
+
+Le plafond de dependances refusait `stripe` en nommant le test qui le retirerait : *"un test qui
+epingle la surface Stripe de ce service a des FIXTURES par version d'API - les evenements webhook
+que `webhook.controller.ts` traite et les champs que `stripe-payment-provider.ts` et
+`users.service.ts` lisent"*. Ce test existe desormais, et l'entree quitte la table.
+
+Il tient en deux moities, dans deux fichiers, et la separation est le coeur de l'affaire. Les types
+du SDK stripe-node sont **tailles pour UNE version d'API** : `apiVersion` y est un literal de chaine,
+et chaque type d'objet est la forme de cette version-la. Un `satisfies` contre `keyof
+Stripe.Checkout.Session` n'est donc pas de la documentation - c'est le compilateur qui lit le schema
+de la nouvelle version et dit si le champ lu par ce service y est encore.
+
+**Encore faut-il que quelqu'un compile ces lignes.** Ecrites d'abord dans le fichier de test, elles
+ne verifiaient rien : `ts-jest` tourne ici sans diagnostics et `tsconfig.build.json` exclut les
+fichiers de test. Mesure par falsification - en empoisonnant les listes avec un evenement que Stripe
+n'a jamais envoye et un champ qu'il n'a jamais eu, la suite restait verte sur toutes les assertions
+de type et ne rougissait que sur deux comptages d'execution. Les epingles sont donc du CODE SOURCE
+(`stripe-surface.ts`) : `nest build` echoue maintenant sur un champ ou un evenement disparu du
+schema, dans le meme job qui echoue deja quand le literal de version bouge.
+
+La seconde moitie est celle qu'aucun compilateur n'atteint : une fixture SIGNEE de chacun des cinq
+evenements traites, livree par le chemin de verification de production, qui verifie que la branche
+part et publie ce qu'elle doit publier.
+
+Ce qui n'est pas prouve, dit clairement : un changement de COMPORTEMENT a forme constante reste
+invisible. Le contrat de Stripe couvre cette moitie - depuis `2024-09-30.acacia`, les publications
+mensuelles a l'interieur d'un train sont additives et seule la version qui OUVRE un train comporte
+des ruptures. Franchir vers un nouveau train reste donc un acte different, et ce qui le rend visible
+est le literal de `stripe-api-version.ts` qui refuse de compiler.
+
 ### Fixed - le plafond de dependances refusait une bibliotheque cliente, et ne pouvait pas lire sa propre porte de sortie
 
 Le gate `Dependency ceiling` repond a une seule question : ce depot a-t-il un test qui verrait cette
