@@ -11,6 +11,32 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - deux choses demandaient la permission de notification en meme temps, et l'une bloquait l'application
+
+Au premier lancement apres une installation, la boite de dialogue de permission d'Android s'ouvrait
+par-dessus la WebView pendant que le bandeau *"Activez les notifications pour etre prevenu des
+nouveaux messages"* etait encore affiche en bas du meme ecran. Un dialogue natif prend **tous** les
+appuis jusqu'a ce qu'on y reponde - c'est correct pour un dialogue natif, et c'est exactement
+pourquoi rien d'autre ne doit demander au meme moment. Mesure sur A1 le 2026-09-14.
+
+La cause etait une horloge : le texte d'explication etait un toast de 6 s, et le dialogue systeme
+s'ouvrait 1200 ms apres - donc pendant les 4,8 s restantes les deux etaient a l'ecran. Aucune duree
+n'aurait ete la bonne : c'est une supposition sur la vitesse de lecture de quelqu'un, et ce qu'elle
+tente de doubler est un dialogue que ce meme code ouvre. **L'explication est desormais une vraie
+boite de confirmation, et le dialogue systeme n'est demande qu'une fois qu'elle a ete fermee.**
+Repondre "Plus tard" est une reponse honoree : Android n'accorde que tres peu d'occasions de
+demander, et en depenser une sur quelqu'un qui vient de refuser l'explication la perd pour de bon.
+
+**Et il vaut la peine de savoir comment cela se presentait** : dialogue ouvert, la WebView cessait de
+repeindre tout en continuant de repondre au CDP - le DOM disait une chose et l'ecran en montrait une
+autre. Un instrument qui lit le DOM aurait rapporte une application qui marche. Seule une capture
+d'ecran les a separes.
+
+Corrige au passage, parce que le correctif s'appuie dessus : `showConfirm` ecrasait la boite en
+attente **sans resoudre sa promesse**. Le dialogue disparaissait de l'ecran et ce qui l'attendait
+attendait pour le reste du processus, sans erreur ni journal. La boite remplacee repond desormais
+"annule", ce qu'a decide quelqu'un qui ne l'a jamais vue.
+
 ### Fixed - le selecteur d'emojis ne chargeait rien en anglais, et allait le chercher chez un tiers
 
 `emoji-picker-element` va chercher ses donnees a l'execution. Sans attribut `data-source` il
