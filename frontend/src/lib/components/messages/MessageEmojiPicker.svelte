@@ -293,9 +293,18 @@
     {/if}
 
     <!-- Composant Web emoji-picker -->
-    <!-- data-source pointe vers le dataset emojibase FRANÇAIS auto-hébergé : `locale="fr"`
-         ne traduit que l'UI, les mots-clés de recherche viennent du data-source. Sans lui,
-         la recherche ne fonctionnait qu'en anglais ("wing" au lieu de "aile"). -->
+    <!-- data-source pointe vers un dataset emojibase AUTO-HÉBERGÉ, dans les DEUX langues :
+         `locale` ne traduit que l'UI, les mots-clés de recherche viennent du data-source. Sans lui,
+         la recherche ne fonctionnait qu'en anglais ("wing" au lieu de "aile").
+
+         ET IL N'EST JAMAIS `undefined`. C'ÉTAIT UN APPEL SORTANT VERS UN CDN TIERS. Sans attribut,
+         emoji-picker-element va chercher ses données sur
+         `cdn.jsdelivr.net/npm/emoji-picker-element-data@^1/en/emojibase/data.json` : l'IP de chaque
+         membre part chez un tiers dès l'ouverture du sélecteur, le sélecteur ne peut pas s'ouvrir
+         hors ligne - donc pas du tout dans les applications mobiles - et `@^1` ne fixe rien, donc
+         l'ensemble des emojis proposés pouvait changer sans commit. Les deux fichiers sont copiés
+         d'un paquet épinglé à une version EXACTE par `tools/emoji-data/sync.mjs` et vérifiés par
+         `emojiData.test.ts`. -->
     <!--
       `flex-auto`, AND NOT `flex-1`, AND THAT ONE WORD IS WHY THE LIST WOULD NOT SCROLL.
       Measured on the running app 2026-09-04, at every panel size: `section.picker` inside the
@@ -322,7 +331,7 @@
       use:attachEmojiPicker
       class="min-h-0 w-full flex-auto"
       locale={getLocale() === 'en' ? 'en' : 'fr'}
-      data-source={getLocale() === 'en' ? undefined : '/emoji-data-fr.json'}
+      data-source={getLocale() === 'en' ? '/emoji-data-en.json' : '/emoji-data-fr.json'}
     ></emoji-picker>
   </div>
 {/if}

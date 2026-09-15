@@ -5724,16 +5724,27 @@ family resolved*, and that is measurable - see the campaign rows below.
   plus the `GSUB` ligatures that make a flag or a ZWJ family one glyph). It belongs in the build
   recipe, not in a one-off notebook. A miss is then either a font to rebuild or an entry to drop -
   either way a known fact, not a surprise on a member's screen.
-- **DEFECT FOUND WHILE SCOPING THIS, and it is the "offers everything" half.**
-  `MessageEmojiPicker.svelte:256` reads
+- **DEFECT FOUND WHILE SCOPING THIS - CLOSED 2026-09-15, AND IT WAS WORSE THAN THE SCOPING SAID.**
+  `MessageEmojiPicker.svelte` read
   `data-source={getLocale() === 'en' ? undefined : '/emoji-data-fr.json'}`, and `undefined` means the
   element's default, which is
   `https://cdn.jsdelivr.net/npm/emoji-picker-element-data@^1/en/emojibase/data.json`
-  (`picker.js:1649`). So on the English locale the app fetches its emoji data from a third-party CDN -
-  an outbound request, hence an IP leak, for every user who opens the picker; the picker cannot open
-  offline, which is fatal in the mobile apps; and `@^1` pins nothing, so the offered set changes under
-  us, which is exactly the non-determinism the standing directive forbids. **Self-host the EN dataset
-  the way FR already is, and pin both.**
+  (`picker.js:1649`, still there in the shipped 1.29.1). The scoping called that an IP leak, a picker
+  that cannot open offline, and an offered set that `@^1` pins to nothing. **It is also a broken
+  screen, and that half was measured rather than reasoned**: `connect-src` names no CDN, so the
+  request never leaves. From the app's own origin on the running estate, 2026-09-15, Chrome answered
+  `Connecting to 'https://cdn.jsdelivr.net/...' violates the following Content Security Policy
+  directive: "connect-src 'self' blob: wss: ws: ..." The action has been blocked.` **On the English
+  locale the emoji picker could not load its data at all** - it had been self-hosted in French since
+  the search keywords needed it, which is exactly why nobody met this in the language this estate
+  reads.
+  Both datasets are now served from `static/`, copied verbatim by `tools/emoji-data/sync.mjs` out of
+  `emoji-picker-element-data` pinned to an EXACT version (a caret would put the offered set back
+  under someone else's control, one `bun install` at a time). `emojiData.test.ts` asserts the
+  attribute is never `undefined` and never remote, that the pin has no range, and that each
+  committed file is BYTE-identical to the package - so a bump that is not re-synced cannot merge.
+  The committed FR file turned out to be exactly `emoji-picker-element-data@1.8.0`'s, which is how
+  the pin was chosen; it is 143 KB smaller now only because the package ships it minified.
 - `emojiUnsupportedMessage` is shown by the library when it detects no colour-emoji support at all.
   Once a font is bundled, decide whether that state is still reachable (WebKitGTK is the only
   candidate) and delete the string if it is not - a message nothing can display is noise in
