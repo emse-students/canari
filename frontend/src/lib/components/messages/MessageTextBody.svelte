@@ -16,9 +16,11 @@
     isDeleted: boolean;
     /** First HTTP URL in the text, used to show a link preview card below the message. */
     firstLink: string | null;
+    /** Jumbomoji: an emoji-only message (see MessageBubble's `isEmojiOnly`) renders larger. */
+    jumbo?: boolean;
   }
 
-  let { textSegments, searchTerm, isDeleted, firstLink }: Props = $props();
+  let { textSegments, searchTerm, isDeleted, firstLink, jumbo = false }: Props = $props();
 
   // NOT folded here: `splitWithHighlight` folds both sides itself, because it also needs the
   // map back to the original text and a pre-folded needle would hide that from its signature.
@@ -35,7 +37,9 @@
 
 {#if !isLinkOnly}
   <p
-    class="text-sm leading-relaxed wrap-anywhere whitespace-pre-wrap select-text {isDeleted
+    class="{jumbo
+      ? 'text-3xl leading-tight'
+      : 'text-sm leading-relaxed'} wrap-anywhere whitespace-pre-wrap select-text {isDeleted
       ? 'italic opacity-60'
       : ''}"
   >

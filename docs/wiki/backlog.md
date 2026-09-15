@@ -5591,163 +5591,17 @@ a Windows path, which is how the killer URL was produced in the first place.
 
 ## Composer and reactions
 
-### P2 - the app draws emoji with the platform's font, and must draw ONE bundled font everywhere (decided 2026-08-23)
+### Bundled emoji font - SHIPPED 2026-09-15, campaign rows still owed
 
-**Decided by the user on 2026-08-23, and the weight is explicitly NOT a factor** (their words: the
-size does not enter the decision). Canari bundles **Noto Color Emoji** and draws every emoji with it,
-in the whole app and the whole site, on every platform. This is the product choice the third bullet of
-the picker entry above said was owed.
-
-**It is ONE work package with the picker fixes, not two** - the user's framing, and it is structurally
-right: the picker is where the set is OFFERED and the app is where it is DRAWN, so offering what the
-font cannot draw, or drawing what the picker never offers, is a single defect seen from two ends. The
-picker's scroll and placement faults are described in the entry above and are not restated here.
-
-Microsoft's Fluent Emoji was examined first, on 2026-08-23, and **rejected on coverage, not licence**.
-It is MIT (copyright Microsoft Corporation, no trademark clause in the repository), so it would have
-been legally clean. Measured on its git tree: 1 595 base emoji, 3 145 variants, **zero country flags**
-(the only "flag" assets are Black, White, Chequered, Triangular, Crossed, Pirate, Rainbow,
-Transgender and Flag-in-hole), **no family / couple / people-holding-hands ZWJ sequences** at all, and
-frozen at Unicode 15.1 (its Emoji 15.1 merge is from 2024-10-02, its last commit 2025-01-30). It also
-ships no font whatsoever - 12 625 files: 3D PNG 109.7 MB, Color SVG 131.9 MB, Flat SVG 17.2 MB, High
-Contrast 6.4 MB. A set with no flags cannot be THE set for a French student association.
-
-#### Why Noto, in numbers
-
-`googlefonts/noto-emoji`, OFL 1.1, last push 2025-09-15. Measured on its git tree 2026-08-23:
-
-- `svg/` holds **3 732 glyph sources**, of which **2 291 are multi-codepoint sequences** (ZWJ
-  families, couples, professions, skin tones). Country flags live in `third_party/region-flags`, and
-  the prebuilt fonts prove they are shipped: `Noto-COLRv1.ttf` 4.7 MB **with** flags against
-  `Noto-COLRv1-noflags.ttf` 2.8 MB, plus a `NotoColorEmoji-flagsonly.ttf` of 0.8 MB.
-- **It is level with the picker's own dataset.** Probed by codepoint: every Emoji 16 addition
-  (fingerprint, leafless tree, root vegetable, splatter, harp, shovel) and every Emoji 17 sample
-  taken (distorted face, orca, trombone, treasure chest) is present. That is what makes "the picker
-  offers exactly what the app can draw" an achievable requirement rather than an aspiration.
-- **Licence.** OFL 1.1 permits embedding in the APK/AAB/IPA/AppImage and permits modification
-  (subsetting, rebuilding). The header declares `Copyright 2013 Google LLC` with **no Reserved Font
-  Name**, so a rebuild does not force a rename. Two real obligations: the OFL text travels with the
-  binary, and the font is never sold on its own. One notch more verbose than MIT, no practical effect
-  here, and compatible with a public repository.
-
-#### The disparity is now OBSERVED, not only predicted (user, 2026-09-09)
-
-The user reports seeing it in the running app: *"tous les emojis de l'app (dans le selecteur, dans
-les reactions, dans toute l'interface) devront etre mis a Noto Color Emoji, il y a deja des
-disparites et il va falloir les regler en meme temps, sur tous les appareils."*
-
-Three things that changes for this entry, none of them its scope:
-
-- **It has a reporter and a date.** Everything above was written while SCOPING, from the fact that
-  neither global stack declares an emoji family. The prediction has now been met, so the entry is no
-  longer speculative and does not need re-justifying to be picked up.
-- **The named surfaces are the picker, the REACTIONS and the rest of the interface.** Reactions were
-  not listed among the surfaces that have to change, because they inherit `body` and were assumed
-  covered - and an assumption is what a user just contradicted. Whether a reaction pill resolves the
-  same family as the bubble text beside it is a MEASUREMENT this WP owes before it declares the two
-  stacks sufficient, taken the way the entry already prescribes: read the resolved family, never
-  judge the picture.
-- **"En meme temps, sur tous les appareils"** is an acceptance condition and belongs with the
-  campaign rows below: one glyph, drawn from one family, on Android, iOS and the web build - and the
-  disparity between two SURFACES on ONE device is as much a failure as a disparity between two
-  devices. It is stated here because the natural way to close this WP is per-surface, and per-surface
-  is exactly how the current disparity was produced.
-
-#### The format is the whole difficulty, and it has a solution
-
-No single colour-font table covers both engine families, and Canari ships on both:
-
-| Table | Chromium: WebView2 (Windows), Android WebView, Chrome/Edge | WebKit: WKWebView (iOS, macOS), Safari | Firefox |
-| --- | --- | --- | --- |
-| **COLRv1** | yes, 98+ | **no** - not implemented, and marked not in active development (WebKit standards-positions 415) | yes, 107+ |
-| **OT-SVG** (`SVG` table) | **no**, ever | yes - Safari 12.1+, iOS Safari 12.2+ | yes, 31+ |
-
-The two are exactly complementary, and **they fit in one file**. `maximum_color`, from
-`googlefonts/nanoemoji` (Google's own tool, the one that builds Noto), adds the `SVG` table to a COLR
-font and the reverse; its stated intent is "a font that will Just Work in any modern browser". Each
-engine reads the table it understands, from a single `.woff2`. Where a two-file split is preferred
-instead, the selector is `src: url(...) tech(color-COLRv1), url(...) tech(color-svg)`, with
-`@supports font-tech()` available since Safari 17 for the awkward case.
-
-Three things that must not be got wrong:
-
-- **Do not pass `--bitmaps`.** Chrome and anything on Skia *prefers* CBDT to COLR when both tables are
-  present (nanoemoji says so, over Skia 12945 and FreeType 1142), and CBDT is the 10.1 MB build.
-  Weight is not a factor by the user's decision, but rendering the WRONG table is a defect.
-- **nanoemoji describes itself as "under active development, doubtless full of bugs".** So it is not a
-  CI dependency: build ONCE, commit the produced `.woff2`, and record the exact command plus the
-  expected hash so the artefact is reproducible without the toolchain being installed anywhere. This
-  is the opposite disposition to `frontend/src/lib/wasm/`, which is generated and not committed
-  precisely because every pipeline can build it; nothing in CI can build this one.
-- **Serve it from our own origin**, never Google Fonts: a third-party font host leaks the IP of every
-  member and cannot work offline in the Tauri apps.
-
-**WebKitGTK was the one target that may read neither table**, and **it is no longer a target at
-all** - the Linux desktop build was dropped 2026-09-03
-([cicd](cicd.md#the-linux-desktop-build-is-suspended-not-lost-2026-09-03)), so
-this row owes one fewer verification than it did. Kept because it returns with the target: WebKitGTK
-goes through FreeType/Skia and WebKit bug 191976 ("[FreeType] Color emoji not properly supported")
-is still open. It was also the only target where the failure was free - the system emoji font on
-Linux **is** Noto Color Emoji, so the fallback drew the same pictures. Never design around it; if
-the desktop target comes back, verify it once on a real build.
-
-**And note what this is, under the standing rule that a fallback is a signal and never a path**: a
-font stack IS a fallback chain, so "it looks right" is not a verdict. The question is always *which
-family resolved*, and that is measurable - see the campaign rows below.
-
-#### What has to change in the app
-
-- **The two global stacks are the whole of it, and neither has an emoji fallback today**, which is why
-  100 % of emoji are currently the platform's: `frontend/src/app.css:134` (`body`) and
-  `frontend/src/app.css:144` (`h1`-`h6`, `.font-brand`). Append the bundled family to both.
-- **The picker uses the same family or the app disagrees with itself.** `emoji-picker-element` 1.29.1
-  exposes `--emoji-font-family` on the element; that is the entire change on that side.
-- **Every stack that is re-declared for an EXPORT is a place the screen and the artefact can
-  disagree**, and each one must be handled explicitly: `PosterCanvas.svelte` (4 inline stacks),
-  `calendarExport.ts`, `trombinoscope.ts`, `avatar.ts` (an SVG data-URI stack), and
-  `MentionComposerInput.svelte:399` (monospace).
-- **A PDF is not a browser.** `frontend/src/lib/pdf/appFonts.ts` maps a computed stack plus a weight
-  onto an embedded jsPDF font, so an emoji in an exported PDF is a separate question this WP owes an
-  answer to (embed, or rasterise). The CSS change does not cover it.
-- `font-display: swap` plus a preload, and the font shipped as a bundled app asset so the mobile
-  builds have it at first paint with no network. An invisible emoji while a font loads is worse than a
-  platform emoji.
-
-#### The picker must offer exactly what the font can draw
-
-- **What it offers today**: `frontend/static/emoji-data-fr.json`, 540 KB, emojibase FR, **1 923 base
-  entries / 3 953 including skins**, groups 0-9 all populated (270 flags, the France flag present,
-  249 ZWJ entries), with `version` values up to **Emoji 17**.
-- So the offered set and Noto are level, and the WP owes a **build-time diff that proves it**: every
-  codepoint and every sequence in the dataset must resolve to a glyph in the shipped font (`cmap`
-  plus the `GSUB` ligatures that make a flag or a ZWJ family one glyph). It belongs in the build
-  recipe, not in a one-off notebook. A miss is then either a font to rebuild or an entry to drop -
-  either way a known fact, not a surprise on a member's screen.
-- **DEFECT FOUND WHILE SCOPING THIS - CLOSED 2026-09-15, AND IT WAS WORSE THAN THE SCOPING SAID.**
-  `MessageEmojiPicker.svelte` read
-  `data-source={getLocale() === 'en' ? undefined : '/emoji-data-fr.json'}`, and `undefined` means the
-  element's default, which is
-  `https://cdn.jsdelivr.net/npm/emoji-picker-element-data@^1/en/emojibase/data.json`
-  (`picker.js:1649`, still there in the shipped 1.29.1). The scoping called that an IP leak, a picker
-  that cannot open offline, and an offered set that `@^1` pins to nothing. **It is also a broken
-  screen, and that half was measured rather than reasoned**: `connect-src` names no CDN, so the
-  request never leaves. From the app's own origin on the running estate, 2026-09-15, Chrome answered
-  `Connecting to 'https://cdn.jsdelivr.net/...' violates the following Content Security Policy
-  directive: "connect-src 'self' blob: wss: ws: ..." The action has been blocked.` **On the English
-  locale the emoji picker could not load its data at all** - it had been self-hosted in French since
-  the search keywords needed it, which is exactly why nobody met this in the language this estate
-  reads.
-  Both datasets are now served from `static/`, copied verbatim by `tools/emoji-data/sync.mjs` out of
-  `emoji-picker-element-data` pinned to an EXACT version (a caret would put the offered set back
-  under someone else's control, one `bun install` at a time). `emojiData.test.ts` asserts the
-  attribute is never `undefined` and never remote, that the pin has no range, and that each
-  committed file is BYTE-identical to the package - so a bump that is not re-synced cannot merge.
-  The committed FR file turned out to be exactly `emoji-picker-element-data@1.8.0`'s, which is how
-  the pin was chosen; it is 143 KB smaller now only because the package ships it minified.
-- `emojiUnsupportedMessage` is shown by the library when it detects no colour-emoji support at all.
-  Once a font is bundled, decide whether that state is still reachable (WebKitGTK is the only
-  candidate) and delete the string if it is not - a message nothing can display is noise in
-  `messages/*.json`.
+Decided by the user 2026-08-23, implemented in full: Canari bundles **Noto Color Emoji** (merged
+COLRv1+OT-SVG, `maximum_color`) and falls back to it on every font stack in the app and every
+export, and proves at build time that every offered emoji resolves to one glyph in the bundled
+font. The picker's own CDN leak (self-hosting the EN dataset) was a separate, already-closed fix
+(`tools/emoji-data/sync.mjs`, above) - this entry builds on it rather than repeating it. Provenance,
+the exact wiring, and why `emojiUnsupportedMessage` was NOT deleted are the whole of
+[emoji.md](frontend/emoji.md), the only copy - nothing about the decision or the implementation is
+restated here. What is left is the campaign rows below, which need real devices this repo does not
+have.
 
 #### What a future campaign owes - asked for by the user on 2026-08-23
 

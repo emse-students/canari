@@ -34,6 +34,7 @@
     getBubbleShapeClass,
     isGifUrl,
   } from '$lib/utils/chat/messageDisplay';
+  import { isEmojiOnlyText } from '$lib/utils/emoji';
   import {
     createReplySwipeGesture,
     replySwipeDragOffset,
@@ -256,6 +257,15 @@
     return textSegments.every(
       (s) => s.type === 'link' || (s.type === 'text' && s.value.trim() === '')
     );
+  });
+
+  /** Up to this many emoji (the user's own answer) still counts as "jumbomoji". */
+  const JUMBO_EMOJI_MAX_COUNT = 5;
+  // Emoji-only message (no media, reply or poll) - renders naked like an image/media, at a larger
+  // size (see MessageTextBody's `jumbo` prop), like WhatsApp/Messenger.
+  const isEmojiOnly = $derived.by(() => {
+    if (mediaRef || effectiveReplyTo || isPollOnly || isDeleted) return false;
+    return isEmojiOnlyText(textContent, JUMBO_EMOJI_MAX_COUNT);
   });
 
   let replySenderDisplayName = $state('');
@@ -653,15 +663,19 @@
         style:transform={replyDragPx !== 0 || reactDragPx !== 0
           ? `translate3d(${replyDragPx + reactDragPx}px, 0, 0)`
           : undefined}
-        class="{isMediaOnly || isLinkOnly || isGifOnly || isPollOnly
+        class="{isMediaOnly || isLinkOnly || isGifOnly || isPollOnly || isEmojiOnly
           ? 'p-0'
           : 'px-3 py-2'} w-fit max-w-full cursor-pointer touch-pan-y {isMobile
           ? 'select-none [-webkit-touch-callout:none] [-webkit-user-select:none]'
-          : ''} {isMediaOnly || isLinkOnly || isGifOnly || isPollOnly
+          : ''} {isMediaOnly || isLinkOnly || isGifOnly || isPollOnly || isEmojiOnly
           ? ''
           : getBubbleShapeClass(groupPosition, isOwn)} {replyDragPx !== 0
           ? 'message-swipe-reply-active'
-          : 'transition-shadow duration-200'} {isMediaOnly || isLinkOnly || isGifOnly || isPollOnly
+          : 'transition-shadow duration-200'} {isMediaOnly ||
+        isLinkOnly ||
+        isGifOnly ||
+        isPollOnly ||
+        isEmojiOnly
           ? ''
           : isOwn
             ? 'text-bubble-out-text bg-bubble-out'
@@ -709,7 +723,13 @@
             />
 
             {#if !isEditingInline}
-              <MessageTextBody {textSegments} {searchTerm} {isDeleted} {firstLink} />
+              <MessageTextBody
+                {textSegments}
+                {searchTerm}
+                {isDeleted}
+                {firstLink}
+                jumbo={isEmojiOnly}
+              />
             {/if}
           {/if}
         {/if}

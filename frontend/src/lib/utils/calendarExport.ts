@@ -550,7 +550,7 @@ function buildCalendarHtml(
     <div style="position:relative;">
       <div style="height:${HEADER_H}px;position:relative;background:${opts.headerBg};border-bottom:1.5px solid ${opts.borderColor};">
         ${faviconHtml}
-        <h1 data-pdf-text style="position:relative;font-family:'Fredoka Variable','Fredoka','Segoe UI',sans-serif;font-size:30px;font-weight:700;color:${opts.monthTitleColor};margin:0;line-height:${HEADER_H}px;text-align:center;letter-spacing:.01em;${blockShadow}">${safe(monthLabel)}</h1>
+        <h1 data-pdf-text style="position:relative;font-family:'Fredoka Variable','Fredoka','Segoe UI','Noto Color Emoji Canari',sans-serif;font-size:30px;font-weight:700;color:${opts.monthTitleColor};margin:0;line-height:${HEADER_H}px;text-align:center;letter-spacing:.01em;${blockShadow}">${safe(monthLabel)}</h1>
       </div>
       <div style="padding:0 20px ${GRID_PAD_BOTTOM}px;">
         <div style="display:grid;grid-template-columns:repeat(7,1fr);border:1.5px solid ${opts.gridOuterBorder};border-top:none;border-radius:0 0 8px 8px;overflow:hidden;">
@@ -583,7 +583,7 @@ export function buildPreviewInnerHtml(
   // identically. box-sizing/margin/padding resets are inlined since there is no iframe stylesheet.
   // Square corners, like the export: the preview's job is to show the sheet that will print, so a
   // decorative radius belongs to the page chrome around it, never to the sheet itself.
-  return `<div style="position:relative;width:${CALENDAR_CONTAINER_WIDTH}px;height:${CALENDAR_CONTAINER_HEIGHT}px;background:${opts.pageBg};font-family:'Nunito Variable','Nunito','Segoe UI',sans-serif;color:#111;overflow:hidden;box-sizing:border-box;">${body}</div>`;
+  return `<div style="position:relative;width:${CALENDAR_CONTAINER_WIDTH}px;height:${CALENDAR_CONTAINER_HEIGHT}px;background:${opts.pageBg};font-family:'Nunito Variable','Nunito','Segoe UI','Noto Color Emoji Canari',sans-serif;color:#111;overflow:hidden;box-sizing:border-box;">${body}</div>`;
 }
 
 /**
@@ -631,7 +631,7 @@ export async function exportCalendarMonth(
     height: `${CALENDAR_CONTAINER_HEIGHT}px`,
     background: opts.pageBg,
     color: '#111111',
-    fontFamily: '"Nunito Variable", "Nunito", "Segoe UI", sans-serif',
+    fontFamily: '"Nunito Variable", "Nunito", "Segoe UI", "Noto Color Emoji Canari", sans-serif',
     boxSizing: 'border-box',
     // No radius: this box IS the sheet, and a sheet of paper has square corners. A radius here
     // rasterises as four transparent notches at the page edge of the PDF.

@@ -396,7 +396,8 @@
 
   :global(.md-composer-code),
   :global(.md-composer-fenced-code) {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-family:
+      ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Noto Color Emoji Canari', monospace;
     font-size: 0.92em;
   }
 

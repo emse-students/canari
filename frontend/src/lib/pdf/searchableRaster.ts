@@ -15,8 +15,15 @@
  * `<span>`, not a padded or flex-centred container. A run is anchored to the TOP of the marked box
  * ({@link drawTextSpecs}); padding and vertical centring are invisible here, so marking a container
  * silently draws its text higher in the PDF than the on-screen preview shows it.
+ *
+ * EMOJI ARE THE ONE EXCEPTION TO "HIDE FOR RASTER, RE-DRAW AS VECTOR": jsPDF's text embedding only
+ * supports plain TrueType outlines, so a color emoji (COLRv1/OT-SVG, see the bundled Noto font) has
+ * no vector form to draw. A `data-pdf-text` node containing emoji is therefore left OUT of the
+ * hide-for-raster rule - captured pixel-perfect, in color, by the background raster pass - and its
+ * vector re-draw is skipped so nothing invisible is drawn on top of it.
  */
 import { rasterizeElementToCanvas, type RasterizeOptions } from '$lib/utils/pdfRaster';
+import { containsEmoji } from '$lib/utils/emoji';
 import { registerAppFonts, pickAppFont } from './appFonts';
 
 /** One measured text run to re-draw as vector text over the raster. */
@@ -36,6 +43,8 @@ interface TextSpec {
   lineHeightPx: number;
   letterSpacingPx: number;
   text: string;
+  /** True when `text` contains emoji - captured by the raster pass instead of drawn as vector text. */
+  hasEmoji: boolean;
 }
 
 /** Parses a CSS `rgb()/rgba()` color into 0-255 components (defaults to black on parse failure). */
@@ -121,6 +130,7 @@ function collectTextSpecs(root: HTMLElement, naturalWidth: number): TextSpec[] {
       lineHeightPx,
       letterSpacingPx,
       text,
+      hasEmoji: containsEmoji(text),
     });
   }
   return specs;
@@ -170,12 +180,17 @@ export async function exportSearchablePdf(
   // 1. Measure the text runs while they are still visible (so colors/sizes are the real ones).
   const specs = collectTextSpecs(el, opts.naturalWidth);
 
+  // An emoji-carrying node is marked so the stylesheet below can exempt it from the hide rule -
+  // it has no vector form (see the module docstring), so it must survive into the raster instead.
+  const emojiEls = specs.filter((s) => s.hasEmoji).map((s) => s.el);
+  for (const node of emojiEls) node.dataset.pdfTextRasterOnly = 'true';
+
   // 2. Hide the text for the background raster by injecting a global stylesheet.
   // We use a stylesheet rather than inline styles because Svelte's reactivity might
   // re-apply declarative inline `style:color` bindings during the async rasterization yield.
   const styleEl = document.createElement('style');
   styleEl.textContent = `
-    .pdf-exporting-raster [data-pdf-text] {
+    .pdf-exporting-raster [data-pdf-text]:not([data-pdf-text-raster-only]) {
       color: rgba(0,0,0,0) !important;
       text-shadow: none !important;
       -webkit-text-fill-color: rgba(0,0,0,0) !important;
@@ -196,6 +211,7 @@ export async function exportSearchablePdf(
     // 3. Always restore the visible text, even if the raster failed.
     el.classList.remove('pdf-exporting-raster');
     styleEl.remove();
+    for (const node of emojiEls) delete node.dataset.pdfTextRasterOnly;
   }
 
   // 4. Compose the PDF.
@@ -271,6 +287,9 @@ function drawTextSpecs(
   yOffset: number
 ): void {
   for (const s of specs) {
+    // Captured in color by the raster pass instead (see the module docstring) - drawing a vector
+    // run on top would either duplicate the text or, worse, paint nothing over a colorless glyph.
+    if (s.hasEmoji) continue;
     const font = pickAppFont(s.family, s.weight);
     if (font) pdf.setFont(font.name, font.style);
     else pdf.setFont('helvetica', s.weight >= 600 ? 'bold' : 'normal');
