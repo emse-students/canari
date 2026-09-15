@@ -11,6 +11,41 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - le rig cliquait une barre d'actions qui n'existe plus depuis le 8 septembre
+
+SEARCH-3 est revenu `ERROR` sur une phrase qui ne laisse aucune ambiguite - *"no `Supprimer` action
+on the row"* - et la cause n'est pas dans l'application. La barre survolee d'un message a ete
+refaite le 2026-09-08 a la demande de l'utilisateur, sur la reference mesuree : **trois cercles de
+28px - reagir, repondre, plus - et tout le reste derriere l'ellipse.** `clickBubbleAction` cherchait
+toujours le bouton directement sur la ligne du message, donc il ne pouvait plus trouver `Supprimer`,
+`Modifier` ni `Transferer`, et les trois runners FWD tombaient sous le meme defaut sans que personne
+l'ait encore constate.
+
+**La regle est celle du composant, pas une observation.** `MessageBubbleToolbar.svelte` l'ecrit deux
+fois - *"Order from the bubble outward is react, reply, more"* et *"The overflow menu: everything
+that is not react or reply"* - et c'est exactement ce que le harness declare maintenant : deux
+actions dans la barre, l'ellipse pressee d'abord pour toutes les autres.
+
+**C'est un ENSEMBLE DECLARE, pas un reessai.** Chercher le libelle puis ouvrir le menu quand il
+manque aurait ete un fallback, et surtout cela aurait rendu le test vert sur un build qui aurait
+PERDU l'action : un bouton absent et un bouton a une pression de distance se ressemblent trait pour
+trait vus d'un echec de recherche. Nommer les deux oblige les quatre autres a prouver que le menu
+les porte vraiment.
+
+Mesure apres correction : SEARCH-3 `PASS` propre, `tombstoneApplied`, les deux actions du menu
+exercees (supprimer et modifier) dans la meme execution. Et FWD-1 `PASS` propre - 105 ms, une seule
+copie - ce qui PROUVE la troisieme action du menu (`Transferer`) au lieu de la deduire : les trois
+runners FWD portaient bien le meme defaut.
+
+### Verified - la recherche plie les accents, et le rig l'a enfin constate
+
+SEARCH-5 etait une ligne ecrite pour ENREGISTRER un manque : ses cinq `PASS` affirmaient le
+comportement d'avant le correctif de `foldForSearch` (2026-08-31), donc ils etaient VOID et la
+prediction du runner avait ete retournee. Une execution repondant `noAccentFound=true` fermait la
+ligne. Elle est fermee, deux fois : `SEARCH5-...Reunion` est trouve par `...reunion` comme par
+`...REUNION`, `1/1` des deux cotes, propre.
+
+
 ### Changed - stripe 22.3.2 -> 22.6.2, et la version d'API franchie avec
 
 La montee du SDK et le literal de `stripe-api-version.ts` sont COUPLES par construction : les types

@@ -2170,7 +2170,31 @@ export async function tapSheetIcon(cx, iconClass) {
  * exactly that way on the first run of MSG-3. The button must be searched inside the bubble's own
  * row, and the row is the nearest ancestor that actually contains one.
  */
+/**
+ * THE TWO ACTIONS THE HOVER STRIP CARRIES ITSELF. Everything else is behind the ellipsis, and that
+ * is the COMPONENT'S OWN RULE rather than an observation: `MessageBubbleToolbar.svelte` says
+ * "Order from the bubble outward is react, reply, more" and "The overflow menu: everything that is
+ * not react or reply". The strip was a single wide bar until 2026-09-08, when the user asked for the
+ * measured three-circle reference, and this list is what changed underneath every caller here.
+ *
+ * IT IS A DECLARED SET, NOT A RETRY. Reaching for the label first and opening the menu when it is
+ * missing would be a fallback - it would also PASS on a build that had lost the action entirely,
+ * because a missing button and a button one press away look identical to a failed lookup. Naming
+ * the two makes the other four assert that the menu really carries them.
+ */
+const QUICK_BAR_ACTIONS = ['Réagir', 'Répondre'];
+/** The ellipsis, by its own `aria-label` (`msg_more_actions_label`). */
+const MORE_ACTIONS = "Plus d'actions";
+
 export async function clickBubbleAction(cx, textMatch, label, timeoutMs = 5000) {
+  if (!QUICK_BAR_ACTIONS.includes(label)) {
+    await pressBubbleControl(cx, textMatch, MORE_ACTIONS, timeoutMs);
+  }
+  return pressBubbleControl(cx, textMatch, label, timeoutMs);
+}
+
+/** One press on one control of a hovered bubble's toolbar - the strip's or the open menu's. */
+async function pressBubbleControl(cx, textMatch, label, timeoutMs) {
   await hoverBubble(cx, textMatch);
   // THE ACTION ROW FADES IN, so reading it once races the hover and the read usually loses. Every
   // caller had compensated with `sleep(800)` of its own, which is the same guess repeated three
