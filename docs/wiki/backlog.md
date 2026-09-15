@@ -689,13 +689,23 @@ at all. Nor could the client skip the ask: whether a member has a photo is a fac
 directory holds, so a `hasAvatar` field in the user payload would need the same call it was meant to
 save. **The line is expected AND necessary, and the NOISE rule is met by this explanation.**
 
-**The two `415`s are NOT page-issued and are still unexplained.** Across three cold starts they
-appear in the console at ~+5.2 s and ~+5.9 s and in the resource timeline NOT AT ALL - not with a
-status, not with a zero status. So they are issued outside the page's own fetch (the native http
-plugin is the candidate) and naming them needs a CDP `Network` capture armed at attach, which the
-resource timeline cannot substitute for. Note the timeline's own limit found on the way: the buffer
-holds **250 entries** and a cold start fills it, so anything after ~+4.5 s is dropped unless
-`setResourceTimingBufferSize` is raised the moment the debugger attaches.
+**The two `415`s are the other half, and they are a PROBE'S ANSWER rather than a failure.** They are
+absent from the resource timeline entirely - no status, not even a zero one - so only a CDP
+`Network` capture armed at attach could name them, and it does: `GET /api/mls/link-preview/image?
+url=...%2Ffavicon.ico`, with a sibling 404 on a `favicon.svg`. `LinkPreviewCard.svelte` walks a chain
+of favicon candidates with off-screen `Image` probes, precisely so that a failure can only ever be
+about the URL that was asked; **a candidate that does not decode IS the probe's answer**, and the
+proxy's 415 is it working (`security.controller.ts:694` admits `image/*` and excludes SVG, which can
+carry script and would be served from our own origin). That docblock already names these console
+lines, and the cover-card branch was already changed to probe nothing at all.
+
+**So all seven lines are dispositioned and this item CLOSES**: five are a cached answer about a
+member with no photo, two are a probe reporting a candidate that is not an image. Neither is the
+visible end of something upstream, and neither should be "fixed". Note the resource timeline's own
+limit found on the way, because it will mislead the next reader too: the buffer holds **250
+entries** and a cold start fills it, so anything after ~+4.5 s is dropped unless
+`setResourceTimingBufferSize` is raised the moment the debugger attaches - and a request the page
+did not itself issue may never appear there at all.
 
 ---
 ### P3 - `cleanup.mjs` sweeps groups but not the delivery queue, and 13 275 rows have accumulated (measured 2026-09-08)
