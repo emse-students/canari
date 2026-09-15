@@ -58,7 +58,8 @@ import { uninstallMlsStatePersisterLifecycle } from '$lib/mls-client/mlsStatePer
 import { disposeMlsEncryptWorker } from '$lib/mls-client/mlsEncryptWorkerSession';
 import {
   setupMessageHandler,
-  initializeConnection,
+  openGatewayConnection,
+  syncConnectionAfterWsOpen,
   initTabLeadershipAsync,
   getIsTabLeader,
 } from '$lib/utils/chat/connection';
@@ -147,10 +148,12 @@ export function makeRecoveryDeps(ctx: SessionContext, cb: ChatSessionCallbacks) 
 }
 
 /**
- * Builds the dependency bag for `initializeConnection` (WebSocket open + post-connect group
- * reconciliation). Shared by the login path and `promoteOfflineSession`, which must perform the
- * exact same connection sequence - a second, hand-copied version would drift the moment either one
- * gained a callback.
+ * Builds the dependency bag for the connection sequence: the WebSocket open
+ * (`openGatewayConnection`) and the post-connect group reconciliation (`syncConnectionAfterWsOpen`),
+ * which login takes in two pieces with the conversation restore between them, and
+ * `promoteOfflineSession` takes in one (`initializeConnection`) because by then the conversations
+ * are already loaded. ONE bag for all three - a second, hand-copied version would drift the moment
+ * any of them gained a callback.
  */
 export function makeConnectionDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
   return {
@@ -955,6 +958,49 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     }
     endStartupCatchupPhase();
 
+    /**
+     * THE SOCKET OPENS BEFORE THE RESTORE, NOT TWENTY-TWO SECONDS AFTER THE APP STARTED.
+     *
+     * Measured on production 2026-09-15, from the user's own console: the app announces
+     * `Initialised in WEB mode` at 22:24:17 and `[TAB] Leadership acquired (Web Locks)` at 22:24:39,
+     * with `[WS] Opening connection` behind it - so for the whole of the archive replay this client
+     * had no socket. Two things follow from that, and only one of them is obvious:
+     *
+     *  - nothing live could arrive for twenty-two seconds, and
+     *  - **every mailbox barrier re-pulled the whole mailbox.** `settleBarrier` trusts a previous
+     *    pull only while `mailboxEmptiedByAPull && isWsOpen()`, and that second half is exactly
+     *    right: with no socket the server can have queued a row since the pull and nothing would
+     *    have pushed it. So with the socket closed the flag is worth nothing, and twenty
+     *    conversations meant twenty HTTP round trips answering `[PENDING] No pending MLS messages`.
+     *
+     * The precondition for opening here is the paragraph at the top of this phase: the inbound
+     * pipeline is registered BEFORE anything can pull, which is what `setup_handler` just finished
+     * doing. Frames are therefore already being processed during the restore today - the barrier
+     * pulls them - so opening the socket adds no new concurrency to the replay; it removes the
+     * reason the barrier could not believe itself.
+     *
+     * Only the SOCKET moves. `syncConnectionAfterWsOpen` - KeyPackage publication, the group sweep,
+     * reconciliation - stays where it was, below the restore, because it reasons about the
+     * conversations this device holds and must not run before they are loaded.
+     */
+    const tabLeaderNow = await initTabLeadershipAsync(cb.log);
+    ctx.setIsTabLeader(tabLeaderNow);
+    if (!tabLeaderNow) {
+      cb.log('[TAB] Follower tab - WebSocket active in another Canari tab.');
+    }
+
+    // Offline: skip the connection entirely rather than let it fail. `openGatewayConnection` would
+    // degrade correctly on its own, but the attempt costs a timeout on a launch that already knows
+    // there is no network, and it logs "Gateway inaccessible" for a device that never had one.
+    let gatewayIsOpen = false;
+    if (offlineSession) {
+      cb.log('[INIT] Offline session - gateway connection deferred until the network returns.');
+    } else {
+      beginStartupCatchupPhase('open_gateway');
+      gatewayIsOpen = await openGatewayConnection(makeConnectionDeps(ctx, cb));
+      endStartupCatchupPhase();
+    }
+
     // Adopt anything the native side queued on its own (an undelivered notification quick reply
     // lives only in the mirror file, which the next mirror rewrite would erase). BEFORE the load:
     // the adopted message is written to the store, so the ordinary history load displays it and
@@ -1249,21 +1295,16 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       }
     );
 
-    const tabLeaderNow = await initTabLeadershipAsync(cb.log);
-    ctx.setIsTabLeader(tabLeaderNow);
-    if (!tabLeaderNow) {
-      cb.log('[TAB] Follower tab - WebSocket active in another Canari tab.');
-    }
-
-    // Offline: skip the connection entirely rather than let it fail. openGatewayConnection would
-    // degrade correctly on its own, but the attempt costs a timeout on a launch that already knows
-    // there is no network, and it logs "Gateway inaccessible" for a device that never had one.
+    // The socket and tab leadership were settled before the restore - see the block that does it,
+    // above. What is left here is the half that reasons about the conversations this device holds:
+    // publishing KeyPackages, sweeping the server's group list, reconciling history. It is skipped
+    // when the socket never opened, exactly as `initializeConnection` skipped it.
     if (offlineSession) {
-      cb.log('[INIT] Offline session - gateway connection deferred until the network returns.');
+      cb.log('[INIT] Offline session - group reconciliation deferred until the network returns.');
       finishStartupCatchupBench(cb.log);
     } else {
       beginStartupCatchupPhase('initialize_connection');
-      await initializeConnection(makeConnectionDeps(ctx, cb));
+      if (gatewayIsOpen) await syncConnectionAfterWsOpen(makeConnectionDeps(ctx, cb));
       {
         const stats = summarizeConversationStats(cb.conversations);
         endStartupCatchupPhase({
@@ -1275,9 +1316,10 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
 
       // Connection established and groups reconciled: drain the outbox. THIS IS LOGIN, AND THE
       // PARENTHESIS THAT USED TO BE HERE - "covers reconnection, which re-runs
-      // initializeConnection" - WAS FALSE. `initializeConnection` has exactly two call sites, this
-      // one and the offline promotion, and each runs once per session; a reconnect goes through
-      // `attemptReconnectImpl`, which never calls it. Reconnection is covered inside the outbox by
+      // initializeConnection" - WAS FALSE. The login path opens the socket above the restore and
+      // syncs here; `initializeConnection` (open + sync in one call) is now left to the offline
+      // promotion alone. Each runs once per session, and a reconnect goes through
+      // `attemptReconnectImpl`, which calls neither. Reconnection is covered inside the outbox by
       // `connectivity.onReconnect`, and believing otherwise makes this line look redundant and
       // that path look uncovered - both wrong, in opposite directions.
       flushOutbox();
