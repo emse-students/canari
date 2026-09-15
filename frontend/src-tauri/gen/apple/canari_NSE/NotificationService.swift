@@ -352,7 +352,9 @@ class NotificationService: UNNotificationServiceExtension {
     // call signaling or empty fallback bodies. Android twin: writeFcmCache after the
     // call branches.
     if let msg = decrypted, msg.type != "call_invite", msg.type != "call_control" {
-      writeFcmCache(groupId: groupId, senderId: senderId, senderName: senderName, result: msg)
+      writeFcmCache(
+        groupId: groupId, senderId: senderId, senderName: senderName, groupName: groupName,
+        result: msg)
     }
 
     applyMessageContent(
@@ -600,7 +602,7 @@ class NotificationService: UNNotificationServiceExtension {
   /// `app_data_dir` copy on the next activation, and `read_and_clear_fcm_cache` pre-injects
   /// it at boot. Android twin: `CanariFirebaseMessagingService.writeFcmCache`.
   private func writeFcmCache(
-    groupId: String, senderId: String, senderName: String, result: DecryptResult
+    groupId: String, senderId: String, senderName: String, groupName: String, result: DecryptResult
   ) {
     guard !result.messageId.isEmpty else {
       NSLog("[CanariNSE] writeFcmCache: messageId empty -> entry ignored")
@@ -616,6 +618,10 @@ class NotificationService: UNNotificationServiceExtension {
       "messageId": result.messageId,
       "senderId": senderId,
       "senderName": senderName,
+      // The GROUP's name, carried because the app cannot invent it: the web consumer builds a
+      // conversation row from this entry, and with nothing here it named the row after the SENDER.
+      // Empty for a DM by the server's own contract. Android twin: `writeFcmCache`.
+      "groupName": groupName,
       "content": result.text,
       "timestamp": result.sentAt,
       "type": result.type,

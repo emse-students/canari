@@ -79,6 +79,46 @@ export type EnsureConversationOutcome =
   | 'exit-owed';
 
 /**
+ * Brings a KNOWN group row's label back in line with the server's, which is the only authority on it.
+ *
+ * **THIS SEAM WAS THE ONLY ONE THAT COULD, AND IT WAS THE ONE THAT RETURNED EARLY.** A group's name
+ * reaches a device by exactly two routes: the `groupRenamed` system message, which a device offline
+ * at the time never sees, and this list. Everything else that writes a conversation row either
+ * creates it or repairs a DM's peer. So a row that acquired a wrong label - a push placeholder named
+ * after its sender, a rename missed while the app was closed - kept it for the life of the install,
+ * and a two-person group ended up sitting in the sidebar under the other member's name, directly
+ * above the real DM with that same person and indistinguishable from it (measured 2026-09-08).
+ *
+ * **GROUPS ONLY, AND THAT IS NOT CAUTION - IT IS WHAT `isGroup` MEANS.** For a DM the server's name
+ * is the canonical `self::peer` KEY and the row's name is the peer's resolved display name: they are
+ * two different facts and overwriting one with the other would put a uuid pair in the sidebar. The
+ * server's name is the group's name only when the server says the row is a group.
+ *
+ * Silent when there is nothing to do, loud when there is: a label changing under a user who is
+ * looking at it is exactly the kind of thing a reader must be able to find afterwards.
+ */
+function repairGroupLabel(
+  key: string,
+  convo: Conversation,
+  group: ServerGroupRow,
+  conversations: Map<string, Conversation>,
+  saveConversation: ((key: string) => Promise<void>) | undefined,
+  log: (msg: string) => void
+): void {
+  if (!group.isGroup) return;
+  const serverName = (group.name ?? '').trim();
+  if (!serverName || serverName === convo.name) return;
+  conversations.set(key, { ...convo, name: serverName, contactName: serverName });
+  log(
+    `[DISCOVERY] ${groupIdShort(group.groupId)} relabelled "${convo.name}" -> "${serverName}" (the server is the authority on a group's name)`
+  );
+  void saveConversation?.(key).catch(() => {});
+}
+
+/** The 8-character prefix every line in this file names a group by. */
+const groupIdShort = (groupId: string) => `${groupId.slice(0, 8)}...`;
+
+/**
  * Ensure a conversation row exists for `group`, creating the placeholder if it does not.
  *
  * @returns Whether the device can now route for this group - see {@link EnsureConversationOutcome}.
@@ -94,7 +134,11 @@ export async function ensureConversationForServerGroup(
   // PEER'S USER ID, so `conversations.has(groupId)` answers "no" for a group this device already
   // holds a perfectly good row for - and creating a second one is the duplicate-DM defect that
   // `mergeDirectConversationDuplicates` exists to clean up afterwards.
-  if ([...conversations.values()].some((c) => c.id === groupId)) return 'existed';
+  const known = [...conversations.entries()].find(([, c]) => c.id === groupId);
+  if (known) {
+    repairGroupLabel(known[0], known[1], group, conversations, saveConversation, log);
+    return 'existed';
+  }
 
   // A GROUP THIS DEVICE HAS ALREADY DECIDED TO LEAVE IS NOT "MISSING LOCALLY", IT IS ON ITS WAY OUT.
   // Without this, DEL-10's group came back: the delete met no server, the local state was purged,
@@ -106,7 +150,7 @@ export async function ensureConversationForServerGroup(
     // Never silent: this is the branch that makes a server group invisible, and the reader who
     // wonders where a group went must find the reason rather than deduce it.
     log(
-      `[DISCOVERY] ${groupId.slice(0, 8)}... not re-created - this device owes the server an exit for it`
+      `[DISCOVERY] ${groupIdShort(groupId)} not re-created - this device owes the server an exit for it`
     );
     return 'exit-owed';
   }
@@ -119,7 +163,7 @@ export async function ensureConversationForServerGroup(
     ? null
     : await resolveDirectPeerId(mlsService, groupId, group.name || '', userId, log);
   if (!group.isGroup && !directPeer) {
-    log(`[DISCOVERY] DM "${groupId.slice(0, 8)}..." peer unresolved - skip (retry next sync)`);
+    log(`[DISCOVERY] DM "${groupIdShort(groupId)}" peer unresolved - skip (retry next sync)`);
     return 'peer-unresolved';
   }
   const displayName = directPeer || group.name || groupId;

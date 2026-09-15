@@ -11,6 +11,43 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - un groupe portait le nom de la personne qui y avait ecrit en premier
+
+Dans la barre laterale, un groupe a deux personnes s'affichait sous le nom de **l'autre membre**,
+juste au-dessus de la vraie conversation privee avec cette meme personne, elle aussi sous ce nom.
+Deux lignes, un seul nom, rien sur l'une ni sur l'autre pour dire laquelle etait quoi. Mesure du
+2026-09-08 : sept heures apres la suppression du groupe, sa ligne etait toujours la, toujours mal
+nommee.
+
+**Le nom venait d'une notification, et une notification parle de son EXPEDITEUR, pas de la
+conversation.** Quand un message arrive alors que l'application est fermee, le service natif le
+dechiffre et ecrit dans un cache une ligne de conversation provisoire - il le faut, le message a une
+cle etrangere vers `conversations(id)`. Cette ligne etait etiquetee avec le nom de l'expediteur.
+Pour une conversation privee les deux coincident, et c'est pour cela que ca a tenu si longtemps ;
+pour un groupe, c'est le nom de la premiere personne qui y a parle. Le nom du groupe voyageait dans
+la notification depuis toujours (`buildPushDataFields.groupName`, vide pour une conversation privee
+par contrat serveur, donc a la fois l'etiquette ET le discriminant) : les deux ecrivains natifs,
+Android et iOS, ne le recopiaient simplement pas dans le fichier de cache.
+
+**Et rien ne corrigeait jamais.** Le commentaire a cote de l'ecriture promettait que le Welcome
+reecrirait l'etiquette - vrai pour un groupe qu'on REJOINT, vide de sens pour un groupe dont on est
+deja membre, c'est-a-dire tous ceux pour lesquels une notification peut arriver. Le nom d'un groupe
+n'atteint un appareil que par deux chemins : le message systeme de renommage, qu'un appareil eteint
+a ce moment-la ne voit jamais, et la liste des groupes du serveur. Ce second chemin passait devant
+la ligne fautive a chaque balayage et repondait `existed` sans regarder le nom. Il la recale
+desormais - **les groupes seulement** : pour une conversation privee, le nom cote serveur est la cle
+canonique `moi::pair` et pas une etiquette, et l'ecraser mettrait deux identifiants la ou un prenom
+doit s'afficher.
+
+Effet de bord utile : un groupe renomme pendant que l'application etait fermee prend enfin son
+nouveau nom, au lieu de garder l'ancien jusqu'a la reinstallation.
+
+Dix cas de test fixent les deux moities, dont quatre temoins - la conversation privee toujours
+nommee d'apres son expediteur (c'etait le correctif d'un P1 du 2026-09-08, il devait survivre), le
+fichier de cache ecrit par une version plus ancienne qui ne contient pas encore le nom du groupe, la
+conversation privee que la reparation ne doit pas toucher, et la reponse serveur qui ne dit rien du
+nom. Quatre des dix echouent contre le code d'avant ; les six autres passent des deux cotes.
+
 ### Fixed - la passerelle criait a l'erreur chaque fois qu'un onglet se fermait
 
 Un navigateur qui se recharge, change de page ou se fait tuer n'envoie pas de trame de fermeture :

@@ -43,6 +43,7 @@ the rule in [durable-rules](durable-rules.md). Delete the line once the measurem
 | the login button that took a press and showed nothing | the fix is a reordering, visible in the component's own state, so any cold `/login` press proves it. What is NOT explained is the 2026-08-28 measurement's "no request" over thirty seconds: a version check running its ladder would have issued three. Read the network tail of the next cold login before calling that measurement understood |
 | the last server-composed sentence now asks the device which language it reads | after the next release, `[PUSH_REGISTER]` prints `locale=fr` or `locale=en` rather than `unstated` for a device that has restarted once - every client re-registers on its next start because the skip predicate changed shape. The VISIBLE half needs an iPhone AND a failed NSE, which is why the log line is the measurement |
 | acknowledging a conversation from the notification shade | HARDWARE, both platforms. On A1: send from W1, background the app, tap **Marquer comme lu**, then OPEN the app - the badge must be gone, which is the half that needed `read_watermarks.ndjson`. Then the same with a quick REPLY, which now means the same thing. `logcat` must show `sendReadWatermark: queued+drained at=<ms>` with the SENDER's instant, never a value near `now`. Board row **NOTIF-6b**, and the iOS twin is written identically and equally unproven |
+| the row a push creates now carries the GROUP's name | HARDWARE, both platforms, and the cheaper of its two cases needs no push at all: rename a group from the peer account while this device is KILLED, then open it - a rename is an MLS system message a killed device never sees, so only the discovery sweep can carry it, and `[DISCOVERY] ... relabelled` is the line. The push case proper needs an APK built from this tree, since an APK embeds its frontend and no deploy reaches it ([check C](device-verification.md#c-the-row-a-push-creates-carries-the-groups-name---owed-on-both-platforms)) |
 | WP-REGRANT-2, a re-granted member's re-join | COMM-22, four grant/revoke cycles green - and COMM-8 reading `seedAfterTheGrant: true`, never `repaired`, which is a fallback and not a path |
 | the auto-merge sweep drains its queue unattended | the next sweep after a merge must merge EVERY pull request that is mergeable, not one. Until 2026-09-01 each merge moved `main` and staleness-invalidated the rest, so the queue drained at one per pass and only while somebody pushed; the predicate now asks whether `.github/workflows/` or `.github/scripts/` moved instead. #302 and #303 are the population sitting on it - both `CLEAN`, both built on `6a356d7e`, neither touched by a gate change. One sweep log showing both merged closes this |
 | a security advisory now has an ACTOR at all | `automated-security-fixes` was `{"enabled":false}` while alerts were on, and the `cargo` ecosystem limits `production-dependencies` to patch - so `serde_with` 3.19.0 -> 3.21.0 (GHSA-7gcf-g7xr-8hxj, medium, `frontend/src-tauri/Cargo.lock`) could be reported and never fixed by anything. Enabled 2026-09-02, and it fired within the minute - **onto a THIRD refusal nobody knew about**, the update job failing on a manifest cargo cannot parse (P1 below). So **this row cannot close on alert 210**: it closes on the first security pull request Dependabot opens for ANY directory, and 210 itself waits on the P1 |
@@ -515,41 +516,6 @@ accepted; with the owner present, 599 of 599 named correctly.
 more than any other promo - are 1A who arrived after both lists were frozen. They appear in neither
 source, so they must pay through the shop, and all three membership products are `isActive = false`.
 The user confirmed 2026-09-11 that the inactive flag is deliberate and is not to be touched.
-
-### P2 - a DELETED two-person group keeps the peer's name in the sidebar, so it is indistinguishable from the DM (measured 2026-09-08)
-
-`e615e00a-2c4d-443a-a940-2ac33303647a` is `N17B-mtsi0qrfu86`, `isGroup=t`, `deletedAt
-2026-09-08 10:02:22`. Seven hours later it was still the second row of the phone's sidebar, titled
-**"Canari Test Beta"** - the other member's name - directly above the real DM with that same person,
-titled identically:
-
-```
-2bd5add9-...  | Canari Test Beta | (the DM)
-e615e00a-...  | Canari Test Beta | N17B-mtsi1ldyydy the first thing ever sa...
-```
-
-**The row keeping its place is by design; the row losing its NAME is not.** A tombstone's local copy
-belongs to the client until it is dismissed - that split is deliberate and `dismiss.mjs` owns it. But
-the group HAS a name server-side, and the client renders the peer-name fallback instead. For a user,
-deleting a two-person group leaves two identical rows with that person's name and no way to tell
-which is the conversation.
-
-**It also disabled two instruments at once.** `openConversation` resolves a peer by TITLE and
-correctly refused - *"2 of 5 conversation tiles match the requested name on port 9333, so the row is
-AMBIGUOUS and none was opened"* - which is how NOTIF-1b lost three verdicts. And `isGroupDebris`
-matches on the group's name, so the sweep cannot recognise the row either: enumerating from the DOM
-would read "Canari Test Beta" and spare it.
-
-**Not to be confused with the sweep gap beside it.** The phone keeps no `CanariDB_<user>` in
-IndexedDB at all (origin `http://tauri.localhost` holds only `emoji-picker-element-fr`), so
-`dismiss.mjs` cannot enumerate it from any client. That is a second, independent hole, now reported
-honestly instead of as a chooser refusing.
-
-**Cleared by hand on 2026-09-08** through the product's own control - open the tile by its
-`data-conversation-tile` id rather than its title, then "Supprimer localement" - which is also the
-proof the fallback is only in the rendering: the row was reachable and deletable the whole time.
-
-**Blocked on nothing.** Local estate, test accounts, and a reproduction that takes one group.
 
 ### P3 - our message notification is not a CONVERSATION to Android, where the reference's is (measured against Messenger on the Mi 9T, 2026-09-09)
 
