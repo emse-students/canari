@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Log } from '$lib/utils/Log';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
   import {
@@ -110,7 +111,8 @@
       );
       await resolveNames(ids);
     } catch (e) {
-      error = e instanceof Error ? e.message : m.moderation_load_reports_error();
+      Log.d('admin.moderation.loadReports failed', e);
+      error = m.moderation_load_reports_error();
     } finally {
       loadingReports = false;
     }
@@ -124,7 +126,8 @@
       const ids = hiddenPosts.map((p) => p.authorId).filter((id): id is string => Boolean(id));
       await resolveNames(ids);
     } catch (e) {
-      error = e instanceof Error ? e.message : m.moderation_load_hidden_posts_error();
+      Log.d('admin.moderation.loadHidden failed', e);
+      error = m.moderation_load_hidden_posts_error();
     } finally {
       loadingHidden = false;
     }
@@ -141,7 +144,8 @@
       ];
       await resolveNames(ids);
     } catch (e) {
-      error = e instanceof Error ? e.message : m.moderation_load_muted_users_error();
+      Log.d('admin.moderation.loadMuted failed', e);
+      error = m.moderation_load_muted_users_error();
     } finally {
       loadingMuted = false;
     }
@@ -160,7 +164,8 @@
       const updated = await reviewReport(reportId, action);
       reports = reports.map((r) => (r.id === reportId ? updated : r));
     } catch (e) {
-      error = e instanceof Error ? e.message : m.common_generic_error_label();
+      Log.d('admin.moderation.handleReview failed', e);
+      error = m.common_generic_error_label();
     } finally {
       processingId = null;
     }
@@ -193,7 +198,8 @@
       muteDialogTarget = null;
       if (tab === 'muted') void loadMuted();
     } catch (e) {
-      error = e instanceof Error ? e.message : m.moderation_mute_error();
+      Log.d('admin.moderation.confirmMuteDialog failed', e);
+      error = m.moderation_mute_error();
     } finally {
       muteDialogLoading = false;
       processingId = null;
@@ -209,7 +215,8 @@
       await handleReview(report.id, 'reviewed');
       if (tab === 'hidden') void loadHidden();
     } catch (e) {
-      error = e instanceof Error ? e.message : m.moderation_hide_error();
+      Log.d('admin.moderation.handleHidePost failed', e);
+      error = m.moderation_hide_error();
       processingId = null;
     }
   }
@@ -230,7 +237,8 @@
       await handleReview(report.id, 'reviewed');
       hiddenPosts = hiddenPosts.filter((p) => p.id !== report.contentId);
     } catch (e) {
-      error = e instanceof Error ? e.message : m.moderation_delete_error();
+      Log.d('admin.moderation.handleDeletePost failed', e);
+      error = m.moderation_delete_error();
       processingId = null;
     }
   }
@@ -250,7 +258,8 @@
       await deleteReportedComment(report.contentId);
       await handleReview(report.id, 'reviewed');
     } catch (e) {
-      error = e instanceof Error ? e.message : m.moderation_delete_comment_error();
+      Log.d('admin.moderation.handleDeleteComment failed', e);
+      error = m.moderation_delete_comment_error();
       processingId = null;
     }
   }
@@ -261,7 +270,8 @@
       await unmuteUser(userId);
       mutedUsers = mutedUsers.filter((u) => u.userId !== userId);
     } catch (e) {
-      error = e instanceof Error ? e.message : m.common_generic_error_label();
+      Log.d('admin.moderation.handleUnmute failed', e);
+      error = m.common_generic_error_label();
     } finally {
       processingId = null;
     }
@@ -273,7 +283,8 @@
       await unhidePost(postId);
       hiddenPosts = hiddenPosts.filter((p) => p.id !== postId);
     } catch (e) {
-      error = e instanceof Error ? e.message : m.moderation_restore_error();
+      Log.d('admin.moderation.handleRestore failed', e);
+      error = m.moderation_restore_error();
     } finally {
       processingId = null;
     }
@@ -285,7 +296,8 @@
       await deletePost(postId);
       hiddenPosts = hiddenPosts.filter((p) => p.id !== postId);
     } catch (e) {
-      error = e instanceof Error ? e.message : m.moderation_delete_error();
+      Log.d('admin.moderation.handleDeleteHidden failed', e);
+      error = m.moderation_delete_error();
     } finally {
       processingId = null;
     }

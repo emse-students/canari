@@ -11,6 +11,31 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - l'administration cessait de traduire ses erreurs, et n'en gardait aucune trace
+
+Quarante-neuf endroits dans treize des quatorze fichiers de `routes/admin` ecrivaient
+`e instanceof Error ? e.message : m.<cle>()`. `request()` leve avec le texte du serveur, donc le
+ternaire choisissait l'anglais **des que l'appel atteignait le serveur**, et la moitie traduite que
+la ligne avait deja declaree ne servait jamais. Les 49 declaraient une cle Paraglide - mesure, 49
+sur 49, aucune ne retombant sur un litteral brut - donc l'arbre entier se ferme en supprimant la
+preference, sans rien devoir a aucun `throw`.
+
+**ET CETTE SUPPRESSION N'EST QU'UNE MOITIE DE CORRECTIF LA OU LE `catch` NE JOURNALISE PAS.** 42 des
+49 ne journalisaient pas : `.message` etait la seule trace survivante de l'echec, et l'enlever en
+aurait fait 42 pertes silencieuses - *"Every swallowed branch logs - in a best-effort path that is
+all a loss leaves."* Chacune journalise desormais `Log.d('admin.<page>.<fn> failed', e)` avant
+d'afficher. **Le tag porte la page parce que `Log.d` n'imprime que le tag qu'on lui donne** et que
+six de ces branches s'appellent `load` : une ligne dont on ne peut pas retrouver le sujet est une
+ligne que son lecteur apprend a sauter.
+
+`serverProse.test.ts` prend `src/routes/admin`, le plus gros arbre qu'il ait pris, plus un fichier
+nomme pour qu'une faute de chemin ne le rende pas vide. Falsifie plutot que suppose : remettre la
+preference dans un seul fichier fait rougir exactement un test (1 echec, 102 succes).
+
+Et le reste a ete CLASSE plutot que compte : sur les 152 occurrences restantes, **101 sont dans un
+appel de journalisation et sont correctes**, 4 sont des docblocs qui citent la forme pour
+l'expliquer, et 26 seulement alimentent un ecran - toutes dans `lib/components`, qui est la passe
+suivante. Les arbres encore hors du garde le sont donc pour une raison, pas par retard.
 ### Fixed - cinq arbres de routes de plus ne montrent plus la phrase du serveur
 
 La balayage continue arbre par arbre, et ce sont les cinq que l'on rencontre **avant d'etre arrive

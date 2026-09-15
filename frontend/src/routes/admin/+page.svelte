@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Log } from '$lib/utils/Log';
   import { onMount } from 'svelte';
   import { isGlobalAdmin, isAssociationSuperAdmin, isContentModerator } from '$lib/stores/user';
   import {
@@ -82,7 +83,8 @@
         targetedDevices: data.targetedDevices,
       });
     } catch (e) {
-      pushTestResult = e instanceof Error ? e.message : m.common_generic_error_label();
+      Log.d('admin.handleBroadcastPushTest failed', e);
+      pushTestResult = m.common_generic_error_label();
     } finally {
       isPushTestRunning = false;
     }

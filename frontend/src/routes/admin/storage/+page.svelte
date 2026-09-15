@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Log } from '$lib/utils/Log';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { isGlobalAdmin } from '$lib/stores/user';
@@ -24,7 +25,8 @@
     try {
       usage = await getBackendStorageUsage();
     } catch (e) {
-      error = e instanceof Error ? e.message : m.common_generic_error_label();
+      Log.d('admin.storage.load failed', e);
+      error = m.common_generic_error_label();
     } finally {
       loading = false;
     }

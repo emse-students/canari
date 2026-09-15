@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Log } from '$lib/utils/Log';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
@@ -57,7 +58,8 @@
           .catch(() => {});
       }
     } catch (e) {
-      error = e instanceof Error ? e.message : m.admin_status_unknown_error();
+      Log.d('admin.status.fetchPresence failed', e);
+      error = m.admin_status_unknown_error();
     } finally {
       loading = false;
     }

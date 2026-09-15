@@ -67,6 +67,18 @@ const TREES = [
   'src/routes/account',
   'src/routes/auth',
   'src/routes/directory',
+  // THE ADMIN TREE, added 2026-09-15 - 49 sites across 13 of its 14 files, and the largest single
+  // pass this guard has taken. Every one of the 49 had already declared a Paraglide fallback
+  // (measured: 49 of 49, none falling back to a raw literal), so the whole tree closed by deleting
+  // the preference, with nothing owed at any throw.
+  //
+  // IT IS ALSO THE PASS THAT FOUND WHAT THE EARLIER ONES HAD BEEN COSTING. Deleting `.message`
+  // deletes the only trace of the failure wherever the catch does not log, and 42 of these 49 did
+  // not - a silent swallow, which CLAUDE.md forbids outright. So each of the 42 gained a
+  // `Log.d('admin.<page>.<fn> failed', e)` in the same change: the member still reads the declared
+  // sentence, and the cause is still recoverable. This guard cannot assert that half - it reads one
+  // regex - which is exactly why the two belong in one commit rather than one of them in a backlog.
+  'src/routes/admin',
 ];
 
 /**
@@ -121,6 +133,7 @@ describe('no member-facing tree renders a server sentence', () => {
     expect(files).toContain('src/routes/calendar/+page.svelte');
     expect(files).toContain('src/routes/auth/callback/+page.svelte');
     expect(files).toContain('src/routes/directory/+page.svelte');
+    expect(files).toContain('src/routes/admin/moderation/+page.svelte');
   });
 
   it.each(files.map((f) => [f]))('%s', (file) => {

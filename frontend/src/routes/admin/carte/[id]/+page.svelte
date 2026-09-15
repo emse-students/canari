@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Log } from '$lib/utils/Log';
   import { onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
@@ -112,7 +113,8 @@
     try {
       project = await updatePosterProject(project.id, { name: trimmed });
     } catch (e) {
-      error = e instanceof Error ? e.message : m.common_save_error();
+      Log.d('admin.carte.id.commitRename failed', e);
+      error = m.common_save_error();
     }
   }
 
@@ -217,7 +219,8 @@
       // Arm autosave only now, so hydrating the state above doesn't schedule a spurious save.
       hydrated = true;
     } catch (e) {
-      error = e instanceof Error ? e.message : m.common_load_error();
+      Log.d('admin.carte.id.loadData failed', e);
+      error = m.common_load_error();
     } finally {
       loading = false;
     }
@@ -299,7 +302,8 @@
       saved = true;
       setTimeout(() => (saved = false), 2500);
     } catch (e) {
-      error = e instanceof Error ? e.message : m.common_save_error();
+      Log.d('admin.carte.id.handleSave failed', e);
+      error = m.common_save_error();
     } finally {
       saving = false;
     }
@@ -355,7 +359,8 @@
         );
       }
     } catch (e) {
-      error = e instanceof Error ? e.message : m.common_save_error();
+      Log.d('admin.carte.id.handlePublish failed', e);
+      error = m.common_save_error();
     } finally {
       publishing = false;
     }
@@ -372,7 +377,8 @@
     try {
       await exportPosterPdf(posterEl, project.name);
     } catch (e) {
-      error = e instanceof Error ? e.message : m.common_generic_error_label();
+      Log.d('admin.carte.id.handleExport failed', e);
+      error = m.common_generic_error_label();
     } finally {
       exporting = false;
     }

@@ -7490,29 +7490,69 @@ came from one predicate; a broader one over `frontend/src` finds ~288 occurrence
 which only some assign to an error state a screen renders - the rest sit inside a `Log`/`console`
 call and are correctly dev-facing.
 
-**194 remain, down from 223** (same predicate, every end measured rather than decremented -
-2026-09-15). The member-facing pass closed 27 across `components/posts`, `components/settings`,
+**145 remain, down from 194 on this branch's base** (one predicate at both ends, measured rather
+than decremented - 2026-09-15; the delta is exactly the admin pass's 49).
+
+The member-facing pass closed 27 across `components/posts`, `components/settings`,
 `routes/posts`, `routes/profile`, `routes/lists`, `routes/documents` and `routes/forms`; the agenda
 pass closed the last three in `components/calendar` and `routes/calendar` and gave that endpoint its
 codes; the landing pass closed seven across `routes/c`, `routes/g`, `routes/account`, `routes/auth`
-and `routes/directory` - the five trees a member meets BEFORE being anywhere yet. **Eighteen trees
-are guarded**, and they are clean but for the one allowlisted file.
+and `routes/directory` - the five trees a member meets BEFORE being anywhere yet; the admin pass
+closed 49 in ONE tree, thirteen of its fourteen files, every one of them with a Paraglide fallback
+already declared.
 
 **The landing pass found the case the sweep's shape does not cover.** `routes/auth/callback`
 declared `String(e)` as its fallback, so BOTH halves of that line were untranslatable and deleting
 the preference alone would have left the other - it gained `auth_callback_exchange_failed` instead.
 It is also the most exposed line the sweep has met: it renders into the sign-in card, for a reader
-who has not reached the application and cannot retry past it. Expect more of these in the trees
-below, and read the fallback before assuming the deletion is the whole fix.
+who has not reached the application and cannot retry past it. Read the fallback before assuming the
+deletion is the whole fix.
 
-**The raw count is an upper bound and always will be**: the predicate is a grep, so it counts the
-docblocks that QUOTE the shape in order to explain it - two of the 194 are the mapper's own
-documentation. The guard strips comments before matching, which is why it is the guard and not the
-grep that decides whether a tree is clean. What is left is chat (`lib/utils/chat`), graine,
-`routes/admin` (11 files), and the worker/`mls-client`/`services` layers, where most sites are
-dev-facing logs rather than screens. Measured 2026-09-15, by tree: `lib/utils` 55, `routes/admin`
-49, `lib/components` 30, `lib/composables` 26, `lib/services` 14, `lib/mls-client` 7, `lib/workers`
-5, and a tail of ones and twos.
+**AND THE ADMIN PASS FOUND WHAT ALL THE EARLIER ONES HAD BEEN COSTING.** Deleting `.message`
+deletes the only trace of the failure wherever the catch does not log, and **42 of those 49 did
+not** - a silent swallow. They gained `Log.d('admin.<page>.<fn> failed', e)` in the same commit, as
+did six sites of the landing pass and twenty of the component pass. This guard cannot assert that
+half - it reads one regex - which is why the two travel together rather than one of them arriving
+here as a queue item.
+
+**THE REMAINDER IS CLASSIFIED, NOT QUEUED. Every one of the 145, 2026-09-15:**
+
+| where the site sits | sites | what it means |
+| --- | --- | --- |
+| in or feeding a `Log.d` / `console.*` / `appendLog` call | 97 | CORRECT. A log is dev-facing; the server's own text is the useful half there |
+| a docblock or test quoting the shape to explain it | 4 | the guard strips comments before matching, so it never sees these |
+| a Paraglide key BUILT to carry the raw text, as a parameter | 7 | the table below: deleting a preference does not touch it (an eighth site, `lib/utils/chat/messaging.ts`, carries it in a shape this predicate does not even match) |
+| assigned to an error state a screen renders, or an intermediate on the way to one | 37 | 20 are the component pass; 1 is the allowlisted PIN message; the other 16 are workers, composables and `mls-client`, read one at a time |
+
+**So the trees still OUTSIDE the guard are outside it for a reason**: `lib/utils/chat`, `graine`,
+the workers and `mls-client` are almost entirely logs, and adding them would fail correct code -
+the regex finds the SHAPE, never the destination. The raw count stays an upper bound for the same
+reason.
+
+**WHAT THE COMPONENT PASS COULD NOT CLOSE IS A DIFFERENT SHAPE, AND DELETING A PREFERENCE DOES NOT
+TOUCH IT.** Eight sites hand the raw text to a Paraglide key BUILT to carry it, so the sentence is
+localized and its subject is not:
+
+| key | reads | sites |
+| --- | --- | --- |
+| `chat_send_error({ reason })` | "Echec de l'envoi : {reason}" | `MainChatPage.svelte` x2, `lib/utils/chat/messaging.ts` |
+| `chat_forward_error({ reason })` | "Echec du transfert : {reason}" | `useMessaging.svelte.ts` x2 |
+| `chat_media_send_error({ reason })` | "Echec de l'envoi du media : {reason}" | `useMessaging.svelte.ts` |
+| `auth_login_failed({ reason })` | "La connexion n'a pas pu demarrer : {reason}" | `auth/LoginPage.svelte` |
+| `chat_call_error({ msg })` | "Erreur appel : {msg}" | `MainChatPage.svelte` (behind `CALLS_ENABLED = false`) |
+
+`auth_callback_denied({ reason })` is the same shape with a different author - the reason is
+Authentik's `error_description`, not this estate's.
+
+**It closes the way the calendar one did: a code at the throw, per endpoint, mapped once.** Until
+then the four trees holding these sites - `src/lib/components` (root), `components/layout`,
+`components/auth`, `lib/composables` - stay outside the guard, because a file it owns must answer
+in full. **And one of them is a rule violation on its own**: `MainChatPage.svelte:988` branches on
+`msg.includes('Groupe introuvable') || msg.includes('Group not found')` to decide which toast to
+show, which is the distinction-in-prose the durable rules forbid; it sits in the calling code
+`CALLS_ENABLED = false` holds off, and the five switches that revive calling are where it is owed.
+
+**Nineteen trees are guarded**, and they are clean but for the one allowlisted file.
 
 **A tree is added only once every file under it answers**, which is why they arrive in batches: a
 guard owning half a directory is one a new file walks past. The CODES are the separate, still-open
