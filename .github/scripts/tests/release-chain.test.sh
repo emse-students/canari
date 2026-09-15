@@ -413,6 +413,33 @@ if [ -r "$AM" ]; then
     fail 'arm-auto-merge.yml arms pull requests from forks - CI green would then merge code from anybody'
   fi
 
+  # `author_association` MUST NOT COME BACK. Measured on #709: a real admin's own pull request was
+  # skipped every time because the webhook payload's `author_association` is computed WITHOUT
+  # visibility into a PRIVATE organisation membership, while the same login queried live over the
+  # API answers `MEMBER` / `admin` seconds apart. The field depends on a privacy setting on the
+  # AUTHOR'S profile that has nothing to do with their access to this repository, so it cannot be
+  # the gate - a live permission check replaced it and must stay the one source of truth.
+  if grep -q 'author_association' <<<"$AM_CODE"; then
+    fail 'arm-auto-merge.yml reads author_association again - it skips every pull request from a member with private organisation membership, silently, which is the #709 regression'
+  else
+    pass 'it no longer reads author_association - see the collaborator-permission check below'
+  fi
+
+  if grep -q 'collaborators/.*permission' <<<"$AM_CODE"; then
+    pass 'it asks the API directly whether this login can push here, instead of trusting a webhook field about their profile privacy'
+  else
+    fail 'arm-auto-merge.yml has no live collaborator-permission check - #709 (a private-membership admin skipped every time) has no fix without it'
+  fi
+
+  # THE MERGE STEP MUST READ THE PERMISSION CHECK'S OWN OUTPUT, not repeat the decision inline -
+  # one authorisation, asked once, is the whole point of making it a step instead of an `if:` nobody
+  # could query with an API call.
+  if grep -q 'steps.authz.outputs.armable' <<<"$AM_CODE"; then
+    pass 'the merge step is gated on the permission check it just ran, not a second copy of the decision'
+  else
+    fail 'arm-auto-merge.yml does not gate the merge step on the authz step output - the permission check runs and decides nothing'
+  fi
+
   # THE ARMING MUST NOT DEPEND ON THE TESTS. `--auto` hands the decision to GitHub; waiting for the
   # suite would hold a runner for its whole length and would still have to re-read the checks, and
   # a job that merges on its own reading of green is a second opinion about which jobs matter.

@@ -11,6 +11,21 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - l'auto-merge n'armait jamais une pull request ouverte par un membre a l'appartenance privee
+
+Signale par l'utilisateur : *"arm auto merge always skips for my PRs"*. `arm-auto-merge.yml` decidait
+qui armer en lisant `github.event.pull_request.author_association` du paquet webhook, calcule SANS
+visibilite sur une appartenance d'organisation PRIVEE - alors que la meme requete, interrogee en
+direct avec un jeton qui voit cette appartenance, repond correctement `MEMBER`. Mesure sur la #709 :
+les deux reponses arrivent a quelques secondes d'ecart et disent le contraire l'une de l'autre.
+**Ce parametre de confidentialite sur le profil de l'auteur n'a rien a voir avec son acces au
+depot**, donc il ne pouvait pas etre le critere.
+
+Le correctif pose la vraie question, en direct : `gh api repos/$REPO/collaborators/$AUTHOR/permission`,
+dans une etape dediee plutot que dans le `if:` du job (qui ne peut pas faire d'appel API), et arme
+sur `admin`/`maintain`/`write` - Dependabot reste reconnu par son nom. `release-chain.test.sh` refuse
+desormais tout retour de `author_association` dans ce fichier.
+
 ### Fixed - un refus d'envoi dans un salon s'affichait en anglais, dans les mots du serveur
 
 Quand l'API des salons refusait un message, la banniere affichait le corps de la reponse tel quel -
