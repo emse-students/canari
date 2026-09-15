@@ -174,6 +174,15 @@ Deep links, system events, rosters and the channel/DM asymmetry are on those two
   The row becomes `pending`, never `removed`: `requestReAdd` returns early on `removed`, so writing
   it during a re-admission ALSO stranded the group for good if the Welcome never came - the repair
   could not be asked for twice. `chat`, `mls`
+- **A NOTICE IN A THREAD IS DURABLE, SO SOMETHING MUST BE ABLE TO WITHDRAW IT.** Declining to write
+  the eviction notice covers the re-admission a device asked for; it does not cover a removal
+  somebody else decided followed by that same somebody adding the device back, where the notice was
+  TRUE when written and is a lie from the Welcome onwards - and it is the one statement in a thread
+  a user cannot dismiss. `retractEvictionNotice` runs against the re-admission Welcome, which is the
+  proof, never on a timer, and it uses `deleteMessage` rather than a tombstone because the seam's own
+  criterion is met: this device wrote the notice locally for its own reader, no peer ever had a copy,
+  and a tombstone would replace a false sentence with the ghost of one. `chat`
+
 
 - **A DEAD END THAT IS A DELIBERATE REFUSAL MUST NOT BE "FIXED", AND FIVE OF THEM HAVE ALREADY BEEN
   MISTAKEN FOR DEFECTS.** The standing rule is that a user must never be asked to leave an impasse

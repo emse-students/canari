@@ -33,6 +33,11 @@ Welcome arrive, donc **l'existence de l'entree** - et non son age, qui est l'aff
 est l'etat durable « une readmission est en vol ». `retireIfEvicted` le lit avant d'enregistrer quoi
 que ce soit.
 
+Et l'autre moitie, que la prevention ne couvre pas : une exclusion decidee par quelqu'un d'autre,
+suivie de cette meme personne qui vous rajoute, ecrit une notice qui etait VRAIE et que le Welcome
+rend fausse. Une readmission retire desormais la notice du fil - contre le Welcome, qui en est la
+preuve, jamais contre une horloge.
+
 La conversation passe alors en `pending` plutot que `removed`, ce qui corrige un second defaut de la
 meme cause : `requestReAdd` retourne immediatement sur `lifecycle === 'removed'`, donc ecrire cet
 etat pendant une readmission **condamnait le groupe** si le Welcome n'arrivait jamais - la reparation

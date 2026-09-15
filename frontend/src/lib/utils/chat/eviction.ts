@@ -53,6 +53,7 @@
  */
 
 import type { IMlsService } from '$lib/mls-client/IMlsService';
+import type { IStorage } from '$lib/db';
 import { m } from '$lib/paraglide/messages';
 import type { AddMessageToChatOptions, Conversation } from '$lib/types';
 import {
@@ -192,6 +193,70 @@ export async function recordEviction(deps: RecordEvictionDeps): Promise<boolean>
     );
   }
   return retired;
+}
+
+/**
+ * Withdraws the eviction notice from a thread, because a Welcome has just disproved it.
+ *
+ * THE OTHER HALF OF "NOTHING RETRACTS A NOTICE", and prevention alone does not cover it.
+ * `retireIfEvicted` now declines to write the notice when the Remove is the first half of a
+ * re-admission this device ASKED for - but a removal somebody else decided, followed by that same
+ * somebody adding us back, is a real eviction correctly recorded and then falsified. The notice was
+ * true when it was written and is a lie from the Welcome onwards, and it is the one statement in
+ * the thread the user cannot dismiss.
+ *
+ * A RE-ADMISSION WELCOME IS THE PROOF, which is why the retraction lives here and not on a timer:
+ * `readmittedAfterEviction` is established from OpenMLS itself (held, and `isGroupActive` false)
+ * before the frame is installed, so the caller is holding the only evidence that could ever settle
+ * this. Nothing is guessed and nothing expires.
+ *
+ * `deleteMessage` rather than a tombstone, and the seam's own criterion is met: this is a message
+ * NO OTHER DEVICE EVER HAD. This device wrote it locally, from a commit, addressed to its own
+ * reader; there is no peer copy for a tombstone to stand for, and leaving one would replace a false
+ * sentence with the visible ghost of a false sentence.
+ *
+ * Best-effort and idempotent: a thread with no notice is the normal case, and every swallowed
+ * branch logs. Returns how many were withdrawn - 0 is an answer, not a failure.
+ */
+export async function retractEvictionNotice(deps: {
+  conversations: Map<string, Conversation>;
+  groupId: string;
+  /** `null` on a caller with no store yet - the thread is still cleaned, see the loop below. */
+  storage?: Pick<IStorage, 'deleteMessage'> | null;
+  log: (message: string) => void;
+}): Promise<number> {
+  const { conversations, groupId, storage, log } = deps;
+  const short = groupId.slice(0, 8);
+
+  const key = findConversationKeyByGroupId(conversations, groupId);
+  const convo = key ? conversations.get(key) : undefined;
+  if (!key || !convo) return 0;
+
+  const notice = m.chat_system_removed_from_group();
+  const stale = convo.messages.filter((msg) => msg.isSystem && msg.content === notice);
+  if (stale.length === 0) return 0;
+
+  conversations.set(key, {
+    ...convo,
+    messages: convo.messages.filter((msg) => !(msg.isSystem && msg.content === notice)),
+  });
+
+  for (const msg of stale) {
+    await storage
+      ?.deleteMessage(msg.id, key)
+      .catch((e: unknown) =>
+        log(
+          `[EVICT] ${short}… - removal notice withdrawn from the thread but not from storage: ${
+            e instanceof Error ? e.message : String(e)
+          }`
+        )
+      );
+  }
+
+  log(
+    `[EVICT] ${short}… - re-admitted, ${stale.length} removal notice(s) withdrawn: the Welcome disproves them`
+  );
+  return stale.length;
 }
 
 /** Everything {@link retireIfEvicted} needs, kept to the narrowest set both call sites can supply. */
