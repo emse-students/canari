@@ -2880,5 +2880,11 @@
   "form_condition_formation_label": "Tracks accepted",
   "form_show_if_toggle": "Show only to certain people",
   "form_show_if_hint": "On top of the condition on another answer, this question can depend on class year, track or membership.",
-  "form_builder_condition_value_placeholder": "Value..."
+  "form_builder_condition_value_placeholder": "Value...",
+  "api_refusal_session": "{action}: your session has expired, please sign in again.",
+  "api_refusal_forbidden": "{action}: you do not have the necessary permissions.",
+  "api_refusal_gone": "{action}: the item no longer exists.",
+  "api_refusal_conflict": "{action}: it already exists.",
+  "api_refusal_rate_limited": "{action}: too many attempts, try again in a moment.",
+  "calendar_action_deposit": "Depositing the event"
 }

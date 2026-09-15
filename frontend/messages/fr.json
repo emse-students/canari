@@ -2880,5 +2880,11 @@
   "form_condition_formation_label": "Formations acceptées",
   "form_show_if_toggle": "N'afficher que pour certaines personnes",
   "form_show_if_hint": "En plus de la condition sur une autre réponse, cette question peut dépendre de la promotion, de la formation ou de la cotisation.",
-  "form_builder_condition_value_placeholder": "Valeur..."
+  "form_builder_condition_value_placeholder": "Valeur...",
+  "api_refusal_session": "{action} : votre session a expirée, reconnectez-vous.",
+  "api_refusal_forbidden": "{action} : vous n'avez pas les droits nécessaires.",
+  "api_refusal_gone": "{action} : l'élément n'existe plus.",
+  "api_refusal_conflict": "{action} : cela existe déjà.",
+  "api_refusal_rate_limited": "{action} : trop de tentatives, réessayez dans un instant.",
+  "calendar_action_deposit": "Dépôt de l'événement"
 }

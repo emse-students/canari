@@ -558,40 +558,46 @@ conversation shortcut implies, and doing the group alone would split the stack w
 the conversation treatment.
 
 ---
-### P2 - a server exception's English text is shown verbatim to a French reader, at 185 call sites (counted 2026-09-09)
+### P2 - eight sites hand the server's words to a Paraglide key BUILT to carry them, and nobody has read them against the status route
 
-Depositing an event without the right flag answers `403` from
-`global-admin-or-association-role.guard.ts`, whose message is
-`Insufficient permissions in this association`. The calendar page prints **that string**, unchanged,
-under the form - eight English words in an otherwise French modal, seen on W2 at 958px.
+**THE LIVE RECORD OF THE SERVER-PROSE SWEEP IS FURTHER DOWN, NOT HERE** - see *218 places still
+render the server's English prose to a French user*, which owns the guard
+(`src/lib/associations/serverProse.test.ts`), the trees it has closed, the re-measured remainder and
+the classification of every site left. **Do not re-derive a count in this entry**; that is what made
+it wrong. It carried its own stale figure (185 sites across 61 `.svelte` files) from 2026-09-09
+until 2026-09-15 while the sweep below re-measured every pass, so a reader arriving here first
+worked to a number nobody had checked in six days.
 
-**The server is not wrong.** Its exception messages are dev-facing and MUST be English, like every
-other log and error in this tree. What is wrong is a client that treats `error.message` as display
-copy: nothing types a string as user-visible, so no compiler catches it, which is exactly why the
-rule says *default to Paraglide for ANY new user-visible string, on the first draft*.
+**WHAT IS OPEN.** The sweep parks eight sites because deleting a preference cannot close them: they
+hand the raw text to a Paraglide key BUILT to carry it - `chat_send_error({ reason })`,
+`chat_forward_error`, `chat_media_send_error`, `auth_login_failed`, `chat_call_error` - so the
+sentence is localized and its subject is not. It recorded that they close "a code at the throw, per
+endpoint, mapped once", and on that basis they have sat untouched.
 
-**The fix is on the CLIENT and it is a mapping, not a translation.** A refusal the reader can act on
-is "vous n'avez pas le droit de deposer un evenement pour cette association", built from the STATUS
-and the operation - never from prose that crossed the network. A message is a distinction carried in
-words, and branching on it later is the failure this repository already names.
+**THERE IS A SECOND ROUTE AND IT COSTS NO ENDPOINT WORK, so the eight are owed a reading against it
+before any endpoint is asked for a code.** `describeApiRefusal` (`utils/apiRefusal.ts`, 2026-09-15)
+turns a STATUS plus a localized action label into a sentence - 401/403/404/409/429, `null` for
+anything else so a caller keeps its own wording rather than being handed an invented reason. It will
+not close all eight: some of those throws are transport failures carrying no status at all, and
+`chat_call_error` sits behind `CALLS_ENABLED = false`. Which ones it does close is the unread part.
 
-**COUNTED, AND THE COUNT IS WHAT PROMOTED THIS.** `err instanceof Error ? err.message : ...` appears
-**185 times across 61 `.svelte` files**. Of those, **173 assign it straight to UI state and 2 hand
-it to a toast; NOT ONE is log-only.** So this is not a modal with an English sentence - it is the
-house style for reporting a failure, and every 4xx the API answers with prose reaches a reader in
-whatever language the server happened to write it in.
+**The reading is owed per site, not as a sweep**, for the reason the sweep entry already paid for
+twice: the predicate finds the shape, never the provenance. Four sites in these trees render an
+error the app itself THREW, already in French, and replacing one of those with a status sentence
+would trade a precise line for a vaguer one.
 
-**That changes the shape of the fix.** 185 hand-written mappings is not a pass anybody finishes, and
-a partial one leaves the defect exactly where it was. What the count argues for is ONE helper the
-call sites already have a reason to use - a failure classified at the THROW, as a type, with the
-localized sentence chosen from the status and the operation - and then the sites migrate to it as
-they are touched. The rule this repository already carries says the same thing about error prose:
-*a distinction carried in words is a distinction exactly one call site will make*.
+**AND ONE OF THE EIGHT IS A RULE VIOLATION ON ITS OWN.** `MainChatPage.svelte:988` branches on
+`msg.includes('Groupe introuvable') || msg.includes('Group not found')` to choose a toast, which is
+the distinction-in-prose the durable rules forbid. It is inside the calling code held off by
+`CALLS_ENABLED = false`, so it is owed with the five switches that revive calling.
+
+**Why the route exists at all** is in `CHANGELOG.md`: a codeless 403 from
+`global-admin-or-association-role.guard.ts` reached the deposit modal as "Erreur lors de la
+sauvegarde", identical to a server fault, because `calendarErrorMessage` read only the CODE and that
+guard throws without one. `SocialApiError` now carries `status` beside `code`.
 
 **What must NOT happen** is translating the server's messages. They are dev-facing and English is
 correct for them, the same as every log here.
-
-**Blocked on nothing** - local estate, and it reproduces on any 4xx the API answers with prose.
 
 ---
 ### P3 - a revocation round trip sits in front of the fingerprint prompt, and moving it is REVERTED, not to be re-opened (measured on the Pixel 6a, 2026-09-15)
@@ -7217,8 +7223,9 @@ the typed errors that close it belong to the P1 PIN-vs-corrupt-state item, writt
 unshipped. **The census cannot be swept blind because of cases like this one**: the predicate finds
 the shape, not the provenance, and provenance is the whole question.
 
-**WHAT IS LEFT, AND THE COUNT IS RE-MEASURED EVERY PASS RATHER THAN DECREMENTED.** The 185 above
-came from one predicate; a broader one over `frontend/src` finds ~288 occurrences of the ternary, of
+**WHAT IS LEFT, AND THE COUNT IS RE-MEASURED EVERY PASS RATHER THAN DECREMENTED.** The 185 this
+sweep started from (the entry above carried it until 2026-09-15, when it stopped carrying a count at
+all because it had gone stale while this one was re-measured) came from one predicate; a broader one over `frontend/src` finds ~288 occurrences of the ternary, of
 which only some assign to an error state a screen renders - the rest sit inside a `Log`/`console`
 call and are correctly dev-facing.
 
@@ -7274,7 +7281,13 @@ localized and its subject is not:
 `auth_callback_denied({ reason })` is the same shape with a different author - the reason is
 Authentik's `error_description`, not this estate's.
 
-**It closes the way the calendar one did: a code at the throw, per endpoint, mapped once.** Until
+**It closes the way the calendar one did: a code at the throw, per endpoint, mapped once** - or, since
+2026-09-15, by the cheaper second route beside it: a STATUS at the throw, which costs no endpoint
+work at all. `describeApiRefusal` (`utils/apiRefusal.ts`) turns 401/403/404/409/429 plus an action
+label into a sentence and answers `null` for anything else, so a caller keeps its own wording rather
+than being handed an invented reason. It will not close all eight - some of these throws are
+transport failures carrying no status - but **each should be read against it before any endpoint is
+asked for a code**, and that reading is owed. Until
 then the four trees holding these sites - `src/lib/components` (root), `components/layout`,
 `components/auth`, `lib/composables` - stay outside the guard, because a file it owns must answer
 in full. **And one of the five is a rule violation on its own**: `MainChatPage.svelte:988` branches

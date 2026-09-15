@@ -11,6 +11,28 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - "vous n'avez pas les droits" et "le serveur est casse" etaient la meme phrase
+
+Deposer un evenement sans en avoir le droit repond 403. Le garde qui le refuse leve une exception
+sans code, et le traducteur du calendrier ne lisait que le code : tout retombait donc sur
+"Erreur lors de la sauvegarde". Un refus sur lequel le lecteur peut agir - demander le droit,
+choisir une autre association - etait indiscernable d'une panne sur laquelle il ne peut rien.
+
+Le statut HTTP etait pourtant dans la reponse depuis le debut : `request()` le jetait. Il est
+desormais porte par l'erreur typee, a cote du code, et **obligatoire** - une valeur absente n'est
+pas une valeur par defaut, c'est une question a laquelle personne n'a repondu.
+
+Un seul traducteur partage transforme maintenant un statut et le nom de l'operation en phrase :
+401, 403, 404, 409, 429, et rien pour le reste, afin que l'appelant garde sa propre formulation
+generique plutot que de se voir inventer une raison que le serveur n'a jamais donnee. Le code reste
+prioritaire sur le statut, qui reste prioritaire sur le generique - chacun en dit strictement moins
+que le precedent.
+
+**Il n'accepte aucun emplacement pour le texte du serveur**, et c'est verifie par un test qui lit
+son propre source. Les messages d'exception du serveur sont destines aux developpeurs et doivent
+rester en anglais, comme tous les journaux de ce depot ; ce qui etait faux, c'etait qu'un ecran les
+affiche tels quels a un lecteur francophone.
+
 ### Fixed - un groupe portait le nom de la personne qui y avait ecrit en premier
 
 Dans la barre laterale, un groupe a deux personnes s'affichait sous le nom de **l'autre membre**,
