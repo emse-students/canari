@@ -788,10 +788,9 @@ jobs:
           bun run check
           bun run format:check
 
-      - name: Run Vitest unit tests
-        working-directory: frontend
-        run: bun run test
-
+      # `test:coverage` runs the exact same suite as `test` (coverage only instruments and
+      # reports, it does not change which tests exist), so a plain run first caught nothing a
+      # failure here would not - it only doubled the frontend suite's wall-clock cost every run.
       - name: Run Vitest with coverage
         working-directory: frontend
         run: bun run test:coverage
