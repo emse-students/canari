@@ -11,6 +11,8 @@ import {
 import { extractMentionUserIds } from '$lib/utils/mentions';
 import { notifyReaction } from '$lib/utils/chat/reactionNotify';
 import { m } from '$lib/paraglide/messages';
+import { describeApiRefusal } from '$lib/utils/apiRefusal';
+import { ChannelApiError } from '$lib/services/ChannelService';
 
 /**
  * Dependencies required by message-sending helpers.
@@ -109,10 +111,32 @@ export async function sendChatMessage(
         mentionedUserIds
       );
       return { success: true };
-    } catch (error: any) {
+    } catch (error: unknown) {
+      // THE ONLY ONE OF THE PARKED SEND SITES THAT CARRIES AN HTTP STATUS, which is why it is the
+      // only one this helper can close. `ChannelService.handleError` throws `ChannelApiError(status,
+      // code, text)` where `text` is the SERVER'S OWN BODY - dev-facing English, correctly so for a
+      // log - and this catch used to interpolate it straight into a French sentence. The other six
+      // sites wrap work that performs no HTTP request at the point of the throw (the outbox, the
+      // MLS layer, a forward whose inner call already caught its own refusal), so they need a code
+      // at the throw rather than this.
+      //
+      // `describeApiRefusal` answers `null` for a status it has nothing better to say about, and
+      // that is not a fallback path: it is the designed answer, and what replaces it here is a
+      // generic line of OUR OWN rather than the prose that crossed the network.
+      //
+      // `String(error)` rather than the usual `instanceof Error ? error.message` ternary, because
+      // that ternary is the exact shape `serverProse.test.ts` reads as a site rendering the
+      // server's words and a regex cannot see that this one only reaches a log. It does NOT make
+      // this tree joinable: over twenty files under `src/lib/utils` use the ternary for logs, so
+      // that guard cannot own this directory until it can tell a log from a render - measured
+      // 2026-09-15, see docs/wiki/backlog.md.
+      const status = error instanceof ChannelApiError ? error.status : null;
+      deps.log(`[SEND] channel send refused (status=${status ?? 'none'}): ${String(error)}`);
       return {
         success: false,
-        error: m.chat_send_error({ reason: error.message || String(error) }),
+        error:
+          describeApiRefusal(status, m.channel_action_message_send()) ??
+          m.chat_send_error_generic(),
       };
     }
   }

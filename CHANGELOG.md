@@ -11,6 +11,18 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - un refus d'envoi dans un salon s'affichait en anglais, dans les mots du serveur
+
+Quand l'API des salons refusait un message, la banniere affichait le corps de la reponse tel quel -
+de l'anglais destine a un journal de developpement, sous un preambule francais. La phrase vient
+desormais du **code HTTP** : `describeApiRefusal` traduit les statuts qu'il connait, et repond `null`
+pour les autres, auquel cas c'est une phrase generique **de nous** qui s'affiche. Le corps du serveur
+reste dans le journal, ou il a sa place.
+
+C'est le seul des huit sites d'envoi que ce correctif pouvait fermer : les sept autres enveloppent du
+travail qui ne fait aucune requete HTTP au point de l'echec, et ont donc besoin d'un code au moment
+de la levee plutot que d'une traduction a l'arrivee.
+
 ## [0.18.3] - 2026-09-15
 
 ### Fixed - l'application bloquait 2,7 s au lancement sur un fichier que les deux cotes avaient deja

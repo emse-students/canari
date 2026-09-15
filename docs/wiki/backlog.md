@@ -483,7 +483,7 @@ conversation shortcut implies, and doing the group alone would split the stack w
 the conversation treatment.
 
 ---
-### P2 - eight sites hand the server's words to a Paraglide key BUILT to carry them, and nobody has read them against the status route
+### P2 - seven sites still hand the server's words to a Paraglide key BUILT to carry them, and each needs a code at the throw
 
 **THE LIVE RECORD OF THE SERVER-PROSE SWEEP IS FURTHER DOWN, NOT HERE** - see *218 places still
 render the server's English prose to a French user*, which owns the guard
@@ -493,25 +493,32 @@ it wrong. It carried its own stale figure (185 sites across 61 `.svelte` files) 
 until 2026-09-15 while the sweep below re-measured every pass, so a reader arriving here first
 worked to a number nobody had checked in six days.
 
-**WHAT IS OPEN.** The sweep parks eight sites because deleting a preference cannot close them: they
-hand the raw text to a Paraglide key BUILT to carry it - `chat_send_error({ reason })`,
-`chat_forward_error`, `chat_media_send_error`, `auth_login_failed`, `chat_call_error` - so the
-sentence is localized and its subject is not. It recorded that they close "a code at the throw, per
-endpoint, mapped once", and on that basis they have sat untouched.
+**WHAT IS OPEN, AND IT IS SEVEN RATHER THAN EIGHT SINCE 2026-09-15.** The sweep parks these because
+deleting a preference cannot close them: they hand the raw text to a Paraglide key BUILT to carry
+it - `chat_send_error({ reason })`, `chat_forward_error`, `chat_media_send_error`,
+`auth_login_failed`, `chat_call_error` - so the sentence is localized and its subject is not. It
+recorded that they close "a code at the throw, per endpoint, mapped once", and on that basis they
+have sat untouched.
 
-**THERE IS A SECOND ROUTE AND IT COSTS NO ENDPOINT WORK, so the eight are owed a reading against it
-before any endpoint is asked for a code.** `describeApiRefusal` (`utils/apiRefusal.ts`, 2026-09-15)
-turns a STATUS plus a localized action label into a sentence - 401/403/404/409/429, `null` for
-anything else so a caller keeps its own wording rather than being handed an invented reason. It will
-not close all eight: some of those throws are transport failures carrying no status at all, and
-`chat_call_error` sits behind `CALLS_ENABLED = false`. Which ones it does close is the unread part.
+**THE SECOND ROUTE WAS READ AGAINST ALL EIGHT ON 2026-09-15, AND IT REACHED EXACTLY ONE.**
+`describeApiRefusal` (`utils/apiRefusal.ts`) turns a STATUS plus a localized action label into a
+sentence - 401/403/404/409/429, `null` for anything else so a caller keeps its own wording rather
+than being handed an invented reason. `lib/utils/chat/messaging.ts` is the one it closed, and the
+discriminator is not a matter of taste: it is the ONLY site holding an HTTP status at the point of
+the throw, `ChannelApiError(status, code, text)` straight out of `ChannelService.handleError`.
 
-**The reading is owed per site, not as a sweep**, for the reason the sweep entry already paid for
-twice: the predicate finds the shape, never the provenance. Four sites in these trees render an
-error the app itself THREW, already in French, and replacing one of those with a status sentence
-would trade a precise line for a vaguer one.
+**THE OTHER SEVEN ARE NOT WAITING ON A JUDGEMENT, THEY ARE WAITING ON A CODE.** Each wraps work that
+performs no HTTP request where it fails - the outbox, the MLS layer, a forward whose inner call
+already caught its own refusal, a login that failed before any response existed - so there is no
+status to map and the cheap route cannot be made to reach them. The sweep's original prescription
+stands unchanged for all seven. `chat_call_error` sits behind `CALLS_ENABLED = false` on top of that.
 
-**AND ONE OF THE EIGHT IS A RULE VIOLATION ON ITS OWN.** `MainChatPage.svelte:988` branches on
+**The reading had to be per site, not a sweep**, for the reason this entry already paid for twice:
+the predicate finds the shape, never the provenance. Four sites in these trees render an error the
+app itself THREW, already in French, and replacing one of those with a status sentence would trade a
+precise line for a vaguer one.
+
+**AND ONE OF THE SEVEN IS A RULE VIOLATION ON ITS OWN.** `MainChatPage.svelte:988` branches on
 `msg.includes('Groupe introuvable') || msg.includes('Group not found')` to choose a toast, which is
 the distinction-in-prose the durable rules forbid. It is inside the calling code held off by
 `CALLS_ENABLED = false`, so it is owed with the five switches that revive calling.
@@ -7198,16 +7205,17 @@ here as a queue item.
 | --- | --- | --- |
 | in or feeding a `Log.d` / `console.*` / `appendLog` call | 96 | CORRECT. A log is dev-facing; the server's own text is the useful half there |
 | a docblock or test quoting the shape to explain it | 4 | the guard strips comments before matching, so it never sees these |
-| a Paraglide key BUILT to carry the raw text, as a parameter | 7 | the table below: deleting a preference does not touch it (an eighth site, `lib/utils/chat/messaging.ts`, carries it in a shape this predicate does not even match) |
+| a Paraglide key BUILT to carry the raw text, as a parameter | 7 | the table below: deleting a preference does not touch it (an eighth site, `lib/utils/chat/messaging.ts`, carried it in a shape this predicate never matched, and closed 2026-09-15) |
 | assigned to an error state a screen renders, or an intermediate on the way to one | 18 | READ, one at a time, 2026-09-15: see below - none of them is a tree this sweep can still close |
 
 **WHAT THE COMPONENT PASS COULD NOT CLOSE IS A DIFFERENT SHAPE, AND DELETING A PREFERENCE DOES NOT
-TOUCH IT.** Eight sites hand the raw text to a Paraglide key BUILT to carry it, so the sentence is
+TOUCH IT.** Seven sites hand the raw text to a Paraglide key BUILT to carry it - eight until
+2026-09-15, when the status route took the only one of them holding a status - so the sentence is
 localized and its subject is not:
 
 | key | reads | sites |
 | --- | --- | --- |
-| `chat_send_error({ reason })` | "Echec de l'envoi : {reason}" | `MainChatPage.svelte` x2, `lib/utils/chat/messaging.ts` |
+| `chat_send_error({ reason })` | "Echec de l'envoi : {reason}" | `MainChatPage.svelte` x2 (`lib/utils/chat/messaging.ts` closed 2026-09-15 on the status route) |
 | `chat_forward_error({ reason })` | "Echec du transfert : {reason}" | `useMessaging.svelte.ts` x2 |
 | `chat_media_send_error({ reason })` | "Echec de l'envoi du media : {reason}" | `useMessaging.svelte.ts` |
 | `auth_login_failed({ reason })` | "La connexion n'a pas pu demarrer : {reason}" | `auth/LoginPage.svelte` |
@@ -7220,10 +7228,16 @@ Authentik's `error_description`, not this estate's.
 2026-09-15, by the cheaper second route beside it: a STATUS at the throw, which costs no endpoint
 work at all. `describeApiRefusal` (`utils/apiRefusal.ts`) turns 401/403/404/409/429 plus an action
 label into a sentence and answers `null` for anything else, so a caller keeps its own wording rather
-than being handed an invented reason. It will not close all eight - some of these throws are
-transport failures carrying no status - but **each should be read against it before any endpoint is
-asked for a code**, and that reading is owed. Until
-then the four trees holding these sites - `src/lib/components` (root), `components/layout`,
+than being handed an invented reason.
+
+**THE READING IS DONE, 2026-09-15, AND IT CLOSED EXACTLY ONE OF THE EIGHT.**
+`lib/utils/chat/messaging.ts` is that one, and the discriminator is not a matter of taste: it is the
+only site HOLDING AN HTTP STATUS AT THE POINT OF THE THROW, because `ChannelService.handleError`
+throws `ChannelApiError(status, code, text)` and `text` is the server's own body. The other seven
+wrap work that performs no HTTP request where it fails - the outbox, the MLS layer, a forward whose
+inner call already caught its own refusal - so no status exists to map and **a code at the throw is
+what they need**, which is what this entry said before the second route appeared. Until they have
+one, the four trees holding these sites - `src/lib/components` (root), `components/layout`,
 `components/auth`, `lib/composables` - stay outside the guard, because a file it owns must answer
 in full. **And one of the five is a rule violation on its own**: `MainChatPage.svelte:988` branches
 on `msg.includes('Groupe introuvable') || msg.includes('Group not found')` to decide which toast to

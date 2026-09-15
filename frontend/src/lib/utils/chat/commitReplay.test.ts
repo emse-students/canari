@@ -22,7 +22,9 @@ function makeMls(overrides: Record<string, unknown>) {
 const noop = () => {};
 
 describe('attemptCommitReplay', () => {
-  beforeEach(() => noteFrameConsumed.mockReset());
+  beforeEach(() => {
+    noteFrameConsumed.mockReset();
+  });
 
   /**
    * A COMMIT SPENDS A GENERATION THE SHARED ARCHIVE ALSO HOLDS, and until 2026-09-07 this path
