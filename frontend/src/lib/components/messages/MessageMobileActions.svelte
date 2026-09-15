@@ -13,12 +13,21 @@
   import { portal } from '$lib/actions/portal';
   import { m } from '$lib/paraglide/messages';
   import { QUICK_REACTION_EMOJIS } from '$lib/utils/chat/messageActions';
+  import { sheetClearance, sheetRestingTop } from '$lib/utils/chat/sheetClearance';
 
   /** Quick-reaction emojis shown in the strip (WhatsApp/Messenger style). */
 
   interface Props {
     /** Whether the radial action menu overlay is visible. */
     visible: boolean;
+    /**
+     * The bubble this sheet acts on, which the sheet must not cover.
+     *
+     * The opener knows which message it is; nothing in the DOM below this node says so. Same
+     * reasoning as `MessageEmojiPicker`'s anchor, and for the same reason it is a prop rather than
+     * a query: a portalled panel that hunts for its own subject finds whichever one matches.
+     */
+    anchor?: HTMLElement | null;
     /** When true, the message belongs to the current user (gates edit/delete). */
     isOwn?: boolean;
     /** When true, hides reply and edit actions (message has been deleted). */
@@ -65,6 +74,7 @@
 
   let {
     visible = false,
+    anchor = null,
     isOwn = false,
     isDeleted = false,
     hasMedia = false,
@@ -85,6 +95,62 @@
     onClose,
     canModerate = false,
   }: Props = $props();
+
+  let sheetEl = $state<HTMLDivElement | undefined>();
+
+  /**
+   * LIFT THE THREAD SO THE SHEET IS NOT COVERING THE MESSAGE IT ACTS ON.
+   *
+   * The whole decision is in `sheetClearance`, with the reasoning and the A1 measurement; this
+   * effect only feeds it what the DOM knows and applies the two numbers it returns. It runs on
+   * `visible`, so closing the sheet runs the cleanup and the borrowed padding goes back - which
+   * also returns the thread to where it was, with nobody having to remember a scroll position.
+   *
+   * The scroll is INSTANT, not smooth. A smooth scroll is a clock with a duration no standard
+   * fixes, and one still running when the sheet closes would fight the cleanup for the same
+   * `scrollTop`. The sheet is appearing over 220 ms at the same moment, so the lift is not a jump
+   * anyone sees on its own.
+   */
+  $effect(() => {
+    if (!visible) return;
+    const sheet = sheetEl;
+    const bubble = anchor;
+    if (!sheet || !bubble) return;
+
+    // The scroller is what clips the thread, and it is the same one the hover toolbar measures
+    // against. Without it there is nothing to scroll and nothing to do.
+    const scroller = bubble.closest<HTMLElement>('.chat-messages-scroll');
+    const overlay = sheet.parentElement;
+    if (!scroller || !overlay) return;
+
+    const style = getComputedStyle(sheet);
+    const bubbleBox = bubble.getBoundingClientRect();
+    const { padBy, scrollBy } = sheetClearance({
+      bubbleTop: bubbleBox.top,
+      bubbleBottom: bubbleBox.bottom,
+      sheetTop: sheetRestingTop(
+        overlay.getBoundingClientRect().bottom,
+        Number.parseFloat(style.bottom) || 0,
+        sheet.offsetHeight
+      ),
+      scrollerTop: scroller.getBoundingClientRect().top,
+      scrollRemaining: scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight,
+    });
+    if (scrollBy <= 0) return;
+
+    // The inline value is restored rather than cleared: a future rule setting one here must not be
+    // erased by this sheet closing.
+    const previousPadding = scroller.style.paddingBottom;
+    if (padBy > 0) {
+      const current = Number.parseFloat(getComputedStyle(scroller).paddingBottom) || 0;
+      scroller.style.paddingBottom = `${current + padBy}px`;
+    }
+    scroller.scrollTop += scrollBy;
+
+    return () => {
+      if (padBy > 0) scroller.style.paddingBottom = previousPadding;
+    };
+  });
 </script>
 
 <!--
@@ -112,6 +178,7 @@
     ></button>
 
     <div
+      bind:this={sheetEl}
       data-keyboard-aware-actions
       class="absolute inset-x-0 flex flex-col items-center gap-4"
       transition:fly={{ y: 24, duration: 220 }}

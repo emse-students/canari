@@ -5528,20 +5528,10 @@ tablet keeps its rotation. `android:screenOrientation` takes one literal value a
 which is why a resource qualifier carries it. **A manifest grep answers this question with silence** -
 it was grepped, found nothing, and the lock was still there.
 
-### P2 - the long-press sheet covers the message it acts on (measured 2026-09-14 on A1)
+### P2 - a reaction chip between two bubbles says nothing about whose it is (seen 2026-09-14 on A1)
 
-Four findings from the same guided session, each with the measurement that would settle it. None is
-fixed; the reaction picker's own two defects that WERE fixed are in `CHANGELOG.md`.
-
-**THE SHEET IS ANCHORED TO THE BOTTOM OF THE SCREEN AND THE THREAD DOES NOT MOVE**, so any message
-in the bottom band is hidden by the sheet acting on it. Measured: the bubble at `731-767`, the
-sheet's reaction strip starting at `749` - **18 of the bubble's 37 px covered, its lower half,
-through the middle of its single line of text**. The rule is `[data-keyboard-aware-actions]` in
-`app.css`, `bottom: max(1rem, safe-area + 1rem)` under `.mobile-convo-open`, and it is right for a
-sheet; what is missing is that the selected message is not lifted clear of it. WhatsApp and
-Messenger both raise the message above the sheet and dim the rest. The fix is deterministic and
-needs no clock: on open, measure the sheet's top and the bubble's bottom and scroll the difference.
-**Do not fix it by moving the sheet** - it is where a thumb is.
+From the same guided session. The three siblings it was filed with are fixed and live in
+`CHANGELOG.md`; this one is not, and it is NOT YET MEASURED.
 
 **A REACTION IS DRAWN AS A CHIP BETWEEN TWO BUBBLES WITH NOTHING SAYING WHOSE IT IS.** Seen on the
 same screen: a heart sits alone, left-aligned, between the message it decorates and the next one,
@@ -5549,11 +5539,13 @@ and a reader cannot tell which of the two it belongs to. NOT YET MEASURED - what
 the chip's box against both neighbours' boxes, and whether any border, offset or overlap ties it to
 one. Filed so it is not lost, not filed as a defect.
 
-*(Two findings that were filed here are fixed and live in `CHANGELOG.md`: the two things asking for
-the notification permission at once - a toast and a 1200 ms sleep racing the native dialog the same
-code opened, fixed 2026-09-15 - and the instrument's two blind spots, a shadow root it never entered
-and a horizontal scroller it counted as an overflow, fixed 2026-09-14. The findings above are about
-the app and are open.)*
+*(Three findings that were filed with this one are fixed and live in `CHANGELOG.md`: the long-press
+sheet covering the message it acts on, fixed 2026-09-15 - the thread is lifted clear of it, and the
+room to lift into is borrowed and given back, on [design-reference](frontend/design-reference.md#24-the-long-press-sheet-covered-the-message-it-acts-on-and-the-thread-moved-instead);
+the two things asking for the notification permission at once - a toast and a 1200 ms sleep racing
+the native dialog the same code opened, fixed 2026-09-15; and the instrument's two blind spots, a
+shadow root it never entered and a horizontal scroller it counted as an overflow, fixed
+2026-09-14.)*
 
 ### P2 - the wry bump that removes the abort, once a STABLE runtime asks for it (found 2026-09-14 on A1)
 

@@ -816,6 +816,7 @@
 
     <MessageMobileActions
       visible={showMobileActions && isMobile}
+      anchor={bubbleAnchor}
       {isOwn}
       {isDeleted}
       hasMedia={!!mediaRef}
