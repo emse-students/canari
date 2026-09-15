@@ -85,6 +85,29 @@ export class SessionExpiredError extends Error {
   }
 }
 
+/**
+ * The refresh endpoint ANSWERED, and the answer was not a verdict on the session.
+ *
+ * THE MIRROR OF {@link SessionExpiredError}, and the pair is the whole point: `_doRefresh` is
+ * careful that only 401/403 prove the cookie dead, because a 502 while the backend restarts during
+ * a deploy is a hiccup and logging the user out for it costs a full OIDC round trip. That care was
+ * spent at the throw and then lost one frame later - the other half arrived as a bare
+ * `new Error('Token refresh failed (HTTP 502)')`, and every caller that wanted to know which of
+ * the two it held had to read the sentence and find the digits in it.
+ *
+ * So the status travels as a FIELD. Reaching this variant at all means the server is there and
+ * unhappy, which makes it transient by construction - a caller with a retry ladder should climb it.
+ */
+export class RefreshFailedError extends Error {
+  constructor(
+    /** The HTTP status the refresh endpoint answered with. Never 401 or 403 - those are the sibling. */
+    readonly status: number
+  ) {
+    super(`Token refresh failed (HTTP ${status})`);
+    this.name = 'RefreshFailedError';
+  }
+}
+
 const alog = (msg: string) => console.log('[A] ' + msg);
 const awarn = (msg: string) => console.warn('[A] ' + msg);
 
@@ -473,7 +496,7 @@ async function _doRefresh(): Promise<string> {
       notifySessionExpired();
       throw new SessionExpiredError();
     }
-    throw new Error(`Token refresh failed (HTTP ${res.status})`);
+    throw new RefreshFailedError(res.status);
   }
 
   const data = (await res.json()) as { access_token: string; refresh_token?: string };

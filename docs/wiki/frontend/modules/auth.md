@@ -71,7 +71,9 @@ export async function refreshAccessToken(): Promise<string | null>;
 export async function logout(): Promise<void>;
 ```
 
-`apiFetch.ts` intercepts 401 responses: it calls `refreshAccessToken()` once and retries. If refresh fails, it clears the session and redirects to `/login`.
+`apiFetch.ts` intercepts 401 responses: it calls `refresh()` once and retries. It clears nothing and
+redirects nowhere - it THROWS, and the logout paths (`ChatBackgroundService`, `sessionConnection`,
+`promoteOfflineSession`) decide from the type of what it threw.
 
 ### A status parsed back out of a sentence is a status that was discarded
 
@@ -83,6 +85,28 @@ exactly the branch that must not guess it.
 
 Corollary for any audit of a seam like this: **one surface handling a case is not "the case is
 handled"**. Enumerate the CONSUMERS of the seam, never just the ones whose source mentions it.
+
+#### And the classification survives only as far as the next `catch`
+
+The same defect arrived a second time (2026-09-15) from the opposite direction: nobody had thrown
+the status away at the throw, `_doRefresh` separates its three outcomes with some care, and
+`apiFetch` destroyed all of it ONE FRAME LATER with `catch { throw new Error('Session expirée -
+veuillez vous reconnecter.') }`. Downstream, `useChannelWorkspaces` then rebuilt a status by
+searching the sentence for any three-digit number and decided retryability from a list of words -
+`fetch`, `network`, `timeout`, `abort`. So a 502 during a deploy read as a dead session, and a
+refusal whose text happened to mention a network was retried three times against a server that had
+already decided.
+
+**A `catch` that rethrows something else is a classification site, whether or not it was meant to
+be one.** Rethrow what you caught unless you are ADDING information; the three refusals now leave
+`apiFetch` as `SessionExpiredError` (the cookie is dead), `RefreshFailedError` (the server answered
+something that is not a verdict on the session - transient by construction, since 401 and 403 leave
+as the sibling) and the transport failure as itself.
+
+**And then ONE predicate, not two.** "Worth retrying" and "call it a network error in the toast" are
+the same question - the server did not decide anything - and they were two hand-written lists that
+agreed only while someone kept them agreeing. `isRetryableLoadError` answers it once, from
+`ChannelApiError.status`, and the toast reads that answer.
 
 ## PIN and device key
 

@@ -1,8 +1,14 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SvelteMap } from 'svelte/reactivity';
 import type { WorkspaceDto, ChannelDto } from '$lib/services/ChannelService';
+import { ChannelApiError } from '$lib/services/ChannelService';
+import { RefreshFailedError, SessionExpiredError } from '$lib/stores/auth';
 
-vi.mock('$lib/stores/auth', () => ({
+// THE ERROR CLASSES COME FROM THE REAL MODULE, not from the mock. `isRetryableLoadError` decides
+// by `instanceof`, and a stand-in class would make every one of those tests pass against a type the
+// application never throws - which is the whole failure the prose matching it replaced had.
+vi.mock('$lib/stores/auth', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/stores/auth')>()),
   getToken: vi.fn().mockResolvedValue('test-token'),
   refresh: vi.fn().mockRejectedValue(new Error('refresh failed')),
   clearAuth: vi.fn(),
@@ -41,7 +47,10 @@ const listUserWorkspaces = vi.fn();
 const listChannels = vi.fn();
 const createWorkspace = vi.fn();
 
-vi.mock('$lib/services/ChannelService', () => ({
+// Same reason as the auth mock above: `ChannelApiError` must be the real class, because that is
+// what `ChannelService.handleError` throws and what the code under test tests for.
+vi.mock('$lib/services/ChannelService', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/services/ChannelService')>()),
   ChannelService: class MockChannelService {
     listUserWorkspaces = listUserWorkspaces;
     listChannels = listChannels;
@@ -217,8 +226,12 @@ describe('useChannelWorkspaces - loadChannelWorkspacesFromBackend', () => {
   });
 
   it('does not retry on 401/403 and sets workspacesLoadError', async () => {
+    // THE ERROR THE SERVICE ACTUALLY THROWS. This used to be a bare `Error` whose message was a
+    // JSON envelope, which `ChannelService` has never produced - it throws `ChannelApiError`. The
+    // test passed because the code under test re-parsed that message; both were reading a shape
+    // nothing writes, and the test could not have caught the status being read wrongly.
     listUserWorkspaces.mockRejectedValue(
-      new Error(JSON.stringify({ statusCode: 401, message: 'Unauthorized' }))
+      new ChannelApiError(401, null, JSON.stringify({ statusCode: 401, message: 'Unauthorized' }))
     );
 
     const store = useChannelWorkspaces();
@@ -230,6 +243,90 @@ describe('useChannelWorkspaces - loadChannelWorkspacesFromBackend', () => {
     expect(store.workspacesLoadError).not.toBeNull();
     expect(listUserWorkspaces).toHaveBeenCalledTimes(1);
     expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('non-retryable'));
+  });
+
+  /**
+   * THE CASE THE WORD LIST GOT WRONG IN BOTH DIRECTIONS.
+   *
+   * Retryability was decided by looking for `fetch`, `network`, `timeout`, `abort` or
+   * `err_internet_disconnected` in the message, and then by hunting any three-digit number in it
+   * for a status. A 403 is a decision - the server has ruled on this device and will rule the same
+   * way again - but a 403 whose body explains that the community is unreachable over the network
+   * was read as transient and asked three more times; and a 502 whose body says only
+   * `Bad Gateway` was retried because the words `API Error 502` happen to contain digits, not
+   * because anyone classified it.
+   *
+   * Both are now decided by `ChannelApiError.status`, which the throw has been carrying all along.
+   */
+  it('reads the status off the error, not words out of its body', async () => {
+    listUserWorkspaces.mockRejectedValue(
+      new ChannelApiError(403, null, 'Network policy: this community is not reachable from here')
+    );
+
+    const store = useChannelWorkspaces();
+    const ctx = makeContext();
+    const promise = store.loadChannelWorkspacesFromBackend(ctx);
+    await tick();
+    await promise;
+
+    expect(listUserWorkspaces).toHaveBeenCalledTimes(1);
+    expect(ctx.log).toHaveBeenCalledWith(expect.stringContaining('non-retryable'));
+  });
+
+  it('retries a Bad Gateway whose body carries no digits at all', async () => {
+    listUserWorkspaces
+      .mockRejectedValueOnce(new ChannelApiError(502, null, 'Bad Gateway'))
+      .mockResolvedValueOnce([makeWorkspaceDto('ws1', 'Community', 'community')]);
+    listChannels.mockResolvedValue([makeChannelDto('ch1', 'general')]);
+
+    const store = useChannelWorkspaces();
+    const ctx = makeContext();
+    const promise = store.loadChannelWorkspacesFromBackend(ctx);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await tick();
+    await promise;
+
+    expect(store.workspacesLoadError).toBeNull();
+    expect(listUserWorkspaces).toHaveBeenCalledTimes(2);
+  });
+
+  /**
+   * A refresh that answered 502 is not a dead session, and the load path must keep asking.
+   *
+   * `apiFetch` used to flatten every refresh failure into one French sentence, so this arrived
+   * carrying neither a status nor a type and was given up on at the first attempt - during a
+   * deploy, which is exactly when the sidebar empties and stays empty.
+   */
+  it('retries a refresh that failed for a transient reason', async () => {
+    listUserWorkspaces
+      .mockRejectedValueOnce(new RefreshFailedError(502))
+      .mockResolvedValueOnce([makeWorkspaceDto('ws1', 'Community', 'community')]);
+    listChannels.mockResolvedValue([makeChannelDto('ch1', 'general')]);
+
+    const store = useChannelWorkspaces();
+    const ctx = makeContext();
+    const promise = store.loadChannelWorkspacesFromBackend(ctx);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await tick();
+    await promise;
+
+    expect(store.workspacesLoadError).toBeNull();
+    expect(listUserWorkspaces).toHaveBeenCalledTimes(2);
+  });
+
+  it('gives up at once on a dead session and reports it as one', async () => {
+    listUserWorkspaces.mockRejectedValue(new SessionExpiredError());
+
+    const store = useChannelWorkspaces();
+    const ctx = makeContext();
+    const promise = store.loadChannelWorkspacesFromBackend(ctx);
+    await tick();
+    await promise;
+
+    expect(listUserWorkspaces).toHaveBeenCalledTimes(1);
+    // Not the generic arm: the session message, chosen from the TYPE, since a `SessionExpiredError`
+    // carries no HTTP status of its own.
+    expect(store.workspacesLoadError).toContain('session expired');
   });
 
   it('returns false and does not issue a second request while a load is already in flight', async () => {

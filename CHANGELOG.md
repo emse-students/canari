@@ -11,6 +11,35 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - un deploiement se lisait comme une deconnexion, et la liste des communautes abandonnait
+
+`refresh()` distingue soigneusement trois reponses : seuls un 401 et un 403 prouvent que le cookie
+est mort, tout autre statut (un 502 pendant qu'un conteneur redemarre au milieu d'un deploiement)
+est passager, et un echec de transport n'est pas une reponse du tout. **`apiFetch` detruisait cette
+distinction une image plus tard** - `catch { throw new Error('Session expiree - veuillez vous
+reconnecter.') }` - donc les trois arrivaient identiques chez l'appelant, sans type et sans statut.
+
+En aval, `useChannelWorkspaces` reconstruisait le statut en cherchant n'importe quel nombre a trois
+chiffres dans la phrase, et decidait s'il fallait reessayer avec une liste de mots : `fetch`,
+`network`, `timeout`, `abort`, `err_internet_disconnected`. La liste se trompait dans les deux sens.
+Un refus dont le texte mentionnait le reseau etait reessaye trois fois contre un serveur qui avait
+deja tranche ; un vrai 502 n'etait reessaye que par l'accident que `API Error 502` contient des
+chiffres. **`ChannelApiError.status` portait la reponse depuis sa creation et personne ne la
+lisait.**
+
+Trois consequences, toutes visibles : pendant un deploiement la barre laterale se vidait et restait
+vide au lieu de reessayer ; une session reellement terminee ne declenchait aucune deconnexion, parce
+que les trois chemins qui la declenchent testent `instanceof SessionExpiredError` et ne voyaient
+qu'une phrase ; et un 403 precis etait annonce par le message generique.
+
+Ce qui remplace : `apiFetch` releve ce qu'il a attrape, un second 401 sur un jeton fraichement emis
+leve `SessionExpiredError`, et le statut non concluant voyage comme champ dans un nouveau
+`RefreshFailedError`. La decision de reessai se lit sur le TYPE, et **une seule fonction repond a la
+question** - "faut-il reessayer" et "faut-il dire que c'est le reseau" sont la meme question, et
+c'etaient deux listes tenues a la main qui ne concordaient que tant que quelqu'un les tenait.
+
+La branche 401 de `apiFetch` n'avait aucun test ; elle en a quatre, et le test qui affirmait qu'un
+401 n'est pas reessaye simulait une forme que `ChannelService` ne leve jamais.
 ### Fixed - "on teste tout" ne testait pas tout, et deux suites sautaient en silence
 
 Quand une pull request modifie `ci.yml` lui-meme, la detection de changements appelle `run_all`

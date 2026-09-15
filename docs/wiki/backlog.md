@@ -7562,11 +7562,23 @@ this sweep has an end rather than a remainder:
   errors of the P1 PIN-vs-corrupt-state item, not here. **One raw English literal hiding among them
   WAS closed** - `'Login failed after recovery.'`, thrown into the recovery modal, now
   `auth_pin_recovery_login_failed`.
-- **Two branch on the error's PROSE**, which is a different durable rule and a worse one:
-  `useChannelWorkspaces.ts:193` decides RETRYABILITY with `hay.includes('fetch') ||
-  hay.includes('network')`, and `sessionAuth.ts:638` compares the message against
-  `MLS_LOCAL_STATE_UNDECRYPTABLE`. A distinction carried in prose is one exactly one call site can
-  make; both want a type at the throw.
+- **Two branched on the error's PROSE**, which is a different durable rule and a worse one.
+  **ONE IS CLOSED, 2026-09-15**: `useChannelWorkspaces` decided RETRYABILITY with a word list
+  (`fetch`, `network`, `timeout`, `abort`, `err_internet_disconnected`) and recovered an HTTP
+  status by hunting any three-digit number in the body, while `ChannelApiError.status` had carried
+  it since the type was introduced. It reads the type now, and so does the toast - one predicate
+  answers both, where two hand-kept lists agreed only while someone kept them agreeing. The status
+  was being guessed because `apiFetch` had flattened three different refusals into one French
+  sentence one frame after `refresh()` took care to separate them; that seam is typed too
+  (`SessionExpiredError` for a dead cookie, the new `RefreshFailedError` for the 502 during a
+  deploy, the transport failure as itself). See `CHANGELOG.md`.
+  **THE SECOND IS NOT AN ORPHAN AND MUST NOT BE CLOSED ALONE**: `sessionAuth.ts:638` compares the
+  message against `MLS_LOCAL_STATE_UNDECRYPTABLE` - a shared CONSTANT rather than a sentence, so
+  the matching is stable - and the real defect is upstream of it. `classifyStateLoadFailure`
+  already separates `sealed` (an old PIN opens it) from `unknown` (corruption, no PIN helps), and
+  both throws collapse the two into that one marker. Typing the marker without deciding what the
+  screen does with `unknown` would ship the same wrong diagnosis behind a better shape. It closes
+  with the P1 PIN-vs-corrupt-state item, whose reader is written and unshipped.
 - **The rest cross a boundary as DATA, not as a screen**: a worker's `postMessage({ detail })`
   (x3), `mlsDecryptSession`'s per-message `{ ok: false, error }`, and log lines.
 
