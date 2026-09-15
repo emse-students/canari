@@ -1,0 +1,19 @@
+# THE ONE DRIVER, BUILT TWICE - once here against today's `mls-core`, and once inside a checkout of
+# an OLD tag, where the same relative path resolves to the OLD crate. That is the whole trick, and
+# it is why this crate depends on NOTHING but `mls-core`: every dependency it added would have to
+# have existed, at a compatible version, on the old side too.
+#
+# It is deliberately OUTSIDE `mls-core/tests/`. An integration test there is compiled by
+# `cargo test`, and this one must be compiled twice against two different libraries by a script.
+#
+# AND IT COMMITS NO `Cargo.lock`, which here is a requirement rather than the usual one about
+# shipped artefacts (`.gitignore`): the same manifest is resolved on BOTH sides, and the old side
+# must be free to resolve the openmls its own `mls-core` asks for. A committed lock would carry
+# today's resolution into a checkout that cannot use it.
+[package]
+name = "mls-cross-version"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+mls-core = { path = "../mls-core" }

@@ -83,6 +83,7 @@ jobs:
       run-harness: ${{ steps.matrix.outputs.harness }}
       run-scripts: ${{ steps.matrix.outputs.scripts }}
       run-android: ${{ steps.matrix.outputs.android }}
+      run-mls-compat: ${{ steps.matrix.outputs.mls_compat }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -261,6 +262,21 @@ jobs:
             echo "android=true" >> "$GITHUB_OUTPUT"
           else
             echo "android=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # -- MLS cross-version compatibility --
+          # THE WIDEST TRIGGER IN THIS FILE, ON PURPOSE. It fires on `mls-core` (the library whose
+          # wire output is the subject), on `mls-cross-version` (the driver both sides are built
+          # from), on the two lockfiles that pin the protocol crates for the things that SHIP, and
+          # on the script and the params it reads. A Dependabot pull request bumping `openmls`
+          # touches only a lock - and that is exactly the pull request this gate was written to
+          # judge, since `lib/ceiling.sh` stopped refusing the family on 2026-09-15.
+          if has '^frontend/mls-core/' || has '^frontend/mls-cross-version/' || \
+             has '^frontend/mls-wasm/Cargo\.lock' || has '^frontend/src-tauri/Cargo\.lock' || \
+             has '^\.github/scripts/mls-forward-compat\.sh'; then
+            echo "mls_compat=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "mls_compat=false" >> "$GITHUB_OUTPUT"
           fi
 
           # -- Cross-client harness self-tests --
@@ -1074,12 +1090,52 @@ jobs:
     with:
       scope: dependencies
 
+  # =================================================================================================
+  # MLS CROSS-VERSION COMPATIBILITY - THE DIRECTION A FIXTURE CANNOT SEE
+  #
+  # `mls-core/tests/cross_version_state.rs` proves today's code opens what v0.14.14 WROTE. Nothing
+  # proved the other direction - that a frame minted TODAY is still readable by the clients already
+  # in the fleet - and `lib/ceiling.sh` refused every `openmls`, `tls_codec`, `hpke-rs` and
+  # `libcrux` update for exactly that absence until 2026-09-15. This job is what retired it, so it
+  # is the job standing between a protocol bump and a member whose conversation stops decrypting.
+  #
+  # IT NEEDS THE TAGS AND THE FULL HISTORY, unlike every other job here: the script checks
+  # `FIXTURE_VERSION` out into a worktree and builds the old library from source. That is also why
+  # it is not a matrix entry - `cargo test` in one crate cannot build a second copy of that crate.
+  # =================================================================================================
+  mls-forward-compat:
+    name: MLS cross-version compatibility
+    needs: changes
+    if: needs.changes.outputs.run-mls-compat == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          # FULL HISTORY AND TAGS, because the old side is a `git worktree add <tag>`. A shallow
+          # checkout resolves no tag and the script fails CLOSED with the fetch command to run.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Two independent target directories - today's crate and the old checkout's - so neither
+      # invalidates the other between runs.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            frontend/mls-cross-version
+            frontend/mls-core
+
+      - name: Can the fleet still read what this commit writes?
+        run: bash .github/scripts/mls-forward-compat.sh
+
   ci-passed:
     name: CI passed
     if: always()
     needs:
       [changes, test-rust, boot-nest-apps, test-typescript-backend, test-frontend, test-android, test-harness,
-      test-ci-scripts, dependency-ceiling, security]
+      test-ci-scripts, dependency-ceiling, mls-forward-compat, security]
     runs-on: ubuntu-latest
     steps:
       - name: Every job either passed or had nothing to do

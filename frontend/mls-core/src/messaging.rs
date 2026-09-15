@@ -292,48 +292,6 @@ impl MlsManager {
                     return Ok(None);
                 }
 
-                // OUR OWN FRAME, READ BACK OUT OF OUR OWN MAILBOX - RFC 9420 WORKING, NOT A
-                // FAILURE. A device's history holds everything the group sent INCLUDING what this
-                // device sent, so every replay re-offers our own frames and OpenMLS refuses them by
-                // design (a member cannot decrypt itself). That is precisely why the sender's
-                // optimistic render is the only writer of its own message (WP-ECHO-1).
-                //
-                // Measured 2026-08-15: opening the DM on two peers with NO send at all produced
-                // this line once on each, and opening a channel produced none - so the source is the
-                // replay, not a live fanout (`broadcast_to_group_members` already excludes the
-                // sender's own devices). It is classified HERE because the arm below is
-                // `log::error!`, and an ERROR on the normal path is one its reader learns to skip:
-                // the web hid it TWICE by re-matching the marker in the log text (the wasm logger
-                // and `mlsWasmLoader`), while native had no such shim - and, worse, `decrypt_kind`
-                // had no arm for it either, so it fell through to `SenderRatchetGap` and the phone
-                // wrote a row into `pending_mls_messages` for a frame that can never decrypt. Dead
-                // weight retried three times before the sweeper reaches it: WP-PENDING-2's exact
-                // shape, one classification short.
-                //
-                // SINCE 2026-08-15 THE REPLAY NO LONGER ASKS. The archive row carries
-                // `sender_device_id`, written at `XADD` from the request body, and the replay skips
-                // its own rows before offering them - so this arm is reached only by rows older
-                // than that deploy, and by a genuinely unexpected live frame. It is not dead code
-                // and must not be deleted with the shim: the classification is what every consumer
-                // ACKs on. See `docs/wiki/legacy-compatibility.md`.
-                //
-                // The return stays `Err`, NOT `Ok(None)`: "nothing of ours to read" and "no
-                // application payload" are the distinction this function was taught to keep (see the
-                // past-epoch arm above). The marker is carried verbatim because it IS the contract
-                // across both FFI boundaries - `classifyIncomingDecryptError` and `decrypt_kind`
-                // each read it to answer `own-message`, and every consumer then ACKs the frame.
-                if err_dbg.contains("CannotDecryptOwnMessage") {
-                    log::debug!(
-                        "Own frame read back from the mailbox, nothing to decrypt: group={} epoch={}",
-                        group_id,
-                        group_epoch
-                    );
-                    return Err(MlsError::OpenMls(format!(
-                        "Process error: CannotDecryptOwnMessage [msg_epoch={}, group_epoch={}]",
-                        msg_epoch, group_epoch
-                    )));
-                }
-
                 // EVERY ERROR REACHING HERE IS A SAME-EPOCH REFUSAL, and that is a proof rather
                 // than an observation: the arms above return for `msg_epoch > group_epoch` (the
                 // gap fast-fail) and for `msg_epoch < group_epoch` (the past-epoch arm, for both
@@ -405,6 +363,75 @@ impl MlsManager {
             | ProcessedMessageContent::ExternalJoinProposalMessage(_) => {
                 state_snapshot.borrow_mut().invalidate();
                 Ok(None)
+            }
+            // OUR OWN COMMIT, FANNED BACK WHILE OUR PENDING COMMIT IS STILL PENDING - AND THIS
+            // ESTATE CANNOT REACH IT. `create_group` and both join paths set no wire format
+            // policy, so every group here takes openmls's default, `PURE_CIPHERTEXT`: a commit
+            // leaves as a `PrivateMessage`, comes back as one, and the arm below claims it on its
+            // sender data before the content is ever named. Measured, not assumed - feeding
+            // `add_members_bulk`'s own bytes back lands in `OwnPrivateMessage`, which is what
+            // `an_echoed_commit_is_claimed_by_its_wire_format` pins.
+            //
+            // It is therefore written as a SIGNAL, not a path: reaching it means the wire format
+            // policy changed under us, and that is worth a line that accuses rather than one a
+            // reader learns to skip.
+            //
+            // AND IF IT EVER DOES BECOME REACHABLE, IT STILL MUST NOT MERGE. openmls's own
+            // documentation says to apply this variant with `merge_pending_commit()`; [[C7]]
+            // Option A says the epoch advances on the SERVER'S answer (`merge_pending_commit_for`)
+            // or unwinds on its refusal (`clear_pending_commit_for`). A frame proves the delivery
+            // service fanned the commit out; it says nothing about the validation the sender is
+            // still waiting on, and merging on it would make the fanout a second writer of one
+            // epoch transition - the local fork Option A exists to delete. So it ends the way the
+            // past-epoch handshake echo does one screen up: nothing merged, `Ok(None)`, and the
+            // caller ACKs the frame so no redelivery loop starts.
+            ProcessedMessageContent::OwnPendingCommit => {
+                log::error!(
+                    "Own pending commit arrived as a PUBLIC message, which no group here should                      produce - the wire format policy has changed: group={} epoch={}. Nothing                      merged: the epoch follows the server's answer, never the fanout.",
+                    group_id,
+                    group_epoch
+                );
+                Ok(None)
+            }
+            // OUR OWN FRAME, READ BACK OUT OF OUR OWN MAILBOX - RFC 9420 WORKING, NOT A FAILURE.
+            // A device's history holds everything the group sent INCLUDING what this device sent,
+            // so every replay re-offers our own frames, and a member cannot decrypt itself. That is
+            // precisely why the sender's optimistic render is the only writer of its own message
+            // (WP-ECHO-1).
+            //
+            // Measured 2026-08-15: opening the DM on two peers with NO send at all produced this
+            // once on each, and opening a channel produced none - so the source is the replay, not
+            // a live fanout (`broadcast_to_group_members` already excludes the sender's own
+            // devices). SINCE 2026-08-15 THE REPLAY NO LONGER ASKS: the archive row carries
+            // `sender_device_id`, written at `XADD` from the request body, and the replay skips its
+            // own rows before offering them - so this is reached only by rows older than that
+            // deploy, and by a genuinely unexpected live frame. It is not dead and must not be
+            // deleted with the shim (`docs/wiki/legacy-compatibility.md`).
+            //
+            // UNDER 0.8.1 THIS WAS AN ERROR AND THE ARM LIVED ABOVE, among the decryption failures;
+            // 0.9.0 processes the frame successfully and NAMES it, so the classification moved here
+            // with it and the string-matching arm was deleted - openmls 0.9.0 contains no
+            // `CannotDecryptOwnMessage` at all, so keeping it would have been a branch no input can
+            // reach. The MARKER is what did not move, because it IS the contract across both FFI
+            // boundaries: `classifyIncomingDecryptError` and `decrypt_kind` each read that exact
+            // text to answer `own-message`, and every consumer ACKs on it.
+            //
+            // The return stays `Err`, NOT `Ok(None)`, for the same reason it always did: "nothing
+            // of ours to read" and "no application payload" are the distinction this function was
+            // taught to keep, and collapsing them is what left `decrypt_kind` classifying these as
+            // `SenderRatchetGap` - the phone then wrote a row into `pending_mls_messages` for a
+            // frame that can never decrypt, retried three times before the sweeper reached it.
+            // WP-PENDING-2's exact shape, one classification short.
+            ProcessedMessageContent::OwnPrivateMessage => {
+                log::debug!(
+                    "Own frame read back from the mailbox, nothing to decrypt: group={} epoch={}",
+                    group_id,
+                    group_epoch
+                );
+                Err(MlsError::OpenMls(format!(
+                    "Process error: CannotDecryptOwnMessage [msg_epoch={}, group_epoch={}]",
+                    msg_epoch, group_epoch
+                )))
             }
         }
     }

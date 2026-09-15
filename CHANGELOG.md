@@ -11,6 +11,61 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - la pile MLS passe a openmls 0.9.0, et le plafond qui la refusait est retire
+
+Quatre mises a jour Dependabot (`openmls`, `openmls_rust_crypto`, `openmls_traits`,
+`openmls_basic_credential`, plus `tls_codec` 0.4 -> 0.5 dans leur sillage) etaient refusees
+depuis l'ecriture de `lib/ceiling.sh`, pour une absence : **rien ne prouvait qu'une trame
+produite AUJOURD'HUI reste lisible par les clients deja installes**. Un fixture ne peut pas
+repondre a cette direction-la - `aes-gcm` avait ferme la meme question par DETERMINISME, en
+rescellant un clair fige sous une cle et un nonce figes, mais une trame MLS porte une garde de
+reutilisation aleatoire : il n'y a rien a reproduire et rien a comparer.
+
+**Donc l'ancien code est EXECUTE, pas imite.** `.github/scripts/mls-forward-compat.sh` extrait
+`FIXTURE_VERSION` (v0.14.14) dans un worktree jetable, y copie `frontend/mls-cross-version` - un
+pilote qui ne depend que de `mls-core` par un chemin RELATIF, donc compile contre la biblioteque
+du checkout ou il se trouve - et fait tenir aux deux binaires une seule conversation par
+fichiers : l'ancien cree le groupe et admet le neuf par un Welcome, le neuf produit une trame
+que l'ancien doit lire, l'ancien en produit une que le neuf doit lire. Une source, deux
+binaires : si les deux API divergent, c'est la compilation du vieux cote qui le dit et qui
+nomme l'appel. Falsifie en inversant un octet de la sortie de `send_message` - la jambe avant
+rougit et se nomme.
+
+**Le filtre qui declenche ce garde porte tout le poids** : une PR Dependabot de cette famille ne
+touche AUCUNE source, seulement `mls-wasm/Cargo.lock` et `src-tauri/Cargo.lock`. Un filtre
+nomme sur `mls-core/**` aurait saute chaque PR qu'il etait cense juger, et chaque execution
+aurait ete verte pour la raison que rien n'avait ete demande - la meme forme que le filtre qui
+nommait `pull-request.yml` apres son renommage. `mls-forward-compat.test.sh` lit les motifs dans
+`ci.yml` et exige qu'ils repondent a la liste de fichiers qu'une vraie mise a jour produit.
+
+### Fixed - la trame qu'un appareil se relit a lui-meme change de forme sans changer de reponse
+
+openmls 0.9.0 ajoute `OwnPendingCommit` et `OwnPrivateMessage` a `ProcessedMessageContent`, et
+la seconde remplace une ERREUR : sous 0.8.1, la trame qu'un appareil retrouve dans sa propre
+boite echouait au dechiffrement avec `CannotDecryptOwnMessage`. **Ce marqueur EST le contrat des
+deux frontieres FFI** - `classifyIncomingDecryptError` et `decrypt_kind` le lisent tous deux
+pour repondre `own-message`, et chaque consommateur acquitte la trame dessus - donc il est
+desormais produit par le bras de SUCCES. Repondre `Ok(None)` a la place aurait ete muet : "pas
+de charge applicative" est ce que dit l'echo d'un commit, et une classification de moins est
+precisement ce qui remplissait `pending_mls_messages` de trames indechiffrables (WP-PENDING-2).
+
+Le bras qui comparait le texte de l'erreur est SUPPRIME plutot que conserve : openmls 0.9.0 ne
+contient plus la chaine `CannotDecryptOwnMessage` nulle part, donc c'etait une branche qu'aucune
+entree ne pouvait atteindre. Son raisonnement - la rediffusion qui ne demande plus depuis le
+2026-08-15, WP-ECHO-1, pourquoi le retour reste `Err` - a suivi le comportement au lieu de
+disparaitre avec le code mort.
+
+`OwnPendingCommit`, lui, **est inatteignable ici et c'est mesure** : aucun groupe ne fixe de
+politique de format, donc tous prennent le defaut `PURE_CIPHERTEXT`, un commit part et revient
+en `PrivateMessage`, et le bras precedent le reclame sur ses donnees d'expediteur avant que son
+contenu ne soit nomme. Il est donc ecrit comme un SIGNAL - `log::error!` et rien de fusionne -
+et non comme un chemin. **Et s'il devenait atteignable, il ne fusionnerait toujours pas** : la
+documentation d'openmls conseille `merge_pending_commit()`, [[C7]] Option A dit que l'epoque
+avance sur la reponse du SERVEUR. Une trame prouve que le service de distribution l'a diffusee,
+pas que la validation attendue a eu lieu. Deux tests fixent que l'echo ne consomme rien, donc
+que les deux reponses du serveur s'appliquent encore apres - falsifies en faisant fusionner ce
+chemin, ce qui les fait rougir tous les deux.
+
 ### Fixed - la conversation cessait de traduire ses erreurs, et l'icone disait "envoi" pour une suppression
 
 Vingt endroits dans six sous-arbres de `lib/components` - canaux, chat, moderation, profil,

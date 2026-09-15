@@ -1025,19 +1025,40 @@ retires it**:
 
 | Family | Why the suite is blind to it | The test that retires it |
 |---|---|---|
-| `openmls*`, `tls_codec*`, `hpke-rs*`, `libcrux*` | a WIRE format is read by other devices on other VERSIONS; `cross_version_state.rs` covers only today opening what v0.14.14 wrote | the FORWARD half - an old binary reading a frame minted by the new one |
 | `aes-gcm` | it opens a channel push sealed by ANOTHER member's device, so both directions are cross-version, and `src-tauri` freezes neither | a channel-push fixture |
 | `webrtc*`, `str0m`, `sdp`, `ice`, `turn`, `stun` | the SFU's ten tests never touch the ICE stack | one relay-path call (campaign rung 15 CALL) |
 | `stripe` | the SDK's literal `apiVersion` type stops a silent API crossing at COMPILE time, but nothing here proves the app still reads what a new API SENDS | fixtures per API version, over the webhook events and object fields the service actually reads |
 | `postgres`, `redis`, `garage` - **a major crossing only** | a datastore major is refused by the data ALREADY ON DISK, and every gate here creates its cluster from an EMPTY volume - the one case that always works | starting the new major against a data directory written by the old one, and proving the documented upgrade path carries it |
 
-**Four families have already LEFT this table, which is what a refusal is for** - it names a missing
+**Five families have already LEFT this table, which is what a refusal is for** - it names a missing
 gate, and it goes the day the gate arrives. `@nestjs/*` left because `boot-nest-apps` constructs the
 real `AppModule` on all four services, which alone moved the ceiling from 5 merge / 28 refuse to 26
 merge / 6 refuse. `chacha20poly1305`, `argon2` and `ciborium` left because `cross_version_state.rs`
 opens artefacts they sealed in v0.14.14, and for an AT-REST envelope - read only by the device that
 wrote it - that backward direction is the whole question. Bare `typeorm` left because
-`app-module.boot-spec.ts` now issues a real query through every entity the app registered. The live
+`app-module.boot-spec.ts` now issues a real query through every entity the app registered.
+
+**`openmls*`, `tls_codec*`, `hpke-rs*` and `libcrux*` left on 2026-09-15, and that one could not be
+closed by a fixture at all.** For an at-rest envelope the reader is the writer, so bytes frozen once
+answer the whole question; for a WIRE format the reader is another device on another version, and the
+direction that had no evidence was the forward one - a frame minted TODAY arriving at a client still
+running the old release. `aes-gcm` closed its equivalent on determinism, re-sealing a frozen plaintext
+under a frozen key and nonce so that equal bytes settle both directions at once; an MLS frame carries a
+random reuse guard, so there is nothing to reproduce and nothing to compare. The gate therefore RUNS THE
+OLD CODE: [`mls-forward-compat.sh`](../../.github/scripts/mls-forward-compat.sh) checks `FIXTURE_VERSION`
+out into a throwaway worktree, builds `frontend/mls-cross-version` - one driver depending on nothing but
+`mls-core` through a relative path - against BOTH libraries, and has the two binaries hold one
+conversation through files: the old side opens the group and admits today by Welcome, today mints a
+frame the old side must read, and the old side mints one today must read.
+
+Its own job in `ci.yml` runs it, and `ci-passed` needs that job, so a break blocks the merge. **The
+filter that starts it is the load-bearing part**: a Dependabot bump of this family touches no source
+file at all, only `frontend/mls-wasm/Cargo.lock` and `frontend/src-tauri/Cargo.lock`, so a path filter
+naming `mls-core/**` would have skipped every pull request it was written to judge and every run would
+have been green for the reason that nothing was asked. `.github/scripts/tests/mls-forward-compat.test.sh`
+feeds that filter the file list a real bump produces and requires it to fire. What the gate does NOT
+cover: one group, one epoch, one application frame each way - a change breaking only a removal, an
+external join or a PSK would pass it. The live
 list is in
 [backlog](backlog.md#p1---the-three-refusals-the-auto-merge-ceiling-makes-and-the-test-that-retires-each).
 
