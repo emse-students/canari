@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { Log } from '$lib/utils/Log';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { channelService, ChannelApiError } from '$lib/services/ChannelService';
@@ -34,6 +35,7 @@
     try {
       preview = await channelService.getInvitePreview(token);
     } catch (e) {
+      Log.d('community invite preview failed', e);
       error = m.invite_not_found();
     } finally {
       loading = false;
@@ -58,6 +60,7 @@
       // A link outliving its community is refused with a code rather than a sentence, so the
       // reason survives any rewording on the server side.
       const coded = e instanceof ChannelApiError ? describeCommunityRefusal(e.code) : null;
+      Log.d('community invite accept failed', e);
       error = coded ?? m.community_join_error_fallback();
       joining = false;
     }
