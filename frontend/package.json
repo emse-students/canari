@@ -73,7 +73,7 @@
     "@tauri-apps/cli": "^2.11.4",
     "@types/node": "^26.5.1",
     "@types/qrcode": "^1.5.6",
-    "@vitest/coverage-v8": "^4.1.11",
+    "@vitest/coverage-v8": "^5.0.0",
     "fake-indexeddb": "^6.2.5",
     "happy-dom": "^20.14.3",
     "husky": "^9.1.7",
