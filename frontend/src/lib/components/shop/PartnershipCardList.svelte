@@ -91,10 +91,23 @@
     claiming = card.id;
     claimErrors = { ...claimErrors, [card.id]: '' };
     try {
-      claimResults = {
-        ...claimResults,
-        [card.id]: await claimPartnership(card.associationId, card.id),
-      };
+      const claimed = await claimPartnership(card.associationId, card.id);
+      /*
+        A CLAIM WITH NO CODE IS A FAILURE WEARING A SUCCESS'S SHAPE, and it used to paint a blank
+        panel: the branch below asked whether the server ANSWERED, never whether the answer carried
+        anything. Only `code_pool` and `shared_code` reach here - `text` is rendered without a
+        button - and both owe a code, so an absent one is a server defect (a pool row consumed and
+        handed back empty, or a shared card with no code set). It accuses, because a card showing
+        the label "your code" above nothing is a defect no student can report.
+      */
+      if (!claimed.code) {
+        console.error(
+          `[Partnerships] claim answered with no code: card=${card.id} mode=${claimed.mode}`
+        );
+        claimErrors = { ...claimErrors, [card.id]: m.shop_partnership_error_generic() };
+        return;
+      }
+      claimResults = { ...claimResults, [card.id]: claimed };
     } catch (e) {
       claimErrors = { ...claimErrors, [card.id]: claimErrorText(e) };
     } finally {

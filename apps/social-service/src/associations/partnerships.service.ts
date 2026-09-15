@@ -447,14 +447,35 @@ export class PartnershipsService {
           });
         }
 
-        const updated: { code: string }[] = await manager.query(
+        /**
+         * A TUPLE, NOT ROWS - and reading it as rows is what handed a student a code they never saw.
+         *
+         * TypeORM's Postgres driver answers an UPDATE or a DELETE with `[rows, rowCount]`, and only
+         * a SELECT with the rows themselves (`PostgresQueryRunner.query`, its `case "UPDATE"`
+         * branch - the SELECT above is correctly shaped for exactly that reason). Indexing `[0]`
+         * therefore took the ROWS ARRAY, whose `.code` is `undefined`: the first claim consumed a
+         * pool row and answered `{"mode":"code_pool"}` with no code at all, while every revisit was
+         * served by `findClaimedCode` - a repository read, correctly shaped - and carried the code.
+         * Measured in prod's nginx log as a 20-byte first answer against 39 bytes on each revisit.
+         * Destructured rather than indexed so the shape is stated where it is read.
+         */
+        const [updatedRows]: [{ code: string }[], number] = await manager.query(
           `UPDATE partnership_codes
            SET "claimedByUserId" = $1, "claimedAt" = now()
            WHERE id = $2
            RETURNING code`,
           [userId, row.id]
         );
-        return updated[0].code;
+        const claimed = updatedRows[0];
+        // This transaction holds the row's lock, so the UPDATE cannot have missed it. Saying so is
+        // what `[0].code` did not: an unexpected shape left here as `undefined` and reached the
+        // screen as an empty code panel, which is a defect nobody can report.
+        if (!claimed) {
+          throw new Error(
+            `[PARTNERSHIP] claim UPDATE matched no row: card=${cardId} codeRow=${row.id}`
+          );
+        }
+        return claimed.code;
       });
       this.logger.log(
         `[PARTNERSHIP] claimed: card=${cardId.slice(0, 8)} user=${userId.slice(0, 8)}`
