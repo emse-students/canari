@@ -11,6 +11,28 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - la passerelle criait a l'erreur chaque fois qu'un onglet se fermait
+
+Un navigateur qui se recharge, change de page ou se fait tuer n'envoie pas de trame de fermeture :
+la socket est simplement coupee. La boucle de reception de `chat-gateway` terminait sur
+`Err(e) => error!(...)` sans rien regarder, donc la maniere la plus courante de finir une session
+web etait consignee au niveau reserve a ce qui ne va pas.
+
+Mesure sur la production, sur les 7 jours precedant le 2026-09-15 : **32 lignes ERROR sur 32**
+etaient cette seule famille, pour 10 comptes differents, sur 2680 lignes au total. Le jumeau poli
+(`Client closed connection`, en `info`) est apparu 3 fois. Le canal ERROR de cette machine ne
+portait donc qu'une chose, et cette chose etait des gens fermant un onglet : une vraie panne aurait
+ete une ligne parmi 33, et personne ne serait alle la chercher. Le banc d'essai avait d'ailleurs du
+se construire une liste de pardon dont ce motif etait l'unique membre.
+
+**C'est une classification, pas une retrogradation.** `axum` emboite l'erreur `tungstenite` une
+seule fois, donc `ResetWithoutClosingHandshake` se lit comme une VARIANTE et non comme du texte.
+Elle seule devient un `info` a cote de la fermeture polie ; tout le reste - `ConnectionClosed`
+compris, qui en a pourtant l'air - reste une erreur, parce qu'un predicat elargi a ce que personne
+n'a observe ne pourra plus jamais le signaler. Et le jour ou une montee de version d'`axum`
+empecherait de lire ce type, le cas est traite a part et le dit lui-meme, au lieu de requalifier
+silencieusement toutes les fins de session.
+
 ### Fixed - "cet appareil n'existe pas" etait annonce comme "votre requete est mal formee"
 
 Deux reponses du service de distribution disaient 400 la ou elles voulaient dire 404 :
