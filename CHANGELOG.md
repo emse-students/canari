@@ -11,6 +11,40 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - la seule sortie de l'ecran de PIN pouvait se trouver hors de l'ecran
+
+Signale par l'utilisateur le 2026-09-14 : *"l'ecran du pin de chiffrement est tres grand et charge,
+il ne s'affichera pas bien sur beaucoup d'ecrans"*. Le corps de la modale est `overflow-y-auto` dans
+un panneau plafonne a `max-h-[92dvh]`, donc **rien n'etait jamais coupe** - et c'est exactement pour
+cela que le defaut a survecu au balayage des 52 routes, qui demandait "est-ce que quelque chose
+deborde de son conteneur".
+
+Mesure sur W3 avec le clavier numerique, le 2026-09-15. A **360 x 640**, le formulaire mesurait
+**928 px dans une zone de defilement de 530** : le bouton **Deverrouiller finissait 195 px sous la
+ligne de flottaison**, et le bouton **Se deconnecter environ 398 px** plus bas encore. On pouvait
+voir le clavier, taper son PIN, et ne pas voir le bouton qui le valide - sur le seul ecran de
+l'application dont on ne peut pas partir. Le commentaire du composant affirmait pourtant de cette
+sortie qu'elle etait *"ALWAYS ON SCREEN"*.
+
+**Les deux sorties sont passees dans le pied de la modale**, qui est `shrink-0` et hors de la zone
+de defilement : aucune hauteur de contenu ne peut plus les repousser. Le bouton de validation
+rejoint son formulaire par `form="encryption-pin-form"` plutot que par imbrication. Et le rythme
+vertical passe de `space-y-6` a `space-y-4` : six intervalles, soit 144 px a 24 px contre 96 a 16,
+plus du tiers du clavier lui-meme.
+
+Apres correctif, aux trois tailles mesurees, le clavier ET les deux boutons sont visibles sans
+defiler : a 360 x 640 le contenu tombe de 928 a 762 px, a 393 x 945 de 907 a 741, a 1280 x 800 de
+841 a 675. La verification de bout en bout est le deverrouillage reel (`bun pin.mjs --device W3`,
+**302 ms**), parce qu'un bouton de validation hors de son formulaire ne fait rien du tout si
+l'association echoue.
+
+**Le meme correctif pour l'ecran voisin**, mesure plutot que suppose : `ChangePinModal` avait la meme
+forme et le meme defaut en plus doux - a 360 x 640, son bouton finissait **69 px sous la ligne de
+flottaison**. Ce n'est pas un blocage (cette modale se ferme, et sa croix est dans l'en-tete, qui ne
+defile pas) ; ce qui le rend aussi grave, c'est le clavier : tous ses champs sont des champs de
+texte, donc le clavier est ouvert chaque fois qu'on s'en sert, et il prend bien plus que les 69 px
+qui manquaient deja.
+
 ### Fixed - le menu d'appui long recouvrait le message sur lequel il agit
 
 Un appui long sur un message situe en bas du fil ouvrait la feuille d'actions **par-dessus ce

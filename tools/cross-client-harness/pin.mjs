@@ -282,7 +282,15 @@ console.log(`[pin] ${account}: ${len} ${hasField ? 'chars' : 'taps'}${has('value
 // gesture the campaign's fourth restart step is made of ("set each PIN from test-accounts.json"),
 // on a modal plainly on screen. A localized string is not a handle: the button is identified by
 // what it IS in the form, which is the same in both shapes and in every locale.
-await activate(cx, 'form button[type=submit]');
+//
+// SCOPED TO THE DIALOG, NOT TO THE FORM, SINCE 2026-09-15. The button moved into `Modal`'s footer -
+// which is `shrink-0` and OUTSIDE the scrollport, so a form taller than the screen can no longer
+// push the only way past this gate below the fold. It reaches its form by `form="encryption-pin-form"`
+// instead of by nesting, so `form button[type=submit]` matched nothing and this threw on a modal
+// plainly on screen, for the second time and for the opposite reason. The lesson the first version
+// of this comment drew still holds and is simply widened: address the button by what it IS, and put
+// the scope on the thing that owns it - the DIALOG - rather than on a nesting the layout may change.
+await activate(cx, '[role="dialog"] button[type=submit]');
 // The modal either closes (unlocked) or shows an error - poll for whichever comes first.
 // "Gone" is the gate predicate NEGATED, never a second reading of it: the keypad shape carries
 // no `#encryption-pin`, so a check keyed on the input alone never settles there.

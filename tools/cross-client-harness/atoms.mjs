@@ -20,7 +20,9 @@
  *     already holds a session, `venue` runs four `SELECT`s. A row can therefore start from whatever
  *     the previous row left behind, which is rule 4 of the campaign.
  *  3. **It addresses the product structurally, not by pixel and not by wording.** A submit button is
- *     `form button[type=submit]`, an autocomplete option is `[role="option"]` reached with the arrow
+ *     `[role="dialog"] button[type=submit]` - scoped to the thing that OWNS it rather than to a
+ *     nesting, because a button may legitimately leave its `<form>` (the PIN gate's did, to stop a
+ *     tall form scrolling the only way out off screen) - an autocomplete option is `[role="option"]` reached with the arrow
  *     keys, a tab is `APP_TAB`. THE RIG DRIVES PHONES OF SEVERAL SIZES AND ONE LOCALE MAY CHANGE:
  *     a coordinate that was right on one screen is wrong on the next, and a French label is not an
  *     API. Where a real pointer sequence IS the thing under test, `realClick` re-measures the centre

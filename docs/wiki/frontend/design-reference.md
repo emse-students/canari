@@ -1879,3 +1879,94 @@ bottom edge, which makes the ownership structural rather than metric. This app s
 and stacks the chip below, so the only ownership signal is distance. Adopting the overlap idiom is a
 product decision with a measured margin of 6 px against 12, and it belongs to the user rather than
 to a sweep.
+
+## 26. The only way past the PIN gate could be off screen, and no overflow check could see it
+
+Reported by the user on 2026-09-14, in the words that name the whole finding: *"l'ecran du pin de
+chiffrement est tres grand et charge, il ne s'affichera pas bien sur beaucoup d'ecrans"*. The backlog
+recorded 901 px of content against A1's 945 and read it as a near-miss - fits here with 44 px to
+spare, a tablet in landscape at 800 px is 101 px short. That reading was about the wrong quantity.
+
+### Why 52 routes of sweeping could not find this
+
+`Modal` gives its body `overflow-y-auto` inside a panel capped at `max-h-[92dvh]`. **A scrollport
+never clips.** Content taller than it scrolls, so `scrollWidth - clientWidth`, "does anything exceed
+its container", and "does the document scroll sideways" - the three questions section 17's sweep
+asked of every route in the app - all answer correctly and all answer no. The quantity that decides
+whether a screen works is not whether content is CUT, it is **what is below the fold at scroll 0**,
+and nothing was asking.
+
+### Measured on W3, 2026-09-15, numeric keypad, before the fix
+
+`useNumpad = isCoarsePointerDevice()`, so a desktop Chrome under a device-metrics override renders
+the TEXT-INPUT variant and measures 628 px with no problem at any size. The keypad variant is the one
+a phone gets, and the modal offers the switch itself, so it is reached by clicking "Clavier
+numerique" rather than by faking a media feature.
+
+| Viewport | Form | Scrollport | Unlock button |
+| --- | --- | --- | --- |
+| 393 x 945 (A1) | 907 px | 810 px | ends 821, visible |
+| **360 x 640** | **928 px** | **530 px** | **195 px BELOW THE FOLD** |
+| 1280 x 800 | 841 px | 677 px | ends 748, visible |
+
+At 360 x 640 the sign-out button - the gate's only exit, whose own comment claimed it was *"ALWAYS ON
+SCREEN"* - sat some 398 px below the fold. **A person could see the keypad, type their PIN, and not
+see the button that submits it**, on the one screen in the app they cannot navigate away from.
+
+### What the 907 px is made of, and what is actually the task
+
+At 393 px wide, in order: 73 px of description, 30 px of PIN dots, **254 px of keypad**, 32 px of
+hint, 127 px of stay-signed-in, 48 px of submit, 41 px of forgot-PIN, 126 px of sign-out - plus six
+`space-y-6` gaps, which is **144 px of rhythm on their own**. The task is the dots and the keypad:
+284 px. Everything else is explanation, and it outweighs the task two to one. That is the "charge"
+half of the report, and it is a number rather than an impression.
+
+### The fix, and why the footer rather than a trim
+
+`Modal` already had a `footer` snippet rendered `shrink-0` OUTSIDE the scrollport. Both exits moved
+into it, so **no content height can push either anywhere**, at any viewport, in either variant, with
+or without the biometric row. A trim would have bought margin; the footer buys a guarantee.
+
+The submit reaches its form by `form="encryption-pin-form"` rather than by nesting. That association
+is the engine's to make, so it is verified as such - `submit.form === form` read on a real Chrome,
+and the end-to-end proof is an actual unlock (`bun pin.mjs --device W3`, 302 ms), because a submit
+button whose `form=` names nothing renders correctly and does nothing.
+
+The rhythm went to `space-y-4` in the same change, which is the one place a trim was worth taking:
+48 px, free, and the footer's own 110 px had made the keypad's last row clip by 5 px at 360 x 640
+without it.
+
+| Viewport | Form, before -> after | Keypad at scroll 0 | Unlock |
+| --- | --- | --- | --- |
+| 393 x 945 | 907 -> 741 px | visible | pinned, ends 866 of 945 |
+| 360 x 640 | 928 -> 762 px | visible | pinned, ends 561 of 640 |
+| 1280 x 800 | 841 -> 675 px | visible | pinned, ends 705 of 800 |
+
+### What the tests pin, and what they cannot
+
+`PinModal.exits.svelte.test.ts` asserts STRUCTURE, not pixels: both controls are outside the
+scrollport, the submit names the form it no longer nests in, and both hold in the first-setup shape
+and with the biometric row and stay-signed-in box up. happy-dom has no layout, so a geometry
+assertion there would be a stub asserting itself. Falsified against the unfixed component: five of
+six go red, and the one that stays green is the counterpart - the destructive reset stays inside its
+disclosure, where it scrolls.
+
+**One rig fact this cost.** `pin.mjs` activated `form button[type=submit]`, which matched nothing
+once the button left the form, and threw on a modal plainly on screen. It is now scoped to
+`[role="dialog"]` - the thing that OWNS the button rather than a nesting the layout may change - and
+`atoms.mjs` records the widened rule.
+
+### The sibling, measured rather than assumed
+
+`ChangePinModal` had the same shape, so it was measured rather than waved through: at 360 x 640 its
+form stood 567 px in a 510 px scrollport and the submit ended **69 px below the fold**. Milder, and
+NOT a softlock - this modal is dismissible and its close button is in the header, which never
+scrolls. **What made it worth the same treatment is the keyboard.** Every field here is a text input,
+so the on-screen keyboard is up whenever anyone uses this screen, and it takes far more than the
+69 px that were already missing. Same fix; the body falls to 499 px at 360 x 640 and the submit sits
+in the footer at all three sizes.
+
+**The two form ids are deliberately different** (`encryption-pin-form`, `change-pin-form`) and a test
+says so. The gate raises the change modal on the recover path, so both can be mounted at once, and
+two forms sharing an id would make every `form=` resolve to whichever the parser saw first - while
+still looking perfectly correct.

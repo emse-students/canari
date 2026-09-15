@@ -116,12 +116,19 @@
     onSubmit(cur, next);
   }
 
+  /**
+   * The `<form>`'s id, so the submit button can live in the modal FOOTER and still submit it.
+   * Distinct from the PIN gate's: two modals can be mounted at once (the gate raises this one on the
+   * recover path), and two forms sharing an id would make `form=` resolve to whichever came first.
+   */
+  const FORM_ID = 'change-pin-form';
+
   const inputClass =
     'w-full rounded-xl border border-cn-border/60 bg-white/5 dark:bg-black/20 px-4 py-3 text-center text-lg tracking-[0.3em] font-mono focus:border-cn-yellow focus:ring-2 focus:ring-cn-yellow/30 focus:outline-none transition-all placeholder:tracking-normal placeholder:text-text-muted/50 disabled:opacity-50';
 </script>
 
 <Modal {open} {title} {onClose}>
-  <form onsubmit={handleSubmit} class="space-y-5 p-1">
+  <form id={FORM_ID} onsubmit={handleSubmit} class="space-y-5 p-1">
     <div class="border-cn-yellow/30 bg-cn-yellow/10 rounded-xl border px-4 py-3">
       {#if isRecover}
         <p class="text-text-muted text-sm leading-relaxed">
@@ -212,9 +219,23 @@
         </div>
       </div>
     {/if}
+  </form>
 
+  <!--
+    THE SAME FIX AS THE PIN GATE'S, FOR THE SAME REASON MEASURED ON THE SAME DAY.
+
+    This modal had the same shape the gate did - the submit as the last block of an `overflow-y-auto`
+    form - and the same defect, milder: measured on W3 2026-09-15, at 360 x 640 the form stood 567 px
+    in a 510 px scrollport and the button ended **69 px below the fold**. It is not a softlock the way
+    the gate was, because this modal IS dismissible and its close button lives in the header, which
+    never scrolls. What makes it worth the same treatment is the keyboard: every field here is a text
+    input, so the on-screen keyboard is UP whenever anyone uses this, and it takes far more than the
+    69 px that were already missing.
+  -->
+  {#snippet footer()}
     <button
       type="submit"
+      form={FORM_ID}
       disabled={isLoading}
       class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover shadow-cn-yellow/20 flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-sm font-bold shadow-lg transition-all hover:-translate-y-0.5 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:translate-y-0"
     >
@@ -226,5 +247,5 @@
         {submitLabel}
       {/if}
     </button>
-  </form>
+  {/snippet}
 </Modal>

@@ -5524,9 +5524,25 @@ local estate, where a directory with people in it exists.
 **The encryption-PIN screen does not fit the screens it will meet** (user, 2026-09-14: *"l'ecran du
 pin de chiffrement est tres grand et charge, il ne s'affichera pas bien sur beaucoup d'ecrans"*).
 Measured before typing the PIN, because typing destroys the evidence: the content stands **901 px**
-tall against the **945 px** this phone offers - it fits here, with 44 px to spare, and that margin is
-the whole finding. A shorter phone loses it outright, and **a tablet in landscape has 800 px**, which
-is 101 px short. Tablets are the case that matters because they are the ones that can rotate at all.
+tall against the **945 px** this phone offers.
+
+**FIXED 2026-09-15, AND THE READING ABOVE WAS ABOUT THE WRONG QUANTITY.** This entry said the margin
+was the whole finding - 44 px to spare here, 101 px short on a tablet in landscape. But the modal
+body is `overflow-y-auto` in a panel capped at `max-h-[92dvh]`, so content taller than the screen was
+never CUT, only scrolled, and "does it fit" was never the question. What decides is **what is below
+the fold at scroll 0**. Measured on W3 with the numeric keypad: at **360 x 640** the form stood
+**928 px in a 530 px scrollport, the unlock button 195 px below the fold and the sign-out button some
+398 px** - the keypad visible, the PIN typeable, and the button that submits it off screen, on the
+one screen in the app a person cannot navigate away from. Both exits moved into `Modal`'s `footer`,
+which is `shrink-0` and outside the scrollport, and the rhythm went from `space-y-6` to `space-y-4`;
+the keypad and both buttons are now visible without scrolling at all three sizes. The measurement,
+the port of the rig selector it cost and what the tests pin are on
+[design-reference](frontend/design-reference.md#26-the-only-way-past-the-pin-gate-could-be-off-screen-and-no-overflow-check-could-see-it);
+the story is in `CHANGELOG.md`.
+
+**The route sweep could not have found it**, which is the part worth carrying forward rather than the
+pixels: its three questions are all about a container being EXCEEDED, and a vertical scrollport never
+is. That is now a rule in [durable-rules](durable-rules.md).
 
 **Phones cannot be put in landscape, and that is deliberate** - the lock is in Kotlin, not the
 manifest: `MainActivity.kt:47-53` sets `SCREEN_ORIENTATION_PORTRAIT` when the resource boolean

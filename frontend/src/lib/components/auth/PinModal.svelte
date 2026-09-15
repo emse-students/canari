@@ -77,6 +77,13 @@
 
   let pin = $state('');
   let internalError = $state('');
+  /**
+   * The `<form>`'s id, so the submit button can live in the modal FOOTER and still submit it.
+   * A constant rather than a literal typed twice, because the two spellings are what would drift -
+   * and a submit button whose `form=` names nothing is a button that silently does nothing.
+   */
+  const FORM_ID = 'encryption-pin-form';
+
   let showForgotPin = $state(false);
   // Set for the round trip of the sign-out so the button cannot be pressed twice.
   let signingOut = $state(false);
@@ -156,7 +163,16 @@
   dismissible={false}
   onClose={onClose ?? (() => {})}
 >
-  <form onsubmit={handleSubmit} class="space-y-6 p-1">
+  <!--
+    `space-y-4`, NOT `space-y-6`, AND THE 48 PX IS THE POINT.
+
+    Six gaps separate this form's blocks, so the rhythm alone is worth 144 px at 24 px and 96 px at
+    16 px - more than a third of the numeric keypad. The screen carries 254 px of keypad and 30 px of
+    dots, which is the task; everything else is explanation, and generous air between a keypad and
+    its own one-line hint buys nothing a reader notices. Measured 2026-09-15: at 360 x 640 the
+    keypad's last row was cut by 5 px at 24 px of rhythm and clears at 16 px.
+  -->
+  <form id={FORM_ID} onsubmit={handleSubmit} class="space-y-4 p-1">
     {#if isFirstSetup}
       <div class="border-cn-yellow/30 bg-cn-yellow/10 space-y-1.5 rounded-xl border px-4 py-3">
         <p class="text-cn-yellow text-sm font-semibold">
@@ -313,21 +329,6 @@
       </label>
     {/if}
 
-    <button
-      type="submit"
-      disabled={isLoading}
-      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover shadow-cn-yellow/20 flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-sm font-bold shadow-lg transition-all hover:-translate-y-0.5 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:translate-y-0"
-    >
-      {#if isLoading}
-        <LoaderCircle size={16} class="animate-spin" />
-        {loadingStep || m.auth_pin_verifying()}
-      {:else if isFirstSetup}
-        {m.auth_pin_create()}
-      {:else}
-        {m.auth_pin_unlock()}
-      {/if}
-    </button>
-
     <!-- PIN changed on another device → recover messages (shown only when applicable) -->
     {#if !isFirstSetup && onRecoverPin && displayError}
       <button
@@ -406,17 +407,60 @@
     {/if}
 
     <!--
-      THE WAY OUT, AND IT IS ALWAYS ON SCREEN.
-
-      Outside the "forgot PIN" disclosure on purpose: the person who needs it is by definition the
-      person who cannot get past this modal, and an exit they have to go looking for is the softlock
-      the fix above would otherwise create. Shown on the first setup too - someone who has just
-      signed in and does not want to choose a PIN right now is stuck in exactly the same way.
-
-      NOT disabled by `isLoading`. A submit that hangs is one of the states this button exists for,
-      and the watchdog that unblocks the keypad is ten seconds long.
+      The sign-out explanation stays in the SCROLLING body while its button is pinned in the footer
+      below. That split is deliberate: the control is what must never be scrolled to, and giving the
+      footer this paragraph as well costs about 32 px of permanent height that the numeric keypad
+      needs more - at 360 x 640 the keypad ends 405 px into the form, against a scrollport already
+      shortened by everything the footer holds. Prose above its own control still reads as one block.
     -->
-    <div class="border-cn-border/30 border-t pt-4">
+    <p
+      class="text-text-muted border-cn-border/30 border-t pt-4 text-center text-xs leading-relaxed"
+    >
+      {m.auth_pin_sign_out_desc()}
+    </p>
+  </form>
+
+  <!--
+    THE TWO WAYS PAST THIS GATE DO NOT SCROLL, AND THAT IS THE WHOLE POINT OF THE SNIPPET.
+
+    Both buttons used to be the last two blocks of the form above, inside the modal body - which is
+    `overflow-y-auto` in a panel capped at `max-h-[92dvh]`, so nothing was ever CUT and the defect
+    was invisible to any "does it overflow" check. Measured on W3 with the numeric keypad, 2026-09-15:
+    at 360 x 640 the form stands 928 px in a 530 px scrollport and **the unlock button ended 195 px
+    below the fold, the sign-out button some 398 px** - a person could see the keypad, type their
+    PIN, and not see the button that submits it. The comment that used to sit here claimed this exit
+    was ALWAYS ON SCREEN; on a short screen it was not, which is the kind of claim only a measurement
+    catches.
+
+    `Modal`'s footer is `shrink-0` and OUTSIDE the scrollport, so it cannot be pushed anywhere by the
+    body's height - at any viewport, in either variant, with or without the biometric row. The submit
+    reaches the form by `form={FORM_ID}` rather than by nesting, which is what lets it leave the
+    `<form>` without leaving the form.
+
+    THE SIGN-OUT IS STILL THE APP'S ORDINARY ONE (`clearAuth` + `/login`): it ends the session and
+    touches neither `mls.bin` nor the message database, so someone who signs out here and remembers
+    their PIN tomorrow finds their history where they left it. The destructive reset stays where it
+    was, behind its disclosure and its two-step confirmation. NOT disabled by `isLoading`: a submit
+    that hangs is one of the states this button exists for, and the watchdog is ten seconds long.
+  -->
+  {#snippet footer()}
+    <div class="flex w-full flex-col gap-2">
+      <button
+        type="submit"
+        form={FORM_ID}
+        disabled={isLoading}
+        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover shadow-cn-yellow/20 flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-sm font-bold shadow-lg transition-all hover:-translate-y-0.5 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-70 disabled:hover:translate-y-0"
+      >
+        {#if isLoading}
+          <LoaderCircle size={16} class="animate-spin" />
+          {loadingStep || m.auth_pin_verifying()}
+        {:else if isFirstSetup}
+          {m.auth_pin_create()}
+        {:else}
+          {m.auth_pin_unlock()}
+        {/if}
+      </button>
+
       <button
         type="button"
         disabled={signingOut}
@@ -431,9 +475,6 @@
           {m.auth_pin_sign_out()}
         {/if}
       </button>
-      <p class="text-text-muted mt-2 text-center text-xs leading-relaxed">
-        {m.auth_pin_sign_out_desc()}
-      </p>
     </div>
-  </form>
+  {/snippet}
 </Modal>
