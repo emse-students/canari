@@ -777,6 +777,12 @@ pub fn run() {
                 "main",
                 tauri::WebviewUrl::App(std::path::PathBuf::from("/")),
             )
+            // THE APP OWNS WHICH URLS ITS OWN WEBVIEW MAY LOAD. Without this, a URL `http::Uri`
+            // cannot parse becomes wry's `currentUrl` and the next IPC aborts the process from
+            // inside a JNI frame - no JS error, no boundary, the app simply vanishes. Refusing
+            // here is the only half of that defect this repository owns; the reasoning, the
+            // measurement and what it does NOT close are in `mobile::navigation`.
+            .on_navigation(|url| crate::mobile::navigation::webview_may_load(url.as_str()))
             .build()?;
 
             #[cfg(debug_assertions)]

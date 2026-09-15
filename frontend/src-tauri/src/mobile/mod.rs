@@ -18,6 +18,13 @@ pub mod background;
 #[cfg(any(target_os = "android", target_os = "ios", test))]
 pub mod graine;
 
+// Which URLs the app's own WebView may start loading. Not a JNI / C-FFI entry point like its
+// siblings, but mobile-only for the same reason they are: what it prevents is an abort inside
+// wry's Android JNI frame. Wired on iOS too, because the rule is identical there and one code
+// path for one window beats two cfg branches asking the same question.
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+pub mod navigation;
+
 #[cfg(any(target_os = "android", target_os = "ios", test))]
 pub mod proto_fields;
 
