@@ -51,6 +51,33 @@ le contournement : renommer les deux chaines fautives aurait regle ces deux cas,
 rien n'aurait signale leur retour. Un fichier de test ne peut pas contenir une classe que
 l'application rend, par construction - il ne rend rien. La feuille de style passe de 217 081 a
 216 113 octets.
+
+### Fixed - le navigateur rejouait les conversations dans un ordre arbitraire, le telephone dans le bon
+
+Au demarrage, les conversations sont rejouees **une par une** - en serie, parce que le client MLS en
+WASM ne supporte pas les appels concurrents. La liste rendue par le stockage local est donc l'ordre
+de passage, et pas seulement un ensemble.
+
+Le contrat dit « triees par recence ». Une seule des deux implementations le tenait : SQLite (le
+telephone) repond `ORDER BY updated_at DESC`, tandis qu'IndexedDB (le navigateur) rendait les lignes
+dans l'ordre des cles - l'identifiant de groupe, c'est-a-dire un ordre arbitraire. Chaque plateforme
+n'execute que l'une des deux, si bien que la divergence n'etait visible qu'en comparant les deux
+fichiers. Concretement : sur telephone la conversation contenant le message le plus recent etait
+prete la premiere ; sur navigateur elle l'etait quand son identifiant voulait bien tomber la.
+
+Corrige dans le stockage, la ou la promesse est ecrite, et verifie par un test dont les identifiants
+montent pendant que les dates descendent - les deux ordres sont donc exactement opposes, et aucune
+implementation ne peut passer par hasard. Le panneau « conversations » de l'accueil, qui retriait
+par lui-meme pour compenser, ne le fait plus.
+
+**En revanche, la LONGUEUR du rejeu n'est pas plafonnee, et c'est un refus motive** : s'arreter au
+bout de N pages et lire le reste a la session suivante est sans danger pour le curseur, mais pas pour
+les messages. Les groupes sont construits avec `max_past_epochs(2)` : une trame laissee non
+dechiffree pendant que le groupe avance de trois epoques devient **definitivement indechiffrable**.
+Le plafond echangerait donc un travail borne au demarrage contre un risque non borne de perdre le
+message de quelqu'un. Le travail inutile, lui, a ete supprime la ou il etait reellement : les
+dix-neuf reconstructions du client MLS et le double telechargement du binaire WASM.
+
 ### Fixed - le binaire WASM de 5,4 Mo etait telecharge deux fois a chaque premier chargement
 
 Mesure sur Firefox contre la production le 15/09/2026 : `assets/mls_wasm_bg.ZX5A_PDr.wasm` en

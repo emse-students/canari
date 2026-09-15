@@ -747,6 +747,43 @@ returns `asked` / `no-peer` / `unavailable` rather than a boolean - a silent not
 "there is no more history", which is a different statement and usually a false one. The answer is
 recognised by the list reaching further back than it did when the ask went out, not by a timer.
 
+### The order of the startup walk, and why its LENGTH is not capped
+
+Phase 2 of `restoreConversations` replays one conversation at a time - serialised, because the WASM
+MLS client is not safe to invoke concurrently - so **the list returned by
+`StorageBackend.getConversations` is the startup schedule**, not merely a set.
+
+The interface promises "ordered by recency" and only one of its two implementations kept the
+promise. `SqliteStorage` answers `ORDER BY updated_at DESC`; `IndexedDbStorage` returned `getAll()`,
+which is key order - the conversation id, which is a group id, which is arbitrary - and its own
+docblock said so. Each platform runs exactly one backend, so the two never met and nothing compared
+them: the phone always replayed the newest conversation first and the browser replayed it wherever
+its group id happened to fall. Fixed in the STORE rather than at the caller, since that is where the
+promise is written, and pinned by `db/conversationOrder.test.ts` with ids ascending while timestamps
+descend, so key order and recency order are exact opposites and no backend can pass by accident.
+
+**THE LENGTH OF THE WALK IS A DIFFERENT QUESTION AND THE ANSWER IS NO.** Capping the pages replayed
+per conversation per session - "stop after N, read the rest next time" - is safe for the CURSOR (it
+only ever advances over rows actually walked) and unsafe for the MESSAGES, which is what matters:
+groups are built with `max_past_epochs(2)` (`mls-core/src/group.rs`), so an application frame left
+undecrypted while the group advances three epochs is **permanently undecryptable** -
+`messaging.rs` has the branch that says so, and the loss it describes was measured on prod
+2026-08-11. A cap would therefore trade a bounded amount of startup work for an unbounded risk of
+losing somebody's message, which is the defect class of queue item 15, deliberately re-created.
+
+What was actually costing the session was never the length of the walk:
+
+- nineteen conversations each rebuilt the whole MLS client to decrypt nothing (fixed 2026-09-15, the
+  session now opens on the first frame that needs it - see the subsection below);
+- nineteen first pages were nineteen requests until `fetchHistoryBatch` made them
+  `ceil(n / HISTORY_BATCH_MAX_GROUPS)`;
+- and on an ordinary reload, with the cursor already at the head, each walk is one page, zero
+  decrypts and zero ledger entries.
+
+So the bound that was wanted already exists, and it is a bound on WORK rather than on COVERAGE: the
+walk is bounded above by the head pinned at its first page, and below by the cursor. Anything cheaper
+than that has to give up a message.
+
 ### Media
 
 Blobs keep their own 30-day idle retention; **text and attachments have different horizons on
