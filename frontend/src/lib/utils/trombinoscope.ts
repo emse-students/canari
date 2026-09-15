@@ -27,7 +27,7 @@ export async function exportTrombinoscope(
     background: '#ffffff',
     padding: '40px',
     color: '#111111',
-    fontFamily: '"Nunito Variable", "Nunito", "Segoe UI", sans-serif',
+    fontFamily: '"Nunito Variable", "Nunito", "Segoe UI", "Noto Color Emoji Canari", sans-serif',
     boxSizing: 'border-box',
   });
 
@@ -68,7 +68,7 @@ export async function exportTrombinoscope(
     <div style="display:flex;align-items:center;gap:16px;margin-bottom:28px;padding-bottom:18px;border-bottom:2.5px solid #d9e0ea;">
       ${logoHtml}
       <div>
-        <h1 data-pdf-text style="font-family:'Fredoka Variable','Fredoka','Segoe UI',sans-serif;font-size:28px;font-weight:700;color:#151B2C;margin:0;">${safe(asso.name)}</h1>
+        <h1 data-pdf-text style="font-family:'Fredoka Variable','Fredoka','Segoe UI','Noto Color Emoji Canari',sans-serif;font-size:28px;font-weight:700;color:#151B2C;margin:0;">${safe(asso.name)}</h1>
         ${contactHtml}
       </div>
     </div>

@@ -101,6 +101,15 @@
       Both files come from scripts/gen-web-icons.mjs; do not edit them by hand.
     -->
     <link rel="apple-touch-icon" sizes="180x180" href="%sveltekit.assets%/apple-touch-icon.png" />
+    <!-- Bundled emoji font (see app.css and docs/wiki/frontend/emoji.md): preloaded so it is ready
+         at first paint rather than swapped in after the platform font already drew. -->
+    <link
+      rel="preload"
+      href="%sveltekit.assets%/fonts/NotoColorEmoji-Canari.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin="anonymous"
+    />
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"

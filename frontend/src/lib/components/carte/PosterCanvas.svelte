@@ -107,6 +107,13 @@
   /** How close (poster px) an edge/center must be to a guide before it snaps. */
   const SNAP_THRESHOLD = 8;
 
+  // Named so the oxfmt line-wrap (which cannot see inside a template attribute string) never
+  // breaks one of these mid-literal - it broke `style:font-family` three times before this.
+  const NUNITO_STACK =
+    "'Nunito Variable', 'Nunito', 'Segoe UI', 'Noto Color Emoji Canari', sans-serif";
+  const FREDOKA_STACK =
+    "'Fredoka Variable', 'Fredoka', 'Segoe UI', 'Noto Color Emoji Canari', sans-serif";
+
   // The unit's whole geometry (layer offsets, card sizing, which members appear in which slot) lives
   // in `layout.ts`, because the PUBLISHER resolves the exact same numbers for the portail showcase -
   // see `publish.ts`. Nothing about a unit is computed here.
@@ -506,7 +513,7 @@
   style:overflow="hidden"
   style:background={theme.pageBg}
   style:color={theme.bubbleNameColor}
-  style:font-family="'Nunito Variable', 'Nunito', 'Segoe UI', sans-serif"
+  style:font-family={NUNITO_STACK}
 >
   {#if background.dataUrl}
     <img
@@ -541,7 +548,7 @@
     >
       <h1
         data-pdf-text
-        style:font-family="'Fredoka Variable', 'Fredoka', 'Segoe UI', sans-serif"
+        style:font-family={FREDOKA_STACK}
         style:font-size="{TITLE_SIZE}px"
         style:font-weight="700"
         style:margin="0"
@@ -740,7 +747,7 @@
         >
           <div
             data-pdf-text={deco.content ? 'true' : null}
-            style:font-family="'Fredoka Variable', 'Fredoka', 'Segoe UI', sans-serif"
+            style:font-family={FREDOKA_STACK}
             style:font-size="{TEXT_BASE_SIZE}px"
             style:font-weight={deco.bold ? '800' : '500'}
             style:text-align={deco.align}
@@ -810,7 +817,7 @@
     >
       <h2
         data-pdf-text
-        style:font-family="'Fredoka Variable', 'Fredoka', 'Segoe UI', sans-serif"
+        style:font-family={FREDOKA_STACK}
         style:font-size="{DIRECTORY_HEADING_SIZE}px"
         style:font-weight="800"
         style:margin="0 0 14px"
@@ -831,7 +838,7 @@
                 data-pdf-text
                 style="break-inside:avoid;break-after:avoid;margin-top:{zone !== model.zones[0]
                   ? '1.5em'
-                  : '0'};margin-bottom:0.8em;font-weight:700;font-family:'Fredoka Variable','Fredoka','Segoe UI',sans-serif;font-size:1.0em;color:{theme.directoryTextColor};letter-spacing:0.01em;border-bottom:1px solid {theme.directoryMutedColor}40;padding-bottom:0.2em;"
+                  : '0'};margin-bottom:0.8em;font-weight:700;font-family:{FREDOKA_STACK};font-size:1.0em;color:{theme.directoryTextColor};letter-spacing:0.01em;border-bottom:1px solid {theme.directoryMutedColor}40;padding-bottom:0.2em;"
               >
                 {zone.label}
               </div>

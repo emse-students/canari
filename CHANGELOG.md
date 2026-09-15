@@ -93,6 +93,28 @@ accent circonflexe rendrait l'ensemble propose a nouveau dependant de quelqu'un 
 install` a la fois. `emojiData.test.ts` verifie que l'attribut n'est jamais `undefined` ni distant,
 que l'epinglage n'est pas une plage, et que chaque fichier commite est identique OCTET POUR OCTET au
 paquet : une montee de version non resynchronisee ne peut donc pas passer.
+
+### Added - un emoji se dessine desormais avec la meme police partout, et un message qui n'est que des emoji s'affiche en grand
+
+Chaque moteur (Chromium, WebKit) ne sait lire qu'une des deux tables de police couleur qui
+existent (COLRv1 ou OT-SVG), si bien qu'un emoji se dessinait jusqu'ici avec la police de la
+plateforme - une image differente sur Android, iOS, Windows et Linux pour le meme message.
+**Noto Color Emoji** (OFL 1.1) est desormais fusionne en un seul fichier COLRv1+OT-SVG
+(`maximum_color`, l'outil de `nanoemoji`, execute une fois, localement - jamais en CI) et servi
+depuis l'origine de l'app (`frontend/static/fonts/NotoColorEmoji-Canari.woff2`), en secours sur
+toutes les piles de police (`app.css`, les exports poster/calendrier/trombinoscope, les initiales
+d'avatar, le composeur) et sur le selecteur d'emoji via `--emoji-font-family` (le meme selecteur
+dont le jeu anglais vient d'etre auto-heberge par le correctif ci-dessus). Une preuve au moment du
+build (`scripts/check-emoji-coverage.mjs`, via `harfbuzzjs`) verifie que chaque emoji offert par les
+deux jeux de donnees se dessine en exactement un glyphe dans la police livree.
+
+Le PDF ne peut pas incorporer une police couleur (jsPDF n'accepte que des contours TrueType
+simples) : un noeud `data-pdf-text` contenant un emoji est desormais capture par la passe de
+rasterisation existante plutot que redessine en vectoriel par-dessus. Le detecteur d'emoji
+(`$lib/utils/emoji.ts`, base sur `Intl.Segmenter`) sert aussi au **jumbomoji** : un message d'au
+plus cinq emoji, sans media ni sondage, perd son fond de bulle et s'affiche a la plus grande taille
+du systeme de police (`text-3xl`), comme sur WhatsApp/Messenger.
+
 ### Fixed - une URL suffisait a faire disparaitre l'application, et rien ne pouvait la rattraper
 
 Le pont Android de wry conserve la derniere URL que la WebView a COMMENCE a charger et la remet a

@@ -330,6 +330,7 @@
     <emoji-picker
       use:attachEmojiPicker
       class="min-h-0 w-full flex-auto"
+      style:--emoji-font-family="'Noto Color Emoji Canari'"
       locale={getLocale() === 'en' ? 'en' : 'fr'}
       data-source={getLocale() === 'en' ? '/emoji-data-en.json' : '/emoji-data-fr.json'}
     ></emoji-picker>

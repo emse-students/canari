@@ -74,7 +74,7 @@ export function generateAvatarPlaceholder(name: string): string {
   </defs>
   <rect width="128" height="128" rx="28" fill="url(#g)" />
   <circle cx="102" cy="26" r="14" fill="rgba(255,255,255,0.18)" />
-  <text x="64" y="72" text-anchor="middle" dominant-baseline="middle" fill="white" font-family="Segoe UI, Inter, sans-serif" font-size="44" font-weight="700">${safeInitials}</text>
+  <text x="64" y="72" text-anchor="middle" dominant-baseline="middle" fill="white" font-family="Segoe UI, Inter, Noto Color Emoji Canari, sans-serif" font-size="44" font-weight="700">${safeInitials}</text>
 </svg>`;
 
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
