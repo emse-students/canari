@@ -11,6 +11,8 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+## [0.18.2] - 2026-09-15
+
 ### Fixed - "vous n'avez pas les droits" et "le serveur est casse" etaient la meme phrase
 
 Deposer un evenement sans en avoir le droit repond 403. Le garde qui le refuse leve une exception
