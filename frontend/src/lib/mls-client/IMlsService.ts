@@ -126,6 +126,21 @@ export interface MlsInitOptions {
    * Never used as a key: it is passed straight to the one-shot legacy decrypt and dropped.
    */
   legacyPin?: string;
+  /**
+   * The saved state exists but was deliberately NOT loaded into the frontend: the native side is
+   * to read `mls.bin` itself. **Tauri only**, and meaningless on the web, where the bytes and the
+   * MLS client live in the same process.
+   *
+   * IT EXISTS BECAUSE AN ABSENT `state` ALREADY MEANT SOMETHING, and what it meant was FIRST
+   * INSTALL - which fresh-starts, rotating this device's identity and dropping its history. "There
+   * is no state" and "the state is on disk, not in this argument" are two different facts, and one
+   * missing array cannot carry both; whoever omits the bytes says which one they mean.
+   *
+   * What it saves is measured: `mls.bin` was 7,8 MB on a real account and crossed the IPC bridge
+   * TWICE as a JSON array of per-byte numbers, 29 074 883 characters each way, for bytes that had
+   * been read natively three lines earlier and were going straight back.
+   */
+  stateOnDisk?: boolean;
 }
 
 /**

@@ -25,6 +25,12 @@ pub(crate) struct InitMlsOptions {
     /// supply it: the native keystore plugin has no access to the app's message catalogue, and the
     /// frontend is the only layer that knows the active locale.
     pub biometric_prompt: Option<tauri_plugin_keystore::BiometricPromptText>,
+    /// READ `mls.bin` HERE INSTEAD OF BEING HANDED IT, and the reason this flag exists rather than
+    /// being inferred: an absent `encrypted_state` already means something, and it means FIRST
+    /// INSTALL - the load below then fresh-starts, which rotates the device identity. "There is no
+    /// state" and "the state is on disk, not in this argument" are two different facts and a
+    /// missing array cannot carry both, so the caller states which one it means.
+    pub state_on_disk: Option<bool>,
 }
 
 /// Initialises the MLS manager for this session and caches its at-rest key.
@@ -40,6 +46,13 @@ pub(crate) async fn initialiser_mls(
 ) -> Result<String, String> {
     let opts = opts.unwrap_or_default();
     let legacy_pin = opts.legacy_pin;
+    // THE BLOB NEVER HAS TO CROSS THE BRIDGE - see `read_mls_state_blob` for what it cost when it
+    // did. `state_on_disk` is only honoured when the caller supplied no bytes, so a caller that
+    // does supply them (old-PIN recovery, the migration retry) keeps deciding what is loaded.
+    let encrypted_state = match (encrypted_state, opts.state_on_disk) {
+        (None, Some(true)) => crate::commands::storage::read_mls_state_blob(&app),
+        (supplied, _) => supplied,
+    };
     let manager_state = state.mls_manager.clone();
     let device_key_state = state.device_key.clone();
     let keystore = PluginDeviceKeyStore::new(app.clone())

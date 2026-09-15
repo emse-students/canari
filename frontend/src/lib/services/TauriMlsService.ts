@@ -441,7 +441,14 @@ export class TauriMlsService extends BaseMlsService {
     this.userId = userId;
     this.delivery.userId = userId;
     this._deviceKeyB64 = deviceKeyB64;
-    this.freshStart = !state;
+    // ONE PREDICATE FOR "THIS DEVICE HAS A SAVED STATE", read three times below - and it is no
+    // longer `!!state`, because since 2026-09-15 the login path deliberately leaves the 7,8 MB
+    // blob on disk rather than hauling it through the IPC bridge twice ({@link MlsInitOptions}).
+    // Every branch here that reacts to a missing state is destructive - a fresh start rotates the
+    // device identity - so all three had to learn the difference between "there is none" and
+    // "it was not passed".
+    const savedStateExists = !!state || opts?.stateOnDisk === true;
+    this.freshStart = !savedStateExists;
 
     // Per-user device ID (same rationale as WebMlsService). resolveDeviceId restores
     // from localStorage or the native push_context before generating a fresh id, and
@@ -449,7 +456,7 @@ export class TauriMlsService extends BaseMlsService {
     await this.resolveDeviceId(userId);
 
     try {
-      await this.loadStateWithKey(deviceKeyB64, state);
+      await this.loadStateWithKey(deviceKeyB64, state, opts?.stateOnDisk);
     } catch (e) {
       // If init fails AND a saved state existed, the state is to blame
       // (credential mismatch, partial corruption, invalid key…).
@@ -468,9 +475,9 @@ export class TauriMlsService extends BaseMlsService {
       // Retry once letting Rust try that envelope: on success it re-seals and persists mls.bin.
       // Must not `return` on success - the push-context write below this block still has to run.
       let migrated = false;
-      if (cause === 'undecryptable' && state && opts?.legacyPin && !isKeystoreEmpty) {
+      if (cause === 'undecryptable' && savedStateExists && opts?.legacyPin && !isKeystoreEmpty) {
         try {
-          await this.invokeInit(deviceKeyB64, state, opts.legacyPin);
+          await this.invokeInit(deviceKeyB64, state, opts.legacyPin, opts.stateOnDisk);
           migrated = true;
           console.log('[MLS] Pre-v0.11.0 mls.bin re-sealed under the device key.');
         } catch (migrationError) {
@@ -489,7 +496,7 @@ export class TauriMlsService extends BaseMlsService {
       if (migrated) {
         // State recovered in place: keep the device identity and fall through to the normal
         // post-init steps.
-      } else if ((cause === 'mismatch' || state != null) && !isKeystoreEmpty) {
+      } else if ((cause === 'mismatch' || savedStateExists) && !isKeystoreEmpty) {
         // ANYTHING BUT A MISMATCH IS WORTH PAUSING FOR, and the test is written that way round
         // deliberately. A `mismatch` decrypted fine and no PIN can repair it, so honouring
         // noFreshStart there would strand the user with nothing to try. Everything else - a state
@@ -667,8 +674,12 @@ export class TauriMlsService extends BaseMlsService {
   }
 
   /** Native decrypt + client init for a given device key/state; throws on wrong key (no fresh-start). */
-  protected async loadStateWithKey(deviceKeyB64: string, state?: Uint8Array): Promise<void> {
-    await this.invokeInit(deviceKeyB64, state);
+  protected async loadStateWithKey(
+    deviceKeyB64: string,
+    state?: Uint8Array,
+    stateOnDisk?: boolean
+  ): Promise<void> {
+    await this.invokeInit(deviceKeyB64, state, undefined, stateOnDisk);
   }
 
   /**
@@ -686,16 +697,25 @@ export class TauriMlsService extends BaseMlsService {
   private async invokeInit(
     deviceKeyB64: string,
     state?: Uint8Array,
-    legacyPin?: string
+    legacyPin?: string,
+    stateOnDisk?: boolean
   ): Promise<void> {
     this._deviceKeyB64 = deviceKeyB64;
+    // `Array.from` ON A MULTI-MEGABYTE BLOB IS THE THING TO AVOID HERE, and `stateOnDisk` is how
+    // the login path avoids it: Rust reads `mls.bin` itself and nothing is serialised. What is left
+    // is the two callers that genuinely hold bytes the native side could not have read - the
+    // pre-v0.11.0 migration retry and a probe of a candidate key - and they are one-off flows.
     const encryptedState = state ? Array.from(state) : null;
     await invoke('initialiser_mls', {
       userId: this.userId,
       deviceId: this.deviceId,
       deviceKeyB64,
       encryptedState,
-      opts: { legacyPin: legacyPin ?? null, biometricPrompt: keystoreUnlockPrompt() },
+      opts: {
+        legacyPin: legacyPin ?? null,
+        biometricPrompt: keystoreUnlockPrompt(),
+        stateOnDisk: stateOnDisk === true,
+      },
     });
   }
 

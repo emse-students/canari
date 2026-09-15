@@ -933,6 +933,36 @@ new lane per push wearing a queue as a disguise.
 The iOS NSE needs no equivalent — the extension is invoked serially by the system — but it carried
 the same `UNKNOWN`/`ABSENT` conflation and got the same tri-state.
 
+#### AND IT MUST NOT CROSS THE IPC BRIDGE, WHICH IT DID TWICE UNTIL 2026-09-15
+
+Tauri serialises a `Vec<u8>` / `number[]` as a **JSON array of per-byte numbers**. On a real account
+`mls.bin` is **8 131 838 bytes**, which is **29 074 883 characters** of JSON per crossing - and the
+login path made two: Rust read the file, handed it to the WebView through `load_mls_state`, and the
+WebView handed the same bytes back through `initialiser_mls`, to the side they had come from.
+
+Measured on a Pixel 6a with `bun tools/cold-start/launch-trace.mjs --heartbeat`
+([tools/cold-start](../../../tools/cold-start/README.md)): **908 ms of main thread warm, and a single
+2 731 ms block on a cold launch**.
+The fingerprint prompt is raised by an `invoke`, so it sat in the queue behind that block and
+appeared **51 ms after it ended** - the prompt looked slow and was not. A 50 ms main-thread
+heartbeat found this; the resource timeline could not, because the work issues no request.
+
+The login path now sends a flag instead of bytes (`InitMlsOptions::state_on_disk`) and the native
+side opens the file it already owns. **The flag exists because an absent array already meant
+something**: FIRST INSTALL, which fresh-starts - rotating the device identity and resetting the
+send-ratchet ledger. "There is no state" and "the state is on disk, not in this argument" are two
+facts and one missing value cannot carry both. Two callers still pass real bytes, and correctly: the
+pre-v0.11.0 Argon2id migration retry and `recoverAndRekey`'s probe of a candidate key, neither of
+which is bytes the native side could have read for itself.
+
+The same shape, smaller: asking **whether** a state exists by loading it. `mls_state_size` answers
+with one `metadata()` syscall, and zero means absent - the rule the bytes already obeyed, since a
+state written short by an interrupted flush is damage, not history.
+
+The web has no bridge to cross: the bytes go from IndexedDB to WASM in one process, so
+`hasMlsState` still loads them there. That split is not a fallback, it is the same question asked
+the way each store can answer it.
+
 ### FCM message cache
 
 Both platforms write decrypted message previews to `fcm_message_cache.ndjson` after a successful decrypt:

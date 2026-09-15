@@ -288,6 +288,49 @@ export async function saveMlsState(userId: string, bytes: Uint8Array): Promise<v
 const stateOrAbsent = (bytes: Uint8Array | null | undefined): Uint8Array | null =>
   bytes && bytes.length > 0 ? bytes : null;
 
+/**
+ * The size of the natively stored MLS state, 0 when there is none - **Tauri only**.
+ *
+ * WHY A SIZE AND NOT THE BYTES. `mls.bin` is megabytes (7,8 MB measured on a real account) and it
+ * crosses the Tauri bridge as a JSON array of per-byte numbers. Asking "is there a state" by
+ * loading it cost 908 ms of main thread warm and blocked a cold launch for 2 731 ms, which the
+ * fingerprint prompt waited out. One `metadata()` syscall answers the same question.
+ *
+ * ZERO IS ABSENT, the same rule {@link stateOrAbsent} applies to the bytes and for the same reason:
+ * a state written short by an interrupted flush is damage, not history, and must not arm
+ * `noFreshStart` against the device it belongs to.
+ *
+ * Throws nothing: an unreadable answer is reported as 0 by the command, which is the same verdict
+ * as a first install - the only safe one, since the alternative is refusing a login on a stat.
+ */
+export async function mlsStateSize(): Promise<number> {
+  if (!isTauriRuntime()) return 0;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return (await invoke<number>('mls_state_size')) ?? 0;
+  } catch (e) {
+    console.warn('[MLS] mls_state_size failed:', e);
+    return 0;
+  }
+}
+
+/**
+ * Whether this device holds a saved MLS state - the BOOLEAN question, on both runtimes.
+ *
+ * Two call sites only ever tested the result of {@link loadMlsState} for truthiness, and on Tauri
+ * that answer cost the whole blob across the bridge ({@link mlsStateSize}). Neither is on the
+ * launch path, which is why they are not the reason that command exists - but a megabyte-scale
+ * read to decide whether to show a link is the same defect, found twice.
+ *
+ * On the web the bytes ARE the cheap answer: IndexedDB hands them over in-process, and there is no
+ * size-only query for a record. So the split is not a fallback, it is the same question asked the
+ * way each store can answer it.
+ */
+export async function hasMlsState(userId: string): Promise<boolean> {
+  if (isTauriRuntime()) return (await mlsStateSize()) > 0;
+  return !!(await loadMlsState(userId));
+}
+
 export async function loadMlsState(userId: string): Promise<Uint8Array | null> {
   if (isTauriRuntime()) {
     try {

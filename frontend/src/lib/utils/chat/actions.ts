@@ -1,5 +1,5 @@
 import { exportBackup, importBackup } from '$lib/backup';
-import { fromHex, saveMlsState, loadMlsState, exportMlsStateAsHex } from '$lib/utils/hex';
+import { fromHex, saveMlsState, hasMlsState, exportMlsStateAsHex } from '$lib/utils/hex';
 import type { IStorage } from '$lib/db';
 import type { IMlsService } from '$lib/mlsService';
 import type { Conversation } from '$lib/types';
@@ -625,7 +625,7 @@ export async function importUserBackup(params: {
   );
 
   if (isSameDevice) {
-    const existingMlsState = await loadMlsState(userId);
+    const existingMlsState = await hasMlsState(userId);
     if (backup.mlsState && !existingMlsState) {
       await saveMlsState(userId, fromHex(backup.mlsState));
       log('MLS state restored (same device).');

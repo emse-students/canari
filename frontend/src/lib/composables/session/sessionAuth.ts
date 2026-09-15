@@ -466,20 +466,33 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       cb.log('Verifying PIN...');
     }
 
-    // Start MLS state load immediately - pure I/O, doesn't need the token.
-    const { loadMlsState } = await import('$lib/utils/hex');
-    // loadMlsState already picks the backend for the runtime: `load_mls_state` (mls.bin) under
-    // Tauri, IndexedDB on the web. So the source is decided by the runtime, not by which call
-    // answered - the log used to report "IndexedDB" on a mobile launch that had just read mls.bin,
-    // which is a misleading thing to hand someone reading a log to debug local storage. The
-    // Tauri-only retry that used to sit here invoked the very same command loadMlsState had just
-    // failed on, and could not answer where that one had not.
+    // Start the MLS state lookup immediately - pure I/O, doesn't need the token.
+    //
+    // UNDER TAURI THIS ASKS FOR THE SIZE AND NOT THE BYTES, and that is the whole of a defect
+    // measured on a Pixel 6a on 2026-09-15. `mls.bin` is 7,8 MB on a real account; it was read by
+    // Rust, serialised to the WebView as a JSON array of per-byte numbers (29 074 883 characters),
+    // turned back into an array by `invokeInit` and serialised AGAIN on the way back to Rust, which
+    // is where it had started. 908 ms of main thread warm - and on a cold launch a single 2 731 ms
+    // block, during which the `invoke` that raises the fingerprint prompt sat in the queue behind
+    // it. The prompt appeared 51 ms after the block ended. The native side reads the file itself
+    // now (`stateOnDisk` below); the frontend only has to know THAT there is a state, which is one
+    // `metadata()` syscall and a number.
+    //
+    // The web has no such bridge - the bytes come from IndexedDB and go to WASM in the same
+    // process - so it still loads them, and the source is decided by the runtime rather than by
+    // which call answered. The log used to report "IndexedDB" on a mobile launch that had just read
+    // mls.bin, which is a misleading thing to hand someone debugging local storage.
+    const { loadMlsState, mlsStateSize } = await import('$lib/utils/hex');
     const mlsStatePromise = (async (): Promise<
-      { bytes: Uint8Array; source: 'native' | 'indexeddb' } | undefined
+      { bytes?: Uint8Array; source: 'native' | 'indexeddb' } | undefined
     > => {
+      if (isTauriRuntime()) {
+        const size = await mlsStateSize();
+        return size > 0 ? { source: 'native' } : undefined;
+      }
       const loaded = await loadMlsState(ctx.getUserId());
       if (!loaded) return undefined;
-      return { bytes: loaded, source: isTauriRuntime() ? 'native' : 'indexeddb' };
+      return { bytes: loaded, source: 'indexeddb' };
     })();
 
     let accessToken: string;
@@ -527,7 +540,9 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     if (mlsStateResult) {
       cb.log(
         mlsStateResult.source === 'native'
-          ? 'MLS state loaded from mls.bin (native).'
+          ? // NOT "loaded", AND THE WORD MATTERS TO WHOEVER READS THIS LINE NEXT: on Tauri the
+            // frontend only learns that mls.bin is there, and the native side opens it.
+            'MLS state present on disk (mls.bin); the native side reads it.'
           : 'MLS state loaded from IndexedDB.'
       );
     }
@@ -625,7 +640,12 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     // retrieve_device_key (single BiometricPrompt).
     const [mlsInitSettled, storageSettled] = await Promise.allSettled([
       mlsService.init(ctx.getUserId(), deviceKeyB64, mlsStateResult?.bytes, {
-        noFreshStart: !!mlsStateResult?.bytes,
+        // `!!bytes` WOULD NOW BE WRONG ON MOBILE: the bytes were deliberately not loaded, and a
+        // saved state read as absent is a FRESH START, which rotates the device identity. The
+        // question is whether a state exists, and `mlsStateResult` is what answers it.
+        noFreshStart: !!mlsStateResult,
+        // Says which of the two things an absent `state` means here - see the lookup above.
+        stateOnDisk: mlsStateResult?.source === 'native',
         // Only the PIN paths can carry it, and only a snapshot older than the v0.11.0 envelope
         // change needs it: init re-seals such a snapshot instead of reporting a PIN rotation.
         legacyPin: !isBiometric && !isVaultLogin ? pin : undefined,
