@@ -223,6 +223,13 @@ rows in the group panel while the flow runs (`pendingGroupInvites` in `useConver
 8. Peer: `registerMember(groupId, userId)` + `updateInvitationStatus(..., 'active')`
 9. Peer: `saveState(pin)` -> persisted to IndexedDB
 
+**The peer is not the only caller of step 8, and the other one claims less.** If the peer never
+reports - added while offline, or its Welcome still queued - the `pending` row outlives the Add, and
+every member re-derives "already in tree" on every sync for ever. Since 2026-09-15 a member that
+reads the leaf in its OWN tree vouches for it instead of only skipping, which retires the row. A
+vouch proves the Add, never a decryption date, so it does NOT replay the pending window - see
+[chat-delivery](../services/chat-delivery.md#a-fulfilled-invitation-is-retired-by-whoever-can-prove-it-and-a-vouch-does-not-replay).
+
 ### Sending a message
 
 1. `sendChatMessage()` in `messaging.ts`

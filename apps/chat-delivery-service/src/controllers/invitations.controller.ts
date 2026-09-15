@@ -409,7 +409,13 @@ export class InvitationsController {
 
   /**
    * Update the status of a device-group membership.
-   * Valid states: `pending` (Welcome not yet processed) or `active` (Welcome received and in sync).
+   * Valid states: `pending` (an Add is owed to this device) or `active` (the Add is done).
+   *
+   * TWO CALLERS MAKE DIFFERENT CLAIMS THROUGH THE SAME WORD, and the difference decides one thing
+   * below. A device reporting on ITSELF says it processed its Welcome and can decrypt from now on.
+   * A group member VOUCHING for another user'''s device says only that it read the shared MLS tree
+   * and the leaf is there. Both are enough to retire the invitation - which is the whole question
+   * the column answers - and only the first fixes a moment, so only the first replays (DF2).
    */
   @UseGuards(HeaderAuthGuard)
   @Post('mls/invitations/status')
@@ -437,7 +443,8 @@ export class InvitationsController {
     // confirming a fulfilled invitation adds no new authority; it only stops
     // getPendingInvitations from re-serving a device provably already in the tree every sync.
     const caller = headerUserId ? sanitizeQueryValue(headerUserId, 'x-user-id') : undefined;
-    if (headerGlobalAdmin !== 'true' && caller && caller !== safeUserId) {
+    const isSelfReport = caller === safeUserId;
+    if (headerGlobalAdmin !== 'true' && caller && !isSelfReport) {
       await this.assertCallerIsGroupMember(caller, safeGroupId, headerGlobalAdmin);
     }
 
@@ -458,12 +465,23 @@ export class InvitationsController {
     //
     // A refusal still throws HERE, because this caller has a user to tell - that is the whole
     // reason the shared method returns its reason instead of throwing it.
+    //
+    // AND A VOUCH DOES NOT REPLAY, BECAUSE IT CANNOT SAY WHEN THE DEVICE COULD DECRYPT.
+    // `redeliverMissed` (DF2) replays everything sent since the row was created, and it is right
+    // to, for a SELF-report: the device saying `active` is saying it has processed its Welcome, so
+    // the window it missed is a window it can now open. A member VOUCHING for someone else's
+    // device says something strictly weaker - that the Add is done and its leaf is in the tree.
+    // That proves no Welcome was processed and fixes no moment, and these rows are old: on
+    // 2026-09-15 production held pending rows up to 13 days deep. Replaying those at a device that
+    // has not opened the group yet is up to 50 undecryptable frames and as many generic pushes -
+    // the exact hazard the flag was added for. It stays pending-window work for the one caller
+    // whose claim carries a decryption date, and the device's own Welcome path is that caller.
     if (body.status === 'active') {
       const outcome = await this.messagingService.activateDeviceMembership(
         safeUserId,
         safeDeviceId,
         safeGroupId,
-        { tag: 'INVITATION_STATUS' }
+        { tag: 'INVITATION_STATUS', redeliverMissed: isSelfReport }
       );
       if (!outcome.ok) {
         throw new BadRequestException(`Device is not addressable: ${outcome.reason}`);

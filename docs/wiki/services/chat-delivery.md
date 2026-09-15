@@ -707,6 +707,43 @@ before the purge erases the evidence that would explain them. `app.controller.st
 pins the partition, the threshold boundary and the shape of the WARN; as with `reportQueueDepth`, a
 mocked repository never parses SQL, so the builder's output is verified only by the deploy log.
 
+### A fulfilled invitation is retired by whoever can PROVE it, and a vouch does not replay
+
+`getPendingInvitations` serves every `pending` row in the caller's groups, and the caller's first
+question about each is whether the Add is already done. It answers that from its own MLS tree
+(`leafIsInLocalTree`, in `frontend/src/lib/utils/chat/actions.ts`), because the routing table
+answers a different question and a fresh-started device clears its routing rows while its leaf sits
+in the ratchet tree.
+
+**Until 2026-09-15 that answer was thrown away.** A leaf found in the tree was skipped - correctly,
+since re-Adding it inflates the epoch, invalidates the queued Welcome and starts a kick/re-add
+churn - and the `pending` row was left exactly as found. So every member of the group re-derived
+the same answer on every sync, for ever. Production on 2026-09-15 held **104 pending rows across 47
+groups and 55 devices, 98 of them older than a day and 19 of them thirteen days old**, and one
+client's startup trace spent 25 of its 31 invitations printing `already in tree - skip`.
+
+The endpoint that retires a row had authorised this since it was written - *"any active member of
+the group vouches that another user's device is already in the shared MLS tree ... it only stops
+`getPendingInvitations` from re-serving a device provably already in the tree every sync"* - and no
+caller was ever written for it. The authority argument holds precisely: the same local tree read is
+**already** trusted for the more dangerous decision, which is not to Add. Vouching risks nothing
+the skip does not. It is best-effort and re-driven; a refusal leaves the row pending and the next
+sync says it again, which is what every sync did before.
+
+**But the two callers of `status: 'active'` are not making the same claim, and one line depends on
+the difference.** A device reporting on ITSELF has processed its Welcome: it is stating a moment
+from which it can decrypt, and `redeliverMissed` (DF2) replays the pending window so it gets the
+notifications missed while it was `pending` - a window it can now open. A member VOUCHING says only
+that the leaf is in the tree. That retires the invitation, which is the whole question the column
+answers, but it fixes no moment and proves no Welcome was processed. Replaying thirteen days at a
+device that may not have opened the group yet is up to 50 undecryptable frames and as many generic
+pushes - the exact hazard `redeliverMissed: false` was added for.
+
+So `updateInvitationStatus` passes `redeliverMissed: isSelfReport`, taking the discriminator from
+the authorization branch that already had to compute it rather than re-deriving it one layer down.
+`invitations.controller.vouch.spec.ts` pins all four answers, the global admin included: an admin is
+not the device either.
+
 ### A revoked device id does not come back for ten years
 
 `DELETE /mls/devices/:userId/:deviceId` purges the device footprint **and** writes a

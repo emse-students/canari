@@ -259,6 +259,77 @@ describe('processPendingInvitations - leaf already in tree', () => {
     expect(mlsService.sendWelcome).toHaveBeenCalled();
     expect(mlsService.removeMemberDevice).not.toHaveBeenCalled();
   });
+
+  // THE ROW IS RETIRED, NOT MERELY SKIPPED. Skipping answered this one sync and left the server's
+  // `pending` row untouched, so every member of the group re-derived the same answer on every sync
+  // for ever. Production held 104 such rows across 47 groups on 2026-09-15, 98 of them older than
+  // a day.
+  it('vouches for a leaf it found in the tree, so the invitation stops coming back', async () => {
+    const mlsService = makeMls({
+      getPendingInvitations: vi
+        .fn()
+        .mockResolvedValue([
+          { id: 'i1', userId: 'peer', deviceId: 'peer-dev', groupId: 'g1', status: 'pending' },
+        ]),
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['peer:peer-dev']),
+      fetchUserDevices: vi
+        .fn()
+        .mockResolvedValue([{ deviceId: 'peer-dev', keyPackage: new Uint8Array([1]) }]),
+    });
+
+    await processPendingInvitations({
+      mlsService,
+      storage: null,
+      userId: 'self',
+      deviceKeyB64: 'pin',
+      conversations: new Map<string, Conversation>([['g1', readyConversation('g1')]]),
+      requestReAdd: () => Promise.resolve(),
+      log: vi.fn(),
+    });
+
+    expect(mlsService.updateInvitationStatus).toHaveBeenCalledWith(
+      'peer-dev',
+      'peer',
+      'g1',
+      'active'
+    );
+    // And still no Add: retiring the row is the ONLY thing that changes here.
+    expect(mlsService.addMember).not.toHaveBeenCalled();
+  });
+
+  // Best-effort, and it has to be: the vouch is a network call inside a sweep that must finish. A
+  // failure leaves the row pending and the next sync says this again, which is what today does.
+  it('a vouch the server refuses neither throws nor stops the sweep', async () => {
+    const mlsService = makeMls({
+      getPendingInvitations: vi.fn().mockResolvedValue([
+        { id: 'i1', userId: 'peer', deviceId: 'dev-a', groupId: 'g1', status: 'pending' },
+        { id: 'i2', userId: 'peer', deviceId: 'dev-b', groupId: 'g1', status: 'pending' },
+      ]),
+      getGroupMemberIdentities: vi.fn().mockResolvedValue(['peer:dev-a', 'peer:dev-b']),
+      fetchUserDevices: vi.fn().mockResolvedValue([
+        { deviceId: 'dev-a', keyPackage: new Uint8Array([1]) },
+        { deviceId: 'dev-b', keyPackage: new Uint8Array([2]) },
+      ]),
+      updateInvitationStatus: vi.fn().mockRejectedValue(new Error('403')),
+    });
+    const log = vi.fn();
+
+    await expect(
+      processPendingInvitations({
+        mlsService,
+        storage: null,
+        userId: 'self',
+        deviceKeyB64: 'pin',
+        conversations: new Map<string, Conversation>([['g1', readyConversation('g1')]]),
+        requestReAdd: () => Promise.resolve(),
+        log,
+      })
+    ).resolves.toBeUndefined();
+
+    // Both were attempted: the first refusal did not abandon the second invitation.
+    expect(mlsService.updateInvitationStatus).toHaveBeenCalledTimes(2);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('the vouch failed'));
+  });
 });
 
 describe('processPendingInvitations - staged Add commit outcomes', () => {
