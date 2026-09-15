@@ -44,6 +44,25 @@ crossing the Tauri bridge twice as a JSON array of per-byte numbers - the accoun
   happened _before_ the attach - so the network half survives a late attach and the console half
   does not.
 
+## The precondition, which is not ambient
+
+**A signed-in handset with an enrolled fingerprint.** The number is launch -> _prompt_, and a
+client with no session to unlock never raises one - so the run fails rather than reporting a fast
+launch.
+
+`coldstart.mjs` now says WHICH precondition failed instead of leaving it to the reader, because on
+2026-09-15 `no bracket - START=true PROMPT=false` cost six manual `adb` commands to resolve into
+"the phone is signed out". It reads the discriminator out of the logcat dump it already holds: the
+process being gone means a CRASH; no `canAuthenticate` at all means the app never reached the
+unlock decision; a `PreAuthInfo AuthenticatorStatus` other than `1` means the system server would
+have refused the prompt (the code is printed, not translated - only `1` has been observed against a
+handset known to be enrolled); and `canAuthenticate` answering OK while the app still declines to
+prompt means **there is no session**, which is what a refused refresh credential looks like from
+here (`PIN prompt declined - refresh credential already proven dead`).
+
+None of those improves by being re-measured, so the tool stops at the first one instead of spending
+23 s a run to repeat itself, and leaves the app RUNNING in the state that failed.
+
 ## What the numbers mean
 
 **The prompt is never answered.** The app is force-stopped between runs, so every run is genuinely
