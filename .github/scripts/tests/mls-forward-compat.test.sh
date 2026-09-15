@@ -37,10 +37,13 @@ bad()  { printf '  FAIL %s\n' "$1"; failures=$((failures + 1)); }
 # -------------------------------------------------------------------------------------------------
 echo "the gate is a job that can fail the build:"
 
-if [ -x "$gate" ]; then
-  ok "the gate script exists and is executable"
+# EXISTS, not executable. Every script in this directory is invoked as `bash <path>` and most are
+# recorded 100644 - `executable-bit.test.mjs` demands the bit only of the ones called as `./x`, and
+# requiring it here failed CI on a checkout that had simply honoured the tree's own convention.
+if [ -f "$gate" ]; then
+  ok "the gate script is in the tree"
 else
-  bad "missing or non-executable: $gate"
+  bad "missing: $gate"
 fi
 
 if grep -q 'bash .github/scripts/mls-forward-compat.sh' "$ci"; then

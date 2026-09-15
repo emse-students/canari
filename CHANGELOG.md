@@ -11,6 +11,26 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - "on teste tout" ne testait pas tout, et deux suites sautaient en silence
+
+Quand une pull request modifie `ci.yml` lui-meme, la detection de changements appelle `run_all`
+et tout doit s'executer - c'est le seul cas ou ce chemin existe, et ce sont precisement les
+pull requests capables de CASSER le fichier. **`run_all` n'ecrivait que cinq des sept sorties**
+que le job declare : `android` et `mls_compat` etaient absents, donc la suite Android et le garde
+de compatibilite MLS SAUTAIENT, et `CI passed` passait au vert pour la raison qu'ils n'avaient
+pas tourne. Mesure sur le run `34954686538`, ou les deux apparaissent `skipped` sur une PR qui
+touche `ci.yml`.
+
+C'est la forme exacte que le commentaire d'a cote decrit deja, et que #521 avait deja payee une
+fois - un job `boot-nest-apps` REPARE qui fusionne alors qu'il est saute. Elle est revenue parce
+que les deux listes sont tenues a la main, cote a cote, sans rien pour les comparer : on ajoute
+une sortie au bloc `outputs:` et on n'en parle pas a `run_all`.
+
+`changes-outputs.test.mjs` **derive** donc l'attente de l'arbre : chaque sortie declaree par le
+job doit etre ecrite par `run_all`, et une sortie ecrite que personne ne transmet echoue aussi
+(c'est presque toujours une faute de frappe). Falsifie en retirant la ligne `android` - la forme
+meme du defaut - ce qui fait rougir exactement cette assertion.
+
 ### Changed - la pile MLS passe a openmls 0.9.0, et le plafond qui la refusait est retire
 
 Quatre mises a jour Dependabot (`openmls`, `openmls_rust_crypto`, `openmls_traits`,
