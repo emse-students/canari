@@ -668,17 +668,26 @@ revocation probe alongside the work that precedes the prompt means exactly that 
 that would need a heal is a defect whatever it does in practice. **Delete the overlap first** - make
 the latch describe a login in flight - **or leave the round trip serial.**
 
-*The launch noise is now NAMED, and five sevenths of it is one route.* A cold start printed five
-`404` and two `415` console lines that nothing explained. The instrument could not place them: a
-browser-issued line arrives on `Log.entryAdded`, which carries its timestamp on the ENTRY and not on
-the params, so `launch-trace.mjs` printed every one of them at epoch zero. With that fixed, the
-`404`s sit at **+1.1 to +1.3 s in a single burst of five**, and
-`performance.getEntriesByType('resource')` names them: `GET /api/users/<id>/avatar` for five
-accounts that have no avatar. `Avatar.svelte:38` builds that URL from the user id alone and mounts
-an `<img>` on it, so a member with no picture costs one request and one console error per mount, for
-ever. **Nothing in the user payload says whether an avatar exists**, which is why the component
-cannot ask; the fix is on the side that knows - either the field, or an answer that is not an error.
-Not yet opened as a work package: it is a request per avatarless member, not a blocker.
+*The launch noise is now NAMED, and five sevenths of it is DISPOSITIONED ALREADY - do not "fix" it.*
+A cold start printed five `404` and two `415` console lines that nothing explained. The instrument
+could not place them: a browser-issued line arrives on `Log.entryAdded`, which carries its timestamp
+on the ENTRY and not on the params, so `launch-trace.mjs` printed every one of them at epoch zero.
+With that fixed they sit in one burst at **+1.1 to +1.3 s**, and
+`performance.getEntriesByType('resource')` names them: `GET /api/users/<id>/avatar` for members who
+have no photo.
+
+**That 404 is the considered answer, and the endpoint's docblock already says why**
+(`users.controller.ts:113`): `absent` is a real answer about the user and is cached
+(`max-age=600`), where `unavailable` is a 502 marked `no-store` - answering 404 for an outage would
+be a lie that gets cached, which is the defect this endpoint was already fixed of. Every response is
+bodyless for the same reason: a JSON error body on a request an `<img>` made cost THREE console
+lines per miss (`404`, `ERR_BLOCKED_BY_ORB`, `ERR_ABORTED`).
+
+And the cache is HONOURED, measured rather than assumed: on a cold start every avatar entry -
+the 404 included - reports `transferSize: 0` and 16-26 ms of duration, so the line costs no network
+at all. Nor could the client skip the ask: whether a member has a photo is a fact only the upstream
+directory holds, so a `hasAvatar` field in the user payload would need the same call it was meant to
+save. **The line is expected AND necessary, and the NOISE rule is met by this explanation.**
 
 **The two `415`s are NOT page-issued and are still unexplained.** Across three cold starts they
 appear in the console at ~+5.2 s and ~+5.9 s and in the resource timeline NOT AT ALL - not with a
