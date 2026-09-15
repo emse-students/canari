@@ -2825,6 +2825,14 @@ rows with the invitation question in
 [Communities and permissions](#communities-and-permissions): a notification that never arrives and a
 notification that arrives undecryptable are different failures, and only the logcat separates them.
 
+## MLS state, device healing and delivery - the defects the campaign measured
+
+These thirty-odd entries sat under a heading that named a superseded 2026-09-05 notification account,
+which is why the file read as unstructured: the heading described one investigation and the entries
+below it describe everything the cross-client campaign has found since 2026-08-26. Each is
+independent and carries its own measurement. Order inside this section is chronological rather than
+by severity - the queue in `CLAUDE.md` carries the priority.
+
 ### P2 - a history repair still costs THREE MINUTES on a large mailbox; only the LOSS half of it was fixed (measured on the local estate 2026-09-05)
 
 **The loss is fixed and what is left is a duration.** HEAL-REVOKE-7 `--order last`, on the build
