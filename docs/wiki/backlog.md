@@ -708,6 +708,45 @@ entries** and a cold start fills it, so anything after ~+4.5 s is dropped unless
 did not itself issue may never appear there at all.
 
 ---
+### P3 - THE PRE-RELEASE CHANNEL IS THE ENVIRONMENT SELECTOR, SO THE BUILD CARRYING A FIX CANNOT MEASURE IT (found 2026-09-15)
+
+An APK embeds its frontend and its backend URL, so freezing the environment into the artifact is
+correct and normal. What is not free is the COUPLING: `-alpha.N` means the Play `internal` track AND
+`dev.canari-emse.fr`, one decision doing two jobs. It cost a measurement outright on 2026-09-15.
+
+`v0.18.3-alpha.1` was cut to measure the cold-start fix on the Pixel 6a, which is the only device
+holding an `mls.bin` of production size (8 131 838 bytes - the whole reason the block was 2 731 ms).
+The alpha installed over the production app, keeping its data, and then **could not be measured at
+all**: `coldstart.mjs` reported `START=true PROMPT=false`. The instrument brackets `am start` against
+`BiometricService/handleAuthenticate`, and **that prompt only exists for a session already
+established** - on dev this account has none, so the app stops at the login screen and the bracket
+has no second end. The build carrying the fix is structurally unable to reproduce the condition the
+fix was written for.
+
+Three costs, two of them paid that day:
+
+- **A pre-release cannot be tested or measured against production data**, which is where every
+  device-verification row that depends on real state lives.
+- **Installing an alpha takes the tester's production app away** for the duration - there is one
+  package id, so the two cannot coexist.
+- **The artefact that ships to production is not the artefact that was tested.** Gate 4 reads "dev
+  has already served it", and what it actually asserts is that the same COMMIT served dev, never the
+  same BINARY: the stable is built again with a different backend URL frozen in.
+
+**The shape that fixes all three is a second package id** (`fr.emse.canari.dev` beside
+`fr.emse.canari`), installable side by side - the classic answer, and the one that would have let the
+2026-09-15 measurement run on the production app without touching it. It costs a second Play listing,
+a second FCM app entry and a signing config. **Not decided here**: the trade is the user's, and the
+alternative (a runtime switch) is a foot-gun in a production build unless it is gated to a debug
+artefact, which reintroduces the two artefacts it was meant to avoid.
+
+Until then, the standing consequence is worth stating plainly, because it will waste a session
+again: **anything that must be measured against PRODUCTION state can only be measured on a STABLE**,
+and the versionCode band is what brings a tester back (rank 99 for a stable, so `0.18.3` = 1800399
+outranks `0.18.3-alpha.1` = 1800301 and Play restores it as an ordinary update, data intact). Opting
+out of the tester programme instead forces an uninstall, which wipes the very state being measured.
+
+---
 ### P3 - `cleanup.mjs` sweeps groups but not the delivery queue, and 13 275 rows have accumulated (measured 2026-09-08)
 
 ```
