@@ -1693,11 +1693,27 @@ fixed 0.5.0 is ESM-only where `query-string@7` is CommonJS, so an override would
 instead of at audit. The reachability argument and the assertion that keeps it honest are in
 `.github/workflows/code-analysis.yml`, which is the only copy.
 
-**What retires this row:** minio publishing a release that drops `query-string@7` - or
-`query-string` itself depending on a `decode-uri-component` above 0.4.2. Either makes the ignore
-unnecessary, and it should be deleted the same day, along with the premise assertion beside it.
-Until then the assertion is what stops the suppression outliving its reason: CI fails if minio ever
-parses a query string, or if the `stringify` call site the measurement was taken on disappears.
+`GHSA-528h-pc64-c93x` (moderate, denial of service) is the SECOND, added 2026-09-03 when it turned
+every pull request red. It covers every `stream-json` at or below 3.4.0 - its `pick`/`ignore`/
+`filter`/`replace` filters are O(depth^2) on nested input - and arrives as `minio > stream-json`.
+Again nothing in the chain can move: minio 8.0.7 requires `stream-json: ^1.8.0` and the fix is
+3.5.0, two majors outside it. It is unreachable twice over: minio imports exactly one thing from the
+package (`stream-json/jsonl/Parser.js`, in its bucket-notification module) and NONE of the four
+filters the advisory is about, and this service never calls that API at all - its whole use of the
+client is `bucketExists`, `fPutObject`, `getObject`, `makeBucket`, `putObject`, `removeObject`.
+
+**What retires this row:** minio publishing a release that moves either pin - dropping
+`query-string@7`, or requiring a `stream-json` at or above 3.5.0 - or `query-string` itself
+depending on a `decode-uri-component` above 0.4.2. Any of those makes an ignore unnecessary, and it
+should be deleted the same day, along with the premise assertion beside it. Until then the
+assertions are what stop the suppressions outliving their reason: CI fails if minio ever parses a
+query string, if the `stringify` call site the measurement was taken on disappears, if minio starts
+importing a stream-json FILTER, or if this service starts calling the notification API.
+
+**UPSTREAM RE-CHECKED 2026-09-15 AND NOTHING HAS MOVED**: `minio` is still 8.0.7, published
+2026-02-27, with `query-string: ^7.1.3` and `stream-json: ^1.8.0` unchanged. Both suppressions are
+still correctly refused. Record the date of the next such check here rather than re-deriving it -
+the registry answers in one request and the answer is the whole of this row.
 
 ---
 
