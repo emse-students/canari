@@ -7,7 +7,12 @@ import {
 import { decodeAppMessage } from '$lib/proto/codec';
 import { appMsgToEnvelope, normalizeMessageId } from '$lib/utils/chat/messageUtils';
 import { applyReaction } from '$lib/utils/chat/messageReactions';
-import { requestReAdd, cancelReAdd, resetReAddCooldowns } from '$lib/utils/chat/recovery';
+import {
+  requestReAdd,
+  cancelReAdd,
+  reAddIsInFlight,
+  resetReAddCooldowns,
+} from '$lib/utils/chat/recovery';
 import {
   markEpochGap,
   clearEpochGap,
@@ -35,6 +40,7 @@ import {
   membershipIsDurablyLost,
   readLocalMembership,
   retireIfEvicted,
+  retractEvictionNotice,
 } from '$lib/utils/chat/eviction';
 import { dropGroupState } from '$lib/utils/chat/dropGroupState';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
@@ -301,6 +307,15 @@ async function handleWelcome({
     log(
       `[WELCOME] ${terminalId.slice(0, 8)}… held but EVICTED - this Welcome is a re-admission, not a redelivery`
     );
+    // THE FRAME IN HAND IS THE PROOF THE NOTICE IS FALSE, so it is withdrawn here and nowhere else.
+    // A real eviction correctly recorded, followed by the same member adding us back, leaves a
+    // permanent "you were removed from this group" in the thread that the user cannot dismiss.
+    await retractEvictionNotice({
+      conversations: deps.conversations,
+      groupId: terminalId,
+      storage: deps.storage,
+      log,
+    });
   }
   if (heldLocally && !readmittedAfterEviction) {
     cancelReAdd(terminalId);
@@ -797,6 +812,7 @@ async function handleKnownGroup({
         conversations,
         groupId,
         evidence: 'remove-commit',
+        reAddInFlight: reAddIsInFlight(groupId),
         saveConversation,
         addMessageToChat,
         log,
@@ -944,6 +960,7 @@ async function handleKnownGroup({
         conversations,
         groupId,
         evidence: 'inbound-frame',
+        reAddInFlight: reAddIsInFlight(groupId),
         saveConversation,
         addMessageToChat,
         log,

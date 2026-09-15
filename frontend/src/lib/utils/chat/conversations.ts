@@ -222,6 +222,40 @@ export async function retireConversation(params: {
 }
 
 /**
+ * Records that this device holds no usable MLS state for the group and is WAITING to be let back
+ * in - the disposition for a removal this device itself asked for.
+ *
+ * `pending` is not a new state invented here: it is what `normalizeConversationLifecycle` already
+ * calls the safest reading of a row it cannot classify, "triggers a recovery, never a purge nor a
+ * send", and what `decideAbsentGroupFate` already treats as a placeholder rather than as an
+ * exclusion. A device between the Remove half and the Add half of its own re-admission is exactly
+ * that, and it is the one thing `removed` must not be used for.
+ *
+ * WHY NOT SIMPLY LEAVE THE ROW `active`. Two readers would then be wrong instead of one. `active`
+ * says the local group is usable and it is not - the Remove has merged - and `removed` says the
+ * membership is over and it is not either. It is also what unblocks the retry: `requestReAdd`
+ * returns early on `lifecycle === 'removed'`, so writing that during a re-admission stranded the
+ * group for good if the Welcome never arrived - the repair could not be asked for a second time.
+ *
+ * A row already `removed` is left alone. That is a real exclusion this device recorded from a
+ * different, authoritative path, and a re-add in flight is not evidence against it.
+ *
+ * @returns whether anything changed
+ */
+export async function markAwaitingReAdmission(params: {
+  conversations: Map<string, Conversation>;
+  key: string;
+  saveConversation?: (key: string) => Promise<void>;
+}): Promise<boolean> {
+  const { conversations, key, saveConversation } = params;
+  const convo = conversations.get(key);
+  if (!convo || convo.lifecycle !== 'active') return false;
+  conversations.set(key, { ...convo, lifecycle: 'pending' });
+  await saveConversation?.(key).catch(() => {});
+  return true;
+}
+
+/**
  * Removes a conversation OUTRIGHT - the row and everything keyed by its group.
  *
  * The other way a conversation can end, and the reason this exists beside {@link retireConversation}

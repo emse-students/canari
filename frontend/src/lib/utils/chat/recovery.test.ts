@@ -12,6 +12,7 @@ import {
   recoverRosterDisagreement,
   resetReAddCooldowns,
   isReAddDue,
+  reAddIsInFlight,
 } from './recovery';
 import { NotAGroupMemberError } from '$lib/mls-client/mlsDeliveryApi';
 import { saveMlsState } from '$lib/utils/hex';
@@ -1138,5 +1139,51 @@ describe('a peer coming back online discharges the proof that nobody could repai
     // end waiting for a state change nothing on this device can cause.
     expect(body).toContain('retryDeferredReconciliations(');
     expect(body).toContain('forgetProvenDeadEnds(');
+  });
+});
+
+/**
+ * THE ENTRY'S EXISTENCE, NOT ITS AGE.
+ *
+ * `lastReAddAt` answers two questions that must not be confused. `isReAddDue` reads its AGE - how
+ * often may this device ask - and that is a rate limit, which is a clock. `reAddIsInFlight` reads
+ * whether there is an entry at all: written when this device commits to an attempt, deleted the
+ * moment a Welcome or an external join lands. A clock cannot say whether the Remove commit in hand
+ * is the first half of our own re-admission, and that decision must not be taken by one.
+ */
+describe('reAddIsInFlight - the fact that separates our own repair from an eviction', () => {
+  let clock = Date.now();
+  beforeEach(() => {
+    clock = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => clock);
+  });
+  afterEach(() => {
+    vi.mocked(Date.now).mockRestore();
+  });
+
+  it('answers no about a group this device never asked about - the shape of a real eviction', () => {
+    expect(reAddIsInFlight('never-seen')).toBe(false);
+  });
+
+  it('answers yes from the moment an attempt is made', async () => {
+    await requestReAdd('g1', makeDeps());
+
+    expect(reAddIsInFlight('g1')).toBe(true);
+  });
+
+  it('outlives the cooldown, because the Welcome is what ends it and not the clock', async () => {
+    await requestReAdd('g1', makeDeps());
+
+    clock += RECOVERY_TIMEOUT_MS + 1;
+    // Due for another attempt, and STILL in flight: the first one was never answered.
+    expect(isReAddDue('g1')).toBe(true);
+    expect(reAddIsInFlight('g1')).toBe(true);
+  });
+
+  it('ends when the Welcome lands', async () => {
+    await requestReAdd('g1', makeDeps());
+    cancelReAdd('g1');
+
+    expect(reAddIsInFlight('g1')).toBe(false);
   });
 });

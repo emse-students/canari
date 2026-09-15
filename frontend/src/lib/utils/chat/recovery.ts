@@ -914,6 +914,31 @@ export function isReAddDue(groupId: string): boolean {
  * modules, read, cleared and deleted from, and never written. `requestReAdd`'s own doc already said
  * "no private timer".
  */
+/**
+ * Whether THIS DEVICE has asked to be re-admitted to `groupId` and has not been welcomed back yet.
+ *
+ * **A RE-ADMISSION IS A REMOVE FOLLOWED BY AN ADD, AND THE REMOVE HALF LOOKS EXACTLY LIKE AN
+ * EVICTION.** MLS cannot Welcome a leaf that is still in the tree, so the member answering a
+ * `welcome_request` removes us first and adds us back in the next commit. The Remove arrives on its
+ * own, names our leaf, and is a signed statement by a member entitled to make it - every test a
+ * real exclusion passes. Read as one, it retires the conversation and posts the permanent "you were
+ * removed from this group" notice into the thread, seconds before the Welcome makes it false.
+ * Observed on a production handset 2026-09-15: `requestReAdd` at 21:37:25, the Remove at 21:37:28,
+ * the re-admission Welcome at 21:37:31, and the notice still in the thread hours later.
+ *
+ * The discriminator was already in hand and nothing read it. `lastReAddAt` is written when this
+ * device commits to an attempt and deleted by {@link cancelReAdd} the moment a Welcome or an
+ * external join lands, so the ENTRY'S EXISTENCE - not its age - is the durable statement "a
+ * re-admission is in flight". The age is the throttle, and that is {@link isReAddDue}'s question,
+ * not this one: a clock cannot answer whether the frame in hand is ours, and this must not be
+ * decided by one.
+ *
+ * `false` for a group this device never asked about, which is the shape a real eviction has.
+ */
+export function reAddIsInFlight(groupId: string): boolean {
+  return lastReAddAt.has(groupId);
+}
+
 export function cancelReAdd(groupId: string): void {
   lastReAddAt.delete(groupId);
   // A group that just became joinable has no dead end to remember, and leaving one behind would

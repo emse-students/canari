@@ -11,6 +11,39 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - une reparation demandee par l'appareil lui-meme s'annoncait comme une exclusion
+
+Un message systeme permanent - **« Vous avez ete retire de ce groupe. Vous ne pouvez plus envoyer
+ni recevoir de nouveaux messages. »** - restait dans un fil ou tout fonctionnait. Mesure sur un
+telephone de production le 15/09/2026, et la console de l'application raconte les six secondes en
+entier : `requestReAdd` a 21:37:25, un commit Remove a 21:37:28, le Welcome de readmission a
+21:37:31. Cote serveur, rien : les deux membres actifs, `kickedAt` a NULL, aucune exclusion nulle
+part.
+
+**Une readmission MLS est un Remove puis un Add.** On ne peut pas envoyer un Welcome a une feuille
+encore presente dans l'arbre, donc le membre qui repond a un `welcome_request` nous retire d'abord.
+La moitie « Remove » arrive seule et passe tous les tests d'une vraie exclusion : signee, ordonnee,
+emise par un membre qui en a le droit, et elle rend le groupe local inactif. Lue comme telle, elle
+retirait la conversation et ecrivait la notice **de facon durable dans le fil**, trois secondes avant
+que le Welcome ne la rende fausse - et rien ne retracte une notice.
+
+Le discriminant etait deja la et personne ne le lisait : cet appareil **sait** qu'il a demande a
+etre readmis. `lastReAddAt` est ecrit quand la tentative part et efface par `cancelReAdd` des que le
+Welcome arrive, donc **l'existence de l'entree** - et non son age, qui est l'affaire du throttle -
+est l'etat durable « une readmission est en vol ». `retireIfEvicted` le lit avant d'enregistrer quoi
+que ce soit.
+
+Et l'autre moitie, que la prevention ne couvre pas : une exclusion decidee par quelqu'un d'autre,
+suivie de cette meme personne qui vous rajoute, ecrit une notice qui etait VRAIE et que le Welcome
+rend fausse. Une readmission retire desormais la notice du fil - contre le Welcome, qui en est la
+preuve, jamais contre une horloge.
+
+La conversation passe alors en `pending` plutot que `removed`, ce qui corrige un second defaut de la
+meme cause : `requestReAdd` retourne immediatement sur `lifecycle === 'removed'`, donc ecrire cet
+etat pendant une readmission **condamnait le groupe** si le Welcome n'arrivait jamais - la reparation
+ne pouvait plus etre redemandee.
+
+
 ### Added - un selecteur d'emoji rejoint le composeur, sur ordinateur
 
 Jusqu'ici le seul selecteur d'emoji de l'application etait celui des reactions
