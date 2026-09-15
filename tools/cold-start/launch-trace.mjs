@@ -56,15 +56,19 @@ await new Promise((r) => setTimeout(r, seconds * 1000));
 
 // Raw events rather than `consoleLines`, which drops the timestamp - and the timestamp is the
 // whole point of this instrument.
+// The two domains carry the timestamp in DIFFERENT places - `Runtime.consoleAPICalled` on the
+// params, `Log.entryAdded` on the entry - and reading only the first printed every browser-issued
+// line (a failed resource, a CSP refusal) at epoch zero, i.e. at -1789490651400 ms. Both are
+// milliseconds since the epoch, the same axis as `timeOrigin`, so one sort puts them in order.
 const rows = (cx.consumed ?? [])
   .concat(cx.events)
   .filter((e) => e.method === 'Runtime.consoleAPICalled' || e.method === 'Log.entryAdded')
-  .map((e) => [
-    e.params.timestamp ?? 0,
+  .map((e) =>
     e.method === 'Log.entryAdded'
-      ? e.params.entry.text
-      : e.params.args.map((a) => a.value ?? a.description ?? '').join(' '),
-  ]);
+      ? [e.params.entry.timestamp, e.params.entry.text]
+      : [e.params.timestamp, e.params.args.map((a) => a.value ?? a.description ?? '').join(' ')]
+  )
+  .sort((a, b) => a[0] - b[0]);
 for (const [at, message] of rows) {
   const offset = String(Math.round(at - timeOrigin)).padStart(6);
   console.log(
