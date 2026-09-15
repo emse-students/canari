@@ -258,11 +258,9 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    [procedures](docs/wiki/device-verification.md)). **A precondition is NOT ambient.**
 10. **UX/RENDERING - THE ROUTE SWEEP IS DONE AND WHAT IT COULD NOT REACH IS WHAT IS LEFT**: REAL
     HARDWARE, all of it Chrome with an override; the channel list's width half closed by injection;
-    Noto Color Emoji; server prose in English reaching a French reader, a TREE count
-    `serverProse.test.ts` settles ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md)).
-11. **P3 - THE COLD START ASKED FOR THE FINGERPRINT AFTER 4,4 s (user, Pixel 6a); THREE OF FOUR
-    CAUSES SHIPPED 2026-09-15.** The fourth is a revocation round trip whose reordering would make
-    a LOST device's wipe wait for a prompt nobody passes - REVERTED, not to be re-opened ([backlog](docs/wiki/backlog.md)).
+    Noto Color Emoji; server prose in English, a TREE count `serverProse.test.ts` settles ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md)).
+11. **P3 - THE COLD START ASKED FOR THE FINGERPRINT AFTER 4,4 s; THREE OF FOUR CAUSES SHIPPED
+    2026-09-15. THE FOURTH IS REVERTED, NOT OPEN** - reinstating it is the trap ([backlog](docs/wiki/backlog.md)).
 12. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
     commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
 13. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
