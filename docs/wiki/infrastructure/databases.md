@@ -94,6 +94,111 @@ To check production against the entities, dump `information_schema.columns` and 
 
 PostgreSQL is backed up daily via `pg_dump -d auth_db --clean --if-exists` (logical dump, gzip). See `docs/wiki/infrastructure/backup.md`.
 
+### Crossing a MAJOR version - the rehearsed procedure
+
+**A datastore major is an OPERATION, not a dependency update, and this section is why.** On
+2026-09-01 an auto-merge shipped `postgres:15-alpine -> 18-alpine`, the deploy recreated the
+container, and PostgreSQL 18 exited against the existing data directory; all eight backend services
+lost `auth_db` - the only database - for 33 minutes. `.github/scripts/lib/ceiling.sh` refuses that
+class of update now. This is the procedure that makes the crossing safe, **rehearsed end to end on
+2026-09-15 against production's own bytes**; every number below was measured, not estimated.
+
+**PostgreSQL 18 refuses the current layout for two independent reasons, and both have to be answered
+in the SAME change.** The catalogue: a 15 cluster is not readable by 18, and `pg_upgrade` needs both
+majors' binaries present at once, which no official image carries. The mount: 18+ expects a single
+mount at `/var/lib/postgresql` and places the cluster in a major-version subdirectory beneath it
+(`PGDATA=/var/lib/postgresql/18/docker`, declared volume `/var/lib/postgresql`), where this
+repository mounts `postgres_data` at `/var/lib/postgresql/data`.
+
+**The refusal is deterministic and reproducible** - seed a volume with 15 at the old mount, start 18
+on it, and the docker-library entrypoint prints this and exits **1**, before postgres starts:
+
+```
+       Counter to that, there appears to be PostgreSQL data in:
+         /var/lib/postgresql/data
+
+       This is usually the result of upgrading the Docker image without
+       upgrading the underlying database using "pg_upgrade" (which requires both
+       versions).
+```
+
+**The path is a logical dump and restore, decided rather than defaulted.** `auth_db` is 96 MB
+(measured on production 2026-09-15; it was 84 MB on 2026-09-01, so re-measure before the window
+rather than quoting either number). At that size the restore is seconds, so `pg_upgrade` and a
+throwaway two-binary image buy nothing and are not built.
+
+**Step 1 - the dump, off production, THROUGH BASH.** PowerShell text-encodes stdout and destroys a
+binary pipe, so a `pg_dump` routed through it is a backup that restores to nothing.
+
+```sh
+ssh canari 'docker exec infrastructure-postgres-1 pg_dump -U canari -d auth_db -Fc' > prod-auth_db.dump
+```
+
+Measured 2026-09-15: **23,253,358 bytes in 45.8 s**, 282 TOC entries, `Format: CUSTOM`,
+`Compression: gzip`. The wall time is the tunnel, not the dump.
+
+**Step 2 - verify the dump is READABLE, not merely written**, which is the whole reason this is a
+separate step. `pg_restore --list` reads the archive header; then restore it into a fresh cluster of
+the NEW major, with the NEW mount layout:
+
+```sh
+docker run -d --name pg18-verify -e POSTGRES_USER=canari -e POSTGRES_PASSWORD=...   -e POSTGRES_DB=auth_db -v pg18_verify_data:/var/lib/postgresql postgres:18-alpine
+docker cp prod-auth_db.dump pg18-verify:/tmp/prod.dump
+docker exec pg18-verify pg_restore --no-owner --exit-on-error -U canari -d auth_db /tmp/prod.dump
+```
+
+Measured: **1.62 s, exit 0, not one line of output.** `--exit-on-error` is not optional - without
+it `pg_restore` reports errors and still exits 0, which is a restore that looks clean and is not.
+
+**Step 3 - compare, and know which differences are EXPECTED.** Row counts per table, structural
+counts, extensions, collation:
+
+| Checked | Production 15.18 | Restored 18.6 | Reading |
+| --- | --- | --- | --- |
+| tables | 53 | 53 | same |
+| rows, per table | - | - | **50 of 53 identical**; `one_time_key_package`, `post_notifications` and `queued_message` differ |
+| indexes | 158 | 158 | same |
+| constraints, `c`/`f`/`p`/`u` | 2 / 6 / 53 / 15 | 2 / 6 / 53 / 15 | same |
+| constraints, `n` | 0 | 347 | **EXPECTED - see below** |
+| enum types | 2 | 2 | same |
+| invalid indexes, unvalidated constraints | 0 / 0 | 0 / 0 | same |
+| extensions | `pg_trgm plpgsql unaccent uuid-ossp` | identical | same |
+| `datcollate` / `datctype` / encoding / locale provider | `en_US.utf8` / `en_US.utf8` / `UTF8` / `c` | identical | same |
+
+**Two of those rows would fail a naive comparison on a CORRECT migration, and both were met.**
+
+- **The three tables that differ are the three that MOVE.** The dump is a snapshot; production is
+  live. Reading production TWICE, minutes apart, moved `one_time_key_package` (30293 -> 30315) and
+  `post_notifications` (348 -> 349) on its own, and `queued_message` is a queue that drains. A
+  differing count on those three is evidence the estate is alive; a differing count on any of the
+  other 50 would be evidence of a lost restore. **Compare per table, never a total.**
+- **347 constraints appear from nowhere, and none of them are new.** PostgreSQL 17 began
+  cataloguing NOT NULL constraints in `pg_constraint`; 15 does not. Broken down by `contype` the
+  entire gap is `n`, and every user-meaningful class is identical. A check comparing
+  `count(*) FROM pg_constraint` goes red here on a migration that is exactly right.
+
+Then run the application's own hot paths, because a restore can be structurally perfect and still
+have lost an extension or a collation. Measured identical on both majors: the `pg_trgm` + `unaccent`
+similarity search over `users`, and the `associations` / `association_members` join. Collation is
+the real cross-major hazard and it is safe here for a reason worth stating - both images are
+Alpine, so both clusters are **musl**, and the sort order does not move underneath the indexes.
+
+**Step 4 - the application on the new major.** Measured 2026-09-15: core-service booted completely
+against an 18 cluster holding this data, logged `unaccent + pg_trgm extensions ready` and `Nest
+application successfully started`, and served `/api/version` and `/api/chat-delivery-health`.
+
+**Step 5 - the cutover, and it is USER-VISIBLE DOWNTIME.** Its ordering constraint is that the
+compose SHAPE change and the image tag change are ONE commit and cannot be merged ahead of the
+window: mounting `postgres_data` at `/var/lib/postgresql` while the image is still 15 gives the 15
+entrypoint an empty directory and it initialises a new cluster over it. Three files change shape
+together - `infrastructure/docker-compose.prod.yml`, `infrastructure/docker-compose.dev.yml`,
+`infrastructure/local/docker-compose.yml` - and the `pg_isready` / `psql` steps in
+`serve-prod.yml`'s migration job run inside that container.
+
+**The rollback is written down BEFORE the window opens, and it is the point of the dump.** The 15
+volume is never destroyed: the restore goes to a NEW volume, so rolling back is pointing compose at
+the old one and the old tag. The dump is the second line of defence, not the first.
+
 ---
 
 ## MongoDB - REMOVED 2026-08-18

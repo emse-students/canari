@@ -16,6 +16,59 @@ measurement or a device nobody here has. None of them is waiting on an implement
 
 ---
 
+### DECISION OWED - the ceiling's `postgres` arm names a test this estate's own upgrade path can never satisfy
+
+**Found by performing the thing the gate asks for, on 2026-09-15, and discovering the gate cannot
+accept it.** This is not a defect in either file: both are internally consistent and each was written
+carefully. They have simply drifted apart, and only a decision separates them.
+
+**The standing rule that makes this a question at all** (user, 2026-08-31): *"Je prefere blinder de
+test et faire les choses automatiquement qu'avoir une review humaine qui n'arrive jamais"*, for *"un
+projet qui peut 'vivre tout seul'"*. So a refusal is never a routing decision to a human queue - it
+is a statement that a gate is MISSING, and it must NAME the test that would lift it. **A queue
+nobody drains is worse than the merge it prevented.**
+
+**What each file says, and neither is wrong.** `.github/scripts/lib/ceiling.sh` refuses a `postgres`
+major bump and names its escape: a test that starts the NEW major against a data directory written
+by the OLD one. `infrastructure/dev/version-gap.yml` is where that test's result gets declared, and
+its taxonomy admits exactly one value that lifts a refusal - `in_place_upgrade`, *"the new major
+serves production's OWN data directory, carried across by the documented upgrade path"*. A
+`logical_restore` - `pg_dump` and restore into a cluster the new major built itself - *"lifts
+NOTHING"*, and that judgement was itself a correction made while writing the file, to stop a green
+gate that proved nothing from re-arming the 2026-09-01 outage.
+
+**And the estate has since decided not to build the path the lifting value describes.** On
+2026-09-01, `auth_db` being small settled it: dump and restore, not `pg_upgrade`, *"which requires
+both binaries live in one image"* and *"should not be built"*. The 2026-09-15 rehearsal executed
+that decision end to end against production's own bytes and it is completely successful
+([databases](infrastructure/databases.md#crossing-a-major-version---the-rehearsed-procedure)) - and
+it is a `logical_restore`. **So the ceiling's refusal can never be lifted by any work this estate
+intends to do**, and the `postgres` row stays `evidence: none` for ever.
+
+**The question is what the refusal should NAME, and there are two honest answers.**
+
+1. **A datastore major is an OPERATION, not a dependency update, and the arm should say so.** No
+   test can make "Dependabot bumps postgres and it auto-merges into a deploy" safe, because the
+   safety lives in a dump taken minutes earlier by an operator, not in the diff. On this reading the
+   refusal is permanent and correct, and what it should name is not a test but a CONDITION: the
+   cutover has been performed and the pin moved by hand. That is a queue of one, drained by the
+   person who did the migration, which is not the unmanned queue the rule is aimed at.
+2. **Or `version-gap.yml` gains a fourth value.** Something like `rehearsed_cutover`: the documented
+   upgrade path for THIS estate, executed against production's own data, with the mount layout the
+   new image expects and the application serving on the result - all of which is now true and
+   evidenced. That keeps the gate's shape (a refusal naming a checkable thing) at the cost of
+   admitting a value whose proof is a dated note rather than a CI run, which is exactly what the
+   file's `proof` field already contemplates.
+
+**What must NOT happen is the third thing**: quietly relaxing the `logical_restore` line to lift the
+refusal. That line is the correction that stopped a gate which would have gone green on the very
+upgrade that took production down, and re-opening it would re-arm precisely that.
+
+**Nothing is blocked on this.** The cutover is authorized and rehearsed and proceeds either way; the
+ceiling refusing a `postgres` bump in the meantime is the outcome both readings want.
+
+---
+
 ### QUESTION - does an iOS attachment CONSUME the avatar cache file it is handed?
 
 Found 2026-08-17 while writing the initials fallback, and it is a question rather than a defect
