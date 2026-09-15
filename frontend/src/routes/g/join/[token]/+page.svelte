@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { Log } from '$lib/utils/Log';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { getGroupInvitePreview, acceptGroupInvite } from '$lib/mls/groupInvites';
@@ -28,7 +29,8 @@
     try {
       preview = await getGroupInvitePreview(token);
     } catch (e) {
-      error = e instanceof Error ? e.message : m.invite_not_found();
+      Log.d('group invite preview failed', e);
+      error = m.invite_not_found();
     } finally {
       loading = false;
     }
@@ -41,7 +43,8 @@
       await acceptGroupInvite(token);
       joined = true;
     } catch (e) {
-      error = e instanceof Error ? e.message : m.group_join_error_fallback();
+      Log.d('group invite accept failed', e);
+      error = m.group_join_error_fallback();
       joining = false;
     }
   }

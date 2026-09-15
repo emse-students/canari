@@ -52,6 +52,21 @@ const TREES = [
   'src/routes/lists',
   'src/routes/documents',
   'src/routes/forms',
+  // THE FIVE ROUTE TREES A MEMBER MEETS WITHOUT BEING ANYWHERE YET, added 2026-09-15. Two invite
+  // landings, the purchase history, the directory and the OIDC callback - seven sites, six of them
+  // the ordinary shape where the declared fallback was already the right answer.
+  //
+  // The callback was the one that had to gain a message rather than lose a preference: its fallback
+  // was `String(e)`, so BOTH halves of that line were untranslatable and deleting the preference
+  // alone would have left the other. It is also the most exposed line of the five - it renders into
+  // the sign-in card, to a reader who has not reached the application yet and has no way to retry
+  // past it - and `console.error('[callback] error:', e)` keeps the real cause for diagnosis, so
+  // nothing is lost by refusing to show it.
+  'src/routes/c',
+  'src/routes/g',
+  'src/routes/account',
+  'src/routes/auth',
+  'src/routes/directory',
 ];
 
 /**
@@ -104,6 +119,8 @@ describe('no member-facing tree renders a server sentence', () => {
     expect(files).toContain('src/lib/components/posts/PostCard.svelte');
     expect(files).toContain('src/routes/lists/[slug]/edit/+page.svelte');
     expect(files).toContain('src/routes/calendar/+page.svelte');
+    expect(files).toContain('src/routes/auth/callback/+page.svelte');
+    expect(files).toContain('src/routes/directory/+page.svelte');
   });
 
   it.each(files.map((f) => [f]))('%s', (file) => {

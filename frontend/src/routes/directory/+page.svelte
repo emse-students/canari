@@ -2,6 +2,7 @@
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
+  import { Log } from '$lib/utils/Log';
   import { goto } from '$app/navigation';
   import { searchDirectory, type DirectoryUserRow } from '$lib/profile/api';
   import { listAssociations, type Association } from '$lib/associations/api';
@@ -51,7 +52,8 @@
       results = res.users;
       total = res.total;
     } catch (err) {
-      error = err instanceof Error ? err.message : m.directory_search_error_fallback();
+      Log.d('directory search failed', err);
+      error = m.directory_search_error_fallback();
       results = [];
       total = 0;
     } finally {

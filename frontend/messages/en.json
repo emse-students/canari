@@ -2035,6 +2035,7 @@
   "auth_callback_denied": "Authentik rejected the login: {reason}",
   "auth_callback_missing_params": "Missing parameters in Authentik redirect.",
   "auth_callback_error_title": "Login failed",
+  "auth_callback_exchange_failed": "The sign-in could not be completed.",
   "auth_callback_retry": "Try again",
   "profile_loading": "Loading profile…",
   "profile_photo_change_label": "Change profile photo",

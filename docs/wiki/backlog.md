@@ -7490,18 +7490,29 @@ came from one predicate; a broader one over `frontend/src` finds ~288 occurrence
 which only some assign to an error state a screen renders - the rest sit inside a `Log`/`console`
 call and are correctly dev-facing.
 
-**195 remain, down from 223** (same predicate, both ends measured on this branch's
-base, 2026-09-13). The member-facing pass closed 27 across `components/posts`,
-`components/settings`, `routes/posts`, `routes/profile`, `routes/lists`, `routes/documents` and
-`routes/forms`; the agenda pass closed the last three in `components/calendar` and `routes/calendar`
-and gave that endpoint its codes. **Thirteen trees are guarded.**
+**194 remain, down from 223** (same predicate, every end measured rather than decremented -
+2026-09-15). The member-facing pass closed 27 across `components/posts`, `components/settings`,
+`routes/posts`, `routes/profile`, `routes/lists`, `routes/documents` and `routes/forms`; the agenda
+pass closed the last three in `components/calendar` and `routes/calendar` and gave that endpoint its
+codes; the landing pass closed seven across `routes/c`, `routes/g`, `routes/account`, `routes/auth`
+and `routes/directory` - the five trees a member meets BEFORE being anywhere yet. **Eighteen trees
+are guarded**, and they are clean but for the one allowlisted file.
+
+**The landing pass found the case the sweep's shape does not cover.** `routes/auth/callback`
+declared `String(e)` as its fallback, so BOTH halves of that line were untranslatable and deleting
+the preference alone would have left the other - it gained `auth_callback_exchange_failed` instead.
+It is also the most exposed line the sweep has met: it renders into the sign-in card, for a reader
+who has not reached the application and cannot retry past it. Expect more of these in the trees
+below, and read the fallback before assuming the deletion is the whole fix.
 
 **The raw count is an upper bound and always will be**: the predicate is a grep, so it counts the
-docblocks that QUOTE the shape in order to explain it - two of the 195 are the mapper's own
+docblocks that QUOTE the shape in order to explain it - two of the 194 are the mapper's own
 documentation. The guard strips comments before matching, which is why it is the guard and not the
 grep that decides whether a tree is clean. What is left is chat (`lib/utils/chat`), graine,
 `routes/admin` (11 files), and the worker/`mls-client`/`services` layers, where most sites are
-dev-facing logs rather than screens.
+dev-facing logs rather than screens. Measured 2026-09-15, by tree: `lib/utils` 55, `routes/admin`
+49, `lib/components` 30, `lib/composables` 26, `lib/services` 14, `lib/mls-client` 7, `lib/workers`
+5, and a tail of ones and twos.
 
 **A tree is added only once every file under it answers**, which is why they arrive in batches: a
 guard owning half a directory is one a new file walks past. The CODES are the separate, still-open

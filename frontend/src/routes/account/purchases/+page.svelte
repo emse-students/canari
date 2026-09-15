@@ -2,6 +2,7 @@
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
+  import { Log } from '$lib/utils/Log';
   import { apiFetch } from '$lib/utils/apiFetch';
   import { socialUrl } from '$lib/utils/apiUrl';
   import { currentUserId } from '$lib/stores/user';
@@ -49,7 +50,8 @@
       if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
       data = (await res.json()) as PurchasesResponse;
     } catch (err) {
-      error = err instanceof Error ? err.message : m.purchases_load_error_fallback();
+      Log.d('purchases load failed', err);
+      error = m.purchases_load_error_fallback();
     } finally {
       loading = false;
     }
