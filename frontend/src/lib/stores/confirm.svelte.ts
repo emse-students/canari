@@ -48,6 +48,19 @@ export const confirmStore = {
  */
 export function showConfirm(message: string, opts: ConfirmOptions = {}): Promise<boolean> {
   return new Promise((resolve) => {
+    // ONE SLOT, SO THE OUTGOING DIALOG IS ANSWERED RATHER THAN DROPPED. Opening a second
+    // confirmation used to overwrite the first one's record without resolving it: the dialog
+    // vanished from the screen and its promise never settled, so whatever was awaiting it waited
+    // for the rest of the process. That is not a theoretical shape - `startPushService` awaits one
+    // before it may ask the OS for the notification permission, and a hung await there would leave
+    // a device with no push and nothing said about it. The replaced dialog resolves as `false`,
+    // which is what a user who never saw it decided.
+    if (_pending) {
+      console.warn(
+        '[confirm] a pending dialog was replaced before it was answered - resolving it as cancelled'
+      );
+      _pending.resolve(false);
+    }
     _pending = {
       message,
       confirmLabel: opts.confirmLabel ?? m.common_confirm_button(),
