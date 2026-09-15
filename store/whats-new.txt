@@ -1,9 +1,5 @@
-version: 0.18.2
+version: 0.18.3
 
-Les émojis s'affichent de la même façon partout, et un message qui n'en contient qu'un l'affiche en grand.
+L'application s'ouvre nettement plus vite : elle ne recopie plus au demarrage un fichier qu'elle avait deja sous la main.
 
-Un groupe ne porte plus le nom de la première personne qui y a écrit, et un groupe renommé hors connexion prend enfin son nouveau nom.
-
-Les messages d'erreur sont en français ; un refus de droits ne se lit plus comme une panne.
-
-Le menu d'appui long ne recouvre plus le message. L'écran du code PIN garde sa sortie visible. Une mise en ligne ne vous déconnecte plus.
+Sur une carte de partenariat, le premier clic sur "Reclamer mon code" affiche bien le code au lieu d'un cadre vide.
