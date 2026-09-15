@@ -21,7 +21,7 @@ import { isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notif
 import { detectRuntimeDeviceOs } from '$lib/mls-client/mlsPlatform';
 import { currentUserId } from '$lib/stores/user';
 import { isTauriRuntime } from '$lib/utils/openExternal';
-import { showToast } from '$lib/stores/toast.svelte';
+import { showConfirm } from '$lib/stores/confirm.svelte';
 import { m } from '$lib/paraglide/messages';
 import { getLocale } from '$lib/i18n';
 
@@ -247,15 +247,33 @@ export async function startPushService(
   );
 
   // --- ANDROID 13+ NOTIFICATION PERMISSION ---
+  //
+  // THE RATIONALE IS ACKNOWLEDGED, NEVER TIMED, AND THAT IS THE WHOLE FIX. It used to be a toast
+  // shown for 6 s with a 1200 ms sleep after it, and the OS dialog opened on the way through: for
+  // the remaining 4,8 s both were on screen at once, and a native permission dialog takes EVERY
+  // touch until it is answered. Measured on A1 on 2026-09-14, on the first launch after an install
+  // - and it presented in a way worth knowing about, because the WebView stopped repainting while
+  // still answering CDP, so the DOM said one thing and the screen showed another. Only a screenshot
+  // separated them.
+  //
+  // A sleep cannot be right here, whatever its length: it is a guess about how fast someone reads,
+  // and the thing it is racing is a dialog this code opens itself. So the two are SEQUENCED by the
+  // one event that proves the first is finished - the user dismissing it. Declining is a real
+  // answer and it is honoured: Android gives an app very few chances to ask, and spending one on a
+  // user who just said "later" wastes it for good.
   try {
     let permissionGranted = await isPermissionGranted();
     if (!permissionGranted) {
-      // Show context before the system dialog (avoids a "cold" permission request).
-      // Short delay to let the user read the toast before the dialog opens.
-      showToast(m.push_permission_rationale(), 'info', 6000);
-      await new Promise((r) => setTimeout(r, 1200));
-      const permission = await requestPermission();
-      permissionGranted = permission === 'granted';
+      const askNow = await showConfirm(m.push_permission_rationale(), {
+        confirmLabel: m.push_permission_enable_button(),
+        cancelLabel: m.push_permission_later_button(),
+      });
+      if (askNow) {
+        const permission = await requestPermission();
+        permissionGranted = permission === 'granted';
+      } else {
+        console.info('[Push] rationale declined - the OS permission dialog was not opened');
+      }
     }
 
     if (!permissionGranted) {

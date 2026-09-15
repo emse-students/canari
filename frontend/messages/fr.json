@@ -2746,6 +2746,8 @@
   "auth_keystore_prompt_unlock_title": "Déverrouiller Canari",
   "auth_keystore_prompt_unlock_reason": "Confirmez votre identité pour déverrouiller Canari.",
   "push_permission_rationale": "Activez les notifications pour être prévenu des nouveaux messages, même lorsque l'application est fermée.",
+  "push_permission_enable_button": "Activer",
+  "push_permission_later_button": "Plus tard",
   "call_sibling_device_busy": "Un autre appareil est déjà en appel.",
   "channel_poll_vote_error": "Vote impossible",
   "pdf_preview_alt": "Aperçu de la première page du document",

@@ -725,6 +725,28 @@ reloading MLS state and interrupting an in-flight send for a movement of the wri
 Negative control, run 2026-08-17: under a forced `user_rotation 1`, Settings reported `cur=2400x1080`
 while Canari stayed `cur=1080x2400`.
 
+#### Asking for the permission: the rationale is acknowledged, never timed
+
+**Android's own permission dialog takes every touch until it is answered**, which is correct for a
+native dialog and is exactly why nothing else may be asking at the same moment. Until 2026-09-15
+`startPushService` showed the rationale as a 6 s toast and opened the OS dialog 1200 ms into it, so
+for the remaining 4,8 s both were on screen and the app took no input at all. Measured on A1 on
+2026-09-14, on the first launch after an install - **and it presented as a WebView that had stopped
+repainting while still answering CDP**, so the DOM said one thing and the screen showed another. An
+instrument reading the DOM would have reported a working app; a screenshot is what separated them.
+
+No duration would have been right. The number is a guess about how fast someone reads, and the thing
+it races is a dialog the same function opens. The two are now sequenced by the one event that PROVES
+the first is finished: the rationale is a real confirmation (`showConfirm`), and `requestPermission`
+is only reached once the user has dismissed it. **Declining is honoured** - Android grants an app
+very few chances to ask, and spending one on someone who just said "later" loses it for good;
+registration continues either way, because FCM still delivers the silent data messages that keep the
+conversation list in sync with pop-ups blocked.
+
+The fix rests on a defect in `showConfirm` that had to be closed with it: a second dialog used to
+overwrite the pending record INCLUDING its resolver, so the first promise never settled and any
+`await` on it waited for the rest of the process. The replaced dialog now answers `false`.
+
 ### Push notification handling
 
 `CanariFirebaseMessagingService.kt` — the single FCM handler:

@@ -5549,18 +5549,11 @@ and a reader cannot tell which of the two it belongs to. NOT YET MEASURED - what
 the chip's box against both neighbours' boxes, and whether any border, offset or overlap ties it to
 one. Filed so it is not lost, not filed as a defect.
 
-**TWO THINGS ASK FOR THE NOTIFICATION PERMISSION AT ONCE, AND ONE OF THEM BLOCKS THE APP.** On first
-launch after an install, Android's own permission dialog opens over the WebView while the in-app
-banner *"Activez les notifications pour etre prevenu des nouveaux messages"* is showing at the
-bottom of the same screen. The native dialog takes every touch until it is answered, which is
-correct for a native dialog and is exactly why nothing else should be asking at the same moment.
-**And it is worth knowing how this presented**: with the dialog up, the WebView stopped repainting
-but kept answering CDP, so the DOM said one thing and the screen showed another - an instrument
-reading the DOM would have reported a working app. A screenshot is what separated them.
-
-*(The instrument's two blind spots that were filed here - it never entered a shadow root, and it
-counted a horizontal scroller as an overflow - were fixed on 2026-09-14 and are in `CHANGELOG.md`.
-The remaining finding above is about the app.)*
+*(Two findings that were filed here are fixed and live in `CHANGELOG.md`: the two things asking for
+the notification permission at once - a toast and a 1200 ms sleep racing the native dialog the same
+code opened, fixed 2026-09-15 - and the instrument's two blind spots, a shadow root it never entered
+and a horizontal scroller it counted as an overflow, fixed 2026-09-14. The findings above are about
+the app and are open.)*
 
 ### P2 - the wry bump that removes the abort, once a STABLE runtime asks for it (found 2026-09-14 on A1)
 
