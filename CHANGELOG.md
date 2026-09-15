@@ -11,6 +11,25 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - le rechargement reconstruisait dix-neuf fois tout l'etat MLS pour ne rien dechiffrer
+
+Mesure sur le client web le 15/09/2026 : a chaque rechargement, l'etat MLS complet - **6 694 960
+octets** - etait serialise, transfere a un worker fraichement lance et reconstruit entierement, une
+fois **par conversation**. Dix-neuf conversations, soit environ **127 Mo** de serialisation, de
+transfert et de reconstruction avant le premier message affiche.
+
+Aucune de ces dix-neuf sessions ne dechiffrait quoi que ce soit. Ouvrir une session de rattrapage
+(`createDecryptSession`) n'est pas un simple handle : c'est cet instantane, ce worker et cette
+reconstruction. Or la rejouabilite d'une archive commence par ecarter les lignes deja connues - le
+jeu des chiffres deja vus, les trames emises par cet appareil, l'empreinte des trames deja livrees -
+et sur un rechargement ordinaire, ou rien n'a ete ajoute depuis le curseur, **il ne reste rien**. Le
+cout etait paye pour la POSSIBILITE d'un travail, sur le chemin ou il n'y en a jamais.
+
+La session s'ouvre desormais sur la premiere trame qui doit reellement etre dechiffree. Une
+conversation a jour n'en ouvre aucune et ne prend meme pas le mutex MLS, ce qui laisse la livraison
+en direct continuer pendant que l'archive est paginee. La barriere de boite aux lettres et
+l'epinglage de la tete, eux, n'ont pas bouge : ils restent au-dessus de la boucle, mutex libre.
+
 ### Fixed - une reparation demandee par l'appareil lui-meme s'annoncait comme une exclusion
 
 Un message systeme permanent - **« Vous avez ete retire de ce groupe. Vous ne pouvez plus envoyer
