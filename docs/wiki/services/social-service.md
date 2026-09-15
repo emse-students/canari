@@ -660,8 +660,12 @@ whoever asked. Measured against the local copy of production with an id belongin
 rows without the brackets, 0 with them**, the four being the school's four administrators. A
 fragment meant to be combined has to say so, which is why the combining lives beside it.
 
-**This closes the feed and not the class.** Sixteen edge locations carry the same `auth_request`,
-and `/api/presence` is a second confirmed hole - see [backlog](../backlog.md).
+**This closes the feed and not the class.** FIFTEEN edge locations carry the same `auth_request`
+(re-derived 2026-09-15; this line said sixteen), and `/api/presence` was the second confirmed hole
+- closed the same day by a header check in `chat-gateway/src/presence.rs`, whose docblock is the
+story. What is still open is that the signed-in rule has THREE independent implementations under
+two different discriminators and nothing asserts every route carries one, which is what made a
+missing one invisible: [backlog](../backlog.md).
 
 ### A post is announced once, by a sweeper, and the column is the whole mechanism
 
@@ -693,10 +697,24 @@ means "not yet announced", so shipping the column empty makes the first tick rea
 archive as new. It stamped 120 rows on the local copy of production. A partial index on the null
 rows keeps the once-a-minute query off a growing table.
 
-**The audience query is not an access gate.** `feed-audience.ts` states "ICM plus global admin" so
-the sweeper knows who to TELL. `GET /api/posts` still answers anybody who asks - the rule has only
-ever been enforced in the client, and moving it to the API is open in
-[backlog](../backlog.md).
+**The audience query is not an access gate, and it stopped having to be on 2026-09-10.**
+`feed-audience.ts` states "ICM plus global admin" so the sweeper knows who to TELL; the same
+`FEED_AUDIENCE_WHERE` is what `FeedAudienceGuard` refuses a reader with, one section above. The
+rule is stated once per side rather than once per endpoint, which is why narrowing it is a single
+edit.
+
+**`association_follows` IS DELIBERATELY NOT CONSULTED, and that is a consequence of the first rule
+rather than an oversight.** If every association post reaches the whole feed audience, following an
+association adds nothing to what you are told - the first recipient derivation already subsumes the
+half of the second that would have used it. That table becomes the opt-in the day the association
+rule is narrowed, which is the one change that would give this sweeper a THIRD derivation rather
+than a different one.
+
+**No digest and no per-association mute, decided on the measured rate rather than on taste.** At
+0.53 association announcements a week, either control would be a setting nobody would ever find.
+Both can be added later without touching the sweeper: the two recipient derivations are private
+methods, and the rate is what would justify one. **Re-measure before believing this** - the
+predicate that named the last population is not the one that names the next.
 
 Pinned by `post-announce.scheduler.spec.ts`, whose first assertion is the stamp/send ORDER rather
 than the recipients.
