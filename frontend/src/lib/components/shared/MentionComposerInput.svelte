@@ -8,6 +8,7 @@
     composerMarkdownPreviewEnabled,
     needsMentionChipRender,
     removeMentionChipBeforeCursor,
+    removeNewlineFillerBeforeCursor,
     renderPlainTextToMentionEditor,
     serializeMentionEditor,
     setPlainTextSelection,
@@ -184,6 +185,11 @@
 
   function handleEditorKeydown(e: KeyboardEvent) {
     if (e.key === 'Backspace' && removeMentionChipBeforeCursor(editorEl!)) {
+      e.preventDefault();
+      emitEditorChange();
+      return;
+    }
+    if (e.key === 'Backspace' && editorEl && removeNewlineFillerBeforeCursor(editorEl)) {
       e.preventDefault();
       emitEditorChange();
       return;
