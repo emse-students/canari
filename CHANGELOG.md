@@ -11,6 +11,35 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - un avis de groupe affiche comme un message de « Utilisateur », qui sonnait et notifiait
+
+Signale par l'utilisateur (2026-09-16) avec les deux rendus du MEME evenement photographies dans un
+seul fil : une pastille grise centree, et juste en dessous la meme phrase en bulle ordinaire, alignee
+a gauche, sous un en-tete **« Utilisateur »**. C'est ce a quoi ressemble un avis systeme quand son
+drapeau `isSystem` est faux : l'application dessine un message normal, et comme aucun nom
+d'affichage ne correspond a l'expediteur sentinelle `system`, l'etiquette retombe sur le libelle
+d'utilisateur inconnu.
+
+`isSystem` et `senderId === 'system'` sont le meme fait ecrit deux fois, et le paquet d'historique
+qu'un appareil envoie a un autre ne transporte volontairement que le second - porter les deux, c'est
+leur donner l'occasion de se contredire. La derivation revient donc au LECTEUR, et elle manquait a
+deux des trois endroits qui materialisent une ligne : le chemin de rejeu l'avait depuis le
+2026-09-14, mais la fusion en direct d'un paquet passe par `addMessageToChat` et `batchAddMessages`,
+qui reprenaient tels quels le drapeau de leur appelant. Les deux le derivent desormais de
+l'expediteur.
+
+**L'affichage etait la plus petite des trois choses que ce drapeau decide.** Le meme booleen commande
+aussi la pastille de non-lus, le son d'arrivee et la notification systeme : un avis de groupe restitue
+par un paquet d'historique **faisait sonner un telephone, incrementait un compteur et poussait une
+banniere pour une ligne que personne n'avait envoyee**, sur un appareil qui venait simplement de se
+reconnecter. Trois des cinq tests ajoutes echouent sans le correctif, dont celui de la notification.
+
+Rien n'est du aux appareils qui l'ont deja affiche : la forme stockee d'un message ne comporte pas
+ce drapeau du tout, il est donc rederive a chaque lecture de la base locale. La valeur fausse n'a
+jamais existe que sur la ligne en memoire, le temps de la session qui avait recu le paquet - ce qui
+explique aussi que les deux rendus du meme evenement aient pu etre photographies cote a cote. Un
+rechargement etait deja la reparation.
+
 ## [0.18.8] - 2026-09-16
 
 ### Fixed - retour arriere apres Maj+Entree ne supprimait pas la ligne, et en supprimait parfois deux
