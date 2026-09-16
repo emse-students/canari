@@ -3,10 +3,16 @@
  * Build-time proof that the picker's offered emoji are level with the bundled font.
  *
  * The picker offers exactly the entries in `static/emoji-data-fr.json` and `static/emoji-data-en.json`
- * (see `MessageEmojiPicker.svelte`), and every one of them must be drawable by the single bundled font
- * every surface in the app now falls back to (`NotoColorEmoji-Canari.woff2`, see
- * `docs/wiki/frontend/emoji.md`) - offering an entry the font cannot draw is the exact defect this
- * work package exists to close, on the picker's own side.
+ * (see `MessageEmojiPicker.svelte`), and every one of them must be drawable by the bundled font the
+ * reader's engine actually picks (see `docs/wiki/frontend/emoji.md`) - offering an entry the font
+ * cannot draw is the exact defect this work package exists to close, on the picker's own side.
+ *
+ * THERE IS MORE THAN ONE SHIPPED FONT SINCE 2026-09-16, SO THIS CHECKS EVERY ONE OF THEM. The
+ * `src:` ladder in `app.css` hands Chromium and Firefox a COLRv1-only derivation and every other
+ * engine the merged font, so a defect in the derivation is invisible to a check that reads only the
+ * merged file. It was: the first derivation silently lost the format 14 cmap and 1034 of these
+ * entries shaped to TWO glyphs instead of one - a font that still loaded and still drew most
+ * things. A gate that reads one of two artefacts proves nothing about the one the reader gets.
  *
  * "Drawable" means HarfBuzz shapes the entry's `emoji` codepoint sequence into EXACTLY ONE glyph -
  * not zero (nothing in the font maps that codepoint) and not more than one (the GSUB ligature that
@@ -28,7 +34,8 @@ import * as hb from 'harfbuzzjs';
 import wawoff2 from 'wawoff2';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const FONT_PATH = join(ROOT, 'static/fonts/NotoColorEmoji-Canari.woff2');
+/** Every font `app.css` can hand a reader - the merged last resort, and the COLRv1 derivation. */
+const FONT_FILES = ['NotoColorEmoji-Canari.woff2', 'NotoColorEmoji-Canari-COLRv1.woff2'];
 const DATASETS = ['static/emoji-data-fr.json', 'static/emoji-data-en.json'];
 
 /** Glyph IDs HarfBuzz shapes `text` into, using the bundled font. Ignores the .notdef glyph (0). */
@@ -45,23 +52,28 @@ function fail(message) {
   process.exit(1);
 }
 
-const woff2Bytes = readFileSync(FONT_PATH);
-const ttfBytes = await wawoff2.decompress(woff2Bytes);
-const blob = new hb.Blob(ttfBytes);
-const face = new hb.Face(blob);
-const font = new hb.Font(face);
-
 const misses = [];
 let checked = 0;
 
-for (const relPath of DATASETS) {
-  const entries = JSON.parse(readFileSync(join(ROOT, relPath), 'utf8'));
-  for (const entry of entries) {
-    checked++;
-    const glyphIds = shapeGlyphIds(font, entry.emoji);
-    const ok = glyphIds.length === 1 && glyphIds[0] !== 0;
-    if (!ok) {
-      misses.push({ dataset: relPath, emoji: entry.emoji, annotation: entry.annotation, glyphIds });
+for (const fontFile of FONT_FILES) {
+  const ttfBytes = await wawoff2.decompress(readFileSync(join(ROOT, 'static/fonts', fontFile)));
+  const font = new hb.Font(new hb.Face(new hb.Blob(ttfBytes)));
+
+  for (const relPath of DATASETS) {
+    const entries = JSON.parse(readFileSync(join(ROOT, relPath), 'utf8'));
+    for (const entry of entries) {
+      checked++;
+      const glyphIds = shapeGlyphIds(font, entry.emoji);
+      const ok = glyphIds.length === 1 && glyphIds[0] !== 0;
+      if (!ok) {
+        misses.push({
+          font: fontFile,
+          dataset: relPath,
+          emoji: entry.emoji,
+          annotation: entry.annotation,
+          glyphIds,
+        });
+      }
     }
   }
 }
@@ -70,15 +82,16 @@ if (misses.length > 0) {
   const lines = misses
     .map(
       (m) =>
-        `  ${m.dataset}: "${m.emoji}" (${m.annotation}) -> ${m.glyphIds.length} glyph(s): [${m.glyphIds.join(', ')}]`
+        `  ${m.font} / ${m.dataset}: "${m.emoji}" (${m.annotation}) -> ${m.glyphIds.length} glyph(s): [${m.glyphIds.join(', ')}]`
     )
     .join('\n');
   fail(
-    `${misses.length} of ${checked} offered emoji do not resolve to exactly one glyph in the bundled font:\n${lines}\n` +
+    `${misses.length} of ${checked} (offered emoji x bundled font) pairs do not resolve to exactly one glyph:\n${lines}\n` +
       `  Each is either a font to rebuild (see docs/wiki/frontend/emoji.md) or an entry to drop.`
   );
 }
 
 console.log(
-  `[check-emoji-coverage] ${checked} offered emoji across ${DATASETS.length} dataset(s) all resolve to one glyph in the bundled font`
+  `[check-emoji-coverage] ${checked} (offered emoji x bundled font) pairs across ${DATASETS.length} ` +
+    `dataset(s) and ${FONT_FILES.length} font(s) all resolve to one glyph`
 );
