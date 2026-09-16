@@ -11,6 +11,33 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - 182 ms de demarrage a froid rendus : la poignee de main du socket n'attend plus un etat MLS qu'elle ne lit pas
+
+Mesure sur la production le 2026-09-16, sur les 215 dernieres millisecondes d'un demarrage a froid de
+1 308 ms : `MLS ready` s'imprime a +1093 et `[WS] Connected to Chat Gateway` a +1308. Le travail
+serie entre les deux fait 33 ms ; les 182 restantes sont la poignee de main elle-meme, qui ne
+commencait qu'une fois tout l'etat MLS dechiffre. Elle n'en a pourtant besoin de rien : `connect`
+envoie un identifiant d'appareil et un jeton, tous deux connus bien avant que `load_or_create` ne
+rende la main. Les deux travaux n'ont aucune dependance de donnees l'un envers l'autre.
+
+La poignee de main part desormais des que `resolveDeviceId` a repondu, et le chargement de l'etat se
+fait pendant qu'elle voyage - le socket s'ouvre a peu pres a l'instant ou MLS devient pret.
+
+**Ce que cette concurrence doit payer est une file, et c'est tout le cout du changement.** Un socket
+ouvert avant l'existence du client MLS peut recevoir une trame qui n'a nulle part ou aller, et la
+comptabilite de livraison de la passerelle ne distingue pas « remise a un client » de « traitee par
+un client » : une trame perdue est donc un message perdu que le serveur croit avoir livre. Toute
+trame entrante est donc RETENUE, dans son ordre d'arrivee, jusqu'a ce que la session declare le
+client pret - puis rejouee sequentiellement, parce qu'un Welcome et le Commit derriere lui
+n'admettent qu'un seul ordre. Les battements de coeur sont la seule exception et n'atteignent jamais
+la porte.
+
+Toutes les trames attendent, pas seulement celles qui portent une charge utile : une frappe en cours,
+un evenement de canal et un `welcome_request` aboutissent a des rappels que la meme session
+enregistre, et un rappel absent perd sa trame tout aussi silencieusement. La porte vit sur
+`BaseMlsService`, donc les deux plateformes en heritent, et une session qui se termine avec des
+trames encore retenues le DIT au lieu de les jeter en silence.
+
 ### Changed - 162 ms de demarrage a froid rendus : la question « cet appareil est-il revoque ? » ne bloque plus le dechiffrement local
 
 Sur les deux chemins de connexion qui sautent la verification du PIN - le trousseau biometrique et

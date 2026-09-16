@@ -517,142 +517,154 @@ export class WebMlsService extends BaseMlsService {
           const msg = JSON.parse(text);
           const frameType = typeof msg.type === 'string' ? msg.type : '';
           if (isHeartbeatFrame(frameType)) return;
-          // THE ONE FIELD EVERY FRAME HAS IS ITS TYPE, and this line used to print four that only a
-          // PAYLOAD frame carries - so every control frame (a read receipt, a typing signal, a
-          // channel event) announced itself as `senderId=undefined, isWelcome=undefined,
-          // protoLen=undefined`. Measured on the local estate 2026-09-04: two of the thirty-six
-          // lines of an ordinary two-client exchange, each reporting three `undefined`s about a
-          // frame that was perfectly well formed. A reader who learns to skip that is a reader who
-          // will skip the next real one, and one who does not learns nothing from three `undefined`s.
-          // The payload fields are logged on the payload branch below, where they exist.
-          console.log(
-            `[WS RCV] ${sanitizeForLog(frameType || 'payload')} frame for group ` +
-              sanitizeForLog(String(msg.groupId ?? '-'))
-          );
-          if (isChannelEventFrame(frameType)) {
-            if (this.onChannelEvent) {
-              console.log(
-                `[WS RCV] Triggering onChannelEvent for ${sanitizeForLog(String(msg.type))}`
-              );
-              this.onChannelEvent({ type: msg.type, data: msg.data });
-            } else {
-              console.warn(
-                `[WS RCV] Received channel/post event but no onChannelEvent registered.`
-              );
-            }
-            return;
-          }
-          if (msg.type === 'typing') {
-            // Group/DM typing: normalise the flat gateway frame into the channel-event
-            // shape so the shared handler updates the typing store uniformly.
-            this.onChannelEvent?.({
-              type: 'typing',
-              data: { groupId: msg.groupId, userId: msg.userId, state: msg.state },
-            });
-            return;
-          }
-          if (msg.type === 'device_revoked') {
-            // Its owner deleted this device. The denylist row is the durable half and would be
-            // found at the next login anyway; this is what makes it immediate, so a device
-            // declared lost stops holding a live session the moment it is disowned. Never
-            // trusted blindly: the frame is addressed to this device by the gateway, and the
-            // handler re-checks with the server before wiping anything.
-            console.warn('[WS RCV] device_revoked - this device was deleted by its owner');
-            this.deviceRevokedCallback?.();
-            return;
-          }
-          if (msg.type === 'welcome_request') {
-            const requesterUserId = (msg.requesterUserId as string) || '';
-            const requesterDeviceId = (msg.requesterDeviceId as string) || '';
-            const groupId = (msg.groupId as string) || '';
-            console.log(
-              `[WS RCV] welcome_request from ${sanitizeForLog(requesterUserId)}:${sanitizeForLog(requesterDeviceId)} for group ${sanitizeForLog(groupId)}`
-            );
-            this.welcomeRequestCallback?.(requesterUserId, requesterDeviceId, groupId);
-            return;
-          }
-          if (msg.type === 'base_refresh_request') {
-            const requesterUserId = (msg.requesterUserId as string) || '';
-            const requesterDeviceId = (msg.requesterDeviceId as string) || '';
-            const groupId = (msg.groupId as string) || '';
-            console.log(
-              `[WS RCV] base_refresh_request from ${sanitizeForLog(requesterUserId)}:${sanitizeForLog(requesterDeviceId)} for group ${sanitizeForLog(groupId)}`
-            );
-            this.baseRefreshRequestCallback?.(requesterUserId, requesterDeviceId, groupId);
-            return;
-          }
-          if (msg.type === 'history_request') {
-            const requesterUserId = (msg.requesterUserId as string) || '';
-            const requesterDeviceId = (msg.requesterDeviceId as string) || '';
-            const groupId = (msg.groupId as string) || '';
-            console.log(
-              `[WS RCV] history_request from ${sanitizeForLog(requesterUserId)}:${sanitizeForLog(requesterDeviceId)} for group ${sanitizeForLog(groupId)}`
-            );
-            this.historyRequestCallback?.(requesterUserId, requesterDeviceId, groupId);
-            return;
-          }
-          if (msg.type === 'epoch_rejected') {
-            console.warn(
-              `[WS RCV] Epoch rejected for group ${msg.groupId} (server epoch: ${msg.currentEpoch})`
-            );
-            // Notify via channel event so connection.ts can trigger recovery
-            if (this.onChannelEvent) {
-              this.onChannelEvent({
-                type: 'epoch_rejected',
-                data: { groupId: msg.groupId, currentEpoch: msg.currentEpoch },
-              });
-            }
-            return;
-          }
-          if (msg.proto && this.messageCallback) {
-            const ciphertext = fromBase64(msg.proto as string);
-            const ratchetTreeBytes =
-              typeof msg.ratchetTree === 'string' && msg.ratchetTree.length > 0
-                ? fromBase64(msg.ratchetTree as string)
-                : undefined;
-
-            if (ciphertext.length > 0) {
-              // The payload frame's own fields, where they are known to exist - the half of the
-              // entry line above that only this branch can honestly print.
-              console.log(
-                `[WS RCV] payload: sender=${sanitizeForLog((msg.senderId as string) || 'unknown')},` +
-                  ` welcome=${msg.isWelcome === true}, commit=${msg.isCommit === true},` +
-                  ` bytes=${ciphertext.length}`
-              );
-              // Queue the message for sequential processing
-              this.enqueueMessage(
-                {
-                  senderId: (msg.senderId as string) || 'unknown',
-                  ciphertext,
-                  groupId: (msg.groupId as string) || undefined,
-                  isWelcome: msg.isWelcome === true,
-                  isCommit: msg.isCommit === true,
-                  ratchetTreeBytes,
-                  queuedMessageId: (msg.queuedMessageId as string) || undefined,
-                  queuedCreatedAt: parseServerTimestampMs(msg.createdAt),
-                },
-                'live'
-              );
-            }
-          } else if (msg.proto && !this.messageCallback) {
-            console.warn(
-              `[WS RCV] a frame carried a proto but no messageCallback is registered - the frame is DROPPED`
-            );
-          } else if (frameType) {
-            // A TYPED FRAME THAT REACHED NO BRANCH IS THE ONE FAILURE THIS LAYER CANNOT OTHERWISE
-            // SHOW. The `workspace.*` family was published, forwarded and delivered here for months
-            // and died on this line under a comment saying it was silently ignored; nothing anywhere
-            // could have said so. It accuses now, and names the type, which is the whole diagnosis.
-            console.warn(
-              `[WS RCV] frame type "${sanitizeForLog(frameType)}" reached no handler - the server is sending ` +
-                `something this client does not route (see channelEventTypes)`
-            );
-          }
+          await this.deliverFrame(msg, frameType);
         } catch (e) {
           console.error('[WS RCV] Failed to process WebSocket message:', e);
         }
       };
     });
+  }
+
+  /**
+   * Hands ONE parsed gateway frame to the handler its type names.
+   *
+   * EXTRACTED FROM `onmessage` SO THAT A HELD FRAME AND A LIVE ONE TAKE LITERALLY THE SAME PATH.
+   * The drain in {@link markInboundReady} replays frames that arrived before the MLS client did,
+   * and a second copy of this routing is how the replayed ones would quietly stop matching the live
+   * ones - a divergence nothing would report, because both halves would still compile and both
+   * would still log.
+   *
+   * @param msg the parsed frame.
+   * @param frameType `msg.type` when it is a string, `''` for a payload frame, which carries none.
+   */
+  protected override async routeFrame(msg: any, frameType: string): Promise<void> {
+    // THE ONE FIELD EVERY FRAME HAS IS ITS TYPE, and this line used to print four that only a
+    // PAYLOAD frame carries - so every control frame (a read receipt, a typing signal, a
+    // channel event) announced itself as `senderId=undefined, isWelcome=undefined,
+    // protoLen=undefined`. Measured on the local estate 2026-09-04: two of the thirty-six
+    // lines of an ordinary two-client exchange, each reporting three `undefined`s about a
+    // frame that was perfectly well formed. A reader who learns to skip that is a reader who
+    // will skip the next real one, and one who does not learns nothing from three `undefined`s.
+    // The payload fields are logged on the payload branch below, where they exist.
+    console.log(
+      `[WS RCV] ${sanitizeForLog(frameType || 'payload')} frame for group ` +
+        sanitizeForLog(String(msg.groupId ?? '-'))
+    );
+    if (isChannelEventFrame(frameType)) {
+      if (this.onChannelEvent) {
+        console.log(`[WS RCV] Triggering onChannelEvent for ${sanitizeForLog(String(msg.type))}`);
+        this.onChannelEvent({ type: msg.type, data: msg.data });
+      } else {
+        console.warn(`[WS RCV] Received channel/post event but no onChannelEvent registered.`);
+      }
+      return;
+    }
+    if (msg.type === 'typing') {
+      // Group/DM typing: normalise the flat gateway frame into the channel-event
+      // shape so the shared handler updates the typing store uniformly.
+      this.onChannelEvent?.({
+        type: 'typing',
+        data: { groupId: msg.groupId, userId: msg.userId, state: msg.state },
+      });
+      return;
+    }
+    if (msg.type === 'device_revoked') {
+      // Its owner deleted this device. The denylist row is the durable half and would be
+      // found at the next login anyway; this is what makes it immediate, so a device
+      // declared lost stops holding a live session the moment it is disowned. Never
+      // trusted blindly: the frame is addressed to this device by the gateway, and the
+      // handler re-checks with the server before wiping anything.
+      console.warn('[WS RCV] device_revoked - this device was deleted by its owner');
+      this.deviceRevokedCallback?.();
+      return;
+    }
+    if (msg.type === 'welcome_request') {
+      const requesterUserId = (msg.requesterUserId as string) || '';
+      const requesterDeviceId = (msg.requesterDeviceId as string) || '';
+      const groupId = (msg.groupId as string) || '';
+      console.log(
+        `[WS RCV] welcome_request from ${sanitizeForLog(requesterUserId)}:${sanitizeForLog(requesterDeviceId)} for group ${sanitizeForLog(groupId)}`
+      );
+      this.welcomeRequestCallback?.(requesterUserId, requesterDeviceId, groupId);
+      return;
+    }
+    if (msg.type === 'base_refresh_request') {
+      const requesterUserId = (msg.requesterUserId as string) || '';
+      const requesterDeviceId = (msg.requesterDeviceId as string) || '';
+      const groupId = (msg.groupId as string) || '';
+      console.log(
+        `[WS RCV] base_refresh_request from ${sanitizeForLog(requesterUserId)}:${sanitizeForLog(requesterDeviceId)} for group ${sanitizeForLog(groupId)}`
+      );
+      this.baseRefreshRequestCallback?.(requesterUserId, requesterDeviceId, groupId);
+      return;
+    }
+    if (msg.type === 'history_request') {
+      const requesterUserId = (msg.requesterUserId as string) || '';
+      const requesterDeviceId = (msg.requesterDeviceId as string) || '';
+      const groupId = (msg.groupId as string) || '';
+      console.log(
+        `[WS RCV] history_request from ${sanitizeForLog(requesterUserId)}:${sanitizeForLog(requesterDeviceId)} for group ${sanitizeForLog(groupId)}`
+      );
+      this.historyRequestCallback?.(requesterUserId, requesterDeviceId, groupId);
+      return;
+    }
+    if (msg.type === 'epoch_rejected') {
+      console.warn(
+        `[WS RCV] Epoch rejected for group ${msg.groupId} (server epoch: ${msg.currentEpoch})`
+      );
+      // Notify via channel event so connection.ts can trigger recovery
+      if (this.onChannelEvent) {
+        this.onChannelEvent({
+          type: 'epoch_rejected',
+          data: { groupId: msg.groupId, currentEpoch: msg.currentEpoch },
+        });
+      }
+      return;
+    }
+    if (msg.proto && this.messageCallback) {
+      const ciphertext = fromBase64(msg.proto as string);
+      const ratchetTreeBytes =
+        typeof msg.ratchetTree === 'string' && msg.ratchetTree.length > 0
+          ? fromBase64(msg.ratchetTree as string)
+          : undefined;
+
+      if (ciphertext.length > 0) {
+        // The payload frame's own fields, where they are known to exist - the half of the
+        // entry line above that only this branch can honestly print.
+        console.log(
+          `[WS RCV] payload: sender=${sanitizeForLog((msg.senderId as string) || 'unknown')},` +
+            ` welcome=${msg.isWelcome === true}, commit=${msg.isCommit === true},` +
+            ` bytes=${ciphertext.length}`
+        );
+        // Queue the message for sequential processing
+        this.enqueueMessage(
+          {
+            senderId: (msg.senderId as string) || 'unknown',
+            ciphertext,
+            groupId: (msg.groupId as string) || undefined,
+            isWelcome: msg.isWelcome === true,
+            isCommit: msg.isCommit === true,
+            ratchetTreeBytes,
+            queuedMessageId: (msg.queuedMessageId as string) || undefined,
+            queuedCreatedAt: parseServerTimestampMs(msg.createdAt),
+          },
+          'live'
+        );
+      }
+    } else if (msg.proto && !this.messageCallback) {
+      console.warn(
+        `[WS RCV] a frame carried a proto but no messageCallback is registered - the frame is DROPPED`
+      );
+    } else if (frameType) {
+      // A TYPED FRAME THAT REACHED NO BRANCH IS THE ONE FAILURE THIS LAYER CANNOT OTHERWISE
+      // SHOW. The `workspace.*` family was published, forwarded and delivered here for months
+      // and died on this line under a comment saying it was silently ignored; nothing anywhere
+      // could have said so. It accuses now, and names the type, which is the whole diagnosis.
+      console.warn(
+        `[WS RCV] frame type "${sanitizeForLog(frameType)}" reached no handler - the server is sending ` +
+          `something this client does not route (see channelEventTypes)`
+      );
+    }
   }
 
   /** Releases Web-specific resources: terminates the key package worker. */

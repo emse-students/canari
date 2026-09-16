@@ -327,3 +327,73 @@ describe('the revocation answer is held across the decrypt, never dropped', () =
     );
   });
 });
+
+/**
+ * The gateway handshake runs BESIDE the MLS state load, and nothing is processed before MLS is.
+ *
+ * Measured on production 2026-09-16: `MLS ready` printed at +1093 ms and `[WS] Connected to Chat
+ * Gateway` at +1308, of which only 33 ms was serial work - the other 182 was a handshake waiting
+ * behind a `load_or_create` it never reads. The two have no data dependency in either direction, so
+ * the socket now starts as soon as `resolveDeviceId` has answered.
+ *
+ * WHAT MAKES THAT SAFE IS AN ORDER, AND AN ORDER IS EXACTLY WHAT A LATER EDIT CAN UNDO WITH EVERY
+ * BEHAVIOURAL TEST STILL GREEN. A socket open before the MLS client exists can be handed a frame
+ * with nowhere to go, and the gateway's accounting cannot tell "handed to a client" from "handled by
+ * one" - so the loss would be silent on both ends. The queue is proven in
+ * `BaseMlsService.inboundGate.test.ts`; what is pinned here is that the login still opens it, and
+ * still opens it in the one place where both of its preconditions hold.
+ */
+describe('the gateway handshake is held across the MLS state load', () => {
+  it('starts the handshake before the state load rather than after it', () => {
+    const start = loginImplBody.indexOf('const startedHandshake = offlineSession');
+    const load = loginImplBody.indexOf('const [mlsInitSettled, storageSettled] = await Promise');
+    expect(start).toBeGreaterThan(-1);
+    expect(load).toBeGreaterThan(start);
+  });
+
+  it('starts it only once a device id exists, which is all the socket needs', () => {
+    // `connect` sends a device id and a token and reads no MLS state. `resolveDeviceId` is what
+    // answers on both login branches, and starting in front of it would be a socket with no name.
+    const start = loginImplBody.indexOf('const startedHandshake = offlineSession');
+    expect(start).toBeGreaterThan(-1);
+    // Searched BACKWARDS from the start, because `loginImpl` resolves the device id again further
+    // down for reasons of its own - what this asserts is that one of them precedes the socket.
+    const resolve = loginImplBody.lastIndexOf(
+      'await mlsService.resolveDeviceId(ctx.getUserId())',
+      start
+    );
+    expect(resolve).toBeGreaterThan(-1);
+  });
+
+  it('opens no socket at all on an offline session', () => {
+    // There is no token to carry and no server to reach; the attempt would cost a timeout and log
+    // `Gateway inaccessible` for a device that never had a gateway.
+    expect(loginImplBody).toContain('const startedHandshake = offlineSession\n      ? null');
+  });
+
+  it('adopts the started handshake instead of opening a second socket', () => {
+    expect(loginImplBody).toContain(
+      'await openGatewayConnection(makeConnectionDeps(ctx, cb), startedHandshake)'
+    );
+  });
+
+  it('opens the inbound gate after the pipeline that drains it is registered', () => {
+    // A held payload frame reaches `messageCallback` or it reaches a `DROPPED` warning, and
+    // `setupMessageHandler` is what registers it. Declaring ready in front of that would replay
+    // every held frame into nothing.
+    const pipeline = loginImplBody.indexOf('setupMessageHandler({');
+    const ready = loginImplBody.indexOf('await mlsService.markInboundReady();');
+    expect(pipeline).toBeGreaterThan(-1);
+    expect(ready).toBeGreaterThan(pipeline);
+  });
+
+  it('opens it before the connection is adopted, and awaits the drain', () => {
+    // AWAITED, because a Welcome and the Commit behind it admit exactly one order - and before the
+    // adoption, because everything `openGatewayConnection` does after the socket opens (the pending
+    // pull most of all) assumes a client that can read what it fetches.
+    const ready = loginImplBody.indexOf('await mlsService.markInboundReady();');
+    const adopt = loginImplBody.indexOf('await openGatewayConnection(makeConnectionDeps(ctx, cb)');
+    expect(ready).toBeGreaterThan(-1);
+    expect(adopt).toBeGreaterThan(ready);
+  });
+});

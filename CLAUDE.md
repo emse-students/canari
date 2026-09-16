@@ -258,8 +258,8 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
     HARDWARE, all of it Chrome with an override; the channel list's width half closed by injection;
     server prose in English, a TREE count `serverProse.test.ts` settles ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md)).
 11. **COLD START - 1.3 s TO A CONNECTED SOCKET ON `0.18.8`, TARGET UNDER 1 s (user); the 13 s of
-    `v0.18.5` is DEAD and may not be quoted.** 41% precedes the app's first word, and the last
-    182 ms is a handshake queued behind a state it never reads ([backlog](docs/wiki/backlog.md)).
+    `v0.18.5` is DEAD, unquotable.** 41% precedes the first word; the handshake's 182 ms and the
+    revocation's 162 are fixed but **UNMEASURED TOGETHER - ONE RELOAD EXPORT** ([backlog](docs/wiki/backlog.md)).
 12. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
     commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
 13. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
