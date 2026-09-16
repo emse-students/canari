@@ -888,10 +888,38 @@ with the app initialised at 695 ms.
 
 **WHAT DOMINATES IS NOW THE PART NOTHING HAD EVER MEASURED**: 534 ms of 1308 - **41%** - elapses
 between the navigation and the first line the application writes. That block contains exactly the
-two things already filed beside this entry, and **this export cannot separate them**: the document's
-own origin round trip (the app-shell entry, 120-146 ms of it) and the fetch, parse and evaluation of
-the module graph (the boot-bundle entry). Splitting them needs
-`performance.getEntriesByType('navigation')`, which is one more reading and not a change.
+two things already filed beside this entry: the document's own origin round trip (the app-shell
+entry, 120-146 ms of it) and the fetch, parse and evaluation of the module graph (the boot-bundle
+entry). The export could not separate them; `performance.getEntriesByType('navigation')` can.
+
+#### The split, taken 2026-09-16: the ROUND TRIP dominates it, not the bundle
+
+Three consecutive reloads of `https://canari-emse.fr/login` in Chrome on this workstation, each read
+straight off the navigation entry, with the first application line's own `+<ms>` prefix as the
+closing milestone:
+
+| | A | B | C |
+| --- | ---: | ---: | ---: |
+| DNS | 33.0 | 0.0 | 0.0 |
+| connect (QUIC + TLS) | 19.2 | 10.5 | 10.8 |
+| **TTFB (`requestStart` -> `responseStart`)** | **130.0** | **90.6** | **110.2** |
+| body (6.7 KB, zstd, h3) | 0.9 | 1.0 | 0.8 |
+| HTML parse to `domInteractive` | 63.1 | 28.0 | 29.1 |
+| module evaluation after `domInteractive` | 74.1 | 29.7 | 28.6 |
+| **the application's first word** | **323** | **162** | **185** |
+| first contentful paint | 264 | 152 | 176 |
+
+**THE ORIGIN ROUND TRIP IS 56-60% OF THE BLOCK, AND THE BUNDLE IS 15-23% OF IT.** 113 of the 114
+resources report `transferSize: 0` - the edge cache and the disk cache between them mean the ~100
+chunks cost almost nothing on a reload, and the 1 248 197 B of the boot-bundle entry buys back at
+most the 29-74 ms of evaluation. What is left is a document nobody may cache
+(`cf-cache-status: DYNAMIC`, `Cache-Control: no-store`) waiting on `frontend-ssr` in Saint-Etienne
+from an edge in Marseille. **So of the two entries filed beside this one, it is the round trip that
+is worth the work, and the bundle is worth it only for a FIRST visit.**
+
+**THIS IS THE SHAPE, NOT THE USER'S NUMBER.** It is Chrome, this workstation, `/login`, warm cache;
+the 534 ms is Firefox, the user's line, `/posts`, and a session. The proportions are what transfers -
+one reload of the user's own browser with these five fields read out would settle the absolute.
 
 **THE SECOND BLOCK IS 162 ms AND HAS NO EXPLANATION YET**: between `Initialising MLS (vault device
 key path)` (856 ms) and `Loading encrypted state with device key` (1018 ms), with nothing but
@@ -961,6 +989,12 @@ What is open is the SHAPE, and the cost of each:
 **NOTHING HERE IS A LEAK.** An unauthenticated fetch already receives this document; caching changes
 how fresh it is, never who may read it. Recorded because "the shell is per-user" is the first thing a
 later reader will assume, and it is false.
+
+**AND IT IS NOW THE BIGGEST SINGLE TERM BEFORE THE APP SPEAKS, WHICH IT WAS ONLY SUSPECTED OF BEING
+WHEN THIS WAS FILED.** The navigation split in the cold-start entry above puts TTFB at 90-130 ms of a
+162-323 ms pre-first-word block - **56-60% of it** - against 29-74 ms for the whole module graph on a
+warm cache. The second shape above is therefore the one worth the user's gesture, and its saving is
+most of an origin round trip on EVERY navigation, not only on a boot.
 
 ---
 ### P2 - THE NETWORK FOR THE JAVASCRIPT IS SOLVED; 1.62 MB OF IT STILL HAS TO BE PARSED BEFORE ANYTHING RUNS (measured on production 2026-09-16)

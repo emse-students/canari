@@ -15,9 +15,15 @@
  * export: six warning lines whose best case is a wasted hint and whose worst case is the 30 KB
  * main sheet fetched twice.
  *
- * JavaScript keeps its header. `rel="modulepreload"` is what lets ~130 chunks be discovered at
- * once and fetched multiplexed - measured at a 21 ms mean TTFB, every one a Cloudflare HIT - and
- * removing entries there does not remove the work, only delays discovering it.
+ * JavaScript keeps its header, and the SERVED DOCUMENT is what settles why. Read off production on
+ * 2026-09-16, `GET /login` returns 13 318 bytes of HTML containing **one `rel="stylesheet"` tag and
+ * ZERO `rel="modulepreload"` tags**, against a `Link:` header carrying one `as="style"` entry and
+ * ~100 `modulepreload` entries. The two halves are therefore not symmetric at all: for the
+ * stylesheet the header duplicates a tag the body already has, and for the modules it is the ONLY
+ * early declaration there is - the graph is otherwise discovered by EXECUTING the inline bootstrap,
+ * one dependency level at a time. `modulepreload` is what lets ~130 chunks be fetched multiplexed -
+ * measured at a 21 ms mean TTFB, every one a Cloudflare HIT - so removing entries there would not
+ * remove the work, only delay discovering it.
  *
  * IT IS SVELTEKIT'S DEFAULT MINUS ONE TYPE, SPELLED AS `js` RATHER THAN `!== 'css'`. The default is
  * `type === 'js' || type === 'css'`, so fonts and plain assets have never carried a preload header
