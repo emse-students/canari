@@ -906,6 +906,47 @@ how fresh it is, never who may read it. Recorded because "the shell is per-user"
 later reader will assume, and it is false.
 
 ---
+### P2 - THE NETWORK FOR THE JAVASCRIPT IS SOLVED; 1.62 MB OF IT STILL HAS TO BE PARSED BEFORE ANYTHING RUNS (measured on production 2026-09-16)
+
+Measured against the **under 1 s** target, after `0.18.7`, by counting the `Link: rel=modulepreload`
+entries the SSR sends and fetching every one of them over a single reused connection:
+
+| route | chunks | wire (zstd) | raw |
+| --- | --- | --- | --- |
+| `/login` | 100 | 338.1 KB | - |
+| `/chat` | 160 (156 JS + 4 CSS) | 490.1 KB | **1 703 232 B (1.62 MB)** |
+
+`/calendar` is 141 and `/` is 101. **`/social` reads 10 and is NOT a low outlier - it answers 404,
+so those ten are the error shell.** Checked before reporting, because the number invited exactly the
+wrong conclusion.
+
+**THE DELIVERY IS ALREADY AS GOOD AS IT GETS.** Mean TTFB across the 160 was **21 ms**, every one a
+Cloudflare `HIT`, all multiplexed on one connection. Compression is working - 1.62 MB becomes 490 KB.
+There is nothing left to win by moving these bytes around, and **a task proposing to is proposing to
+re-measure this table**.
+
+**WHAT IS LEFT IS THE JAVASCRIPT ITSELF.** 1.62 MB of it is parsed and compiled on the main thread
+before the app runs, on the same thread that then decrypts twenty-four avatars and initialises MLS.
+On a mid-range phone that is a substantial fraction of the whole budget, and unlike the network half
+it cannot be moved to an edge.
+
+**AND THE SPLIT IS ROUTE-AWARE, SO THIS IS NOT ONE MISSING `import()`.** 100 / 141 / 160 across three
+real routes is a graph that genuinely differs per page. The question worth asking is the 100 on
+`/login` - what a user pays before a form with two fields - and it is a question, not a finding: the
+100 has not been read chunk by chunk, and naming a culprit from a count is the guess this repository
+forbids.
+
+**DO NOT TOUCH THE PRELOAD HEADER AS A REMEDY.** Removing entries does not remove the work - those
+modules are imported by the entry graph and would be discovered later instead of sooner, which is
+strictly worse for latency. The preload is what makes the 21 ms possible.
+
+**THE NEXT STEP IS A READING, NOT A CHANGE**: which of the 100 `/login` chunks are reachable before
+authentication, from the build's own module graph rather than from a guess. Until that exists,
+nothing here is actionable, and the user's next cold-start export is what says whether parse time is
+even the dominant term - since #742 every console line carries `+<ms>`, so the gap between the first
+line and `Initialised in WEB mode` is now readable directly.
+
+---
 ### P3 - THE PRE-RELEASE CHANNEL IS THE ENVIRONMENT SELECTOR, SO THE BUILD CARRYING A FIX CANNOT MEASURE IT (found 2026-09-15)
 
 An APK embeds its frontend and its backend URL, so freezing the environment into the artifact is
