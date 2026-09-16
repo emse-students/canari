@@ -6424,7 +6424,7 @@ build, so the prune's reclaim is not observable here.
 **The 2026-09-06 prune (`prune_expired_key_packages`) does NOT fix this** and was never going to:
 these bundles are hours old, not 84 days. The prune bounds the ceiling; this loop is what fills it.
 
-### P2 - 933 KEY PACKAGES AGAINST A POOL OF FIFTY, ON THE USER'S OWN BROWSER, ON `0.18.4` - AND THE LINE THAT WOULD NAME THE REMEDY IS NATIVE-ONLY (production console, 2026-09-16)
+### P2 - 1013 KEY PACKAGES AGAINST A POOL OF FIFTY, +80 IN TWELVE MINUTES WITH NOTHING RECLAIMED, ON THE USER'S OWN BROWSER ON `0.18.4` - AND THE LINE THAT WOULD NAME THE REMEDY IS NATIVE-ONLY (two production consoles, 2026-09-16)
 
 **DOWNGRADED P1 -> P2 ON 2026-09-16.** It was a P1 because the PIN gate told the user the unlock
 had failed while it was still working; that half is shipped. What remains is bounded growth with no
@@ -6505,6 +6505,46 @@ putting a clock in the crate** - the pattern is established one function above.
 file size and an argument about membership; one line of its own log would have given the census. The
 2026-09-16 figure stays recorded because it dates the install, and nothing more should be built on
 it.
+
+#### AND THEN THE SAME BROWSER WAS READ TWICE, TWELVE MINUTES APART, WHICH GIVES THE RATE AND NAMES THE MECHANISM
+
+A second console export from the same profile, 08:10 against 07:58 on the same day and the same
+build. Four census lines across the two loads, in order:
+
+```
+07:58:04  KeyPackage  933 x 2 215 941 B   total 7 291 769 B
+07:58:04  [MLS Worker] generateKeyPackage start needed=50
+08:10:19  KeyPackage  983 x 2 334 671 B   total 7 424 982 B
+08:10:21  [MLS Worker] generateKeyPackage start needed=30 -> generate_key_packages count=30
+08:10:21  KeyPackage 1013 x 2 405 882 B   total 7 496 207 B
+```
+
+**The arithmetic is exact and it leaves no room for a reclaim.** 933 + 50 = 983, 983 + 30 = 1013;
+118 730 bytes for the first fifty and 71 211 for the next thirty, both 2 374 - 2 375 bytes a package.
+**Nothing was dropped between the two loads, and nothing was dropped during either.** Twelve minutes
+of ordinary use cost this profile **+80 packages and +204 438 bytes, permanently.**
+
+**WHAT IT NAMES.** `needed = 50 - existing` is read against the SERVER's remaining pool, so the
+server had 0 left at 07:58 and 20 at 08:10 - peers consume prekeys, the client tops the pool back up
+by MINTING, and the private half of every package ever minted stays in the blob until its own
+`not_after` elapses. The 1013 is not a leak in the sense of a bug still to find: it is the
+**accumulated history of every top-up this profile has ever done**, which is exactly what the
+84-day-bounded prune leaves behind by design. The three accrual fixes above stopped the pathological
+multipliers; they were never going to stop this, and this entry should not be read as though a fourth
+fix were hiding.
+
+**WHAT IT DOES NOT ESTABLISH.** Two samples are not a rate law. How fast a profile accrues is how
+fast its peers claim prekeys, which is a function of how many devices are joining groups around it -
+so +80/12 min is this account, this morning, and nothing is owed to it beyond that. **The number that
+would generalise is the census line collected across several accounts**, and it costs one console
+export each.
+
+**WHICH IS WHY THE NATIVE-ONLY SECOND LINE IS STILL THE THING TO SHIP**, and now for a sharper reason
+than before: the breakdown would say how many of the 1013 are already past `not_after` and merely
+waiting for the next load to drop them. If that share is large, the steady state is far below 1013
+and there is nothing to do; if it is near zero, the 84-day bound is not binding on this profile and
+the ceiling is higher than anyone has assumed. **One line separates those two worlds and it is gated
+off the only platform that produced this measurement.**
 
 
 
