@@ -7821,9 +7821,10 @@ number decides whether the pass is worth its risk.
   announcement at 14:20:37, two of them in the same second (14:23:32) and two more at 14:38:18.
 - **two cursor resumes from BEFORE it** (14:27:33 `after=1789568349700-0`, 14:40:12
   `after=1789568451147-0`), which re-read it as well.
-- **37 `[HISTORY_REQ] FORWARDED`**, per requesting device: Arthur ARMAND 8, Hortense BAIZE 7, Victor
-  KALFON 6, Jeanne BOUSSONNIERE 5, Matheo BOUDIER 5, Mael OULLION 4, Esteban DELSOL 1. Plus 14
-  `NO_PEER_ONLINE`.
+- **37 `[HISTORY_REQ] FORWARDED`** over SEVEN requesting devices, distributed 8 / 7 / 6 / 5 / 5 / 4
+  / 1 - so no single device accounts for it and the top three are within two of each other. Plus 14
+  `NO_PEER_ONLINE`. (The devices are not named here, and must not be: this is a PUBLIC repository
+  and the distribution is the whole of what the measurement needs.)
 
 These were the multipliers of the duplicated notice; with the id fixed they multiply nothing visible
 any more, which is exactly why they need a number before they get a name. **A group being built -
@@ -7848,8 +7849,9 @@ has one waiting for it.
 
 ### P3 - the adder was absent from `dm_group_members` for five minutes while committing adds
 
-`dm_group_members` dates Matheo BOUDIER's own row at **14:25:12.819**, after he had committed epochs
-3 (14:20:34), 4 (14:21:36) and 5 (14:23:24) in that same group - each of which added other people.
+`dm_group_members` dates the ADDER's own row at **14:25:12.819**, after that same account had
+committed epochs 3 (14:20:34), 4 (14:21:36) and 5 (14:23:24) in that group - each of which added
+other people.
 `processBulkAddition` opens with `await mlsService.registerMember(conversation.id, userId)` for the
 caller, inside the try whose catch aborts the whole invitation, and no abort was logged.
 
@@ -7857,7 +7859,7 @@ Unexplained, and it touches recipient resolution: **a column is only evidence fo
 written to answer**, and this one was read as "who is in this group". Note that routing filters on
 `dm_device_group_memberships.status='active'`, not on this table, so the blast radius is not obvious
 either way - which is the first thing to establish. Read with the placeholder-seat item in the main
-queue.
+queue. The account is identified in this file by its ROLE and by nothing else, deliberately.
 
 ## Post-campaign projects - decided, not scheduled
 

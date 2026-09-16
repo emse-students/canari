@@ -877,6 +877,33 @@ The link-preview pipeline, the SSRF guard, the favicon cascade and the undici se
 
 ## Contracts the compiler does not check
 
+### A MEASUREMENT TAKEN FROM PRODUCTION NAMES ROLES AND COUNTS, NEVER PEOPLE - THIS REPOSITORY IS PUBLIC
+
+`emse-students/canari` is world-readable, and a production investigation reads production data: a
+`docker logs` of the delivery service, a `SELECT` against `dm_group_members`, a screenshot the user
+sent. Every one of those carries the names of real students, and the write-up is where they escape.
+
+**It has already happened.** A 2026-09-16 investigation into a duplicated group notice wrote seven
+students' full names into `backlog.md` beside a count of how many history requests each of their
+devices made, one more name into a `CHANGELOG.md` entry, one into a database timestamp, and two into
+a test fixture. Not one of those names was load-bearing: the finding was a DISTRIBUTION (8/7/6/5/5/4/1
+over seven devices, no single device dominating), and the distribution says everything the
+measurement needed. The names were simply what the log happened to print.
+
+**THE RULE IS THEREFORE MECHANICAL, WHICH IS THE ONLY KIND THAT SURVIVES A LONG SESSION.** A
+production observation enters the repository as counts, dates, durations, route shapes, opaque ids
+and ROLES - "the adder", "the requesting device", "seven devices" - and an identity is REWRITTEN at
+the moment the paragraph is drafted, never "cleaned up later". Two corollaries with teeth:
+
+- **A test fixture is repository text.** A name copied out of a screenshot into a `content:` string
+  proves nothing a made-up one does not, and it ships to every reader of the repo for ever.
+- **`git` does not forget.** A name removed today stays in the history, so the removal limits the
+  damage and does not undo it. That asymmetry is the entire argument for rewriting at drafting time:
+  there is no second chance, only a smaller first one.
+
+An opaque uuid is not an identity and may be written down - it is how a later session finds the same
+group again. A `name` column, a display name and a screenshot caption are identities and may not.
+
 ### AN OPEN ITEM WHOSE SUBSTANCE HAS NEVER BEEN IN THE REPOSITORY IS NOT AN OPEN ITEM
 
 `CLAUDE.md` says the repository is the only reference and that nothing may exist solely in a chat
