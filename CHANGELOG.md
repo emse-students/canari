@@ -43,6 +43,20 @@ lisait** : la commande ecrit le blob elle-meme. Tauri serialise un `Vec<u8>` en 
 d'entiers, soit plusieurs octets de transport par octet d'etat, a chaque connexion - et le pire
 telephone mesure en septembre portait 19 548 753 octets. Le champ est supprime.
 
+### Fixed
+
+- **Une photo de profil changee n'etait plus visible avant environ 25 h, et MiGallery nous donnait
+  deja la version qu'on jetait.** `AvatarService` ne lisait que `content-type` de la reponse amont ;
+  l'ETag - que MiGallery indexe sur l'identifiant de l'asset, donc sur la photo elle-meme - partait
+  a la poubelle. La seule question que la chaine savait poser etait "une heure s'est-elle ecoulee",
+  qui porte sur une horloge et jamais sur la photo, et sa reponse etait toujours "retelecharge tout".
+  L'ETag est desormais conserve avec l'entree en cache, renvoye a MiGallery en `If-None-Match` des
+  que le TTL expire - le retelechargement horaire de chaque visage devient un 304 sans corps - et
+  transmis au navigateur a la place de celui qu'Express inventait sur les octets sortants. Le
+  `max-age` de 24 h ne bouge pas : le raccourcir demande une decision consignee au backlog, et un
+  nombre plus petit choisi par compromis serait le meme defaut a une autre cadence.
+
+
 ## [0.18.7] - 2026-09-16
 
 ### Changed - les deux agendas dessinent le meme mois, et ne le dessinent plus qu'une fois

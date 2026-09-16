@@ -20,8 +20,41 @@
 
 /** The two answers the upstream can actually give about an avatar. */
 export type AvatarAnswer =
-  | { readonly kind: 'image'; readonly body: Buffer; readonly contentType: string }
+  | {
+      readonly kind: 'image';
+      readonly body: Buffer;
+      readonly contentType: string;
+      /**
+       * MiGallery's own version of the photo, when it sent one.
+       *
+       * IT IS KEYED ON THE ASSET ID UPSTREAM, so it changes exactly when the user changes their
+       * photo and at no other time - which is the one thing a TTL can never know. Optional because
+       * an upstream that sends no ETag is still a perfectly good answer; it simply cannot be
+       * revalidated, and falls back to being re-downloaded when its TTL lapses, as before.
+       */
+      readonly etag?: string;
+    }
   | { readonly kind: 'absent' };
+
+/** A lapsed image that carries a version the upstream can confirm or replace in one round trip. */
+export interface RevalidatableAvatar {
+  readonly body: Buffer;
+  readonly contentType: string;
+  readonly etag: string;
+}
+
+/**
+ * What the cache holds for one user, and the THIRD state is the point.
+ *
+ * `fresh` and `miss` were the whole vocabulary, so every lapse of the TTL was a full re-download of
+ * a photo that had almost certainly not changed - hourly, per replica, per face. `stale` is the
+ * state where we still hold the bytes AND a version the upstream can check, which turns that
+ * re-download into a 304 with an empty body.
+ */
+export type AvatarLookup =
+  | { readonly state: 'fresh'; readonly answer: AvatarAnswer }
+  | { readonly state: 'stale'; readonly answer: RevalidatableAvatar }
+  | { readonly state: 'miss' };
 
 /**
  * Whether a non-ok upstream status means "this user has no avatar" - the only negative that may be
@@ -69,17 +102,31 @@ export class AvatarCache {
   }
 
   /**
-   * The cached answer for `userId`, or null when absent or stale. An expired slot is dropped on
-   * read, so a key that stops being requested cannot pin its payload in memory for ever.
+   * Classifies what is held for `userId`: usable as is, revalidatable, or nothing.
+   *
+   * AN EXPIRED SLOT IS KEPT ONLY WHEN IT CAN BE REVALIDATED, and dropped otherwise. That is the
+   * whole of the memory argument: an entry with no ETag can do nothing but be re-downloaded, so
+   * holding it would pin a payload for a key that may never be asked for again. An entry WITH one
+   * is about to be handed to a conditional request whose answer rewrites or replaces it, and the
+   * `maxEntries` ceiling bounds it either way.
+   *
+   * An absence is never stale: there is no version to confirm, and "this user has none" is cheap to
+   * ask again.
    */
-  get(userId: string): AvatarAnswer | null {
+  lookup(userId: string): AvatarLookup {
     const slot = this.slots.get(userId);
-    if (!slot) return null;
-    if (slot.expiresAt <= this.now()) {
-      this.slots.delete(userId);
-      return null;
+    if (!slot) return { state: 'miss' };
+    if (slot.expiresAt > this.now()) return { state: 'fresh', answer: slot.answer };
+
+    const answer = slot.answer;
+    if (answer.kind === 'image' && answer.etag) {
+      return {
+        state: 'stale',
+        answer: { body: answer.body, contentType: answer.contentType, etag: answer.etag },
+      };
     }
-    return slot.answer;
+    this.slots.delete(userId);
+    return { state: 'miss' };
   }
 
   /**

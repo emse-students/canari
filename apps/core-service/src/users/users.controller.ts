@@ -213,6 +213,18 @@ export class UsersController {
       'Content-Length': outcome.body.length,
       'Cache-Control': 'public, max-age=86400',
     });
+    // MiGALLERY'S VERSION, NOT EXPRESS'S INVENTION - and setting it is the whole of the change,
+    // because `res.send` only generates a weak ETag when none is set and only 304s when the request
+    // is `fresh` against the one that IS. That generated ETag was computed over whatever bytes went
+    // out, so it could confirm nothing until the 24 h above had already elapsed; this one is keyed
+    // on the asset id upstream, so it changes exactly when the user changes their photo.
+    //
+    // THIS DOES NOT SHORTEN THE 24 h, and it is not meant to. It makes the revalidation that
+    // eventually happens be about the PHOTO instead of about a clock, and it saves the body on
+    // every conditional request that reaches us. Shortening it needs the decision recorded in
+    // `docs/wiki/backlog.md` - `no-cache` plus this ETag, or a busted URL - and a smaller number
+    // chosen as a compromise would be the same defect at a different rate.
+    if (outcome.etag) res.set({ ETag: outcome.etag });
     res.send(outcome.body);
   }
 
