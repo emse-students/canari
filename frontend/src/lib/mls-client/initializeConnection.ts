@@ -63,10 +63,62 @@ export type SyncAfterConnectDeps = Pick<
 };
 
 /**
+ * A handshake started ahead of the code that will use the socket, settled either way.
+ *
+ * `null` means the socket opened; an `Error` is the rejection {@link openGatewayConnection} would
+ * have caught had it called `connect` itself. IT NEVER REJECTS, and that is the point: this promise
+ * is created long before anything awaits it, and a rejecting one left in flight for the length of
+ * an MLS state load is an unhandled rejection - which on this path also means a `SessionExpiredError`
+ * reported by the wrong mechanism, at the wrong time, to nobody.
+ */
+export type StartedHandshake = Promise<Error | null>;
+
+/**
+ * Starts the gateway handshake WITHOUT waiting for it, so it runs beside the MLS state load.
+ *
+ * The two have no data dependency in either direction: the socket carries a device id and a token,
+ * both of which exist before a byte of MLS state is decrypted. Measured on production 2026-09-16,
+ * the handshake was 182 ms of a 1308 ms cold start and every one of those milliseconds was spent
+ * waiting for a state the socket never reads.
+ *
+ * WHAT MAKES IT SAFE IS NOT HERE BUT AT THE OTHER END: an early socket can be handed a frame before
+ * the MLS client that must interpret it exists, so `BaseMlsService` holds every inbound frame until
+ * the login calls `markInboundReady`. **Do not call this without that call.** The caller that
+ * awaits the result is {@link openGatewayConnection}, which does the whole of the post-connect half
+ * exactly as it does for a handshake it started itself.
+ *
+ * @returns the started handshake, or `null` on a follower tab, which opens no socket at all.
+ */
+export function startGatewayHandshake(
+  deps: Pick<ConnectionDeps, 'mlsService' | 'log'>
+): StartedHandshake | null {
+  if (!getIsTabLeader()) {
+    deps.log('[TAB] Follower tab - skipping openGatewayConnection.');
+    return null;
+  }
+  deps.log('Connecting to Gateway…');
+  return (async () => {
+    const { getToken } = await import('$lib/stores/auth');
+    const token = await getToken();
+    await deps.mlsService.connect(token);
+  })().then(
+    () => null,
+    (e: unknown) => (e instanceof Error ? e : new Error(String(e)))
+  );
+}
+
+/**
  * Opens the WebSocket to the chat gateway (leader tab only).
  * Returns true when the socket is up; false when skipped or connect failed.
+ *
+ * @param started a handshake already in flight from {@link startGatewayHandshake}. Omitted, this
+ *   function starts one itself and awaits it, which is what the reconnect path does - it has
+ *   nothing to overlap the wait with.
  */
-export async function openGatewayConnection(deps: ConnectionDeps): Promise<boolean> {
+export async function openGatewayConnection(
+  deps: ConnectionDeps,
+  started?: StartedHandshake | null
+): Promise<boolean> {
   const { mlsService, scheduleReconnect, setIsWsConnected, setReconnectAttempts, log } = deps;
 
   if (!getIsTabLeader()) {
@@ -74,11 +126,18 @@ export async function openGatewayConnection(deps: ConnectionDeps): Promise<boole
     return false;
   }
 
-  log('Connecting to Gateway…');
   try {
-    const { getToken } = await import('$lib/stores/auth');
-    const token = await getToken();
-    await mlsService.connect(token);
+    if (started) {
+      // The failure is RE-THROWN rather than returned, so both routes reach the one catch below
+      // and a `SessionExpiredError` is still re-thrown to the caller that must stop retrying.
+      const failure = await started;
+      if (failure) throw failure;
+    } else {
+      log('Connecting to Gateway…');
+      const { getToken } = await import('$lib/stores/auth');
+      const token = await getToken();
+      await mlsService.connect(token);
+    }
     setIsWsConnected(true);
     setReconnectAttempts(0);
     log('Connected to network!');

@@ -495,6 +495,20 @@ export interface IMlsService {
   // Networking
   /** Opens a WebSocket connection to the chat gateway. Token is used when the cookie is not forwarded (Tauri, proxy, ITP). Falls back to internal getToken() if omitted. */
   connect(token?: string): Promise<void>;
+  /**
+   * Declares this client able to interpret an inbound frame, and replays everything the socket
+   * collected before it was.
+   *
+   * THE SOCKET IS ALLOWED TO OPEN BEFORE THE MLS STATE IS LOADED - the handshake needs a device id
+   * and a token and nothing else - so every frame that arrives in that window is HELD in arrival
+   * order rather than routed into a client that cannot decrypt it. This call is what ends the
+   * window, and the login is the only caller that can honestly make it: it is the only place that
+   * knows both the MLS client and the inbound pipeline exist. Awaiting it matters, because a
+   * Welcome and the Commit behind it may only be processed in the order they arrived.
+   *
+   * Idempotent, and silent when nothing was held.
+   */
+  markInboundReady(): Promise<void>;
   /** True when the live gateway WebSocket is open (used for reconnect watchdog). */
   isWsOpen(): boolean;
   /** Fetches all registered devices (with KeyPackages) for the given user. Throws on transport/HTTP failure; `[]` only when the user genuinely has no active device. */

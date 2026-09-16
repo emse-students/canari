@@ -59,6 +59,7 @@ import { disposeMlsEncryptWorker } from '$lib/mls-client/mlsEncryptWorkerSession
 import {
   setupMessageHandler,
   openGatewayConnection,
+  startGatewayHandshake,
   syncConnectionAfterWsOpen,
   initTabLeadershipAsync,
   getIsTabLeader,
@@ -663,6 +664,30 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     // surfaces as a recoverable signal instead of a destructive fresh-start that would
     // drop history. In biometric mode, an empty PIN is passed so the Rust side invokes
     // retrieve_device_key (single BiometricPrompt).
+    // TAB LEADERSHIP IS DECIDED HERE BECAUSE IT IS WHAT DECIDES WHETHER TO OPEN A SOCKET AT ALL,
+    // and it costs a Web Lock acquisition - measured at 6 ms on the 2026-09-16 export. Nothing
+    // between here and its old position below the restore reads `getIsTabLeader()`, so the move is
+    // a reordering of two independent facts and not a change of meaning.
+    const tabLeaderNow = await initTabLeadershipAsync(cb.log);
+    ctx.setIsTabLeader(tabLeaderNow);
+    if (!tabLeaderNow) {
+      cb.log('[TAB] Follower tab - WebSocket active in another Canari tab.');
+    }
+
+    // THE HANDSHAKE STARTS HERE AND IS AWAITED 200 MS LOWER DOWN. `resolveDeviceId` has answered on
+    // both paths above, which is everything the socket needs; the MLS state load below needs
+    // nothing from the socket. Measured on production 2026-09-16, the two ran one after the other
+    // and cost 236 ms + 182 ms of a 1308 ms cold start.
+    //
+    // THE ORDER THAT MATTERS IS NOT "BOTH FINISH" BUT "NOTHING IS PROCESSED BEFORE THE THING THAT
+    // CAN PROCESS IT EXISTS", exactly as for the revocation answer above. A frame that arrives on
+    // this socket before MLS is ready is HELD by `BaseMlsService`, in arrival order, and replayed by
+    // the `markInboundReady` below - which is the precondition of this line and must stay paired
+    // with it. An offline session opens nothing: there is no token to carry and no server to reach.
+    const startedHandshake = offlineSession
+      ? null
+      : startGatewayHandshake({ mlsService, log: cb.log });
+
     const [mlsInitSettled, storageSettled] = await Promise.allSettled([
       mlsService.init(ctx.getUserId(), deviceKeyB64, mlsStateResult?.bytes, {
         // `!!bytes` WOULD NOW BE WRONG ON MOBILE: the bytes were deliberately not loaded, and a
@@ -1020,12 +1045,21 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     endStartupCatchupPhase();
 
     /**
-     * THE SOCKET OPENS BEFORE THE RESTORE, NOT TWENTY-TWO SECONDS AFTER THE APP STARTED.
+     * THE GATE OPENS HERE, AND NOT ONE LINE EARLIER, AND THE SOCKET IS ALREADY UP BEHIND IT.
      *
-     * Measured on production 2026-09-15, from the user's own console: the app announces
-     * `Initialised in WEB mode` at 22:24:17 and `[TAB] Leadership acquired (Web Locks)` at 22:24:39,
-     * with `[WS] Opening connection` behind it - so for the whole of the archive replay this client
-     * had no socket. Two things follow from that, and only one of them is obvious:
+     * Both preconditions of {@link IMlsService.markInboundReady} are true on this line and on no
+     * earlier one: the MLS client is initialised, and `setupMessageHandler` just above registered
+     * the inbound pipeline every held payload frame needs. It is AWAITED because a Welcome and the
+     * Commit behind it may only be processed in the order they arrived. Silent and free when
+     * nothing was held - every follower tab, every offline session, and every boot where the
+     * handshake simply finished first.
+     *
+     * WHY THE SOCKET MUST BE UP BEFORE THE RESTORE, which is the older half of this and still the
+     * reason the two lines below sit here rather than further down. Measured on production
+     * 2026-09-15, from the user's own console: the app announced `Initialised in WEB mode` at
+     * 22:24:17 and `[TAB] Leadership acquired (Web Locks)` at 22:24:39, with `[WS] Opening
+     * connection` behind it - so for the whole of the archive replay this client had no socket. Two
+     * things followed, and only one of them is obvious:
      *
      *  - nothing live could arrive for twenty-two seconds, and
      *  - **every mailbox barrier re-pulled the whole mailbox.** `settleBarrier` trusts a previous
@@ -1034,21 +1068,16 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
      *    have pushed it. So with the socket closed the flag is worth nothing, and twenty
      *    conversations meant twenty HTTP round trips answering `[PENDING] No pending MLS messages`.
      *
-     * The precondition for opening here is the paragraph at the top of this phase: the inbound
-     * pipeline is registered BEFORE anything can pull, which is what `setup_handler` just finished
-     * doing. Frames are therefore already being processed during the restore today - the barrier
-     * pulls them - so opening the socket adds no new concurrency to the replay; it removes the
-     * reason the barrier could not believe itself.
+     * Since 2026-09-16 the handshake no longer STARTS here either - it was started before the MLS
+     * state load, 182 ms further up, and what remains on this path is the gate and the await. The
+     * concurrency that buys is paid for by the hold queue and by nothing else: frames are held, not
+     * dropped, and they are replayed by the call below before a single line past it runs.
      *
-     * Only the SOCKET moves. `syncConnectionAfterWsOpen` - KeyPackage publication, the group sweep,
-     * reconciliation - stays where it was, below the restore, because it reasons about the
+     * Only the SOCKET moved, twice. `syncConnectionAfterWsOpen` - KeyPackage publication, the group
+     * sweep, reconciliation - stays where it was, below the restore, because it reasons about the
      * conversations this device holds and must not run before they are loaded.
      */
-    const tabLeaderNow = await initTabLeadershipAsync(cb.log);
-    ctx.setIsTabLeader(tabLeaderNow);
-    if (!tabLeaderNow) {
-      cb.log('[TAB] Follower tab - WebSocket active in another Canari tab.');
-    }
+    await mlsService.markInboundReady();
 
     // Offline: skip the connection entirely rather than let it fail. `openGatewayConnection` would
     // degrade correctly on its own, but the attempt costs a timeout on a launch that already knows
@@ -1058,7 +1087,9 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       cb.log('[INIT] Offline session - gateway connection deferred until the network returns.');
     } else {
       beginStartupCatchupPhase('open_gateway');
-      gatewayIsOpen = await openGatewayConnection(makeConnectionDeps(ctx, cb));
+      // The handshake this awaits was started before the MLS state load, not here - see
+      // `startGatewayHandshake` above. Everything after the socket opens is unchanged.
+      gatewayIsOpen = await openGatewayConnection(makeConnectionDeps(ctx, cb), startedHandshake);
       endStartupCatchupPhase();
     }
 

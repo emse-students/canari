@@ -3,6 +3,7 @@ export {
   setupMessageHandler,
   initializeConnection,
   openGatewayConnection,
+  startGatewayHandshake,
   syncConnectionAfterWsOpen,
   initTabLeadershipAsync,
   getIsTabLeader,
@@ -13,4 +14,5 @@ export {
   type MessageHandlerDeps,
   type ConnectionDeps,
   type SyncAfterConnectDeps,
+  type StartedHandshake,
 } from '$lib/mls-client';
