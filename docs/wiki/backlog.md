@@ -729,10 +729,21 @@ feed is the engine's INITIALISATION.
 
 **WHAT IS NOT KNOWN, AND MUST BE BEFORE ANYTHING IS WRITTEN.** Whether those ten seconds are
 network concurrency, main-thread contention (each avatar is decrypted in WASM on the same thread),
-or the vault key derivation simply being slow on a cold process. Second-resolution console
-timestamps cannot separate them, and **a fix written against a suspected cause is the thing this
-repository forbids**. What settles it is one `performance.mark` pair around the vault path and one
-around `WasmMlsClient::new`, read on the same two reloads - not a guess about priority hints.
+or the vault key derivation simply being slow on a cold process. **A fix written against a suspected
+cause is the thing this repository forbids.**
+
+**THE INSTRUMENT THIS PARAGRAPH ASKED FOR IS NO LONGER OWED.** It read "second-resolution console
+timestamps cannot separate them ... what settles it is one `performance.mark` pair around the vault
+path and one around `WasmMlsClient::new`". Since #742 every console line carries `+<ms>` since its
+own document's navigation start, from the one console seam - so `Initialising MLS (vault device key
+path)...` and `WasmMlsClient::new`, which are already logged, now bracket themselves. **Write no
+marks: the next export answers this with the lines that are already there.** What the reading must
+still separate is unchanged, and so is the refusal to guess.
+
+**Do not read the ten seconds forward from `v0.18.5` either.** That console predates the Cache Rule,
+#741's round that no longer decrypts and rewrites a 7.5 MB state on an ordinary boot, and #743's
+second version probe. The window may be a different size or gone; the three causes above are what
+the new reading has to choose between, not the old number.
 
 **Do not "fix" this by lowering the avatars' fetch priority.** A priority hint is advisory, it
 differs per engine, and it would make the measurement above unreproducible without stating what the
