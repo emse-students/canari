@@ -1286,6 +1286,32 @@ The `updated-dependencies` trailers are parsed **as blocks**, never as three ind
 lists: a grouped pull request carries several, and an update Dependabot could not classify has no
 `update-type`, so three lists pasted side by side would pair the wrong name with the wrong version.
 
+### The two duplicate gates, and why they are two
+
+`.github/scripts/lib/declared-duplicates.mjs` holds ONE list, read by two self-tests asking
+opposite questions.
+
+| Gate | Question | Fails when |
+| --- | --- | --- |
+| `declared-duplicates.test.mjs` | do the copies we DECIDED on still agree? | a group drifts - three of four agreeing is the failure it names |
+| `undeclared-duplicates.test.mjs` | is this duplicate one somebody decided on? | a function body is identical across two files and appears in neither list |
+
+The second was written on 2026-09-16 because the first is blind to the dangerous half: a copy
+nobody declared is a copy nobody will remember to update. It walks `frontend/src` and `apps` in ONE
+pass - so a body shared between the client and a service is seen as one group - extracts function
+bodies by brace balance, normalises away comments, blank lines and indentation, and hashes them.
+
+Two disposals silence a group, both requiring a `why`: **`DECLARED_GROUPS`** (the copies must
+agree, and the other gate then enforces that) or **`ACKNOWLEDGED_IDIOMS`** (their agreeing means
+nothing, so the entry must argue a divergence would be harmless). There is deliberately no third.
+
+**What it cannot see**, so a green run is not mistaken for a proof: two copies that have ALREADY
+drifted by one character are invisible to it - which is the state the calendar defect was in. It
+reads `.ts` and `.svelte` only, skips tests and generated trees, and ignores bodies under four
+normalised lines. The threshold is four rather than five on purpose: the only idiom below five is
+acknowledged by name, and a threshold chosen to clear the awkward case silences it without anybody
+reading it, plus every future case that happens to be the same length.
+
 ### Verifying a change to the CI scripts
 
 The decisions live in `.github/scripts/lib/` precisely so they can be exercised on inputs GitHub
