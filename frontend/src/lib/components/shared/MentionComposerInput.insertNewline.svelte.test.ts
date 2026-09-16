@@ -60,6 +60,14 @@ function typeAtCursor(editorEl: HTMLElement, text: string) {
   flushSync();
 }
 
+/** Dispatches a real `Enter` keydown, like `MarkdownComposerField` (no `onkeydown` of its own) relies on. */
+function pressEnter(editorEl: HTMLElement) {
+  editorEl.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+  );
+  flushSync();
+}
+
 describe('MentionComposerInput.insertNewlineAtCursor', () => {
   it('inserts a real newline at the caret, with the caret anchored right after it', () => {
     const { app, props } = mountEditor('hello');
@@ -99,5 +107,42 @@ describe('MentionComposerInput.insertNewlineAtCursor', () => {
 
     const editorEl = app.getEditorElement()!;
     expect(editorEl.querySelector(`.${MD_FENCED_CODE_CLASS}`)).not.toBeNull();
+  });
+
+  it('a formatted line re-rendered by markdownPreview still lands the next keystroke after the break', async () => {
+    // Measured 2026-09-16: `appendComposerText` (the render path `markdownPreview` re-renders
+    // through, separate from `appendTextWithBreaks`) left its OWN trailing empty text node for a
+    // line ending in `\n`, which doesn't anchor a caret either - same defect class as the plain
+    // case above, but only reachable once the text actually contains markdown (e.g. `__test__`)
+    // so the re-render path is taken at all.
+    const { app, props } = mountEditor('__test__', true);
+    app.setSelectionRange('__test__'.length, '__test__'.length);
+    app.insertNewlineAtCursor();
+    flushSync();
+    // Inserting the newline itself re-renders the markdown styling (`applyDomFromPlainText`),
+    // which sets `isApplyingDom` and clears it again in a queued microtask - exactly the gap a
+    // real keystroke always has (a separate browser event), but two synchronous calls in a test
+    // do not, so this awaits that same tick.
+    await Promise.resolve();
+
+    typeAtCursor(app.getEditorElement()!, 'world');
+
+    expect(props.value).toBe('__test__\nworld');
+  });
+
+  it('Enter still inserts a newline when the current text has no markdown to trigger a preview', () => {
+    // Measured 2026-09-16: `handleEditorKeydown` additionally gated its Enter interception on
+    // `composerMarkdownPreviewEnabled(text, ...)`, a check on whether the CURRENT text already
+    // looks like markdown. Plain text never does, so the gate fell through to the browser's own
+    // default Enter handling for the common case - the same "helloworld" bug this file already
+    // covers, just unguarded for anything without markdown syntax. `markdownPreview` (the prop)
+    // alone must decide whether this component owns Enter, never the text's own content.
+    const { app, props } = mountEditor('hello', true);
+    app.setSelectionRange('hello'.length, 'hello'.length);
+
+    pressEnter(app.getEditorElement()!);
+    typeAtCursor(app.getEditorElement()!, 'world');
+
+    expect(props.value).toBe('hello\nworld');
   });
 });
