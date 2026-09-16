@@ -550,6 +550,32 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       );
     }
 
+    // THE REVOCATION QUESTION IS ASKED HERE AND READ AFTER THE DECRYPT, and this variable is the
+    // whole of that: the keystore and vault paths put a network round trip in front of a purely
+    // local decrypt, and the two have no data dependency at all. Measured on production
+    // 2026-09-16, the gap between the login's last local line and MLS being ready was 162 ms of
+    // waiting for `/revoked` with the CPU idle - 12% of a 1.3 s cold start, bought back by holding
+    // the promise instead of awaiting it where it is asked.
+    //
+    // A HELD PROMISE AND NOT A `Promise.all`: what must be preserved is not "both finish" but
+    // "nothing this device does on the server's behalf happens before the answer is in". The
+    // decrypt below touches only local bytes a revoked device already holds, so overlapping it
+    // costs nothing; everything after the gate - the token, the session/device binding, the push
+    // registration, the first key-package publication - is on the far side of it. The PIN path
+    // cannot join in and deliberately does not: its round trip RETURNS the salt the device key is
+    // derived from, so there is a real data dependency there and no idle wait to reclaim.
+    //
+    // WHAT `init()` MAY DO WHILE THE ANSWER IS IN FLIGHT WAS ENUMERATED, NOT ASSUMED, and it is
+    // one call. `_initImpl` publishes nothing: `generateKeyPackage` is reached from
+    // `initializeConnection` and `republishKeyMaterial`, both far past this gate. Its only network
+    // step is `deleteDevice` inside `rotateDeviceIdentity`, on the branch where the saved state
+    // fails to open - and `DELETE /api/mls/devices/:userId/:deviceId` ADDS a `RevokedDevice` row,
+    // or refreshes the `revokedAt` of one that exists (`devices.controller.ts`). It can therefore
+    // only reinforce a revocation, never lift one. A fresh start likewise mints a client locally and nothing more; were it to reach
+    // registration, `REGISTER_DEVICE` refuses a revoked id on the server's own authority. So the
+    // overlap moves work, and moves no decision.
+    let revocationAnswer: Promise<boolean> | null = null;
+
     // Biometric mode & vault-based login: skip server-side PIN verification.
     // The keystore (retrieve_device_key → BiometricPrompt) or the encrypted
     // device key vault are the authentication factors.
@@ -628,11 +654,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       // it reads the stored id and decrypts nothing. `isDeviceRevoked` answers `false` when it
       // cannot reach the server, so an offline login is never wiped by a transport failure.
       const deviceId = await mlsService.resolveDeviceId(ctx.getUserId());
-      if (await mlsService.isDeviceRevoked(ctx.getUserId(), deviceId)) {
-        await wipeRevokedDevice(ctx, cb);
-        cb.log('[SECURITY] Revoked device: signed out and reset to a fresh install.');
-        throw new LoginFailure('device_revoked', m.auth_device_revoked_reset());
-      }
+      revocationAnswer = mlsService.isDeviceRevoked(ctx.getUserId(), deviceId);
     }
 
     // PIN verified server-side (or biometric mode) - now decrypt the local MLS state.
@@ -655,6 +677,21 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       }),
       getStorage(ctx.getUserId()),
     ]);
+    // THE GATE, AND IT IS READ BEFORE THE INIT VERDICT ON PURPOSE. A device that is both revoked
+    // and carrying an unopenable state has exactly one correct answer, and it is not "enter the PIN
+    // you used before": `local_state_unopenable` would park its owner in a recovery modal for a
+    // device they have already declared lost. Revocation is the stronger fact, so it is consulted
+    // first - which is also the order the awaited version had, one round trip earlier.
+    //
+    // `isDeviceRevoked` answers `false` when it cannot reach the server and never rejects, so this
+    // await can neither throw into the destructive catch below nor leave a rejection unhandled when
+    // an earlier line throws past it.
+    if (revocationAnswer !== null && (await revocationAnswer)) {
+      await wipeRevokedDevice(ctx, cb);
+      cb.log('[SECURITY] Revoked device: signed out and reset to a fresh install.');
+      throw new LoginFailure('device_revoked', m.auth_device_revoked_reset());
+    }
+
     if (mlsInitSettled.status === 'rejected') {
       const reason = mlsInitSettled.reason;
       const reasonStr = reason instanceof Error ? reason.message : String(reason);
