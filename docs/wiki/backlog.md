@@ -5775,7 +5775,7 @@ the map meanwhile so the board reconciles today.
 
 ### P1 - 3053 PREKEY BUNDLES ARE WRITTEN AND NOTHING CAN SAFELY RECLAIM THEM, AND THE ONE RULE THAT WOULD HAVE WAS REFUTED BY THE WELCOME WINDOW (churn fixed 2026-09-08; window measured on production 2026-09-12)
 
-#### THE CHURN IS FIXED AND SHIPPED, AND ITS STORY IS NOT KEPT HERE
+#### THE CHURN'S ACCOUNT LIVES IN `CHANGELOG.md`, AND WHAT A LATER SESSION MUST NOT RE-DERIVE
 
 Four sections of investigation stood here until 2026-09-16 - the 2026-09-08 observation on the
 Mi 9T, the refutation of candidate 2 at the reload boundary, the lock-order cause and its
