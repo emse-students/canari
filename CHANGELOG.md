@@ -11,6 +11,36 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - sur telephone, Entree envoyait le message plutot que de passer a la ligne
+
+Signale par l'utilisateur (2026-09-16) : sur telephone, une nouvelle ligne devait se comporter
+comme Maj+Entree sur ordinateur, jamais comme un envoi - il n'y a pas de geste "Maj" a atteindre
+sur un clavier tactile. `handleComposerKeydown` traite desormais Entree comme un saut de ligne des
+que `isMobileViewport` est vrai, exactement comme Maj+Entree l'est deja sur ordinateur.
+
+**Ce changement en a revele un plus profond.** Un Entree simple non intercepte scinde
+l'editeur en un nouveau BLOC (`hello<div>monde</div>`) que le serialiseur relit comme
+`"hellomonde"` - la coupure disparait, elle n'est pas simplement mal stylee. Maj+Entree insere un
+`<br>` a la place, qui survit au aller-retour - mais c'etait un accident du comportement par
+defaut du navigateur pour CETTE seule combinaison de touches, pas une garantie qu'un second
+appelant pouvait reutiliser. `MentionComposerInput` expose maintenant `insertNewlineAtCursor()`,
+qui reproduit ce `<br>` a la main puis emet un vrai evenement `input` - le meme chemin qu'une
+frappe ordinaire emprunte deja - plutot que de laisser le navigateur choisir, et plutot que
+`syncFromPlainText`, dont l'ecriture externe se perdait sous un composeur controle en sens unique
+(`value`/`onchange`, celui de `ChatComposer`) : le curseur qu'elle venait de placer avait disparu
+au moment ou le parent renvoyait le meme texte comme prop une frappe plus tard.
+
+**Et celui-ci en a revele un troisieme, plus etroit.** Un curseur place juste apres un `<br>` SANS
+RIEN apres lui s'ancre sur l'element PARENT plutot que dans un noeud texte - y compris quand ce
+"rien" est un noeud texte vide issu de la coupure du texte precedent au moment de l'insertion - et
+la frappe suivante atterrissait AVANT le `<br>` dans Chrome. Un caractere de remplissage
+`​` (deja la convention de ce depot via `stripComposerDomFillers`) ancre le curseur pour de
+vrai, sans jamais atteindre un message envoye.
+
+`insertPlainTextNewline`, la fonction que `syncFromPlainText` appelait, n'a plus aucun appelant
+reel dans l'application - supprimee, avec les deux tests qui construisaient leur propre nouvelle
+ligne autour d'elle plutot que de l'exercer.
+
 ## [0.18.6] - 2026-09-16
 
 ### Changed - la police emoji passe de 5,7 Mo a 2,0 Mo pour presque tout le monde

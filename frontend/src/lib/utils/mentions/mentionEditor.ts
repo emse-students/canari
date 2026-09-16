@@ -107,16 +107,6 @@ export function serializeMentionEditor(root: HTMLElement): string {
   return stripComposerDomFillers(out);
 }
 
-/**
- * Inserts a newline at the plain-text caret and returns the updated text + cursor offset.
- */
-export function insertPlainTextNewline(root: HTMLElement): { text: string; cursor: number } {
-  const text = serializeMentionEditor(root);
-  const { start, end } = getPlainTextSelection(root);
-  const next = text.slice(0, start) + '\n' + text.slice(end);
-  return { text: next, cursor: start + 1 };
-}
-
 function createMentionChip(userId: string, label: string): HTMLSpanElement {
   const span = document.createElement('span');
   span.className = MENTION_CHIP_CLASS;

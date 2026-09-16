@@ -5,7 +5,6 @@
   import {
     getMentionChipFromEventTarget,
     getPlainTextSelection,
-    insertPlainTextNewline,
     composerMarkdownPreviewEnabled,
     needsMentionChipRender,
     removeMentionChipBeforeCursor,
@@ -198,8 +197,7 @@
       composerMarkdownPreviewEnabled(serializeMentionEditor(editorEl), renderOptions)
     ) {
       e.preventDefault();
-      const { text, cursor } = insertPlainTextNewline(editorEl);
-      syncFromPlainText(text, cursor);
+      insertNewlineAtCursor();
       return;
     }
     if (mention.handleKeydown(e)) return;
@@ -225,6 +223,70 @@
   /** @public */
   export function getEditorElement(): HTMLDivElement | null {
     return editorEl;
+  }
+
+  /**
+   * @public - Inserts a real line break at the caret, by hand, rather than leaving it to the
+   * browser's own default `Enter` handling OR to `syncFromPlainText` (an EXTERNAL sync, meant
+   * for a `bind:value` caller like `MarkdownComposerField` - see below for why a one-way
+   * `value`/`onchange` caller cannot use it the same way).
+   *
+   * WHY NOT LEAVE IT TO THE BROWSER. Measured 2026-09-16: an unprevented plain `Enter` splits the
+   * contenteditable into a new BLOCK (`hello<div>world</div>`), which `serializeMentionEditor`
+   * reads back as `"helloworld"` - the boundary silently dropped, not merely un-styled.
+   * `Shift+Enter`'s own browser default inserts a `<br>` instead, which DOES round-trip - but that
+   * is an accident of what the default handler does for ONE key combination, not a guarantee a
+   * second caller may rely on. This reproduces that same `<br>` shape by hand.
+   *
+   * WHY NOT `syncFromPlainText`, WHICH ALREADY DOES EXACTLY THIS FOR THE MARKDOWN-PREVIEW CASE
+   * ABOVE. That caller is only ever reached under `MarkdownComposerField`'s `bind:value` - a
+   * two-way binding, where the parent's variable and this component's `value` are the same
+   * underlying source, so writing `value` here IS the whole update. `ChatComposer` binds one-way
+   * (`value={messageText}` + `onchange`): the write here still fires `onchange`, but the parent
+   * then hands the SAME text back down as a fresh `value` PROP a tick later, which is a second,
+   * independent trip through this component's own `value`-changed effect - one this component
+   * cannot tell apart from a real external edit. Measured: the caret `syncFromPlainText` had just
+   * placed was gone by the time that second trip re-rendered, and a character typed immediately
+   * after landed where the caret would have been withOUT the newline, before the line break
+   * "caught up" from behind it (`"helloworld\n"` instead of `"hello\nworld"`).
+   *
+   * Mutating the DOM directly and firing a real `input` event sidesteps the whole question: it is
+   * the exact path every ordinary keystroke already takes (`oninput` -> `emitEditorChange`), which
+   * has no such race under either binding mode, because nothing but a real edit ever reaches it.
+   */
+  export function insertNewlineAtCursor() {
+    if (!editorEl) return;
+    const { start, end } = getPlainTextSelection(editorEl);
+    setPlainTextSelection(editorEl, start, end);
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    range.deleteContents();
+    const br = document.createElement('br');
+    range.insertNode(br);
+    range.setStartAfter(br);
+    range.collapse(true);
+    // A caret placed right after a `<br>` with nothing MEANINGFUL following it anchors to the
+    // PARENT element at a child-index offset rather than inside a text node - and typing then
+    // lands BEFORE the `<br>` in Chrome, not after (measured 2026-09-16: pressing Enter at the
+    // end of the text, the ordinary case, produces exactly this). "Nothing meaningful" is not
+    // "no sibling": splitting a text node at its own end - exactly what just happened above -
+    // leaves an EMPTY text node as that sibling, which anchors no better than none at all, by
+    // the same measurement. `\u200B` is this codebase's own existing filler convention
+    // (`stripComposerDomFillers`, already called by every `serializeMentionEditor` read) rather
+    // than a new one: a non-empty placeholder gives the caret a real anchor, and the character
+    // never reaches a sent message.
+    const after = br.nextSibling;
+    if (!(after instanceof Text) || after.data === '') {
+      const zwsp = after instanceof Text ? after : document.createTextNode('');
+      if (!(after instanceof Text)) br.after(zwsp);
+      zwsp.data = '\u200B';
+      range.setStart(zwsp, 1);
+      range.collapse(true);
+    }
+    sel.removeAllRanges();
+    sel.addRange(range);
+    editorEl.dispatchEvent(new InputEvent('input', { bubbles: true }));
   }
 
   /**
