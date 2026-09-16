@@ -101,15 +101,16 @@
       Both files come from scripts/gen-web-icons.mjs; do not edit them by hand.
     -->
     <link rel="apple-touch-icon" sizes="180x180" href="%sveltekit.assets%/apple-touch-icon.png" />
-    <!-- Bundled emoji font (see app.css and docs/wiki/frontend/emoji.md): preloaded so it is ready
-         at first paint rather than swapped in after the platform font already drew. -->
-    <link
-      rel="preload"
-      href="%sveltekit.assets%/fonts/NotoColorEmoji-Canari.woff2"
-      as="font"
-      type="font/woff2"
-      crossorigin="anonymous"
-    />
+    <!-- THE BUNDLED EMOJI FONT IS NOT PRELOADED, AND THAT IS THE POINT (see app.css and
+         docs/wiki/frontend/emoji.md). It is 5 705 472 bytes - larger than the MLS engine, larger
+         than the application bundle, the biggest single thing this site serves - and a preload puts
+         exactly that in front of everything else on a first visit. Measured on production
+         2026-09-16: it held the origin link for ~12 s while the 723 kB encryption engine queued
+         behind it at 54 kB/s, and the badge took fifteen seconds to appear. Firefox reported the
+         preload "not used after a few seconds" in the same load.
+         The `@font-face` in app.css carries `font-display: swap`, so the font still loads and still
+         replaces the platform glyphs - it just no longer outranks the application that needs to
+         start. -->
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"

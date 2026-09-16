@@ -31,6 +31,40 @@ aux visiteurs qui n'ont jamais ouvert de session dans ce navigateur : 723 ko n'e
 sur un telephone, et la presence d'un appareil deja enrole est un fait lisible sur place plutot
 qu'un pari.
 
+**Ce qui encombrait la file, mesure apres coup :** pas les avatars, mais l'entree suivante.
+
+### Fixed - une police de 5,7 Mo etait retelechargee a chaque chargement de page, en tete de file
+
+Le reordonnancement ci-dessus n'a pas suffi, et le releve a cache chaud du 16/09/2026 l'a montre :
+meme deuxieme chargement, meme 13 222 ms sur le meme fichier. Le binaire n'etait donc pas lent
+parce qu'il partait tard - il etait lent parce que le lien vers le serveur etait deja pris.
+
+Par quoi : **la police d'emoji embarquee, 5 705 472 octets, servie avec `Cache-Control: no-store`**.
+Ni le navigateur ni Cloudflare n'avaient le droit de la garder, donc elle traversait depuis le
+serveur a chaque ouverture de page, a environ 477 ko/s - une douzaine de secondes de lien sature.
+Et elle etait declaree en `<link rel="preload">` dans `app.html`, donc elle partait *avant* tout le
+reste. Firefox signalait dans le meme releve que ce prechargement « n'a pas ete utilise ».
+
+Le `no-store` visait la page HTML, pas les fichiers. Il etait ecrit dans le bloc nginx `location /`,
+dont la regle `try_files $uri @ssr` ne retient que les fichiers presents sur le disque et renvoie
+les pages ailleurs : la directive a donc manque sa cible et frappe tout ce que le site sert en
+statique - la police, les icones de l'application installable, le manifeste - pendant qu'une page
+HTML ne portait, elle, aucune consigne de cache. Les deux moities sont corrigees : la consigne
+« ne pas garder » est sur la page, les fichiers statiques annoncent une duree de vie, et la police
+une duree d'un mois.
+
+Le meme bloc revelait un second effet du meme mecanisme : nginx REMPLACE les en-tetes herites des
+qu'un bloc en declare un a lui, donc quatre blocs qui ne fixaient qu'une consigne de cache
+servaient leurs fichiers sans `X-Content-Type-Options` ni `X-Frame-Options`. Une page HTML, elle,
+les avait - parce que son bloc ne declarait rien. Les quatre blocs les restituent desormais, et un
+test CI (`static-headers.test.mjs`) refuse un bloc qui repeterait l'une ou l'autre des deux
+erreurs : il echoue sur chacune, verifie.
+
+**Reste une chose que ce depot ne peut pas corriger seul** : Cloudflare ne met pas `.wasm` en cache
+par defaut (`cf-cache-status: DYNAMIC`, la ou un `.js` repond `HIT`), donc le moteur de chiffrement
+traverse depuis le serveur a chaque fois qu'un navigateur ne l'a pas deja. Il faut une regle de
+cache dans le tableau de bord Cloudflare ; c'est note dans le backlog.
+
 
 ## [0.18.4] - 2026-09-15
 
