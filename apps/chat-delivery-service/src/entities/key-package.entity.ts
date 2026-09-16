@@ -41,4 +41,22 @@ export class KeyPackage {
 
   @CreateDateColumn()
   createdAt: Date;
+
+  /**
+   * When this package stops being usable, from its own MLS `Lifetime`, reported by the client that
+   * minted it. `null` means no client has said yet.
+   *
+   * **AND IT CANNOT BE DERIVED FROM `createdAt` HERE, UNLIKE THE ONE-TIME POOL.** This row is
+   * UPDATED in place on every re-registration and `registerDevice` resets `createdAt` deliberately
+   * - a device re-enrolling after 30 days would otherwise fall off the device list's cutoff - while
+   * the client REPUBLISHES the last-resort package it already holds rather than minting a new one.
+   * So this row can carry today's date and a package that elapses in four days, and migration 024
+   * leaves it NULL rather than backfilling a number that would certify an expired package as valid.
+   *
+   * A NULL reads as "not known to be expired": no device is locked out by a fact nobody has. What it
+   * costs is that the aged last-resort packages counted on production on 2026-09-16 - 4 of them, 2
+   * with a join stuck on them right now - stay invisible until their owners next connect.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  notAfter?: Date | null;
 }

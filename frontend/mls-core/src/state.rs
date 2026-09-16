@@ -110,6 +110,32 @@ impl StateSnapshotCache {
     }
 }
 
+/// A key package about to be published, and the instant it stops being usable.
+///
+/// **THE TWO TRAVEL TOGETHER BECAUSE ONLY ONE PLACE KNOWS BOTH.** `not_after` lives inside the
+/// serialized package, and the only thing in this estate that can parse an MLS KeyPackage is this
+/// crate: the delivery service stores an opaque base64 string, so it has never been able to answer
+/// "is this package still usable" and has served elapsed ones. Measured on production 2026-09-16,
+/// that is not theoretical - a peer's last-resort package was handed out 48 hours past its
+/// `not_after`, the joiner refused it with `LifetimeError(Expired)`, and the invitation retried
+/// every launch for ever because nothing on either side could see why.
+///
+/// **AND IT CANNOT BE DERIVED FROM A ROW'S AGE.** The obvious shortcut - the server stamps
+/// `createdAt + 84 days`, openmls's default lifetime - is sound only for the one-time pool, whose
+/// rows are inserted once and deleted as they are served. The static row is UPDATED in place on
+/// every re-registration, and the client REPUBLISHES the last-resort package it already holds
+/// rather than minting a new one, so that row can carry today's date and a package that elapses in
+/// four days. Carrying the real value is the only honest answer.
+///
+/// Seconds since the UNIX epoch, which is openmls's own unit for `Lifetime`.
+#[derive(Clone, Debug)]
+pub struct DatedKeyPackage {
+    /// The serialized PUBLIC key package, exactly as it is published.
+    pub public: Vec<u8>,
+    /// The instant it stops being usable, from the package's own `Lifetime`.
+    pub not_after: u64,
+}
+
 pub struct MlsManager {
     // OpenMlsRustCrypto owns the MemoryStorage internally and implements OpenMlsProvider
     pub(crate) provider: OpenMlsRustCrypto,
@@ -784,7 +810,7 @@ impl MlsManager {
     /// The leaf capabilities have to declare `LastResort` as well - a leaf validates locally that
     /// its capabilities cover the extensions it uses, and a peer re-runs that validation on the
     /// KeyPackage it was handed.
-    fn build_key_package(&self, last_resort: bool) -> Result<Vec<u8>, MlsError> {
+    fn build_key_package(&self, last_resort: bool) -> Result<DatedKeyPackage, MlsError> {
         let ciphersuite = Ciphersuite::MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519;
 
         let credential_with_key = CredentialWithKey {
@@ -827,15 +853,19 @@ impl MlsManager {
 
         self.mark_state_dirty();
 
-        // 3. Return the serialized public KeyPackage
-        key_package
+        // 3. Return the serialized public KeyPackage, WITH the instant it stops being usable.
+        //    Read here because here is where it is free and exact: the bundle is in hand, and
+        //    recovering it later costs a deserialize plus a signature validation per package.
+        let not_after = key_package.life_time().not_after();
+        let public = key_package
             .tls_serialize_detached()
-            .map_err(|e| MlsError::OpenMls(format!("Serialization error: {:?}", e)))
+            .map_err(|e| MlsError::OpenMls(format!("Serialization error: {:?}", e)))?;
+        Ok(DatedKeyPackage { public, not_after })
     }
 
     /// A one-time prekey for the server-side pool: consumed by the first Welcome built on it.
     pub fn generate_key_package(&self) -> Result<Vec<u8>, MlsError> {
-        self.build_key_package(false)
+        Ok(self.build_key_package(false)?.public)
     }
 
     /// Deletes every stored `KeyPackage` bundle whose lifetime has ELAPSED. Returns how many went.
@@ -944,12 +974,17 @@ impl MlsManager {
 
     /// The device's static fallback, served by the delivery service to every peer that finds the
     /// one-time pool empty. Reusable by construction - see [`Self::build_key_package`].
-    pub fn generate_last_resort_key_package(&self) -> Result<Vec<u8>, MlsError> {
+    pub fn generate_last_resort_key_package(&self) -> Result<DatedKeyPackage, MlsError> {
         self.build_key_package(true)
     }
 
-    pub fn generate_key_packages(&self, count: usize) -> Result<Vec<Vec<u8>>, MlsError> {
-        (0..count).map(|_| self.generate_key_package()).collect()
+    /// The one-time pool, each package carrying its own `not_after`.
+    ///
+    /// They are minted within microseconds of each other and therefore all elapse together, but
+    /// each carries its own value rather than one for the batch: the caller publishes them one row
+    /// at a time, and a row is only ever evidence for the package it holds.
+    pub fn generate_key_packages(&self, count: usize) -> Result<Vec<DatedKeyPackage>, MlsError> {
+        (0..count).map(|_| self.build_key_package(false)).collect()
     }
 
     /// Checks whether the private key for the provided public KeyPackage is still held locally.
@@ -1093,18 +1128,21 @@ impl MlsManager {
     /// THE CLOCK IS A PARAMETER for the reason it is on the prune and the census: `SystemTime::now()`
     /// panics on wasm and took every web login down in v0.16.4.
     ///
-    /// @returns the serialized PUBLIC key package to republish, or `None` if the device must mint
+    /// @returns the PUBLIC key package to republish and the instant it elapses, or `None` if the
+    /// device must mint. **The date is the whole reason this is not simply bytes**: a republished
+    /// package keeps the `not_after` of the day it was minted, which can be months before the row
+    /// the server writes for it, so nothing downstream may derive one from the other.
     pub fn existing_last_resort_key_package(
         &self,
         now_secs: u64,
-    ) -> Result<Option<Vec<u8>>, MlsError> {
+    ) -> Result<Option<DatedKeyPackage>, MlsError> {
         let storage = self.provider.storage();
         let values = storage
             .values
             .read()
             .map_err(|e| MlsError::OpenMls(format!("Storage lock poisoned: {e}")))?;
 
-        let mut best: Option<(u64, Vec<u8>)> = None;
+        let mut best: Option<(u64, DatedKeyPackage)> = None;
         self.for_each_proven_key_package(&values, |_k, bundle| {
             let kp = bundle.key_package();
             if !kp.extensions().contains(ExtensionType::LastResort) {
@@ -1125,10 +1163,16 @@ impl MlsManager {
                 .as_ref()
                 .is_none_or(|(seen, _)| life.not_before() > *seen)
             {
-                best = Some((life.not_before(), public));
+                best = Some((
+                    life.not_before(),
+                    DatedKeyPackage {
+                        public,
+                        not_after: life.not_after(),
+                    },
+                ));
             }
         });
 
-        Ok(best.map(|(_, public)| public))
+        Ok(best.map(|(_, dated)| dated))
     }
 }

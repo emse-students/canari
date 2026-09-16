@@ -216,6 +216,7 @@ describe('the KICK and INVITATION_STATUS doors', () => {
         { provide: getRepositoryToken(Group), useValue: emptyRepo() },
         { provide: getRepositoryToken(GroupInvite), useValue: emptyRepo() },
         { provide: getRepositoryToken(KeyPackage), useValue: emptyRepo() },
+        { provide: getRepositoryToken(OneTimeKeyPackage), useValue: emptyRepo() },
         { provide: getRepositoryToken(RevokedDevice), useValue: emptyRepo() },
         { provide: getRepositoryToken(QueuedMessage), useValue: emptyRepo() },
         { provide: 'REDIS_CLIENT', useValue: redis },
@@ -341,6 +342,7 @@ describe('the CRON door', () => {
       providers: [
         { provide: getRepositoryToken(QueuedMessage), useValue: emptyRepo() },
         { provide: getRepositoryToken(KeyPackage), useValue: keyPackageRepo },
+        { provide: getRepositoryToken(OneTimeKeyPackage), useValue: keyPackageRepo },
         { provide: getRepositoryToken(Group), useValue: emptyRepo() },
         { provide: getRepositoryToken(GroupMember), useValue: emptyRepo() },
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: deviceGroupRepo },

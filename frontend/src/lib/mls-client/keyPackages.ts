@@ -1,6 +1,9 @@
 /** The generated client, so the slice below is derived from the real contract and never restated. */
 type WasmClient = import('$lib/wasm/mls_wasm.js').WasmMlsClient;
 
+/** The generated dated package, for the same reason - it is what the three minters now return. */
+type WasmDated = import('$lib/wasm/mls_wasm.js').WasmDatedKeyPackage;
+
 /**
  * The slice of the WASM client {@link mintKeyPackages} needs, PICKED from the generated client
  * rather than copied out of it.
@@ -27,10 +30,47 @@ export type KeyPackageMinter = Pick<
   'generate_last_resort_key_package' | 'generate_key_packages' | 'existing_last_resort_key_package'
 >;
 
+/**
+ * A key package and the instant it stops being usable.
+ *
+ * **THE EXPIRY TRAVELS WITH THE BYTES BECAUSE NOTHING DOWNSTREAM CAN RECOVER IT.** `not_after`
+ * lives inside the serialized package, and the only thing in this estate that parses an MLS
+ * KeyPackage is the WASM crate: the delivery service stores an opaque base64 string, so it has
+ * never been able to answer "is this package still usable" and has served elapsed ones. Measured on
+ * production 2026-09-16, a peer's last-resort package was handed out 48 hours past its `not_after`,
+ * the joiner refused it with `LifetimeError(Expired)`, and the invitation retried every launch for
+ * ever because nothing on either side could see why.
+ *
+ * **AND A ROW'S AGE IS NOT EVIDENCE FOR IT.** The server's obvious shortcut - stamp
+ * `createdAt + 84 days`, openmls's default lifetime - holds only for the one-time pool, whose rows
+ * are inserted once and deleted as they are served. The static row is UPDATED in place and its
+ * `createdAt` reset on every re-registration, while {@link mintKeyPackages} REPUBLISHES the
+ * last-resort package it already holds rather than minting a new one. That row can therefore carry
+ * today's date and a package that elapses in four days.
+ */
+export interface DatedKeyPackage {
+  bytes: Uint8Array;
+  /** Seconds since the UNIX epoch, read off the package's own MLS `Lifetime` at mint time. */
+  notAfterSecs: number;
+}
+
+/**
+ * Copies a minted package out of WASM memory and releases the binding immediately.
+ *
+ * `WasmDatedKeyPackage` is a wasm-bindgen class, so it owns a slot in the linear memory until it is
+ * freed. A round mints up to fifty-one of them and reads each exactly once, so holding them is pure
+ * debt - and the getters copy, so the plain object below outlives the free.
+ */
+const takeDated = (dated: WasmDated): DatedKeyPackage => {
+  const out = { bytes: dated.public, notAfterSecs: dated.notAfterSecs };
+  dated.free();
+  return out;
+};
+
 /** A device's published key material: one reusable fallback plus the one-time pool. */
 export interface MintedKeyPackages {
-  fallback: Uint8Array;
-  poolPackages: Uint8Array[];
+  fallback: DatedKeyPackage;
+  poolPackages: DatedKeyPackage[];
 }
 
 /**
@@ -51,8 +91,9 @@ export interface MintedKeyPackages {
  * A BigInt AND NOT A NUMBER, because the binding takes a Rust `u64`. Handing that a Number does
  * not convert, it THROWS - which is the whole of the defect described on {@link KeyPackageMinter}.
  */
-export function heldLastResortKeyPackage(client: KeyPackageMinter): Uint8Array | undefined {
-  return client.existing_last_resort_key_package(BigInt(Math.floor(Date.now() / 1000)));
+export function heldLastResortKeyPackage(client: KeyPackageMinter): DatedKeyPackage | undefined {
+  const held = client.existing_last_resort_key_package(BigInt(Math.floor(Date.now() / 1000)));
+  return held ? takeDated(held) : undefined;
 }
 
 /**
@@ -80,9 +121,9 @@ export function mintKeyPackages(client: KeyPackageMinter, needed: number): Minte
   // so every 84 days instead of every time the socket comes back. The read itself is
   // {@link heldLastResortKeyPackage}, shared with the callers that ask the same question earlier
   // in order to decide whether this round is worth paying for at all.
-  const fallback = heldLastResortKeyPackage(client) ?? client.generate_last_resort_key_package();
-  const poolPackages =
-    needed > 0 ? [...(client.generate_key_packages(needed) as Iterable<Uint8Array>)] : [];
+  const fallback =
+    heldLastResortKeyPackage(client) ?? takeDated(client.generate_last_resort_key_package());
+  const poolPackages = needed > 0 ? client.generate_key_packages(needed).map(takeDated) : [];
   return { fallback, poolPackages };
 }
 

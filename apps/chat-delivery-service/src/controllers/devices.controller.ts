@@ -32,6 +32,7 @@ import {
   sanitizeQueryValue,
   sanitizeOptionalDeviceName,
   sanitizeOptionalDeviceOs,
+  sanitizeOptionalNotAfter,
   sanitizeOptionalDeviceAppVersion,
   assertCallerOwnsUserId,
 } from '../utils/sanitize';
@@ -115,8 +116,9 @@ export class DevicesController {
   }
 
   /**
-   * Pops one OTKP (FIFO) for a device, or returns the static registration KeyPackage.
-   * Returns null when the device is revoked or has no registered KeyPackage.
+   * Pops one usable OTKP for a device, or returns the static registration KeyPackage.
+   * Returns null when the device is revoked, has no registered KeyPackage, or holds nothing that
+   * has not elapsed.
    *
    * THE STATIC ROW IS SERVED TO EVERY CALLER, UNCHANGED, UNTIL THE DEVICE RECONNECTS - which is
    * why the client mints it with the MLS `last_resort` extension (`mintKeyPackages`). An ordinary
@@ -148,7 +150,18 @@ export class DevicesController {
           userId,
           deviceId,
         })
-        .orderBy('otkp.createdAt', 'ASC')
+        // AN ELAPSED PACKAGE IS NOT A PACKAGE, and serving one used to cost the row as well as the
+        // join: the DELETE below runs whether or not the peer can use what it was handed, so 171
+        // aged rows in front of a valid one meant the valid one was reached on the 171st attempt.
+        // A NULL is a row from before migration 024 on a table that backfills exactly, so it means
+        // "not known to be expired" rather than "assume the worst".
+        .andWhere('(otkp."notAfter" IS NULL OR otkp."notAfter" > now())')
+        // NEAREST TO EXPIRY FIRST, which is only correct now that the line above excludes the
+        // elapsed ones: of the packages that can still be used, spending the shortest-lived first
+        // is what stops it elapsing unused. `createdAt ASC` said the same thing by proxy and said it
+        // wrong, because it could not tell "oldest" from "already dead".
+        .orderBy('otkp."notAfter"', 'ASC', 'NULLS LAST')
+        .addOrderBy('otkp.createdAt', 'ASC')
         .limit(1)
         // typeorm 1.0 removed 'pessimistic_partial_write' mode: express
         // FOR UPDATE SKIP LOCKED via setLock('pessimistic_write') + setOnLocked.
@@ -171,7 +184,23 @@ export class DevicesController {
         `[KP] one-time pool EMPTY for ${userId}/${deviceId} - serving the static last-resort row`
       );
     }
-    return otkp?.keyPackage ?? device.keyPackage;
+    if (otkp) return otkp.keyPackage;
+
+    // AND A REFUSAL IS AN ANSWER, WHERE A DEAD PACKAGE IS NOT. Serving a last-resort row the server
+    // KNOWS has elapsed puts the adder into a loop it cannot see the end of: the joiner rejects it
+    // with `LifetimeError(Expired)`, the invitation is neither satisfied nor abandoned, and it
+    // retries on every launch for ever - measured on production 2026-09-16, on both boots of one
+    // export, four requests and a crypto round each time. Returning null makes the endpoint 404, so
+    // the adder gets something it can act on. Nothing here can conjure a valid package for a device
+    // that has not connected since its own elapsed; what it can do is stop pretending.
+    if (device.notAfter && device.notAfter.getTime() <= Date.now()) {
+      this.logger.warn(
+        `[KP] last-resort EXPIRED for ${userId}/${deviceId} (notAfter=${device.notAfter.toISOString()})` +
+          ' - refusing rather than serving a package no peer can build a Welcome on'
+      );
+      return null;
+    }
+    return device.keyPackage;
   }
 
   @UseGuards(HeaderAuthGuard)
@@ -183,6 +212,8 @@ export class DevicesController {
       userId: string;
       deviceId: string;
       keyPackage: string;
+      /** ISO 8601, the package's own MLS lifetime end. Absent from clients older than 2026-09-16. */
+      notAfter?: unknown;
       deviceName?: string;
       deviceOs?: string;
       deviceAppVersion?: string;
@@ -230,6 +261,12 @@ export class DevicesController {
       throw new BadRequestException('keyPackage must be a non-empty base64 string');
     }
     const keyPackagePayload = body.keyPackage;
+    // THE DATE BELONGS TO THE PAYLOAD AND IS WRITTEN WITH IT, ALWAYS - including when it is null.
+    // The static row is UPDATED in place, and the one case that matters is a device whose
+    // last-resort package elapsed and which has therefore minted a NEW one: leaving the previous
+    // date behind would refuse a package that works. `notAfter` is a property of `keyPackage`, not
+    // of the row, so the two never move apart.
+    const notAfter = sanitizeOptionalNotAfter(body.notAfter);
     const deviceName = sanitizeOptionalDeviceName(body.deviceName);
     const deviceOs = sanitizeOptionalDeviceOs(body.deviceOs);
     const deviceAppVersion = sanitizeOptionalDeviceAppVersion(body.deviceAppVersion);
@@ -263,7 +300,8 @@ export class DevicesController {
     const traceId = this.makeTraceId('reg-device');
 
     this.logger.log(
-      `[REGISTER_DEVICE][${traceId}] START user=${userId} device=${deviceId} kpLen=${keyPackagePayload.length}`
+      `[REGISTER_DEVICE][${traceId}] START user=${userId} device=${deviceId} kpLen=${keyPackagePayload.length}` +
+        ` notAfter=${notAfter ? notAfter.toISOString() : 'unknown'}`
     );
     const existing = await this.keyPackageRepo.findOne({
       where: { userId, deviceId },
@@ -274,6 +312,7 @@ export class DevicesController {
         userId,
         deviceId,
         keyPackage: keyPackagePayload,
+        notAfter,
         deviceName,
         deviceOs,
         deviceAppVersion,
@@ -289,6 +328,7 @@ export class DevicesController {
         { userId, deviceId },
         {
           keyPackage: keyPackagePayload,
+          notAfter,
           ...(deviceName !== undefined && { deviceName }),
           ...(deviceOs !== undefined && { deviceOs }),
           ...(deviceAppVersion !== undefined && { deviceAppVersion }),
@@ -358,17 +398,39 @@ export class DevicesController {
     if (body.keyPackages.length > 200) {
       throw new BadRequestException('keyPackages must not exceed 200 items');
     }
-    for (const kp of body.keyPackages) {
-      if (typeof kp !== 'string' || kp.length === 0 || kp.length > 16384) {
+
+    // A UNION FOR EXACTLY ONE RELEASE, and the bare string is the OLD half. A client from before
+    // 2026-09-16 sends `["base64", ...]` and cannot be made to send anything else; one from after
+    // sends `[{ keyPackage, notAfter }, ...]` because the server cannot parse an MLS KeyPackage and
+    // so could not tell an elapsed one from a fresh one. The old spelling stores a NULL, which the
+    // resolver reads as "not known to be expired" - no device is locked out by a fact nobody has.
+    // The removal date is on `docs/wiki/legacy-compatibility.md`.
+    const parsed = body.keyPackages.map((entry) => {
+      const raw: unknown =
+        typeof entry === 'object' && entry !== null ? entry : { keyPackage: entry };
+      const { keyPackage, notAfter } = raw as { keyPackage?: unknown; notAfter?: unknown };
+      if (typeof keyPackage !== 'string' || keyPackage.length === 0 || keyPackage.length > 16384) {
         throw new BadRequestException('Each keyPackage must be a non-empty base64 string');
       }
-    }
+      return { keyPackage, notAfter: sanitizeOptionalNotAfter(notAfter) };
+    });
 
-    const rows = (body.keyPackages as string[]).map((kp) =>
-      this.oneTimeKeyPackageRepo.create({ userId, deviceId, keyPackage: kp })
+    const rows = parsed.map((kp) =>
+      this.oneTimeKeyPackageRepo.create({
+        userId,
+        deviceId,
+        keyPackage: kp.keyPackage,
+        notAfter: kp.notAfter,
+      })
     );
     await this.oneTimeKeyPackageRepo.save(rows);
-    this.logger.log(`[REGISTER_PREKEYS] user=${userId} device=${deviceId} count=${rows.length}`);
+    // THE UNDATED COUNT IS WHAT SAYS THE SHIM IS STILL EARNING ITS KEEP. It is the only signal that
+    // separates "old clients are still out there" from "the union can go", and a removal date with
+    // no measurement behind it is a guess.
+    const undated = parsed.filter((kp) => kp.notAfter === null).length;
+    this.logger.log(
+      `[REGISTER_PREKEYS] user=${userId} device=${deviceId} count=${rows.length} undated=${undated}`
+    );
     return { status: 'registered', count: rows.length };
   }
 
@@ -440,9 +502,12 @@ export class DevicesController {
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
     const keyPackage = await this.resolveKeyPackagePayloadForDevice(safeUserId, safeDeviceId);
     if (!keyPackage) {
-      // The resolver returns null in exactly two cases, and the docblock above names both: the
-      // device is revoked, or it never registered a KeyPackage. Neither is a malformed request -
-      // see the sibling refusal in `updateDeviceMetadata` for why "absent" gets its own code here.
+      // The resolver returns null in exactly three cases, and the docblock above names all of
+      // them: the device is revoked, it never registered a KeyPackage, or everything it published
+      // has elapsed. None is a malformed request - see the sibling refusal in
+      // `updateDeviceMetadata` for why "absent" gets its own code here. The third case is a 404 on
+      // purpose: it is the answer a caller can act on, where serving a package every joiner is
+      // entitled to refuse is an invitation that retries for ever.
       throw new NotFoundException(`No key package for device ${safeUserId}:${safeDeviceId}`);
     }
     const row = await this.keyPackageRepo.findOne({
@@ -486,6 +551,12 @@ export class DevicesController {
           device.userId,
           device.deviceId
         );
+        // A DEVICE WITH NOTHING USABLE IS NOT AN INVITE TARGET, and dropping it here is what makes
+        // the refusal reach a person: the client throws "no active device found" rather than
+        // building a Welcome on an elapsed package and watching the joiner refuse it on every
+        // launch. The device returns to the list by itself - it mints and re-registers on its next
+        // connection, and `registerDevice` re-creates the pending membership for every group its
+        // owner is already in.
         if (!keyPackage) return null;
         return { ...device, keyPackage, displayName };
       })
@@ -530,9 +601,19 @@ export class DevicesController {
   async getPrekeyCount(@Param('userId') userId: string, @Param('deviceId') deviceId: string) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
-    const count = await this.oneTimeKeyPackageRepo.count({
-      where: { userId: safeUserId, deviceId: safeDeviceId },
-    });
+    // PACKAGES THAT CAN BE USED, WHICH IS THE QUESTION THE CALLER ASKS. The client mints
+    // `50 - count` on every connection, so counting elapsed rows as available is how a device ends
+    // up with a pool of fifty that every peer is refused. Expired rows are left to the reclaim
+    // rather than deleted here: a read endpoint that deletes is a surprise, and the sweep says how
+    // many it took.
+    const count = await this.oneTimeKeyPackageRepo
+      .createQueryBuilder('otkp')
+      .where('otkp.userId = :userId AND otkp.deviceId = :deviceId', {
+        userId: safeUserId,
+        deviceId: safeDeviceId,
+      })
+      .andWhere('(otkp."notAfter" IS NULL OR otkp."notAfter" > now())')
+      .getCount();
     return { count };
   }
 

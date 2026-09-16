@@ -11,9 +11,16 @@ import {
   MLS_LOCAL_STATE_UNDECRYPTABLE,
   type MlsInitOptions,
 } from '$lib/mls-client';
-import { heldLastResortKeyPackage, mintKeyPackages } from '$lib/mls-client/keyPackages';
+import {
+  heldLastResortKeyPackage,
+  mintKeyPackages,
+  type DatedKeyPackage,
+} from '$lib/mls-client/keyPackages';
 import { persistMlsStructuralCheckpoint } from '$lib/mls-client/mlsStatePersisterRegistry';
-import type { MlsKeyPackageRequest } from '$lib/mls-client/mlsWorkerProtocol';
+import type {
+  MlsKeyPackageRequest,
+  MlsKeyPackageResponse,
+} from '$lib/mls-client/mlsWorkerProtocol';
 import { isChannelEventFrame, isHeartbeatFrame } from '$lib/mls-client/channelEventTypes';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
@@ -33,8 +40,8 @@ import { sanitizeForLog } from '$lib/utils/logSanitize';
  * Buffers are transferred back to avoid an additional clone cost.
  */
 interface WorkerKeyPackageResult {
-  fallback: Uint8Array;
-  poolPackages: Uint8Array[];
+  fallback: DatedKeyPackage;
+  poolPackages: DatedKeyPackage[];
   state: Uint8Array;
 }
 
@@ -237,19 +244,24 @@ export class WebMlsService extends BaseMlsService {
 
       const onMessage = (event: MessageEvent): void => {
         if (settled) return;
-        const msg = event.data as
-          | {
-              type: 'generateKeyPackage:ok';
-              payload: { fallback: ArrayBuffer; poolPackages: ArrayBuffer[]; state: ArrayBuffer };
-            }
-          | { type: 'generateKeyPackage:error'; error: string };
+        // THE PROTOCOL TYPE, NOT A COPY OF IT. This assertion used to restate the payload inline,
+        // which is a claim that compiles whether or not it is true - the same shape that hid the
+        // `existing_last_resort_key_package` BigInt defect for a whole release. Importing it makes
+        // the next divergence a compile error, and it is what caught the dates being dropped here.
+        const msg = event.data as MlsKeyPackageResponse;
         if (!msg) return;
         if (msg.type === 'generateKeyPackage:ok') {
           settled = true;
           cleanup();
           resolve({
-            fallback: new Uint8Array(msg.payload.fallback),
-            poolPackages: msg.payload.poolPackages.map((b) => new Uint8Array(b)),
+            fallback: {
+              bytes: new Uint8Array(msg.payload.fallback),
+              notAfterSecs: msg.payload.fallbackNotAfterSecs,
+            },
+            poolPackages: msg.payload.poolPackages.map((b, i) => ({
+              bytes: new Uint8Array(b),
+              notAfterSecs: msg.payload.poolNotAfterSecs[i],
+            })),
             state: new Uint8Array(msg.payload.state),
           });
         } else if (msg.type === 'generateKeyPackage:error') {
@@ -861,7 +873,7 @@ export class WebMlsService extends BaseMlsService {
   }
 
   /** WASM client wrapper - mints the fallback + pool via {@link mintKeyPackages}, replenishes the OTKP pool to 50, saves state, then publishes to the delivery service. */
-  protected async generateKeyPackageImpl(deviceKeyB64: string): Promise<Uint8Array> {
+  protected async generateKeyPackageImpl(deviceKeyB64: string): Promise<DatedKeyPackage> {
     // On fresh start (no saved WASM state), old OTKPs on the server belong to
     // a previous session whose private keys are gone. Purge them so inviting
     // devices don't consume stale prekeys that would cause NoMatchingKeyPackage.
@@ -923,8 +935,8 @@ export class WebMlsService extends BaseMlsService {
       return alreadyHeld;
     }
 
-    let fallback: Uint8Array;
-    let poolPackages: Uint8Array[] = [];
+    let fallback: DatedKeyPackage;
+    let poolPackages: DatedKeyPackage[] = [];
 
     if (this.useKeyPackageWorker && typeof Worker !== 'undefined') {
       // The worker generates KeyPackages off-thread, but its result contains private keys
@@ -1249,12 +1261,13 @@ export class WebMlsService extends BaseMlsService {
   }
 
   /** WASM client wrapper - publishes this device's static fallback KeyPackage to the delivery service, including device name/OS metadata. */
-  async publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void> {
-    const base64 = toBase64(keyPackageBytes);
+  async publishKeyPackage(keyPackage: DatedKeyPackage): Promise<void> {
+    const base64 = toBase64(keyPackage.bytes);
     const storedName =
       localStorage.getItem(`device-name:${this.userId}:${this.deviceId}`) || undefined;
     await this.delivery.registerDeviceKeyPackage({
       keyPackageBase64: base64,
+      notAfterSecs: keyPackage.notAfterSecs,
       deviceName: storedName,
       deviceOs: detectRuntimeDeviceOs(),
       deviceAppVersion: getClientAppVersion(),

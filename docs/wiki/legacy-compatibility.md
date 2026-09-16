@@ -298,6 +298,30 @@ replay, and delete this entry.
 before the change still duplicates once per replay and once per bundle. **Nothing repairs the rows
 already on disk**; see [backlog](backlog.md).
 
+
+### 2026-12-16 - one-time prekeys published as a bare base64 string
+
+**Site:** `devices.controller.ts`, the `parsed` map in `registerDevicePrekeys` - the
+`typeof entry === 'object' ? entry : { keyPackage: entry }` line and nothing else.
+**Shim:** a client below 0.18.10 sends `keyPackages: ["base64", ...]`; one at or above it sends
+`[{ keyPackage, notAfter }, ...]`. The old spelling stores a NULL `notAfter`, which every read in
+this service treats as "not known to be expired" rather than "assume the worst" - so an old client's
+pool keeps working exactly as it did, and no device is locked out by a fact nobody has.
+**Replacement:** the expiry lives inside the serialized MLS KeyPackage and only the client's WASM
+crate can parse one. Until 2026-09-16 both tables held an opaque string, the server served elapsed
+packages, and the joiner refused them with `LifetimeError(Expired)` for ever - see
+[mls](protocols/mls-graine-state-machine.md) and migration `024_key_package_not_after.sql`.
+**What settles the date, and it is a measurement rather than a guess:** every batch logs
+`[REGISTER_PREKEYS] ... undated=N`, and N is the count of rows that arrived with no date. The shim
+goes when that count is zero over a week, which the retention of a stale install makes 2026-12-16 at
+the latest; `minClientVersion` reaching 0.18.10 retires it outright and sooner.
+**On removal:** type `keyPackages` as `{ keyPackage: string; notAfter?: string }[]`, delete the
+object/string branch, and delete this entry. The `notAfter IS NULL` arms in the resolver, the count
+and the reclaim STAY - they cover the rows migration 024 could not date, which outlive the shim.
+**Cost of keeping it:** a device on an old client publishes a pool the reclaim can never sweep and
+the resolver can never skip, so it keeps exactly the defect this change closes until it updates.
+That is the same trade the NULL makes everywhere here, and it is why the count above is logged.
+
 ---
 
 ## No date - `GET /api/mls/history/:groupId` answering with a bare array

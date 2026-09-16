@@ -29,7 +29,7 @@ import {
   resetSendRatchetLedger,
   snapshotEmitted,
 } from '$lib/mls-client/sendRatchetLedger';
-import { fingerprintKeyPackage } from '$lib/mls-client/keyPackages';
+import { fingerprintKeyPackage, type DatedKeyPackage } from '$lib/mls-client/keyPackages';
 import type {
   DeviceMembershipRow,
   HistoryRequestOutcome,
@@ -1961,7 +1961,7 @@ export abstract class BaseMlsService implements IMlsService {
    * after a reinstall, so retrying it is futile: the only way forward is to become a new device.
    * Retried exactly once - a second refusal is a server bug, not a state to keep rotating through.
    */
-  async generateKeyPackage(deviceKeyB64: string): Promise<Uint8Array> {
+  async generateKeyPackage(deviceKeyB64: string): Promise<DatedKeyPackage> {
     try {
       return await this.generateKeyPackageImpl(deviceKeyB64);
     } catch (e) {
@@ -2194,8 +2194,8 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.registerMember(groupId, userId);
   }
 
-  async publishKeyPackages(packages: Uint8Array[]): Promise<void> {
-    for (const kp of packages) this.publishedThisSession.add(fingerprintKeyPackage(kp));
+  async publishKeyPackages(packages: DatedKeyPackage[]): Promise<void> {
+    for (const kp of packages) this.publishedThisSession.add(fingerprintKeyPackage(kp.bytes));
     return this.delivery.publishKeyPackages(packages);
   }
 
@@ -2530,8 +2530,8 @@ export abstract class BaseMlsService implements IMlsService {
 
   abstract saveState(deviceKeyB64: string): Promise<Uint8Array>;
   protected abstract changeDeviceKeyImpl(newDeviceKeyB64: string): Promise<void>;
-  protected abstract generateKeyPackageImpl(deviceKeyB64: string): Promise<Uint8Array>;
-  abstract publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void>;
+  protected abstract generateKeyPackageImpl(deviceKeyB64: string): Promise<DatedKeyPackage>;
+  abstract publishKeyPackage(keyPackage: DatedKeyPackage): Promise<void>;
   abstract createGroup(groupId: string): Promise<void>;
 
   // ── One commit regime (C7-A unified: stage -> validate -> merge/clear) ──────

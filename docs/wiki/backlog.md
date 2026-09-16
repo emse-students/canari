@@ -7049,7 +7049,7 @@ state, a `reloadClientFromState` that decrypted it a second time, and three encr
 the emulator never accumulates one; only a phone that has lived through a campaign shows it. It
 belongs with the other three iOS/Android defects that no green build could have caught.
 
-### P1 - A DEVICE WHOSE ONE-TIME POOL RAN OUT IS OFFERED A LAST-RESORT PACKAGE THAT HAS EXPIRED, AND NOTHING WILL EVER REPLACE IT (production, measured 2026-09-16)
+### P1 - THE SERVER CAN SEE AN EXPIRED KEY PACKAGE NOW AND REFUSES TO SERVE ONE; WHAT IS LEFT IS AN ADDER THAT STILL RETRIES FOR EVER (production, measured 2026-09-16)
 
 Both reloads of the 17:20 export end a pending invitation the same way, 4 536 ms and 5 016 ms in:
 
@@ -7092,51 +7092,45 @@ satisfied and never abandoned, and it costs four requests and a crypto round eve
 below is real in the code but is biting nobody today; what is biting is the expired last-resort, and
 two joins are stuck on it right now.
 
-#### The second defect, latent: the pool is served OLDEST-FIRST, which is nearest-to-expiry first
+**AND THE LAST-RESORT COUNT IS A LOWER BOUND, MEASURED WITH THE INSTRUMENT IT WAS MEASURING.** Both
+`aged` rows above were found by `createdAt` because nothing else existed to ask - and `createdAt` is
+exactly the column that does not answer this question for `key_package`: `registerDevice` resets it
+on every re-registration while the client REPUBLISHES the package it already holds, so a row can
+carry today's date and a package that elapsed last week. The 4 are the ones whose row was not
+refreshed. The true number is knowable only once enough devices have reported a real `notAfter`,
+which is what the daily report exists to say.
 
-`resolveKeyPackagePayloadForDevice` (`devices.controller.ts:143-163`) takes the pool
-`ORDER BY otkp.createdAt ASC LIMIT 1` and `DELETE`s the row before returning it. So an attempt that
-fails on an expired package still **consumes and destroys** it: with 34 aged rows in front of a
-valid one, the valid one is reached on the 34th boot, not the first. Zero devices are in that state
-today; five are one pending invitation away from it.
+#### THE SERVER HALF IS WRITTEN AND THE DIAGNOSIS ABOVE IS WHAT IT WAS WRITTEN FROM
 
-#### Both have the same root cause: the expiry is a fact the server never learns
+Both tables carry a `notAfter` the client now writes, migration `024_key_package_not_after.sql`
+backfills the one-time table exactly (`createdAt + 84 days`, sound there and only there - the static
+row's `createdAt` is reset on every re-registration while the held package is REPUBLISHED, so the
+same derivation would certify an elapsed package as valid). The resolver skips what has elapsed and
+orders by expiry rather than by age, the count answers about packages that can be used, and a daily
+job reclaims the one-time rows and NAMES the devices whose last-resort is dead. The second defect
+this entry used to list - a pool served oldest-first, each failed attempt consuming the row it
+failed on - is closed by the same ordering change. See `CHANGELOG.md` and
+[legacy-compatibility](legacy-compatibility.md) for the one-release union in the publish shape.
 
-`OneTimeKeyPackage` stores `id`, `userId`, `deviceId`, `keyPackage` (opaque base64) and `createdAt`
-- **there is no `not_after` column**, and `key_package` has none either. So no query can filter on
-expiry, `getPrekeyCount` counts expired rows as available (which is what the replenish decision
-reads), and neither the purge nor the prune endpoint can target them. The lifetime lives inside the
-blob and the only thing in this estate that parses an MLS KeyPackage is the client. **NEVER LEARN BY
-FAILING WHAT A FACT COULD HAVE TOLD YOU** - this is that rule, on the join path. Above, `createdAt`
-had to stand in for `not_after`, which is the same gap showing up in the measurement itself.
+#### WHAT IS LEFT IS THE ADDER, AND IT IS A PRODUCT DECISION THIS ENTRY DOES NOT GET TO MAKE
 
-**THE FIX IS TO CARRY THE DISCRIMINATOR TO WHERE THE DECISION IS MADE.** The client knows
-`not_after` when it mints the package; `POST mls/register-device/prekeys` and the device
-registration should carry it, both tables should store it, and then:
+The server now answers `404` where it used to hand out a package every joiner is entitled to refuse,
+so the question "can this device be added at all?" is finally answerable at the point it is asked.
+**Nothing yet acts on the answer.** The pending invitation still retries on every boot - four
+requests and a crypto round each time - because a 404 and a transport failure reach the same catch,
+and neither has a termination rule. What the client owes is a decision: stop and tell the user the
+device is unreachable, abandon the seat, or keep the invitation but stop paying for it every launch.
 
-1. the resolver filters `not_after > now()` and orders by it, so a valid package is served first and
-   an expired one is never handed out at all;
-2. `getPrekeyCount` answers about packages that can be used, which is the question its caller asks;
-3. **an expired last-resort becomes visible**, which is the only way the 4 rows above get noticed
-   without an export landing on somebody's desk;
-4. **the expiry reclaim the key-package P1 could not write gets a mechanism** - the server deletes
-   what has elapsed without guessing, and an expired row is the one case with no ambiguity at all,
-   since no peer can build a usable Welcome on it.
+Two facts bound that decision and both are measured. **A device repairs itself the moment it
+connects** - `heldLastResortKeyPackage` refuses to offer an elapsed package, so the round falls
+through to a fresh mint and republishes (`keyPackages.ts`); nothing needs writing there, and the 4
+aged rows are devices that have not been online since their package died, not a client defect. And
+**the adder cannot conjure a package for a device that is not there**, so no server-side filtering
+ends the loop - only a rule about when to stop asking does.
 
-**THE CLIENT HALF ALREADY EXISTS, AND CHECKING SAVED A WRONG ENTRY.** The obvious remedy - "a device
-whose last-resort has expired should republish one" - is already written and already correct:
-`heldLastResortKeyPackage` (`keyPackages.ts:54`) calls `existing_last_resort_key_package(now)`, so an
-expired one is not returned, the round falls through to `generate_last_resort_key_package()` and
-publishes a fresh one. **Nothing needs writing there.**
-
-So the 4 aged rows are not a client defect: they are devices that have not connected at all since
-their package elapsed, and no amount of server-side filtering conjures a valid package for a device
-that is not there. **THE REAL QUESTION IS WHAT THE ADDING SIDE OWES**, and it is the termination rule:
-the pending invitation retries every boot for ever, with no proof it can ever succeed and no way to
-say so. Serving a package the server KNOWS is expired (once `not_after` is a column) turns that into
-an answerable question - `410`-shaped rather than a crypto error - and the adder can then stop, tell
-the user the device is unreachable, or abandon the seat, which are product decisions this entry does
-not get to make. **What it does establish is that retrying silently for ever is none of them.**
+**AND THE RULE IS THE ONE THIS REPOSITORY ALREADY HOLDS:** a status code is an ANSWER, a transport
+failure is not. The 404 is the first thing on this path that can be told apart from "the network was
+bad", which is exactly what a termination rule needs and exactly what did not exist before.
 
 ---
 ### P2 - the MLS snapshot version is a PER-DOCUMENT counter compared ACROSS documents, so a second tab's write is dropped on a collision (measured on TAB-4, 2026-09-05)

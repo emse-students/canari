@@ -28,8 +28,34 @@ pub(crate) struct PendingDb(pub Arc<sqlx::SqlitePool>);
 /// in the 2026-09 campaign reached 19 548 753 B.
 #[derive(serde::Serialize)]
 pub(crate) struct KeyPackageBatchResult {
-    pub fallback: Vec<u8>,
-    pub pool_packages: Vec<Vec<u8>>,
+    pub fallback: DatedKeyPackagePayload,
+    pub pool_packages: Vec<DatedKeyPackagePayload>,
+}
+
+/// A key package and the instant it stops being usable, on its way to the delivery service.
+///
+/// The expiry crosses this boundary because nothing on the far side can recover it: the server
+/// stores an opaque base64 string, the frontend cannot parse an MLS KeyPackage, and a row's age is
+/// not evidence for it - the last-resort package is REPUBLISHED unchanged while its row's
+/// `createdAt` is reset on every re-registration. See `mls_core::DatedKeyPackage`, which carries
+/// the production measurement this was written for.
+///
+/// `not_after_secs` is seconds since the UNIX epoch, `f64` rather than `u64` because Tauri hands a
+/// `u64` to JS as a JSON number anyway and the narrower type says so honestly.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct DatedKeyPackagePayload {
+    pub public: Vec<u8>,
+    pub not_after_secs: f64,
+}
+
+impl From<mls_core::DatedKeyPackage> for DatedKeyPackagePayload {
+    fn from(d: mls_core::DatedKeyPackage) -> Self {
+        Self {
+            public: d.public,
+            not_after_secs: d.not_after as f64,
+        }
+    }
 }
 
 /// Per-message outcome for batch MLS decrypt (history catch-up).

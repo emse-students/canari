@@ -46,15 +46,20 @@ workerScope.onmessage = async (event: MessageEvent<MlsKeyPackageRequest>) => {
     );
 
     const minted = mintKeyPackages(client, needed);
-    const fallback = minted.fallback;
-    const poolPackages: ArrayBuffer[] = minted.poolPackages.map((bytes) => asTransferBuffer(bytes));
+    // THE EXPIRY TRAVELS WITH THE BYTES, and a structured clone cannot carry it implicitly: the
+    // buffers are TRANSFERRED (that is the whole reason this runs off-thread), so the dates ride
+    // alongside as plain numbers, index for index. See `DatedKeyPackage` for why the far side
+    // cannot recover them - nothing outside the WASM crate can parse an MLS KeyPackage.
+    const poolPackages: ArrayBuffer[] = minted.poolPackages.map((kp) => asTransferBuffer(kp.bytes));
     const nextState = client.save_state(deviceKeyB64) as Uint8Array;
 
     const response: MlsKeyPackageOk = {
       type: 'generateKeyPackage:ok',
       payload: {
-        fallback: asTransferBuffer(fallback),
+        fallback: asTransferBuffer(minted.fallback.bytes),
+        fallbackNotAfterSecs: minted.fallback.notAfterSecs,
         poolPackages,
+        poolNotAfterSecs: minted.poolPackages.map((kp) => kp.notAfterSecs),
         state: asTransferBuffer(nextState),
       },
     };
