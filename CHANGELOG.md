@@ -84,8 +84,8 @@ requete.
 
 ### Fixed - un ajout de membres s'affichait autant de fois qu'il y avait eu de rejeux
 
-Signale par l'utilisateur sur un groupe de 31 personnes (2026-09-16), photo a l'appui : « Matheo
-BOUDIER a ajoute Esteban DELSOL, ... au groupe », quatre fois de suite, a l'identique.
+Signale par l'utilisateur sur un groupe de 31 personnes (2026-09-16), photo a l'appui : l'avis
+« <auteur> a ajoute <six personnes> au groupe », quatre fois de suite, a l'identique.
 
 **Rien n'avait ete envoye quatre fois.** Le journal de commits MLS porte UN commit pour ce lot
 (epoch 3, 14:20:34), `dm_group_members` inscrit les six personnes UNE fois (14:20:36) et l'archive
