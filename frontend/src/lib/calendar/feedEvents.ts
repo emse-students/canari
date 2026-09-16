@@ -22,9 +22,55 @@ export interface EventDayGroup {
   events: AssociationCalendarFeedEvent[];
 }
 
-/** Local midnight of the day an instant falls in. */
-function startOfLocalDay(value: Date): Date {
-  return new Date(value.getFullYear(), value.getMonth(), value.getDate());
+/**
+ * WHEN A CALENDAR DAY BEGINS, AND IT IS NOT MIDNIGHT.
+ *
+ * A party announced 23:00-02:00 is ONE evening to everybody who goes to it, and midnight splits it
+ * across two squares - so the grid showed it twice, and the second square claimed an event on a
+ * morning when nothing happens. Five in the morning is the hour campus life is actually over, and
+ * it is early enough that nothing legitimately scheduled starts before it.
+ *
+ * This is the ONE place the boundary is stated. It was a local constant in `MonthCalendarGridRich`
+ * as well until 2026-09-16 - a second copy of "which day does this event occupy", which is exactly
+ * what this module's own header warns against.
+ */
+export const DAY_STARTS_AT_HOUR = 5;
+
+/**
+ * The calendar day an INSTANT belongs to, as local midnight of that day.
+ *
+ * The return value stays midnight rather than 05:00 on purpose: it is the day's IDENTITY, used for
+ * `isToday` and for formatting, and every caller already reads it that way. Only the ASSIGNMENT
+ * moves - 02:00 on the 5th answers with the 4th.
+ */
+export function calendarDayOf(value: Date): Date {
+  const shifted = new Date(value.getTime());
+  shifted.setHours(shifted.getHours() - DAY_STARTS_AT_HOUR);
+  return new Date(shifted.getFullYear(), shifted.getMonth(), shifted.getDate());
+}
+
+/**
+ * A SQUARE ON THE GRID, normalised - local midnight, and never shifted.
+ *
+ * THE TWO ARGUMENTS OF `eventCoversDay` ARE NOT THE SAME KIND OF THING, and reading them with one
+ * function is how this broke: an event's `startsAt` is an INSTANT that has to be assigned to a day,
+ * while `day` is ALREADY a day's identity. Shifting the identity too would have answered the 4th
+ * for the square labelled 5, moving every event back a day - the 05:00 rule applied twice, once
+ * where it belongs and once where it means nothing.
+ */
+function squareOf(day: Date): Date {
+  return new Date(day.getFullYear(), day.getMonth(), day.getDate());
+}
+
+/**
+ * The square `day` of `focusDate`'s month, as a Date - or null when no square is selected.
+ *
+ * Both agenda surfaces hold a `focusDate` and a `selectedDay` number, and both need to turn that
+ * pair back into a date to seed a form. Written once here rather than twice as a component-local
+ * helper, which is how the pair already drifted apart elsewhere in these two files.
+ */
+export function daySquareDate(focusDate: Date, day: number | null): Date | null {
+  return day === null ? null : new Date(focusDate.getFullYear(), focusDate.getMonth(), day);
 }
 
 /**
@@ -33,10 +79,10 @@ function startOfLocalDay(value: Date): Date {
  * An event with no `endsAt` is a point in time and occupies exactly the day it starts on.
  */
 export function eventCoversDay(event: AssociationCalendarFeedEvent, day: Date): boolean {
-  const target = startOfLocalDay(day);
-  const start = startOfLocalDay(new Date(event.startsAt));
+  const target = squareOf(day);
+  const start = calendarDayOf(new Date(event.startsAt));
   if (!event.endsAt) return target.getTime() === start.getTime();
-  const end = startOfLocalDay(new Date(event.endsAt));
+  const end = calendarDayOf(new Date(event.endsAt));
   return target >= start && target <= end;
 }
 

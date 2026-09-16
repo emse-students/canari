@@ -4,6 +4,7 @@ import type {
   CreateAssociationCalendarEventPayload,
   UpdateAssociationCalendarEventPayload,
 } from '$lib/associations/api';
+import { DAY_STARTS_AT_HOUR } from './feedEvents';
 
 /**
  * THE ONE SHAPE BEHIND FOUR MODALS.
@@ -120,9 +121,23 @@ export function toDatetimeLocalValue(iso: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/** A blank form, starting on the current hour - the defaults a NEW entry opens with, decided once. */
-export function blankEventFormValues(): EventFormValues {
+/**
+ * A blank form - the defaults a NEW entry opens with, decided once.
+ *
+ * `onDay` is the square the user clicked before reaching for "create": having picked a day, being
+ * handed today's date and asked to pick it again is the form ignoring what was already said. Pass
+ * `null` where no day is selected, and the form opens on today as before.
+ *
+ * THE HOUR IS CLAMPED TO {@link DAY_STARTS_AT_HOUR}, and that is not cosmetic: this app's day
+ * begins at 05:00, so seeding 02:00 on the 5th would open a form whose event belongs to the 4th -
+ * the grid would draw it on the square BEFORE the one the user clicked.
+ */
+export function blankEventFormValues(onDay?: Date | null): EventFormValues {
   const now = new Date();
+  if (onDay) {
+    now.setFullYear(onDay.getFullYear(), onDay.getMonth(), onDay.getDate());
+    now.setHours(Math.max(now.getHours(), DAY_STARTS_AT_HOUR));
+  }
   now.setMinutes(0, 0, 0);
   return {
     title: '',

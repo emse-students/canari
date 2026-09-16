@@ -1,6 +1,8 @@
 import {
   DAY_NUM_H,
   EVENT_TITLE_LINE_HEIGHT,
+  HALF_DAY_PIVOT_HOUR,
+  daySlotLayout,
   eventBgCss,
   fitEventText,
   splitLogoBands,
@@ -198,5 +200,55 @@ describe('fitEventText', () => {
         if (clampLines(clampCss) > 1) expect(wanted).toBeLessThanOrEqual(availH);
       }
     }
+  });
+});
+
+describe('daySlotLayout', () => {
+  it('stacks one slot per event on an ordinary day', () => {
+    const l = daySlotLayout([9, 14, 18], 0);
+
+    expect(l.nSlots).toBe(3);
+    expect(l.slotOf).toEqual([0, 1, 2]);
+    expect(l.overflowSlot).toBeNull();
+  });
+
+  it('counts the overflow row as a slot of its own', () => {
+    const l = daySlotLayout([9, 14], 4);
+
+    expect(l.nSlots).toBe(3);
+    expect(l.overflowSlot).toBe(2);
+  });
+
+  /**
+   * THE RULE THIS WAS ADDED FOR. A lone event says WHEN by which half of the square it paints, and
+   * that has to read the same on screen and on the printed sheet - which is why the rule is here
+   * and not in the component.
+   */
+  it('gives a lone morning event the top half and leaves the bottom empty', () => {
+    const l = daySlotLayout([9], 0);
+
+    expect(l.nSlots).toBe(2);
+    expect(l.slotOf).toEqual([0]);
+  });
+
+  it('gives a lone afternoon event the bottom half', () => {
+    const l = daySlotLayout([15], 0);
+
+    expect(l.nSlots).toBe(2);
+    expect(l.slotOf).toEqual([1]);
+  });
+
+  it('puts the pivot hour itself in the afternoon, and the hour before in the morning', () => {
+    expect(daySlotLayout([HALF_DAY_PIVOT_HOUR], 0).slotOf).toEqual([1]);
+    expect(daySlotLayout([HALF_DAY_PIVOT_HOUR - 1], 0).slotOf).toEqual([0]);
+  });
+
+  /** A lone event with MORE hidden behind it is not a lone event - the cell fills as usual. */
+  it('does not halve a cell whose single visible event hides others', () => {
+    const l = daySlotLayout([9], 3);
+
+    expect(l.nSlots).toBe(2);
+    expect(l.slotOf).toEqual([0]);
+    expect(l.overflowSlot).toBe(1);
   });
 });

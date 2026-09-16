@@ -76,6 +76,57 @@ The same fact decides what a row says: the day panel takes `ownAssociationId` (n
 `hideAssociationName` boolean) and the dialog is told `showAssociation` per event, so a row the page
 merely co-owns still names, colours and badges its real owner.
 
+## WHAT A DAY IS, AND WHERE AN EVENT SITS IN ITS SQUARE
+
+Three rules, all stated ONCE and read by both agenda surfaces and by the PDF export. Two of them
+were asked for by the user on 2026-09-16, and the third is what the first one broke if left alone.
+
+### A DAY BEGINS AT 05:00, NOT AT MIDNIGHT
+
+`DAY_STARTS_AT_HOUR` in [`feedEvents.ts`](../../../../frontend/src/lib/calendar/feedEvents.ts) - the
+only place it is written. A party announced 23:00-02:00 is ONE evening to everybody who goes to it,
+and midnight split it across two squares: the grid drew it twice, and the second square claimed an
+event on a morning when nothing happens. Five is the hour campus life is actually over, and early
+enough that nothing legitimately scheduled starts before it.
+
+**THE TWO ARGUMENTS OF `eventCoversDay` ARE NOT THE SAME KIND OF THING**, and reading them with one
+function is how this went wrong the first time. An event's `startsAt` is an INSTANT that has to be
+assigned to a day (`calendarDayOf`, which shifts); a `day` is ALREADY a day's identity (`squareOf`,
+which does not). Shifting both would have answered the 4th for the square labelled 5, moving every
+event back a day - the rule applied twice, once where it belongs and once where it means nothing.
+`feedEvents.test.ts` pins that case explicitly with an ordinary daytime lecture.
+
+The value returned is still local MIDNIGHT, not 05:00: it is the day's identity, used for `isToday`
+and for formatting, and every caller already reads it that way. Only the ASSIGNMENT moved.
+
+### A LONE EVENT TAKES HALF THE SQUARE, AND WHICH HALF SAYS WHEN
+
+`daySlotLayout` in [`calendarExport.ts`](../../../../frontend/src/lib/utils/calendarExport.ts),
+pivoting on `HALF_DAY_PIVOT_HOUR` (13:00). A square with a single event used to paint it floor to
+ceiling, which says nothing about WHEN. Half a cell says "morning" or "afternoon" at a glance across
+a whole month, with no type at all - and a month sheet is read at arm's length, where the times are
+not legible anyway. 13:00 rather than 12:00 because a midday event reads as the morning's end.
+
+It is NOT a lone event if others are hidden behind it: a cell with one visible event and a "+N
+autres" row fills as usual, because the cell is not showing one event.
+
+**THE RULE LIVES BESIDE `fitEventText` AND `splitLogoBands` FOR THE REASON THOSE TWO DO** - the
+screen grid and the PDF export both import it, and a layout rule written in the component would be
+a rule the sheet does not have. **The day number belongs to slot 0, and slot 0 no longer always
+holds an event**: when the lone event is an afternoon one, the empty top half carries the number,
+and the event block stops reserving `DAY_NUM_H` for it. Both renderers do this, and getting only
+one of them right is a half-fix that shows up as a number drawn twice or not at all.
+
+### CREATING AN EVENT ON THE SQUARE YOU CLICKED
+
+`blankEventFormValues(onDay)` takes the selected day, via `daySquareDate(focusDate, selectedDay)` -
+shared, because both surfaces hold that same `focusDate` + `selectedDay` pair. Having picked a day
+and then being handed today's date is the form ignoring what was already said.
+
+**The seeded hour is clamped to `DAY_STARTS_AT_HOUR`**, which is not cosmetic: seeding 02:00 on the
+5th would open a form whose event belongs to the 4th by the rule above, so the grid would draw it on
+the square BEFORE the one the user clicked.
+
 ## The event form - ONE component, and capabilities decide the rest
 
 Four modals ("Proposer", "Modifier" on an association's page; "Deposer", "Modifier" on the global

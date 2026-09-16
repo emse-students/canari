@@ -39,6 +39,7 @@
     toUpdatePayload,
     type EventFormValues,
   } from '$lib/calendar/eventForm';
+  import { daySquareDate } from '$lib/calendar/feedEvents';
   import {
     ChevronLeft,
     ChevronRight,
@@ -383,7 +384,8 @@
     editingEventId = null;
     editingOwnerName = '';
     depositValues = {
-      ...blankEventFormValues(),
+      // The square the user clicked seeds the date - see `blankEventFormValues`.
+      ...blankEventFormValues(daySquareDate(focusDate, selectedDay)),
       targetAssociationId: filterAssociationId || associations[0]?.id || '',
     };
     poster.set(null);

@@ -11,6 +11,24 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - l'agenda : une journee finit a 5h du matin, et une case a moitie remplie dit l'heure
+
+Trois corrections demandees le 16/09/2026, toutes dans le calendrier.
+
+Une soiree annoncee de 23h a 2h etait dessinee sur DEUX cases, et la seconde annoncait un evenement
+un matin ou il ne se passe rien. Une journee commence desormais a 5h : cette soiree tient sur la
+seule case du soir ou elle a commence. C'est l'heure ou la vie du campus s'arrete vraiment, et assez
+tot pour que rien de legitime ne commence avant.
+
+Une case ne contenant qu'un seul evenement le peignait du haut en bas, ce qui ne disait rien de
+QUAND. Elle se coupe maintenant en deux : moitie haute avant 13h, moitie basse apres. Sur un mois
+entier, l'heure se lit d'un coup d'oeil sans un seul chiffre - et une feuille imprimee se lit de
+loin, ou les horaires ne sont de toute facon pas lisibles. L'export PDF applique la meme regle, par
+construction : les deux lisent la meme fonction.
+
+Enfin, cliquer sur un jour puis « creer un evenement » ouvrait le formulaire sur la date du jour
+courant. Il s'ouvre sur le jour choisi.
+
 ### Fixed - le moteur de chiffrement traversait la France a chaque chargement
 
 Le binaire WASM de 723 ko n'etait pas garde par le cache Cloudflare, alors que le fichier `.js`
