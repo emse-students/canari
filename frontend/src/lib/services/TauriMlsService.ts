@@ -20,10 +20,16 @@ import { BaseMlsService } from './BaseMlsService';
 import { keystoreUnlockPrompt } from './biometric';
 
 /** Native batch result for key package generation plus immediate `mls.bin` persistence. */
+/**
+ * What the native batch hands back: the two things this side publishes.
+ *
+ * IT DECLARED A THIRD, `state`, AND NOTHING EVER READ IT. The command persists the blob itself, so
+ * the field only ever crossed the IPC boundary to be dropped - and Tauri sends a `Vec<u8>` as a
+ * JSON array of integers, which is several bytes of wire per byte of state, on every connection.
+ */
 interface NativeKeyPackageBatchResult {
   fallback: number[];
   pool_packages: number[][];
-  state: number[];
 }
 
 /**

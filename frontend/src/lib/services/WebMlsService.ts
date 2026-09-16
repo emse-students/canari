@@ -11,7 +11,7 @@ import {
   MLS_LOCAL_STATE_UNDECRYPTABLE,
   type MlsInitOptions,
 } from '$lib/mls-client';
-import { mintKeyPackages } from '$lib/mls-client/keyPackages';
+import { heldLastResortKeyPackage, mintKeyPackages } from '$lib/mls-client/keyPackages';
 import { persistMlsStructuralCheckpoint } from '$lib/mls-client/mlsStatePersisterRegistry';
 import type { MlsKeyPackageRequest } from '$lib/mls-client/mlsWorkerProtocol';
 import { isChannelEventFrame, isHeartbeatFrame } from '$lib/mls-client/channelEventTypes';
@@ -864,6 +864,36 @@ export class WebMlsService extends BaseMlsService {
     // covers this path, the web one and the background FCM one alike.
     const existing = await this.delivery.fetchPrekeyCount();
     const needed = Math.max(0, 50 - existing);
+
+    // A ROUND THAT MINTS NOTHING OWES THE DISK NOTHING, AND THAT IS THE ORDINARY ROUND.
+    //
+    // Everything below this point exists to get new private bundles onto disk before their public
+    // halves are published. When the pool is already full AND the held last-resort is still valid,
+    // there are no new bundles: `mintKeyPackages` would return the package this keystore already
+    // contains and an empty pool, and the state after would be byte-identical to the state before.
+    //
+    // Measured on production on 2026-09-16, an ordinary boot: `[MLS Worker] generateKeyPackage
+    // start needed=0`, and around it a `save_state` of 7 539 303 B, a worker that ran
+    // `load_or_create` over the whole 7 539 305 B state, a `reloadClientFromState` that decrypted
+    // it a second time on the main thread, and three encrypted checkpoints - 153 ms + 65 ms +
+    // 63 ms - to publish bytes the server already held. Two full decrypts and two full encrypts of
+    // a 7.5 MB state, on the boot path, for no change at all.
+    //
+    // THE DISCRIMINATOR IS THIS ROUND'S OWN ACTION, not a dirty bit. `StateSnapshotCache.dirty`
+    // answers "must the CBOR be rebuilt", and `load_or_create` leaves it true on a state that
+    // exactly matches the disk - it is evidence for a different question, and reusing it here
+    // would skip writes that are genuinely owed. "Did I mint" is answered by the two lines above
+    // and by nothing else.
+    //
+    // The package republished here was minted by an EARLIER round, which persisted it: that is the
+    // same round the `await` below the mint protects. So publishing it cannot outrun its own
+    // private half.
+    const alreadyHeld = needed === 0 ? heldLastResortKeyPackage(this.client) : undefined;
+    if (alreadyHeld) {
+      console.log('[MLS] key package round: pool full and last-resort valid - nothing to mint');
+      await this.publishKeyPackage(alreadyHeld);
+      return alreadyHeld;
+    }
 
     let fallback: Uint8Array;
     let poolPackages: Uint8Array[] = [];

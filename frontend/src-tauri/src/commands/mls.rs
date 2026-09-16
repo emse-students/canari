@@ -370,21 +370,24 @@ pub(crate) async fn generer_key_packages_et_persister(
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .map_err(|e| format!("System clock is before the UNIX epoch: {e}"))?;
-        let fallback = match manager
+        let (fallback, minted_fallback) = match manager
             .existing_last_resort_key_package(now_secs)
             .map_err(|e| e.to_string())?
         {
             Some(held) => {
                 log::debug!("generer_key_packages_et_persister: republishing the held last-resort");
-                held
+                (held, false)
             }
             None => {
                 log::info!(
                     "generer_key_packages_et_persister: no valid last-resort held - minting one"
                 );
-                manager
-                    .generate_last_resort_key_package()
-                    .map_err(|e| e.to_string())?
+                (
+                    manager
+                        .generate_last_resort_key_package()
+                        .map_err(|e| e.to_string())?,
+                    true,
+                )
             }
         };
         let pool_packages = if count > 0 {
@@ -394,21 +397,45 @@ pub(crate) async fn generer_key_packages_et_persister(
         } else {
             Vec::new()
         };
-        let key = session_at_rest_key(&device_key_b64, &device_key_state)?;
-        let encrypted_state = manager
-            .save_encrypted_with_key(&key)
-            .map_err(|e| e.to_string())?;
-        write_mls_state_blob(&app, &encrypted_state)?;
-        log::debug!(
-            "generer_key_packages_et_persister done count={} state_bytes={}",
-            count,
-            encrypted_state.len()
-        );
+
+        // A ROUND THAT MINTS NOTHING OWES THE DISK NOTHING, AND THAT IS THE ORDINARY ROUND.
+        //
+        // The write below exists to make new private bundles durable before their public halves
+        // are published. The two branches above say exactly whether any were created: an empty
+        // pool plus a republished last-resort leaves this engine's storage byte-identical to what
+        // the blob already holds, so encrypting and rewriting it is Argon2 and a multi-megabyte
+        // file write for no change.
+        //
+        // It is the common case, not an edge one. `needed = 50 - existing` is zero whenever no
+        // peer has claimed a prekey since the last connection, and the last-resort rotates on its
+        // own 84-day lifetime since #458. The web half of this same round was measured on
+        // production on 2026-09-16 doing two full decrypts, two full encrypts and three
+        // checkpoints of a 7 539 305-byte state on `needed=0`.
+        //
+        // WHAT DECIDES IS THIS ROUND'S OWN ACTION. `MlsManager`'s snapshot dirty bit answers "must
+        // the CBOR be rebuilt", which `load_or_create` leaves true on a state that matches the
+        // blob exactly - evidence for a different question, and trusting it here would skip a
+        // write that is genuinely owed.
+        if count > 0 || minted_fallback {
+            let key = session_at_rest_key(&device_key_b64, &device_key_state)?;
+            let encrypted_state = manager
+                .save_encrypted_with_key(&key)
+                .map_err(|e| e.to_string())?;
+            write_mls_state_blob(&app, &encrypted_state)?;
+            log::debug!(
+                "generer_key_packages_et_persister done count={} state_bytes={}",
+                count,
+                encrypted_state.len()
+            );
+        } else {
+            log::debug!(
+                "generer_key_packages_et_persister done count=0 - pool full and last-resort valid, nothing minted so no write owed"
+            );
+        }
 
         Ok::<KeyPackageBatchResult, String>(KeyPackageBatchResult {
             fallback,
             pool_packages,
-            state: encrypted_state,
         })
     })
     .await

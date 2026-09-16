@@ -19,12 +19,17 @@ pub(crate) struct AppState {
 /// Separate from tauri-plugin-sql (JS side) so it stays reachable from Rust commands.
 pub(crate) struct PendingDb(pub Arc<sqlx::SqlitePool>);
 
-/// Result of a batch KeyPackage generation.
+/// Result of a batch KeyPackage generation: the two things the caller publishes, and nothing else.
+///
+/// IT CARRIED THE WHOLE ENCRYPTED STATE UNTIL 2026-09-16, AND NOTHING EVER READ IT. The command
+/// writes the blob itself (`write_mls_state_blob`), so the copy handed back was pure transport:
+/// Tauri serialises a `Vec<u8>` as a JSON array of integers, several bytes of wire per byte of
+/// state, on every connection. A lived-in profile's state is 7.5 MB and the worst phone measured
+/// in the 2026-09 campaign reached 19 548 753 B.
 #[derive(serde::Serialize)]
 pub(crate) struct KeyPackageBatchResult {
     pub fallback: Vec<u8>,
     pub pool_packages: Vec<Vec<u8>>,
-    pub state: Vec<u8>,
 }
 
 /// Per-message outcome for batch MLS decrypt (history catch-up).
