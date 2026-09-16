@@ -11,6 +11,27 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - une regle ecrite deux fois est une regle qu'une correction sur deux atteint
+
+Les deux defauts de l'agenda du 16/09/2026 avaient la meme cause : la meme regle existait en
+plusieurs exemplaires, et le correctif n'a atteint que celui que son auteur avait sous les yeux.
+Rien ne surveillait ca. `declared-duplicates` gardait les copies ASSUMEES - celles qu'on a decidees,
+comme la liste d'origines CORS de chaque service - et etait aveugle a celles qui se sont simplement
+produites, c'est-a-dire precisement les dangereuses : personne ne les nomme.
+
+**Une seconde porte cherche desormais les corps de fonction identiques entre deux fichiers** et
+echoue sur tout groupe qui n'est ni une copie declaree, ni un idiome explicitement reconnu (avec sa
+raison, dans les deux cas). Il n'y a pas de troisieme disposition : « on sait » qui n'est ecrit nulle
+part est exactement ce que cette porte refuse.
+
+Elle a trouve un vrai doublon le jour ou elle a ete ecrite : **les primitives iCalendar existaient
+en deux exemplaires**, dans le client et dans `social-service`. Or on peut exporter un `.ics` depuis
+l'application ET s'abonner au flux d'une association : les deux doivent decrire la meme soiree - meme
+identifiant, memes horodatages UTC, meme duree d'une heure par defaut quand un evenement n'a pas de
+fin. Les cinq fonctions et toute la boucle d'ecriture sont reunies dans un `ics.ts` sans aucun
+import, copie tel quel des deux cotes et compare octet par octet par la CI - la forme que ce depot
+utilisait deja pour `cors-origins.ts`, faute de paquet TypeScript partage.
+
 ### Changed - une regle, une implementation : six copies du frontend ramenees a zero
 
 Suite de la remarque de l'utilisateur le 16/09/2026 - *« factorise et reutilise ce que tu peux,

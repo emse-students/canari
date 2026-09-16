@@ -349,6 +349,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/static-headers.test.mjs
 	@bun .github/scripts/tests/codeql-category.test.mjs
 	@bun .github/scripts/tests/declared-duplicates.test.mjs
+	@bun .github/scripts/tests/undeclared-duplicates.test.mjs
 	@bash .github/scripts/tests/release-shipped.test.sh
 	@bun .github/scripts/tests/recipe-covers-tests.test.mjs
 	@bun .github/scripts/tests/shellcheck-scope.test.mjs

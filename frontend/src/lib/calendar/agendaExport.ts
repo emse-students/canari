@@ -1,25 +1,9 @@
 import { downloadDecryptedFile } from '$lib/utils/fileDownload';
+import { buildIcsDocument, icsEndOrDefault, toIcsDate, type IcsEvent } from '$lib/calendar/ics';
 
-/** RFC 5545 TEXT escaping for SUMMARY/DESCRIPTION/UID fragments. */
-export function icsEscapeText(s: string): string {
-  return s.replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/;/g, '\\;').replace(/,/g, '\\,');
-}
+export { formatIcsUtc, icsEscapeText } from '$lib/calendar/ics';
 
-function toDate(d: string | Date): Date {
-  return typeof d === 'string' ? new Date(d) : d;
-}
-
-/** UTC form `YYYYMMDDTHHmmssZ` for iCalendar DATE-TIME. */
-export function formatIcsUtc(dt: Date): string {
-  const y = dt.getUTCFullYear();
-  const m = String(dt.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(dt.getUTCDate()).padStart(2, '0');
-  const h = String(dt.getUTCHours()).padStart(2, '0');
-  const min = String(dt.getUTCMinutes()).padStart(2, '0');
-  const s = String(dt.getUTCSeconds()).padStart(2, '0');
-  return `${y}${m}${day}T${h}${min}${s}Z`;
-}
-
+/** One agenda row as the client holds it, before it becomes a calendar entry. */
 export type AgendaExportEvent = {
   id: string;
   title: string;
@@ -30,54 +14,27 @@ export type AgendaExportEvent = {
   sourceUrl?: string;
 };
 
-function defaultEnd(start: Date, endRaw: string | Date | null | undefined): Date {
-  if (endRaw === null || endRaw === undefined) return new Date(start.getTime() + 60 * 60 * 1000);
-  const end = toDate(endRaw);
-  if (Number.isNaN(end.getTime()) || end <= start) {
-    return new Date(start.getTime() + 60 * 60 * 1000);
-  }
-  return end;
-}
-
-function truncateDescription(s: string, max = 450): string {
-  const t = s.trim();
-  if (t.length <= max) return t;
-  return `${t.slice(0, max)}…`;
+/** The client's rows in the shape `ics.ts` speaks - the only thing this module adds to the RFC. */
+function toIcsEvent(ev: AgendaExportEvent): IcsEvent {
+  return {
+    uid: ev.id,
+    summary: ev.title,
+    startsAt: ev.startsAt,
+    endsAt: ev.endsAt ?? null,
+    description: ev.description ?? null,
+    url: ev.sourceUrl ?? null,
+  };
 }
 
 /**
  * Builds a VCALENDAR document (UTC) suitable for Apple Calendar, Google import, and most Android apps.
+ *
+ * Every RFC 5545 decision is in `ics.ts`, which `social-service` carries a byte-identical copy of:
+ * a file someone imports here and a feed they subscribe to there must describe the same evening.
  */
 export function buildIcsCalendar(events: AgendaExportEvent[], opts?: { prodId?: string }): string {
-  const prodId = opts?.prodId ?? '-//Canari//Agenda//FR';
-  const lines: string[] = [
-    'BEGIN:VCALENDAR',
-    'VERSION:2.0',
-    `PRODID:${icsEscapeText(prodId)}`,
-    'CALSCALE:GREGORIAN',
-    'METHOD:PUBLISH',
-  ];
-  const now = new Date();
-  for (const ev of events) {
-    const start = toDate(ev.startsAt);
-    if (Number.isNaN(start.getTime())) continue;
-    const end = defaultEnd(start, ev.endsAt ?? null);
-    lines.push('BEGIN:VEVENT');
-    lines.push(`UID:${icsEscapeText(ev.id)}@canari`);
-    lines.push(`DTSTAMP:${formatIcsUtc(now)}`);
-    lines.push(`DTSTART:${formatIcsUtc(start)}`);
-    lines.push(`DTEND:${formatIcsUtc(end)}`);
-    lines.push(`SUMMARY:${icsEscapeText(ev.title)}`);
-    if (ev.description?.trim()) {
-      lines.push(`DESCRIPTION:${icsEscapeText(truncateDescription(ev.description))}`);
-    }
-    if (ev.sourceUrl?.trim()) {
-      lines.push(`URL:${icsEscapeText(ev.sourceUrl.trim())}`);
-    }
-    lines.push('END:VEVENT');
-  }
-  lines.push('END:VCALENDAR');
-  return lines.join('\r\n');
+  const icsEvents = events.map(toIcsEvent);
+  return opts?.prodId ? buildIcsDocument(icsEvents, opts.prodId) : buildIcsDocument(icsEvents);
 }
 
 function formatGoogleUtc(d: Date): string {
@@ -89,11 +46,11 @@ function formatGoogleUtc(d: Date): string {
 
 /** Opens Google Calendar "create event" with the same times as the agenda row (template, not subscribed). */
 export function googleCalendarTemplateUrl(ev: AgendaExportEvent): string {
-  const start = toDate(ev.startsAt);
+  const start = toIcsDate(ev.startsAt);
   if (Number.isNaN(start.getTime())) {
     return 'https://calendar.google.com/calendar/u/0/r';
   }
-  const end = defaultEnd(start, ev.endsAt ?? null);
+  const end = icsEndOrDefault(start, ev.endsAt ?? null);
   const params = new URLSearchParams({
     action: 'TEMPLATE',
     text: ev.title,
