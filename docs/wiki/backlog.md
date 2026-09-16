@@ -959,6 +959,42 @@ new here is that it is no longer only a count, it is a third of the state this t
 
 **WHAT IS OWED IS ONE EXPORT PER CHANGE, NOT A CAMPAIGN.** This table is reproducible from any
 reload, costs the user one gesture, and every line in it is attributable to a document since #742.
+
+#### The LAST block is 215 ms, and 182 of it is a handshake queued behind a state it never reads
+
+The same export, second boot, read line by line between `MLS ready` (+1093) and
+`[WS] Connected to Chat Gateway` (+1308):
+
+| +ms | line |
+| ---: | --- |
+| 1093 | `[INIT] MLS ready - syncing messages in background.` |
+| 1108 | `[MLS] key package census - 1033 proven` (15 ms, and it is IN FRONT of the badge - see the corrected comment on the call site) |
+| 1108 | session/device binding, push service, three API calls fired |
+| 1120 | `[TAB] Leadership acquired (Web Locks).` -> `Connecting to Gateway...` |
+| 1126 | `[WS] Opening connection -> wss://.../api/ws?device_id=...` |
+| **1308** | **connected** |
+
+**SO THE SERIAL PART IS 33 ms AND THE HANDSHAKE IS 182.** Nothing between 1093 and 1126 is slow;
+what costs is that the handshake does not START until the whole MLS state is loaded. And it does not
+need it: `WebMlsService.connect` sends `device_id` and a token, both of which exist long before
+`load_or_create` returns - `resolveDeviceId` answers ahead of `init()`, which is exactly what the
+revocation fix above already relies on. The 236 ms that `load_or_create` spends (856 -> 1092) and the
+182 ms of the handshake have no data dependency in either direction, and running them concurrently
+would put the socket up at about the instant MLS becomes ready: **~200 ms of 1308, 15%.**
+
+**WHAT MAKES IT A WORK PACKAGE RATHER THAN AN EDIT IS WHAT ARRIVES ON AN EARLY SOCKET.**
+`this.ws.onmessage` routes a payload frame straight into the MLS client. Opening the socket before
+that client can decrypt means a frame can arrive with nowhere to go, and the gateway's delivery
+accounting does not distinguish "handed to a client" from "handled by one". So the change is: open
+the socket as early as the device id allows, and **hold inbound payload frames in a queue until MLS
+is ready**, draining in arrival order. Control frames (typing, channel events, heartbeats) need no
+queue - they read no MLS state.
+
+**THE ORDER MATTERS AND IT IS THE SAME ARGUMENT AS THE REVOCATION FIX:** what must be preserved is
+not "both finish" but "nothing is PROCESSED before the thing that can process it exists". A queue
+with a drain is that; a socket opened early with no queue is a dropped message.
+
+**AND IT IS MEASURABLE THE SAME WAY IT WAS FOUND** - one reload export, the same two milestones.
 ---
 ### P2 - EVERY BOOT PAYS A FULL ORIGIN ROUND TRIP FOR A DOCUMENT THAT IS THE SAME FOR EVERYBODY (measured on production 2026-09-16)
 

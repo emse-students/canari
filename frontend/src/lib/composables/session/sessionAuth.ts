@@ -775,8 +775,16 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     // and not which of three reclaims applies. The browser passes its own clock instead.
     //
     // HERE RATHER THAN IN `init()`: it deserialises every stored bundle, and a thousand of those do
-    // not belong in front of the connected badge. By this line the badge is up and the catch-up is
-    // already running, so the cost is off the path that the user waits on.
+    // not belong in front of the connected badge.
+    //
+    // WHAT THIS COMMENT USED TO CLAIM IS FALSE, AND THE USER'S OWN EXPORT SAYS SO. It said the badge
+    // was up and the catch-up already running by this line, so the cost was off the path. Measured
+    // 2026-09-16, second boot: this line prints at +1108 ms and `[WS] Connected to Chat Gateway`
+    // at +1308 ms - the socket is TWO HUNDRED MILLISECONDS AWAY, and everything here is in front of
+    // it. The census costs 15 ms of that (1033 bundles), which is why it is still here rather than
+    // rescheduled: 1% of the boot does not justify machinery, and a claim nobody re-measured is
+    // worth more to remove than 15 ms is to save. What the same export DID find is the 182 ms the
+    // socket handshake spends waiting for a state it never reads - `docs/wiki/backlog.md`.
     if (!isTauriRuntime()) {
       const withCensus = mlsService as { logKeyPackageCensus?: () => void };
       withCensus.logKeyPackageCensus?.();
