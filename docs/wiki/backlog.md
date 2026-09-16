@@ -66,6 +66,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 | What | Kind | Where the substance is |
 | --- | --- | --- |
 | set up the external uptime probe that mails - **decided 2026-09-06, mail**; the probe must hit `/api/version` AND `/api/chat-delivery-health`, never the homepage, which answered 200 through both outages | ~1 click in Cloudflare or an uptime service | [P2 - NOTHING TELLS ANYBODY PRODUCTION IS DOWN](#p2---nothing-tells-anybody-production-is-down-and-both-outages-of-2026-09-01-were-reported-by-the-user-owed-to-the-user-a-decision-then-one-click) |
+| **a second Cloudflare Cache Rule, for `/api/users/*/avatar`** - the first one (2026-09-16) covers `/_app/immutable/*` only, so twenty-four faces still cross to Saint-Etienne on every cold load at 846-946 ms each. The origin already says `public, max-age=86400`; Cloudflare caches by EXTENSION and an API path has none, so only a rule lifts it | 1 rule in the dashboard | [P2 - twenty-four avatars cross the country](#p2---twenty-four-avatars-cross-the-country-on-every-cold-load-and-the-mls-init-waits-behind-them-measured-on-production-2026-09-16) |
 | App Store Connect: the 2.3.6 radio button | 1 click | [mobile](frontend/mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on) |
 | Lydia's credentials, which Lydia owes | blocked upstream | WP-LYDIA-1 |
 | **the dev mobile half: a Firebase project for `dev.canari-emse.fr` and a dev keystore, plus where that keystore is backed up.** No agent can do it - the Play service account holds only `androidpublisher`, not `serviceusage.services.enable`, so it can neither create a project nor turn an API on. Until then a pre-release APK points at dev with production's FCM sender | 1 console visit, 1 decision | [`dev.canari-emse.fr` - the chantier closed](#devcanari-emsefr---the-two-things-that-outlived-the-chantier) |
@@ -667,6 +668,47 @@ limit found on the way, because it will mislead the next reader too: the buffer 
 entries** and a cold start fills it, so anything after ~+4.5 s is dropped unless
 `setResourceTimingBufferSize` is raised the moment the debugger attaches - and a request the page
 did not itself issue may never appear there at all.
+
+---
+### P2 - TWENTY-FOUR AVATARS CROSS THE COUNTRY ON EVERY COLD LOAD, AND THE MLS INIT WAITS BEHIND THEM (measured on production 2026-09-16)
+
+Two consoles from the user's own Firefox on `v0.18.5`, one hard reload and one F5 thirty-eight
+seconds later. **Both halves of `v0.18.5`'s cold-start work are confirmed to hold** - measured the
+same hour, `mls_wasm_bg.*.wasm` answers `cf-cache-status: HIT` in **147 ms** (707 kB brotli, was
+11 325 ms) and the emoji font `HIT` in **199 ms** (was ~12 s and `no-store`). The Cache Rule works.
+What is left is a different queue.
+
+| | hard reload | F5, 38 s later |
+| --- | --- | --- |
+| open -> `Initialised in WEB mode` | 3 s | 1 s |
+| open -> `Connected to network!` | **13 s** | **3 s** |
+| `/api/users/*/avatar`, 24 of them | 846 - 946 ms each | 516 - 630 ms each |
+
+**THE AVATARS ARE NOT EDGE-CACHED, AND THAT IS THE HALF NO CODE HERE CAN FIX.** The origin answers
+`public, max-age=86400` with an ETag - measured directly, twice - and Cloudflare still says
+`cf-cache-status: DYNAMIC`, because its default caching is decided by file EXTENSION and an API
+path has none. The same fact that kept `.wasm` uncached until 2026-09-16, arriving through a path
+the first rule does not cover. So every one of the twenty-four is a round trip to Saint-Etienne,
+and a 516 ms floor on a warm browser is that RTT and nothing else. One rule closes it; it is in
+[owed to the user](#owed-to-the-user---decisions-rotations-and-one-off-clicks).
+
+**AND THE MLS INITIALISATION SITS INSIDE THAT WINDOW.** On the cold console,
+`Initialising MLS (vault device key path)...` is logged at 10:30:41 and `WasmMlsClient::new` at
+**10:30:51** - ten seconds filled by nothing but those twenty-four faces. On the warm console the
+same pair is one second apart. **This is `v0.18.5`'s own defect displaced by one notch, not
+removed**: #724 moved the wasm DOWNLOAD off the social feed's queue, and what now waits behind the
+feed is the engine's INITIALISATION.
+
+**WHAT IS NOT KNOWN, AND MUST BE BEFORE ANYTHING IS WRITTEN.** Whether those ten seconds are
+network concurrency, main-thread contention (each avatar is decrypted in WASM on the same thread),
+or the vault key derivation simply being slow on a cold process. Second-resolution console
+timestamps cannot separate them, and **a fix written against a suspected cause is the thing this
+repository forbids**. What settles it is one `performance.mark` pair around the vault path and one
+around `WasmMlsClient::new`, read on the same two reloads - not a guess about priority hints.
+
+**Do not "fix" this by lowering the avatars' fetch priority.** A priority hint is advisory, it
+differs per engine, and it would make the measurement above unreproducible without stating what the
+ordering IS. The ordering is the thing to state.
 
 ---
 ### P3 - THE PRE-RELEASE CHANNEL IS THE ENVIRONMENT SELECTOR, SO THE BUILD CARRYING A FIX CANNOT MEASURE IT (found 2026-09-15)
