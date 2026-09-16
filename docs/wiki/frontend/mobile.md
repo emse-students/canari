@@ -10,12 +10,32 @@ Canari runs as a native mobile app on Android and iOS via Tauri 2, using the sam
 | Aspect | Web (browser) | Tauri (mobile) |
 |---|---|---|
 | MLS | WASM (`WebMlsService`) | Native Rust (`TauriMlsService` via `invoke()`) |
+| Which of the two ships | chosen when the bundle is BUILT - see below | idem |
 | State storage | IndexedDB | Filesystem (`~/.canari/`) |
 | HTTP | `fetch()` with cookies | `@tauri-apps/plugin-http` (bypasses CORS) |
 | WebSocket auth | `canari_ws_token` cookie | `?token=` query param (cookie not sent on cross-origin WS) |
 | MLS snapshot | Argon2 in worker thread → IndexedDB | Direct filesystem write under `mls_bin_write_lock` |
 | Prekeys | 50 OTKPs | 200 OTKPs (more frequent offline periods) |
 | Push notifications | — | FCM (Android), APNs via FCM (iOS) |
+
+## Which implementation a build ships, and why it is not a runtime choice
+
+`TauriMlsService` calls into Rust and cannot execute in a browser; `WebMlsService` needs the WASM
+loader a Tauri build stubs out. Both were statically imported behind `isTauriRuntime() ? ... : ...`
+until 2026-09-16, so each bundle compiled and evaluated the one it could never call.
+
+The seam is `src/lib/mlsServicePlatform.ts` (web, and the file TypeScript, vitest and `bun run dev`
+read) beside `src/lib/mlsServicePlatform.native.ts`. `platformMlsService()` in `vite.config.js`
+redirects the import when the build is native - `TAURI_ENV_PLATFORM`, which the Tauri CLI exports to
+its `beforeBuildCommand` for Android and desktop, or `TAURI_TARGET`, which the iOS workflow sets by
+hand. `scripts/check-platform-service.mjs` then fails the build unless exactly the expected one
+reached the output, because both mistakes are silent: a web build keeping the native half only
+wastes bytes, while a native build keeping the WEB half would open a second MLS state beside the
+real one.
+
+`createMlsService()` is the only place an instance is made, and it refuses outright when the
+bundle's platform and the runtime disagree - the one case a build-time choice can still get wrong
+is a Tauri shell pointed at a dev server started outside the Tauri CLI.
 
 ## Native MLS
 

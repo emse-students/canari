@@ -11,6 +11,28 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - chaque version n'embarque plus que l'implementation MLS qu'elle peut executer
+
+`TauriMlsService` appelle le Rust de l'application et ne peut pas s'executer dans un navigateur ;
+`WebMlsService` a besoin du chargeur WASM qu'une compilation Tauri remplace par une souche. Les
+deux etaient pourtant importes statiquement derriere un ternaire d'execution
+(`isTauriRuntime() ? ... : ...`), donc chaque version compilait et evaluait a chaque demarrage
+celle qu'elle ne pourrait jamais appeler.
+
+Le choix se decide a la COMPILATION, il s'y fait desormais : `$lib/mlsServicePlatform` est resolu
+vers la moitie native quand `TAURI_ENV_PLATFORM` (Android, bureau, `tauri dev`) ou `TAURI_TARGET`
+(iOS) est present, et vers la moitie web sinon - ce qu'est aussi un `bun run dev`. Verifie sur deux
+compilations reelles du meme commit : le nom de commande natif `initialiser_mls` a disparu du
+bundle web, la ligne web `WASM init failed` a disparu du bundle Android, et le JavaScript du
+bundle web perd 13 846 B (4 503 875 -> 4 490 029).
+
+Une porte le verifie a chaque compilation plutot qu'une lecture de configuration, parce que les
+deux erreurs sont silencieuses : garder la moitie native cote web ne coute que des octets, tandis
+que garder la moitie WEB dans une version native ouvrirait un second etat MLS a cote du vrai.
+Et `createMlsService()` refuse net si la plateforme compilee et celle rencontree a l'execution ne
+concordent pas, au lieu de basculer sur l'autre : y arriver signifierait que la version qui tourne
+n'est pas celle qui devrait tourner.
+
 ### Added - une lecture d'archive dit desormais QUI l'a demandee
 
 `[HISTORY]` nommait le groupe, le curseur et le nombre de lignes, et rien du demandeur. Les treize

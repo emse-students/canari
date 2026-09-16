@@ -1142,20 +1142,41 @@ person, the first arrival with no session, and any claim that moving it helps th
 a claim this reading does not support. Two separate things, and they must not be merged into one
 task.
 
-**A SECOND FINDING FELL OUT OF THE SAME MAP, AND IT DOES TOUCH `/chat`:** `src/lib/mlsService.ts:8`
-picks the implementation with a RUNTIME ternary, `isTauriRuntime() ? TauriMlsService : WebMlsService`,
-with both statically imported. So every browser downloads, parses and evaluates `TauriMlsService`
-(48 312 B of source) that can never run in it, and every Tauri build carries `WebMlsService`
-(60 538 B) for the same reason. The choice is decidable at BUILD time - `svelte.config.js` already
-branches on `BUILD_WEB` for the adapter - so this one is a deletion rather than a deferral.
-`CallService.ts` (49 079 B of source) is in the same chunk while `CALLS_ENABLED = false`.
+**A SECOND FINDING FELL OUT OF THE SAME MAP, AND IT IS FIXED (2026-09-16).** `src/lib/mlsService.ts`
+picked the implementation with a RUNTIME ternary, `isTauriRuntime() ? TauriMlsService :
+WebMlsService`, with both statically imported - so every browser downloaded, parsed and evaluated a
+`TauriMlsService` that can never run in it, and every Tauri build carried a `WebMlsService` whose
+WASM loader that same build stubs out. The choice is decidable at BUILD time, so it is made there:
+`platformMlsService()` in `vite.config.js` resolves `$lib/mlsServicePlatform` to the native half
+when `TAURI_TARGET` or `TAURI_ENV_PLATFORM` is set, and `scripts/check-platform-service.mjs` fails
+the build unless exactly the expected implementation reached the output. Measured on two real
+builds of the same commit: the web bundle no longer contains the native-only command name
+`initialiser_mls`, the Android bundle no longer contains the web-only line `WASM init failed`, and
+the web build's JavaScript shrank by 13 846 B (4 503 875 -> 4 490 029).
 
-**AND ITS SIZE IS SMALL, WHICH IS WRITTEN HERE SO NOBODY SPENDS A DAY ON IT AND CALLS IT THE COLD
-START.** Those are SOURCE bytes. Against the chunk's 2 080 441 B of source compiling to 404 879 B,
-the shipped shares are roughly **9.4 KB minified** for `TauriMlsService` on the web, 11.8 KB for
-`WebMlsService` in Tauri, 9.6 KB for `CallService` - about 2.3% of one chunk each, not a third of a
-route. The reason to do it is that shipping an implementation that cannot run is wrong, not that it
-is fast.
+**AND THE SIZE IS SMALL, WHICH IS WRITTEN HERE SO NOBODY QUOTES IT AS THE COLD START.** The reason
+it was done is that shipping an implementation that cannot run is wrong, not that it is fast.
+`CallService.ts` (49 079 B of source, roughly 9.6 KB minified) is in the same chunk while
+`CALLS_ENABLED = false`, and is NOT to be picked apart for bytes: the five switches move in ONE
+commit at revival.
+
+### P3 - the WASM stub is an iOS-only opt-in, so an Android build carries a WASM module it cannot use (found 2026-09-16)
+
+`mlsWasmStub()` in `vite.config.js` fires on `TAURI_TARGET`, and the ONLY thing that sets it is
+`.github/workflows/ios.yml`. Android reaches Vite through `bun tauri android build`, whose
+`beforeBuildCommand` gets `TAURI_ENV_PLATFORM` instead - so the stub does not fire, and the
+Android bundle carries the MLS WASM module and its workers while every MLS call goes to Rust
+through `invoke()`. Both builds were made on 2026-09-16 and `[bundle-check]` reports `1 wasm` for
+each.
+
+**It is not a one-word predicate change, which is why it is written down rather than done.** The
+virtual module the stub installs exports `loadAndInitWasm` and nothing else, while
+`$lib/mls-client/index.ts` re-exports `migrateLegacyMlsStateBlob` from the same file and three
+workers import from it. Widening the predicate therefore changes what compiles on iOS as well -
+where the current shape has shipped - so it owes a build of BOTH natives and a reading of what the
+native path actually calls, not a guess. The prize is the whole WASM payload on Android, which is
+the largest single asset either native build carries.
+
 
 **THE NEXT STEP IS STILL A MEASUREMENT, NOT A REFACTOR OF THE LAYOUT.** The user's next cold-start
 export is what says whether parse time is even the dominant term - since #742 every console line

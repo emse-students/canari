@@ -21,6 +21,50 @@ const devOrigin = host ? `http://${host}:1420` : undefined;
 const devApiPort = process.env.CANARI_LOCAL_API_PORT || '8081';
 
 /**
+ * Whether this build produces a NATIVE app rather than a page a browser loads.
+ *
+ * Two variables and not one, because the two native pipelines announce themselves differently and
+ * both are already in use: the Tauri CLI exports `TAURI_ENV_PLATFORM` to the `beforeBuildCommand`
+ * it runs (Android, desktop, `tauri dev`), while the iOS workflow calls `bun run build` itself and
+ * sets `TAURI_TARGET` by hand. A build that is neither is a browser build - which is also what
+ * `bun run dev` is, so a plain dev server keeps serving the web implementation.
+ *
+ * @returns true when the bundle being built will run inside a Tauri webview.
+ */
+function isNativeBuild() {
+  // eslint-disable-next-line no-undef
+  return !!(process.env.TAURI_TARGET || process.env.TAURI_ENV_PLATFORM);
+}
+
+/**
+ * Resolves `$lib/mlsServicePlatform` to the implementation this build can actually run.
+ *
+ * `TauriMlsService` cannot execute in a browser and `WebMlsService` cannot execute in a Tauri build
+ * (its WASM loader is stubbed above). Both were nevertheless statically imported behind a runtime
+ * ternary until 2026-09-16, so each bundle shipped, parsed and evaluated the one it could never
+ * call. The choice is known when the bundle is built, so it is made here.
+ *
+ * It rewrites the RESOLUTION and not the source: the web file stays the module TypeScript, vitest
+ * and `bun run dev` see, and only a native build is redirected. `scripts/check-platform-service.mjs`
+ * asserts afterwards that exactly one of the two reached the output.
+ *
+ * @returns {import('vite').Plugin}
+ */
+function platformMlsService() {
+  const nativeFile = path.join(__dirname, 'src/lib/mlsServicePlatform.native.ts');
+  return {
+    name: 'platform-mls-service',
+    enforce: 'pre',
+    async resolveId(source, importer, options) {
+      if (!isNativeBuild()) return null;
+      if (!/(^|\/)mlsServicePlatform$/.test(source)) return null;
+      const resolved = await this.resolve(nativeFile, importer, { ...options, skipSelf: true });
+      return resolved?.id ?? nativeFile;
+    },
+  };
+}
+
+/**
  * Stubs out the WASM loader for Tauri builds (AppImage, Android, etc.).
  *
  * When the TAURI_TARGET env var is set, any import of `mlsWasmLoader` is
@@ -31,6 +75,11 @@ const devApiPort = process.env.CANARI_LOCAL_API_PORT || '8081';
  * @returns {import('vite').Plugin}
  */
 function mlsWasmStub() {
+  // TAURI_TARGET alone, deliberately, and NOT `isNativeBuild()`: the virtual module this installs
+  // exports `loadAndInitWasm` and nothing else, while `$lib/mls-client` re-exports more names from
+  // the real loader. Widening the predicate to Android is a change to what an Android build
+  // compiles, and it is written down as a measurement to make rather than made blind here
+  // (docs/wiki/backlog.md).
   // eslint-disable-next-line no-undef
   const isTauri = !!process.env.TAURI_TARGET;
   const VIRTUAL_ID = '\0mls-wasm-stub';
@@ -127,6 +176,7 @@ export default defineConfig(async () => ({
   },
   plugins: [
     mlsWasmStub(),
+    platformMlsService(),
     tailwindcss(),
     // Paraglide must compile before SvelteKit so the generated runtime in
     // src/lib/paraglide is available to the app. SPA mode (ssr=false): locale
