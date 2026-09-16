@@ -8,12 +8,15 @@
  * at and buys nothing: a header preload pays off ahead of the body, which requires Early Hints
  * (103), and nothing in this estate sends one.
  *
- * Measured rather than argued, 2026-09-16. In Chrome on `/posts`, all six stylesheets record
- * exactly ONE resource-timing entry each, `initiatorType: "link"` - the tag fetched them and the
- * header produced no second, earlier request. In the user's Firefox the same six are reported
- * `preloaded with link preload not used`, once per file per load, on both reloads of that day's
- * export: six warning lines whose best case is a wasted hint and whose worst case is the 30 KB
- * main sheet fetched twice.
+ * Measured on production, `/login`, Chrome, 2026-09-16: the document's one stylesheet records
+ * exactly ONE resource-timing entry, `initiatorType: "link"` - the tag fetched it and the header
+ * produced no second, earlier request.
+ *
+ * **AN EARLIER VERSION OF THIS DOCBLOCK ALSO CITED SIX FIREFOX `preloaded ... not used` WARNINGS,
+ * AND THAT CITATION HAD NO SOURCE.** No console export of that day contains the string, and the
+ * claim traces back to this file rather than to a reading. It is removed rather than softened: a
+ * justification nobody can re-derive is worse than a shorter one, and the response below settles
+ * the question without it. Whether Firefox warns is unknown here and does not need to be known.
  *
  * JavaScript keeps its header, and the SERVED DOCUMENT is what settles why. Read off production on
  * 2026-09-16, `GET /login` returns 13 318 bytes of HTML containing **one `rel="stylesheet"` tag and
