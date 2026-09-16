@@ -96,7 +96,7 @@ export async function enrollBiometricImpl(): Promise<void> {
     localStorage.removeItem(BIOMETRIC_DISMISSED_KEY);
     appendLog('[BIOMETRIC] Enrollment OK - device key cleared from session (hardware keystore)');
   } catch (e) {
-    appendLog(`[BIOMETRIC] Enrollment failed: ${e instanceof Error ? e.message : String(e)}`);
+    appendLog(`[BIOMETRIC] Enrollment failed: ${String(e)}`);
     console.error('Biometric enrollment failed:', e);
   }
 }

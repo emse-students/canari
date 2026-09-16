@@ -11,6 +11,45 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - l'envoi d'un media trop volumineux le dit, et six erreurs cessent de citer une exception
+
+Le dernier arbre hors de la garde `serverProse`, `src/lib/composables`, tenait **vingt-cinq**
+occurrences de `e instanceof Error ? e.message : ...` - et non trois, comme l'entree du backlog
+l'affirmait : trois etait le nombre de sites qu'un LECTEUR rencontre, alors que le predicat
+trouve la forme partout ou elle est. Dix-neuf etaient des lignes de journal, passees a
+`String(e)`, qui en dit strictement plus (le type et la cause, pas seulement le message).
+
+**Six arrivaient sur un ecran.** L'envoi d'un media affichait la phrase de l'exception ; son
+`catch` couvre deux branches dont une seule interroge un serveur, alors le statut est desormais
+LU (`MediaUploadError`) plutot que suppose. C'est aussi ce qui rend enfin visible le seul refus
+sur lequel un membre peut agir : un fichier trop gros. La route repondait 413 et le client s'en
+servait uniquement pour ecrire une autre chaine de caracteres - `Media upload failed: 413
+(fichier trop volumineux)`, des mots francais dans un message anglais destine aux developpeurs,
+le tout recopie dans une phrase francaise a l'ecran. **Personne ne relisait ce 413**, si bien
+que, pour le code, il etait indiscernable d'un 500. Il a maintenant sa phrase, dans le mappeur
+commun, ou elle vaut pour toute route qui recoit un corps.
+
+Les deux transferts ne disent plus que "cela a echoue" : la fonction qu'ils enveloppent RENVOIE
+son refus, deja traduit, donc ce qui atteint ces `catch` est imprevu. Et le champ d'erreur de la
+connexion montrait `_e.message` : un lecteur francais y lisait
+`Session expired - please log in again`, la phrase que porte `SessionExpiredError`.
+`LoginFailure` est desormais un `LocalizedError` - ses six `throw` construisent tous leur
+message avec Paraglide - et le champ demande au lieu de supposer. **Deux litteraux anglais
+traînaient a cote**, `'Please fill in all fields.'` et `'Biometric authentication failed.
+Please enter your PIN manually.'`, chacun avec une cle Paraglide qui existait deja.
+
+**Un defaut de la meme famille a ete trouve la ou cette garde ne regarde pas.**
+`classifyApiError` passait le message de N'IMPORTE QUELLE erreur a
+`channel_action_error_generic({ action, detail })`. Or `detail` est la moitie lisible d'une
+enveloppe Nest documentee, et seul un refus repondu par cette API en a une : un `TypeError` de
+notre propre code etait donc affiche a un membre comme la raison pour laquelle sa communaute ne
+chargeait pas. Le detail n'est cite que s'il vient d'une enveloppe.
+
+La garde prend `src/lib/composables`, avec une entree dans sa liste d'exceptions : la comparaison
+contre `MLS_LOCAL_STATE_UNDECRYPTABLE` se referme avec le P1 qui decide ce qu'un etat corrompu
+doit dire, et la typer seule livrerait le meme mauvais diagnostic sous une meilleure forme.
+Mesure d'un bout a l'autre avec le meme predicat : 117 occurrences avant, 93 apres.
+
 ### Changed - un refus du serveur porte son statut dans UN type, plus un par service
 
 Deux endroits avaient fait pousser la meme classe, a un jour d'intervalle : `ChannelApiError` et

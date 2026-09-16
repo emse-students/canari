@@ -48,6 +48,7 @@ import {
 } from '$lib/utils/chat/messageReactions';
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 import { chat_system_message_deleted, m } from '$lib/paraglide/messages';
+import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
 import { MediaService } from '$lib/media';
 import { getPreviewText, mkMediaEnvelope, parseEnvelope, serializeEnvelope } from '$lib/envelope';
 import { encodeAppMessage, mkMedia, MediaKind } from '$lib/proto/codec';
@@ -1060,13 +1061,23 @@ export function useMessaging() {
           ctx.playSendTone?.();
         }
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
         if (sentMediaMessageCount < fileEntries.length) {
           pendingMediaFiles = [...fileEntries.slice(sentMediaMessageCount), ...pendingMediaFiles];
         }
-        ctx.setSendError(m.chat_media_send_error({ reason: errorMessage }));
+        // BOTH BRANCHES OF THE LOOP ABOVE LAND HERE AND ONLY ONE OF THEM ASKS A SERVER ANYTHING.
+        // The MLS branch writes bytes to IndexedDB and returns; the channel branch uploads and
+        // sends inline, and both of those now throw a typed refusal. So the status is READ rather
+        // than assumed: `refusalStatus` answers null for the queue's own failures, which is
+        // correct - nothing refused anything - and the generic line stands. The 413 the upload
+        // route answers for an oversized file is the one a member can act on, and it is the
+        // reason this catch gained a status instead of a second sentence.
+        const status = refusalStatus(error);
+        ctx.setSendError(
+          describeApiRefusal(status, m.chat_media_action_send()) ??
+            m.chat_media_send_error_generic()
+        );
         ctx.log(
-          `[MEDIA] send failed, ${fileEntries.length - sentMediaMessageCount} file(s) re-staged: ${errorMessage}`
+          `[MEDIA] send failed (status=${status ?? 'none'}), ${fileEntries.length - sentMediaMessageCount} file(s) re-staged: ${String(error)}`
         );
       } finally {
         isUploadingMedia = false;
@@ -1216,9 +1227,7 @@ export function useMessaging() {
         ctx.deviceKeyB64
       );
     } catch (e) {
-      ctx.log(
-        `[DB] Failed to persist local mutation on ${msg.id}: ${e instanceof Error ? e.message : String(e)}`
-      );
+      ctx.log(`[DB] Failed to persist local mutation on ${msg.id}: ${String(e)}`);
     }
   }
 
@@ -1291,9 +1300,7 @@ export function useMessaging() {
     try {
       await ctx.storage.deleteMessage(messageId, conversationId);
     } catch (e) {
-      ctx.log(
-        `[DB] Failed to drop withdrawn message ${messageId}: ${e instanceof Error ? e.message : String(e)}`
-      );
+      ctx.log(`[DB] Failed to drop withdrawn message ${messageId}: ${String(e)}`);
     }
   }
 
@@ -1468,9 +1475,10 @@ export function useMessaging() {
           log: ctx.log,
         });
       } catch (e) {
-        const reason = e instanceof Error ? e.message : String(e);
-        ctx.log(`[FORWARD] channel forward failed for "${targetName}": ${reason}`);
-        return { success: false, error: m.chat_forward_error({ reason }) };
+        // `sendChatMessage` RETURNS its refusal, already localized, rather than throwing it - so
+        // anything reaching this catch is unexpected and has nothing to add beyond "it failed".
+        ctx.log(`[FORWARD] channel forward failed for "${targetName}": ${String(e)}`);
+        return { success: false, error: m.chat_forward_error_fallback() };
       }
     }
 
@@ -1514,9 +1522,9 @@ export function useMessaging() {
         log: ctx.log,
       });
     } catch (e) {
-      const reason = e instanceof Error ? e.message : String(e);
-      ctx.log(`[FORWARD] MLS forward failed for "${targetName}": ${reason}`);
-      return { success: false, error: m.chat_forward_error({ reason }) };
+      // Same as the channel branch above, and for the same reason.
+      ctx.log(`[FORWARD] MLS forward failed for "${targetName}": ${String(e)}`);
+      return { success: false, error: m.chat_forward_error_fallback() };
     }
   }
 

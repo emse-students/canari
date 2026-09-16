@@ -20,7 +20,7 @@ import { fetchOrUnreachable } from '$lib/utils/fetchOrUnreachable';
 // Every `throw` below whose message is a Paraglide line is a `LocalizedError`: the modals rendering
 // these PIN flows must be able to tell "the PIN you typed is not the current one" from a browser's
 // `Failed to fetch`, and only the THROW knows which it is.
-import { LocalizedError } from '$lib/utils/localizedError';
+import { LocalizedError, localizedMessage } from '$lib/utils/localizedError';
 import { LoginFailure, isExpectedLoginOutcome, loginErrorCode } from './loginErrors';
 import { MLS_LOCAL_STATE_UNDECRYPTABLE } from '$lib/mls-client';
 import { getToken, clearAuth, SessionExpiredError } from '$lib/stores/auth';
@@ -423,7 +423,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
   let offlineSession = false;
 
   if (!userId.trim()) {
-    const msg = 'Please fill in all fields.';
+    const msg = m.auth_login_fill_all();
     ctx.setLoginError(msg);
     cb.onLoginFailed?.(msg);
     return;
@@ -838,9 +838,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     // Skipped offline: there is no token yet, and promoteOfflineSession re-runs it.
     if (!offlineSession) {
       void bindCurrentSessionDevice(ctx.getMyDeviceId()).catch((e) =>
-        cb.log(
-          `[WARN] Session/device binding failed: ${e instanceof Error ? e.message : String(e)}`
-        )
+        cb.log(`[WARN] Session/device binding failed: ${String(e)}`)
       );
     }
 
@@ -871,9 +869,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
             /* non-blocking */
           }
         })
-        .catch((e) =>
-          cb.log(`[WARN] Push registration failed: ${e instanceof Error ? e.message : String(e)}`)
-        );
+        .catch((e) => cb.log(`[WARN] Push registration failed: ${String(e)}`));
     }
 
     // Message outbox: register the flusher before loading conversations so that
@@ -1383,9 +1379,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
               groupId,
             });
           } catch (e) {
-            cb.log(
-              `[WARN] Echec handleHistoryRequest: ${e instanceof Error ? e.message : String(e)}`
-            );
+            cb.log(`[WARN] Echec handleHistoryRequest: ${String(e)}`);
           }
         });
       }
@@ -1479,7 +1473,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     // - it is maintenance, not startup, and nothing waits on it. Its own failures are logged and
     // swallowed inside; the catch here only exists because this call site cannot await it.
     sweepExpiredGraineSeeds().catch((e: unknown) => {
-      console.warn(`[GRAINE] retention sweep threw: ${e instanceof Error ? e.message : String(e)}`);
+      console.warn(`[GRAINE] retention sweep threw: ${String(e)}`);
     });
 
     for (const delay of [35_000, 70_000]) {
@@ -1494,20 +1488,25 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     startConnectionWatchdogImpl(ctx, cb);
   } catch (_e: unknown) {
     cancelStartupCatchupBench();
-    const msg = _e instanceof Error ? _e.message : String(_e);
+    // THE SHOWN SENTENCE AND THE LOGGED ONE ARE NOT THE SAME STRING, which is the whole of the
+    // defect this closes. Six of the throws below this catch are `LoginFailure(code, m.auth_...())`
+    // and their message IS the French line the member must read; everything else - a
+    // `SessionExpiredError` carrying "Session expired - please log in again", a `TypeError` from a
+    // dead socket, a bug of our own - reached the same field verbatim, in English.
+    const shown = localizedMessage(_e, m.auth_pin_login_failed());
     const code = loginErrorCode(_e);
-    ctx.setLoginError(msg);
+    ctx.setLoginError(shown);
     // AN ORDINARY OUTCOME IS NARRATED, A DEFECT IS ACCUSED - see `isExpectedLoginOutcome` for why
     // one catch cannot say both with one level. The code is read here rather than below because the
     // log is the first thing anybody looks at, and a mistyped PIN or a train tunnel filed under
     // `[INIT] Login failed` beside a WASM that would not load is a line whose reader learns to skip
     // it. The code is NAMED in the line so the two can still be told apart at a glance.
     if (isExpectedLoginOutcome(code)) {
-      cb.log(`[INIT] Login did not complete (${code}): ${msg}`);
-      console.warn(`[INIT] Login did not complete (${code}):`, msg);
+      cb.log(`[INIT] Login did not complete (${code}): ${String(_e)}`);
+      console.warn(`[INIT] Login did not complete (${code}):`, _e);
     } else {
-      cb.log(`Error: ${msg}`);
-      console.error(`[INIT] Login failed (${code}):`, msg);
+      cb.log(`Error: ${String(_e)}`);
+      console.error(`[INIT] Login failed (${code}):`, _e);
     }
     ctx.resetMls();
     clearUserLocally();
@@ -1519,7 +1518,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       if (cb.onSessionExpired) cb.onSessionExpired();
       else void goto('/login', { replaceState: true });
     } else if (cb.onLoginFailed) {
-      cb.onLoginFailed(msg, code);
+      cb.onLoginFailed(shown, code);
     } else {
       const cur = window.location.pathname + window.location.search + window.location.hash;
       void goto(`/login?returnTo=${encodeURIComponent(cur)}`, { replaceState: true });
@@ -1630,8 +1629,8 @@ export async function biometricLoginImpl(
     // distinguishes "empty keystore" from "authentication cancelled" via distinct messages.
     await loginImpl(ctx, cb);
   } catch (e) {
-    ctx.setLoginError('Biometric authentication failed. Please enter your PIN manually.');
-    cb.log(`[BIOMETRIC] Exception: ${e instanceof Error ? e.message : String(e)}`);
+    ctx.setLoginError(m.auth_biometric_failed_fallback());
+    cb.log(`[BIOMETRIC] Exception: ${String(e)}`);
     console.error(e);
   }
 }

@@ -94,6 +94,11 @@ export function describeApiRefusal(
       return m.api_refusal_gone({ action });
     case 409:
       return m.api_refusal_conflict({ action });
+    case 413:
+      // THE ONE STATUS A MEMBER CAN ACT ON WITHOUT KNOWING WHAT A STATUS IS. It is here rather
+      // than in the media caller because 413 means the same thing on every route that has a body:
+      // what you sent is too big. The media upload is simply the only one that answers it today.
+      return m.api_refusal_too_large({ action });
     case 429:
       return m.api_refusal_rate_limited({ action });
     default:

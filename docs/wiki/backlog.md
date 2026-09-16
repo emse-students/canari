@@ -7698,11 +7698,11 @@ all because it had gone stale while this one was re-measured) came from one pred
 which only some assign to an error state a screen renders - the rest sit inside a `Log`/`console`
 call and are correctly dev-facing.
 
-**117 remain, down from 194** (one predicate at both ends, measured rather than decremented). The
+**93 remain, down from 194** (one predicate at both ends, measured rather than decremented). The
 intermediate readings were 125 on 2026-09-15 - the 49 of the admin pass plus the 20 of the
-component pass - and 127 immediately before the component-ROOT pass of 2026-09-16, the tree having
-moved twice in between. **That is why this line is re-measured and never decremented**: two sites
-arrived while the count sat still.
+component pass - 127 immediately before the component-ROOT pass of 2026-09-16, the tree having
+moved twice in between, and 117 after it. **That is why this line is re-measured and never
+decremented**: two sites arrived while the count sat still.
 
 The member-facing pass closed 27 across `components/posts`, `components/settings`,
 `routes/posts`, `routes/profile`, `routes/lists`, `routes/documents` and `routes/forms`; the agenda
@@ -7771,9 +7771,44 @@ inner call already caught its own refusal - so no status exists to map and **a c
 what they need**, which is what this entry said before the second route appeared. Until they have
 one, the trees holding these sites stayed outside the guard, because a file it owns must answer in
 full. **Three of those four trees closed on 2026-09-16** - `src/lib/components` (root),
-`components/layout` and `components/auth` - and the directory went in as ONE entry. **Only
-`lib/composables` is left**, and only `useMessaging.svelte.ts` in it holds a site of this shape;
-the other five files there are the ordinary shape or logs, so that tree is one pass from joining.
+`components/layout` and `components/auth` - and the directory went in as ONE entry.
+**`lib/composables` closed the same day, and the count this entry carried for it was WRONG**: it
+said three sites, which was the number a READER meets. The guard's regex finds the SHAPE, so the
+tree actually held **twenty-five**, nineteen of them log lines. They were not exempted - a log
+that writes `e.message` throws away the type, the stack and the `cause` of whatever it caught, so
+`String(e)` is the better line, and a convention with no exceptions is the only one a regex can
+hold.
+
+The six that reached a member closed three ways, the same three the component pass found. The
+media send got a STATUS at the throw (`MediaUploadError`, new), which is also how a 413 stopped
+being indistinguishable - to the code - from a 500: the special case existed only to write a
+different string, and nothing read it back. The two forwards had nothing to add, because
+`sendChatMessage` RETURNS its refusal already localized and anything reaching those catches is
+unexpected. And the login error field was showing `_e.message`, so `SessionExpiredError`'s
+`'Session expired - please log in again'` was what a French member read; `LoginFailure` is a
+`LocalizedError` now and the field asks instead of assuming. **Two raw English literals were
+sitting beside it** - `'Please fill in all fields.'` and
+`'Biometric authentication failed. Please enter your PIN manually.'` - both with a Paraglide key
+that already existed.
+
+**One more defect of the same family was found where this guard cannot look.**
+`classifyApiError` in `useChannelWorkspaces` fed an ARBITRARY error's message into
+`channel_action_error_generic({ action, detail })`: `readErrorDetail` parses a documented Nest
+envelope, and only a refusal this API answered has one, so a `TypeError` of ours was shown to a
+member as the reason their community would not load. A detail is quoted only when it came from an
+envelope now, and `channel_action_error_unknown` says just what was attempted otherwise.
+
+**AND ONE THING THE 413 EXPOSED THAT IS STILL OPEN.** The client refuses a file over
+`VITE_MEDIA_MAX_SIZE_MB` (default 100) and nginx refuses a body over `client_max_body_size
+100m` - the same number, set in two places that do not know about each other, measured against
+two different things. The client measures the PLAINTEXT file; what is uploaded is the
+ciphertext inside a multipart envelope, which is a couple of hundred bytes larger. So a file
+of exactly the limit passes the client's check and is refused by nginx, and an installed APK
+carries whatever value it was BUILT with, which nothing keeps in step with the box. The 413
+now reads as "le contenu envoye est trop volumineux" instead of an English exception, so the
+member is no longer misled - but the two caps should be one fact, derived, with the envelope
+accounted for on whichever side does the refusing. Not attempted here: it is an infrastructure
+change and a build-time variable, and it needs the boundary REPRODUCED before either moves.
 
 **THE LAST EIGHTEEN WERE READ INDIVIDUALLY, AND NOT ONE IS AN ORDINARY SITE.** They are the reason
 this sweep has an end rather than a remainder:
@@ -7783,9 +7818,12 @@ this sweep has an end rather than a remainder:
   `SettingsSecuritySection.svelte`). Deleting the preference would have REPLACED a precise sentence
   with a vaguer one, which was the allowlist's whole argument. **THREE OF THE FOUR CLOSED
   2026-09-16 and it took none of the P1's endpoint work**: `LocalizedError` types the throw, so a
-  screen can ASK whether a message is the reader's instead of assuming. `sessionAuth.ts:1339` is the
-  one left, and it is `LoginFailure(code, m.auth_...())` - a type that ALREADY carries a code, read
-  by `lib/composables`, so it belongs to that tree's pass rather than this one. **One raw English
+  screen can ASK whether a message is the reader's instead of assuming. **THE FOURTH CLOSED WITH
+  `lib/composables` the same day**: `LoginFailure(code, m.auth_...())` already carried a code, and
+  all six of its throws build their message from Paraglide, so it became a `LocalizedError`
+  subclass and the catch renders `localizedMessage(_e, m.auth_pin_login_failed())`. That catch is
+  also reached by `SessionExpiredError` and by any `TypeError` from a dead socket, which is what
+  made the assumption load-bearing in both directions. **One raw English
   literal hiding among them was closed earlier** - `'Login failed after recovery.'`, thrown into the
   recovery modal, now `auth_pin_recovery_login_failed`. **A second one closed 2026-09-16**:
   `'Server-side PIN reset failed.'` was the whole of what a French reader saw when a PIN reset
@@ -7806,19 +7844,26 @@ this sweep has an end rather than a remainder:
   already separates `sealed` (an old PIN opens it) from `unknown` (corruption, no PIN helps), and
   both throws collapse the two into that one marker. Typing the marker without deciding what the
   screen does with `unknown` would ship the same wrong diagnosis behind a better shape. It closes
-  with the P1 PIN-vs-corrupt-state item, whose reader is written and unshipped.
+  with the P1 PIN-vs-corrupt-state item, whose reader is written and unshipped. **It is the
+  allowlist's one entry since 2026-09-16**, which is what that list is for: `lib/composables`
+  joined the guard with every OTHER site in that file closed, and the entry FAILS the day this one
+  stops offending - so it cannot rot while the P1 waits.
 - **The rest cross a boundary as DATA, not as a screen**: a worker's `postMessage({ detail })`
   (x3), `mlsDecryptSession`'s per-message `{ ok: false, error }`, and log lines.
 
 **So the trees still OUTSIDE the guard are outside it for a reason**: `lib/utils/chat`, `graine`,
-the workers and `mls-client` are almost entirely logs, and adding them would fail correct code -
-the regex finds the SHAPE, never the destination. The raw count stays an upper bound for the same
-reason.
+the workers and `mls-client` are almost entirely logs, and the regex finds the SHAPE, never the
+destination. **That reason is now weaker than it reads**, and the composables pass is the evidence:
+nineteen of its twenty-five sites were logs, every one of them became `String(e)`, and not one lost
+anything - `String(e)` renders `Error: <message>` rather than `<message>`, which is strictly more
+than the ternary gave. So those trees are not blocked on the guard learning to tell a log from a
+render; they are blocked on somebody doing the same sweep. The raw count stays an upper bound.
 
-**Fifteen entries are guarded and they cover more ground than the twenty did**: `src/lib/components`
-is now one of them and owns all 218 of its files, so the five subtree entries under it were
-removed rather than left to walk the same file twice. Every guarded file is clean and the allowlist
-is empty.
+**Sixteen entries are guarded and they cover more ground than the twenty did**: `src/lib/components`
+is one of them and owns all 218 of its files, so the five subtree entries under it were removed
+rather than left to walk the same file twice, and `src/lib/composables` joined on 2026-09-16.
+Every guarded file is clean but ONE, `sessionAuth.ts`, which is the allowlist's single entry and
+carries the reason it cannot yet close.
 
 **A tree is added only once every file under it answers**, which is why they arrive in batches: a
 guard owning half a directory is one a new file walks past. The CODES are the separate, still-open

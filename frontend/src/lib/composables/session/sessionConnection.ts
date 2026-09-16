@@ -42,11 +42,7 @@ export function runGroupDiscoveryImpl(
     log: cb.log,
     storage: st,
   }).catch((e) =>
-    cb.log(
-      `[WARN] Echec decouverte groupes${label ? ` (${label})` : ''}: ${
-        e instanceof Error ? e.message : String(e)
-      }`
-    )
+    cb.log(`[WARN] Echec decouverte groupes${label ? ` (${label})` : ''}: ${String(e)}`)
   );
 }
 
@@ -173,8 +169,8 @@ export async function attemptReconnectImpl(
       void goto('/login', { replaceState: true });
       return;
     }
-    cb.log(`Reconnection failed: ${err instanceof Error ? err.message : String(err)}`);
-    console.error('[WS] Reconnection failed:', err instanceof Error ? err.message : err);
+    cb.log(`Reconnection failed: ${String(err)}`);
+    console.error('[WS] Reconnection failed:', err);
     retry = true;
   } finally {
     ctx.setIsReconnecting(false);

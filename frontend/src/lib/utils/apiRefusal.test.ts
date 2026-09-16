@@ -5,6 +5,7 @@ import { withoutAnyComments } from '../styles/markupSources';
 import { ApiRefusalError, describeApiRefusal, refusalCode, refusalStatus } from './apiRefusal';
 import { ChannelApiError } from '$lib/services/ChannelService';
 import { CallInitiateError } from './callFailure';
+import { MediaUploadError } from './mediaErrors';
 
 /**
  * A REFUSAL IS DESCRIBED FROM ITS STATUS, NEVER FROM THE SERVER'S SENTENCE.
@@ -22,6 +23,7 @@ describe('describeApiRefusal', () => {
     [403, 'forbidden'],
     [404, 'gone'],
     [409, 'conflict'],
+    [413, 'too large'],
     [429, 'rate limited'],
   ])('answers %i with a localized sentence naming the action', (status) => {
     const out = describeApiRefusal(status, ACTION);
@@ -34,7 +36,7 @@ describe('describeApiRefusal', () => {
     // The whole point of the change: before it, a 403 and a 500 read identically, so the reader
     // could not tell a refusal they could act on from a fault they could not. Four identical
     // strings would pass every assertion above and still be that defect.
-    const sentences = [401, 403, 404, 409, 429].map((s) => describeApiRefusal(s, ACTION));
+    const sentences = [401, 403, 404, 409, 413, 429].map((s) => describeApiRefusal(s, ACTION));
 
     expect(new Set(sentences).size).toBe(sentences.length);
   });
@@ -82,8 +84,22 @@ describe('refusalStatus and refusalCode', () => {
   it('keeps each subclass distinguishable by name', () => {
     expect(new ChannelApiError(500, null, 'x').name).toBe('ChannelApiError');
     expect(new CallInitiateError(500, 'x').name).toBe('CallInitiateError');
+    expect(new MediaUploadError(500, 'x').name).toBe('MediaUploadError');
     expect(new ChannelApiError(500, null, 'x')).toBeInstanceOf(ApiRefusalError);
     expect(new CallInitiateError(500, 'x')).toBeInstanceOf(ApiRefusalError);
+    expect(new MediaUploadError(500, 'x')).toBeInstanceOf(ApiRefusalError);
+  });
+
+  it('describes an oversized upload as oversized, not as a fault', () => {
+    // THE CASE THE 413 ARM EXISTS FOR. The upload route tested `res.status === 413` and threw a
+    // different STRING for it - `Media upload failed: 413 (fichier trop volumineux)` - which
+    // nothing anywhere parsed back, so to the code the one refusal a member can act on was
+    // indistinguishable from a 500. It is a status now, and it reads differently from one.
+    const tooLarge = describeApiRefusal(refusalStatus(new MediaUploadError(413, 'x')), ACTION);
+
+    expect(tooLarge).not.toBeNull();
+    expect(tooLarge).not.toBe(describeApiRefusal(500, ACTION));
+    expect(describeApiRefusal(500, ACTION)).toBeNull();
   });
 
   it.each([
