@@ -47,9 +47,20 @@ network round trip, and the browser ends up with one resource-timing entry per s
 out loud: **"The resource was preloaded using link preload but not used within a few seconds"**, once
 per stylesheet, which on a production boot of the login page was six warnings for six sheets.
 
-JavaScript is the opposite case and keeps its header: a module graph is discovered by *executing*
-the entry, so `modulepreload` is what lets the whole first wave arrive multiplexed instead of in
-dependency order.
+JavaScript is the opposite case and keeps its header, and **the served document is what settles it
+rather than any argument about it.** `GET /login` on production, read 2026-09-16, returns 13 318
+bytes of HTML:
+
+| declared in the BODY | declared in the `Link:` HEADER |
+| --- | --- |
+| 1 x `<link rel="stylesheet">` | 1 x `rel="preload"; as="style"` |
+| **0** x `<link rel="modulepreload">` | **~100** x `rel="modulepreload"` |
+
+The two halves are not symmetric. For the stylesheet the header repeats a tag the body already
+carries. For the modules there is no tag at all - the graph is discovered by *executing* the inline
+bootstrap, one dependency level at a time - so the header is the only thing that makes the first
+wave arrive multiplexed. The ~130 chunks it names come back at a 21 ms mean TTFB, every one a
+Cloudflare HIT.
 
 The predicate is therefore `type === 'js'`, and it lives in
 [`$lib/server/preload`](../../../frontend/src/lib/server/preload.ts) rather than in
