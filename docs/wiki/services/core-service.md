@@ -164,7 +164,7 @@ of **three** outcomes. The distinction exists for one reason: **only an ANSWER m
 
 | outcome | when | response | cached |
 | --- | --- | --- | --- |
-| `image` | upstream 200 | the bytes, upstream `Content-Type` | 1 h in process, 24 h in the browser |
+| `image` | upstream 200 | the bytes, upstream `Content-Type` **and upstream `ETag`** | 1 h in process (then REVALIDATED, not re-fetched), 24 h in the browser |
 | `absent` | upstream **404** - this user has no photo | `404`, no body | 10 min in process, 10 min in the browser |
 | `unavailable` | timeout, transport failure, upstream 5xx/429, our key refused, or no key configured | `502`, no body, `Cache-Control: no-store` | never, at any layer |
 
@@ -219,6 +219,41 @@ had only ever drawn them once.
   age check, matching this endpoint's `max-age`.
 - Guarded by `userAvatarCache.test.ts`: reintroducing any store without an expiry makes "asks the
   server again for a face nothing is displaying any more" fail - verified by reintroducing one.
+
+##### The version comes from MiGallery, and until 2026-09-16 we threw it away
+
+**There was no invalidation of an avatar at any layer, and the upstream had already solved it.**
+MiGallery's `api/users/[username]/avatar` keys its ETag on the **asset id** - the thing that changes
+when a user changes their photo - and answers `no-cache` unbusted. `AvatarService` read
+`content-type` off the response and discarded the rest, never sent `If-None-Match`, and the
+controller replaced that `no-cache` with `public, max-age=86400`. The ETag a client saw was
+**Express's own weak one**, computed over whatever bytes went out, which can only ever produce a 304
+after the day has already elapsed. Four layers, four independent timers, ~25 h of staleness, and not
+one of them able to ask whether the photo had changed.
+
+What shipped, and what deliberately did not:
+
+- **The cache has three states, not two.** An expired entry is `stale` rather than `miss` **when and
+  only when it carries a version**: an entry with no validator can do nothing but be re-downloaded,
+  so keeping it would pin a payload for a key nobody may ask for again, and `maxEntries` bounds the
+  rest. An absence is never stale - there is no version of a photo that does not exist.
+- **A lapsed hour now costs a conditional request, not a download.** `If-None-Match` carries the
+  upstream token whole - weak marker and quotes included, because re-deriving or re-quoting an
+  opaque validator is how it stops matching what issued it.
+- **`validateStatus` accepts 304 only while a conditional request is in flight.** axios rejects 304
+  by default, which would classify "unchanged" as an outage; accepting it unconditionally would let
+  an unsolicited one store an empty body. The predicate closes over whether we asked.
+- **Forwarding the ETag downstream is one line**, because `res.send` generates a weak ETag only when
+  none is set and 304s only against the one that IS (`express/lib/response.js` 169 and 199 on 5.2.1).
+- **The 24 h was NOT shortened, and that is the point.** These changes make the revalidation that
+  eventually happens be about the PHOTO instead of about a clock, and take the body off the wire;
+  they do not move the ~25 h, which is decided by `max-age` alone. The shape that does - `no-cache`
+  plus the real ETag, or a busted URL - is an open decision in [backlog](../backlog.md), and a
+  smaller number chosen as a compromise would be the same defect at a different rate.
+
+Guarded by `avatar.service.spec.ts` (6 cases, including the `validateStatus` predicate read back and
+exercised directly, since axios is mocked and never applies it) and `avatar.cache.spec.ts` - five
+tests fail when the ETag capture is removed, verified by removing it.
 
 `chat-delivery-service` re-exposes the same image at `/api/mls/push/avatar/:targetUserId` for the
 Android background service, and forwards core's status unchanged.
