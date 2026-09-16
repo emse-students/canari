@@ -161,7 +161,41 @@ empty** - see above.
 | `http_response_headers_transform` | *(none - deliberate)* |
 | `http_request_dynamic_redirect` | `www.` -> apex, 301 |
 | `http_config_settings` | BIC disabled on the auth subdomain |
-| `http_request_cache_settings` | cache bypassed on the auth subdomain |
+| `http_request_cache_settings` | cache bypassed on the auth subdomain; **`/_app/immutable/*` eligible for cache, TTL from the origin** |
+
+### THE EDGE CACHES BY FILE EXTENSION, NOT BY WHAT THE ORIGIN ASKS FOR
+
+The origin sends `Cache-Control: public, max-age=31536000, immutable` on the whole of
+`/_app/immutable/`, and until 2026-09-16 Cloudflare ignored it for some of them. **Its default
+caching is decided by the file EXTENSION**: `.js` is on the list, `.wasm` is not. Measured on
+production with three requests, which is all it takes:
+
+| asset | `cf-cache-status`, before |
+| --- | --- |
+| `_app/immutable/entry/app.*.js` | `HIT` |
+| `_app/immutable/assets/mls_wasm_bg.*.wasm` | `DYNAMIC` |
+| `fonts/*.woff2` | `BYPASS` (the origin said `no-store`; fixed in v0.18.5) |
+
+So every browser without the file paid a full origin round trip for the 723 kB encryption engine -
+13 222 ms on the link measured that day, on every release, for ever. **A correct `Cache-Control` is
+not a cached response here.** The Cache Rule above is what lifts it, and it is the statement of
+intent: *do not* rename an asset to an extension the default list likes, which would lie about its
+type to the next reader and move the MIME assertion somewhere else.
+
+Two traps cost three attempts at the form. **`http.request.full_uri` carries scheme and host**, so
+`starts_with(full_uri, "/_app/...")` can never match - the field is `http.request.uri.path`. And
+**the wildcard operator matches the WHOLE path**, so `/_app/immutable/` without a trailing `*`
+matches that exact path and nothing under it.
+
+One command settles whether it still holds, and the rule is correctly bounded only if an HTML route
+still answers `DYNAMIC`:
+
+```sh
+curl -sSo /dev/null -D - -H 'Accept-Encoding: br'   https://canari-emse.fr/_app/immutable/assets/mls_wasm_bg.*.wasm | grep -i cf-cache-status
+```
+
+Measured after deployment: `MISS` on the first request, `HIT` on the second, while `/` and `/posts`
+stayed `DYNAMIC`.
 
 ## The daemon on the origin, and the token it carries
 

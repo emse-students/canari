@@ -66,8 +66,6 @@ else holds, a console owned by the user, or hardware that does not exist.
 | What | Kind | Where the substance is |
 | --- | --- | --- |
 | set up the external uptime probe that mails - **decided 2026-09-06, mail**; the probe must hit `/api/version` AND `/api/chat-delivery-health`, never the homepage, which answered 200 through both outages | ~1 click in Cloudflare or an uptime service | [P2 - NOTHING TELLS ANYBODY PRODUCTION IS DOWN](#p2---nothing-tells-anybody-production-is-down-and-both-outages-of-2026-09-01-were-reported-by-the-user-owed-to-the-user-a-decision-then-one-click) |
-| `DEPENDABOT_ALERTS_TOKEN` - a fine-grained token with **"Dependabot alerts: read"** on this repository. The nightly alerts job has NEVER passed: it declared `security-events: read`, which is code scanning, and Dependabot alerts have no `permissions:` key at all, so `GITHUB_TOKEN` cannot read them at any setting. The job now reads this secret when it exists and fails loudly when it does not - deliberately, because an alert list nobody reads looks exactly like an empty one | 1 token, 1 secret | `.github/scripts/dependabot-alerts-report.sh`, and the 403 it now names correctly |
-| **one Cloudflare Cache Rule so the edge stops sending every `.wasm` back to the origin** - `/_app/immutable/*` -> *Eligible for cache*, TTL from the origin (already `immutable`, already a year). Cloudflare decides by file EXTENSION and `.wasm` is not on its default list, so the 723 kB encryption engine answers `DYNAMIC` where the sibling `.js` answers `HIT`. The token here is refused on `/rulesets` (401), verified by calling it | 1 rule in the dashboard, or 1 wider token | [P2 - Cloudflare does not edge-cache `.wasm`](#p2---cloudflare-does-not-edge-cache-wasm-so-the-encryption-engine-crosses-from-the-origin-every-time-a-browser-lacks-it-measured-on-production-2026-09-16-owed-a-dashboard-gesture) |
 | App Store Connect: the 2.3.6 radio button | 1 click | [mobile](frontend/mobile.md#where-the-submission-stands-and-what-each-half-is-waiting-on) |
 | Lydia's credentials, which Lydia owes | blocked upstream | WP-LYDIA-1 |
 | **the dev mobile half: a Firebase project for `dev.canari-emse.fr` and a dev keystore, plus where that keystore is backed up.** No agent can do it - the Play service account holds only `androidpublisher`, not `serviceusage.services.enable`, so it can neither create a project nor turn an API on. Until then a pre-release APK points at dev with production's FCM sender | 1 console visit, 1 decision | [`dev.canari-emse.fr` - the chantier closed](#devcanari-emsefr---the-two-things-that-outlived-the-chantier) |
@@ -669,44 +667,6 @@ limit found on the way, because it will mislead the next reader too: the buffer 
 entries** and a cold start fills it, so anything after ~+4.5 s is dropped unless
 `setResourceTimingBufferSize` is raised the moment the debugger attaches - and a request the page
 did not itself issue may never appear there at all.
-
----
-### P2 - CLOUDFLARE DOES NOT EDGE-CACHE `.wasm`, SO THE ENCRYPTION ENGINE CROSSES FROM THE ORIGIN EVERY TIME A BROWSER LACKS IT (measured on production 2026-09-16; owed a dashboard gesture)
-
-Measured with three requests, which is all it takes and all that was ever needed:
-
-| asset | `cf-cache-status` | what that means |
-| --- | --- | --- |
-| `_app/immutable/entry/app.*.js` | `HIT` | answered by the Marseille PoP |
-| `_app/immutable/assets/mls_wasm_bg.*.wasm` | `DYNAMIC` | crosses to Saint-Etienne, every time |
-| `fonts/*.woff2` | `BYPASS` | was `no-store`; fixed in this tree |
-
-The origin sends `Cache-Control: public, max-age=31536000, immutable` on all of `/_app/immutable/`,
-and Cloudflare ignores it: **its default caching is decided by file EXTENSION, not by the origin's
-headers, and `.wasm` is not on the list** (`.js` is - hence the `HIT` one row up). So a browser with
-a cold cache pays a full origin round trip for 723 kB over a link measured at 163 - 477 kB/s, which
-on 2026-09-16 was 13 222 ms. This is not a first-load-after-a-release cost: it is every browser that
-does not already hold the file, on every release, for ever.
-
-**WHAT WOULD FIX IT, AND WHY NO AGENT CAN.** One Cache Rule on the `canari-emse.fr` zone -
-`http.request.uri.path starts_with "/_app/immutable/"` -> *Eligible for cache*, edge TTL from the
-origin's headers, which are already correct and already a year. The Cloudflare token this repository
-can reach (issued 2026-09-02, "Claude Agent") answers **401 on `/zones/{id}/rulesets`**: it can read
-zones, Access apps and its own token list, and not the rules. Verified by calling the endpoint
-rather than by reading a permission name. So this is a dashboard gesture or a new token, and it is
-in [owed to the user](#owed-to-the-user---decisions-rotations-and-one-off-clicks).
-
-**Do not "fix" this by renaming the asset to an extension Cloudflare likes.** The rule is the
-statement of intent; a filename that lies about its type to get past a default list is a trap for
-the next reader, and the MIME type would then have to be re-asserted somewhere else anyway.
-
-**THE MEASUREMENT THAT SETTLES WHETHER THIS STILL MATTERS IS ONE COMMAND**, and it should be taken
-before anything is built on top of it:
-
-```sh
-curl -sSo /dev/null -D - -H 'Accept-Encoding: br' \
-  https://canari-emse.fr/_app/immutable/assets/mls_wasm_bg.*.wasm | grep -i cf-cache-status
-```
 
 ---
 ### P3 - THE PRE-RELEASE CHANNEL IS THE ENVIRONMENT SELECTOR, SO THE BUILD CARRYING A FIX CANNOT MEASURE IT (found 2026-09-15)
@@ -1490,24 +1450,15 @@ than reasoned about, and `dependabot-alerts-report.test.sh` pins all four plus a
 SHAPE changed - valid JSON, right count, none of the fields this reader wants - which must accuse the
 reader rather than count as zero. 19 assertions, in `make test-ci-scripts`.
 
-**AND THE JOB HAS STILL NEVER PASSED, BECAUSE NO WORKFLOW SETTING CAN LIFT ITS 403.** `GITHUB_TOKEN`
-cannot read Dependabot alerts at any permission level - there is no `permissions:` key for them at
-all, and `security-events` is code scanning, a different thing. The job already reads a secret when
-one exists (`.github/workflows/scheduled.yml:183`,
-`GH_TOKEN: secrets.DEPENDABOT_ALERTS_TOKEN || secrets.GITHUB_TOKEN`) and fails loudly when it does
-not, deliberately, per the paragraph above. **Only the user can mint it**, and they asked on
-2026-09-10 for the steps rather than the description:
-
-1. GitHub -> Settings -> Developer settings -> Personal access tokens -> **Fine-grained tokens** ->
-   Generate new token.
-2. Resource owner **`emse-students`**, repository access **only `emse-students/canari`**.
-3. Repository permissions: **`Dependabot alerts: Read-only`**, and nothing else.
-4. Any expiry is acceptable - note that the job starts failing loudly on the day it lapses, which is
-   the correct behaviour and not a regression.
-5. Repo -> Settings -> Secrets and variables -> Actions -> New repository secret, named exactly
-   **`DEPENDABOT_ALERTS_TOKEN`**.
-
-Nothing is deployed or merged afterwards; the next nightly run picks it up.
+**THE JOB PASSED FOR THE FIRST TIME ON 2026-09-16**: `ok GitHub holds no open Dependabot alert for
+this repository.` **`GITHUB_TOKEN` cannot read Dependabot alerts at any permission level** - there is
+no `permissions:` key for them at all, and `security-events` is code scanning, a different thing - so
+the 403 was never a workflow setting away from lifting. A fine-grained token with
+`Dependabot alerts: Read-only` on this repository alone now sits in `DEPENDABOT_ALERTS_TOKEN`, read
+at `.github/workflows/scheduled.yml:183` as
+`GH_TOKEN: secrets.DEPENDABOT_ALERTS_TOKEN || secrets.GITHUB_TOKEN`. **The zero it prints is now a
+measured zero rather than an unread one**, which is the whole point of the loud failure above. The
+job starts failing loudly again on the day the token lapses, and that is correct.
 
 **Adding it made `scheduled.test.sh` fail, and the test was wrong.** Two jobs on one cron is legal,
 and that test says so in its own note - while comparing declared against claimed with `comm` over

@@ -11,6 +11,29 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - le moteur de chiffrement traversait la France a chaque chargement
+
+Le binaire WASM de 723 ko n'etait pas garde par le cache Cloudflare, alors que le fichier `.js`
+voisin l'etait. La raison n'est pas dans nos en-tetes, qui etaient corrects depuis toujours
+(`immutable`, un an) : **Cloudflare decide par EXTENSION de fichier, et `.wasm` n'est pas sur sa
+liste par defaut**. Chaque navigateur sans le fichier payait donc un aller-retour complet jusqu'a
+Saint-Etienne - 13 222 ms sur le debit mesure le 16/09/2026, a chaque version publiee.
+
+Une regle de cache posee le 16/09/2026 rend `/_app/immutable/*` eligible, duree de vie prise sur nos
+en-tetes. Verifie ensuite : `MISS` a la premiere requete, `HIT` a la seconde, et les pages HTML
+restent `DYNAMIC` - la regle ne deborde pas.
+
+### Fixed - le rapport de vulnerabilites annoncait zero sans avoir pu regarder
+
+Le controle nocturne des alertes Dependabot n'avait jamais reussi. Il demandait la permission
+`security-events`, qui couvre l'analyse de code et pas les alertes de dependances - lesquelles n'ont
+aucune permission de workflow, a aucun niveau. Le jeton par defaut ne pouvait donc pas les lire, et
+le controle echouait bruyamment plutot que d'afficher un zero trompeur : une liste que personne ne
+lit ressemble exactement a une liste vide.
+
+Un jeton dedie, limite a la lecture des alertes de ce seul depot, a ete pose le 16/09/2026. Le
+controle passe pour la premiere fois : zero alerte ouverte, et ce zero a maintenant ete mesure.
+
 ## [0.18.5] - 2026-09-16
 
 ### Fixed - quinze secondes avant le badge « connecte », dont treize sur un seul fichier
