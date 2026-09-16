@@ -14,7 +14,12 @@
  * any version reaches this endpoint.
  */
 import { BadRequestException } from '@nestjs/common';
-import { sanitizeIdentityValue, sanitizeQueryValue, UNRESOLVED_IDENTITY_VALUES } from './sanitize';
+import {
+  sanitizeIdentityValue,
+  sanitizeLogValue,
+  sanitizeQueryValue,
+  UNRESOLVED_IDENTITY_VALUES,
+} from './sanitize';
 
 describe('sanitizeIdentityValue', () => {
   it.each([...UNRESOLVED_IDENTITY_VALUES])(
@@ -53,5 +58,42 @@ describe('sanitizeIdentityValue', () => {
     expect(() => sanitizeIdentityValue('', 'userId')).toThrow(BadRequestException);
     expect(() => sanitizeIdentityValue('a/b', 'userId')).toThrow(BadRequestException);
     expect(() => sanitizeIdentityValue(undefined, 'userId')).toThrow(BadRequestException);
+  });
+});
+
+/**
+ * A DIAGNOSTIC FIELD MUST NEVER BE ABLE TO REFUSE THE REQUEST IT ONLY DESCRIBES.
+ *
+ * `sanitizeQueryValue` throws, which is right for a value the request depends on. The `[HISTORY]`
+ * requester is not one: it exists so a burst of archive walks can be attributed to a device, and a
+ * diagnostic that can 400 a history walk is worse than no diagnostic at all. These cases pin the
+ * three outcomes, all of them values, all of them distinguishable by the reader.
+ */
+describe('sanitizeLogValue', () => {
+  it('keeps a value that is safe to print', () => {
+    expect(sanitizeLogValue('device-7')).toBe('device-7');
+  });
+
+  it('trims, the way every other value here is trimmed', () => {
+    expect(sanitizeLogValue('  device-7  ')).toBe('device-7');
+  });
+
+  it.each([undefined, null, '', '   '])('says nobody told us, for %p', (value) => {
+    expect(sanitizeLogValue(value)).toBe('unstated');
+  });
+
+  /** "Nobody told us" and "somebody told us something unusable" are different facts. */
+  it('distinguishes an absent value from an unusable one', () => {
+    expect(sanitizeLogValue('a b')).toBe('invalid');
+    expect(sanitizeLogValue(42)).toBe('invalid');
+  });
+
+  /** The header is client-supplied, so it is the obvious way to forge lines in a log. */
+  it('refuses a value carrying a newline, which is how a log line is forged', () => {
+    expect(sanitizeLogValue('a\n[HISTORY] user=victim device=forged')).toBe('invalid');
+  });
+
+  it('lets the caller name what absence looks like', () => {
+    expect(sanitizeLogValue(undefined, 'none')).toBe('none');
   });
 });

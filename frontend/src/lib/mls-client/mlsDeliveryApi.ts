@@ -205,9 +205,24 @@ export class MlsDeliveryApi {
     this.f = opts.fetchImpl ?? globalThis.fetch.bind(globalThis);
   }
 
+  /**
+   * The headers every `/api/mls/*` request carries: the bearer token, and WHICH DEVICE IS ASKING.
+   *
+   * `X-Canari-Device` is here rather than at a call site because the device id is known in exactly
+   * one place and every future log line that wants it would otherwise need its own plumbing. It is
+   * self-asserted and DIAGNOSTIC ONLY - nginx authenticates the USER alongside it and no server
+   * decision reads it, so the most a client can do by lying is misattribute its own request inside
+   * its own account. Nginx forwards it untouched: the `/api/mls/` block only SETS `X-User-Id` and
+   * friends from the auth subrequest, and client headers it does not name pass through.
+   *
+   * `'pending'` travels like any other value. It is the client's own literal for an unresolved
+   * identity, the server already knows it as one, and a log line reading `device=pending` names a
+   * real condition - a request made before `resolveDeviceId` finished - which is exactly the kind of
+   * thing this field exists to surface.
+   */
   private async auth(extra: Record<string, string> = {}): Promise<Record<string, string>> {
     const token = await this.getToken();
-    return { Authorization: `Bearer ${token}`, ...extra };
+    return { Authorization: `Bearer ${token}`, 'X-Canari-Device': this.deviceId, ...extra };
   }
 
   private uint8ToB64(bytes: Uint8Array): string {
