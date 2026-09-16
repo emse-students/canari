@@ -68,6 +68,7 @@
   } from '$lib/stores/appVersionCheck.svelte';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { isTauriRuntime } from '$lib/utils/openExternal';
+  import { LocalizedError, localizedMessage } from '$lib/utils/localizedError';
   import { isMobileTauriRuntime } from '$lib/utils/appVersion';
   import { createPausableInterval } from '$lib/utils/backgroundPausableInterval';
   import {
@@ -351,15 +352,21 @@
       );
       if (!globalSession.isLoggedIn) {
         // The session reports its own refusal through `onLoginFailed`, already localized; the
-        // literal that used to stand here was the one English sentence this modal could show.
-        throw new Error(failMsg || m.auth_pin_recovery_login_failed());
+        // literal that used to stand here was the one English sentence this modal could show. It
+        // is a `LocalizedError` for the same reason: the catch below shows a `LocalizedError`'s
+        // message and replaces every other one, so a bare `Error` here would lose this sentence.
+        throw new LocalizedError(failMsg || m.auth_pin_recovery_login_failed());
       }
       showRecoverModal = false;
       showPinModal = false;
       canRecoverPin = false;
       pinError = '';
     } catch (e) {
-      recoverError = e instanceof Error ? e.message : String(e);
+      // `recoverPinImpl` throws a `LocalizedError` for each refusal the reader has to tell apart -
+      // the old PIN, the new PIN, no local state, a server that would not answer. Anything else is
+      // dev prose and the declared line stands in its place.
+      recoverError = localizedMessage(e, m.auth_pin_recovery_failed());
+      appendLog(`[PIN_RECOVER] failed: ${String(e)}`);
     } finally {
       recoverLoading = false;
       recoverProgress = null;
@@ -731,8 +738,11 @@
               appendLog
             )
             .catch((e) =>
+              // `String(e)` rather than the usual ternary: this is a LOG, where the exception's own
+              // words are the point, and the ternary is the exact shape `serverProse.test.ts` reads
+              // as a site RENDERING them - a regex cannot tell one from the other.
               appendLog(
-                `[GRAINE] could not prepare joined channel ${event.channelId}: ${e instanceof Error ? e.message : String(e)}`
+                `[GRAINE] could not prepare joined channel ${event.channelId}: ${String(e)}`
               )
             );
         }
@@ -1490,14 +1500,19 @@
       .catch((e: unknown) => {
         // login() routes errors through onLoginFailed; this guards against a rejection
         // that escapes that path (e.g. before the internal try) leaving the spinner stuck.
+        //
+        // TWO KINDS REACH HERE AND ONLY THE THROW KNOWS WHICH. The login flow throws a
+        // `LocalizedError` for the PIN calls it can name (`auth_pin_salt_unreachable`,
+        // `auth_pin_check_unreachable`); anything else escaping is an exception nobody planned
+        // for, whose message is English - and on THIS modal an English line reads exactly like
+        // "your PIN is wrong".
         answered = true;
         clearTimeout(stepTimer);
-        const msg = e instanceof Error ? e.message : String(e);
-        pinError = msg;
+        pinError = localizedMessage(e, m.auth_pin_login_failed());
         pinLoading = false;
         pinStep = '';
         _loginInProgress = false;
-        appendLog(`[PIN] login() rejected: ${msg}`);
+        appendLog(`[PIN] login() rejected: ${String(e)}`);
       });
   }
 
@@ -1531,8 +1546,11 @@
       // here would strand the user mid-reset with nothing to unlock and no way to finish.
       showPinModal = true;
     } catch (e) {
-      pinError = e instanceof Error ? e.message : String(e);
-      appendLog(`[PIN_RESET] Failed: ${pinError}`);
+      // The `Server-side PIN reset failed.` thrown above is a DEV line and used to be shown as it
+      // stood - an English sentence on a French modal, and the only thing the reader was told.
+      // It stays exactly as it is, in the log, where it is correct.
+      pinError = m.auth_pin_reset_failed();
+      appendLog(`[PIN_RESET] Failed: ${String(e)}`);
     } finally {
       pinLoading = false;
       pinStep = '';

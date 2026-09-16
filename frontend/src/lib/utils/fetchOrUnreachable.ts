@@ -1,3 +1,5 @@
+import { LocalizedError } from '$lib/utils/localizedError';
+
 /**
  * `fetch`, with a NOT-REACHED turned into the same sentence a BAD ANSWER already gets.
  *
@@ -27,12 +29,16 @@
  * 500 are answers, they belong to the `!res.ok` branch at each call site, and a wrapper that started
  * turning them into "server unreachable" would erase the distinction it exists to draw.
  *
+ * IT IS A {@link LocalizedError}, which is the same statement one level up: the message a caller
+ * hands it is that caller's own Paraglide line, so a screen may show it. This class adds one fact
+ * on top - we could not ASK - and `isServerUnreachable` is what reads that narrower question.
+ *
  * IT LIVES IN ITS OWN FILE so it can be executed by a test. `sessionAuth.ts` cannot be imported by
  * one - it is a several-hundred-line flow over a dozen module-level dependencies, which is why
  * `offlineUnlock.test.ts` reads it as TEXT and pins its decisions as source guards. A wrapper whose
  * whole content is a `try` around one call deserves better than a guard that greps for a keyword.
  */
-export class ServerUnreachableError extends Error {
+export class ServerUnreachableError extends LocalizedError {
   constructor(
     message: string,
     /** The rejection `fetch` produced - kept for the log, never for the screen. */

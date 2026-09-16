@@ -11,6 +11,44 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - dix messages d'erreur du chat, de la connexion et du PIN cessent de montrer la phrase d'une exception
+
+Dix endroits de `src/lib/components` affichaient `e.message` : la phrase anglaise d'une
+exception, rendue telle quelle a un lecteur francais. Chacun a ete lu separement, parce que la
+forme ne dit rien de la provenance, et ils se sont refermes de trois facons differentes.
+
+**Quatre avaient un STATUT au moment du `throw`, epele dans une chaine de caracteres.**
+`calls/initiate` levait `Error("calls/initiate failed (404): ...")`, et le seul consommateur -
+le toast de la page de discussion - relisait cette phrase avec
+`msg.includes('Groupe introuvable') || msg.includes('Group not found')` pour choisir entre deux
+messages. Une distinction portee par une phrase, donc, et deja pourrie : **rien dans ce client
+ne leve l'une ou l'autre de ces phrases**, si bien que la branche dependait d'un corps de
+reponse que rien n'assure. Le statut traverse desormais le `throw` (`CallInitiateError`), un 404
+garde la phrase sur le groupe desynchronise - la seule des deux sur laquelle le lecteur peut
+agir - et le reste passe par le mappeur de refus deja en place. Les deux refus de sondage
+(voter, cloturer) le traversent aussi, au lieu de concatener une etiquette francaise et le corps
+anglais du serveur.
+
+**Trois n'avaient rien a dire de plus que "cela a echoue"** : un envoi que la file d'attente n'a
+jamais recu, un message vocal dans le meme cas, une connexion OIDC qui echoue avant qu'aucune
+reponse existe. Chacun prend la phrase generique dont il avait deja la cle, et l'exception part
+dans le journal, ou l'anglais est correct.
+
+**Trois affichaient une phrase que l'application elle-meme avait levee, deja en francais**, et
+c'est le cas interessant : supprimer la preference aurait remplace six refus precis ("Le PIN
+actuel est incorrect", "L'ancien PIN est incorrect"...) par une phrase vague. Rien dans `Error`
+ne dit de quelle espece il s'agit, donc le `throw` le dit : `LocalizedError` signifie que le
+message est POUR LE LECTEUR, et l'ecran demande (`localizedMessage`) au lieu de supposer. Les
+douze `throw` de `sessionAuth.ts` dont le message est une cle Paraglide sont de ce type, et
+`ServerUnreachableError` en devient une sous-classe plutot qu'un voisin. Au passage, un dernier
+litteral anglais disparait de l'ecran : `Server-side PIN reset failed.` etait tout ce qu'un
+lecteur voyait quand une reinitialisation de PIN echouait.
+
+**La garde prend tout le repertoire.** `serverProse.test.ts` surveillait onze sous-arbres de
+`lib/components` ; elle surveille maintenant `src/lib/components`, ses 218 fichiers, en une seule
+entree - et **sa liste d'exceptions est vide a nouveau**. Mesure d'un bout a l'autre avec le meme
+predicat : 127 occurrences avant, 117 apres.
+
 ### Changed - une carte de "Mes associations" affiche votre role, plus un "0 membres" faux
 
 Chaque carte de cette section annoncait "0 membres" - a propos d'associations dont le lecteur est

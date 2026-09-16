@@ -504,6 +504,15 @@ check in the same file, which is also what catches a fourteenth builder.
   `showToast` takes a `string` and a literal passes lint, `check` and CI. `showToast` is guarded by
   `stores/toastLocalization.test.ts`, which reads the sources and accepts a template only when it
   interpolates an `m.*()` call; other entry points are on trust.
+- **AN EXCEPTION'S MESSAGE IS NOT A SENTENCE FOR A READER, EXCEPT WHEN THE THROW SAYS IT IS.**
+  `e instanceof Error ? e.message : <fallback>` renders the server's or the browser's English
+  almost every time, and `associations/serverProse.test.ts` fails any file under a guarded tree
+  that still carries the shape. The exceptions are real, though - `sessionAuth.ts` throws a dozen
+  refusals whose message IS the French sentence the user must read - so they are typed:
+  `LocalizedError` (`utils/localizedError.ts`) marks a message as the reader's, and
+  `localizedMessage(e, m.some_declared_line())` is how a screen asks. `ServerUnreachableError` is a
+  subclass of it. Where the failure carries an HTTP STATUS instead, `utils/apiRefusal.ts` turns the
+  status plus an action label into the sentence, and answers `null` rather than inventing one.
 - **A native prompt is user-visible UI whose text you do not fully own.** A plugin fills the fields
   you leave empty from its own hardcoded defaults, which are English: `tauri-plugin-biometric`
   titles the Android prompt "Fingerprint Authentication" and labels its button "Cancel" unless

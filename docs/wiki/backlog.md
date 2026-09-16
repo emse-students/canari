@@ -483,7 +483,7 @@ conversation shortcut implies, and doing the group alone would split the stack w
 the conversation treatment.
 
 ---
-### P2 - seven sites still hand the server's words to a Paraglide key BUILT to carry them, and each needs a code at the throw
+### P2 - three sites still hand the server's words to a Paraglide key BUILT to carry them, and all three sit in ONE file
 
 **THE LIVE RECORD OF THE SERVER-PROSE SWEEP IS FURTHER DOWN, NOT HERE** - see *218 places still
 render the server's English prose to a French user*, which owns the guard
@@ -493,12 +493,12 @@ it wrong. It carried its own stale figure (185 sites across 61 `.svelte` files) 
 until 2026-09-15 while the sweep below re-measured every pass, so a reader arriving here first
 worked to a number nobody had checked in six days.
 
-**WHAT IS OPEN, AND IT IS SEVEN RATHER THAN EIGHT SINCE 2026-09-15.** The sweep parks these because
-deleting a preference cannot close them: they hand the raw text to a Paraglide key BUILT to carry
-it - `chat_send_error({ reason })`, `chat_forward_error`, `chat_media_send_error`,
-`auth_login_failed`, `chat_call_error` - so the sentence is localized and its subject is not. It
-recorded that they close "a code at the throw, per endpoint, mapped once", and on that basis they
-have sat untouched.
+**WHAT IS OPEN, AND IT IS THREE SINCE 2026-09-16 - eight on 2026-09-11, seven on 2026-09-15.** The
+sweep parks these because deleting a preference cannot close them: they hand the raw text to a
+Paraglide key BUILT to carry it, so the sentence is localized and its subject is not. What is left
+is `chat_forward_error({ reason })` twice and `chat_media_send_error({ reason })` once, **all
+three in `frontend/src/lib/composables/useMessaging.svelte.ts`**, which is the last thing keeping
+`lib/composables` outside the guard.
 
 **THE SECOND ROUTE WAS READ AGAINST ALL EIGHT ON 2026-09-15, AND IT REACHED EXACTLY ONE.**
 `describeApiRefusal` (`utils/apiRefusal.ts`) turns a STATUS plus a localized action label into a
@@ -507,21 +507,37 @@ than being handed an invented reason. `lib/utils/chat/messaging.ts` is the one i
 discriminator is not a matter of taste: it is the ONLY site holding an HTTP status at the point of
 the throw, `ChannelApiError(status, code, text)` straight out of `ChannelService.handleError`.
 
-**THE OTHER SEVEN ARE NOT WAITING ON A JUDGEMENT, THEY ARE WAITING ON A CODE.** Each wraps work that
-performs no HTTP request where it fails - the outbox, the MLS layer, a forward whose inner call
-already caught its own refusal, a login that failed before any response existed - so there is no
-status to map and the cheap route cannot be made to reach them. The sweep's original prescription
-stands unchanged for all seven. `chat_call_error` sits behind `CALLS_ENABLED = false` on top of that.
+**FOUR OF THE SEVEN CLOSED ON 2026-09-16, AND NOT ONE OF THEM NEEDED A NEW ENDPOINT CODE** - see
+`CHANGELOG.md`. Two (`chat_send_error` x2) had nothing to say beyond "it failed" and took the
+generic line they already had a key for; `auth_login_failed` was the same, before any response
+existed to describe; `chat_call_error` turned out to HOLD a status that `fetchInitiateCall` was
+spelling into a string, so it took `CallInitiateError(status, ...)` and the one refusal mapper.
+
+**AND THE ENTRY WAS WRONG ABOUT ONE OF THE THREE THAT ARE LEFT, WHICH IS WHY THE READING IS PER
+SITE.** It said each of them "performs no HTTP request where it fails". `chat_media_send_error`
+does: its `catch` in `useMessaging.svelte.ts` wraps BOTH the MLS branch (which only queues to
+IndexedDB - no status, nothing to map) and the CHANNEL branch, which is `encryptAndUpload` plus
+`sendEncryptedChannelMessage` - four `!res.ok` throws in `lib/media.ts` that spell the status into
+the message, and a `ChannelApiError` that already carries one. So that site is TWO failures
+sharing one catch, and the cheap status route reaches half of it. **`lib/media.ts` also throws
+`'Media upload failed: 413 (fichier trop volumineux)'`** - a French fragment inside a dev-facing
+English message, which is the defect in both directions at once.
+
+The two forward sites are the ones the original prescription still describes exactly: a forward
+whose inner call already caught its own refusal, with nothing but an exception to show for it.
 
 **The reading had to be per site, not a sweep**, for the reason this entry already paid for twice:
 the predicate finds the shape, never the provenance. Four sites in these trees render an error the
 app itself THREW, already in French, and replacing one of those with a status sentence would trade a
 precise line for a vaguer one.
 
-**AND ONE OF THE SEVEN IS A RULE VIOLATION ON ITS OWN.** `MainChatPage.svelte:988` branches on
-`msg.includes('Groupe introuvable') || msg.includes('Group not found')` to choose a toast, which is
-the distinction-in-prose the durable rules forbid. It is inside the calling code held off by
-`CALLS_ENABLED = false`, so it is owed with the five switches that revive calling.
+**THE RULE VIOLATION AMONG THEM IS CLOSED, AND IT DID NOT WAIT FOR CALLING TO COME BACK.**
+`MainChatPage.svelte` branched on `msg.includes('Groupe introuvable') || msg.includes('Group not
+found')` to choose a toast - the distinction-in-prose the durable rules forbid - and it had
+already rotted: **nothing in the client throws either sentence**, so the branch depended on a
+server body no test asserts. Typing the throw is not one of the five switches `CALLS_ENABLED`
+holds, so it moved on its own: `CallInitiateError` carries the status, `describeCallFailure` maps
+it, and a 404 keeps the desynced-group sentence because that is the one a reader can act on.
 
 **Why the route exists at all** is in `CHANGELOG.md`: a codeless 403 from
 `global-admin-or-association-role.guard.ts` reached the deposit modal as "Erreur lors de la
@@ -7646,14 +7662,19 @@ matches `instanceof Error ? x.message`, and asserts per-tree that it found files
 the total would not catch a path typo, because the healthy trees clear any floor a missing one
 leaves. An allowlist entry that stops offending fails too.
 
-**ITS ALLOWLIST IS NO LONGER EMPTY, AND THE ONE ENTRY IS THE INTERESTING CASE.**
-`SettingsSecuritySection.svelte` renders `.message` from a PIN change, and that message is not the
-server talking: `changePinImpl` throws `new Error(m.auth_pin_change_current_incorrect())`, so the
-text is already French and deleting the preference would replace a precise sentence with a vaguer
-one. It is the SAME rule one step earlier - a distinction carried in prose instead of a code - and
-the typed errors that close it belong to the P1 PIN-vs-corrupt-state item, written 2026-09-08 and
-unshipped. **The census cannot be swept blind because of cases like this one**: the predicate finds
-the shape, not the provenance, and provenance is the whole question.
+**ITS ALLOWLIST HELD EXACTLY ONE ENTRY, FROM 2026-09-15 TO 2026-09-16, AND THAT CASE IS WHY THE
+CENSUS CANNOT BE SWEPT BLIND.** `SettingsSecuritySection.svelte` rendered `.message` from a PIN
+change, and that message is not the server talking: `changePinImpl` throws
+`new Error(m.auth_pin_change_current_incorrect())`, so the text is already French and deleting the
+preference would have replaced a precise sentence with a vaguer one. The predicate finds the
+shape, not the provenance, and provenance is the whole question.
+
+**IT CLOSED WITHOUT WAITING FOR THE P1 IT WAS PARKED AGAINST**, because the thing it needed was
+smaller than a per-endpoint code: `LocalizedError` (`lib/utils/localizedError.ts`) says of a THROW
+that its message is the reader's, and `localizedMessage(e, <declared line>)` is what a screen asks.
+The twelve throws in `sessionAuth.ts` whose message is a Paraglide call are that type now, and
+`ServerUnreachableError` became a SUBCLASS rather than a sibling - it was already this contract
+plus one more fact. **The allowlist is empty again**, which is what it is supposed to be.
 
 **WHAT IS LEFT, AND THE COUNT IS RE-MEASURED EVERY PASS RATHER THAN DECREMENTED.** The 185 this
 sweep started from (the entry above carried it until 2026-09-15, when it stopped carrying a count at
@@ -7661,8 +7682,11 @@ all because it had gone stale while this one was re-measured) came from one pred
 which only some assign to an error state a screen renders - the rest sit inside a `Log`/`console`
 call and are correctly dev-facing.
 
-**125 remain, down from 194** (one predicate at both ends, measured rather than decremented -
-2026-09-15; the delta is exactly the 49 of the admin pass plus the 20 of the component pass).
+**117 remain, down from 194** (one predicate at both ends, measured rather than decremented). The
+intermediate readings were 125 on 2026-09-15 - the 49 of the admin pass plus the 20 of the
+component pass - and 127 immediately before the component-ROOT pass of 2026-09-16, the tree having
+moved twice in between. **That is why this line is re-measured and never decremented**: two sites
+arrived while the count sat still.
 
 The member-facing pass closed 27 across `components/posts`, `components/settings`,
 `routes/posts`, `routes/profile`, `routes/lists`, `routes/documents` and `routes/forms`; the agenda
@@ -7673,7 +7697,8 @@ closed 49 in ONE tree, thirteen of its fourteen files, every one of them with a 
 already declared; the component pass closed 20 more across six subtrees of `lib/components` -
 channels, chat, moderation, profile, shared and sidebar - two of which were the DOUBLE violation,
 a raw French literal as the fallback ('Erreur lors du retrait.', 'Erreur'), so neither half of the
-line was translated whichever branch ran.
+line was translated whichever branch ran; and the component-ROOT pass of 2026-09-16 closed the
+last 10 and handed the guard the whole 218-file directory in one entry instead of eleven subtrees.
 
 **The landing pass found the case the sweep's shape does not cover.** `routes/auth/callback`
 declared `String(e)` as its fallback, so BOTH halves of that line were untranslatable and deleting
@@ -7703,13 +7728,14 @@ TOUCH IT.** Seven sites hand the raw text to a Paraglide key BUILT to carry it -
 2026-09-15, when the status route took the only one of them holding a status - so the sentence is
 localized and its subject is not:
 
-| key | reads | sites |
-| --- | --- | --- |
-| `chat_send_error({ reason })` | "Echec de l'envoi : {reason}" | `MainChatPage.svelte` x2 (`lib/utils/chat/messaging.ts` closed 2026-09-15 on the status route) |
-| `chat_forward_error({ reason })` | "Echec du transfert : {reason}" | `useMessaging.svelte.ts` x2 |
-| `chat_media_send_error({ reason })` | "Echec de l'envoi du media : {reason}" | `useMessaging.svelte.ts` |
-| `auth_login_failed({ reason })` | "La connexion n'a pas pu demarrer : {reason}" | `auth/LoginPage.svelte` |
-| `chat_call_error({ msg })` | "Erreur appel : {msg}" | `MainChatPage.svelte` (behind `CALLS_ENABLED = false`) |
+| key | reads | sites | state |
+| --- | --- | --- | --- |
+| `chat_forward_error({ reason })` | "Echec du transfert : {reason}" | `useMessaging.svelte.ts` x2 | OPEN |
+| `chat_media_send_error({ reason })` | "Echec de l'envoi du media : {reason}" | `useMessaging.svelte.ts` | OPEN, and half of it HAS a status |
+| `chat_send_error({ reason })` | "Echec de l'envoi : {reason}" | `MainChatPage.svelte` x2 | CLOSED 2026-09-16, generic line + the exception in the log |
+| `auth_login_failed({ reason })` | "La connexion n'a pas pu demarrer : {reason}" | `auth/LoginPage.svelte` | CLOSED 2026-09-16, same |
+| `chat_call_error({ msg })` | "Erreur appel : {msg}" | `MainChatPage.svelte` | CLOSED 2026-09-16, `CallInitiateError(status)` |
+| - | - | `lib/utils/chat/messaging.ts` | CLOSED 2026-09-15 on the status route |
 
 `auth_callback_denied({ reason })` is the same shape with a different author - the reason is
 Authentik's `error_description`, not this estate's.
@@ -7727,25 +7753,27 @@ throws `ChannelApiError(status, code, text)` and `text` is the server's own body
 wrap work that performs no HTTP request where it fails - the outbox, the MLS layer, a forward whose
 inner call already caught its own refusal - so no status exists to map and **a code at the throw is
 what they need**, which is what this entry said before the second route appeared. Until they have
-one, the four trees holding these sites - `src/lib/components` (root), `components/layout`,
-`components/auth`, `lib/composables` - stay outside the guard, because a file it owns must answer
-in full. **And one of the five is a rule violation on its own**: `MainChatPage.svelte:988` branches
-on `msg.includes('Groupe introuvable') || msg.includes('Group not found')` to decide which toast to
-show, which is the distinction-in-prose the durable rules forbid; it is inside the calling code
-that `CALLS_ENABLED = false` holds off, and the five switches that revive calling are where it is
-owed.
+one, the trees holding these sites stayed outside the guard, because a file it owns must answer in
+full. **Three of those four trees closed on 2026-09-16** - `src/lib/components` (root),
+`components/layout` and `components/auth` - and the directory went in as ONE entry. **Only
+`lib/composables` is left**, and only `useMessaging.svelte.ts` in it holds a site of this shape;
+the other five files there are the ordinary shape or logs, so that tree is one pass from joining.
 
 **THE LAST EIGHTEEN WERE READ INDIVIDUALLY, AND NOT ONE IS AN ORDINARY SITE.** They are the reason
 this sweep has an end rather than a remainder:
 
-- **Four render an error the app itself THREW, already in French** - the PIN and login path
+- **Four rendered an error the app itself THREW, already in French** - the PIN and login path
   (`ChatBackgroundService.svelte` x2, `sessionAuth.ts:1339`, plus the allowlisted
-  `SettingsSecuritySection.svelte`). `sessionAuth` throws `new LoginFailure(code, m.auth_...())` and
-  `new Error(m.auth_pin_salt_unreachable())`: deleting the preference would REPLACE a precise
-  sentence with a vaguer one, which is the allowlist's whole argument. They close with the typed
-  errors of the P1 PIN-vs-corrupt-state item, not here. **One raw English literal hiding among them
-  WAS closed** - `'Login failed after recovery.'`, thrown into the recovery modal, now
-  `auth_pin_recovery_login_failed`.
+  `SettingsSecuritySection.svelte`). Deleting the preference would have REPLACED a precise sentence
+  with a vaguer one, which was the allowlist's whole argument. **THREE OF THE FOUR CLOSED
+  2026-09-16 and it took none of the P1's endpoint work**: `LocalizedError` types the throw, so a
+  screen can ASK whether a message is the reader's instead of assuming. `sessionAuth.ts:1339` is the
+  one left, and it is `LoginFailure(code, m.auth_...())` - a type that ALREADY carries a code, read
+  by `lib/composables`, so it belongs to that tree's pass rather than this one. **One raw English
+  literal hiding among them was closed earlier** - `'Login failed after recovery.'`, thrown into the
+  recovery modal, now `auth_pin_recovery_login_failed`. **A second one closed 2026-09-16**:
+  `'Server-side PIN reset failed.'` was the whole of what a French reader saw when a PIN reset
+  failed; it stays in the log and the modal shows `auth_pin_reset_failed`.
 - **Two branched on the error's PROSE**, which is a different durable rule and a worse one.
   **ONE IS CLOSED, 2026-09-15**: `useChannelWorkspaces` decided RETRYABILITY with a word list
   (`fetch`, `network`, `timeout`, `abort`, `err_internet_disconnected`) and recovered an HTTP
@@ -7771,7 +7799,10 @@ the workers and `mls-client` are almost entirely logs, and adding them would fai
 the regex finds the SHAPE, never the destination. The raw count stays an upper bound for the same
 reason.
 
-**Twenty-five trees are guarded**, and they are clean but for the one allowlisted file.
+**Fifteen entries are guarded and they cover more ground than the twenty did**: `src/lib/components`
+is now one of them and owns all 218 of its files, so the five subtree entries under it were
+removed rather than left to walk the same file twice. Every guarded file is clean and the allowlist
+is empty.
 
 **A tree is added only once every file under it answers**, which is why they arrive in batches: a
 guard owning half a directory is one a new file walks past. The CODES are the separate, still-open

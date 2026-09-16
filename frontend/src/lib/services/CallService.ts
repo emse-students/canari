@@ -15,6 +15,7 @@ import {
   logCallAudioTrackSettings,
 } from '$lib/utils/callAudio';
 import { publishCallPresence } from '$lib/utils/callPresence';
+import { CallInitiateError } from '$lib/utils/callFailure';
 import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
 import { getCallSystemMessageContext, recordCallMissed } from '$lib/utils/chat/callSystemMessages';
@@ -422,8 +423,14 @@ export class CallService {
       body: JSON.stringify({ groupId }),
     });
     if (!res.ok) {
+      // THE STATUS CROSSES THE THROW, and the body stays in the message for the log. Spelling the
+      // status into the sentence made the only consumer read it back out with `msg.includes(...)`
+      // to tell one refusal from another - see `CallInitiateError`.
       const detail = await res.text().catch(() => '');
-      throw new Error(`calls/initiate failed (${res.status})${detail ? `: ${detail}` : ''}`);
+      throw new CallInitiateError(
+        res.status,
+        `calls/initiate failed (${res.status})${detail ? `: ${detail}` : ''}`
+      );
     }
     return res.json() as Promise<{ roomId: string; roomToken: string }>;
   }

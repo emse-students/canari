@@ -28,7 +28,11 @@
     sendChannelPoll,
     type ChannelPollDraft,
   } from '$lib/utils/chat/channelCrypto';
-  import { channelService } from '$lib/services/ChannelService';
+  import { ChannelApiError, channelService } from '$lib/services/ChannelService';
+  import { describeApiRefusal } from '$lib/utils/apiRefusal';
+  // NOT from `CallService`: calling is held off, and naming its error type here would pull the
+  // whole service into this page's module graph for a `catch` - see `callFailure.ts`.
+  import { describeCallFailure } from '$lib/utils/callFailure';
   import {
     claimChannelReadSignal,
     newestForeignMessageAt,
@@ -738,12 +742,17 @@
    * The catch does not restore the text - the echo is already on screen and pulling it back would
    * be a second surprise. It says so, out loud, on both surfaces: the error banner the media path
    * already uses, and the log, because a best-effort path that swallows leaves nothing else behind.
+   *
+   * THE TWO SURFACES SAY DIFFERENT THINGS, AND THAT IS THE POINT. What reaches here is an
+   * exception `handleSendChat` did not expect - an aborted IndexedDB transaction, a failure in the
+   * MLS layer - so its message is dev prose in English, and there is no status anywhere on this
+   * path to say anything sharper. The banner therefore carries the generic line, and the exception
+   * goes to the log, where English is correct and where the cause is still recoverable.
    */
   function sendText(text: string) {
     void messaging.handleSendChat(msgCtx(), text).catch((e: unknown) => {
-      const reason = e instanceof Error ? e.message : String(e);
-      convs.sendError = m.chat_send_error({ reason });
-      log(`[SEND] handleSendChat threw - the message was NOT queued: ${reason}`);
+      convs.sendError = m.chat_send_error_generic();
+      log(`[SEND] handleSendChat threw - the message was NOT queued: ${String(e)}`);
     });
   }
 
@@ -768,9 +777,8 @@
    */
   function handleSendVoiceNote(file: File) {
     void messaging.sendVoiceNote(file, msgCtx()).catch((e: unknown) => {
-      const reason = e instanceof Error ? e.message : String(e);
-      convs.sendError = m.chat_send_error({ reason });
-      log(`[SEND] sendVoiceNote threw - the recording was NOT queued: ${reason}`);
+      convs.sendError = m.chat_send_error_generic();
+      log(`[SEND] sendVoiceNote threw - the recording was NOT queued: ${String(e)}`);
     });
   }
 
@@ -945,8 +953,14 @@
       const meta = await channelService.votePoll(channelId, messageId, optionIds);
       setPollMeta(messageId, meta);
     } catch (e) {
+      // `channelService` throws `ChannelApiError(status, code, text)`, `text` being the server's
+      // own body: dev-facing English, correct for a log and wrong on a toast. The STATUS is what
+      // picks the sentence, through the one refusal mapper - which answers `null` for a status it
+      // has nothing better to say about, leaving the poll's own line to stand.
+      const status = e instanceof ChannelApiError ? e.status : null;
+      log(`[POLL] vote refused (status=${status ?? 'none'}): ${String(e)}`);
       showToast(
-        `${m.channel_poll_vote_error()} : ${e instanceof Error ? e.message : m.common_error_heading()}`,
+        describeApiRefusal(status, m.channel_action_poll_vote()) ?? m.channel_poll_vote_error(),
         'warning'
       );
     }
@@ -960,8 +974,11 @@
       const meta = await channelService.closePoll(channelId, messageId);
       setPollMeta(messageId, meta);
     } catch (e) {
+      // Same shape as the vote above, and the same reason.
+      const status = e instanceof ChannelApiError ? e.status : null;
+      log(`[POLL] close refused (status=${status ?? 'none'}): ${String(e)}`);
       showToast(
-        `${m.channel_poll_close_error()} : ${e instanceof Error ? e.message : m.common_error_heading()}`,
+        describeApiRefusal(status, m.channel_action_poll_close()) ?? m.channel_poll_close_error(),
         'warning'
       );
     }
@@ -984,12 +1001,12 @@
       return;
     }
     session.callService.startCall(convo.id, video).catch((e: unknown) => {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes('Groupe introuvable') || msg.includes('Group not found')) {
-        showToast(m.chat_call_group_desynced());
-      } else {
-        showToast(m.chat_call_error({ msg }));
-      }
+      // It used to choose between these two toasts with
+      // `msg.includes('Groupe introuvable') || msg.includes('Group not found')` - a distinction
+      // carried in prose, and one that had already rotted: NOTHING in this client throws either
+      // sentence. `describeCallFailure` reads the status `CallInitiateError` now carries.
+      log(`[CALL] startCall failed: ${String(e)}`);
+      showToast(describeCallFailure(e), 'warning');
     });
   }
 </script>
