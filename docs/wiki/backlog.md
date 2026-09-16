@@ -697,9 +697,28 @@ and a 516 ms floor on a warm browser is that RTT and nothing else.
 the literal placeholder `<un-id>` is a bad request, and Cloudflare bypasses an error. **What the
 rule also made permanent is the staleness below** - the entry that follows.
 
-**WHAT REMAINS ON THIS ENTRY IS THE REQUEST COUNT, NOT THE LATENCY.** Twenty separate avatar calls
-stand beside a `/api/users/batch` that returns all twenty users in one 148 ms call; the edge made
-each of them cheap without making any of them unnecessary.
+**AND THE REMEDY THIS ENTRY WAS HEADING FOR IS NOW REFUTED, BY MEASUREMENT.** The obvious next move
+was to batch the twenty avatars beside the `/api/users/batch` that already returns all twenty users
+in one 148 ms call. Measured 2026-09-16, twenty real production avatars over ONE reused connection:
+
+```
+0.067655  time_connect 0.019312   200  12320   <- the first, paying the handshake
+0.018702  time_connect 0            200  10420
+...                                              17 - 37 ms each thereafter
+wall 566 ms for 20 sequential on one connection
+```
+
+**17 to 37 ms each, against 846 - 946 ms each before the rule.** In a browser they are multiplexed
+over a single HTTP/3 connection rather than run in series, so they overlap and the real cost is
+close to one round trip. There is no second left to win here.
+
+**Batching would now be a REGRESSION, and for a reason the rule created.** Twenty images in one JSON
+answer means base64 - a third more bytes - and it destroys the per-image edge caching that produced
+the 20 ms in the first place: one batch response keyed on twenty ids is a cache entry almost no two
+renders share, where twenty stable URLs are twenty entries every render hits. **A predicate that
+named the last incident is not the predicate that names the next one**: "twenty requests" was a
+proxy for "twenty round trips to Saint-Etienne", and the rule cut the thing the proxy stood for.
+Do not re-open this as a batching task.
 
 **AND THE MLS INITIALISATION SITS INSIDE THAT WINDOW.** On the cold console,
 `Initialising MLS (vault device key path)...` is logged at 10:30:41 and `WasmMlsClient::new` at
