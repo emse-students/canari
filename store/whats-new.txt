@@ -1,7 +1,11 @@
 version: 0.18.9
 
-Deux corrections de demarrage.
+Corrections d'affichage et de notifications.
 
-A chaque rechargement, l'application ouvrait sa console sur deux lignes d'erreur reseau qui n'en etaient pas: c'est la page qui partait qui fermait sa connexion, et la nouvelle le prenait pour une coupure et programmait une reconnexion inutile. Elle reconnait maintenant le depart au bon moment.
+Un avis de groupe (ajout, depart) pouvait arriver comme un message de « Utilisateur », avec sonnerie et notification: il redevient un avis, en silence.
 
-Chaque page demandait aussi a l'avance des feuilles de style qu'elle reclamait deja dans le meme document. Ces demandes en double sont retirees.
+Un ajout de membres pouvait s'afficher plusieurs fois de suite, a l'identique.
+
+Retour arriere apres un saut de ligne (Maj+Entree) ne supprimait pas la ligne, et en effacait parfois deux.
+
+Les photos de profil modifiees sur MiGallery se mettent enfin a jour.
