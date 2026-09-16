@@ -12,7 +12,14 @@
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
   import { associationAccentHex } from '$lib/associations/accent';
-  import { eventOwners } from '$lib/calendar/feedEvents';
+  import {
+    breaksOnDay as breaksOnDayOf,
+    dayOccupancy,
+    eventCardsOnDay,
+    eventOwners,
+  } from '$lib/calendar/feedEvents';
+  import { localizedWeekdays, monthGridDays } from '$lib/calendar/monthGrid';
+  import { isToday } from '$lib/utils/dates';
 
   let {
     focusDate,
@@ -26,16 +33,11 @@
     selectedDay?: number | null;
   }>();
 
-  const weekdayLabels = $derived(
-    Array.from({ length: 7 }, (_, i) =>
-      new Intl.DateTimeFormat(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
-        weekday: 'short',
-      })
-        .format(new Date(2024, 0, 1 + ((i + 0) % 7)))
-        .replace(/\.$/, '')
-        .slice(0, 3)
-    )
-  );
+  /**
+   * The header row, asked of the same helper the PDF export asks - so a header cannot read "lun" on
+   * screen and "Lun" on the sheet this grid is a preview of, which it did until 2026-09-16.
+   */
+  const weekdayLabels = $derived(localizedWeekdays(getLocale(), 'short'));
 
   /**
    * The month's own name, capitalised - "Septembre".
@@ -51,61 +53,35 @@
       .replace(/^\w/, (c) => c.toUpperCase())
   );
 
-  const calendarCells = $derived.by(() => {
-    const y = focusDate.getFullYear();
-    const mo = focusDate.getMonth();
-    const first = new Date(y, mo, 1);
-    const lastDay = new Date(y, mo + 1, 0).getDate();
-    const mondayIndex = (first.getDay() + 6) % 7;
-    const cells: { day: number | null }[] = [];
-    for (let i = 0; i < mondayIndex; i++) cells.push({ day: null });
-    for (let day = 1; day <= lastDay; day++) cells.push({ day });
-    while (cells.length % 7 !== 0) cells.push({ day: null });
-    return cells;
-  });
+  /**
+   * The month's squares, asked of `monthGrid` rather than built here - the seven lines that padded
+   * a month to whole weeks existed in this component AND in the PDF export.
+   */
+  const calendarCells = $derived(monthGridDays(focusDate));
 
-  function sameDay(a: Date, b: Date): boolean {
-    return (
-      a.getFullYear() === b.getFullYear() &&
-      a.getMonth() === b.getMonth() &&
-      a.getDate() === b.getDate()
-    );
-  }
-
-  function isToday(day: number): boolean {
-    return sameDay(new Date(focusDate.getFullYear(), focusDate.getMonth(), day), new Date());
+  /** Whether square `day` of the focused month is today - `utils/dates` owns the comparison. */
+  function isTodaySquare(day: number): boolean {
+    return isToday(new Date(focusDate.getFullYear(), focusDate.getMonth(), day));
   }
 
   function isWeekend(cellIndex: number): boolean {
     return cellIndex % 7 >= 5;
   }
 
-  /** All calendar entries (events + breaks) overlapping `day`, sorted by start. */
-  function entriesOnDay(day: number): AssociationCalendarFeedEvent[] {
-    const d = new Date(focusDate.getFullYear(), focusDate.getMonth(), day);
-    return (events as AssociationCalendarFeedEvent[])
-      .filter((ev: AssociationCalendarFeedEvent) => {
-        const start = new Date(ev.startsAt);
-        const startDay = new Date(start.getFullYear(), start.getMonth(), start.getDate());
-        if (!ev.endsAt) return d.getTime() === startDay.getTime();
-        const end = new Date(ev.endsAt);
-        const endDay = new Date(end.getFullYear(), end.getMonth(), end.getDate());
-        return d >= startDay && d <= endDay;
-      })
-      .sort(
-        (a: AssociationCalendarFeedEvent, b: AssociationCalendarFeedEvent) =>
-          new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime()
-      );
-  }
-
-  /** Normal event cards for `day` (breaks excluded - they render as a background band). */
+  /**
+   * The event cards for `day` - breaks excluded, they render as a background band.
+   *
+   * Asked of `feedEvents` rather than computed here. A private copy split the month at MIDNIGHT and
+   * survived the 05:00 boundary landing on 2026-09-16, so this grid went on drawing a 23:00-02:00
+   * evening on two squares while the day panel beside it drew one.
+   */
   function eventsOnDay(day: number): AssociationCalendarFeedEvent[] {
-    return entriesOnDay(day).filter((ev) => ev.kind !== 'break');
+    return eventCardsOnDay(events as AssociationCalendarFeedEvent[], focusDate, day);
   }
 
   /** Break entries (no-course / vacation) overlapping `day`, drawn as a full-day background band. */
   function breaksOnDay(day: number): AssociationCalendarFeedEvent[] {
-    return entriesOnDay(day).filter((ev) => ev.kind === 'break');
+    return breaksOnDayOf(events as AssociationCalendarFeedEvent[], focusDate, day);
   }
 
   /**
@@ -114,9 +90,13 @@
    * Not computed here: a cell that halves on screen and fills on the sheet would be two designs,
    * and the whole reason this grid mirrors `calendarExport` is that it is meant to be printable.
    */
-  function cellLayout(visible: AssociationCalendarFeedEvent[], overflowCount: number) {
+  function cellLayout(
+    visible: AssociationCalendarFeedEvent[],
+    overflowCount: number,
+    square: Date
+  ) {
     return daySlotLayout(
-      visible.map((ev) => new Date(ev.startsAt).getHours()),
+      visible.map((ev) => dayOccupancy(ev, square)),
       overflowCount
     );
   }
@@ -220,8 +200,8 @@
 
     <!-- Day cells -->
     <div class="grid grid-cols-7" role="grid" aria-label={m.calendar_month_grid_label()}>
-      {#each calendarCells as cell, i (i)}
-        {#if cell.day === null}
+      {#each calendarCells as day, i (i)}
+        {#if day === null}
           <div
             class="border-cn-border/40 border-r border-b {isWeekend(i)
               ? 'bg-cn-bg'
@@ -231,28 +211,32 @@
             aria-hidden="true"
           ></div>
         {:else}
-          {@const dayEvents = eventsOnDay(cell.day)}
-          {@const dayBreaks = breaksOnDay(cell.day)}
+          {@const dayEvents = eventsOnDay(day)}
+          {@const dayBreaks = breaksOnDay(day)}
           {@const nVisible = dayEvents.length > MAX_VISIBLE ? MAX_VISIBLE - 1 : dayEvents.length}
           {@const visible = dayEvents.slice(0, nVisible)}
           {@const overflowCount = dayEvents.length - nVisible}
           <!-- The slot height the titles are fitted to, computed exactly as the export computes it
                (`CELL_H / nSlots`, floored). The "+N autres" row is a slot and is counted, and a
                lone event splits the cell in two - `daySlotLayout` decides both. -->
-          {@const layout = cellLayout(visible, overflowCount)}
+          {@const square = new Date(focusDate.getFullYear(), focusDate.getMonth(), day)}
+          {@const layout = cellLayout(visible, overflowCount, square)}
           {@const slotH = Math.floor(CELL_H / (layout.nSlots || 1))}
-          {@const loneSlot = visible.length === 1 && overflowCount === 0 ? layout.slotOf[0] : null}
-          {@const selected = selectedDay === cell.day}
-          {@const today = isToday(cell.day)}
+          {@const loneSlot =
+            visible.length === 1 && overflowCount === 0 && layout.nSlots === 2
+              ? layout.slotOf[0]
+              : null}
+          {@const selected = selectedDay === day}
+          {@const today = isTodaySquare(day)}
           <button
             type="button"
             role="gridcell"
-            aria-label="{cell.day}{dayEvents.length > 0
+            aria-label="{day}{dayEvents.length > 0
               ? `, ${m.calendar_day_event_count({ count: dayEvents.length })}`
               : ''}"
             aria-selected={selected}
             onclick={() => {
-              selectedDay = selectedDay === cell.day ? null : cell.day;
+              selectedDay = selectedDay === day ? null : day;
             }}
             style="min-height:{CELL_H}px;"
             class="border-cn-border/40 relative overflow-hidden border-r border-b text-left transition-all {isWeekend(
@@ -274,7 +258,7 @@
               <!-- Empty cell: day number, plus the break title when this is a vacation day. -->
               <span
                 class="absolute top-1.5 left-2 z-10 text-xs leading-none font-bold
- {today ? 'text-cn-yellow' : 'text-text-muted/50'}">{cell.day}</span
+ {today ? 'text-cn-yellow' : 'text-text-muted/50'}">{day}</span
               >
               {#if dayBreaks.length > 0}
                 <span
@@ -294,7 +278,7 @@
                   <div class="relative flex-1">
                     <span
                       class="absolute top-1.5 left-2 text-xs leading-none font-bold
- {today ? 'text-cn-yellow' : 'text-text-muted/50'}">{cell.day}</span
+ {today ? 'text-cn-yellow' : 'text-text-muted/50'}">{day}</span
                     >
                   </div>
                 {/if}
@@ -333,7 +317,7 @@
                           class="text-2xs leading-none font-bold {today
                             ? 'underline decoration-2'
                             : ''}"
-                          style="color:{fg};">{cell.day}</span
+                          style="color:{fg};">{day}</span
                         >
                       </div>
                     {/if}

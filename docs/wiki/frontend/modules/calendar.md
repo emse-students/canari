@@ -106,6 +106,26 @@ unchanged and still works - it always posted the third-column request for its ow
 Three rules, all stated ONCE and read by both agenda surfaces and by the PDF export. Two of them
 were asked for by the user on 2026-09-16, and the third is what the first one broke if left alone.
 
+### FOUR COPIES OF THE SAME MONTH, AND WHY THAT IS THE DEFECT ITSELF
+
+**Two defects shipped on 2026-09-16 and both were a private copy**, which is the argument for this
+section existing. The agenda has THREE surfaces - the month grid, the PDF sheet, and the day panel /
+schedule list - and the first two each held their own answer to questions the third asked of a
+shared module. A rule with more than one implementation does not stay wrong everywhere; it gets
+half-fixed, which is worse, because the surface that was corrected proves the rule works.
+
+| the question | where it is answered now | how many copies before |
+| --- | --- | --- |
+| which day does this event belong to | `eventCoversDay` / `eventCardsOnDay` / `breaksOnDay` | 3 - and only ONE took the 05:00 rule |
+| how much of THIS day does it fill | `dayOccupancy` | 0 - the rule read a start hour that was not about the day |
+| which squares does this month have | `monthGridDays` | 2 |
+| what is written above the columns | `localizedWeekdays` | 2, disagreeing: "lun" on screen, "Lun" on the sheet |
+| is this square today | `isToday` in `utils/dates.ts` | 2 |
+
+`monthGrid.ts` holds the squares and the labels; `feedEvents.ts` holds everything about which events
+land on them. **Anything the grid and the sheet must agree on goes in one of those two, and a helper
+written inside either renderer is the defect, not a shortcut.**
+
 ### A DAY BEGINS AT 05:00, NOT AT MIDNIGHT
 
 `DAY_STARTS_AT_HOUR` in [`feedEvents.ts`](../../../../frontend/src/lib/calendar/feedEvents.ts) - the
@@ -124,16 +144,51 @@ event back a day - the rule applied twice, once where it belongs and once where 
 The value returned is still local MIDNIGHT, not 05:00: it is the day's identity, used for `isToday`
 and for formatting, and every caller already reads it that way. Only the ASSIGNMENT moved.
 
+**AND IT REACHED ONLY ONE OF THE THREE SURFACES UNTIL 2026-09-16.** `eventCoversDay` was written and
+tested, and the day panel and the schedule list used it - but `MonthCalendarGridRich` and
+`calendarExport` each carried a PRIVATE `entriesOnDay` cutting the month at midnight, and neither
+was touched. So the evening the whole change was written for went on being drawn twice by the month
+grid and by the printed sheet, which are the two surfaces a user actually looks at, while the list
+beside them was right. The commit message claimed the grid was fixed; the diff never named it.
+
+Both copies are deleted. `eventCardsOnDay` and `breaksOnDay` in `feedEvents.ts` are what the two
+renderers call now, and `feedEvents.test.ts` asserts the 23:00-02:00 party stays off the following
+square THROUGH that selector rather than only through `eventCoversDay`. **A rule proved on a helper
+nobody paints with is not a proved rule.**
+
 ### A LONE EVENT TAKES HALF THE SQUARE, AND WHICH HALF SAYS WHEN
 
 `daySlotLayout` in [`calendarExport.ts`](../../../../frontend/src/lib/utils/calendarExport.ts),
-pivoting on `HALF_DAY_PIVOT_HOUR` (13:00). A square with a single event used to paint it floor to
-ceiling, which says nothing about WHEN. Half a cell says "morning" or "afternoon" at a glance across
-a whole month, with no type at all - and a month sheet is read at arm's length, where the times are
-not legible anyway. 13:00 rather than 12:00 because a midday event reads as the morning's end.
+deciding from `dayOccupancy` in `feedEvents.ts`, which pivots on `HALF_DAY_PIVOT_HOUR` (13:00). A
+square with a single event used to paint it floor to ceiling, which says nothing about WHEN. Half a
+cell says "morning" or "afternoon" at a glance across a whole month, with no type at all - and a
+month sheet is read at arm's length, where the times are not legible anyway. 13:00 rather than 12:00
+because a midday event reads as the morning's end.
 
 It is NOT a lone event if others are hidden behind it: a cell with one visible event and a "+N
 autres" row fills as usual, because the cell is not showing one event.
+
+**A START HOUR IS ONLY ABOUT THE DAY IT FALLS ON**, and forgetting that is what a WEI exposed on
+2026-09-16. Both renderers handed the layout `startsAt.getHours()` for EVERY square a multi-day
+event covered, so a Friday 18:00 departure painted the bottom half of Saturday and of Sunday too -
+two days the event holds end to end, and about which its start hour says nothing.
+
+`dayOccupancy(event, day)` asks the question from the DAY's point of view instead, and the rule it
+states is simpler than the one it replaces: **a cell halves only when the event leaves half that day
+genuinely free.**
+
+| the event, relative to this square | what the square shows |
+| --- | --- |
+| began earlier AND ends later | `full` - one slot |
+| began earlier, ends here before 13:00 | `morning` |
+| began earlier, ends here at or after 13:00 | `full` |
+| begins here at or after 13:00, ends later | `afternoon` |
+| begins here before 13:00, ends later | `full` - it holds the day to 05:00 tomorrow |
+| contained in this day | the half its start hour names |
+
+The hours compare against the pivot without re-shifting, and that is a property of `calendarDayOf`
+rather than a coincidence: an instant it assigns to a square necessarily reads between 05:00 and
+23:59 local.
 
 **THE RULE LIVES BESIDE `fitEventText` AND `splitLogoBands` FOR THE REASON THOSE TWO DO** - the
 screen grid and the PDF export both import it, and a layout rule written in the component would be

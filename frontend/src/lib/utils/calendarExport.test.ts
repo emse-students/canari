@@ -1,7 +1,6 @@
 import {
   DAY_NUM_H,
   EVENT_TITLE_LINE_HEIGHT,
-  HALF_DAY_PIVOT_HOUR,
   daySlotLayout,
   eventBgCss,
   fitEventText,
@@ -205,7 +204,7 @@ describe('fitEventText', () => {
 
 describe('daySlotLayout', () => {
   it('stacks one slot per event on an ordinary day', () => {
-    const l = daySlotLayout([9, 14, 18], 0);
+    const l = daySlotLayout(['morning', 'afternoon', 'afternoon'], 0);
 
     expect(l.nSlots).toBe(3);
     expect(l.slotOf).toEqual([0, 1, 2]);
@@ -213,7 +212,7 @@ describe('daySlotLayout', () => {
   });
 
   it('counts the overflow row as a slot of its own', () => {
-    const l = daySlotLayout([9, 14], 4);
+    const l = daySlotLayout(['morning', 'afternoon'], 4);
 
     expect(l.nSlots).toBe(3);
     expect(l.overflowSlot).toBe(2);
@@ -225,27 +224,35 @@ describe('daySlotLayout', () => {
    * and not in the component.
    */
   it('gives a lone morning event the top half and leaves the bottom empty', () => {
-    const l = daySlotLayout([9], 0);
+    const l = daySlotLayout(['morning'], 0);
 
     expect(l.nSlots).toBe(2);
     expect(l.slotOf).toEqual([0]);
   });
 
   it('gives a lone afternoon event the bottom half', () => {
-    const l = daySlotLayout([15], 0);
+    const l = daySlotLayout(['afternoon'], 0);
 
     expect(l.nSlots).toBe(2);
     expect(l.slotOf).toEqual([1]);
   });
 
-  it('puts the pivot hour itself in the afternoon, and the hour before in the morning', () => {
-    expect(daySlotLayout([HALF_DAY_PIVOT_HOUR], 0).slotOf).toEqual([1]);
-    expect(daySlotLayout([HALF_DAY_PIVOT_HOUR - 1], 0).slotOf).toEqual([0]);
+  /**
+   * THE DEFECT A MULTI-DAY EVENT EXPOSED. A WEI covering a whole Saturday leaves no half of it
+   * free, so the square must fill - and it did not, because the layout was handed the event's
+   * Friday start hour on Saturday's square too.
+   */
+  it('fills the cell for a lone event that occupies the whole day', () => {
+    const l = daySlotLayout(['full'], 0);
+
+    expect(l.nSlots).toBe(1);
+    expect(l.slotOf).toEqual([0]);
+    expect(l.overflowSlot).toBeNull();
   });
 
   /** A lone event with MORE hidden behind it is not a lone event - the cell fills as usual. */
   it('does not halve a cell whose single visible event hides others', () => {
-    const l = daySlotLayout([9], 3);
+    const l = daySlotLayout(['morning'], 3);
 
     expect(l.nSlots).toBe(2);
     expect(l.slotOf).toEqual([0]);

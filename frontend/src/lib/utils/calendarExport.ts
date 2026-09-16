@@ -4,20 +4,13 @@ import { exportSearchablePdf } from '$lib/pdf/searchableRaster';
 import { getLocale } from '$lib/paraglide/runtime';
 import { m } from '$lib/paraglide/messages';
 import type { AssociationCalendarFeedEvent } from '$lib/associations/api';
-
-/**
- * Localized Monday-first weekday names for the active UI locale via Intl (no hardcoded strings).
- * `style` picks abbreviated ('short', e.g. "Lun"/"Mon") or full ('long', e.g. "Lundi"/"Monday");
- * the first letter is upper-cased and any trailing abbreviation dot is dropped for a clean header.
- */
-function localizedWeekdays(locale: string, style: 'short' | 'long'): string[] {
-  const fmt = new Intl.DateTimeFormat(locale, { weekday: style });
-  // 2024-01-01 is a Monday; walk the 7 following days for a Monday-first week.
-  return Array.from({ length: 7 }, (_, i) => {
-    const name = fmt.format(new Date(2024, 0, 1 + i)).replace(/\.$/, '');
-    return name.charAt(0).toUpperCase() + name.slice(1);
-  });
-}
+import {
+  breaksOnDay,
+  dayOccupancy,
+  eventCardsOnDay,
+  type DayOccupancy,
+} from '$lib/calendar/feedEvents';
+import { localizedWeekdays, monthGridDays } from '$lib/calendar/monthGrid';
 
 // Header height. Kept generous so the month title (Fredoka, tall round ascenders) sits low enough in
 // its line box to clear the top page edge - a tighter header clipped the glyph tops on export.
@@ -157,55 +150,6 @@ export function eventBgCss(ev: AssociationCalendarFeedEvent): string {
 }
 
 /** Monday-first array of day-numbers (null = padding cell) for a given month. */
-function buildCalendarCells(year: number, month: number): (number | null)[] {
-  const first = new Date(year, month, 1);
-  const lastDay = new Date(year, month + 1, 0).getDate();
-  const mondayIndex = (first.getDay() + 6) % 7;
-  const cells: (number | null)[] = [];
-  for (let i = 0; i < mondayIndex; i++) cells.push(null);
-  for (let day = 1; day <= lastDay; day++) cells.push(day);
-  while (cells.length % 7 !== 0) cells.push(null);
-  return cells;
-}
-
-function entriesOnDay(
-  events: AssociationCalendarFeedEvent[],
-  year: number,
-  month: number,
-  day: number
-): AssociationCalendarFeedEvent[] {
-  const d = new Date(year, month, day);
-  return events
-    .filter((ev) => {
-      const start = new Date(ev.startsAt);
-      const startDay = new Date(start.getFullYear(), start.getMonth(), start.getDate());
-      if (!ev.endsAt) return d.getTime() === startDay.getTime();
-      const end = new Date(ev.endsAt);
-      const endDay = new Date(end.getFullYear(), end.getMonth(), end.getDate());
-      return d >= startDay && d <= endDay;
-    })
-    .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
-}
-
-/** Normal event cards for a day (breaks excluded - they render as a background band). */
-function eventsOnDay(
-  events: AssociationCalendarFeedEvent[],
-  year: number,
-  month: number,
-  day: number
-): AssociationCalendarFeedEvent[] {
-  return entriesOnDay(events, year, month, day).filter((ev) => ev.kind !== 'break');
-}
-
-/** Break (no-course / vacation) entries overlapping a day, drawn as a full-day background band. */
-function breaksOnDay(
-  events: AssociationCalendarFeedEvent[],
-  year: number,
-  month: number,
-  day: number
-): AssociationCalendarFeedEvent[] {
-  return entriesOnDay(events, year, month, day).filter((ev) => ev.kind === 'break');
-}
 
 function safe(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -302,16 +246,6 @@ export interface LogoBand {
   imgWidthPct: number;
 }
 
-/**
- * THE HOUR THAT SPLITS A DAY IN TWO, FOR A CELL SHOWING ONE EVENT.
- *
- * A square with a single event used to paint it floor to ceiling, which says nothing about WHEN.
- * Half a cell says "morning" or "afternoon" at a glance, across a whole month, without a single
- * digit of type - and the month sheet is read at arm's length, where the times are not legible
- * anyway. 13:00 rather than 12:00 because a midday event reads as the morning's end here.
- */
-export const HALF_DAY_PIVOT_HOUR = 13;
-
 /** Where one day's visible events sit in its cell. */
 export interface DaySlotLayout {
   /** How many equal slots the cell is divided into. */
@@ -326,27 +260,32 @@ export interface DaySlotLayout {
  * How to divide a day cell, shared by the screen grid and the PDF export.
  *
  * ORDINARILY this is one slot per entry, stacked in order - that is what a full day looks like and
- * it has not changed. The ONE special case is a day with exactly one event and no overflow: the
- * cell splits in two and the event takes the half its start hour names, leaving the other half as
- * background.
+ * it has not changed. The ONE special case is a day with exactly one event, no overflow, AND an
+ * event that leaves half the day free: the cell splits in two and the event takes its half,
+ * leaving the other as background.
+ *
+ * IT TAKES OCCUPANCIES RATHER THAN START HOURS, and that is the whole of the 2026-09-16 fix: both
+ * callers used to hand it `startsAt.getHours()` on every square a multi-day event covered, so a
+ * WEI's Friday-evening hour decided the shape of Saturday and Sunday as well. `dayOccupancy` is
+ * asked per square instead, and a day the event holds end to end answers `full` - one slot.
  *
  * It lives here, beside `fitEventText` and `splitLogoBands`, because those two are already the
  * reason the screen and the sheet agree. A layout rule written in the component would be a rule
  * the export does not have, and the grid exists to be printable.
  */
-export function daySlotLayout(startHours: number[], overflowCount: number): DaySlotLayout {
-  if (startHours.length === 1 && overflowCount === 0) {
+export function daySlotLayout(occupancies: DayOccupancy[], overflowCount: number): DaySlotLayout {
+  if (occupancies.length === 1 && overflowCount === 0 && occupancies[0] !== 'full') {
     return {
       nSlots: 2,
-      slotOf: [startHours[0] < HALF_DAY_PIVOT_HOUR ? 0 : 1],
+      slotOf: [occupancies[0] === 'morning' ? 0 : 1],
       overflowSlot: null,
     };
   }
   const hasOverflow = overflowCount > 0;
   return {
-    nSlots: startHours.length + (hasOverflow ? 1 : 0),
-    slotOf: startHours.map((_, i) => i),
-    overflowSlot: hasOverflow ? startHours.length : null,
+    nSlots: occupancies.length + (hasOverflow ? 1 : 0),
+    slotOf: occupancies.map((_, i) => i),
+    overflowSlot: hasOverflow ? occupancies.length : null,
   };
 }
 
@@ -424,7 +363,7 @@ function buildCalendarHtml(
     .format(new Date(year, month, 1))
     .replace(/^\w/, (c) => c.toUpperCase());
 
-  const cells = buildCalendarCells(year, month);
+  const cells = monthGridDays(new Date(year, month, 1));
   const nRows = cells.length / 7;
   // Divide the FULL container height across the rows (no cap): a 4-row month gets taller cells that
   // reach the bottom edge instead of leaving a white band, keeping the content A4-ratio exact.
@@ -470,8 +409,11 @@ function buildCalendarHtml(
         return `<div style="height:${CELL_H}px;background:${isWeekend ? cellBgEmptyWeekend : cellBgEmptyNormal};border-right:1px solid ${opts.borderColor};border-bottom:1px solid ${opts.borderColor};box-sizing:border-box;"></div>`;
       }
 
-      const dayEvents = eventsOnDay(events, year, month, day);
-      const dayBreaks = breaksOnDay(events, year, month, day);
+      // The square this cell paints, and the ONE definition of which events land on it - the 05:00
+      // day boundary included, which a private copy here used to cut at midnight.
+      const square = new Date(year, month, day);
+      const dayEvents = eventCardsOnDay(events, square, day);
+      const dayBreaks = breaksOnDay(events, square, day);
       const breakColor = dayBreaks.length > 0 ? eventHexColors(dayBreaks[0])[0] : null;
       // A 3px colored strip along the bottom edge, continuous across a break period.
       const breakBand = breakColor
@@ -495,14 +437,17 @@ function buildCalendarHtml(
       const visible = dayEvents.slice(0, nVisible);
       const overflowCount = dayEvents.length - nVisible;
       // The same rule the screen grid asks, so the sheet and the screen cannot divide a cell
-      // differently: ordinarily one slot per entry, and a lone event takes the half its start
-      // hour names.
+      // differently: ordinarily one slot per entry, and a lone event that leaves half THIS day free
+      // takes that half.
       const layout = daySlotLayout(
-        visible.map((ev) => new Date(ev.startsAt).getHours()),
+        visible.map((ev) => dayOccupancy(ev, square)),
         overflowCount
       );
       const slotH = Math.floor(CELL_H / layout.nSlots);
-      const loneSlot = visible.length === 1 && overflowCount === 0 ? layout.slotOf[0] : null;
+      const loneSlot =
+        visible.length === 1 && overflowCount === 0 && layout.nSlots === 2
+          ? layout.slotOf[0]
+          : null;
       // An empty half, carrying the day number when it is the FIRST slot - the number belongs to
       // slot 0, and slot 0 no longer always holds an event.
       const blankHalf = (withDayNumber: boolean) =>
