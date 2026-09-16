@@ -11,6 +11,8 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+## [0.18.9] - 2026-09-16
+
 ### Fixed - les deux premieres lignes de chaque rechargement, et six prechargements de feuilles de style pour rien
 
 Deux corrections tirees d'un seul export de console (Firefox de l'utilisateur, 2026-09-16, `0.18.8`,
