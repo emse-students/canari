@@ -1,9 +1,5 @@
-version: 0.18.4
+version: 0.18.5
 
-Le demarrage est nettement plus rapide : l'application se connecte avant de relire vos conversations, ne redemande plus toute votre boite aux lettres a chaque fois, et les messages recus pendant le lancement arrivent tout de suite.
+Le lancement est nettement plus rapide. L'application demande son moteur de chiffrement des l'ouverture, au lieu d'attendre la verification du code PIN : il arrivait jusque-la en dernier dans la file, derriere les avatars et les apercus de liens du fil.
 
-Dans le navigateur, les conversations reviennent dans le bon ordre : la plus recente en premier.
-
-Le selecteur d'emoji arrive dans la zone de saisie, sur ordinateur.
-
-Reprendre sa place dans une conversation n'affiche plus a tort un avis de retrait.
+Dans le navigateur, une police de 5,7 Mo servant aux emoji etait retelechargee a chaque chargement de page. Elle est desormais gardee en cache, et n'est plus reclamee en priorite.
