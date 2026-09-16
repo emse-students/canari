@@ -1,5 +1,7 @@
-version: 0.18.5
+version: 0.18.6
 
-Le lancement est nettement plus rapide. L'application demande son moteur de chiffrement des l'ouverture, au lieu d'attendre la verification du code PIN : il arrivait jusque-la en dernier dans la file, derriere les avatars et les apercus de liens du fil.
+L'agenda dit l'heure sans un seul chiffre : une journee finit a 5h du matin, donc une soiree de 23h a 2h tient sur la seule case du soir, et une case qui ne porte qu'un evenement se remplit en haut avant 13h, en bas apres. Cliquer sur un jour ouvre le formulaire sur ce jour-la.
 
-Dans le navigateur, une police de 5,7 Mo servant aux emoji etait retelechargee a chaque chargement de page. Elle est desormais gardee en cache, et n'est plus reclamee en priorite.
+« Deposer un evenement » etait cache a une partie de ceux qui en avaient deja le droit : il leur est rendu.
+
+La police des emoji perd les deux tiers de son poids, sans qu'un dessin change.
