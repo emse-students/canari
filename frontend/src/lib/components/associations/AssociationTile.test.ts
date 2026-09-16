@@ -64,6 +64,31 @@ describe('the one tile keeps what the copies did not have', () => {
     expect(tile).not.toMatch(/post-markdown_p\]:line-clamp/);
   });
 
+  it("says the reader's role where it knows one, in place of a count it was never given", () => {
+    // `/api/associations/me/list` (`listByUser`) returns `role` and NO `memberCount`, so the
+    // footer's `memberCount ?? 0` printed "0 membres" on every card of "Mes associations" - about
+    // associations the reader IS a member of, and one section above the real count of the same
+    // association. The role is what that section is about, so it REPLACES the count.
+    const roleBranch = tile.indexOf('{#if association.role}');
+    const countBranch = tile.indexOf('assoc_member_count_many');
+    expect(roleBranch).toBeGreaterThan(-1);
+    expect(countBranch).toBeGreaterThan(roleBranch);
+    // The count is the ELSE of the role and never its neighbour - `{:else}` sits between the two.
+    const roleFooter = tile.slice(roleBranch, countBranch);
+    expect(roleFooter).toContain('{:else}');
+    // And the count survives untouched where no role is known: the other wall, the archived fold
+    // and both list shelves all draw this same tile, and none of them is told a role.
+    expect(tile).toContain('assoc_list_member_badge');
+    // ONCE, and BELOW the description: the pill MOVED out of the header rather than being copied
+    // into the footer, which is why the header's badge row now carries the TYPE alone.
+    expect(tile.split('{association.role}')).toHaveLength(2);
+    expect(tile.indexOf('{association.role}')).toBeGreaterThan(tile.indexOf('ProfileBioMarkdown'));
+    // The same yellow pill as before, still pinned to the bottom of the card: `mt-auto` is what
+    // lines a row's footers up instead of leaving them at five different heights.
+    expect(roleFooter).toContain('mt-auto');
+    expect(roleFooter).toContain('bg-cn-yellow/20');
+  });
+
   it("carries the association's colour, with the fallback the rest of the app already gives", () => {
     // `Association.color` has fed the calendar and the Carte de la Vie Asso for months, and
     // `cardGrid.ts` sized its 15rem minimum with "an association's colour bar" in the budget. No
