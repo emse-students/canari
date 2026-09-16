@@ -225,10 +225,10 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    three commands a run owes before any of it is believed are in the campaign section below.
    PIN's four rows change a PIN or restart a browser, hence last; HEAL-NEW's rung redesign is open
    on a clean pass ([backlog](docs/wiki/backlog.md)).
-2. **P1 - THE PREKEY WEIGHT: THE WELCOME WINDOW IS MEASURED (2026-09-12) AND IT REFUTED THE RULE
-   THAT WOULD HAVE RECLAIMED THE PILE** - worst completed join 35 d 16 h, one still in flight at
-   46 d, so a count-based horizon sits inside the window whatever K is. What survives is safe by
-   construction, reclaims only the published fifty, and has no mechanism ([backlog](docs/wiki/backlog.md)).
+2. **P1 - THE PREKEY WEIGHT: THE PURGE-AND-REMINT LOOP IS STILL LIVE ON THE STABLE LINE** - ~1 200
+   bundles in FOUR HOURS on a Mi 9T running `0.18.1`, which carries #393's guard (2026-09-16): it
+   closed the observed case, not the class. The reclaim rule was refuted separately by the Welcome
+   window - a count-based horizon sits inside it whatever K is ([backlog](docs/wiki/backlog.md)).
 3. **P1 - a PLACEHOLDER held a member's seat**; only a member's CLIENT can say whether a LEAF is
    left in the MLS tree and **NOTHING HAS** - the three identities cited here as that evidence were
    this campaign's OWN mention fixtures, named 2026-09-07 ([backlog](docs/wiki/backlog.md)).
