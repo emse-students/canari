@@ -44,6 +44,20 @@ import {
 import { resolveUserDisplayName } from '../utils/display-name';
 import { activeRevocationWhere } from '../utils/revocation';
 
+/**
+ * Why a device cannot be handed a KeyPackage right now - and whether that is for ever.
+ *
+ * `revoked` is final. `unregistered` means nothing was ever published for this user/device pair.
+ * `expired` is TEMPORARY and is the one worth naming: the device repairs itself on its next
+ * connection (`heldLastResortKeyPackage` refuses to offer an elapsed package, so the round falls
+ * through to a fresh mint), and `registerDevice` then re-creates the pending membership for every
+ * group its owner is already in.
+ */
+export type KeyPackageRefusal = 'revoked' | 'unregistered' | 'expired';
+
+/** Either a package to serve, or {@link KeyPackageRefusal} saying why there is none. */
+export type KeyPackageResolution = { keyPackage: string } | { refusal: KeyPackageRefusal };
+
 /** Device registration, key packages, device metadata, and device deletion. */
 @Controller()
 export class DevicesController {
@@ -117,8 +131,18 @@ export class DevicesController {
 
   /**
    * Pops one usable OTKP for a device, or returns the static registration KeyPackage.
-   * Returns null when the device is revoked, has no registered KeyPackage, or holds nothing that
-   * has not elapsed.
+   *
+   * **THE THREE WAYS THIS ANSWERS "NO" ARE THREE DIFFERENT FACTS, SO IT RETURNS WHICH ONE.** It
+   * used to return `null` for all of them, and every caller past this point could then only say
+   * "not found" - which is how a device holding an elapsed package came to be reported to its
+   * inviter as DEREGISTERED, and acted on as one. A distinction carried in prose is a distinction
+   * exactly one call site will make; this one is carried as a type, from where it is known.
+   *
+   * The three differ in what the caller may expect next, which is the whole reason to tell them
+   * apart: `revoked` is final, `unregistered` means nothing was ever published for this pair, and
+   * `expired` is TEMPORARY - the device mints a fresh package and re-registers on its next
+   * connection, and `registerDevice` re-creates the pending membership for every group its owner is
+   * already in.
    *
    * THE STATIC ROW IS SERVED TO EVERY CALLER, UNCHANGED, UNTIL THE DEVICE RECONNECTS - which is
    * why the client mints it with the MLS `last_resort` extension (`mintKeyPackages`). An ordinary
@@ -131,16 +155,16 @@ export class DevicesController {
   private async resolveKeyPackagePayloadForDevice(
     userId: string,
     deviceId: string
-  ): Promise<string | null> {
+  ): Promise<KeyPackageResolution> {
     const revoked = await this.revokedDeviceRepo.findOne({
       where: activeRevocationWhere({ userId, deviceId }),
     });
-    if (revoked) return null;
+    if (revoked) return { refusal: 'revoked' };
 
     const device = await this.keyPackageRepo.findOne({
       where: { userId, deviceId },
     });
-    if (!device) return null;
+    if (!device) return { refusal: 'unregistered' };
 
     const otkp = await this.dataSource.transaction(async (manager) => {
       const found = await manager
@@ -184,7 +208,7 @@ export class DevicesController {
         `[KP] one-time pool EMPTY for ${userId}/${deviceId} - serving the static last-resort row`
       );
     }
-    if (otkp) return otkp.keyPackage;
+    if (otkp) return { keyPackage: otkp.keyPackage };
 
     // AND A REFUSAL IS AN ANSWER, WHERE A DEAD PACKAGE IS NOT. Serving a last-resort row the server
     // KNOWS has elapsed puts the adder into a loop it cannot see the end of: the joiner rejects it
@@ -198,9 +222,9 @@ export class DevicesController {
         `[KP] last-resort EXPIRED for ${userId}/${deviceId} (notAfter=${device.notAfter.toISOString()})` +
           ' - refusing rather than serving a package no peer can build a Welcome on'
       );
-      return null;
+      return { refusal: 'expired' };
     }
-    return device.keyPackage;
+    return { keyPackage: device.keyPackage };
   }
 
   @UseGuards(HeaderAuthGuard)
@@ -500,22 +524,29 @@ export class DevicesController {
   async getDeviceKeyPackage(@Param('userId') userId: string, @Param('deviceId') deviceId: string) {
     const safeUserId = sanitizeQueryValue(userId, 'userId');
     const safeDeviceId = sanitizeQueryValue(deviceId, 'deviceId');
-    const keyPackage = await this.resolveKeyPackagePayloadForDevice(safeUserId, safeDeviceId);
-    if (!keyPackage) {
-      // The resolver returns null in exactly three cases, and the docblock above names all of
-      // them: the device is revoked, it never registered a KeyPackage, or everything it published
-      // has elapsed. None is a malformed request - see the sibling refusal in
-      // `updateDeviceMetadata` for why "absent" gets its own code here. The third case is a 404 on
-      // purpose: it is the answer a caller can act on, where serving a package every joiner is
-      // entitled to refuse is an invitation that retries for ever.
-      throw new NotFoundException(`No key package for device ${safeUserId}:${safeDeviceId}`);
+    const resolved = await this.resolveKeyPackagePayloadForDevice(safeUserId, safeDeviceId);
+    if ('refusal' in resolved) {
+      // The resolver refuses in exactly three cases and the docblock above names all of them. None
+      // is a malformed request - see the sibling refusal in `updateDeviceMetadata` for why "absent"
+      // gets its own code here - and all three are a 404 on purpose: a 404 is the answer a caller
+      // can act on, where serving a package every joiner is entitled to refuse is an invitation
+      // that retries for ever.
+      //
+      // WHICH OF THE THREE TRAVELS IN THE BODY, because the caller does different things with them
+      // and could not tell them apart. `expired` in particular is temporary and says so: the
+      // inviter used to log it as "deregistered" and delete the pending membership on it.
+      throw new NotFoundException({
+        statusCode: 404,
+        message: `No key package for device ${safeUserId}:${safeDeviceId}`,
+        reason: resolved.refusal,
+      });
     }
     const row = await this.keyPackageRepo.findOne({
       where: { userId: safeUserId, deviceId: safeDeviceId },
     });
     return {
       deviceId: safeDeviceId,
-      keyPackage,
+      keyPackage: resolved.keyPackage,
       deviceName: row?.deviceName ?? undefined,
       deviceOs: row?.deviceOs ?? undefined,
       deviceAppVersion: row?.deviceAppVersion ?? undefined,
@@ -547,7 +578,7 @@ export class DevicesController {
 
     const results = await Promise.all(
       activeDevices.map(async (device) => {
-        const keyPackage = await this.resolveKeyPackagePayloadForDevice(
+        const resolved = await this.resolveKeyPackagePayloadForDevice(
           device.userId,
           device.deviceId
         );
@@ -557,8 +588,8 @@ export class DevicesController {
         // launch. The device returns to the list by itself - it mints and re-registers on its next
         // connection, and `registerDevice` re-creates the pending membership for every group its
         // owner is already in.
-        if (!keyPackage) return null;
-        return { ...device, keyPackage, displayName };
+        if ('refusal' in resolved) return null;
+        return { ...device, keyPackage: resolved.keyPackage, displayName };
       })
     );
 

@@ -1,4 +1,5 @@
 import type { DatedKeyPackage } from './keyPackages';
+import type { DeviceKeyPackageAnswer } from './deviceKeyPackage';
 import type { FrameDelivery } from './frameDelivery';
 import type { IncomingDeliveryMeta } from './incomingDelivery';
 import type { MlsDecryptSession } from './mlsDecryptSession';
@@ -522,17 +523,14 @@ export interface IMlsService {
       deviceAppVersion?: string;
     }>
   >;
-  /** Fetches one device's KeyPackage when it is missing from {@link fetchUserDevices} (e.g. 30-day list filter). */
-  fetchDeviceKeyPackage(
-    userId: string,
-    deviceId: string
-  ): Promise<{
-    keyPackage: Uint8Array;
-    deviceId: string;
-    deviceName?: string;
-    deviceOs?: string;
-    deviceAppVersion?: string;
-  } | null>;
+  /**
+   * Fetches one device's KeyPackage when it is missing from {@link fetchUserDevices} (e.g. 30-day
+   * list filter).
+   *
+   * NEVER `null`: a 404 and an unreachable server are different facts and exactly one of them says
+   * anything about the device. See {@link DeviceKeyPackageAnswer}.
+   */
+  fetchDeviceKeyPackage(userId: string, deviceId: string): Promise<DeviceKeyPackageAnswer>;
   /** Uploads a single KeyPackage to the server so other devices can invite this one. */
   publishKeyPackage(keyPackage: DatedKeyPackage): Promise<void>;
   /** Bulk-upload multiple one-time prekeys to the server pool. */

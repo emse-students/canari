@@ -26,7 +26,7 @@ function makeMls(overrides: Partial<IMlsService> = {}): IMlsService {
     getGroupMembers: vi.fn().mockResolvedValue([]),
     getGroupMemberIdentities: vi.fn().mockResolvedValue([]),
     fetchUserDevices: vi.fn().mockResolvedValue([]),
-    fetchDeviceKeyPackage: vi.fn().mockResolvedValue(null),
+    fetchDeviceKeyPackage: vi.fn().mockResolvedValue({ kind: 'none', reason: 'unregistered' }),
     removeMemberDevice: vi.fn().mockResolvedValue(undefined),
     kickStaleDevice: vi.fn().mockResolvedValue(undefined),
     addMember: vi.fn(),
