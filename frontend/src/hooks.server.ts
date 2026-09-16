@@ -2,6 +2,9 @@ import type { Handle } from '@sveltejs/kit';
 import { renderSeoTags, renderSeoTitle } from '$lib/seo/renderHead';
 import { resolveServerSeo } from '$lib/seo/serverSeo';
 import { SITE } from '$lib/seo/site';
+// Lives in its own module so a test can import it WITHOUT pulling `$env/dynamic/private` in
+// through the SEO chain above - the same reason `handleError` is not written here either.
+import { preloadableAsset } from '$lib/server/preload';
 
 /**
  * Writes the page's Open Graph head into the shell before it is sent.
@@ -36,6 +39,7 @@ import { SITE } from '$lib/seo/site';
  * being known at that point. That is strictly better than the bare `app.html` it had before, and
  * per-request enrichment is by definition only reachable where a server is running.
  */
+
 const SEO_MARKER = '<meta name="canari-seo-placeholder" data-canari-seo />';
 const STATIC_TITLE = `<title>${SITE.defaultTitle}</title>`;
 
@@ -66,6 +70,7 @@ export const handle: Handle = async ({ event, resolve }) => {
   }
 
   return resolve(event, {
+    preload: preloadableAsset,
     transformPageChunk: ({ html }) => {
       if (!seoBlock || !seoTitle) return html;
       return html.replace(STATIC_TITLE, seoTitle).replace(SEO_MARKER, seoBlock);

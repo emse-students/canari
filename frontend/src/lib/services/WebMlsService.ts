@@ -57,21 +57,45 @@ export class WebMlsService extends BaseMlsService {
   private readonly useEncryptWorker = import.meta.env.VITE_MLS_ENCRYPT_WORKER !== 'false';
 
   /**
-   * `true` between `pagehide` and `pageshow` - the page is on its way out (or into the bfcache).
+   * `true` from the moment this document starts leaving until `pageshow` brings it back.
    *
    * A SOCKET THE BROWSER TORE DOWN BECAUSE THE PAGE IS LEAVING IS NOT A CONNECTION THAT WAS LOST.
    * The two are indistinguishable at `onclose`: both arrive as code 1006 with no reason, so the
-   * handler warned and scheduled a reconnect for a document that no longer exists. Read on the
-   * user's own Firefox export of 2026-09-15, where `[WS] Disconnected. Code: 1006` and
-   * `Connection lost. Retrying in 1s...` are the first two lines of a RELOAD - emitted by the
-   * previous page's bundle, which is how they can be attributed at all.
+   * handler warned and scheduled a reconnect for a document that no longer exists.
    *
-   * It is a FLAG SET BY AN EVENT, not a timer: `pagehide` fires before the socket is torn down, and
-   * the only thing it changes is that a close arriving after it is silent and schedules nothing.
+   * ## Why it listens for TWO events, measured 2026-09-16
+   *
+   * It listened for `pagehide` alone, on the stated assumption that `pagehide` fires before the
+   * socket is torn down. **That assumption is false where it mattered.** The user's Firefox export
+   * of 2026-09-16 was taken on `0.18.8`, and this guard has shipped since `v0.18.4` - yet both
+   * reloads in it still open with `[WS] Disconnected. Code: 1006` and `Connection lost. Retrying in
+   * 1s...`, so the close reached `onclose` while this flag was still false. Nothing had removed the
+   * listeners either: `destroy()` has no caller in the application.
+   *
+   * What that export DID settle is whose lines they are. The second reload stamps them `+15269ms` -
+   * 15.2 s into the PREVIOUS document's life, by `performance.now()` - and only then does the new
+   * document's clock start at zero. They belong to the page being unloaded, always did, and are
+   * attributable at a glance only because #742 stamps every line.
+   *
+   * So the flag is set at the EARLIEST point a navigation is known rather than the latest.
+   * Measured in Chrome on a local rig (`beforeunload` -> `pagehide` -> `visibilitychange:hidden`,
+   * 5 ms apart, and **no `close` event delivered at all** - Chrome never had this symptom). Firefox
+   * cannot be driven from here, so the ordering of its close against `beforeunload` is REASONED, not
+   * measured: the teardown follows the decision to navigate, and `beforeunload` is that decision.
+   * **One reload of a shipped build settles it, and that check is owed.**
+   *
+   * Registering `beforeunload` does not cost the back/forward cache - `unload` is the listener that
+   * disqualifies a page, and this file registers none.
+   *
+   * It is a FLAG SET BY AN EVENT, not a timer: the only thing it changes is that a close arriving
+   * after it is silent and schedules nothing.
    */
   private pageIsHiding = false;
-  /** Registered `pagehide`/`pageshow` listeners, removed together in {@link destroyPlatformResources}. */
-  private _pageHideHandler: (() => void) | null = null;
+  /**
+   * The one handler behind both `beforeunload` and `pagehide` - the same answer to the same
+   * question, so it is written once and registered twice.
+   */
+  private _pageLeavingHandler: (() => void) | null = null;
   private _pageShowHandler: (() => void) | null = null;
 
   constructor() {
@@ -373,12 +397,14 @@ export class WebMlsService extends BaseMlsService {
     }
 
     // THE PAGE LEAVING AND THE NETWORK DROPPING ARRIVE AT `onclose` AS THE SAME EVENT, so the
-    // discriminator is carried from where it is KNOWN. `pagehide` fires before the browser tears the
-    // socket down, and `pageshow` fires again when a bfcache restore brings the same document back -
-    // at which point the socket is gone for real and the reconnect is exactly what is wanted, so it
-    // is asked for here rather than left to the next visibility change.
-    if (!this._pageHideHandler && typeof window !== 'undefined') {
-      this._pageHideHandler = () => {
+    // discriminator is carried from where it is KNOWN - and from the EARLIEST place it is known,
+    // which is why `beforeunload` is listened for beside `pagehide`. See {@link pageIsHiding} for
+    // the export that showed `pagehide` alone arriving too late. `pageshow` fires when a bfcache
+    // restore brings the same document back - at which point the socket is gone for real and the
+    // reconnect is exactly what is wanted, so it is asked for here rather than left to the next
+    // visibility change.
+    if (!this._pageLeavingHandler && typeof window !== 'undefined') {
+      this._pageLeavingHandler = () => {
         this.pageIsHiding = true;
       };
       this._pageShowHandler = () => {
@@ -388,7 +414,8 @@ export class WebMlsService extends BaseMlsService {
           this.disconnectCallback?.();
         }
       };
-      window.addEventListener('pagehide', this._pageHideHandler);
+      window.addEventListener('beforeunload', this._pageLeavingHandler);
+      window.addEventListener('pagehide', this._pageLeavingHandler);
       window.addEventListener('pageshow', this._pageShowHandler);
     }
 
@@ -622,9 +649,10 @@ export class WebMlsService extends BaseMlsService {
       this.keyPackageWorker.terminate();
       this.keyPackageWorker = null;
     }
-    if (this._pageHideHandler) {
-      window.removeEventListener('pagehide', this._pageHideHandler);
-      this._pageHideHandler = null;
+    if (this._pageLeavingHandler) {
+      window.removeEventListener('beforeunload', this._pageLeavingHandler);
+      window.removeEventListener('pagehide', this._pageLeavingHandler);
+      this._pageLeavingHandler = null;
     }
     if (this._pageShowHandler) {
       window.removeEventListener('pageshow', this._pageShowHandler);

@@ -939,18 +939,29 @@ page that no longer exists.
 It is visible on the user's Firefox export of 2026-09-15, where `[WS] Disconnected. Code: 1006` and
 `Connection lost. Retrying in 1s...` are the **first two lines of the new page's console** - and are
 attributable at all only because the source column names the PREVIOUS page's bundle, retained across
-the navigation.
+the navigation. **Both lines belong to the document that is LEAVING**: `performance.now()` in their
+prefix is measured against the OLD navigation, so an export spanning a reload carries two epochs and
+the opening pair sits at the end of the first one, not at the start of the second.
 
 The discriminator is carried from where it is known rather than guessed at the close:
 
 | event | what it sets | why |
 | --- | --- | --- |
-| `pagehide` | `pageIsHiding = true` | fires BEFORE the browser tears the socket down, so a close arriving after it is silent and schedules nothing |
+| `beforeunload` | `pageIsHiding = true` | the decision to leave, and the EARLIEST thing the browser says about it - the teardown follows it, so the flag is already true when the close arrives |
+| `pagehide` | `pageIsHiding = true` | the same flag, for the paths `beforeunload` does not reach (a bfcache entry, a tab discarded without an unload) |
 | `pageshow` | `pageIsHiding = false`, then reconnect if the socket is not open | a bfcache restore brings the same document back with a socket that really is gone, and nothing else would notice |
 
+**`pagehide` ALONE WAS NOT ENOUGH, and the 2026-09-16 export is the proof**: the same two lines came
+back on a build carrying the guard, which can only mean the close reached `onclose` while the flag
+was still false. Measured on a local rig in Chrome the order is `beforeunload` -> `pagehide` ->
+`visibilitychange:hidden`, 5 ms apart; Firefox delivers a close in that window and Chrome delivers
+none at all. Registering `beforeunload` costs no bfcache eligibility - `unload` is the listener that
+disqualifies a page, and this codebase has none.
+
 A real navigation takes the whole client with it, so there is nothing to clean up on that path.
-Pinned by `WebMlsService.pageLifecycle.test.ts`, whose three cases are the three states the page can
-be in when a close arrives.
+Pinned by `WebMlsService.pageLifecycle.test.ts`, whose four cases are the states the page can be in
+when a close arrives - **including a close that BEATS `pagehide`, which is the case the first version
+of that test did not have, and why the symptom survived it.**
 
 ### Login failure codes
 

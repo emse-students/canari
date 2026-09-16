@@ -32,6 +32,35 @@ Nginx serves the assets and proxies HTML navigations to the `frontend-ssr` conta
 container is down it falls back to the prerendered `app-shell.html`, so the SPA still boots — see
 [../infrastructure/nginx.md](../infrastructure/nginx.md).
 
+### The same response declares its stylesheets twice, and only one of the two is useful
+
+`resolve(event, { ... })` in `src/hooks.server.ts` takes a `preload` predicate alongside
+`transformPageChunk`. SvelteKit calls it once per asset it is about to name in the document, and the
+ones it accepts get an early-hint `Link:` header on the SAME response that carries the markup
+(`@sveltejs/kit`'s `render.js`). So for a stylesheet the browser receives both halves at once: the
+header telling it to preload the file, and, a few kilobytes later in the body, the
+`<link rel="stylesheet">` that actually requests it.
+
+The header wins nothing there. The document is already in flight, the `<link>` is parsed in the same
+network round trip, and the browser ends up with one resource-timing entry per sheet whose
+`initiatorType` is `link` - the preload's own entry is never the one that fetched it. Firefox says so
+out loud: **"The resource was preloaded using link preload but not used within a few seconds"**, once
+per stylesheet, which on a production boot of the login page was six warnings for six sheets.
+
+JavaScript is the opposite case and keeps its header: a module graph is discovered by *executing*
+the entry, so `modulepreload` is what lets the whole first wave arrive multiplexed instead of in
+dependency order.
+
+The predicate is therefore `type === 'js'`, and it lives in
+[`$lib/server/preload`](../../../frontend/src/lib/server/preload.ts) rather than in
+`hooks.server.ts`, so a test can import it without dragging `$env/dynamic/private` in through the SEO
+chain - the same split as `$lib/server/handleError`.
+
+**It is written as `=== 'js'`, never as `!== 'css'`.** SvelteKit's default is
+`({ type }) => type === 'js' || type === 'css'`: fonts and other assets were never preloaded, so the
+negation would have silently STARTED preloading them while claiming to remove one. `hooks.server.test.ts`
+pins that: a font and an asset both answer `false`.
+
 ## Source tree
 
 ```
