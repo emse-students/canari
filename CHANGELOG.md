@@ -11,6 +11,28 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - retour arriere apres Maj+Entree ne supprimait pas la ligne, et en supprimait parfois deux
+
+Deux nouveaux signalements de l'utilisateur (2026-09-16), sur le meme mecanisme
+`insertNewlineAtCursor` que le correctif precedent :
+
+**« Maj+Entree puis retour arriere ne supprime pas la nouvelle ligne »** - le retour arriere natif
+ne supprime que le caractere de remplissage qui ancre le curseur apres le `<br>`, jamais le `<br>`
+lui-meme, et Chrome insere alors un SECOND `<br>` pour que la ligne desormais vraiment vide
+continue de s'afficher (`bonjour<br><br>` au lieu de `bonjour`) - la ligne n'etait pas seulement
+conservee, elle doublait, et un second retour arriere depuis la, reproduisait la meme corruption sur
+la nouvelle paire. `removeNewlineFillerBeforeCursor` intercepte desormais ce cas a la main : elle
+supprime le `<br>` et le remplissage ensemble, et replace le curseur un caractere de texte brut en
+arriere - le `\n` que cela retire.
+
+**« a -> Maj+Entree -> b -> Maj+Entree » donnait « a\n\nb » au lieu de « a\nb\n »** - une ligne
+vide en plus entre « a » et « b ». `locatePlainTextOffset` comparait une position en texte brut a la
+longueur BRUTE d'un noeud texte comme `"​world"` (remplissage inclus), un caractere de trop, et
+placait donc le curseur juste AVANT « world » plutot qu'apres - separant le remplissage de ce qui le
+suivait plutot que de le suivre. Desormais alignee sur le meme compte que `serializeMentionEditor`
+utilise deja pour mesurer une selection, la fonction saute les caracteres de remplissage sans les
+compter comme du texte reel.
+
 ### Fixed - une manche de key packages qui ne frappe rien ne paie plus pour tout
 
 A chaque connexion, le client remplit son stock de prekeys a cinquante : il demande au serveur

@@ -397,15 +397,44 @@ function caretTargetAfterLineBreak(
   return null;
 }
 
+/**
+ * Maps a count of PLAIN-text characters (fillers already excluded, matching `measureOffset`'s own
+ * `serializeMentionEditor`-based count) to a raw DOM offset inside `raw`, which may still contain
+ * `COMPOSER_EMPTY_LINE_FILLER` characters that must be skipped rather than counted.
+ *
+ * Measured 2026-09-16: `locatePlainTextOffset` used to compare a plain-text target directly
+ * against `node.textContent.length` - the RAW length, filler included - so a node holding a
+ * filler-anchored newline plus whatever was typed after it (`"\u200Bb"`) reported one character
+ * too many. Landing the caret one raw position short put it BEFORE the typed character instead of
+ * after it, and a SECOND newline inserted right there split the filler away from what followed
+ * instead of following it: `insertNewlineAtCursor` after "a", Shift+Enter, "b", Shift+Enter
+ * produced `a<br>\u200B<br>b` (an extra blank line before "b") instead of `a<br>b<br>\u200B`.
+ */
+function rawOffsetForPlainCount(raw: string, count: number): number {
+  let seen = 0;
+  for (let i = 0; i < raw.length; i++) {
+    if (raw[i] === COMPOSER_EMPTY_LINE_FILLER) continue;
+    seen++;
+    if (seen === count) return i + 1;
+  }
+  // `count` is 0, or unreachable within this node's real characters: land just after any
+  // leading filler run, matching where `insertNewlineAtCursor` itself anchors the caret - right
+  // after the invisible placeholder, never in front of it.
+  let i = 0;
+  while (i < raw.length && raw[i] === COMPOSER_EMPTY_LINE_FILLER) i++;
+  return i;
+}
+
 function locatePlainTextOffset(root: HTMLElement, target: number): { node: Node; offset: number } {
   let remaining = target;
   let found: { node: Node; offset: number } = { node: root, offset: 0 };
 
   function walk(node: Node): boolean {
     if (node.nodeType === Node.TEXT_NODE) {
-      const len = node.textContent?.length ?? 0;
+      const raw = node.textContent ?? '';
+      const len = stripComposerDomFillers(raw).length;
       if (remaining <= len) {
-        found = { node, offset: remaining };
+        found = { node, offset: rawOffsetForPlainCount(raw, remaining) };
         return true;
       }
       remaining -= len;
@@ -489,6 +518,53 @@ export function removeMentionChipBeforeCursor(root: HTMLElement): boolean {
   if (!(chip instanceof HTMLElement)) return false;
 
   chip.remove();
+  return true;
+}
+
+/**
+ * Collapses the newline the caret sits right after, when nothing has been typed on the emptied
+ * line yet. `insertNewlineAtCursor` anchors the caret after a trailing `<br>` with
+ * `COMPOSER_EMPTY_LINE_FILLER`, a character invisible to the user but not to native `Backspace`:
+ * measured (2026-09-16) to delete the filler CHARACTER while leaving the `<br>` in place, and
+ * Chrome then inserts a SECOND `<br>` to keep the now genuinely empty line rendering
+ * (`a<br><br>` instead of `a`) - the newline was not merely left behind, it doubled, and a second
+ * Backspace from there repeats the same corruption on the new pair. Handled by hand instead:
+ * remove the `<br>` together with whatever filler anchored it, landing the caret one plain-text
+ * character back - the `\n` this removes.
+ */
+export function removeNewlineFillerBeforeCursor(root: HTMLElement): boolean {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0 || !sel.isCollapsed) return false;
+  const range = sel.getRangeAt(0);
+  if (!root.contains(range.startContainer)) return false;
+
+  const { startContainer, startOffset } = range;
+  let br: ChildNode | null = null;
+  let textNode: Text | null = null;
+
+  if (startContainer instanceof Text) {
+    const before = startContainer.data.slice(0, startOffset);
+    if (!/^\u200B*$/.test(before)) return false;
+    const prev = startContainer.previousSibling;
+    if (!(prev instanceof HTMLElement) || prev.tagName !== 'BR') return false;
+    br = prev;
+    textNode = startContainer;
+  } else if (startContainer instanceof HTMLElement) {
+    const prev = startContainer.childNodes[startOffset - 1];
+    if (!(prev instanceof HTMLElement) || prev.tagName !== 'BR') return false;
+    br = prev;
+  } else {
+    return false;
+  }
+
+  const caretOffset = getPlainTextSelection(root).start;
+  if (textNode) {
+    const after = textNode.data.slice(startOffset);
+    if (after === '') textNode.remove();
+    else textNode.data = after;
+  }
+  br.remove();
+  setPlainTextSelection(root, Math.max(0, caretOffset - 1));
   return true;
 }
 

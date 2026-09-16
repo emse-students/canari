@@ -68,6 +68,14 @@ function pressEnter(editorEl: HTMLElement) {
   flushSync();
 }
 
+/** Dispatches a real `Backspace` keydown, the same event `removeNewlineFillerBeforeCursor` reacts to. */
+function pressBackspace(editorEl: HTMLElement) {
+  editorEl.dispatchEvent(
+    new KeyboardEvent('keydown', { key: 'Backspace', bubbles: true, cancelable: true })
+  );
+  flushSync();
+}
+
 describe('MentionComposerInput.insertNewlineAtCursor', () => {
   it('inserts a real newline at the caret, with the caret anchored right after it', () => {
     const { app, props } = mountEditor('hello');
@@ -144,5 +152,39 @@ describe('MentionComposerInput.insertNewlineAtCursor', () => {
     typeAtCursor(app.getEditorElement()!, 'world');
 
     expect(props.value).toBe('hello\nworld');
+  });
+
+  it('Backspace right after a fresh newline removes it, rather than doubling the <br>', () => {
+    // Measured 2026-09-16 (user report: "Shift Entree puis retour arriere ne supprime pas la
+    // nouvelle ligne"): native Backspace only ever deletes the anchor FILLER character, leaving
+    // the `<br>` in place - and Chrome then inserted a SECOND `<br>` to keep the now genuinely
+    // empty line rendering (`hello<br><br>`), rather than collapsing back to "hello".
+    const { app, props } = mountEditor('hello');
+    app.setSelectionRange(5, 5);
+    app.insertNewlineAtCursor();
+    flushSync();
+
+    pressBackspace(app.getEditorElement()!);
+
+    expect(props.value).toBe('hello');
+    expect(app.getEditorElement()!.querySelectorAll('br')).toHaveLength(0);
+  });
+
+  it('a second newline after typing on the first one lands after the typed text, not before it', () => {
+    // Measured 2026-09-16 (user report: "a -> shift entree -> b -> shift entree" produced
+    // "a\n\nb" instead of "a\nb\n"): `locatePlainTextOffset` compared a plain-text target against
+    // the RAW length of a text node like "\u200Bworld" (filler included), one character too many,
+    // so it placed the caret right BEFORE "world" instead of after it - splitting the filler away
+    // from what followed instead of following it.
+    const { app, props } = mountEditor('hello');
+    app.setSelectionRange(5, 5);
+    app.insertNewlineAtCursor();
+    flushSync();
+    typeAtCursor(app.getEditorElement()!, 'world');
+
+    app.insertNewlineAtCursor();
+    flushSync();
+
+    expect(props.value).toBe('hello\nworld\n');
   });
 });
