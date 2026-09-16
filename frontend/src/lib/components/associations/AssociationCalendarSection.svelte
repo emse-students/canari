@@ -42,6 +42,7 @@
     toUpdatePayload,
     type EventFormValues,
   } from '$lib/calendar/eventForm';
+  import { daySquareDate } from '$lib/calendar/feedEvents';
   import { pushHistoryOverlay, closeHistoryOverlayFromUi } from '$lib/utils/historyOverlayStack';
   import CalendarScheduleList from '$lib/components/calendar/CalendarScheduleList.svelte';
   import {
@@ -284,7 +285,11 @@
   async function openCreate() {
     editingId = null;
     // The target is this association, and saying so is what keeps it out of its own co-owner list.
-    formValues = { ...blankEventFormValues(), targetAssociationId: associationId };
+    // The square the user clicked seeds the date - see `blankEventFormValues`.
+    formValues = {
+      ...blankEventFormValues(daySquareDate(focusDate, selectedDay)),
+      targetAssociationId: associationId,
+    };
     poster.set(null);
     modalOpen = true;
     await ensureLinkCandidates();

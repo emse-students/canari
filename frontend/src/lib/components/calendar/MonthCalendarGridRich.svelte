@@ -5,6 +5,7 @@
   import {
     DAY_NUM_H,
     EVENT_TITLE_LINE_HEIGHT,
+    daySlotLayout,
     fitEventText,
     splitLogoBands,
   } from '$lib/utils/calendarExport';
@@ -105,6 +106,19 @@
   /** Break entries (no-course / vacation) overlapping `day`, drawn as a full-day background band. */
   function breaksOnDay(day: number): AssociationCalendarFeedEvent[] {
     return entriesOnDay(day).filter((ev) => ev.kind === 'break');
+  }
+
+  /**
+   * How this cell divides, asked of the rule the PDF export uses.
+   *
+   * Not computed here: a cell that halves on screen and fills on the sheet would be two designs,
+   * and the whole reason this grid mirrors `calendarExport` is that it is meant to be printable.
+   */
+  function cellLayout(visible: AssociationCalendarFeedEvent[], overflowCount: number) {
+    return daySlotLayout(
+      visible.map((ev) => new Date(ev.startsAt).getHours()),
+      overflowCount
+    );
   }
 
   /** Returns all hex colors for the event: primary first, then co-owners. */
@@ -223,8 +237,11 @@
           {@const visible = dayEvents.slice(0, nVisible)}
           {@const overflowCount = dayEvents.length - nVisible}
           <!-- The slot height the titles are fitted to, computed exactly as the export computes it
-               (`CELL_H / nSlots`, floored). The "+N autres" row is a slot and is counted. -->
-          {@const slotH = Math.floor(CELL_H / (nVisible + (overflowCount > 0 ? 1 : 0) || 1))}
+               (`CELL_H / nSlots`, floored). The "+N autres" row is a slot and is counted, and a
+               lone event splits the cell in two - `daySlotLayout` decides both. -->
+          {@const layout = cellLayout(visible, overflowCount)}
+          {@const slotH = Math.floor(CELL_H / (layout.nSlots || 1))}
+          {@const loneSlot = visible.length === 1 && overflowCount === 0 ? layout.slotOf[0] : null}
           {@const selected = selectedDay === cell.day}
           {@const today = isToday(cell.day)}
           <button
@@ -267,15 +284,30 @@
                 >
               {/if}
             {:else}
-              <!-- Events fill the entire cell, split equally -->
+              <!-- Events fill the entire cell, split equally - except a lone event, which takes
+                   the half its start hour names and leaves the other as background. -->
               <div class="absolute inset-0 flex flex-col">
+                {#if loneSlot === 1}
+                  <!-- The morning half of a day whose only event is in the afternoon. It is empty,
+                       so it is where the day number goes: the number always belongs to the FIRST
+                       slot, and that slot is no longer guaranteed to hold an event. -->
+                  <div class="relative flex-1">
+                    <span
+                      class="absolute top-1.5 left-2 text-xs leading-none font-bold
+ {today ? 'text-cn-yellow' : 'text-text-muted/50'}">{cell.day}</span
+                    >
+                  </div>
+                {/if}
                 {#each visible as ev, ei (ev.id)}
                   {@const colors = eventColors(ev)}
                   {@const fg = contrastColor(colors[0])}
                   {@const logos = eventLogos(ev)}
                   <!-- The first slot spends `DAY_NUM_H` on the day number, so its title has that
                        much less height to fit into - the export's own arithmetic. -->
-                  {@const fit = fitEventText(ei === 0 ? slotH - DAY_NUM_H : slotH, SCREEN_MIN_FONT)}
+                  {@const fit = fitEventText(
+                    ei === 0 && loneSlot !== 1 ? slotH - DAY_NUM_H : slotH,
+                    SCREEN_MIN_FONT
+                  )}
                   <div
                     class="relative flex flex-1 flex-col overflow-hidden {ev.status === 'pending'
                       ? 'opacity-50'
@@ -295,7 +327,7 @@
                          and the cell became 128px a long title ran straight over the number - "29"
                          read as "2". A row the title cannot enter removes the overlap by
                          construction, where the `px-5` inset it replaces only reserved slack. -->
-                    {#if ei === 0}
+                    {#if ei === 0 && loneSlot !== 1}
                       <div class="relative z-10 shrink-0 pt-1 pl-1.5" style="height:{DAY_NUM_H}px;">
                         <span
                           class="text-2xs leading-none font-bold {today
@@ -391,6 +423,11 @@
                     </div>
                   </div>
                 {/each}
+
+                {#if loneSlot === 0}
+                  <!-- The afternoon half of a day whose only event is in the morning. -->
+                  <div class="flex-1"></div>
+                {/if}
 
                 {#if overflowCount > 0}
                   <div

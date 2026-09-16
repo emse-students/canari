@@ -11,6 +11,37 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - l'agenda : une journee finit a 5h du matin, et une case a moitie remplie dit l'heure
+
+Trois corrections demandees le 16/09/2026, toutes dans le calendrier.
+
+Une soiree annoncee de 23h a 2h etait dessinee sur DEUX cases, et la seconde annoncait un evenement
+un matin ou il ne se passe rien. Une journee commence desormais a 5h : cette soiree tient sur la
+seule case du soir ou elle a commence. C'est l'heure ou la vie du campus s'arrete vraiment, et assez
+tot pour que rien de legitime ne commence avant.
+
+Une case ne contenant qu'un seul evenement le peignait du haut en bas, ce qui ne disait rien de
+QUAND. Elle se coupe maintenant en deux : moitie haute avant 13h, moitie basse apres. Sur un mois
+entier, l'heure se lit d'un coup d'oeil sans un seul chiffre - et une feuille imprimee se lit de
+loin, ou les horaires ne sont de toute facon pas lisibles. L'export PDF applique la meme regle, par
+construction : les deux lisent la meme fonction.
+
+Enfin, cliquer sur un jour puis « creer un evenement » ouvrait le formulaire sur la date du jour
+courant. Il s'ouvre sur le jour choisi.
+
+### Fixed - « Deposer un evenement » etait cache a ceux qui en avaient le droit
+
+Sur `/calendar`, le bouton n'apparaissait que pour un administrateur global ou un membre du BDE
+habilite a valider. Toute autre personne autorisee a proposer un evenement devait passer par la page
+de son association pour deposer exactement la meme demande - le serveur, lui, ne demande que la
+permission « proposer un evenement » sur l'association visee, et l'a toujours acceptee depuis cette
+page. Le bouton cachait donc un droit deja accorde.
+
+Il est desormais offert a toute personne qui detient cette permission quelque part, et la liste des
+associations proposees se limite a celles ou elle la detient : on ne peut pas viser une association
+qui refuserait. La page de l'association continue de fonctionner a l'identique pour qui prefere y
+passer.
+
 ### Fixed - le moteur de chiffrement traversait la France a chaque chargement
 
 Le binaire WASM de 723 ko n'etait pas garde par le cache Cloudflare, alors que le fichier `.js`

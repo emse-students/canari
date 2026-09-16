@@ -303,6 +303,54 @@ export interface LogoBand {
 }
 
 /**
+ * THE HOUR THAT SPLITS A DAY IN TWO, FOR A CELL SHOWING ONE EVENT.
+ *
+ * A square with a single event used to paint it floor to ceiling, which says nothing about WHEN.
+ * Half a cell says "morning" or "afternoon" at a glance, across a whole month, without a single
+ * digit of type - and the month sheet is read at arm's length, where the times are not legible
+ * anyway. 13:00 rather than 12:00 because a midday event reads as the morning's end here.
+ */
+export const HALF_DAY_PIVOT_HOUR = 13;
+
+/** Where one day's visible events sit in its cell. */
+export interface DaySlotLayout {
+  /** How many equal slots the cell is divided into. */
+  nSlots: number;
+  /** The slot each visible event occupies, index-aligned with the events passed in. */
+  slotOf: number[];
+  /** The slot the "+N autres" row occupies, or null when there is no overflow. */
+  overflowSlot: number | null;
+}
+
+/**
+ * How to divide a day cell, shared by the screen grid and the PDF export.
+ *
+ * ORDINARILY this is one slot per entry, stacked in order - that is what a full day looks like and
+ * it has not changed. The ONE special case is a day with exactly one event and no overflow: the
+ * cell splits in two and the event takes the half its start hour names, leaving the other half as
+ * background.
+ *
+ * It lives here, beside `fitEventText` and `splitLogoBands`, because those two are already the
+ * reason the screen and the sheet agree. A layout rule written in the component would be a rule
+ * the export does not have, and the grid exists to be printable.
+ */
+export function daySlotLayout(startHours: number[], overflowCount: number): DaySlotLayout {
+  if (startHours.length === 1 && overflowCount === 0) {
+    return {
+      nSlots: 2,
+      slotOf: [startHours[0] < HALF_DAY_PIVOT_HOUR ? 0 : 1],
+      overflowSlot: null,
+    };
+  }
+  const hasOverflow = overflowCount > 0;
+  return {
+    nSlots: startHours.length + (hasOverflow ? 1 : 0),
+    slotOf: startHours.map((_, i) => i),
+    overflowSlot: hasOverflow ? startHours.length : null,
+  };
+}
+
+/**
  * Band geometry for an `n`-owner split watermark, in percentages so it is unit-free.
  *
  * This is the single definition of the split, shared by the two surfaces that draw it: the PDF
@@ -446,10 +494,26 @@ function buildCalendarHtml(
       const nVisible = dayEvents.length > MAX_SHOW ? MAX_SHOW - 1 : dayEvents.length;
       const visible = dayEvents.slice(0, nVisible);
       const overflowCount = dayEvents.length - nVisible;
-      const nSlots = nVisible + (overflowCount > 0 ? 1 : 0);
-      const slotH = Math.floor(CELL_H / nSlots);
+      // The same rule the screen grid asks, so the sheet and the screen cannot divide a cell
+      // differently: ordinarily one slot per entry, and a lone event takes the half its start
+      // hour names.
+      const layout = daySlotLayout(
+        visible.map((ev) => new Date(ev.startsAt).getHours()),
+        overflowCount
+      );
+      const slotH = Math.floor(CELL_H / layout.nSlots);
+      const loneSlot = visible.length === 1 && overflowCount === 0 ? layout.slotOf[0] : null;
+      // An empty half, carrying the day number when it is the FIRST slot - the number belongs to
+      // slot 0, and slot 0 no longer always holds an event.
+      const blankHalf = (withDayNumber: boolean) =>
+        `<div style="height:${slotH}px;position:relative;box-sizing:border-box;">${
+          withDayNumber
+            ? `<div style="padding:5px 0 0 6px;"><span data-pdf-text style="font-size:11px;font-weight:800;color:${opts.emptyDayColor};line-height:1;">${day}</span></div>`
+            : ''
+        }</div>`;
 
       const rows = [
+        ...(loneSlot === 1 ? [blankHalf(true)] : []),
         ...visible.map((ev, idx) => {
           const bg = eventBgCss(ev);
           const fg = contrastColor(eventHexColors(ev)[0]);
@@ -485,7 +549,7 @@ function buildCalendarHtml(
 
           const sep = idx > 0 ? 'border-top:1px solid rgba(0,0,0,0.10);' : '';
 
-          if (idx === 0) {
+          if (idx === 0 && loneSlot !== 1) {
             // First slot: day number on top, title below - flex column so html2canvas sees
             // explicit heights and doesn't collapse the text area (fixes bottom:0 rendering bug).
             const availH = slotH - DAY_NUM_H;
@@ -504,6 +568,7 @@ function buildCalendarHtml(
             </div>`;
           }
         }),
+        ...(loneSlot === 0 ? [blankHalf(false)] : []),
         ...(overflowCount > 0
           ? (() => {
               return [
