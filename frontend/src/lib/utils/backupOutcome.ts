@@ -23,7 +23,7 @@ export type BackupOutcome = { ok: boolean; text: string };
  */
 export function backupErrorOutcome(e: unknown): BackupOutcome {
   if (!(e instanceof BackupError)) {
-    console.error(`[BACKUP] unclassified failure: ${e instanceof Error ? e.message : String(e)}`);
+    console.error(`[BACKUP] unclassified failure: ${String(e)}`);
     return { ok: false, text: m.profile_backup_error_unknown() };
   }
   // The detail is developer-facing and never shown: it names the offending id, count or version.
@@ -77,6 +77,6 @@ export function backupExportOutcome(): BackupOutcome {
 
 /** The sentence for an export that did not. Exports have one failure mode: it did not happen. */
 export function backupExportFailure(e: unknown): BackupOutcome {
-  console.error(`[BACKUP] export failed: ${e instanceof Error ? e.message : String(e)}`);
+  console.error(`[BACKUP] export failed: ${String(e)}`);
   return { ok: false, text: m.profile_backup_error_export() };
 }

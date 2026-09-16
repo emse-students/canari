@@ -364,9 +364,7 @@ export async function requestReAdd(groupId: string, deps: RecoveryDeps): Promise
   try {
     meta = await deps.mlsService.getGroupMeta(groupId);
   } catch (error) {
-    deps.log(
-      `[READD] ${groupId.slice(0, 8)}... getGroupMeta threw: ${error instanceof Error ? error.message : String(error)}`
-    );
+    deps.log(`[READD] ${groupId.slice(0, 8)}... getGroupMeta threw: ${String(error)}`);
   }
   deps.log(`[READD] ${groupId.slice(0, 8)}... getGroupMeta -> ${meta === null ? 'null' : 'ok'}`);
 

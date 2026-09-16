@@ -34,7 +34,7 @@ export async function mirrorGraineSeed(session: StoredGraineSession): Promise<vo
       createdAt: session.createdAt,
     });
   } catch (e) {
-    console.warn(`[GRAINE_MIRROR] store failed: ${e instanceof Error ? e.message : String(e)}`);
+    console.warn(`[GRAINE_MIRROR] store failed: ${String(e)}`);
   }
 }
 
@@ -53,7 +53,7 @@ export async function forgetGraineChannelMirror(channelId: string): Promise<void
     await invoke('forget_graine_channel', { channelId });
   } catch (e) {
     console.warn(
-      `[GRAINE_MIRROR] forget failed for channel ${channelId.slice(0, 8)}: ${e instanceof Error ? e.message : String(e)}`
+      `[GRAINE_MIRROR] forget failed for channel ${channelId.slice(0, 8)}: ${String(e)}`
     );
   }
 }
@@ -79,7 +79,7 @@ export async function forgetGraineMirroredSessions(sessionIds: readonly string[]
     await invoke('forget_graine_sessions', { sessionIds });
   } catch (e) {
     console.warn(
-      `[GRAINE_MIRROR] forget failed for ${sessionIds.length} expired session(s): ${e instanceof Error ? e.message : String(e)}`
+      `[GRAINE_MIRROR] forget failed for ${sessionIds.length} expired session(s): ${String(e)}`
     );
   }
 }

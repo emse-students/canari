@@ -170,15 +170,13 @@ async function joinDistributionGroup(
     // roster reconciliation already obeys.
     if (heldLocally) {
       log(
-        `[GRAINE] could not re-read the distribution group of ${scopeLabel(scope)} (${e instanceof Error ? e.message : String(e)}) - keeping the one this device holds`
+        `[GRAINE] could not re-read the distribution group of ${scopeLabel(scope)} (${String(e)}) - keeping the one this device holds`
       );
       await reconcileRoster(channelService, scope, log);
       await askForHistory(scope, log);
       return true;
     }
-    log(
-      `[GRAINE] could not read the distribution group of ${scopeLabel(scope)}: ${e instanceof Error ? e.message : String(e)}`
-    );
+    log(`[GRAINE] could not read the distribution group of ${scopeLabel(scope)}: ${String(e)}`);
     return false;
   }
 
@@ -462,9 +460,7 @@ async function reconcileRoster(
   try {
     await reconcileDistributionGroupRoster(channelService, scope, log);
   } catch (e) {
-    log(
-      `[GRAINE] roster reconciliation failed for ${scopeLabel(scope)}: ${e instanceof Error ? e.message : String(e)}`
-    );
+    log(`[GRAINE] roster reconciliation failed for ${scopeLabel(scope)}: ${String(e)}`);
   }
 }
 
@@ -493,8 +489,6 @@ async function askForHistory(
   try {
     await requestCommunityHistory(scope.workspaceId);
   } catch (e) {
-    log(
-      `[GRAINE] could not ask for the history of ${scopeLabel(scope)}: ${e instanceof Error ? e.message : String(e)}`
-    );
+    log(`[GRAINE] could not ask for the history of ${scopeLabel(scope)}: ${String(e)}`);
   }
 }

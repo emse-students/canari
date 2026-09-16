@@ -158,7 +158,7 @@ async function flushRepairs(): Promise<void> {
         outstanding.delete(channelId);
         console.warn(
           `[GRAINE] could not ask for missing seed(s) in channel ${channelId.slice(0, 8)}: ` +
-            (e instanceof Error ? e.message : String(e))
+            String(e)
         );
         continue;
       }
@@ -171,7 +171,7 @@ async function flushRepairs(): Promise<void> {
         // messages stay unreadable with nothing anywhere naming the reason.
         console.warn(
           `[GRAINE] could not ask for ${sessions.size} missing seed(s) in channel ${channelId.slice(0, 8)}: ` +
-            (e instanceof Error ? e.message : String(e))
+            String(e)
         );
       }
     }
@@ -246,7 +246,7 @@ async function ownDevicesOnTheGroup(scope: DistributionScope): Promise<boolean> 
   } catch (e) {
     console.warn(
       `[GRAINE] could not read our own devices on the distribution group of ${scopeLabel(scope)} ` +
-        `(${e instanceof Error ? e.message : String(e)}) - asking ourselves anyway rather than ` +
+        `(${String(e)}) - asking ourselves anyway rather than ` +
         `stranding a seed`
     );
     return true;
@@ -368,7 +368,7 @@ async function withheldFromUs(
     console.warn(
       `[GRAINE] asking for seed(s) of community ${workspaceId.slice(0, 8)} without placing our own ` +
         `history boundary: ` +
-        (e instanceof Error ? e.message : String(e))
+        String(e)
     );
     return [];
   }

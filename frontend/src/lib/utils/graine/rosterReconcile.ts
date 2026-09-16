@@ -130,7 +130,7 @@ export async function reconcileDistributionGroupRoster(
           );
   } catch (e) {
     log(
-      `[GRAINE] could not compare ${scopeLabel(scope)} with its distribution group: ${e instanceof Error ? e.message : String(e)} - nobody removed`
+      `[GRAINE] could not compare ${scopeLabel(scope)} with its distribution group: ${String(e)} - nobody removed`
     );
     return [];
   }
@@ -159,7 +159,7 @@ export async function reconcileDistributionGroupRoster(
     // epoch) is the benign case and the next pass carries it; anything else is a real failure and
     // this line is the only place it is visible.
     log(
-      `[GRAINE] could not remove ${diff.strayUserIds.length} departed member(s) from ${scopeLabel(scope)}: ${e instanceof Error ? e.message : String(e)} - they can still read it`
+      `[GRAINE] could not remove ${diff.strayUserIds.length} departed member(s) from ${scopeLabel(scope)}: ${String(e)} - they can still read it`
     );
     return [];
   }

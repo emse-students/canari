@@ -77,10 +77,7 @@ export async function dropGroupState(
     mlsService.forgetGroup(groupId, minEpoch);
     write(`[MLS] dropped local state for ${short}... (${reason}, minEpoch=${minEpoch})`);
   } catch (e) {
-    write(
-      `[MLS] dropping local state for ${short}... (${reason}) FAILED: ` +
-        (e instanceof Error ? e.message : String(e))
-    );
+    write(`[MLS] dropping local state for ${short}... (${reason}) FAILED: ` + String(e));
   }
 
   // The gap describes state this device no longer holds. Cleared even when the forget threw: on
@@ -93,10 +90,7 @@ export async function dropGroupState(
   // ONE CALL, AND THE FLAG DECIDES ONLY WHETHER IT IS AWAITED. Started before the branch so a
   // `'deferred'` drop cannot become a drop with no checkpoint at all.
   const durable = persistMlsStructuralCheckpoint({ mlsService }).catch((e: unknown) => {
-    write(
-      `[MLS] checkpoint after dropping ${short}... FAILED: ` +
-        (e instanceof Error ? e.message : String(e))
-    );
+    write(`[MLS] checkpoint after dropping ${short}... FAILED: ` + String(e));
     return false;
   });
   if (checkpoint === 'awaited') await durable;

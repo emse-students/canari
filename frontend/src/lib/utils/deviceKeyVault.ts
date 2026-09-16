@@ -141,7 +141,7 @@ export async function loadDeviceKey(): Promise<string | null> {
     console.warn(
       `[VAULT] the stored device key did not decrypt under a wrap key that IS present - clearing it; ` +
         `this device will ask for its PIN. The blob, its iv or the key has been altered since it was written: ` +
-        `${e instanceof Error ? e.message : String(e)}`
+        `${String(e)}`
     );
     clearDeviceKey();
     return null;

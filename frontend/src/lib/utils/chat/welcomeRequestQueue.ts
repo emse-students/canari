@@ -95,7 +95,7 @@ export async function serveWelcomeRequest(
   } catch (e) {
     ctx.log(
       `[WELCOME_REQ] ${groupId.slice(0, 8)}... serving ${request.requesterDeviceId.slice(0, 12)}...` +
-        ` FAILED: ${e instanceof Error ? e.message : String(e)}`
+        ` FAILED: ${String(e)}`
     );
   }
 }

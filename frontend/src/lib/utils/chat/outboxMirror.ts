@@ -91,9 +91,7 @@ export async function syncOutboxMirror(entries: OutboxEntry[]): Promise<void> {
     const { invoke } = await import('@tauri-apps/api/core');
     await invoke('store_outbox_mirror', { entries: mirror });
   } catch (e) {
-    appendLog(
-      `[OUTBOX_MIRROR] Mirror write failed (${mirror.length} entries): ${e instanceof Error ? e.message : String(e)}`
-    );
+    appendLog(`[OUTBOX_MIRROR] Mirror write failed (${mirror.length} entries): ${String(e)}`);
   }
 }
 
@@ -109,9 +107,7 @@ export async function reconcileOutboxSent(storage: IStorage): Promise<void> {
     const { invoke } = await import('@tauri-apps/api/core');
     sentIds = await invoke<string[]>('read_and_clear_outbox_sent');
   } catch (e) {
-    appendLog(
-      `[OUTBOX_MIRROR] outbox_sent read failed: ${e instanceof Error ? e.message : String(e)}`
-    );
+    appendLog(`[OUTBOX_MIRROR] outbox_sent read failed: ${String(e)}`);
     return;
   }
   if (!sentIds.length) return;
@@ -222,7 +218,7 @@ export async function adoptOrphanedMirrorEntries(
     const { invoke } = await import('@tauri-apps/api/core');
     mirror = await invoke<OutboxMirrorEntry[]>('read_outbox_mirror');
   } catch (e) {
-    appendLog(`[OUTBOX_MIRROR] Mirror read failed: ${e instanceof Error ? e.message : String(e)}`);
+    appendLog(`[OUTBOX_MIRROR] Mirror read failed: ${String(e)}`);
     return 0;
   }
   if (!mirror.length) return 0;

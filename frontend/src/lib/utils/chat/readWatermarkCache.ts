@@ -98,7 +98,7 @@ export async function consumeNativeReadWatermarks(
     const { invoke } = await import('@tauri-apps/api/core');
     entries = await invoke<NativeReadWatermark[]>('read_and_clear_read_watermarks');
   } catch (e) {
-    appendLog(`[READ_WATERMARK] Read failed: ${e instanceof Error ? e.message : String(e)}`);
+    appendLog(`[READ_WATERMARK] Read failed: ${String(e)}`);
     return 0;
   }
   if (!entries.length) return 0;

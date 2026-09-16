@@ -215,9 +215,7 @@ export async function ensureConversationForServerGroup(
     try {
       await saveConversation(key);
     } catch (e) {
-      log(
-        `[WARN] Placeholder persistence failed for ${groupId}: ${e instanceof Error ? e.message : String(e)}`
-      );
+      log(`[WARN] Placeholder persistence failed for ${groupId}: ${String(e)}`);
     }
   }
   log(`[DISCOVERY] Placeholder "${displayName}" created.`);

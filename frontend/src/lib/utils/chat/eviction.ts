@@ -172,9 +172,7 @@ export async function recordEviction(deps: RecordEvictionDeps): Promise<boolean>
     // Best-effort, and after the retire: the banner is the durable half and must not be held up by
     // a message write. A swallowed branch logs.
     await addMessageToChat?.('system', notice, key, { isSystem: true }).catch((e: unknown) =>
-      log(
-        `[EVICT] ${short}… - removal notice not posted: ${e instanceof Error ? e.message : String(e)}`
-      )
+      log(`[EVICT] ${short}… - removal notice not posted: ${String(e)}`)
     );
   }
 
@@ -246,9 +244,8 @@ export async function retractEvictionNotice(deps: {
       ?.deleteMessage(msg.id, key)
       .catch((e: unknown) =>
         log(
-          `[EVICT] ${short}… - removal notice withdrawn from the thread but not from storage: ${
-            e instanceof Error ? e.message : String(e)
-          }`
+          `[EVICT] ${short}… - removal notice withdrawn from the thread but not from storage: ` +
+            String(e)
         )
       );
   }

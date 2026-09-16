@@ -1241,9 +1241,7 @@ export async function replayConversationHistory(params: {
     };
   } catch (err) {
     // Non-blocking: log the error and continue so other conversations still load
-    log(
-      `[WARN] History replay failed for ${contactName}: ${err instanceof Error ? err.message : String(err)}`
-    );
+    log(`[WARN] History replay failed for ${contactName}: ${String(err)}`);
     return undefined;
   } finally {
     // Commit the accumulated ratchet to the live client and release the worker / mutex.
@@ -1334,7 +1332,7 @@ export async function retroactivelyResolveHexIds(
       storage.saveMessages(toSave, deviceKeyB64).catch((e: unknown) => {
         console.warn(
           `[History] could not persist ${toSave.length} message(s) whose hex ids were resolved ` +
-            `(group ${conversationId.slice(0, 8)}…): ${e instanceof Error ? e.message : String(e)} - ` +
+            `(group ${conversationId.slice(0, 8)}…): ${String(e)} - ` +
             `they will be resolved again on the next load`
         );
       });

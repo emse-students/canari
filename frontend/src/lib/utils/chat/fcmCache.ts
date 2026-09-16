@@ -110,7 +110,7 @@ export async function consumeFcmCache(
     const { invoke } = await import('@tauri-apps/api/core');
     entries = await invoke<FcmCacheEntry[]>('read_and_clear_fcm_cache');
   } catch (e) {
-    appendLog(`[FCM_CACHE] Cache read failed: ${e instanceof Error ? e.message : String(e)}`);
+    appendLog(`[FCM_CACHE] Cache read failed: ${String(e)}`);
     return NOTHING;
   }
 
@@ -161,9 +161,7 @@ export async function consumeFcmCache(
         `[FCM_CACHE] ✓ id=${entry.messageId.slice(0, 8)} group=${entry.groupId.slice(0, 8)} type=${entry.type}`
       );
     } catch (e) {
-      appendLog(
-        `[FCM_CACHE] Injection failed id=${entry.messageId.slice(0, 8)}: ${e instanceof Error ? e.message : String(e)}`
-      );
+      appendLog(`[FCM_CACHE] Injection failed id=${entry.messageId.slice(0, 8)}: ${String(e)}`);
     }
   }
 

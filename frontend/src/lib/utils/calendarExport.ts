@@ -227,9 +227,7 @@ async function fetchDataUrl(url: string | null): Promise<string | null> {
       reader.readAsDataURL(blob);
     });
   } catch (e) {
-    console.warn(
-      `[CalendarExport] Logo fetch threw for ${url}: ${e instanceof Error ? e.message : String(e)}`
-    );
+    console.warn(`[CalendarExport] Logo fetch threw for ${url}: ${String(e)}`);
     return null;
   }
 }
