@@ -225,10 +225,10 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    three commands a run owes before any of it is believed are in the campaign section below.
    PIN's four rows change a PIN or restart a browser, hence last; HEAL-NEW's rung redesign is open
    on a clean pass ([backlog](docs/wiki/backlog.md)).
-2. **P1 - 1013 KEY PACKAGES AGAINST A POOL OF FIFTY, +80 IN TWELVE MINUTES, NOTHING RECLAIMED** -
-   two production consoles, 2026-09-16, `load_or_create`'s own census line on the user's browser:
-   2.4 MB of a 7.5 MB state. Every top-up MINTS; the breakdown naming WHICH of three reclaims
-   applies now reaches the web, UNSHIPPED - one reload settles it ([backlog](docs/wiki/backlog.md)).
+2. **P1 - 1024 KEY PACKAGES AGAINST A POOL OF FIFTY, AND NONE OF THE THREE RECLAIMS TOUCHES ONE** -
+   the census landed 2026-09-16 and closed the WHICH question: `0 expired, 0 undecodable`, one
+   last-resort. So expiry, purge and supersession are all REFUTED here; what is unreclaimed is the
+   consumed one-time bundle, which nothing deletes ([backlog](docs/wiki/backlog.md)).
 3. **P1 - a PLACEHOLDER held a member's seat**; only a member's CLIENT can say whether a LEAF is
    left in the MLS tree and **NOTHING HAS** - the three identities cited here as that evidence were
    this campaign's OWN mention fixtures, named 2026-09-07 ([backlog](docs/wiki/backlog.md)).
@@ -259,8 +259,8 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
 10. **UX/RENDERING - THE ROUTE SWEEP IS DONE AND WHAT IT COULD NOT REACH IS WHAT IS LEFT**: REAL
     HARDWARE, all of it Chrome with an override; the channel list's width half closed by injection;
     server prose in English, a TREE count `serverProse.test.ts` settles ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md)).
-11. **COLD START ON `v0.18.5`, 2026-09-16: 13 s HARD-RELOADED, 3 s ON F5** - target **under 1 s**.
-    Wasm and font answer `HIT`; left are 24 uncached avatars and the MLS init behind them, mechanism NOT established. Revocation round trip REVERTED ([backlog](docs/wiki/backlog.md)).
+11. **COLD START - TARGET UNDER 1 s (user), AND NO CURRENT NUMBER: the 13 s of `v0.18.5` PREDATES
+    the Cache Rule and three boot fixes, so it may not be quoted.** Re-measure from an export ([backlog](docs/wiki/backlog.md)).
 12. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
     commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
 13. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
