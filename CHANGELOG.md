@@ -86,6 +86,26 @@ attente a recuperer.
 Six gardes de source pinent l'ordre, parce qu'une reecriture ulterieure pourrait le defaire sans
 qu'aucun test de comportement ne rougisse.
 
+### Fixed - la date d'arrivee d'un membre etait reecrite a chaque invitation qu'il envoyait
+
+`dm_group_members.joinedAt` est une colonne de CREATION, et l'ajout de membre la reecrivait a chaque
+appel (`ON CONFLICT DO UPDATE SET "joinedAt"`). Or le client reinscrit l'APPELANT avant chaque
+invitation : inviter quelqu'un avancait donc sa propre date d'arrivee. Mesure sur un groupe de
+production du 2026-09-16 : le groupe est cree a 14:17:14 et aucune de ses 31 lignes ne porte 14:17 ;
+la plus ancienne est 14:19:07, l'instant de la premiere invitation envoyee par son createur. La
+table ne pouvait plus repondre a la question pour laquelle la colonne existe.
+
+Aucun comportement n'en dependait - la colonne ne sort du service par aucune route - et c'est la
+forme exacte du cout : **une colonne n'est une preuve que pour la question qu'elle a ete ecrite pour
+repondre**, et son seul lecteur est donc un humain devant `psql`. L'un d'eux y a lu qu'un compte
+n'etait pas membre du groupe pendant les cinq premieres minutes ou il y validait des ajouts, ce qui
+n'est jamais arrive.
+
+Les deux seuls ecrivains de cette table - l'ajout de membre et l'acceptation d'un lien d'invitation -
+passent desormais par `ensureGroupMember`, qui ne dit rien en cas de conflit ; ils n'etaient pas
+d'accord, le second ignorait deja le conflit. Une reinscription ne change plus un octet, et un
+membre retire puis revenu obtient bien une nouvelle date, parce que le retrait supprime la ligne.
+
 ### Fixed - une panne reseau pouvait retirer une invitation parfaitement valide
 
 `fetchDeviceKeyPackage` renvoyait `null` pour un 404, un 500, une erreur de passerelle et un reseau

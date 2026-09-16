@@ -30,6 +30,7 @@ import {
 import { RETENTION_WINDOW_MS } from '../retention.constants';
 import { resolveUserDisplayNamesBatch } from '../utils/display-name';
 import { isBlockedBetween } from '../utils/user-blocks';
+import { ensureGroupMember } from '../utils/group-membership';
 
 /** Group membership management: add/remove members, list members, list user groups. */
 @Controller()
@@ -362,18 +363,11 @@ export class MembersController {
     });
 
     await this.dataSource.transaction(async (manager) => {
-      // Upsert GroupMember: updates joinedAt if the row already exists.
-      await manager
-        .createQueryBuilder()
-        .insert()
-        .into(GroupMember)
-        .values({
-          groupId: safeGroupId,
-          userId: safeUserId,
-          joinedAt: new Date(),
-        })
-        .orUpdate(['joinedAt'], ['groupId', 'userId'])
-        .execute();
+      // Enrol at the user level, leaving an existing enrolment untouched - the same call the
+      // invitation-link join makes, so the two writers of this table cannot disagree about what a
+      // second call means. Until 2026-09-16 this one rewrote `joinedAt` on every call, which is why
+      // no row of a 31-member production group carried that group's own creation minute.
+      await ensureGroupMember(manager, safeGroupId, safeUserId);
 
       // Upsert DeviceGroupMembership for each active device: no-op if already present.
       for (const device of userDevices) {

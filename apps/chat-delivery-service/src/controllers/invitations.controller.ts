@@ -25,6 +25,7 @@ import { KeyPackage } from '../entities/key-package.entity';
 import { QueuedMessage } from '../entities/queued-message.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { IsNull } from 'typeorm';
+import { ensureGroupMember } from '../utils/group-membership';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import {
   sanitizeIdentityValue,
@@ -167,13 +168,7 @@ export class InvitationsController {
     }
 
     // 1. User-level membership (authoritative "who belongs to the group").
-    await this.groupMemberRepo
-      .createQueryBuilder()
-      .insert()
-      .into(GroupMember)
-      .values({ groupId: group.id, userId: callerId, role: 'member' as const })
-      .orIgnore()
-      .execute();
+    await ensureGroupMember(this.groupMemberRepo.manager, group.id, callerId);
 
     // 2. Pending device memberships → fulfilled by processPendingInvitations on members.
     await this.deviceGroupRepo

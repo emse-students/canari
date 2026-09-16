@@ -40,6 +40,19 @@ export class GroupMember {
   @Column({ type: 'enum', enum: ['admin', 'member'], default: 'member' })
   role: 'admin' | 'member';
 
+  /**
+   * When this membership was CREATED, and never anything else.
+   *
+   * It is not refreshed. Both writers go through `ensureGroupMember`, which says nothing on
+   * conflict, so a second enrolment of somebody already here changes no byte of this row. A member
+   * who is removed and comes back is a NEW row, because removal hard-deletes - so "arrived again,
+   * later" is expressed, while "asked again" is not.
+   *
+   * It was refreshed until 2026-09-16, and the cost was a wrong reading rather than a wrong
+   * behaviour: nothing in the service has ever read this column, so the only reader is a person at
+   * a `psql` prompt - and one of them read an adder as having joined five minutes after committing
+   * adds, when what had happened was that inviting somebody moved the inviter's own arrival.
+   */
   @CreateDateColumn()
   joinedAt: Date;
 }
