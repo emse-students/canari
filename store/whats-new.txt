@@ -1,5 +1,7 @@
-version: 0.18.8
+version: 0.18.9
 
-Le demarrage est plus court.
+Deux corrections de demarrage.
 
-A chaque connexion, l'application refaisait un gros travail de dechiffrement et de chiffrement pour republier des cles que le serveur detenait deja. Elle ne le fait plus quand il n'y a rien de nouveau a publier, et c'est le cas ordinaire. Elle ne demande aussi la version du serveur qu'une fois par ouverture, au lieu de deux.
+A chaque rechargement, l'application ouvrait sa console sur deux lignes d'erreur reseau qui n'en etaient pas: c'est la page qui partait qui fermait sa connexion, et la nouvelle le prenait pour une coupure et programmait une reconnexion inutile. Elle reconnait maintenant le depart au bon moment.
+
+Chaque page demandait aussi a l'avance des feuilles de style qu'elle reclamait deja dans le meme document. Ces demandes en double sont retirees.
