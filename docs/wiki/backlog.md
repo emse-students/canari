@@ -832,33 +832,90 @@ one that needs a decision:
 **Do not ship part 3 without deciding which shape**, and do not lower the TTL as a compromise: a
 smaller number is the same defect at a different rate, and it would still be a claim nobody can
 honour.
-### P3 - THE FIRST TWO LINES OF A BOOT ARE STILL A DEAD SOCKET, ON A BUILD THAT SHIPPED THE REPAIR FOR EXACTLY THAT, AND NOTHING IN AN EXPORT SAYS WHICH DOCUMENT WROTE THEM (production, 2026-09-16)
+### P3 - THE TWO OPENING LINES BELONG TO THE DOCUMENT THAT IS LEAVING, AND THE GUARD WAS WATCHING AN EVENT THAT ARRIVES TOO LATE (production, 2026-09-16)
+
+The export of 17:20 settles it with no instrumentation of the socket at all, exactly as the previous
+version of this entry predicted. **It contains TWO reloads**, which is what makes it decisive:
+
+| | boot 1 | boot 2 |
+| --- | --- | --- |
+| who wrote the two lines | `app.ANnYATDE.js` - the PREVIOUS build | `app.D-YogZjL.js` - the previous document, same build |
+| stamp on them | `[17:19:59]`, the SECOND-resolution clock #742 deleted | **`+15269ms`** |
+| the next document's first line | `+923ms` | `+534ms` |
+
+`+15269ms` is `performance.now()` fifteen seconds into boot 1's life. **The lines are the outgoing
+page's, they always were, and the stamp #742 shipped is what made that readable in seconds.**
+
+**SO THE FLAG WAS FALSE, AND THE REASON IS ORDERING.** #719 has shipped since `v0.18.4`, the
+listeners are attached (nothing calls `destroy()` in the application at all), and the close still
+reached `onclose` first. `pagehide` does not fire before the socket teardown on a Firefox reload,
+which is the assumption #719 was built on and the assumption its test encoded by dispatching
+`pagehide` first - **a test that chooses the convenient order proves the guard and not the
+ordering**, which is how #719 came to look shipped and not be.
+
+**THE GUARD NOW LISTENS FOR `beforeunload` AS WELL**, the earliest point a navigation is known, with
+a test whose close arrives BEFORE `pagehide` - it fails without the change and passes with it.
+Measured on a local rig in Chrome: `beforeunload` -> `pagehide` -> `visibilitychange:hidden`, 5 ms
+apart, and **Chrome delivers no `close` event at all on a reload**, so it never had this symptom.
+
+**WHAT IS STILL OWED IS ONE READING, AND IT IS THE LAST ONE.** Firefox cannot be driven from here,
+so the ordering of ITS close against `beforeunload` is reasoned rather than measured: the teardown
+follows the decision to navigate, and `beforeunload` is that decision. One reload of a build
+carrying this change says whether those two lines are gone. If they are still there, the remaining
+reading is that Firefox closes the socket before it dispatches anything at all - at which point the
+honest conclusion is that no DOM event can discriminate, and the lines should be explained where
+they are read rather than suppressed.
+
+---
+### P2 - THE COLD START IS 1.3 s ON `0.18.8` AND 41% OF IT HAPPENS BEFORE THE APPLICATION SAYS A WORD (production, 2026-09-16)
+
+The first measurement since `v0.18.5`, from the user's own Firefox export of 17:20 on `/posts`,
+which contains two consecutive reloads. **`+<ms>` is `performance.now()` - milliseconds since THIS
+document's navigation started - so nothing below is inferred.**
+
+| milestone | boot 1 (first load of `0.18.8`) | boot 2 (reload) |
+| --- | ---: | ---: |
+| the application's first word (`[A] token->refresh`) | 923 | **534** |
+| `Initialised in WEB mode (WASM)` | 1089 | **695** |
+| `MLS state loaded from IndexedDB` | 1255 | 856 |
+| `load_or_create` returns (7 617 611 B of state) | 1482 | 1092 |
+| `MLS ready - syncing messages in background` | 1484 | **1093** |
+| **`[WS] Connected to Chat Gateway`** | 1690 | **1308** |
+
+**THE 13 s IS DEAD AND MUST NOT BE QUOTED AGAIN.** It predates the Cache Rule and three boot fixes.
+The honest number against the user's "under 1 s tout compris" is **1.3 s to a connected socket**,
+with the app initialised at 695 ms.
+
+**WHAT DOMINATES IS NOW THE PART NOTHING HAD EVER MEASURED**: 534 ms of 1308 - **41%** - elapses
+between the navigation and the first line the application writes. That block contains exactly the
+two things already filed beside this entry, and **this export cannot separate them**: the document's
+own origin round trip (the app-shell entry, 120-146 ms of it) and the fetch, parse and evaluation of
+the module graph (the boot-bundle entry). Splitting them needs
+`performance.getEntriesByType('navigation')`, which is one more reading and not a change.
+
+**THE SECOND BLOCK IS 162 ms AND HAS NO EXPLANATION YET**: between `Initialising MLS (vault device
+key path)` (856 ms) and `Loading encrypted state with device key` (1018 ms), with nothing but
+unrelated API responses landing in the gap. The decrypt of the whole 7.6 MB state that follows it
+takes only 74 ms. **Do not guess at it** - name it from a `performance.mark` or from reading the
+vault path, not from the shape of the log.
+
+**AND THE KEY-PACKAGE LEAK NOW HAS A PRICE IN BYTES.** The same boot prints its own composition:
 
 ```
-Ouverture de https://canari-emse.fr/chat
-[WS] Disconnected. Code: 1006, Reason: no reason
-[13:32:41] Connection lost. Retrying in 1s... (attempt 1)
+load_or_create: state composition - 7617618B total;
+  Tree           26x  2 575 517 B
+  MessageSecrets 26x  2 455 685 B
+  KeyPackage   1033x  2 453 307 B
+[MLS] key package census - 1033 proven (1032 one-time, 1 last-resort);
+  0 expired, 0 undecodable; 30 mint instant(s), largest batch 50
 ```
 
-On `0.18.6`. #719 shipped in `v0.18.4` precisely to remove these two lines from every reload:
-`pagehide` sets `pageIsHiding`, and `onclose` returns before warning or reconnecting when it is set.
-The logic reads correctly and the guard is on the branch these lines come from.
+**32% of everything decrypted on every boot is the unreclaimed one-time pool**, and `0 expired, 0
+undecodable` says again that none of the three reclaims applies to it. That is the P1 above; what is
+new here is that it is no longer only a count, it is a third of the state this table is timing.
 
-**SO EITHER THE FLAG WAS FALSE, OR THESE LINES ARE THE PREVIOUS DOCUMENT'S - AND THE EXPORT CANNOT
-SAY WHICH.** Firefox persists the console across a navigation, and the source column names the same
-bundle either way when no deploy happened in between. #719's own test docblock leans on that column
-to attribute the 2026-09-15 occurrence; here it cannot.
-
-**DO NOT WRITE A FIX AGAINST EITHER READING.** They want opposite work - one is a missed event on the
-LEAVING page, the other is nothing at all - and a change made against the wrong one would be
-untestable in the field, which is how #719 came to look shipped and not be.
-
-**WHAT SETTLES IT IS ALREADY ON ITS WAY.** Every console line now carries `+<ms>` since its own
-document's navigation start. A line written by the PREVIOUS document carries that document's
-lifetime - seconds or minutes - while a line written by the new one carries a handful of
-milliseconds. One export answers it with no instrumentation of the socket at all. Read the next one
-before touching `WebMlsService`.
-
+**WHAT IS OWED IS ONE EXPORT PER CHANGE, NOT A CAMPAIGN.** This table is reproducible from any
+reload, costs the user one gesture, and every line in it is attributable to a document since #742.
 ---
 ### P2 - EVERY BOOT PAYS A FULL ORIGIN ROUND TRIP FOR A DOCUMENT THAT IS THE SAME FOR EVERYBODY (measured on production 2026-09-16)
 

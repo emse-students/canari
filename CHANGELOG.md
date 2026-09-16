@@ -11,6 +11,41 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - les deux premieres lignes de chaque rechargement, et six prechargements de feuilles de style pour rien
+
+Deux corrections tirees d'un seul export de console (Firefox de l'utilisateur, 2026-09-16, `0.18.8`,
+deux rechargements consecutifs).
+
+**`[WS] Disconnected. Code: 1006` etait ecrit par la page qui S'EN VA.** #719 avait pose le garde en
+`v0.18.4` : `pagehide` leve un drapeau, et `onclose` se tait quand il est leve. Les lignes etaient
+toujours la. L'export le tranche sans instrumenter la socket : au second rechargement elles portent
+`+15269ms`, soit quinze secondes dans la vie du document PRECEDENT, alors que le nouveau document
+commence son horloge a zero juste apres. Elles ont toujours appartenu a la page sortante, et c'est
+l'horodatage a la milliseconde pose par #742 qui rend cela lisible d'un coup d'oeil.
+
+Le drapeau etait donc faux, et la raison est un ORDRE : `pagehide` n'arrive pas avant la destruction
+de la socket sur un rechargement Firefox. Le test de #719 encodait l'hypothese en declenchant
+`pagehide` en premier - **un test qui choisit l'ordre qui l'arrange prouve le garde et pas
+l'ordre**, et c'est ainsi que #719 a pu paraitre livre sans l'etre. Le garde ecoute desormais aussi
+`beforeunload`, le premier instant ou une navigation est connue, avec un test dont la fermeture
+arrive AVANT `pagehide` : il echoue sans le correctif. Mesure sur un banc local en Chrome :
+`beforeunload` -> `pagehide` -> `visibilitychange`, a 5 ms d'intervalle, et **Chrome ne delivre
+aucun `close`** sur un rechargement, donc il n'a jamais eu le symptome. Firefox ne pouvant pas etre
+pilote d'ici, un rechargement d'une build portant ce changement reste du.
+
+**Et six feuilles de style etaient prechargees par un en-tete que le meme document rend inutile.**
+SvelteKit emet les DEUX moities : le `<link rel="stylesheet">` dans la tete et un
+`rel="preload"; as="style"` dans l'en-tete `Link:` de la meme reponse. L'indice arrive donc avec la
+balise qu'il annonce et ne fait rien gagner - un preload d'en-tete paie avant le corps, ce qui
+demande des Early Hints (103) que cette infrastructure n'envoie pas. Mesure : en Chrome sur
+`/posts`, chacune des six n'a qu'UNE entree de resource-timing, `initiatorType: "link"` ; dans le
+Firefox de l'utilisateur les six sont signalees `prechargee ... non utilisee`, une fois par fichier
+et par chargement. Le predicat `preload` ne retient plus que `js` - le `modulepreload` qui fait
+decouvrir tout le graphe d'un coup reste intact, et le predicat est ecrit `type === 'js'` plutot que
+`!== 'css'` parce que la negation aurait COMMENCE a precharger polices et images, que le defaut de
+SvelteKit laissait tranquilles.
+
+
 ### Fixed - un ajout de membres s'affichait autant de fois qu'il y avait eu de rejeux
 
 Signale par l'utilisateur sur un groupe de 31 personnes (2026-09-16), photo a l'appui : « Matheo

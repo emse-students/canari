@@ -14,6 +14,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { handleError } from '$lib/server/handleError';
+import { preloadableAsset } from '$lib/server/preload';
 import { SITE } from '$lib/seo/site';
 
 // Read from the project root rather than from `import.meta.url`: under Vitest's transform that URL
@@ -92,5 +93,36 @@ describe('handleError separates a correct answer from a failure', () => {
     } as never);
 
     expect(String(warn.mock.calls[0][0])).not.toContain('\x1b[');
+  });
+});
+
+describe('a stylesheet the document already declares earns no preload header', () => {
+  /**
+   * SvelteKit emits the `<link rel="stylesheet">` and the `Link: rel=preload; as=style` header from
+   * the SAME response, so the hint arrives with the tag it hints at. Chrome records one fetch per
+   * sheet, initiated by the tag; the user's Firefox reports every one of them as an unused preload.
+   */
+  it('refuses css', () => {
+    expect(preloadableAsset({ type: 'css', path: '/_app/immutable/assets/0.heJSv4Af.css' })).toBe(
+      false
+    );
+  });
+
+  /**
+   * The one type that MUST keep its header. `rel="modulepreload"` is what lets the whole chunk graph
+   * be discovered at once rather than a level at a time.
+   */
+  it('keeps js', () => {
+    expect(preloadableAsset({ type: 'js', path: '/_app/immutable/chunks/x.js' })).toBe(true);
+  });
+
+  /**
+   * PINS THE NARROWING, NOT JUST THE EXCLUSION. SvelteKit's default is `js || css`, so fonts and
+   * assets never carried a header here; writing this predicate as `!== 'css'` would have started
+   * preloading both. These two cases are what make that a test failure rather than a surprise.
+   */
+  it('does not START preloading anything the default left alone', () => {
+    expect(preloadableAsset({ type: 'font', path: '/_app/immutable/assets/x.woff2' })).toBe(false);
+    expect(preloadableAsset({ type: 'asset', path: '/_app/immutable/assets/x.png' })).toBe(false);
   });
 });

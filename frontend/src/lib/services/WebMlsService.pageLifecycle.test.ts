@@ -9,9 +9,16 @@
  * and `Connection lost. Retrying in 1s...` are the FIRST TWO LINES of the new page's console - and
  * are attributable at all only because the source column names the PREVIOUS page's bundle.
  *
- * The three cases are the three states the page can be in when a close arrives, and the middle one
- * is the reason this is a pair of events rather than one: a bfcache restore brings the same document
- * back with a socket that really is gone, and that reconnect must happen.
+ * **THE FIRST VERSION OF THIS TEST PROVED THE GUARD AND NOT THE ORDERING, AND THAT IS WHY THE
+ * SYMPTOM SURVIVED IT.** It dispatched `pagehide` and then closed the socket, which is the one order
+ * in which the guard cannot fail. The 2026-09-16 export - taken on `0.18.8`, with this guard shipped
+ * since `v0.18.4` - still opens both of its reloads with those two lines, so the real browser
+ * delivers the close FIRST. A test may not choose the order that suits it: the case below where the
+ * close arrives before `pagehide` is the one the field actually produces.
+ *
+ * The four cases are the four states the page can be in when a close arrives. The bfcache one is the
+ * reason this is a pair of events rather than one: a restore brings the same document back with a
+ * socket that really is gone, and that reconnect must happen.
  */
 vi.mock('../workers/mlsKeyPackage.worker?worker', () => ({ default: class {} }));
 vi.mock('$lib/mls-client', async (importOriginal) => ({
@@ -82,6 +89,19 @@ describe('WebMlsService page lifecycle', () => {
     const { reconnect, socket } = await connected();
 
     window.dispatchEvent(new Event('pagehide'));
+    socket.readyState = 3;
+    socket.onclose!({ code: 1006, reason: '' });
+
+    expect(reconnect).not.toHaveBeenCalled();
+    expect(console.warn).not.toHaveBeenCalled();
+  });
+
+  it('says nothing for a close that beats pagehide, which is the order the browser uses', async () => {
+    const { reconnect, socket } = await connected();
+
+    // THE ORDER THE FIELD PRODUCES. `beforeunload` is the decision to navigate; the socket teardown
+    // follows it, and `pagehide` may not have run yet when the close lands.
+    window.dispatchEvent(new Event('beforeunload'));
     socket.readyState = 3;
     socket.onclose!({ code: 1006, reason: '' });
 
