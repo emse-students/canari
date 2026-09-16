@@ -91,12 +91,25 @@ export interface MlsKeyPackageRequest {
   };
 }
 
-/** Generated fallback key package, one-time packages, and the updated sealed state. */
+/**
+ * Generated fallback key package, one-time packages, and the updated sealed state.
+ *
+ * **THE EXPIRIES RIDE ALONGSIDE THE BUFFERS RATHER THAN INSIDE THEM**, which is why they are two
+ * fields and not one array of objects: the buffers are TRANSFERRED, since moving a pool of fifty
+ * packages plus a multi-megabyte state by copy is the cost this worker exists to avoid, and a
+ * transfer list names buffers. Index for index with `poolPackages`. Nothing on the receiving side
+ * can recover a `not_after` from the bytes - only the WASM crate parses an MLS KeyPackage - so a
+ * date dropped here is a date the delivery service never learns. See `DatedKeyPackage`.
+ */
 export interface MlsKeyPackageOk {
   type: 'generateKeyPackage:ok';
   payload: {
     fallback: ArrayBuffer;
+    /** Seconds since the epoch, for `fallback`. */
+    fallbackNotAfterSecs: number;
     poolPackages: ArrayBuffer[];
+    /** Seconds since the epoch, one per entry of `poolPackages`, in the same order. */
+    poolNotAfterSecs: number[];
     state: ArrayBuffer;
   };
 }

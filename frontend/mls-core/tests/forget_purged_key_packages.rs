@@ -36,10 +36,19 @@ fn now() -> u64 {
         .as_secs()
 }
 
+/// The payloads a purge names, projected out of what the mint returned.
+///
+/// `generate_key_packages` carries each package's `not_after` beside its bytes since 2026-09-16 -
+/// the delivery service cannot parse an MLS KeyPackage and so could not see an elapsed one. The
+/// reclaim below is about BYTES the server reported deleting, so it takes the bytes alone.
+fn payloads(minted: Vec<mls_core::DatedKeyPackage>) -> Vec<Vec<u8>> {
+    minted.into_iter().map(|d| d.public).collect()
+}
+
 #[test]
 fn what_the_server_says_it_deleted_is_what_goes() {
     let m = device("alice-forget");
-    let pool = m.generate_key_packages(10).expect("a pool of 10");
+    let pool = payloads(m.generate_key_packages(10).expect("a pool of 10"));
     m.generate_last_resort_key_package().expect("a fallback");
 
     let before = m.key_package_census_at(now()).expect("census");
@@ -70,7 +79,7 @@ fn what_the_server_says_it_deleted_is_what_goes() {
 #[test]
 fn a_package_the_server_did_not_name_is_untouched() {
     let m = device("alice-untouched");
-    let pool = m.generate_key_packages(5).expect("a pool");
+    let pool = payloads(m.generate_key_packages(5).expect("a pool"));
 
     // THIS IS THE HANDED-OUT CASE, and it is the reason the list is a parameter. A prekey a peer
     // fetched is already gone from the server, so a sweep deriving its own set from "absent
@@ -90,7 +99,7 @@ fn a_package_the_server_did_not_name_is_untouched() {
 #[test]
 fn forgetting_twice_is_not_an_error_and_is_reported_apart() {
     let m = device("alice-twice");
-    let pool = m.generate_key_packages(3).expect("a pool");
+    let pool = payloads(m.generate_key_packages(3).expect("a pool"));
 
     let first = m.forget_key_packages(&pool).expect("forget");
     assert_eq!(first.forgotten, 3);
@@ -109,7 +118,7 @@ fn forgetting_twice_is_not_an_error_and_is_reported_apart() {
 #[test]
 fn rubbish_is_counted_and_never_fatal() {
     let m = device("alice-rubbish");
-    let pool = m.generate_key_packages(2).expect("a pool");
+    let pool = payloads(m.generate_key_packages(2).expect("a pool"));
 
     let mut batch: Vec<Vec<u8>> = vec![b"not a key package at all".to_vec(), vec![0u8; 4]];
     batch.extend(pool.iter().cloned());
@@ -144,7 +153,7 @@ fn a_held_last_resort_is_offered_back_instead_of_a_fresh_mint() {
         .expect("the one just minted");
 
     assert_eq!(
-        offered, minted,
+        offered.public, minted.public,
         "republishing must offer the very package the device already holds - reuse is what the \
          LastResort extension MEANS, and it is why the delivery service can serve one package to \
          every peer that finds the pool empty"

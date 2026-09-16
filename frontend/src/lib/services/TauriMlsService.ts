@@ -11,6 +11,7 @@ import {
 } from '$lib/mls-client';
 import { mapNativeBatchDecryptResults } from '$lib/mls-client/mlsBatchDecrypt';
 import type { MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
+import type { DatedKeyPackage } from '$lib/mls-client/keyPackages';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
@@ -28,8 +29,20 @@ import { keystoreUnlockPrompt } from './biometric';
  * JSON array of integers, which is several bytes of wire per byte of state, on every connection.
  */
 interface NativeKeyPackageBatchResult {
-  fallback: number[];
-  pool_packages: number[][];
+  fallback: NativeDatedKeyPackage;
+  pool_packages: NativeDatedKeyPackage[];
+}
+
+/**
+ * One key package from the native mint, with the instant it stops being usable.
+ *
+ * The expiry crosses the boundary because nothing on this side can recover it: only the Rust crate
+ * parses an MLS KeyPackage, and the delivery service stores an opaque string. `notAfterSecs` is
+ * seconds since the epoch - see `DatedKeyPackage`, which carries the reasoning.
+ */
+interface NativeDatedKeyPackage {
+  public: number[];
+  notAfterSecs: number;
 }
 
 /**
@@ -257,110 +270,7 @@ export class TauriMlsService extends BaseMlsService {
           // The transport's keepalive, not a message. Parity with `WebMlsService`, through the one
           // predicate both clients ask - see `isHeartbeatFrame`.
           if (isHeartbeatFrame(msgType)) return;
-
-          if (isChannelEventFrame(msgType)) {
-            if (this.onChannelEvent) {
-              console.log(`[WS RCV] Triggering onChannelEvent for ${msgType}`);
-              this.onChannelEvent({ type: msgType, data: parsed.data });
-            } else {
-              console.warn(`[WS RCV] Received channel event but no onChannelEvent registered.`);
-            }
-            return;
-          }
-          if (msgType === 'typing') {
-            // Group/DM typing: normalise the flat gateway frame into the channel-event
-            // shape so the shared handler updates the typing store uniformly.
-            this.onChannelEvent?.({
-              type: 'typing',
-              data: { groupId: parsed.groupId, userId: parsed.userId, state: parsed.state },
-            });
-            return;
-          }
-          if (msgType === 'device_revoked') {
-            // Its owner deleted this device. The denylist row is the durable half and would be
-            // found at the next login anyway; this is what makes it immediate, so a device
-            // declared lost stops holding a live session the moment it is disowned. Never
-            // trusted blindly: the frame is addressed to this device by the gateway, and the
-            // handler re-checks with the server before wiping anything.
-            console.warn('[WS RCV] device_revoked - this device was deleted by its owner');
-            this.deviceRevokedCallback?.();
-            return;
-          }
-          if (msgType === 'welcome_request') {
-            const requesterUserId = (parsed.requesterUserId as string) || '';
-            const requesterDeviceId = (parsed.requesterDeviceId as string) || '';
-            const groupId = (parsed.groupId as string) || '';
-            console.log(
-              `[WS RCV] welcome_request from ${requesterUserId}:${requesterDeviceId} for group ${groupId}`
-            );
-            this.welcomeRequestCallback?.(requesterUserId, requesterDeviceId, groupId);
-            return;
-          }
-          if (msgType === 'base_refresh_request') {
-            const requesterUserId = (parsed.requesterUserId as string) || '';
-            const requesterDeviceId = (parsed.requesterDeviceId as string) || '';
-            const groupId = (parsed.groupId as string) || '';
-            console.log(
-              `[WS RCV] base_refresh_request from ${requesterUserId}:${requesterDeviceId} for group ${groupId}`
-            );
-            this.baseRefreshRequestCallback?.(requesterUserId, requesterDeviceId, groupId);
-            return;
-          }
-          if (msgType === 'history_request') {
-            const requesterUserId = (parsed.requesterUserId as string) || '';
-            const requesterDeviceId = (parsed.requesterDeviceId as string) || '';
-            const groupId = (parsed.groupId as string) || '';
-            console.log(
-              `[WS RCV] history_request from ${requesterUserId}:${requesterDeviceId} for group ${groupId}`
-            );
-            this.historyRequestCallback?.(requesterUserId, requesterDeviceId, groupId);
-            return;
-          }
-          if (msgType === 'epoch_rejected') {
-            console.warn(
-              `[WS RCV] Epoch rejected for group ${parsed.groupId} (server epoch: ${parsed.currentEpoch})`
-            );
-            if (this.onChannelEvent) {
-              this.onChannelEvent({
-                type: 'epoch_rejected',
-                data: { groupId: parsed.groupId, currentEpoch: parsed.currentEpoch },
-              });
-            }
-            return;
-          }
-          if (parsed.proto && this.messageCallback) {
-            const ciphertext = fromBase64(parsed.proto as string);
-            const ratchetTreeBytes =
-              typeof parsed.ratchetTree === 'string' && (parsed.ratchetTree as string).length > 0
-                ? fromBase64(parsed.ratchetTree as string)
-                : undefined;
-            if (ciphertext.length > 0) {
-              this.enqueueMessage(
-                {
-                  senderId: (parsed.senderId as string) || 'unknown',
-                  ciphertext,
-                  groupId: (parsed.groupId as string) || undefined,
-                  isWelcome: !!parsed.isWelcome,
-                  isCommit: !!parsed.isCommit,
-                  ratchetTreeBytes,
-                  queuedMessageId: (parsed.queuedMessageId as string) || undefined,
-                  queuedCreatedAt: parseServerTimestampMs(parsed.createdAt),
-                },
-                'live'
-              );
-            }
-          } else if (parsed.proto && !this.messageCallback) {
-            console.warn(
-              `[WS RCV] a frame carried a proto but no messageCallback is registered - the frame is DROPPED`
-            );
-          } else if (msgType) {
-            // See the same branch in `WebMlsService`: a typed frame that reached no handler is the
-            // one failure this layer cannot otherwise show, and it stayed invisible for months.
-            console.warn(
-              `[WS RCV] frame type "${msgType}" reached no handler - the server is sending ` +
-                `something this client does not route (see channelEventTypes)`
-            );
-          }
+          await this.deliverFrame(parsed, msgType);
         } catch (e) {
           console.error('[WS RCV] Failed to process WebSocket message:', e);
         }
@@ -371,6 +281,120 @@ export class TauriMlsService extends BaseMlsService {
 
     // Pending queue fetch is handled by initializeConnection() to keep
     // behavior aligned between WebMlsService and TauriMlsService.
+  }
+
+  /**
+   * Hands ONE parsed gateway frame to the handler its type names - the native half of the routing
+   * `WebMlsService` implements for the browser socket. Everything in front of it, the inbound gate
+   * included, is shared on {@link BaseMlsService}.
+   */
+  protected override async routeFrame(
+    parsed: Record<string, unknown>,
+    msgType: string
+  ): Promise<void> {
+    if (isChannelEventFrame(msgType)) {
+      if (this.onChannelEvent) {
+        console.log(`[WS RCV] Triggering onChannelEvent for ${msgType}`);
+        this.onChannelEvent({ type: msgType, data: parsed.data });
+      } else {
+        console.warn(`[WS RCV] Received channel event but no onChannelEvent registered.`);
+      }
+      return;
+    }
+    if (msgType === 'typing') {
+      // Group/DM typing: normalise the flat gateway frame into the channel-event
+      // shape so the shared handler updates the typing store uniformly.
+      this.onChannelEvent?.({
+        type: 'typing',
+        data: { groupId: parsed.groupId, userId: parsed.userId, state: parsed.state },
+      });
+      return;
+    }
+    if (msgType === 'device_revoked') {
+      // Its owner deleted this device. The denylist row is the durable half and would be
+      // found at the next login anyway; this is what makes it immediate, so a device
+      // declared lost stops holding a live session the moment it is disowned. Never
+      // trusted blindly: the frame is addressed to this device by the gateway, and the
+      // handler re-checks with the server before wiping anything.
+      console.warn('[WS RCV] device_revoked - this device was deleted by its owner');
+      this.deviceRevokedCallback?.();
+      return;
+    }
+    if (msgType === 'welcome_request') {
+      const requesterUserId = (parsed.requesterUserId as string) || '';
+      const requesterDeviceId = (parsed.requesterDeviceId as string) || '';
+      const groupId = (parsed.groupId as string) || '';
+      console.log(
+        `[WS RCV] welcome_request from ${requesterUserId}:${requesterDeviceId} for group ${groupId}`
+      );
+      this.welcomeRequestCallback?.(requesterUserId, requesterDeviceId, groupId);
+      return;
+    }
+    if (msgType === 'base_refresh_request') {
+      const requesterUserId = (parsed.requesterUserId as string) || '';
+      const requesterDeviceId = (parsed.requesterDeviceId as string) || '';
+      const groupId = (parsed.groupId as string) || '';
+      console.log(
+        `[WS RCV] base_refresh_request from ${requesterUserId}:${requesterDeviceId} for group ${groupId}`
+      );
+      this.baseRefreshRequestCallback?.(requesterUserId, requesterDeviceId, groupId);
+      return;
+    }
+    if (msgType === 'history_request') {
+      const requesterUserId = (parsed.requesterUserId as string) || '';
+      const requesterDeviceId = (parsed.requesterDeviceId as string) || '';
+      const groupId = (parsed.groupId as string) || '';
+      console.log(
+        `[WS RCV] history_request from ${requesterUserId}:${requesterDeviceId} for group ${groupId}`
+      );
+      this.historyRequestCallback?.(requesterUserId, requesterDeviceId, groupId);
+      return;
+    }
+    if (msgType === 'epoch_rejected') {
+      console.warn(
+        `[WS RCV] Epoch rejected for group ${parsed.groupId} (server epoch: ${parsed.currentEpoch})`
+      );
+      if (this.onChannelEvent) {
+        this.onChannelEvent({
+          type: 'epoch_rejected',
+          data: { groupId: parsed.groupId, currentEpoch: parsed.currentEpoch },
+        });
+      }
+      return;
+    }
+    if (parsed.proto && this.messageCallback) {
+      const ciphertext = fromBase64(parsed.proto as string);
+      const ratchetTreeBytes =
+        typeof parsed.ratchetTree === 'string' && (parsed.ratchetTree as string).length > 0
+          ? fromBase64(parsed.ratchetTree as string)
+          : undefined;
+      if (ciphertext.length > 0) {
+        this.enqueueMessage(
+          {
+            senderId: (parsed.senderId as string) || 'unknown',
+            ciphertext,
+            groupId: (parsed.groupId as string) || undefined,
+            isWelcome: !!parsed.isWelcome,
+            isCommit: !!parsed.isCommit,
+            ratchetTreeBytes,
+            queuedMessageId: (parsed.queuedMessageId as string) || undefined,
+            queuedCreatedAt: parseServerTimestampMs(parsed.createdAt),
+          },
+          'live'
+        );
+      }
+    } else if (parsed.proto && !this.messageCallback) {
+      console.warn(
+        `[WS RCV] a frame carried a proto but no messageCallback is registered - the frame is DROPPED`
+      );
+    } else if (msgType) {
+      // See the same branch in `WebMlsService`: a typed frame that reached no handler is the
+      // one failure this layer cannot otherwise show, and it stayed invisible for months.
+      console.warn(
+        `[WS RCV] frame type "${msgType}" reached no handler - the server is sending ` +
+          `something this client does not route (see channelEventTypes)`
+      );
+    }
   }
 
   /** Sends a disconnect control frame over the native WebSocket so the gateway removes the presence key immediately. */
@@ -763,7 +787,7 @@ export class TauriMlsService extends BaseMlsService {
   }
 
   /** Tauri-native `invoke` wrapper - calls `generer_key_packages_et_persister`, replenishes the OTKP pool to 50, saves state, then publishes to the delivery service. */
-  protected async generateKeyPackageImpl(deviceKeyB64: string): Promise<Uint8Array> {
+  protected async generateKeyPackageImpl(deviceKeyB64: string): Promise<DatedKeyPackage> {
     // On fresh start (no saved WASM state), old OTKPs on the server belong to
     // a previous session whose private keys are gone. Purge them so inviting
     // devices don't consume stale prekeys that would cause NoMatchingKeyPackage.
@@ -804,8 +828,12 @@ export class TauriMlsService extends BaseMlsService {
         count: needed,
       }
     );
-    const fallback = Uint8Array.from(nativeBatch.fallback);
-    const poolPackages = nativeBatch.pool_packages.map((kp) => Uint8Array.from(kp));
+    const dated = (kp: NativeDatedKeyPackage): DatedKeyPackage => ({
+      bytes: Uint8Array.from(kp.public),
+      notAfterSecs: kp.notAfterSecs,
+    });
+    const fallback = dated(nativeBatch.fallback);
+    const poolPackages = nativeBatch.pool_packages.map(dated);
 
     // Publish the static fallback KP (always refreshed on connection).
     await this.publishKeyPackage(fallback);
@@ -1000,13 +1028,14 @@ export class TauriMlsService extends BaseMlsService {
   }
 
   /** Tauri-native `invoke` wrapper - publishes this device's static fallback KeyPackage to the delivery service, including device name/OS metadata. */
-  async publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void> {
-    const base64 = toBase64(keyPackageBytes);
+  async publishKeyPackage(keyPackage: DatedKeyPackage): Promise<void> {
+    const base64 = toBase64(keyPackage.bytes);
     const storedName =
       localStorage.getItem(`device-name:${this.userId}:${this.deviceId}`) || undefined;
     const deviceAppVersion = getClientAppVersion();
     await this.delivery.registerDeviceKeyPackage({
       keyPackageBase64: base64,
+      notAfterSecs: keyPackage.notAfterSecs,
       deviceName: storedName,
       deviceOs: detectRuntimeDeviceOs('desktop'),
       deviceAppVersion,

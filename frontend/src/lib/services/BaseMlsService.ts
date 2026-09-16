@@ -29,7 +29,7 @@ import {
   resetSendRatchetLedger,
   snapshotEmitted,
 } from '$lib/mls-client/sendRatchetLedger';
-import { fingerprintKeyPackage } from '$lib/mls-client/keyPackages';
+import { fingerprintKeyPackage, type DatedKeyPackage } from '$lib/mls-client/keyPackages';
 import type {
   DeviceMembershipRow,
   HistoryRequestOutcome,
@@ -560,6 +560,17 @@ export abstract class BaseMlsService implements IMlsService {
       window.removeEventListener('online', this._onlineHandler);
       this._onlineHandler = null;
     }
+    // A HELD FRAME BELONGS TO THE CLIENT THAT WAS GOING TO READ IT, and this destroy is that
+    // client ending. Unlike the unacked work list above, nothing else can drain these: the gate
+    // reopens on the next login against a different MLS state, and the server re-delivers any
+    // payload frame that was never acknowledged. Counted rather than dropped in silence, because a
+    // non-zero number here means a login gave up between opening its socket and being ready.
+    if (this.heldFrames.length > 0) {
+      console.warn(
+        `[WS RCV] destroy with ${this.heldFrames.length} frame(s) still held - this session never became ready`
+      );
+      this.heldFrames = [];
+    }
     this.destroyPlatformResources();
   }
 
@@ -573,6 +584,104 @@ export abstract class BaseMlsService implements IMlsService {
   abstract sendDisconnect(): void;
 
   abstract sendTyping(groupId: string, isTyping: boolean): void;
+
+  // ── The inbound gate ──────────────────────────────────────────────────────
+
+  /**
+   * FRAMES THAT ARRIVED BEFORE THE CLIENT THAT CAN READ THEM, HELD IN ARRIVAL ORDER.
+   *
+   * The socket handshake and the MLS state load have no data dependency in either direction -
+   * `connect` sends a device id and a token, both of which exist before a byte of MLS state is
+   * decrypted - so the login runs them concurrently and the socket comes up at about the instant
+   * MLS becomes ready. Measured on production 2026-09-16: the handshake was 182 ms of a 1308 ms
+   * cold start, spent entirely waiting behind a state it never reads.
+   *
+   * WHAT THAT CONCURRENCY OWES IS THIS QUEUE, AND IT IS THE WHOLE COST OF THE CHANGE. A socket open
+   * before the MLS client exists can be handed a payload frame with nowhere to go, and the
+   * gateway's delivery accounting does not distinguish "handed to a client" from "handled by one" -
+   * so a dropped frame is a dropped message the server believes it delivered. The rule is the one
+   * the revocation fix states: what must be preserved is not "both finish" but **nothing is
+   * PROCESSED before the thing that can process it exists**.
+   *
+   * EVERY frame waits, not only the payload ones. A typing signal, a channel event and a
+   * `welcome_request` alike reach callbacks that the same login registers, and an unregistered
+   * callback drops its frame just as silently - so a rule per frame type would be several chances
+   * to get one wrong, for no gain over a queue whose whole lifetime is the 182 ms it recovers.
+   * Heartbeats are the single exception and they never reach here: both sockets answer
+   * {@link resetHeartbeatCounter} and test `isHeartbeatFrame` in front of this gate.
+   */
+  private heldFrames: { msg: any; frameType: string }[] = [];
+
+  /**
+   * Whether {@link routeFrame} may run. False until {@link markInboundReady}.
+   *
+   * A BOOLEAN SET BY AN EVENT, NOT A CLOCK: there is no value here that could be wrong. It never
+   * returns to false - a reconnect opens a socket for a client that already exists, and a session
+   * that ends takes the whole service with it ({@link destroy} empties the queue).
+   */
+  private inboundReady = false;
+
+  /**
+   * Hands ONE parsed gateway frame to the handler its type names. Implemented per platform because
+   * each socket parses its own transport; everything in front of it is shared.
+   *
+   * @param msg the parsed frame.
+   * @param frameType `msg.type` when it is a string, `''` for a payload frame, which carries none.
+   */
+  protected abstract routeFrame(msg: any, frameType: string): Promise<void>;
+
+  /**
+   * The gate every non-heartbeat frame passes, on both platforms: route it, or hold it.
+   *
+   * @param msg the parsed frame.
+   * @param frameType `msg.type` when it is a string, `''` for a payload frame.
+   */
+  protected async deliverFrame(msg: any, frameType: string): Promise<void> {
+    if (this.inboundReady) {
+      await this.routeFrame(msg, frameType);
+      return;
+    }
+    this.heldFrames.push({ msg, frameType });
+    console.log(
+      `[WS RCV] holding ${sanitizeForLog(frameType || 'payload')} frame until MLS is ready ` +
+        `(${this.heldFrames.length} held)`
+    );
+  }
+
+  /**
+   * Opens the inbound gate and replays everything the socket collected in front of it.
+   *
+   * CALLED ONCE PER LOGIN, by the only caller that can honestly say both preconditions hold: the
+   * MLS client is initialised AND the inbound pipeline is registered. Both are needed - a client
+   * with no `messageCallback` drains a payload frame into a `DROPPED` warning, which is the same
+   * loss by a different route.
+   *
+   * THE DRAIN IS SEQUENTIAL AND ITS CALLER AWAITS IT, for one reason: arrival order is the only
+   * order a Welcome and the Commit behind it may be processed in. Starting every replay at once
+   * would leave the MLS mutex to serialise them in whatever order the microtask queue happened to
+   * hold - which is arrival order today and need not be tomorrow.
+   *
+   * Idempotent, and silent when nothing was held, so a caller need not know whether a socket was
+   * ever open.
+   */
+  async markInboundReady(): Promise<void> {
+    if (this.inboundReady) return;
+    this.inboundReady = true;
+    const held = this.heldFrames;
+    this.heldFrames = [];
+    if (held.length === 0) return;
+    console.log(`[WS RCV] MLS ready - draining ${held.length} held frame(s) in arrival order`);
+    for (const { msg, frameType } of held) {
+      try {
+        await this.routeFrame(msg, frameType);
+      } catch (e) {
+        // PER FRAME, because the alternative is that one unroutable frame discards every frame
+        // behind it - and these are precisely the frames that arrived while this client could not
+        // answer for itself, which is the worst possible batch to lose as a group.
+        console.error('[WS RCV] Failed to process a held WebSocket message:', e);
+      }
+    }
+  }
 
   // ── Callbacks ─────────────────────────────────────────────────────────────
 
@@ -1961,7 +2070,7 @@ export abstract class BaseMlsService implements IMlsService {
    * after a reinstall, so retrying it is futile: the only way forward is to become a new device.
    * Retried exactly once - a second refusal is a server bug, not a state to keep rotating through.
    */
-  async generateKeyPackage(deviceKeyB64: string): Promise<Uint8Array> {
+  async generateKeyPackage(deviceKeyB64: string): Promise<DatedKeyPackage> {
     try {
       return await this.generateKeyPackageImpl(deviceKeyB64);
     } catch (e) {
@@ -2194,8 +2303,8 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.registerMember(groupId, userId);
   }
 
-  async publishKeyPackages(packages: Uint8Array[]): Promise<void> {
-    for (const kp of packages) this.publishedThisSession.add(fingerprintKeyPackage(kp));
+  async publishKeyPackages(packages: DatedKeyPackage[]): Promise<void> {
+    for (const kp of packages) this.publishedThisSession.add(fingerprintKeyPackage(kp.bytes));
     return this.delivery.publishKeyPackages(packages);
   }
 
@@ -2530,8 +2639,8 @@ export abstract class BaseMlsService implements IMlsService {
 
   abstract saveState(deviceKeyB64: string): Promise<Uint8Array>;
   protected abstract changeDeviceKeyImpl(newDeviceKeyB64: string): Promise<void>;
-  protected abstract generateKeyPackageImpl(deviceKeyB64: string): Promise<Uint8Array>;
-  abstract publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void>;
+  protected abstract generateKeyPackageImpl(deviceKeyB64: string): Promise<DatedKeyPackage>;
+  abstract publishKeyPackage(keyPackage: DatedKeyPackage): Promise<void>;
   abstract createGroup(groupId: string): Promise<void>;
 
   // ── One commit regime (C7-A unified: stage -> validate -> merge/clear) ──────

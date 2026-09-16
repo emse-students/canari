@@ -1,3 +1,4 @@
+import type { DatedKeyPackage } from './keyPackages';
 import type { FrameDelivery } from './frameDelivery';
 import type { IncomingDeliveryMeta } from './incomingDelivery';
 import type { MlsDecryptSession } from './mlsDecryptSession';
@@ -392,7 +393,7 @@ export interface IMlsService {
     state: Uint8Array
   ): Promise<boolean>;
   /** Generates a fresh MLS KeyPackage for this device, signed with the device-key-encrypted identity key. */
-  generateKeyPackage(deviceKeyB64: string): Promise<Uint8Array>;
+  generateKeyPackage(deviceKeyB64: string): Promise<DatedKeyPackage>;
   /**
    * Purges the published KeyPackages (static fallback + one-time pool) and republishes
    * fresh ones from the current local keystore.
@@ -495,6 +496,20 @@ export interface IMlsService {
   // Networking
   /** Opens a WebSocket connection to the chat gateway. Token is used when the cookie is not forwarded (Tauri, proxy, ITP). Falls back to internal getToken() if omitted. */
   connect(token?: string): Promise<void>;
+  /**
+   * Declares this client able to interpret an inbound frame, and replays everything the socket
+   * collected before it was.
+   *
+   * THE SOCKET IS ALLOWED TO OPEN BEFORE THE MLS STATE IS LOADED - the handshake needs a device id
+   * and a token and nothing else - so every frame that arrives in that window is HELD in arrival
+   * order rather than routed into a client that cannot decrypt it. This call is what ends the
+   * window, and the login is the only caller that can honestly make it: it is the only place that
+   * knows both the MLS client and the inbound pipeline exist. Awaiting it matters, because a
+   * Welcome and the Commit behind it may only be processed in the order they arrived.
+   *
+   * Idempotent, and silent when nothing was held.
+   */
+  markInboundReady(): Promise<void>;
   /** True when the live gateway WebSocket is open (used for reconnect watchdog). */
   isWsOpen(): boolean;
   /** Fetches all registered devices (with KeyPackages) for the given user. Throws on transport/HTTP failure; `[]` only when the user genuinely has no active device. */
@@ -519,9 +534,9 @@ export interface IMlsService {
     deviceAppVersion?: string;
   } | null>;
   /** Uploads a single KeyPackage to the server so other devices can invite this one. */
-  publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void>;
+  publishKeyPackage(keyPackage: DatedKeyPackage): Promise<void>;
   /** Bulk-upload multiple one-time prekeys to the server pool. */
-  publishKeyPackages(packages: Uint8Array[]): Promise<void>;
+  publishKeyPackages(packages: DatedKeyPackage[]): Promise<void>;
   /** Delivers a Welcome message to the target user/device via the delivery service. */
   sendWelcome(
     welcomeBytes: Uint8Array,

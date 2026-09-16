@@ -11,32 +11,32 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
-### Fixed - le depart d'un membre ne s'affichait nulle part avant sa prochaine relecture d'archive
+### Changed - 182 ms de demarrage a froid rendus : la poignee de main du socket n'attend plus un etat MLS qu'elle ne lit pas
 
-`leaveGroupAndBroadcast` diffuse une trame `memberLeft` depuis toujours, l'archive la conserve, et
-la relecture (`historySystemEvents.ts`) la rend depuis toujours - mais le gestionnaire de livraison
-EN DIRECT n'avait aucune branche pour cet evenement. Un evenement inconnu est acquitte et ignore par
-construction : rien ne rougissait nulle part. Consequence pour l'utilisateur : quelqu'un quitte un
-groupe et **personne ne voit rien**, puis la mention apparait a la relecture suivante de l'archive,
-a sa place d'origine dans le fil - c'est-a-dire comme un evenement vieux de plusieurs jours.
+Mesure sur la production le 2026-09-16, sur les 215 dernieres millisecondes d'un demarrage a froid de
+1 308 ms : `MLS ready` s'imprime a +1093 et `[WS] Connected to Chat Gateway` a +1308. Le travail
+serie entre les deux fait 33 ms ; les 182 restantes sont la poignee de main elle-meme, qui ne
+commencait qu'une fois tout l'etat MLS dechiffre. Elle n'en a pourtant besoin de rien : `connect`
+envoie un identifiant d'appareil et un jeton, tous deux connus bien avant que `load_or_create` ne
+rende la main. Les deux travaux n'ont aucune dependance de donnees l'un envers l'autre.
 
-Le commentaire de `strayLeaves.ts` justifiait meme de ne rien diffuser lui-meme *parce que* « le
-partant a deja envoye `memberLeft` et chaque membre restant l'a affiche ». Aucun ne l'avait jamais
-fait.
+La poignee de main part desormais des que `resolveDeviceId` a repondu, et le chargement de l'etat se
+fait pendant qu'elle voyage - le socket s'ouvre a peu pres a l'instant ou MLS devient pret.
 
-La branche manquante est ajoutee, et elle ecrit sous l'id que l'emetteur frappe depuis 2026-09-16 :
-la bulle du direct et celle de la relecture sont donc UNE seule ligne, pas deux.
+**Ce que cette concurrence doit payer est une file, et c'est tout le cout du changement.** Un socket
+ouvert avant l'existence du client MLS peut recevoir une trame qui n'a nulle part ou aller, et la
+comptabilite de livraison de la passerelle ne distingue pas « remise a un client » de « traitee par
+un client » : une trame perdue est donc un message perdu que le serveur croit avoir livre. Toute
+trame entrante est donc RETENUE, dans son ordre d'arrivee, jusqu'a ce que la session declare le
+client pret - puis rejouee sequentiellement, parce qu'un Welcome et le Commit derriere lui
+n'admettent qu'un seul ordre. Les battements de coeur sont la seule exception et n'atteignent jamais
+la porte.
 
-**Elle porte une verification que les autres branches n'ont pas.** `memberLeft` nomme le partant
-dans un champ de charge utile, alors que l'identite authentifiee par MLS est celle de l'emetteur :
-sans recoupement, n'importe quel membre pouvait annoncer le depart de n'importe quel autre a tout le
-groupe. Seul le partant peut annoncer son propre depart, en direct comme a la relecture - un champ
-de charge utile est une affirmation, l'emetteur MLS est un fait.
-
-Enfin, elle n'ecrit rien pour NOTRE propre depart : MLS ne renvoie jamais une trame au client qui
-l'a emise, donc une telle trame ne peut venir que d'un autre de nos appareils, lequel va de toute
-facon perdre la conversation puisque quitter desinscrit l'UTILISATEUR et que la verification
-d'appartenance retire alors la ligne partout.
+Toutes les trames attendent, pas seulement celles qui portent une charge utile : une frappe en cours,
+un evenement de canal et un `welcome_request` aboutissent a des rappels que la meme session
+enregistre, et un rappel absent perd sa trame tout aussi silencieusement. La porte vit sur
+`BaseMlsService`, donc les deux plateformes en heritent, et une session qui se termine avec des
+trames encore retenues le DIT au lieu de les jeter en silence.
 
 ### Changed - 162 ms de demarrage a froid rendus : la question « cet appareil est-il revoque ? » ne bloque plus le dechiffrement local
 
@@ -63,6 +63,61 @@ attente a recuperer.
 
 Six gardes de source pinent l'ordre, parce qu'une reecriture ulterieure pourrait le defaire sans
 qu'aucun test de comportement ne rougisse.
+
+### Fixed - un paquet de cles perime bloquait une adhesion pour toujours, et rien ne pouvait le voir
+
+La date de peremption vit A L'INTERIEUR du KeyPackage MLS serialise, et la seule chose de cet estate
+capable d'en lire un est le module WASM du client. Les deux tables du service de livraison ne
+stockaient qu'une chaine base64 opaque : aucune requete n'a jamais pu distinguer un paquet perime
+d'un paquet frais. Mesure sur la production le 2026-09-16, trois consequences, toutes vivantes :
+
+- le paquet statique de dernier recours d'un appareil etait servi 48 h apres sa peremption. Le
+  destinataire le refusait (`LifetimeError(Expired)`), l'invitation n'etait ni honoree ni
+  abandonnee, et elle recommencait a chaque lancement, indefiniment. **Deux comptes etaient dans cet
+  etat, 4 lignes de dernier recours etaient perimees** ;
+- la reserve de paquets a usage unique etait servie du plus ancien au plus recent et la ligne est
+  SUPPRIMEE en la servant : une tentative qui echoue sur un paquet perime le consomme quand meme.
+  171 lignes perimees attendaient en tete de file sur 5 appareils ;
+- le comptage de la reserve comptait les lignes perimees comme disponibles, et c'est ce nombre qui
+  decide combien de paquets le client fabrique ensuite.
+
+Le client transporte desormais la date de chaque paquet depuis openmls jusqu'au serveur (mls-core,
+mls-wasm, Tauri, le worker web et les deux implementations de service), la migration 024 ajoute la
+colonne aux deux tables, et le service ne sert plus rien de perime : il refuse avec un 404 que
+l'appelant peut traiter, au lieu d'un paquet que tout destinataire a le droit de refuser. Un
+menage quotidien recupere les paquets a usage unique perimes et NOMME les appareils dont le dernier
+recours l'est - la premiere chose ici capable de voir cet etat.
+
+Une date inconnue n'est jamais lue comme « perime » : les lignes anterieures a la migration et
+celles des clients plus anciens restent servies. Le format de publication accepte les deux formes
+pendant une version ([legacy-compatibility](docs/wiki/legacy-compatibility.md)).
+
+### Fixed - le depart d'un membre ne s'affichait nulle part avant sa prochaine relecture d'archive
+
+`leaveGroupAndBroadcast` diffuse une trame `memberLeft` depuis toujours, l'archive la conserve, et
+la relecture (`historySystemEvents.ts`) la rend depuis toujours - mais le gestionnaire de livraison
+EN DIRECT n'avait aucune branche pour cet evenement. Un evenement inconnu est acquitte et ignore par
+construction : rien ne rougissait nulle part. Consequence pour l'utilisateur : quelqu'un quitte un
+groupe et **personne ne voit rien**, puis la mention apparait a la relecture suivante de l'archive,
+a sa place d'origine dans le fil - c'est-a-dire comme un evenement vieux de plusieurs jours.
+
+Le commentaire de `strayLeaves.ts` justifiait meme de ne rien diffuser lui-meme *parce que* « le
+partant a deja envoye `memberLeft` et chaque membre restant l'a affiche ». Aucun ne l'avait jamais
+fait.
+
+La branche manquante est ajoutee, et elle ecrit sous l'id que l'emetteur frappe depuis 2026-09-16 :
+la bulle du direct et celle de la relecture sont donc UNE seule ligne, pas deux.
+
+**Elle porte une verification que les autres branches n'ont pas.** `memberLeft` nomme le partant
+dans un champ de charge utile, alors que l'identite authentifiee par MLS est celle de l'emetteur :
+sans recoupement, n'importe quel membre pouvait annoncer le depart de n'importe quel autre a tout le
+groupe. Seul le partant peut annoncer son propre depart, en direct comme a la relecture - un champ
+de charge utile est une affirmation, l'emetteur MLS est un fait.
+
+Enfin, elle n'ecrit rien pour NOTRE propre depart : MLS ne renvoie jamais une trame au client qui
+l'a emise, donc une telle trame ne peut venir que d'un autre de nos appareils, lequel va de toute
+facon perdre la conversation puisque quitter desinscrit l'UTILISATEUR et que la verification
+d'appartenance retire alors la ligne partout.
 
 ## [0.18.9] - 2026-09-16
 
@@ -111,8 +166,8 @@ requete.
 
 ### Fixed - un ajout de membres s'affichait autant de fois qu'il y avait eu de rejeux
 
-Signale par l'utilisateur sur un groupe de 31 personnes (2026-09-16), photo a l'appui : « Matheo
-BOUDIER a ajoute Esteban DELSOL, ... au groupe », quatre fois de suite, a l'identique.
+Signale par l'utilisateur sur un groupe de 31 personnes (2026-09-16), photo a l'appui : l'avis
+« <auteur> a ajoute <six personnes> au groupe », quatre fois de suite, a l'identique.
 
 **Rien n'avait ete envoye quatre fois.** Le journal de commits MLS porte UN commit pour ce lot
 (epoch 3, 14:20:34), `dm_group_members` inscrit les six personnes UNE fois (14:20:36) et l'archive

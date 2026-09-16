@@ -36,6 +36,48 @@ impl log::Log for WebLogger {
     fn flush(&self) {}
 }
 
+/// A key package about to be published, and the instant it stops being usable.
+///
+/// The JS side cannot parse an MLS KeyPackage and neither can the delivery service, so the expiry
+/// has to cross this boundary explicitly or it is lost - see `mls_core::DatedKeyPackage`, which
+/// carries the reasoning and the production measurement that made it necessary.
+///
+/// **`f64` SECONDS AND NOT A `u64`, DELIBERATELY.** wasm-bindgen marshals a Rust `u64` as a JS
+/// `BigInt`, and this crate has already paid for that once: `existing_last_resort_key_package` was
+/// declared to JS as taking a `number`, `ToBigInt` throws a `TypeError` on any Number, and for a
+/// whole release no web client published a single key package. A `BigInt` returned here would put
+/// the same trap on the way out - `JSON.stringify` refuses one outright. Seconds since the epoch
+/// are exact in an `f64` until the year 285 million, so nothing is lost by the narrower type.
+#[wasm_bindgen]
+pub struct WasmDatedKeyPackage {
+    public: Vec<u8>,
+    not_after_secs: f64,
+}
+
+#[wasm_bindgen]
+impl WasmDatedKeyPackage {
+    /// The serialized PUBLIC key package, exactly as it is published.
+    #[wasm_bindgen(getter)]
+    pub fn public(&self) -> Vec<u8> {
+        self.public.clone()
+    }
+
+    /// The instant it stops being usable, seconds since the UNIX epoch.
+    #[wasm_bindgen(getter, js_name = notAfterSecs)]
+    pub fn not_after_secs(&self) -> f64 {
+        self.not_after_secs
+    }
+}
+
+impl From<mls_core::DatedKeyPackage> for WasmDatedKeyPackage {
+    fn from(d: mls_core::DatedKeyPackage) -> Self {
+        Self {
+            public: d.public,
+            not_after_secs: d.not_after as f64,
+        }
+    }
+}
+
 static LOGGER: WebLogger = WebLogger;
 
 // Call this once from JS
@@ -269,25 +311,24 @@ impl WasmMlsClient {
     /// every peer that finds the one-time pool empty, and an ordinary KeyPackage would be consumed
     /// by the first Welcome built on it.
     #[wasm_bindgen]
-    pub fn generate_last_resort_key_package(&self) -> Result<Vec<u8>, JsValue> {
+    pub fn generate_last_resort_key_package(&self) -> Result<WasmDatedKeyPackage, JsValue> {
         log::info!("generate_last_resort_key_package");
         self.manager
             .generate_last_resort_key_package()
+            .map(WasmDatedKeyPackage::from)
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 
     #[wasm_bindgen]
-    pub fn generate_key_packages(&self, count: usize) -> Result<js_sys::Array, JsValue> {
+    pub fn generate_key_packages(&self, count: usize) -> Result<Vec<WasmDatedKeyPackage>, JsValue> {
         log::info!("generate_key_packages count={}", count);
-        let packages = self
+        Ok(self
             .manager
             .generate_key_packages(count)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
-        let arr = js_sys::Array::new();
-        for kp in packages {
-            arr.push(&js_sys::Uint8Array::from(kp.as_slice()));
-        }
-        Ok(arr)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?
+            .into_iter()
+            .map(WasmDatedKeyPackage::from)
+            .collect())
     }
 
     /// The last-resort package this device already holds and can still publish, if any.
@@ -299,9 +340,10 @@ impl WasmMlsClient {
     pub fn existing_last_resort_key_package(
         &self,
         now_secs: u64,
-    ) -> Result<Option<Vec<u8>>, JsValue> {
+    ) -> Result<Option<WasmDatedKeyPackage>, JsValue> {
         self.manager
             .existing_last_resort_key_package(now_secs)
+            .map(|d| d.map(WasmDatedKeyPackage::from))
             .map_err(|e| JsValue::from_str(&e.to_string()))
     }
 

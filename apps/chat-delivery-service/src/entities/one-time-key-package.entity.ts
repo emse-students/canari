@@ -28,4 +28,20 @@ export class OneTimeKeyPackage {
 
   @CreateDateColumn()
   createdAt: Date;
+
+  /**
+   * When this package stops being usable, from its own MLS `Lifetime`, reported by the client that
+   * minted it.
+   *
+   * **THE SERVER CANNOT WORK IT OUT, AND THAT IS THE WHOLE REASON THE COLUMN EXISTS.** `keyPackage`
+   * is an opaque base64 blob here; parsing an MLS KeyPackage needs the client's WASM crate. Without
+   * this, `resolveKeyPackagePayloadForDevice` handed out elapsed packages - and it DELETES a row as
+   * it serves it, so a failed join consumed the package anyway.
+   *
+   * Nullable only for the rows that predate migration 024, which backfills them from
+   * `createdAt + 84 days` - exact for this table, whose rows are inserted once and never updated.
+   */
+  @Index()
+  @Column({ type: 'timestamptz', nullable: true })
+  notAfter: Date | null;
 }

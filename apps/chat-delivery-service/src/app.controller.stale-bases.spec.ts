@@ -6,6 +6,7 @@ import { Logger } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { QueuedMessage } from './entities/queued-message.entity';
 import { KeyPackage } from './entities/key-package.entity';
+import { OneTimeKeyPackage } from './entities/one-time-key-package.entity';
 import { Group } from './entities/group.entity';
 import { GroupMember } from './entities/group-member.entity';
 import { DeviceGroupMembership } from './entities/device-group-membership.entity';
@@ -103,6 +104,7 @@ describe('AppController - reportStaleExternalJoinBases', () => {
       providers: [
         { provide: getRepositoryToken(QueuedMessage), useValue: emptyRepo() },
         { provide: getRepositoryToken(KeyPackage), useValue: emptyRepo() },
+        { provide: getRepositoryToken(OneTimeKeyPackage), useValue: emptyRepo() },
         { provide: getRepositoryToken(Group), useValue: emptyRepo() },
         { provide: getRepositoryToken(GroupMember), useValue: emptyRepo() },
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: deviceGroupRepo },

@@ -42,7 +42,9 @@ const CONVO = 'conversation-key';
 /** Exactly what `serializeForBundle` puts on the wire for a notice: a sender, and no flag. */
 const BUNDLE_NOTICE = {
   senderId: 'system',
-  content: 'Mathéo BOUDIER a ajouté Esteban DELSOL au groupe',
+  // A FIXTURE, AND IT NAMES NOBODY. This repository is PUBLIC; the assertion is about a notice's
+  // shape on the wire - a sender and no flag - and a real member's name proves none of it.
+  content: 'Camille MARTIN a ajouté Alex DURAND au groupe',
   messageId: 'notice-1',
   timestamp: new Date('2026-09-16T14:20:37Z'),
 };

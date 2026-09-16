@@ -226,9 +226,9 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    PIN's four rows change a PIN or restart a browser, hence last; HEAL-NEW's rung redesign is open
    on a clean pass ([backlog](docs/wiki/backlog.md)).
 2. **P1 - LOCALLY 1024 KEY PACKAGES AGAINST A POOL OF FIFTY THAT NO RECLAIM TOUCHES; ON THE PEER
-   SIDE AN EXPIRED LAST-RESORT BLOCKS A JOIN FOR EVER.** The census refutes all three reclaims here
-   (`0 expired`); the estate count of 2026-09-16 finds 4 aged last-resort rows, **2 with a join
-   stuck on them**, and no `not_after` column anywhere to see them ([backlog](docs/wiki/backlog.md)).
+   SIDE THE SERVER NOW REFUSES AN EXPIRED PACKAGE AND THE ADDER STILL RETRIES FOR EVER.** All three
+   reclaims here are refuted (`0 expired`); `notAfter` ships, a termination rule is owed on the
+   adding side ([backlog](docs/wiki/backlog.md)).
 3. **P1 - a PLACEHOLDER held a member's seat**; only a member's CLIENT can say whether a LEAF is
    left in the MLS tree and **NOTHING HAS** - the three identities cited here as that evidence were
    this campaign's OWN mention fixtures, named 2026-09-07 ([backlog](docs/wiki/backlog.md)).
@@ -258,8 +258,8 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
     HARDWARE, all of it Chrome with an override; the channel list's width half closed by injection;
     server prose in English, a TREE count `serverProse.test.ts` settles ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md)).
 11. **COLD START - 1.3 s TO A CONNECTED SOCKET ON `0.18.8`, TARGET UNDER 1 s (user); the 13 s of
-    `v0.18.5` is DEAD and may not be quoted.** 41% precedes the app's first word, and the last
-    182 ms is a handshake queued behind a state it never reads ([backlog](docs/wiki/backlog.md)).
+    `v0.18.5` is DEAD, unquotable.** 41% precedes the first word; the handshake's 182 ms and the
+    revocation's 162 are fixed but **UNMEASURED TOGETHER - ONE RELOAD EXPORT** ([backlog](docs/wiki/backlog.md)).
 12. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
     commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
 13. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract

@@ -86,6 +86,8 @@ Everything that touches the device key, the PIN, `mls.bin` or an unlock path is 
 - **A WIPE MUST NOT BE REFUSABLE BY WHOEVER IS HOLDING THE DEVICE.** The revocation wipe called `BiometricService.disable()`, whose whole contract is a prompt that can be cancelled - right for a Settings toggle, backwards for a device its owner declared lost, because the person at the sensor may be whoever took it. And check what the step actually DELETES: that one passed no alias, so `deleteKeyBytes` was never called and "the biometric key" cleared two flags. [auth](frontend/modules/auth.md#erasing-a-revoked-device-and-the-125-s-that-undid-it)
 - **A TOTAL WIPE'S ALLOWLIST IS OF WHAT SURVIVES, AND ITS DEFAULT IS DELETE.** The general rule that a destructive control needs an allowlist of what it MAY touch inverts here: `clear_app_data` named what it deleted - `extension() == "db"` - so every file added to the app data directory after it was written survived unmentioned, and a revoked phone kept `graine_seeds.json`, `channel_keys.json`, `pending_push_secret.txt`, the key-alias index and six cached faces. Nothing reports this: the wipe logs success, and only reading the disk disagrees. Name the framework's directories and delete the rest. [auth](frontend/modules/auth.md#erasing-a-revoked-device-and-the-125-s-that-undid-it)
 - **A DEVICE WITH TWO STORES IS WIPED BY TWO OWNERS, AND EACH MUST NAME THE OTHER'S TERRITORY.** The native sweep must not touch `app_webview` (the engine is reading out of it - that is the `SIG: 9` above) and the WebView sweep cannot see `mls.bin`. Neither half is a fallback for the other and neither may be widened into the other's: the two constants that draw the border, `KEPT_AT_TOP_LEVEL` in `commands/storage.rs` and `OUR_NATIVE` in the harness's `phone.mjs`, are written facing each other on purpose. [auth](frontend/modules/auth.md#erasing-a-revoked-device-and-the-125-s-that-undid-it)
+- **TWO JOBS WITH NO DATA DEPENDENCY MAY OVERLAP, AND WHAT MUST BE PRESERVED IS NEVER "BOTH FINISH" BUT "NOTHING IS PROCESSED BEFORE THE THING THAT CAN PROCESS IT EXISTS".** Measured twice on the same production boot, 2026-09-16: `/api/mls/devices/.../revoked` waited 162 ms in front of a decrypt that reads only local bytes, and the gateway handshake waited 182 ms behind a `load_or_create` whose output it never reads. Both are now started early and READ late. **`Promise.all` satisfies neither**, and that is the whole distinction: it makes the ordering a coincidence of timing rather than a property, so the barrier survives exactly until one of the two gets faster. Hold the promise and read it at the line where the answer first matters - which for the revocation is before anything acts on the session, and for the socket is before a single frame is routed. **The cost is always the same and it is always the real work:** an early start can produce results the late reader is not ready for, so they are QUEUED, in arrival order, and replayed by the event that makes the reader ready - `markInboundReady`, never a timer. A held frame with nowhere to go is a message the gateway believes it delivered, and the alternative to the queue is not "a bit of latency", it is a silent loss on both ends. The order that results is invisible to every behavioural test, so it is pinned by SOURCE guards. [auth](frontend/modules/auth.md#and-since-2026-09-16-the-handshake-starts-before-the-phases-do)
+
 - **A QUESTION WHOSE ANSWER DESTROYS SOMETHING TAKES ITS SUBJECT AS AN ARGUMENT, NEVER FROM AMBIENT STATE.** `isDeviceRevoked()` read fields that are `unknown`/`pending` until `init()` runs, so asking before init would answer "not revoked" for a reason having nothing to do with revocation - a wrong answer no caller could see was wrong. [auth](frontend/modules/auth.md#pin-and-device-key)
 
 ## Community channels -> [chat](frontend/modules/chat.md), [social-service](services/social-service.md)
@@ -874,6 +876,33 @@ The link-preview pipeline, the SSRF guard, the favicon cascade and the undici se
 - **A GUARD THAT STOPS FAILING OPEN STARTS REPORTING WHAT WAS ALWAYS BROKEN** - and it looks like a regression on the day it lands. Read the new failure as the measurement it is, and expect it to name a second fault under the first. [api-surface](protocols/api-surface.md#internal-cross-service-calls)
 
 ## Contracts the compiler does not check
+
+### A MEASUREMENT TAKEN FROM PRODUCTION NAMES ROLES AND COUNTS, NEVER PEOPLE - THIS REPOSITORY IS PUBLIC
+
+`emse-students/canari` is world-readable, and a production investigation reads production data: a
+`docker logs` of the delivery service, a `SELECT` against `dm_group_members`, a screenshot the user
+sent. Every one of those carries the names of real students, and the write-up is where they escape.
+
+**It has already happened.** A 2026-09-16 investigation into a duplicated group notice wrote seven
+students' full names into `backlog.md` beside a count of how many history requests each of their
+devices made, one more name into a `CHANGELOG.md` entry, one into a database timestamp, and two into
+a test fixture. Not one of those names was load-bearing: the finding was a DISTRIBUTION (8/7/6/5/5/4/1
+over seven devices, no single device dominating), and the distribution says everything the
+measurement needed. The names were simply what the log happened to print.
+
+**THE RULE IS THEREFORE MECHANICAL, WHICH IS THE ONLY KIND THAT SURVIVES A LONG SESSION.** A
+production observation enters the repository as counts, dates, durations, route shapes, opaque ids
+and ROLES - "the adder", "the requesting device", "seven devices" - and an identity is REWRITTEN at
+the moment the paragraph is drafted, never "cleaned up later". Two corollaries with teeth:
+
+- **A test fixture is repository text.** A name copied out of a screenshot into a `content:` string
+  proves nothing a made-up one does not, and it ships to every reader of the repo for ever.
+- **`git` does not forget.** A name removed today stays in the history, so the removal limits the
+  damage and does not undo it. That asymmetry is the entire argument for rewriting at drafting time:
+  there is no second chance, only a smaller first one.
+
+An opaque uuid is not an identity and may be written down - it is how a later session finds the same
+group again. A `name` column, a display name and a screenshot caption are identities and may not.
 
 ### AN OPEN ITEM WHOSE SUBSTANCE HAS NEVER BEEN IN THE REPOSITORY IS NOT AN OPEN ITEM
 

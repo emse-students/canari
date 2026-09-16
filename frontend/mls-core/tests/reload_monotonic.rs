@@ -124,7 +124,11 @@ fn a_snapshot_predating_a_mint_passes_the_epoch_guard_while_losing_every_minted_
     // the packages the device published, so every one of them reads as a server orphan.
     let unrecognised = published
         .iter()
-        .filter(|kp| !candidate.key_package_has_private(kp).unwrap_or(false))
+        .filter(|kp| {
+            !candidate
+                .key_package_has_private(&kp.public)
+                .unwrap_or(false)
+        })
         .count();
     assert_eq!(
         unrecognised, 50,
@@ -198,7 +202,11 @@ fn a_same_count_substitution_is_invisible_to_a_count_and_named_by_the_key_set() 
     // the reloaded manager cannot back what was minted after the snapshot, and can back what it kept.
     let unrecognised_new = second_batch
         .iter()
-        .filter(|kp| !candidate.key_package_has_private(kp).unwrap_or(false))
+        .filter(|kp| {
+            !candidate
+                .key_package_has_private(&kp.public)
+                .unwrap_or(false)
+        })
         .count();
     assert_eq!(
         unrecognised_new, 6,
@@ -206,7 +214,11 @@ fn a_same_count_substitution_is_invisible_to_a_count_and_named_by_the_key_set() 
     );
     let unrecognised_old = first_batch
         .iter()
-        .filter(|kp| !candidate.key_package_has_private(kp).unwrap_or(false))
+        .filter(|kp| {
+            !candidate
+                .key_package_has_private(&kp.public)
+                .unwrap_or(false)
+        })
         .count();
     assert_eq!(
         unrecognised_old, 0,

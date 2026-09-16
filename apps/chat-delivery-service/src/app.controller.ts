@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, LessThan, MoreThanOrEqual } from 'typeorm';
 import { QueuedMessage } from './entities/queued-message.entity';
 import { KeyPackage } from './entities/key-package.entity';
+import { OneTimeKeyPackage } from './entities/one-time-key-package.entity';
 import { Group } from './entities/group.entity';
 import { GroupMember } from './entities/group-member.entity';
 import { DeviceGroupMembership } from './entities/device-group-membership.entity';
@@ -50,6 +51,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
   private cleanupStalePushTokensInterval: ReturnType<typeof setInterval>;
   private cleanupStalePendingInvitationsInterval: ReturnType<typeof setInterval>;
   private cleanupExpiredRevocationsInterval: ReturnType<typeof setInterval>;
+  private reclaimExpiredKeyPackagesInterval: ReturnType<typeof setInterval>;
   private reportQueueDepthInterval: ReturnType<typeof setInterval>;
   private reportStrandedMembershipsInterval: ReturnType<typeof setInterval>;
   private reportStaleBasesInterval: ReturnType<typeof setInterval>;
@@ -79,6 +81,8 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     private queuedMessageRepo: Repository<QueuedMessage>,
     @InjectRepository(KeyPackage)
     private keyPackageRepo: Repository<KeyPackage>,
+    @InjectRepository(OneTimeKeyPackage)
+    private oneTimeKeyPackageRepo: Repository<OneTimeKeyPackage>,
     @InjectRepository(Group) private groupRepo: Repository<Group>,
     @InjectRepository(GroupMember)
     private groupMemberRepo: Repository<GroupMember>,
@@ -193,6 +197,14 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       );
     }, 24 * ONE_HOUR);
 
+    // Reclaim one-time key packages past their own MLS lifetime, and REPORT the last-resort rows
+    // past theirs - see reclaimExpiredKeyPackages for why one is deleted and the other cannot be.
+    this.reclaimExpiredKeyPackagesInterval = setInterval(() => {
+      void this.reclaimExpiredKeyPackages().catch((e) =>
+        this.logger.error('[CRON] reclaimExpiredKeyPackages failed', e)
+      );
+    }, 24 * ONE_HOUR);
+
     // Observe the undelivered queue. Purely a report: it deletes nothing, and it exists because
     // a single device silently accumulated 29 499 frames (39 MB) in five hours on production and
     // nothing said so - the shape was only found by hand, a day later.
@@ -265,6 +277,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
       ['cleanupStalePushTokens', () => this.cleanupStalePushTokens()],
       ['cleanupStalePendingInvitations', () => this.cleanupStalePendingInvitations()],
       ['cleanupExpiredRevocations', () => this.cleanupExpiredRevocations()],
+      ['reclaimExpiredKeyPackages', () => this.reclaimExpiredKeyPackages()],
       ['pruneExpiredCommitLog', () => this.messagingService.pruneExpiredCommitLog()],
       // Last on purpose: they report the estate as the GC leaves it, not as it found it -
       // `cleanupStalePendingInvitations` above is the job that deletes what the second one reads.
@@ -319,6 +332,7 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     clearInterval(this.cleanupStalePushTokensInterval);
     clearInterval(this.cleanupStalePendingInvitationsInterval);
     clearInterval(this.cleanupExpiredRevocationsInterval);
+    clearInterval(this.reclaimExpiredKeyPackagesInterval);
     clearInterval(this.reportQueueDepthInterval);
     clearInterval(this.reportStrandedMembershipsInterval);
     clearInterval(this.reportStaleBasesInterval);
@@ -1045,6 +1059,63 @@ export class AppController implements OnModuleInit, OnModuleDestroy {
     if (result.affected && result.affected > 0) {
       this.logger.log(
         `[CRON] cleanupExpiredRevocations: deleted ${result.affected} revocation(s) past their window`
+      );
+    }
+  }
+
+  /**
+   * Reclaims one-time key packages past their own lifetime, and reports the last-resort rows past
+   * theirs.
+   *
+   * **THE TWO HALVES ARE NOT SYMMETRIC, AND THAT IS THE WHOLE JOB.** A one-time package is spent by
+   * the first Welcome built on it, so a row still sitting in the pool was never handed out and
+   * nothing holds a private half waiting for it; past its `notAfter` every joiner would refuse the
+   * Welcome anyway, so deleting it costs nobody a join. The device's own keystore drops the private
+   * bundle by the same expiry (`prune_key_packages_expired_at`), so the two ends agree without
+   * having to talk.
+   *
+   * The static last-resort row cannot be deleted for the same reason it exists: it is what
+   * `resolveKeyPackagePayloadForDevice` falls back on, and removing it would make the device
+   * uninvitable rather than merely unjoinable - `getUserDevices` reads this table. Only the device
+   * itself can repair the state, by minting a fresh package and re-registering, which it does on
+   * its next connection. So this half is a REPORT, and it is the first thing in this estate able to
+   * SEE the condition at all: on 2026-09-16, 4 rows were aged and 2 accounts had a join stuck on
+   * one, found by a hand query nobody would have thought to run.
+   */
+  private async reclaimExpiredKeyPackages() {
+    const reclaimed = await this.oneTimeKeyPackageRepo
+      .createQueryBuilder()
+      .delete()
+      .where('"notAfter" IS NOT NULL AND "notAfter" <= now()')
+      .execute();
+    if (reclaimed.affected && reclaimed.affected > 0) {
+      this.logger.log(
+        `[CRON] reclaimExpiredKeyPackages: deleted ${reclaimed.affected} one-time package(s) past their lifetime`
+      );
+    }
+
+    const staleFallbacks = await this.keyPackageRepo
+      .createQueryBuilder('kp')
+      .select('kp.userId', 'userId')
+      .addSelect('kp.deviceId', 'deviceId')
+      .addSelect('kp.notAfter', 'notAfter')
+      .where('kp."notAfter" IS NOT NULL AND kp."notAfter" <= now()')
+      .orderBy('kp."notAfter"', 'ASC')
+      .limit(20)
+      .getRawMany<{ userId: string; deviceId: string; notAfter: Date }>();
+    if (staleFallbacks.length > 0) {
+      // NAMED, not counted: the repair is per device and a total tells nobody which one to look at.
+      // The cap is what keeps a bad day from being a log flood; the count above it says how bad.
+      const total = await this.keyPackageRepo
+        .createQueryBuilder('kp')
+        .where('kp."notAfter" IS NOT NULL AND kp."notAfter" <= now()')
+        .getCount();
+      this.logger.warn(
+        `[CRON] reclaimExpiredKeyPackages: ${total} device(s) hold an EXPIRED last-resort package - ` +
+          'every join addressed to one is refused until its owner reconnects and republishes. ' +
+          staleFallbacks
+            .map((r) => `${r.userId}/${r.deviceId}@${new Date(r.notAfter).toISOString()}`)
+            .join(' ')
       );
     }
   }

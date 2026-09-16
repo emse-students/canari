@@ -960,7 +960,7 @@ new here is that it is no longer only a count, it is a third of the state this t
 **WHAT IS OWED IS ONE EXPORT PER CHANGE, NOT A CAMPAIGN.** This table is reproducible from any
 reload, costs the user one gesture, and every line in it is attributable to a document since #742.
 
-#### The LAST block is 215 ms, and 182 of it is a handshake queued behind a state it never reads
+#### The LAST block was 215 ms, and the 182 of handshake in it are SHIPPED - what is left is the 33
 
 The same export, second boot, read line by line between `MLS ready` (+1093) and
 `[WS] Connected to Chat Gateway` (+1308):
@@ -968,33 +968,32 @@ The same export, second boot, read line by line between `MLS ready` (+1093) and
 | +ms | line |
 | ---: | --- |
 | 1093 | `[INIT] MLS ready - syncing messages in background.` |
-| 1108 | `[MLS] key package census - 1033 proven` (15 ms, and it is IN FRONT of the badge - see the corrected comment on the call site) |
+| 1108 | `[MLS] key package census - 1033 proven` (15 ms, and it is IN FRONT of the badge) |
 | 1108 | session/device binding, push service, three API calls fired |
 | 1120 | `[TAB] Leadership acquired (Web Locks).` -> `Connecting to Gateway...` |
 | 1126 | `[WS] Opening connection -> wss://.../api/ws?device_id=...` |
 | **1308** | **connected** |
 
-**SO THE SERIAL PART IS 33 ms AND THE HANDSHAKE IS 182.** Nothing between 1093 and 1126 is slow;
-what costs is that the handshake does not START until the whole MLS state is loaded. And it does not
-need it: `WebMlsService.connect` sends `device_id` and a token, both of which exist long before
-`load_or_create` returns - `resolveDeviceId` answers ahead of `init()`, which is exactly what the
-revocation fix above already relies on. The 236 ms that `load_or_create` spends (856 -> 1092) and the
-182 ms of the handshake have no data dependency in either direction, and running them concurrently
-would put the socket up at about the instant MLS becomes ready: **~200 ms of 1308, 15%.**
+**THE 182 ms OF HANDSHAKE ARE DONE** (unshipped as of this writing, merged on `main`). It never
+needed the state it was queued behind: `connect` sends a device id and a token, both of which
+`resolveDeviceId` answers before `init()`. The login now starts the handshake there and awaits it
+200 ms lower down; tab leadership moved up with it, because leadership is what decides whether to
+open a socket at all. What the concurrency owes is `BaseMlsService`'s inbound gate - every frame
+held in arrival order until `markInboundReady`, then replayed sequentially - because the gateway's
+delivery accounting cannot tell "handed to a client" from "handled by one", so an early frame with
+nowhere to go is a message lost on both ends. Six source guards in `offlineUnlock.test.ts` pin the
+order, which is the half a behavioural test cannot see.
 
-**WHAT MAKES IT A WORK PACKAGE RATHER THAN AN EDIT IS WHAT ARRIVES ON AN EARLY SOCKET.**
-`this.ws.onmessage` routes a payload frame straight into the MLS client. Opening the socket before
-that client can decrypt means a frame can arrive with nowhere to go, and the gateway's delivery
-accounting does not distinguish "handed to a client" from "handled by one". So the change is: open
-the socket as early as the device id allows, and **hold inbound payload frames in a queue until MLS
-is ready**, draining in arrival order. Control frames (typing, channel events, heartbeats) need no
-queue - they read no MLS state.
+**WHAT IS LEFT HERE IS THE 33 ms OF SERIAL WORK, AND IT IS NOT WORTH MACHINERY.** 15 ms of it is the
+key-package census, kept deliberately: 1% of the boot does not justify rescheduling, and a claim
+nobody re-measured costs more than 15 ms is worth saving.
 
-**THE ORDER MATTERS AND IT IS THE SAME ARGUMENT AS THE REVOCATION FIX:** what must be preserved is
-not "both finish" but "nothing is PROCESSED before the thing that can process it exists". A queue
-with a drain is that; a socket opened early with no queue is a dropped message.
+**AND THE MEASUREMENT IS OWED AGAIN.** The table above is `0.18.8`. Nothing here has been re-read on
+a build carrying either this change or the 162 ms revocation change, and the arithmetic
+(1308 - 182 - 162 = 964) is a PREDICTION, not a result - the two savings may overlap, since both
+were waiting on the network. **One reload export on the shipped build settles it**, and until it
+exists no line anywhere may quote a cold start under a second as measured.
 
-**AND IT IS MEASURABLE THE SAME WAY IT WAS FOUND** - one reload export, the same two milestones.
 ---
 ### P2 - EVERY BOOT PAYS A FULL ORIGIN ROUND TRIP FOR A DOCUMENT THAT IS THE SAME FOR EVERYBODY (measured on production 2026-09-16)
 
@@ -7049,7 +7048,7 @@ state, a `reloadClientFromState` that decrypted it a second time, and three encr
 the emulator never accumulates one; only a phone that has lived through a campaign shows it. It
 belongs with the other three iOS/Android defects that no green build could have caught.
 
-### P1 - A DEVICE WHOSE ONE-TIME POOL RAN OUT IS OFFERED A LAST-RESORT PACKAGE THAT HAS EXPIRED, AND NOTHING WILL EVER REPLACE IT (production, measured 2026-09-16)
+### P1 - THE SERVER CAN SEE AN EXPIRED KEY PACKAGE NOW AND REFUSES TO SERVE ONE; WHAT IS LEFT IS AN ADDER THAT STILL RETRIES FOR EVER (production, measured 2026-09-16)
 
 Both reloads of the 17:20 export end a pending invitation the same way, 4 536 ms and 5 016 ms in:
 
@@ -7092,51 +7091,45 @@ satisfied and never abandoned, and it costs four requests and a crypto round eve
 below is real in the code but is biting nobody today; what is biting is the expired last-resort, and
 two joins are stuck on it right now.
 
-#### The second defect, latent: the pool is served OLDEST-FIRST, which is nearest-to-expiry first
+**AND THE LAST-RESORT COUNT IS A LOWER BOUND, MEASURED WITH THE INSTRUMENT IT WAS MEASURING.** Both
+`aged` rows above were found by `createdAt` because nothing else existed to ask - and `createdAt` is
+exactly the column that does not answer this question for `key_package`: `registerDevice` resets it
+on every re-registration while the client REPUBLISHES the package it already holds, so a row can
+carry today's date and a package that elapsed last week. The 4 are the ones whose row was not
+refreshed. The true number is knowable only once enough devices have reported a real `notAfter`,
+which is what the daily report exists to say.
 
-`resolveKeyPackagePayloadForDevice` (`devices.controller.ts:143-163`) takes the pool
-`ORDER BY otkp.createdAt ASC LIMIT 1` and `DELETE`s the row before returning it. So an attempt that
-fails on an expired package still **consumes and destroys** it: with 34 aged rows in front of a
-valid one, the valid one is reached on the 34th boot, not the first. Zero devices are in that state
-today; five are one pending invitation away from it.
+#### THE SERVER HALF IS WRITTEN AND THE DIAGNOSIS ABOVE IS WHAT IT WAS WRITTEN FROM
 
-#### Both have the same root cause: the expiry is a fact the server never learns
+Both tables carry a `notAfter` the client now writes, migration `024_key_package_not_after.sql`
+backfills the one-time table exactly (`createdAt + 84 days`, sound there and only there - the static
+row's `createdAt` is reset on every re-registration while the held package is REPUBLISHED, so the
+same derivation would certify an elapsed package as valid). The resolver skips what has elapsed and
+orders by expiry rather than by age, the count answers about packages that can be used, and a daily
+job reclaims the one-time rows and NAMES the devices whose last-resort is dead. The second defect
+this entry used to list - a pool served oldest-first, each failed attempt consuming the row it
+failed on - is closed by the same ordering change. See `CHANGELOG.md` and
+[legacy-compatibility](legacy-compatibility.md) for the one-release union in the publish shape.
 
-`OneTimeKeyPackage` stores `id`, `userId`, `deviceId`, `keyPackage` (opaque base64) and `createdAt`
-- **there is no `not_after` column**, and `key_package` has none either. So no query can filter on
-expiry, `getPrekeyCount` counts expired rows as available (which is what the replenish decision
-reads), and neither the purge nor the prune endpoint can target them. The lifetime lives inside the
-blob and the only thing in this estate that parses an MLS KeyPackage is the client. **NEVER LEARN BY
-FAILING WHAT A FACT COULD HAVE TOLD YOU** - this is that rule, on the join path. Above, `createdAt`
-had to stand in for `not_after`, which is the same gap showing up in the measurement itself.
+#### WHAT IS LEFT IS THE ADDER, AND IT IS A PRODUCT DECISION THIS ENTRY DOES NOT GET TO MAKE
 
-**THE FIX IS TO CARRY THE DISCRIMINATOR TO WHERE THE DECISION IS MADE.** The client knows
-`not_after` when it mints the package; `POST mls/register-device/prekeys` and the device
-registration should carry it, both tables should store it, and then:
+The server now answers `404` where it used to hand out a package every joiner is entitled to refuse,
+so the question "can this device be added at all?" is finally answerable at the point it is asked.
+**Nothing yet acts on the answer.** The pending invitation still retries on every boot - four
+requests and a crypto round each time - because a 404 and a transport failure reach the same catch,
+and neither has a termination rule. What the client owes is a decision: stop and tell the user the
+device is unreachable, abandon the seat, or keep the invitation but stop paying for it every launch.
 
-1. the resolver filters `not_after > now()` and orders by it, so a valid package is served first and
-   an expired one is never handed out at all;
-2. `getPrekeyCount` answers about packages that can be used, which is the question its caller asks;
-3. **an expired last-resort becomes visible**, which is the only way the 4 rows above get noticed
-   without an export landing on somebody's desk;
-4. **the expiry reclaim the key-package P1 could not write gets a mechanism** - the server deletes
-   what has elapsed without guessing, and an expired row is the one case with no ambiguity at all,
-   since no peer can build a usable Welcome on it.
+Two facts bound that decision and both are measured. **A device repairs itself the moment it
+connects** - `heldLastResortKeyPackage` refuses to offer an elapsed package, so the round falls
+through to a fresh mint and republishes (`keyPackages.ts`); nothing needs writing there, and the 4
+aged rows are devices that have not been online since their package died, not a client defect. And
+**the adder cannot conjure a package for a device that is not there**, so no server-side filtering
+ends the loop - only a rule about when to stop asking does.
 
-**THE CLIENT HALF ALREADY EXISTS, AND CHECKING SAVED A WRONG ENTRY.** The obvious remedy - "a device
-whose last-resort has expired should republish one" - is already written and already correct:
-`heldLastResortKeyPackage` (`keyPackages.ts:54`) calls `existing_last_resort_key_package(now)`, so an
-expired one is not returned, the round falls through to `generate_last_resort_key_package()` and
-publishes a fresh one. **Nothing needs writing there.**
-
-So the 4 aged rows are not a client defect: they are devices that have not connected at all since
-their package elapsed, and no amount of server-side filtering conjures a valid package for a device
-that is not there. **THE REAL QUESTION IS WHAT THE ADDING SIDE OWES**, and it is the termination rule:
-the pending invitation retries every boot for ever, with no proof it can ever succeed and no way to
-say so. Serving a package the server KNOWS is expired (once `not_after` is a column) turns that into
-an answerable question - `410`-shaped rather than a crypto error - and the adder can then stop, tell
-the user the device is unreachable, or abandon the seat, which are product decisions this entry does
-not get to make. **What it does establish is that retrying silently for ever is none of them.**
+**AND THE RULE IS THE ONE THIS REPOSITORY ALREADY HOLDS:** a status code is an ANSWER, a transport
+failure is not. The 404 is the first thing on this path that can be told apart from "the network was
+bad", which is exactly what a termination rule needs and exactly what did not exist before.
 
 ---
 ### P2 - the MLS snapshot version is a PER-DOCUMENT counter compared ACROSS documents, so a second tab's write is dropped on a collision (measured on TAB-4, 2026-09-05)
@@ -7828,9 +7821,10 @@ number decides whether the pass is worth its risk.
   announcement at 14:20:37, two of them in the same second (14:23:32) and two more at 14:38:18.
 - **two cursor resumes from BEFORE it** (14:27:33 `after=1789568349700-0`, 14:40:12
   `after=1789568451147-0`), which re-read it as well.
-- **37 `[HISTORY_REQ] FORWARDED`**, per requesting device: Arthur ARMAND 8, Hortense BAIZE 7, Victor
-  KALFON 6, Jeanne BOUSSONNIERE 5, Matheo BOUDIER 5, Mael OULLION 4, Esteban DELSOL 1. Plus 14
-  `NO_PEER_ONLINE`.
+- **37 `[HISTORY_REQ] FORWARDED`** over SEVEN requesting devices, distributed 8 / 7 / 6 / 5 / 5 / 4
+  / 1 - so no single device accounts for it and the top three are within two of each other. Plus 14
+  `NO_PEER_ONLINE`. (The devices are not named here, and must not be: this is a PUBLIC repository
+  and the distribution is the whole of what the measurement needs.)
 
 These were the multipliers of the duplicated notice; with the id fixed they multiply nothing visible
 any more, which is exactly why they need a number before they get a name. **A group being built -
@@ -7842,8 +7836,9 @@ added first - one line, and the prerequisite for any of the rest.
 
 ### P3 - the adder was absent from `dm_group_members` for five minutes while committing adds
 
-`dm_group_members` dates Matheo BOUDIER's own row at **14:25:12.819**, after he had committed epochs
-3 (14:20:34), 4 (14:21:36) and 5 (14:23:24) in that same group - each of which added other people.
+`dm_group_members` dates the ADDER's own row at **14:25:12.819**, after that same account had
+committed epochs 3 (14:20:34), 4 (14:21:36) and 5 (14:23:24) in that group - each of which added
+other people.
 `processBulkAddition` opens with `await mlsService.registerMember(conversation.id, userId)` for the
 caller, inside the try whose catch aborts the whole invitation, and no abort was logged.
 
@@ -7851,7 +7846,7 @@ Unexplained, and it touches recipient resolution: **a column is only evidence fo
 written to answer**, and this one was read as "who is in this group". Note that routing filters on
 `dm_device_group_memberships.status='active'`, not on this table, so the blast radius is not obvious
 either way - which is the first thing to establish. Read with the placeholder-seat item in the main
-queue.
+queue. The account is identified in this file by its ROLE and by nothing else, deliberately.
 
 ## Post-campaign projects - decided, not scheduled
 

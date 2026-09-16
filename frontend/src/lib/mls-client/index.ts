@@ -59,9 +59,11 @@ export {
 export {
   initializeConnection,
   openGatewayConnection,
+  startGatewayHandshake,
   syncConnectionAfterWsOpen,
   type ConnectionDeps,
   type SyncAfterConnectDeps,
+  type StartedHandshake,
 } from './initializeConnection';
 export {
   resolveMlsPublicUrls,

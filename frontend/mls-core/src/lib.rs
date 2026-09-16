@@ -12,6 +12,7 @@ pub mod state_blob;
 pub mod welcome;
 
 // Re-export MlsManager at crate root so that `mls_core::MlsManager` continues to work.
+pub use state::DatedKeyPackage;
 pub use state::MlsManager;
 pub use state::PersistedState;
 

@@ -37,6 +37,21 @@ import { WebMlsService } from './WebMlsService';
 
 const HELD = new Uint8Array([0xbe, 0xef]);
 const MINTED = new Uint8Array([0xfa]);
+/** 84 days out, which is what openmls stamps on a package it mints. */
+const NOT_AFTER = Math.floor(Date.now() / 1000) + 84 * 24 * 60 * 60;
+
+/**
+ * A minted binding as wasm-bindgen hands it over: the bytes, the expiry, and a `free` that MUST be
+ * called exactly once. The mock carries the real shape rather than a bare `Uint8Array` because the
+ * free is the half a test can get wrong silently - a binding nobody releases is a slot of linear
+ * memory held for the life of the tab, fifty-one of them per round.
+ */
+const dated = (bytes: Uint8Array) => ({
+  public: bytes,
+  notAfterSecs: NOT_AFTER,
+  free: vi.fn(),
+  [Symbol.dispose]: vi.fn(),
+});
 
 function makeCtx(opts: { poolOnServer: number; held?: Uint8Array }) {
   const saveState = vi.fn(() => new Uint8Array(16));
@@ -44,10 +59,12 @@ function makeCtx(opts: { poolOnServer: number; held?: Uint8Array }) {
   const publishKeyPackages = vi.fn().mockResolvedValue(undefined);
   const client = {
     save_state: saveState,
-    existing_last_resort_key_package: vi.fn((_now: bigint) => opts.held),
-    generate_last_resort_key_package: vi.fn(() => MINTED),
+    existing_last_resort_key_package: vi.fn((_now: bigint) =>
+      opts.held ? dated(opts.held) : undefined
+    ),
+    generate_last_resort_key_package: vi.fn(() => dated(MINTED)),
     generate_key_packages: vi.fn((n: number) =>
-      Array.from({ length: n }, (_, i) => new Uint8Array([i]))
+      Array.from({ length: n }, (_, i) => dated(new Uint8Array([i])))
     ),
   };
   return {
@@ -68,10 +85,10 @@ function makeCtx(opts: { poolOnServer: number; held?: Uint8Array }) {
   };
 }
 
-const round = (ctx: unknown): Promise<Uint8Array> =>
+const round = (ctx: unknown): Promise<{ bytes: Uint8Array; notAfterSecs: number }> =>
   (
     WebMlsService.prototype as unknown as {
-      generateKeyPackageImpl(k: string): Promise<Uint8Array>;
+      generateKeyPackageImpl(k: string): Promise<{ bytes: Uint8Array; notAfterSecs: number }>;
     }
   ).generateKeyPackageImpl.call(ctx, 'device-key');
 
@@ -91,9 +108,9 @@ describe('a key package round that mints nothing writes nothing', () => {
     expect(client.generate_last_resort_key_package).not.toHaveBeenCalled();
     // The publish still happens: it is the one thing this round is for, and it is an HTTP call
     // over bytes already on disk.
-    expect(publishKeyPackage).toHaveBeenCalledWith(HELD);
+    expect(publishKeyPackage).toHaveBeenCalledWith({ bytes: HELD, notAfterSecs: NOT_AFTER });
     expect(publishKeyPackages).not.toHaveBeenCalled();
-    expect(fallback).toEqual(HELD);
+    expect(fallback).toEqual({ bytes: HELD, notAfterSecs: NOT_AFTER });
   });
 
   it('does not even ask the state for a snapshot on that round', async () => {
@@ -103,6 +120,19 @@ describe('a key package round that mints nothing writes nothing', () => {
     const { ctx, saveState } = makeCtx({ poolOnServer: 50, held: HELD });
     await round(ctx);
     expect(saveState).not.toHaveBeenCalled();
+  });
+
+  it('releases the binding it read, because nothing else will', async () => {
+    // A wasm-bindgen class owns a slot in the linear memory until it is freed, and the getters
+    // copy - so the plain object the round returns outlives the free and the slot does not have to.
+    // This is asserted HERE and not only on `keyPackages.test.ts` because this file is the one that
+    // exercises the round end to end, and it is the file that went on returning bare `Uint8Array`s
+    // after the mint started handing over bindings: CI caught it with `dated.free is not a
+    // function`, which is what a mock shaped like the real thing is for.
+    const { ctx, client } = makeCtx({ poolOnServer: 50, held: HELD });
+    await round(ctx);
+    const handed = client.existing_last_resort_key_package.mock.results[0].value;
+    expect(handed.free).toHaveBeenCalledTimes(1);
   });
 
   it('asks for the held package with a BigInt, because the binding takes a u64', async () => {
@@ -141,7 +171,7 @@ describe('a round that does mint still pays for the write it owes', () => {
 
     expect(client.generate_last_resort_key_package).toHaveBeenCalledTimes(1);
     expect(persistMlsStructuralCheckpoint).toHaveBeenCalledTimes(1);
-    expect(publishKeyPackage).toHaveBeenCalledWith(MINTED);
-    expect(fallback).toEqual(MINTED);
+    expect(publishKeyPackage).toHaveBeenCalledWith({ bytes: MINTED, notAfterSecs: NOT_AFTER });
+    expect(fallback).toEqual({ bytes: MINTED, notAfterSecs: NOT_AFTER });
   });
 });

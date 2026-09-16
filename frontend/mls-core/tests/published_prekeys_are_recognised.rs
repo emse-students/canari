@@ -32,7 +32,7 @@ fn every_freshly_minted_prekey_is_recognised_through_a_publish_round_trip() {
     let unrecognised: Vec<usize> = published
         .iter()
         .enumerate()
-        .filter(|(_, kp)| !m.key_package_has_private(kp).unwrap_or(false))
+        .filter(|(_, kp)| !m.key_package_has_private(&kp.public).unwrap_or(false))
         .map(|(i, _)| i)
         .collect();
 
@@ -51,7 +51,7 @@ fn the_last_resort_fallback_is_recognised_too() {
     let m = MlsManager::load_or_create("alice", "kp-fallback", None).expect("device");
     let fallback = m.generate_last_resort_key_package().expect("a fallback");
     assert!(
-        m.key_package_has_private(&fallback).expect("check"),
+        m.key_package_has_private(&fallback.public).expect("check"),
         "the static fallback must be recognised as this device's own - it carries the LastResort \
          extension the pool prekeys do not, which is exactly the kind of difference a hash over \
          the encoding would notice"
