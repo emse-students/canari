@@ -18,6 +18,8 @@
     eventCardsOnDay,
     eventOwners,
   } from '$lib/calendar/feedEvents';
+  import { localizedWeekdays, monthGridDays } from '$lib/calendar/monthGrid';
+  import { isToday } from '$lib/utils/dates';
 
   let {
     focusDate,
@@ -31,16 +33,11 @@
     selectedDay?: number | null;
   }>();
 
-  const weekdayLabels = $derived(
-    Array.from({ length: 7 }, (_, i) =>
-      new Intl.DateTimeFormat(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
-        weekday: 'short',
-      })
-        .format(new Date(2024, 0, 1 + ((i + 0) % 7)))
-        .replace(/\.$/, '')
-        .slice(0, 3)
-    )
-  );
+  /**
+   * The header row, asked of the same helper the PDF export asks - so a header cannot read "lun" on
+   * screen and "Lun" on the sheet this grid is a preview of, which it did until 2026-09-16.
+   */
+  const weekdayLabels = $derived(localizedWeekdays(getLocale(), 'short'));
 
   /**
    * The month's own name, capitalised - "Septembre".
@@ -56,29 +53,15 @@
       .replace(/^\w/, (c) => c.toUpperCase())
   );
 
-  const calendarCells = $derived.by(() => {
-    const y = focusDate.getFullYear();
-    const mo = focusDate.getMonth();
-    const first = new Date(y, mo, 1);
-    const lastDay = new Date(y, mo + 1, 0).getDate();
-    const mondayIndex = (first.getDay() + 6) % 7;
-    const cells: { day: number | null }[] = [];
-    for (let i = 0; i < mondayIndex; i++) cells.push({ day: null });
-    for (let day = 1; day <= lastDay; day++) cells.push({ day });
-    while (cells.length % 7 !== 0) cells.push({ day: null });
-    return cells;
-  });
+  /**
+   * The month's squares, asked of `monthGrid` rather than built here - the seven lines that padded
+   * a month to whole weeks existed in this component AND in the PDF export.
+   */
+  const calendarCells = $derived(monthGridDays(focusDate));
 
-  function sameDay(a: Date, b: Date): boolean {
-    return (
-      a.getFullYear() === b.getFullYear() &&
-      a.getMonth() === b.getMonth() &&
-      a.getDate() === b.getDate()
-    );
-  }
-
-  function isToday(day: number): boolean {
-    return sameDay(new Date(focusDate.getFullYear(), focusDate.getMonth(), day), new Date());
+  /** Whether square `day` of the focused month is today - `utils/dates` owns the comparison. */
+  function isTodaySquare(day: number): boolean {
+    return isToday(new Date(focusDate.getFullYear(), focusDate.getMonth(), day));
   }
 
   function isWeekend(cellIndex: number): boolean {
@@ -217,8 +200,8 @@
 
     <!-- Day cells -->
     <div class="grid grid-cols-7" role="grid" aria-label={m.calendar_month_grid_label()}>
-      {#each calendarCells as cell, i (i)}
-        {#if cell.day === null}
+      {#each calendarCells as day, i (i)}
+        {#if day === null}
           <div
             class="border-cn-border/40 border-r border-b {isWeekend(i)
               ? 'bg-cn-bg'
@@ -228,32 +211,32 @@
             aria-hidden="true"
           ></div>
         {:else}
-          {@const dayEvents = eventsOnDay(cell.day)}
-          {@const dayBreaks = breaksOnDay(cell.day)}
+          {@const dayEvents = eventsOnDay(day)}
+          {@const dayBreaks = breaksOnDay(day)}
           {@const nVisible = dayEvents.length > MAX_VISIBLE ? MAX_VISIBLE - 1 : dayEvents.length}
           {@const visible = dayEvents.slice(0, nVisible)}
           {@const overflowCount = dayEvents.length - nVisible}
           <!-- The slot height the titles are fitted to, computed exactly as the export computes it
                (`CELL_H / nSlots`, floored). The "+N autres" row is a slot and is counted, and a
                lone event splits the cell in two - `daySlotLayout` decides both. -->
-          {@const square = new Date(focusDate.getFullYear(), focusDate.getMonth(), cell.day)}
+          {@const square = new Date(focusDate.getFullYear(), focusDate.getMonth(), day)}
           {@const layout = cellLayout(visible, overflowCount, square)}
           {@const slotH = Math.floor(CELL_H / (layout.nSlots || 1))}
           {@const loneSlot =
             visible.length === 1 && overflowCount === 0 && layout.nSlots === 2
               ? layout.slotOf[0]
               : null}
-          {@const selected = selectedDay === cell.day}
-          {@const today = isToday(cell.day)}
+          {@const selected = selectedDay === day}
+          {@const today = isTodaySquare(day)}
           <button
             type="button"
             role="gridcell"
-            aria-label="{cell.day}{dayEvents.length > 0
+            aria-label="{day}{dayEvents.length > 0
               ? `, ${m.calendar_day_event_count({ count: dayEvents.length })}`
               : ''}"
             aria-selected={selected}
             onclick={() => {
-              selectedDay = selectedDay === cell.day ? null : cell.day;
+              selectedDay = selectedDay === day ? null : day;
             }}
             style="min-height:{CELL_H}px;"
             class="border-cn-border/40 relative overflow-hidden border-r border-b text-left transition-all {isWeekend(
@@ -275,7 +258,7 @@
               <!-- Empty cell: day number, plus the break title when this is a vacation day. -->
               <span
                 class="absolute top-1.5 left-2 z-10 text-xs leading-none font-bold
- {today ? 'text-cn-yellow' : 'text-text-muted/50'}">{cell.day}</span
+ {today ? 'text-cn-yellow' : 'text-text-muted/50'}">{day}</span
               >
               {#if dayBreaks.length > 0}
                 <span
@@ -295,7 +278,7 @@
                   <div class="relative flex-1">
                     <span
                       class="absolute top-1.5 left-2 text-xs leading-none font-bold
- {today ? 'text-cn-yellow' : 'text-text-muted/50'}">{cell.day}</span
+ {today ? 'text-cn-yellow' : 'text-text-muted/50'}">{day}</span
                     >
                   </div>
                 {/if}
@@ -334,7 +317,7 @@
                           class="text-2xs leading-none font-bold {today
                             ? 'underline decoration-2'
                             : ''}"
-                          style="color:{fg};">{cell.day}</span
+                          style="color:{fg};">{day}</span
                         >
                       </div>
                     {/if}

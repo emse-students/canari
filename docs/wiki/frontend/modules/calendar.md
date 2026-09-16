@@ -106,6 +106,26 @@ unchanged and still works - it always posted the third-column request for its ow
 Three rules, all stated ONCE and read by both agenda surfaces and by the PDF export. Two of them
 were asked for by the user on 2026-09-16, and the third is what the first one broke if left alone.
 
+### FOUR COPIES OF THE SAME MONTH, AND WHY THAT IS THE DEFECT ITSELF
+
+**Two defects shipped on 2026-09-16 and both were a private copy**, which is the argument for this
+section existing. The agenda has THREE surfaces - the month grid, the PDF sheet, and the day panel /
+schedule list - and the first two each held their own answer to questions the third asked of a
+shared module. A rule with more than one implementation does not stay wrong everywhere; it gets
+half-fixed, which is worse, because the surface that was corrected proves the rule works.
+
+| the question | where it is answered now | how many copies before |
+| --- | --- | --- |
+| which day does this event belong to | `eventCoversDay` / `eventCardsOnDay` / `breaksOnDay` | 3 - and only ONE took the 05:00 rule |
+| how much of THIS day does it fill | `dayOccupancy` | 0 - the rule read a start hour that was not about the day |
+| which squares does this month have | `monthGridDays` | 2 |
+| what is written above the columns | `localizedWeekdays` | 2, disagreeing: "lun" on screen, "Lun" on the sheet |
+| is this square today | `isToday` in `utils/dates.ts` | 2 |
+
+`monthGrid.ts` holds the squares and the labels; `feedEvents.ts` holds everything about which events
+land on them. **Anything the grid and the sheet must agree on goes in one of those two, and a helper
+written inside either renderer is the defect, not a shortcut.**
+
 ### A DAY BEGINS AT 05:00, NOT AT MIDNIGHT
 
 `DAY_STARTS_AT_HOUR` in [`feedEvents.ts`](../../../../frontend/src/lib/calendar/feedEvents.ts) - the

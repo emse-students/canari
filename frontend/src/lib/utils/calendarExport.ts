@@ -10,20 +10,7 @@ import {
   eventCardsOnDay,
   type DayOccupancy,
 } from '$lib/calendar/feedEvents';
-
-/**
- * Localized Monday-first weekday names for the active UI locale via Intl (no hardcoded strings).
- * `style` picks abbreviated ('short', e.g. "Lun"/"Mon") or full ('long', e.g. "Lundi"/"Monday");
- * the first letter is upper-cased and any trailing abbreviation dot is dropped for a clean header.
- */
-function localizedWeekdays(locale: string, style: 'short' | 'long'): string[] {
-  const fmt = new Intl.DateTimeFormat(locale, { weekday: style });
-  // 2024-01-01 is a Monday; walk the 7 following days for a Monday-first week.
-  return Array.from({ length: 7 }, (_, i) => {
-    const name = fmt.format(new Date(2024, 0, 1 + i)).replace(/\.$/, '');
-    return name.charAt(0).toUpperCase() + name.slice(1);
-  });
-}
+import { localizedWeekdays, monthGridDays } from '$lib/calendar/monthGrid';
 
 // Header height. Kept generous so the month title (Fredoka, tall round ascenders) sits low enough in
 // its line box to clear the top page edge - a tighter header clipped the glyph tops on export.
@@ -163,16 +150,6 @@ export function eventBgCss(ev: AssociationCalendarFeedEvent): string {
 }
 
 /** Monday-first array of day-numbers (null = padding cell) for a given month. */
-function buildCalendarCells(year: number, month: number): (number | null)[] {
-  const first = new Date(year, month, 1);
-  const lastDay = new Date(year, month + 1, 0).getDate();
-  const mondayIndex = (first.getDay() + 6) % 7;
-  const cells: (number | null)[] = [];
-  for (let i = 0; i < mondayIndex; i++) cells.push(null);
-  for (let day = 1; day <= lastDay; day++) cells.push(day);
-  while (cells.length % 7 !== 0) cells.push(null);
-  return cells;
-}
 
 function safe(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -386,7 +363,7 @@ function buildCalendarHtml(
     .format(new Date(year, month, 1))
     .replace(/^\w/, (c) => c.toUpperCase());
 
-  const cells = buildCalendarCells(year, month);
+  const cells = monthGridDays(new Date(year, month, 1));
   const nRows = cells.length / 7;
   // Divide the FULL container height across the rows (no cap): a 4-row month gets taller cells that
   // reach the bottom edge instead of leaving a white band, keeping the content A4-ratio exact.

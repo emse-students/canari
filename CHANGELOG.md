@@ -64,7 +64,14 @@ Les deux copies sont supprimees. Les deux rendus appellent `eventCardsOnDay` et 
 test qui garde la soiree passe maintenant par ce selecteur et non plus seulement par le helper :
 **une regle prouvee sur une fonction avec laquelle personne ne peint n'est pas une regle prouvee.**
 
-82 tests sur la suite calendrier (73 avant), `bun run check` 0 erreur sur 8 349 fichiers.
+**ET TOUT CE QUI RESTAIT EN DOUBLE DANS CE COIN EST RAMENE A UNE IMPLEMENTATION**, parce que les
+deux defauts ci-dessus etaient le meme accident : une copie privee. La construction des cases du
+mois existait deux fois, les libelles de jours deux fois - et ils ne disaient pas la meme chose,
+« lun » a l'ecran contre « Lun » sur la feuille dont cette grille est pourtant l'apercu - et
+`isToday` deux fois. `monthGrid.ts` porte desormais les cases et les libelles, `feedEvents.ts` tout
+ce qui concerne les evenements qui s'y posent, et l'en-tete de la grille s'ecrit comme celui du PDF.
+
+90 tests sur la suite calendrier (73 avant), `bun run check` 0 erreur sur 8 350 fichiers.
 
 ## [0.18.6] - 2026-09-16
 
