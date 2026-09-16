@@ -11,6 +11,8 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+## [0.18.6] - 2026-09-16
+
 ### Changed - la police emoji passe de 5,7 Mo a 2,0 Mo pour presque tout le monde
 
 Canari embarque sa propre police emoji pour que le meme caractere donne la meme image partout. Elle
