@@ -11,6 +11,8 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+## [0.18.7] - 2026-09-16
+
 ### Changed - les deux agendas dessinent le meme mois, et ne le dessinent plus qu'une fois
 
 `/calendar` et l'onglet agenda d'une association sont deux vues d'une seule idee, et elles etaient
