@@ -11,6 +11,8 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+## [0.18.8] - 2026-09-16
+
 ### Fixed - retour arriere apres Maj+Entree ne supprimait pas la ligne, et en supprimait parfois deux
 
 Deux nouveaux signalements de l'utilisateur (2026-09-16), sur le meme mecanisme
