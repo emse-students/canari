@@ -76,6 +76,31 @@ The same fact decides what a row says: the day panel takes `ownAssociationId` (n
 `hideAssociationName` boolean) and the dialog is told `showAssociation` per event, so a row the page
 merely co-owns still names, colours and badges its real owner.
 
+### WHO MAY DEPOSIT FROM THE GLOBAL AGENDA, AND WHOSE `:id` CARRIES THE RIGHT
+
+`POST /associations/:id/events` is guarded by `AssociationPermissionFlag.PROPOSE_EVENT` on `:id`
+(`associations.controller.ts`) and by nothing else. So three kinds of caller reach it, and `/calendar`
+must tell them apart because **only one of them posts through an association other than the target**:
+
+| Caller | URL `:id` | `targetAssocId` | Why |
+| --- | --- | --- | --- |
+| Global admin | the target | not sent | the guard lets them through on any `:id` |
+| `PROPOSE_EVENT` holder on the target | the target | not sent | the right lives ON the target |
+| BDE `VALIDATE_EVENTS` holder | their BDE association | the target | they hold nothing on the target; the service reads `targetAssocId` only from a validator (`isValidator && dto.targetAssocId`) |
+
+Until 2026-09-16 the button was gated on `canDepositEvent` - global admin or BDE validator - so an
+ordinary proposer was sent to their association's page to file a request this page would have made
+identically. **The client was hiding a permission the server already grants**, and the fix widens no
+server rule: `canCreateEvent = canDepositEvent || proposeAssocIds.size > 0`, and the picker is
+narrowed to `depositableAssociations` so a proposer can only aim at an association they hold the flag
+on rather than aim anywhere and be refused. `canTargetAnotherAssociation` follows that list's length,
+because a picker with one entry is a control with no choice in it.
+
+The endpoint keys on `isGlobalAdmin() || proposeAssocIds.has(target)`, **not on `isGlobalAdmin()`
+alone**: that older test sent every non-admin through `depositAuthorityAssoId`, which is `''` for a
+proposer, so the request would have gone to `/associations//events`. The association's own page is
+unchanged and still works - it always posted the third-column request for its own members.
+
 ## WHAT A DAY IS, AND WHERE AN EVENT SITS IN ITS SQUARE
 
 Three rules, all stated ONCE and read by both agenda surfaces and by the PDF export. Two of them

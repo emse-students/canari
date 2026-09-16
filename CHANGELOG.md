@@ -29,6 +29,19 @@ construction : les deux lisent la meme fonction.
 Enfin, cliquer sur un jour puis « creer un evenement » ouvrait le formulaire sur la date du jour
 courant. Il s'ouvre sur le jour choisi.
 
+### Fixed - « Deposer un evenement » etait cache a ceux qui en avaient le droit
+
+Sur `/calendar`, le bouton n'apparaissait que pour un administrateur global ou un membre du BDE
+habilite a valider. Toute autre personne autorisee a proposer un evenement devait passer par la page
+de son association pour deposer exactement la meme demande - le serveur, lui, ne demande que la
+permission « proposer un evenement » sur l'association visee, et l'a toujours acceptee depuis cette
+page. Le bouton cachait donc un droit deja accorde.
+
+Il est desormais offert a toute personne qui detient cette permission quelque part, et la liste des
+associations proposees se limite a celles ou elle la detient : on ne peut pas viser une association
+qui refuserait. La page de l'association continue de fonctionner a l'identique pour qui prefere y
+passer.
+
 ### Fixed - le moteur de chiffrement traversait la France a chaque chargement
 
 Le binaire WASM de 723 ko n'etait pas garde par le cache Cloudflare, alors que le fichier `.js`

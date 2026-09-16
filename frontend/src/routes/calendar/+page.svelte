@@ -298,14 +298,37 @@
   // ── Event deposit (global admins + BDE validators) ────────────────────────
   // What these users can do is deposit an event on ANY association's calendar - not publish one.
   // Since 2026-09-14 no creation path validates, theirs included, so a deposit lands in the same
-  // pending queue every proposal does and the badge above counts it. A global admin posts directly
-  // on the chosen association; a BDE validator posts via their BDE association and redirects with
-  // `targetAssocId`.
+  // pending queue every proposal does and the badge above counts it. A global admin and a PROPOSE_EVENT
+  // holder both post directly on the target association, because that is where their right lives; a
+  // BDE validator posts via their BDE association and redirects with `targetAssocId`.
 
   /** Whether the current user may deposit an event on any association's calendar. */
   let canDepositEvent = $state(false);
   /** BDE association id (with VALIDATE_EVENTS) used as the URL :id for non-global-admins. */
   let depositAuthorityAssoId = $state('');
+
+  /**
+   * WHO MAY REACH THIS FORM AT ALL, which is a WIDER question than `canDepositEvent`.
+   *
+   * `canDepositEvent` means "may deposit on ANY association" - a global admin, or a BDE holder of
+   * VALIDATE_EVENTS. Gating the button on it sent everyone else to their association's page to do
+   * a thing the server would have accepted here: `POST :id/events` asks for PROPOSE_EVENT on `:id`
+   * and nothing more, and the association section has always posted exactly that request. So the
+   * button was hiding a permission the user already had (user, 2026-09-16).
+   */
+  const canCreateEvent = $derived(canDepositEvent || proposeAssocIds.size > 0);
+
+  /**
+   * The associations the picker may offer - everyone's, or only the user's own.
+   *
+   * A proposer may create FOR their own associations and no others, so the list is narrowed here
+   * rather than left whole and refused by the server. Deposit authority sees all of them, which is
+   * what that grant is.
+   */
+  const depositableAssociations = $derived(
+    canDepositEvent ? associations : associations.filter((a) => proposeAssocIds.has(a.id))
+  );
+
   let depositModalOpen = $state(false);
   let depositValues = $state<EventFormValues>(blankEventFormValues());
   /** Non-null when the modal is editing an existing event instead of depositing a new one. */
@@ -331,7 +354,7 @@
    * the control appears only where the request would succeed instead of being sent to find out.
    */
   const capabilities = $derived({
-    canTargetAnotherAssociation: true,
+    canTargetAnotherAssociation: depositableAssociations.length > 1,
     canSetKind: canDepositEvent,
     canLinkForm: mayLinkFormOn(depositValues.targetAssociationId),
   });
@@ -386,7 +409,11 @@
     depositValues = {
       // The square the user clicked seeds the date - see `blankEventFormValues`.
       ...blankEventFormValues(daySquareDate(focusDate, selectedDay)),
-      targetAssociationId: filterAssociationId || associations[0]?.id || '',
+      // The month filter seeds the target only when the user may post there; otherwise the first
+      // association they may post on does, so the form never opens aimed at a refusal.
+      targetAssociationId: depositableAssociations.some((a) => a.id === filterAssociationId)
+        ? filterAssociationId
+        : (depositableAssociations[0]?.id ?? ''),
     };
     poster.set(null);
     depositModalOpen = true;
@@ -416,10 +443,16 @@
     } else {
       // Global admin: posts directly on the target association. BDE validator: posts through
       // their BDE association with targetAssocId toward the target. Both land `pending`.
-      const urlAssocId = isGlobalAdmin() ? target : depositAuthorityAssoId;
+      // WHOSE :id CARRIES THE RIGHT, which is the whole of the choice. `POST :id/events` asks for
+      // PROPOSE_EVENT on `:id`, so a global admin and a proposer both post straight at the target.
+      // A validator holds nothing on the target and posts through their BDE association instead,
+      // which is the only case `targetAssocId` is read from (`associations.service.ts`). Keying
+      // this on `isGlobalAdmin()` alone sent a proposer's event to `''`.
+      const postsOnTarget = isGlobalAdmin() || proposeAssocIds.has(target);
+      const urlAssocId = postsOnTarget ? target : depositAuthorityAssoId;
       await createAssociationCalendarEvent(urlAssocId, {
         ...toCreatePayload(values, capabilities),
-        ...(isGlobalAdmin() ? {} : { targetAssocId: target }),
+        ...(postsOnTarget ? {} : { targetAssocId: target }),
       });
     }
     depositModalOpen = false;
@@ -452,7 +485,7 @@
     subtitle={scheduleLayout ? m.calendar_subtitle_schedule() : m.calendar_subtitle()}
   >
     {#snippet actions()}
-      {#if canDepositEvent}
+      {#if canCreateEvent}
         <button
           type="button"
           onclick={openDeposit}
@@ -671,7 +704,7 @@
   editing={!!editingEventId}
   bind:values={depositValues}
   {capabilities}
-  {associations}
+  associations={depositableAssociations}
   linkableForms={linkCandidates}
   poster={poster.controls}
   submitLabel={editingEventId ? m.common_save_button() : m.calendar_deposit_submit()}
