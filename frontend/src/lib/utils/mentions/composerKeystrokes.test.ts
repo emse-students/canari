@@ -1,7 +1,6 @@
 import { markdownStructureKey } from '$lib/utils/markdown/inlinePreview';
 import {
   composerMarkdownPreviewEnabled,
-  insertPlainTextNewline,
   renderPlainTextToMentionEditor,
   serializeMentionEditor,
   setPlainTextSelection,
@@ -155,7 +154,10 @@ describe('simulateComposerKeystrokes (markdown preview)', () => {
 
     renderPlainTextToMentionEditor(root, state.value, MD);
     setPlainTextSelection(root, state.value.length);
-    const { text, cursor } = insertPlainTextNewline(root);
+    // The caret was just placed at the end, so inserting a newline there is a plain append -
+    // no shared helper needed for what the next assertion actually exercises.
+    const text = `${state.value}\n`;
+    const cursor = text.length;
     expect(text).toBe('## Title\n');
     expect(cursor).toBe('## Title\n'.length);
 

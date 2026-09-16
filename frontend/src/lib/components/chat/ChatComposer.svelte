@@ -330,10 +330,21 @@
   });
 
   function handleComposerKeydown(e: KeyboardEvent) {
-    // Guard: !e.isComposing prevents Enter from sending when the IME is selecting a suggestion.
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+    // Guard: !e.isComposing prevents this from firing while the IME is selecting a suggestion.
+    if (e.key === 'Enter' && !e.isComposing) {
+      // On a phone, plain Enter is the same key as Shift+Enter on a keyboard - a newline, never a
+      // send - because there is no separate "hold Shift" gesture to reach for (user, 2026-09-16).
+      const isNewline = e.shiftKey || isMobileViewport;
       e.preventDefault();
-      if (!isSendDisabled) {
+      if (isNewline) {
+        // NEVER LEFT TO THE BROWSER'S OWN DEFAULT HANDLING - see `insertNewlineAtCursor`'s
+        // docblock: an unprevented plain Enter splits the editor into a new block that the
+        // serializer reads back with the line break silently dropped. `Shift+Enter` happens to
+        // insert a `<br>` that round-trips instead, but that is an accident of ONE key
+        // combination's browser default, not a guarantee - so both go through the same explicit
+        // insertion rather than one relying on the other's luck.
+        mentionComposer?.insertNewlineAtCursor();
+      } else if (!isSendDisabled) {
         mentionComposer?.commitComposition();
         onSend();
         stopTyping();
