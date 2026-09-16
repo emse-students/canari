@@ -11,6 +11,28 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Added - une lecture d'archive dit desormais QUI l'a demandee
+
+`[HISTORY]` nommait le groupe, le curseur et le nombre de lignes, et rien du demandeur. Les treize
+parcours complets `after=start` d'un meme groupe en dix minutes mesures sur la production le
+2026-09-16 etaient donc comptables et pas attribuables : ni a un appareil, ni a un compte, ni meme
+a un nombre d'appelants distincts. **Un taux n'est un defaut qu'une fois mesure contre la population
+qui l'a produit**, et une rafale venant d'un seul appareil qui reessaie n'est pas le meme systeme
+que la meme rafale repartie sur les appareils d'un compte.
+
+`[HISTORY]` et `[HISTORY_BATCH]` commencent maintenant par `user=... device=...`. L'utilisateur est
+ce que nginx a pose sur la requete apres `/internal/auth/verify` ; l'appareil est le `X-Canari-Device`
+du client, auto-declare, accepte pour la meme raison que `probeSender` accepte la moitie « appareil »
+d'une identite MLS : l'utilisateur est authentifie a cote, donc un menteur ne peut mal attribuer que
+sa propre requete a l'interieur de son propre compte. L'en-tete part de `MlsDeliveryApi.auth()`, seul
+endroit ou l'identifiant d'appareil est connu, donc de toutes les requetes `/api/mls/*` a la fois.
+
+**Rien ne branche dessus, par construction.** Il passe par `sanitizeLogValue`, qui ne leve jamais :
+un champ qui ne fait que decrire la requete ne doit jamais pouvoir la refuser. Trois lectures
+distinctes en sortent - la valeur, `unstated` quand rien n'a ete envoye, et `invalid` quand la valeur
+sort de la liste blanche, ce qui interdit au passage d'ecrire des retours a la ligne dans le journal
+et d'y forger des lignes.
+
 ### Changed - 182 ms de demarrage a froid rendus : la poignee de main du socket n'attend plus un etat MLS qu'elle ne lit pas
 
 Mesure sur la production le 2026-09-16, sur les 215 dernieres millisecondes d'un demarrage a froid de

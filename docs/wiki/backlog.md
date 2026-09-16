@@ -7831,8 +7831,15 @@ any more, which is exactly why they need a number before they get a name. **A gr
 four add commits in five minutes, 31 members arriving in batches - may legitimately reconcile this
 hard.** Establish the rate against the population (how many walks per group per hour across the
 estate, and what fraction are `after=start` rather than a cursor resume) before calling this a
-defect. `[HISTORY]` does not name its requester, so attributing a walk to a device needs that field
-added first - one line, and the prerequisite for any of the rest.
+defect.
+
+**THE FIELD THAT MAKES THAT MEASUREMENT POSSIBLE IS SHIPPED (2026-09-16), AND NOTHING HAS BEEN
+MEASURED WITH IT YET.** `[HISTORY]` and `[HISTORY_BATCH]` now open with `user=... device=...`: the
+user is what nginx put on the request, the device is the client's own `X-Canari-Device`, sent from
+`MlsDeliveryApi.auth()` on every `/api/mls/*` request. The numbers above predate it and remain
+unattributed - **re-measure on a build that carries it before naming any of this a defect**, and
+answer with the same `GROUP BY` the rest of this section asks for: walks per group per hour across
+the estate, and the `after=start` fraction, now also per DEVICE rather than per account.
 
 ### P3 - the adder was absent from `dm_group_members` for five minutes while committing adds
 
