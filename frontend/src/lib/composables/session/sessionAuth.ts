@@ -17,6 +17,10 @@ import {
 } from '$lib/utils/chat/pinChange';
 import { deriveDeviceKeyB64, isValidDeviceKeyB64 } from '$lib/crypto/deviceKey';
 import { fetchOrUnreachable } from '$lib/utils/fetchOrUnreachable';
+// Every `throw` below whose message is a Paraglide line is a `LocalizedError`: the modals rendering
+// these PIN flows must be able to tell "the PIN you typed is not the current one" from a browser's
+// `Failed to fetch`, and only the THROW knows which it is.
+import { LocalizedError } from '$lib/utils/localizedError';
 import { LoginFailure, isExpectedLoginOutcome, loginErrorCode } from './loginErrors';
 import { MLS_LOCAL_STATE_UNDECRYPTABLE } from '$lib/mls-client';
 import { getToken, clearAuth, SessionExpiredError } from '$lib/stores/auth';
@@ -596,7 +600,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
         m.auth_pin_salt_unreachable()
       );
       if (!saltRes.ok) {
-        throw new Error(m.auth_pin_salt_unreachable());
+        throw new LocalizedError(m.auth_pin_salt_unreachable());
       }
       const { salt } = (await saltRes.json()) as { salt: string };
       const verifier = await computePinVerifier(ctx.getUserId(), ctx.getPin(), salt);
@@ -612,7 +616,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
         m.auth_pin_check_unreachable()
       );
       if (!pinCheckRes.ok) {
-        throw new Error(m.auth_pin_check_unreachable());
+        throw new LocalizedError(m.auth_pin_check_unreachable());
       }
       const pinCheckData = (await pinCheckRes.json()) as {
         status: string;
@@ -1643,7 +1647,7 @@ async function fetchPinSalt(ctx: SessionContext, userId: string, token: string):
     { headers: { Authorization: `Bearer ${token}` } },
     m.auth_pin_salt_unreachable()
   );
-  if (!res.ok) throw new Error(m.auth_pin_salt_unreachable());
+  if (!res.ok) throw new LocalizedError(m.auth_pin_salt_unreachable());
   const { salt } = (await res.json()) as { salt: string };
   return salt;
 }
@@ -1675,7 +1679,7 @@ export async function changePinImpl(
   onProgress?: PinProgressCallback
 ): Promise<void> {
   const userId = ctx.getUserId();
-  if (!userId.trim()) throw new Error(m.auth_no_user_signed_in());
+  if (!userId.trim()) throw new LocalizedError(m.auth_no_user_signed_in());
   log('[PIN_CHANGE] Starting PIN change...');
   onProgress?.({ percent: 2, stage: 'verify' });
 
@@ -1692,8 +1696,8 @@ export async function changePinImpl(
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ userId, oldVerifier, newVerifier }),
   });
-  if (res.status === 403) throw new Error(m.auth_pin_change_current_incorrect());
-  if (!res.ok) throw new Error(m.auth_pin_change_server_error());
+  if (res.status === 403) throw new LocalizedError(m.auth_pin_change_current_incorrect());
+  if (!res.ok) throw new LocalizedError(m.auth_pin_change_server_error());
   log('[PIN_CHANGE] Account verifier rotated server-side.');
 
   // Derive both device keys from the same salt: the old one to read the existing state,
@@ -1735,14 +1739,14 @@ export async function recoverPinImpl(
   onProgress?: PinProgressCallback
 ): Promise<void> {
   const userId = ctx.getUserId();
-  if (!userId.trim()) throw new Error(m.auth_no_user_signed_in());
+  if (!userId.trim()) throw new LocalizedError(m.auth_no_user_signed_in());
   cb.log('[PIN_RECOVER] Starting recovery...');
   onProgress?.({ percent: 3, stage: 'verify' });
 
   const { loadMlsState } = await import('$lib/utils/hex');
   const state = await loadMlsState(userId);
   if (!state) {
-    throw new Error(m.auth_no_local_state_recover());
+    throw new LocalizedError(m.auth_no_local_state_recover());
   }
 
   // The new PIN must be the real (rotated) account PIN: verify its verifier server-side.
@@ -1754,10 +1758,10 @@ export async function recoverPinImpl(
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ userId, verifier: newVerifier }),
   });
-  if (!res.ok) throw new Error(m.auth_pin_verify_new_unreachable());
+  if (!res.ok) throw new LocalizedError(m.auth_pin_verify_new_unreachable());
   const data = (await res.json()) as { status: string };
   if (data.status !== 'ok') {
-    throw new Error(m.auth_pin_new_incorrect());
+    throw new LocalizedError(m.auth_pin_new_incorrect());
   }
 
   // Both device keys come from the same salt: the old one still seals the local state,
@@ -1772,7 +1776,7 @@ export async function recoverPinImpl(
   const mls = ctx.ensureMls();
   const ok = await mls.recoverAndRekey(userId, oldDeviceKeyB64, newDeviceKeyB64, state);
   if (!ok) {
-    throw new Error(m.auth_pin_old_incorrect());
+    throw new LocalizedError(m.auth_pin_old_incorrect());
   }
   cb.log('[PIN_RECOVER] MLS state re-encrypted with the new device key.');
 
@@ -1793,7 +1797,7 @@ export async function recoverPinImpl(
   // client initialised), so the decrypted client is reused and all messages are kept.
   await loginImpl(ctx, cb);
   if (!ctx.isLoggedIn()) {
-    throw new Error(m.auth_login_failed_after_recovery());
+    throw new LocalizedError(m.auth_login_failed_after_recovery());
   }
   onProgress?.({ percent: 100, stage: 'login' });
   cb.log('[PIN_RECOVER] Complete - messages preserved.');

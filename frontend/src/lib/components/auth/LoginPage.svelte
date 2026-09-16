@@ -174,11 +174,18 @@
     return true;
   }
 
-  /** Reports a login that never reached Authentik, and hands the form back to the user. */
+  /**
+   * Reports a login that never reached Authentik, and hands the form back to the user.
+   *
+   * The card carries a GENERIC line and the console carries the exception. `startOidcLogin` fails
+   * before any response exists - a discovery document that would not parse, a redirect the engine
+   * refused - so there is no status to describe and nothing localized to show: its message is dev
+   * prose in English, and this is the most exposed card in the application, read by someone who is
+   * not signed in and has no way past it.
+   */
   function failLoginAttempt(e: unknown) {
-    const reason = e instanceof Error ? e.message : String(e);
-    console.warn(`[LOGIN] OIDC start failed: ${reason}`);
-    loginError = m.auth_login_failed({ reason });
+    console.warn(`[LOGIN] OIDC start failed: ${String(e)}`);
+    loginError = m.auth_login_start_failed();
     isLoggingIn = false;
   }
 

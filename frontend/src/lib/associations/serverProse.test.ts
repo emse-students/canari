@@ -39,14 +39,12 @@ const ROOT = process.cwd();
  * codes at the throw (`CALENDAR_ERROR_CODES`) that both modals translate through one mapper.
  */
 const TREES = [
-  'src/lib/components/associations',
-  'src/lib/components/calendar',
-  'src/lib/components/shop',
+  // The five `lib/components` subtrees that used to be listed here - associations, calendar, shop,
+  // posts, settings - are gone, not dropped: `src/lib/components` at the bottom now owns all 218
+  // files, and naming a subtree under it would walk the same file twice.
   'src/routes/associations',
   'src/routes/calendar',
   'src/routes/shop',
-  'src/lib/components/posts',
-  'src/lib/components/settings',
   'src/routes/posts',
   'src/routes/profile',
   'src/routes/lists',
@@ -79,24 +77,31 @@ const TREES = [
   // sentence, and the cause is still recoverable. This guard cannot assert that half - it reads one
   // regex - which is exactly why the two belong in one commit rather than one of them in a backlog.
   'src/routes/admin',
-  // THE SIX COMPONENT SUBTREES A MEMBER MEETS INSIDE A CONVERSATION, added 2026-09-15. Twenty
-  // sites, and the directory is entered SUBTREE BY SUBTREE rather than at `src/lib/components`:
-  // its root and its `layout/` still hold the OTHER shape, a Paraglide key that TAKES the raw text
-  // as a parameter (`chat_send_error({ reason })`, `chat_call_error({ msg })`,
-  // `auth_login_failed({ reason })`). Deleting a preference does not close that one - the sentence
-  // is BUILT to carry the server's words - and it needs codes at the throw, so the eight sites are
-  // measured and parked in docs/wiki/backlog.md rather than half-done here.
+  // THE WHOLE COMPONENT DIRECTORY, 218 files, taken on 2026-09-16 - and it is entered at the ROOT
+  // rather than as eleven subtrees, which is the change. Five of those subtrees arrived with the
+  // association, calendar, shop, posts and settings passes; six more joined on 2026-09-15 (twenty
+  // sites, two of them the double violation the earlier passes named: a raw French literal as the
+  // fallback, untranslated in BOTH halves of the line). What kept the root out was the OTHER shape:
+  // a Paraglide key that TAKES the raw text as a parameter - `chat_send_error({ reason })`,
+  // `chat_call_error({ msg })`, `auth_login_failed({ reason })` - which deleting a preference
+  // cannot close, because the sentence is BUILT to carry the server's words.
   //
-  // Two of the twenty were the double violation the earlier passes named: a raw French literal as
-  // the fallback ('Erreur lors du retrait.', 'Erreur'), untranslated in BOTH halves of the line.
-  // Each took a key named for the operation that failed, as did the icon REMOVAL that had been
-  // reporting an upload error. Twenty of the twenty-one catches did not log, and now do.
-  'src/lib/components/channels',
-  'src/lib/components/chat',
-  'src/lib/components/moderation',
-  'src/lib/components/profile',
-  'src/lib/components/shared',
-  'src/lib/components/sidebar',
+  // The ten that were left closed in three different ways, and the reading had to be per site:
+  //
+  //  - Four had a STATUS at the throw that was being spelt into a string. `calls/initiate` now
+  //    throws `CallInitiateError(status, ...)`, so the toast that used to choose between two
+  //    sentences with `msg.includes('Groupe introuvable')` reads the status instead; the two poll
+  //    refusals go through `describeApiRefusal` like every other channel write.
+  //  - Three had nothing to say beyond "it failed": an outbox rejection, a voice note that never
+  //    reached the queue, an OIDC start that failed before any response existed. Each took the
+  //    generic line it already had a key for, and the exception went to the log.
+  //  - Three rendered a message the app itself THREW, already in French - the case this guard's
+  //    allowlist existed for. They now read `localizedMessage(e, <declared line>)`, and the twelve
+  //    throws behind them are `LocalizedError`. That is the same rule one step earlier: what the
+  //    type says is not what went wrong, but that the message is FOR THE READER.
+  //
+  // ALLOWED IS THEREFORE EMPTY AGAIN, which is what it is supposed to be.
+  'src/lib/components',
 ];
 
 /**
@@ -104,16 +109,13 @@ const TREES = [
  *
  * It exists so a pass has somewhere honest to park a site it cannot finish, rather than deleting
  * this guard to get a commit through. An entry that stops offending FAILS, so nothing rots here.
+ *
+ * It has held exactly one entry, `SettingsSecuritySection.svelte`, from 2026-09-15 to 2026-09-16:
+ * `changePinImpl` throws its refusals as French sentences, so deleting the preference there would
+ * have replaced a precise line with a vaguer one. `LocalizedError` closed it - the throw now says
+ * that its message is the reader's, and the screen asks rather than assumes.
  */
-const ALLOWED: Record<string, string> = {
-  'src/lib/components/settings/SettingsSecuritySection.svelte':
-    'The PIN-change error is the one `.message` in these trees that is NOT the server talking: ' +
-    '`changePinImpl` throws `new Error(m.auth_pin_change_current_incorrect())`, so the text is ' +
-    'already French. Deleting the preference here would REPLACE a correct sentence with a vaguer ' +
-    'one. It is a message carrying a distinction instead of a code, which is the same rule one ' +
-    'step earlier, and the typed errors that close it belong to the P1 PIN-vs-corrupt-state item ' +
-    '(docs/wiki/backlog.md) - written 2026-09-08, unshipped, and not to be forked here.',
-};
+const ALLOWED: Record<string, string> = {};
 
 /** Every `.svelte` and `.ts` file under `dir`, recursively. */
 function sourcesUnder(dir: string): string[] {

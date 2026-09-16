@@ -20,6 +20,7 @@
     setDeviceKeyPersistence,
   } from '$lib/utils/deviceKeyVault';
   import { isTauriRuntime } from '$lib/utils/openExternal';
+  import { localizedMessage } from '$lib/utils/localizedError';
   import { showToast } from '$lib/stores/toast.svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -122,7 +123,11 @@
       showChangePinModal = false;
       changePinSuccess = m.profile_pin_changed();
     } catch (e) {
-      changePinError = e instanceof Error ? e.message : String(e);
+      // `changePinImpl` throws a `LocalizedError` for the two things the reader must be told apart
+      // ("that is not your current PIN", "the server refused the rotation"); anything else reaching
+      // here is dev prose, and the declared line stands in its place.
+      changePinError = localizedMessage(e, m.profile_pin_change_failed());
+      appendLog(`[PIN_CHANGE] failed: ${String(e)}`);
     } finally {
       changePinLoading = false;
       changePinProgress = null;
