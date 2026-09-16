@@ -40,6 +40,7 @@
     type EventFormValues,
   } from '$lib/calendar/eventForm';
   import { daySquareDate } from '$lib/calendar/feedEvents';
+  import { createAgendaMonth } from '$lib/calendar/agendaMonth.svelte';
   import {
     ChevronLeft,
     ChevronRight,
@@ -51,42 +52,26 @@
   import { createEventPoster } from '$lib/calendar/eventPoster.svelte';
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
-  import {
-    SCHEDULE_AGENDA_QUERY,
-    isScheduleAgendaViewport,
-    onViewportChange,
-  } from '$lib/utils/viewport';
 
-  /**
-   * A PHONE GETS A SCHEDULE LIST INSTEAD OF THE MONTH GRID (user, 2026-09-09).
-   *
-   * Read at mount and kept in step with rotations rather than fixed once: the same window can be
-   * both, and a device turned sideways must get the grid back rather than keep a layout chosen for
-   * the width it used to have. `false` under SSR is the desktop answer by design - the mount that
-   * follows corrects it.
-   */
-  let scheduleLayout = $state(false);
-
-  let focusDate = $state(new Date());
   let associations = $state<Association[]>([]);
   let filterAssociationId = $state('');
-  let events = $state<AssociationCalendarFeedEvent[]>([]);
-  let loading = $state(true);
-  let loadError = $state('');
 
-  const titleMonth = $derived(
-    new Intl.DateTimeFormat(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
-      month: 'long',
-      year: 'numeric',
-    }).format(focusDate)
-  );
-
-  function monthRangeISO(d: Date): { from: string; to: string } {
-    const start = new Date(d.getFullYear(), d.getMonth(), 1, 0, 0, 0, 0);
-    const end = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
-    return { from: start.toISOString(), to: end.toISOString() };
-  }
+  /**
+   * The month itself - shared with an association's calendar tab, which draws the same thing from
+   * another endpoint.
+   *
+   * `includePending` is always sent and the server filters: it only returns pending events to
+   * submitters, BDE admins and global admins.
+   */
+  const agenda = createAgendaMonth({
+    load: ({ from, to }) =>
+      listAggregatedCalendarFeed({
+        from,
+        to,
+        associationId: filterAssociationId || undefined,
+        includePending: true,
+      }),
+  });
 
   async function loadAssociations() {
     try {
@@ -97,29 +82,6 @@
       associations = [...list].sort((a, b) => a.name.localeCompare(b.name, 'fr'));
     } catch {
       associations = [];
-    }
-  }
-
-  async function loadMonth() {
-    loading = true;
-    loadError = '';
-    try {
-      const { from, to } = monthRangeISO(focusDate);
-      // includePending: server only returns pending events to submitters / BDE admins /
-      // global admins; the flag is always sent and the server filters accordingly.
-      events = await listAggregatedCalendarFeed({
-        from,
-        to,
-        associationId: filterAssociationId || undefined,
-        includePending: true,
-      });
-    } catch {
-      // The fallback this line already declared is the right answer; the server's own sentence is
-      // English and was winning the ternary every time.
-      loadError = m.common_generic_error_label();
-      events = [];
-    } finally {
-      loading = false;
     }
   }
 
@@ -137,32 +99,15 @@
   }
 
   function onFilterSelectChange() {
-    selectedDay = null;
+    agenda.selectedDay = null;
     applyFilterToUrl();
-    void loadMonth();
+    void agenda.reload();
   }
-
-  function prevMonth() {
-    focusDate = new Date(focusDate.getFullYear(), focusDate.getMonth() - 1, 1);
-    selectedDay = null;
-    void loadMonth();
-  }
-
-  function nextMonth() {
-    focusDate = new Date(focusDate.getFullYear(), focusDate.getMonth() + 1, 1);
-    selectedDay = null;
-    void loadMonth();
-  }
-
-  onMount(() => {
-    scheduleLayout = isScheduleAgendaViewport();
-    return onViewportChange(SCHEDULE_AGENDA_QUERY, (narrow) => (scheduleLayout = narrow));
-  });
 
   onMount(async () => {
     filterAssociationId = page.url.searchParams.get('association')?.trim() ?? '';
     await loadAssociations();
-    await loadMonth();
+    await agenda.reload();
     /**
      * THE PDF TOOL IS ADMIN-ONLY, SO THE LINK TO IT IS TOO (user, 2026-09-14). A link that leads to
      * a page which immediately sends the reader back is a dead end offered on purpose, and this is
@@ -221,7 +166,7 @@
     const next = n.to.url.searchParams.get('association')?.trim() ?? '';
     if (next !== filterAssociationId) {
       filterAssociationId = next;
-      void loadMonth();
+      void agenda.reload();
     }
   });
 
@@ -239,20 +184,14 @@
   });
 
   const sortedEvents = $derived(
-    [...events].sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime())
+    [...agenda.events].sort(
+      (a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime()
+    )
   );
-
-  function openEventDetail(ev: AssociationCalendarFeedEvent) {
-    detailEvent = ev;
-    detailModalOpen = true;
-  }
 
   let canModerateAgenda = $state(false);
   let canExportPdf = $state(false);
   let pendingCount = $state(0);
-  let selectedDay = $state<number | null>(null);
-  let detailEvent = $state<AssociationCalendarFeedEvent | null>(null);
-  let detailModalOpen = $state(false);
 
   // ── Editing from the global agenda ────────────────────────────────────────
   // Mirrors the server rule on PATCH/DELETE `/associations/:id/events/:eventId`: a global admin
@@ -267,15 +206,17 @@
     return canDepositEvent || proposeAssocIds.has(ev.associationId);
   }
 
-  const canEditDetailEvent = $derived(detailEvent ? canEditEvent(detailEvent) : false);
+  const canEditDetailEvent = $derived(
+    agenda.detailEvent ? canEditEvent(agenda.detailEvent) : false
+  );
 
   function handleDetailEdit(ev: AssociationCalendarFeedEvent) {
-    detailModalOpen = false;
+    agenda.detailModalOpen = false;
     openEditEvent(ev);
   }
 
   async function handleDetailDelete(id: string) {
-    const target = detailEvent;
+    const target = agenda.detailEvent;
     if (!target) return;
     if (
       !(await showConfirm(m.asso_calendar_confirm_delete(), {
@@ -285,13 +226,13 @@
     ) {
       return;
     }
-    detailModalOpen = false;
-    detailEvent = null;
+    agenda.detailModalOpen = false;
+    agenda.detailEvent = null;
     try {
       await deleteAssociationCalendarEvent(target.associationId, id);
-      await loadMonth();
+      await agenda.reload();
     } catch {
-      loadError = m.common_generic_error_label();
+      agenda.loadError = m.common_generic_error_label();
     }
   }
 
@@ -400,7 +341,7 @@
   const poster = createEventPoster({
     associationId: () => depositValues.targetAssociationId,
     eventId: () => editingEventId,
-    onChanged: loadMonth,
+    onChanged: () => agenda.reload(),
   });
 
   function openDeposit() {
@@ -408,7 +349,7 @@
     editingOwnerName = '';
     depositValues = {
       // The square the user clicked seeds the date - see `blankEventFormValues`.
-      ...blankEventFormValues(daySquareDate(focusDate, selectedDay)),
+      ...blankEventFormValues(daySquareDate(agenda.focusDate, agenda.selectedDay)),
       // The month filter seeds the target only when the user may post there; otherwise the first
       // association they may post on does, so the form never opens aimed at a refusal.
       targetAssociationId: depositableAssociations.some((a) => a.id === filterAssociationId)
@@ -456,12 +397,12 @@
       });
     }
     depositModalOpen = false;
-    detailEvent = null;
-    await loadMonth();
+    agenda.detailEvent = null;
+    await agenda.reload();
   }
 
   const exportHref = $derived.by(() => {
-    const monthKey = `${focusDate.getFullYear()}-${String(focusDate.getMonth() + 1).padStart(2, '0')}`;
+    const monthKey = `${agenda.focusDate.getFullYear()}-${String(agenda.focusDate.getMonth() + 1).padStart(2, '0')}`;
     const parts = [`month=${encodeURIComponent(monthKey)}`];
     if (filterAssociationId) parts.push(`association=${encodeURIComponent(filterAssociationId)}`);
     return `/calendar/export?${parts.join('&')}`;
@@ -482,7 +423,7 @@
        nothing. -->
   <PageHeader
     title={m.calendar_heading()}
-    subtitle={scheduleLayout ? m.calendar_subtitle_schedule() : m.calendar_subtitle()}
+    subtitle={agenda.scheduleLayout ? m.calendar_subtitle_schedule() : m.calendar_subtitle()}
   >
     {#snippet actions()}
       {#if canCreateEvent}
@@ -523,25 +464,24 @@
 
     <!-- THE CONTROLS ARE SNIPPETS BECAUSE THEY HAVE TWO HOMES, NOT TO SAVE TYPING. The phone
          keeps them in a bar above a list; the desktop puts them in the left rail beside the
-         month. Copying them would be two month navigations that can disagree about what `prevMonth`
-         resets, which is exactly the class of bug `selectedDay = null` in three places already
-         invites. -->
+         month. Copying them would be two month navigations that can disagree about what a month
+         step resets - the class of bug that `createAgendaMonth` now owns outright. -->
     {#snippet monthNav()}
       <div class="flex items-center gap-2">
         <button
           type="button"
-          onclick={prevMonth}
+          onclick={agenda.prevMonth}
           class="ui-icon-button border-cn-border text-text-main rounded-xl border transition-colors hover:bg-(--cn-surface)"
           aria-label={m.calendar_prev_month()}
         >
           <ChevronLeft size={20} />
         </button>
         <span class="text-text-main flex-1 text-center text-sm font-bold capitalize">
-          {titleMonth}
+          {agenda.titleMonth}
         </span>
         <button
           type="button"
-          onclick={nextMonth}
+          onclick={agenda.nextMonth}
           class="ui-icon-button border-cn-border text-text-main rounded-xl border transition-colors hover:bg-(--cn-surface)"
           aria-label={m.calendar_next_month()}
         >
@@ -586,11 +526,11 @@
 
     {#snippet loadErrorBox()}
       <div class="bg-red-err/10 border-red-err/30 text-red-err rounded-xl border p-4 text-sm">
-        {loadError}
+        {agenda.loadError}
       </div>
     {/snippet}
 
-    {#if scheduleLayout}
+    {#if agenda.scheduleLayout}
       <!-- THE PHONE IS UNCHANGED. One list, no grid: seven columns of 48px say which days exist
            and nothing about what is on them. `CalendarScheduleList` takes the month out of the
            feed itself, so there is no selected day to carry here, and no day panel to place. -->
@@ -604,14 +544,14 @@
         </div>
       </Card>
 
-      {#if loadError}
+      {#if agenda.loadError}
         {@render loadErrorBox()}
       {:else}
         <CalendarScheduleList
-          {focusDate}
+          focusDate={agenda.focusDate}
           events={sortedEvents}
-          {loading}
-          onEventClick={openEventDetail}
+          loading={agenda.loading}
+          onEventClick={agenda.openDetail}
         />
       {/if}
     {:else}
@@ -646,27 +586,32 @@
             {@render exportActions()}
           </div>
 
-          {#if !loadError && !(!loading && sortedEvents.length === 0)}
+          {#if !agenda.loadError && !(!agenda.loading && sortedEvents.length === 0)}
             <hr class="border-cn-border/60" />
             <!-- The selected day belongs BESIDE the month it was clicked in, not under it. The
                  panel renders its own "pick a day" state when nothing is selected, so the rail
                  never collapses as you navigate. -->
             <CalendarDayEventsPanel
-              {focusDate}
-              {selectedDay}
+              focusDate={agenda.focusDate}
+              selectedDay={agenda.selectedDay}
               events={sortedEvents}
-              onEventClick={openEventDetail}
+              onEventClick={agenda.openDetail}
             />
           {/if}
         </div>
 
         <div class="min-w-0 space-y-4">
-          {#if loadError}
+          {#if agenda.loadError}
             {@render loadErrorBox()}
           {:else}
-            <MonthCalendarGridRich {focusDate} events={sortedEvents} {loading} bind:selectedDay />
+            <MonthCalendarGridRich
+              focusDate={agenda.focusDate}
+              events={sortedEvents}
+              loading={agenda.loading}
+              bind:selectedDay={agenda.selectedDay}
+            />
 
-            {#if !loading && sortedEvents.length === 0}
+            {#if !agenda.loading && sortedEvents.length === 0}
               <Card class="text-text-muted p-8 text-center text-sm">{m.calendar_empty()}</Card>
             {/if}
           {/if}
@@ -675,12 +620,12 @@
     {/if}
 
     <CalendarEventDetailModal
-      open={detailModalOpen}
-      event={detailEvent}
+      open={agenda.detailModalOpen}
+      event={agenda.detailEvent}
       canEdit={canEditDetailEvent}
       onClose={() => {
-        detailModalOpen = false;
-        detailEvent = null;
+        agenda.detailModalOpen = false;
+        agenda.detailEvent = null;
       }}
       onEdit={handleDetailEdit}
       onDelete={handleDetailDelete}

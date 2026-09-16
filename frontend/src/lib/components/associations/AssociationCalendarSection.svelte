@@ -43,17 +43,12 @@
     type EventFormValues,
   } from '$lib/calendar/eventForm';
   import { daySquareDate, formatEventDateTimeRange } from '$lib/calendar/feedEvents';
+  import { createAgendaMonth } from '$lib/calendar/agendaMonth.svelte';
   import { pushHistoryOverlay, closeHistoryOverlayFromUi } from '$lib/utils/historyOverlayStack';
   import CalendarScheduleList from '$lib/components/calendar/CalendarScheduleList.svelte';
-  import {
-    SCHEDULE_AGENDA_QUERY,
-    isScheduleAgendaViewport,
-    onViewportChange,
-  } from '$lib/utils/viewport';
   import { createEventPoster } from '$lib/calendar/eventPoster.svelte';
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
-  import { getLocale } from '$lib/paraglide/runtime';
 
   interface Props {
     associationId: string;
@@ -76,21 +71,23 @@
     canDeclareBreak = false,
   }: Props = $props();
 
-  let events = $state<AssociationCalendarFeedEvent[]>([]);
-  let loading = $state(true);
-  let loadError = $state('');
-  let focusDate = $state(new Date());
-  let selectedDay = $state<number | null>(null);
-  let detailEvent = $state<AssociationCalendarFeedEvent | null>(null);
-  let detailModalOpen = $state(false);
-
-  /** Visible month / year, locale-aware. */
-  const titleMonth = $derived(
-    new Intl.DateTimeFormat(getLocale() === 'en' ? 'en-US' : 'fr-FR', {
-      month: 'long',
-      year: 'numeric',
-    }).format(focusDate)
-  );
+  /**
+   * The month itself - shared with `/calendar`, which draws the same thing from another endpoint.
+   *
+   * `includePending` is always sent: the backend only returns pending events to proposers, BDE
+   * validators and admins (and ignores the flag for everyone else), so they see them greyed-out on
+   * every club's calendar, not only the ones they edit. Rejected events are for editors of THIS
+   * club, and appear in the management section below rather than on the grid.
+   */
+  const agenda = createAgendaMonth({
+    load: ({ from, to }) =>
+      listAssociationCalendarEvents(associationId, {
+        from,
+        to,
+        includePending: true,
+        includeRejected: canEdit,
+      }),
+  });
 
   let modalOpen = $state(false);
   let eventModalHistoryClose: (() => void) | null = null;
@@ -112,7 +109,7 @@
     associationId: () => associationId,
     eventId: () => editingId,
     // The cards below carry the poster too, so the month is reloaded rather than patched.
-    onChanged: loadMonth,
+    onChanged: () => agenda.reload(),
   });
 
   /**
@@ -149,8 +146,8 @@
 
   function exportMonthIcs() {
     if (validatedEvents.length === 0) return;
-    const y = focusDate.getFullYear();
-    const mo = pad(focusDate.getMonth() + 1);
+    const y = agenda.focusDate.getFullYear();
+    const mo = pad(agenda.focusDate.getMonth() + 1);
     downloadTextFile(
       `agenda-${associationSlug ?? associationId}-${y}-${mo}.ics`,
       buildIcsCalendar(validatedEvents.map(toAgendaExport)),
@@ -179,62 +176,13 @@
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
-  function monthRangeISO(d: Date): { from: string; to: string } {
-    const start = new Date(d.getFullYear(), d.getMonth(), 1, 0, 0, 0, 0);
-    const end = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
-    return { from: start.toISOString(), to: end.toISOString() };
-  }
+  onMount(() => void agenda.reload());
 
-  async function loadMonth() {
-    loading = true;
-    loadError = '';
-    try {
-      const { from, to } = monthRangeISO(focusDate);
-      events = await listAssociationCalendarEvents(associationId, {
-        from,
-        to,
-        // Always requested: the backend only returns pending events to proposers / BDE / admins
-        // (otherwise ignored), so they see them greyed-out on the calendar for ALL clubs,
-        // not only the ones they edit.
-        includePending: true,
-        // Rejected events (management section) only for editors of this club.
-        includeRejected: canEdit,
-      });
-    } catch (e) {
-      loadError = m.common_load_error();
-    } finally {
-      loading = false;
-    }
-  }
-
-  onMount(loadMonth);
-
-  /**
-   * A PHONE GETS A SCHEDULE LIST INSTEAD OF THE MONTH GRID - the same rule as `/calendar`, read
-   * from the same predicate. Kept in step with rotations rather than fixed at mount: one window
-   * can be both, and a device turned sideways must get the grid back.
-   */
-  let scheduleLayout = $state(false);
-  onMount(() => {
-    scheduleLayout = isScheduleAgendaViewport();
-    return onViewportChange(SCHEDULE_AGENDA_QUERY, (narrow) => (scheduleLayout = narrow));
-  });
-
-  function prevMonth() {
-    selectedDay = null;
-    focusDate = new Date(focusDate.getFullYear(), focusDate.getMonth() - 1, 1);
-    loadMonth();
-  }
-
-  function nextMonth() {
-    selectedDay = null;
-    focusDate = new Date(focusDate.getFullYear(), focusDate.getMonth() + 1, 1);
-    loadMonth();
-  }
-
-  const validatedEvents = $derived(events.filter((e) => (e.status ?? 'validated') === 'validated'));
-  const pendingEvents = $derived(events.filter((e) => e.status === 'pending'));
-  const rejectedEvents = $derived(events.filter((e) => e.status === 'rejected'));
+  const validatedEvents = $derived(
+    agenda.events.filter((e) => (e.status ?? 'validated') === 'validated')
+  );
+  const pendingEvents = $derived(agenda.events.filter((e) => e.status === 'pending'));
+  const rejectedEvents = $derived(agenda.events.filter((e) => e.status === 'rejected'));
 
   // The calendar shows validated + pending events (pending rendered greyed-out via MonthCalendarGridRich),
   // never rejected ones (those only appear in the management section below).
@@ -242,7 +190,9 @@
   // The list includes events this association only CO-OWNS: naming itself the owner put it in both
   // the owner slot and the co-owner slot of the same event, and the grid - keyed on that identity -
   // threw `each_key_duplicate` and crashed the page (prod, 2026-09-14).
-  const feedEvents = $derived(events.filter((e) => (e.status ?? 'validated') !== 'rejected'));
+  const feedEvents = $derived(
+    agenda.events.filter((e) => (e.status ?? 'validated') !== 'rejected')
+  );
 
   const sortedPendingEvents = $derived(
     [...pendingEvents].sort(
@@ -258,11 +208,6 @@
     )
   );
 
-  function openEventDetail(ev: AssociationCalendarFeedEvent) {
-    detailEvent = ev;
-    detailModalOpen = true;
-  }
-
   async function handleDetailDelete(id: string) {
     if (
       !(await showConfirm(m.asso_calendar_confirm_delete(), {
@@ -272,13 +217,13 @@
     ) {
       return;
     }
-    detailModalOpen = false;
-    detailEvent = null;
+    agenda.detailModalOpen = false;
+    agenda.detailEvent = null;
     await removeEvent(id);
   }
 
   function handleDetailEdit(ev: AssociationCalendarFeedEvent) {
-    const raw = events.find((e) => e.id === ev.id);
+    const raw = agenda.events.find((e) => e.id === ev.id);
     if (raw) void openEdit(raw);
   }
 
@@ -287,7 +232,7 @@
     // The target is this association, and saying so is what keeps it out of its own co-owner list.
     // The square the user clicked seeds the date - see `blankEventFormValues`.
     formValues = {
-      ...blankEventFormValues(daySquareDate(focusDate, selectedDay)),
+      ...blankEventFormValues(daySquareDate(agenda.focusDate, agenda.selectedDay)),
       targetAssociationId: associationId,
     };
     poster.set(null);
@@ -335,7 +280,7 @@
       await createAssociationCalendarEvent(associationId, toCreatePayload(values, capabilities));
     }
     dismissEventModal(false);
-    await loadMonth();
+    await agenda.reload();
   }
 
   async function removeEvent(id: string) {
@@ -348,18 +293,18 @@
       return;
     try {
       await deleteAssociationCalendarEvent(associationId, id);
-      await loadMonth();
+      await agenda.reload();
     } catch (e) {
-      loadError = m.common_delete_error();
+      agenda.loadError = m.common_delete_error();
     }
   }
 
   async function validateEvent(id: string) {
     try {
       await validateAssociationCalendarEvent(associationId, id);
-      await loadMonth();
+      await agenda.reload();
     } catch (e) {
-      loadError = m.common_generic_error_label();
+      agenda.loadError = m.common_generic_error_label();
     }
   }
 </script>
@@ -387,7 +332,7 @@
       <button
         type="button"
         onclick={exportMonthIcs}
-        disabled={loading || validatedEvents.length === 0}
+        disabled={agenda.loading || validatedEvents.length === 0}
         class="border-cn-border text-text-main hover:bg-cn-bg inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-semibold transition-colors disabled:pointer-events-none disabled:opacity-40"
       >
         <Download size={18} />
@@ -410,16 +355,18 @@
     <div class="flex items-center justify-between gap-2">
       <button
         type="button"
-        onclick={prevMonth}
+        onclick={agenda.prevMonth}
         class="ui-icon-button border-cn-border text-text-main hover:bg-cn-bg rounded-xl border transition-colors"
         aria-label={m.asso_calendar_prev_month_label()}
       >
         <ChevronLeft size={20} />
       </button>
-      <p class="text-text-main flex-1 text-center text-base font-bold capitalize">{titleMonth}</p>
+      <p class="text-text-main flex-1 text-center text-base font-bold capitalize">
+        {agenda.titleMonth}
+      </p>
       <button
         type="button"
-        onclick={nextMonth}
+        onclick={agenda.nextMonth}
         class="ui-icon-button border-cn-border text-text-main hover:bg-cn-bg rounded-xl border transition-colors"
         aria-label={m.asso_calendar_next_month_label()}
       >
@@ -428,13 +375,13 @@
     </div>
   {/snippet}
 
-  {#if loadError}
+  {#if agenda.loadError}
     <div class="border-red-err/30 bg-red-err/10 text-red-err rounded-xl border px-4 py-3 text-sm">
-      {loadError}
+      {agenda.loadError}
     </div>
   {/if}
 
-  {#if scheduleLayout}
+  {#if agenda.scheduleLayout}
     <!-- THE PHONE GETS THE SAME ANSWER AS `/calendar`, AND HAD NONE AT ALL. Seven columns of 48px
          say which days exist and nothing about what is on them, and this section drew that grid on
          every screen: the association's agenda was unreadable on the device most people open it on,
@@ -444,11 +391,11 @@
     {@render monthNav()}
 
     <CalendarScheduleList
-      {focusDate}
+      focusDate={agenda.focusDate}
       events={feedEvents}
-      {loading}
+      loading={agenda.loading}
       ownAssociationId={associationId}
-      onEventClick={openEventDetail}
+      onEventClick={agenda.openDetail}
     />
   {:else}
     <!-- AND THE DESKTOP GETS `/calendar`'S SHAPE, FOR THE SAME REASON THE PHONE GOT ITS LIST: ONE
@@ -473,34 +420,40 @@
         <!-- The day you clicked belongs BESIDE the month you clicked it in. The panel draws its
              own "pick a day" state, so the rail never collapses as you navigate. -->
         <CalendarDayEventsPanel
-          {focusDate}
-          {selectedDay}
+          focusDate={agenda.focusDate}
+          selectedDay={agenda.selectedDay}
           events={feedEvents}
           ownAssociationId={associationId}
-          onEventClick={openEventDetail}
+          onEventClick={agenda.openDetail}
         />
       </div>
 
       <div class="min-w-0">
-        <MonthCalendarGridRich {focusDate} events={feedEvents} {loading} bind:selectedDay />
+        <MonthCalendarGridRich
+          focusDate={agenda.focusDate}
+          events={feedEvents}
+          loading={agenda.loading}
+          bind:selectedDay={agenda.selectedDay}
+        />
       </div>
     </div>
   {/if}
 
   <CalendarEventDetailModal
-    open={detailModalOpen}
-    event={detailEvent}
+    open={agenda.detailModalOpen}
+    event={agenda.detailEvent}
     {canEdit}
-    showAssociation={detailEvent !== null && detailEvent.associationId !== associationId}
+    showAssociation={agenda.detailEvent !== null &&
+      agenda.detailEvent.associationId !== associationId}
     onClose={() => {
-      detailModalOpen = false;
-      detailEvent = null;
+      agenda.detailModalOpen = false;
+      agenda.detailEvent = null;
     }}
     onEdit={handleDetailEdit}
     onDelete={handleDetailDelete}
   />
 
-  {#if canEdit && !loading && sortedPendingEvents.length > 0}
+  {#if canEdit && !agenda.loading && sortedPendingEvents.length > 0}
     <div class="space-y-3">
       <h3 class="text-amber-warn text-sm font-bold tracking-wide uppercase">
         {m.asso_calendar_pending_section_title({ count: sortedPendingEvents.length })}
@@ -552,7 +505,7 @@
     </div>
   {/if}
 
-  {#if canEdit && !loading && sortedRejectedEvents.length > 0}
+  {#if canEdit && !agenda.loading && sortedRejectedEvents.length > 0}
     <div class="space-y-3">
       <h3 class="text-red-err text-sm font-bold tracking-wide uppercase">
         {m.asso_calendar_rejected_section_title({ count: sortedRejectedEvents.length })}

@@ -11,6 +11,24 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - les deux agendas dessinent le meme mois, et ne le dessinent plus qu'une fois
+
+`/calendar` et l'onglet agenda d'une association sont deux vues d'une seule idee, et elles etaient
+ecrites deux fois : les memes six etats, la meme arithmetique des mois, le meme titre localise, la
+meme regle « telephone = liste, sinon grille » avec le meme commentaire recopie dessous, et la meme
+paire de modale de detail. Rien ne les tenait en phase, **et elles avaient deja diverge** : un
+chargement en echec vidait le mois sur une surface et laissait celui du mois precedent sur l'autre,
+sous deux phrases differentes.
+
+Ce qui differe reellement, c'est **une fonction** : quel point d'entree repond pour un mois. C'est
+desormais l'argument de `createAgendaMonth()`, tout le reste est partage. Les deux surfaces perdent
+102 lignes.
+
+Au passage, la divergence est tranchee dans le sens le plus honnete : **un chargement en echec vide
+le mois**. Laisser la reponse precedente a l'ecran sous un bandeau d'erreur affiche un mois qui
+n'est pas celui que le titre annonce, et le lecteur n'a aucun moyen de savoir quelles cases sont
+perimees.
+
 ### Changed - une regle ecrite deux fois est une regle qu'une correction sur deux atteint
 
 Les deux defauts de l'agenda du 16/09/2026 avaient la meme cause : la meme regle existait en
