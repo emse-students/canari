@@ -6424,7 +6424,7 @@ build, so the prune's reclaim is not observable here.
 **The 2026-09-06 prune (`prune_expired_key_packages`) does NOT fix this** and was never going to:
 these bundles are hours old, not 84 days. The prune bounds the ceiling; this loop is what fills it.
 
-### P2 - 1013 KEY PACKAGES AGAINST A POOL OF FIFTY, +80 IN TWELVE MINUTES WITH NOTHING RECLAIMED, ON THE USER'S OWN BROWSER ON `0.18.4` - AND THE LINE THAT WOULD NAME THE REMEDY IS NATIVE-ONLY (two production consoles, 2026-09-16)
+### P2 - 1013 KEY PACKAGES AGAINST A POOL OF FIFTY, +80 IN TWELVE MINUTES WITH NOTHING RECLAIMED, ON THE USER'S OWN BROWSER ON `0.18.4` - AND THE LINE THAT NAMES THE REMEDY NOW REACHES THE WEB, UNSHIPPED (two production consoles, 2026-09-16)
 
 **DOWNGRADED P1 -> P2 ON 2026-09-16.** It was a P1 because the PIN gate told the user the unlock
 had failed while it was still working; that half is shipped. What remains is bounded growth with no
@@ -6539,12 +6539,27 @@ so +80/12 min is this account, this morning, and nothing is owed to it beyond th
 would generalise is the census line collected across several accounts**, and it costs one console
 export each.
 
-**WHICH IS WHY THE NATIVE-ONLY SECOND LINE IS STILL THE THING TO SHIP**, and now for a sharper reason
-than before: the breakdown would say how many of the 1013 are already past `not_after` and merely
-waiting for the next load to drop them. If that share is large, the steady state is far below 1013
-and there is nothing to do; if it is near zero, the 84-day bound is not binding on this profile and
-the ceiling is higher than anyone has assumed. **One line separates those two worlds and it is gated
-off the only platform that produced this measurement.**
+**THE SECOND LINE NOW REACHES THE WEB, AND IT IS THE THING TO SHIP.** The breakdown says how many
+of the 1013 are already past `not_after` and merely waiting for the next load to drop them. If that
+share is large, the steady state is far below 1013 and there is nothing to do; if it is near zero,
+the 84-day bound is not binding on this profile and the ceiling is higher than anyone has assumed.
+**One line separates those two worlds, and until 2026-09-16 it was gated off the only platform that
+produced this measurement.**
+
+**WHY IT WAS GATED, AND WHAT UNGATED IT.** Not an oversight: the breakdown compares each bundle's
+`not_after` against now, and `mls-core` must not read a clock on `wasm32` - `SystemTime::now()` is
+unimplemented there and PANICS rather than erroring, which took every web login down in v0.16.4.
+So the clock moved to the CALLER. `key_package_census_summary_at(now_secs)` takes the instant,
+`WasmMlsClient::key_package_census(now_secs)` passes `Date.now() / 1000`, and the native wrapper
+that reads its own clock stays `#[cfg(not(target_arch = "wasm32"))]`. The web prints it once MLS is
+ready rather than during `init()`: it deserialises every stored bundle, and a thousand of those do
+not belong in front of the connected badge.
+
+**WHAT IS OWED IS A CONSOLE EXPORT, NOT A FIX.** The line ships with the next release; after it, one
+reload on the user's own browser answers which of the three reclaims applies. **Nothing here should
+be acted on before that number exists** - a prune written against the wrong share would delete
+prekeys a peer is about to build a Welcome on, which is exactly the ambiguity the expiry-only prune
+was written to avoid.
 
 
 

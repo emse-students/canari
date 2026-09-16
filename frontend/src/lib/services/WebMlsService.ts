@@ -763,6 +763,33 @@ export class WebMlsService extends BaseMlsService {
     this.client.create_group(groupId);
   }
 
+  /**
+   * Logs what the `KeyPackage` label in the load-time composition line is made of.
+   *
+   * The composition line prints a COUNT, and a count names no remedy: expired debt, superseded
+   * fallbacks and a revoked pool stack into one number and are reclaimed by three different
+   * mechanisms. Until now the breakdown was native-only, so the one platform that produced the
+   * measurement everybody reasons from - two production console exports on 2026-09-16, twelve
+   * minutes apart on one profile, 933 -> 983 -> 1013 with nothing reclaimed - could say how many and
+   * not which. The clock is passed rather than read because `mls-core` must not read one on wasm.
+   *
+   * NOT ON THE START-UP PATH, deliberately: this walks and deserialises every stored bundle, which
+   * is a different cost from the composition pass, and a thousand of them is not something to put
+   * in front of the connected badge. Called once MLS is ready, and never awaited by anything.
+   *
+   * Best-effort by design. A diagnostic that can break a session is worse than no diagnostic, so a
+   * failure is reported and swallowed - the caller has nothing to decide on the result.
+   */
+  logKeyPackageCensus(): void {
+    try {
+      console.log(
+        `[MLS] key package census - ${this.client.key_package_census(Date.now() / 1000)}`
+      );
+    } catch (e) {
+      console.warn(`[MLS] key package census unavailable: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+
   /** WASM client wrapper - serialises current MLS state as plain CBOR (no Argon2). */
   async saveStatePlain(writer = 'checkpoint'): Promise<Uint8Array> {
     // Tag at the synchronous snapshot moment: this is the freshness reference the write-if-newer

@@ -468,13 +468,33 @@ impl MlsManager {
         self.key_package_census_at(now)
     }
 
-    /// One compact line for the load-time log, beside the composition summary.
+    /// One compact line for the load-time log, beside the composition summary, at the instant given.
     ///
     /// The composition line already prints `KeyPackage 3050x7211906B`, and that is the number that
     /// sent two investigations looking for a mechanism. This says which of them it could be.
+    ///
+    /// COMPILED FOR EVERY TARGET, and that is the whole point of the parameter. The formatter used
+    /// to carry the native-only gate that belongs to the CLOCK, not to the formatting - so the
+    /// platform that produced the measurement everybody reasons from could print `KeyPackage 1013x`
+    /// and not one word about which of three reclaims applies. A browser has a clock; it passes it.
+    pub fn key_package_census_summary_at(&self, now_secs: u64) -> String {
+        Self::format_census(self.key_package_census_at(now_secs))
+    }
+
+    /// [`Self::key_package_census_summary_at`] with the clock read rather than given.
+    ///
+    /// **NOT COMPILED FOR wasm32**, for the reason [`Self::key_package_census`] is not: `std`'s
+    /// clock is unimplemented there and PANICS rather than erroring. Both wrappers hand their
+    /// `Result` to the same formatter, so there is ONE clock read on this target and ONE line
+    /// format for every target - the two cannot drift into saying different things.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn key_package_census_summary(&self) -> String {
-        match self.key_package_census() {
+        Self::format_census(self.key_package_census())
+    }
+
+    /// The one rendering of a census, shared by both wrappers above.
+    fn format_census(census: Result<KeyPackageCensus, MlsError>) -> String {
+        match census {
             Ok(c) => format!(
                 "{} proven ({} one-time, {} last-resort); {} expired, {} undecodable; \
                  {} mint instant(s), largest batch {}",
@@ -651,14 +671,21 @@ impl MlsManager {
             // number, and those three are reclaimed by three different things - one of which is
             // already running. This line is what stops the next reader dividing 7.2 MB by 50.
             //
-            // NATIVE ONLY, and gated by the SAME rule as the prune above rather than by a second
-            // one: the summary reads a clock to fill `expired`, and this crate must not read a
-            // clock on wasm - `SystemTime::now()` PANICS there, which is the v0.16.4 outage the
-            // block above is written around. The other six figures need no clock, so a web caller
-            // that wants them calls `key_package_census_at` with `Date.now()/1000`, exactly as the
-            // prune's escape hatch works. It is not a gap worth closing blind: the accumulation
-            // this measures was measured on a handset, and a browser profile does not live long
-            // enough to reach the horizon.
+            // NATIVE ONLY HERE, and gated by the SAME rule as the prune above rather than by a
+            // second one: this CALL SITE reads a clock to fill `expired`, and this crate must not
+            // read a clock on wasm - `SystemTime::now()` PANICS there, which is the v0.16.4 outage
+            // the block above is written around.
+            //
+            // **THE WEB IS NOT WITHOUT IT ANY MORE, AND THE OLD NOTE HERE WAS WRONG ABOUT WHY.** It
+            // said a browser profile does not live long enough to reach the horizon. Two production
+            // console exports on 2026-09-16, twelve minutes apart on one profile, read 933 -> 983 ->
+            // 1013 key packages with nothing reclaimed: the browser is where the accumulation was
+            // actually observed, and it was the one platform that could print the count and not the
+            // breakdown. `WasmMlsClient::key_package_census` now takes `Date.now()/1000` and calls
+            // `key_package_census_summary_at` - the clock in the caller, none in this crate, on any
+            // target. It is a method rather than a line in this function because it walks and
+            // DESERIALISES every stored bundle, which is a different cost from the composition pass
+            // above, and the web start-up is not where an O(n) diagnostic belongs.
             #[cfg(not(target_arch = "wasm32"))]
             log::info!(
                 "load_or_create: key package census - {}",
