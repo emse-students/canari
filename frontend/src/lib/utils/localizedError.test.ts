@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { LocalizedError, localizedMessage } from './localizedError';
 import { ServerUnreachableError, isServerUnreachable } from './fetchOrUnreachable';
+import { LoginFailure } from '$lib/composables/session/loginErrors';
+import { SessionExpiredError } from '$lib/stores/auth';
 
 /**
  * THE TYPE ANSWERS ONE QUESTION: MAY THIS MESSAGE BE SHOWN?
@@ -37,6 +39,21 @@ describe('localizedMessage', () => {
 
     expect(error).toBeInstanceOf(LocalizedError);
     expect(localizedMessage(error, FALLBACK)).toBe('Serveur injoignable.');
+  });
+
+  it('shows a LoginFailure, whose six throws all build a Paraglide sentence', () => {
+    // The login catch renders whatever it caught into the sign-in error field, and the SAME `try`
+    // also catches a `SessionExpiredError` carrying "Session expired - please log in again" and a
+    // `TypeError` from a dead socket. Both halves of that were live: the English reached a French
+    // reader, and dropping the preference outright would have replaced "that is not your current
+    // PIN" with a vague line. The code it already carried says WHY; the type says the message is
+    // the reader's.
+    const refusal = new LoginFailure('pin_mismatch', 'Le PIN est incorrect.');
+
+    expect(refusal).toBeInstanceOf(LocalizedError);
+    expect(refusal.code).toBe('pin_mismatch');
+    expect(localizedMessage(refusal, FALLBACK)).toBe('Le PIN est incorrect.');
+    expect(localizedMessage(new SessionExpiredError(), FALLBACK)).toBe(FALLBACK);
   });
 
   it('keeps "could not reach" narrower than "may be shown"', () => {

@@ -11,6 +11,7 @@
  */
 
 import { isServerUnreachable } from '$lib/utils/fetchOrUnreachable';
+import { LocalizedError } from '$lib/utils/localizedError';
 
 /** Why a login attempt failed. */
 export type LoginErrorCode =
@@ -41,8 +42,15 @@ export type LoginErrorCode =
   /** Anything else (network, server, unexpected). */
   | 'other';
 
-/** An `Error` that also states, in machine-readable form, why the login failed. */
-export class LoginFailure extends Error {
+/**
+ * An `Error` that also states, in machine-readable form, why the login failed.
+ *
+ * A {@link LocalizedError}, because all six throws build it with a Paraglide message: "that is not
+ * your current PIN" is a distinction no status expresses, and the sentence IS the answer. The
+ * subclass is what lets the catch that renders it ask, instead of assuming - the same `try` also
+ * catches a `TypeError` from a dead socket, whose message is English and must never be shown.
+ */
+export class LoginFailure extends LocalizedError {
   readonly code: LoginErrorCode;
 
   constructor(code: LoginErrorCode, message: string) {

@@ -381,7 +381,11 @@ export function useChannelWorkspaces() {
    * An error that is not one of ours carries no status, and says so by leaving it undefined rather
    * than by having one guessed for it.
    */
-  function classifyApiError(error: unknown): { status?: number; code?: string; detail: string } {
+  function classifyApiError(error: unknown): {
+    status?: number;
+    code?: string;
+    detail: string | null;
+  } {
     if (error instanceof ChannelApiError) {
       return {
         status: error.status,
@@ -389,7 +393,12 @@ export function useChannelWorkspaces() {
         detail: readErrorDetail(error.message),
       };
     }
-    return { detail: readErrorDetail(error instanceof Error ? error.message : String(error)) };
+    // NO ENVELOPE, NO DETAIL. `readErrorDetail` parses a documented Nest body, and only a refusal
+    // this API answered has one. Anything else here is a transport failure or a bug of ours, whose
+    // message is English and is not a sentence for a reader - it used to be interpolated straight
+    // into `channel_action_error_generic`, so a `TypeError: x is not a function` was shown to a
+    // member as the reason their community would not load.
+    return { detail: null };
   }
 
   /**
@@ -424,7 +433,9 @@ export function useChannelWorkspaces() {
     if (status === 401 || error instanceof SessionExpiredError) {
       message = m.channel_action_error_session({ action });
     } else if (status === 403) {
-      message = m.channel_action_error_permission({ action, detail });
+      // `detail` is non-null on every path that reaches here: a status comes only from a
+      // `ChannelApiError`, and that is the branch above which reads the envelope.
+      message = m.channel_action_error_permission({ action, detail: detail ?? '' });
     } else if (status === 409) {
       message = m.channel_action_error_conflict({ action });
     } else if (isRetryableLoadError(error)) {
@@ -433,8 +444,11 @@ export function useChannelWorkspaces() {
       // agreed only while someone kept them agreeing. The load path already had to be right about
       // it, so the toast reads its answer instead of re-deriving one.
       message = m.channel_action_error_network({ action });
-    } else {
+    } else if (detail) {
       message = m.channel_action_error_generic({ action, detail });
+    } else {
+      // The server said nothing we can quote, so the sentence says only what was attempted.
+      message = m.channel_action_error_unknown({ action });
     }
 
     if (toast) showToast(message, 'error');
@@ -690,8 +704,9 @@ export function useChannelWorkspaces() {
           ctx.log(`[WORKSPACE-LOAD] communities/channels loaded (attempt ${attempt + 1})`);
           return true;
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          ctx.log(`[WORKSPACE-LOAD] attempt ${attempt + 1}/${attemptCount} failed: ${message}`);
+          ctx.log(
+            `[WORKSPACE-LOAD] attempt ${attempt + 1}/${attemptCount} failed: ${String(error)}`
+          );
 
           // ONE QUESTION, ASKED ONCE. The 401/403 test that stood beside this call was not a
           // second rule but a patch on the first one: while retryability was decided by hunting

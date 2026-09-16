@@ -20,8 +20,8 @@ import { withoutAnyComments } from '$lib/styles/markupSources';
  * error') it was two violations in one line. Seventy sites were closed on 2026-09-11 by deleting
  * the preference, and this is what stops the seventy-first.
  *
- * `ALLOWED` is the shrinking half of the contract. It is EMPTY, and an entry that stops being
- * needed fails too - a guard whose allowlist can rot is a guard that quietly stops guarding.
+ * `ALLOWED` is the shrinking half of the contract. It holds ONE entry, and an entry that stops
+ * being needed fails too - a guard whose allowlist can rot is a guard that quietly stops guarding.
  */
 
 const ROOT = process.cwd();
@@ -102,6 +102,34 @@ const TREES = [
   //
   // ALLOWED IS THEREFORE EMPTY AGAIN, which is what it is supposed to be.
   'src/lib/components',
+  // THE COMPOSABLES, 2026-09-16 - twenty-five sites, and only six of them were ever on a screen.
+  //
+  // THE COUNT IS THE LESSON. The backlog said three sites remained here, which was the count of
+  // sites a READER meets; the regex finds the SHAPE, so nineteen log lines counted too. They are
+  // not false positives and they were not exempted: a log that writes `e.message` throws away the
+  // type, the stack and the `cause` of whatever it caught, so `String(e)` is simply the better
+  // line - and a convention with no exceptions is the only one a regex can hold.
+  //
+  // The six that reached a member:
+  //
+  //  - A media send read the exception's sentence into a French one. Both branches of that loop
+  //    share the catch and only one asks a server anything, so the status is READ
+  //    (`MediaUploadError`, new) rather than assumed - which is also how a 413 stopped being
+  //    indistinguishable, to the code, from a 500.
+  //  - Two forwards did the same, while the function they wrap RETURNS its refusal already
+  //    localized: anything reaching those catches is unexpected and says only "it failed".
+  //  - The login error field showed `_e.message`, so `SessionExpiredError`'s "Session expired -
+  //    please log in again" was what a French member read. `LoginFailure` is a `LocalizedError`
+  //    now, and the field asks instead of assuming.
+  //  - Two raw English literals were sitting beside them - 'Please fill in all fields.' and
+  //    'Biometric authentication failed. Please enter your PIN manually.' - both with a Paraglide
+  //    key that already existed.
+  //
+  // And one more that this guard cannot see: `classifyApiError` fed an arbitrary error's message
+  // into `channel_action_error_generic({ detail })`, so a `TypeError` of ours was shown to a member
+  // as the reason their community would not load. A detail is now quoted only when it came from a
+  // documented envelope.
+  'src/lib/composables',
 ];
 
 /**
@@ -110,12 +138,27 @@ const TREES = [
  * It exists so a pass has somewhere honest to park a site it cannot finish, rather than deleting
  * this guard to get a commit through. An entry that stops offending FAILS, so nothing rots here.
  *
- * It has held exactly one entry, `SettingsSecuritySection.svelte`, from 2026-09-15 to 2026-09-16:
- * `changePinImpl` throws its refusals as French sentences, so deleting the preference there would
- * have replaced a precise line with a vaguer one. `LocalizedError` closed it - the throw now says
- * that its message is the reader's, and the screen asks rather than assumes.
+ * It held `SettingsSecuritySection.svelte` from 2026-09-15 to 2026-09-16: `changePinImpl` throws
+ * its refusals as French sentences, so deleting the preference there would have replaced a precise
+ * line with a vaguer one. `LocalizedError` closed it - the throw now says that its message is the
+ * reader's, and the screen asks rather than assumes.
+ *
+ * `sessionAuth.ts` took its place on 2026-09-16, and it is parked DELIBERATELY rather than left
+ * behind: the site compares `reason.message` against `MLS_LOCAL_STATE_UNDECRYPTABLE`, a shared
+ * constant rather than a sentence, and the defect is upstream of the comparison.
+ * `classifyStateLoadFailure` already separates `sealed` (an old PIN opens it) from `unknown`
+ * (corruption, no PIN helps) and BOTH throws collapse the two into that one marker. Typing the
+ * marker without deciding what the screen does with `unknown` would ship the same wrong diagnosis
+ * behind a better shape, so it closes with the P1 that owns that question - see
+ * `docs/wiki/backlog.md`. Every OTHER site in that file was closed in the same pass.
  */
-const ALLOWED: Record<string, string> = {};
+const ALLOWED: Record<string, string> = {
+  'src/lib/composables/session/sessionAuth.ts':
+    'Compares the MLS init failure against the shared MLS_LOCAL_STATE_UNDECRYPTABLE constant. ' +
+    'The marker collapses `sealed` and `unknown`, so typing it without deciding what the screen ' +
+    'does with `unknown` would ship the same wrong diagnosis behind a better shape. It closes ' +
+    'with the PIN-vs-corrupt-state P1 in docs/wiki/backlog.md.',
+};
 
 /** Every `.svelte` and `.ts` file under `dir`, recursively. */
 function sourcesUnder(dir: string): string[] {
@@ -155,6 +198,8 @@ describe('no member-facing tree renders a server sentence', () => {
     expect(files).toContain('src/routes/directory/+page.svelte');
     expect(files).toContain('src/routes/admin/moderation/+page.svelte');
     expect(files).toContain('src/lib/components/sidebar/SidebarCommunityAdminModal.svelte');
+    expect(files).toContain('src/lib/composables/useMessaging.svelte.ts');
+    expect(files).toContain('src/lib/composables/session/sessionAuth.ts');
   });
 
   it.each(files.map((f) => [f]))('%s', (file) => {

@@ -87,6 +87,7 @@ const SKIP_REENCODE_UNDER_BYTES = 2 * 1024 * 1024;
 const MIN_SIZE_SAVINGS_RATIO = 0.85;
 
 import { encryptMediaBuffer } from '$lib/mediaCrypto';
+import { MediaUploadError } from '$lib/utils/mediaErrors';
 import { acquireDecryptedMediaBlobUrl, acquireRawMediaBlobUrl } from '$lib/utils/mediaBlobCache';
 
 // ---------------------------------------------------------------------------
@@ -358,7 +359,10 @@ export class MediaService {
         headers: { Authorization: `Bearer ${authToken}` },
       });
       if (!initRes.ok) {
-        throw new Error(`Chunked upload init failed: ${initRes.status}`);
+        throw new MediaUploadError(
+          initRes.status,
+          `chunked upload init failed (${initRes.status})`
+        );
       }
       const { uploadId } = await initRes.json();
 
@@ -381,8 +385,9 @@ export class MediaService {
           body: chunkFormData,
         });
         if (!chunkRes.ok) {
-          throw new Error(
-            `Chunk upload failed at chunk ${i + 1}/${totalChunks}: ${chunkRes.status}`
+          throw new MediaUploadError(
+            chunkRes.status,
+            `chunk upload failed at chunk ${i + 1}/${totalChunks} (${chunkRes.status})`
           );
         }
       }
@@ -396,7 +401,10 @@ export class MediaService {
         }
       );
       if (!completeRes.ok) {
-        throw new Error(`Chunked upload complete failed: ${completeRes.status}`);
+        throw new MediaUploadError(
+          completeRes.status,
+          `chunked upload complete failed (${completeRes.status})`
+        );
       }
       const completeData = await completeRes.json();
       mediaId = completeData.mediaId;
@@ -418,10 +426,10 @@ export class MediaService {
       if (!res.ok) {
         const responseText = await res.text();
         const details = responseText ? ` - ${responseText}` : '';
-        if (res.status === 413) {
-          throw new Error('Media upload failed: 413 (fichier trop volumineux)');
-        }
-        throw new Error(`Media upload failed: ${res.status} ${res.statusText}${details}`);
+        throw new MediaUploadError(
+          res.status,
+          `media upload failed (${res.status} ${res.statusText})${details}`
+        );
       }
 
       const data = await res.json();
@@ -500,7 +508,10 @@ export class MediaService {
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      throw new Error(`Avatar upload failed: ${res.status}${text ? ` - ${text}` : ''}`);
+      throw new MediaUploadError(
+        res.status,
+        `avatar upload failed (${res.status})${text ? ` - ${text}` : ''}`
+      );
     }
 
     const data = await res.json();

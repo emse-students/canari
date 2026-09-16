@@ -17,6 +17,8 @@
  * The type is the contract; `isMediaPurgedError` is the only reader of it.
  */
 
+import { ApiRefusalError } from './apiRefusal';
+
 /** Wire-level marker kept as the message so existing logs stay greppable. */
 export const MEDIA_PURGED_MESSAGE = 'MEDIA_PURGED_BY_RETENTION';
 
@@ -35,4 +37,28 @@ export class MediaPurgedError extends Error {
  */
 export function isMediaPurgedError(err: unknown): boolean {
   return err instanceof MediaPurgedError;
+}
+
+/**
+ * A refusal answered by the media service on the way UP, carrying the STATUS instead of spelling it.
+ *
+ * THE SAME ARGUMENT AS `MediaPurgedError` ABOVE, one direction later. The five `!res.ok` sites in
+ * `MediaService` threw a plain `Error` whose message held the number, and one of them was worse
+ * than that: `Media upload failed: 413 (fichier trop volumineux)` put French words inside a
+ * dev-facing English sentence, which was then interpolated whole into a French sentence on screen.
+ * **NOTHING read that 413 back out.** The special case existed only to write a different string, so
+ * the one refusal a member can act on - your file is too big - was, to the code, indistinguishable
+ * from a 500.
+ *
+ * It lives HERE rather than beside the throws so that a screen mapping an upload failure does not
+ * have to import `MediaService` to name the type. That is not hypothetical: `$lib/media` sits in a
+ * module cycle (`media` -> `mediaBlobCache` -> `mediaTouch` -> `globalChatSingleton` ->
+ * `useMessaging` -> `media`), so importing it first is enough to construct `MediaService` before
+ * its own module has finished evaluating.
+ */
+export class MediaUploadError extends ApiRefusalError {
+  constructor(status: number, message: string) {
+    super(status, null, message);
+    this.name = 'MediaUploadError';
+  }
 }

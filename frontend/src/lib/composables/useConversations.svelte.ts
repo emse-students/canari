@@ -402,9 +402,7 @@ export function useConversations() {
         // no trace of why. `isLoadingHistory` still clears via `finally` below, so the skeleton
         // stops showing regardless, which is exactly what made this indistinguishable from a
         // conversation that genuinely has no history.
-        ctx.log(
-          `[HISTORY] Échec chargement historique (${id.slice(0, 8)}…): ${e instanceof Error ? e.message : e}`
-        );
+        ctx.log(`[HISTORY] Échec chargement historique (${id.slice(0, 8)}…): ${String(e)}`);
       }
     } finally {
       if (isSelected) isLoadingHistory = false;
@@ -491,7 +489,7 @@ export function useConversations() {
         });
       }
     } catch (e) {
-      ctx.log(`[CHANNEL] Échec chargement historique: ${e instanceof Error ? e.message : e}`);
+      ctx.log(`[CHANNEL] Échec chargement historique: ${String(e)}`);
     } finally {
       if (isSelected) isLoadingHistory = false;
     }
@@ -1157,13 +1155,13 @@ export function useConversations() {
         // Reachable and refusing. The exit is KEPT, because a server that is up and saying no is a
         // defect to find, never a decision to forget.
         ctx.log(
-          `[${label}] Serveur joignable mais REFUS (${e instanceof Error ? e.message : String(e)}) - sortie conservee, purge locale`
+          `[${label}] Serveur joignable mais REFUS (${String(e)}) - sortie conservee, purge locale`
         );
       } else {
         // NO ANSWER. Not "an error to log and move past" - this is the one branch that leaves work
         // behind, so it accuses, and the row it kept is what the next reconnect replays.
         ctx.log(
-          `[${label}] Serveur INJOIGNABLE (${e instanceof Error ? e.message : String(e)}) - sortie CONSERVEE, rejouee a la reconnexion`
+          `[${label}] Serveur INJOIGNABLE (${String(e)}) - sortie CONSERVEE, rejouee a la reconnexion`
         );
       }
     }
@@ -1263,7 +1261,7 @@ export function useConversations() {
       await saveConversation(selectedContact, ctx);
       ctx.log(`Groupe renomme en "${name}"`);
     } catch (e) {
-      ctx.log(`Erreur renommage: ${e instanceof Error ? e.message : String(e)}`);
+      ctx.log(`Erreur renommage: ${String(e)}`);
     }
   }
 
@@ -1285,7 +1283,7 @@ export function useConversations() {
       await saveConversation(selectedContact, ctx);
       ctx.log(`Photo de groupe mise a jour (media=${mediaId})`);
     } catch (e) {
-      ctx.log(`Erreur changement photo: ${e instanceof Error ? e.message : String(e)}`);
+      ctx.log(`Erreur changement photo: ${String(e)}`);
     }
   }
 
@@ -1372,7 +1370,7 @@ export function useConversations() {
       await loadGroupMembers(convo.id, ctx);
       ctx.log(`${memberId} retire du groupe.`);
     } catch (e) {
-      ctx.log(`Erreur retrait membre: ${e instanceof Error ? e.message : String(e)}`);
+      ctx.log(`Erreur retrait membre: ${String(e)}`);
     }
   }
 
