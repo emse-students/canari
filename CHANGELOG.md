@@ -33,17 +33,25 @@ arrive AVANT `pagehide` : il echoue sans le correctif. Mesure sur un banc local 
 aucun `close`** sur un rechargement, donc il n'a jamais eu le symptome. Firefox ne pouvant pas etre
 pilote d'ici, un rechargement d'une build portant ce changement reste du.
 
-**Et six feuilles de style etaient prechargees par un en-tete que le meme document rend inutile.**
+**Et les feuilles de style etaient prechargees par un en-tete que le meme document rend inutile.**
 SvelteKit emet les DEUX moities : le `<link rel="stylesheet">` dans la tete et un
 `rel="preload"; as="style"` dans l'en-tete `Link:` de la meme reponse. L'indice arrive donc avec la
 balise qu'il annonce et ne fait rien gagner - un preload d'en-tete paie avant le corps, ce qui
-demande des Early Hints (103) que cette infrastructure n'envoie pas. Mesure : en Chrome sur
-`/posts`, chacune des six n'a qu'UNE entree de resource-timing, `initiatorType: "link"` ; dans le
-Firefox de l'utilisateur les six sont signalees `prechargee ... non utilisee`, une fois par fichier
-et par chargement. Le predicat `preload` ne retient plus que `js` - le `modulepreload` qui fait
-decouvrir tout le graphe d'un coup reste intact, et le predicat est ecrit `type === 'js'` plutot que
-`!== 'css'` parce que la negation aurait COMMENCE a precharger polices et images, que le defaut de
-SvelteKit laissait tranquilles.
+demande des Early Hints (103) que cette infrastructure n'envoie pas. Mesure sur la production,
+`/login`, Chrome, 2026-09-16 : le document rend 13 318 octets de HTML portant UNE balise
+`rel="stylesheet"` et AUCUNE `rel="modulepreload"`, contre un en-tete portant une entree
+`as="style"` et une centaine de `modulepreload` ; la feuille unique n'a qu'UNE entree de
+resource-timing, `initiatorType: "link"`. Les deux moities ne sont donc pas symetriques : pour la
+feuille l'en-tete repete une balise deja presente, pour les modules il est la seule declaration
+anticipee qui existe. Le predicat `preload` ne retient plus que `js`, ecrit `type === 'js'` plutot
+que `!== 'css'` parce que la negation aurait COMMENCE a precharger polices et images, que le defaut
+de SvelteKit laissait tranquilles.
+
+**Une premiere redaction de cette entree citait six avertissements Firefox `prechargee ... non
+utilisee`, et cette citation n'avait aucune source** : aucun export de console de ce jour ne contient
+la chaine, et l'affirmation remonte a la documentation elle-meme, pas a une lecture. Elle est retiree
+plutot qu'attenuee. La correction tient sur la reponse servie, que n'importe qui relit en une
+requete.
 
 
 ### Fixed - un ajout de membres s'affichait autant de fois qu'il y avait eu de rejeux

@@ -43,9 +43,14 @@ header telling it to preload the file, and, a few kilobytes later in the body, t
 
 The header wins nothing there. The document is already in flight, the `<link>` is parsed in the same
 network round trip, and the browser ends up with one resource-timing entry per sheet whose
-`initiatorType` is `link` - the preload's own entry is never the one that fetched it. Firefox says so
-out loud: **"The resource was preloaded using link preload but not used within a few seconds"**, once
-per stylesheet, which on a production boot of the login page was six warnings for six sheets.
+`initiatorType` is `link` - the preload's own entry is never the one that fetched it. Measured on
+production, `/login`, Chrome, 2026-09-16: the page's single stylesheet has exactly one entry, and it
+is the tag's.
+
+**This paragraph also used to cite six Firefox `preloaded ... not used` warnings, and that citation
+had no source** - no console export of that day contains the string, and it traced back to the
+documentation rather than to a reading. It was removed rather than softened. The change stands on the
+served document below, which anyone can re-read in one request.
 
 JavaScript is the opposite case and keeps its header, and **the served document is what settles it
 rather than any argument about it.** `GET /login` on production, read 2026-09-16, returns 13 318

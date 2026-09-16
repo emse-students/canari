@@ -953,10 +953,26 @@ The discriminator is carried from where it is known rather than guessed at the c
 
 **`pagehide` ALONE WAS NOT ENOUGH, and the 2026-09-16 export is the proof**: the same two lines came
 back on a build carrying the guard, which can only mean the close reached `onclose` while the flag
-was still false. Measured on a local rig in Chrome the order is `beforeunload` -> `pagehide` ->
-`visibilitychange:hidden`, 5 ms apart; Firefox delivers a close in that window and Chrome delivers
-none at all. Registering `beforeunload` costs no bfcache eligibility - `unload` is the listener that
-disqualifies a page, and this codebase has none.
+was still false.
+
+The ordering was read off a local rig rather than assumed - one page, one WebSocket, every event
+appended to `sessionStorage` so the departing life can be read from the next one. Two consecutive
+Chrome reloads, 2026-09-16:
+
+```
+ws open                             15.5      17.0
+beforeunload                      7718.2   13350.9
+pagehide                          7723.3   13356.3
+visibilitychange -> hidden        7723.3   13356.4
+```
+
+**`beforeunload` leads `pagehide` by ~5 ms, and no `close` is delivered at all** - which is why
+Chrome never showed this symptom, and why a guard hung on `pagehide` looked correct here. Firefox
+delivers a close in that window; that half is reasoned, since Firefox cannot be driven from the
+session that wrote this.
+
+Registering `beforeunload` costs no bfcache eligibility - `unload` is the listener that disqualifies
+a page, and this codebase has none.
 
 A real navigation takes the whole client with it, so there is nothing to clean up on that path.
 Pinned by `WebMlsService.pageLifecycle.test.ts`, whose four cases are the states the page can be in
