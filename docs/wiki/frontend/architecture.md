@@ -543,6 +543,9 @@ When `isKeyboardOpen = true`: bottom nav is hidden, `pb-14` padding removed, `--
 `frontend/src-tauri/` contains the Tauri 2 configuration. Key differences from the browser build:
 
 - `TauriMlsService` calls `invoke()` instead of WASM (native Rust execution).
+- WHICH of the two a bundle contains is decided by the BUILD, not by the page: `mlsServicePlatform.ts`
+  is the web half, `mlsServicePlatform.native.ts` the native one, and `vite.config.js` resolves the
+  import ([mobile](mobile.md#which-implementation-a-build-ships-and-why-it-is-not-a-runtime-choice)).
 - MLS state stored on the filesystem, not localStorage.
 - HTTP requests via `@tauri-apps/plugin-http` (bypasses CORS).
 - Native Tauri commands: `mls_init`, `mls_send_message`, `mls_process_message`, `mls_create_group`, `mls_add_members_bulk`, `mls_process_welcome`, `mls_generate_key_package`.

@@ -6,7 +6,7 @@
  * This file is intentionally thin: reactive state, SessionContext construction,
  * and delegation to the session/* sub-modules.
  */
-import { MlsService } from '$lib/mlsService';
+import { createMlsService } from '$lib/mlsService';
 import type { IMlsService } from '$lib/mlsService';
 import type { IStorage } from '$lib/db';
 import { SvelteMap } from 'svelte/reactivity';
@@ -124,7 +124,7 @@ export function useChatSession() {
   function ensureMls(): IMlsService {
     if (!mls) {
       if (typeof window === 'undefined') throw new Error('MLS unavailable outside browser context');
-      mls = new MlsService();
+      mls = createMlsService();
     }
     return mls;
   }
@@ -398,7 +398,7 @@ export function useChatSession() {
     /** Initialises the MLS service and CallService; must be called from onMount. */
     initServices(log: (msg: string) => void) {
       if (mls) return;
-      mls = new MlsService();
+      mls = createMlsService();
       log(isTauriRuntime() ? 'Initialised in TAURI mode' : 'Initialised in WEB mode (WASM)');
       callService = new CallService(mls);
       callService.callState.subscribe((s: any) => (callState = s));
