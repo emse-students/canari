@@ -225,10 +225,10 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    three commands a run owes before any of it is believed are in the campaign section below.
    PIN's four rows change a PIN or restart a browser, hence last; HEAL-NEW's rung redesign is open
    on a clean pass ([backlog](docs/wiki/backlog.md)).
-2. **P1 - THE PREKEY WEIGHT: EVERY COUNT HERE WAS INFERRED FROM A FILE SIZE, AND NO DEVICE CAN
-   REPORT ITS OWN STATE CENSUS** - a `0.18.1` handset carrying all three accrual fixes still weighed
-   2.75 MB two days in (2026-09-16), and nothing separates groups from bundles. The reclaim rule was
-   refuted separately by the Welcome window ([backlog](docs/wiki/backlog.md)).
+2. **P1 - 933 KEY PACKAGES AGAINST A POOL OF FIFTY, ON THE USER'S OWN BROWSER, ON `0.18.4`** - read
+   from `load_or_create`'s composition line in a production console, 2026-09-16: 2.2 MB of a 7.3 MB
+   state. The breakdown naming WHICH of three reclaims applies is native-only
+   ([backlog](docs/wiki/backlog.md)).
 3. **P1 - a PLACEHOLDER held a member's seat**; only a member's CLIENT can say whether a LEAF is
    left in the MLS tree and **NOTHING HAS** - the three identities cited here as that evidence were
    this campaign's OWN mention fixtures, named 2026-09-07 ([backlog](docs/wiki/backlog.md)).

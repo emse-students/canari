@@ -6385,7 +6385,7 @@ build, so the prune's reclaim is not observable here.
 **The 2026-09-06 prune (`prune_expired_key_packages`) does NOT fix this** and was never going to:
 these bundles are hours old, not 84 days. The prune bounds the ceiling; this loop is what fills it.
 
-### P2 - `mls.bin` IS 2.75 MB ON A TWO-DAY-OLD INSTALL CARRYING ALL THREE ACCRUAL FIXES, AND NOTHING CAN SAY HOW MUCH OF IT IS BUNDLES (re-measured on the Mi 9T, 2026-09-16)
+### P2 - 933 KEY PACKAGES AGAINST A POOL OF FIFTY, ON THE USER'S OWN BROWSER, ON `0.18.4` - AND THE LINE THAT WOULD NAME THE REMEDY IS NATIVE-ONLY (production console, 2026-09-16)
 
 **DOWNGRADED P1 -> P2 ON 2026-09-16.** It was a P1 because the PIN gate told the user the unlock
 had failed while it was still working; that half is shipped. What remains is bounded growth with no
@@ -6437,14 +6437,36 @@ plus ~2 000 a member, four groups cost 0.45 MB at fifty members apiece and 1.6 M
 **this install's membership was never counted**, so the residue is anywhere between ~600 and ~1 400
 bundles. A range that wide is not a finding.
 
-**SO THE OPEN ITEM IS AN INSTRUMENT, NOT A FIX.** `mls-core/tests/state_weight.rs` can weigh the
-parts of a state it builds itself; nothing can ask a REAL device what its blob is made of, which is
-why every number in this entry's history has been inferred from a file size and an assumption about
-membership. A device that could report `groups=N, members=M, one-time bundles=B, last-resort=L`
-would have settled 19.5 MB in one line in September, and would settle this in one line now. That is
-the same rule the rest of this repository works to: a correct mechanism with no report is found by
-hand, a day late. **Until that exists, no `stat mls.bin` on any handset can accuse anything**, and
-this entry should not ask for another one.
+**AND THE INSTRUMENT I WAS ABOUT TO ASK FOR ALREADY EXISTS - IT PRINTS ONCE PER LOAD.**
+`load_or_create` calls `state_composition_summary()` and logs it at `info`, on the one seam every
+platform loads through, added precisely because two investigations had to INFER composition from
+synthetic states. A production console export from the USER's own browser, 2026-09-16 07:58:04 on
+`0.18.4`, carries it:
+
+```
+load_or_create: state composition - 7291769B total;
+  Tree 23x2536880B, MessageSecrets 23x2420376B, KeyPackage 933x2215941B
+```
+
+**933 key packages against a pool of fifty, on a WEB profile, on the current stable.** 2 215 941
+bytes of a 7 291 769-byte state - 30% of it - at ~2 375 bytes each. Tree and MessageSecrets are 23
+groups apiece and cost about the same again, which also settles the question the Mi 9T measurement
+could not: **groups and bundles are separable, and they are separated by reading the log rather than
+by dividing a file size.** No `stat mls.bin` was ever needed.
+
+**WHAT IS STILL MISSING IS THE SECOND LINE, AND ONLY ON WEB.** The breakdown that names a remedy -
+how many of those 933 are expired debt, how many superseded fallbacks, how many a revoked pool - is
+`#[cfg(not(target_arch = "wasm32"))]`, gated with the prune because the summary reads a clock and
+this crate must not. So the web says 933 and cannot say which of the three reclaims applies, and
+those three are reclaimed by three different mechanisms. **Passing the caller's
+`Date.now()/1000` the way `prune_key_packages_expired_at` already does would lift the gate without
+putting a clock in the crate** - the pattern is established one function above.
+
+**THE HANDSET MEASUREMENT IS THEREFORE SUPERSEDED, NOT PENDING.** `stat mls.bin` on the Mi 9T gave a
+file size and an argument about membership; one line of its own log would have given the census. The
+2026-09-16 figure stays recorded because it dates the install, and nothing more should be built on
+it.
+
 
 
 **This is invisible to every gate in this repository.** The desktop clients carry a small state and
