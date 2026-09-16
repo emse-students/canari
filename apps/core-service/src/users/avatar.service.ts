@@ -34,7 +34,13 @@ import { AvatarCache, isCacheableAbsence } from './avatar.cache';
  * startup by the constructor's warning, which is where a configuration fact belongs.
  */
 export type AvatarOutcome =
-  | { readonly kind: 'image'; readonly body: Buffer; readonly contentType: string }
+  | {
+      readonly kind: 'image';
+      readonly body: Buffer;
+      readonly contentType: string;
+      /** MiGallery's version of the photo, forwarded verbatim so a downstream cache can use it. */
+      readonly etag?: string;
+    }
   | { readonly kind: 'absent' }
   | { readonly kind: 'unavailable' }
   | { readonly kind: 'disabled' };
@@ -49,7 +55,14 @@ export type AvatarOutcome =
  */
 const UPSTREAM_TIMEOUT_MS = 4000;
 
-/** A fetched image is stable; the gallery is not asked again for an hour. */
+/**
+ * A fetched image is stable; the gallery is not asked again for an hour.
+ *
+ * WHAT LAPSING NOW COSTS IS A CONDITIONAL REQUEST, NOT A DOWNLOAD. Until 2026-09-16 this number was
+ * the whole of the invalidation story on this side, and it was not one: it decided how often the
+ * photo was fetched AGAIN, never whether it had changed. It still decides the former, and the
+ * upstream ETag decides the latter.
+ */
 const IMAGE_TTL_MS = 60 * 60 * 1000;
 
 /** An absence is shorter-lived: a user may upload a photo, and should see it appear. */
@@ -109,19 +122,39 @@ export class AvatarService {
     // answering "try again" to every render is a storm with no exit.
     if (!this.avatarApiKey) return { kind: 'disabled' };
 
-    const cached = this.cache.get(userId);
-    if (cached) return cached;
+    const cached = this.cache.lookup(userId);
+    if (cached.state === 'fresh') return cached.answer;
+
+    // THE ONE THING THAT CAN SAY WHETHER THE PHOTO CHANGED. MiGallery keys its ETag on the asset id,
+    // so asking it to confirm this version is the only question in the whole chain whose answer is
+    // about the PHOTO rather than about a clock. Null on a miss: there is nothing to confirm.
+    const revalidating = cached.state === 'stale' ? cached.answer : null;
 
     try {
       const url = `${this.avatarApiUrl}/api/users/${userId}/avatar`;
 
       const response = await axios.get<ArrayBuffer>(url, {
-        headers: { 'x-api-key': this.avatarApiKey },
+        headers: {
+          'x-api-key': this.avatarApiKey,
+          ...(revalidating ? { 'If-None-Match': revalidating.etag } : {}),
+        },
         responseType: 'arraybuffer',
         timeout: UPSTREAM_TIMEOUT_MS,
         // Disable redirects: following them to unknown destinations is a SSRF vector.
         maxRedirects: 0,
+        // A 304 IS AN ANSWER, AND ONLY WHEN WE ASKED THE QUESTION. axios's default rejects it as an
+        // error, which would classify "unchanged" as an outage. It is accepted only while a
+        // conditional request is in flight, so an unsolicited 304 - which would leave us with an
+        // empty body and nothing to revive - still lands in the catch and is reported, not stored.
+        validateStatus: (status) =>
+          (status >= 200 && status < 300) || (revalidating !== null && status === 304),
       });
+
+      if (revalidating && response.status === 304) {
+        const outcome = { kind: 'image', ...revalidating } as const;
+        this.cache.set(userId, outcome);
+        return outcome;
+      }
 
       const outcome = {
         kind: 'image',
@@ -129,6 +162,9 @@ export class AvatarService {
         // Pass the upstream's type through rather than asserting JPEG. The proxy does not know what
         // the gallery stores, and hardcoding it mislabels every PNG or WebP it serves.
         contentType: String(response.headers['content-type'] ?? 'image/jpeg'),
+        // KEPT WHOLE, WEAK MARKER AND QUOTES INCLUDED. It is an opaque token: re-deriving, trimming
+        // or re-quoting it is how a validator stops matching the thing that issued it.
+        etag: typeof response.headers['etag'] === 'string' ? response.headers['etag'] : undefined,
       } as const;
       this.cache.set(userId, outcome);
       return outcome;

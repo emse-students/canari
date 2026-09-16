@@ -213,6 +213,20 @@ export class UsersController {
       'Content-Length': outcome.body.length,
       'Cache-Control': 'public, max-age=86400',
     });
+    // THE ORIGIN'S VALIDATOR RATHER THAN A PROXY'S INVENTION - AND THAT IS ALL IT IS.
+    //
+    // `res.send` generates a weak ETag only when none is set, and 304s only against the one that IS
+    // (`express/lib/response.js` 169 and 199 on 5.2.1, read rather than assumed). The generated one
+    // was computed over the bytes going out, so it discriminates a changed photo EXACTLY as well as
+    // this one does: same bytes, same token, either way. Nothing downstream behaves differently.
+    //
+    // It is set anyway because a proxy that synthesises a validator for content it did not author
+    // is making a claim it cannot support - MiGallery's token is keyed on the asset id, and it is
+    // the only one that stays meaningful if these bytes are ever re-encoded on the way. Do not file
+    // it as the fix for staleness: what shortens that is `max-age`, and the decision about its
+    // shape is in `docs/wiki/backlog.md`. The revalidation that actually saves work is the one
+    // AvatarService makes upstream.
+    if (outcome.etag) res.set({ ETag: outcome.etag });
     res.send(outcome.body);
   }
 

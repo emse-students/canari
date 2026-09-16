@@ -92,3 +92,120 @@ describe('AvatarService - an estate with no provider is not an outage', () => {
     expect(get).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * A PHOTO THAT CHANGED USED TO BE INVISIBLE FOR ABOUT A DAY, AND THE UPSTREAM HAD ALREADY SOLVED IT.
+ *
+ * MiGallery keys its ETag on the ASSET ID - the thing that changes when a user changes their photo -
+ * and this service read `content-type` off the response and threw the rest away. So the only
+ * question anything in the chain could ask was "has an hour elapsed", which is a question about a
+ * clock and not about the photo, and the answer to it was always "download the whole thing again".
+ *
+ * These assert the two halves of the repair: the version is KEPT, and the lapsed TTL spends a
+ * conditional request rather than a download.
+ */
+describe('AvatarService - a photo that changed, and one that did not', () => {
+  const USER = 'e'.repeat(64);
+  const TTL_MS = 60 * 60 * 1000;
+
+  const service = () =>
+    new AvatarService({
+      get: (name: string, fallback?: string) =>
+        name === 'MIGALLERY_API_KEY' ? 'a-real-key' : (fallback ?? ''),
+    } as unknown as ConfigService);
+
+  const imageResponse = (body: string, etag?: string) => ({
+    status: 200,
+    data: Buffer.from(body),
+    headers: { 'content-type': 'image/png', ...(etag ? { etag } : {}) },
+  });
+
+  // THE CLOCK IS DRIVEN, NEVER WAITED FOR - the TTL is an hour, and a suite may not spend one.
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => {
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+    jest.clearAllMocks();
+  });
+
+  it('keeps the upstream version instead of discarding it with the rest of the headers', async () => {
+    jest.spyOn(axios, 'get').mockResolvedValue(imageResponse('photo', '"asset-7"'));
+
+    const outcome = await service().fetchUserAvatar(USER);
+
+    expect(outcome).toMatchObject({ kind: 'image', contentType: 'image/png', etag: '"asset-7"' });
+  });
+
+  it('asks the gallery to confirm that version once the hour lapses, and sends no such header before', async () => {
+    const get = jest.spyOn(axios, 'get').mockResolvedValue(imageResponse('photo', '"asset-7"'));
+    const svc = service();
+
+    await svc.fetchUserAvatar(USER);
+    jest.advanceTimersByTime(TTL_MS + 1);
+    await svc.fetchUserAvatar(USER);
+
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(get.mock.calls[0][1]?.headers).not.toHaveProperty('If-None-Match');
+    expect(get.mock.calls[1][1]?.headers).toMatchObject({ 'If-None-Match': '"asset-7"' });
+  });
+
+  it('accepts a 304 ONLY while it has a version to revive - an unsolicited one is not an answer', async () => {
+    const get = jest.spyOn(axios, 'get').mockResolvedValue(imageResponse('photo', '"asset-7"'));
+    const svc = service();
+
+    await svc.fetchUserAvatar(USER);
+    jest.advanceTimersByTime(TTL_MS + 1);
+    await svc.fetchUserAvatar(USER);
+
+    // axios is mocked, so `validateStatus` is never applied here - it is read back and exercised
+    // directly, which is the only way to prove the rule it encodes rather than assume it.
+    expect(get.mock.calls[0][1]?.validateStatus?.(304)).toBe(false);
+    expect(get.mock.calls[1][1]?.validateStatus?.(304)).toBe(true);
+    expect(get.mock.calls[1][1]?.validateStatus?.(500)).toBe(false);
+  });
+
+  it('revives the held bytes on a 304 and re-arms the hour, so nothing is downloaded twice', async () => {
+    const get = jest.spyOn(axios, 'get').mockResolvedValue(imageResponse('photo', '"asset-7"'));
+    const svc = service();
+    await svc.fetchUserAvatar(USER);
+
+    jest.advanceTimersByTime(TTL_MS + 1);
+    get.mockResolvedValue({ status: 304, data: Buffer.alloc(0), headers: {} });
+    const revalidated = await svc.fetchUserAvatar(USER);
+
+    // The body came from the entry we already had; the 304 carried none.
+    expect(revalidated).toMatchObject({ kind: 'image', etag: '"asset-7"' });
+    expect((revalidated as { body: Buffer }).body).toEqual(Buffer.from('photo'));
+
+    // And the hour started again: a request inside it must not reach the gallery at all.
+    await svc.fetchUserAvatar(USER);
+    expect(get).toHaveBeenCalledTimes(2);
+  });
+
+  it('takes the new photo when the gallery answers 200 with a different version', async () => {
+    const get = jest.spyOn(axios, 'get').mockResolvedValue(imageResponse('old', '"asset-7"'));
+    const svc = service();
+    await svc.fetchUserAvatar(USER);
+
+    jest.advanceTimersByTime(TTL_MS + 1);
+    get.mockResolvedValue(imageResponse('new', '"asset-8"'));
+    const outcome = await svc.fetchUserAvatar(USER);
+
+    expect(outcome).toMatchObject({ kind: 'image', etag: '"asset-8"' });
+    expect((outcome as { body: Buffer }).body).toEqual(Buffer.from('new'));
+  });
+
+  it('asks nothing conditional of an upstream that sent no version, and re-downloads as before', async () => {
+    const get = jest.spyOn(axios, 'get').mockResolvedValue(imageResponse('photo'));
+    const svc = service();
+
+    await svc.fetchUserAvatar(USER);
+    jest.advanceTimersByTime(TTL_MS + 1);
+    await svc.fetchUserAvatar(USER);
+
+    // No version means nothing could confirm it, so the entry is dropped rather than held: a
+    // conditional request with no validator is a full download wearing a second header.
+    expect(get.mock.calls[1][1]?.headers).not.toHaveProperty('If-None-Match');
+    expect(get.mock.calls[1][1]?.validateStatus?.(304)).toBe(false);
+  });
+});

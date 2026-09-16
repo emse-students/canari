@@ -164,7 +164,7 @@ of **three** outcomes. The distinction exists for one reason: **only an ANSWER m
 
 | outcome | when | response | cached |
 | --- | --- | --- | --- |
-| `image` | upstream 200 | the bytes, upstream `Content-Type` | 1 h in process, 24 h in the browser |
+| `image` | upstream 200 | the bytes, upstream `Content-Type` **and upstream `ETag`** | 1 h in process (then REVALIDATED, not re-fetched), 24 h in the browser |
 | `absent` | upstream **404** - this user has no photo | `404`, no body | 10 min in process, 10 min in the browser |
 | `unavailable` | timeout, transport failure, upstream 5xx/429, our key refused, or no key configured | `502`, no body, `Cache-Control: no-store` | never, at any layer |
 
@@ -220,8 +220,56 @@ had only ever drawn them once.
 - Guarded by `userAvatarCache.test.ts`: reintroducing any store without an expiry makes "asks the
   server again for a face nothing is displaying any more" fail - verified by reintroducing one.
 
+##### The version comes from MiGallery, and until 2026-09-16 we threw it away
+
+**There was no invalidation of an avatar at any layer, and the upstream had already solved it.**
+MiGallery's `api/users/[username]/avatar` keys its ETag on the **asset id** - the thing that changes
+when a user changes their photo - and answers `no-cache` unbusted. `AvatarService` read
+`content-type` off the response and discarded the rest, never sent `If-None-Match`, and the
+controller replaced that `no-cache` with `public, max-age=86400`. Four layers, four independent
+timers, ~25 h of staleness, and not one of them able to ask whether the photo had changed.
+
+**THE ETAG A CLIENT SAW WAS EXPRESS'S OWN, AND THAT HALF WAS NEVER THE DEFECT.** It is computed over
+the bytes going out, so it discriminates a changed photo exactly as well as the upstream token does.
+What made the ETag irrelevant downstream was `max-age=86400`: a validator nobody is allowed to ask
+about for a day settles nothing. Recording this because the first draft of this page claimed
+otherwise - a synthesised validator is a provenance problem, not a correctness one.
+
+What shipped, and what deliberately did not:
+
+- **The cache has three states, not two.** An expired entry is `stale` rather than `miss` **when and
+  only when it carries a version**: an entry with no validator can do nothing but be re-downloaded,
+  so keeping it would pin a payload for a key nobody may ask for again, and `maxEntries` bounds the
+  rest. An absence is never stale - there is no version of a photo that does not exist.
+- **A lapsed hour now costs a conditional request, not a download.** `If-None-Match` carries the
+  upstream token whole - weak marker and quotes included, because re-deriving or re-quoting an
+  opaque validator is how it stops matching what issued it.
+- **`validateStatus` accepts 304 only while a conditional request is in flight.** axios rejects 304
+  by default, which would classify "unchanged" as an outage; accepting it unconditionally would let
+  an unsolicited one store an empty body. The predicate closes over whether we asked.
+- **Forwarding the ETag downstream is one line and changes no behaviour**, because `res.send`
+  generates a weak ETag only when none is set and 304s only against the one that IS
+  (`express/lib/response.js` 169 and 199 on 5.2.1). It is done for provenance - a proxy synthesising
+  a validator for content it did not author claims something it cannot support, and MiGallery's
+  token stays meaningful if these bytes are ever re-encoded in transit. **It is not the fix for
+  staleness and must not be filed as one.**
+- **The 24 h was NOT shortened, and that is the point.** The saving is upstream: a lapsed hour costs
+  a conditional request instead of a full download, per replica, per face. The ~25 h a user sees is
+  decided by `max-age` alone and is untouched. The shape that does - `no-cache`
+  plus the real ETag, or a busted URL - is an open decision in [backlog](../backlog.md), and a
+  smaller number chosen as a compromise would be the same defect at a different rate.
+
+Guarded by `avatar.service.spec.ts` (6 cases, including the `validateStatus` predicate read back and
+exercised directly, since axios is mocked and never applies it) and `avatar.cache.spec.ts` - five
+tests fail when the ETag capture is removed, verified by removing it.
+
 `chat-delivery-service` re-exposes the same image at `/api/mls/push/avatar/:targetUserId` for the
-Android background service, and forwards core's status unchanged.
+Android background service, and forwards core's status unchanged. **It was deliberately left alone
+by the 2026-09-16 pass and is not a half-finished half of it**: it holds no cache of its own, so
+there is no lapsed TTL to revalidate, and the weak ETag Express derives from the bytes it forwards
+discriminates a changed photo correctly. Its readers - Android's `AVATAR_CACHE_MAX_AGE_MS` and iOS's
+`fetchAvatar` - keep a disk copy behind an explicit age check and send no conditional request at
+all, so there is nothing on that hop for a forwarded validator to do.
 
 #### Name search (search + directory)
 

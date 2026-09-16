@@ -43,6 +43,39 @@ lisait** : la commande ecrit le blob elle-meme. Tauri serialise un `Vec<u8>` en 
 d'entiers, soit plusieurs octets de transport par octet d'etat, a chaque connexion - et le pire
 telephone mesure en septembre portait 19 548 753 octets. Le champ est supprime.
 
+### Fixed - la version d'une photo de profil vient de MiGallery, on la jetait
+
+Il n'existait **aucune invalidation d'avatar, a aucune couche** : MiGallery, un cache d'une heure par
+replique dans core-service, 24 h chez Cloudflare, 24 h dans le navigateur. Quatre horloges
+independantes, environ 25 h de decalage, et pas une seule capable de demander si la photo avait
+change.
+
+MiGallery avait pourtant deja resolu le probleme. Son ETag est indexe sur **l'identifiant de
+l'asset** - ce qui change quand quelqu'un change sa photo, et rien d'autre. `AvatarService` lisait
+`content-type` de la reponse et jetait le reste. La seule question que la chaine savait poser etait
+"une heure s'est-elle ecoulee", qui porte sur une horloge et jamais sur la photo, et sa reponse etait
+toujours "retelecharge tout".
+
+L'ETag est desormais conserve avec l'entree en cache et renvoye en `If-None-Match` des que l'heure
+expire. L'economie est plus grande qu'un corps de reponse : chez MiGallery le branchement 304 court
+**avant `generateFaceCrop`**, donc un visage inchange ne coute plus la generation de son recadrage.
+
+Le cache a trois etats et non deux. Une entree expiree devient `stale` plutot que `miss` **quand, et
+seulement quand, elle porte une version** : une entree sans validateur ne peut que se faire
+retelecharger, donc la garder epinglerait une charge utile pour une cle que personne ne redemandera
+peut-etre jamais. Une absence n'est jamais `stale` - il n'y a pas de version d'une photo qui n'existe
+pas. Et `validateStatus` n'accepte un 304 que pendant qu'une requete conditionnelle est en vol : par
+defaut axios le traite en erreur, ce qui classerait "inchange" en panne, et l'accepter sans condition
+laisserait un 304 non sollicite stocker un corps vide.
+
+L'ETag est aussi transmis au navigateur a la place de celui qu'Express synthetisait, **par honnetete
+de provenance et sans rien changer au comportement** : celui d'Express est calcule sur les octets
+sortants, donc il discrimine une photo changee tout aussi bien.
+
+**Le `max-age` de 24 h ne bouge pas, et c'est lui seul qui decide des ~25 h que voit l'utilisateur.**
+Le raccourcir demande une decision consignee au backlog, et un nombre plus petit choisi par compromis
+serait le meme defaut a une autre cadence.
+
 ## [0.18.7] - 2026-09-16
 
 ### Changed - les deux agendas dessinent le meme mois, et ne le dessinent plus qu'une fois

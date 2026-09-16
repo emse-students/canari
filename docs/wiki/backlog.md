@@ -739,7 +739,7 @@ differs per engine, and it would make the measurement above unreproducible witho
 ordering IS. The ordering is the thing to state.
 
 ---
-### P2 - A CHANGED PROFILE PHOTO IS INVISIBLE FOR ~25 h, AND THE UPSTREAM ALREADY HANDS US THE VERSION WE THROW AWAY (measured on production 2026-09-16, asked by the USER)
+### P2 - A CHANGED PROFILE PHOTO IS STILL INVISIBLE FOR UP TO 24 h, AND ONLY `max-age` DECIDES THAT - THE SHAPE THAT MOVES IT IS THE OPEN DECISION (measured on production 2026-09-16, asked by the USER)
 
 **There is no invalidation of any kind on an avatar, at any layer.** Canari does not own the photo -
 it proxies MiGallery - so the only question is how fast a change there reaches a face here, and the
@@ -785,11 +785,18 @@ ever; a key naming an IDENTITY may not.* `/api/users/<id>/avatar` names a person
 **THE FIX IS ENTIRELY INSIDE CANARI - MiGallery needs no change.** Three parts, and the third is the
 one that needs a decision:
 
-1. store the upstream ETag with the cached entry and send `If-None-Match` when the 1 h TTL lapses -
-   an hourly full re-download of every face becomes a 304;
-2. forward MiGallery's ETag instead of letting Express invent one, so a revalidation downstream can
-   actually be about the PHOTO;
-3. stop claiming 24 h. Two shapes, and they are not equivalent:
+1. ~~store the upstream ETag with the cached entry and send `If-None-Match` when the 1 h TTL
+   lapses~~ **LANDED 2026-09-16**, and it buys more than a body: MiGallery's 304 branch runs
+   **before `generateFaceCrop`**, so an unchanged face no longer costs the crop generation either.
+   `AvatarCache` grew a third state - an expired entry is `stale` rather than `miss` **when and only
+   when it carries a version**, because an entry with no validator can do nothing but be
+   re-downloaded. `validateStatus` accepts a 304 only while a conditional request is in flight;
+2. ~~forward MiGallery's ETag instead of letting Express invent one~~ **LANDED 2026-09-16, AND IT
+   CHANGES NO BEHAVIOUR** - the first draft of this entry claimed it did, and was wrong. Express
+   derives its weak ETag from the bytes it sends, so it discriminates a changed photo exactly as
+   well. Forwarding the origin's token is provenance, not a repair;
+3. stop claiming 24 h. **THIS IS THE WHOLE OF WHAT A USER SEES, AND PARTS 1 AND 2 DID NOT SHORTEN IT
+   BY A SECOND.** Two shapes, and they are not equivalent:
    - **`no-cache` + the real ETag**: correct, deterministic, and puts one conditional request per
      face per render back on the wire - the amplification this endpoint was fixed of, and the reason
      the entry above exists.
@@ -799,7 +806,17 @@ one that needs a decision:
      version must reach the client without fetching the avatar first** - today core-service learns
      the asset id only by downloading the image, which is circular. `/api/users/batch` is the
      natural carrier and MiGallery would have to expose the id cheaply, which is the one part that
-     crosses a repository boundary.
+     crosses a repository boundary. **MiGallery was read on 2026-09-16 and exposes
+     `photos_asset_id` in exactly one place - `/api/users/[userId]/photo-access`, one call per
+     person behind its own scope.** There is no batch carrier today, so the blocking condition
+     stands.
+
+     **AND THE OBVIOUS WAY ROUND IT IS REFUTED, NOT UNEXPLORED.** Core-service now holds the asset
+     id after the first fetch, so `/api/users/batch` could carry it when the cache has it and omit
+     it otherwise - self-priming rather than circular. It must not be built: that cache is **per
+     replica**, so the same face would come back busted from one replica and unbusted from another,
+     and the client would keep two cache entries for one photo and thrash between them. A version
+     must come from somewhere shared and authoritative; an in-process LRU is not that.
 
 **Do not ship part 3 without deciding which shape**, and do not lower the TTL as a compromise: a
 smaller number is the same defect at a different rate, and it would still be a claim nobody can
