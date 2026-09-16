@@ -188,14 +188,16 @@
       emitEditorChange();
       return;
     }
-    if (
-      e.key === 'Enter' &&
-      !singleLine &&
-      markdownPreview &&
-      editorEl &&
-      !e.isComposing &&
-      composerMarkdownPreviewEnabled(serializeMentionEditor(editorEl), renderOptions)
-    ) {
+    // `markdownPreview` (not `composerMarkdownPreviewEnabled(...)`, a check on the CURRENT text,
+    // removed 2026-09-16) is what tells apart the two callers of this component: a free-text
+    // field (`MarkdownComposerField`, no `onkeydown` of its own) owns Enter itself and always
+    // wants a newline, while `ChatComposer` passes `markdownPreview` false specifically so Enter
+    // reaches ITS `onkeydown` and decides send-vs-newline there. Gating the free-text case on
+    // "does the text look like markdown right now" left PLAIN text - the common case - falling
+    // through to the browser's own broken default (see `insertNewlineAtCursor`'s docblock): typing
+    // "hello", Enter, "world" produced "helloworld" with the line break silently gone, same defect
+    // as the one this file already fixed for formatted text, just unguarded for everything else.
+    if (e.key === 'Enter' && !singleLine && markdownPreview && editorEl && !e.isComposing) {
       e.preventDefault();
       insertNewlineAtCursor();
       return;

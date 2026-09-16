@@ -130,7 +130,12 @@ function appendTextWithBreaks(parent: HTMLElement, text: string): void {
     if (i < lines.length - 1) parent.appendChild(document.createElement('br'));
   }
   if (text.endsWith('\n')) {
-    parent.appendChild(document.createTextNode(''));
+    // NOT a genuinely empty text node - a caret placed inside one anchors to the PARENT element
+    // rather than the node itself (measured 2026-09-16, same as `insertNewlineAtCursor`'s own
+    // trailing-`<br>` case), and the next keystroke then lands BEFORE this trailing newline
+    // instead of after it. `COMPOSER_EMPTY_LINE_FILLER` is this file's own existing convention
+    // for exactly that anchor, already stripped by every `serializeMentionEditor` read.
+    parent.appendChild(document.createTextNode(COMPOSER_EMPTY_LINE_FILLER));
   }
 }
 
@@ -279,7 +284,10 @@ function appendComposerText(parent: HTMLElement, text: string, markdownPreview: 
 
   const last = classified[classified.length - 1];
   if (text.endsWith('\n') && last?.kind === 'normal' && last.line === '') {
-    parent.appendChild(document.createTextNode(''));
+    // Same reasoning as `appendTextWithBreaks`'s own trailing case: a genuinely empty text node
+    // does not anchor the caret, and the next keystroke lands before this line break instead of
+    // on the new line it just opened.
+    parent.appendChild(document.createTextNode(COMPOSER_EMPTY_LINE_FILLER));
   }
 }
 

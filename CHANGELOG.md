@@ -147,6 +147,21 @@ vrai, sans jamais atteindre un message envoye.
 reel dans l'application - supprimee, avec les deux tests qui construisaient leur propre nouvelle
 ligne autour d'elle plutot que de l'exercer.
 
+**Signale une seconde fois par l'utilisateur (2026-09-16), sur un post cette fois** : en tapant du
+markdown (`__test__` par exemple) dans l'editeur d'un post puis Entree, la ligne ne se coupait qu'a
+moitie - il fallait appuyer une seconde fois pour vraiment passer a la ligne. Deux causes
+distinctes, meme famille que ci-dessus :
+
+- `appendComposerText` (le chemin de rendu que `markdownPreview` emprunte reellement pour
+  reappliquer le style markdown, separe de `appendTextWithBreaks`) avait son propre noeud texte
+  vide de fin de ligne, qui n'ancre pas non plus le curseur - corrige avec le meme caractere de
+  remplissage que ci-dessus.
+- `handleEditorKeydown` ne declenchait `insertNewlineAtCursor()` que si le texte ACTUEL contenait
+  deja du markdown (`composerMarkdownPreviewEnabled(texte, ...)`) - un texte sans syntaxe markdown
+  retombait donc sur le meme defaut casse du navigateur. Seul `markdownPreview` (la prop du
+  composant, qui distingue un champ libre comme `MarkdownComposerField` de `ChatComposer`) doit
+  decider qui possede Entree, jamais le contenu du texte au moment de la frappe.
+
 ### Fixed - un WEI ne remplissait pas ses journees, et la regle des 5h n'avait atteint qu'un tiers de l'agenda
 
 Deux defauts, trouves en repondant a une question de l'utilisateur le 16/09/2026 : pourquoi le WEI
