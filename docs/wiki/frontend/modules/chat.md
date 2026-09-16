@@ -1145,6 +1145,53 @@ every load, so pooling would fight the refresh (`isChannelConversationId`).
 This subsumes the `no-local-history` clause of the current marker: "awaiting history" becomes "my
 diff with at least one peer is non-empty", which empties itself.
 
+#### A row sent by `system` is a system row, and the SEAM derives that (2026-09-16)
+
+Two renderings of the SAME `memberAdded` were photographed in one thread on production: a centred
+grey pill, and directly beneath it the same sentence as an ordinary left-aligned bubble under a
+**"Utilisateur"** header. The second is what a system notice looks like when `isSystem` is false -
+the renderer draws a normal message, and no display name resolves for the `system` sentinel, so the
+sender label falls back to the unknown-user string.
+
+`serializeForBundle` is the writer that produced it. A bundle row carries the sender, the body, the
+id, the two timestamps, the reactions, the tombstone and the edit instant - and has never carried
+this flag, for a good reason: **`isSystem` and `senderId === 'system'` are the same fact, and
+putting both on the wire is where they get to disagree.** The flag was never missing from the
+bundle. It was missing from the READER.
+
+`isSystemSender`'s own docblock already stated the invariant - *every seam that MATERIALISES a row
+derives it from here instead of restating it* - and the 2026-09-14 fix honoured it in the REPLAY's
+`pushPendingMessage` only. The LIVE bundle merge in `systemMessageHandler` does not go through that
+function: its `toAdd` rows are handed to `batchAddMessages`, or to `addMessageToChat` one by one
+when the batch path is unavailable, and BOTH of those restated the caller's flag. Half an invariant
+is not an invariant. Both now derive:
+
+```ts
+const isSystem = options.isSystem === true || isSystemSender(senderId);   // addMessageToChat
+const isSystem = pm.isSystem === true || isSystemSender(pm.senderId);     // batchAddMessages
+```
+
+It widens the answer rather than replacing it: a row its writer flagged stays flagged whatever its
+sender is.
+
+**THE RENDER IS THE SMALLEST OF THE THREE THINGS THIS FLAG DECIDES**, and that is why the defect was
+worse than the screenshots show. The same value gates the unread badge, the arrival tone and the OS
+notification, so a group notice restored through a bundle **rang a phone, raised a count and pushed
+a banner for a line nobody sent** - on a device that had merely reconnected. A rendering bug is what
+got reported; three of the five tests in `useMessaging.systemSender.svelte.test.ts` fail without the
+fix, and one of them is the notification.
+
+**NOTHING IS OWED TO THE DEVICES THAT ALREADY SHOWED IT, AND THAT IS A PROPERTY OF THE SCHEMA RATHER
+THAN OF THE FIX.** `StoredMessage` HAS NO `isSystem` COLUMN, so `mapStoredMessagesToChatMessages`
+derives it on every read from IndexedDB and always has. The wrong value only ever existed on the
+in-memory row, for the life of the session that received the bundle - which is also why the
+photograph could show both renderings of one event side by side. A reload was already the repair.
+There is no migration here, no collapse pass, and no destructive control to gate.
+
+This is independent of [the notice-identity fix](#a-visible-system-notice-needs-an-identity-the-sender-minted),
+which gives a notice ONE id across the three paths that can write it: that one settles HOW MANY rows appear, this one settles their SHAPE however they
+arrived. A correctly deduped notice could still be a "Utilisateur" bubble, and was.
+
 ### What ended the wait, and why there is no wait left
 
 Kept because the shape recurs, not because the code is still there. The exchange used to be gated by

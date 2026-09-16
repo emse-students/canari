@@ -27,6 +27,7 @@ import { applyPin, isMessagePinned } from '$lib/stores/pinStore.svelte';
 import {
   indexMessagesById,
   isStaleInboundMessage,
+  isSystemSender,
   normalizeMessageId,
   resolveMessageTimestamp,
 } from '$lib/utils/chat/messageUtils';
@@ -498,6 +499,19 @@ export function useMessaging() {
     }
 
     const isOwn = isOwnMessage(senderId, ctx.userId);
+    // ONE BELIEF, ONE DERIVATION - and this is the seam that MATERIALISES the row, so it is derived
+    // here rather than trusted from the caller. `isSystemSender`'s own docblock says why: a writer
+    // that sets the sender without the flag produces a notice rendered as an ORDINARY BUBBLE
+    // labelled "Utilisateur", because no display name resolves for the sentinel. The `history_bundle`
+    // is exactly that writer - `serializeForBundle` carries reactions, tombstones and the edit
+    // instant, and has never carried this flag - and the 2026-09-14 fix derived it in the REPLAY's
+    // `pushPendingMessage` only, leaving the LIVE bundle merge restating it here. Both halves of one
+    // invariant, one of them held.
+    //
+    // AND THE RENDER IS THE SMALLEST OF THE THREE THINGS IT DECIDES. The same flag gates the unread
+    // badge, the arrival tone and the OS notification below, so a notice arriving through a bundle
+    // rang a phone and raised a count for a line nobody sent.
+    const isSystem = options.isSystem === true || isSystemSender(senderId);
     // One arriving message, so one scan: building an index here would cost the same walk and throw
     // it away. The batch path below is the one that had to change.
     const resolvedTimestamp = resolveMessageTimestamp(
@@ -512,7 +526,7 @@ export function useMessaging() {
       timestamp: new SvelteDate(resolvedTimestamp),
       isOwn,
       replyTo: options.replyTo,
-      isSystem: options.isSystem ?? false,
+      isSystem,
       status: options.status,
       isFcmPreview: options.isFcmPreview,
       serverTimestamp: options.serverTimestamp,
@@ -610,7 +624,7 @@ export function useMessaging() {
     if (
       isConversationOpen &&
       !isOwn &&
-      !options.isSystem &&
+      !isSystem &&
       isChannelConversationId(normalized) &&
       claimChannelReadSignal(normalized, newMsg.timestamp.getTime())
     ) {
@@ -623,7 +637,7 @@ export function useMessaging() {
     // and carries its channel's own sound, so exactly one audible signal is produced either way.
     if (
       !isOwn &&
-      !options.isSystem &&
+      !isSystem &&
       !isStaleInboundMessage(resolvedTimestamp) &&
       canSeeArrival(ctx, normalized)
     ) {
@@ -631,7 +645,7 @@ export function useMessaging() {
     }
 
     // ONE DECISION, ASKED BY BOTH INBOUND PATHS - see `notifyInbound`.
-    notifyInbound(ctx, normalized, convo.name, senderId, content, !!options.isSystem, isOwn);
+    notifyInbound(ctx, normalized, convo.name, senderId, content, isSystem, isOwn);
 
     const skipDbSave = options.skipDbSave ?? isChannelConversationId(normalized);
     if (ctx.storage && !skipDbSave) {
@@ -709,12 +723,15 @@ export function useMessaging() {
       if (processedCount % 50 === 0) await yieldToMainThread();
 
       const id = normalizeMessageId(pm.messageId) ?? crypto.randomUUID();
+      // Derived per row, for the reason spelt out in `addMessageToChat` above: this is the OTHER
+      // seam that materialises a row, and the `history_bundle` reaches BOTH of them.
+      const isSystem = pm.isSystem === true || isSystemSender(pm.senderId);
       const existingMsg = byId.get(id);
       if (existingMsg && shouldUpgradeMessage(existingMsg, pm.content)) {
         const upgraded = mergeMessageUpgrade(existingMsg, {
           content: pm.content,
           replyTo: pm.replyTo,
-          isSystem: pm.isSystem,
+          isSystem,
           serverTimestamp: pm.serverTimestamp,
         });
         upgradedById.set(id, upgraded);
@@ -742,7 +759,7 @@ export function useMessaging() {
         timestamp: new SvelteDate(resolvedTimestamp),
         isOwn,
         replyTo: pm.replyTo,
-        isSystem: pm.isSystem,
+        isSystem,
         ingestSequence: pm.ingestSequence,
       };
       brandNew.push(newMsg);
@@ -760,7 +777,7 @@ export function useMessaging() {
             : new SvelteDate(newMsg.timestamp)
           ).getTime(),
           serverTimestamp: pm.serverTimestamp,
-          ...(pm.isSystem ? { readBy: [] } : {}),
+          ...(isSystem ? { readBy: [] } : {}),
         });
       }
     }
