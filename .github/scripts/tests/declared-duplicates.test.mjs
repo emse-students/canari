@@ -69,6 +69,34 @@ const GROUPS = [
     ],
   },
   {
+    what: 'the server-to-server secret check every exposed internal route makes',
+    compare: 'code',
+    why: 'one credential, three services, and no shared TS package - each copy introduces itself with the routes IT gates, which is why this is compared as code rather than exactly',
+    files: [
+      'apps/core-service/src/internal/internal-secret.util.ts',
+      'apps/media-service/src/media/internal-secret.util.ts',
+      'apps/social-service/src/internal/internal-secret.util.ts',
+    ],
+  },
+  {
+    what: 'the block check that refuses to pull a blocker into a shared space',
+    compare: 'code',
+    why: 'the same refusal at two different mutations - a group add and a salon invitation - so each copy names its own call site in prose and must decide identically',
+    files: [
+      'apps/chat-delivery-service/src/utils/user-blocks.ts',
+      'apps/social-service/src/common/user-blocks.ts',
+    ],
+  },
+  {
+    what: 'the Stripe callback URL allowlist',
+    compare: 'exact',
+    why: 'an allowlist deciding where a payment may return to; two services build those URLs and a divergence would let one accept a destination the other refuses',
+    files: [
+      'apps/core-service/src/payment/stripe-callback-url.ts',
+      'apps/social-service/src/common/stripe-callback-url.ts',
+    ],
+  },
+  {
     what: 'the Minesweeper engine, client and server',
     compare: 'code',
     why: 'the server replays a ranked game to decide whether a score is a cheat, so it must reach the SAME verdict as the client that produced it - a divergence rejects honest players or accepts dishonest ones',
