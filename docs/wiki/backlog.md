@@ -1028,7 +1028,16 @@ simply delete it.**
 What is open is the SHAPE, and the cost of each:
 
 - **`no-cache` + an ETag on the shell.** Saves the 6 KB body on a revalidation and nothing else: the
-  round trip is the cost, not the bytes. Small.
+  round trip is the cost, not the bytes. Small. **AND THE SECOND REASON TO REACH FOR IT DOES NOT
+  APPLY HERE, MEASURED 2026-09-16 RATHER THAN ASSUMED.** The obvious argument is that `no-store`
+  disqualifies a document from the back/forward cache, so leaving a canari-emse.fr tab and pressing
+  Back costs the whole 1.3 s boot again. It does not, in this Chrome: a real history traversal away
+  from `https://canari-emse.fr/login` and back fires `pageshow` with `persisted: true`, the
+  document's own JavaScript globals survive it, and `performance.getEntriesByType('navigation')[0]`
+  is still the ORIGINAL entry - all three are the signature of a restore, on the `no-store` response
+  production serves today. So this line buys the 6 KB and nothing more, and a later reader reaching
+  for it on the bfcache argument should re-measure before believing it. The probe is three steps:
+  stamp `window`, traverse away, `history.back()`, read the stamp back.
 - **Edge caching with a short `s-maxage`, or with a purge on deploy.** This is the one that moves the
   number: the document would be served from the user's own PoP instead of proxied to France, and the
   `frontend-ssr` container leaves the critical path of every navigation. **Its blocking condition is
