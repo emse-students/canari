@@ -226,10 +226,14 @@ had only ever drawn them once.
 MiGallery's `api/users/[username]/avatar` keys its ETag on the **asset id** - the thing that changes
 when a user changes their photo - and answers `no-cache` unbusted. `AvatarService` read
 `content-type` off the response and discarded the rest, never sent `If-None-Match`, and the
-controller replaced that `no-cache` with `public, max-age=86400`. The ETag a client saw was
-**Express's own weak one**, computed over whatever bytes went out, which can only ever produce a 304
-after the day has already elapsed. Four layers, four independent timers, ~25 h of staleness, and not
-one of them able to ask whether the photo had changed.
+controller replaced that `no-cache` with `public, max-age=86400`. Four layers, four independent
+timers, ~25 h of staleness, and not one of them able to ask whether the photo had changed.
+
+**THE ETAG A CLIENT SAW WAS EXPRESS'S OWN, AND THAT HALF WAS NEVER THE DEFECT.** It is computed over
+the bytes going out, so it discriminates a changed photo exactly as well as the upstream token does.
+What made the ETag irrelevant downstream was `max-age=86400`: a validator nobody is allowed to ask
+about for a day settles nothing. Recording this because the first draft of this page claimed
+otherwise - a synthesised validator is a provenance problem, not a correctness one.
 
 What shipped, and what deliberately did not:
 
@@ -243,11 +247,15 @@ What shipped, and what deliberately did not:
 - **`validateStatus` accepts 304 only while a conditional request is in flight.** axios rejects 304
   by default, which would classify "unchanged" as an outage; accepting it unconditionally would let
   an unsolicited one store an empty body. The predicate closes over whether we asked.
-- **Forwarding the ETag downstream is one line**, because `res.send` generates a weak ETag only when
-  none is set and 304s only against the one that IS (`express/lib/response.js` 169 and 199 on 5.2.1).
-- **The 24 h was NOT shortened, and that is the point.** These changes make the revalidation that
-  eventually happens be about the PHOTO instead of about a clock, and take the body off the wire;
-  they do not move the ~25 h, which is decided by `max-age` alone. The shape that does - `no-cache`
+- **Forwarding the ETag downstream is one line and changes no behaviour**, because `res.send`
+  generates a weak ETag only when none is set and 304s only against the one that IS
+  (`express/lib/response.js` 169 and 199 on 5.2.1). It is done for provenance - a proxy synthesising
+  a validator for content it did not author claims something it cannot support, and MiGallery's
+  token stays meaningful if these bytes are ever re-encoded in transit. **It is not the fix for
+  staleness and must not be filed as one.**
+- **The 24 h was NOT shortened, and that is the point.** The saving is upstream: a lapsed hour costs
+  a conditional request instead of a full download, per replica, per face. The ~25 h a user sees is
+  decided by `max-age` alone and is untouched. The shape that does - `no-cache`
   plus the real ETag, or a busted URL - is an open decision in [backlog](../backlog.md), and a
   smaller number chosen as a compromise would be the same defect at a different rate.
 
@@ -256,7 +264,12 @@ exercised directly, since axios is mocked and never applies it) and `avatar.cach
 tests fail when the ETag capture is removed, verified by removing it.
 
 `chat-delivery-service` re-exposes the same image at `/api/mls/push/avatar/:targetUserId` for the
-Android background service, and forwards core's status unchanged.
+Android background service, and forwards core's status unchanged. **It was deliberately left alone
+by the 2026-09-16 pass and is not a half-finished half of it**: it holds no cache of its own, so
+there is no lapsed TTL to revalidate, and the weak ETag Express derives from the bytes it forwards
+discriminates a changed photo correctly. Its readers - Android's `AVATAR_CACHE_MAX_AGE_MS` and iOS's
+`fetchAvatar` - keep a disk copy behind an explicit age check and send no conditional request at
+all, so there is nothing on that hop for a forwarded validator to do.
 
 #### Name search (search + directory)
 
