@@ -168,12 +168,14 @@ export class MessagingController {
     @Body()
     body: { groups?: { groupId: string; after?: string; limit?: number; until?: string }[] },
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-global-admin') headerGlobalAdmin?: string,
+    @Headers('x-canari-device') headerDeviceId?: string
   ) {
     return this.messagingService.getHistoryBatch(
       body?.groups ?? [],
       headerUserId,
-      headerGlobalAdmin
+      headerGlobalAdmin,
+      headerDeviceId
     );
   }
 
@@ -193,7 +195,13 @@ export class MessagingController {
     @Query('limit') limitRaw?: string,
     @Query('until') until?: string,
     @Headers('x-user-id') headerUserId?: string,
-    @Headers('x-global-admin') headerGlobalAdmin?: string
+    @Headers('x-global-admin') headerGlobalAdmin?: string,
+    /**
+     * The client's own device id, self-asserted and DIAGNOSTIC ONLY - nothing branches on it, and
+     * it cannot refuse the request. It is what lets a burst of walks over one group be attributed
+     * to a device rather than to an account with several. See `historyRequester`.
+     */
+    @Headers('x-canari-device') headerDeviceId?: string
   ): Promise<Record<string, unknown>[]> {
     const limit = limitRaw ? parseInt(limitRaw, 10) : undefined;
     const { rows, head } = await this.messagingService.getHistory(
@@ -202,7 +210,8 @@ export class MessagingController {
       headerUserId,
       headerGlobalAdmin,
       Number.isFinite(limit) ? limit : undefined,
-      until
+      until,
+      headerDeviceId
     );
     if (head) res.setHeader('X-History-Head', head);
     return rows;

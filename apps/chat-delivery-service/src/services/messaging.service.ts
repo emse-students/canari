@@ -45,6 +45,7 @@ import {
 import {
   sanitizeQueryValue,
   sanitizeOptionalQueryValue,
+  sanitizeLogValue,
   sanitizeStringIdList,
   assertCallerOwnsUserId,
   isUnresolvedIdentity,
@@ -2869,6 +2870,32 @@ export class MessagingService {
   }
 
   /**
+   * WHO ASKED, as one field every history log line carries.
+   *
+   * A `[HISTORY]` line named the group, the cursor and the row count and NOT the caller, so a burst
+   * of walks over one group could not be attributed to anything: thirteen full `after=start` walks
+   * in ten minutes on production 2026-09-16 were unattributable to a device, an account, or even a
+   * count of distinct callers. **A rate is only a defect once it is measured against the population
+   * that produced it**, and that measurement needs this field before it needs anything else.
+   *
+   * THE TWO HALVES ARE NOT WORTH THE SAME AND THE LINE SAYS SO. `user` is what nginx put on the
+   * request after `/internal/auth/verify` answered - a fact this service did not have to trust the
+   * caller for. `device` is the client's own `X-Canari-Device`, self-asserted, and it is accepted
+   * anyway for the same reason `probeSender` accepts the device half of an MLS identity: the user
+   * is authenticated alongside it, so the only thing a liar can misreport is which of its OWN
+   * devices walked the archive. That costs a misattributed walk inside one account and nothing else,
+   * which is worth far less than having no device at all when two of them walk the same group.
+   *
+   * Neither half can refuse the request - see {@link sanitizeLogValue}.
+   */
+  private historyRequester(
+    headerUserId: string | undefined,
+    headerDeviceId: string | undefined
+  ): string {
+    return `user=${sanitizeLogValue(headerUserId)} device=${sanitizeLogValue(headerDeviceId)}`;
+  }
+
+  /**
    * Reads one page from `history:{groupId}` (no auth — caller must gate access).
    *
    * `after` is an exclusive Redis stream ID (`(${after}` in XRANGE); `until` is an INCLUSIVE upper
@@ -2882,7 +2909,8 @@ export class MessagingService {
     groupId: string,
     after: string | undefined,
     limit: number,
-    until?: string
+    until: string | undefined,
+    requester: string
   ): Promise<{ rows: Record<string, unknown>[]; head?: string }> {
     const streamKey = `history:${groupId}`;
     const startId = after ? `(${after}` : '-';
@@ -2892,7 +2920,8 @@ export class MessagingService {
       ? until
       : ((await this.redis.xrevrange(streamKey, '+', '-', 'COUNT', 1))[0]?.[0] ?? undefined);
     this.logger.log(
-      `[HISTORY] group=${groupId} after=${after ?? 'start'} until=${until ?? head ?? 'empty'} limit=${limit} entries=${entries.length}`
+      `[HISTORY] ${requester} group=${groupId} after=${after ?? 'start'} ` +
+        `until=${until ?? head ?? 'empty'} limit=${limit} entries=${entries.length}`
     );
     return { rows: this.mapHistoryEntries(entries), head };
   }
@@ -2963,8 +2992,10 @@ export class MessagingService {
     headerUserId: string | undefined,
     headerGlobalAdmin: string | undefined,
     limitRaw?: number,
-    untilRaw?: string
+    untilRaw?: string,
+    headerDeviceId?: string
   ): Promise<{ rows: Record<string, unknown>[]; head?: string }> {
+    const requester = this.historyRequester(headerUserId, headerDeviceId);
     const groupId = sanitizeQueryValue(groupIdRaw, 'groupId');
     const after = this.sanitizeStreamId(afterRaw);
     const until = this.sanitizeStreamId(untilRaw);
@@ -2983,15 +3014,23 @@ export class MessagingService {
       // history went with it - which is a client still holding the conversation locally and asking
       // for it, the most ordinary request there is. Naming the first cause for both made a line
       // whose reader learns to skip it.
-      this.logger.log(`[HISTORY] group=${groupId} not deliverable (absent or deleted) - empty`);
+      this.logger.log(
+        `[HISTORY] ${requester} group=${groupId} not deliverable (absent or deleted) - empty`
+      );
       return { rows: [] };
     }
 
     try {
-      const { rows, head } = await this.readHistoryStreamPage(groupId, after, limit, until);
+      const { rows, head } = await this.readHistoryStreamPage(
+        groupId,
+        after,
+        limit,
+        until,
+        requester
+      );
       return { rows: await this.enrichHistoryWithDisplayNames(rows), head };
     } catch (e) {
-      this.logger.error(`[HISTORY] group=${groupId} error=${String(e)}`);
+      this.logger.error(`[HISTORY] ${requester} group=${groupId} error=${String(e)}`);
       throw new ServiceUnavailableException('History stream unavailable');
     }
   }
@@ -3003,8 +3042,10 @@ export class MessagingService {
   async getHistoryBatch(
     items: HistoryBatchRequestItem[],
     headerUserId: string | undefined,
-    headerGlobalAdmin: string | undefined
+    headerGlobalAdmin: string | undefined,
+    headerDeviceId?: string
   ): Promise<HistoryBatchResponse> {
+    const requester = this.historyRequester(headerUserId, headerDeviceId);
     if (!Array.isArray(items)) {
       throw new BadRequestException('groups must be an array');
     }
@@ -3041,11 +3082,11 @@ export class MessagingService {
           return;
         }
         try {
-          const page = await this.readHistoryStreamPage(groupId, after, limit, until);
+          const page = await this.readHistoryStreamPage(groupId, after, limit, until, requester);
           histories[groupId] = page.rows;
           if (page.head) heads[groupId] = page.head;
         } catch (e) {
-          this.logger.error(`[HISTORY_BATCH] group=${groupId} error=${String(e)}`);
+          this.logger.error(`[HISTORY_BATCH] ${requester} group=${groupId} error=${String(e)}`);
           histories[groupId] = [];
         }
       })
@@ -3055,7 +3096,9 @@ export class MessagingService {
     const allEntries = Object.values(histories).flat();
     await this.enrichHistoryWithDisplayNames(allEntries);
 
-    this.logger.log(`[HISTORY_BATCH] groups=${normalized.length} authorized=${authorized.size}`);
+    this.logger.log(
+      `[HISTORY_BATCH] ${requester} groups=${normalized.length} authorized=${authorized.size}`
+    );
     return { histories, heads };
   }
 

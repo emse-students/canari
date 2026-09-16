@@ -80,6 +80,27 @@ export function isUnresolvedIdentity(value: string): boolean {
 }
 
 /**
+ * A caller-supplied value reduced to something safe to put in a LOG LINE, and never to a refusal.
+ *
+ * WHY THIS IS NOT `sanitizeOptionalQueryValue`. That one throws, which is right for a value the
+ * request DEPENDS on - a 400 naming the field beats an outcome the caller has to read. A field that
+ * only describes the request must never be able to refuse it: a diagnostic that can 400 a history
+ * walk is a diagnostic that makes the system worse than having none.
+ *
+ * So the three outcomes are all values, and all three are distinguishable by the reader: the value
+ * itself, `unstated` when the caller sent none, and `invalid` when it sent something outside
+ * {@link SAFE_QUERY_VALUE_REGEX} - which is also what stops a caller writing newlines into a log and
+ * forging lines in it.
+ */
+export function sanitizeLogValue(value: unknown, absent = 'unstated'): string {
+  if (value === undefined || value === null || value === '') return absent;
+  if (typeof value !== 'string') return 'invalid';
+  const trimmed = value.trim();
+  if (!trimmed) return absent;
+  return SAFE_QUERY_VALUE_REGEX.test(trimmed) ? trimmed : 'invalid';
+}
+
+/**
  * Like `sanitizeQueryValue` but treats `undefined`, `null`, and `""` as absent
  * and returns `undefined` instead of throwing, leaving the field truly optional.
  */

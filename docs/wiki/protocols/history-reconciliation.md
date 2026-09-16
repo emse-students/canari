@@ -906,6 +906,41 @@ carries a `[HISTORY]` warning naming what was lost, since 2026-08-16:
 | Store unreadable before the batch write | An `isDeleted` / `isEdited` flag set by an already-seen event is overwritten with the original body |
 | The post-save mutation pass | Replayed reactions, deletes and edits are not stored, and it says how many of each |
 
+### And on the SERVER side, a `[HISTORY]` line names who asked
+
+Every `[HISTORY]` and `[HISTORY_BATCH]` line opens with `user=<u> device=<d>` since 2026-09-16.
+Before that it named the group, the cursor and the row count and nothing about the caller, which is
+why the thirteen full `after=start` walks over one group in ten minutes measured on production that
+day could be COUNTED and not ATTRIBUTED - not to a device, not to an account, not even to a number
+of distinct callers. **A rate is only a defect once it is measured against the population that
+produced it**, and a burst from one device retrying is a different system from the same burst spread
+over an account's several devices.
+
+**The two halves are not worth the same and the line says so.** `user` is what nginx put on the
+request once `/internal/auth/verify` answered - a fact the service did not have to trust the caller
+for. `device` is the client's own `X-Canari-Device`, self-asserted, accepted for the same reason
+`probeSender` accepts the device half of an MLS identity: the user is authenticated alongside it, so
+the most a liar can do is misattribute its own walk inside its own account.
+
+**Where each half is attached.** The device id is known in exactly one place on the client, so it is
+sent from exactly one place: `MlsDeliveryApi.auth()`, which every `/api/mls/*` request already goes
+through - a call site that wanted it later would otherwise need its own plumbing. Nginx forwards it
+untouched; the `/api/mls/` block only SETS `X-User-Id` and friends from the auth subrequest, and
+client headers it does not name pass through. The header is already on a preflighted request
+(`Authorization` forces one under Tauri's cross-origin webview) and NestJS reflects the requested
+header list, so it costs no new round-trip.
+
+**Nothing branches on it, and that is a property rather than an accident.** It reaches the log
+through `sanitizeLogValue`, which cannot throw: a value the request DEPENDS on deserves a 400 naming
+the field, but a field that only describes the request must never be able to refuse it. So there are
+three readings and they are distinguishable - the value, `unstated` when the caller sent none (an
+older client), and `invalid` when it sent something outside the safe allowlist, which is also what
+stops a caller writing newlines into the log and forging lines in it. `device=pending` is a fourth
+and it is real: the client's own literal for an unresolved identity, naming a request made before
+`resolveDeviceId` finished.
+
+---
+
 ---
 
 ## What disappears

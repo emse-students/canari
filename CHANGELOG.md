@@ -11,28 +11,27 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
-### Fixed - une panne reseau pouvait retirer une invitation parfaitement valide
+### Added - une lecture d'archive dit desormais QUI l'a demandee
 
-`fetchDeviceKeyPackage` renvoyait `null` pour un 404, un 500, une erreur de passerelle et un reseau
-injoignable indifferemment - et `processPendingInvitations` lisait chacun d'eux comme « l'appareil a
-ete desinscrit », puis SUPPRIMAIT l'appartenance en attente. Une mauvaise minute sur un seul point
-d'entree pouvait donc retirer une invitation valide. La regle existait deja et ce site ne l'honorait
-pas : **un code de statut est une reponse, une panne de transport n'en est pas une.** Une non-reponse
-n'etablit plus rien, l'invitation reste, et le balayage suivant redemande.
+`[HISTORY]` nommait le groupe, le curseur et le nombre de lignes, et rien du demandeur. Les treize
+parcours complets `after=start` d'un meme groupe en dix minutes mesures sur la production le
+2026-09-16 etaient donc comptables et pas attribuables : ni a un appareil, ni a un compte, ni meme
+a un nombre d'appelants distincts. **Un taux n'est un defaut qu'une fois mesure contre la population
+qui l'a produit**, et une rafale venant d'un seul appareil qui reessaie n'est pas le meme systeme
+que la meme rafale repartie sur les appareils d'un compte.
 
-**Et le 404 avait lui-meme trois causes rapportees comme une seule.** Depuis que le serveur refuse de
-servir un paquet perime (meme date), « pas de paquet » signifie aussi « cet appareil n'est pas venu
-en ligne depuis que son paquet est mort » - ce qui est TEMPORAIRE et se repare tout seul. Les trois
-causes - `revoked`, `unregistered`, `expired` - sont desormais classifiees a l'endroit ou elles sont
-connues et voyagent dans le corps du 404. Les trois retirent la ligne, parce que redemander pendant
-ce demarrage ne changera pas la reponse, mais seul `expired` promet un retour : l'appareil frappe un
-paquet neuf a sa prochaine connexion et `registerDevice` recree l'appartenance en attente pour chaque
-groupe de son proprietaire. C'est aussi ce qui termine la boucle qui reessayait a chaque lancement -
-quatre requetes et un tour de crypto - sans qu'aucune decision produit ne soit necessaire : arreter
-ne perd rien.
+`[HISTORY]` et `[HISTORY_BATCH]` commencent maintenant par `user=... device=...`. L'utilisateur est
+ce que nginx a pose sur la requete apres `/internal/auth/verify` ; l'appareil est le `X-Canari-Device`
+du client, auto-declare, accepte pour la meme raison que `probeSender` accepte la moitie « appareil »
+d'une identite MLS : l'utilisateur est authentifie a cote, donc un menteur ne peut mal attribuer que
+sa propre requete a l'interieur de son propre compte. L'en-tete part de `MlsDeliveryApi.auth()`, seul
+endroit ou l'identifiant d'appareil est connu, donc de toutes les requetes `/api/mls/*` a la fois.
 
-Un client plus recent que son serveur lit un 404 sans motif comme `unspecified` et se comporte
-exactement comme avant que le champ existe - voir `docs/wiki/legacy-compatibility.md`.
+**Rien ne branche dessus, par construction.** Il passe par `sanitizeLogValue`, qui ne leve jamais :
+un champ qui ne fait que decrire la requete ne doit jamais pouvoir la refuser. Trois lectures
+distinctes en sortent - la valeur, `unstated` quand rien n'a ete envoye, et `invalid` quand la valeur
+sort de la liste blanche, ce qui interdit au passage d'ecrire des retours a la ligne dans le journal
+et d'y forger des lignes.
 
 ### Changed - 182 ms de demarrage a froid rendus : la poignee de main du socket n'attend plus un etat MLS qu'elle ne lit pas
 
@@ -87,6 +86,28 @@ attente a recuperer.
 Six gardes de source pinent l'ordre, parce qu'une reecriture ulterieure pourrait le defaire sans
 qu'aucun test de comportement ne rougisse.
 
+### Fixed - une panne reseau pouvait retirer une invitation parfaitement valide
+
+`fetchDeviceKeyPackage` renvoyait `null` pour un 404, un 500, une erreur de passerelle et un reseau
+injoignable indifferemment - et `processPendingInvitations` lisait chacun d'eux comme « l'appareil a
+ete desinscrit », puis SUPPRIMAIT l'appartenance en attente. Une mauvaise minute sur un seul point
+d'entree pouvait donc retirer une invitation valide. La regle existait deja et ce site ne l'honorait
+pas : **un code de statut est une reponse, une panne de transport n'en est pas une.** Une non-reponse
+n'etablit plus rien, l'invitation reste, et le balayage suivant redemande.
+
+**Et le 404 avait lui-meme trois causes rapportees comme une seule.** Depuis que le serveur refuse de
+servir un paquet perime (meme date), « pas de paquet » signifie aussi « cet appareil n'est pas venu
+en ligne depuis que son paquet est mort » - ce qui est TEMPORAIRE et se repare tout seul. Les trois
+causes - `revoked`, `unregistered`, `expired` - sont desormais classifiees a l'endroit ou elles sont
+connues et voyagent dans le corps du 404. Les trois retirent la ligne, parce que redemander pendant
+ce demarrage ne changera pas la reponse, mais seul `expired` promet un retour : l'appareil frappe un
+paquet neuf a sa prochaine connexion et `registerDevice` recree l'appartenance en attente pour chaque
+groupe de son proprietaire. C'est aussi ce qui termine la boucle qui reessayait a chaque lancement -
+quatre requetes et un tour de crypto - sans qu'aucune decision produit ne soit necessaire : arreter
+ne perd rien.
+
+Un client plus recent que son serveur lit un 404 sans motif comme `unspecified` et se comporte
+exactement comme avant que le champ existe - voir `docs/wiki/legacy-compatibility.md`.
 ### Fixed - un paquet de cles perime bloquait une adhesion pour toujours, et rien ne pouvait le voir
 
 La date de peremption vit A L'INTERIEUR du KeyPackage MLS serialise, et la seule chose de cet estate
