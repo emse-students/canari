@@ -8,6 +8,7 @@
  */
 
 import { deepLinkClaims } from '$lib/mobile/deepLinkClaims';
+import { prefetchMlsWasmAtBoot } from '$lib/mls-client/wasmPrefetch';
 import { navigateInAppFromPublicUrl } from '$lib/utils/appLinkNavigation';
 import { installAppLinkClickHandler, isTauriRuntime } from '$lib/utils/openExternal';
 import { inAppPathFromPublicUrl, isPublicAppUrl } from '$lib/utils/publicAppUrl';
@@ -25,6 +26,22 @@ export function handleError({ error }: { error: unknown }): void {
 
 /** Optional init hook - called once before the app starts. No setup needed here. */
 export function init(): void {}
+
+// ════════════════════════════════════════════════════════════════════════════
+// MLS WASM - START THE DOWNLOAD HERE, NOT AFTER THE PIN
+// ════════════════════════════════════════════════════════════════════════════
+//
+// This file is the earliest client seam there is, which is the entire reason the call sits here:
+// measured on production 2026-09-16, the binary was fetched only once the PIN had been verified and
+// two dozen avatar requests were already on the connection, and it took 13 286 ms of a 15-second
+// start-up. Nothing about the binary depends on the PIN. `wasmPrefetch` carries the measurement,
+// the four-step chain it shortens, and why it is guarded rather than unconditional.
+//
+// Tauri is excluded because there is no download there: `frontendDist` embeds the bundle, and the
+// `mls-wasm-stub` plugin replaces the loader outright in those builds, so calling it would throw.
+if (!isTauriRuntime()) {
+  prefetchMlsWasmAtBoot();
+}
 
 // ════════════════════════════════════════════════════════════════════════════
 // EXTERNAL LINKS - Open in system browser / default app (not in WebView)

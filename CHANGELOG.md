@@ -11,6 +11,27 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - quinze secondes avant le badge « connecte », dont treize sur un seul fichier
+
+Au chargement de la page, l'application telecharge son moteur de chiffrement (un binaire WASM de
+2,1 Mo, 723 ko compresse). Elle ne le demandait qu'apres avoir verifie le code PIN aupres du
+serveur - alors que le fil social avait deja lance vingt-quatre demandes d'avatars et une douzaine
+d'apercus de liens. Le binaire arrivait dernier dans la file et avancait a 54 ko/s.
+
+Releve en production le 16/09/2026 sur un compte reel, en 0.18.4 : `Initialised in WEB mode` a
+07:57:49, `[TAB] Leadership acquired` a 07:58:04. **Quinze secondes, dont 13 286 ms pour le seul
+`mls_wasm_bg.wasm`.** Tout le reste etait rapide : la connexion au serveur de messagerie s'ouvre et
+se confirme dans la meme seconde une fois atteinte, et la relecture de l'historique amorce vingt
+conversations en UNE requete. Le badge « connecte » attendait ce fichier, et rien d'autre.
+
+Or rien dans ce binaire ne depend du PIN, d'une session ou d'un etat stocke - seul le DECHIFFREMENT
+de l'etat en depend. Le telechargement demarre desormais au demarrage de l'application, avant tout
+le reste, et la suite attend une requete deja en vol au lieu d'en emettre une. Il n'est pas demande
+aux visiteurs qui n'ont jamais ouvert de session dans ce navigateur : 723 ko n'est pas une broutille
+sur un telephone, et la presence d'un appareil deja enrole est un fait lisible sur place plutot
+qu'un pari.
+
+
 ## [0.18.4] - 2026-09-15
 
 ### Fixed - une invitation deja honoree revenait a chaque synchronisation, indefiniment
