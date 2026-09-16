@@ -2,6 +2,7 @@
   import { Users } from '@lucide/svelte';
   import { onDestroy } from 'svelte';
   import { MediaService } from '$lib/media';
+  import { getInitials } from '$lib/utils/avatar';
   import { releaseRawMediaBlobUrl } from '$lib/utils/mediaBlobCache';
   import { m } from '$lib/paraglide/messages';
 
@@ -51,16 +52,21 @@
     variant === 'community' ? 'bg-amber-500 text-cn-ink' : 'bg-cn-ink text-cn-yellow'
   );
 
-  function getInitials(n: string): string {
-    return n
-      .trim()
-      .split(/\s+/)
-      .slice(0, 2)
-      .map((w) => w[0]?.toUpperCase() ?? '')
-      .join('');
-  }
-
-  const initials = $derived(getInitials(name));
+  /**
+   * The letters drawn when there is no image, or nothing when the icon should show instead.
+   *
+   * THE PRIVATE COPY THIS REPLACES CUT A NAME IN HALF, NOT A CHARACTER. It took `w[0]` of each
+   * word - a UTF-16 code UNIT, not a character - so a group whose name begins with an emoji
+   * rendered that emoji's lone high surrogate, which is not a character and draws as a placeholder
+   * box. Reported from a real group on 2026-09-16. The shared `getInitials` had solved it from the
+   * start by keeping only letters and digits, and is already the implementation the Carte uses; a
+   * second one existed here only because this component was written later.
+   *
+   * The empty name is the one case the shared function answers differently: it returns `?`, which
+   * is right for a USER whose name is missing, where a group with no name has an icon to show. So
+   * emptiness is decided here and `?` can never reach the box.
+   */
+  const initials = $derived(name.trim() ? getInitials(name) : '');
 
   let currentMediaId: string | null = null;
   let acquiredMediaId: string | null = null;
