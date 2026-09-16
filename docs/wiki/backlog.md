@@ -7076,6 +7076,14 @@ satisfied and never abandoned, and it costs four requests and a crypto round eve
 below is real in the code but is biting nobody today; what is biting is the expired last-resort, and
 two joins are stuck on it right now.
 
+**AND THE LAST-RESORT COUNT IS A LOWER BOUND, MEASURED WITH THE INSTRUMENT IT WAS MEASURING.** Both
+`aged` rows above were found by `createdAt` because nothing else existed to ask - and `createdAt` is
+exactly the column that does not answer this question for `key_package`: `registerDevice` resets it
+on every re-registration while the client REPUBLISHES the package it already holds, so a row can
+carry today's date and a package that elapsed last week. The 4 are the ones whose row was not
+refreshed. The true number is knowable only once enough devices have reported a real `notAfter`,
+which is what the daily report exists to say.
+
 #### THE SERVER HALF IS WRITTEN AND THE DIAGNOSIS ABOVE IS WHAT IT WAS WRITTEN FROM
 
 Both tables carry a `notAfter` the client now writes, migration `024_key_package_not_after.sql`
