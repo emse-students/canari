@@ -260,8 +260,7 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
     HARDWARE, all of it Chrome with an override; the channel list's width half closed by injection;
     server prose in English, a TREE count `serverProse.test.ts` settles ([backlog](docs/wiki/backlog.md), [design-reference](docs/wiki/frontend/design-reference.md)).
 11. **COLD START ON `v0.18.5`, 2026-09-16: 13 s HARD-RELOADED, 3 s ON F5** - target **under 1 s**.
-    Edge answers wasm and font `HIT`; left are 24 uncached avatars and the MLS init behind them,
-    mechanism NOT established. Revocation round trip REVERTED ([backlog](docs/wiki/backlog.md)).
+    Wasm and font answer `HIT`; left are 24 uncached avatars and the MLS init behind them, mechanism NOT established. Revocation round trip REVERTED ([backlog](docs/wiki/backlog.md)).
 12. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE
     commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
 13. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract
