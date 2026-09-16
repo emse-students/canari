@@ -7033,6 +7033,96 @@ state, a `reloadClientFromState` that decrypted it a second time, and three encr
 the emulator never accumulates one; only a phone that has lived through a campaign shows it. It
 belongs with the other three iOS/Android defects that no green build could have caught.
 
+### P1 - A DEVICE WHOSE ONE-TIME POOL RAN OUT IS OFFERED A LAST-RESORT PACKAGE THAT HAS EXPIRED, AND NOTHING WILL EVER REPLACE IT (production, measured 2026-09-16)
+
+Both reloads of the 17:20 export end a pending invitation the same way, 4 536 ms and 5 016 ms in:
+
+```
+[PENDING] 1 pending invitation(s) to process
+  POST /api/mls/add-lock                     201   52 ms
+  GET  /api/mls/devices/<peer>               200   73 ms
+[RUST::INFO]  add_members_bulk to group: <id> (1 key packages)
+[RUST::WARN]  Skipping invalid KeyPackage at index 0: LifetimeError(Expired { not_after: ..., now: ... })
+[PENDING] Add error for <peer device> to <group>: Crypto/OpenMLS error: No valid KeyPackages to add
+  DELETE /api/mls/add-lock                   200   56 ms
+```
+
+The package was **48 hours past its `not_after`** when it was served, and `(1 key packages)` names
+which one it was: the peer's one-time pool is empty, so
+`resolveKeyPackagePayloadForDevice` (`devices.controller.ts:169-174`) fell through to the static
+last-resort - correctly, and loudly, with the `one-time pool EMPTY` warning it was given for exactly
+this. **The fallback is not the defect. The defect is that the row it falls back to has expired and
+nothing on either side will ever replace it**: the server never rotates it, and the client only
+republishes when it comes online, which is the thing this device is not doing.
+
+It happened on both boots, so it is a loop rather than an incident. The invitation is never
+satisfied and never abandoned, and it costs four requests and a crypto round every launch.
+
+#### The estate, counted rather than guessed (read-only, production, 2026-09-16)
+
+| population | count |
+| --- | ---: |
+| one-time key packages | 30 650 over 654 devices (mean pool 46.9, max 100) |
+| one-time rows older than the 84-day lifetime | **171**, on **5** devices |
+| devices whose OLDEST row - the one served next - is aged | **5**, i.e. all of them |
+| static last-resort packages | 702 devices |
+| **last-resort packages older than 84 days** | **4** |
+| devices with a `pending` membership right now | 19 (21 rows) |
+| of those, pool EMPTY so the last-resort is served | **6** |
+| of those, **last-resort already aged: the join CANNOT complete** | **2** |
+| of those, served an aged one-time row | 0 |
+
+**THE MEASUREMENT MOVED THE HEADLINE, AND THAT IS WHY IT WAS TAKEN FIRST.** The ordering defect
+below is real in the code but is biting nobody today; what is biting is the expired last-resort, and
+two joins are stuck on it right now.
+
+#### The second defect, latent: the pool is served OLDEST-FIRST, which is nearest-to-expiry first
+
+`resolveKeyPackagePayloadForDevice` (`devices.controller.ts:143-163`) takes the pool
+`ORDER BY otkp.createdAt ASC LIMIT 1` and `DELETE`s the row before returning it. So an attempt that
+fails on an expired package still **consumes and destroys** it: with 34 aged rows in front of a
+valid one, the valid one is reached on the 34th boot, not the first. Zero devices are in that state
+today; five are one pending invitation away from it.
+
+#### Both have the same root cause: the expiry is a fact the server never learns
+
+`OneTimeKeyPackage` stores `id`, `userId`, `deviceId`, `keyPackage` (opaque base64) and `createdAt`
+- **there is no `not_after` column**, and `key_package` has none either. So no query can filter on
+expiry, `getPrekeyCount` counts expired rows as available (which is what the replenish decision
+reads), and neither the purge nor the prune endpoint can target them. The lifetime lives inside the
+blob and the only thing in this estate that parses an MLS KeyPackage is the client. **NEVER LEARN BY
+FAILING WHAT A FACT COULD HAVE TOLD YOU** - this is that rule, on the join path. Above, `createdAt`
+had to stand in for `not_after`, which is the same gap showing up in the measurement itself.
+
+**THE FIX IS TO CARRY THE DISCRIMINATOR TO WHERE THE DECISION IS MADE.** The client knows
+`not_after` when it mints the package; `POST mls/register-device/prekeys` and the device
+registration should carry it, both tables should store it, and then:
+
+1. the resolver filters `not_after > now()` and orders by it, so a valid package is served first and
+   an expired one is never handed out at all;
+2. `getPrekeyCount` answers about packages that can be used, which is the question its caller asks;
+3. **an expired last-resort becomes visible**, which is the only way the 4 rows above get noticed
+   without an export landing on somebody's desk;
+4. **the expiry reclaim the key-package P1 could not write gets a mechanism** - the server deletes
+   what has elapsed without guessing, and an expired row is the one case with no ambiguity at all,
+   since no peer can build a usable Welcome on it.
+
+**THE CLIENT HALF ALREADY EXISTS, AND CHECKING SAVED A WRONG ENTRY.** The obvious remedy - "a device
+whose last-resort has expired should republish one" - is already written and already correct:
+`heldLastResortKeyPackage` (`keyPackages.ts:54`) calls `existing_last_resort_key_package(now)`, so an
+expired one is not returned, the round falls through to `generate_last_resort_key_package()` and
+publishes a fresh one. **Nothing needs writing there.**
+
+So the 4 aged rows are not a client defect: they are devices that have not connected at all since
+their package elapsed, and no amount of server-side filtering conjures a valid package for a device
+that is not there. **THE REAL QUESTION IS WHAT THE ADDING SIDE OWES**, and it is the termination rule:
+the pending invitation retries every boot for ever, with no proof it can ever succeed and no way to
+say so. Serving a package the server KNOWS is expired (once `not_after` is a column) turns that into
+an answerable question - `410`-shaped rather than a crypto error - and the adder can then stop, tell
+the user the device is unreachable, or abandon the seat, which are product decisions this entry does
+not get to make. **What it does establish is that retrying silently for ever is none of them.**
+
+---
 ### P2 - the MLS snapshot version is a PER-DOCUMENT counter compared ACROSS documents, so a second tab's write is dropped on a collision (measured on TAB-4, 2026-09-05)
 
 `saveMlsStateEncrypted` refuses any tagged write whose version is not strictly newer than the stored

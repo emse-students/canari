@@ -225,10 +225,10 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    three commands a run owes before any of it is believed are in the campaign section below.
    PIN's four rows change a PIN or restart a browser, hence last; HEAL-NEW's rung redesign is open
    on a clean pass ([backlog](docs/wiki/backlog.md)).
-2. **P1 - 1024 KEY PACKAGES AGAINST A POOL OF FIFTY, AND NONE OF THE THREE RECLAIMS TOUCHES ONE** -
-   the census landed 2026-09-16 and closed the WHICH question: `0 expired, 0 undecodable`, one
-   last-resort. So expiry, purge and supersession are all REFUTED here; what is unreclaimed is the
-   consumed one-time bundle, which nothing deletes ([backlog](docs/wiki/backlog.md)).
+2. **P1 - LOCALLY 1024 KEY PACKAGES AGAINST A POOL OF FIFTY THAT NO RECLAIM TOUCHES; ON THE PEER
+   SIDE AN EXPIRED LAST-RESORT BLOCKS A JOIN FOR EVER.** The census refutes all three reclaims here
+   (`0 expired`); the estate count of 2026-09-16 finds 4 aged last-resort rows, **2 with a join
+   stuck on them**, and no `not_after` column anywhere to see them ([backlog](docs/wiki/backlog.md)).
 3. **P1 - a PLACEHOLDER held a member's seat**; only a member's CLIENT can say whether a LEAF is
    left in the MLS tree and **NOTHING HAS** - the three identities cited here as that evidence were
    this campaign's OWN mention fixtures, named 2026-09-07 ([backlog](docs/wiki/backlog.md)).
