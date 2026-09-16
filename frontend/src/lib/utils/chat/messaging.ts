@@ -11,8 +11,7 @@ import {
 import { extractMentionUserIds } from '$lib/utils/mentions';
 import { notifyReaction } from '$lib/utils/chat/reactionNotify';
 import { m } from '$lib/paraglide/messages';
-import { describeApiRefusal } from '$lib/utils/apiRefusal';
-import { ChannelApiError } from '$lib/services/ChannelService';
+import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
 
 /**
  * Dependencies required by message-sending helpers.
@@ -130,7 +129,7 @@ export async function sendChatMessage(
       // this tree joinable: over twenty files under `src/lib/utils` use the ternary for logs, so
       // that guard cannot own this directory until it can tell a log from a render - measured
       // 2026-09-15, see docs/wiki/backlog.md.
-      const status = error instanceof ChannelApiError ? error.status : null;
+      const status = refusalStatus(error);
       deps.log(`[SEND] channel send refused (status=${status ?? 'none'}): ${String(error)}`);
       return {
         success: false,

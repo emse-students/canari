@@ -25,12 +25,9 @@
   } from '../shared/PermissionGrid.svelte';
   import { MediaService } from '$lib/media';
   import { getToken } from '$lib/stores/auth';
-  import {
-    channelService,
-    ChannelApiError,
-    type WorkspaceInviteDto,
-  } from '$lib/services/ChannelService';
+  import { channelService, type WorkspaceInviteDto } from '$lib/services/ChannelService';
   import { describeCommunityRefusal } from '$lib/utils/chat/communityErrors';
+  import { refusalCode } from '$lib/utils/apiRefusal';
   import {
     GRAINE_DEFAULT_HISTORY_VISIBILITY,
     type GraineHistoryVisibility,
@@ -375,7 +372,7 @@
       Log.d('communityAdmin.handleRemoveMember failed', e);
       // Removing the last admin is refused with a code, which is what names the reason here - the
       // raw body would otherwise be printed at the user.
-      const coded = e instanceof ChannelApiError ? describeCommunityRefusal(e.code) : null;
+      const coded = describeCommunityRefusal(refusalCode(e));
       membersError = coded ?? m.common_save_error();
     } finally {
       const updated = { ...memberRemoving };
@@ -417,7 +414,7 @@
       // refusals that matter here - the invitee has never installed Canari, and the key service
       // could not be asked - used to reach the admin as an English backend sentence or a JSON
       // blob. They are different situations with different remedies and now say so.
-      const coded = e instanceof ChannelApiError ? describeCommunityRefusal(e.code) : null;
+      const coded = describeCommunityRefusal(refusalCode(e));
       inviteStatus = coded ?? m.chat_community_key_distribution_error();
       inviteUserId = savedId;
       inviteRole = savedRole;
@@ -561,9 +558,7 @@
       Log.d('communityAdmin.saveHistoryVisibility failed', e);
       // Classified by the server's CODE, never by its sentence - the same contract every other
       // community refusal in this modal is read through.
-      historyVisibilityError =
-        describeCommunityRefusal(e instanceof ChannelApiError ? e.code : null) ??
-        m.common_save_error();
+      historyVisibilityError = describeCommunityRefusal(refusalCode(e)) ?? m.common_save_error();
     } finally {
       historyVisibilitySaving = false;
     }

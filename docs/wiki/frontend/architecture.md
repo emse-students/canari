@@ -513,6 +513,10 @@ check in the same file, which is also what catches a fourteenth builder.
   `localizedMessage(e, m.some_declared_line())` is how a screen asks. `ServerUnreachableError` is a
   subclass of it. Where the failure carries an HTTP STATUS instead, `utils/apiRefusal.ts` turns the
   status plus an action label into the sentence, and answers `null` rather than inventing one.
+  **A STATUS AT THE THROW IS ONE TYPE, NOT ONE PER SERVICE**: `ApiRefusalError(status, code,
+  message)` is the base, each service's class adds only its NAME, and a screen reads
+  `refusalStatus(e)` / `refusalCode(e)` instead of naming a service it otherwise has no reason to
+  import - which is how `chat/messaging.ts` stopped pulling `ChannelService` into the send path.
 - **A native prompt is user-visible UI whose text you do not fully own.** A plugin fills the fields
   you leave empty from its own hardcoded defaults, which are English: `tauri-plugin-biometric`
   titles the Android prompt "Fingerprint Authentication" and labels its button "Cancel" unless

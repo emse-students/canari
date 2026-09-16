@@ -11,6 +11,25 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - un refus du serveur porte son statut dans UN type, plus un par service
+
+Deux endroits avaient fait pousser la meme classe, a un jour d'intervalle : `ChannelApiError` et
+`CallInitiateError`. Elles existent pour la meme raison et se lisent de la meme facon : un ecran
+attrape l'erreur, veut le NUMERO, et ne doit pas montrer la phrase. Un troisieme endroit attend -
+les quatre `!res.ok` de l'envoi de media n'ont pas de classe du tout et epellent leur statut dans
+le message - et c'est precisement pour qu'il n'en fasse pas une quatrieme que la base arrive
+d'abord.
+
+`ApiRefusalError(status, code, message)` est desormais la base ; chaque service n'ajoute que son
+NOM. Dix appels qui ecrivaient `e instanceof XxxError ? e.status : null` a la main lisent
+`refusalStatus(e)` ou `refusalCode(e)` - dont cinq n'importaient un service QUE pour nommer son
+type d'erreur. `chat/messaging.ts`, sur le chemin d'envoi, tirait ainsi les 1030 lignes de
+`ChannelService` dans son graphe de modules pour un `instanceof` ; il ne le fait plus.
+
+Aucune phrase affichee ne bouge, et un test l'affirme. Un seul comportement s'elargit :
+`isRetryableLoadError` demandait "est-ce un 5xx d'un refus de CANAL" et demande maintenant
+"est-ce un 5xx d'un refus, quel qu'il soit" - ce que la question voulait dire depuis le debut.
+
 ### Fixed - dix messages d'erreur du chat, de la connexion et du PIN cessent de montrer la phrase d'une exception
 
 Dix endroits de `src/lib/components` affichaient `e.message` : la phrase anglaise d'une

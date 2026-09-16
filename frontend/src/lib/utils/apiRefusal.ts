@@ -1,6 +1,61 @@
 import { m } from '$lib/paraglide/messages';
 
 /**
+ * A REFUSAL THE SERVER ANSWERED, carrying the STATUS instead of spelling it into a sentence.
+ *
+ * Three throws had grown the same shape in three places - `ChannelApiError`, `CallInitiateError`,
+ * and the media upload's four `!res.ok` sites, which had no class at all and spelt the status into
+ * the message. They exist for one reason and are read one way: a screen catches the error, wants
+ * the number, and must not show the sentence.
+ *
+ * SO THE NUMBER IS THE TYPE. A subclass then says only WHICH endpoint refused, which is what lets
+ * `describeCallFailure` answer a 404 differently from every other caller while both read the
+ * status through the same accessor. Five call sites had written
+ * `e instanceof SomeApiError ? e.status : null` by hand, each one naming a service it otherwise
+ * had no reason to import - `chat/messaging.ts` pulled 1030 lines of `ChannelService` into the
+ * send path for the type alone.
+ *
+ * `code` sits on the base rather than on `ChannelApiError` because it answers the same question
+ * one step more precisely: the stable name the server chose, when it chose one. An endpoint that
+ * names nothing passes `null`, which means "this refusal has no machine-readable name" and must
+ * never be treated as a match.
+ */
+export class ApiRefusalError extends Error {
+  constructor(
+    /** The HTTP status the server answered with. */
+    readonly status: number,
+    /** The server's stable error code, or null when the body carried none. */
+    readonly code: string | null,
+    message: string
+  ) {
+    super(message);
+    this.name = 'ApiRefusalError';
+  }
+}
+
+/**
+ * The HTTP status an error carries, or `null` when it carries none.
+ *
+ * `null` is not a default and never a 0: it means NOBODY ANSWERED. A `TypeError` from a `fetch`
+ * that reached no server, an abort, a bug of our own - none of them is a verdict, and
+ * {@link describeApiRefusal} is written to say nothing about a status it was not given.
+ */
+export function refusalStatus(error: unknown): number | null {
+  return error instanceof ApiRefusalError ? error.status : null;
+}
+
+/**
+ * The stable refusal code an error carries, or `null` when it carries none.
+ *
+ * Prefer this to `error instanceof SomeApiError ? error.code : null` at a call site: the point of
+ * the base class is that a screen mapping a refusal need not know WHICH service refused in order
+ * to ask what the refusal was called.
+ */
+export function refusalCode(error: unknown): string | null {
+  return error instanceof ApiRefusalError ? error.code : null;
+}
+
+/**
  * THE SENTENCE A REFUSED API WRITE READS AS, CHOSEN FROM THE STATUS AND THE OPERATION.
  *
  * A server exception's message is DEV-FACING and English, like every other log and error in this
