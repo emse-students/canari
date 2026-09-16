@@ -8,6 +8,8 @@
 import { describe, it, expect } from 'vitest';
 import type { AssociationCalendarFeedEvent } from '$lib/associations/api';
 import {
+  dayOccupancy,
+  eventCardsOnDay,
   eventCoversDay,
   eventsOnDay,
   groupMonthEventsByDay,
@@ -282,5 +284,96 @@ describe('a calendar day begins at 05:00, not at midnight', () => {
       true,
       false,
     ]);
+  });
+});
+
+describe('dayOccupancy - how much of ONE day an event fills', () => {
+  /**
+   * THE DEFECT A WEI EXPOSED, AND THE REASON THIS FUNCTION EXISTS.
+   *
+   * The half-cell rule used to read `startsAt.getHours()` on every square a multi-day event
+   * covered, so a Friday 18:00 departure painted the BOTTOM half of Saturday and of Sunday - two
+   * days the event holds end to end, and about which its start hour says nothing at all.
+   */
+  const wei = event({
+    startsAt: localIso(2026, 9, 18, 18),
+    endsAt: localIso(2026, 9, 20, 17),
+  });
+
+  it('halves the first day, which the event only holds from the evening', () => {
+    expect(dayOccupancy(wei, new Date(2026, 8, 18))).toBe('afternoon');
+  });
+
+  it('FILLS a day the event holds end to end', () => {
+    expect(dayOccupancy(wei, new Date(2026, 8, 19))).toBe('full');
+  });
+
+  it('fills the last day too when the event runs past the pivot hour', () => {
+    expect(dayOccupancy(wei, new Date(2026, 8, 20))).toBe('full');
+  });
+
+  it('leaves the last day a morning when the event ends before the pivot', () => {
+    const earlyFinish = event({
+      startsAt: localIso(2026, 9, 18, 18),
+      endsAt: localIso(2026, 9, 20, 11),
+    });
+
+    expect(dayOccupancy(earlyFinish, new Date(2026, 8, 20))).toBe('morning');
+  });
+
+  /**
+   * A DEPARTURE BEFORE THE PIVOT LEAVES NO FREE HALF EITHER. The event holds the day from the
+   * morning to 05:00 tomorrow, so halving it would claim an empty afternoon that is not empty.
+   */
+  it('fills the first day when the event leaves in the morning', () => {
+    const morningDeparture = event({
+      startsAt: localIso(2026, 9, 18, 9),
+      endsAt: localIso(2026, 9, 20, 17),
+    });
+
+    expect(dayOccupancy(morningDeparture, new Date(2026, 8, 18))).toBe('full');
+  });
+
+  it('keeps the original rule for an event contained in its day', () => {
+    const lecture = event({
+      startsAt: localIso(2026, 9, 18, 9),
+      endsAt: localIso(2026, 9, 18, 11),
+    });
+    const party = event({ startsAt: localIso(2026, 9, 18, 23), endsAt: localIso(2026, 9, 19, 2) });
+
+    expect(dayOccupancy(lecture, new Date(2026, 8, 18))).toBe('morning');
+    expect(dayOccupancy(party, new Date(2026, 8, 18))).toBe('afternoon');
+  });
+
+  it('reads a point in time by its own hour', () => {
+    const noEnd = event({ startsAt: localIso(2026, 9, 18, 15), endsAt: null });
+
+    expect(dayOccupancy(noEnd, new Date(2026, 8, 18))).toBe('afternoon');
+  });
+});
+
+describe('eventCardsOnDay - the selector both painted surfaces now share', () => {
+  /**
+   * THE SECOND HALF OF THE 2026-09-16 DEFECT. `MonthCalendarGridRich` and `calendarExport` each
+   * held a private copy splitting the month at MIDNIGHT, and neither was changed when the 05:00
+   * boundary landed - so the two surfaces a user actually looks at went on drawing a 23:00-02:00
+   * evening twice. This asserts the selector they now call applies the boundary.
+   */
+  it('keeps a 23:00-02:00 party off the following square', () => {
+    const party = event({
+      startsAt: localIso(2026, 9, 4, 23),
+      endsAt: localIso(2026, 9, 5, 2),
+    });
+    const focus = new Date(2026, 8, 1);
+
+    expect(eventCardsOnDay([party], focus, 4)).toHaveLength(1);
+    expect(eventCardsOnDay([party], focus, 5)).toHaveLength(0);
+  });
+
+  it('leaves break entries to the background band', () => {
+    const holiday = event({ startsAt: localIso(2026, 9, 4, 9), kind: 'break' });
+    const lecture = event({ startsAt: localIso(2026, 9, 4, 9) });
+
+    expect(eventCardsOnDay([holiday, lecture], new Date(2026, 8, 1), 4)).toEqual([lecture]);
   });
 });

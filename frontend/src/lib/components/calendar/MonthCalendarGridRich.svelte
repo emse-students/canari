@@ -12,7 +12,12 @@
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
   import { associationAccentHex } from '$lib/associations/accent';
-  import { eventOwners } from '$lib/calendar/feedEvents';
+  import {
+    breaksOnDay as breaksOnDayOf,
+    dayOccupancy,
+    eventCardsOnDay,
+    eventOwners,
+  } from '$lib/calendar/feedEvents';
 
   let {
     focusDate,
@@ -80,32 +85,20 @@
     return cellIndex % 7 >= 5;
   }
 
-  /** All calendar entries (events + breaks) overlapping `day`, sorted by start. */
-  function entriesOnDay(day: number): AssociationCalendarFeedEvent[] {
-    const d = new Date(focusDate.getFullYear(), focusDate.getMonth(), day);
-    return (events as AssociationCalendarFeedEvent[])
-      .filter((ev: AssociationCalendarFeedEvent) => {
-        const start = new Date(ev.startsAt);
-        const startDay = new Date(start.getFullYear(), start.getMonth(), start.getDate());
-        if (!ev.endsAt) return d.getTime() === startDay.getTime();
-        const end = new Date(ev.endsAt);
-        const endDay = new Date(end.getFullYear(), end.getMonth(), end.getDate());
-        return d >= startDay && d <= endDay;
-      })
-      .sort(
-        (a: AssociationCalendarFeedEvent, b: AssociationCalendarFeedEvent) =>
-          new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime()
-      );
-  }
-
-  /** Normal event cards for `day` (breaks excluded - they render as a background band). */
+  /**
+   * The event cards for `day` - breaks excluded, they render as a background band.
+   *
+   * Asked of `feedEvents` rather than computed here. A private copy split the month at MIDNIGHT and
+   * survived the 05:00 boundary landing on 2026-09-16, so this grid went on drawing a 23:00-02:00
+   * evening on two squares while the day panel beside it drew one.
+   */
   function eventsOnDay(day: number): AssociationCalendarFeedEvent[] {
-    return entriesOnDay(day).filter((ev) => ev.kind !== 'break');
+    return eventCardsOnDay(events as AssociationCalendarFeedEvent[], focusDate, day);
   }
 
   /** Break entries (no-course / vacation) overlapping `day`, drawn as a full-day background band. */
   function breaksOnDay(day: number): AssociationCalendarFeedEvent[] {
-    return entriesOnDay(day).filter((ev) => ev.kind === 'break');
+    return breaksOnDayOf(events as AssociationCalendarFeedEvent[], focusDate, day);
   }
 
   /**
@@ -114,9 +107,13 @@
    * Not computed here: a cell that halves on screen and fills on the sheet would be two designs,
    * and the whole reason this grid mirrors `calendarExport` is that it is meant to be printable.
    */
-  function cellLayout(visible: AssociationCalendarFeedEvent[], overflowCount: number) {
+  function cellLayout(
+    visible: AssociationCalendarFeedEvent[],
+    overflowCount: number,
+    square: Date
+  ) {
     return daySlotLayout(
-      visible.map((ev) => new Date(ev.startsAt).getHours()),
+      visible.map((ev) => dayOccupancy(ev, square)),
       overflowCount
     );
   }
@@ -239,9 +236,13 @@
           <!-- The slot height the titles are fitted to, computed exactly as the export computes it
                (`CELL_H / nSlots`, floored). The "+N autres" row is a slot and is counted, and a
                lone event splits the cell in two - `daySlotLayout` decides both. -->
-          {@const layout = cellLayout(visible, overflowCount)}
+          {@const square = new Date(focusDate.getFullYear(), focusDate.getMonth(), cell.day)}
+          {@const layout = cellLayout(visible, overflowCount, square)}
           {@const slotH = Math.floor(CELL_H / (layout.nSlots || 1))}
-          {@const loneSlot = visible.length === 1 && overflowCount === 0 ? layout.slotOf[0] : null}
+          {@const loneSlot =
+            visible.length === 1 && overflowCount === 0 && layout.nSlots === 2
+              ? layout.slotOf[0]
+              : null}
           {@const selected = selectedDay === cell.day}
           {@const today = isToday(cell.day)}
           <button

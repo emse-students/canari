@@ -41,6 +41,31 @@ vrai, sans jamais atteindre un message envoye.
 reel dans l'application - supprimee, avec les deux tests qui construisaient leur propre nouvelle
 ligne autour d'elle plutot que de l'exercer.
 
+### Fixed - un WEI ne remplissait pas ses journees, et la regle des 5h n'avait atteint qu'un tiers de l'agenda
+
+Deux defauts, trouves en repondant a une question de l'utilisateur le 16/09/2026 : pourquoi le WEI
+ne prend-il pas toute la hauteur de sa case ?
+
+**UNE HEURE DE DEBUT NE PARLE QUE DU JOUR OU ELLE TOMBE.** La regle de demi-case lisait
+`startsAt.getHours()` sur CHAQUE case couverte par un evenement, donc un WEI partant le vendredi a
+18h peignait aussi la moitie basse du samedi et du dimanche - deux journees qu'il occupe de bout en
+bout, et dont son heure de depart ne dit rien. `dayOccupancy(event, day)` pose desormais la question
+du point de vue du JOUR, et la regle obtenue s'enonce plus simplement que celle qu'elle remplace :
+**une case ne se coupe en deux que si l'evenement laisse vraiment une demi-journee libre.**
+
+**ET LA JOURNEE QUI FINIT A 5H N'ETAIT APPLIQUEE QUE PAR LA LISTE.** `eventCoversDay` avait bien ete
+ecrite et testee, mais `MonthCalendarGridRich` et `calendarExport` portaient chacun une copie PRIVEE
+de « a quel jour appartient cet evenement » qui decoupait encore a minuit, et aucune des deux n'a
+ete modifiee. La soiree 23h-2h pour laquelle tout le changement avait ete ecrit continuait donc
+d'etre dessinee sur deux cases par la grille du mois et par le PDF - les deux surfaces qu'on regarde
+- pendant que le panneau du jour, lui, avait raison.
+
+Les deux copies sont supprimees. Les deux rendus appellent `eventCardsOnDay` et `breaksOnDay`, et le
+test qui garde la soiree passe maintenant par ce selecteur et non plus seulement par le helper :
+**une regle prouvee sur une fonction avec laquelle personne ne peint n'est pas une regle prouvee.**
+
+82 tests sur la suite calendrier (73 avant), `bun run check` 0 erreur sur 8 349 fichiers.
+
 ## [0.18.6] - 2026-09-16
 
 ### Changed - la police emoji passe de 5,7 Mo a 2,0 Mo pour presque tout le monde

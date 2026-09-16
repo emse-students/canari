@@ -86,6 +86,57 @@ export function eventCoversDay(event: AssociationCalendarFeedEvent, day: Date): 
   return target >= start && target <= end;
 }
 
+/**
+ * THE HOUR THAT SPLITS A DAY IN TWO, for a cell showing a single event.
+ *
+ * Half a cell says "morning" or "afternoon" at a glance, across a whole month, without a single
+ * digit of type - and the month sheet is read at arm's length, where the times are not legible
+ * anyway. 13:00 rather than 12:00 because a midday event reads as the morning's end here.
+ *
+ * It sits beside {@link DAY_STARTS_AT_HOUR} because the two are the same kind of fact: the hours at
+ * which this app's calendar day begins and folds. It lived in `calendarExport` until 2026-09-16,
+ * where {@link dayOccupancy} - the only reader that matters - could not reach it without importing
+ * the PDF module.
+ */
+export const HALF_DAY_PIVOT_HOUR = 13;
+
+/** Which part of ONE day an event actually fills. */
+export type DayOccupancy = 'morning' | 'afternoon' | 'full';
+
+/**
+ * How much of `day` this event occupies - the question a half-filled cell answers.
+ *
+ * A START HOUR IS ONLY ABOUT THE DAY IT FALLS ON. Reading `startsAt` on every square a multi-day
+ * event covers is how a WEI running Friday 18:00 to Sunday painted the bottom half of Saturday and
+ * Sunday too: on those squares the event fills the day and its start hour says nothing about them.
+ *
+ * So the rule is stated once, from the day's point of view: a cell may only halve when the event
+ * leaves half the day genuinely free.
+ *
+ * - it began earlier AND ends later - the day is full;
+ * - it began earlier and ends here - it held the day from 05:00, so it is a morning only if it ends
+ *   before {@link HALF_DAY_PIVOT_HOUR}, and otherwise fills;
+ * - it begins here and ends later - it holds the day to 05:00 tomorrow, so it is an afternoon only
+ *   if it starts at or after the pivot, and otherwise fills;
+ * - it is contained in the day - the half its start hour names, which is the original rule.
+ *
+ * The hours are safe to compare against the pivot without re-shifting: an instant assigned to `day`
+ * by {@link calendarDayOf} necessarily reads between 05:00 and 23:59 local.
+ */
+export function dayOccupancy(event: AssociationCalendarFeedEvent, day: Date): DayOccupancy {
+  const target = squareOf(day);
+  const start = new Date(event.startsAt);
+  const end = event.endsAt ? new Date(event.endsAt) : null;
+  const startsEarlier = calendarDayOf(start) < target;
+  const endsLater = end !== null && calendarDayOf(end) > target;
+  if (startsEarlier && endsLater) return 'full';
+  if (startsEarlier && end !== null) {
+    return end.getHours() < HALF_DAY_PIVOT_HOUR ? 'morning' : 'full';
+  }
+  if (endsLater) return start.getHours() >= HALF_DAY_PIVOT_HOUR ? 'afternoon' : 'full';
+  return start.getHours() < HALF_DAY_PIVOT_HOUR ? 'morning' : 'afternoon';
+}
+
 /** Every event covering one day of `focusDate`'s month, ordered by start. */
 export function eventsOnDay(
   events: AssociationCalendarFeedEvent[],
@@ -96,6 +147,32 @@ export function eventsOnDay(
   return events
     .filter((event) => eventCoversDay(event, target))
     .sort((a, b) => new Date(a.startsAt).getTime() - new Date(b.startsAt).getTime());
+}
+
+/**
+ * The cards for one day - break entries excluded, since those draw as a full-day background band.
+ *
+ * THIS AND {@link breaksOnDay} EXIST TO DELETE TWO COPIES OF THEMSELVES. `MonthCalendarGridRich`
+ * and `calendarExport` each carried a private `entriesOnDay` splitting a month into squares at
+ * MIDNIGHT, and neither was touched when the 05:00 boundary landed on 2026-09-16 - so the evening
+ * the change was written for went on being drawn twice by the two surfaces a user actually looks
+ * at, while the day panel and the schedule list had it right. One implementation cannot do that.
+ */
+export function eventCardsOnDay(
+  events: AssociationCalendarFeedEvent[],
+  focusDate: Date,
+  day: number
+): AssociationCalendarFeedEvent[] {
+  return eventsOnDay(events, focusDate, day).filter((event) => event.kind !== 'break');
+}
+
+/** The break entries (no-course / vacation) covering one day, drawn behind the cards. */
+export function breaksOnDay(
+  events: AssociationCalendarFeedEvent[],
+  focusDate: Date,
+  day: number
+): AssociationCalendarFeedEvent[] {
+  return eventsOnDay(events, focusDate, day).filter((event) => event.kind === 'break');
 }
 
 /**
