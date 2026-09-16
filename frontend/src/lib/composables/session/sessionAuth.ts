@@ -729,6 +729,22 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     cb.log('[INIT] MLS ready - syncing messages in background.');
     cb.onMlsReady?.();
 
+    // WHAT THE KEY PACKAGE COUNT IS MADE OF, ONCE PER SESSION, AND ONLY ON WEB.
+    //
+    // Native prints this from `load_or_create`; web could not, because the breakdown reads a clock
+    // and `mls-core` must not read one on wasm. So the platform that produced the measurement
+    // everybody reasons from - two production console exports on 2026-09-16, twelve minutes apart on
+    // one profile, 933 -> 983 -> 1013 key packages with nothing reclaimed - could report the count
+    // and not which of three reclaims applies. The browser passes its own clock instead.
+    //
+    // HERE RATHER THAN IN `init()`: it deserialises every stored bundle, and a thousand of those do
+    // not belong in front of the connected badge. By this line the badge is up and the catch-up is
+    // already running, so the cost is off the path that the user waits on.
+    if (!isTauriRuntime()) {
+      const withCensus = mlsService as { logKeyPackageCensus?: () => void };
+      withCensus.logKeyPackageCensus?.();
+    }
+
     // Fire-and-forget: saveDeviceKey is independent of conversation loading.
     // The device key is always saved — on Tauri it feeds push_context.json for
     // background FCM decryption; on web it powers auto-login.

@@ -163,3 +163,56 @@ fn a_census_never_mutates_what_it_measures() {
     );
     assert_eq!(first.total, 9, "and it must still be the whole store");
 }
+
+#[test]
+fn the_summary_carries_every_axis_the_census_counts() {
+    let m = device("alice-summary");
+    m.generate_key_packages(20).expect("20 prekeys");
+    m.generate_last_resort_key_package().expect("a fallback");
+
+    // THE INSTANT IS GIVEN, NEVER READ. This is the exact form `WasmMlsClient::key_package_census`
+    // calls with `Date.now() / 1000`, on a target where reading a clock does not error but PANICS.
+    let at = now();
+    let line = m.key_package_census_summary_at(at);
+
+    assert!(
+        line.starts_with("21 proven (20 one-time, 1 last-resort); 0 expired, 0 undecodable;"),
+        "one line is ALL the web gets - a browser has no struct to inspect, so every axis the \
+         census separates must survive the rendering, in the order a reader scans them; got: {line}"
+    );
+
+    // The tail is tied to the struct rather than spelt out, because `not_before` is a wall clock
+    // in whole seconds: a mint straddling a second boundary splits one pool across two instants,
+    // which is real and must not be asserted away.
+    let c = m.key_package_census_at(at).expect("census");
+    assert!(
+        line.ends_with(&format!(
+            "{} mint instant(s), largest batch {}",
+            c.mint_instants, c.largest_batch
+        )),
+        "the batch shape is what tells a wholesale remint from a top-up, and it is the half a \
+         reader reaches for first; got: {line}"
+    );
+}
+
+#[test]
+fn the_summary_answers_about_the_instant_it_was_given() {
+    let m = device("alice-summary-horizon");
+    m.generate_key_packages(12).expect("12 prekeys");
+
+    // THE ONE ASSERTION THAT WOULD CATCH A CLOCK SNEAKING BACK IN. A summary reading its own
+    // clock would answer these two identically, and on wasm32 the first call would take the tab
+    // down rather than answer at all - which is how v0.16.4 broke every web login.
+    let fresh = m.key_package_census_summary_at(now());
+    let horizon = m.key_package_census_summary_at(now() + 100 * DAY);
+
+    assert!(
+        fresh.contains("0 expired"),
+        "nothing minted a moment ago is expired; got: {fresh}"
+    );
+    assert!(
+        horizon.contains("12 expired"),
+        "a hundred days past an 84-day lifetime, the whole store is reclaimable and the line must \
+         say so; got: {horizon}"
+    );
+}

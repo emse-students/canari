@@ -156,6 +156,38 @@ impl WasmMlsClient {
         Ok(WasmMlsClient { manager })
     }
 
+    /// What the `KeyPackage` label in the composition line is actually MADE of, as one log line.
+    ///
+    /// WHY THE CALLER PASSES THE CLOCK. `mls-core` compiles to `wasm32-unknown-unknown`, where
+    /// `SystemTime::now()` PANICS rather than erroring - that took MLS init down for every web user
+    /// in v0.16.4. So the crate reads no clock on any target and the `_at` form takes one; this is
+    /// the browser's, `Date.now() / 1000`, read where reading a clock is allowed.
+    ///
+    /// WHY IT IS A METHOD AND NOT A LINE IN THE CONSTRUCTOR. The composition summary beside it is
+    /// one pass over a map already in memory; this walks and DESERIALISES every stored bundle, and
+    /// on the profile that motivated it that is a thousand of them. `WasmMlsClient::new` runs on the
+    /// start-up path, several times per page load, and an O(n) diagnostic does not belong in front
+    /// of the connected badge - a 5.7 MB font taught that lesson on 2026-09-16 and it does not need
+    /// teaching twice. The caller invokes this once MLS is ready.
+    ///
+    /// WHAT IT ANSWERS, AND IT IS THE OPEN QUESTION RATHER THAN A CURIOSITY. The count alone names
+    /// no remedy: expired debt, superseded fallbacks and a revoked pool stack into one number and
+    /// are reclaimed by three different mechanisms. `expired` is the one that decides whether there
+    /// is anything to do at all - large, and the 84-day prune is already draining this and the
+    /// steady state is far below the count; near zero, and the bound is not binding on this profile.
+    #[wasm_bindgen]
+    pub fn key_package_census(&self, now_secs: f64) -> String {
+        // A negative or non-finite clock is the caller's bug, not a reason to panic inside the
+        // engine: `as u64` on either is a saturating cast in Rust, so this degrades to the epoch
+        // and the line reads 0 expired rather than taking MLS down. The line names it so the
+        // reading is not mistaken for a measurement.
+        if !now_secs.is_finite() || now_secs < 0.0 {
+            log::warn!("key_package_census: caller passed {now_secs} as a clock; refusing to read");
+            return "unavailable (caller's clock is not a time)".to_string();
+        }
+        self.manager.key_package_census_summary_at(now_secs as u64)
+    }
+
     // Create a group
     #[wasm_bindgen]
     pub fn create_group(&mut self, group_id: String) -> Result<(), JsValue> {

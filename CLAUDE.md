@@ -228,7 +228,7 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
 2. **P1 - 1013 KEY PACKAGES AGAINST A POOL OF FIFTY, +80 IN TWELVE MINUTES, NOTHING RECLAIMED** -
    two production consoles, 2026-09-16, `load_or_create`'s own census line on the user's browser:
    2.4 MB of a 7.5 MB state. Every top-up MINTS; the breakdown naming WHICH of three reclaims
-   applies is native-only ([backlog](docs/wiki/backlog.md)).
+   applies now reaches the web, UNSHIPPED - one reload settles it ([backlog](docs/wiki/backlog.md)).
 3. **P1 - a PLACEHOLDER held a member's seat**; only a member's CLIENT can say whether a LEAF is
    left in the MLS tree and **NOTHING HAS** - the three identities cited here as that evidence were
    this campaign's OWN mention fixtures, named 2026-09-07 ([backlog](docs/wiki/backlog.md)).
