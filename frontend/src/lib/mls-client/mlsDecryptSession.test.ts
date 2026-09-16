@@ -50,7 +50,9 @@ describe('createSequentialDecryptSession', () => {
 
     const results = await session.decryptPage([new Uint8Array([1]), new Uint8Array([2])]);
 
-    expect(results[0]).toEqual({ ok: false, error: 'WrongEpoch' });
+    // `Error: ` is expected on purpose: the row carries `String(e)`, so the TYPE of what was
+    // thrown crosses the boundary with its sentence rather than being discarded at the throw.
+    expect(results[0]).toEqual({ ok: false, error: 'Error: WrongEpoch' });
     expect(results[1]).toEqual({ ok: true, plaintext: new Uint8Array([2]) });
   });
 

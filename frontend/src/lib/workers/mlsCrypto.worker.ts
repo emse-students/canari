@@ -87,7 +87,7 @@ workerScope.onmessage = async (event: MessageEvent<MlsCryptoWorkerRequest>) => {
         break;
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = String(error);
     workerScope.postMessage({ type: 'error', error: message });
   }
 };

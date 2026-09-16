@@ -506,8 +506,10 @@ check in the same file, which is also what catches a fourteenth builder.
   interpolates an `m.*()` call; other entry points are on trust.
 - **AN EXCEPTION'S MESSAGE IS NOT A SENTENCE FOR A READER, EXCEPT WHEN THE THROW SAYS IT IS.**
   `e instanceof Error ? e.message : <fallback>` renders the server's or the browser's English
-  almost every time, and `associations/serverProse.test.ts` fails any file under a guarded tree
-  that still carries the shape. The exceptions are real, though - `sessionAuth.ts` throws a dozen
+  almost every time, and `associations/serverProse.test.ts` fails any hand-written file under `src`
+  that still carries the shape - **the whole tree since 2026-09-16, 1 004 files, with generated
+  output skipped and one allowlisted site**. A log is not an exception to it: `String(e)` renders
+  `Error: <message>`, which keeps the type the ternary threw away, so the convention has none. The exceptions are real, though - `sessionAuth.ts` throws a dozen
   refusals whose message IS the French sentence the user must read - so they are typed:
   `LocalizedError` (`utils/localizedError.ts`) marks a message as the reader's, and
   `localizedMessage(e, m.some_declared_line())` is how a screen asks. `ServerUnreachableError` is a

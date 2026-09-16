@@ -323,7 +323,7 @@ if (isTauriRuntime()) {
             // here made that indistinguishable from "the app was not started by a deep link" - a
             // notification tapped from a KILLED app opened Canari on the default route and stayed
             // there, with nothing in any log to say why (WP-DEEPLINK-1).
-            const msg = err instanceof Error ? err.message : String(err);
+            const msg = String(err);
             if (msg === lastGetCurrentError) return;
             lastGetCurrentError = msg;
             console.error(

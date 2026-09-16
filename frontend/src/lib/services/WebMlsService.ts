@@ -838,7 +838,7 @@ export class WebMlsService extends BaseMlsService {
         `[MLS] key package census - ${this.client.key_package_census(Date.now() / 1000)}`
       );
     } catch (e) {
-      console.warn(`[MLS] key package census unavailable: ${e instanceof Error ? e.message : e}`);
+      console.warn(`[MLS] key package census unavailable: ${String(e)}`);
     }
   }
 

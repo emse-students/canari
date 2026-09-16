@@ -218,7 +218,7 @@ export class CallService {
       void this.chatNotifier?.onCallStarted(groupId, this.currentCallId!);
       this.syncCallPresence(true);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = String(e);
       appendLog(`[Call] startCall failed: ${msg}`);
       console.error('Error starting call:', e);
       this.endCall(false);
@@ -249,7 +249,7 @@ export class CallService {
       await this.connectToSfu(callId);
       this.syncCallPresence(true);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = String(e);
       appendLog(`[Call] acceptCall failed: ${msg}`);
       console.error('Error accepting call:', e);
       this.endCall();
@@ -381,7 +381,7 @@ export class CallService {
       });
       appendLog(`[Call] server ring ${res.ok ? 'sent' : `failed (${res.status})`}`);
     } catch (e) {
-      appendLog(`[Call] server ring error: ${e instanceof Error ? e.message : String(e)}`);
+      appendLog(`[Call] server ring error: ${String(e)}`);
     }
   }
 
@@ -405,7 +405,7 @@ export class CallService {
         body: JSON.stringify({ groupId, callId, reason }),
       });
     } catch (e) {
-      appendLog(`[Call] ring-end error: ${e instanceof Error ? e.message : String(e)}`);
+      appendLog(`[Call] ring-end error: ${String(e)}`);
     }
   }
 
@@ -472,7 +472,7 @@ export class CallService {
         signal: controller.signal,
       });
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = String(e);
       appendLog(`[Call] ICE servers request failed: ${msg}`);
       throw e;
     } finally {
@@ -574,7 +574,7 @@ export class CallService {
         appendLog('[Call] remote ICE end-of-candidates');
       }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = String(e);
       appendLog(`[Call] addIceCandidate failed: ${msg}`);
     }
   }
@@ -712,7 +712,7 @@ export class CallService {
             await this.addRemoteIceCandidate(candidate);
           }
         } catch (err) {
-          const detail = err instanceof Error ? err.message : String(err);
+          const detail = String(err);
           appendLog(`[Call] signaling error: ${detail}`);
           console.error('Signaling error:', err);
         }
@@ -762,7 +762,7 @@ export class CallService {
       appendLog(`[Call] E2E transforms attached (${senders} sender(s), ${receivers} receiver(s))`);
       this.e2eActive.set(true);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = String(e);
       appendLog(`[Call] E2E transforms failed: ${msg}`);
     }
   }
@@ -1035,7 +1035,7 @@ export class CallService {
         return;
       }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = String(e);
       appendLog(`[Call] sender transform failed: ${msg}`);
       return;
     }
@@ -1069,7 +1069,7 @@ export class CallService {
         return;
       }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = String(e);
       appendLog(`[Call] receiver transform failed: ${msg}`);
       return;
     }
@@ -1205,9 +1205,7 @@ export class CallService {
       await sender.setParameters(params);
       appendLog(`[Call] video sender capped at ${CallService.MAX_VIDEO_BITRATE / 1000} kbps`);
     } catch (e) {
-      appendLog(
-        `[Call] applyVideoSenderLimits failed: ${e instanceof Error ? e.message : 'unknown'}`
-      );
+      appendLog(`[Call] applyVideoSenderLimits failed: ${String(e)}`);
     }
   }
 
@@ -1266,7 +1264,7 @@ export class CallService {
         this.isVideoOff.set(false);
         appendLog('[Call] camera acquired and added mid-call (renegotiated)');
       } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
+        const msg = String(e);
         appendLog(`[Call] enabling camera failed: ${msg}`);
       }
       return;

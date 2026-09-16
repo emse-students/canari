@@ -1222,7 +1222,7 @@ async function upsertConversation(
             .catch((e: unknown) => {
               deps.log(
                 `[WELCOME] FAILED to persist ${toSave.length} re-keyed message(s) in ${joinedGroupId.slice(0, 8)}…: ` +
-                  `${e instanceof Error ? e.message : String(e)} - they are on screen and will NOT survive a reload`
+                  `${String(e)} - they are on screen and will NOT survive a reload`
               );
               return false;
             });

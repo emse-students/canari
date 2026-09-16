@@ -3065,7 +3065,7 @@ export abstract class BaseMlsService implements IMlsService {
       // handler needs is gone by construction.
       console.error(
         `[GRAINE] handler refused a frame from ${sender.slice(0, 8)} on community ${workspaceId.slice(0, 8)} - not acknowledged:`,
-        e instanceof Error ? e.message : String(e)
+        String(e)
       );
       return false;
     }
