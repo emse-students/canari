@@ -34,6 +34,28 @@ export interface MintedKeyPackages {
 }
 
 /**
+ * The last-resort package this device ALREADY HOLDS, if one is still valid at this instant.
+ *
+ * Exported because two callers need the same answer for two different reasons, and reading it
+ * twice is how they would drift. {@link mintKeyPackages} asks in order to republish rather than
+ * remint. A host that pays for state I/O asks BEFORE committing to it: a round where the pool is
+ * full AND this returns a package mints nothing at all, and a round that mints nothing writes no
+ * new private bundle, so it owes the disk nothing. Measured on production 2026-09-16, that round
+ * is the ordinary one - `needed=0` on a boot that still spent a snapshot, a worker that decrypted
+ * the whole 7 539 305-byte state, a reload that decrypted it again, and three encrypted
+ * checkpoints (153 ms + 65 ms + 63 ms) to publish bytes the server already had.
+ *
+ * The clock is read HERE and passed in, never inside the WASM crate: `SystemTime::now()` panics
+ * on wasm32 and took every web login down in v0.16.4.
+ *
+ * A BigInt AND NOT A NUMBER, because the binding takes a Rust `u64`. Handing that a Number does
+ * not convert, it THROWS - which is the whole of the defect described on {@link KeyPackageMinter}.
+ */
+export function heldLastResortKeyPackage(client: KeyPackageMinter): Uint8Array | undefined {
+  return client.existing_last_resort_key_package(BigInt(Math.floor(Date.now() / 1000)));
+}
+
+/**
  * Mints the two kinds of KeyPackage a device publishes, and it is the ONLY place that decides
  * which is which.
  *
@@ -55,17 +77,10 @@ export function mintKeyPackages(client: KeyPackageMinter, needed: number): Minte
   // a Mi 9T on 2026-09-09: 269 last-resort bundles, 9% of a 3051-bundle keystore.
   //
   // Rotation becomes the package's own lifetime - the query returns nothing once none is valid -
-  // so every 84 days instead of every time the socket comes back.
-  //
-  // The clock is read HERE and passed in, never inside the WASM crate: `SystemTime::now()` panics
-  // on wasm32 and took every web login down in v0.16.4.
-  //
-  // A BigInt AND NOT A NUMBER, because the binding takes a Rust `u64`. Handing that a Number does
-  // not convert, it THROWS - which is the whole of the defect described on {@link KeyPackageMinter}.
-  // The optional call it replaces was a fallback for a client without the method, and no such
-  // client exists: one generated `WasmMlsClient` serves both web call sites.
-  const held = client.existing_last_resort_key_package(BigInt(Math.floor(Date.now() / 1000)));
-  const fallback = held ?? client.generate_last_resort_key_package();
+  // so every 84 days instead of every time the socket comes back. The read itself is
+  // {@link heldLastResortKeyPackage}, shared with the callers that ask the same question earlier
+  // in order to decide whether this round is worth paying for at all.
+  const fallback = heldLastResortKeyPackage(client) ?? client.generate_last_resort_key_package();
   const poolPackages =
     needed > 0 ? [...(client.generate_key_packages(needed) as Iterable<Uint8Array>)] : [];
   return { fallback, poolPackages };

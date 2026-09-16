@@ -689,8 +689,17 @@ What is left is a different queue.
 `cf-cache-status: DYNAMIC`, because its default caching is decided by file EXTENSION and an API
 path has none. The same fact that kept `.wasm` uncached until 2026-09-16, arriving through a path
 the first rule does not cover. So every one of the twenty-four is a round trip to Saint-Etienne,
-and a 516 ms floor on a warm browser is that RTT and nothing else. One rule closes it; it is in
-[owed to the user](#owed-to-the-user---decisions-rotations-and-one-off-clicks).
+and a 516 ms floor on a warm browser is that RTT and nothing else.
+
+**THE RULE IS DEPLOYED AND MEASURED, 2026-09-16.** `/api/users/<id>/avatar` now answers
+`cf-cache-status: HIT` with an `Age` on a real avatar, and an ABSENT avatar answers `404` +
+`public, max-age=600` -> `MISS`, i.e. cacheable. A `BYPASS` read on that path is a `400`: sending
+the literal placeholder `<un-id>` is a bad request, and Cloudflare bypasses an error. **What the
+rule also made permanent is the staleness below** - the entry that follows.
+
+**WHAT REMAINS ON THIS ENTRY IS THE REQUEST COUNT, NOT THE LATENCY.** Twenty separate avatar calls
+stand beside a `/api/users/batch` that returns all twenty users in one 148 ms call; the edge made
+each of them cheap without making any of them unnecessary.
 
 **AND THE MLS INITIALISATION SITS INSIDE THAT WINDOW.** On the cold console,
 `Initialising MLS (vault device key path)...` is logged at 10:30:41 and `WasmMlsClient::new` at
@@ -709,6 +718,73 @@ around `WasmMlsClient::new`, read on the same two reloads - not a guess about pr
 **Do not "fix" this by lowering the avatars' fetch priority.** A priority hint is advisory, it
 differs per engine, and it would make the measurement above unreproducible without stating what the
 ordering IS. The ordering is the thing to state.
+
+---
+### P2 - A CHANGED PROFILE PHOTO IS INVISIBLE FOR ~25 h, AND THE UPSTREAM ALREADY HANDS US THE VERSION WE THROW AWAY (measured on production 2026-09-16, asked by the USER)
+
+**There is no invalidation of any kind on an avatar, at any layer.** Canari does not own the photo -
+it proxies MiGallery - so the only question is how fast a change there reaches a face here, and the
+answer today is "when four independent timers happen to have run out".
+
+| Layer | How long it holds | What invalidates it |
+| --- | --- | --- |
+| MiGallery (`gallery.mitv.fr`) | - | source of truth, changes at once |
+| `AvatarService`'s in-process LRU (`IMAGE_TTL_MS`) | 1 h | nothing; TTL only, and **one copy per replica** |
+| Cloudflare (the Cache Rule, deployed 2026-09-16) | 24 h | nothing |
+| the browser's own HTTP cache | 24 h | nothing |
+
+Measured live, `GET /api/users/<id>/avatar`:
+
+```
+Cache-Control: public, max-age=86400
+etag: W/"3020-Bw+qPypeSB5uzDJv2iONFgFB+94"
+Age: 855      cf-cache-status: HIT
+```
+
+**THE ETAG IN THAT RESPONSE IS NOT MiGALLERY'S, IT IS EXPRESS'S.** Nest lets Express compute a weak
+ETag over whatever bytes go out; it can only ever produce a 304 AFTER the 24 h has elapsed, so it
+says nothing about staleness.
+
+**AND MiGALLERY HAD ALREADY SOLVED THIS.** `src/routes/api/users/[username]/avatar/+server.ts` in
+the MiGallery repo keys an ETag on the ASSET ID - the thing that changes when the user changes their
+photo - and answers accordingly:
+
+```ts
+const etag = `"${assetId}"`;
+'Cache-Control': busted ? 'public, max-age=15552000, immutable' : 'no-cache'
+```
+
+It says *revalidate every time, and here is the version*. `AvatarService.fetchUserAvatar` then
+discards `response.headers['etag']` (only `content-type` is read), never sends `If-None-Match`,
+never passes `?v=`, and the controller **overrides that `no-cache` with `public, max-age=86400`**.
+A response the upstream marked as needing revalidation is republished by us as fresh for a day.
+
+**THE RULE THIS BREAKS IS ALREADY WRITTEN IN THIS REPOSITORY**, in `userAvatarCache.ts`, by the pass
+that deleted a Cache Storage bucket for the same reason: *a key naming a CONTENT may be cached for
+ever; a key naming an IDENTITY may not.* `/api/users/<id>/avatar` names a person.
+
+**THE FIX IS ENTIRELY INSIDE CANARI - MiGallery needs no change.** Three parts, and the third is the
+one that needs a decision:
+
+1. store the upstream ETag with the cached entry and send `If-None-Match` when the 1 h TTL lapses -
+   an hourly full re-download of every face becomes a 304;
+2. forward MiGallery's ETag instead of letting Express invent one, so a revalidation downstream can
+   actually be about the PHOTO;
+3. stop claiming 24 h. Two shapes, and they are not equivalent:
+   - **`no-cache` + the real ETag**: correct, deterministic, and puts one conditional request per
+     face per render back on the wire - the amplification this endpoint was fixed of, and the reason
+     the entry above exists.
+   - **a busted URL**: the client asks `/api/users/<id>/avatar?v=<version>` and Canari may then
+     answer `immutable`. A photo change changes the version, changes the URL, and all four layers
+     invalidate at once with no revalidation traffic at all. **Its blocking condition is that the
+     version must reach the client without fetching the avatar first** - today core-service learns
+     the asset id only by downloading the image, which is circular. `/api/users/batch` is the
+     natural carrier and MiGallery would have to expose the id cheaply, which is the one part that
+     crosses a repository boundary.
+
+**Do not ship part 3 without deciding which shape**, and do not lower the TTL as a compromise: a
+smaller number is the same defect at a different rate, and it would still be a claim nobody can
+honour.
 
 ---
 ### P3 - THE PRE-RELEASE CHANNEL IS THE ENVIRONMENT SELECTOR, SO THE BUILD CARRYING A FIX CANNOT MEASURE IT (found 2026-09-15)
@@ -6553,6 +6629,31 @@ reload on the user's own browser answers which of the three reclaims applies. **
 be acted on before that number exists** - a prune written against the wrong share would delete
 prekeys a peer is about to build a Welcome on, which is exactly the ambiguity the expiry-only prune
 was written to avoid.
+
+#### THE EXPORT ARRIVED, AND IT SAYS NONE OF THE THREE RECLAIMS APPLIES (production, 2026-09-16 13:32)
+
+```
+load_or_create: state composition - 7539303B total; Tree 24x2545493B, MessageSecrets 24x2438316B, KeyPackage 1024x2431971B
+[MLS] key package census - 1024 proven (1023 one-time, 1 last-resort); 0 expired, 0 undecodable; 29 mint instant(s), largest batch 50
+```
+
+**`0 expired` decides the question the entry above could not.** The 84-day bound is NOT binding on
+this profile: every one of the 1024 bundles has time left to run, so the prune would reclaim nothing
+today and the steady state is not below 1024 - it is wherever the mint rate puts it at day 84.
+`1 last-resort` also confirms #458 holds on the web: one fallback, not the 269 the Mi 9T carried.
+
+**SO THERE IS NO RECLAIM TO WRITE, AND THE ENTRY MUST NOT BE READ AS THOUGH THERE WERE.** The three
+mechanisms are expiry (nothing expired), a purge the server confirmed (`forget_key_packages`, wired,
+and no purge happened here) and a superseded fallback (there is one). What is left is accrual that
+is correct by construction: 29 mint instants are 29 top-ups, each of them `50 - existing` against a
+pool peers really did drain.
+
+**WHAT THE SAME EXPORT DID SHOW IS A DIFFERENT DEFECT, AND IT IS FIXED** - the round that mints
+NOTHING and pays for everything anyway. `[MLS Worker] generateKeyPackage start needed=0` on an
+ordinary F5, and around it a `save_state` of 7 539 303 B, a worker `load_or_create` over the whole
+state, a `reloadClientFromState` that decrypted it a second time, and three encrypted checkpoints
+(153 ms + 65 ms + 63 ms) - to publish a last-resort package the delivery service already held. See
+`CHANGELOG.md`; the discriminator is the round's own action, never a dirty bit.
 
 
 

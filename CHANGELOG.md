@@ -11,6 +11,38 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - une manche de key packages qui ne frappe rien ne paie plus pour tout
+
+A chaque connexion, le client remplit son stock de prekeys a cinquante : il demande au serveur
+combien il lui en reste, et ne fabrique que la difference. Quand personne n'en a consomme depuis la
+derniere fois, cette difference vaut zero - **et c'est le cas ordinaire**. Sur la console de
+production du 16/09/2026, un simple F5 :
+
+```
+[MLS Worker] generateKeyPackage start needed=0
+[MLS] Encrypted state checkpoint persisted. (153 ms)
+[MLS] Encrypted state checkpoint persisted. (65 ms)
+[MLS] Encrypted state checkpoint persisted. (63 ms)
+```
+
+`needed=0`, et le dernier paquet de secours etait encore valide : **rien n'a ete fabrique**. La
+manche a quand meme paye un instantane de 7 539 303 octets, un worker qui a dechiffre l'etat entier,
+un rechargement qui l'a dechiffre une seconde fois sur le fil principal, et trois ecritures
+chiffrees - pour republier des octets que le serveur avait deja. Deux dechiffrements et deux
+chiffrements complets d'un etat de 7,5 Mo, sur le chemin du demarrage, pour zero changement.
+
+L'ecriture n'existe que pour rendre durable une NOUVELLE cle privee avant que sa moitie publique ne
+soit publiee. S'il n'y en a aucune, l'etat d'apres est identique a l'etat d'avant et rien n'est du au
+disque. Les deux hotes le savent exactement : le stock demande et la branche qu'a prise le paquet de
+secours. **Ce qui decide, c'est l'action de la manche elle-meme, jamais un drapeau « modifie »** -
+celui-la repond a « faut-il reconstruire le CBOR », il est vrai juste apres un chargement dont
+l'etat correspond pourtant au disque, et s'en servir ici sauterait des ecritures reellement dues.
+
+Cote natif, la meme manche renvoyait aussi **tout l'etat chiffre au JavaScript, que personne ne
+lisait** : la commande ecrit le blob elle-meme. Tauri serialise un `Vec<u8>` en tableau JSON
+d'entiers, soit plusieurs octets de transport par octet d'etat, a chaque connexion - et le pire
+telephone mesure en septembre portait 19 548 753 octets. Le champ est supprime.
+
 ## [0.18.7] - 2026-09-16
 
 ### Changed - les deux agendas dessinent le meme mois, et ne le dessinent plus qu'une fois
