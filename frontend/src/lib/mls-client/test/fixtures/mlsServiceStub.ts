@@ -31,7 +31,7 @@ export function createMlsServiceStub(
     connect: vi.fn().mockResolvedValue(undefined),
     isWsOpen: vi.fn().mockReturnValue(true),
     fetchUserDevices: vi.fn().mockResolvedValue([]),
-    fetchDeviceKeyPackage: vi.fn().mockResolvedValue(null),
+    fetchDeviceKeyPackage: vi.fn().mockResolvedValue({ kind: 'none', reason: 'unregistered' }),
     publishKeyPackage: vi.fn().mockResolvedValue(undefined),
     publishKeyPackages: vi.fn().mockResolvedValue(undefined),
     republishKeyMaterial: vi.fn().mockResolvedValue(undefined),

@@ -299,6 +299,29 @@ before the change still duplicates once per replay and once per bundle. **Nothin
 already on disk**; see [backlog](backlog.md).
 
 
+### No date yet - a `/key-package` 404 with no `reason` in its body
+
+**Site:** `mlsDeliveryApi.ts`, `fetchDeviceKeyPackage` - the `'unspecified'` arm of the reason parse,
+and the `refusalIsTemporary` call sites that read it.
+**Shim:** since 2026-09-16 the delivery service puts `reason: 'revoked' | 'unregistered' | 'expired'`
+in the body of the 404, because the three are three different facts and the caller acts differently
+on each. A server that predates the field sends none, and `'unspecified'` is what the client calls
+that: it takes the branch the code took before the reason existed - retire the pending membership,
+promise nothing about a return - which is the only reading that cannot be wrong.
+**Replacement:** the field itself. Nothing else is needed.
+**What settles the date, and why there is none yet:** this is a shim against an old SERVER, not an
+old client, so `minClientVersion` says nothing about it. It is dead the moment every estate runs a
+build at or above the one carrying the field, and the two estates are deployed from this repository -
+so the honest condition is "after the next production deploy", not a date. Written here rather than
+left implicit because a `'unspecified'` that quietly becomes unreachable is exactly the branch a
+later reader spends an afternoon on.
+**On removal:** narrow `DeviceKeyPackageRefusal` to the server's three, delete the `'unspecified'`
+arm and its test, and delete this entry.
+**Cost of keeping it:** none beyond one branch. It never fires against a current server, and against
+an old one it preserves behaviour rather than inventing any.
+
+---
+
 ### 2026-12-16 - one-time prekeys published as a bare base64 string
 
 **Site:** `devices.controller.ts`, the `parsed` map in `registerDevicePrekeys` - the

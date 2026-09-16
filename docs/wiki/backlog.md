@@ -7048,7 +7048,7 @@ state, a `reloadClientFromState` that decrypted it a second time, and three encr
 the emulator never accumulates one; only a phone that has lived through a campaign shows it. It
 belongs with the other three iOS/Android defects that no green build could have caught.
 
-### P1 - THE SERVER CAN SEE AN EXPIRED KEY PACKAGE NOW AND REFUSES TO SERVE ONE; WHAT IS LEFT IS AN ADDER THAT STILL RETRIES FOR EVER (production, measured 2026-09-16)
+### P1 - THE SERVER REFUSES AN EXPIRED KEY PACKAGE AND THE ADDER NOW ACTS ON THAT ANSWER; WHAT IS LEFT IS ONE RE-MEASUREMENT (production, measured 2026-09-16, before the fix)
 
 Both reloads of the 17:20 export end a pending invitation the same way, 4 536 ms and 5 016 ms in:
 
@@ -7111,14 +7111,26 @@ this entry used to list - a pool served oldest-first, each failed attempt consum
 failed on - is closed by the same ordering change. See `CHANGELOG.md` and
 [legacy-compatibility](legacy-compatibility.md) for the one-release union in the publish shape.
 
-#### WHAT IS LEFT IS THE ADDER, AND IT IS A PRODUCT DECISION THIS ENTRY DOES NOT GET TO MAKE
+#### THE ADDER NOW ACTS ON THE ANSWER (2026-09-16), AND WHAT IS LEFT IS ONE MEASUREMENT
 
-The server now answers `404` where it used to hand out a package every joiner is entitled to refuse,
-so the question "can this device be added at all?" is finally answerable at the point it is asked.
-**Nothing yet acts on the answer.** The pending invitation still retries on every boot - four
-requests and a crypto round each time - because a 404 and a transport failure reach the same catch,
-and neither has a termination rule. What the client owes is a decision: stop and tell the user the
-device is unreachable, abandon the seat, or keep the invitation but stop paying for it every launch.
+The server answers `404` where it used to hand out a package every joiner is entitled to refuse, and
+the client now reads that answer instead of collapsing it. **Three things were wrong at that seam and
+all three are closed**:
+
+- A 404, a 500, a gateway error and an unreachable network all arrived as `null`, and the loop
+  retired the pending membership on every one of them - so a bad minute on one endpoint could
+  abandon a perfectly valid invitation. A transport failure is not an answer, and the row now stays.
+- The 404 itself had THREE causes reported as one: `revoked`, `unregistered` and `expired` are
+  classified at the throw and travel in the body. All three retire the row - asking again this boot
+  cannot change the answer - but only `expired` is temporary, and the log says so.
+- The retry loop terminates, because retiring the row IS the termination: `registerDevice` re-creates
+  the pending membership for every group its owner is in, so an `expired` device returns by itself
+  the moment it reconnects. **Nothing is lost by stopping, which is what made the third of the three
+  options this entry used to list the right one without a product decision.**
+
+**WHAT IS LEFT IS TO COUNT IT.** The 19 `pending` rows and the 2 stuck joins above were measured
+BEFORE any of this shipped. Re-measure them on a deployed build: the two stuck joins should clear on
+their devices' next connection, and any that does NOT is a fact this entry could not have produced.
 
 Two facts bound that decision and both are measured. **A device repairs itself the moment it
 connects** - `heldLastResortKeyPackage` refuses to offer an elapsed package, so the round falls

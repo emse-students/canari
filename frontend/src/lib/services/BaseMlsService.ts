@@ -36,6 +36,7 @@ import type {
   BaseRefreshOutcome,
   IncomingDeliveryMeta,
 } from '$lib/mls-client/IMlsService';
+import type { DeviceKeyPackageAnswer } from '$lib/mls-client/deviceKeyPackage';
 import { MlsPerGroupScheduler, type MlsQueuedMessage } from '$lib/mls-client/mlsPerGroupScheduler';
 import {
   shouldAckAfterSuccess,
@@ -2286,16 +2287,7 @@ export abstract class BaseMlsService implements IMlsService {
     }
   }
 
-  async fetchDeviceKeyPackage(
-    userId: string,
-    deviceId: string
-  ): Promise<{
-    keyPackage: Uint8Array;
-    deviceId: string;
-    deviceName?: string;
-    deviceOs?: string;
-    deviceAppVersion?: string;
-  } | null> {
+  async fetchDeviceKeyPackage(userId: string, deviceId: string): Promise<DeviceKeyPackageAnswer> {
     return this.delivery.fetchDeviceKeyPackage(userId, deviceId);
   }
 

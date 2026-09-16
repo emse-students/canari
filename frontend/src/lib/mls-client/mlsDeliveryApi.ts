@@ -4,6 +4,7 @@ import { ackMessagesWithRetry } from './ackRetry';
 import { DELIVERY, type FrameDelivery } from './frameDelivery';
 import type { DeviceMembershipRow, GroupMeta, UserGroupRow } from './IMlsService';
 import type { DatedKeyPackage } from './keyPackages';
+import type { DeviceKeyPackageAnswer } from './deviceKeyPackage';
 import { toBase64, fromBase64 } from '$lib/utils/hex';
 
 export type MlsDeliveryFetch = typeof fetch;
@@ -365,35 +366,61 @@ export class MlsDeliveryApi {
   /**
    * Fetches a single device's consumable KeyPackage (no 30-day list cutoff).
    * Used when pending invitations reference a device not returned by {@link fetchUserDevices}.
+   *
+   * ANSWERS IN THREE SHAPES AND NEVER IN `null` - see {@link DeviceKeyPackageAnswer} for the defect
+   * that made the distinction load-bearing. A 404 is an ANSWER and carries the server's reason;
+   * anything else - a 5xx, a gateway error, an unreachable network, a body that does not parse -
+   * is `unanswered`, which establishes nothing about the device and must not be acted on.
    */
-  async fetchDeviceKeyPackage(
-    userId: string,
-    deviceId: string
-  ): Promise<{
-    keyPackage: Uint8Array;
-    deviceId: string;
-    deviceName?: string;
-    deviceOs?: string;
-    deviceAppVersion?: string;
-  } | null> {
+  async fetchDeviceKeyPackage(userId: string, deviceId: string): Promise<DeviceKeyPackageAnswer> {
+    let res: Response;
     try {
-      const res = await this.f(
+      res = await this.f(
         `${this.historyUrl}/api/mls/devices/${encodeURIComponent(userId)}/${encodeURIComponent(deviceId)}/key-package`,
         { headers: await this.auth() }
       );
-      if (!res.ok) return null;
+    } catch (e) {
+      return { kind: 'unanswered', detail: `unreachable: ${String(e).slice(0, 120)}` };
+    }
+
+    if (res.status === 404) {
+      // The reason is the server's, classified where it is known. A server older than the field
+      // sends none, and `unspecified` keeps the reading that cannot be wrong: the caller then
+      // behaves exactly as it did before the field existed.
+      const reason = await res
+        .json()
+        .then((b: { reason?: unknown }) =>
+          b?.reason === 'revoked' || b?.reason === 'unregistered' || b?.reason === 'expired'
+            ? b.reason
+            : ('unspecified' as const)
+        )
+        .catch(() => 'unspecified' as const);
+      return { kind: 'none', reason };
+    }
+
+    if (!res.ok) {
+      return { kind: 'unanswered', detail: `HTTP ${res.status}` };
+    }
+
+    try {
       const d = await res.json();
-      if (typeof d.keyPackage !== 'string' || typeof d.deviceId !== 'string') return null;
+      if (typeof d.keyPackage !== 'string' || typeof d.deviceId !== 'string') {
+        // A 200 whose body is not a key package is the server failing to answer, not the device
+        // failing to exist. Reading it as "absent" is what put this whole seam on the wrong side.
+        return { kind: 'unanswered', detail: 'a 200 with no key package in it' };
+      }
       return {
-        keyPackage: this.decodeKeyPackageBase64(d.keyPackage),
-        deviceId: d.deviceId,
-        deviceName: typeof d.deviceName === 'string' ? d.deviceName : undefined,
-        deviceOs: typeof d.deviceOs === 'string' ? d.deviceOs : undefined,
-        deviceAppVersion: typeof d.deviceAppVersion === 'string' ? d.deviceAppVersion : undefined,
+        kind: 'package',
+        device: {
+          keyPackage: this.decodeKeyPackageBase64(d.keyPackage),
+          deviceId: d.deviceId,
+          deviceName: typeof d.deviceName === 'string' ? d.deviceName : undefined,
+          deviceOs: typeof d.deviceOs === 'string' ? d.deviceOs : undefined,
+          deviceAppVersion: typeof d.deviceAppVersion === 'string' ? d.deviceAppVersion : undefined,
+        },
       };
     } catch (e) {
-      console.error('Fetch device KeyPackage error:', e);
-      return null;
+      return { kind: 'unanswered', detail: `unreadable body: ${String(e).slice(0, 120)}` };
     }
   }
 

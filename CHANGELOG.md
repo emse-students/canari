@@ -11,6 +11,29 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - une panne reseau pouvait retirer une invitation parfaitement valide
+
+`fetchDeviceKeyPackage` renvoyait `null` pour un 404, un 500, une erreur de passerelle et un reseau
+injoignable indifferemment - et `processPendingInvitations` lisait chacun d'eux comme « l'appareil a
+ete desinscrit », puis SUPPRIMAIT l'appartenance en attente. Une mauvaise minute sur un seul point
+d'entree pouvait donc retirer une invitation valide. La regle existait deja et ce site ne l'honorait
+pas : **un code de statut est une reponse, une panne de transport n'en est pas une.** Une non-reponse
+n'etablit plus rien, l'invitation reste, et le balayage suivant redemande.
+
+**Et le 404 avait lui-meme trois causes rapportees comme une seule.** Depuis que le serveur refuse de
+servir un paquet perime (meme date), « pas de paquet » signifie aussi « cet appareil n'est pas venu
+en ligne depuis que son paquet est mort » - ce qui est TEMPORAIRE et se repare tout seul. Les trois
+causes - `revoked`, `unregistered`, `expired` - sont desormais classifiees a l'endroit ou elles sont
+connues et voyagent dans le corps du 404. Les trois retirent la ligne, parce que redemander pendant
+ce demarrage ne changera pas la reponse, mais seul `expired` promet un retour : l'appareil frappe un
+paquet neuf a sa prochaine connexion et `registerDevice` recree l'appartenance en attente pour chaque
+groupe de son proprietaire. C'est aussi ce qui termine la boucle qui reessayait a chaque lancement -
+quatre requetes et un tour de crypto - sans qu'aucune decision produit ne soit necessaire : arreter
+ne perd rien.
+
+Un client plus recent que son serveur lit un 404 sans motif comme `unspecified` et se comporte
+exactement comme avant que le champ existe - voir `docs/wiki/legacy-compatibility.md`.
+
 ### Changed - 182 ms de demarrage a froid rendus : la poignee de main du socket n'attend plus un etat MLS qu'elle ne lit pas
 
 Mesure sur la production le 2026-09-16, sur les 215 dernieres millisecondes d'un demarrage a froid de
