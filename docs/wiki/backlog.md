@@ -7804,9 +7804,12 @@ deleting anything that is not a build cache.**
 ## What the duplicated group notice left behind (2026-09-16)
 
 The notice itself is fixed - `mkVisibleSystem` mints the id at the sender, both readers use it,
-[chat](frontend/modules/chat.md#a-visible-system-notice-needs-an-identity-the-sender-minted). Four
-things came out of the same investigation and none is closed by that commit. The evidence for all of
-them is one prod group, `687b2ebb-e2d6-49f2-855f-1df3dcb040ee`, 31 members, created 2026-09-16 14:17.
+[chat](frontend/modules/chat.md#a-visible-system-notice-needs-an-identity-the-sender-minted). TWO of
+the four things that came out of the same investigation are still open. The third was answered on
+2026-09-16 and its story is in `CHANGELOG.md`: the adder that looked absent from `dm_group_members`
+for five minutes was an arrival date being rewritten by its own owner's next invitation, not a
+missing membership. The evidence for all of them is one prod group,
+`687b2ebb-e2d6-49f2-855f-1df3dcb040ee`, 31 members, created 2026-09-16 14:17.
 
 ### P2 - nothing repairs a notice already duplicated on a device, and nothing should, blind
 
@@ -7852,20 +7855,6 @@ user is what nginx put on the request, the device is the client's own `X-Canari-
 unattributed - **re-measure on a build that carries it before naming any of this a defect**, and
 answer with the same `GROUP BY` the rest of this section asks for: walks per group per hour across
 the estate, and the `after=start` fraction, now also per DEVICE rather than per account.
-
-### P3 - the adder was absent from `dm_group_members` for five minutes while committing adds
-
-`dm_group_members` dates the ADDER's own row at **14:25:12.819**, after that same account had
-committed epochs 3 (14:20:34), 4 (14:21:36) and 5 (14:23:24) in that group - each of which added
-other people.
-`processBulkAddition` opens with `await mlsService.registerMember(conversation.id, userId)` for the
-caller, inside the try whose catch aborts the whole invitation, and no abort was logged.
-
-Unexplained, and it touches recipient resolution: **a column is only evidence for the question it was
-written to answer**, and this one was read as "who is in this group". Note that routing filters on
-`dm_device_group_memberships.status='active'`, not on this table, so the blast radius is not obvious
-either way - which is the first thing to establish. Read with the placeholder-seat item in the main
-queue. The account is identified in this file by its ROLE and by nothing else, deliberately.
 
 ## Post-campaign projects - decided, not scheduled
 

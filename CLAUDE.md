@@ -276,7 +276,7 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
     PROD P1 is FIXED, UNSHIPPED, owing ONE hardware run nothing blocks. **A reaction to your OWN
     message must notify by push and NOTIF-15 asserts the opposite** ([backlog](docs/wiki/backlog.md)).
 18. **ONE COMMIT, FOUR NOTICES ON SCREEN (#752, PROD 2026-09-16) - THE FRAME CARRIES AN ID AND
-    THREE THINGS STILL DO NOT**; `[HISTORY]` names its requester since 2026-09-16 and NOTHING has been measured with it ([backlog](docs/wiki/backlog.md)).
+    TWO THINGS STILL DO NOT**; `[HISTORY]` names its requester since 2026-09-16 and NOTHING has been measured with it ([backlog](docs/wiki/backlog.md)).
 
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
 
