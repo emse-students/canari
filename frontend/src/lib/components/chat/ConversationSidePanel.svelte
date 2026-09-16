@@ -87,6 +87,27 @@
       </div>
     </div>
 
-    <div class="min-h-0 flex-1 overflow-y-auto">{@render children()}</div>
+    <!--
+      THE ONE PLACE THE PANEL SAYS IT IS A CONTAINER, AND EVERY CHILD READS ITS WIDTH FROM HERE.
+
+      The panel's width is NOT a function of the window: measured 2026-09-16 against this app's own
+      CSS, it is 320px at a 1400px viewport (the column) and 448px at 1000px (the drawer) - so a
+      `sm:` or `md:` variant written inside it asks the wrong box how much room there is, and asks it
+      backwards, since the widest window gives the NARROWEST panel. It cost the rename row: at
+      1400px `sm:flex-row` was on, the row needed 341px in 230px of card, and the `Valider` button
+      stood 66px outside a panel that clips - a control nobody could see or press on a desktop.
+
+      So the children write `@md:`, and `sidePanelWidth.test.ts` holds them to it. `@md` is 28rem,
+      which is exactly the drawer's `max-width`: the side-by-side forms exist in the drawer at full
+      width and nowhere narrower, and no arithmetic about padding has to be believed for that to
+      hold.
+
+      SAFE HERE ONLY BECAUSE EVERYTHING FULL-SCREEN INSIDE THIS PANEL IS PORTALLED. `container-type:
+      inline-size` makes this div the containing block for `position: fixed` descendants; the invite
+      `Modal` and the media `FullScreenViewer` both `use:portal` out to `body`, so none of them is a
+      descendant by the time it is painted. A future panel child that draws a fixed overlay IN PLACE
+      would be positioned against this box instead of the window.
+    -->
+    <div class="@container min-h-0 flex-1 overflow-y-auto">{@render children()}</div>
   </aside>
 {/if}

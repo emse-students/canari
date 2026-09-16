@@ -64,7 +64,7 @@
   width and border - and `MainChatPage` mounted it twice to get both. `ConversationSidePanel` owns
   the shell now, so this file answers one question: who is in this channel.
 -->
-<div class="space-y-8 p-4 md:p-5">
+<div class="space-y-8 p-4 @md:p-5">
   <!-- Admins & Moderators section. -->
   {#if admins.length > 0}
     <div class="animate-in fade-in slide-in-from-bottom-2 duration-300">

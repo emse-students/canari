@@ -22,6 +22,19 @@ export function generateAvatarColor(str: string): string {
 }
 
 /**
+ * The first N CHARACTERS of a string, never the first N code units.
+ *
+ * `s[0]` and `substring(0, 2)` both count UTF-16 code units, so on anything outside the Basic
+ * Multilingual Plane they return half of a surrogate pair - not a character, and drawn as a
+ * placeholder box. The letters this file keeps are `\p{L}` and `\p{N}`, which include astral ones
+ * (mathematical alphanumerics, CJK extensions), so the hazard is inside the filtered string too and
+ * not only in the raw name.
+ */
+function firstChars(value: string, count: number): string {
+  return [...value].slice(0, count).join('');
+}
+
+/**
  * Get initials from a username/userId
  */
 export function getInitials(name: string): string {
@@ -38,13 +51,13 @@ export function getInitials(name: string): string {
 
   if (alnumParts.length === 0) {
     const compact = cleaned.replace(/[^\p{L}\p{N}]/gu, '');
-    return compact.substring(0, 2).toUpperCase() || '?';
+    return firstChars(compact, 2).toUpperCase() || '?';
   }
 
-  if (alnumParts.length === 1) return alnumParts[0].substring(0, 2).toUpperCase();
+  if (alnumParts.length === 1) return firstChars(alnumParts[0], 2).toUpperCase();
 
   // Take first letter of first two valid parts.
-  return (alnumParts[0][0] + alnumParts[1][0]).toUpperCase();
+  return (firstChars(alnumParts[0], 1) + firstChars(alnumParts[1], 1)).toUpperCase();
 }
 
 function escapeXml(value: string): string {

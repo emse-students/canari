@@ -366,35 +366,10 @@
       <Lock size={18} strokeWidth={2.5} />
       {m.chat_channel_access_tab()}
     </button>
-
-    <!-- Boutons de danger (Desktop uniquement, placés en bas) -->
-    <div class="mt-auto hidden gap-2 pt-6 md:flex md:flex-col">
-      <!-- Only a private channel can be left: a public one is readable by every member of the
-             community, so there is no per-member access to give up. Leaving is a community-level
-             action there ("Quitter la communaute", in the community panel). -->
-      {#if selectedChannel?.isPrivate}
-        <button
-          type="button"
-          onclick={handleLeaveChannel}
-          class="flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-bold text-orange-600 transition-colors outline-none hover:bg-orange-500/10 focus-visible:ring-2 focus-visible:ring-orange-500 dark:text-orange-400"
-        >
-          <LogOut size={18} strokeWidth={2.5} />
-          {m.chat_leave_channel_button()}
-        </button>
-      {/if}
-      <button
-        type="button"
-        onclick={handleDeleteChannel}
-        class="flex w-full items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-bold text-red-600 transition-colors outline-none hover:bg-red-500/10 focus-visible:ring-2 focus-visible:ring-red-500 dark:text-red-400"
-      >
-        <Trash2 size={18} strokeWidth={2.5} />
-        {m.chat_delete_channel_button()}
-      </button>
-    </div>
   </div>
 
   <!-- Contenu Principal -->
-  <div class="flex-1 overflow-y-auto bg-transparent p-5 md:p-8">
+  <div class="flex-1 overflow-y-auto bg-transparent p-5 @md:p-8">
     <!-- ================= ONGLET : GÉNÉRAL ================= -->
     {#if activeTab === 'general'}
       <div class="max-w-2xl space-y-6">
@@ -505,12 +480,24 @@
           {/if}
         </div>
 
-        <!-- Zone de danger (Visible uniquement sur mobile dans cet onglet) -->
-        <div class="space-y-3 border-t border-black/10 pt-6 md:hidden dark:border-white/10">
+        <!--
+          THE ONLY DANGER ZONE, AND IT IS UNCONDITIONAL NOW.
+
+          A second copy of these two buttons lived in the tab strip behind `md:flex`, from when this
+          panel was a modal with a 16rem tab RAIL beside its content. That rail was deleted when the
+          panel moved into `ConversationSidePanel` - a single column - and the copy inside it was
+          not: the strip is `flex-row overflow-x-auto`, so from 768px of WINDOW up, "leave" and
+          "delete" were rendered as two more items of a horizontal tab bar, scrolled off its right
+          end, while this block was hidden by the matching `md:hidden`. The destructive controls of
+          a channel were reachable only by scrolling a row of tabs sideways.
+        -->
+        <div class="space-y-3 border-t border-black/10 pt-6 dark:border-white/10">
           <h3 class="mb-2 px-1 text-xs font-bold tracking-wider text-red-500 uppercase">
             {m.chat_danger_zone_label()}
           </h3>
-          <!-- Private channels only - see the desktop block above. -->
+          <!-- Only a private channel can be left: a public one is readable by every member of the
+               community, so there is no per-member access to give up. Leaving is a community-level
+               action there (the community panel's own "leave"). -->
           {#if selectedChannel?.isPrivate}
             <button
               type="button"
