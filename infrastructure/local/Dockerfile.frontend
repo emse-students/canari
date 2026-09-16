@@ -30,8 +30,17 @@ RUN rm -f /usr/share/nginx/html/index.html /usr/share/nginx/html/50x.html
 # The Content-Security-Policy, stated ONCE and included by every block that sets
 # security headers. nginx's add_header REPLACES the inherited set instead of adding
 # to it, so a block that sets any header of its own loses the policy unless it
-# restates it - which is why three blocks below need it. Three verbatim copies is
-# how a policy drifts: two get a new host, the third silently keeps blocking it.
+# restates it - which is why every block below that sets one restates all three.
+# Verbatim copies is how a policy drifts: two get a new host, the third silently
+# keeps blocking it, so the CSP itself is included rather than retyped.
+#
+# THE RULE WAS STATED HERE AND NOT APPLIED, which is why it is now a gate
+# (.github/scripts/tests/static-headers.test.mjs). Measured on production
+# 2026-09-16: four blocks set a Cache-Control and stopped there, so the emoji font,
+# every content-hashed bundle, every .mjs worker and both App Link manifests were
+# served with NO nosniff and NO X-Frame-Options - while an HTML page, which reaches
+# @ssr and declared nothing, inherited all three correctly. A convention that only
+# holds where someone remembered it is the thing a test is for.
 #
 # connect-src is the list of hosts the APP ITSELF calls, and it must match the code:
 #   - api.klipy.com    the GIF picker's search/trending API (GifPickerModal)
@@ -82,11 +91,17 @@ RUN printf 'server {\n\
     try_files $uri =404;\n\
     add_header Content-Type application/json;\n\
     add_header Cache-Control "public, max-age=3600";\n\
+    include /etc/nginx/snippets/csp.conf;\n\
+    add_header X-Content-Type-Options "nosniff" always;\n\
+    add_header X-Frame-Options "DENY" always;\n\
     }\n\
     \n\
     location /_app/immutable/ {\n\
     try_files $uri =404;\n\
     add_header Cache-Control "public, max-age=31536000, immutable";\n\
+    include /etc/nginx/snippets/csp.conf;\n\
+    add_header X-Content-Type-Options "nosniff" always;\n\
+    add_header X-Frame-Options "DENY" always;\n\
     }\n\
     \n\
     # nginx mime.types has no .mjs entry, so an ES module shipped as a build\n\
@@ -97,6 +112,9 @@ RUN printf 'server {\n\
     try_files $uri =404;\n\
     default_type application/javascript;\n\
     add_header Cache-Control "public, max-age=31536000, immutable";\n\
+    include /etc/nginx/snippets/csp.conf;\n\
+    add_header X-Content-Type-Options "nosniff" always;\n\
+    add_header X-Frame-Options "DENY" always;\n\
     }\n\
     \n\
     # The root has to be matched exactly. There is no index.html any more, so\n\
@@ -107,12 +125,52 @@ RUN printf 'server {\n\
     try_files /nonexistent @ssr;\n\
     }\n\
     \n\
+    # The bundled emoji font is 5.7 MB - by a wide margin the largest thing this\n\
+    # origin serves - and its name is stable across deploys, so it is the one asset\n\
+    # here worth a month rather than an hour. No `immutable`: the name carries no\n\
+    # content hash, so a rebuilt font (docs/wiki/frontend/emoji.md records the sha256\n\
+    # of the committed artefact) must stay revalidatable. nginx answers the monthly\n\
+    # conditional request with a 304 off its ETag, so a returning browser downloads\n\
+    # these bytes exactly once.\n\
+    location /fonts/ {\n\
+    try_files $uri =404;\n\
+    add_header Cache-Control "public, max-age=2592000";\n\
+    include /etc/nginx/snippets/csp.conf;\n\
+    add_header X-Content-Type-Options "nosniff" always;\n\
+    add_header X-Frame-Options "DENY" always;\n\
+    }\n\
+    \n\
     # No $uri/ here on purpose: every directory under the root has its own\n\
     # location, so the only thing $uri/ can still do is re-open the 403 above.\n\
+    #\n\
+    # WHAT THIS BLOCK ACTUALLY SERVES, AND WHY ITS HEADERS WERE INVERTED. `try_files\n\
+    # $uri @ssr` means nginx answers from THIS block only when the path is a file on\n\
+    # disk - the PWA icons, the web manifest, the emoji data, the emoji font. A page\n\
+    # falls through to @ssr, and a named location handles the request itself, so an\n\
+    # `add_header` here never reached one. The `Cache-Control: no-store` that stood\n\
+    # here was therefore stamped on every immutable asset in static/ and on none of\n\
+    # the HTML it was written for; it now lives in @ssr, where the page is.\n\
+    #\n\
+    # Measured on production 2026-09-16, and this is what it cost: the emoji font\n\
+    # answered `cf-cache-status: BYPASS` with `Cache-Control: no-store`, so its\n\
+    # 5 705 472 bytes crossed from the origin on EVERY page load, uncacheable by the\n\
+    # browser and by the edge alike. Preloaded from app.html, it went first and held\n\
+    # the link at ~477 kB/s while the 723 kB MLS binary queued behind it at 54 kB/s\n\
+    # and took 13 286 ms of a 15-second start-up.\n\
+    #\n\
+    # The three security headers are repeated rather than inherited: nginx drops the\n\
+    # server-level add_header set as soon as a location declares one of its own, and\n\
+    # this block did - so every file it served was missing nosniff and X-Frame-Options\n\
+    # (measured on the same day: 0 of 2 present on the font, 2 of 2 on an HTML page,\n\
+    # which reaches @ssr and declares nothing). Cache-Control is deliberately NOT\n\
+    # `always`: a 404 from here must not be cached, and nginx skips a non-always\n\
+    # header on a 4xx.\n\
     location / {\n\
     try_files $uri @ssr;\n\
-    add_header Cache-Control "no-store" always;\n\
+    add_header Cache-Control "public, max-age=3600";\n\
     include /etc/nginx/snippets/csp.conf;\n\
+    add_header X-Content-Type-Options "nosniff" always;\n\
+    add_header X-Frame-Options "DENY" always;\n\
     }\n\
     \n\
     # HTML navigations -> the SvelteKit server (adapter-node), which writes the\n\
@@ -135,6 +193,21 @@ RUN printf 'server {\n\
     proxy_buffer_size 32k;\n\
     proxy_buffers 8 32k;\n\
     proxy_busy_buffers_size 64k;\n\
+    # THE PAGE IS THE THING THAT MUST NOT BE CACHED, and until 2026-09-16 nothing\n\
+    # said so: the no-store written for it sat in `location /`, which only ever\n\
+    # answers for a file on disk. Measured that day, an HTML navigation carried no\n\
+    # Cache-Control at all. adapter-node sets none of its own on an SSR response, so\n\
+    # this is the only declaration and there is no second header to reconcile.\n\
+    #\n\
+    # The three security headers are repeated because nginx drops the whole\n\
+    # server-level add_header set from a location that declares one of its own. This\n\
+    # block declared none, which is how HTML kept CSP, nosniff and X-Frame-Options by\n\
+    # inheritance; adding Cache-Control here would have stripped all three from every\n\
+    # navigation on the site.\n\
+    add_header Cache-Control "no-store" always;\n\
+    include /etc/nginx/snippets/csp.conf;\n\
+    add_header X-Content-Type-Options "nosniff" always;\n\
+    add_header X-Frame-Options "DENY" always;\n\
     error_page 502 503 504 =200 @app_shell;\n\
     }\n\
     \n\

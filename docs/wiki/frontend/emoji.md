@@ -71,8 +71,21 @@ obligations, the other being that the font is never sold on its own).
 ## Wired in
 
 - One `@font-face` (`font-display: swap`) in `frontend/src/app.css`, family name
-  `'Noto Color Emoji Canari'`, plus a `<link rel="preload">` in `frontend/src/app.html` so it is
-  ready at first paint rather than swapped in after the platform font already drew.
+  `'Noto Color Emoji Canari'`. **It is deliberately NOT preloaded, and was until 2026-09-16.**
+  5 705 472 bytes is larger than the MLS engine and larger than the application bundle - the
+  biggest single thing this site serves - and a preload puts exactly that in front of everything
+  else on a first visit. Measured on production that day it held the origin link for ~12 s while
+  the 723 kB encryption engine queued behind it at 54 kB/s, and Firefox reported the preload
+  "not used after a few seconds" in the same load. `swap` already defines the behaviour without it:
+  the platform glyphs draw, this font replaces them when it arrives.
+- **Its bytes are worth a month at the edge** - `location /fonts/` in
+  `infrastructure/local/Dockerfile.frontend` sends `public, max-age=2592000`, which is as long as a
+  stable filename may safely claim. There is no content hash in the name, so `immutable` is not
+  available: a rebuilt font under the same name would be unreachable for a year. The monthly
+  conditional request is answered 304 from nginx's ETag, so a returning browser downloads these
+  bytes once. **If this font is ever rebuilt, the sha256 in the table above changes and the cached
+  copies expire within thirty days** - that is the whole safety margin, and it is why the TTL is a
+  month rather than a year.
 - Appended as the last fallback (before the generic keyword) on both global stacks (`body`,
   `h1`-`h6`/`.font-brand`) and on every stack re-declared for an export: `PosterCanvas.svelte` (5
   inline stacks), `calendarExport.ts` (3 stacks, including the two JS-side container assignments),

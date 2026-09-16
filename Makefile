@@ -346,6 +346,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/no-nul-in-source.test.mjs
 	@bun .github/scripts/tests/wiki-links.test.mjs
 	@bun .github/scripts/tests/backlog-closed.test.mjs
+	@bun .github/scripts/tests/static-headers.test.mjs
 	@bun .github/scripts/tests/codeql-category.test.mjs
 	@bun .github/scripts/tests/declared-duplicates.test.mjs
 	@bash .github/scripts/tests/release-shipped.test.sh
