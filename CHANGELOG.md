@@ -76,6 +76,33 @@ sortants, donc il discrimine une photo changee tout aussi bien.
 Le raccourcir demande une decision consignee au backlog, et un nombre plus petit choisi par compromis
 serait le meme defaut a une autre cadence.
 
+### Changed - la console horodate enfin a la milliseconde, et elle horodate toutes ses lignes
+
+L'objectif de demarrage est **sous la seconde**, et la console etait precise a la seconde. L'export
+de production du 16/09/2026 met `Initialised in WEB mode`, `Verifying PIN...`,
+`MLS state loaded from IndexedDB` et `Initialising MLS (vault device key path)...` **sur le meme
+`[13:32:42]`**. On ne mesure pas un budget avec une regle dont la plus petite graduation est le
+budget.
+
+Pire : seules les lignes passant par `appendLog` portaient une heure. `[MLS] key package census`,
+`[MLS] generateKeyPackage via worker`, chaque ligne `[API]` n'en avaient aucune - donc les deux
+moities d'un demarrage ne pouvaient pas etre situees l'une par rapport a l'autre.
+
+L'horodatage descend a l'endroit ou il aurait toujours du etre : **l'unique enrobage de `console.*`**,
+installe depuis `hooks.client.ts`, la couture cliente la plus precoce. Toutes les lignes en heritent,
+sans un seul appel modifie, et sans une ligne de console supplementaire. Deux horloges, et ce ne sont
+pas le meme fait :
+
+- l'**heure murale** a la milliseconde, qui seule permet d'aligner le journal sur une cascade reseau,
+  un log serveur ou l'export d'un second appareil ;
+- le **decalage depuis le debut de la navigation** (`performance.now()`), monotone - il survit a un
+  ajustement d'horloge en cours de mesure - et surtout : **rien dans un export ne disait quand la page
+  avait commence**, donc la distance entre la navigation et le premier mot de l'application n'avait
+  jamais ete mesuree. C'est une part du demarrage.
+
+Un worker garde sa propre console et n'execute pas ce fichier : ses lignes restent sans horodatage,
+et c'est le seul endroit ou il faut encore se fier a l'ordre.
+
 ## [0.18.7] - 2026-09-16
 
 ### Changed - les deux agendas dessinent le meme mois, et ne le dessinent plus qu'une fois

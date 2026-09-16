@@ -821,6 +821,32 @@ one that needs a decision:
 **Do not ship part 3 without deciding which shape**, and do not lower the TTL as a compromise: a
 smaller number is the same defect at a different rate, and it would still be a claim nobody can
 honour.
+### P3 - THE FIRST TWO LINES OF A BOOT ARE STILL A DEAD SOCKET, ON A BUILD THAT SHIPPED THE REPAIR FOR EXACTLY THAT, AND NOTHING IN AN EXPORT SAYS WHICH DOCUMENT WROTE THEM (production, 2026-09-16)
+
+```
+Ouverture de https://canari-emse.fr/chat
+[WS] Disconnected. Code: 1006, Reason: no reason
+[13:32:41] Connection lost. Retrying in 1s... (attempt 1)
+```
+
+On `0.18.6`. #719 shipped in `v0.18.4` precisely to remove these two lines from every reload:
+`pagehide` sets `pageIsHiding`, and `onclose` returns before warning or reconnecting when it is set.
+The logic reads correctly and the guard is on the branch these lines come from.
+
+**SO EITHER THE FLAG WAS FALSE, OR THESE LINES ARE THE PREVIOUS DOCUMENT'S - AND THE EXPORT CANNOT
+SAY WHICH.** Firefox persists the console across a navigation, and the source column names the same
+bundle either way when no deploy happened in between. #719's own test docblock leans on that column
+to attribute the 2026-09-15 occurrence; here it cannot.
+
+**DO NOT WRITE A FIX AGAINST EITHER READING.** They want opposite work - one is a missed event on the
+LEAVING page, the other is nothing at all - and a change made against the wrong one would be
+untestable in the field, which is how #719 came to look shipped and not be.
+
+**WHAT SETTLES IT IS ALREADY ON ITS WAY.** Every console line now carries `+<ms>` since its own
+document's navigation start. A line written by the PREVIOUS document carries that document's
+lifetime - seconds or minutes - while a line written by the new one carries a handful of
+milliseconds. One export answers it with no instrumentation of the socket at all. Read the next one
+before touching `WebMlsService`.
 
 ---
 ### P2 - EVERY BOOT PAYS A FULL ORIGIN ROUND TRIP FOR A DOCUMENT THAT IS THE SAME FOR EVERYBODY (measured on production 2026-09-16)
