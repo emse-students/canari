@@ -123,7 +123,26 @@ export async function refreshAppVersionCheck(): Promise<AppVersionCheckResult> {
   return inflight;
 }
 
+/**
+ * THE CACHED VERDICT IS ADOPTED AT IMPORT; THE PROBE IS NOT FIRED HERE.
+ *
+ * Hydration is synchronous, touches only `localStorage` and is what lets a blocking verdict be
+ * known before anything has rendered - so it stays, and every reader that says "the store hydrates
+ * at import" is still right.
+ *
+ * **THE REFRESH USED TO FIRE HERE TOO, AND IT WAS A SECOND `GET /api/version` PER BOOT.** The root
+ * layout already calls `refreshAppVersionCheck()` on mount, next to the `focus`, `online` and
+ * `visibilitychange` listeners that refresh it afterwards - one place, readable, and the only one a
+ * reader would look for. `inflight` dedupes CONCURRENT calls and nothing more, so the two requests
+ * collided only when the second happened to be raised before the first answered; on production on
+ * 2026-09-16 it did not, and the boot carried both. **The fix is to have one caller, not a window
+ * in which two are tolerated** - a time-based guard here would be a clock deciding idempotence,
+ * which is the one thing it must never decide.
+ *
+ * Nothing is delayed by this. The root layout's `onMount` is the same tick's worth of work away,
+ * the verdict that gates the unlock is read from the hydrated cache long before either lands, and
+ * `PlatformGateOverlay` raises itself from this same store whenever a later answer blocks.
+ */
 if (typeof window !== 'undefined') {
   hydrateFromCachedServerInfo();
-  void refreshAppVersionCheck();
 }

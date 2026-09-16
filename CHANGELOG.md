@@ -103,6 +103,26 @@ pas le meme fait :
 Un worker garde sa propre console et n'execute pas ce fichier : ses lignes restent sans horodatage,
 et c'est le seul endroit ou il faut encore se fier a l'ordre.
 
+### Fixed - un seul `GET /api/version` par demarrage, au lieu de deux
+
+Le module du controle de version lancait sa propre requete **a l'import**, et la mise en page
+racine la relance **au montage** - a cote des ecouteurs `focus`, `online` et `visibilitychange` qui
+la rafraichissent ensuite. Sur la console de production du 16/09/2026, un demarrage ordinaire porte
+donc deux `GET /api/version` : un avant `Initialised in WEB mode (WASM)`, un apres.
+
+`inflight` n'est pas une protection contre ca : il ne deduplique que les appels **concurrents**, donc
+les deux ne se rencontrent que si la seconde part avant que la premiere ait repondu. Quand la
+premiere gagne la course - ce qui est arrive la - les deux partent.
+
+L'appel a l'import disparait ; celui de la mise en page reste, parce que c'est le seul endroit ou un
+lecteur ira le chercher et qu'il est colocalise avec les ecouteurs. **Un garde temporel aurait ete
+une horloge decidant de l'idempotence**, ce qu'une horloge ne doit jamais decider : on supprime le
+second appelant, on ne tolere pas une fenetre.
+
+Rien n'est retarde : l'adoption du verdict en cache reste synchrone a l'import, c'est elle qui permet
+de connaitre un blocage avant tout rendu, et `PlatformGateOverlay` se leve depuis ce meme magasin
+des qu'une reponse ulterieure bloque.
+
 ## [0.18.7] - 2026-09-16
 
 ### Changed - les deux agendas dessinent le meme mois, et ne le dessinent plus qu'une fois

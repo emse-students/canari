@@ -398,9 +398,9 @@
     // THE VERDICT IS ALREADY HERE, AND WAITING FOR A FRESHER ONE COST EVERY LAUNCH A ROUND TRIP.
     //
     // The probe below used to be awaited here. The store hydrates `lastCheck` from cached server
-    // metadata synchronously at import and fires its own refresh there, so that wait never
-    // produced the FIRST verdict - only a newer one - while `GET /api/version` sat in front of the
-    // unlock. On a degraded link that is not a small cost: the probe carries a retry ladder of
+    // metadata synchronously at import, and the root layout fires a refresh on mount, so that wait
+    // never produced the FIRST verdict - only a newer one - while `GET /api/version` sat in front
+    // of the unlock. On a degraded link that is not a small cost: the probe carries a retry ladder of
     // 3 x 8 s timeouts plus backoff, so the fingerprint prompt could be held back ~26 s before
     // answering from exactly the cache consulted below (Pixel 6a, 2026-09-15).
     //
