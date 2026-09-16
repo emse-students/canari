@@ -921,11 +921,55 @@ is worth the work, and the bundle is worth it only for a FIRST visit.**
 the 534 ms is Firefox, the user's line, `/posts`, and a session. The proportions are what transfers -
 one reload of the user's own browser with these five fields read out would settle the absolute.
 
-**THE SECOND BLOCK IS 162 ms AND HAS NO EXPLANATION YET**: between `Initialising MLS (vault device
-key path)` (856 ms) and `Loading encrypted state with device key` (1018 ms), with nothing but
-unrelated API responses landing in the gap. The decrypt of the whole 7.6 MB state that follows it
-takes only 74 ms. **Do not guess at it** - name it from a `performance.mark` or from reading the
-vault path, not from the shape of the log.
+#### The second block is 162 ms, and it is a NETWORK ROUND TRIP HOLDING BACK A PURELY LOCAL DECRYPT
+
+Between `Initialising MLS (vault device key path)` (856 ms) and `Loading encrypted state with device
+key` (1018 ms). The decrypt of the whole 7.6 MB state that follows it takes only 74 ms. The entry
+first recorded "nothing but unrelated API responses in the gap" - **that was wrong, and the export
+says so**: one of them is the only related thing there is.
+
+`sessionAuth.ts:630-631` is the whole of it. On the vault path, before `init()` is allowed to start:
+
+```ts
+const deviceId = await mlsService.resolveDeviceId(ctx.getUserId());
+if (await mlsService.isDeviceRevoked(ctx.getUserId(), deviceId)) { ... }
+```
+
+`isDeviceRevoked` is a `fetch` to `/api/mls/devices/<user>/<device>/revoked`
+(`mlsDeliveryApi.ts:346`), and the export shows that exact request **inside both gaps** - at 63 ms of
+HTTP/3 in boot 2, in a burst of ~15 concurrent feed requests (avatars, presence, link previews,
+forms) that the same reload fired. `resolveDeviceId` adds an awaited `persistDeviceIdNatively` on
+EVERY resolution, not only on a mint (`BaseMlsService.ts:1945`). Boot 1 shows the same shape,
+151 ms.
+
+**SO A DECRYPT THAT NEEDS NO NETWORK AT ALL IS SEQUENCED BEHIND ONE THAT DOES**, and the round trip
+is paid at the slowest moment of the boot, when a dozen other requests are already in flight.
+
+**THE CANDIDATE IS CONCURRENCY, NOT A TIMEOUT, AND IT HAS ONE BLOCKING QUESTION.** The two are
+independent: the revocation answer gates the WIPE, and `init()` only opens local state. Running them
+under one `Promise.all` and still gating `wipeRevokedDevice` on the answer would take the round trip
+off the critical path without weakening the check - a revoked device does strictly more work and
+then gets wiped exactly as before, which is the same end state.
+
+**BUT A NAIVE `Promise.all` IS WRONG, AND THE READ SETTLES IT RATHER THAN LEAVING IT OPEN.** `init()`
+CAN publish before the answer lands, by two branches of `WebMlsService._initImpl`:
+
+- **`rotateDeviceIdentity`** (`BaseMlsService.ts:1991`) writes a NEW device id to `localStorage`,
+  loads a fresh state, `persistCheckpoint()`s it and fires `deleteDevice` at the server for the old
+  one. Reachable with `noFreshStart` set whenever the cause is `mismatch`, which the guard
+  deliberately excludes.
+- **a fresh start**, when no saved state exists at all: `loadAndInitWasm` with `state: undefined`
+  mints a new client, and the key packages follow.
+
+Doing either on a device the server has ALREADY revoked writes a new fact into the estate rather
+than merely wasting work, which is the one outcome the sequential await was buying.
+
+**SO THE SHAPE IS NOT `Promise.all`, IT IS A PROMISE HELD ACROSS THE LOCAL WORK.** Issue the
+revocation fetch without awaiting it, run the purely local decrypt, and await it before any branch
+that rotates, mints or persists. Deterministic, no clock, no fallback, and it removes the round trip
+from the boot of every device that is NOT revoked, which is all of them. **What it costs is that the
+two publish points above must be enumerated and gated, not assumed** - that is the work this item
+now describes, and it is no longer waiting on a reading.
 
 **AND THE KEY-PACKAGE LEAK NOW HAS A PRICE IN BYTES.** The same boot prints its own composition:
 
