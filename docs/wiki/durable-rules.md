@@ -328,6 +328,30 @@ Deep links, system events, rosters and the channel/DM asymmetry are on those two
 
 ## Outbound delivery -> [chat](frontend/modules/chat.md), [history-reconciliation](protocols/history-reconciliation.md), [chat-delivery](services/chat-delivery.md), [mobile](frontend/mobile.md)
 
+- **A ROW WRITTEN BY MORE THAN ONE PATH NEEDS AN IDENTITY CARRIED BY THE EVENT, NEVER MINTED BY THE
+  WRITER - AND THE ONLY IDENTITY THAT CONVERGES ACROSS DEVICES IS THE SENDER'S.** A visible system
+  notice is written by live delivery AND by the archive replay, and copied between devices by a
+  peer's `history_bundle`; every deduplication in the app compares ids, and `addMessageToChat` ends
+  on `?? crypto.randomUUID()`. With no id on the frame, the three paths minted three, so ONE
+  membership change drew one bubble per replay and per bundle, durably on disk - four on a member's
+  screen for a single `memberAdded` commit, prod 2026-09-16. **Ordinary messages were immune for the
+  only reason that matters: they have always carried a sender-minted `message_id`.** Neither
+  substitute works: an id derived from the PAYLOAD collides when the same person is added twice, and
+  one derived from the CIPHERTEXT agrees between the two paths of one device and disagrees between
+  two devices, because MLS re-encrypts per recipient - which is exactly the case the bundle needs. So
+  the sender mints it once (`mkVisibleSystem`). **And when you find such a row, count the WRITERS
+  before believing a cause**: the three multipliers here were invisible from the client, and the
+  server settled it in three queries - one commit, one membership row, one archive entry.
+  [chat](frontend/modules/chat.md#a-visible-system-notice-needs-an-identity-the-sender-minted)
+- **STORING A VALUE IN CLEAR IS NOT A LICENCE TO LOG IT.** A group name is in clear on the server
+  because the push title is composed where nothing can decrypt - an accepted exposure, now written
+  down in `SECURITY.md`. A LOG LINE is not covered by it: it copies the same text into journald,
+  where it outlives the row it came from, escapes every deletion its owners can ask for, and is read
+  by anyone with shell on the box. `[CREATE_GROUP]` and `[RENAME_GROUP]` printed it until 2026-09-16
+  and now print a byte count, which is the shape `[PUSH_SEND]` had already reached for the identical
+  value. **An exposure written down nowhere is an exposure nobody accepted**, so the table in
+  `SECURITY.md` is the list, and a new log line touching any column in it owes the same treatment.
+
 - **TWO SPELLINGS OF ONE FACT MUST BE DERIVED AT EVERY SEAM THAT MATERIALISES A ROW, NOT AT ONE OF
   THEM.** `isSystem` and `senderId === 'system'` say the same thing, and the `history_bundle`
   deliberately puts only the second on the wire - carrying both is where they get to disagree. So

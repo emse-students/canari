@@ -7555,6 +7555,76 @@ already suspected. Until that scan runs, this is a slope rather than a diagnosis
 sits at P3 beside the two prod hosts above rather than being called fixed. **Ask the user before
 deleting anything that is not a build cache.**
 
+## What the duplicated group notice left behind (2026-09-16)
+
+The notice itself is fixed - `mkVisibleSystem` mints the id at the sender, both readers use it,
+[chat](frontend/modules/chat.md#a-visible-system-notice-needs-an-identity-the-sender-minted). Four
+things came out of the same investigation and none is closed by that commit. The evidence for all of
+them is one prod group, `687b2ebb-e2d6-49f2-855f-1df3dcb040ee`, 31 members, created 2026-09-16 14:17.
+
+### P2 - nothing repairs a notice already duplicated on a device, and nothing should, blind
+
+**The rows are local, durable, and carry distinct random ids** - the fix makes new events converge
+and says nothing about old ones. Every member of every group created before this ships keeps
+whatever copies their device accumulated.
+
+**Do not write a collapse pass on a hunch.** Merging system rows that share a sender, a body and a
+nearby timestamp is a heuristic over user data, it is a destructive control with no allowlist of what
+it may touch, and *hiding the duplication is not removing it*. If it is done at all, the honest shape
+is the one the rest of this repo uses: a pass that runs once, is gated on knowing the state is really
+broken, names exactly which rows it may delete, and reports what it did.
+
+**What is owed first is the POPULATION.** Nobody knows how many rows this is: one screenshot, one
+group. A count of `isSystem` rows sharing `(conversation, content)` on one real device would settle
+whether this is four lines in one group or a permanent fixture of every long conversation - and that
+number decides whether the pass is worth its risk.
+
+### P2 - 13 full archive walks and 37 reconciliation answers in ten minutes, for one group
+
+**Measured, not estimated**, from `infrastructure-chat-delivery-service-1` over 14:17-14:49:
+
+- **13 `[HISTORY] after=start`** - a walk of the WHOLE stream from its first entry - covering the
+  announcement at 14:20:37, two of them in the same second (14:23:32) and two more at 14:38:18.
+- **two cursor resumes from BEFORE it** (14:27:33 `after=1789568349700-0`, 14:40:12
+  `after=1789568451147-0`), which re-read it as well.
+- **37 `[HISTORY_REQ] FORWARDED`**, per requesting device: Arthur ARMAND 8, Hortense BAIZE 7, Victor
+  KALFON 6, Jeanne BOUSSONNIERE 5, Matheo BOUDIER 5, Mael OULLION 4, Esteban DELSOL 1. Plus 14
+  `NO_PEER_ONLINE`.
+
+These were the multipliers of the duplicated notice; with the id fixed they multiply nothing visible
+any more, which is exactly why they need a number before they get a name. **A group being built -
+four add commits in five minutes, 31 members arriving in batches - may legitimately reconcile this
+hard.** Establish the rate against the population (how many walks per group per hour across the
+estate, and what fraction are `after=start` rather than a cursor resume) before calling this a
+defect. `[HISTORY]` does not name its requester, so attributing a walk to a device needs that field
+added first - one line, and the prerequisite for any of the rest.
+
+### P3 - `memberLeft` is rendered by the replay and by NOTHING live
+
+`historySystemEvents.ts:193` renders `chat_system_member_left`; `systemMessageHandler.ts` has no
+branch for the event at all - `grep` finds `chat_system_member_left` in exactly one non-test file.
+`leaveGroupAndBroadcast` does send it (`notifyMembershipChange`), so the frame is on the wire and in
+the archive.
+
+**So a member leaving a group shows nothing to anyone until their next archive replay**, and then
+appears at its original position in the scrollback rather than at the moment it happened. Found while
+enumerating the writers of every visible notice; it is a missing branch, not a duplicate, which is
+why it is not in the same commit. The send site already carries an id since 2026-09-16, so the branch
+has one waiting for it.
+
+### P3 - the adder was absent from `dm_group_members` for five minutes while committing adds
+
+`dm_group_members` dates Matheo BOUDIER's own row at **14:25:12.819**, after he had committed epochs
+3 (14:20:34), 4 (14:21:36) and 5 (14:23:24) in that same group - each of which added other people.
+`processBulkAddition` opens with `await mlsService.registerMember(conversation.id, userId)` for the
+caller, inside the try whose catch aborts the whole invitation, and no abort was logged.
+
+Unexplained, and it touches recipient resolution: **a column is only evidence for the question it was
+written to answer**, and this one was read as "who is in this group". Note that routing filters on
+`dm_device_group_memberships.status='active'`, not on this table, so the blast radius is not obvious
+either way - which is the first thing to establish. Read with the placeholder-seat item in the main
+queue.
+
 ## Post-campaign projects - decided, not scheduled
 
 ### Separating ICM and ISMIN - two schools on one deployment (user, 2026-09-05)

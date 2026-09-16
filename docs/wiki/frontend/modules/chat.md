@@ -416,6 +416,49 @@ explicitly through **`appMsgToChannelSystemEnvelope`** and attribute it to `'sys
 `isSystem: true`, so it renders centred and neutral rather than as a message from whoever triggered
 it. `ChatMessageGroups` centres on the ROW flag; the `system` envelope kind only gives the pill.
 
+### A visible system notice needs an identity the SENDER minted
+
+A notice the members are meant to SEE - a member added or removed, a rename, a new photo, a deleted
+group - is written by **two paths that never meet**, and copied between devices by a third:
+
+| path | where |
+| --- | --- |
+| live delivery | `systemMessageHandler.ts`, the `memberAdded` / `memberRemoved` / `groupRenamed` / `groupImageChanged` / `groupDeleted` branches |
+| archive replay | `historySystemEvents.ts`, the same events re-read from `history:{groupId}` |
+| a peer's `history_bundle` | `serializeForBundle` copies the row, **with the id that peer stored** |
+
+**Every deduplication in the application compares ids** - the bulk-ingest check in
+`addMessageToChat`, the bundle's `existingIds` set, the post-save merge. So a notice with no id
+cannot be deduplicated by anything: `addMessageToChat` ends on
+`normalizeMessageId(options.messageId) ?? crypto.randomUUID()`, and each of the three paths minted a
+different one for the same event.
+
+**What that cost, measured on production 2026-09-16.** A 31-member group, one `memberAdded` commit,
+**one** frame in the archive - and four identical notices on a member's screen, durable, on disk. The
+multipliers were in the same ten minutes: 13 full `after=start` archive walks and 37 reconciliation
+answers. Ordinary messages were untouched, because they have carried a `message_id` since they were
+introduced; the notices were the only rows in the conversation with no identity at all.
+
+**The fix is `mkVisibleSystem` (`proto/codec.ts`)**, which mints `messageId` and `sentAt` at the send
+site exactly as `sendMessage` does for a text frame. Both readers then use it: the live path takes it
+through `SystemEventContext.messageId`, the replay through `parsed.messageId`.
+
+**Why the sender's id and not a derived one.** An id derived from the event payload collides when the
+same person is added twice; an id derived from the ciphertext agrees between the live and replay
+paths of ONE device and disagrees between two, because MLS re-encrypts per recipient - and agreeing
+between devices is precisely what the bundle needs. A sender-minted id is the only one that
+converges everywhere. `channel_invitation` is the exception that already worked: it derives from
+`channelInviteMessageId(channelId, inviteeId)`, which both sides can compute because the invitation
+names exactly one invitee.
+
+**A channel notice never had the problem.** Channel messages are server-authoritative, so
+`decodeChannelMessageRow` takes `id: String(row.id)` - one identity, issued by the server, shared by
+every reader.
+
+Pinned by `systemMessageHandler.noticeIdentity.test.ts`, which asserts the convergence property
+directly: one frame handed to both paths produces one id. Old frames carry none and stay
+duplicate-prone - [legacy-compatibility](../../legacy-compatibility.md).
+
 ### A mutation event is authorised on RECEIPT, by the MLS sender
 
 `delete_message` and `edit_message` name a target by `messageId`. `handleSystemEvent` resolves it and
@@ -1145,8 +1188,8 @@ in-memory row, for the life of the session that received the bundle - which is a
 photograph could show both renderings of one event side by side. A reload was already the repair.
 There is no migration here, no collapse pass, and no destructive control to gate.
 
-This is independent of the notice-identity fix that gives a notice ONE id across the three paths
-that can write it: that one settles HOW MANY rows appear, this one settles their SHAPE however they
+This is independent of [the notice-identity fix](#a-visible-system-notice-needs-an-identity-the-sender-minted),
+which gives a notice ONE id across the three paths that can write it: that one settles HOW MANY rows appear, this one settles their SHAPE however they
 arrived. A correctly deduped notice could still be a "Utilisateur" bubble, and was.
 
 ### What ended the wait, and why there is no wait left

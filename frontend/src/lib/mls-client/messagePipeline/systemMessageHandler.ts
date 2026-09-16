@@ -51,6 +51,17 @@ export interface SystemEventContext extends MessageHandlerDeps {
   convoKey: string;
   /** Normalised (lowercase) sender user id. */
   senderNorm: string;
+  /**
+   * The frame's OWN id, as the sender minted it (`mkVisibleSystem`), or undefined for a frame from
+   * a build that sent none.
+   *
+   * It is what makes a notice written here the SAME ROW as the one the archive replay writes for
+   * the same event, and as the one a peer's `history_bundle` carries - all three compare ids, and
+   * before this existed all three minted their own, so one membership change drew one bubble per
+   * replay and per bundle. Undefined keeps the old behaviour for an old frame, which is a
+   * duplicate-prone row this build cannot repair: see `docs/wiki/legacy-compatibility.md`.
+   */
+  messageId?: string;
   /** Persist MLS state to storage immediately (used when group membership changes). */
   /** Queue metadata for messages received via the offline delivery queue. */
   deliveryMeta?: IncomingDeliveryMeta;
@@ -154,6 +165,7 @@ export async function handleSystemEvent(
     convo,
     convoKey,
     senderNorm,
+    messageId,
     deliveryMeta,
   } = ctx;
 
@@ -499,7 +511,7 @@ export async function handleSystemEvent(
       'system',
       m.chat_system_group_renamed({ sender: getName(senderNorm), name: data.newName }),
       convoKey,
-      { isSystem: true }
+      { isSystem: true, messageId }
     );
     log(`📝 Group renamed to "${data.newName}" by ${getName(senderNorm)}`);
     return true;
@@ -517,7 +529,7 @@ export async function handleSystemEvent(
         ? m.chat_system_group_photo_changed({ sender: getName(senderNorm) })
         : m.chat_system_group_photo_removed({ sender: getName(senderNorm) }),
       convoKey,
-      { isSystem: true }
+      { isSystem: true, messageId }
     );
     log(`🖼️ Group photo changed by ${getName(senderNorm)} (media=${imageMediaId ?? 'null'})`);
     return true;
@@ -558,7 +570,7 @@ export async function handleSystemEvent(
           target: getName(data.targetUser),
         }),
         convoKey,
-        { isSystem: true }
+        { isSystem: true, messageId }
       );
     }
     return true;
@@ -578,7 +590,7 @@ export async function handleSystemEvent(
         'system',
         m.chat_system_member_added({ sender: getName(senderNorm), members: added }),
         convoKey,
-        { isSystem: true }
+        { isSystem: true, messageId }
       );
     }
     return true;
@@ -615,7 +627,7 @@ export async function handleSystemEvent(
         'system',
         m.chat_system_conversation_deleted({ sender: senderName }),
         convoKey,
-        { isSystem: true }
+        { isSystem: true, messageId }
       );
       await retireConversation({
         conversations,

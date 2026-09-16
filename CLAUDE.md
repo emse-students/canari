@@ -242,15 +242,13 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    re-derived against `main` 2026-09-12, EIGHT larger than claimed, so **work to the swept numbers,
    never the audit's**; the table emptied 2026-09-14 - four of five rows artifacts, one family never
    defined here, the last a distinction with no reader. D8/R-D8 REFUTED, not to be re-opened. **FIVE
-   CONVERSATIONS REST ON ONE HOLDER, ONE HAS NONE** - the hourly report says so and repairs nothing.
-   [backlog](docs/wiki/backlog.md), [triage](docs/wiki/protocols/mls-graine-state-machine.md#10-triage---what-is-worth-a-pull-request).
+   CONVERSATIONS REST ON ONE HOLDER, ONE HAS NONE** - the hourly report says so and repairs nothing. [backlog](docs/wiki/backlog.md), [triage](docs/wiki/protocols/mls-graine-state-machine.md#10-triage---what-is-worth-a-pull-request).
 7. **THE DEPENDENCY CHAIN** (user: *"un projet qui peut 'vivre tout seul'"*) - ONE merge mechanism
    and ONE arming point, asserted only by `bun tools/ecosystem-shape/shape.mjs`
    ([cicd](docs/wiki/cicd.md#dependency-updates-and-the-auto-merge-that-ships-them), the only copy).
    Three open, all in [backlog](docs/wiki/backlog.md): the suppression control case, **nothing tells
    anybody prod is down - it fell again for 6 min on 2026-09-11, cut by a firewall UPSTREAM of everything here**, and [host-updates](docs/wiki/infrastructure/host-updates.md).
-   **PostgreSQL 15 -> 18: REHEARSED ON PROD'S OWN BYTES 2026-09-15, ONLY THE CUTOVER IS LEFT** and
-   its window is the user's; procedure and rollback in [databases](docs/wiki/infrastructure/databases.md#crossing-a-major-version---the-rehearsed-procedure); #309.
+   **PostgreSQL 15 -> 18: REHEARSED ON PROD'S OWN BYTES 2026-09-15, ONLY THE CUTOVER IS LEFT** and its window is the user's; procedure and rollback in [databases](docs/wiki/infrastructure/databases.md#crossing-a-major-version---the-rehearsed-procedure); #309.
 8. **P2 - 1429 LEGACY COTISATION ROWS ARE LOADED ON BOTH ESTATES (v0.17.1) AND NOT ONE CLAIM HAS
    BEEN OBSERVED** - 60 prod accounts grant at their next sign-in, 248 close `already-held`, and an
    empty screen still looks like a broken claim ([backlog](docs/wiki/backlog.md), [cotisations](docs/wiki/cotisations.md)).
@@ -270,13 +268,14 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
     ([backlog](docs/wiki/backlog.md)).
 15. **TWELVE MESSAGES DROPPED, PERMANENT COMMIT-LOG HOLE AT EPOCH 121** - four defects shipped in
     `v0.15.0`'s ancestors; RESIDUE and the 13:10 arm open ([backlog](docs/wiki/backlog.md)).
-16. **`dev.canari-emse.fr` IS THE PRE-RELEASE TARGET**
-    ([dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy). Two open: a dev
+16. **`dev.canari-emse.fr` IS THE PRE-RELEASE TARGET** ([dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy). Two open: a dev
     deploy cannot tell a broken CHANGE from an unreachable REGISTRY, and prod's deploy job is still
     inlined shell where `deploy-dev` exercises the script ([backlog](docs/wiki/backlog.md)).
 17. **FROM THE USER: FIRST CONTACT, THE THEME NO NOTIF ROW HAS EVER ASKED ABOUT.** The 2026-09-08
     PROD P1 is FIXED, UNSHIPPED, owing ONE hardware run nothing blocks. **A reaction to your OWN
     message must notify by push and NOTIF-15 asserts the opposite** ([backlog](docs/wiki/backlog.md)).
+18. **ONE COMMIT, FOUR NOTICES ON SCREEN (#752, PROD 2026-09-16) - THE FRAME CARRIES AN ID NOW AND
+    FOUR THINGS STILL DO NOT**, each its own section in [backlog](docs/wiki/backlog.md).
 
 ### CANARI - THE ECOSYSTEM CHANTIER (migration CLOSED in all five repos 2026-08-27)
 

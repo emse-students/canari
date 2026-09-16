@@ -489,6 +489,7 @@ async function handleWelcome({
                       convo,
                       convoKey: joinedGroupId,
                       senderNorm: msg.sender,
+                      messageId: normalizeMessageId(appMsg.messageId),
                       deliveryMeta: undefined,
                     });
                   }
@@ -931,6 +932,7 @@ async function handleKnownGroup({
         convo: conversations.get(convoKey) ?? convo,
         convoKey,
         senderNorm: sender,
+        messageId: normalizeMessageId(msg.messageId),
         deliveryMeta,
       });
     }
