@@ -11,6 +11,8 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+## [0.18.5] - 2026-09-16
+
 ### Fixed - quinze secondes avant le badge « connecte », dont treize sur un seul fichier
 
 Au chargement de la page, l'application telecharge son moteur de chiffrement (un binaire WASM de
