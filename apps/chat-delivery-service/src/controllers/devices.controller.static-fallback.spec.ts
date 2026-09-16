@@ -13,6 +13,7 @@ import { PushToken } from '../entities/push-token.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { MessagingService } from '../services/messaging.service';
+import { stubPool } from '../testing/queryBuilder';
 
 /**
  * THE SERVER PROMISES REUSE, AND THIS IS WHERE IT MAKES THE PROMISE.
@@ -38,26 +39,7 @@ describe('DevicesController - the static KeyPackage row once the pool is empty',
   let warn: jest.SpyInstance;
 
   /** A pool that is empty: the locked SELECT finds nothing, so nothing is deleted. */
-  const emptyPool = {
-    transaction: jest.fn(async (fn: (m: unknown) => unknown) =>
-      fn({
-        getRepository: () => ({
-          createQueryBuilder: () => ({
-            where: () => ({
-              orderBy: () => ({
-                limit: () => ({
-                  setLock: () => ({
-                    setOnLocked: () => ({ getOne: async () => null }),
-                  }),
-                }),
-              }),
-            }),
-          }),
-        }),
-        delete: jest.fn(),
-      })
-    ),
-  };
+  const emptyPool = stubPool(null);
 
   beforeEach(async () => {
     keyPackageRepo = {

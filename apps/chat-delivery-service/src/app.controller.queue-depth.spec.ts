@@ -6,6 +6,7 @@ import { Logger } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { QueuedMessage } from './entities/queued-message.entity';
 import { KeyPackage } from './entities/key-package.entity';
+import { OneTimeKeyPackage } from './entities/one-time-key-package.entity';
 import { Group } from './entities/group.entity';
 import { GroupMember } from './entities/group-member.entity';
 import { DeviceGroupMembership } from './entities/device-group-membership.entity';
@@ -70,6 +71,7 @@ describe('AppController - reportQueueDepth', () => {
       providers: [
         { provide: getRepositoryToken(QueuedMessage), useValue: queuedMessageRepo },
         { provide: getRepositoryToken(KeyPackage), useValue: keyPackageRepo },
+        { provide: getRepositoryToken(OneTimeKeyPackage), useValue: keyPackageRepo },
         { provide: getRepositoryToken(Group), useValue: emptyRepo() },
         { provide: getRepositoryToken(GroupMember), useValue: emptyRepo() },
         { provide: getRepositoryToken(DeviceGroupMembership), useValue: emptyRepo() },

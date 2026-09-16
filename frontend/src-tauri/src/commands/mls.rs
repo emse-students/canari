@@ -434,8 +434,8 @@ pub(crate) async fn generer_key_packages_et_persister(
         }
 
         Ok::<KeyPackageBatchResult, String>(KeyPackageBatchResult {
-            fallback,
-            pool_packages,
+            fallback: fallback.into(),
+            pool_packages: pool_packages.into_iter().map(Into::into).collect(),
         })
     })
     .await

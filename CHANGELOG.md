@@ -11,6 +11,34 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - un paquet de cles perime bloquait une adhesion pour toujours, et rien ne pouvait le voir
+
+La date de peremption vit A L'INTERIEUR du KeyPackage MLS serialise, et la seule chose de cet estate
+capable d'en lire un est le module WASM du client. Les deux tables du service de livraison ne
+stockaient qu'une chaine base64 opaque : aucune requete n'a jamais pu distinguer un paquet perime
+d'un paquet frais. Mesure sur la production le 2026-09-16, trois consequences, toutes vivantes :
+
+- le paquet statique de dernier recours d'un appareil etait servi 48 h apres sa peremption. Le
+  destinataire le refusait (`LifetimeError(Expired)`), l'invitation n'etait ni honoree ni
+  abandonnee, et elle recommencait a chaque lancement, indefiniment. **Deux comptes etaient dans cet
+  etat, 4 lignes de dernier recours etaient perimees** ;
+- la reserve de paquets a usage unique etait servie du plus ancien au plus recent et la ligne est
+  SUPPRIMEE en la servant : une tentative qui echoue sur un paquet perime le consomme quand meme.
+  171 lignes perimees attendaient en tete de file sur 5 appareils ;
+- le comptage de la reserve comptait les lignes perimees comme disponibles, et c'est ce nombre qui
+  decide combien de paquets le client fabrique ensuite.
+
+Le client transporte desormais la date de chaque paquet depuis openmls jusqu'au serveur (mls-core,
+mls-wasm, Tauri, le worker web et les deux implementations de service), la migration 024 ajoute la
+colonne aux deux tables, et le service ne sert plus rien de perime : il refuse avec un 404 que
+l'appelant peut traiter, au lieu d'un paquet que tout destinataire a le droit de refuser. Un
+menage quotidien recupere les paquets a usage unique perimes et NOMME les appareils dont le dernier
+recours l'est - la premiere chose ici capable de voir cet etat.
+
+Une date inconnue n'est jamais lue comme « perime » : les lignes anterieures a la migration et
+celles des clients plus anciens restent servies. Le format de publication accepte les deux formes
+pendant une version ([legacy-compatibility](docs/wiki/legacy-compatibility.md)).
+
 ## [0.18.9] - 2026-09-16
 
 ### Fixed - les deux premieres lignes de chaque rechargement, et six prechargements de feuilles de style pour rien

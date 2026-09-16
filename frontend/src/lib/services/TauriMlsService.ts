@@ -11,6 +11,7 @@ import {
 } from '$lib/mls-client';
 import { mapNativeBatchDecryptResults } from '$lib/mls-client/mlsBatchDecrypt';
 import type { MlsBatchProcessResult } from '$lib/mls-client/IMlsService';
+import type { DatedKeyPackage } from '$lib/mls-client/keyPackages';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
@@ -28,8 +29,20 @@ import { keystoreUnlockPrompt } from './biometric';
  * JSON array of integers, which is several bytes of wire per byte of state, on every connection.
  */
 interface NativeKeyPackageBatchResult {
-  fallback: number[];
-  pool_packages: number[][];
+  fallback: NativeDatedKeyPackage;
+  pool_packages: NativeDatedKeyPackage[];
+}
+
+/**
+ * One key package from the native mint, with the instant it stops being usable.
+ *
+ * The expiry crosses the boundary because nothing on this side can recover it: only the Rust crate
+ * parses an MLS KeyPackage, and the delivery service stores an opaque string. `notAfterSecs` is
+ * seconds since the epoch - see `DatedKeyPackage`, which carries the reasoning.
+ */
+interface NativeDatedKeyPackage {
+  public: number[];
+  notAfterSecs: number;
 }
 
 /**
@@ -763,7 +776,7 @@ export class TauriMlsService extends BaseMlsService {
   }
 
   /** Tauri-native `invoke` wrapper - calls `generer_key_packages_et_persister`, replenishes the OTKP pool to 50, saves state, then publishes to the delivery service. */
-  protected async generateKeyPackageImpl(deviceKeyB64: string): Promise<Uint8Array> {
+  protected async generateKeyPackageImpl(deviceKeyB64: string): Promise<DatedKeyPackage> {
     // On fresh start (no saved WASM state), old OTKPs on the server belong to
     // a previous session whose private keys are gone. Purge them so inviting
     // devices don't consume stale prekeys that would cause NoMatchingKeyPackage.
@@ -804,8 +817,12 @@ export class TauriMlsService extends BaseMlsService {
         count: needed,
       }
     );
-    const fallback = Uint8Array.from(nativeBatch.fallback);
-    const poolPackages = nativeBatch.pool_packages.map((kp) => Uint8Array.from(kp));
+    const dated = (kp: NativeDatedKeyPackage): DatedKeyPackage => ({
+      bytes: Uint8Array.from(kp.public),
+      notAfterSecs: kp.notAfterSecs,
+    });
+    const fallback = dated(nativeBatch.fallback);
+    const poolPackages = nativeBatch.pool_packages.map(dated);
 
     // Publish the static fallback KP (always refreshed on connection).
     await this.publishKeyPackage(fallback);
@@ -1000,13 +1017,14 @@ export class TauriMlsService extends BaseMlsService {
   }
 
   /** Tauri-native `invoke` wrapper - publishes this device's static fallback KeyPackage to the delivery service, including device name/OS metadata. */
-  async publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void> {
-    const base64 = toBase64(keyPackageBytes);
+  async publishKeyPackage(keyPackage: DatedKeyPackage): Promise<void> {
+    const base64 = toBase64(keyPackage.bytes);
     const storedName =
       localStorage.getItem(`device-name:${this.userId}:${this.deviceId}`) || undefined;
     const deviceAppVersion = getClientAppVersion();
     await this.delivery.registerDeviceKeyPackage({
       keyPackageBase64: base64,
+      notAfterSecs: keyPackage.notAfterSecs,
       deviceName: storedName,
       deviceOs: detectRuntimeDeviceOs('desktop'),
       deviceAppVersion,

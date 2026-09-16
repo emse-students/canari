@@ -3,6 +3,7 @@ import { fetchJsonUnderProgressDeadline } from './progressDeadline';
 import { ackMessagesWithRetry } from './ackRetry';
 import { DELIVERY, type FrameDelivery } from './frameDelivery';
 import type { DeviceMembershipRow, GroupMeta, UserGroupRow } from './IMlsService';
+import type { DatedKeyPackage } from './keyPackages';
 import { toBase64, fromBase64 } from '$lib/utils/hex';
 
 export type MlsDeliveryFetch = typeof fetch;
@@ -469,6 +470,12 @@ export class MlsDeliveryApi {
   /** Registers this device on the delivery service with its initial KeyPackage and metadata. */
   async registerDeviceKeyPackage(params: {
     keyPackageBase64: string;
+    /**
+     * When this package stops being usable, seconds since the epoch, read off its own MLS
+     * `Lifetime` at mint time - see `DatedKeyPackage`. Sent as ISO 8601 because the column is a
+     * timestamp and the server must not have to know this unit.
+     */
+    notAfterSecs: number;
     deviceName?: string;
     deviceOs: string;
     deviceAppVersion?: string;
@@ -480,6 +487,7 @@ export class MlsDeliveryApi {
         userId: this.userId,
         deviceId: this.deviceId,
         keyPackage: params.keyPackageBase64,
+        notAfter: new Date(params.notAfterSecs * 1000).toISOString(),
         ...(params.deviceName ? { deviceName: params.deviceName } : {}),
         deviceOs: params.deviceOs,
         ...(params.deviceAppVersion ? { deviceAppVersion: params.deviceAppVersion } : {}),
@@ -507,9 +515,21 @@ export class MlsDeliveryApi {
     }
   }
 
-  /** Uploads a batch of one-time prekeys (OTKP) to replenish the server-side prekey pool. */
-  async publishKeyPackages(packages: Uint8Array[]): Promise<void> {
-    const keyPackages = packages.map((bytes) => this.uint8ToB64(bytes));
+  /**
+   * Uploads a batch of one-time prekeys (OTKP) to replenish the server-side prekey pool.
+   *
+   * **EACH ROW CARRIES ITS OWN EXPIRY, AND THE SHAPE IS A UNION FOR ONE RELEASE.** The server
+   * cannot parse an MLS KeyPackage, so until 2026-09-16 it stored an opaque string and could not
+   * tell an elapsed package from a fresh one - it served expired ones, and a join built on one
+   * fails with `LifetimeError(Expired)` for ever. Clients older than this change still send a bare
+   * base64 string, so `keyPackages` accepts either that or `{ keyPackage, notAfter }`; the removal
+   * date is on `docs/wiki/legacy-compatibility.md`.
+   */
+  async publishKeyPackages(packages: DatedKeyPackage[]): Promise<void> {
+    const keyPackages = packages.map((kp) => ({
+      keyPackage: this.uint8ToB64(kp.bytes),
+      notAfter: new Date(kp.notAfterSecs * 1000).toISOString(),
+    }));
     const response = await this.f(`${this.historyUrl}/api/mls/register-device/prekeys`, {
       method: 'POST',
       headers: await this.auth({ 'Content-Type': 'application/json' }),

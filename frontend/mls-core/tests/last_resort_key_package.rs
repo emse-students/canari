@@ -43,7 +43,7 @@ fn the_static_fallback_survives_being_served_to_more_than_one_group() {
         .expect("carol publishes her static fallback");
 
     let (_, welcome_a, _, _) = alice
-        .add_members_bulk("g-fallback-a", &[&fallback])
+        .add_members_bulk("g-fallback-a", &[&fallback.public[..]])
         .expect("alice adds carol");
     alice
         .merge_pending_commit_for("g-fallback-a")
@@ -54,7 +54,7 @@ fn the_static_fallback_survives_being_served_to_more_than_one_group() {
         .expect("alice's tree");
 
     let (_, welcome_b, _, _) = bob
-        .add_members_bulk("g-fallback-b", &[&fallback])
+        .add_members_bulk("g-fallback-b", &[&fallback.public[..]])
         .expect("bob adds carol on the same fallback");
     bob.merge_pending_commit_for("g-fallback-b")
         .expect("bob confirms");

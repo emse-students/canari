@@ -226,9 +226,10 @@ rules in [durable-rules](docs/wiki/durable-rules.md), verdicts on
    PIN's four rows change a PIN or restart a browser, hence last; HEAL-NEW's rung redesign is open
    on a clean pass ([backlog](docs/wiki/backlog.md)).
 2. **P1 - LOCALLY 1024 KEY PACKAGES AGAINST A POOL OF FIFTY THAT NO RECLAIM TOUCHES; ON THE PEER
-   SIDE AN EXPIRED LAST-RESORT BLOCKS A JOIN FOR EVER.** The census refutes all three reclaims here
-   (`0 expired`); the estate count of 2026-09-16 finds 4 aged last-resort rows, **2 with a join
-   stuck on them**, and no `not_after` column anywhere to see them ([backlog](docs/wiki/backlog.md)).
+   SIDE THE SERVER NOW REFUSES AN EXPIRED PACKAGE AND THE ADDER STILL RETRIES FOR EVER.** The census
+   refutes all three reclaims here (`0 expired`); `notAfter`, the filtered resolver and the reclaim
+   are written against the 2026-09-16 count (4 aged rows, **2 joins stuck**), leaving a termination
+   rule owed on the adding side ([backlog](docs/wiki/backlog.md)).
 3. **P1 - a PLACEHOLDER held a member's seat**; only a member's CLIENT can say whether a LEAF is
    left in the MLS tree and **NOTHING HAS** - the three identities cited here as that evidence were
    this campaign's OWN mention fixtures, named 2026-09-07 ([backlog](docs/wiki/backlog.md)).

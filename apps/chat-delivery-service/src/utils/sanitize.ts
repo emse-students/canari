@@ -270,3 +270,25 @@ export function sanitizeEpoch(value: unknown, fieldName: string): number {
   }
   return n;
 }
+
+/**
+ * Reads a key package's own expiry off the wire, or `null` when the client did not send one.
+ *
+ * **AN UNREADABLE DATE IS `null`, NEVER A REFUSAL, AND NEVER A GUESS.** This value decides whether
+ * a package is served, and the two failure directions are not symmetric: storing a date that is too
+ * far out serves a dead package, which is exactly what happened before this column existed, while
+ * storing one that is too near refuses a package that works and blocks a join that would have
+ * succeeded. So anything this function cannot read becomes "not known to be expired" - the same
+ * reading migration 024 gives the NULLs it leaves behind - and the resolver serves it.
+ *
+ * Nothing is clamped either. A device whose clock is months behind publishes packages the server
+ * sees as already elapsed, and refusing to serve them is CORRECT: openmls validates a lifetime
+ * against the JOINER's clock, so a peer would refuse the Welcome anyway, and the server refusing
+ * first is the difference between an answerable 404 and a join that retries for ever.
+ */
+export function sanitizeOptionalNotAfter(value: unknown): Date | null {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value !== 'string') return null;
+  const at = new Date(value);
+  return Number.isNaN(at.getTime()) ? null : at;
+}

@@ -1,3 +1,4 @@
+import type { DatedKeyPackage } from './keyPackages';
 import type { FrameDelivery } from './frameDelivery';
 import type { IncomingDeliveryMeta } from './incomingDelivery';
 import type { MlsDecryptSession } from './mlsDecryptSession';
@@ -392,7 +393,7 @@ export interface IMlsService {
     state: Uint8Array
   ): Promise<boolean>;
   /** Generates a fresh MLS KeyPackage for this device, signed with the device-key-encrypted identity key. */
-  generateKeyPackage(deviceKeyB64: string): Promise<Uint8Array>;
+  generateKeyPackage(deviceKeyB64: string): Promise<DatedKeyPackage>;
   /**
    * Purges the published KeyPackages (static fallback + one-time pool) and republishes
    * fresh ones from the current local keystore.
@@ -519,9 +520,9 @@ export interface IMlsService {
     deviceAppVersion?: string;
   } | null>;
   /** Uploads a single KeyPackage to the server so other devices can invite this one. */
-  publishKeyPackage(keyPackageBytes: Uint8Array): Promise<void>;
+  publishKeyPackage(keyPackage: DatedKeyPackage): Promise<void>;
   /** Bulk-upload multiple one-time prekeys to the server pool. */
-  publishKeyPackages(packages: Uint8Array[]): Promise<void>;
+  publishKeyPackages(packages: DatedKeyPackage[]): Promise<void>;
   /** Delivers a Welcome message to the target user/device via the delivery service. */
   sendWelcome(
     welcomeBytes: Uint8Array,
