@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { paymentBrandLabel } from '$lib/utils/cardIcons';
   import { Log } from '$lib/utils/Log';
   import { onMount } from 'svelte';
   import { CreditCard, Plus, Trash2, LoaderCircle, CircleAlert, CircleCheck } from '@lucide/svelte';
@@ -81,15 +82,6 @@
       paymentError = m.profile_payment_delete_error_fallback();
     }
   }
-
-  function brandLabel(brand: string): string {
-    const labels: Record<string, string> = {
-      visa: 'Visa',
-      mastercard: 'Mastercard',
-      amex: 'American Express',
-    };
-    return labels[brand] ?? brand.charAt(0).toUpperCase() + brand.slice(1);
-  }
 </script>
 
 <div
@@ -162,7 +154,10 @@
                   •••• •••• •••• {pm.last4}
                 </span>
                 <span class="text-text-muted text-2xs mt-0.5 font-bold tracking-wider uppercase">
-                  {brandLabel(pm.brand)} • Exp: {String(pm.expMonth).padStart(2, '0')}/{pm.expYear}
+                  {paymentBrandLabel(pm.brand)} • Exp: {String(pm.expMonth).padStart(
+                    2,
+                    '0'
+                  )}/{pm.expYear}
                 </span>
               </div>
             </div>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { needsThumbIcon } from '$lib/utils/mediaLayout';
   import { Log } from '$lib/utils/Log';
   import {
     Image,
@@ -241,14 +242,6 @@
   });
 
   /** Returns true for files whose preview should show a generic icon instead of an object URL. */
-  function needsThumbIcon(file: File): boolean {
-    return (
-      !file.type.startsWith('image/') &&
-      !file.type.startsWith('video/') &&
-      !file.type.startsWith('audio/')
-    );
-  }
-
   /** Replace the current media selection with a new set of files. Revokes stale object URLs. */
   function onPickFiles(event: Event) {
     const input = event.target as HTMLInputElement;

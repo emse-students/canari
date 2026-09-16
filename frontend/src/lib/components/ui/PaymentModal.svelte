@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { paymentBrandLabel } from '$lib/utils/cardIcons';
   import {
     CreditCard,
     X,
@@ -62,15 +63,6 @@
       currency: currency.toUpperCase(),
     }).format(totalCents / 100)
   );
-
-  function brandLabel(brand: string): string {
-    const labels: Record<string, string> = {
-      visa: 'Visa',
-      mastercard: 'Mastercard',
-      amex: 'American Express',
-    };
-    return labels[brand] ?? brand.charAt(0).toUpperCase() + brand.slice(1);
-  }
 
   async function notifyPaymentFailed() {
     try {
@@ -174,7 +166,7 @@
               <CreditCard size={18} class="text-text-muted shrink-0" />
               <div class="min-w-0">
                 <p class="text-text-main text-sm font-bold">
-                  {brandLabel(pm.brand)} •••• {pm.last4}
+                  {paymentBrandLabel(pm.brand)} •••• {pm.last4}
                 </p>
                 <p class="text-text-muted text-xs">
                   {m.payment_modal_expires({ month: pm.expMonth, year: pm.expYear })}

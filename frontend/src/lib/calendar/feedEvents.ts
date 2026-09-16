@@ -1,5 +1,6 @@
 import type { AssociationCalendarFeedEvent } from '$lib/associations/api';
 import { associationAccentHex } from '$lib/associations/accent';
+import { getLocale } from '$lib/paraglide/runtime';
 
 /**
  * WHAT A CALENDAR FEED EVENT LOOKS LIKE ON A ROW, IN ONE PLACE.
@@ -199,10 +200,23 @@ export function eventAccentColor(event: AssociationCalendarFeedEvent): string {
   return associationAccentHex({ id: event.associationId, color: event.associationColor });
 }
 
+/**
+ * The locale every calendar surface formats in.
+ *
+ * `getLocale()` answers `'fr'`/`'en'`, which `Intl` accepts but resolves to `en-GB`-ish defaults for
+ * the second; the two region tags are named here so a date reads the same everywhere it is drawn.
+ * `formatTime` hardcoded `'fr-FR'` until 2026-09-16 while the copy in the admin agenda did this,
+ * so an English user read one surface in their locale and the next in French.
+ */
+function calendarLocale(): string {
+  return getLocale() === 'en' ? 'en-US' : 'fr-FR';
+}
+
 function formatTime(iso: string): string {
-  return new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit' }).format(
-    new Date(iso)
-  );
+  return new Intl.DateTimeFormat(calendarLocale(), {
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(iso));
 }
 
 /** `18:00` for an event with no end, `18:00 - 20:00` for one with. */
@@ -210,4 +224,35 @@ export function formatEventTimeRange(event: AssociationCalendarFeedEvent): strin
   const start = formatTime(event.startsAt);
   if (!event.endsAt) return start;
   return `${start} - ${formatTime(event.endsAt)}`;
+}
+
+/**
+ * The same range with the DAY in front - "Ven 18 sept., 18:00 - 17:00".
+ *
+ * Used where an event is read outside a month grid and the square no longer says which day it is:
+ * an association's event list and the admin agenda. Both wrote this out themselves, identically,
+ * and neither could gain a fix the other did not.
+ *
+ * Only the START carries the date. An end time alone is the shorter, more readable thing when the
+ * two are the same day, which they are for almost every event; a multi-day event is read from the
+ * grid or the detail modal, where its span is drawn rather than spelt.
+ */
+export function formatEventDateTimeRange(event: {
+  startsAt: string;
+  endsAt?: string | null;
+}): string {
+  const locale = calendarLocale();
+  const withDay = new Intl.DateTimeFormat(locale, {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  const start = withDay.format(new Date(event.startsAt));
+  if (!event.endsAt) return start;
+  const end = new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(
+    new Date(event.endsAt)
+  );
+  return `${start} - ${end}`;
 }

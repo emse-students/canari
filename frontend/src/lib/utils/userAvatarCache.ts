@@ -1,4 +1,5 @@
 import { Log } from '$lib/utils/Log';
+import { BlobUrlPool } from '$lib/utils/blobUrlPool';
 
 /**
  * The Cache Storage bucket this module used to write, kept ONLY so it can be deleted.
@@ -15,10 +16,14 @@ import { Log } from '$lib/utils/Log';
  */
 const RETIRED_CACHE_NAME = 'canari-user-avatars-v1';
 
-/** Live blob URL per canonical avatar URL, held while at least one avatar displays it. */
-const sessionBlobByUrl = new Map<string, string>();
-/** Reference count per canonical avatar URL (several avatars can share one blob). */
-const blobRefCount = new Map<string, number>();
+/**
+ * This module's own pool - the counting is shared, the STATE is not.
+ *
+ * `evictDelayMs: 0` because these bytes are not worth keeping past their last holder: the delayed
+ * eviction the pool defaults to exists for decrypted media, which is expensive to produce again.
+ * Uncapped for the same reason it always was: the bound is how many faces are on screen.
+ */
+const blobs = new BlobUrlPool({ evictDelayMs: 0, maxEntries: Infinity });
 /** In-progress load per canonical avatar URL, so N simultaneous mounts cost ONE request. */
 const inFlightByUrl = new Map<string, Promise<AvatarDisplay>>();
 
@@ -38,16 +43,6 @@ export type AvatarDisplay =
   | { readonly kind: 'direct'; readonly url: string }
   /** The server answered, and there is no image to show. Draw initials, ask nobody. */
   | { readonly kind: 'none' };
-
-function retainBlobUrl(canonicalUrl: string, blobUrl: string): string {
-  const prior = sessionBlobByUrl.get(canonicalUrl);
-  if (prior?.startsWith('blob:') && prior !== blobUrl) {
-    URL.revokeObjectURL(prior);
-  }
-  sessionBlobByUrl.set(canonicalUrl, blobUrl);
-  blobRefCount.set(canonicalUrl, (blobRefCount.get(canonicalUrl) ?? 0) + 1);
-  return blobUrl;
-}
 
 /**
  * Reads one avatar from the network, or from the HTTP cache when it is still fresh.
@@ -90,8 +85,8 @@ export async function resolveUserAvatarDisplayUrl(httpUrl: string | null): Promi
   if (!httpUrl?.trim()) return { kind: 'none' };
   const url = httpUrl.trim();
 
-  const held = sessionBlobByUrl.get(url);
-  if (held) return { kind: 'blob', url: retainBlobUrl(url, held) };
+  const held = blobs.tryRetain(url);
+  if (held) return { kind: 'blob', url: held };
 
   // ONE REQUEST FOR N SIMULTANEOUS MOUNTS. The map above cannot dedupe them - it is only written
   // once the bytes are in - so without this every face in a freshly rendered list would ask for
@@ -105,22 +100,13 @@ export async function resolveUserAvatarDisplayUrl(httpUrl: string | null): Promi
 
   const loaded = await pending;
   if (loaded.kind !== 'blob') return loaded;
-  return { kind: 'blob', url: retainBlobUrl(url, loaded.url) };
+  return { kind: 'blob', url: blobs.retain(url, loaded.url) };
 }
 
 /** Decrements the ref count and revokes the blob URL when no avatar still uses it. */
 export function releaseUserAvatarDisplayUrl(httpUrl: string | null): void {
-  if (!httpUrl) return;
-  const url = httpUrl.trim();
-  const next = (blobRefCount.get(url) ?? 1) - 1;
-  if (next > 0) {
-    blobRefCount.set(url, next);
-    return;
-  }
-  blobRefCount.delete(url);
-  const blobUrl = sessionBlobByUrl.get(url);
-  if (blobUrl?.startsWith('blob:')) URL.revokeObjectURL(blobUrl);
-  sessionBlobByUrl.delete(url);
+  // Trimmed exactly as the resolve side keys it, or a caller's stray space leaks a blob.
+  blobs.release(httpUrl?.trim() ?? null);
 }
 
 /**
