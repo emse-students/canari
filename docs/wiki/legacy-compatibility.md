@@ -278,6 +278,28 @@ where the sender did read something. It corrects itself on the next watermark th
 
 ---
 
+### 2026-12-15 - a visible system notice with no `message_id`
+
+**Site:** `systemMessageHandler.ts` (the `messageId?` field of `SystemEventContext`, undefined for an
+old frame) and `historySystemEvents.ts` (`parsed.messageId || undefined`). Both then let
+`addMessageToChat` mint a `crypto.randomUUID()`, which is the pre-2026-09-16 behaviour.
+**Shim:** none is written as a branch - the shim IS the undefined, and what it buys is that an old
+frame still draws its notice instead of being dropped.
+**Replacement:** `mkVisibleSystem` (`proto/codec.ts`) mints the id at the SENDER, once, so the live
+path, the archive replay and a peer's `history_bundle` all write one row for one event. See
+[chat](frontend/modules/chat.md#a-visible-system-notice-needs-an-identity-the-sender-minted).
+**Two conditions, not one, and the date covers only the second.** A LIVE PEER below the version that
+ships this keeps sending id-less frames, and that half is retired by `minClientVersion`, not by a
+date. The ARCHIVE holds id-less rows written before it, and those are trimmed by `XTRIM ... MINID` at
+`RETENTION_WINDOW_MS` (90 days) - hence 2026-12-15.
+**On removal:** make `messageId` required on `SystemEventContext`, drop the `|| undefined` in the
+replay, and delete this entry.
+**Cost of keeping it:** exactly the defect this replaced, confined to old frames - a notice from
+before the change still duplicates once per replay and once per bundle. **Nothing repairs the rows
+already on disk**; see [backlog](backlog.md).
+
+---
+
 ## No date - `GET /api/mls/history/:groupId` answering with a bare array
 
 **The gate does not reach this one, and the page used to claim it did.** Retiring it is not a matter

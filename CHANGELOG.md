@@ -11,6 +11,44 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - un ajout de membres s'affichait autant de fois qu'il y avait eu de rejeux
+
+Signale par l'utilisateur sur un groupe de 31 personnes (2026-09-16), photo a l'appui : « Matheo
+BOUDIER a ajoute Esteban DELSOL, ... au groupe », quatre fois de suite, a l'identique.
+
+**Rien n'avait ete envoye quatre fois.** Le journal de commits MLS porte UN commit pour ce lot
+(epoch 3, 14:20:34), `dm_group_members` inscrit les six personnes UNE fois (14:20:36) et l'archive
+Redis contient UNE entree pour l'annonce (14:20:37). Les quatre bulles etaient fabriquees a la
+reception.
+
+**La cause : ce bandeau etait le seul type de ligne de l'application sans identite.** Une trame
+`mkSystem('memberAdded', ...)` laissait `message_id` vide, alors que trois chemins ecrivent cette
+meme ligne sans jamais se croiser - la livraison directe, le rejeu d'archive, et le `history_bundle`
+d'un pair qui la recopie. Chacun tirait son propre `crypto.randomUUID()`, et comme toutes les
+deduplications de l'application comparent des identifiants, aucune ne pouvait s'appliquer : une
+modification de membres dessinait une bulle par rejeu et par bundle, durablement, sur disque. Dans
+les dix minutes concernees : 13 marches completes d'archive et 37 reponses de reconciliation.
+
+`mkVisibleSystem` frappe desormais l'identifiant chez l'emetteur, une fois, comme pour un message
+texte ; les deux lecteurs s'en servent. Six evenements sont concernes : `memberAdded`,
+`memberRemoved`, `memberLeft`, `groupRenamed`, `groupImageChanged` et `groupDeleted`. Les salons
+n'etaient pas touches - leurs messages portent l'identifiant de la ligne serveur. **Les lignes deja
+ecrites sur les appareils ne sont pas reparees**, et une trame emise par une version anterieure reste
+duplicable : [legacy-compatibility](docs/wiki/legacy-compatibility.md).
+
+### Security - le nom d'un groupe ne part plus dans les journaux du serveur
+
+`[CREATE_GROUP]` et `[RENAME_GROUP]` imprimaient le nom du groupe en clair. Le stocker en clair est
+un arbitrage assume - le serveur compose le titre de la notification push et ne peut pas dechiffrer -
+mais une ligne de journal en recopie le texte dans journald, ou il survit a la ligne dont il vient,
+echappe a toute suppression demandee par ses proprietaires, et se lit avec un simple acces shell sur
+la machine. Les deux lignes impriment desormais un nombre d'octets, la forme que `[PUSH_SEND]` avait
+deja adoptee pour la meme valeur.
+
+`SECURITY.md` gagne la section qui manquait : ce que le serveur sait, pourquoi, et ce qu'il ne peut
+pas obtenir. Une exposition qui n'est ecrite nulle part est une exposition que personne n'a acceptee.
+
+
 ## [0.18.8] - 2026-09-16
 
 ### Fixed - retour arriere apres Maj+Entree ne supprimait pas la ligne, et en supprimait parfois deux

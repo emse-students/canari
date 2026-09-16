@@ -8,7 +8,7 @@ import {
 } from '$lib/utils/chat/groupActions';
 import { globalMessaging } from '$lib/stores/globalChatSingleton.svelte';
 import type { SvelteMap } from 'svelte/reactivity';
-import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
+import { encodeAppMessage, mkVisibleSystem } from '$lib/proto/codec';
 import { requestReAdd } from '$lib/utils/chat/recovery';
 import { findActiveDirectGroupForPeer } from '$lib/utils/chat/groupSyncEligibility';
 import { buildConversationRow, isRawId } from '$lib/utils/chat/conversations';
@@ -397,7 +397,7 @@ async function processBulkAddition(
     if (announcedUsers.size > 0) {
       try {
         const controlMsg = encodeAppMessage(
-          mkSystem('memberAdded', JSON.stringify({ newUsers: [...announcedUsers] }))
+          mkVisibleSystem('memberAdded', JSON.stringify({ newUsers: [...announcedUsers] }))
         );
         await mlsService.sendMessage(conversation.id, controlMsg);
         await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);

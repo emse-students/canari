@@ -136,8 +136,14 @@ export class GroupsController {
     }
 
     const groupId = crypto.randomUUID();
+    // THE NAME IS NOT PRINTED, AND THE LENGTH IS WHAT THE LINE WAS ACTUALLY FOR. The server stores
+    // it in clear because it has to compose a push title it cannot decrypt - that is an accepted
+    // exposure, written down in `SECURITY.md`. A LOG line is not covered by it: it copies the same
+    // text into journald, where it outlives the row, escapes every deletion the group can ask for,
+    // and is read by anyone with shell on the box. `[PUSH_SEND]` already reached this conclusion
+    // for the identical value and prints `groupName=<n>B`; this is the same shape.
     this.logger.log(
-      `[CREATE_GROUP][${traceId}] name="${body.name}" createdBy=${body.createdBy} isGroup=${body.isGroup ?? true} creatorDevice=${body.creatorDeviceId ?? 'none'} groupId=${groupId}`
+      `[CREATE_GROUP][${traceId}] nameBytes=${Buffer.byteLength(body.name ?? '', 'utf8')} createdBy=${body.createdBy} isGroup=${body.isGroup ?? true} creatorDevice=${body.creatorDeviceId ?? 'none'} groupId=${groupId}`
     );
     const newGroup = this.groupRepo.create({
       id: groupId,
@@ -225,7 +231,10 @@ export class GroupsController {
       throw new BadRequestException('name is required');
     }
     await this.groupRepo.update({ id: safeGroupId }, { name: body.name.trim() });
-    this.logger.log(`[RENAME_GROUP] group=${safeGroupId} newName="${body.name.trim()}"`);
+    // The new name is not printed, for the reason spelt out in `createGroup` above.
+    this.logger.log(
+      `[RENAME_GROUP] group=${safeGroupId} newNameBytes=${Buffer.byteLength(body.name.trim(), 'utf8')}`
+    );
     return { status: 'renamed' };
   }
 

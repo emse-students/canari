@@ -121,6 +121,34 @@ export function mkSystem(event: string, data?: string): canari.AppMessage.$Prope
 }
 
 /**
+ * Builds a system frame that the members are MEANT TO SEE as a notice in the conversation - a
+ * member added or removed, a rename, a new photo, a deleted group - as opposed to the transport
+ * and mutation events, which change existing rows and draw no bubble of their own.
+ *
+ * **THE DIFFERENCE IS THE `message_id`, AND IT IS THE WHOLE POINT.** A notice is written by two
+ * paths that never meet - live delivery (`systemMessageHandler`) and the archive replay
+ * (`historySystemEvents`) - and it is copied between devices by a third, the `history_bundle`,
+ * which carries whatever id the sending peer stored. With no id on the frame every one of them
+ * minted its own `crypto.randomUUID()`, so no dedup in the application could ever fire on this row:
+ * the bulk-ingest check, the bundle's `existingIds` set and the post-save merge all compare ids.
+ * One membership change then produced one bubble PER REPLAY AND PER BUNDLE, durably, on disk.
+ * Measured on prod 2026-09-16 on a 31-member group: ONE `memberAdded` frame in the archive, four
+ * identical notices on a member's screen, 13 full archive walks and 37 reconciliation answers in
+ * the ten minutes that made them.
+ *
+ * The id is minted HERE, by the sender, once - the same shape `sendMessage` uses for a text
+ * message. It is the only identity that converges across devices: MLS re-encrypts per recipient, so
+ * an id derived from the ciphertext would agree between the live and replay paths of ONE device and
+ * disagree between two, which is exactly the case the bundle needs.
+ *
+ * `sentAt` rides along for the same reason it does on a text frame: it is the sender's clock, and
+ * the two reading paths otherwise date the row from two different arrivals.
+ */
+export function mkVisibleSystem(event: string, data?: string): canari.AppMessage.$Properties {
+  return { ...mkSystem(event, data), messageId: crypto.randomUUID(), sentAt: Date.now() };
+}
+
+/**
  * Builds a community poll message. The question and option labels are carried
  * here (end-to-end encrypted); only the option ids are also sent in clear to the
  * server so it can tally votes without seeing the labels.

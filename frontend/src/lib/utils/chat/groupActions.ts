@@ -5,7 +5,7 @@ import type { IMlsService } from '$lib/mlsService';
 import type { IStorage, StoredMessage } from '$lib/db';
 import type { ReadWatermarks } from '$lib/types';
 import type { Conversation } from '$lib/types';
-import { encodeAppMessage, mkSystem } from '$lib/proto/codec';
+import { encodeAppMessage, mkSystem, mkVisibleSystem } from '$lib/proto/codec';
 import { pinEntries } from '$lib/stores/pinStore.svelte';
 import { buildUserGroupSyncIndex, isGroupEligibleForMlsRecovery } from './groupSyncEligibility';
 import { dropGroupState } from './dropGroupState';
@@ -143,7 +143,7 @@ export async function deleteGroupAndBroadcast(params: {
   if (holdsGroupState(mlsService, groupId)) {
     try {
       const controlMsg = encodeAppMessage(
-        mkSystem('groupDeleted', JSON.stringify({ deletedBy: userId }))
+        mkVisibleSystem('groupDeleted', JSON.stringify({ deletedBy: userId }))
       );
       await mlsService.sendMessage(groupId, controlMsg);
     } catch {
@@ -196,7 +196,9 @@ export async function renameGroupAndBroadcast(params: {
   // already committed to the server; if the MLS message fails, peers will
   // still see the new name when they next fetch group metadata.
   try {
-    const controlMsg = encodeAppMessage(mkSystem('groupRenamed', JSON.stringify({ newName })));
+    const controlMsg = encodeAppMessage(
+      mkVisibleSystem('groupRenamed', JSON.stringify({ newName }))
+    );
     await mlsService.sendMessage(groupId, controlMsg);
   } catch {
     // Non-blocking: rename already applied server-side
@@ -220,7 +222,7 @@ export async function setGroupImageAndBroadcast(params: {
   // they next fetch group metadata via getUserGroups.
   try {
     const controlMsg = encodeAppMessage(
-      mkSystem('groupImageChanged', JSON.stringify({ imageMediaId: mediaId }))
+      mkVisibleSystem('groupImageChanged', JSON.stringify({ imageMediaId: mediaId }))
     );
     await mlsService.sendMessage(groupId, controlMsg);
   } catch {
@@ -244,7 +246,7 @@ async function notifyMembershipChange(
   try {
     await mlsService.sendMessage(
       groupId,
-      encodeAppMessage(mkSystem(event, JSON.stringify(payload)))
+      encodeAppMessage(mkVisibleSystem(event, JSON.stringify(payload)))
     );
   } catch {
     /* non-blocking */
