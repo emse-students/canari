@@ -27,6 +27,16 @@
    * hover outline, a `contrastColor`ed badge), so this is a call, not a re-implementation, and the
    * fallback is the one the rest of the app already spells - see `associations/accent.ts`.
    *
+   * **THE FOOTER CARRIES THE READER'S ROLE WHERE THERE IS ONE, AND THE MEMBER COUNT ONLY WHERE THERE
+   * IS NOT.** `/api/associations/me/list` (`listByUser`) returns `role`, `permissions` and `isAdmin`
+   * and NO `memberCount`, so `memberCount ?? 0` printed "0 membres" on every card of "Mes
+   * associations" - a card claiming zero members of an association its reader belongs to, which
+   * contradicts itself AND contradicts the real count the same association shows one section lower,
+   * where `list()` attaches one. The answer is not to go and fetch the count: that section is about
+   * the reader's own place in each association, so the footer says THAT, in the yellow pill that used
+   * to sit beside the name. Where no role is known - "Toutes les associations", the archived fold,
+   * every list shelf - nothing changes: the count stays, and `isMember` still adds its "Membre" note.
+   *
    * The avatar stays beside the name rather than going into `CardTile`'s header frame, which is why
    * that header is now optional: `AssociationAvatar` falls back to INITIALS, and an association with
    * no logo showing a generic glyph would lose the one thing that tells it apart.
@@ -43,7 +53,10 @@
     association: Association;
     /** Where the tile navigates - `/associations/<slug>` or `/lists/<slug>`, the caller's decision. */
     href: string;
-    /** True when the signed-in user belongs to it; adds the "Membre" note to the footer. */
+    /**
+     * True when the signed-in user belongs to it; adds the "Membre" note to the footer - only where
+     * no `role` is known, since a role says the same thing and more.
+     */
     isMember?: boolean;
   }
 
@@ -88,24 +101,15 @@
           <h3 class="text-text-main line-clamp-3 leading-snug font-bold [overflow-wrap:anywhere]">
             {association.name}
           </h3>
-          {#if association.type === 'list' || association.role}
+          {#if association.type === 'list'}
             <div class="mt-1 flex flex-wrap items-center gap-1">
-              {#if association.type === 'list'}
-                <span
-                  class="text-cn-dark bg-cn-dark/10 rounded-full px-2 py-0.5 text-xs font-semibold"
-                >
-                  {listPromo
-                    ? m.assoc_list_promo_badge({ promo: listPromo })
-                    : m.assoc_list_type_badge()}
-                </span>
-              {/if}
-              {#if association.role}
-                <span
-                  class="text-cn-dark bg-cn-yellow/20 rounded-full px-2 py-0.5 text-xs font-semibold"
-                >
-                  {association.role}
-                </span>
-              {/if}
+              <span
+                class="text-cn-dark bg-cn-dark/10 rounded-full px-2 py-0.5 text-xs font-semibold"
+              >
+                {listPromo
+                  ? m.assoc_list_promo_badge({ promo: listPromo })
+                  : m.assoc_list_type_badge()}
+              </span>
             </div>
           {/if}
         </div>
@@ -126,18 +130,30 @@
 
       <!--
         `mt-auto` pins the footer to the bottom of whatever height the grid row settles on, so the
-        member counts line up across a row instead of floating at five different heights.
+        roles and the counts line up across a row instead of floating at five different heights.
+
+        The role REPLACES the count rather than joining it, and it is the same pill that used to sit
+        beside the name rather than a second styling of one idea - see the docblock.
       -->
-      <p class="text-text-muted mt-auto pt-1 text-xs">
-        {memberCount !== 1
-          ? m.assoc_member_count_many({ count: memberCount })
-          : m.assoc_member_count_one({ count: memberCount })}
-        {#if association.archived}
-          <span class="ml-1 font-semibold">&#183; {m.assoc_list_archived_badge()}</span>
-        {:else if isMember}
-          <span class="text-cn-dark ml-1 font-semibold">&#183; {m.assoc_list_member_badge()}</span>
-        {/if}
-      </p>
+      {#if association.role}
+        <div class="mt-auto pt-1">
+          <span class="text-cn-dark bg-cn-yellow/20 rounded-full px-2 py-0.5 text-xs font-semibold">
+            {association.role}
+          </span>
+        </div>
+      {:else}
+        <p class="text-text-muted mt-auto pt-1 text-xs">
+          {memberCount !== 1
+            ? m.assoc_member_count_many({ count: memberCount })
+            : m.assoc_member_count_one({ count: memberCount })}
+          {#if association.archived}
+            <span class="ml-1 font-semibold">&#183; {m.assoc_list_archived_badge()}</span>
+          {:else if isMember}
+            <span class="text-cn-dark ml-1 font-semibold">&#183; {m.assoc_list_member_badge()}</span
+            >
+          {/if}
+        </p>
+      {/if}
     </div>
   </CardTile>
 </a>

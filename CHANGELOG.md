@@ -11,6 +11,25 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - une carte de "Mes associations" affiche votre role, plus un "0 membres" faux
+
+Chaque carte de cette section annoncait "0 membres" - a propos d'associations dont le lecteur est
+lui-meme membre, et une section plus bas la meme association affichait son vrai nombre. La cause
+n'est pas un comptage rate : `/api/associations/me/list` (`listByUser`) renvoie `role`,
+`permissions` et `isAdmin`, et jamais `memberCount`, si bien que le `memberCount ?? 0` de la tuile
+publiait un zero qui n'avait ete mesure par personne.
+
+Le pied de carte porte desormais le role du lecteur - la meme pastille jaune, deplacee depuis le
+haut de la carte plutot que dupliquee en bas, l'en-tete ne gardant que le badge de TYPE
+("Liste 2026"). Le nombre de membres reste intact partout ou aucun role n'est connu, c'est-a-dire
+"Toutes les associations", le repli des archivees et les etageres de listes, ou la mention
+"Membre" continue de signaler l'appartenance.
+
+Le comptage n'a volontairement pas ete rapatrie dans `listByUser` : cette section parle de la
+place du lecteur dans chaque association, et c'est ce que la carte dit maintenant. Le test source
+de la tuile fixe les deux moities - le role REMPLACE le compte (il en est le `{:else}`), et il
+n'apparait qu'une fois, sous la description.
+
 ### Changed - chaque version n'embarque plus que l'implementation MLS qu'elle peut executer
 
 `TauriMlsService` appelle le Rust de l'application et ne peut pas s'executer dans un navigateur ;
