@@ -1176,6 +1176,22 @@ it was done is that shipping an implementation that cannot run is wrong, not tha
 `CALLS_ENABLED = false`, and is NOT to be picked apart for bytes: the five switches move in ONE
 commit at revival.
 
+### P3 - the side panel's heading and its cards are inset by different amounts, and nobody owns the number (measured 2026-09-16)
+
+`ConversationSidePanel`'s header is `px-4`; the four components rendered into it choose their own
+body padding - `p-5 @md:p-6` (group), `p-5 @md:p-8` (channel settings), `p-4 @md:p-5` (members),
+`p-6` (media). So the title and the close button sit 4px inside the cards below them in the column
+and 8px in the drawer, and the offset is a different number per panel. It is visible in the user's
+2026-09-16 screenshot, under the defect that was fixed there.
+
+**The fix is not to pick one of the four - it is to decide WHO owns the inset**, and that is the
+shell: one horizontal padding on the panel, children padding only vertically, which also removes
+the four places a future panel can get it wrong. That touches every side panel at once and none of
+the other three has been laid out and read since they moved into this shell, so it wants its own
+pass with a measurement per panel rather than a line changed in passing. The container is already
+armed (`@container`), so the shell can spell the inset `@md:` like everything else.
+
+---
 ### P3 - the WASM stub is an iOS-only opt-in, so an Android build carries a WASM module it cannot use (found 2026-09-16)
 
 `mlsWasmStub()` in `vite.config.js` fires on `TAURI_TARGET`, and the ONLY thing that sets it is

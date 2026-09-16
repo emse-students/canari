@@ -1970,3 +1970,69 @@ in the footer at all three sizes.
 says so. The gate raises the change modal on the recover path, so both can be mounted at once, and
 two forms sharing an id would make every `form=` resolve to whichever the parser saw first - while
 still looking perfectly correct.
+
+## 27. The side panel is a box, and the wider the window the narrower it gets
+
+Reported by the user on 2026-09-16 from a screenshot of "Gestion du groupe", with no diagnosis
+attached: *"Le panneau de gestion de groupe a l'air d'avoir des problemes d'interfaces."* The
+screenshot showed the amber check button of the rename row cut off at the panel's right edge.
+
+### The quantity nothing was measuring
+
+`.conversation-side-panel` ([app.css](../../../frontend/src/app.css)) has two shapes and neither is
+proportional to the window:
+
+| Window | Panel | Why |
+| --- | --- | --- |
+| < 1280 px | `width: 100%`, `max-width: 28rem` | drawer, capped at 448 px |
+| >= 1280 px | `width: 20rem` | column beside the thread, 320 px |
+
+So **the panel is at its NARROWEST on the widest screens**, and any `sm:`/`md:` variant written
+inside it reads a box it is not in, in the wrong direction. `ChatGroupPanel` had four: `sm:flex-row`
+on the rename row, and `md:p-6` / `md:p-5` on the two boxes around it - which together take 88 px of
+the 320 from 768 px of window up, so the panel's contents are squeezed twice by the same mistake.
+
+### Measured against the app's own compiled CSS, 2026-09-16
+
+The rename row is `input` (`flex-1`, no `min-w-0`, so it will not shrink past its intrinsic width)
+plus a `px-5` button reading `Valider`, with a 12 px gap.
+
+| Window | Panel | `sm:flex-row` | Row needs | Card gives | `Valider` |
+| --- | --- | --- | --- | --- | --- |
+| 1400 px | 320 px | ON | 341 px | 230 px | right edge 66 px **outside** the panel |
+| 1000 px | 448 px | ON | 358 px | 358 px | fits, 45 px inside |
+| 400 px | 400 px | off | - | 374 px | fits, stacked |
+
+The column carries `overflow: hidden`, so on a desktop the button was neither visible nor
+clickable: **renaming a group was impossible exactly where there is the most room on screen**, and
+only there. A user on a laptop meets it every time; the drawer forms are all correct, which is why
+it survived.
+
+### The fix is one arming point, and a container question
+
+The panel body declares `@container` once, in `ConversationSidePanel`; its children spell widths
+`@md:` (28 rem - exactly the drawer's `max-width`, so a side-by-side form exists in the full drawer
+and nowhere narrower). The input takes `min-w-0`, which makes the overflow unrepresentable rather
+than merely unlikely - a translation that lengthens the button cannot bring it back.
+
+After, same three widths: 246/246, 358/358, 326/326 px of row against card, button 37 / 45 / 37 px
+inside the panel, and the panel's padding follows the panel (20 px at 320, 24 px only at 448).
+
+`container-type: inline-size` makes that div the containing block for `position: fixed` descendants.
+It is safe here because everything full-screen inside the panel portals out to `body` - the invite
+`Modal` and the media `FullScreenViewer` both `use:portal` - and a future child drawing a fixed
+overlay IN PLACE would be positioned against the panel instead of the window.
+
+### What the same reading found next door
+
+`ChannelSettingsPanel` kept TWO copies of its danger zone: one in the content behind `md:hidden`,
+one in the tab strip behind `md:flex`. The second is left over from the two-column rail this panel
+had as a modal - the rail was deleted when it moved into the side panel, the copy inside it was not.
+From 768 px of window up, "leave channel" and "delete channel" were therefore rendered as two more
+items of a `flex-row overflow-x-auto` tab bar, off its right end, while the content copy was hidden.
+One copy now, unconditional.
+
+**The guard is [sidePanelWidth.test.ts](../../../frontend/src/lib/components/chat/sidePanelWidth.test.ts)**,
+and it derives the panel family from what `MainChatPage` renders between the shell's tags rather
+than listing four files. It asserts padding and flex-direction only: `md:hidden` decides WHICH
+CONTROLS EXIST, which is a question about the device, not about how much room there is.

@@ -49,6 +49,53 @@ lecteur voyait quand une reinitialisation de PIN echouait.
 entree - et **sa liste d'exceptions est vide a nouveau**. Mesure d'un bout a l'autre avec le meme
 predicat : 127 occurrences avant, 117 apres.
 
+### Fixed - le bouton qui valide un renommage de groupe se tenait hors du panneau, sur desktop
+
+Le panneau "Gestion du groupe" affichait son champ de nom et son bouton `Valider` cote a cote des
+640px de FENETRE. Or la largeur du panneau ne suit pas celle de la fenetre : `.conversation-side-panel`
+fait `max-width: 28rem` en tiroir et `width: 20rem` en colonne des 1280px, donc **plus l'ecran est
+large, plus le panneau est etroit**. Mesure contre le CSS compile de l'application le 2026-09-16 :
+
+| Fenetre | Panneau | Direction | La ligne demande | La carte offre | Le bouton |
+| --- | --- | --- | --- | --- | --- |
+| 1400px | 320px (colonne) | ligne | 341px | 230px | 66px DEHORS, dans un panneau qui coupe |
+| 1000px | 448px (tiroir) | ligne | 358px | 358px | tient |
+| 400px | 400px (tiroir) | colonne | - | 326px | tient |
+
+Renommer un groupe etait donc impossible exactement la ou il y a le plus de place a l'ecran, et
+nulle part ailleurs - la colonne porte `overflow: hidden`, si bien que le bouton n'etait ni visible
+ni atteignable. Les marges interieures aggravaient le meme calcul : `md:p-6` et `md:p-5` prenaient
+88px des 320 a partir de 768px de fenetre.
+
+Le corps du panneau declare desormais `@container`, une fois, et ses enfants ecrivent `@md:` :
+une largeur y est enoncee contre le panneau, jamais contre la fenetre. Le champ porte `min-w-0`,
+ce qui rend le debordement irrepresentable meme si une traduction allonge le bouton.
+`sidePanelWidth.test.ts` tient la regle, sur une famille de composants DEDUITE de ce que
+`MainChatPage` rend dans le panneau plutot que listee.
+
+### Fixed - l'avatar d'un groupe dont le nom commence par un emoji dessinait une tuile vide
+
+`GroupAvatar` portait sa propre fonction d'initiales, qui prenait `w[0]` de chaque mot : une UNITE
+de code UTF-16, donc la moitie haute d'un emoji, qui n'est pas un caractere et se dessine en carre
+blanc. Le `getInitials` partage de `$lib/utils/avatar` - deja utilise par la Carte - ne garde que
+lettres et chiffres et n'a jamais eu ce defaut ; la copie privee est supprimee. Le meme risque
+subsistait un cran plus bas dans la fonction partagee, `\p{L}` couvrant des lettres hors du plan
+multilingue de base : elle compte des caracteres maintenant, pas des unites de code.
+
+### Fixed - les boutons "quitter" et "supprimer" d'un canal etaient rendus dans la barre d'onglets
+
+`ChannelSettingsPanel` gardait DEUX copies de sa zone de danger : une dans le contenu en
+`md:hidden`, une dans l'ancien rail vertical en `md:flex`. Ce rail a ete supprime quand le panneau
+est devenu une colonne unique ; la copie qu'il contenait ne l'a pas ete. A partir de 768px de
+fenetre, les deux actions destructrices d'un canal etaient donc posees dans une barre d'onglets
+`flex-row overflow-x-auto`, decalees hors de son bord droit, pendant que la copie du contenu etait
+cachee. Il n'en reste qu'une, sans condition.
+
+### Changed - le bloc "Lien d'invitation" prend la carte de ses voisins
+
+C'etait la seule section du panneau posee a nu entre deux cartes, chacun de ses enfants portant un
+`px-1` qui imitait le retrait de la carte absente.
+
 ### Changed - une carte de "Mes associations" affiche votre role, plus un "0 membres" faux
 
 Chaque carte de cette section annoncait "0 membres" - a propos d'associations dont le lecteur est

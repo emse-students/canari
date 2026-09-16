@@ -10,6 +10,7 @@
     Users,
     X,
     PencilLine,
+    Link2,
     Shield,
     Camera,
   } from '@lucide/svelte';
@@ -218,7 +219,7 @@
   ways depending on whether it was a channel. `ConversationSidePanel` owns the shell; the subtitle
   that used to sit under the heading is gone with it, because the panel's title bar has one line.
 -->
-<div class="keyboard-aware-panel-scroll flex min-h-0 flex-1 flex-col gap-6 p-5 md:p-6">
+<div class="keyboard-aware-panel-scroll flex min-h-0 flex-1 flex-col gap-6 p-5 @md:p-6">
   <!-- Group/contact identity card -->
   <div
     class="bg-cn-surface flex items-center gap-4 rounded-2xl border border-black/5 px-4 py-4 shadow-sm dark:border-white/10"
@@ -283,7 +284,7 @@
   <!-- Rename section -->
   {#if isGroupConversation}
     <div
-      class="bg-cn-surface flex flex-col gap-3 rounded-2xl border border-black/5 p-4 shadow-sm md:p-5 dark:border-white/10"
+      class="bg-cn-surface flex flex-col gap-3 rounded-2xl border border-black/5 p-4 shadow-sm @md:p-5 dark:border-white/10"
     >
       <label
         for="group-rename-input"
@@ -292,13 +293,13 @@
         <PencilLine size={14} />
         {m.chat_group_name_label()}
       </label>
-      <div class="flex flex-col gap-3 sm:flex-row">
+      <div class="flex flex-col gap-3 @md:flex-row">
         <input
           id="group-rename-input"
           type="text"
           bind:value={renameInput}
           onkeydown={handleRenameKey}
-          class="text-text-main bg-cn-surface flex-1 rounded-xl border border-black/10 px-4 py-3 text-sm font-semibold shadow-inner transition-all outline-none focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/50 dark:border-white/10"
+          class="text-text-main bg-cn-surface min-w-0 flex-1 rounded-xl border border-black/10 px-4 py-3 text-sm font-semibold shadow-inner transition-all outline-none focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/50 dark:border-white/10"
         />
         <button
           onclick={submitRename}
@@ -312,17 +313,30 @@
     </div>
   {/if}
 
-  <!-- Invite link section -->
+  <!--
+    Invite link section.
+
+    A CARD, LIKE EVERY OTHER SECTION OF THIS PANEL. It was the one block with no surface under it -
+    a label, a paragraph and a button lying directly on the panel between two cards - and each of
+    its children carried `px-1` to imitate the inset of the card it did not have. The user read the
+    result as the panel being broken, which it looked like. The rename card beside it is the shape
+    copied: same radius, same border, same label row with an icon.
+  -->
   {#if isGroupConversation && groupId}
-    <div class="flex flex-col gap-2">
-      <span class="text-text-muted text-2xs px-1 font-bold tracking-wider uppercase">
+    <div
+      class="bg-cn-surface flex flex-col gap-3 rounded-2xl border border-black/5 p-4 shadow-sm @md:p-5 dark:border-white/10"
+    >
+      <span
+        class="text-text-muted text-2xs inline-flex items-center gap-2 font-bold tracking-wider uppercase"
+      >
+        <Link2 size={14} />
         {m.chat_group_invite_link_title()}
       </span>
-      <p class="text-text-muted px-1 text-xs leading-relaxed">
+      <p class="text-text-muted -mt-1 text-xs leading-relaxed">
         {m.chat_group_invite_link_description()}
       </p>
       {#if shareLink}
-        <div class="flex items-center gap-2 px-1">
+        <div class="flex items-center gap-2">
           <input
             type="text"
             readonly
@@ -338,7 +352,7 @@
           </button>
         </div>
         {#if shareCopied}
-          <p class="text-green-ok px-1 text-xs font-semibold">
+          <p class="text-green-ok text-xs font-semibold">
             {m.chat_group_link_copied_label()}
           </p>
         {/if}
@@ -347,13 +361,13 @@
           type="button"
           onclick={generateShareLink}
           disabled={shareLoading}
-          class="text-2xs mx-1 self-start rounded-xl bg-amber-500/10 px-3 py-1.5 font-bold text-amber-600 transition-colors hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-400"
+          class="text-2xs self-start rounded-xl bg-amber-500/10 px-3 py-1.5 font-bold text-amber-600 transition-colors hover:bg-amber-500/20 disabled:opacity-50 dark:text-amber-400"
         >
           {shareLoading ? m.common_generating_label() : m.chat_group_generate_link_button()}
         </button>
       {/if}
       {#if shareError}
-        <p class="px-1 text-xs font-medium text-red-600 dark:text-red-400">{shareError}</p>
+        <p class="text-xs font-medium text-red-600 dark:text-red-400">{shareError}</p>
       {/if}
     </div>
   {/if}
@@ -461,7 +475,7 @@
   <!-- Leave / delete section (panel footer) -->
   {#if onGroupLeave || onGroupDelete}
     <div
-      class="keyboard-aware-panel-footer bg-cn-surface mt-auto flex flex-col gap-3 border-t border-black/5 p-5 md:p-6 dark:border-white/10"
+      class="keyboard-aware-panel-footer bg-cn-surface mt-auto flex flex-col gap-3 border-t border-black/5 p-5 @md:p-6 dark:border-white/10"
     >
       {#if onGroupLeave && !confirmLeave && !confirmDelete}
         <button
