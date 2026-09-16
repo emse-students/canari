@@ -191,8 +191,14 @@ export async function applyReplaySystemEvent(ctx: ReplaySystemEventCtx): Promise
         target: getName(data.targetUser),
       });
     } else if (parsed.system.event === 'memberLeft' && data.userId) {
-      const getName = await resolveDisplayNames([data.userId]);
-      systemContent = chat_system_member_left({ user: getName(data.userId) });
+      // The same cross-check the live handler makes, for the same reason and with the same verdict:
+      // the id is a self-asserted payload field, the stream row's sender is the identity MLS
+      // authenticated, and only the party that left may say so. Rendering nothing is what an
+      // unusable payload already gets here.
+      if (String(data.userId).toLowerCase() === senderNorm) {
+        const getName = await resolveDisplayNames([data.userId]);
+        systemContent = chat_system_member_left({ user: getName(data.userId) });
+      }
     } else if (parsed.system.event === 'memberAdded') {
       const newUserIds: string[] =
         data.newUsers && Array.isArray(data.newUsers)

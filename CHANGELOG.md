@@ -11,6 +11,33 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - le depart d'un membre ne s'affichait nulle part avant sa prochaine relecture d'archive
+
+`leaveGroupAndBroadcast` diffuse une trame `memberLeft` depuis toujours, l'archive la conserve, et
+la relecture (`historySystemEvents.ts`) la rend depuis toujours - mais le gestionnaire de livraison
+EN DIRECT n'avait aucune branche pour cet evenement. Un evenement inconnu est acquitte et ignore par
+construction : rien ne rougissait nulle part. Consequence pour l'utilisateur : quelqu'un quitte un
+groupe et **personne ne voit rien**, puis la mention apparait a la relecture suivante de l'archive,
+a sa place d'origine dans le fil - c'est-a-dire comme un evenement vieux de plusieurs jours.
+
+Le commentaire de `strayLeaves.ts` justifiait meme de ne rien diffuser lui-meme *parce que* « le
+partant a deja envoye `memberLeft` et chaque membre restant l'a affiche ». Aucun ne l'avait jamais
+fait.
+
+La branche manquante est ajoutee, et elle ecrit sous l'id que l'emetteur frappe depuis 2026-09-16 :
+la bulle du direct et celle de la relecture sont donc UNE seule ligne, pas deux.
+
+**Elle porte une verification que les autres branches n'ont pas.** `memberLeft` nomme le partant
+dans un champ de charge utile, alors que l'identite authentifiee par MLS est celle de l'emetteur :
+sans recoupement, n'importe quel membre pouvait annoncer le depart de n'importe quel autre a tout le
+groupe. Seul le partant peut annoncer son propre depart, en direct comme a la relecture - un champ
+de charge utile est une affirmation, l'emetteur MLS est un fait.
+
+Enfin, elle n'ecrit rien pour NOTRE propre depart : MLS ne renvoie jamais une trame au client qui
+l'a emise, donc une telle trame ne peut venir que d'un autre de nos appareils, lequel va de toute
+facon perdre la conversation puisque quitter desinscrit l'UTILISATEUR et que la verification
+d'appartenance retire alors la ligne partout.
+
 ### Changed - 162 ms de demarrage a froid rendus : la question « cet appareil est-il revoque ? » ne bloque plus le dechiffrement local
 
 Sur les deux chemins de connexion qui sautent la verification du PIN - le trousseau biometrique et

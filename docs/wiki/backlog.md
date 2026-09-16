@@ -7840,19 +7840,6 @@ estate, and what fraction are `after=start` rather than a cursor resume) before 
 defect. `[HISTORY]` does not name its requester, so attributing a walk to a device needs that field
 added first - one line, and the prerequisite for any of the rest.
 
-### P3 - `memberLeft` is rendered by the replay and by NOTHING live
-
-`historySystemEvents.ts:193` renders `chat_system_member_left`; `systemMessageHandler.ts` has no
-branch for the event at all - `grep` finds `chat_system_member_left` in exactly one non-test file.
-`leaveGroupAndBroadcast` does send it (`notifyMembershipChange`), so the frame is on the wire and in
-the archive.
-
-**So a member leaving a group shows nothing to anyone until their next archive replay**, and then
-appears at its original position in the scrollback rather than at the moment it happened. Found while
-enumerating the writers of every visible notice; it is a missing branch, not a duplicate, which is
-why it is not in the same commit. The send site already carries an id since 2026-09-16, so the branch
-has one waiting for it.
-
 ### P3 - the adder was absent from `dm_group_members` for five minutes while committing adds
 
 `dm_group_members` dates Matheo BOUDIER's own row at **14:25:12.819**, after he had committed epochs
