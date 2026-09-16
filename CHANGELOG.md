@@ -11,6 +11,32 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - 162 ms de demarrage a froid rendus : la question « cet appareil est-il revoque ? » ne bloque plus le dechiffrement local
+
+Sur les deux chemins de connexion qui sautent la verification du PIN - le trousseau biometrique et
+le coffre de cle d'appareil - `loginImpl` posait au serveur la question `/api/mls/devices/.../revoked`
+et ATTENDAIT la reponse avant de dechiffrer l'etat MLS local. Mesure sur la production le
+2026-09-16 : 162 ms d'attente reseau processeur au repos, soit 12 % d'un demarrage a froid de 1,3 s,
+entre deux travaux qui n'ont aucune dependance de donnees l'un envers l'autre.
+
+La promesse est desormais RETENUE au lieu d'etre attendue sur place : la question part au meme
+endroit, le dechiffrement local se fait pendant qu'elle voyage, et la reponse est lue juste apres.
+Ce n'est pas un `Promise.all` et la distinction est le coeur du changement - ce qu'il faut preserver
+n'est pas « les deux ont fini » mais « rien de ce que cet appareil fait au nom du serveur n'arrive
+avant la reponse ». Le dechiffrement ne touche que des octets locaux qu'un appareil revoque detient
+deja ; le jeton, la liaison session/appareil, l'enregistrement push et la premiere publication de
+key packages sont tous de l'autre cote de la barriere.
+
+La barriere est lue AVANT le verdict d'initialisation, ce qui corrige au passage un cas de bord :
+un appareil a la fois revoque et porteur d'un etat illisible etait invite a ressaisir son ancien PIN
+dans une fenetre de recuperation qu'il ne peut pas mener a bien, alors que la seule bonne reponse
+est l'effacement. Le chemin PIN, lui, ne rejoint deliberement pas la manoeuvre : son aller-retour
+RENVOIE le sel dont la cle d'appareil est derivee, il y a donc une vraie dependance et aucune
+attente a recuperer.
+
+Six gardes de source pinent l'ordre, parce qu'une reecriture ulterieure pourrait le defaire sans
+qu'aucun test de comportement ne rougisse.
+
 ## [0.18.9] - 2026-09-16
 
 ### Fixed - les deux premieres lignes de chaque rechargement, et six prechargements de feuilles de style pour rien

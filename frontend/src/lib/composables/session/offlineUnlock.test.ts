@@ -250,3 +250,80 @@ describe('a revoked live device is logged out, not asked for its PIN', () => {
     expect(liveRevocationTail).not.toContain('cb.onLoginFailed?.(');
   });
 });
+
+/**
+ * The revocation round trip runs BESIDE the local decrypt, and the answer still gates everything.
+ *
+ * Measured on production 2026-09-16: on the keystore and vault paths, 162 ms of a 1.3 s cold start
+ * was spent waiting for `/api/mls/devices/.../revoked` with nothing else running - a network answer
+ * in front of a decrypt that reads only local bytes, and no data dependency between the two. The
+ * promise is now held across the decrypt instead.
+ *
+ * That is a security-relevant reordering and it is exactly the kind a later edit could undo while
+ * every behavioural test stays green, so both halves are pinned here: the question is still ASKED
+ * on those paths, and the ANSWER is still read before anything acts on the session. `Promise.all`
+ * would satisfy neither - it would make the gate a coincidence of timing rather than an order.
+ */
+describe('the revocation answer is held across the decrypt, never dropped', () => {
+  /** From the vault/keystore branch to the gate, which is where the whole change lives. */
+  const heldRevocation = (() => {
+    const at = loginImplBody.indexOf('revocationAnswer = mlsService.isDeviceRevoked(');
+    expect(at).toBeGreaterThan(-1);
+    const end = loginImplBody.indexOf("throw new LoginFailure('device_revoked'", at);
+    expect(end).toBeGreaterThan(at);
+    return loginImplBody.slice(at, end);
+  })();
+
+  it('still asks the server on the two paths that skip the PIN check', () => {
+    // The question is the whole of the protection for a device revoked while it was offline: those
+    // paths verify nothing else server-side, so dropping this call would silently restore the
+    // defect it was written for.
+    expect(heldRevocation).toContain('revocationAnswer = mlsService.isDeviceRevoked(');
+  });
+
+  it('overlaps it with the decrypt rather than awaiting it in place', () => {
+    // The init/storage pair is what the round trip now runs beside; finding it INSIDE the slice
+    // between the question and the gate is what "held across the decrypt" means.
+    expect(heldRevocation).toContain('await Promise.allSettled([');
+    expect(heldRevocation).toContain('mlsService.init(ctx.getUserId(), deviceKeyB64');
+  });
+
+  it('gates on the answer before anything reads the init verdict', () => {
+    const gate = loginImplBody.indexOf(
+      'if (revocationAnswer !== null && (await revocationAnswer))'
+    );
+    const verdict = loginImplBody.indexOf("if (mlsInitSettled.status === 'rejected')");
+    expect(gate).toBeGreaterThan(-1);
+    expect(verdict).toBeGreaterThan(-1);
+    // A device that is both revoked and carrying an unopenable state must be wiped, not parked in
+    // a PIN-recovery modal it can never complete.
+    expect(gate).toBeLessThan(verdict);
+  });
+
+  it('gates before the session, the binding and the push registration', () => {
+    const gate = loginImplBody.indexOf(
+      'if (revocationAnswer !== null && (await revocationAnswer))'
+    );
+    expect(gate).toBeGreaterThan(-1);
+    // Everything a revoked device must not do on the server's behalf lives after the gate. These
+    // are the three that talk to it.
+    for (const after of [
+      'ctx.setIsLoggedIn(true);',
+      'bindCurrentSessionDevice(ctx.getMyDeviceId())',
+      'startPushService(',
+    ]) {
+      expect(loginImplBody.indexOf(after)).toBeGreaterThan(gate);
+    }
+  });
+
+  it('wipes on a true answer, exactly as the awaited version did', () => {
+    const gate = loginImplBody.indexOf(
+      'if (revocationAnswer !== null && (await revocationAnswer))'
+    );
+    const wipe = loginImplBody.indexOf('await wipeRevokedDevice(ctx, cb);', gate);
+    expect(wipe).toBeGreaterThan(gate);
+    expect(loginImplBody.indexOf("throw new LoginFailure('device_revoked'", wipe)).toBeGreaterThan(
+      wipe
+    );
+  });
+});
