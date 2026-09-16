@@ -102,7 +102,7 @@ export async function ackMessagesWithRetry(
       }
       log?.(`[ACK] HTTP ${res.status} attempt ${attempt + 1}`);
     } catch (e) {
-      log?.(`[ACK] failed attempt ${attempt + 1}: ${e instanceof Error ? e.message : String(e)}`);
+      log?.(`[ACK] failed attempt ${attempt + 1}: ${String(e)}`);
     }
     if (attempt < ACK_BACKOFF_MS.length) {
       await sleep(ACK_BACKOFF_MS[attempt]);

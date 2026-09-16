@@ -772,7 +772,7 @@ export class ChannelService {
       // the system will ever report that.
       console.warn(
         `[CHANNEL_READ] could not signal ${cid.slice(0, 8)} - a stale notification may linger on ` +
-          `another device: ${e instanceof Error ? e.message : String(e)}`
+          `another device: ${String(e)}`
       );
     }
   }

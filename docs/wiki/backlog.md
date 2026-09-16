@@ -7698,17 +7698,18 @@ all because it had gone stale while this one was re-measured) came from one pred
 which only some assign to an error state a screen renders - the rest sit inside a `Log`/`console`
 call and are correctly dev-facing.
 
-**37 remain, down from 194** (one predicate at both ends, measured rather than decremented). The
-intermediate readings were 125 on 2026-09-15 - the 49 of the admin pass plus the 20 of the
-component pass - 127 immediately before the component-ROOT pass of 2026-09-16, the tree having
-moved twice in between, 117 after it, and 93 after `lib/composables`. **That is why this line is
-re-measured and never decremented**: two sites arrived while the count sat still.
+**ONE REMAINS, DOWN FROM 194, AND IT IS THE ALLOWLISTED ONE** (one predicate at both ends,
+measured rather than decremented). The intermediate readings were 125 on 2026-09-15 - the 49 of the
+admin pass plus the 20 of the component pass - 127 immediately before the component-ROOT pass of
+2026-09-16, the tree having moved twice in between, 117 after it, 93 after `lib/composables`, and 37
+after `lib/utils`. **That is why this line is re-measured and never decremented**: two sites arrived
+while the count sat still.
 
-**OF THE 37, THREE ARE COMMENTS** (`utils/localizedError.ts`, `utils/chat/messaging.ts` and the
-guard's own regex), which the stripper never shows the predicate. The rest sit in
-`lib/services` (15), `lib/mls-client` (7), `lib/workers` (5), `lib/calendar` (2),
-`lib/associations` (1), `lib/stores` (1), `lib/i18n.ts`, `hooks.client.ts`, and the one
-allowlisted site in `lib/composables`.
+The seven occurrences a raw `grep` still finds in `frontend/src` are **six comments** quoting the
+shape in order to explain it - `utils/localizedError.ts`, `utils/chat/messaging.ts`,
+`calendar/calendarErrors.ts` and its test, and the guard's own docblock and regex - plus
+`composables/session/sessionAuth.ts:726`, which is `ALLOWED`'s single entry and closes with the P1
+that owns the question. The guard strips comments before matching, so it sees exactly one.
 
 The member-facing pass closed 27 across `components/posts`, `components/settings`,
 `routes/posts`, `routes/profile`, `routes/lists`, `routes/documents` and `routes/forms`; the agenda
@@ -7881,11 +7882,25 @@ what had happened; everything left compares against a shared CONSTANT
 Verified with `grep -rnE "\.message\s*(\.(includes|startsWith|match|toLowerCase)\(|===)"` over
 both trees: two hits, both `typeof obj.message === 'string'` shape checks on parsed JSON.
 
-**Seventeen entries are guarded and they cover more ground than the twenty did**:
-`src/lib/components` is one of them and owns all 218 of its files, so the five subtree entries under
-it were removed rather than left to walk the same file twice, and `src/lib/composables` (2026-09-16)
-and `src/lib/utils` (319 files, the same day) joined after it. Every guarded file is clean but ONE,
-`sessionAuth.ts`, which is the allowlist's single entry and carries the reason it cannot yet close.
+**THE GUARD OWNS `src` WHOLE SINCE 2026-09-16 - ONE ENTRY, NOT SEVENTEEN.** The last trees closed
+the same day: `lib/services` (15 sites, twelve of them in `CallService.ts`), `lib/mls-client` (7),
+`lib/workers` (5), `lib/stores`, `lib/i18n.ts` and `hooks.client.ts` - **29 sites, every one a log
+line or a string crossing a `postMessage` boundary whose protocol declares it a string**. With
+nothing left for a partial list to mean, the seventeen entries and their per-pass comments collapse
+into `TREES = ['src']`, and the file walks **1 004** hand-written sources.
+
+**A SKIP IS PERMITTED FOR EXACTLY ONE REASON - THE FILE IS GENERATED**, and there are four:
+`src/lib/paraglide` (2 658 files of compiler output, and the only one that matters to the clock),
+`src/lib/wasm`, and `src/lib/proto/canari.{js,d.ts}`. None is in git; every pipeline rebuilds them.
+A hand-written file that cannot answer goes in `ALLOWED` instead, where it FAILS the day it stops
+offending. Two assertions keep the single entry honest: the seventeen former trees are listed as
+`MUST_COVER` and each must still contribute files - a walk silently returning a fraction of `src`
+clears any floor on the total - and the skipped paths must contribute none.
+
+Every walked file is clean but ONE, `sessionAuth.ts`, which is the allowlist's single entry and
+carries the reason it cannot yet close. **The census that began at 194 is finished.** What is NOT
+finished is the separate, still-open half: the CODES at the throw, per endpoint, that would let one
+refusal be told from another. Nothing in this sweep needed them, which was its whole argument.
 
 **ONE THING THE UTILS READING FOUND AND DID NOT FIX.** A group creation that fails tells the member
 NOTHING: `createNewGroup` and `startNewConversation` catch their own failure, clean up the orphan

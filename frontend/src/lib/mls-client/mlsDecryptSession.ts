@@ -44,7 +44,7 @@ export function createSequentialDecryptSession(
           const plaintext = await service.processIncomingMessage(groupId, bytes);
           results.push({ ok: true, plaintext });
         } catch (e) {
-          results.push({ ok: false, error: e instanceof Error ? e.message : String(e) });
+          results.push({ ok: false, error: String(e) });
         }
       }
       return results;

@@ -43,7 +43,7 @@ async function mirrorLocaleToNative(locale: Locale): Promise<void> {
   } catch (e) {
     // Best-effort: the cost of failing is a notification in the previous language, never a lost
     // one. Silence would leave nothing behind, so it accuses - it should not happen.
-    console.warn(`[LOCALE_MIRROR] failed: ${e instanceof Error ? e.message : String(e)}`);
+    console.warn(`[LOCALE_MIRROR] failed: ${String(e)}`);
   }
 }
 

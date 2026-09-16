@@ -46,7 +46,7 @@ workerScope.onmessage = async (event: MessageEvent<MlsEncryptRequest>) => {
     };
     workerScope.postMessage(response, [response.payload.encrypted]);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = String(error);
     workerScope.postMessage({ type: 'encrypt:error', error: message });
   }
 };

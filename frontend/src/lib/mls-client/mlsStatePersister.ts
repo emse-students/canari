@@ -68,7 +68,7 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
     dirtyEncrypted = false;
     inFlightEncrypted = runSaveEncrypted()
       .catch((e) => {
-        const msg = e instanceof Error ? e.message : String(e);
+        const msg = String(e);
         log?.(`[MLS] Encrypted state checkpoint failed: ${msg}`);
         throw e;
       })

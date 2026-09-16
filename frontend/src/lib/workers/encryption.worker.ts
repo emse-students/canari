@@ -41,7 +41,7 @@ self.onmessage = async (event: MessageEvent<{ type: string; payload?: ArrayBuffe
       ]);
       self.postMessage({ type: 'keyReady' });
     } catch (e) {
-      const detail = e instanceof Error ? e.message : String(e);
+      const detail = String(e);
       self.postMessage({ type: 'keyError', detail });
     }
   }
@@ -148,7 +148,7 @@ async function decryptFrame(
   } catch (e) {
     decryptFailures++;
     if (decryptFailures <= 3 || decryptFailures % 100 === 0) {
-      const detail = e instanceof Error ? e.message : String(e);
+      const detail = String(e);
       self.postMessage({ type: 'decryptError', detail, count: decryptFailures });
     }
     console.error('[Worker] Decryption failed', e);

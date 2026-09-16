@@ -316,7 +316,7 @@ export class MlsDeliveryApi {
         if (pageLimit > 1) {
           pageLimit = Math.max(1, Math.floor(pageLimit / 2));
           console.warn(
-            `[PENDING] page did not arrive (${e instanceof Error ? e.message : String(e)}) - retrying with limit=${pageLimit}`
+            `[PENDING] page did not arrive (${String(e)}) - retrying with limit=${pageLimit}`
           );
           continue;
         }

@@ -71,7 +71,7 @@ workerScope.onmessage = async (event: MessageEvent<MlsKeyPackageRequest>) => {
     ]);
     console.log('[MLS Worker] generateKeyPackage done');
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = String(error);
     const response: MlsKeyPackageErr = { type: 'generateKeyPackage:error', error: message };
     workerScope.postMessage(response);
   }

@@ -11,6 +11,30 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - plus aucune exception ne parle a la place du code : 194 sites, il en reste un
+
+Le recensement ouvert le 2026-09-09 - *"218 endroits affichent la prose anglaise du serveur a un
+lecteur francais"* - se termine. Les derniers arbres tombent ici : `lib/services` (15 sites, dont
+**douze dans `CallService.ts`**), `lib/mls-client` (7), `lib/workers` (5), `lib/stores`, `lib/i18n.ts`
+et `hooks.client.ts`. **Vingt-neuf sites, tous des lignes de journal ou des chaines traversant un
+`postMessage` dont le protocole declare deja une chaine** - `String(e)` y rend `Error: <message>`,
+donc le type traverse la frontiere avec la phrase au lieu d'etre jete au `throw`.
+
+**La garde `serverProse` prend `src` en entier** : une entree au lieu de dix-sept, **1 004 fichiers
+ecrits a la main**. Un fichier n'est saute que s'il est GENERE - `src/lib/paraglide` (2 658 fichiers
+de sortie du compilateur), `src/lib/wasm`, `src/lib/proto/canari.{js,d.ts}` : aucun n'est dans git et
+chaque pipeline les reconstruit. Un fichier ecrit a la main qui ne peut pas repondre va dans
+`ALLOWED` avec sa raison, ou il ECHOUE le jour ou il cesse d'offenser. Deux assertions gardent
+l'entree unique honnete : les dix-sept anciens arbres restent listes et doivent chacun rapporter des
+fichiers - un parcours qui ne renverrait qu'une fraction de `src` franchirait n'importe quel plancher
+sur le total - et les chemins generes ne doivent en rapporter aucun.
+
+**Il reste UN site**, et c'est l'entree unique de la liste d'exceptions : la comparaison contre
+`MLS_LOCAL_STATE_UNDECRYPTABLE` dans `sessionAuth.ts`, qui se referme avec le P1 decidant ce qu'un
+etat MLS corrompu doit dire. **194 au depart.** Ce qui n'est PAS termine est l'autre moitie, toujours
+ouverte : les CODES au `throw`, par endpoint, qui permettraient de distinguer un refus d'un autre.
+Aucun des dix passages n'en a eu besoin - c'etait tout son argument.
+
 ### Changed - un mappeur d'erreurs qui n'atteignait aucun ecran disparaît, et 55 journaux disent ce qu'ils ont attrape
 
 `src/lib/utils` - 319 fichiers - tenait **cinquante-six** occurrences de

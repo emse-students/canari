@@ -148,9 +148,7 @@ export async function openGatewayConnection(
     try {
       await mlsService.fetchPendingMessages();
     } catch (e) {
-      log(
-        `[WARN] Failed to fetch initial pending messages: ${e instanceof Error ? e.message : String(e)}`
-      );
+      log(`[WARN] Failed to fetch initial pending messages: ${String(e)}`);
     }
 
     if (typeof window !== 'undefined') {
@@ -166,7 +164,7 @@ export async function openGatewayConnection(
     }
     return true;
   } catch (wsErr: unknown) {
-    const msg = wsErr instanceof Error ? wsErr.message : String(wsErr);
+    const msg = String(wsErr);
     setIsWsConnected(false);
     log(`Gateway inaccessible: ${msg}`);
     console.error('[WS] Gateway connection failed:', msg);
