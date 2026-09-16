@@ -2,6 +2,7 @@ import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { slugify } from '$lib/utils/textFold';
 import { ChannelApiError, ChannelService } from '$lib/services/ChannelService';
 import { RefreshFailedError, SessionExpiredError } from '$lib/stores/auth';
+import { ApiRefusalError } from '$lib/utils/apiRefusal';
 import type { WorkspaceDto, ChannelDto } from '$lib/services/ChannelService';
 import type { IMlsService } from '$lib/mlsService';
 import type { AddMessageToChatOptions, Conversation } from '$lib/types';
@@ -199,7 +200,7 @@ export function useChannelWorkspaces() {
    */
   function isRetryableLoadError(error: unknown): boolean {
     // The server answered. Only its own 5xx is worth asking again; a 4xx is a decision about us.
-    if (error instanceof ChannelApiError) return error.status >= 500;
+    if (error instanceof ApiRefusalError) return error.status >= 500;
     // The refresh endpoint answered something that is not a verdict on the session - transient by
     // construction, since 401 and 403 leave as `SessionExpiredError` instead.
     if (error instanceof RefreshFailedError) return true;

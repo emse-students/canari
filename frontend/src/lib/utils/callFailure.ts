@@ -1,5 +1,5 @@
 import { m } from '$lib/paraglide/messages';
-import { describeApiRefusal } from '$lib/utils/apiRefusal';
+import { ApiRefusalError, describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
 
 /**
  * A refusal from `POST /api/calls/initiate`, carrying the STATUS instead of spelling it.
@@ -18,14 +18,13 @@ import { describeApiRefusal } from '$lib/utils/apiRefusal';
  * import the service to name its error type: calling is held off (`CALLS_ENABLED`) and pulling
  * `CallService` into a module graph that does not otherwise need it would be paid on every cold
  * start.
+ *
+ * It carries no `code`: the initiate route answers a status and a body, and inventing a code slot
+ * it never fills would be a discriminator nothing sets.
  */
-export class CallInitiateError extends Error {
-  constructor(
-    /** The HTTP status `POST /api/calls/initiate` answered with. */
-    readonly status: number,
-    message: string
-  ) {
-    super(message);
+export class CallInitiateError extends ApiRefusalError {
+  constructor(status: number, message: string) {
+    super(status, null, message);
     this.name = 'CallInitiateError';
   }
 }
@@ -47,7 +46,7 @@ export class CallInitiateError extends Error {
  * @returns A localized sentence, never the thrown message - that belongs in the log.
  */
 export function describeCallFailure(error: unknown): string {
-  const status = error instanceof CallInitiateError ? error.status : null;
+  const status = refusalStatus(error);
   if (status === 404) return m.chat_call_group_desynced();
   return describeApiRefusal(status, m.chat_call_action_start()) ?? m.chat_call_error_generic();
 }

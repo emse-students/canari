@@ -3,8 +3,9 @@
   import { Log } from '$lib/utils/Log';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
-  import { channelService, ChannelApiError } from '$lib/services/ChannelService';
+  import { channelService } from '$lib/services/ChannelService';
   import { describeCommunityRefusal } from '$lib/utils/chat/communityErrors';
+  import { refusalCode } from '$lib/utils/apiRefusal';
   import { openInvitedChannel } from '$lib/utils/chat/notificationRouting';
   import { currentUserId } from '$lib/stores/user';
   import { apiAssetUrl } from '$lib/utils/apiUrl';
@@ -59,7 +60,7 @@
     } catch (e) {
       // A link outliving its community is refused with a code rather than a sentence, so the
       // reason survives any rewording on the server side.
-      const coded = e instanceof ChannelApiError ? describeCommunityRefusal(e.code) : null;
+      const coded = describeCommunityRefusal(refusalCode(e));
       Log.d('community invite accept failed', e);
       error = coded ?? m.community_join_error_fallback();
       joining = false;

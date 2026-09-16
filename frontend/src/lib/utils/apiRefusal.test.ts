@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { withoutAnyComments } from '../styles/markupSources';
-import { describeApiRefusal } from './apiRefusal';
+import { ApiRefusalError, describeApiRefusal, refusalCode, refusalStatus } from './apiRefusal';
+import { ChannelApiError } from '$lib/services/ChannelService';
+import { CallInitiateError } from './callFailure';
 
 /**
  * A REFUSAL IS DESCRIBED FROM ITS STATUS, NEVER FROM THE SERVER'S SENTENCE.
@@ -53,6 +55,55 @@ describe('describeApiRefusal', () => {
     // transport failure must not be described as though the server had refused something.
     expect(describeApiRefusal(null, ACTION)).toBeNull();
     expect(describeApiRefusal(undefined, ACTION)).toBeNull();
+  });
+});
+
+describe('refusalStatus and refusalCode', () => {
+  /**
+   * THE READERS ARE ASSERTED THROUGH THE SUBCLASSES, NOT THROUGH THE BASE ALONE.
+   *
+   * The base class buys exactly one thing: a screen catching a refusal can ask for the number
+   * without naming the service that threw it. An assertion that only ever constructed
+   * `ApiRefusalError` would pass while a subclass quietly stopped handing `super` its status,
+   * which is the failure these are written against.
+   */
+  it('reads the status and the code a channel refusal carries', () => {
+    expect(refusalStatus(new ChannelApiError(429, 'RATE_LIMITED', 'slow down'))).toBe(429);
+    expect(refusalCode(new ChannelApiError(429, 'RATE_LIMITED', 'slow down'))).toBe('RATE_LIMITED');
+  });
+
+  it('reads the status a call refusal carries, and no code', () => {
+    // `CallInitiateError` passes `null`: the initiate route answers a status and a body, so a code
+    // slot would be a discriminator nothing ever sets.
+    expect(refusalStatus(new CallInitiateError(404, 'calls/initiate failed (404)'))).toBe(404);
+    expect(refusalCode(new CallInitiateError(404, 'calls/initiate failed (404)'))).toBeNull();
+  });
+
+  it('keeps each subclass distinguishable by name', () => {
+    expect(new ChannelApiError(500, null, 'x').name).toBe('ChannelApiError');
+    expect(new CallInitiateError(500, 'x').name).toBe('CallInitiateError');
+    expect(new ChannelApiError(500, null, 'x')).toBeInstanceOf(ApiRefusalError);
+    expect(new CallInitiateError(500, 'x')).toBeInstanceOf(ApiRefusalError);
+  });
+
+  it.each([
+    ['a transport failure', new TypeError('Failed to fetch')],
+    ['an ordinary Error', new Error('boom')],
+    ['a thrown string', 'boom'],
+    ['null', null],
+  ])('answers null for %s, which answered nothing', (_label, thrown) => {
+    // NOBODY ANSWERED is not a status, and it is not a 0 either. The contract of
+    // `describeApiRefusal` rests on this: it says nothing about a status it was not given.
+    expect(refusalStatus(thrown)).toBeNull();
+    expect(refusalCode(thrown)).toBeNull();
+  });
+
+  it('describes a refusal read through the accessor exactly as one read by hand', () => {
+    // The refactor's only obligation: ten call sites dropped their own `instanceof` ternary for
+    // these two readers, and not one rendered sentence may move.
+    const error = new ChannelApiError(403, null, "the server's own English");
+
+    expect(describeApiRefusal(refusalStatus(error), ACTION)).toBe(describeApiRefusal(403, ACTION));
   });
 });
 

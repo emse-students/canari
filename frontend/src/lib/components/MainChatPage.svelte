@@ -28,8 +28,8 @@
     sendChannelPoll,
     type ChannelPollDraft,
   } from '$lib/utils/chat/channelCrypto';
-  import { ChannelApiError, channelService } from '$lib/services/ChannelService';
-  import { describeApiRefusal } from '$lib/utils/apiRefusal';
+  import { channelService } from '$lib/services/ChannelService';
+  import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
   // NOT from `CallService`: calling is held off, and naming its error type here would pull the
   // whole service into this page's module graph for a `catch` - see `callFailure.ts`.
   import { describeCallFailure } from '$lib/utils/callFailure';
@@ -953,11 +953,11 @@
       const meta = await channelService.votePoll(channelId, messageId, optionIds);
       setPollMeta(messageId, meta);
     } catch (e) {
-      // `channelService` throws `ChannelApiError(status, code, text)`, `text` being the server's
+      // `channelService` throws an `ApiRefusalError` whose `message` is the server's
       // own body: dev-facing English, correct for a log and wrong on a toast. The STATUS is what
       // picks the sentence, through the one refusal mapper - which answers `null` for a status it
       // has nothing better to say about, leaving the poll's own line to stand.
-      const status = e instanceof ChannelApiError ? e.status : null;
+      const status = refusalStatus(e);
       log(`[POLL] vote refused (status=${status ?? 'none'}): ${String(e)}`);
       showToast(
         describeApiRefusal(status, m.channel_action_poll_vote()) ?? m.channel_poll_vote_error(),
@@ -975,7 +975,7 @@
       setPollMeta(messageId, meta);
     } catch (e) {
       // Same shape as the vote above, and the same reason.
-      const status = e instanceof ChannelApiError ? e.status : null;
+      const status = refusalStatus(e);
       log(`[POLL] close refused (status=${status ?? 'none'}): ${String(e)}`);
       showToast(
         describeApiRefusal(status, m.channel_action_poll_close()) ?? m.channel_poll_close_error(),

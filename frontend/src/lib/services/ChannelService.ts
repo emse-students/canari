@@ -242,25 +242,21 @@ export interface ChannelMessageRow {
 }
 
 import { apiFetch } from '$lib/utils/apiFetch';
+import { ApiRefusalError } from '$lib/utils/apiRefusal';
 import { Log } from '$lib/utils/Log';
 
 /**
  * A refusal answered by the channels API.
  *
- * Carries the HTTP status and the server's stable `code` so callers classify by TYPE and by a
- * machine-readable discriminator, never by the sentence in `message` - which stays the raw response
- * body so existing consumers that surface it are unchanged. The `code` half is the same contract
- * `DEVICE_REVOKED` uses on the delivery service.
+ * What it adds to {@link ApiRefusalError} is its NAME: the status and the code are the base's, and
+ * a caller that only wants the number reads `refusalStatus(e)` without importing this module at
+ * all. `message` stays the raw response body, so the consumers that parse a Nest envelope out of
+ * it - `readErrorDetail` in `useChannelWorkspaces` - are unchanged. The `code` half is the same
+ * contract `DEVICE_REVOKED` uses on the delivery service.
  */
-export class ChannelApiError extends Error {
-  constructor(
-    /** The HTTP status the server answered with. */
-    readonly status: number,
-    /** The server's stable error code, or null when the body carried none. */
-    readonly code: string | null,
-    message: string
-  ) {
-    super(message);
+export class ChannelApiError extends ApiRefusalError {
+  constructor(status: number, code: string | null, message: string) {
+    super(status, code, message);
     this.name = 'ChannelApiError';
   }
 }
