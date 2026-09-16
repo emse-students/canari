@@ -50,10 +50,21 @@ describe('the login sequence', () => {
   });
 
   it('takes tab leadership before it tries to open anything', () => {
-    // Only the leader tab holds a socket, and `openGatewayConnection` asks `getIsTabLeader()` -
-    // which answers `false` until `initTabLeadershipAsync` has resolved.
+    // Only the leader tab holds a socket, and BOTH halves ask `getIsTabLeader()` - which answers
+    // `false` until `initTabLeadershipAsync` has resolved. Since 2026-09-16 the half that matters
+    // is `startGatewayHandshake`, which runs 200 ms ahead of the adoption below: leadership moved up
+    // with it, and this asserts it moved FAR enough rather than merely staying ahead of the second.
     const leadership = source.indexOf('await initTabLeadershipAsync(');
     expect(leadership).toBeGreaterThan(-1);
+    expect(leadership).toBeLessThan(source.indexOf('startGatewayHandshake({'));
     expect(leadership).toBeLessThan(source.indexOf('await openGatewayConnection('));
+  });
+
+  it('opens the gateway span around the adoption, which is all that is left to wait for', () => {
+    // THE SPAN NO LONGER TIMES THE HANDSHAKE, AND THE BENCHMARK MUST NOT BE READ AS THOUGH IT DID.
+    // `open_gateway` now brackets the await of a socket that has been opening for 200 ms, so a
+    // small number here is the handshake WINNING, not the handshake being fast.
+    const span = markerIndex('open_gateway');
+    expect(source.indexOf('startGatewayHandshake({')).toBeLessThan(span);
   });
 });

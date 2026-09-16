@@ -59,7 +59,7 @@ bundle that wires its handler, and there is no interval in which it is visible b
 | Phase | What it does |
 |---|---|
 | `setup_handler` | registers the inbound pipeline, so nothing can arrive unhandled |
-| `open_gateway` | tab leadership, then `openGatewayConnection` - the socket |
+| `open_gateway` | `openGatewayConnection` ADOPTS a socket that has been opening since before `setup_handler` |
 | `load_conversations` | the archive replay out of the local store, one conversation at a time |
 | `fcm_cache` | merges what a background notification decrypted while the app was dead |
 | `initialize_connection` | `syncConnectionAfterWsOpen` - KeyPackages, the group sweep, reconciliation |
@@ -86,6 +86,32 @@ the pair would have had the group sweep reconcile against an empty map.
 and processes them during the restore today; what changes is that the barrier can now believe its
 own result. The offline branch skips `open_gateway` entirely rather than letting it fail - the
 attempt costs a timeout on a launch that already knows there is no network.
+
+### And since 2026-09-16 the handshake starts before the phases do
+
+The table above is where the socket is AWAITED. It is no longer where the socket is OPENED.
+
+Measured on production 2026-09-16, between `MLS ready` (+1093 ms) and `[WS] Connected to Chat
+Gateway` (+1308): the serial work between the two is 33 ms and the handshake is 182. It was queued
+behind `load_or_create` and reads nothing that function produces - `connect` sends a device id and a
+token, and `resolveDeviceId` answers both before `init()` is called. So `startGatewayHandshake` now
+fires there, tab leadership moved up with it (it is what decides whether to open a socket at all),
+and `open_gateway` adopts the result. **A small `open_gateway` span is therefore the handshake
+WINNING, not the handshake being fast**, and the benchmark must not be read the other way.
+
+**WHAT PAYS FOR THAT CONCURRENCY IS A QUEUE, AND IT IS THE WHOLE COST.** A socket open before the
+MLS client exists can be handed a payload frame with nowhere to go, and the gateway's delivery
+accounting does not distinguish "handed to a client" from "handled by one" - so the loss would be
+silent on both ends. `BaseMlsService` holds every inbound frame in arrival order until the login
+calls `markInboundReady()`, then replays them sequentially, because a Welcome and the Commit behind
+it admit exactly one order. Heartbeats never reach the gate; everything else waits, payload frames
+and control frames alike, because a control frame whose callback is not yet registered is dropped
+just as silently as a payload one. A session that ends with frames still held SAYS so.
+
+The gate lives on the base class, so both sockets pass it, and the per-frame routing was extracted
+to `routeFrame` on each platform so that a held frame and a live one take literally the same path.
+Behaviour is in `BaseMlsService.inboundGate.test.ts` and `startGatewayHandshake.test.ts`; the boot
+ORDER, which no behavioural test can see, is in six source guards in `offlineUnlock.test.ts`.
 
 The order is asserted by `session/startupOrder.test.ts`, deliberately a SOURCE test: the property is
 an order between two statements inside a function that takes a live MLS client, a storage backend, a
