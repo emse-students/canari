@@ -124,7 +124,7 @@ async function flush(): Promise<void> {
       writeTouched({ day: record.day, ids: [...new Set([...record.ids, ...mediaIds])] });
       appendLog(`[MEDIA_TOUCH] ${mediaIds.length} cached media reported as used`);
     } catch (e) {
-      appendLog(`[MEDIA_TOUCH] report failed: ${e instanceof Error ? e.message : String(e)}`);
+      appendLog(`[MEDIA_TOUCH] report failed: ${String(e)}`);
       for (const id of mediaIds) seenThisSession.delete(id);
     }
   }

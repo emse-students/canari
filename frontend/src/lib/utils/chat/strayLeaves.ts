@@ -57,7 +57,7 @@ export async function removeStrayLeaves(
   } catch (e) {
     log(
       `[STRAY] ${groupId.slice(0, 8)}... could not compare the tree with its roster: ` +
-        `${e instanceof Error ? e.message : String(e)} - nobody removed`
+        `${String(e)} - nobody removed`
     );
     return [];
   }
@@ -79,7 +79,7 @@ export async function removeStrayLeaves(
     // this line is the only place it is visible.
     log(
       `[STRAY] ${groupId.slice(0, 8)}... could not remove ${diff.strayUserIds.length} departed ` +
-        `member(s): ${e instanceof Error ? e.message : String(e)} - their leaves stay`
+        `member(s): ${String(e)} - their leaves stay`
     );
     return [];
   }

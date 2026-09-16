@@ -7698,11 +7698,17 @@ all because it had gone stale while this one was re-measured) came from one pred
 which only some assign to an error state a screen renders - the rest sit inside a `Log`/`console`
 call and are correctly dev-facing.
 
-**93 remain, down from 194** (one predicate at both ends, measured rather than decremented). The
+**37 remain, down from 194** (one predicate at both ends, measured rather than decremented). The
 intermediate readings were 125 on 2026-09-15 - the 49 of the admin pass plus the 20 of the
 component pass - 127 immediately before the component-ROOT pass of 2026-09-16, the tree having
-moved twice in between, and 117 after it. **That is why this line is re-measured and never
-decremented**: two sites arrived while the count sat still.
+moved twice in between, 117 after it, and 93 after `lib/composables`. **That is why this line is
+re-measured and never decremented**: two sites arrived while the count sat still.
+
+**OF THE 37, THREE ARE COMMENTS** (`utils/localizedError.ts`, `utils/chat/messaging.ts` and the
+guard's own regex), which the stripper never shows the predicate. The rest sit in
+`lib/services` (15), `lib/mls-client` (7), `lib/workers` (5), `lib/calendar` (2),
+`lib/associations` (1), `lib/stores` (1), `lib/i18n.ts`, `hooks.client.ts`, and the one
+allowlisted site in `lib/composables`.
 
 The member-facing pass closed 27 across `components/posts`, `components/settings`,
 `routes/posts`, `routes/profile`, `routes/lists`, `routes/documents` and `routes/forms`; the agenda
@@ -7851,19 +7857,43 @@ this sweep has an end rather than a remainder:
 - **The rest cross a boundary as DATA, not as a screen**: a worker's `postMessage({ detail })`
   (x3), `mlsDecryptSession`'s per-message `{ ok: false, error }`, and log lines.
 
-**So the trees still OUTSIDE the guard are outside it for a reason**: `lib/utils/chat`, `graine`,
-the workers and `mls-client` are almost entirely logs, and the regex finds the SHAPE, never the
-destination. **That reason is now weaker than it reads**, and the composables pass is the evidence:
-nineteen of its twenty-five sites were logs, every one of them became `String(e)`, and not one lost
-anything - `String(e)` renders `Error: <message>` rather than `<message>`, which is strictly more
-than the ternary gave. So those trees are not blocked on the guard learning to tell a log from a
-render; they are blocked on somebody doing the same sweep. The raw count stays an upper bound.
+**THE ARGUMENT FOR LEAVING A LOG-ONLY TREE OUTSIDE THE GUARD IS DEAD, AND `src/lib/utils` IS WHAT
+KILLED IT.** The reason recorded here was that `lib/utils/chat`, `graine`, the workers and
+`mls-client` are almost entirely logs while the regex finds the SHAPE, never the destination. The
+utils pass of 2026-09-16 took 319 files and **fifty-six sites, of which NOT ONE was on a screen** -
+and closing them cost nothing and bought the type back: `String(e)` renders `Error: <message>`
+rather than `<message>`, so every one of those log lines now keeps what it was throwing away. The
+workers and `mls-client` are blocked on nothing but somebody doing the same sweep.
 
-**Sixteen entries are guarded and they cover more ground than the twenty did**: `src/lib/components`
-is one of them and owns all 218 of its files, so the five subtree entries under it were removed
-rather than left to walk the same file twice, and `src/lib/composables` joined on 2026-09-16.
-Every guarded file is clean but ONE, `sessionAuth.ts`, which is the allowlist's single entry and
-carries the reason it cannot yet close.
+**AND THE FIFTY-SIXTH SITE IS WHY A TREE IS TAKEN WHOLE RATHER THAN SITE BY SITE.**
+`utils/chat/groupCreation.ts` held `toUiDiscussionError`, documented as producing *"user-friendly
+strings suitable for display in the UI"*: five `raw.toLowerCase().includes(...)` branches over an
+exception's words - `'no registered device'`, `'session expir'`, `'401'`, `'failed to fetch'`,
+`'already_member'` - each returning an English sentence, falling back to the server's own text.
+**All three of its call sites are `log(...)`**, and `appendLog` writes to the console. So it
+rendered nothing, translated nothing, and staked its correctness on prose from layers that never
+promised it. It is deleted. **A NAME IS NOT A CONSUMER** - see
+[durable-rules](durable-rules.md), where the 413 case recorded the same rule one size smaller.
+
+With it went the LAST site in `src/lib` or `src/routes` that read an exception's words to decide
+what had happened; everything left compares against a shared CONSTANT
+(`MLS_LOCAL_STATE_UNDECRYPTABLE`, `MEDIA_PURGED_MESSAGE`), which is a marker rather than a sentence.
+Verified with `grep -rnE "\.message\s*(\.(includes|startsWith|match|toLowerCase)\(|===)"` over
+both trees: two hits, both `typeof obj.message === 'string'` shape checks on parsed JSON.
+
+**Seventeen entries are guarded and they cover more ground than the twenty did**:
+`src/lib/components` is one of them and owns all 218 of its files, so the five subtree entries under
+it were removed rather than left to walk the same file twice, and `src/lib/composables` (2026-09-16)
+and `src/lib/utils` (319 files, the same day) joined after it. Every guarded file is clean but ONE,
+`sessionAuth.ts`, which is the allowlist's single entry and carries the reason it cannot yet close.
+
+**ONE THING THE UTILS READING FOUND AND DID NOT FIX.** A group creation that fails tells the member
+NOTHING: `createNewGroup` and `startNewConversation` catch their own failure, clean up the orphan
+group, and the only trace is the console line this pass rewrote. That was already true before
+`toUiDiscussionError` was deleted - its sentences never reached a screen either - so nothing
+regressed, but the modal closes on a group that does not exist and the member is left to work out
+why. Fixing it is a UI change (the creation modal has to stay open and render a refusal), not a
+sweep, so it is written down here rather than folded into a commit about a ternary.
 
 **A tree is added only once every file under it answers**, which is why they arrive in batches: a
 guard owning half a directory is one a new file walks past. The CODES are the separate, still-open

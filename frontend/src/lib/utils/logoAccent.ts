@@ -210,10 +210,7 @@ export async function loadLogoAccent(url: string): Promise<string | null> {
       );
       return accent;
     } catch (e) {
-      Log.d(
-        'logoAccent',
-        `could not read ${url.slice(0, 80)} (${e instanceof Error ? e.message : String(e)}) - using the fallback`
-      );
+      Log.d('logoAccent', `could not read ${url.slice(0, 80)} (${String(e)}) - using the fallback`);
       return null;
     }
   })();

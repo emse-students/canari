@@ -11,6 +11,34 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - un mappeur d'erreurs qui n'atteignait aucun ecran disparaît, et 55 journaux disent ce qu'ils ont attrape
+
+`src/lib/utils` - 319 fichiers - tenait **cinquante-six** occurrences de
+`e instanceof Error ? e.message : String(e)`, et **pas une seule n'arrivait sur un ecran**. C'est
+ce qui rend l'arbre interessant : cinquante-cinq etaient des lignes de journal qui jetaient le
+type, la pile et la `cause` de ce qu'elles venaient d'attraper pour n'en imprimer que la phrase.
+`String(e)` rend `Error: <message>` : les journaux de la couche MLS, de Graine, de l'outbox et du
+coffre de cles disent desormais ce qui a ete leve, et non plus seulement ce que ca racontait.
+
+**La cinquante-sixieme est la raison pour laquelle un arbre se prend en entier.**
+`groupCreation.ts` portait `toUiDiscussionError`, documentee comme produisant des *"user-friendly
+strings suitable for display in the UI"* : cinq branches `raw.toLowerCase().includes(...)` sur les
+MOTS d'une exception - `'no registered device'`, `'session expir'`, `'401'`, `'failed to fetch'`,
+`'already_member'` - renvoyant chacune une phrase anglaise, et retombant sinon sur le texte du
+serveur. **Ses trois appelants sont des `log(...)`**, et `appendLog` ecrit dans la console. Elle
+n'affichait donc rien, ne traduisait rien, et faisait reposer sa justesse sur la prose de couches
+qui ne l'avaient jamais promise : un renommage cote serveur l'aurait rendue muette sans qu'aucun
+test ne bouge. Elle est supprimee ; l'exception part dans le journal, ou elle allait deja.
+
+Avec elle disparaît **le dernier endroit de `src/lib` et `src/routes` qui lisait les mots d'une
+exception pour decider de ce qui s'etait passe.** Ce qui reste compare a une CONSTANTE partagee
+(`MLS_LOCAL_STATE_UNDECRYPTABLE`, `MEDIA_PURGED_MESSAGE`), c'est-a-dire a un marqueur et non a une
+phrase.
+
+La garde `serverProse` prend l'arbre : dix-sept entrees, une seule exception (`sessionAuth.ts`, qui
+se referme avec le P1 PIN-vs-etat-corrompu). Mesure d'un bout a l'autre avec le meme predicat :
+93 occurrences avant, 37 apres - dont trois sont des commentaires citant la forme pour l'expliquer.
+
 ### Fixed - l'envoi d'un media trop volumineux le dit, et six erreurs cessent de citer une exception
 
 Le dernier arbre hors de la garde `serverProse`, `src/lib/composables`, tenait **vingt-cinq**

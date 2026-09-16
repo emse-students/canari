@@ -88,13 +88,8 @@ export async function deliverWelcomes(params: {
         delivered.add(owner);
         log(`${tag} Welcome -> ${owner}:${did} OK`);
       } catch (e) {
-        log(
-          `${tag} Welcome failed -> ${owner}:${did}: ${e instanceof Error ? e.message : String(e)}`
-        );
-        console.warn(
-          `${tag} sendWelcome failed for ${owner}:${did}:`,
-          e instanceof Error ? e.message : e
-        );
+        log(`${tag} Welcome failed -> ${owner}:${did}: ${String(e)}`);
+        console.warn(`${tag} sendWelcome failed for ${owner}:${did}:`, e);
       }
     })
   );
@@ -351,7 +346,7 @@ export async function persistMlsStateAfterMutation(
   try {
     await persistMlsStructuralCheckpoint({ mlsService });
   } catch (e) {
-    log?.(`[MLS] saveState failed after mutation: ${e instanceof Error ? e.message : String(e)}`);
+    log?.(`[MLS] saveState failed after mutation: ${String(e)}`);
   }
 }
 
@@ -378,7 +373,7 @@ export async function forgetMlsGroupIfPresent(
     log?.(`[MLS] forgetGroup ${groupId} (absent from server)`);
     return true;
   } catch (e) {
-    log?.(`[MLS] forgetGroup failed for ${groupId}: ${e instanceof Error ? e.message : String(e)}`);
+    log?.(`[MLS] forgetGroup failed for ${groupId}: ${String(e)}`);
     return false;
   }
 }

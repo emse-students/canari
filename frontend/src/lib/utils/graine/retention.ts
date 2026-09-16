@@ -58,9 +58,7 @@ export async function sweepExpiredGraineSeeds(): Promise<number> {
     const rows = await storage.getAllEncryptedGraineRows();
     held = rows.map((row) => ({ sessionId: row.sessionId, createdAt: row.createdAt }));
   } catch (e) {
-    console.warn(
-      `[GRAINE] retention sweep could not read the seed store: ${e instanceof Error ? e.message : String(e)}`
-    );
+    console.warn(`[GRAINE] retention sweep could not read the seed store: ${String(e)}`);
     return 0;
   }
   if (held.length === 0) return 0;
@@ -76,7 +74,7 @@ export async function sweepExpiredGraineSeeds(): Promise<number> {
       // A chunk that never got an answer must not be swept: the rest of this run would read its
       // sessions as unnamed, which is precisely the "server said nothing" that means nothing.
       console.warn(
-        `[GRAINE] retention sweep abandoned after ${i} of ${held.length} session(s): ${e instanceof Error ? e.message : String(e)}`
+        `[GRAINE] retention sweep abandoned after ${i} of ${held.length} session(s): ${String(e)}`
       );
       return 0;
     }
@@ -107,7 +105,7 @@ export async function sweepExpiredGraineSeeds(): Promise<number> {
     dropped = await storage.deleteGraineSessions(sessionIds);
   } catch (e) {
     console.warn(
-      `[GRAINE] retention sweep failed to drop ${sessionIds.length} expired seed(s): ${e instanceof Error ? e.message : String(e)}`
+      `[GRAINE] retention sweep failed to drop ${sessionIds.length} expired seed(s): ${String(e)}`
     );
     return 0;
   }

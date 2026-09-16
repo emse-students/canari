@@ -311,7 +311,7 @@ async function gatherNamedSessions(
     console.warn(
       `[GRAINE] refusing ${frame.sender} the seed(s) they asked for in community ` +
         `${frame.workspaceId.slice(0, 8)} - cannot place their history boundary: ` +
-        (e instanceof Error ? e.message : String(e))
+        String(e)
     );
     return null;
   }

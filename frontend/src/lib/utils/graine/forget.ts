@@ -75,7 +75,7 @@ export async function forgetCommunityGraine(workspaceId: string): Promise<number
     // An unreadable store still gets its rows dropped below - the delete is by workspace id, a
     // clear column, and needs no device key. What is lost is only the list of what to un-cache.
     console.warn(
-      `[GRAINE] could not enumerate the seeds of community ${workspaceId.slice(0, 8)} before purging them: ${e instanceof Error ? e.message : String(e)}`
+      `[GRAINE] could not enumerate the seeds of community ${workspaceId.slice(0, 8)} before purging them: ${String(e)}`
     );
   }
 
@@ -84,7 +84,7 @@ export async function forgetCommunityGraine(workspaceId: string): Promise<number
     dropped = await storage.deleteGraineSessionsForWorkspace(workspaceId);
   } catch (e) {
     console.warn(
-      `[GRAINE] durable purge failed for community ${workspaceId.slice(0, 8)}: ${e instanceof Error ? e.message : String(e)}`
+      `[GRAINE] durable purge failed for community ${workspaceId.slice(0, 8)}: ${String(e)}`
     );
   }
 

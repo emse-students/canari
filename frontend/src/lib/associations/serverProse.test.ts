@@ -130,6 +130,26 @@ const TREES = [
   // as the reason their community would not load. A detail is now quoted only when it came from a
   // documented envelope.
   'src/lib/composables',
+  // THE UTILITIES, 2026-09-16 - 319 files, fifty-six sites, and NOT ONE of them was on a screen.
+  //
+  // That is the point of taking the tree rather than the sites a reader meets. Every one of the
+  // fifty-five log lines threw away the type, the stack and the `cause` of what it caught in order
+  // to print a sentence; `String(e)` prints `Error: <message>` and keeps them. A tree where the
+  // shape survives only in logs is a tree where the next screen written under it copies the shape.
+  //
+  // THE FIFTY-SIXTH IS WHY THE COUNT OF READER-FACING SITES IS NOT THE MEASURE. `groupCreation.ts`
+  // held `toUiDiscussionError`, documented as "user-friendly strings suitable for display in the
+  // UI": five `raw.toLowerCase().includes(...)` branches over the words of an exception - 'no
+  // registered device', 'session expir', '401', 'failed to fetch', 'already_member' - each
+  // returning an English sentence, and falling back to the server's own text. Its three call sites
+  // are `log(...)`, all of them, and `appendLog` writes to the console. So the mapper rendered
+  // nothing, translated nothing, and depended for its correctness on prose from a layer that never
+  // promised it. It is deleted; the exception goes to the log, which is where it was already going.
+  //
+  // With it went the LAST place in `src/lib` and `src/routes` that read an exception's words to
+  // decide what had happened. What remains compares against a shared CONSTANT
+  // (`MLS_LOCAL_STATE_UNDECRYPTABLE`, `MEDIA_PURGED_MESSAGE`), which is a marker, not a sentence.
+  'src/lib/utils',
 ];
 
 /**
@@ -200,6 +220,8 @@ describe('no member-facing tree renders a server sentence', () => {
     expect(files).toContain('src/lib/components/sidebar/SidebarCommunityAdminModal.svelte');
     expect(files).toContain('src/lib/composables/useMessaging.svelte.ts');
     expect(files).toContain('src/lib/composables/session/sessionAuth.ts');
+    expect(files).toContain('src/lib/utils/chat/groupCreation.ts');
+    expect(files).toContain('src/lib/utils/graine/repair.ts');
   });
 
   it.each(files.map((f) => [f]))('%s', (file) => {

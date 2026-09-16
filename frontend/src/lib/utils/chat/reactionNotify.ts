@@ -52,6 +52,6 @@ export async function notifyReaction(params: {
     }
   } catch (e) {
     // Fire-and-forget: an expired session must not surface an error to the caller.
-    console.warn(`[notifyReaction] Failed: ${e instanceof Error ? e.message : String(e)}`);
+    console.warn(`[notifyReaction] Failed: ${String(e)}`);
   }
 }

@@ -35,33 +35,6 @@ interface GroupCreationDeps {
 }
 
 /**
- * Maps raw error messages from the MLS/network layer to user-friendly strings
- * suitable for display in the UI. Falls back to the raw message for unrecognised errors.
- */
-function toUiDiscussionError(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error);
-  const lower = raw.toLowerCase();
-
-  if (lower.includes('no registered device') || lower.includes('no active device')) {
-    return 'The recipient does not yet have an active device.';
-  }
-  if (lower.includes('session expir') || lower.includes('401') || lower.includes('403')) {
-    return 'Session expired or insufficient permissions. Please sign in and try again.';
-  }
-  if (lower.includes('failed to fetch') || lower.includes('network')) {
-    return 'Messaging service unavailable. Check your network connection.';
-  }
-  if (lower.includes('cannot send the secure invitation')) {
-    return raw;
-  }
-  if (lower.includes('already_member')) {
-    return 'This member is already present locally; they will join the group via automatic sync.';
-  }
-
-  return raw;
-}
-
-/**
  * Fetches the list of registered devices for a user, retrying up to `attempts` times
  * before giving up. Returns an empty array if no devices are found after all retries.
  * Targets are always picked from the user autocomplete (they exist and have signed in),
@@ -238,7 +211,7 @@ export async function createNewGroup(name: string, deps: GroupCreationDeps): Pro
       }
     });
   } catch (e) {
-    log(`Group creation error: ${toUiDiscussionError(e)}`);
+    log(`Group creation error: ${String(e)}`);
     console.error('[GROUP] createNewGroup failed:', e);
     globalMessaging.resetMessageCatchupState();
     if (conversationKey) conversations.delete(conversationKey);
@@ -375,9 +348,7 @@ async function processBulkAddition(
             await mlsService.registerMember(conversation.id, tUser);
             announcedUsers.add(tUser);
           } catch (err) {
-            log(
-              `[WARN] registerMember failed for ${tUser}: ${err instanceof Error ? err.message : String(err)}`
-            );
+            log(`[WARN] registerMember failed for ${tUser}: ${String(err)}`);
           }
         })
       );
@@ -411,7 +382,7 @@ async function processBulkAddition(
       console.warn('[SYNC] No Welcome delivered - member addition notification skipped');
     }
   } catch (e: any) {
-    log(`Bulk invite error: ${toUiDiscussionError(e)}`);
+    log(`Bulk invite error: ${String(e)}`);
     console.error('[SYNC] processBulkAddition failed:', e);
   }
 }
@@ -716,8 +687,7 @@ export async function startNewConversation(
     log(`[OK] Secure channel established with ${contact}.`);
     console.log(`[DM] 1v1 conversation with ${contact} ready (groupId=${groupId})`);
   } catch (_e: unknown) {
-    const msg = _e instanceof Error ? _e.message : String(_e);
-    log(`Creation error: ${toUiDiscussionError(msg)}`);
+    log(`Creation error: ${String(_e)}`);
     if (groupId) conversations.delete(groupId);
 
     // Clean up local MLS state (epoch may have advanced after addMembersBulk)

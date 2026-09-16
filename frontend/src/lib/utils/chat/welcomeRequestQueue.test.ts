@@ -120,7 +120,9 @@ describe('a welcome_request is served one way, from either entrance (R-D9)', () 
       // Never throws: one entrance is a WebSocket message handler and the other a group-ready
       // notification, and a rejection in either belongs to no group at all.
       await expect(entrance.enter(ctx)).resolves.toBeUndefined();
-      expect(ctx.lines.join(' | ')).toMatch(/FAILED: socket is gone/);
+      // `Error: ` is part of the expectation on purpose: the line renders `String(e)`, not
+      // `e.message`, so it carries the TYPE of what was thrown as well as its sentence.
+      expect(ctx.lines.join(' | ')).toMatch(/FAILED: Error: socket is gone/);
     });
   }
 

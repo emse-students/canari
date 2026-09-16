@@ -156,9 +156,7 @@ export async function resolveDirectPeerId(
     }
     return peer;
   } catch (e) {
-    log?.(
-      `[DM_PEER] ${groupId.slice(0, 8)}... roster lookup failed: ${e instanceof Error ? e.message : String(e)}`
-    );
+    log?.(`[DM_PEER] ${groupId.slice(0, 8)}... roster lookup failed: ${String(e)}`);
     return null;
   }
 }
@@ -708,9 +706,7 @@ export async function mergeDirectConversationDuplicates(
       }
       log(`Merged duplicate 1:1 conversation: ${duplicate.name} -> ${canonical.name}`);
     } catch (error) {
-      log(
-        `Direct-conversation merge error: ${error instanceof Error ? error.message : String(error)}`
-      );
+      log(`Direct-conversation merge error: ${String(error)}`);
     }
   }
 
@@ -723,9 +719,7 @@ export async function mergeDirectConversationDuplicates(
     try {
       await storage.saveConversation(canonical);
     } catch (e) {
-      log(
-        `[WARN] Canonical persist failed ${canonical.id}: ${e instanceof Error ? e.message : String(e)}`
-      );
+      log(`[WARN] Canonical persist failed ${canonical.id}: ${String(e)}`);
     }
     merged.push(canonical);
   }
@@ -748,9 +742,7 @@ export async function mergeDirectConversationDuplicates(
       await storage.saveConversation(updatedMeta);
       normalizedMetas.push(updatedMeta);
     } catch (e) {
-      log(
-        `[WARN] Direct-conversation normalization failed ${meta.id}: ${e instanceof Error ? e.message : String(e)}`
-      );
+      log(`[WARN] Direct-conversation normalization failed ${meta.id}: ${String(e)}`);
       normalizedMetas.push(meta);
     }
   }
@@ -908,9 +900,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
             `primed in ${requests} request(s)`
         );
       } catch (e) {
-        ctx.log(
-          `[WARN] batch history failed: ${e instanceof Error ? e.message : String(e)} — sequential fallback`
-        );
+        ctx.log(`[WARN] batch history failed: ${String(e)} — sequential fallback`);
       }
     }
 
@@ -1039,9 +1029,7 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
           }
         }
       } catch (e) {
-        ctx.log(
-          `[WARN] Conversation load failed ${meta.id}: ${e instanceof Error ? e.message : String(e)}`
-        );
+        ctx.log(`[WARN] Conversation load failed ${meta.id}: ${String(e)}`);
       }
     }
   });
