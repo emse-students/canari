@@ -6363,28 +6363,29 @@ all - the WebView's console is read over CDP, and logcat carries only the native
 attempt reads the phone's CDP console across a background/resume, not its logcat**, and that is the
 one line still owed.
 
-**SECOND OBSERVATION, 2026-09-16, AND IT IS INDIRECT BUT IT SETTLES THE RESIDUE PARAGRAPH.** The
+**AN ATTEMPT AT A SECOND OBSERVATION, 2026-09-16, AND IT COULD NOT BE MADE TO CARRY WEIGHT.** The
 Mi 9T was re-imaged by the 2026-09-14 hardware session (`firstInstallTime=2026-09-14 20:12:15`) and
-runs `0.18.1`, which HAS the guard - `e5aba1f76` is an ancestor of `v0.16.4`, and `v0.16.4` of
-`v0.18.1`. Four hours after first run, `mls.bin` stood at **2 750 195 bytes** for a device holding
-**4 conversations and 1 180 messages**. Groups cannot account for it: at the measured 5 330-byte
-floor plus ~2 000 a member, four groups cost under 0.45 MB even at fifty members apiece, and sends
-are flat. The remainder is **roughly 1 200 bundles, which is about twenty-four purge-and-remint
-rounds of fifty, in four hours.**
+runs `0.18.1`. Four hours after first run its `mls.bin` was **2 750 195 bytes** for a device holding
+4 conversations and 1 180 messages. The temptation is to read the residue as bundles and call the
+loop live - **and that reading does not hold.** Group weight depends on membership, this install's
+membership was never counted, and between fifty and two hundred members a group the four groups
+account for anywhere from 0.45 MB to 1.6 MB of it. The bundle residue is therefore somewhere between
+~600 and ~1 400, which accuses nothing.
 
-**So the loop survived the guard, exactly the way the residue paragraph predicted it would.**
-`publishedThisSession` is per-process; an enrolment session that restarts the app hands each new
-process an empty set, and the previous process's mints are purgeable again. This does not identify
-the reload that empties the keystore - that is still the owed CDP observation - but it removes the
-possibility that #393 closed the class, and it dates the loop as live on the current stable line
-rather than on `0.16.x`. **It is also the last measurement this handset can give about the pile**:
-its old 19.5 MB blob was deleted with the debug build, so the prune's reclaim is no longer
-observable here (see the blob entry below).
+**What the attempt did establish is that a file size is the wrong instrument, and this entry has
+been using it since September.** Every count here - 3053, 3051, 2782, ten thousand - was inferred
+from a blob's weight and an assumption about what else was in it. **The cheapest next step is no
+longer the CDP observation; it is a device that can report its own state census** (groups, members,
+one-time bundles, last-resort), which would settle this entry, the blob entry and the 2026-09-06
+19.5 MB question in one line each. See the blob entry below, where that item now lives.
+
+**And this handset can no longer answer the other half either**: its 19.5 MB blob went with the debug
+build, so the prune's reclaim is not observable here.
 
 **The 2026-09-06 prune (`prune_expired_key_packages`) does NOT fix this** and was never going to:
 these bundles are hours old, not 84 days. The prune bounds the ceiling; this loop is what fills it.
 
-### P2 - TWO ACCRUAL PATHS STILL MINT INTO `mls.bin`: ~1 200 BUNDLES IN FOUR HOURS ON A FRESH INSTALL, AND THE PRUNE'S RECLAIM IS NOW UNOBSERVABLE ON THIS HANDSET (re-measured on the Mi 9T, 2026-09-16)
+### P2 - `mls.bin` IS 2.75 MB ON A TWO-DAY-OLD INSTALL CARRYING ALL THREE ACCRUAL FIXES, AND NOTHING CAN SAY HOW MUCH OF IT IS BUNDLES (re-measured on the Mi 9T, 2026-09-16)
 
 **DOWNGRADED P1 -> P2 ON 2026-09-16.** It was a P1 because the PIN gate told the user the unlock
 had failed while it was still working; that half is shipped. What remains is bounded growth with no
@@ -6401,65 +6402,50 @@ never the cause; and `MlsManager::prune_expired_key_packages` now bounds growth 
 `mls-core/tests/state_weight.rs`, the rule in `tests/prune_expired_key_packages.rs`, the UI guard in
 `sessionExpiredRelease.test.ts`.
 
-**WHAT THE PRUNE DELIBERATELY DOES NOT DO** is shrink a blob whose bundles are younger than 84 days.
-So what is left is the minting itself rather than its cleanup - two paths, and neither is written.
+**THE TWO ACCRUAL PATHS THIS ENTRY CALLED OPEN ARE BOTH SHIPPED, AND THE ENTRY WAS WRONG TO STILL
+LIST THEM.** Checked against the tree on 2026-09-16 rather than believed:
 
-1. **The per-connection last-resort mint.** `generateKeyPackageImpl` publishes a fresh fallback
-   every time, and a `last_resort` package is reusable by construction - that is the whole point
-   of the 2026-09-06 fix. It should be re-minted only when the device can no longer back it, and
-   `keyPackageHasPrivate` already answers exactly that question about a fetched package. At
-   1 936 bytes a connection this is the STEADY-STATE floor of the leak, the part that survives
-   every storm being fixed: twenty connections a day over the 84-day prune horizon is ~1 680
-   bundles, over 3 MB, on a device doing nothing wrong.
-2. **`republishKeyMaterial`'s 50 orphans - and the obvious fix for it is WRONG.** Dropping the
-   local bundles when the server pool is purged would race a join and lose it: a peer may have
-   claimed a prekey seconds before the purge with the Welcome still in flight, and the private
-   key it needs is precisely what would be deleted. **The discriminator exists, but only on the
-   server.** A claim and the row's deletion are one atomic operation, so anything still present
-   when `DELETE .../prekeys` runs is provably UNCLAIMED - and therefore provably safe to delete
-   locally. The endpoint currently returns nothing. Have it return the ids it actually deleted,
-   and the client can drop exactly those with no race and no clock. That is the repository's own
-   rule about never learning by failing what a fact could have told you: carry the discriminator
-   to where the decision is made, from where it is already known. It needs a server change, a
-   client change, and a delete-by-`hash_ref` in `mls-core`.
+1. **The per-connection last-resort remint is gone** - `generer_key_packages_et_persister` now calls
+   `existing_last_resort_key_package(now_secs)` and mints only when nothing valid is held, so the
+   cadence is the package's own 84-day lifetime instead of every socket. `e0f2d825b` (#458), first
+   tagged `v0.17.0`.
+2. **The purge endpoint returns what it deleted** - `deleteAllOneTimePrekeys()` is typed
+   `Promise<string[]>` and reads `data.keyPackages`, and `republishKeyMaterial` hands exactly that
+   list to `forgetPurgedPrekeys`, which drops those private bundles and nothing it worked out for
+   itself. That is precisely the discriminator this entry asked for. Same commit.
 
-**THE FIELD RE-MEASUREMENT WAS TAKEN, AND IT ANSWERED A DIFFERENT QUESTION - A BETTER ONE.** On
-2026-09-16 the Mi 9T ran `0.18.1`, which carries the prune, and `stat mls.bin` read **2 750 195
-bytes** against the 19 548 753 of 2026-09-06. **That is not a reclaim.** The 2026-09-14 guided
-hardware session installed the release APK over the debug build, which uninstalled it and wiped
-`mls.bin` (see that session's entry above); `dumpsys package fr.emse.canari` confirms it with
-`firstInstallTime=2026-09-14 20:12:15`. The old blob was deleted, not pruned, so **the prune's
-reclaim remains unobserved and this handset can no longer be the place it is observed.**
+A third cause was fixed earlier: a background engine writing back its older blob between the mint and
+the write deleted fifty private keys whose public halves had just been published - `ForegroundCritical`
+now brackets the mint rather than the write, `6ff1143ca` (#432), `v0.16.6`.
 
-**WHAT THE NEW BLOB DOES MEASURE IS THE ACCRUAL, WHICH IS THE HALF THAT IS STILL OPEN.** The install
-is two days old and its local store holds **4 conversations and 1 180 messages**. Sends are flat in
-`mls.bin` by measurement, and message history lives in the SQLite store rather than the MLS state,
-so the conversations cost what the weights table says a group costs: 5 330 bytes of floor and
-~2 000 a member. Even at a generous fifty members apiece that is under 0.45 MB of the 2 750 195.
-**The remaining ~2.3 MB is roughly 1 200 accumulated prekey bundles, and the blob reached that size
-by 2026-09-15 00:15 - within FOUR HOURS of first run.** It has not been rewritten since, though the
-app ran again on 2026-09-15 18:21.
+**ALL THREE ARE IN `v0.18.1`**, verified with `git merge-base --is-ancestor`. So the open work this
+entry described no longer exists, and what replaces it is a question raised by a measurement.
 
-**WHICH PATH THAT ACCUSES, STATED HONESTLY.** Those four hours were an enrolment on an estate where
-this device had nothing, which is precisely the `NoMatchingKeyPackage` condition `republishKeyMaterial`
-answers with fifty fresh bundles every 30 s. So the number bounds **path 2**, the storm, and says
-nothing about **path 1**, the steady-state per-connection mint - a device four hours old has not made
-enough connections for that floor to show. ~1 200 bundles is about twenty-four purge-and-remint
-rounds, and it is the same engine that put ten thousand into the old blob.
+**THE MEASUREMENT, AND WHAT IT CANNOT YET SEPARATE.** On 2026-09-16 the Mi 9T ran `0.18.1` and
+`stat mls.bin` read **2 750 195 bytes**, against 19 548 753 on 2026-09-06. **That is not a reclaim
+and it is not a regression either.** `firstInstallTime=2026-09-14 20:12:15`: the 2026-09-14 hardware
+session installed the release APK over the debug build, which uninstalled it and wiped the blob (that
+session's own entry above says so). So this is a two-day-old install, and the prune's reclaim can no
+longer be observed on this handset at all.
 
-**THE PRUNE'S RECLAIM IS NOT PENDING, IT IS DATED - AND IT IS NO LONGER THE POINT.** The prune
-deletes on an elapsed `not_after` and openmls dates a KeyPackage 84 days ahead, so nothing in this
-install can be reclaimed before **2026-12-07**, and only if it survives until then. But a device that
-mints 1 200 bundles in four hours does not have a reclaim problem, it has a minting problem: waiting
-until December to watch 2.3 MB of hours-old bundles finally expire measures the cleanup working as
-designed on a leak nobody stopped. The ~22 s unlock and the 17 s structural checkpoint are likewise
-unremeasured at this size and are not the open question either - both were functions of the weight,
-and the weight is what the two paths above decide.
+What is worth explaining is that a **two-day-old install on a build carrying all three fixes already
+weighs 2.75 MB**, four hours after first run - `mls.bin` has not been rewritten since 2026-09-15
+00:15, though the app ran again on 2026-09-15 18:21. The local store holds 4 conversations and 1 180
+messages. Sends are flat in `mls.bin` by measurement and history lives in SQLite, so the candidates
+are groups and bundles - **and nothing here separates them.** At the measured 5 330-byte group floor
+plus ~2 000 a member, four groups cost 0.45 MB at fifty members apiece and 1.6 MB at two hundred;
+**this install's membership was never counted**, so the residue is anywhere between ~600 and ~1 400
+bundles. A range that wide is not a finding.
 
-**SO NOTHING HERE IS WAITING ON A HANDSET.** How many bundles a connection mints, and whether a purge
-round orphans fifty, are statements about `generateKeyPackageImpl` and `republishKeyMaterial` that a
-unit test settles today. The field number was never going to be the fix; it was going to be the proof
-that a fix had landed, and there is nothing yet for it to prove.
+**SO THE OPEN ITEM IS AN INSTRUMENT, NOT A FIX.** `mls-core/tests/state_weight.rs` can weigh the
+parts of a state it builds itself; nothing can ask a REAL device what its blob is made of, which is
+why every number in this entry's history has been inferred from a file size and an assumption about
+membership. A device that could report `groups=N, members=M, one-time bundles=B, last-resort=L`
+would have settled 19.5 MB in one line in September, and would settle this in one line now. That is
+the same rule the rest of this repository works to: a correct mechanism with no report is found by
+hand, a day late. **Until that exists, no `stat mls.bin` on any handset can accuse anything**, and
+this entry should not ask for another one.
+
 
 **This is invisible to every gate in this repository.** The desktop clients carry a small state and
 the emulator never accumulates one; only a phone that has lived through a campaign shows it. It
