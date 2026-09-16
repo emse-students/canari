@@ -823,6 +823,52 @@ smaller number is the same defect at a different rate, and it would still be a c
 honour.
 
 ---
+### P2 - EVERY BOOT PAYS A FULL ORIGIN ROUND TRIP FOR A DOCUMENT THAT IS THE SAME FOR EVERYBODY (measured on production 2026-09-16)
+
+Against the cold-start target of **under 1 s**, the FIRST thing in every waterfall:
+
+```
+/chat                       200   14 306 B (6 005 B on the wire, zstd)
+                            TTFB 120-146 ms   cf-cache-status: DYNAMIC   Cache-Control: no-store
+/_app/immutable/entry/app.*  200   36 558 B (9 540 B)  TTFB 65 ms   cf-cache-status: HIT
+/_app/immutable/assets/0.*   200  216 458 B (28 840 B) TTFB 64 ms   cf-cache-status: HIT
+```
+
+Everything hashed is `HIT` and compressed, so **the edge is healthy and the bytes are not the
+problem** - a first pass read the two entry chunks as `MISS`, which was only the first request after
+the `0.18.7` deploy, and a second pass showed both `HIT`. What is left is the document: it is never
+cached anywhere, so every boot waits on an origin round trip and on the `frontend-ssr` container
+before a single byte of application code is fetched.
+
+**THE DOCUMENT IS NOT USER-SPECIFIC, AND THAT IS NOT AN INFERENCE FROM A RESPONSE.** `hooks.server.ts`
+is the whole of the server-side work: the app is a SPA with `ssr = false`, not one component renders
+there, and the handle reads `event.url.pathname` and nothing else - no cookie, no session, no user.
+Two fetches of `/chat` differ in exactly four lines, all of them Cloudflare's own injected
+`__CF$cv$params`; the origin's bytes are identical.
+
+**SO `no-store` IS STRICTER THAN THE PAGE REQUIRES - BUT IT IS NOT WRONG, AND IT IS FIVE HOURS OLD.**
+It was added deliberately on 2026-09-16 (`Dockerfile.frontend`, `location @ssr`) after measuring that
+an HTML navigation carried no `Cache-Control` at all, and it is doing a real job: the shell names
+hashed assets, so a cached shell after a deploy loads the previous build's JavaScript. **Do not
+simply delete it.**
+
+What is open is the SHAPE, and the cost of each:
+
+- **`no-cache` + an ETag on the shell.** Saves the 6 KB body on a revalidation and nothing else: the
+  round trip is the cost, not the bytes. Small.
+- **Edge caching with a short `s-maxage`, or with a purge on deploy.** This is the one that moves the
+  number: the document would be served from the user's own PoP instead of proxied to France, and the
+  `frontend-ssr` container leaves the critical path of every navigation. **Its blocking condition is
+  a Cloudflare Cache Rule** - HTML is not edge-cached by default whatever the origin says - and the
+  2026-09-16 Cloudflare authorization was for ONE specific rule and is spent, so this needs the user.
+  The staleness it introduces is a DEPLOY question, not a privacy one: the two risks are a shell
+  naming last build's chunks, and an Open Graph head describing a renamed event for the TTL.
+
+**NOTHING HERE IS A LEAK.** An unauthenticated fetch already receives this document; caching changes
+how fresh it is, never who may read it. Recorded because "the shell is per-user" is the first thing a
+later reader will assume, and it is false.
+
+---
 ### P3 - THE PRE-RELEASE CHANNEL IS THE ENVIRONMENT SELECTOR, SO THE BUILD CARRYING A FIX CANNOT MEASURE IT (found 2026-09-15)
 
 An APK embeds its frontend and its backend URL, so freezing the environment into the artifact is
