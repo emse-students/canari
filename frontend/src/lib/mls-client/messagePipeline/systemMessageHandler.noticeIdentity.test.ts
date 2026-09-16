@@ -72,6 +72,9 @@ describe('a visible system notice carries the sender’s id', () => {
   const NOTICE_EVENTS: [string, Record<string, unknown>][] = [
     ['memberAdded', { newUsers: ['carol', 'dave'] }],
     ['memberRemoved', { targetUser: 'carol' }],
+    // `senderNorm` is bob above, and only the leaver may announce its own departure - so the id
+    // this branch must echo is bob's. It joined the list the day the branch existed at all.
+    ['memberLeft', { userId: 'bob' }],
     ['groupRenamed', { newName: 'Nouveau nom' }],
     ['groupImageChanged', { imageMediaId: 'media-7' }],
   ];

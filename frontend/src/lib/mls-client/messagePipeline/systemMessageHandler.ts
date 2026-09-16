@@ -576,6 +576,52 @@ export async function handleSystemEvent(
     return true;
   }
 
+  if (event === 'memberLeft' && data.userId) {
+    // THE DEPARTURE NOTICE HAD A WRITER ON THE REPLAY AND NONE HERE. `leaveGroupAndBroadcast` has
+    // always broadcast this frame and `applyReplaySystemEvent` has always rendered it, so a member
+    // walking out showed NOTHING to anybody until that member's next archive replay - and then at
+    // its original place in the scrollback rather than at the moment it happened. This branch is
+    // the missing half, and it renders the same Paraglide message against the same frame id so the
+    // bubble it writes and the one the replay writes are the SAME ROW rather than two.
+    const leaver = String(data.userId);
+
+    // Only the party that left may say so. The id is a self-asserted payload field where the
+    // sender is the identity MLS itself authenticated, so this is the one cross-check available -
+    // and without it any member could announce any other member's departure to the whole group.
+    // The send site never disagrees: `notifyMembershipChange` is handed the caller's own id.
+    if (leaver.toLowerCase() !== senderNorm.toLowerCase()) {
+      log(
+        `[MLS] Refused a memberLeft from ${senderNorm.slice(0, 8)} announcing ${leaver.slice(0, 8)} - only the leaver may announce its own departure`
+      );
+      return true;
+    }
+
+    // OUR OWN DEPARTURE, REACHING ANOTHER OF OUR DEVICES. MLS never returns a frame to the client
+    // that sent it, so this is only ever a sibling device, and it must not draw "you left the
+    // group" into a conversation it is about to lose: leaving de-registers the USER, so the server
+    // refuses that group's membership check on every device, and `verifyMembership` retires the row
+    // from there. Logged rather than silent, because that retire happens on a different loop.
+    if (leaver.toLowerCase() === userId.toLowerCase()) {
+      log(
+        `[INFO] We left "${convoKey}" from another device - no notice here, the membership check retires it`
+      );
+      return true;
+    }
+
+    const getName = await resolveDisplayNames([leaver]);
+    await addMessageToChat(
+      'system',
+      m.chat_system_member_left({ user: getName(leaver) }),
+      convoKey,
+      {
+        isSystem: true,
+        messageId,
+      }
+    );
+    log(`[INFO] ${getName(leaver)} left group "${convoKey}"`);
+    return true;
+  }
+
   if (event === 'memberAdded') {
     const newUserIds: string[] =
       data.newUsers && Array.isArray(data.newUsers)

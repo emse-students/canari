@@ -416,6 +416,36 @@ explicitly through **`appMsgToChannelSystemEnvelope`** and attribute it to `'sys
 `isSystem: true`, so it renders centred and neutral rather than as a message from whoever triggered
 it. `ChatMessageGroups` centres on the ROW flag; the `system` envelope kind only gives the pill.
 
+### `memberLeft` had a reader and no writer, for as long as it existed
+
+The table above lists FIVE live branches today and listed four until 2026-09-16. `memberLeft` was
+the missing one, and nothing about it looked broken from either end: `leaveGroupAndBroadcast` sent
+the frame, the archive held it, `applyReplaySystemEvent` rendered it, and `strayLeaves` even carries
+a paragraph saying it broadcasts nothing itself **because "the leaver already sent `memberLeft` and
+every remaining member rendered it"**. No member ever had. A departure drew nothing at the moment it
+happened, and then appeared on that member's next archive replay - at its place in the scrollback,
+which reads as something that happened days ago.
+
+**It is the shape of defect a per-event branch invites**: an unknown event is ACKed and ignored by
+design, so the only way one is missing is by reading the two paths against each other. The frame's
+own id (above) is what makes adding the branch safe - the live notice and the replayed one are the
+same row rather than two.
+
+**The branch owes one check the others do not.** `memberRemoved` names its target in a payload
+field, and the party that may send it is the admin doing the removing; `memberLeft` names the
+LEAVER in a payload field, and the only party who may announce that is the leaver. The identity MLS
+authenticated is `senderNorm`, so the branch refuses any frame whose `userId` is not its sender -
+otherwise any member could announce any other member's departure to the whole group. The replay
+makes the same comparison against the stream row's `sender_id`, so the archive cannot render what
+live delivery refused. Same principle as `mutationIsAuthorised` one screen up: **a payload field is
+a claim, the MLS sender is a fact.**
+
+**And it draws nothing for our own departure.** MLS never returns a frame to the client that sent
+it, so a `memberLeft` naming us can only come from another of our own devices - which is about to
+lose the conversation anyway, because leaving de-registers the USER and `verifyMembership` then
+retires the row on every device. Telling that device "you left the group" first would write a notice
+into a conversation about to disappear.
+
 ### A visible system notice needs an identity the SENDER minted
 
 A notice the members are meant to SEE - a member added or removed, a rename, a new photo, a deleted
@@ -423,7 +453,7 @@ group - is written by **two paths that never meet**, and copied between devices 
 
 | path | where |
 | --- | --- |
-| live delivery | `systemMessageHandler.ts`, the `memberAdded` / `memberRemoved` / `groupRenamed` / `groupImageChanged` / `groupDeleted` branches |
+| live delivery | `systemMessageHandler.ts`, the `memberAdded` / `memberRemoved` / `memberLeft` / `groupRenamed` / `groupImageChanged` / `groupDeleted` branches |
 | archive replay | `historySystemEvents.ts`, the same events re-read from `history:{groupId}` |
 | a peer's `history_bundle` | `serializeForBundle` copies the row, **with the id that peer stored** |
 
