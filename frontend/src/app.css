@@ -22,13 +22,27 @@
 @source not '../**/*.test.ts';
 @source not '../**/*.spec.ts';
 
-/* Bundled Noto Color Emoji (COLRv1 + OT-SVG merged, see docs/wiki/frontend/emoji.md): the one emoji
-   font every stack in this file - and every export in $lib/pdf, $lib/utils - falls back to, so the
-   same codepoint is the same picture on every engine Canari ships on. `font-display: swap` plus the
-   preload in app.html keep it from blocking first paint. */
+/* Bundled Noto Color Emoji (see docs/wiki/frontend/emoji.md): the one emoji font every stack in
+   this file - and every export in $lib/pdf, $lib/utils - falls back to, so the same codepoint is
+   the same picture on every engine Canari ships on. `font-display: swap` keeps it off the critical
+   path; it is deliberately NOT preloaded, which app.html explains.
+
+   TWO FILES, AND THE ENGINE ASKS FOR THE ONE IT CAN READ. The merged artefact carries COLR/CPAL
+   (Chromium, Firefox) AND an `SVG ` table (WebKit). No engine reads both, and on Chromium and
+   Firefox - nearly every reader here - the table they will never open is 80.2% of 5 705 472 bytes.
+   `tech(color-COLRv1)` lets those engines name the 1 981 256-byte derivation instead; everything
+   else falls through to the merged font, byte for byte what shipped before.
+
+   THE FALL-THROUGH IS THE MECHANISM, NOT A FALLBACK PATH. An engine that cannot parse `tech()` at
+   all treats that ONE source component as invalid and skips it - the `@font-face` survives and the
+   next component answers. Verified in a real Chrome with a bogus `tech()` value. So the last line
+   is what an old WebKit, and only an old WebKit, is served: no engine that understands the first
+   line ever requests it. */
 @font-face {
   font-family: 'Noto Color Emoji Canari';
-  src: url('/fonts/NotoColorEmoji-Canari.woff2') format('woff2');
+  src:
+    url('/fonts/NotoColorEmoji-Canari-COLRv1.woff2') format('woff2') tech(color-COLRv1),
+    url('/fonts/NotoColorEmoji-Canari.woff2') format('woff2');
   font-weight: normal;
   font-style: normal;
   font-display: swap;

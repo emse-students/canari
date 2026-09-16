@@ -7,7 +7,7 @@ picker never depends on a third-party CDN. Why Noto over Microsoft's Fluent Emoj
 coverage: no flags, no ZWJ families, frozen at Unicode 15.1), the exact numbers measured on Noto's
 git tree, and the licence terms are all in the backlog entry - not restated here.
 
-## The format problem, and why one file solves it
+## The format problem, and why one file solves it - and why it is then split in two
 
 No single colour-font table is read by every engine Canari ships on:
 
@@ -17,7 +17,9 @@ No single colour-font table is read by every engine Canari ships on:
 | OT-SVG (`SVG` table) | no, ever | yes | yes |
 
 `maximum_color`, from Google's own `nanoemoji` (the tool that builds Noto), merges both tables into
-ONE font: each engine reads the table it understands, from a single `.woff2`. `nanoemoji` calls
+ONE font: each engine reads the table it understands, from a single `.woff2`. **That single file is
+still the source of truth, and still what an engine gets if it cannot say what it can read** - the
+split below derives from it and never replaces it. `nanoemoji` calls
 itself "under active development, doubtless full of bugs", so it is never a CI dependency - the
 font is built ONCE, locally, and the produced binary is committed. Nothing in CI can build this one
 (the opposite disposition to `frontend/src/lib/wasm/`, which every pipeline generates for itself).
@@ -68,10 +70,81 @@ obligations, the other being that the font is never sold on its own).
 | Committed artefact | `frontend/static/fonts/NotoColorEmoji-Canari.woff2`, 5 705 472 bytes, sha256 `d1bdd49068ebbbc3706bd8fc8b346c237437d804698f340aba03194ba5f671e6` |
 | Tables present | `COLR`+`CPAL` (source), `SVG ` (added), `GSUB` (ligatures) - verified with `fontTools.ttLib`; no `CBDT`/`CBLC`/`sbix`/`EBDT`/`EBLC` bitmap table |
 
+## The COLRv1 derivation - 34.7% of the bytes, the same pixels
+
+**No engine reads both tables, so nearly every reader downloads one it will never open.** On the
+merged artefact the `SVG ` table is **80.2%** of 5 705 472 bytes, and Chromium and Firefox - which
+is nearly every reader here - never touch it. `frontend/scripts/split-emoji-font.py` drops it and
+subsets what is left:
+
+| | |
+| --- | --- |
+| Input | `NotoColorEmoji-Canari.woff2`, 5 705 472 bytes, sha256 `d1bdd490...5f671e6` |
+| Output | `NotoColorEmoji-Canari-COLRv1.woff2`, **1 981 256 bytes (34.7%)**, sha256 `cf9f21500f515413f40e508894756b03d5b2bbcb1999753907ba27d7f6d1570d` |
+| Glyphs | 41 863 - unchanged; the COLR layer glyphs ARE the picture, so none of them is spare |
+| Command | `python frontend/scripts/split-emoji-font.py` |
+
+Like the merge it reads from, this is a LOCAL once-per-rebuild step and never a CI dependency. What
+CI checks is the output, below.
+
+**THE FIRST TRAP: `getBestCmap()` NEVER RETURNS THE VARIATION-SEQUENCE SUBTABLE.** The emoji
+presentation sequences live in cmap format 14 - 371 pairs here, `U+263A U+FE0F` -> the emoji face
+among them. Subsetting on the best cmap's keys alone left those target glyphs unreachable, so the
+subsetter pruned them and the format 14 subtable with them, and **1034 of the 3846 offered emoji
+then shaped to TWO glyphs** (the base, then a stray glyph for the unmatched selector). Nothing
+announced it: the font loaded, and drew most things. The closure must name the selectors, the bases
+AND the glyphs the pairs point at, and the script asserts format 14 survived before it exits.
+
+**THE SECOND TRAP: THE SAME INPUT PRODUCED A DIFFERENT FILE EVERY RUN**, measured twice, for two
+reasons that both had to go. Python randomises `str` hashing per process, so a `set` of glyph NAMES
+iterates in a different order each time and the subsetter lays glyphs out in that order - hence the
+sorted closure. And `save()` stamps `head.modified` with the clock unless `SOURCE_DATE_EPOCH` says
+otherwise - hence the input font's own `modified`, which is the honest value for a derivation. **An
+artefact nobody can re-derive byte for byte cannot be checked against the table above.**
+
+**THE RENDER PROOF, AND WHY SHAPING WAS NOT ENOUGH.** Shaping says the cmap and GSUB survived; it
+says nothing about whether the colour table still draws. Both fonts were rastered to canvas in
+Chrome 153 at 64 px over eight clusters chosen to exercise what a subset breaks - a ZWJ family, two
+regional-indicator flags, a skin-tone modifier sequence and a VS16 sequence - and compared:
+
+| | |
+| --- | --- |
+| Differing subpixels | **0 of 360 000** |
+| Advance width | 637.5 px, both |
+| Files fetched through the `app.css` ladder | `NotoColorEmoji-Canari-COLRv1.woff2` only, 1 981 256 bytes |
+
+The merged font is **never requested** by an engine that understands the first source line. The
+same probe run against an SVG-only derivation painted **0 pixels** in Chrome, which is the other
+half of the proof: the two tables really are disjoint, and Chromium really does read only one.
+
+**THE COST, NAMED: THE NATIVE APPS CARRY +2 MB THEY NEVER USE.** `frontendDist: "../build"` means
+an APK and an IPA EMBED `static/`, so both now ship both fonts while each reads exactly one - the
+Android WebView is Chromium and takes the derivation, WKWebView is WebKit and takes the merged file.
+The web pays nothing for this (a browser downloads one file and the other is never requested) and
+the store binaries pay ~2 MB of install size for nothing. **It is accepted rather than unnoticed**:
+the measurement this work serves is a cold start in a BROWSER, where the font crosses the network,
+and an embedded font crosses nothing. Splitting `static/` per platform at build time would close it
+and is a bigger change than this one.
+
+**AN SVG-ONLY DERIVATION IS NOT SHIPPED, DELIBERATELY.** The same script shape produces one (4 033
+glyphs, 3 730 056 bytes, 65.4%) and it would save WebKit ~2 MB. It is not committed because
+**nothing on this workstation can verify that it draws** - Chromium cannot read OT-SVG by
+construction, and the only local engine that can is the user's own Firefox, which must not be
+driven. Shipping an unverified colour font to iOS is the precise shape of the three iOS defects
+that were invisible to every gate here. When a WebKit engine is reachable, the derivation is one
+edit away; until then WebKit gets the merged font it already had.
+
 ## Wired in
 
 - One `@font-face` (`font-display: swap`) in `frontend/src/app.css`, family name
-  `'Noto Color Emoji Canari'`. **It is deliberately NOT preloaded, and was until 2026-09-16.**
+  `'Noto Color Emoji Canari'`, with **TWO source components and the engine picking**:
+  `url(...-COLRv1.woff2) format('woff2') tech(color-COLRv1)` first, the merged font with no
+  `tech()` last. An engine that cannot parse `tech()` treats that ONE component as invalid and
+  skips it - the `@font-face` survives and the next component answers, which is verified behaviour
+  in a real Chrome (an unrecognised `tech()` value falls through the same way) rather than an
+  inference from the grammar. **The fall-through is the mechanism, not a fallback path**: no engine
+  that understands the first line ever requests the second file.
+  **It is deliberately NOT preloaded, and was until 2026-09-16.**
   5 705 472 bytes is larger than the MLS engine and larger than the application bundle - the
   biggest single thing this site serves - and a preload puts exactly that in front of everything
   else on a first visit. Measured on production that day it held the origin link for ~12 s while
@@ -83,9 +156,9 @@ obligations, the other being that the font is never sold on its own).
   stable filename may safely claim. There is no content hash in the name, so `immutable` is not
   available: a rebuilt font under the same name would be unreachable for a year. The monthly
   conditional request is answered 304 from nginx's ETag, so a returning browser downloads these
-  bytes once. **If this font is ever rebuilt, the sha256 in the table above changes and the cached
+  bytes once. **If either font is ever rebuilt, the sha256 in the tables above changes and the cached
   copies expire within thirty days** - that is the whole safety margin, and it is why the TTL is a
-  month rather than a year.
+  month rather than a year. Both files sit under `/fonts/`, so both take that policy.
 - Appended as the last fallback (before the generic keyword) on both global stacks (`body`,
   `h1`-`h6`/`.font-brand`) and on every stack re-declared for an export: `PosterCanvas.svelte` (5
   inline stacks), `calendarExport.ts` (3 stacks, including the two JS-side container assignments),
@@ -118,10 +191,16 @@ key could simply be dropped.
 
 `frontend/scripts/check-emoji-coverage.mjs` (wired into `bun run build`, after
 `check-bundle-consistency.mjs`) shapes every entry's `emoji` codepoint sequence from BOTH datasets
-against the committed font with `harfbuzzjs` and asserts it resolves to EXACTLY ONE glyph - not
-zero (a gap in the font) and not more than one (the GSUB ligature that merges a flag or a ZWJ family
-into a single glyph did not fire). A miss fails the build with every offending entry listed, never a
-silent gap. Passes for all 3 846 entries across both datasets against the committed font.
+against **every committed font** with `harfbuzzjs` and asserts it resolves to EXACTLY ONE glyph -
+not zero (a gap in the font) and not more than one (the GSUB ligature that merges a flag or a ZWJ
+family into a single glyph did not fire). A miss fails the build with every offending entry listed,
+named by font, never a silent gap. Passes for all **7 692 (entry x font) pairs**: 3 846 entries
+across both datasets, against both the merged artefact and the COLRv1 derivation.
+
+**It reads every shipped font because a gate that reads one of two proves nothing about the one the
+reader gets.** The ladder hands Chromium and Firefox the derivation and everything else the merged
+file, so a defect in the derivation is invisible to a check pointed at the merged file alone - and
+the format 14 loss above is exactly that defect, caught by this check and by nothing else.
 
 **This build of `harfbuzzjs` cannot read a `.woff2` directly** - handed the committed file's bytes
 as-is, `hb.Face` reports zero GSUB scripts and shapes every codepoint to glyph 0 (glyph .notdef),

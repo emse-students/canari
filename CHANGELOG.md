@@ -11,6 +11,21 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - la police emoji passe de 5,7 Mo a 2,0 Mo pour presque tout le monde
+
+Canari embarque sa propre police emoji pour que le meme caractere donne la meme image partout. Elle
+contient en realite DEUX polices : une table lue par Chrome et Firefox, une autre lue par Safari.
+Aucun moteur ne lit les deux, donc chaque visiteur telechargeait 5,7 Mo dont il n'ouvrait jamais la
+moitie - et pour Chrome et Firefox, la moitie inutile represente 80 % du fichier.
+
+Une variante ne contenant que la table utile est desormais livree a cote, et le navigateur demande
+lui-meme celle qu'il sait lire. Chrome et Firefox telechargent 2,0 Mo au lieu de 5,7 ; Safari et les
+navigateurs plus anciens recoivent exactement le fichier d'avant, inchange.
+
+Verifie plutot que suppose : les deux polices dessinent **exactement les memes pixels** (0 different
+sur 360 000) sur huit cas choisis pour casser un decoupage - une famille, deux drapeaux, une teinte
+de peau, une sequence de presentation - et seule la petite est effectivement telechargee.
+
 ### Changed - l'agenda : une journee finit a 5h du matin, et une case a moitie remplie dit l'heure
 
 Trois corrections demandees le 16/09/2026, toutes dans le calendrier.
