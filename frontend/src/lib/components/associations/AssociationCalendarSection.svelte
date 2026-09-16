@@ -42,7 +42,7 @@
     toUpdatePayload,
     type EventFormValues,
   } from '$lib/calendar/eventForm';
-  import { daySquareDate } from '$lib/calendar/feedEvents';
+  import { daySquareDate, formatEventDateTimeRange } from '$lib/calendar/feedEvents';
   import { pushHistoryOverlay, closeHistoryOverlayFromUi } from '$lib/utils/historyOverlayStack';
   import CalendarScheduleList from '$lib/components/calendar/CalendarScheduleList.svelte';
   import {
@@ -362,21 +362,6 @@
       loadError = m.common_generic_error_label();
     }
   }
-
-  function formatEventRange(ev: AssociationCalendarEvent): string {
-    const locale = getLocale() === 'en' ? 'en-US' : 'fr-FR';
-    const s = new Date(ev.startsAt);
-    const fmt = new Intl.DateTimeFormat(locale, {
-      weekday: 'short',
-      day: 'numeric',
-      month: 'short',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-    if (!ev.endsAt) return fmt.format(s);
-    const e = new Date(ev.endsAt);
-    return `${fmt.format(s)} - ${new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(e)}`;
-  }
 </script>
 
 <div class="space-y-5">
@@ -533,7 +518,7 @@
                 {m.asso_calendar_pending_badge()}
               </span>
             </p>
-            <p class="text-text-muted mt-0.5 text-xs">{formatEventRange(ev)}</p>
+            <p class="text-text-muted mt-0.5 text-xs">{formatEventDateTimeRange(ev)}</p>
           </div>
           <div class="flex shrink-0 items-center gap-1">
             <button
@@ -585,7 +570,7 @@
                 {m.asso_calendar_rejected_badge()}
               </span>
             </p>
-            <p class="text-text-muted mt-0.5 text-xs">{formatEventRange(ev)}</p>
+            <p class="text-text-muted mt-0.5 text-xs">{formatEventDateTimeRange(ev)}</p>
             {#if ev.rejectionReason?.trim()}
               <p class="text-red-err mt-1 text-xs">
                 {m.asso_calendar_rejection_reason_prefix()}{ev.rejectionReason}

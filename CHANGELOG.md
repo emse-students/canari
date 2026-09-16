@@ -11,6 +11,39 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Changed - une regle, une implementation : six copies du frontend ramenees a zero
+
+Suite de la remarque de l'utilisateur le 16/09/2026 - *« factorise et reutilise ce que tu peux,
+sinon on a souvent ce genre de probleme a moitie resolu »* - apres deux defauts du calendrier qui
+etaient tous les deux une copie privee. Balayage du depot a la recherche de corps de fonction
+identiques dans plusieurs fichiers : six groupes dans le frontend, tous fermes sauf un, assume.
+
+**LE COMPTAGE DE REFERENCES DES BLOBS EXISTAIT TROIS FOIS** - dans `blobUrlPool.ts`, dans
+`userAvatarCache.ts` et dans `associationLogoCache.ts` - et les trois n'etaient pas d'accord sur ce
+qui arrive quand une meme cle est retenue avec un blob DIFFERENT : deux revoquaient celui qui est
+en train d'etre affiche, cassant les `<img>` qui le pointaient, le troisieme abandonnait le nouveau
+sans le revoquer, donc le faisait fuir. Une seule implementation desormais, et elle garde l'affiche
+et revoque le superflu. Les deux politiques qui different vraiment sont devenues des arguments : le
+media dechiffre reste tiede cinq minutes sous un plafond de 200, les avatars et les logos revoquent
+tout de suite.
+
+**LE TYPE D'UN FICHIER SE LISAIT QUATRE FOIS.** `resolveMediaType` faisait deja cette
+classification ; les deux formulaires de publication relisaient le MIME a la main, donc ajouter un
+type ici aurait laisse les deux formulaires dessiner un apercu casse.
+
+**ET UN HORAIRE D'EVENEMENT NE SE FORMATAIT PAS PAREIL SELON L'ECRAN** : `formatEventTimeRange`
+codait `'fr-FR'` en dur pendant que la copie de l'agenda d'administration respectait la locale, donc
+un utilisateur anglophone lisait une surface dans sa langue et la suivante en francais. Corrige en
+unifiant. Le nom des marques de carte bancaire, lui aussi ecrit deux fois, tient dans une table.
+
+**CE QUI N'EST PAS FACTORISE, ET POURQUOI** : quatre lignes annulant un minuteur d'appui long, dans
+une bulle de message et dans le demineur. Un idiome partage n'est pas une decision partagee, et
+l'extraire ne protegerait rien - le defaut de la journee etait une REGLE ecrite deux fois, pas une
+ligne.
+
+4 443 tests frontend sur 367 fichiers, `bun run check` 0 erreur sur 8 351 fichiers.
+
+
 ### Fixed - sur telephone, Entree envoyait le message plutot que de passer a la ligne
 
 Signale par l'utilisateur (2026-09-16) : sur telephone, une nouvelle ligne devait se comporter

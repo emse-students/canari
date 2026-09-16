@@ -16,8 +16,8 @@
   import { contrastColor, toHex } from '$lib/utils/color';
   import { m } from '$lib/paraglide/messages';
   import ModalOverlay from '$lib/components/shared/ModalOverlay.svelte';
-  import { getLocale } from '$lib/paraglide/runtime';
   import { associationAccentHex } from '$lib/associations/accent';
+  import { formatEventDateTimeRange } from '$lib/calendar/feedEvents';
 
   let events = $state<AssociationCalendarFeedEvent[]>([]);
   let canValidate = $state(false);
@@ -55,21 +55,6 @@
   }
 
   onMount(load);
-
-  function formatRange(ev: AssociationCalendarFeedEvent): string {
-    const locale = getLocale() === 'en' ? 'en-US' : 'fr-FR';
-    const s = new Date(ev.startsAt);
-    const fmt = new Intl.DateTimeFormat(locale, {
-      weekday: 'short',
-      day: 'numeric',
-      month: 'short',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-    if (!ev.endsAt) return fmt.format(s);
-    const e = new Date(ev.endsAt);
-    return `${fmt.format(s)} - ${new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(e)}`;
-  }
 
   async function validate(ev: AssociationCalendarFeedEvent) {
     actingId = ev.id;
@@ -201,7 +186,7 @@
             >
               {ev.title}
             </button>
-            <p class="text-text-muted text-xs">{formatRange(ev)}</p>
+            <p class="text-text-muted text-xs">{formatEventDateTimeRange(ev)}</p>
             {#if ev.description?.trim()}
               <p class="text-text-muted line-clamp-2 text-sm whitespace-pre-wrap">
                 {ev.description}

@@ -62,6 +62,18 @@ export function resolveMediaType(media: { type?: MediaType; mimeType: string }):
 }
 
 /**
+ * Whether a picked file has no visual preview and must be drawn as an icon card instead.
+ *
+ * ASKED OF `resolveMediaType` RATHER THAN RE-READING THE MIME. The post forms each carried their
+ * own three-way `startsWith` test, so "what kind of thing is this file" had a third and a fourth
+ * answer in the app - and a new kind added here would have reached the classification while leaving
+ * both forms drawing a broken preview.
+ */
+export function needsThumbIcon(file: File): boolean {
+  return resolveMediaType({ mimeType: file.type }) === 'file';
+}
+
+/**
  * Whether a container should reserve space with `aspect-ratio` while the media
  * decrypts. Only a picture-shaped attachment has a size known in advance; a file
  * or audio attachment is a self-sizing card, and reserving a ratio for it strands
