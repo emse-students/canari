@@ -5773,227 +5773,25 @@ misreading. A self-test asserting that every verdict `results.mjs` can produce i
 `rows.mjs` would pin it, and belongs with the other harness self-tests. `SETUP-FAILED` is added to
 the map meanwhile so the board reconciles today.
 
-### P1 - THE DEVICE PURGES 49 OF THE 50 PREKEYS IT HAS JUST PUBLISHED, SO THE POOL NEVER FILLS AND IT MINTS FIFTY MORE ON EVERY CONNECTION (measured on the Mi 9T, 2026-09-06 evening)
+### P1 - 3053 PREKEY BUNDLES ARE WRITTEN AND NOTHING CAN SAFELY RECLAIM THEM, AND THE ONE RULE THAT WOULD HAVE WAS REFUTED BY THE WELCOME WINDOW (churn fixed 2026-09-08; window measured on production 2026-09-12)
 
-#### THE OBSERVATION THIS ENTRY HAS BEEN OWED IS TAKEN - Mi 9T, 2026-09-08 17:08-17:10, `a1Build fff05fe14`
+#### THE CHURN'S ACCOUNT LIVES IN `CHANGELOG.md`, AND WHAT A LATER SESSION MUST NOT RE-DERIVE
 
-*"Nobody has seen any of the three on a device yet."* Two of them are now on the record, from two
-ordinary NOTIF-1b reconnections on a SWEPT estate:
+Four sections of investigation stood here until 2026-09-16 - the 2026-09-08 observation on the
+Mi 9T, the refutation of candidate 2 at the reload boundary, the lock-order cause and its
+verification on the same handset. All four describe a defect that SHIPPED, so the backlog is the
+wrong file for them: the account is `CHANGELOG.md`, *"a resume read the MLS keystore before it took
+the lock, so a mint that finished in between was erased"*, and the earlier half is under
+`[0.16.4]`, *"a device published fifty one-time prekeys and immediately purged all fifty"*.
 
-```
-17:08:37.734  [MLS][Tauri] generateKeyPackage native batch path needed=0
-17:09:14.547  [MLS] reconcilePublishedKeyPackages: REFUSED to purge 6/50 prekey(s) this session
-              published itself - the device cannot back a package it just minted
-17:09:34.586  [MLS][Tauri] generateKeyPackage native batch path needed=0
-17:09:59.928  [MLS] reconcilePublishedKeyPackages: REFUSED to purge 6/50 prekey(s) ...
-```
+**What those sections established, and what a later session must not re-derive:** the pool is full
+at rest and carries fifty distinct packages; the reload no longer drops key material, because the
+read, the decrypt and the install happen under one manager lock rather than two; and the growth
+that fed the blob is SLOWED, not repaid - `load_or_create` deletes on `not_after` alone, so it
+bounds the leak at 84 days and reclaims nothing already written.
 
-**`REFUSED` DOES NOT MEAN THE SEAM HELD, AND THE TABLE ABOVE SAID IT DID.** It means the seam BROKE
-and #393 caught it: `keyPackageHasPrivate()` returned **false for six packages this session had just
-minted**, which is impossible if the round trip cannot change a byte - the device holds those private
-keys by construction. The guard recognised them by fingerprint and refused. That row is corrected in
-place: `REFUSED to purge N/M` is the ACCUSATION, not the all-clear.
-
-**AND NOTHING WAS PURGED AT ALL.** The `purged N/M` line is absent from both reconnections, so
-`orphanIds.length` was zero. No `[RESUME] reload DROPS KEY MATERIAL` either, though a logcat buffer is
-bounded and that is weaker evidence than the two lines that did appear.
-
-**THE POOL IS NOW THE HEALTHY SIGNATURE THIS ENTRY DEFINED.** On 2026-09-06 all fifty carried a single
-timestamp to the microsecond - one batch, nothing older beside it. Today, same device:
-
-| | 2026-09-06 | 2026-09-08 |
-| --- | --- | --- |
-| mint timestamps behind the 50 | **1** | **6** (18 + 8 + 6 + 6 + 6 + 6) |
-| `generateKeyPackage ... needed=` | 49, 49, 49, 50 | **0, 0** |
-| reconciliation | `purged 49/50` | `REFUSED to purge 6/50`, nothing purged |
-
-Six mint timestamps summing to 50 is *"topped up incrementally (several mint timestamps) - the design
-working"*, which this entry's own population table counted on 39 production devices. The catastrophic
-loop is CONTAINED.
-
-**THE GROWTH IT FED IS SLOWED, NOT STOPPED.** `mls.bin` went 10 237 105 -> **10 376 276** bytes across
-the afternoon and four or five runs - about 139 kB - against the **~389 kB in ONE run** recorded above
-when the loop was live. Call it an order of magnitude, measured rather than modelled. The blob does
-not shrink, so **10.4 MB is still what a checkpoint re-encrypts per message**, and that is what makes
-NOTIF-1b's warm-up 19 992 ms and the row ungradeable.
-
-**WHAT IS STILL OPEN, NARROWED TO ONE SENTENCE.** Why does `keyPackageHasPrivate()` answer false for
-six packages this process minted minutes earlier? The guard makes it harmless and says so; it does not
-explain it. Candidate 1 was refuted from the code on the grounds that the round trip cannot change a
-byte - and this measurement is that refutation's problem, not its confirmation: the bytes did not
-change and the answer was still false, so what differs is the KEYSTORE the question is asked against,
-which is candidate 2's family. **AND THE LINE THAT WOULD HAVE NAMED IT COULD NOT FIRE - FIXED
-2026-09-08.** The resume guard compared CARDINALITIES (`candidate_count < live_count`), and a reload
-that drops six bundles while a mint adds six leaves the cardinality identical. That is exactly the
-shape above - six unbacked out of fifty - and `[RESUME] reload DROPS KEY MATERIAL` was silent on both
-reconnections. The downstream symptom was loud and its cause was mute, which is why this entry called
-candidate 2 unobserved for two days. `MlsManager::key_package_keys()` now exposes WHICH bundles a
-keystore holds, the guard reports the SET DIFFERENCE, and the line carries both cardinalities beside
-it: `lost=6 live=50 loading=50` is a substitution and `lost=6 live=50 loading=44` is a shrink, and
-they are different accidents. Proved by a test that expires one batch and mints another of the same
-size, so the counts agree and the set names all six (`reload_monotonic.rs`). **The next device
-reconnection can now answer this entry's last question**, where before today it could not have.
-
-#### CANDIDATE 2 IS REFUTED AT THE RELOAD BOUNDARY, AND THE SAME SHAPE WAS **PURGED** THIS TIME - Mi 9T, 2026-09-08 17:51-17:53, `a1Build e2d09c211`
-
-The guard that could not fire is shipped, so its silence is now worth something. Two ordinary
-background/foreground cycles on the rebuilt APK:
-
-```
-17:51:29  load_or_create: 10360876B total; KeyPackage 2919x6901168B, Tree 5x1704647B, MessageSecrets 5x1701037B
-17:51:35  generateKeyPackage native batch path needed=0
-17:51:49  KeyPackage published.
-17:51:50  reconcilePublishedKeyPackages: purged 6/50 orphaned prekey(s)
-17:52:18  load_or_create: 10363262B; KeyPackage 2920x6903554B
-17:52:18  [RESUME] foreground manager reloaded from mls.bin (C2)
-17:52:18  generateKeyPackage native batch path needed=6
-17:52:23  generer_key_packages_et_persister done count=6 state_bytes=10395269
-17:53:19  load_or_create: 10379829B; KeyPackage 2927x6920121B
-17:53:19  [RESUME] foreground manager reloaded from mls.bin (C2)
-17:53:19  generateKeyPackage native batch path needed=0
-17:53:23  generer_key_packages_et_persister done count=0 state_bytes=10397667
-```
-
-**THE RESUME RELOAD DOES NOT DROP KEY MATERIAL, AND THIS RUN CARRIES ITS OWN POSITIVE CONTROL.** Both
-reloads are announced by their own `(C2)` line and neither is followed by `[RESUME] reload DROPS KEY
-MATERIAL`. Before today that silence was uninformative - the detector compared cardinalities and a
-six-for-six substitution is invisible to a count. It reports the SET DIFFERENCE now, so a substitution
-at that boundary would name itself.
-
-And the run does not merely fail to show a loss, it shows a SURVIVAL, which is the harder thing to
-arrange and the reason this is a refutation rather than an absence. Six bundles were minted at
-17:52:18 and persisted by 17:52:23; they were published at 17:52:27; and the **next** reload, at
-17:53:19, is a reload that happens strictly AFTER a mint - the exact ordering candidate 2 requires.
-It carried them: `KeyPackage 2920x` before, `2927x` after, `needed=0` on the other side, and the guard
-silent. A reload that discarded a mint would have been named by both the set difference and the
-subsequent `needed=`, and neither fired.
-
-**SO CANDIDATE 2 SURVIVED ONLY IN A NARROWER FORM - AND THAT FORM WAS THEN REPRODUCED ON PURPOSE.**
-The mint is not instantaneous: `generer_key_packages_et_persister` ran from 17:52:18.198 to
-17:52:23.034, **4.8 seconds**, while a reload costs ~30 ms. What the two cycles above never produced is
-a reload landing INSIDE that window - both times the reload preceded the mint by ~110 ms. A snapshot
-read while a mint is in flight is the only ordering in which the server can hold a package whose
-private key never reached the file, so ten of the phone's fifty prekeys were deleted from the local
-estate's `one_time_key_package` to force `needed=10`, and the app was resumed, backgrounded and
-resumed again across the mint. **18:02:04 - 18:02:14, and every line of it is the defect:**
-
-```
-18:02:04.730  thread 15666  generer_key_packages_et_persister start count=10      MINT BEGINS
-18:02:08.926  thread 15669  load_or_create ... KeyPackage 2928x                   snapshot READ mid-mint
-18:02:09.571  thread 15666  generer ... done count=10 state_bytes=10423737        MINT PERSISTS
-18:02:09.592  thread 15669  [RESUME] reload DROPS KEY MATERIAL - 11 bundle(s) ... live=2939, loading=2928
-18:02:09.599  thread 15669  [RESUME] foreground manager reloaded from mls.bin     STALE SNAPSHOT WINS
-18:02:14.429                REFUSED to purge 10/50 prekey(s) this session published itself
-```
-
-Two threads, one manager. 15669 read the file 0.6 s before 15666 wrote it and installed the result
-0.03 s after - erasing ten bundles whose public halves were already on the server. The detector named
-the loss the instant it happened, which is what #441 bought.
-
-#### THE CAUSE IS A LOCK ORDER: THE RESUME READ OUTSIDE THE MANAGER LOCK AND INSTALLED INSIDE IT - 2026-09-08
-
-`recharger_mls_au_resume` read `mls.bin` under `mls_bin_write_lock`, RELEASED it, decrypted, and only
-then took the manager lock to install. The comment above that release said the foreground guard closed
-the gap. It does not: `mark_foreground_active()` stops **background JNI engines**, and the writer that
-races here is `generer_key_packages_et_persister`, a FOREGROUND command that holds the manager lock
-while it mints and writes the file at the end of that same critical section. Nothing on the resume path
-observed it.
-
-**AND THE TWO PATHS TOOK THE SAME TWO LOCKS IN OPPOSITE ORDERS**, which is the same defect read from the
-other side:
-
-| | first | second |
-| --- | --- | --- |
-| the mint | `mls_manager` | `mls_bin_write_lock` (inside `write_mls_state_blob`) |
-| the resume reload, until now | `mls_bin_write_lock` | `mls_manager` |
-
-An inversion like that is normally a deadlock. This one was not, only because the reload released the
-first before taking the second - and **that release is the window**. So the fix is not a retry, a
-re-read or a reconciliation: the reload now takes the manager lock FIRST and holds it across the read,
-the decrypt and the install. A mint in flight makes the reload wait and read the file it wrote; a
-reload in flight makes the mint wait and mint into the manager just installed. There is no interleaving
-left for a ledger to notice afterwards, and the lock-order inversion is gone as a side effect. The cost
-is that the manager is unavailable for the ~600 ms a 10 MB `mls.bin` takes to decrypt, which is the
-point rather than a regression: an MLS mutation running against a manager about to be replaced IS the
-defect.
-
-**THE ORDERING IS NOW A COMPILE-TIME PROPERTY, BECAUSE A COMMENT IS NOT A GUARANTEE.** The read, the
-grading and the install moved into `reload_into(live: &mut Option<MlsManager>, ...)`, and the only way
-to obtain that `&mut` is to hold the guard - so the read cannot be hoisted back out of the critical
-section without a type error. A unit test cannot observe which of two locks a caller takes first, and
-the test added beside it does not pretend to: it pins the other half, that the bytes are fetched INSIDE
-the call, so moving the read back into the command changes the signature and stops it compiling.
-
-**THE OTHER SITE THAT REPLACES A LIVE MANAGER IS NAMED HERE AND DELIBERATELY NOT TOUCHED.** Exactly two
-places assign the foreground manager: `storage.rs`, fixed above, and `mls.rs:91` (`initialiser_mls`),
-which builds a candidate from bytes **JS hands it** and then installs it with `*lock = Some(manager)` -
-no epoch guard, no key-material guard, and the bytes were read by the caller at some earlier moment.
-That is the same shape, and it is NOT the same defect - settled structurally rather than left owed.
-`TauriMlsService.invokeInit` is the single call site, reached only from `_initImpl`, which `init()`
-guards with `if (this.initPromise) return this.initPromise` (`BaseMlsService.ts:402`). So the command
-runs at most once per service instance, with the manager still `None`; the one repeat path - the
-pre-v0.11.0 migration retry - only happens after a load that FAILED, so nothing was installed to
-clobber. `recoverAndRekey` short-circuits the same promise before the login that follows. The
-assignment at `mls.rs:91` is therefore an initialisation and its lack of a guard is correct. Recorded
-because the enumeration is the point: the seam has exactly two consumers and both have now been read,
-rather than the one that happened to break.
-
-#### VERIFIED ON THE SAME HANDSET, SAME GESTURE, 2026-09-08 18:16 - `a1Build 232ae6101 + the fix`
-
-A negative needs the window held open on purpose, so the pool was emptied outright to make the mint
-long (50 packages, 6.2 s) and the resume was aimed into the middle of it:
-
-```
-18:16:03.040  thread 16616  generer_key_packages_et_persister start count=50     MINT BEGINS
-18:16:07.075                (resume gesture - 2.2 s INSIDE the mint)
-18:16:09.265  thread 16616  generer ... done count=50 state_bytes=10572990       MINT PERSISTS
-18:16:15.788  thread 16617  load_or_create ... KeyPackage 3002x                  reload READ - after it
-18:16:15.819  thread 16617  [RESUME] foreground manager reloaded from mls.bin
-18:16:15.953                generateKeyPackage native batch path needed=0
-```
-
-**The reload waited.** Its file read is 6.5 s after the mint persisted, where the same gesture on the
-old build read 0.6 s BEFORE the write and installed 0.03 s after it. `KeyPackage 2951x -> 3002x` is all
-fifty plus the last-resort; the server's pool for the device reads 50; and `DROPS KEY MATERIAL` and
-`REFUSED to purge` are both absent from the whole run.
-
-**ONE EARLIER ATTEMPT IS RECORDED HERE BECAUSE IT PROVED NOTHING AND LOOKED LIKE IT DID.** At 18:14 the
-same provocation with ten packages came back clean - and it was worthless: the mint started at
-18:14:42.255, AFTER both reloads had finished at 18:14:42.041, so the window was never entered. A run
-that cannot fail is not evidence that something was fixed. That is what the fifty-package mint is for.
-
-**AND THE SIX UNBACKED PACKAGES SURVIVED A PROCESS RESTART, WHICH RELOCATES THE LOSS.** 17:51:29 is a
-cold start - the APK was reinstalled at 17:50 and the process is new - and `reconcile` still found six
-of the fifty without private keys. Nothing in that process had minted or reloaded anything yet. So the
-six are **durable debris written by an earlier session**, not something a live reload produces, and
-looking for the loss inside one resume was looking in the wrong place.
-
-**THE SAME 6/50 SHAPE WAS `purged` HERE AND `REFUSED` AT 17:09, AND NOTHING IN THIS ENTRY EXPLAINS
-THE DIFFERENCE.** That is the question this measurement leaves, and it is a bigger one than it looks:
-
-| | 17:08-17:10, build `fff05fe14` | 17:51-17:53, build `e2d09c211` |
-| --- | --- | --- |
-| `needed=` | 0, 0 | 0, then **6**, then 0 |
-| reconciliation | `REFUSED to purge 6/50 ... this session published itself` twice | **`purged 6/50 orphaned`** once, then nothing |
-| after it | the six stay unbacked, for ever | pool refilled, **two clean cycles** |
-
-`REFUSED` is not a safe default here. It is the branch that keeps a device permanently unhealable: six
-registered packages nobody can answer for, a guard declining to remove them because it believes this
-session published them, and no other path that ever will. `purged` is the branch that heals. **A guard
-whose refusal is unbounded in time is not a guard, it is a leak** - and `publishedThisSession` is
-populated by the publish call, which re-publishes the whole pool rather than only what was just
-minted (`KeyPackage published.` fires at 17:51:49 with `count=0`), so on the face of it every package
-should be refused every time. It was not, here. Until that is settled, neither outcome is understood,
-and the next step is to read what fills that set rather than to guess from two logs.
-
-**WHAT IS LEFT IS NOT CHURN.** `KeyPackage 2919x` against a pool of **50** - roughly 2 870 storage rows
-of key material with no live bundle behind them, 6.9 MB of a 10.36 MB store, 67%. The growth across
-these three loads is ~19 kB, against ~389 kB in one run when the loop was live. So the blob's weight is
-**debt already written, not traffic**: `prune_expired_key_packages` does run, once per
-`load_or_create` ([state.rs:428](../../frontend/mls-core/src/state.rs)), but it deletes on `not_after`
-alone, so it bounds the leak at 84 days and repays none of the balance. **That is what keeps
-NOTIF-1b's warm-up at 19 992 ms, and no prekey fix will move it.** Reclaiming the store is a separate
-piece of work from stopping the churn, and only the second one is done.
+**Stopping the churn and reclaiming the store are two pieces of work, and only the first is done.**
+The rest of this entry is the second.
 
 #### WHAT IS LEFT IS THE BALANCE: 3053 BUNDLES THAT CANNOT SAFELY BE DROPPED, DRAINING BY THEIR OWN 84-DAY LIFETIME
 
@@ -6040,42 +5838,45 @@ storm and no debug hook was added to the product to force one; it is covered by 
 the three layers, including the one that proves a HANDED-OUT bundle survives a purge that did not
 name it.
 
-**WHAT IS STILL OWED, AND IT IS THE REASON NOTIF-1b IS STILL BLOCKED.** The 3053 bundles already
-written are NOT reclaimed and cannot safely be: the server has no record of them at all, so nothing
-can prove they were never handed out, and a rule that guessed would delete the bundle a pending
-Welcome needs. `0 expired` on the day of measurement means the whole balance still has time to run -
-84 days from minting, so it would drain on its own from **late October 2026**.
+**WHAT IS LEFT, AND IT IS ONE RULE WITH NO MECHANISM.** Three retention rules were drafted here.
+Rule three - *keep published + last-resort + the K most recently minted* - was the one this entry
+called "the one worth building", blocked on a single number: how long a Welcome may sit between the
+claim and the join. **That number was measured on production on 2026-09-12 and it killed the rule**
+(the section below carries it). K sits inside the delivery window whatever K is, so the rule cannot
+be repaired by raising it.
 
-**THE PRUNE IS THE PATH, DECIDED BY THE USER 2026-09-10, AND IT UNBLOCKS NOTIF-1b.** Of the two ways
-to shorten the wait - a server-side claim record, which would only ever help bundles minted after it
-exists, or a deliberate horizon prune on the test fixture - the second was taken. It was the user's
-to take rather than an agent's, because the device holds real groups.
+**Rule two is what survives, and it is safe by construction rather than by argument**: a row the
+server's `DELETE ... RETURNING` names was still in the pool, so it was never handed out and no
+Welcome can exist for it - true whatever the window turns out to be. `forget_key_packages` drops
+exactly that set and never derives one. **It reclaims only the currently published fifty**, which is
+the whole of what can be justified today.
 
-**AND THE DECISION HAS NO MECHANISM, WHICH IS WHAT 2026-09-11 FOUND WHEN IT WENT TO RUN IT.** The
-choice above was recorded as though the doing were clerical. It is not. The only thing that deletes
-these bundles is `MlsManager::prune_key_packages_expired_at(now_secs)`, and a "horizon prune" means
-calling it with an instant ~100 days ahead - which the tests do and **nothing in the product can**.
-There is no debug surface to hang it on either: `VITE_ENABLE_DEV_ROUTES` survives only in generated
-ambient types, no route reads it, and `commands/mls.rs` carries no `cfg(debug_assertions)` command.
-So there are exactly two ways forward, and neither is a click:
+**So the 3053 already written are not reclaimed, no rule on this device can reclaim them, and that
+is why NOTIF-1b is still blocked** - its 19 992 ms warm-up is the store, not the churn. The server
+has no record that these bundles were ever handed out, so nothing can prove a given one is not what
+a pending Welcome needs, and a rule that guessed would delete exactly that. `0 expired` on the day
+of measurement means the whole balance still has its life to run: 84 days from minting, so it
+drains on its own from **late October 2026** - and `load_or_create` already deletes on `not_after`,
+so that drain needs no work from anybody.
 
-| Way | What it costs | What it leaves behind |
-| --- | --- | --- |
-| A dev-gated Tauri command that prunes at a caller-supplied instant | a DESTRUCTIVE control shipped into the product for one phone, against *one-off actions go to the user* and against *a destructive control needs an allowlist of what it may touch* | a permanent hazard, gated by a flag nothing currently reads |
-| Ship retention rule 3 - keep published + last-resort + the K most recently minted | the safety ARGUMENT the table below demands, re-measured | the population fixed, the test phone pruning itself on next load, and no manual step at all |
+**THE ONE THING THAT WOULD WIDEN THIS IS SERVER-SIDE, AND IT IS NOT WRITTEN.** A column recording
+when a package stopped being published - or the claim instant, which
+`resolveKeyPackagePayloadForDevice` destroys today by DELETEing the row as it hands it out - would
+let a later rule separate "abandoned" from "claimed, Welcome in flight". It would only ever help
+bundles minted after it exists, which is why it was passed over in favour of a one-off prune; the
+one-off prune is now refuted, so this is the remaining path. **Nobody has costed it, and it is not
+started.**
 
-**THE SECOND IS THE ONE WORTH BUILDING, AND IT IS BLOCKED ON A NUMBER NOBODY HOLDS.** Its safety is
-"K mints cannot happen inside a Welcome's delivery window", and the delivery window is the interval
-between a peer CLAIMING a prekey and the joiner processing the Welcome built on it. Nothing records
-it: `resolveKeyPackagePayloadForDevice` DELETES the row as it hands it out, so the claim leaves no
-trace to measure from. **That measurement is the next step for this entry** - and it is a server-side
-change (record the claim instant, or the Welcome's own age at delivery), not a device one.
-
-**WHAT THE PRUNE RISKS, WRITTEN BEFORE IT IS RUN AND NOT AFTER.** The paragraph above is the risk:
-nothing can prove a deleted bundle was not the one a pending Welcome needs. The user chose the
-direct prune over the inventory-first variant that was offered. That does not remove the risk, so
-the run ENUMERATES the device's groups and any pending Welcome into its log first - not as a gate,
-as evidence, so that a failure afterwards can be attributed rather than guessed at.
+**AND THE DIRECT PRUNE HAS NO SURFACE EITHER, WHICH IS WHAT 2026-09-11 FOUND WHEN IT WENT TO RUN
+IT.** The user's 2026-09-10 decision to prune the test fixture by hand was recorded as though the
+doing were clerical. It is not: the only thing that deletes these bundles is
+`MlsManager::prune_key_packages_expired_at(now_secs)`, called with an instant ~100 days ahead, which
+the tests do and **nothing in the product can**. There is no debug surface to hang it on -
+`VITE_ENABLE_DEV_ROUTES` survives only in generated ambient types, no route reads it, and
+`commands/mls.rs` carries no `cfg(debug_assertions)` command. Shipping a dev-gated destructive
+command into the product for one phone would violate both *one-off actions go to the user* and *a
+destructive control needs an allowlist of what it may touch*, and would leave a permanent hazard
+behind a flag nothing reads. **It was not built, and the 84-day drain makes it unnecessary.**
 
 #### THE POPULATION WAS MEASURED ON 2026-09-07, AND IT REFUTES HALF OF THE HEADLINE ABOVE
 
@@ -6562,118 +6363,115 @@ all - the WebView's console is read over CDP, and logcat carries only the native
 attempt reads the phone's CDP console across a background/resume, not its logcat**, and that is the
 one line still owed.
 
+**AN ATTEMPT AT A SECOND OBSERVATION, 2026-09-16, AND IT COULD NOT BE MADE TO CARRY WEIGHT.** The
+Mi 9T was re-imaged by the 2026-09-14 hardware session (`firstInstallTime=2026-09-14 20:12:15`) and
+runs `0.18.1`. Four hours after first run its `mls.bin` was **2 750 195 bytes** for a device holding
+4 conversations and 1 180 messages. The temptation is to read the residue as bundles and call the
+loop live - **and that reading does not hold.** Group weight depends on membership, this install's
+membership was never counted, and between fifty and two hundred members a group the four groups
+account for anywhere from 0.45 MB to 1.6 MB of it. The bundle residue is therefore somewhere between
+~600 and ~1 400, which accuses nothing.
+
+**What the attempt did establish is that a file size is the wrong instrument, and this entry has
+been using it since September.** Every count here - 3053, 3051, 2782, ten thousand - was inferred
+from a blob's weight and an assumption about what else was in it. **The cheapest next step is no
+longer the CDP observation; it is a device that can report its own state census** (groups, members,
+one-time bundles, last-resort), which would settle this entry, the blob entry and the 2026-09-06
+19.5 MB question in one line each. See the blob entry below, where that item now lives.
+
+**And this handset can no longer answer the other half either**: its 19.5 MB blob went with the debug
+build, so the prune's reclaim is not observable here.
+
 **The 2026-09-06 prune (`prune_expired_key_packages`) does NOT fix this** and was never going to:
 these bundles are hours old, not 84 days. The prune bounds the ceiling; this loop is what fills it.
 
-### P1 - `mls.bin` is 19.5 MB on a real phone, one checkpoint costs 17 SECONDS, and the PIN gate tells the user the unlock failed while it is still working (measured on the Mi 9T, 2026-09-06)
+### P2 - 933 KEY PACKAGES AGAINST A POOL OF FIFTY, ON THE USER'S OWN BROWSER, ON `0.18.4` - AND THE LINE THAT WOULD NAME THE REMEDY IS NATIVE-ONLY (production console, 2026-09-16)
 
-Three lines from one launch of `0.16.4` on the Mi 9T, all from the same minute:
+**DOWNGRADED P1 -> P2 ON 2026-09-16.** It was a P1 because the PIN gate told the user the unlock
+had failed while it was still working; that half is shipped. What remains is bounded growth with no
+visible symptom, which is correctness, not a broken user-facing path.
+
+**THE SHIPPED HALVES ARE NOT KEPT HERE.** Two of the three things this entry was opened for are done
+and their story is in `CHANGELOG.md` under `[0.16.4] - 2026-09-06`: the PIN gate no longer calls a
+slow unlock a failed one - the 10-second watchdog was a clock standing in for a proof, and the proof
+is observable - and the weight of a state was measured part by part. A one-time prekey bundle is
+**1 936 bytes**, not the ~400 its docblock claimed; fifty sends cost ~0, so message history was
+never the cause; and `MlsManager::prune_expired_key_packages` now bounds growth at
+(mint rate x 84 days) from one seam in `load_or_create`, on an elapsed `not_after` rather than on
+"the server no longer publishes it" - which would race a join and lose it. Weights in
+`mls-core/tests/state_weight.rs`, the rule in `tests/prune_expired_key_packages.rs`, the UI guard in
+`sessionExpiredRelease.test.ts`.
+
+**THE TWO ACCRUAL PATHS THIS ENTRY CALLED OPEN ARE BOTH SHIPPED, AND THE ENTRY WAS WRONG TO STILL
+LIST THEM.** Checked against the tree on 2026-09-16 rather than believed:
+
+1. **The per-connection last-resort remint is gone** - `generer_key_packages_et_persister` now calls
+   `existing_last_resort_key_package(now_secs)` and mints only when nothing valid is held, so the
+   cadence is the package's own 84-day lifetime instead of every socket. `e0f2d825b` (#458), first
+   tagged `v0.17.0`.
+2. **The purge endpoint returns what it deleted** - `deleteAllOneTimePrekeys()` is typed
+   `Promise<string[]>` and reads `data.keyPackages`, and `republishKeyMaterial` hands exactly that
+   list to `forgetPurgedPrekeys`, which drops those private bundles and nothing it worked out for
+   itself. That is precisely the discriminator this entry asked for. Same commit.
+
+A third cause was fixed earlier: a background engine writing back its older blob between the mint and
+the write deleted fifty private keys whose public halves had just been published - `ForegroundCritical`
+now brackets the mint rather than the write, `6ff1143ca` (#432), `v0.16.6`.
+
+**ALL THREE ARE IN `v0.18.1`**, verified with `git merge-base --is-ancestor`. So the open work this
+entry described no longer exists, and what replaces it is a question raised by a measurement.
+
+**THE MEASUREMENT, AND WHAT IT CANNOT YET SEPARATE.** On 2026-09-16 the Mi 9T ran `0.18.1` and
+`stat mls.bin` read **2 750 195 bytes**, against 19 548 753 on 2026-09-06. **That is not a reclaim
+and it is not a regression either.** `firstInstallTime=2026-09-14 20:12:15`: the 2026-09-14 hardware
+session installed the release APK over the debug build, which uninstalled it and wiped the blob (that
+session's own entry above says so). So this is a two-day-old install, and the prune's reclaim can no
+longer be observed on this handset at all.
+
+What is worth explaining is that a **two-day-old install on a build carrying all three fixes already
+weighs 2.75 MB**, four hours after first run - `mls.bin` has not been rewritten since 2026-09-15
+00:15, though the app ran again on 2026-09-15 18:21. The local store holds 4 conversations and 1 180
+messages. Sends are flat in `mls.bin` by measurement and history lives in SQLite, so the candidates
+are groups and bundles - **and nothing here separates them.** At the measured 5 330-byte group floor
+plus ~2 000 a member, four groups cost 0.45 MB at fifty members apiece and 1.6 MB at two hundred;
+**this install's membership was never counted**, so the residue is anywhere between ~600 and ~1 400
+bundles. A range that wide is not a finding.
+
+**AND THE INSTRUMENT I WAS ABOUT TO ASK FOR ALREADY EXISTS - IT PRINTS ONCE PER LOAD.**
+`load_or_create` calls `state_composition_summary()` and logs it at `info`, on the one seam every
+platform loads through, added precisely because two investigations had to INFER composition from
+synthetic states. A production console export from the USER's own browser, 2026-09-16 07:58:04 on
+`0.18.4`, carries it:
 
 ```
-D mls_core::state: save_state: returning cached CBOR snapshot (19427791 bytes)
-I [MLS] Encrypted state checkpoint persisted. (17115 ms)
-I [MLS] Encrypted state checkpoint persisted. (19691 ms)
+load_or_create: state composition - 7291769B total;
+  Tree 23x2536880B, MessageSecrets 23x2420376B, KeyPackage 933x2215941B
 ```
 
-`stat mls.bin` on the device: **19 548 753 bytes**. Three checkpoints in that launch, 17.1 s, 17.1 s
-and 19.7 s. Nothing here is contended or unlucky - it is the cost of sealing 19.5 MB on this SoC,
-and it is paid again on every structural checkpoint.
+**933 key packages against a pool of fifty, on a WEB profile, on the current stable.** 2 215 941
+bytes of a 7 291 769-byte state - 30% of it - at ~2 375 bytes each. Tree and MessageSecrets are 23
+groups apiece and cost about the same again, which also settles the question the Mi 9T measurement
+could not: **groups and bundles are separable, and they are separated by reading the log rather than
+by dividing a file size.** No `stat mls.bin` was ever needed.
 
-**WHAT IT COSTS THE USER, AND WHY IT IS A P1 RATHER THAN A PERFORMANCE NOTE.** `handlePinSubmit`
-arms a 10-second watchdog whose comment calls it a "temporal safety net" for "an unexpected early
-return or a hung network call". On this device the login legitimately takes ~19 s (`[pin] settled in
-18715ms`, measured twice), so the watchdog fires EVERY TIME, sets `pinError = m.auth_pin_timeout()`
-- *"Le deverrouillage prend plus de temps que prevu. Veuillez reessayer."* - and unblocks the
-spinner, while the login underneath goes on to succeed. The user is told, in red, that the unlock
-failed; retrying starts a second one. Seen on screen twice today (`scratchpad/shot.png`), and it is
-the reason `pin.mjs` reports `REFUSED by the product` and the harness cannot unlock this phone.
+**WHAT IS STILL MISSING IS THE SECOND LINE, AND ONLY ON WEB.** The breakdown that names a remedy -
+how many of those 933 are expired debt, how many superseded fallbacks, how many a revoked pool - is
+`#[cfg(not(target_arch = "wasm32"))]`, gated with the prune because the summary reads a clock and
+this crate must not. So the web says 933 and cannot say which of the three reclaims applies, and
+those three are reclaimed by three different mechanisms. **Passing the caller's
+`Date.now()/1000` the way `prune_key_packages_expired_at` already does would lift the gate without
+putting a clock in the crate** - the pattern is established one function above.
 
-**Two questions, and they had different answers.**
+**THE HANDSET MEASUREMENT IS THEREFORE SUPERSEDED, NOT PENDING.** `stat mls.bin` on the Mi 9T gave a
+file size and an argument about membership; one line of its own log would have given the census. The
+2026-09-16 figure stays recorded because it dates the install, and nothing more should be built on
+it.
 
-1. ~~**The watchdog is a clock standing in for a proof.**~~ **ANSWERED AND FIXED, 2026-09-06.** The
-   enumeration came out the first way: `login()` always settles, and the only way a caller can be
-   stranded is for it to settle without having called back - which is observable rather than
-   guessable. The clock is gone and that fact is read instead; a slow login is no longer a failed
-   one. Story in `CHANGELOG.md`, guards in `sessionExpiredRelease.test.ts`, validated in negative
-   against two mutations. **The twelve seconds themselves are untouched, which is question 2.**
-2. ~~**19.5 MB is the real question and it is not answered.**~~ **MEASURED AND BOUNDED, 2026-09-06.**
-   The hypothesis was right and the arithmetic was not: `mls-core/tests/state_weight.rs` weighs the
-   parts, and `tests/prune_expired_key_packages.rs` pins the rule that now bounds them.
 
-   | what | bytes each | note |
-   | --- | --- | --- |
-   | one-time prekey bundle | **1 936** | the docblock said ~400 - **wrong by five times** |
-   | a group of one | 5 330 | floor, no members, no history |
-   | one member added | ~2 000 | read off the slope over four rounds |
-   | **50 sends** | **~0** | flat after the first batch |
-
-   **SENDS ARE FLAT, SO MESSAGE HISTORY IS NOT THE CAUSE** - the obvious suspect, and it is
-   eliminated rather than doubted. In a state carrying 41 groups AND 200 prekeys, the prekeys are
-   **60.1%** of it. Against the phone's 19 548 753 bytes, ~40 groups account for well under 2 MB
-   even at twenty members apiece, leaving roughly **ten thousand accumulated bundles**.
-
-   **THE ACCRUAL ENGINE IS NOT THE FRESH START.** `freshStart` is `!state`, so it fires on a new
-   install and not per launch, and 200 reinstalls is not a real history. Two other callers are, and
-   both are unconditional: `generateKeyPackageImpl` publishes a BRAND-NEW last-resort package on
-   **every connection**, and `republishKeyMaterial` purges the server pool and mints up to 50 more
-   **once per 30 s** for as long as a `NoMatchingKeyPackage` storm lasts - each round orphaning the
-   previous 50 locally, ~97 kB a time. ~200 such rounds is exactly what this phone's healing
-   campaign produced, and 200 x 97 kB is the blob.
-
-   **THE ASYMMETRY IS THE DEFECT, STATED PLAINLY.** Reconciliation existed in one direction only -
-   `reconcilePublishedKeyPackages` purges the SERVER of a prekey whose private key is gone locally.
-   Nothing ever asked the opposite question, so a bundle the server had stopped publishing was kept
-   for the life of the install.
-
-   **WHY EXPIRY AND NOT "THE SERVER NO LONGER PUBLISHES IT".** The delivery service DELETES a
-   one-time prekey as it hands it out, so absence from the server is exactly what a bundle looks
-   like when a peer is about to send the Welcome built on it - pruning on that signal would race a
-   join and lose it. An elapsed `not_after` carries no such ambiguity: openmls defaults it to 84
-   days, a Welcome referencing an expired KeyPackage is invalid under RFC 9420, and so the delete
-   is confined to what could not have been used anyway. It needs no server round-trip and cannot
-   race anything, which is what makes it safe unattended.
-
-   **WHERE IT RUNS.** `MlsManager::prune_expired_key_packages`, called once from `load_or_create` -
-   and `load_with_key` delegates there, so the web client, the native client and the background FCM
-   path all shed through one seam with no second code path and no timer. The last-resort fallback is
-   kept exactly like any other package until its own lifetime elapses, which is the KEEP the old
-   text asked for. A prune failure is logged and does not fail the load: a device that cannot shed
-   still works, one that refuses to load has lost everything.
-
-   **WHAT THIS DOES AND DOES NOT CLOSE.** It bounds the leak permanently at (mint rate x 84 days),
-   which is the durable fix. It does **not** promise to shrink *this* phone's blob today - only
-   bundles past 84 days go, so the reclaim depends on the install's age. **Two accrual paths are
-   therefore still open**, and they are the minting itself rather than its cleanup.
-
-   1. **The per-connection last-resort mint.** `generateKeyPackageImpl` publishes a fresh fallback
-      every time, and a `last_resort` package is reusable by construction - that is the whole point
-      of the 2026-09-06 fix. It should be re-minted only when the device can no longer back it, and
-      `keyPackageHasPrivate` already answers exactly that question about a fetched package. At
-      1 936 bytes a connection this is the STEADY-STATE floor of the leak, the part that survives
-      every storm being fixed: twenty connections a day over the 84-day prune horizon is ~1 680
-      bundles, over 3 MB, on a device doing nothing wrong.
-   2. **`republishKeyMaterial`'s 50 orphans - and the obvious fix for it is WRONG.** Dropping the
-      local bundles when the server pool is purged would race a join and lose it: a peer may have
-      claimed a prekey seconds before the purge with the Welcome still in flight, and the private
-      key it needs is precisely what would be deleted. **The discriminator exists, but only on the
-      server.** A claim and the row's deletion are one atomic operation, so anything still present
-      when `DELETE .../prekeys` runs is provably UNCLAIMED - and therefore provably safe to delete
-      locally. The endpoint currently returns nothing. Have it return the ids it actually deleted,
-      and the client can drop exactly those with no race and no clock. That is the repository's own
-      rule about never learning by failing what a fact could have told you: carry the discriminator
-      to where the decision is made, from where it is already known. It needs a server change, a
-      client change, and a delete-by-`hash_ref` in `mls-core`.
 
 **This is invisible to every gate in this repository.** The desktop clients carry a small state and
 the emulator never accumulates one; only a phone that has lived through a campaign shows it. It
 belongs with the other three iOS/Android defects that no green build could have caught.
-
-**WHAT REMAINS AFTER THE UI HALF AND THE MEASUREMENT**: the unlock still takes ~22 s on this
-handset and a structural checkpoint still costs 17 s of CPU, because the prune bounds future growth
-rather than reclaiming an existing blob whose bundles have not yet reached 84 days. The two accrual
-paths named in question 2 are what would actually shrink it, and neither is written. **A field
-re-measurement of `stat mls.bin` on this handset is owed once a build carrying the prune has run on
-it** - that number, not a test, is what closes this entry.
 
 ### P2 - the MLS snapshot version is a PER-DOCUMENT counter compared ACROSS documents, so a second tab's write is dropped on a collision (measured on TAB-4, 2026-09-05)
 
