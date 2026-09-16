@@ -6363,6 +6363,24 @@ all - the WebView's console is read over CDP, and logcat carries only the native
 attempt reads the phone's CDP console across a background/resume, not its logcat**, and that is the
 one line still owed.
 
+**SECOND OBSERVATION, 2026-09-16, AND IT IS INDIRECT BUT IT SETTLES THE RESIDUE PARAGRAPH.** The
+Mi 9T was re-imaged by the 2026-09-14 hardware session (`firstInstallTime=2026-09-14 20:12:15`) and
+runs `0.18.1`, which HAS the guard - `e5aba1f76` is an ancestor of `v0.16.4`, and `v0.16.4` of
+`v0.18.1`. Four hours after first run, `mls.bin` stood at **2 750 195 bytes** for a device holding
+**4 conversations and 1 180 messages**. Groups cannot account for it: at the measured 5 330-byte
+floor plus ~2 000 a member, four groups cost under 0.45 MB even at fifty members apiece, and sends
+are flat. The remainder is **roughly 1 200 bundles, which is about twenty-four purge-and-remint
+rounds of fifty, in four hours.**
+
+**So the loop survived the guard, exactly the way the residue paragraph predicted it would.**
+`publishedThisSession` is per-process; an enrolment session that restarts the app hands each new
+process an empty set, and the previous process's mints are purgeable again. This does not identify
+the reload that empties the keystore - that is still the owed CDP observation - but it removes the
+possibility that #393 closed the class, and it dates the loop as live on the current stable line
+rather than on `0.16.x`. **It is also the last measurement this handset can give about the pile**:
+its old 19.5 MB blob was deleted with the debug build, so the prune's reclaim is no longer
+observable here (see the blob entry below).
+
 **The 2026-09-06 prune (`prune_expired_key_packages`) does NOT fix this** and was never going to:
 these bundles are hours old, not 84 days. The prune bounds the ceiling; this loop is what fills it.
 
