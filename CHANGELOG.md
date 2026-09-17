@@ -11,6 +11,46 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Added - le plus gros bloc du demarrage avait 43 % du cout et aucune horloge
+
+Le dernier export de l'utilisateur donne cinq blocs pour un demarrage a froid de 1342 ms, et le plus
+cher des cinq est celui qui separe le premier mot de l'application de `MLS ready` : **580 ms, 43 %**.
+Rien ne mesurait l'interieur de ce bloc. Ce n'est pas un oubli de lecture - il n'y avait pas d'horloge
+a lire : `beginStartupCatchupBench()` est appele dans `sessionAuth.ts` sur la ligne qui PRECEDE
+immediatement `[INIT] MLS ready`, donc il mesure la synchro qui suit et jamais l'init qui precede.
+L'instrument etait a une ligne de la fin du bloc qu'il ne couvrait pas.
+
+`frontend/src/lib/mls-client/bootBenchmark.ts` le couvre. C'est un SECOND module et non un troisieme
+`kind` sur le banc de catch-up, parce que ses trois proprietes sont l'inverse des siennes :
+
+- **des OFFSETS depuis `performance.timeOrigin`**, pas des durees. Une ligne de banc et une ligne de
+  HAR deviennent le meme nombre. Lire un banc de durees contre un HAR, sur une seconde horloge, est
+  exactement l'operation qui a fait passer un aller-retour de 94 ms pour « 56-60 % du demarrage »
+  alors qu'il en faisait 7 % ;
+- **des spans NOMMES qui peuvent se chevaucher.** La poignee de main du socket est lancee ~200 ms
+  avant d'etre attendue et la reponse de revocation est tenue pendant le dechiffrement local, deux
+  chevauchements deliberes et deja payes. Un modele a une seule phase active les aurait fermes trop
+  tot et aurait rapporte cette concurrence comme une sequence ;
+- **aucun compteur de messages**, parce qu'aucun n'est une preuve pour cette question-la.
+
+Le rapport porte aussi le `PerformanceNavigationTiming` du document - TTFB, corps,
+`domContentLoaded` - donc **il repond seul a tout le tableau, et un HAR n'est plus du**.
+
+**Il enregistre a chaque demarrage et ne journalise que si on le demande.** Un drapeau qui exige un
+rechargement ne peut pas capturer un demarrage a froid : quand on sait qu'on voulait la mesure, le
+demarrage en question est fini. `window.__canariBootBench.get()` repond donc sur n'importe quel
+build, sans drapeau et sans rechargement ; `localStorage.setItem('canari_boot_bench', '1')` n'ajoute
+qu'une ligne de resume par demarrage.
+
+**Et sa premiere execution a refute la premiere chose qu'il devait tester.** Les deux derivations
+PBKDF2-SHA256 du chemin PIN - 100 000 iterations puis 310 000, sequentielles par construction - sont
+chronometrees separement : 410 000 iterations de SHA-256 devant un demarrage, c'est exactement la
+forme qui ressemble a une reponse. **Elles ne sont pas sur le chemin mesure.** `loginImpl` ne prend
+la branche PIN que si ni le keystore ni le coffre n'ont repondu ; une session qui revient prend le
+`else`, et tout le bloc PIN est saute. L'export de l'utilisateur imprime `Initialising MLS (vault
+device key path)`, la ligne qui est DANS ce `else` : ces 410 000 iterations n'ont jamais ete dans ses
+580 ms. L'instrument l'a dit a sa premiere lecture, au lieu qu'un correctif soit construit dessus.
+
 ## [0.18.11] - 2026-09-17
 
 ### Changed - le seul endroit qui mesure un noeud sur le point d'etre porte est mesure, et tenu

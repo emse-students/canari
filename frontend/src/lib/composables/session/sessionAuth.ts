@@ -77,6 +77,13 @@ import {
   summarizeConversationStats,
   installCatchupBenchDevTools,
 } from '$lib/mls-client/catchupBenchmark';
+import {
+  markBoot,
+  beginBootSpan,
+  endBootSpan,
+  finishBootBench,
+  installBootBenchDevTools,
+} from '$lib/mls-client/bootBenchmark';
 import { saveDeviceKey, clearDeviceKey, clearDeviceKeyAndWrapKey } from '$lib/utils/deviceKeyVault';
 import { wipeDeviceToFactory } from '$lib/utils/deviceReset';
 import { startPushService, stopPushService } from '$lib/services/PushNotificationService';
@@ -394,6 +401,12 @@ export async function wipeRevokedDevice(ctx: SessionContext, cb: ChatSessionCall
  * On failure redirects to /login (or calls cb.onLoginFailed if provided).
  */
 export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): Promise<void> {
+  // EVERY OFFSET IN THIS REPORT IS MEASURED FROM NAVIGATION START, not from here, so the document,
+  // the module graph and hydration are all visible as the gap before `login-start` without anything
+  // needing to instrument them. That gap is the other half of the cold start, and a bench anchored
+  // at this line would have hidden it exactly as the catch-up bench hid the 43% that precedes it.
+  installBootBenchDevTools();
+  markBoot('login-start');
   const userId = ctx.getUserId();
   const pin = ctx.getPin();
   // Reassigned below once the PIN branch has fetched the server salt and derived the key.
@@ -505,7 +518,9 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
 
     let accessToken: string;
     try {
+      beginBootSpan('access-token');
       accessToken = await getToken();
+      endBootSpan('access-token');
     } catch (err) {
       // A SessionExpiredError means the refresh cookie is dead (HTTP 401/403) - the session
       // cannot be recovered by re-entering the PIN. Surface it as a session loss (logout +
@@ -594,6 +609,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       //  - a revoked device is matched on its real deviceId (not the 'pending' placeholder),
       //    so the one-shot reset fires instead of leaving it banned forever.
       // Fetch the per-user random salt from the server
+      beginBootSpan('pin-salt-fetch');
       const saltRes = await fetchOrUnreachable(
         `${ctx.getHistoryBaseUrl()}/api/mls/security/pin-salt/${encodeURIComponent(ctx.getUserId())}`,
         { headers: { Authorization: `Bearer ${accessToken}` } },
@@ -603,13 +619,20 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
         throw new LocalizedError(m.auth_pin_salt_unreachable());
       }
       const { salt } = (await saltRes.json()) as { salt: string };
+      endBootSpan('pin-salt-fetch');
+      // PBKDF2-SHA256, 100k iterations - the first of TWO derivations this path runs.
+      beginBootSpan('pin-verifier-pbkdf2');
       const verifier = await computePinVerifier(ctx.getUserId(), ctx.getPin(), salt);
+      endBootSpan('pin-verifier-pbkdf2', { iterations: 100_000 });
       const verifierHeaders: Record<string, string> = {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${accessToken}`,
       };
+      beginBootSpan('resolve-device-id');
       const deviceId = await mlsService.resolveDeviceId(ctx.getUserId());
+      endBootSpan('resolve-device-id');
       const verifierPayload = JSON.stringify({ userId: ctx.getUserId(), verifier, deviceId });
+      beginBootSpan('pin-check-request');
       const pinCheckRes = await fetchOrUnreachable(
         `${ctx.getHistoryBaseUrl()}/api/mls/security/pin-check`,
         { method: 'POST', headers: verifierHeaders, body: verifierPayload },
@@ -622,6 +645,7 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
         status: string;
         resetRequired?: boolean;
       };
+      endBootSpan('pin-check-request');
 
       if (pinCheckData.status === 'mismatch') {
         throw new LoginFailure('pin_mismatch', m.auth_pin_mismatch());
@@ -639,7 +663,12 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       // PIN accepted: derive this device's at-rest key from it. Done here rather than at the
       // call site because it needs the same server salt the verifier was just computed with,
       // and it must not run before the PIN has been proven correct.
+      // PBKDF2-SHA256, 310k iterations - the SECOND derivation, and it is sequential with the
+      // first by construction: it is placed after the PIN check on purpose. Both halves are timed
+      // so the cost of that ordering is a measurement rather than an argument.
+      beginBootSpan('device-key-pbkdf2');
       deviceKeyB64 = await deriveDeviceKeyB64(ctx.getUserId(), pin, salt);
+      endBootSpan('device-key-pbkdf2', { iterations: 310_000 });
       ctx.setDeviceKey(deviceKeyB64);
     } else {
       cb.log(
@@ -658,7 +687,9 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
       // `resolveDeviceId` is safe here for the same reason the PIN path calls it before `init()`:
       // it reads the stored id and decrypts nothing. `isDeviceRevoked` answers `false` when it
       // cannot reach the server, so an offline login is never wiped by a transport failure.
+      beginBootSpan('resolve-device-id');
       const deviceId = await mlsService.resolveDeviceId(ctx.getUserId());
+      endBootSpan('resolve-device-id');
       revocationAnswer = mlsService.isDeviceRevoked(ctx.getUserId(), deviceId);
     }
 
@@ -672,7 +703,9 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     // and it costs a Web Lock acquisition - measured at 6 ms on the 2026-09-16 export. Nothing
     // between here and its old position below the restore reads `getIsTabLeader()`, so the move is
     // a reordering of two independent facts and not a change of meaning.
+    beginBootSpan('tab-leadership');
     const tabLeaderNow = await initTabLeadershipAsync(cb.log);
+    endBootSpan('tab-leadership', { leader: tabLeaderNow });
     ctx.setIsTabLeader(tabLeaderNow);
     if (!tabLeaderNow) {
       cb.log('[TAB] Follower tab - WebSocket active in another Canari tab.');
@@ -688,10 +721,12 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     // this socket before MLS is ready is HELD by `BaseMlsService`, in arrival order, and replayed by
     // the `markInboundReady` below - which is the precondition of this line and must stay paired
     // with it. An offline session opens nothing: there is no token to carry and no server to reach.
+    if (!offlineSession) markBoot('gateway-handshake-started');
     const startedHandshake = offlineSession
       ? null
       : startGatewayHandshake({ mlsService, log: cb.log });
 
+    beginBootSpan('mls-init-and-storage');
     const [mlsInitSettled, storageSettled] = await Promise.allSettled([
       mlsService.init(ctx.getUserId(), deviceKeyB64, mlsStateResult?.bytes, {
         // `!!bytes` WOULD NOW BE WRONG ON MOBILE: the bytes were deliberately not loaded, and a
@@ -715,7 +750,11 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     // `isDeviceRevoked` answers `false` when it cannot reach the server and never rejects, so this
     // await can neither throw into the destructive catch below nor leave a rejection unhandled when
     // an earlier line throws past it.
-    if (revocationAnswer !== null && (await revocationAnswer)) {
+    endBootSpan('mls-init-and-storage');
+    beginBootSpan('revocation-gate');
+    const revoked = revocationAnswer !== null && (await revocationAnswer);
+    endBootSpan('revocation-gate', { asked: revocationAnswer !== null });
+    if (revoked) {
       await wipeRevokedDevice(ctx, cb);
       cb.log('[SECURITY] Revoked device: signed out and reset to a fresh install.');
       throw new LoginFailure('device_revoked', m.auth_device_revoked_reset());
@@ -751,7 +790,9 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     // it is what gates the device-key vault write and store_push_context further down. Biometric
     // mode must keep both skipped - the keystore is the only place this key belongs at rest.
     if (isBiometric) {
+      beginBootSpan('keystore-session-key');
       const sessionKey = await mlsService.resolveSessionDeviceKey();
+      endBootSpan('keystore-session-key');
       if (!sessionKey || !isValidDeviceKeyB64(sessionKey)) {
         throw new LoginFailure('keystore_empty', m.auth_keystore_empty_enter_pin());
       }
@@ -784,12 +825,18 @@ export async function loginImpl(ctx: SessionContext, cb: ChatSessionCallbacks): 
     // catch calls resetMls() + clearUserLocally() + clearDeviceKey(). A network blip would then
     // destroy the very session that just unlocked. The empty token is what every network-touching
     // helper reads as "not authenticated yet"; promoteOfflineSession fills it in.
+    beginBootSpan('auth-token-final');
     ctx.setAuthToken(offlineSession ? '' : await getToken());
+    endBootSpan('auth-token-final', { offline: offlineSession });
     ctx.setIsOfflineSession(offlineSession);
 
     ctx.setIsLoggedIn(true);
     saveUserLocally({ id: ctx.getUserId(), admin: isGlobalAdmin() });
     ctx.setIsMessagingInitializing(true);
+    // THE BOOT MEASUREMENT ENDS EXACTLY WHERE THE CATCH-UP ONE BEGINS, on the same line, so the two
+    // reports abut with no gap and no overlap. That adjacency is the point: between them they cover
+    // the whole cold start, and the 43% that used to have no clock at all is the first of the two.
+    finishBootBench();
     installCatchupBenchDevTools();
     beginStartupCatchupBench();
     cb.log('[INIT] MLS ready - syncing messages in background.');

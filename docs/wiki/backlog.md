@@ -960,6 +960,87 @@ state to decrypt. **So the edge Cache Rule beside this entry is worth at most ~8
 quoted as the cold-start fix; what dominates is the 580 ms of session and MLS work after the first
 word.**
 
+#### THE 43% IS THE ONE BLOCK WITH NO CLOCK IN IT, AND THAT IS NOW FIXED (`bootBenchmark.ts`, 2026-09-17)
+
+**Every number in the table above was read by a human off a HAR and a console export.** That is how
+the 580 ms is known to be 43%, and it is also why nothing is known about what is INSIDE it: the five
+rows are the five boundaries an export happens to expose, not a decomposition of the work.
+
+**The bench that exists measures the wrong side of the boundary.** `beginStartupCatchupBench()` is
+called in `sessionAuth.ts` on the line immediately BEFORE `[INIT] MLS ready`, so it times the sync
+that follows and never the init that precedes it. The largest block of the cold start was the only
+one with no instrument, and the instrument sat one line past its end.
+
+`frontend/src/lib/mls-client/bootBenchmark.ts` covers it, and it is a SECOND module rather than a
+third `kind` on the catch-up bench because all three of its properties are the opposite of that
+one's, and a column is only evidence for the question it was written to answer:
+
+| | catch-up bench | boot bench |
+| --- | --- | --- |
+| what it measures | durations, from `Date.now()` | OFFSETS from `performance.timeOrigin` |
+| concurrent steps | one active phase; a new one closes the last | named spans that may overlap |
+| what it counts | messages, conversations, acks | nothing - none of it is evidence here |
+
+**The offsets are the point.** A duration-only report has to be read against a HAR by hand, on a
+second clock, which is precisely the operation that turned a 94 ms round trip into a "56-60% of cold
+start" claim that was really 7%. Anchored at navigation start, a bench line and a HAR line are the
+same number. The report also carries the document's own `PerformanceNavigationTiming` - TTFB, body,
+`domContentLoaded` - so **it answers the WHOLE table above on its own, and a HAR is no longer owed
+for it.**
+
+**The overlap matters and is not a detail.** The gateway handshake is started ~200 ms before it is
+awaited and the revocation answer is deliberately held across the local decrypt, both on purpose and
+both recorded in this entry. A single-active-phase model would have closed those spans early and
+reported the concurrency this entry PAID for as if it were sequence.
+
+**IT RECORDS ON EVERY BOOT AND LOGS ONLY WHEN ASKED.** A flag that needs a reload cannot capture a
+cold start: by the time anyone wants the measurement, the boot in question is over. So
+`window.__canariBootBench.get()` answers on any build, with no flag and no reload -
+`localStorage.setItem('canari_boot_bench', '1')` only adds one summary line per boot on top.
+
+#### ITS FIRST RUN REFUTED THE FIRST THING IT WAS BUILT TO TEST (local estate, 2026-09-17)
+
+**The hypothesis was the two PBKDF2 derivations, and it is wrong for this boot and for the user's.**
+The PIN login path runs two sequential PBKDF2-SHA256 derivations on the same PIN and the same server
+salt - `computePinVerifier` at 100 000 iterations before the PIN check, `deriveDeviceKeyB64` at
+310 000 after it - and 410 000 iterations of SHA-256 in front of a boot is exactly the shape that
+looks like an answer. **It is not on the path being measured.** `loginImpl` takes the PIN branch only
+when neither a keystore nor a device-key vault answered; a returning session takes the `else`, and
+the whole PIN block - salt fetch, both derivations, the PIN-check round trip - is skipped.
+
+**And the user's boot is that same branch.** Their export prints `Initialising MLS (vault device key
+path)`, which is the log line inside that `else`. So the 410 000 iterations were never in their
+580 ms, and the instrument said so on its first run rather than after a change was built on them.
+**This is what the section above was written to avoid, and it worked at the first opportunity.**
+
+The first report, read off the scratch browser against the LOCAL estate:
+
+| | offset | duration |
+| --- | ---: | ---: |
+| document TTFB / `domContentLoaded` / `load` | - | 5.2 / 85.8 / 101.6 |
+| `login-start` | 147.4 | - |
+| `access-token` | 158.8 | 9.0 |
+| `resolve-device-id` | 221.1 | 0.1 |
+| `tab-leadership` (leader) | 221.2 | 7.8 |
+| `gateway-handshake-started` | 229.1 | - |
+| **`mls-init-and-storage`** | 229.5 | **159.1** |
+| `revocation-gate` (asked) | 388.6 | 45.7 |
+| `auth-token-final` | 434.8 | 0.2 |
+| **`MLS ready`** | **435.1** | - |
+
+**NOT ONE OF THESE NUMBERS IS THE USER'S AND NONE MAY BE QUOTED AS A COLD START.** It is a local
+estate on a loopback with a small state: the TTFB is 5 ms where theirs is 94, and `mls-init` here
+decrypts a fraction of their 7.6 MB. **What transfers is WHICH SPANS EXIST**, and that is the whole
+refutation - a branch that does not run costs nothing regardless of whose machine it is on.
+
+**What the run does prove about the instrument**: the offsets, the navigation entry, the overlap and
+the `window.__canariBootBench` reader all work on a real browser and a real boot. **The PIN spans are
+NOT proven end to end** - this boot never entered that branch, so they stand on the unit tests and
+the typecheck alone.
+
+**WHAT IS OWED IS ONE BOOT ON THE USER'S OWN BROWSER**, which is now one console command rather than
+a HAR export. Until then no number in this entry's arithmetic has moved.
+
 Two things the export settles in passing, both measured rather than argued:
 
 - **The module graph costs almost nothing per chunk and is already entirely at the edge.** 173
