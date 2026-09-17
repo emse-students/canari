@@ -46,6 +46,7 @@
   import PollSection from './PollSection.svelte';
   import FormSection from './FormSection.svelte';
   import Button from '$lib/components/ui/Button.svelte';
+  import Toggle from '$lib/components/ui/Toggle.svelte';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
 
@@ -90,11 +91,21 @@
   let selectedLinkedCalendarEventId = $state('');
   let linkableCalendarEvents = $state<AssociationCalendarEvent[]>([]);
   let loadingLinkableEvents = $state(false);
+  /** Mutually exclusive with `selectedAssociationId`: an association post already anonymizes its
+   *  author for everyone, so the two identities never combine. */
+  let anonymous = $state(false);
 
   /** Associations the user may post as (admin/owner). Global admins can post as any. */
   let postAsAssociations = $derived(
     isGlobalAdmin() ? myAssociations : myAssociations.filter((a) => a.isAdmin)
   );
+
+  // Picking an association while "Anonyme" is on would be silently overridden by the server
+  // anyway (see `PostsController.createPost`) - cleared here too so the UI never shows a state
+  // the publish will not honor.
+  $effect(() => {
+    if (selectedAssociationId) anonymous = false;
+  });
 
   // --- UI state ---
   let publishing = $state(false);
@@ -119,6 +130,7 @@
       scheduledAt,
       selectedAssociationId,
       selectedLinkedCalendarEventId,
+      anonymous,
     };
   }
 
@@ -134,6 +146,7 @@
     scheduledAt = draft.scheduledAt;
     selectedAssociationId = draft.selectedAssociationId;
     selectedLinkedCalendarEventId = draft.selectedLinkedCalendarEventId;
+    anonymous = draft.anonymous;
   }
 
   function persistComposerDraft() {
@@ -330,6 +343,7 @@
       }
 
       if (selectedAssociationId) payload.associationId = selectedAssociationId;
+      if (anonymous) payload.anonymous = true;
       if (selectedLinkedCalendarEventId.trim()) {
         payload.linkedCalendarEventId = selectedLinkedCalendarEventId.trim();
       }
@@ -351,6 +365,7 @@
       scheduledAt = '';
       selectedAssociationId = '';
       selectedLinkedCalendarEventId = '';
+      anonymous = false;
       onPostCreated();
     } catch (err) {
       Log.d('publishPost failed', err);
@@ -448,6 +463,16 @@
         {/if}
       </div>
     {/if}
+
+    <!-- Anonyme: visible a tout le monde, independant du droit de publier au nom d'une asso -->
+    <div class="mb-5">
+      <Toggle
+        bind:checked={anonymous}
+        label={m.post_create_anonymous_label()}
+        hint={m.post_create_anonymous_hint()}
+        disabled={!!selectedAssociationId}
+      />
+    </div>
 
     <!-- Bannière Brouillon Restauré -->
     {#if draftRestored}

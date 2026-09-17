@@ -173,7 +173,10 @@ export class PostsController {
         throw new BadRequestException('You need admin or owner role to post as this association');
       }
     }
-    return this.service.createPost({ ...body, authorId: xUserId });
+    // Mutually exclusive with speaking for an association, which already anonymizes its author
+    // unconditionally - never trust the client to have respected that itself.
+    const anonymous = !!body.anonymous && !body.associationId;
+    return this.service.createPost({ ...body, authorId: xUserId, anonymous });
   }
 
   /** Association agenda entry linked to this post (same association), if configured. */
@@ -340,6 +343,18 @@ export class PostsController {
   ) {
     await this.assertContentModerator(xUserId, xGlobalAdmin);
     return this.service.setPinned(postId, false);
+  }
+
+  /** Clears the anonymous flag on a post, revealing its author again. Content moderators. */
+  @UseGuards(NginxAuthGuard)
+  @Patch(':postId/unmask')
+  async unmaskPost(
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') xGlobalAdmin: string | undefined,
+    @Param('postId') postId: string
+  ) {
+    await this.assertContentModerator(xUserId, xGlobalAdmin);
+    return this.service.clearAnonymousFlag(postId);
   }
 
   /** Refuses the caller unless they may moderate content anywhere on the platform. */

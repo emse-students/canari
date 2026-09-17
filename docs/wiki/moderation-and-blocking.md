@@ -94,6 +94,17 @@ The lazy purge is gone, the cron is the only mechanism, and its clock is `review
 `isContentModerator`: a platform admin, or a BDE member holding `MODERATE`. One predicate, shared by
 `/api/moderation/*` and by the post controls that give the same people the same reach.
 
+### Anonymous posts - the fourth control that predicate now gates
+
+A personal post (never an association one - the two are mutually exclusive, and an association
+post already anonymizes its author for everyone unconditionally) can be marked `anonymous` at
+creation. `PostsService.viewerCapabilities` strips `authorId` from the response for every viewer
+**except** the same `isContentModerator` tier - `canUnmaskAnonymous` is drawn from it, the same
+shape as `canPin`. `PATCH /posts/:postId/unmask` (`PostsController`, guarded by the same
+`assertContentModerator` pin/hide already use) clears the flag, one-directional: an author who did
+not choose anonymity at creation has no route back into it later, and the flag is otherwise
+immutable on edit - like `associationId` already is.
+
 ---
 
 ## Blocking

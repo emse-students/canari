@@ -1,5 +1,15 @@
 <script lang="ts">
-  import { Pin, PinOff, Pencil, Trash2, Flag, Link, Check, Ellipsis } from '@lucide/svelte';
+  import {
+    Pin,
+    PinOff,
+    Pencil,
+    Trash2,
+    Flag,
+    Link,
+    Check,
+    Ellipsis,
+    VenetianMask,
+  } from '@lucide/svelte';
   import { copyPublicShareLink } from '$lib/utils/copyShareLink';
   import { clickOutside } from '$lib/actions/clickOutside';
   import { slide } from 'svelte/transition';
@@ -46,6 +56,9 @@
     canPin: boolean;
     /** May report: any logged-in reader who is not the post's own publisher. */
     canReport: boolean;
+    /** May clear the anonymous flag on this post: same tier as `canPin`, only ever true when the
+     *  post actually is anonymous - the server never sets it otherwise. */
+    canUnmaskAnonymous: boolean;
     /** Whether any user is logged in (gates the whole menu). */
     isLoggedIn: boolean;
     /** Called when the reader picks pin/unpin. */
@@ -56,6 +69,8 @@
     onDelete: () => void;
     /** Called when the reader picks "Report": the card opens the shared reason dialog. */
     onReport: () => void;
+    /** Called when a moderator picks "Remove anonymity". */
+    onUnmaskAnonymous: () => void;
     /** Post id used for the public share link. */
     postId: string;
   }
@@ -65,11 +80,13 @@
     canManage,
     canPin,
     canReport,
+    canUnmaskAnonymous,
     isLoggedIn,
     onTogglePin,
     onStartEdit,
     onDelete,
     onReport,
+    onUnmaskAnonymous,
     postId,
   }: Props = $props();
 
@@ -157,6 +174,18 @@
               <Pin size={16} strokeWidth={2.5} />
               {m.post_pin_action_label()}
             {/if}
+          </button>
+        {/if}
+
+        {#if canUnmaskAnonymous}
+          <button
+            type="button"
+            role="menuitem"
+            onclick={() => pick(onUnmaskAnonymous)}
+            class="{ROW} text-text-main hover:bg-amber-500/10 hover:text-amber-500"
+          >
+            <VenetianMask size={16} strokeWidth={2.5} />
+            {m.post_action_unmask_anonymous()}
           </button>
         {/if}
 

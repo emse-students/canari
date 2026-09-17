@@ -11,6 +11,27 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Added - poster anonymement, et l'action de moderation qui retire l'anonymat
+
+Demande de l'utilisateur (2026-09-17) : un interrupteur "Anonyme" dans le composeur de post,
+toujours visible - independant du droit d'administrer une association, contrairement au
+selecteur "Publier en tant que" qui reste reserve aux admins d'association. Coche, un post
+personnel n'expose plus `authorId` (ni les champs de nom) a un lecteur ordinaire ; un moderateur
+de contenu ou un admin plateforme continue de les recevoir, exactement le niveau deja verifie pour
+epingler ou masquer un post (`isContentModerator`). `anonymous` est fixe a la creation, jamais
+modifiable par l'auteur en edition (comme `associationId` deja aujourd'hui), et mutuellement
+exclusif avec un post d'association - qui anonymise deja son auteur pour tout le monde,
+inconditionnellement, un mecanisme distinct que celui-ci ne duplique pas. Le serveur ne fait jamais
+confiance au client sur cette exclusivite : `associationId` present force `anonymous` a faux, quoi
+que le client ait envoye.
+
+Cote affichage, un post anonyme n'utilise jamais `authorId` pour choisir un avatar - meme quand un
+moderateur le recoit dans le payload - et dessine une icone generique a la place
+(`AnonymousAvatar`, modelee sur `GroupAvatar`). Un moderateur/admin voit une nouvelle action
+"Retirer l'anonymat" dans le menu du post, qui appelle `PATCH /posts/:postId/unmask` - a sens
+unique, sans action inverse : un auteur qui n'a pas choisi l'anonymat a la creation n'a pas de
+chemin retour vers lui plus tard.
+
 ### Fixed - les tests jest des quatre services NestJS epuisaient plus de 6 Go de RAM sur un poste a beaucoup de coeurs
 
 Signale par l'utilisateur (2026-09-17) : `bun run test` interrompu faute de RAM. Cause reelle :

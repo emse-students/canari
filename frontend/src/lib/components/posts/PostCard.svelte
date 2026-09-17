@@ -11,6 +11,7 @@
     getPost,
     pinPost as pinPostApi,
     unpinPost as unpinPostApi,
+    unmaskPost as unmaskPostApi,
     type PostEntity,
     type PostComment,
   } from '$lib/posts/api';
@@ -105,6 +106,7 @@
   const canManage = $derived(localPost.canManage === true);
   const canPin = $derived(localPost.canPin === true);
   const canReport = $derived(localPost.canReport === true);
+  const canUnmaskAnonymous = $derived(localPost.canUnmaskAnonymous === true);
 
   let userReaction = $derived((localPost.reactions ?? {})[currentUserId] ?? null);
   let reactions = $derived<Record<string, number>>((localPost.reactions ?? {}) as any);
@@ -380,6 +382,18 @@
     }
   }
 
+  /** Clears the anonymous flag (moderator/admin only), revealing the author again. */
+  async function unmaskAnonymous() {
+    try {
+      await unmaskPostApi(localPost.id);
+      localPost = { ...localPost, anonymous: false };
+      actionMessage = m.post_anonymous_removed();
+    } catch (err) {
+      Log.d('unmaskAnonymous failed', err);
+      errorMessage = m.post_unable_to_unmask();
+    }
+  }
+
   /** Whether the post's own report dialog is open. A comment's is keyed by the comment instead. */
   let reportingPost = $state(false);
   let reportSubmitting = $state(false);
@@ -475,11 +489,13 @@
         {canManage}
         {canPin}
         {canReport}
+        {canUnmaskAnonymous}
         isLoggedIn={!!currentUserId}
         onTogglePin={togglePin}
         onStartEdit={startEditPost}
         onDelete={handleDeletePost}
         onReport={() => (reportingPost = true)}
+        onUnmaskAnonymous={unmaskAnonymous}
         postId={localPost.id}
       />
     </div>

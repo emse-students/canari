@@ -207,6 +207,15 @@ export class CreatePostDto {
   @IsOptional()
   associationId?: string;
 
+  /**
+   * Server decides precedence when both are set: `PostsController.createPost` forces this false
+   * whenever `associationId` is present, never trusting the client to have respected the
+   * mutual exclusivity the composer's own UI already enforces.
+   */
+  @IsBoolean()
+  @IsOptional()
+  anonymous?: boolean;
+
   @IsOptional()
   @ValidateIf((_, v) => typeof v === 'string' && v.length > 0)
   @IsUUID()
