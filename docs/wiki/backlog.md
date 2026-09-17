@@ -1498,16 +1498,46 @@ moment the composer knows which gesture produced it. That is the standing rule a
 discriminator to where the decision is already known; a heuristic on the file would be the fallback
 this repository forbids.
 
-### P3 - the community settings screen on mobile is a wall of text, hidden elements and modals, where the conversation settings are not (user, 2026-09-17)
+### P3 - MEASURED 2026-09-17, REDESIGN OPEN - community settings are a modal where the conversation settings are a panel (user, 2026-09-17)
 
 Verbatim: *"Les parametres de communaute sur mobile ne sont pas du tout ergonomiques, beaucoup de
 texte, elements caches, modal... Au lieu de ca, on pourrait avoir quelque chose de similaire aux
 parametres des conversations. Tu peux le mesurer sur le Mi9T directement si tu veux."*
 
 **The user named the target, which is what makes this actionable rather than a taste question**: the
-CONVERSATION settings screen is the shape to copy. Measurable on the Mi 9T directly, and the measure
-comes before the redesign - what is hidden, how many taps, how much of it is a modal that a screen
-that size cannot hold.
+CONVERSATION settings screen is the shape to copy.
+
+**MEASURED at 436 x 945** - the Mi 9T's own CSS pixels, not 393, because that is the screen the
+report was written on ([device-verification](device-verification.md)). Same account, same estate,
+same build, the two screens opened one after the other:
+
+| | conversation settings (the named target) | community settings (reported) |
+| --- | --- | --- |
+| shape | full-bleed side panel, no `role="dialog"` | **a modal**, 404 x 869 floating in 436 x 945 |
+| frame a finger can actually read | **945** - the whole screen | **790**; 155 px, 16% of the phone, spent on the float |
+| content vs that frame | 945 - **1.00 screen**, nothing scrolls | 895 - **1.13 screens** |
+| settings hidden behind a tab | **none** | **three** (Vue d'ensemble / Roles & permissions / Membres) |
+| characters of prose | 545 | **670**, +23% in a frame 155 px shorter |
+| tap targets under 44 px | 7 | 8 |
+| "Quitter" / "Supprimer" | on screen | **below the modal's own scroll frame** |
+
+So all three words in the report are literal. *modal*: `SidebarCommunityAdminModal` is a `<Modal>`
+covering 92% of the screen in each direction - which is a panel that also dims, floats and clips,
+paying a scrim and a gutter for nothing a phone wants. *elements caches*: two thirds of the settings
+sit behind a tab strip INSIDE that modal, and the two destructive actions sit below its scroll frame.
+*beaucoup de texte*: 23% more prose than the screen it is compared with, in 16% less room.
+
+**What the redesign is**: the phone gets the shape `ConversationSidePanel` already has - full-bleed,
+no scrim, the screen's whole height - keeping the tab strip, which is what makes three sections
+legible once the frame stops costing 155 px. `ConversationMediaPanel` is the worked example of a
+horizontal strip inside such a panel.
+
+**Measured in a browser, NOT on the phone, and that is a standing constraint rather than a
+shortcut.** The Mi 9T currently carries the USER'S OWN account, whose encryption PIN is theirs alone
+and which gates every screen behind the chat; the harness path (`run.mjs --preflight A1`) expects the
+test account instead. Re-provisioning that phone would destroy a real session, so anything on it that
+is not purely structural is owed to the user. A LAYOUT question needs none of that: the client is a
+WebView, and the width and height above are the device's own.
 
 ---
 ## Notifications - the two builders, and the rung of the campaign that reads them as one
