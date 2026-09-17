@@ -2,6 +2,7 @@
   import type { PostEntity } from '$lib/posts/api';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
+  import AnonymousAvatar from '$lib/components/shared/AnonymousAvatar.svelte';
   import { Clock } from '@lucide/svelte';
   import { timeAgo, exactDate } from '$lib/utils/time';
   import { m } from '$lib/paraglide/messages';
@@ -15,9 +16,10 @@
 
   let { post }: Props = $props();
 
-  /** Returns the display name for the post author: association name for association posts, "firstName lastName" / displayName / userId for personal posts. */
+  /** Returns the display name for the post author: association name for association posts, "Anonyme" for an anonymous post, "firstName lastName" / displayName / userId otherwise. */
   function getPostAuthorName(): string {
     if (post.association) return post.association.name;
+    if (post.anonymous) return m.post_anonymous_label();
     const first = post.authorFirstName?.trim();
     const last = post.authorLastName?.trim();
     if (first && last) return `${first} ${last}`;
@@ -53,6 +55,10 @@
         shape="circle"
       />
     </a>
+  {:else if post.anonymous}
+    <span class="shrink-0">
+      <AnonymousAvatar size="md" shape="circle" />
+    </span>
   {:else}
     <a
       href="/profile/{encodeURIComponent(post.authorId ?? '')}"
@@ -72,6 +78,8 @@
         >
           {post.association.name}
         </a>
+      {:else if post.anonymous}
+        <span class="text-text-main text-sm font-bold">{m.post_anonymous_label()}</span>
       {:else}
         <a
           href="/profile/{encodeURIComponent(post.authorId ?? '')}"

@@ -18,6 +18,47 @@ which is also where every release up to and including v0.13.1 now lives.
   identifiants de notification etant stables PAR CONVERSATION - elle n'ecrase plus la notification
   d'un message non lu de cette meme conversation, ni ne compte dans le badge du lanceur.
 
+### Added - poster anonymement, et l'action de moderation qui retire l'anonymat
+
+Demande de l'utilisateur (2026-09-17) : un interrupteur "Anonyme" dans le composeur de post,
+toujours visible - independant du droit d'administrer une association, contrairement au
+selecteur "Publier en tant que" qui reste reserve aux admins d'association. Coche, un post
+personnel n'expose plus `authorId` (ni les champs de nom) a un lecteur ordinaire ; un moderateur
+de contenu ou un admin plateforme continue de les recevoir, exactement le niveau deja verifie pour
+epingler ou masquer un post (`isContentModerator`). `anonymous` est fixe a la creation, jamais
+modifiable par l'auteur en edition (comme `associationId` deja aujourd'hui), et mutuellement
+exclusif avec un post d'association - qui anonymise deja son auteur pour tout le monde,
+inconditionnellement, un mecanisme distinct que celui-ci ne duplique pas. Le serveur ne fait jamais
+confiance au client sur cette exclusivite : `associationId` present force `anonymous` a faux, quoi
+que le client ait envoye.
+
+Cote affichage, un post anonyme n'utilise jamais `authorId` pour choisir un avatar - meme quand un
+moderateur le recoit dans le payload - et dessine une icone generique a la place
+(`AnonymousAvatar`, modelee sur `GroupAvatar`). Un moderateur/admin voit une nouvelle action
+"Retirer l'anonymat" dans le menu du post, qui appelle `PATCH /posts/:postId/unmask` - a sens
+unique, sans action inverse : un auteur qui n'a pas choisi l'anonymat a la creation n'a pas de
+chemin retour vers lui plus tard.
+
+### Fixed - les tests jest des quatre services NestJS epuisaient plus de 6 Go de RAM sur un poste a beaucoup de coeurs
+
+Signale par l'utilisateur (2026-09-17) : `bun run test` interrompu faute de RAM. Cause reelle :
+jest choisit son nombre de workers sur le compte de coeurs CPU (`coeurs - 1`), une heuristique
+pensee pour du travail lie au CPU - alors que chaque worker ici fait tourner `ts-jest`, qui
+type-verifie le fichier entier avant de l'executer, sur tout le graphe de modules NestJS +
+TypeORM + ExcelJS. Sur un poste a 16 coeurs, ca fait 15 workers, chacun memoire-lourd : le nombre
+de workers scalait sur le mauvais axe.
+
+`isolatedModules: true` (dans le `tsconfig.json` de chaque service - la forme que `ts-jest`
+recommande desormais, pas l'option de transform depreciee) fait sauter cette verification de
+type par fichier : chaque worker transpile sans construire un programme TypeScript complet, donc
+consomme une fraction de la memoire. La verification de type elle-meme n'est pas perdue - elle
+reste entiere sur `bun run build`/`bun run check`, qui compile tout le projet d'un coup. Applique
+aux trois services qui ne l'avaient pas encore (`chat-delivery-service`, `media-service`,
+`social-service`) - `core-service` l'avait deja pour une autre raison (son `module: nodenext`).
+
+Mesure apres coup, sur le meme poste a 16 coeurs : les 833 tests de `social-service` passent en
+8 secondes avec un pic memoire d'environ 10 Go au lieu d'epuiser les 14 Go disponibles.
+
 ### Fixed - six autotests CI lisaient tout l'arbre derriere un filtre de chemins de huit motifs
 
 `ci.yml` ne lancait `test-ci-scripts` que si le changement touchait `.github/scripts/`,

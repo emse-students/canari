@@ -12,6 +12,7 @@
     "rootDir": "./src",
     "incremental": true,
     "skipLibCheck": true,
+    "isolatedModules": true,
     "types": ["node", "jest", "multer"],
     "strictNullChecks": false,
     "noImplicitAny": false,

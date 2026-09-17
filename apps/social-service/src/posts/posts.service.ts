@@ -44,6 +44,8 @@ interface PostCapabilities {
   canPin: boolean;
   /** The flag. Withheld only from the post's own publisher - reporting yourself means nothing. */
   canReport: boolean;
+  /** Clears an anonymous post's flag, revealing its author. Same tier as `canPin`. */
+  canUnmaskAnonymous: boolean;
 }
 
 /** Core post service: creation, listing (with Redis cache), search, scheduling, and moderation. */
@@ -182,22 +184,39 @@ export class PostsService {
    * corrects and withdraws its own words and pins nothing.
    */
   private viewerCapabilities(
-    post: { authorId?: string | null; associationId?: string | null },
+    post: { authorId?: string | null; associationId?: string | null; anonymous?: boolean },
     viewer: PostViewerContext
   ): PostCapabilities {
     const isPublisher = this.viewerIsPublisher(post, viewer);
+    const isModeratorTier = viewer.isGlobalAdmin || viewer.isModerator;
     return {
-      canManage: viewer.isGlobalAdmin || viewer.isModerator || isPublisher,
-      canPin: viewer.isGlobalAdmin || viewer.isModerator,
+      canManage: isModeratorTier || isPublisher,
+      canPin: isModeratorTier,
       canReport: !!viewer.viewerId && !isPublisher,
+      canUnmaskAnonymous: !!post.anonymous && isModeratorTier,
     };
+  }
+
+  /**
+   * Whether THIS viewer must have `authorId` withheld on a post marked `anonymous` - never the
+   * post's own publisher's business, since only a moderator/admin may see past the flag.
+   */
+  private mustHideAnonymousAuthor(post: { anonymous?: boolean }, viewer: PostViewerContext) {
+    return !!post.anonymous && !(viewer.isGlobalAdmin || viewer.isModerator);
   }
 
   /** Strip publisher identity and attach association display for API responses. */
   private shapeListRow(p: any, viewer: PostViewerContext): any {
     const capabilities = this.viewerCapabilities(p, viewer);
     if (!p.associationId) {
-      return { ...p, ...capabilities };
+      const out: any = { ...p, ...capabilities };
+      if (this.mustHideAnonymousAuthor(p, viewer)) {
+        delete out.authorId;
+        delete out.authorDisplayName;
+        delete out.authorFirstName;
+        delete out.authorLastName;
+      }
+      return out;
     }
     const out: any = { ...p, ...capabilities };
     delete out.authorId;
@@ -219,7 +238,7 @@ export class PostsService {
     return out;
   }
 
-  /** Anonymize association-authored posts loaded as TypeORM entities. */
+  /** Anonymize association-authored and flagged-anonymous posts loaded as TypeORM entities. */
   private async toPublicPostFromEntity(
     post: Post,
     viewer: PostViewerContext
@@ -231,6 +250,9 @@ export class PostsService {
     }
     Object.assign(raw, this.viewerCapabilities(post, viewer));
     if (!raw.associationId) {
+      if (this.mustHideAnonymousAuthor(post, viewer)) {
+        delete raw.authorId;
+      }
       return raw;
     }
     delete raw.authorId;
@@ -699,6 +721,14 @@ export class PostsService {
       `UPDATE posts SET "hiddenByModeration" = false WHERE id = $1`,
       [postId]
     );
+    await this.invalidateListCache();
+    return { ok: true };
+  }
+
+  /** Clears the anonymous flag, revealing the post's author again. One-directional: an author who
+   *  did not choose anonymity at creation has no route back into it later. */
+  async clearAnonymousFlag(postId: string): Promise<{ ok: boolean }> {
+    await this.postRepo.manager.query(`UPDATE posts SET anonymous = false WHERE id = $1`, [postId]);
     await this.invalidateListCache();
     return { ok: true };
   }
