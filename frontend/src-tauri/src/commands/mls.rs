@@ -208,12 +208,26 @@ pub(crate) async fn sauvegarder_mls(
     .map_err(|e| e.to_string())?
 }
 
+/// Encrypts the live MLS state, writes `mls.bin`, and returns THE NUMBER OF BYTES WRITTEN.
+///
+/// IT RETURNS A LENGTH AND NOT THE BLOB, AND THAT IS THE WHOLE POINT OF THIS DOCBLOCK. This command
+/// exists because handing the snapshot back to JS so that JS could write it cost a `number[]`
+/// marshalling of the entire state - 2.0 s of a 3.7 s checkpoint on a Mi 9T, measured 2026-08-14.
+/// The duplicate WRITE was removed then; the marshalling was not, because the command kept
+/// returning `Vec<u8>`, which Tauri serialises as a JSON array of one number per byte. A 7.8 MB
+/// snapshot crossed the bridge as ~7.8 million JSON integers on every checkpoint and once more in
+/// front of the first screen, and **all four native call sites discarded it** - the return type was
+/// web's meaning of `saveState` (where the bytes ARE the persistence, because IndexedDB still has
+/// to be handed them) leaking into a platform that had already written the file.
+///
+/// The length is kept rather than nothing because a write that reports no size is a write nothing
+/// can sanity-check, and eight bytes is not a cost.
 #[tauri::command]
 pub(crate) async fn sauvegarder_mls_et_persister(
     device_key_b64: String,
     state: tauri::State<'_, AppState>,
     app: tauri::AppHandle,
-) -> Result<Vec<u8>, String> {
+) -> Result<usize, String> {
     let manager_state = state.mls_manager.clone();
     let device_key_state = state.device_key.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -233,7 +247,7 @@ pub(crate) async fn sauvegarder_mls_et_persister(
             .save_encrypted_with_key(&key)
             .map_err(|e| e.to_string())?;
         write_mls_state_blob(&app, &encrypted)?;
-        Ok::<Vec<u8>, String>(encrypted)
+        Ok::<usize, String>(encrypted.len())
     })
     .await
     .map_err(|e| e.to_string())?

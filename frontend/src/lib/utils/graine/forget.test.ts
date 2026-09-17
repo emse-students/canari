@@ -92,7 +92,6 @@ beforeEach(() => {
       getEpoch: () => 3,
       distributionScopes: () => scopes,
       forgetDistributionGroup,
-      saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
       persistCheckpoint: vi.fn().mockResolvedValue(undefined),
     } as never,
   });
@@ -164,7 +163,6 @@ describe('forgetCommunityGraine', () => {
         getEpoch: () => 3,
         distributionScopes: () => scopes,
         forgetDistributionGroup,
-        saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
         persistCheckpoint: vi.fn().mockResolvedValue(undefined),
       } as never,
     });

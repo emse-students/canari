@@ -34,7 +34,7 @@ interface ServiceInternals {
   _deviceKeyB64: string;
   _mutationsAtLastPersist: number;
   reloadStateFromDisk(): Promise<void>;
-  saveState(deviceKeyB64: string): Promise<Uint8Array>;
+  persistState(deviceKeyB64: string): Promise<number>;
 }
 
 function makeService(): ServiceInternals {
@@ -60,7 +60,7 @@ describe('TauriMlsService.reloadStateFromDisk - the resume that must not rewind 
     // One send since the last persist: the file is a generation behind the live client.
     svc.liveMutations = 1;
     svc._mutationsAtLastPersist = 0;
-    invoke.mockResolvedValue(Array.from({ length: 8 }, () => 0));
+    invoke.mockResolvedValue(8);
 
     await svc.reloadStateFromDisk();
 
@@ -72,7 +72,7 @@ describe('TauriMlsService.reloadStateFromDisk - the resume that must not rewind 
     const svc = makeService();
     svc.liveMutations = 3;
     svc._mutationsAtLastPersist = 1;
-    invoke.mockResolvedValue(Array.from({ length: 8 }, () => 0));
+    invoke.mockResolvedValue(8);
 
     await svc.reloadStateFromDisk();
 
@@ -94,11 +94,13 @@ describe('TauriMlsService.reloadStateFromDisk - the resume that must not rewind 
     invoke.mockImplementation(async (cmd: string) => {
       // A send racing the save: the snapshot the native side serialized cannot contain it.
       if (cmd === 'sauvegarder_mls_et_persister') svc.liveMutations++;
-      return Array.from({ length: 8 }, () => 0);
+      // A BYTE COUNT, which is all the command returns since it stopped marshalling the whole
+      // snapshot back across the bridge for callers that discarded it.
+      return 8;
     });
 
     svc.liveMutations = 1;
-    await svc.saveState('a'.repeat(44));
+    await svc.persistState('a'.repeat(44));
 
     // Erring this way costs one refused reload; erring the other way costs a rewound ratchet.
     expect(svc._mutationsAtLastPersist).toBe(1);

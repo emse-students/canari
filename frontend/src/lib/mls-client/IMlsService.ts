@@ -336,19 +336,23 @@ export interface IMlsService {
   createGroup(groupId: string): Promise<void>;
   /** Creates a new named group on the delivery server and returns its assigned group ID. */
   createRemoteGroup(name: string, isGroup?: boolean): Promise<string>;
-  /** Serialises and encrypts the current MLS state to a byte array using the device key. */
-  saveState(deviceKeyB64: string): Promise<Uint8Array>;
   /**
    * Writes the current MLS state to THIS platform's durable store - the whole checkpoint, and the
    * only call a checkpoint needs.
    *
-   * It exists because {@link saveState} does not mean the same thing on the two platforms. On web it
-   * RETURNS bytes that still have to be handed to IndexedDB; on native it has already written
-   * `mls.bin` before it returns, so handing those bytes back through `save_mls_state` writes the
-   * same file, with the same bytes, a second time - and pays a `number[]` IPC marshalling of the
-   * whole snapshot to do it, which is the very cost `sauvegarder_mls_et_persister` was written to
-   * avoid. Measured on the phone 2026-08-14: 3.7 s per checkpoint, of which 1.7 s was the real save
-   * and 2.0 s the duplicate.
+   * It exists because saving does not mean the same thing on the two platforms. On web
+   * `WebMlsService.saveState` RETURNS bytes that still have to be handed to IndexedDB; on native
+   * `TauriMlsService.persistState` has already written `mls.bin` before it returns, so handing
+   * those bytes back through `save_mls_state` writes the same file, with the same bytes, a second
+   * time - and pays a `number[]` IPC marshalling of the whole snapshot to do it, which is the very
+   * cost `sauvegarder_mls_et_persister` was written to avoid. Measured on the phone 2026-08-14:
+   * 3.7 s per checkpoint, of which 1.7 s was the real save and 2.0 s the duplicate.
+   *
+   * AND THE SAVE ITSELF IS NO LONGER ON THIS INTERFACE, which is the other half of the same fact.
+   * Declaring it here gave the two platforms one return type - web's - so native kept marshalling
+   * the whole snapshot back across the bridge for four call sites that all discarded it, long after
+   * the duplicate write above had been removed for naming that very cost. This seam is the one
+   * every caller wants; the per-platform save is the platform's own business.
    *
    * A caller that has to know which platform it is on in order to persist correctly is a caller
    * that will get it wrong; this is the seam that removes the question.

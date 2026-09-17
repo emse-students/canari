@@ -50,7 +50,6 @@ beforeEach(() => {
       getGroupMemberIdentities,
       removeMember,
       getEpoch: () => 26,
-      saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
       persistCheckpoint: vi.fn().mockImplementation(async () => {
         persisted += 1;
       }),

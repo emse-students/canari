@@ -48,7 +48,6 @@ function deps(overrides: Record<string, unknown> = {}) {
     fetchUserDevices: vi.fn(async () => []),
     getDeviceId: vi.fn(() => 'dev-1'),
     getLocalGroups: vi.fn(() => Array.from(local)),
-    saveState: vi.fn(async () => new Uint8Array([1])),
     deleteGroupOnServer: vi.fn(async () => {
       order.push('deleteGroupOnServer');
     }),
@@ -170,7 +169,6 @@ function dmDeps() {
       welcome: new Uint8Array([1]),
     })),
     sendWelcome: vi.fn(async () => {}),
-    saveState: vi.fn(async () => new Uint8Array([1])),
     deleteGroupOnServer: vi.fn(async () => {}),
   };
 
