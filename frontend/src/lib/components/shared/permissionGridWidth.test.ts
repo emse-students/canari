@@ -11,7 +11,7 @@
  * sideways to read is a matrix nobody audits". The answer taken then was to widen that one tab to
  * `max-w-6xl`. It worked, and it bought the room from the window.
  *
- * A PANEL CANNOT BUY ROOM FROM THE WINDOW. `.conversation-side-panel` is `max-width: 28rem`, and
+ * A PANEL CANNOT BUY ROOM FROM THE WINDOW. `.side-panel` is `max-width: 28rem`, and
  * the wider the window the narrower the panel gets (`sidePanelWidth.test.ts` is the gate for that
  * inversion). So the floors have to be the ones the content actually needs, measured against the
  * narrowest box that will ever hold the grid rather than against a desktop that had room to spare.
@@ -82,8 +82,8 @@ function canonicalRoleCount(): number {
 /** The side panel's widest form, in px, read from the rule that declares it. */
 function sidePanelWidthPx(): number {
   const css = readFileSync(APP_CSS, 'utf8');
-  const rule = css.match(/\.conversation-side-panel \{[^}]*?max-width: ([\d.]+)rem;/);
-  if (!rule) throw new Error('.conversation-side-panel no longer declares a max-width in rem');
+  const rule = css.match(/\.side-panel \{[^}]*?max-width: ([\d.]+)rem;/);
+  if (!rule) throw new Error('.side-panel no longer declares a max-width in rem');
   return Number(rule[1]) * 16;
 }
 

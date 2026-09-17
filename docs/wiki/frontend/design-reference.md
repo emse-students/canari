@@ -746,11 +746,19 @@ illegal state stopped being reachable rather than being guarded against.
 - **One instance, not two.** A desktop card and a mobile drawer as separate `{#if}` branches would
   mount `children` twice - two copies of the media panel, two decrypt passes, two of every request its
   content makes. The chrome is the only thing that differs, so the media query moves the chrome:
-  `.conversation-side-panel` is `position: fixed` at the base and `position: static` from 1280px up.
+  `.side-panel` is `position: fixed` at the base, and `.side-panel-column` makes it
+  `position: static` from 1280px up.
 - **The three CSS blocks are contiguous and ascending**, and that ordering is the mechanism. Written
   apart they were wrong: the 1280px rule sat *before* the 768px one, so at 1400px the drawer's own
   top-bar offset won on source order and pushed the column down by a whole bar.
 - **Escape, the scrim, the header and the close button are declared once**, in the shell.
+- **The shell is shared, and the COLUMN is the opt-in.** Since 2026-09-17 the community settings
+  render into it too, from the sidebar - a fourth shape for the same idea until then. What they
+  could not take is `position: static`, which needs a row with a place for it; the sidebar covers
+  the whole app and has none. So the drawer is `.side-panel`, every panel's, and the column is
+  `.side-panel-column`, which a host adds because only a host knows. Measured on the working tree
+  at the three rungs: 436 px full-bleed, 448 px inset and rounded from 768 px up, and 320 px
+  `static` at 1400 px for the chat panel only.
 - **The back gesture is one entry.** `openSidePanel` unwinds the previous panel's history entry before
   pushing its own - stacking them would make one visible panel need two back presses, the second of
   which closes something that was never on screen.
@@ -1979,7 +1987,7 @@ screenshot showed the amber check button of the rename row cut off at the panel'
 
 ### The quantity nothing was measuring
 
-`.conversation-side-panel` ([app.css](../../../frontend/src/app.css)) has two shapes and neither is
+`.side-panel` ([app.css](../../../frontend/src/app.css)) has two shapes and neither is
 proportional to the window:
 
 | Window | Panel | Why |

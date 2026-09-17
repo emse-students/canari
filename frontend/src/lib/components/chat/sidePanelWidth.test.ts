@@ -1,7 +1,8 @@
 /**
  * THE CONVERSATION SIDE PANEL IS A BOX, NOT A WINDOW, AND ITS WIDTH RUNS THE WRONG WAY.
  *
- * `.conversation-side-panel` is `width: 100%; max-width: 28rem` below 1280px and `width: 20rem`
+ * `.side-panel` is `width: 100%; max-width: 28rem` below 1280px, and `.side-panel-column`
+ * makes it `width: 20rem`
  * above it. So the panel is 448px at a 1000px viewport and **320px at 1400px**: the wider the
  * window, the narrower the panel. Every `sm:`/`md:` variant written inside it therefore asks the
  * window how much room there is, gets an answer about a different box, and gets it backwards.
@@ -53,7 +54,12 @@ import { withoutComments } from '$lib/styles/markupSources';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const COMPONENTS = resolve(HERE, '..');
-const SHELL = resolve(HERE, 'ConversationSidePanel.svelte');
+// The shared shell, not this directory's binding of it: the scrim, the container context and
+// the `xl:hidden` this file asserts on all moved to `shared/SidePanel.svelte` on 2026-09-17, while
+// `ConversationSidePanel` kept the name, the callers and the one decision that is the chat page's
+// (`column`). What is gated here is the box the children measure themselves against, so it follows
+// the box.
+const SHELL = resolve(COMPONENTS, 'shared/SidePanel.svelte');
 const HOST = resolve(COMPONENTS, 'MainChatPage.svelte');
 
 /** A file's markup with comments gone and every run of whitespace collapsed to one space. */
