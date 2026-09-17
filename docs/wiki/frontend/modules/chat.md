@@ -725,7 +725,7 @@ just vanished.
 `ChannelSettingsModal` offers "Quitter le salon" only when `selectedChannel.isPrivate`. A public
 channel is readable by every member of the community and keeps no per-member access, so there is
 nothing there to give up: the server answers `400`, and leaving is a community-level action
-(`SidebarCommunityAdminModal` -> `leaveCurrentWorkspace`). Hiding the button is convenience; the
+(`SidebarCommunityAdminPanel` -> `leaveCurrentWorkspace`). Hiding the button is convenience; the
 refusal is the gate. The scope rule behind it, and the defect that made it necessary, are on
 [social-service](../../services/social-service.md#a-channel-scoped-action-never-touches-community-membership-2026-08-17).
 

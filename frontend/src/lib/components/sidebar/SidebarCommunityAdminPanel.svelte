@@ -54,13 +54,13 @@
   }
 
   interface Props {
-    /** Whether the modal is visible. */
+    /** Whether the panel is showing. */
     open: boolean;
     /** List of all available community workspaces. */
     workspaces: ChannelWorkspace[];
     /** ID of the workspace currently being administered. */
     selectedWorkspaceId: string;
-    /** Callback to close the modal. */
+    /** Callback to close the panel. */
     onClose: () => void;
     /** Callback to update the avatar image of the selected workspace. */
     onUpdateWorkspaceImage?: (workspaceDbId: string, mediaId: string) => void;
@@ -480,7 +480,7 @@
     return `${expiry} - ${uses}`;
   });
 
-  /** Confirms then leaves/removes the selected community, closing the modal on success. */
+  /** Confirms then leaves/removes the selected community, closing the panel on success. */
   async function leaveCommunity() {
     if (
       !(await showConfirm(
@@ -557,14 +557,14 @@
     } catch (e) {
       Log.d('communityAdmin.saveHistoryVisibility failed', e);
       // Classified by the server's CODE, never by its sentence - the same contract every other
-      // community refusal in this modal is read through.
+      // community refusal in this panel is read through.
       historyVisibilityError = describeCommunityRefusal(refusalCode(e)) ?? m.common_save_error();
     } finally {
       historyVisibilitySaving = false;
     }
   }
 
-  // The selected community's rule, re-read whenever the modal opens on another one. Sourced from
+  // The selected community's rule, re-read whenever the panel opens on another one. Sourced from
   // the sidebar entry, which the server's broadcast keeps current on every member's device.
   $effect(() => {
     const declared = selectedWorkspace?.historyVisibility;

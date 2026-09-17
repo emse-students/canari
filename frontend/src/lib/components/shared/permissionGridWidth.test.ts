@@ -6,7 +6,7 @@
  * label was going to win anyway. So every pixel in those floors is reserved, not needed.
  *
  * That mattered because of who renders it. The grid has exactly ONE consumer,
- * `SidebarCommunityAdminModal`, whose own comment records the consequence: at `max-w-4xl` the grid
+ * `SidebarCommunityAdminPanel`, whose own comment records the consequence: at `max-w-4xl` the grid
  * "was under 600px and its own horizontal scrollbar was doing the work - a matrix you have to drag
  * sideways to read is a matrix nobody audits". The answer taken then was to widen that one tab to
  * `max-w-6xl`. It worked, and it bought the room from the window.
@@ -40,7 +40,7 @@ import { withoutComments } from '$lib/styles/markupSources';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC = resolve(HERE, '../../..');
 const GRID = resolve(HERE, 'PermissionGrid.svelte');
-const CONSUMER = resolve(SRC, 'lib/components/sidebar/SidebarCommunityAdminModal.svelte');
+const CONSUMER = resolve(SRC, 'lib/components/sidebar/SidebarCommunityAdminPanel.svelte');
 const APP_CSS = resolve(SRC, 'app.css');
 
 /** A file's markup with comments gone and every run of whitespace collapsed to one space. */
@@ -75,7 +75,7 @@ function gridFloors(): { label: number; role: number } {
  */
 function canonicalRoleCount(): number {
   const union = flatten(CONSUMER).match(/type CanonicalRole = ([^;]+);/);
-  if (!union) throw new Error('SidebarCommunityAdminModal no longer declares CanonicalRole');
+  if (!union) throw new Error('SidebarCommunityAdminPanel no longer declares CanonicalRole');
   return union[1].split('|').length;
 }
 
