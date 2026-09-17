@@ -2224,6 +2224,15 @@ export function logcatReport(lines, label = 'A1') {
     // clear - a cancel that finds nothing is not a different event, it is this one arriving second.
     ['fcm-cancel', /^cancelConversationNotification: (notif removed|no notif for) group=/],
     ['fcm-cache', /^(writeFcmCache|fetchAvatar): /],
+    // THE REACTION ARM, WHICH LEFT NOTIF-15 `PASS-DIRTY` OVER ITS OWN SUCCESS PATH - the same way
+    // NOTIF-4 landed there in 2026-08-22 for the cancelling half of the line above. This is the
+    // handler stating, at DEBUG, that it recognised a reaction push and is about to draw it; the
+    // row that asserts the drawing cannot then be dirtied by the app saying it happened.
+    //
+    // ONLY THE `D` SITE, DELIBERATELY. Its sibling at `W` - "reaction push without groupId -
+    // dropped, nothing to attach it to" - is a push that reached the device and was thrown away,
+    // which is a real loss and must keep surfacing.
+    ['fcm-reaction', /^reaction: group=[0-9a-f]+ actor=[0-9a-f]+ emoji=/],
     // ── the boot receiver, and the reason it fires without a boot ────────────────────────────────
     // ANDROID REPLAYS THE BOOT BROADCAST TO A PACKAGE LEAVING THE STOPPED STATE, so `force-stop`
     // followed by a launch delivers `LOCKED_BOOT_COMPLETED` then `BOOT_COMPLETED` on a device that

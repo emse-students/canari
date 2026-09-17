@@ -168,6 +168,13 @@ export const PHASES = {
       'notif.mjs 10',
       'notif7.mjs bg',
       'notif7.mjs killed',
+      // KILLS THE PHONE AND PUTS IT BACK, PIN INCLUDED, so it is placed among the other rows that
+      // do - and before the venue rows below, which it must not leave a locked handset to. It also
+      // PARKS the owner browsers, deliberately and for the whole run: a device of the owner left in
+      // the conversation emits a read receipt, and a read receipt from self cancels the very
+      // notification this row waits for. See the runner's docblock for the 80 ms that cost the
+      // first attempt.
+      'notif15.mjs',
       // LAST, because these are the only NOTIF rows that open the VENUE channel: doing so re-renders
       // the dead-mention chips MENTION-5 leaves behind, and a row that runs after them inherits
       // nothing while a row that runs before is unaffected either way. Both forgive those 404s.
