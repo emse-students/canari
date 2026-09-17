@@ -1167,6 +1167,52 @@ for the file to EXIST, not for it to be rewritten with bytes it already holds. A
 someone to establish whether `initialiser_mls` mutates the state it opens; **nothing here has
 established it, and it must not be assumed.**
 
+#### THE FIRST MEASUREMENT INSIDE RUST: HALF OF A COLD LOAD IS TWO DIAGNOSTIC LOG LINES (OXYGEN, 2026-09-17)
+
+The entry above ends by saying the next question is inside Rust. `mls-core` had **no load benchmark
+at all** - every bench in `mls_perf.rs` measured SAVING - so `benches/mls_perf.rs` gained
+`load_or_create_cold` and `load_per_pool_passes`. The pool is the swept dimension rather than the
+group count, because the per-load passes walk key packages and because the accumulation is already
+known to be unbounded (queue item 2).
+
+**A BENCH THAT INSTALLS NO LOGGER MEASURES A DIFFERENT FUNCTION FROM THE ONE A PHONE RUNS**, and
+this is the finding, not a footnote. `log::info!` expands to `if level_enabled { ... }`, so with no
+logger installed `log::max_level()` is `Off` and **its arguments are never evaluated**. Two of
+`load_or_create`'s arguments are `state_composition_summary()` and `key_package_census_summary()`,
+and the second `serde_json`-deserialises every stored bundle, recomputes its `hash_ref` and runs a
+substring scan over its key. A device installs `tauri-plugin-log` at info and pays for all of it;
+every test and bench in this repository was blind to it. The benches now install a discarding logger
+and run each load TWICE, so the gap is a number in the output rather than a claim in a comment.
+
+Criterion, 20 samples, OXYGEN, 5 groups, release:
+
+| key-package pool | load, logger at INFO | load, logger OFF | what the two log lines cost |
+| --- | --- | --- | --- |
+| 50 | 1.416 ms | 0.829 ms | +0.59 ms (**+71 %**) |
+| 500 | 12.17 ms | 6.25 ms | +5.9 ms (**+95 %**) |
+| 1000 | 24.52 ms | 12.91 ms | +11.6 ms (**+90 %**) |
+
+And the three per-load passes measured apart from the load, same machine:
+
+| pass | 50 | 500 | 1000 | what it is |
+| --- | --- | --- | --- | --- |
+| `prune_expired_key_packages` | 0.578 ms | 5.69 ms | 11.49 ms | maintenance, always runs |
+| `key_package_census_summary` | 0.587 ms | 5.71 ms | 11.61 ms | a LOG LINE's argument |
+| `state_composition_summary` | 0.021 ms | 0.109 ms | 0.209 ms | a LOG LINE's argument |
+
+**SO A COLD LOAD AT A 1000-PACKAGE POOL IS ROUGHLY 1 ms OF DECODE, 11.5 ms OF PRUNING AND 11.6 ms OF
+A DIAGNOSTIC NOBODY READ.** All three are O(pool), none of them is needed before the first screen,
+and the comment on the census already says in as many words that "the web start-up is not where an
+O(n) diagnostic belongs" - while leaving it on the native one.
+
+**WHAT THIS DOES AND DOES NOT SETTLE.** It does not explain 1644 ms: OXYGEN is not a Mi 9T and its
+pool is a fixture. It settles the SHAPE - the cost is linear in a pool nothing reclaims, and about
+half of it is work the load does not need to do - and it gives the first reproducible number anyone
+can re-run. **The next measurement is the same sweep at the pool a real device carries**, which
+queue item 2 is already about, and the fix it argues for is moving both O(pool) passes off the
+awaited path rather than deleting either: the report is why the leak was found at all. That is a
+change in the Tauri command layer, not in `mls-core`, and it is not made here.
+
 Two things the export settles in passing, both measured rather than argued:
 
 - **The module graph costs almost nothing per chunk and is already entirely at the edge.** 173
