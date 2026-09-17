@@ -1213,6 +1213,41 @@ queue item 2 is already about, and the fix it argues for is moving both O(pool) 
 awaited path rather than deleting either: the report is why the leak was found at all. That is a
 change in the Tauri command layer, not in `mls-core`, and it is not made here.
 
+#### THE PRUNE'S COST IS THE DECODE, NOT THE PROOF - MEASURED, AND IT REFUTED THE FIX THAT ARGUED FOR IT (OXYGEN, 2026-09-17)
+
+`prune_expired_key_packages` is the other O(pool) pass on the awaited cold load, 11.39 ms at a
+1000-package pool. It shared a walk with the census that PROVES every row - a `hash_ref` recomputed
+per bundle plus a serialisation - while the expiry test needs only the decoded lifetime. The obvious
+fix was to prove only the rows about to be deleted, and it shipped: the deleted set is unchanged
+(expired AND proven, exactly what the census counts as expired), now asserted by a test rather than
+guaranteed by the sharing.
+
+**AND THE NUMBER SAID THE HYPOTHESIS WAS MOSTLY WRONG**, which is the finding worth keeping:
+
+| pool | before | after | change |
+| --- | --- | --- | --- |
+| 50 | 0.560 ms | 0.495 ms | **-11.5%** |
+| 500 | 5.61 ms | 5.05 ms | **-11.2%** |
+| 1000 | 11.39 ms | 10.08 ms | **-12.1%** |
+
+The cryptographic proof was **12%** of the pass. The other 88% is
+`serde_json::from_slice::<KeyPackageBundle>` on every stored bundle - the DECODE. A thousand bundles
+are deserialised to read a thousand dates, and no rearrangement of what happens after the decode can
+recover that.
+
+**SO THE REMAINING ~10 ms NEEDS AN INDEX, AND THE INDEX IS BLOCKED.** The storage key is
+`label || json(hash_ref) || version` and carries no expiry, so the only way to skip the decode is to
+write the pool's expiries - or its earliest `not_after` - where a load can read them without opening
+every bundle. That is a field in the state blob, and **the blob-header WRITER cannot move until the
+reader is the floor (`minClientVersion`)**, which is item 5 of the queue. Two cheaper-looking routes
+are refuted in advance: a partial `serde` shape that decodes only the lifetime still parses the whole
+JSON and duplicates knowledge of openmls's wire format in a second place, and an in-memory cache of
+the earliest expiry is empty on precisely the path that matters - a COLD load.
+
+**WHAT MUST NOT BE BUILT INSTEAD**: a clock-driven "prune every N hours". Idempotence comes from
+durable state, termination from a proof, never from a clock - and a pool that silently stops being
+pruned is item 2 of the queue getting worse, which is a P1.
+
 Two things the export settles in passing, both measured rather than argued:
 
 - **The module graph costs almost nothing per chunk and is already entirely at the edge.** 173

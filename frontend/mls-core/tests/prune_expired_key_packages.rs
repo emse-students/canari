@@ -137,3 +137,54 @@ fn a_pruned_device_still_works_and_the_prune_is_idempotent() {
         "the freshly minted package is the only thing left to find"
     );
 }
+
+/// THE CENSUS AND THE PRUNE MUST STILL DESCRIBE THE SAME ROWS, NOW THAT THEY WALK THEM DIFFERENTLY.
+///
+/// They shared one function until 2026-09-17, which proved every row for both of them - and that
+/// proof, a `hash_ref` recomputed per bundle, was most of an 11.4 ms pass at a pool of 1000, paid on
+/// the awaited path of a cold start to delete nothing at all. The prune now takes the proof on the
+/// rows it is about to delete and on no others. **What must not move is the answer**: the set
+/// deleted is still exactly the set the census calls expired, at the same instant, which is the
+/// property the shared walk existed to guarantee and the only one worth asserting here.
+#[test]
+fn the_prune_deletes_exactly_what_the_census_calls_expired() {
+    let m = device("alice-agreement");
+    m.generate_key_packages(20).expect("20 prekeys");
+    m.generate_last_resort_key_package().expect("a fallback");
+
+    let fresh = m.key_package_census_at(now()).expect("census now");
+    assert_eq!(fresh.total, 21, "the census must see every bundle minted");
+    assert_eq!(fresh.expired, 0, "nothing minted a moment ago is expired");
+    assert_eq!(
+        fresh.undecodable, 0,
+        "every bundle this device wrote must prove itself"
+    );
+    assert_eq!(
+        m.prune_key_packages_expired_at(now()).expect("prune now"),
+        fresh.expired,
+        "the prune must take the rows the census counted, and no others"
+    );
+
+    // Past every 84-day lifetime: the census is read BEFORE the delete, so the two numbers are
+    // answers to the same question about the same state rather than one describing the other's
+    // leftovers.
+    let horizon = now() + 100 * DAY;
+    let elapsed = m.key_package_census_at(horizon).expect("census later");
+    assert_eq!(
+        elapsed.total, 21,
+        "the pool has not changed, only the clock"
+    );
+    assert_eq!(elapsed.expired, 21, "all of them have elapsed by then");
+    assert_eq!(
+        m.prune_key_packages_expired_at(horizon).expect("prune"),
+        elapsed.expired,
+        "the prune must take exactly what the census called expired"
+    );
+
+    let after = m.key_package_census_at(horizon).expect("census after");
+    assert_eq!(after.total, 0, "nothing proven may be left behind");
+    assert_eq!(
+        after.undecodable, 0,
+        "a prune must not leave a row it could no longer understand"
+    );
+}
