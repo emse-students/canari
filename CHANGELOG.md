@@ -11,36 +11,15 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
-### Changed - le snapshot MLS entier traversait le pont IPC en tableau de nombres JSON pour quatre appelants qui le jetaient
+### Changed - le snapshot MLS entier traversait le pont IPC pour quatre appelants qui le jetaient
 
-`sauvegarder_mls_et_persister` chiffre l'etat et ecrit `mls.bin` - puis rendait les octets. Tauri
-serialise un `Vec<u8>` de retour en JSON, soit **un entier decimal par octet** : un snapshot de
-7,8 Mo devenait 27,8 Mo de JSON, encode cote Rust, reparse cote webview, puis reparcouru par
-`Uint8Array.from`. A chaque checkpoint, et une fois de plus juste apres `initialiser_mls`, devant le
-premier ecran. **Les quatre appels natifs jetaient le resultat.**
-
-Le type de retour venait du web, ou `saveState` DOIT rendre les octets parce que l'appelant doit
-encore les remettre a IndexedDB. Il etait declare sur `IMlsService`, donc les deux plateformes
-partageaient une signature - et le natif, qui avait deja ecrit le fichier, payait le sens de l'autre.
-
-Le commentaire de `persistCheckpoint` nommait deja ce cout : *2,0 s d'un checkpoint de 3,7 s sur un
-Mi 9T, mesure le 2026-08-14, « presque tout en marshalling du snapshot en `number[]` »*. Le correctif
-de ce jour-la a supprime la **seconde ecriture** et laisse le marshalling, parce qu'il n'a jamais
-touche a ce que la commande renvoie.
-
-- `sauvegarder_mls` - la variante qui chiffre SANS ecrire - est **supprimee** : elle etait
-  enregistree dans l'`invoke_handler` et appelee par personne, et elle rendait le blob entier de la
-  meme facon. Une commande exposee que rien n'appelle est une surface, pas une option ;
-- la commande renvoie desormais un **nombre d'octets ecrits** ;
-- cote natif, `saveState` devient `persistState(deviceKeyB64): Promise<number>` ;
-- `saveState` **quitte `IMlsService` et `BaseMlsService`** : la seule persistance partagee est
-  `persistCheckpoint`, qui ne rend rien. Chaque plateforme garde sa propre sauvegarde, avec le type
-  de retour que ses propres appelants utilisent reellement.
-
-Le cout evite, mesure sur OXYGEN (desktop, release), pour un blob de 7,8 Mo : **95 ms** d'encodage
-`serde_json` cote Rust, 27,8 Mo transportes, **220 ms** de `JSON.parse` + `Uint8Array.from` cote JS,
-soit **~315 ms hors copie de transport**. C'est un PLANCHER de machine de bureau ; le chiffre du
-telephone viendra du span `mls-save-state`, qui mesurait 2712,1 ms.
+`sauvegarder_mls_et_persister` ecrivait `mls.bin` **et** rendait les octets ; Tauri serialise un
+`Vec<u8>` en JSON, soit un entier decimal par octet - **27,8 Mo de JSON pour un instantane de
+7,8 Mo**, a chaque checkpoint et une fois de plus devant le premier ecran, alors que les quatre
+appels natifs jetaient le resultat. Le type de retour venait du web, ou les octets SONT la
+persistance, et il etait declare sur `IMlsService` ; il n'y est plus. `sauvegarder_mls`, enregistree
+et appelee par personne, est supprimee. Le cout evite et ce que la question ouverte du demarrage
+devient : [backlog](docs/wiki/backlog.md).
 
 ### Changed - anonyme devient une identite de publication, ouverte a tout le monde ; un moderateur (et l'auteur) voient toujours qui a publie
 
