@@ -1,10 +1,12 @@
 version: 0.18.10
 
-Demarrage plus rapide, et des erreurs enfin lisibles.
+Demarrage plus rapide, notifications plus justes.
 
 La connexion au serveur de discussion ne fait plus la queue derriere le dechiffrement local.
 
-Les messages d'erreur ne montrent plus la phrase technique d'une exception: chaque refus est dit en francais.
+Une reaction a votre message notifie sur son propre canal, plus discret.
+
+Les messages d'erreur sont dits en francais, sans jargon technique.
 
 Un fichier trop volumineux le dit avant l'envoi.
 
