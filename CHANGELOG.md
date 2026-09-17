@@ -58,7 +58,12 @@ ne l'avait montre parce que les panneaux de conversation s'ouvrent sur un ecran 
 `MobileHeader` et `BottomNav` : la zone de contenu y EST la fenetre. Ceux de communaute s'ouvrent
 depuis la LISTE, ou les deux sont affiches - et leur pied, qui est desormais l'endroit de « Quitter »
 et « Supprimer », passait sous la barre du bas. La modale remplacee n'avait jamais eu le probleme
-parce qu'une modale est portee vers `body`. Le tiroir l'est maintenant aussi ; la colonne ne l'est
+parce qu'une modale est portee vers `body`. Mesure A/B dans Chrome sur la geometrie de cet ecran,
+fenetre de 958 x 944 : dans un conteneur encastre a `top: 120` sur 734 px de haut, un enfant
+`fixed inset-0` mesure **120 / 734 - la boite du CONTENEUR** s'il porte `will-change: transform`, et
+**0 / 944 - la fenetre** dans le meme conteneur sans cette declaration. 210 px de fenetre
+inatteignables, soit exactement l'en-tete plus la barre du bas. Le tiroir est maintenant porte lui
+aussi ; la colonne ne l'est
 pas, et pas par concession : a `xl` elle est un FRERE en flex des autres cartes, et un noeud deplace
 dans `<body>` n'a plus de rangee a rejoindre. Le meme booleen decide les deux, et un test monte la
 coquille dans une page pour lire ou le noeud atterrit, dans les deux sens.

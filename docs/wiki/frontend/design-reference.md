@@ -765,8 +765,11 @@ illegal state stopped being reachable rather than being guarded against.
   between the header and the bottom bar, and painted under both however high its rung is. The
   conversation panels hid it, because their screen hides `MobileHeader` and `BottomNav` and the
   content area IS the viewport there; the community settings, opened from the conversation list,
-  had their foot under the bottom bar. A column must NOT portal - at `xl` it is a flex sibling of
-  the chat cards, and a node moved to `<body>` has no row left to join.
+  had their foot under the bottom bar. Measured A/B in Chrome, window 958 x 944: a `fixed inset-0`
+  child of a wrapper inset to `top: 120` / 734 px tall measures **120 / 734** with
+  `will-change: transform` and **0 / 944** without it - 210 px of window unreachable, exactly the
+  header plus the bottom bar. A column must NOT portal - at `xl` it is a flex sibling of the chat
+  cards, and a node moved to `<body>` has no row left to join.
 - **The back gesture is one entry.** `openSidePanel` unwinds the previous panel's history entry before
   pushing its own - stacking them would make one visible panel need two back presses, the second of
   which closes something that was never on screen.

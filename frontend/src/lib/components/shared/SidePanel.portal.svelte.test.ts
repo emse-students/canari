@@ -21,7 +21,9 @@
  * rule is not "portal panels" - it is that the two shapes want opposite things, which is why one
  * boolean decides both and why both directions are asserted here. A regression in either direction
  * is silent: nothing about the markup looks wrong, and happy-dom reports no geometry to contradict
- * it, so the PARENT is what this reads.
+ * it, so the PARENT is what this reads. The geometry itself was settled once, A/B in Chrome on a
+ * 958 x 944 window: a `fixed inset-0` child of a wrapper inset to `top: 120` / 734 px tall measures
+ * 120 / 734 with `will-change: transform` and 0 / 944 without it.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { createRawSnippet, flushSync, mount, unmount } from 'svelte';
