@@ -87,7 +87,6 @@ function mls(overrides: Record<string, unknown> = {}) {
     getDeviceId: vi.fn(() => 'dev-1'),
     getLocalGroups: vi.fn(() => [...local]),
     getUserGroups: vi.fn(async () => []),
-    saveState: vi.fn(async () => new Uint8Array([1])),
     deleteGroupOnServer: vi.fn(async () => {}),
     notifyConversationAvailable: vi.fn(),
     notifyConversationsRestored: vi.fn(),

@@ -586,7 +586,7 @@ export class TauriMlsService extends BaseMlsService {
     // and it is started here while `lister_groupes` below IS awaited. If the native side serialises
     // these calls, the awaited one queues behind this write and the boot pays for it without any
     // line saying so. A span that is still open at `MLS ready` reports exactly that.
-    const savePromise = timeBootSpan('mls-save-state', this.saveState(deviceKeyB64)).catch(
+    const savePromise = timeBootSpan('mls-save-state', this.persistState(deviceKeyB64)).catch(
       () => {}
     );
 
@@ -636,12 +636,14 @@ export class TauriMlsService extends BaseMlsService {
   }
 
   /**
-   * Native `saveState` writes `mls.bin` before it returns, so the checkpoint is that one call.
-   * Handing its bytes back to `save_mls_state` would write the same file twice - 2.0 s of the
-   * 3.7 s measured on the phone, nearly all of it marshalling the snapshot as a JS `number[]`.
+   * Native {@link persistState} writes `mls.bin` before it returns, so the checkpoint is that one
+   * call. Handing its bytes back to `save_mls_state` would write the same file twice - 2.0 s of the
+   * 3.7 s measured on the phone, nearly all of it marshalling the snapshot as a JS `number[]`. That
+   * second write went in 2026-08-14; the marshalling it blamed only went when the command stopped
+   * returning the blob at all.
    */
   protected async writeCheckpoint(deviceKeyB64: string): Promise<void> {
-    await this.saveState(deviceKeyB64);
+    await this.persistState(deviceKeyB64);
   }
 
   /**
@@ -655,19 +657,32 @@ export class TauriMlsService extends BaseMlsService {
     return invoke<number>('skip_send_generations', { groupId, count });
   }
 
-  /** Tauri-native `invoke` wrapper - calls `sauvegarder_mls_et_persister` to encrypt and persist the MLS state to the native mls.bin file using the device key. */
-  async saveState(deviceKeyB64: string): Promise<Uint8Array> {
+  /**
+   * Encrypts and writes `mls.bin`, and returns the number of bytes written.
+   *
+   * IT IS NOT CALLED `saveState`, AND THE RENAME IS THE FIX. `saveState` is web's word: there the
+   * bytes ARE the persistence, because the caller still has to hand them to IndexedDB. Native had
+   * inherited the same signature through {@link IMlsService}, so `sauvegarder_mls_et_persister`
+   * returned the whole snapshot and Tauri marshalled it as a JSON array of one number per byte -
+   * ~7.8 million integers across the bridge, then a `Uint8Array.from` over all of them, on every
+   * checkpoint and once more on the awaited boot path. **All four native call sites discarded the
+   * result**, and the docblock on {@link writeCheckpoint} had named that exact cost since
+   * 2026-08-14 while still paying it: the fix that day removed the duplicate WRITE and left the
+   * marshalling, because it never changed what the command returns.
+   *
+   * A length, by contrast, is eight bytes and answers the one question a caller can have about a
+   * write it did not perform itself.
+   */
+  async persistState(deviceKeyB64: string): Promise<number> {
     await this.awaitRustMutations();
     // Read the counter BEFORE the invoke, so a send that lands DURING it stays counted as
     // unpersisted. Erring that way costs a refused reload; erring the other way costs a rewound
     // ratchet, which is the whole defect this watermark exists to prevent.
     const mutationsAtSnapshot = this.liveMutations;
-    // Native command handles save_encrypted_with_key + mls.bin write in one invoke
-    // to avoid JS Array.from(…) conversion on large state blobs (notably Android).
-    const raw = await invoke<number[]>('sauvegarder_mls_et_persister', { deviceKeyB64 });
-    const bytes = Uint8Array.from(raw);
+    // ONE invoke for encrypt + write: the JS side never sees the blob, which is the point.
+    const written = await invoke<number>('sauvegarder_mls_et_persister', { deviceKeyB64 });
     this._mutationsAtLastPersist = mutationsAtSnapshot;
-    return bytes;
+    return written;
   }
 
   /**
@@ -704,7 +719,7 @@ export class TauriMlsService extends BaseMlsService {
       console.warn(
         `[MLS][Tauri] Resume reload SKIPPED: ${unpersisted} send(s) have not reached mls.bin - reloading would rewind this device's own send ratchet. Persisting the live state instead.`
       );
-      await this.saveState(this._deviceKeyB64).catch((e) => {
+      await this.persistState(this._deviceKeyB64).catch((e) => {
         console.error('[MLS][Tauri] Persist of the live state after a skipped reload failed:', e);
       });
       return;
@@ -793,7 +808,7 @@ export class TauriMlsService extends BaseMlsService {
 
   protected async changeDeviceKeyImpl(newDeviceKeyB64: string): Promise<void> {
     this._deviceKeyB64 = newDeviceKeyB64;
-    await this.saveState(newDeviceKeyB64);
+    await this.persistState(newDeviceKeyB64);
 
     // Always regenerate the keystore key for background push, regardless of the biometric flag.
     // The keystore key is required for FCM decryption even without biometrics.

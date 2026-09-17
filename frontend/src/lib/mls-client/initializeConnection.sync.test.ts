@@ -50,7 +50,6 @@ describe('syncConnectionAfterWsOpen - a departed leaf is collected by a holder',
       removeMember,
       getEpoch: vi.fn().mockReturnValue(9),
       ...forgetPair(),
-      saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
       persistCheckpoint: vi.fn().mockResolvedValue(undefined),
       getDeviceId: vi.fn().mockReturnValue('dev-1'),
       isDistributionGroup: vi.fn().mockReturnValue(false),
@@ -94,7 +93,7 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
         .mockResolvedValue([{ status: 'pending', groupId: 'g-deleted' }]),
       getLocalGroups: vi.fn().mockReturnValue([]),
       ...forgetPair(),
-      saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
+      persistCheckpoint: vi.fn().mockResolvedValue(undefined),
       getDeviceId: vi.fn().mockReturnValue('dev-1'),
       // No distribution group here: `reconcileGroup` asks this before anything else,
       // because a seed carrier has no history to reconcile.
@@ -114,7 +113,10 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
     await done;
 
     expect(mls.forgetGroup).not.toHaveBeenCalled();
-    expect(mls.saveState).not.toHaveBeenCalled();
+    // ON THE CHECKPOINT, BECAUSE THAT IS WHAT THIS CODE CAN CALL. It used to assert on `saveState`,
+    // which no caller outside a platform class has ever reached - an assertion that would have held
+    // whatever the sweep did.
+    expect(mls.persistCheckpoint).not.toHaveBeenCalled();
     expect(log).not.toHaveBeenCalledWith(expect.stringContaining('Skip recovery'));
   });
 
@@ -127,7 +129,6 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
       getUserGroups: vi.fn().mockRejectedValue(new Error('getUserGroups failed: 503')),
       getLocalGroups: vi.fn().mockReturnValue(['g-live-1', 'g-live-2']),
       ...forgetPair(),
-      saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
       getDeviceId: vi.fn().mockReturnValue('dev-1'),
       // No distribution group here: `reconcileGroup` asks this before anything else,
       // because a seed carrier has no history to reconcile.
@@ -157,7 +158,6 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
       getUserGroups: vi.fn().mockResolvedValue([]),
       getLocalGroups: vi.fn().mockReturnValue(['g-live-1']),
       ...forgetPair(),
-      saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
       getDeviceId: vi.fn().mockReturnValue('dev-1'),
       // No distribution group here: `reconcileGroup` asks this before anything else,
       // because a seed carrier has no history to reconcile.
@@ -198,7 +198,6 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
         .mockResolvedValue({ groupId: 'd-dist', distributionWorkspaceId: 'ws-1' }),
       registerDistributionGroup: vi.fn(),
       ...forgetPair(),
-      saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
       getDeviceId: vi.fn().mockReturnValue('dev-1'),
       waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
     };
@@ -230,7 +229,6 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
       getGroupServerStatus: vi.fn().mockResolvedValue('absent'),
       registerDistributionGroup: vi.fn(),
       ...forgetPair(),
-      saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
       getDeviceId: vi.fn().mockReturnValue('dev-1'),
       waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
     };
@@ -281,7 +279,6 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
       registerDistributionGroup: vi.fn(),
       noteDistributionGroup: vi.fn(),
       ...forgetPair(),
-      saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
       getDeviceId: vi.fn().mockReturnValue('dev-1'),
       waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
     };
@@ -311,7 +308,6 @@ describe('syncConnectionAfterWsOpen (orphan MLS cleanup)', () => {
       getGroupServerStatus: vi.fn().mockResolvedValue('error'),
       registerDistributionGroup: vi.fn(),
       ...forgetPair(),
-      saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
       getDeviceId: vi.fn().mockReturnValue('dev-1'),
       waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
     };
@@ -348,7 +344,6 @@ describe('syncConnectionAfterWsOpen (a refused device is not a deferred one)', (
     isDistributionGroup: vi.fn().mockReturnValue(false),
     registerDistributionGroup: vi.fn(),
     ...forgetPair(),
-    saveState: vi.fn().mockResolvedValue(new Uint8Array([1])),
     getDeviceId: vi.fn().mockReturnValue('dev-1'),
     waitForMessageQueueIdle: vi.fn().mockResolvedValue(undefined),
   });
