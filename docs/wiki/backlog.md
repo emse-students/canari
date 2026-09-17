@@ -1607,19 +1607,42 @@ side 2026-09-17, the three files are not three copies of one guard that drifted 
 | Where | Refuses on | If `INTERNAL_SHARED_SECRET` is absent | Other paths |
 | --- | --- | --- | --- |
 | `core-service/.../nginx-auth.guard.ts` | empty `x-user-id` | **401 in production**, allowed otherwise | none |
-| `social-service/.../nginx-auth.guard.ts` | empty `x-user-id`, and a 401 when `NODE_ENV` is UNSET | falls through to a static `NGINX_AUTH_SECRET`, and allows the request when that is unset too | **a dev path that decodes the JWT without verifying its signature** and trusts `sub` |
+| `social-service/.../nginx-auth.guard.ts` | empty `x-user-id`, and a 401 when `NODE_ENV` is UNSET | **401 in production since 2026-09-17** - it was the only one of the three that did not | **a dev path that decodes the JWT without verifying its signature** and trusts `sub` |
 | `chat-delivery-service/.../header-auth.guard.ts` | `x-user-logged-in !== 'true'` | **401 in production**, allowed otherwise | logs a denial, `/push/` routes only |
 | `chat-gateway/src/presence.rs:34` | empty `x-user-id` | n/a | none - Rust, and it stays where it is |
 
-**SO THE MERGE IS A DECISION ABOUT POLICY, NOT A RENAME, AND IT MUST BE TAKEN DELIBERATELY.** Two of
-the rows above are what this repository calls a fallback, and the rule says a fallback is a signal
-and never a path: `social-service` accepts a request in production when neither secret is configured,
-where its two siblings refuse, and it carries an unverified-JWT branch gated only on `NODE_ENV` not
-being `production`. Picking any one of the three as "the" shared guard silently changes what the
-other two services refuse - which is the exact accident the previous paragraph warns about, one level
-up from the discriminator it was written about. **Whoever takes this decides, in writing and before
-touching a file, which refusals are intended**; the shared HMAC verification can be lifted out
-first and on its own, because that half really is three identical copies.
+**SO THE MERGE IS A DECISION ABOUT POLICY, NOT A RENAME, AND IT MUST BE TAKEN DELIBERATELY.** Picking
+any one of the three as "the" shared guard silently changes what the other two services refuse -
+which is the exact accident the previous paragraph warns about, one level up from the discriminator
+it was written about. **Whoever takes this decides, in writing and before touching a file, which
+refusals are intended**; the shared HMAC verification can be lifted out first and on its own, because
+that half really is three identical copies.
+
+#### ONE OF THE TWO DIVERGENCES IS SETTLED, AND IT WAS WORSE THAN THIS ENTRY SAID (2026-09-17)
+
+This entry described `social-service` as falling through to a static `NGINX_AUTH_SECRET`. **Nothing
+anywhere sets that variable** - not a compose file, not an env template, not the nginx config, and
+not the production container, which reports `INTERNAL_SHARED_SECRET` and `NODE_ENV` and no third
+name. So the `if` guarding it never fired, the `else` branch did nothing whatever, and control
+reached `if (userId) return true`. **The fallback was not a weaker check; it was no check**, and with
+the real secret absent a bare `X-User-Id` header was accepted as proof of its own authenticity.
+
+Latent rather than active - all three services carry the secret in production - and fixed rather than
+recorded, because what held it shut was the presence of a variable and not the code. The guard now
+fails closed like its two siblings and the dead branch is deleted. **It also had no test, which is
+how it stayed the outlier**; it has thirteen, written around what it must REFUSE, and verified by
+mutation: replayed against the previous guard, exactly two fail, with `Received function did not
+throw`.
+
+**WHAT IS LEFT OF THE DIVERGENCE IS THE UNVERIFIED-JWT BRANCH, AND IT IS A QUESTION, NOT AN
+OVERSIGHT.** It is unreachable on every deployed estate - dev PINS `NODE_ENV: production` where
+production merely defaults to it - so it runs only on a developer's own machine. **But it is not dead
+code there**: `frontend/vite.config.js` sends `/channels` straight to `social-service:3014`, outside
+nginx, because nginx has no location for it. That request carries a bearer token and no `X-User-Id`,
+which is precisely the branch. Deleting it therefore breaks `bun run dev`, and the honest fix is to
+give the local nginx a `/channels` location and point the proxy at it - closing the routing gap the
+fallback was papering over. **Put to the user 2026-09-17 and awaiting their answer**, because it
+changes their local loop.
 
 `verifyInternalToken` is exported from `core-service` and imported by **nobody** outside its own
 file. Two names for one CONCEPT is also why a reader auditing "does everything have

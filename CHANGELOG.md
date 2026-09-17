@@ -11,6 +11,37 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Security - le garde de `social-service` ne se repliait pas sur un controle plus faible, il se repliait sur AUCUN
+
+Trois services portent ce garde. Deux echouent fermes quand `INTERNAL_SHARED_SECRET` manque en
+production : ils refusent tout. `social-service` etait le troisieme, et il partait ailleurs - vers une
+branche de repli lisant `NGINX_AUTH_SECRET`.
+
+**Rien ne pose cette variable.** Ni un fichier compose, ni un gabarit d'environnement, ni la
+configuration nginx, ni le conteneur de production - mesure le 2026-09-17, qui ne declare que
+`INTERNAL_SHARED_SECRET` et `NODE_ENV`. Son `if` ne se declenchait donc jamais, la branche `else` ne
+faisait rien du tout, et le controle atteignait `if (userId) return true`. Autrement dit : **avec le
+vrai secret absent, n'importe quelle requete portant un en-tete `X-User-Id` etait acceptee sur la foi
+de cet en-tete seul.** Un repli qui a pourri en porte ouverte.
+
+**Ce n'etait pas actif** : les trois services portent le secret en production aujourd'hui, le defaut
+etait donc latent. Il est neanmoins corrige plutot que note, parce que ce qui le tenait ferme n'etait
+pas le code mais la presence d'une variable.
+
+Le garde echoue desormais ferme comme ses deux freres, et la branche morte est supprimee au lieu
+d'etre reparee - un repli est un signal, jamais un chemin.
+
+**Et il n'avait aucun test, ce qui est exactement pourquoi il est reste le seul des trois a ne pas
+echouer ferme.** Il en a treize, ecrits autour de ce qu'il doit REFUSER : secret absent, jeton absent,
+jeton signe pour un autre utilisateur, jeton signe avec un autre secret, jeton vieux de deux minutes.
+**Verifie par mutation** - rejoues contre le garde d'avant, exactement deux tombent, et le message est
+`Received function did not throw`.
+
+Le chemin de developpement qui decode un JWT sans verifier sa signature n'est pas touche ici : il est
+inatteignable sur toute estate deployee (dev EPINGLE `NODE_ENV: production`), mais il sert
+`bun run dev`, ou `/channels` va droit sur social-service hors nginx. Ce qu'il advient de lui est une
+question ouverte, posee a l'utilisateur.
+
 ## [0.18.11] - 2026-09-17
 
 ### Changed - le seul endroit qui mesure un noeud sur le point d'etre porte est mesure, et tenu
