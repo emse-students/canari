@@ -98,7 +98,7 @@ export async function api(url, init = {}) {
     headers: {
       authorization: `Bearer ${await token()}`,
       'content-type': 'application/json',
-      ...(init.headers ?? {}),
+      ...init.headers,
     },
   });
   const text = await response.text();
