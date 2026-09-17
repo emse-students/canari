@@ -11,6 +11,20 @@ which is also where every release up to and including v0.13.1 now lives.
 
 ## [Unreleased]
 
+### Fixed - une premiere conversation arrivee par notification etait dessinee comme un GROUPE
+
+Un premier message de quelqu'un avec qui on n'a pas encore de conversation cree sa fiche a partir du
+cache FCM. Cette fiche portait un LIBELLE et pas de type, et le constructeur ecrit `group` quand un
+site ne dit rien - donc un DM etait rendu avec l'avatar de groupe : **un carre arrondi, et aucun
+utilisateur dont aller chercher la photo**, jusqu'a ce qu'un redemarrage laisse le balayage serveur
+reecrire la fiche. Deux retours de l'utilisateur (2026-09-18) qui n'en font qu'un.
+
+Le discriminateur etait deja sur le fil, et ce fichier le documentait deja : le push ne porte pas de
+nom de groupe pour un DM. Il en a trois etats, pas deux - **absent n'est pas vide** - et le pair
+d'un DM est l'expediteur. Ce que cela ne sait pas separer est ecrit dans le code :
+[backlog](docs/wiki/backlog.md).
+
+
 ### Changed - le snapshot MLS entier traversait le pont IPC en tableau de nombres JSON pour quatre appelants qui le jetaient
 
 `sauvegarder_mls_et_persister` chiffre l'etat et ecrit `mls.bin` - puis rendait les octets. Tauri
